@@ -29,7 +29,6 @@ void TestLspProtocolParsesPositionAndRange() {
   Expect(range.start.line == 3 && range.start.character == 7, "range start parsed");
   Expect(range.end.line == 3 && range.end.character == 12, "range end parsed");
 
-  // Missing start/end yields a zeroed range rather than garbage.
   const LspClient::Range empty = codec::ParseRange(Json("{}"));
   Expect(empty.start.line == 0 && empty.end.character == 0, "missing range is zeroed");
 }
@@ -48,7 +47,6 @@ void TestLspProtocolParsesLocationsArrayAndSingleAndLink() {
   Expect(from_array.size() == 2, "array of locations parses both");
   Expect(from_array[1].uri == "file:///b.cpp", "second location uri");
 
-  // LocationLink shape (targetUri / targetSelectionRange) used when linkSupport=true.
   const JsonValue link = Json(R"([{"targetUri":"file:///c.cpp",
       "targetRange":{"start":{"line":5,"character":0},"end":{"line":9,"character":0}},
       "targetSelectionRange":{"start":{"line":5,"character":4},"end":{"line":5,"character":8}}}])");
@@ -65,23 +63,17 @@ void TestLspProtocolParsesDiagnosticSeverityDefault() {
   const LspClient::Diagnostic warn = codec::ParseDiagnostic(with_severity);
   Expect(warn.severity == 2 && warn.message == "bad" && warn.code == "E1", "diagnostic fields");
 
-  // Severity defaults to Error (1) when the server omits it.
   const JsonValue no_severity =
       Json(R"({"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":2}},
                "message":"oops"})");
   Expect(codec::ParseDiagnostic(no_severity).severity == 1, "missing severity defaults to error");
 
-  // LSP Diagnostic.code is `integer | string`. A numeric code (e.g. TypeScript's
-  // 2304) must be captured as text, not silently dropped by AsString().
   const JsonValue int_code =
       Json(R"({"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":2}},
                "message":"cannot find name","severity":1,"code":2304})");
   Expect(codec::ParseDiagnostic(int_code).code == "2304",
          "integer diagnostic code must be preserved as its decimal string");
 
-  // Out-of-spec severity values (0, 99, INT_MAX) must be clamped to the LSP
-  // domain (1..4) at parse time so they cannot misclassify severity filters or
-  // "most severe" status logic; anything invalid defaults to Error (1).
   const auto severity_of = [](const char* value) {
     std::string body = R"({"range":{"start":{"line":0,"character":0},)"
                        R"("end":{"line":0,"character":2}},"message":"m","severity":)";
@@ -97,7 +89,6 @@ void TestLspProtocolParsesDiagnosticSeverityDefault() {
 }
 
 void TestLspProtocolParsesDocumentSymbolShapes() {
-  // DocumentSymbol with nested children.
   const JsonValue doc_symbol = Json(R"({"name":"Outer","kind":5,
       "range":{"start":{"line":0,"character":0},"end":{"line":9,"character":0}},
       "selectionRange":{"start":{"line":0,"character":6},"end":{"line":0,"character":11}},
@@ -108,7 +99,6 @@ void TestLspProtocolParsesDocumentSymbolShapes() {
   Expect(parsed.selection_range.start.character == 6, "document symbol selection range");
   Expect(parsed.children.size() == 1 && parsed.children[0].name == "inner", "nested child parsed");
 
-  // SymbolInformation shape (location.range, no selectionRange).
   const JsonValue symbol_info = Json(R"({"name":"freefn","kind":12,
       "location":{"uri":"file:///d.cpp",
         "range":{"start":{"line":4,"character":0},"end":{"line":4,"character":6}}}})");
@@ -120,7 +110,6 @@ void TestLspProtocolParsesDocumentSymbolShapes() {
 
 void TestLspProtocolEncodersRoundTrip() {
   const LspClient::Range range{{2, 5}, {2, 9}};
-  // Make -> Parse should reproduce the range.
   const LspClient::Range round = codec::ParseRange(codec::MakeRange(range));
   Expect(round.start.line == 2 && round.start.character == 5, "encoded range start round-trips");
   Expect(round.end.line == 2 && round.end.character == 9, "encoded range end round-trips");
@@ -133,8 +122,6 @@ void TestLspProtocolEncodersRoundTrip() {
 }
 
 void TestLspProtocolDecodesSemanticTokens() {
-  // Two tokens on line 0 (cols 0..3 type 1, cols 5..9 type 2) and one on line 2
-  // (cols 4..6 type 0), delta-encoded as the LSP wire format prescribes.
   const JsonValue result = Json(R"({"data":[
       0,0,3,1,0,
       0,5,4,2,0,
@@ -150,15 +137,10 @@ void TestLspProtocolDecodesSemanticTokens() {
   Expect(tokens[2].line == 2 && tokens[2].start_char == 4 && tokens[2].length == 2,
          "third token jumps two lines and resets the column (2,4,2)");
 
-  // Malformed inputs decode to nothing rather than throwing or over-reading.
   Expect(codec::ParseSemanticTokensData(Json(R"({})")).empty(), "missing data => no tokens");
   Expect(codec::ParseSemanticTokensData(Json(R"({"data":[0,0,3]})")).empty(),
          "a partial 3-int group yields no tokens");
 
-  // Delta positions that would overflow a signed int when summed must be handled
-  // as saturating 64-bit arithmetic (no UB) and dropped as out-of-range, while
-  // earlier in-range tokens still decode. First token line=2e9 (in range);
-  // second adds 2e9 -> 4e9 > INT_MAX -> dropped.
   const auto overflow = codec::ParseSemanticTokensData(
       Json(R"({"data":[2000000000,0,3,0,0, 2000000000,0,3,0,0]})"));
   Expect(overflow.size() == 1,
@@ -166,10 +148,6 @@ void TestLspProtocolDecodesSemanticTokens() {
   Expect(overflow[0].line == 2000000000,
          "the in-range token decodes to its accumulated line");
 
-  // TD-2026-07-16-46: real INT64 overflow. Two groups whose deltaLine is INT64_MAX
-  // each would UB-overflow a plain `line += delta` on the second add (the first token
-  // is already dropped but leaves `line` at INT64_MAX). Saturating arithmetic drops
-  // both and never overflows. Also exercise a same-line huge deltaStart run.
   const auto line_overflow = codec::ParseSemanticTokensData(
       Json(R"({"data":[9223372036854775807,0,3,0,0, 9223372036854775807,0,3,0,0]})"));
   Expect(line_overflow.empty(),
@@ -179,10 +157,6 @@ void TestLspProtocolDecodesSemanticTokens() {
   Expect(col_overflow.empty(),
          "two INT64_MAX same-line column deltas are both dropped without overflow UB");
 
-  // The integer fast path (TD-2026-10-09-335) keeps the general readers' meaning
-  // for everything that is not an int64: an integral double reads as its value,
-  // a fractional token type is the fallback (0), and an out-of-int token type
-  // clamps rather than wraps.
   const auto doubles = codec::ParseSemanticTokensData(
       Json(R"({"data":[1.0,2.0,3.0,4.0,0, 0,1,2,2.5,0, 0,1,2,9000000000,0, 0,1,2,-9000000000,0]})"));
   Expect(doubles.size() == 4 && doubles[0].line == 1 && doubles[0].start_char == 2 &&
@@ -194,11 +168,7 @@ void TestLspProtocolDecodesSemanticTokens() {
          "an out-of-int token type clamps");
 }
 
-// A hostile/buggy language server can pack ~1M minimal entries into one 64 MiB
-// message; each parse path materializes strings + ranges and builds a picker /
-// outline / diagnostics list on the UI thread. The parsers must cap the count.
 void TestLspProtocolParseCapsBoundHostileArrays() {
-  // Locations (references/definition picker).
   {
     std::string body = "[";
     for (int i = 0; i < 60000; ++i) {
@@ -209,7 +179,6 @@ void TestLspProtocolParseCapsBoundHostileArrays() {
     Expect(codec::ParseLocations(Json(body)).size() <= 50000,
            "ParseLocations must cap a hostile locations array");
   }
-  // Diagnostics.
   {
     std::string body = "[";
     for (int i = 0; i < 20000; ++i) {
@@ -220,7 +189,6 @@ void TestLspProtocolParseCapsBoundHostileArrays() {
     Expect(codec::ParseDiagnostics(Json(body)).size() <= 10000,
            "ParseDiagnostics must cap a hostile diagnostics array");
   }
-  // Document symbols: a flat sibling flood stays under the total-node budget.
   {
     std::string body = "[";
     for (int i = 0; i < 120000; ++i) {
@@ -234,7 +202,6 @@ void TestLspProtocolParseCapsBoundHostileArrays() {
 }
 
 void TestLspProtocolParsesHoverContents() {
-  // MarkupContent: {kind, value}.
   Expect(codec::ParseHoverContents(
              Json(R"({"contents":{"kind":"markdown","value":"### foo\ndocs"}})")) ==
              "foo\ndocs",
@@ -242,20 +209,15 @@ void TestLspProtocolParsesHoverContents() {
   Expect(codec::ParseHoverContents(
              Json(R"({"contents":{"kind":"plaintext","value":"### foo `x`"}})")) == "### foo `x`",
          "plaintext MarkupContent is left alone");
-  // MarkedString object: {language, value}.
   Expect(codec::ParseHoverContents(
              Json(R"({"contents":{"language":"cpp","value":"int foo"}})")) == "int foo",
          "MarkedString object value is extracted");
-  // Bare MarkedString string.
   Expect(codec::ParseHoverContents(Json(R"({"contents":"just text"})")) == "just text",
          "bare MarkedString string is returned verbatim");
-  // MarkedString[] joins blocks with a blank line, skipping empty pieces.
   Expect(codec::ParseHoverContents(
              Json(R"({"contents":["one",{"language":"cpp","value":"two"},""]})")) ==
              "one\n\ntwo",
          "MarkedString array joins non-empty blocks");
-  // Fenced code blocks lose their fence lines (with the language tag) and keep
-  // their content; the popup has no markdown renderer, so "```cpp" was painted.
   Expect(codec::ParseHoverContents(Json(
              R"({"contents":{"kind":"markdown","value":"```cpp\nint foo(int x)\n```\nReturns x."}})")) ==
              "int foo(int x)\nReturns x.",
@@ -270,14 +232,11 @@ void TestLspProtocolParsesHoverContents() {
              codec::StripMarkdownFences("~~~py\nx = 1\n~~~") == "x = 1" &&
              codec::StripMarkdownFences("  ```\n  code\n  ```\ntail") == "  code\ntail",
          "the fence stripper handles tildes, indented fences and text without fences");
-  // No contents / empty.
   Expect(codec::ParseHoverContents(Json("{}")).empty(), "missing contents yields empty");
   Expect(codec::ParseHoverContents(Json(R"({"contents":[]})")).empty(),
          "empty contents array yields empty");
 }
 
-// The hover card draws plain text, so markdown hovers are converted: clangd's
-// "### field `queue_`  \nprovided by ...\n\n---\nType: ..." was drawn verbatim.
 void TestLspProtocolHoverMarkdownBecomesText() {
   const std::string clangd =
       "### field `queue_`  \nprovided by `\"scheduler.hpp\"`  \n\n---\nType: `std::vector<Task>`  "
@@ -296,12 +255,6 @@ void TestLspProtocolHoverMarkdownBecomesText() {
          "only a real heading (1-6 '#' and a space) loses its marker");
 }
 
-// Code is code: the converter used to strip `**`/`__` everywhere, fenced blocks
-// and code spans included (fences were dropped before it ran), so a Python hover
-// `def f(*args, **kwargs)` read "def f(*args, kwargs)" and `__init__` read "init".
-// A code span is CommonMark's: a matching run of backticks, its content literal,
-// one padding space stripped from each end -- csharp-ls sends
-// "`` int Util.Twice(int value) ``", which drew with the spaces (QA lsp-csharp).
 void TestLspProtocolHoverMarkdownKeepsCodeVerbatim() {
   const std::string fenced = "```python\ndef f(*args, **kwargs): __init__\n```\nCalls **it**.";
   Expect(codec::HoverMarkdownToText(fenced) == "def f(*args, **kwargs): __init__\nCalls it.",
@@ -322,13 +275,9 @@ void TestLspProtocolHoverMarkdownKeepsCodeVerbatim() {
   Expect(parsed == "def g(**kw): ...", "a markdown hover keeps its fenced code: [" + parsed + "]");
 }
 
-// J27: ParseHoverContents caps a hostile MarkedString[] by element count AND total
-// bytes, truncating on a UTF-8 boundary with an explicit marker, so a near-64 MiB
-// hover cannot force an unbounded concatenation on the callback path.
 void TestLspProtocolHoverContentsAreBounded() {
-  const std::string marker = "\n\n\xE2\x80\xA6 (truncated)";  // "\n\n… (truncated)"
+  const std::string marker = "\n\n\xE2\x80\xA6 (truncated)";
 
-  // A single 200 KiB element is truncated well below its input size and marked.
   {
     const std::string big(200 * 1024, 'x');
     const std::string body = std::string(R"({"contents":[")") + big + R"("]})";
@@ -337,7 +286,6 @@ void TestLspProtocolHoverContentsAreBounded() {
     Expect(out.rfind(marker) != std::string::npos, "byte-cap truncation is explicitly marked");
   }
 
-  // Hundreds of tiny elements are capped by element count and marked.
   {
     std::string many = R"({"contents":[)";
     for (int i = 0; i < 500; ++i) {
@@ -350,8 +298,6 @@ void TestLspProtocolHoverContentsAreBounded() {
            "an over-long hover array is capped by element count and marked");
   }
 
-  // A 3-byte code point ("→") payload is never split mid-character at the byte cap:
-  // the join before the marker ends on a code-point boundary (a multiple of 3).
   {
     std::string arrows;
     while (arrows.size() < 200 * 1024) {
@@ -364,9 +310,6 @@ void TestLspProtocolHoverContentsAreBounded() {
     Expect(mpos % 3 == 0, "truncation lands on a UTF-8 boundary (no split multibyte char)");
   }
 
-  // Regression: the single-string shapes were previously UNCAPPED. A bare
-  // MarkedString and a MarkupContent {value} must be capped + marked too, so a
-  // server cannot push a tens-of-MiB hover payload onto the callback/render path.
   {
     const std::string big(200 * 1024, 'y');
     const std::string bare = codec::ParseHoverContents(Json(std::string(R"({"contents":")") + big + R"("})"));
@@ -379,9 +322,6 @@ void TestLspProtocolHoverContentsAreBounded() {
   }
 }
 
-// J26: LSP positions narrow to `int` deterministically. Out-of-int-range
-// coordinates clamp to the nearest int bound rather than wrapping to an unrelated
-// small/negative value.
 void TestLspProtocolClampsOutOfRangePositions() {
   const LspClient::Position over =
       codec::ParsePosition(Json(R"({"line":2147483648,"character":9223372036854775807})"));
@@ -394,10 +334,6 @@ void TestLspProtocolClampsOutOfRangePositions() {
   Expect(under.character == -1, "an in-range negative character is preserved");
 }
 
-// TD-2026-07-17A-122: a fractional JSON number is not a valid protocol integer.
-// JsonIntInRange (exercised here via ParsePosition/severity) must reject it and use
-// the field's fallback rather than truncating 12.9 -> 12 and steering an edit or
-// diagnostic to an adjacent-but-wrong location. Exact-integral doubles still narrow.
 void TestLspProtocolRejectsFractionalIntegers() {
   const LspClient::Position fractional =
       codec::ParsePosition(Json(R"({"line":12.9,"character":4.5})"));
@@ -415,7 +351,6 @@ void TestLspProtocolRejectsFractionalIntegers() {
 }
 
 void TestLspProtocolParsesWorkspaceEdit() {
-  // `changes` object shape (uri -> TextEdit[]).
   const JsonValue changes = Json(R"({"changes":{
       "file:///a.cpp":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":3}},"newText":"sum"}],
       "file:///b.cpp":[
@@ -427,7 +362,6 @@ void TestLspProtocolParsesWorkspaceEdit() {
   Expect(edit.changes.at("file:///b.cpp").size() == 2, "b.cpp has two edits");
   Expect(edit.changes.at("file:///a.cpp")[0].second == "sum", "newText parsed");
 
-  // `documentChanges` array shape (TextDocumentEdit[] + resource ops).
   const JsonValue doc_changes = Json(R"({"documentChanges":[
       {"textDocument":{"uri":"file:///c.cpp","version":1},
        "edits":[{"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":2}},"newText":"x"}]},
@@ -439,18 +373,15 @@ void TestLspProtocolParsesWorkspaceEdit() {
   Expect(from_doc.expected_versions.at("file:///c.cpp") == 1,
          "the versioned TextDocumentEdit records its expected version");
 
-  // Caps bound a hostile edit count.
   const JsonValue hostile = Json(R"({"changes":{"file:///h.cpp":[
       {"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"newText":"a"},
       {"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":1}},"newText":"b"},
       {"range":{"start":{"line":2,"character":0},"end":{"line":2,"character":1}},"newText":"c"}]}})");
   const LspClient::WorkspaceEdit capped =
-      codec::ParseWorkspaceEdit(hostile, /*max_files=*/10, /*max_edits_total=*/2);
+      codec::ParseWorkspaceEdit(hostile, 10, 2);
   Expect(capped.changes.at("file:///h.cpp").size() == 2, "the total-edit cap truncates the list");
 }
 
-// TD-2026-07-17-011: WorkspaceEdit resource ops (create/rename/delete), their
-// options, versioned TextDocumentEdits, and the pre-rename edit re-keying.
 void TestLspProtocolParsesWorkspaceEditResourceOps() {
   using Op = LspClient::WorkspaceEdit::ResourceOp;
   const JsonValue edit_json = Json(R"({"documentChanges":[
@@ -477,39 +408,31 @@ void TestLspProtocolParsesWorkspaceEditResourceOps() {
              edit.resource_ops[2].ignore_if_not_exists,
          "delete op parses recursive + ignoreIfNotExists");
 
-  // The edit listed BEFORE the rename of its file follows the file to its new
-  // name (the host applies all resource ops before any text edit).
   Expect(edit.changes.count("file:///mod.rs") == 0, "the pre-rename bucket is re-keyed away");
   Expect(edit.changes.at("file:///renamed.rs").size() == 1,
          "the pre-rename edit lands under the post-rename uri");
-  // The version stays keyed by the URI the server actually sent.
   Expect(edit.expected_versions.at("file:///mod.rs") == 7,
          "expected version stays keyed by the original uri");
 
-  // The resource-op count shares the file cap.
   const JsonValue many_ops = Json(R"({"documentChanges":[
       {"kind":"create","uri":"file:///1"},
       {"kind":"create","uri":"file:///2"},
       {"kind":"create","uri":"file:///3"}]})");
   const LspClient::WorkspaceEdit capped_ops =
-      codec::ParseWorkspaceEdit(many_ops, /*max_files=*/2, /*max_edits_total=*/10);
+      codec::ParseWorkspaceEdit(many_ops, 2, 10);
   Expect(capped_ops.resource_ops.size() == 2, "resource ops are bounded by the file cap");
 
-  // Empty-edit versioned entries bypass the edit budget, so the version map is
-  // bounded by the file cap too (hostile-server backstop).
   const JsonValue many_versions = Json(R"({"documentChanges":[
       {"textDocument":{"uri":"file:///v1","version":1},"edits":[]},
       {"textDocument":{"uri":"file:///v2","version":2},"edits":[]},
       {"textDocument":{"uri":"file:///v3","version":3},"edits":[]}]})");
   const LspClient::WorkspaceEdit capped_versions =
-      codec::ParseWorkspaceEdit(many_versions, /*max_files=*/2, /*max_edits_total=*/10);
+      codec::ParseWorkspaceEdit(many_versions, 2, 10);
   Expect(capped_versions.expected_versions.size() == 2,
          "expected versions are bounded by the file cap");
 }
 
 void TestLspProtocolParsesSignatureHelp() {
-  // Two overloads; parameter labels as strings, documentation as MarkupContent and
-  // as a bare string; top-level active signature/parameter.
   const JsonValue help = Json(R"({
     "activeSignature":1,
     "activeParameter":0,
@@ -535,10 +458,8 @@ void TestLspProtocolParsesSignatureHelp() {
   Expect(parsed.signatures[1].parameters[0].label == "int a", "string parameter label parsed");
   Expect(parsed.signatures[1].parameters[1].documentation == "the second arg",
          "MarkupContent parameter documentation unwrapped");
-  // A signature that omits activeParameter reports -1 (falls back to the top level).
   Expect(parsed.signatures[0].active_parameter == -1, "absent per-signature activeParameter is -1");
 
-  // Parameter label given as `[start, end]` offsets into the signature label.
   const JsonValue offsets = Json(R"json({
     "signatures":[{"label":"bar(x, y)","parameters":[{"label":[4,5]},{"label":[7,8]}]}]})json");
   const LspClient::SignatureHelp offset_parsed = codec::ParseSignatureHelp(offsets);
@@ -548,10 +469,6 @@ void TestLspProtocolParsesSignatureHelp() {
   Expect(offset_parsed.signatures[0].parameters[1].label == "y",
          "second parameter label resolved from offsets");
 
-  // Regression: parameter label offsets are UTF-16 code units, not bytes. For a
-  // non-ASCII label they must be converted before slicing. Label "f(é, β)" has
-  // é (2 bytes) and β (2 bytes); the UTF-16 offsets of é are [2,3] and of β [5,6].
-  // Byte-slicing those offsets would split the multibyte characters.
   const std::string unicode_label = "f(\xc3\xa9, \xce\xb2)";
   const JsonValue unicode = Json(std::string(R"({"signatures":[{"label":")") + unicode_label +
                                  R"(","parameters":[{"label":[2,3]},{"label":[5,6]}]}]})");
@@ -562,13 +479,11 @@ void TestLspProtocolParsesSignatureHelp() {
   Expect(unicode_parsed.signatures[0].parameters[1].label == "\xce\xb2",
          "UTF-16 offsets [5,6] resolve to the whole β");
 
-  // Out-of-range offsets are ignored rather than reading past the label.
   const JsonValue bad = Json(R"({"signatures":[{"label":"z","parameters":[{"label":[3,9]}]}]})");
   const LspClient::SignatureHelp bad_parsed = codec::ParseSignatureHelp(bad);
   Expect(bad_parsed.signatures[0].parameters[0].label.empty(),
          "out-of-range offset label yields empty, not a read past the string");
 
-  // A result with no signatures is empty (nothing to show).
   const LspClient::SignatureHelp none = codec::ParseSignatureHelp(Json("{}"));
   Expect(none.signatures.empty(), "missing signatures array yields no signatures");
 }
@@ -588,12 +503,10 @@ void TestLspProtocolParsesWorkspaceSymbols() {
          "symbol location parsed");
   Expect(symbols[1].container_name.empty(), "absent containerName is empty");
 
-  // Non-array yields nothing.
   Expect(codec::ParseWorkspaceSymbols(Json("{}")).empty(), "non-array yields no symbols");
 }
 
 void TestLspProtocolParsesPrepareRename() {
-  // `{ range, placeholder }` shape.
   const LspClient::PrepareRename with_placeholder = codec::ParsePrepareRename(Json(
       R"({"range":{"start":{"line":2,"character":4},"end":{"line":2,"character":9}},
           "placeholder":"widget"})"));
@@ -601,20 +514,17 @@ void TestLspProtocolParsesPrepareRename() {
   Expect(with_placeholder.placeholder == "widget", "placeholder parsed");
   Expect(with_placeholder.range.start.character == 4, "range start parsed");
 
-  // A bare Range (no placeholder).
   const LspClient::PrepareRename bare_range = codec::ParsePrepareRename(
       Json(R"({"start":{"line":1,"character":0},"end":{"line":1,"character":3}})"));
   Expect(bare_range.can_rename, "bare range is renameable");
   Expect(bare_range.placeholder.empty(), "bare range carries no placeholder");
   Expect(bare_range.range.end.character == 3, "bare range end parsed");
 
-  // `{ defaultBehavior: true/false }`.
   Expect(codec::ParsePrepareRename(Json(R"({"defaultBehavior":true})")).can_rename,
          "defaultBehavior true is renameable");
   Expect(!codec::ParsePrepareRename(Json(R"({"defaultBehavior":false})")).can_rename,
          "defaultBehavior false is not renameable");
 
-  // JSON null => the server says this position is not renameable.
   Expect(!codec::ParsePrepareRename(Json("null")).can_rename,
          "null result is not renameable");
 }
@@ -627,12 +537,11 @@ void TestLspProtocolParsesTextEdits() {
   Expect(edits[0].second == "AB" && edits[1].second == "x", "newText parsed for each edit");
   Expect(edits[0].first.end.character == 2, "range parsed for each edit");
 
-  // Non-array yields no edits; the cap truncates.
   Expect(codec::ParseTextEdits(Json("{}")).empty(), "non-array yields no edits");
   const auto capped = codec::ParseTextEdits(Json(R"([
       {"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"newText":"a"},
       {"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":1}},"newText":"b"}])"),
-      /*max_edits=*/1);
+      1);
   Expect(capped.size() == 1, "the edit cap truncates");
 }
 
@@ -649,18 +558,14 @@ void TestLspProtocolParsesInlayHints() {
   Expect(hints[1].label == "name:" && hints[1].kind == 2, "label parts flattened by value");
   Expect(hints[1].padding_right, "paddingRight parsed");
 
-  // Non-array yields nothing; the cap truncates.
   Expect(codec::ParseInlayHints(Json("null")).empty(), "non-array yields no hints");
   const auto capped = codec::ParseInlayHints(Json(R"json([
       {"position":{"line":0,"character":0},"label":"a"},
-      {"position":{"line":1,"character":0},"label":"b"}])json"), /*max_hints=*/1);
+      {"position":{"line":1,"character":0},"label":"b"}])json"), 1);
   Expect(capped.size() == 1, "the hint cap truncates");
 
-  // Regression: the 512-byte label cap must truncate on a UTF-8 boundary, not a
-  // raw byte, so a multi-byte code point straddling the cap is dropped whole
-  // rather than leaving a split sequence.
   std::string long_label(511, 'a');
-  long_label += "\xC3\xBC";  // 'ü' (2 bytes); byte 512 lands on its lead byte
+  long_label += "\xC3\xBC";
   const std::string payload =
       "[{\"position\":{\"line\":0,\"character\":0},\"label\":\"" + long_label + "\"}]";
   const auto utf8_capped = codec::ParseInlayHints(Json(payload));
@@ -685,14 +590,11 @@ void TestLspProtocolParsesDocumentHighlights() {
   Expect(highlights[1].kind == 3, "write kind parsed");
   Expect(highlights[2].kind == 1, "an absent kind defaults to Text(1)");
 
-  // An out-of-vocabulary kind keeps the range (the server's authoritative answer)
-  // and only loses its read/write tint.
   const auto odd_kind = codec::ParseDocumentHighlights(Json(R"json([
       {"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":3}},"kind":99}])json"));
   Expect(odd_kind.size() == 1 && odd_kind[0].kind == 1,
          "an unknown kind falls back to Text rather than dropping the range");
 
-  // Empty and inverted ranges paint nothing, so they never reach the store.
   const auto degenerate = codec::ParseDocumentHighlights(Json(R"json([
       {"range":{"start":{"line":1,"character":4},"end":{"line":1,"character":4}}},
       {"range":{"start":{"line":2,"character":9},"end":{"line":2,"character":4}}},
@@ -703,7 +605,7 @@ void TestLspProtocolParsesDocumentHighlights() {
   const auto capped = codec::ParseDocumentHighlights(Json(R"json([
       {"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}}},
       {"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":1}}}])json"),
-      /*max_highlights=*/1);
+      1);
   Expect(capped.size() == 1, "the highlight cap truncates");
 }
 
@@ -721,18 +623,13 @@ void TestLspProtocolParsesCodeLenses() {
   Expect(lenses[0].arguments.size() == 2, "command arguments are kept verbatim");
   Expect(lenses[0].unresolved.IsNull(), "a resolved lens carries nothing to resolve");
   Expect(lenses[1].needs_resolve(), "a title-less lens with data is marked for resolve");
-  // The unresolved lens must round-trip VERBATIM: servers correlate through `data`
-  // and reject an object we rebuilt from the parsed fields.
   Expect(lenses[1].unresolved["data"]["id"].AsInt(0) == 77,
          "the original lens object (including `data`) is preserved for codeLens/resolve");
-  // `data` is optional in the protocol, so a bare range is still resolvable — it
-  // must not be discarded as unpaintable before resolve has had a chance to run.
   const auto bare = codec::ParseCodeLenses(Json(R"json([
       {"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":2}}}])json"));
   Expect(bare.size() == 1 && bare[0].needs_resolve(),
          "a range-only lens without `data` is still marked for resolve");
 
-  // codeLens/resolve returns the same shape, now with the command filled in.
   const auto resolved = codec::ParseCodeLens(Json(R"json(
       {"range":{"start":{"line":9,"character":0},"end":{"line":9,"character":4}},
        "command":{"title":"Run test","command":"rust-analyzer.runSingle"}})json"));
@@ -745,7 +642,7 @@ void TestLspProtocolParsesCodeLenses() {
       {"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},
        "command":{"title":"a","command":"c"}},
       {"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":1}},
-       "command":{"title":"b","command":"c"}}])json"), /*max_lenses=*/1);
+       "command":{"title":"b","command":"c"}}])json"), 1);
   Expect(capped.size() == 1, "the lens cap truncates");
 }
 
@@ -764,15 +661,12 @@ void TestLspProtocolParsesCallHierarchy() {
   Expect(items[0].raw["data"]["tok"].AsInt(0) == 5,
          "the item is preserved verbatim for the follow-up calls request");
 
-  // An item without selectionRange falls back to range rather than to (0,0).
   const auto no_selection = codec::ParseCallHierarchyItems(Json(R"json([
       {"name":"beta","uri":"file:///b.cpp",
        "range":{"start":{"line":9,"character":2},"end":{"line":9,"character":6}}}])json"));
   Expect(no_selection.size() == 1 && no_selection[0].selection_range.start.line == 9,
          "a missing selectionRange falls back to the item's range");
 
-  // Incoming edges are keyed `from`; outgoing `to`. fromRanges is read from the
-  // same key in both directions.
   const std::string calls_json = R"json([
       {"from":{"name":"caller","uri":"file:///c.cpp",
                "range":{"start":{"line":1,"character":0},"end":{"line":4,"character":1}}},
@@ -780,11 +674,11 @@ void TestLspProtocolParsesCallHierarchy() {
              "range":{"start":{"line":2,"character":0},"end":{"line":6,"character":1}}},
        "fromRanges":[{"start":{"line":2,"character":4},"end":{"line":2,"character":9}},
                      {"start":{"line":3,"character":4},"end":{"line":3,"character":9}}]}])json";
-  const auto incoming = codec::ParseCallHierarchyCalls(Json(calls_json), /*incoming=*/true);
+  const auto incoming = codec::ParseCallHierarchyCalls(Json(calls_json), true);
   Expect(incoming.size() == 1 && incoming[0].item.name == "caller",
          "incoming calls take the far end from `from`");
   Expect(incoming[0].call_ranges.size() == 2, "both call sites parsed");
-  const auto outgoing = codec::ParseCallHierarchyCalls(Json(calls_json), /*incoming=*/false);
+  const auto outgoing = codec::ParseCallHierarchyCalls(Json(calls_json), false);
   Expect(outgoing.size() == 1 && outgoing[0].item.name == "callee",
          "outgoing calls take the far end from `to`");
   Expect(outgoing[0].call_ranges.size() == 2, "fromRanges is read the same way in both directions");
@@ -793,7 +687,7 @@ void TestLspProtocolParsesCallHierarchy() {
   Expect(codec::ParseCallHierarchyCalls(Json("null"), true).empty(), "non-array yields no calls");
 }
 
-}  // namespace
+}
 
 void RegisterLspProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LspProtocol/ParsesCodeLenses", TestLspProtocolParsesCodeLenses);
@@ -827,4 +721,4 @@ void RegisterLspProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LspProtocol/EncodersRoundTrip", TestLspProtocolEncodersRoundTrip);
 }
 
-}  // namespace microide::tests
+}

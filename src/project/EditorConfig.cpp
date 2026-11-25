@@ -17,8 +17,6 @@
 namespace microide::project {
 namespace {
 
-// EditorConfig keys and the boolean/enum values are case-insensitive; section
-// globs are not.
 std::string LowerAscii(std::string_view text) {
   std::string lowered(text);
   for (char& c : lowered) {
@@ -39,9 +37,6 @@ std::optional<bool> ParseBool(std::string_view value) {
   return std::nullopt;
 }
 
-// Append glob fragments matching exactly the canonical decimal spellings of the
-// numbers in [lo, hi], both the same digit count: "120".."345" becomes
-// "1[2-9][0-9]", "2[0-9][0-9]", "3[0-3][0-9]", "34[0-5]". O(digits) fragments.
 void AppendSameWidthRange(std::string_view lo, std::string_view hi, std::string& prefix,
                           std::vector<std::string>& out) {
   if (lo.empty()) {
@@ -90,8 +85,6 @@ void AppendSameWidthRange(std::string_view lo, std::string_view hi, std::string&
   }
 }
 
-// Fragments for every unsigned value in [from, to], split at each digit-count
-// boundary so each piece is a same-width range.
 void AppendUnsignedRange(std::uint64_t from, std::uint64_t to, std::vector<std::string>& out) {
   std::string prefix;
   std::uint64_t width_floor = 1;
@@ -110,14 +103,11 @@ void AppendUnsignedRange(std::uint64_t from, std::uint64_t to, std::vector<std::
   }
 }
 
-// Fragments matching the canonical decimal spelling of every integer in [lo, hi]
-// (none when lo > hi), the meaning EditorConfig gives `{lo..hi}`.
 void AppendIntegerRange(std::int64_t lo, std::int64_t hi, std::vector<std::string>& out) {
   if (lo > hi) {
     return;
   }
   if (lo < 0) {
-    // -5..-2 is "-" followed by 2..5. Magnitudes stay in uint64 so INT64_MIN fits.
     std::vector<std::string> magnitudes;
     AppendUnsignedRange(hi < 0 ? 0 - static_cast<std::uint64_t>(hi) : 1,
                         0 - static_cast<std::uint64_t>(lo), magnitudes);
@@ -132,7 +122,6 @@ void AppendIntegerRange(std::int64_t lo, std::int64_t hi, std::vector<std::strin
   AppendUnsignedRange(static_cast<std::uint64_t>(lo), static_cast<std::uint64_t>(hi), out);
 }
 
-// `{lo..hi}` with two signed decimal integers, as EditorConfig spells a range.
 std::optional<std::pair<std::int64_t, std::int64_t>> ParseBraceRange(std::string_view body) {
   const std::size_t dots = body.find("..");
   if (dots == std::string_view::npos) {
@@ -156,18 +145,10 @@ std::optional<std::pair<std::int64_t, std::int64_t>> ParseBraceRange(std::string
   return std::pair{*lo, *hi};
 }
 
-// Brace groups one header may hold. Each expanded group is one level of
-// recursion, so this, not the header's length, bounds the stack.
 constexpr std::size_t kMaxSectionBraceGroups = 64;
 
-// Expansion steps one header may take. The pattern cap alone does not bound the
-// work: a path ending in an empty range (`{a,b}...{5..1}`) emits nothing, so
-// 2^groups of them never fill it.
 constexpr std::size_t kMaxSectionExpansionSteps = 16 * 1024;
 
-// EditorConfig's brace rules, which are not the search box's `{a,b}`: a group with
-// no top-level ',' is either an integer range `{n..m}` or literal text -- `[{a}]`
-// names the file "{a}". `steps_left` is the remaining kMaxSectionExpansionSteps.
 void ExpandSectionBraces(std::string pattern, std::vector<std::string>& out,
                          std::size_t& steps_left) {
   if (out.size() >= kMaxExpandedGlobPatterns || steps_left == 0) {
@@ -201,8 +182,6 @@ void ExpandSectionBraces(std::string pattern, std::vector<std::string>& out,
         ExpandSectionBraces(std::move(expanded), out, steps_left);
       };
       if (!commas.empty()) {
-        // Alternation. Split here rather than through ExpandGlobBraces, which
-        // would flatten a nested `{1..3}` or `{a}` before these rules saw it.
         std::size_t alternative_start = open + 1;
         commas.push_back(index);
         for (const std::size_t comma : commas) {
@@ -220,7 +199,6 @@ void ExpandSectionBraces(std::string pattern, std::vector<std::string>& out,
         }
         return;
       }
-      // Literal: escape both braces so neither expander nor matcher reads them.
       pattern.insert(index, 1, '\\');
       pattern.insert(open, 1, '\\');
       index += 2;
@@ -231,17 +209,6 @@ void ExpandSectionBraces(std::string pattern, std::vector<std::string>& out,
   out.push_back(std::move(pattern));
 }
 
-// Turn one section header into the concrete patterns it means, normalized to match
-// against a path relative to the .editorconfig's own directory.
-//
-// EditorConfig's rules, which differ from the search box's:
-//   - a pattern containing no '/' matches in any directory ("*.py" is "**/*.py")
-//   - a pattern with a leading '/' is anchored to this directory
-//   - a pattern that otherwise contains '/' is also anchored here
-//   - '{a,b}' alternation and '{n..m}' integer ranges are expanded, and any other
-//     brace group is literal (GlobMatches has no brace support)
-// There is deliberately no "bare name also means its subtree" expansion: that is a
-// search-box affordance and would make "[build]" silently capture build/**.
 void AppendSectionPatterns(std::string_view header, std::vector<std::string>& out) {
   std::string_view pattern = util::TrimAsciiWhitespaceView(header);
   if (pattern.empty()) {
@@ -258,7 +225,7 @@ void AppendSectionPatterns(std::string_view header, std::vector<std::string>& ou
   }
   if (std::count(normalized.begin(), normalized.end(), '{') >
       static_cast<std::ptrdiff_t>(kMaxSectionBraceGroups)) {
-    return;  // dropped, as the parser drops any header with no pattern
+    return;
   }
   std::size_t steps_left = kMaxSectionExpansionSteps;
   ExpandSectionBraces(std::move(normalized), out, steps_left);
@@ -267,11 +234,6 @@ void AppendSectionPatterns(std::string_view header, std::vector<std::string>& ou
 void ApplyProperty(std::string_view key, std::string_view raw_value,
                    EditorConfigProperties& properties) {
   const std::string value = LowerAscii(util::TrimAsciiWhitespaceView(raw_value));
-  // "unset" removes the inherited value when the sections fold, so the editor's
-  // own setting rules again (the spec: as if the property were never set). It
-  // used to return before recording anything, which left the parent section's
-  // value standing -- `[plain/*] indent_size = unset` under `[*] indent_size = 2`
-  // still gave 2 (found by the QA editorconfig flow).
   if (value == "unset") {
     static constexpr std::pair<std::string_view, unsigned> kUnsetKeys[] = {
         {"indent_style", EditorConfigProperties::kUnsetIndentStyle},
@@ -300,7 +262,6 @@ void ApplyProperty(std::string_view key, std::string_view raw_value,
   }
   if (key == "indent_size") {
     if (value == "tab") {
-      // Resolved against tab_width after the whole chain is folded, per the spec.
       properties.indent_width = 0;
       return;
     }
@@ -338,9 +299,6 @@ void ApplyProperty(std::string_view key, std::string_view raw_value,
     return;
   }
   if (key == "max_line_length") {
-    // `off` is a value, recorded as 0 so a later section's `off` overrides an
-    // earlier limit (dropping it left the earlier limit standing); Resolve folds
-    // it back to "no limit".
     if (value == "off") {
       properties.max_line_length = 0;
       return;
@@ -350,10 +308,9 @@ void ApplyProperty(std::string_view key, std::string_view raw_value,
     }
     return;
   }
-  // Unknown key: ignored, per the EditorConfig spec.
 }
 
-}  // namespace
+}
 
 void EditorConfigProperties::MergeOver(const EditorConfigProperties& other) {
   if (other.unset & kUnsetIndentStyle) {
@@ -402,12 +359,7 @@ void EditorConfigProperties::MergeOver(const EditorConfigProperties& other) {
 
 EditorConfigFile ParseEditorConfig(std::string_view text) {
   EditorConfigFile file;
-  // Properties before the first section header are the preamble; only `root`
-  // is meaningful there.
   bool in_preamble = true;
-  // True while the current section header was not kept (over the cap, or a
-  // header with no usable pattern such as `[]`): its properties belong to it,
-  // not to the last section that was kept, so they are skipped.
   bool in_dropped_section = false;
 
   std::size_t position = 0;
@@ -427,9 +379,6 @@ EditorConfigFile ParseEditorConfig(std::string_view text) {
       const std::size_t close = line.rfind(']');
       if (close == std::string_view::npos || close == 0 ||
           close - 1 > kMaxEditorConfigSectionNameBytes) {
-        // Unterminated header: skip the line rather than swallowing the rest of
-        // the file into a bogus section. An over-long name is skipped the same
-        // way; the reference core truncates it, which matches nothing it meant.
         continue;
       }
       in_preamble = false;
@@ -504,9 +453,6 @@ const EditorConfigResolver::DirectoryEntry& EditorConfigResolver::EntryForDirect
     return it->second;
   }
 
-  // A miss here is the expensive case: a stat, and possibly a read + parse.
-  // Counted so a regression that defeats the cache shows up as a rising ratio
-  // against EditorConfigResolveQueries rather than as unexplained frame time.
   util::AddPerformanceCounter(util::PerfCounterId::EditorConfigDirectoryReads);
   DirectoryEntry entry;
   const std::filesystem::path config_path = directory / ".editorconfig";
@@ -533,23 +479,14 @@ const EditorConfigProperties& EditorConfigResolver::Resolve(
   }
 
   util::AddPerformanceCounter(util::PerfCounterId::EditorConfigResolveQueries);
-  // path::native() IS the std::string, so this is a view over storage the path
-  // already owns — no allocation on a memo hit, which is the whole point of the
-  // memo.
   const std::string_view path_key{absolute_path.native()};
   if (const auto it = resolved_.find(path_key); it != resolved_.end()) {
     return it->second;
   }
 
-  // Everything below is the cold path: ApplyEditorPreferences runs for every tab
-  // in every group on any settings change, so the warm ratio here is what keeps
-  // this off the frame budget. queries/misses makes that ratio observable.
   util::AddPerformanceCounter(util::PerfCounterId::EditorConfigResolveMisses);
   util::PerformanceTrace::Scope perf_scope("EditorConfigResolver::Resolve");
 
-  // Only files inside the project participate: the upward walk stops at the root,
-  // so a `.editorconfig` in a parent of the project (or in $HOME) cannot silently
-  // reconfigure it.
   std::error_code error;
   const std::filesystem::path relative =
       std::filesystem::relative(absolute_path, project_root_, error);
@@ -558,12 +495,8 @@ const EditorConfigProperties& EditorConfigResolver::Resolve(
     return kEmpty;
   }
 
-  // Collect the chain from the file's directory upward to the project root,
-  // stopping at the first `root = true`. Innermost first.
   struct ChainEntry {
     const EditorConfigFile* config;
-    // Path of the file being resolved, relative to that config's directory —
-    // what the section globs are matched against.
     std::string relative_to_config;
   };
   std::vector<ChainEntry> chain;
@@ -585,7 +518,6 @@ const EditorConfigProperties& EditorConfigResolver::Resolve(
       break;
     }
     const std::filesystem::path parent = directory.parent_path();
-    // parent_path() of "/" is "/": stop rather than spin.
     if (parent.empty() || parent == directory) {
       break;
     }
@@ -593,14 +525,11 @@ const EditorConfigProperties& EditorConfigResolver::Resolve(
     directory = parent;
   }
 
-  // Fold outermost-first so that a nearer `.editorconfig` wins, and within one
-  // file a later matching section wins over an earlier one.
   EditorConfigProperties resolved;
   for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
     for (const EditorConfigFile::Section& section : it->config->sections) {
       bool matched = false;
       for (const std::string& pattern : section.patterns) {
-        // EditorConfig's '**' crosses '/' wherever it appears, unlike gitignore's.
         if (GlobMatches(pattern, it->relative_to_config, GlobDoubleStar::Always)) {
           matched = true;
           break;
@@ -612,24 +541,18 @@ const EditorConfigProperties& EditorConfigResolver::Resolve(
     }
   }
 
-  // `indent_size = tab` (recorded as 0) means "follow tab_width"; resolve it here
-  // so no consumer has to know the rule. With no tab_width the spec leaves it
-  // implementation-defined — drop the opinion and let the user's setting stand.
   if (resolved.indent_width.has_value() && *resolved.indent_width == 0) {
     resolved.indent_width = resolved.tab_size;
   }
-  // `indent_style = tab` with no indent_size means `indent_size = tab` per the
-  // spec (and the reference implementation), so it follows tab_width as well.
   if (resolved.soft_tabs.has_value() && !*resolved.soft_tabs &&
       !resolved.indent_width.has_value() && resolved.tab_size.has_value()) {
     resolved.indent_width = resolved.tab_size;
   }
-  // Per the spec, tab_width defaults to indent_size when unset.
   if (!resolved.tab_size.has_value() && resolved.indent_width.has_value()) {
     resolved.tab_size = resolved.indent_width;
   }
   if (resolved.max_line_length.has_value() && *resolved.max_line_length == 0) {
-    resolved.max_line_length.reset();  // `off`
+    resolved.max_line_length.reset();
   }
 
   if (resolved_.size() >= kMaxEditorConfigResolvedPaths) {
@@ -638,4 +561,4 @@ const EditorConfigProperties& EditorConfigResolver::Resolve(
   return resolved_.emplace(path_key, resolved).first->second;
 }
 
-}  // namespace microide::project
+}

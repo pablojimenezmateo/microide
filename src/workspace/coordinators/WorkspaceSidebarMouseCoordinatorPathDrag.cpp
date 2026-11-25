@@ -8,19 +8,13 @@
 #include "util/PathMatch.h"
 #include "util/InvokeIfSet.h"
 
-// The tree drag (TD-2026-10-24-386): a file or folder pressed on a tree row and
-// dropped on an editor pane, a folder or the terminal. The press is armed in
-// HandleTreeButtonDown; this TU is the motion, the drop and the deferred click.
-
 namespace microide::workspace {
 
 namespace {
 
-// How far the pointer travels before a press is a drag (VS Code's few pixels):
-// a click that wobbles still opens the row.
 constexpr float kPathDragThresholdPx = 4.0f;
 
-}  // namespace
+}
 
 bool SidebarMouseCoordinator::HandlePathDragMotion(float x, float y, const WorkspaceLayout& layout) {
   PathDragState& drag = interaction_state_.path_drag;
@@ -48,8 +42,6 @@ void SidebarMouseCoordinator::ResolvePathDropTarget(const WorkspaceLayout& layou
   const float x = drag.pointer_x;
   const float y = drag.pointer_y;
 
-  // A file onto an editor pane: a group's tab strip opens it in that group; its
-  // body by VS Code's zones -- the middle opens it there, an edge carves a pane.
   if (!drag.is_directory && operations_.compute_editor_group_rects) {
     const EditorGroupRectsLayout rects = operations_.compute_editor_group_rects(layout);
     for (std::size_t gi = 0; gi < rects.groups.size(); ++gi) {
@@ -68,7 +60,6 @@ void SidebarMouseCoordinator::ResolvePathDropTarget(const WorkspaceLayout& layou
     }
   }
 
-  // The terminal: its quoted path is typed there.
   if (operations_.terminal_drop_rect) {
     if (const auto terminal = operations_.terminal_drop_rect(layout); terminal.has_value() && Contains(*terminal, x, y)) {
       drag.target = PathDragState::Target::Terminal;
@@ -77,8 +68,6 @@ void SidebarMouseCoordinator::ResolvePathDropTarget(const WorkspaceLayout& layou
     }
   }
 
-  // A tree folder: the hovered folder, or a hovered file's folder. Not where it
-  // already is, and not a folder into itself.
   if (operations_.active_sidebar_mode() != SidebarMode::Tree || !Contains(layout.sidebar, x, y)) {
     return;
   }
@@ -90,7 +79,7 @@ void SidebarMouseCoordinator::ResolvePathDropTarget(const WorkspaceLayout& layou
   if (row.has_value()) {
     const auto& entry = entries[*row];
     folder = entry.is_directory ? entry.path : entry.path.parent_path();
-    for (int i = static_cast<int>(*row); i >= 0; --i) {  // the folder's own row, at or above the hovered one
+    for (int i = static_cast<int>(*row); i >= 0; --i) {
       if (entries[static_cast<std::size_t>(i)].path == folder) {
         folder_row = i;
         break;
@@ -135,7 +124,7 @@ bool SidebarMouseCoordinator::FinishPathDrag(bool copy) {
       break;
     case PathDragState::Target::TreeFolder:
       if (operations_.paste_tree_path) {
-        (void)operations_.paste_tree_path(drag.path, /*cut=*/!copy, drag.folder);  // the shell notifies a refusal
+        (void)operations_.paste_tree_path(drag.path, !copy, drag.folder);
       }
       break;
     case PathDragState::Target::Terminal:
@@ -158,10 +147,8 @@ void SidebarMouseCoordinator::ActivateTreeSelection() {
   operations_.reveal_selected_tree_sidebar_line();
   if (opened.has_value()) {
     operations_.open_file(*opened);
-    // Opening a file from the tree shows it in the editor but does not take the
-    // keyboard: the tree keeps it, so its keys stay live after the click.
     state_.surface.focus = FocusTarget::Sidebar;
   }
 }
 
-}  // namespace microide::workspace
+}

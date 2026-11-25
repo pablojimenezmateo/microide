@@ -22,27 +22,15 @@
 
 namespace microide::util {
 
-// Caps applied to every match so a user- or plugin-supplied pattern with
-// catastrophic backtracking (e.g. `(a+)+$`) cannot spin near PCRE2's ~10M default
-// ceiling on every line across every file and worker thread (a real hang/DoS).
-// A pathological pattern blows past these exponentially, so it fails fast with
-// PCRE2_ERROR_MATCHLIMIT/DEPTHLIMIT; legitimate patterns finish far below them.
-// match_limit bounds total match steps (honored by the interpreter and JIT);
-// depth_limit bounds backtracking/recursion depth (and thus native stack use).
 inline constexpr std::uint32_t kRegexMatchLimit = 1'000'000;
 inline constexpr std::uint32_t kRegexDepthLimit = 10'000;
 
-// PCRE2_MATCH_INVALID_UTF only exists from PCRE2 10.34; spell it as a local
-// constant so the JIT gate below compiles (and simply stays off) on older
-// headers rather than needing an #ifdef at each use.
 #ifdef PCRE2_MATCH_INVALID_UTF
 inline constexpr std::uint32_t kMatchInvalidUtf = PCRE2_MATCH_INVALID_UTF;
 #else
 inline constexpr std::uint32_t kMatchInvalidUtf = 0;
 #endif
 
-// Match-time options pcre2_jit_match accepts (pcre2api "THE JIT-SPECIFIC
-// MATCHING FUNCTION"). Anything else must go through pcre2_match.
 inline constexpr std::uint32_t kJitMatchOptions = PCRE2_NOTBOL | PCRE2_NOTEOL | PCRE2_NOTEMPTY |
                                                   PCRE2_NOTEMPTY_ATSTART | PCRE2_PARTIAL_SOFT |
                                                   PCRE2_PARTIAL_HARD;
@@ -52,25 +40,6 @@ struct RegexMatchRange {
   std::size_t end = 0;
 };
 
-// Compile options for a user-facing SEARCH pattern (project-wide, in-file, and
-// replace all share this), given whether the search is case sensitive.
-//
-// Search matches CHARACTERS, as VS Code's (ripgrep's) does: PCRE2_UTF makes `.`,
-// `[^...]` and a match boundary a whole code point, and PCRE2_UCP makes `\w`,
-// `\b`, `\d`, `\s` Unicode-aware and folds Unicode case (`Δ` finds `δ`, as the
-// literal path's util::Utf8CaseFold does). Byte-oriented matching -- what an
-// ASCII query used to get (TD-2026-07-25-101) -- let `caf.` match `caf` plus the
-// FIRST BYTE of `é`, so a highlight split a character and a replace-all wrote
-// invalid UTF-8.
-//
-// Speed is kept by CompiledRegex's ASCII twin (`AsciiTwin::Build`, which search
-// compiles with): UTF and UCP change nothing an all-ASCII line can observe, so
-// those lines -- nearly all of them -- run the byte-mode compilation.
-//
-// PCRE2_MATCH_INVALID_UTF (PCRE2 >= 10.34) is what makes UTF safe here: search
-// subjects are arbitrary file bytes, and without it a single invalid byte makes
-// pcre2_match refuse the whole line. Older PCRE2 keeps the previous rule -- UTF
-// only for a case-insensitive non-ASCII query -- rather than lose such lines.
 inline std::uint32_t SearchRegexCompileOptions(std::string_view query, bool case_sensitive) {
   const std::uint32_t caseless = case_sensitive ? 0u : static_cast<std::uint32_t>(PCRE2_CASELESS);
 #ifdef PCRE2_MATCH_INVALID_UTF
@@ -131,25 +100,14 @@ class RegexMatchData {
   pcre2_match_data* data_ = nullptr;
 };
 
-// Whether a subject is known to hold no byte >= 0x80. Decided once per line by
-// the caller (util::IsAllAscii), so a line with many matches is scanned once.
 enum class RegexSubject : std::uint8_t { Unknown, Ascii };
 
-// Whether a UTF pattern also gets a byte-mode compilation for ASCII subjects.
 enum class AsciiTwin : std::uint8_t { None, Build };
 
 class CompiledRegex {
  public:
   CompiledRegex() = default;
 
-  // `twin = AsciiTwin::Build` on an all-ASCII PCRE2_UTF pattern also compiles it
-  // without UTF/UCP/MATCH_INVALID_UTF, and Match() runs that one for a subject the
-  // caller says is ASCII. On such a subject the two compilations match identically --
-  // UTF and UCP only change behaviour at code points >= 0x80; the syntax
-  // highlighter verified this over every built-in rule regex -- and byte mode is
-  // the faster matcher (measured over this repository's sources: up to 2x for a
-  // caseless or `\w`-heavy pattern). A pattern only UTF mode accepts (`\x{100}`)
-  // gets no twin and always runs the UTF compilation.
   CompiledRegex(std::string_view pattern,
                 uint32_t options,
                 std::string error_prefix = {},
@@ -172,28 +130,9 @@ class CompiledRegex {
                        jit_rc);
         }
       }
-      // pcre2_jit_match skips pcre2_match's per-call argument/option validation
-      // and its UTF subject check, dispatching straight into the compiled code.
-      // That preamble is a fixed cost per call, and the syntax highlighter makes
-      // ~40 calls per line (one per pattern rule) over subjects of a hundred-odd
-      // bytes, so it is a real fraction of the highlight path rather than noise.
-      //
-      // Two conditions gate it, because "skips the UTF check" is only safe when
-      // nothing needs checking:
-      //   * JIT actually compiled (otherwise pcre2_jit_match returns
-      //     PCRE2_ERROR_JIT_BADOPTION and matches nothing), and
-      //   * the pattern is either byte-oriented (no PCRE2_UTF) or was compiled
-      //     with PCRE2_MATCH_INVALID_UTF, where the JIT handles malformed
-      //     sequences itself (PCRE2 >= 10.34) instead of relying on a prior
-      //     validity check. Subjects here are arbitrary file bytes, so a plain
-      //     PCRE2_UTF pattern must keep the checked pcre2_match path.
       jit_fast_path_ = jit_rc == 0 && (!utf_mode_ || (options & kMatchInvalidUtf) != 0);
       code_ = std::shared_ptr<pcre2_code>(code, pcre2_code_free);
 
-      // Match context carrying the backtracking caps. It is not modified by
-      // pcre2_match, so a single shared instance is safe to use concurrently from
-      // the search worker threads. If creation fails we fall back to nullptr
-      // (PCRE2's built-in defaults) rather than refusing to match.
       if (pcre2_match_context* mctx = pcre2_match_context_create(nullptr); mctx != nullptr) {
         pcre2_set_match_limit(mctx, kRegexMatchLimit);
         pcre2_set_depth_limit(mctx, kRegexDepthLimit);
@@ -202,11 +141,6 @@ class CompiledRegex {
     } else if (!error_prefix_.empty()) {
       error_ = BuildRegexErrorMessage(error_prefix_, error_code, error_offset);
     }
-    // Only for an all-ASCII PATTERN: a multibyte literal is one character to UTF
-    // mode and several bytes to byte mode, so a quantifier after it binds
-    // differently -- `ӥ?` is an optional character in one and a required 0xD3 plus
-    // an optional 0xA5 in the other, and on an ASCII line the first matches empty
-    // where the second matches nothing (found by SearchRegexFuzz).
     if (code_ != nullptr && utf_mode_ && twin == AsciiTwin::Build && IsAllAscii(pattern)) {
       const uint32_t byte_options = options & ~(PCRE2_UTF | PCRE2_UCP | kMatchInvalidUtf);
       pcre2_code* ascii = pcre2_compile(reinterpret_cast<PCRE2_SPTR>(pattern.data()),
@@ -221,9 +155,6 @@ class CompiledRegex {
 
   bool valid() const { return code_ != nullptr; }
   const std::string& error() const { return error_; }
-  // True when the pattern was compiled with PCRE2_UTF, i.e. PCRE2 interprets the
-  // subject as UTF-8 and a start offset must land on a character boundary.
-  // Without UTF, matching is byte-oriented and every byte is a legal offset.
   bool utf_mode() const { return utf_mode_; }
 
   RegexMatchData CreateMatchData() const {
@@ -241,8 +172,6 @@ class CompiledRegex {
     if (!valid() || !match_data.valid()) {
       return PCRE2_ERROR_BADOPTION;
     }
-    // Same capture count as the UTF compilation, so one match-data block serves
-    // both.
     if (subject == RegexSubject::Ascii && ascii_code_ != nullptr) {
       if (ascii_jit_ && (options & ~kJitMatchOptions) == 0) {
         return pcre2_jit_match(ascii_code_.get(), reinterpret_cast<PCRE2_SPTR>(text.data()),
@@ -252,9 +181,6 @@ class CompiledRegex {
       return pcre2_match(ascii_code_.get(), reinterpret_cast<PCRE2_SPTR>(text.data()),
                          text.size(), offset, options, match_data.get(), match_context_.get());
     }
-    // The JIT accepts only a subset of match-time options; anything outside it
-    // falls back to pcre2_match rather than failing. The highlighter only ever
-    // passes 0 or PCRE2_NOTBOL, both of which are in the subset.
     if (jit_fast_path_ && (options & ~kJitMatchOptions) == 0) {
       return pcre2_jit_match(code_.get(), reinterpret_cast<PCRE2_SPTR>(text.data()), text.size(),
                              offset, options, match_data.get(), match_context_.get());
@@ -280,38 +206,25 @@ class CompiledRegex {
     return true;
   }
 
-  // Substitutes ALL matches in `subject` (global) and APPENDS the result to
-  // `out`. The replacement is interpreted with PCRE2's extended syntax: `$1` /
-  // `${name}` group references plus `\n \t \r`, `\U \L \u \l \E` case modifiers,
-  // and `${name:-default}` conditionals (VSCode-parity). Returns the number of
-  // substitutions (>= 0) or a negative PCRE2 error code (e.g.
-  // PCRE2_ERROR_BADREPESCAPE for an unsupported `\` escape); `out` is left
-  // unchanged on error. Honors the shared match/depth limits.
   int SubstituteInto(std::string_view subject,
                      std::string_view replacement,
                      std::string& out) const {
     if (!valid()) {
       return PCRE2_ERROR_BADOPTION;
     }
-    // Reused across calls so a per-line replace-all pass does not allocate a
-    // fresh output buffer for every line. PCRE2_SUBSTITUTE_OVERFLOW_LENGTH lets
-    // us size exactly on the first overflow and retry once.
     thread_local std::vector<PCRE2_UCHAR> buffer(256);
     const uint32_t options = PCRE2_SUBSTITUTE_GLOBAL | PCRE2_SUBSTITUTE_EXTENDED |
                              PCRE2_SUBSTITUTE_OVERFLOW_LENGTH;
-    // An ASCII line substitutes through the byte-mode twin (see the constructor).
-    // A non-ASCII REPLACEMENT is fine there too: byte mode copies it through.
     pcre2_code* code =
         ascii_code_ != nullptr && IsAllAscii(subject) ? ascii_code_.get() : code_.get();
     for (;;) {
       PCRE2_SIZE out_length = buffer.size();
       const int rc = pcre2_substitute(
           code, reinterpret_cast<PCRE2_SPTR>(subject.data()), subject.size(),
-          /*startoffset=*/0, options, /*match_data=*/nullptr, match_context_.get(),
+          0, options, nullptr, match_context_.get(),
           reinterpret_cast<PCRE2_SPTR>(replacement.data()), replacement.size(), buffer.data(),
           &out_length);
       if (rc == PCRE2_ERROR_NOMEMORY) {
-        // out_length holds the required size (including the NUL) on overflow.
         buffer.resize(out_length);
         continue;
       }
@@ -323,11 +236,6 @@ class CompiledRegex {
     }
   }
 
-  // Expands `replacement` for the single match that begins at `offset` in
-  // `subject` (matched in full context, so lookarounds resolve), returning ONLY
-  // the expanded replacement text — used by "Replace current" to substitute one
-  // occurrence. Same replacement syntax as SubstituteInto. Returns std::nullopt
-  // on any PCRE2 error (bad escape, no anchored match at `offset`, limit hit).
   std::optional<std::string> ExpandMatchAt(std::string_view subject,
                                            std::size_t offset,
                                            std::string_view replacement) const {
@@ -341,7 +249,7 @@ class CompiledRegex {
       PCRE2_SIZE out_length = buffer.size();
       const int rc = pcre2_substitute(
           code_.get(), reinterpret_cast<PCRE2_SPTR>(subject.data()), subject.size(), offset, options,
-          /*match_data=*/nullptr, match_context_.get(),
+          nullptr, match_context_.get(),
           reinterpret_cast<PCRE2_SPTR>(replacement.data()), replacement.size(), buffer.data(),
           &out_length);
       if (rc == PCRE2_ERROR_NOMEMORY) {
@@ -349,7 +257,7 @@ class CompiledRegex {
         continue;
       }
       if (rc <= 0) {
-        return std::nullopt;  // rc == 0: nothing matched anchored at `offset`.
+        return std::nullopt;
       }
       return std::string(reinterpret_cast<const char*>(buffer.data()), out_length);
     }
@@ -360,33 +268,14 @@ class CompiledRegex {
   bool jit_fast_path_ = false;
   bool ascii_jit_ = false;
   std::shared_ptr<pcre2_code> code_;
-  std::shared_ptr<pcre2_code> ascii_code_;  // AsciiTwin::Build only
+  std::shared_ptr<pcre2_code> ascii_code_;
   std::shared_ptr<pcre2_match_context> match_context_;
   std::string error_prefix_;
   std::string error_;
 };
 
-// Default cancellation poll interval (advance-loop iterations) for
-// FindNextRegexMatchInLine — coarse enough that the modulo/atomic-load cost is
-// negligible against the per-offset PCRE2 match, fine enough that a cooperative
-// Stop() stays sub-millisecond even on a pathological single-line file.
 inline constexpr std::size_t kRegexMatchCancelPollInterval = 4096;
 
-// Finds the next regex match in `line` starting at *search_from, advancing past
-// empty matches (recovering a non-empty alternative anchored at the same offset,
-// e.g. `x?|foo` on "foo"). Returns true and fills *match_start / *match_end /
-// *search_from on a real match; false when the line is exhausted.
-//
-// `cancel` (optional) is polled every kRegexMatchCancelPollInterval iterations of
-// the empty-match advance loop so a pattern that matches empty at every offset
-// (e.g. `x?`) on a very large single line can be interrupted; on cancel it returns
-// false leaving *search_from short of line.size()+1. Callers with no cancellation
-// need (in-memory buffer search) pass nullptr. This is the single shared match
-// engine for both project-wide and in-file regex search.
-//
-// `subject` is RegexSubject::Ascii when the caller checked that `line` holds no
-// byte >= 0x80 (util::IsAllAscii, once per line, not per match): the pattern's
-// ASCII twin then runs. Unknown is always correct, only slower.
 inline bool FindNextRegexMatchInLine(const CompiledRegex& pattern,
                                      std::string_view line,
                                      std::size_t* search_from,
@@ -419,11 +308,6 @@ inline bool FindNextRegexMatchInLine(const CompiledRegex& pattern,
       return false;
     }
     if (range.start == range.end) {
-      // PCRE2 returned the leftmost match and it is empty. There is no match of
-      // any kind before range.start, but a non-empty alternative may begin at the
-      // SAME offset (e.g. `x?|foo` on "foo": the leftmost `x?` matches empty at 0,
-      // yet `foo` also starts at 0). The naive "advance one byte" idiom loses it.
-      // Retry anchored at range.start rejecting an empty match to recover it.
       const int anchored_rc =
           pattern.Match(line, range.start, *match_data, PCRE2_NOTEMPTY_ATSTART | PCRE2_ANCHORED,
                         subject);
@@ -435,29 +319,12 @@ inline bool FindNextRegexMatchInLine(const CompiledRegex& pattern,
         *search_from = anchored.end;
         return true;
       }
-      // No non-empty match here; skip the pure empty match and advance.
-      //
-      // The step must be a whole CHARACTER under PCRE2_UTF, not one byte. A byte
-      // step lands inside a multi-byte sequence, and pcre2_match then rejects the
-      // start offset with PCRE2_ERROR_BADUTFOFFSET — which the `rc < 0` arm above
-      // treats as "line exhausted", silently dropping every remaining match on
-      // the line. PCRE2_MATCH_INVALID_UTF (>= 10.34) happens to tolerate such an
-      // offset and masks this, but the compile-options fallback above deliberately
-      // supports older PCRE2 without it, where a case-insensitive non-ASCII query
-      // that can match empty returned ZERO matches from the first multi-byte
-      // character onward. Stepping by character is also strictly cheaper: it skips
-      // the 1-3 continuation-byte offsets that can never begin a match anyway.
       if (range.end >= line.size()) {
         *search_from = line.size() + 1;
       } else if (pattern.utf_mode()) {
-        // NextUtf8Boundary advances ONE character from a boundary offset, which
-        // range.end is (PCRE2 in UTF mode only reports character boundaries).
-        // Passing range.end + 1 would start the scan mid-sequence, where the
-        // lead-byte classifier sees a continuation byte and falls back to a
-        // 1-byte step — landing mid-character again.
         *search_from = NextUtf8Boundary(line, range.end);
       } else {
-        *search_from = range.end + 1;  // byte-oriented: every offset is legal
+        *search_from = range.end + 1;
       }
       continue;
     }
@@ -471,4 +338,4 @@ inline bool FindNextRegexMatchInLine(const CompiledRegex& pattern,
   return false;
 }
 
-}  // namespace microide::util
+}

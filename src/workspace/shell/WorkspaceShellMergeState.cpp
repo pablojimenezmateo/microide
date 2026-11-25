@@ -21,8 +21,6 @@ namespace microide::workspace {
 
 namespace {
 
-// Templated over the element type: the model's line lists are `std::string_view`
-// (views into its source buffers) and the result pane's are owned `std::string`.
 template <typename LinesRange>
 std::size_t MaxVisualColumnsForLines(const LinesRange& lines) {
   std::size_t max_columns = 0;
@@ -32,10 +30,6 @@ std::size_t MaxVisualColumnsForLines(const LinesRange& lines) {
   return max_columns;
 }
 
-// The model's line lists are views into its source buffers and the parsed
-// conflict blocks own their strings, so the two sides of every comparison here
-// are different types that compare fine element-wise. `std::equal` rather than
-// `==`, which no longer has an overload spanning them.
 template <typename LhsRange, typename RhsRange>
 bool LinesEqual(const LhsRange& lhs, const RhsRange& rhs) {
   return std::equal(lhs.begin(), lhs.end(), rhs.begin(), rhs.end());
@@ -51,9 +45,6 @@ struct ParsedGitConflictBlock {
 struct SelectedGitConflictBlock {
   std::vector<std::string> lines;
   compare::MergeChoice choice = compare::MergeChoice::Base;
-  // False when the parsed block is still an untouched raw conflict (the user has
-  // not picked a side yet). Such a block must be tracked as UNRESOLVED, never
-  // collapsed to a resolved choice.
   bool resolved = true;
 };
 
@@ -75,12 +66,6 @@ SelectedGitConflictBlock SelectGitConflictBlock(const compare::MergeHunk& hunk,
     return SelectedGitConflictBlock{.lines = block.incoming_lines,
                                     .choice = compare::MergeChoice::Incoming};
   }
-  // Both sides still equal the model (any base-section difference is only diff3
-  // informational): this is an untouched raw conflict block. Previously it fell
-  // through to {base_lines, Base} and was marked resolved, silently collapsing an
-  // unedited conflict to base content — a data-loss merge bug. Instead present the
-  // model's default choice as the preview (matching how a marker-free file opens)
-  // and flag it UNRESOLVED so the user must still pick a side.
   return SelectedGitConflictBlock{.lines = compare::MergeChoiceLines(hunk, hunk.choice),
                                   .choice = hunk.choice,
                                   .resolved = false};
@@ -90,10 +75,6 @@ struct ParsedGitConflictOutput {
   std::vector<std::string> result_lines;
   std::vector<std::vector<std::string>> conflict_lines;
   std::vector<compare::MergeChoice> conflict_choices;
-  // Per-conflict "already resolved" flag, parallel to conflict_choices. 0 means the
-  // block is still raw/untouched and must be tracked unresolved. std::uint8_t (not
-  // std::vector<bool>) so it can be handed to BuildMergeTrackedConflictsForResult as
-  // a contiguous std::span.
   std::vector<std::uint8_t> conflict_resolved;
 };
 
@@ -111,9 +92,6 @@ std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::Mer
   ParsedGitConflictOutput parsed;
   std::vector<ParsedGitConflictSegment> segments;
   std::size_t line_index = 0;
-  // The marker grammar is util's (IsConflict*Line): line-anchored, length-tolerant
-  // sigils, a separator of seven or more '=' (merge.conflictMarkerSize may raise
-  // it), and the trailing '\r' SplitOnByte keeps on a CRLF file ignored.
   using util::IsConflictBaseLine;
   using util::IsConflictEndLine;
   using util::IsConflictSeparatorLine;
@@ -199,12 +177,6 @@ std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::Mer
       ++conflict_segment_index;
     }
   } else {
-    // The number of marker blocks does not match the model's conflict hunks — this
-    // is the "one large git block spanning several model hunks" case. Reduce each
-    // block to its current/HEAD side (BuildMergeTrackedConflictsForResult then maps
-    // it back onto the individual hunks and infers per-hunk choices). Taking the
-    // current side is a deterministic default here; see the large-conflict-block
-    // regression test.
     for (const auto& segment : segments) {
       if (!segment.conflict) {
         parsed.result_lines.insert(parsed.result_lines.end(), segment.plain_lines.begin(),
@@ -222,15 +194,6 @@ std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::Mer
   return parsed;
 }
 
-// Re-derive the merge tab's view state after its model or result buffer
-// changed: drop the stale hover, recompute the widest visual column across all
-// three panes, push the tab's saved scroll into the result viewport and read
-// back what it clamped to, then keep the selected hunk in range.
-//
-// Both the derived-state refresh and the restore-from-persisted-output path
-// need exactly this, and each used to spell it out. The read-back matters: the
-// viewport clamps the scroll it is given, so the tab's own scroll_row must be
-// re-read from it rather than assumed.
 void ResyncMergeTabViewState(MergeTabState& merge_tab) {
   merge_tab.hover_state.reset();
   merge_tab.max_visual_columns =
@@ -250,7 +213,7 @@ void ResyncMergeTabViewState(MergeTabState& merge_tab) {
   merge_tab.selected_hunk = std::min(merge_tab.selected_hunk, merge_tab.conflicts.size() - 1);
 }
 
-}  // namespace
+}
 
 void WorkspaceShell::UpdateMergeMaxVisualColumns(
     MergeTabState& merge_tab,
@@ -274,26 +237,16 @@ void WorkspaceShell::RefreshMergeTabDerivedState(MergeTabState& merge_tab) const
   ResyncMergeTabViewState(merge_tab);
 }
 
-// The visible window's syntax tokens, for a merge surface painted into `rect`. In
-// frame prep, not paint, for the reason PopulateCompareSyntaxTokensForWindow gives:
-// capped per call, tokenizing while painting made two paints of one frame disagree.
 void WorkspaceShell::PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab,
                                                         const SDL_FRect& rect) {
   if (rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
   const MergeSurfaceLayout surface = ComputeMergeSurfaceLayout(rect, merge_tab);
-  // The clamp paint applies, applied first so both read the same scroll row.
   ClampMergeScrollRow(merge_tab, surface.visible_rows);
   const std::size_t visible_start_row = static_cast<std::size_t>(std::max(0, merge_tab.scroll_row));
   const std::size_t visible_end_row =
       visible_start_row + static_cast<std::size_t>(std::max(1, surface.visible_rows)) + 64;
-  // The two panes tokenize cumulatively from the top, so reaching a row means
-  // walking every row above it. SurfaceTokenWindow does that walk with
-  // `AdvanceState` (which allocates nothing) and keeps token buffers only for a
-  // bounded window around the viewport, recycled as it slides -- where this used
-  // to keep one heap buffer per line of the file forever (TD-2026-08-15-242).
-  // As the compare panes': 256-row steps while the frame's walk time lasts.
   constexpr std::size_t kMergeSyntaxRowsPerFrame = 256;
   const SurfaceTokenWindow::WalkBudget walk_budget{
       kMergeSyntaxRowsPerFrame, std::chrono::steady_clock::now() + kSyntaxWalkTimePerFrame};
@@ -303,13 +256,6 @@ void WorkspaceShell::PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab
   merge_tab.current_token_window.EnsureWindow(
       visible_start_row, visible_end_row, merge_tab.output_path, walk_budget,
       [&](std::size_t row) -> std::string_view { return merge_tab.model.current_lines[row]; });
-  // (Rows this step reached repaint in this frame through their own units: each
-  // source row keys on its tokens, CompareRowUnits.)
-  // Capped per frame, so a window deep in a long file takes several: the next frame
-  // takes the next step (PreparedFrameState::syntax_catch_up_owed). The merge
-  // surface had no catch-up at all, so rows past the cap stayed plain until
-  // something else repainted. Against each window's own row count: one never
-  // sized walks nothing, and would otherwise ask forever.
   const auto behind = [&](const SurfaceTokenWindow& window) {
     return window.frontier() < std::min(visible_end_row, window.line_count());
   };
@@ -319,15 +265,6 @@ void WorkspaceShell::PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab
 }
 
 void WorkspaceShell::UpdateMergeTrackingAfterViewportEdit(MergeTabState& merge_tab) {
-  // TD-2026-07-16-31: derive the changed line span from the viewport's own
-  // last-applied-edit metadata instead of snapshotting + diffing the whole result
-  // buffer before and after every mutation. The span is whole-line-trimmed to match
-  // the previous editor::ComputeChangedLineSpan(before, after) result exactly, so the
-  // conflict shift/invalidate logic below is byte-for-byte unchanged — it just no
-  // longer pays an O(document) copy + diff per keystroke. Merge result editing is
-  // single-caret, so an absent span means the edit was a no-op (nothing to
-  // re-track); a true multi-region edit (which resets the span) also lands here and
-  // safely refreshes scroll only, matching the old no-change early-out.
   const std::optional<editor::AppliedEditLineSpan>& applied_span =
       merge_tab.result_viewport.last_applied_edit_line_span();
   if (!applied_span.has_value()) {
@@ -340,23 +277,7 @@ void WorkspaceShell::UpdateMergeTrackingAfterViewportEdit(MergeTabState& merge_t
   const long long line_delta =
       static_cast<long long>(change.new_end) - static_cast<long long>(change.old_end);
 
-  // There used to be a second branch here for a "pure insertion", taking its
-  // anchor line from the caret/selection the CALLER captured before the edit --
-  // which is why five call sites each had to remember to snapshot them, and why
-  // every edit action that did not (the whole shaping block: move-line,
-  // copy-line, delete-line, insert-line, indent, comment toggle, sort) left the
-  // conflict spans pointing at the wrong lines, so the next accept overwrote text
-  // that was no longer the conflict.
-  //
-  // The branch was also redundant. A pure insertion is exactly
-  // `old_start == old_end` (no before-line was consumed), the anchor line is then
-  // `old_start`, and substituting those two facts into the branch below makes the
-  // two bodies character-for-character the same test. So the span the viewport
-  // already publishes answers it on its own and the caller has nothing to capture.
   for (auto& conflict : merge_tab.conflicts) {
-    // `>=` on the shift test, not `>`: an insertion at exactly the conflict's
-    // first result line happens BEFORE the conflict (caret at column 0), so it
-    // shifts down rather than being invalidated.
     if (conflict.end_line <= change.old_start) {
       continue;
     }
@@ -370,8 +291,6 @@ void WorkspaceShell::UpdateMergeTrackingAfterViewportEdit(MergeTabState& merge_t
     conflict.valid = false;
   }
 
-  // Materialize only the changed rows (bounded by the edit) via zero-copy LineView
-  // instead of snapshotting the whole result buffer.
   const std::size_t line_count = merge_tab.result_viewport.lines().size();
   const std::size_t changed_start = std::min(change.old_start, line_count);
   const std::size_t changed_end = std::min(change.new_end, line_count);
@@ -385,9 +304,6 @@ void WorkspaceShell::UpdateMergeTrackingAfterViewportEdit(MergeTabState& merge_t
   }
 
   merge_tab.hover_state.reset();
-  // Conflict spans / validity just moved, so the cached overview-ruler markers
-  // (keyed on model_revision) are stale — invalidate them or the scrollbar keeps
-  // drawing markers at pre-edit rows and colors until an unrelated full refresh.
   merge_tab.scrollbar_marker_cache_valid = false;
   merge_tab.scroll_row = static_cast<int>(merge_tab.result_viewport.scroll_line());
   merge_tab.horizontal_scroll = merge_tab.result_viewport.horizontal_scroll();
@@ -403,11 +319,6 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabEntry(
   const std::filesystem::path normalized_current = current_path.lexically_normal();
   const std::filesystem::path normalized_output = output_path.lexically_normal();
 
-  // Classify the three worktree inputs so a binary/NUL, too-large, or unreadable file
-  // cannot masquerade as text and enter the merge model — compare tabs already refuse
-  // these via ReadTextFileClassified, and a text merge over binary bytes could later be
-  // saved through the result viewport and corrupt the file (TD-2026-07-17A-111). Missing
-  // is rejected here as before (the merge flow stages all three sides).
   const util::TextFileReadResult base_read = util::ReadTextFileClassified(normalized_base);
   const util::TextFileReadResult incoming_read = util::ReadTextFileClassified(normalized_incoming);
   const util::TextFileReadResult current_read = util::ReadTextFileClassified(normalized_current);
@@ -515,10 +426,6 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers
 }
 
 void WorkspaceShell::InvalidateStaleMergeTabs() {
-  // Two numbers, not the whole state: this runs on every git sidebar refresh, and
-  // `CurrentState()` deep-copies the entry list and the tree-status map. The
-  // conflicted count is also loop-invariant — it used to be recomputed inside the
-  // per-tab loop (TD-2026-08-06-159).
   const GitRepositoryService::Summary repository = git_repository_service_.CurrentSummary();
   for (TabEntry& tab : context_.current_project_state.focused_group().open_tabs) {
     if (!tab.merge.has_value()) {
@@ -530,8 +437,6 @@ void WorkspaceShell::InvalidateStaleMergeTabs() {
       merge_tab.index_stale = true;
       merge_tab.marked_resolved = false;
     }
-    // Same shared confirmation as the watcher path: the tick is the prefilter, the
-    // recorded baseline is the answer. (TD-2026-09-29-306.)
     if (MergeResultChangedOnDisk(merge_tab)) {
       merge_tab.external_result_stale = true;
       merge_tab.marked_resolved = false;
@@ -552,9 +457,6 @@ void WorkspaceShell::FinalizeGitMergeTab(MergeTabState& merge_tab,
 
   const std::optional<project::GitRepositoryEntry> entry =
       FindConflictRepositoryEntry(repository_state, path);
-  // The classification input holds string_views; keep the serialized buffers in
-  // named locals so the views stay valid through ClassifyMergeFileConflict (a
-  // temporary here would dangle — caught by AddressSanitizer).
   const std::string base_content =
       util::SerializeLinesStreaming(merge_tab.model.base_lines, merge_tab.result_line_ending);
   const std::string incoming_content =
@@ -593,4 +495,4 @@ void WorkspaceShell::FinalizeGitMergeTab(MergeTabState& merge_tab,
   }
 }
 
-}  // namespace microide::workspace
+}

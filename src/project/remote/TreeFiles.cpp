@@ -30,20 +30,17 @@ FileOpResult Error(std::string message) {
   return result;
 }
 
-// An error the path itself causes (FileOpResult::blocked).
 FileOpResult Refused(std::string message) {
   FileOpResult result = Error(std::move(message));
   result.blocked = true;
   return result;
 }
 
-// Whether `err` is the path refusing the operation rather than the host failing it.
 bool RefusesThePath(int err) {
   return err == EACCES || err == EPERM || err == EROFS || err == ENOTDIR || err == ELOOP ||
          err == EISDIR || err == ENAMETOOLONG;
 }
 
-// Error, or Refused when `err` says the path refuses it.
 FileOpResult ErrorFor(std::string message, int err) {
   return RefusesThePath(err) ? Refused(std::move(message)) : Error(std::move(message));
 }
@@ -66,15 +63,9 @@ std::string Errno(std::string_view what) {
   return std::string(what) + ": " + std::strerror(errno);
 }
 
-// The directory holding `path`'s last component, reached one component at a time
-// with O_NOFOLLOW (a link in a parent position fails with ELOOP/ENOTDIR instead of
-// being followed), and that last component's name.
 struct Parent {
   UniqueFd dir;
   std::string name;
-  // Not creating, a directory on the way does not exist: nothing is at the path, as
-  // when only its last component is missing (a host that moved a whole directory
-  // away). `dir` is not open; the caller answers as for a missing file.
   bool absent = false;
 };
 
@@ -101,7 +92,7 @@ std::optional<Parent> OpenParent(const std::filesystem::path& root, std::string_
     const std::string component(path.substr(start, slash - start));
     UniqueFd next(::openat(dir.Get(), component.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
     if (next.Get() < 0 && errno == ENOENT && !create) {
-      return Parent{UniqueFd(), std::string(path.substr(path.rfind('/') + 1)), /*absent=*/true};
+      return Parent{UniqueFd(), std::string(path.substr(path.rfind('/') + 1)), true};
     }
     if (next.Get() < 0 && errno == ENOENT && create) {
       if (::mkdirat(dir.Get(), component.c_str(), 0755) != 0 && errno != EEXIST) {
@@ -121,8 +112,6 @@ std::optional<Parent> OpenParent(const std::filesystem::path& root, std::string_
   return Parent{std::move(dir), std::string(path.substr(start))};
 }
 
-// What `name` in `dir` holds: nullopt when nothing is there. A link, a directory or
-// anything but a regular file sets *not_a_file (its content has no hash).
 std::optional<util::ContentHash> CurrentHash(int dir, const std::string& name, bool* exists,
                                              bool* not_a_file, std::string* error,
                                              int* error_code = nullptr) {
@@ -158,7 +147,6 @@ std::optional<util::ContentHash> CurrentHash(int dir, const std::string& name, b
   return hash;
 }
 
-// Whether `expect` holds for `name`; on false, `*result` is the answer to send.
 bool CheckExpect(int dir, const std::string& name, const Precondition& expect, bool allow_non_file,
                  FileOpResult* result, bool* exists) {
   if ((expect.kind == Precondition::Kind::Any && allow_non_file) || expect.kind == Precondition::Kind::Replace) {
@@ -198,14 +186,10 @@ bool CheckExpect(int dir, const std::string& name, const Precondition& expect, b
   return false;
 }
 
-// A delete's answer for a path with nothing at it, as CheckExpect would give it:
-// gone already unless `expect` named bytes, which are not there.
 FileOpResult AbsentVerdict(const Precondition& expect) {
   return expect.kind == Precondition::Kind::Hash ? Conflict(std::nullopt) : Ok(std::nullopt);
 }
 
-// renameat2(RENAME_NOREPLACE), falling back to link+unlink where the filesystem
-// does not support it (link refuses an existing destination just the same).
 int RenameNoReplace(int from_dir, const char* from, int to_dir, const char* to) {
 #if defined(RENAME_NOREPLACE)
   if (::renameat2(from_dir, from, to_dir, to, RENAME_NOREPLACE) == 0) {
@@ -225,7 +209,6 @@ int RenameNoReplace(int from_dir, const char* from, int to_dir, const char* to) 
 constexpr std::string_view kTempMarker = ".microide-";
 constexpr std::string_view kTempSuffix = ".tmp";
 
-// "." + name + ".microide-<pid>-<n>.tmp": TreeWriteTemporaryOwner reads it back.
 std::string TempName(const std::string& name) {
   static std::atomic<std::uint64_t> counter{0};
   return "." + name.substr(0, 200) + std::string(kTempMarker) + std::to_string(::getpid()) + "-" +
@@ -237,7 +220,7 @@ bool AllDigits(std::string_view text) {
          text.find_first_not_of("0123456789") == std::string_view::npos;
 }
 
-}  // namespace
+}
 
 std::optional<std::int64_t> TreeWriteTemporaryOwner(std::string_view name) {
   if (name.size() < 2 || name.front() != '.' || !name.ends_with(kTempSuffix)) {
@@ -267,7 +250,7 @@ std::optional<std::int64_t> TreeWriteTemporaryOwner(std::string_view name) {
 bool TreeWriteTemporaryIsAbandoned(std::string_view name) {
   const std::optional<std::int64_t> owner = TreeWriteTemporaryOwner(name);
   if (!owner.has_value() || *owner <= 0 || *owner > std::numeric_limits<pid_t>::max()) {
-    return owner.has_value();  // not a pid this machine could have: nobody's
+    return owner.has_value();
   }
   const pid_t pid = static_cast<pid_t>(*owner);
   return pid != ::getpid() && ::kill(pid, 0) != 0 && errno == ESRCH;
@@ -277,14 +260,13 @@ FileOpResult ReadTreeFile(const std::filesystem::path& root, std::string_view pa
                                std::uint64_t max_bytes,
                                const std::function<void(std::string_view chunk)>& sink) {
   std::string error;
-  std::optional<Parent> parent = OpenParent(root, path, /*create=*/false, &error);
+  std::optional<Parent> parent = OpenParent(root, path, false, &error);
   if (!parent.has_value()) {
     return Error(error);
   }
   if (parent->absent) {
     return Conflict(std::nullopt);
   }
-  // The final component may be a link: an out-of-root link ships as its target.
   const UniqueFd fd(::openat(parent->dir.Get(), parent->name.c_str(),
                        O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK));
   if (fd.Get() < 0) {
@@ -334,21 +316,15 @@ FileOpResult ReadHostFile(std::string_view path, std::uint64_t max_bytes,
 
 namespace {
 
-// WriteTreeFile's body, with the bytes supplied by `fill`: it writes them to the
-// temp file's descriptor and returns their hash (nullopt with *error on failure).
 FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_view path,
                                const std::function<std::optional<util::ContentHash>(int fd, std::string* error)>& fill,
                                const Precondition& expect, std::optional<std::uint32_t> mode,
                                std::optional<std::int64_t> mtime_ns, Durability durability,
                                const std::filesystem::path& staging) {
   std::string error;
-  // An update names bytes that must already be there: a missing directory on the
-  // way means they are not, which is a conflict decided before anything is made --
-  // creating the parents first left an empty directory behind on a host that had
-  // moved the folder away.
   const bool update = expect.kind == Precondition::Kind::Hash;
   int error_code = 0;
-  std::optional<Parent> parent = OpenParent(root, path, /*create=*/!update, &error, &error_code);
+  std::optional<Parent> parent = OpenParent(root, path, !update, &error, &error_code);
   if (!parent.has_value()) {
     return ErrorFor(error, error_code);
   }
@@ -357,11 +333,7 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
   }
   FileOpResult refused;
   bool exists = false;
-  // `expect: replace` (the user's Replace on Host) may replace what is not a
-  // file: a link, dangling or not, becomes the file -- the rename below replaces
-  // the link itself, never what it names. A directory there still refuses it (the
-  // rename fails with EISDIR). Every other precondition refuses a link.
-  if (!CheckExpect(parent->dir.Get(), parent->name, expect, /*allow_non_file=*/false, &refused, &exists)) {
+  if (!CheckExpect(parent->dir.Get(), parent->name, expect, false, &refused, &exists)) {
     return refused;
   }
   mode_t final_mode = 0644;
@@ -373,16 +345,11 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
         S_ISREG(info.st_mode)) {
       final_mode = info.st_mode & 07777;
       if (expect.kind == Precondition::Kind::Replace) {
-        // What refused the save gives way to the user's file, an unreadable mode
-        // too: kept, the host could not read the file it was just given, never
-        // listed it, and the mirror held it as its own (soak 0cc274626767).
         final_mode |= S_IRUSR | S_IWUSR;
       }
     }
   }
   const std::string temp = TempName(parent->name);
-  // Where the temp lives: beside the file, or in the caller's staging directory
-  // (same filesystem), so that a crash mid-write leaves nothing in the tree.
   UniqueFd staging_dir;
   if (!staging.empty()) {
     staging_dir = UniqueFd(::open(staging.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
@@ -410,7 +377,7 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
           {0, UTIME_OMIT},
           {static_cast<time_t>(*mtime_ns / 1'000'000'000), static_cast<long>(*mtime_ns % 1'000'000'000)},
       };
-      (void)::futimens(out.Get(), times);  // best effort: only a fast path depends on it
+      (void)::futimens(out.Get(), times);
     }
     if (durability == Durability::Synced) {
       util::AddPerformanceCounter(util::PerfCounterId::RemoteTreeFileFsyncs);
@@ -422,10 +389,7 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
       return Error(why);
     }
   }
-  // The target's absolute path, built only for a test's crash-point hook.
   const std::string crash_target = util::CrashPointsArmed() ? (root / std::string(path)).native() : std::string();
-  // Deferred: the bytes are durable only at the batch's SyncTreeFilesystem, so a
-  // sync of the directory alone does not make this write survive a power cut.
   util::CrashPoint(durability == Durability::Synced ? "tree.renaming" : "tree.renaming-deferred", crash_target);
   const int renamed =
       expect.kind == Precondition::Kind::Absent
@@ -435,7 +399,6 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
     const int saved = errno;
     ::unlinkat(temp_dir, temp.c_str(), 0);
     if (saved == EEXIST) {
-      // Created on the host between the check and the rename.
       bool now_exists = false;
       bool not_a_file = false;
       std::string ignored;
@@ -444,9 +407,6 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
     errno = saved;
     return ErrorFor(Errno("cannot replace " + std::string(path)), saved);
   }
-  // A synced write's rename durable too (a deferred one is covered by the batch's
-  // SyncTreeFilesystem): an acked push must not revert on the host after a power
-  // cut, while the client already took it as the new base.
   util::CrashPoint("tree.renamed", crash_target);
   if (durability == Durability::Synced) {
     (void)::fsync(parent->dir.Get());
@@ -455,7 +415,7 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
   return Ok(*hash);
 }
 
-}  // namespace
+}
 
 bool SyncTreeFilesystem(const std::filesystem::path& root) {
   util::AddPerformanceCounter(util::PerfCounterId::RemoteTreeFlushes);
@@ -502,7 +462,6 @@ FileOpResult CopyFileIntoTree(const std::filesystem::path& root, std::string_vie
           *error = Errno("cannot open the fetched copy of " + std::string(path));
           return std::nullopt;
         }
-        // In the kernel, and a reflink where the filesystem can: no bytes through here.
         for (;;) {
           const ssize_t count = ::copy_file_range(in.Get(), nullptr, fd, nullptr, 1u << 30, 0);
           if (count == 0) {
@@ -513,7 +472,7 @@ FileOpResult CopyFileIntoTree(const std::filesystem::path& root, std::string_vie
               continue;
             }
             if (errno == EXDEV || errno == ENOSYS || errno == EINVAL || errno == EOPNOTSUPP) {
-              break;  // not supported here: copy by hand below, from where it got to
+              break;
             }
             *error = Errno("cannot copy " + std::string(path));
             return std::nullopt;
@@ -551,7 +510,7 @@ FileOpResult CopyFileIntoTree(const std::filesystem::path& root, std::string_vie
 FileOpResult MakeTreeSymlink(const std::filesystem::path& root, std::string_view path,
                              std::string_view target) {
   std::string error;
-  std::optional<Parent> parent = OpenParent(root, path, /*create=*/true, &error);
+  std::optional<Parent> parent = OpenParent(root, path, true, &error);
   if (!parent.has_value()) {
     return Error(error);
   }
@@ -575,7 +534,7 @@ FileOpResult MakeTreeSymlink(const std::filesystem::path& root, std::string_view
 
 FileOpResult MakeTreeDirectory(const std::filesystem::path& root, std::string_view path) {
   std::string error;
-  std::optional<Parent> parent = OpenParent(root, path, /*create=*/true, &error);
+  std::optional<Parent> parent = OpenParent(root, path, true, &error);
   if (!parent.has_value()) {
     return Error(error);
   }
@@ -594,20 +553,20 @@ FileOpResult MakeTreeDirectory(const std::filesystem::path& root, std::string_vi
 FileOpResult RenameTreeEntry(const std::filesystem::path& root, std::string_view from,
                                   std::string_view to, const Precondition& expect) {
   std::string error;
-  std::optional<Parent> source = OpenParent(root, from, /*create=*/false, &error);
+  std::optional<Parent> source = OpenParent(root, from, false, &error);
   if (!source.has_value()) {
     return Error(error);
   }
   if (source->absent) {
-    return Conflict(std::nullopt);  // what CheckExpect and !exists below answer for nothing
+    return Conflict(std::nullopt);
   }
-  std::optional<Parent> target = OpenParent(root, to, /*create=*/true, &error);
+  std::optional<Parent> target = OpenParent(root, to, true, &error);
   if (!target.has_value()) {
     return Error(error);
   }
   FileOpResult refused;
   bool exists = false;
-  if (!CheckExpect(source->dir.Get(), source->name, expect, /*allow_non_file=*/true, &refused,
+  if (!CheckExpect(source->dir.Get(), source->name, expect, true, &refused,
                    &exists)) {
     return refused;
   }
@@ -630,7 +589,7 @@ FileOpResult RenameTreeEntry(const std::filesystem::path& root, std::string_view
 FileOpResult DeleteTreeEntry(const std::filesystem::path& root, std::string_view path,
                                   const Precondition& expect) {
   std::string error;
-  std::optional<Parent> parent = OpenParent(root, path, /*create=*/false, &error);
+  std::optional<Parent> parent = OpenParent(root, path, false, &error);
   if (!parent.has_value()) {
     return Error(error);
   }
@@ -639,12 +598,12 @@ FileOpResult DeleteTreeEntry(const std::filesystem::path& root, std::string_view
   }
   FileOpResult refused;
   bool exists = false;
-  if (!CheckExpect(parent->dir.Get(), parent->name, expect, /*allow_non_file=*/true, &refused,
+  if (!CheckExpect(parent->dir.Get(), parent->name, expect, true, &refused,
                    &exists)) {
     return refused;
   }
   if (!exists) {
-    return Ok(std::nullopt);  // already gone: what the caller wanted
+    return Ok(std::nullopt);
   }
   struct stat info {};
   const bool directory =
@@ -652,8 +611,6 @@ FileOpResult DeleteTreeEntry(const std::filesystem::path& root, std::string_view
       S_ISDIR(info.st_mode);
   if (::unlinkat(parent->dir.Get(), parent->name.c_str(), directory ? AT_REMOVEDIR : 0) != 0) {
     if (directory && (errno == ENOTEMPTY || errno == EEXIST)) {
-      // The directory holds something the caller did not account for: refused,
-      // as a write over other bytes is, never deleted whole.
       return Conflict(std::nullopt);
     }
     return Error(Errno("cannot delete " + std::string(path)));
@@ -666,7 +623,7 @@ FileOpResult SetAsideTreeEntry(const std::filesystem::path& root, std::string_vi
                                bool* moved) {
   *moved = false;
   std::string error;
-  std::optional<Parent> parent = OpenParent(root, path, /*create=*/false, &error);
+  std::optional<Parent> parent = OpenParent(root, path, false, &error);
   if (!parent.has_value()) {
     return Error(error);
   }
@@ -675,12 +632,12 @@ FileOpResult SetAsideTreeEntry(const std::filesystem::path& root, std::string_vi
   }
   FileOpResult refused;
   bool exists = false;
-  if (!CheckExpect(parent->dir.Get(), parent->name, expect, /*allow_non_file=*/true, &refused,
+  if (!CheckExpect(parent->dir.Get(), parent->name, expect, true, &refused,
                    &exists)) {
     return refused;
   }
   if (!exists) {
-    return Ok(std::nullopt);  // already gone: what the caller wanted
+    return Ok(std::nullopt);
   }
   if (RenameNoReplace(parent->dir.Get(), parent->name.c_str(), AT_FDCWD, aside.c_str()) != 0) {
     return Error(Errno("cannot set " + std::string(path) + " aside"));
@@ -692,7 +649,7 @@ FileOpResult SetAsideTreeEntry(const std::filesystem::path& root, std::string_vi
 FileOpResult RestoreTreeEntry(const std::filesystem::path& root, std::string_view path,
                               const std::filesystem::path& aside) {
   std::string error;
-  std::optional<Parent> parent = OpenParent(root, path, /*create=*/true, &error);
+  std::optional<Parent> parent = OpenParent(root, path, true, &error);
   if (!parent.has_value()) {
     return Error(error);
   }
@@ -705,4 +662,4 @@ FileOpResult RestoreTreeEntry(const std::filesystem::path& root, std::string_vie
   return Ok(std::nullopt);
 }
 
-}  // namespace microide::project::remote
+}

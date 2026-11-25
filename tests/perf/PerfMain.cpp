@@ -46,28 +46,13 @@
 namespace microide::tests::perf {
 namespace {
 
-// Measured iterations per scenario unless --iterations says otherwise, and the
-// floor for writing a baseline. Both uses are the same fact: the committed
-// baselines describe a ten-iteration run, and a metric averaged over a settling
-// series is only comparable against one recorded the same way
-// (TD-2026-08-06-148).
 inline constexpr std::size_t kDefaultIterations = 10;
 
 struct CliOptions {
   std::vector<std::string> scenarios;
   bool update_baseline = false;
-  // `--update-baseline=deterministic`: rewrite only the metrics that do not
-  // depend on how busy the machine is (allocation counts, per-phase allocation
-  // counts, net heap retention) and carry every timing/resident number over from
-  // the committed baseline unchanged. See MergeDeterministicMetrics for why the
-  // two halves have different runner requirements, and TD-2026-08-07-161 for the
-  // drift that the all-or-nothing form caused.
   bool update_deterministic_only = false;
   bool smoke = false;
-  // `--build-config`: print the baked-in build configuration and exit. The
-  // allocation tracer refuses to run against a binary whose symbol names it
-  // cannot stand behind (see -fno-ipa-icf, TD-2026-08-13-197), and this is how
-  // it asks.
   bool print_build_config = false;
   bool require_fixtures = false;
   bool keep_artifacts = false;
@@ -76,34 +61,12 @@ struct CliOptions {
   std::optional<std::filesystem::path> report_text;
   std::optional<std::string> reference_runner;
   std::optional<std::string> layout_mode;
-  // SDL renderer driver to measure through (see RunOptions::renderer_driver).
-  // Default "software" keeps the portable, baseline-gated reference lane.
   std::string renderer_driver = "software";
-  // SDL video driver to measure through (see RunOptions::video_driver). Default
-  // "dummy" keeps the baseline-gated reference lane, and the harness sets it
-  // itself so a bare `microide_perf` reproduces the gate.
   std::string video_driver = "dummy";
-  // CPU set to measure on (see PerfCpuAffinity.h). "auto" pins to the fastest
-  // cluster on a heterogeneous machine and is a no-op elsewhere.
   std::string pin_cores = "auto";
-  // Run each scenario in its own child process (TD-2026-08-06-152). On by
-  // default: without it every metric is a property of the suite rather than of
-  // the scenario, because all ~100 share one process. `--no-isolate` restores the
-  // old single-process run, which is what a tracer session wants (the allocation
-  // tracer's output has to come from the process you are watching).
   bool isolate_scenarios = true;
 };
 
-// Set by main() after CLI parse. It now governs only the manifest-backed fixture
-// TREE check below: an absent tree is a skip locally and a hard failure in CI.
-//
-// It used to govern per-scenario fixture handling too, through
-// EnsureFixtureOrSkip — which is deleted. Two policies for "the fixture is not
-// here" in one binary is precisely what let a gated scenario measure an empty
-// function and PASS (TD-2026-08-10-170), and the flag's default made the quiet
-// answer the usual one. A scenario now declares the skip
-// (ScenarioContext::SkipScenario, via RequireFixture) and the run refuses to
-// grade it, with or without this flag.
 bool g_require_fixtures = false;
 
 struct ProcessSample {
@@ -144,8 +107,6 @@ ProcessSample ReadProcessSample() {
     if (tokens.size() < 15) {
       throw std::runtime_error("insufficient /proc/self/stat fields");
     }
-    // Non-throwing parse: a malformed /proc/self/stat shape yields a controlled
-    // missing-sample (zero ticks) rather than an exception from a numeric parser.
     const std::optional<std::int64_t> utime = util::ParseInt64(tokens[11]);
     const std::optional<std::int64_t> stime = util::ParseInt64(tokens[12]);
     if (utime.has_value() && stime.has_value() && *utime >= 0 && *stime >= 0) {
@@ -199,7 +160,6 @@ class FixtureRestoreGuard {
     try {
       WriteFileTextOrThrow(path_, original_);
     } catch (...) {
-      // Do not throw from destructor; best-effort restore only.
     }
   }
 
@@ -369,10 +329,6 @@ std::vector<std::string> FindStaleBaselineScenarios(const std::vector<Scenario>&
   return stale;
 }
 
-// TD-2026-07-17-059: the symmetric half of the manifest check. FindStaleBaseline-
-// Scenarios catches baseline files with no registered scenario (orphans); this
-// catches the reverse — a baseline-gated scenario with NO committed baseline file,
-// which would otherwise run against harness defaults instead of a pinned budget.
 std::vector<std::string> FindScenariosMissingBaseline(const std::vector<Scenario>& scenarios) {
   std::vector<std::string> missing;
   std::error_code error;
@@ -425,7 +381,7 @@ void OpenEditorEssentials50kCppOrThrow(ScenarioContext& context) {
   if (!context.Open(path.parent_path())) {
     throw std::runtime_error("failed to open editor essentials fixture project");
   }
-  context.OpenTab(path);  // drains the off-thread read: the buffer is the file
+  context.OpenTab(path);
   context.PumpFrames(2);
 }
 
@@ -443,22 +399,6 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(5);
           },
   });
-  // Five real project opens per iteration, each arming a file-index build and a
-  // tree watch on background threads. Their WALL is not reproducible on this
-  // runner -- five consecutive runs of one unchanged binary spread the p50 across
-  // 25.4-34.7 ms (+37%) -- so the wall envelope is sized to cover that. The
-  // allocation envelope stays tight: the counter is per-thread, so this scenario
-  // reports only the shell thread's allocations and reports the same number every
-  // run. That tight gate is what would catch a regression like the switch
-  // teardown this scenario found (a 79 ms p50 before the inotify retire landed).
-  //
-  // Net heap retention is the one metric this scenario cannot supply, and for a
-  // reason specific to what it does: each iteration's window frees the structures
-  // the PREVIOUS iteration's project allocated, so `bytes_allocated -
-  // bytes_freed` reports where the teardown happened to land rather than what the
-  // code holds. Its per-iteration series spans −21,284 to +29,061 bytes across two
-  // full runs whose `p50_allocations` differed by 14. See
-  // Scenario::gate_net_heap_metrics.
   PerfHarness::RegisterScenario(Scenario{
       .name = "multi_project_switch",
       .smoke = true,
@@ -487,34 +427,12 @@ void RegisterBuiltInScenarios() {
   PerfHarness::RegisterScenario(Scenario{
       .name = "multi_tab_cycle",
       .smoke = true,
-      // warmup: the first pass on a fresh driver pays the project's cold open --
-      // the background file-index build, the initial watch batch, the session
-      // write -- which is ~15x the steady-state cost of the measured work here.
-      // Left un-warmed it landed in exactly one measured iteration and governed
-      // p95/max, so the committed baseline held a p95 several times its own p50
-      // and the allocation gate flapped between runs on nothing but which
-      // percentile the cold pass fell into. `cold_startup_large_project` is the
-      // scenario that measures that open on purpose.
       .warmup_iterations = 1,
-      // Net heap retention is not a measurement for this scenario, and the reason
-      // is the same one multi_project_switch records: memory this iteration
-      // allocates on the shell thread is released somewhere the per-thread
-      // counter cannot see -- a later iteration's teardown, or a background
-      // thread (the queued session-state write, whose encode runs here and whose
-      // buffer is freed by the writer). The reading is +86 KB EVERY iteration
-      // while `rss_growth_bytes` is 0-8 KB and trending to zero, so the metric
-      // claims ~780 KB retained across a run that grew ~119 KB and flattened.
-      // A gate that a flat RSS contradicts is not measuring retention
-      // (TD-2026-08-12-191). See Scenario::gate_net_heap_metrics.
       .gate_net_heap_metrics = false,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/large_project");
             context.PumpFrames(2);
-            // Built outside the window: composing the path per tab put a
-            // std::string concatenation, a std::to_string and a filesystem::path
-            // construction inside a gate that is supposed to measure opening a
-            // tab (TD-2026-08-07-166).
             std::vector<std::filesystem::path> files;
             files.reserve(20);
             for (int i = 1; i <= 20; ++i) {
@@ -551,19 +469,9 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(2);
           },
   });
-  // Wall spread +20% p50/p95/max across four consecutive runs of one unchanged
-  // binary; allocations are exact, so they stay tight.
   PerfHarness::RegisterScenario(Scenario{
       .name = "typing_large_file",
       .smoke = true,
-      // warmup: the first pass on a fresh driver pays the project's cold open --
-      // the background file-index build, the initial watch batch, the session
-      // write -- which is ~15x the steady-state cost of the measured work here.
-      // Left un-warmed it landed in exactly one measured iteration and governed
-      // p95/max, so the committed baseline held a p95 several times its own p50
-      // and the allocation gate flapped between runs on nothing but which
-      // percentile the cold pass fell into. `cold_startup_large_project` is the
-      // scenario that measures that open on purpose.
       .warmup_iterations = 1,
       .tolerance_p95_percent = tolerance::kJitterWallP95,
       .tolerance_max_percent = tolerance::kJitterWallMax,
@@ -577,46 +485,17 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(2);
           },
   });
-  // Small measured phase (~1.5 ms) whose wall this runner cannot hold at the
-  // default envelope; allocations are exact, so they stay tight.
   PerfHarness::RegisterScenario(Scenario{
       .name = "scroll_large_file",
       .smoke = true,
-      // warmup: the first pass on a fresh driver pays the project's cold open --
-      // the background file-index build, the initial watch batch, the session
-      // write -- which is ~15x the steady-state cost of the measured work here.
-      // Left un-warmed it landed in exactly one measured iteration and governed
-      // p95/max, so the committed baseline held a p95 several times its own p50
-      // and the allocation gate flapped between runs on nothing but which
-      // percentile the cold pass fell into. `cold_startup_large_project` is the
-      // scenario that measures that open on purpose.
       .warmup_iterations = 1,
       .tolerance_p95_percent = tolerance::kJitterWallP95,
       .tolerance_max_percent = tolerance::kJitterWallMax,
-      // Bumped with the per-step frame pump inside the phase (see below): the
-      // scenario total now includes sixty rendered frames it did not before, so
-      // the old numbers describe a different measurement (TD-2026-08-07-167).
       .measurement_revision = 2,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/large_project");
             context.OpenTab("tests/perf/fixtures/large_project/pkg0/file_1.txt");
-            // The SCROLLING, declared as a phase. Without one, this scenario's
-            // metrics cover the project open and the tab open as well, and those
-            // dominate — so a drift row against the scenario total says nothing
-            // about scrolling (TD-2026-08-12-193, and the shape
-            // TD-2026-08-06-151 swept for).
-            //
-            // A frame per step, not a batch of input followed by two frames at
-            // the end. Without it the phase measured the SCROLL EVENTS only and
-            // recorded **zero allocations** for sixty of them: everything a
-            // scroll actually costs — re-layout, the visible-line cache, glyph
-            // work, the view-model rebuild — happens on the frame the scroll
-            // schedules, and every one of those frames was landing outside the
-            // window. A phase named `scroll_burst` that cannot see a regression
-            // in the scroll RENDER path is the shape TD-2026-08-12-193 is about,
-            // one level down. `compare_selection.scroll_burst` already pumps per
-            // step for the same reason.
             context.Measure("scroll_large_file.scroll_burst", [&] {
               for (int i = 0; i < 40; ++i) {
                 context.Scroll(-1);
@@ -629,28 +508,7 @@ void RegisterBuiltInScenarios() {
             });
           },
   });
-  // Sustained scroll through *fresh* content across the whole 50k-line file.
-  // Unlike editor_sticky_scroll_scroll / editor_render_whitespace_paint (which
-  // re-scroll a small window and are therefore glyph-cache-friendly), this sweeps
-  // top-to-bottom so the working set (tens of thousands of distinct colored runs)
-  // far exceeds the 4096-entry texture cache and keeps missing on evicted lines
-  // across iterations. This is the workload that decides whether the
-  // composite-build path (BuildAsciiCompositeSurface + texture upload) is a real
-  // bottleneck on the GPU lane -- i.e. whether a batched glyph atlas could ever
-  // win. Advisory only (no portable baseline); run it via
-  //   microide_perf --scenarios=editor_scroll_fresh_content_large --renderer=auto
   PerfHarness::RegisterScenario(Scenario{
-      // TD-2026-08-06-142 — "how much does an open tab cost to keep open?" had
-      // no answer, so a cap for the sum across tabs could only have been a
-      // guess. This is the answer, reported rather than gated: one 50k-line
-      // C++ tab, every derived cache warmed the way real use warms it (a full
-      // scroll sweep for the width table and the visible-line LRU, folding on
-      // for the fold model, edits for the highlight chain and the undo stack),
-      // with the breakdown in the `editor.tab_derived_cache_*` counters.
-      //
-      // Advisory on purpose. A gate here would be a cap, and the entry is
-      // explicit that a cap chosen before the measurement exists is the mistake.
-      // Read the counters, then choose.
       .name = "editor_tab_derived_cache_residency",
       .smoke = false,
       .baseline_gated = false,
@@ -661,23 +519,14 @@ void RegisterBuiltInScenarios() {
             OpenEditorEssentials50kCppOrThrow(context);
             context.PumpFrames(8);
             (void)TA::EnsureActiveFoldingModelFresh(context.Shell());
-            // Sweep the whole document so the per-line width table, the
-            // wrapped-row table, the visible-line LRU and the highlight-state
-            // chain are all populated to their steady state rather than to
-            // whatever the first screen touched.
             for (int i = 0; i < 320; ++i) {
               context.KeyDown(SDLK_PAGEDOWN);
               context.PumpFrames(1);
             }
-            // A short typing run, so the undo stack is not empty. It is the one
-            // component here with a declared per-tab ceiling (256 MiB), and the
-            // one that grows with use rather than with document size.
             for (int i = 0; i < 24; ++i) {
               context.Type("x");
               context.PumpFrames(1);
             }
-            // Publishes the editor.tab_derived_cache_* counters as a side effect;
-            // the report picks them up from the per-iteration counter delta.
             const TA::DerivedCacheResidency residency =
                 TA::EditorDerivedCacheResidency(context.Shell());
             if (residency.editor_tabs == 0) {
@@ -697,38 +546,17 @@ void RegisterBuiltInScenarios() {
   PerfHarness::RegisterScenario(Scenario{
       .name = "editor_scroll_fresh_content_large",
       .smoke = false,
-      // Gated on its deterministic half (TD-2026-08-15-245). The advisory
-      // envelope below is a wall ceiling and stays one; what was missing is that
-      // a 640-frame sweep through fresh content -- the glyph-texture cache's
-      // worst case -- had no allocation gate at all.
       .baseline_gated = true,
       .run =
           [](ScenarioContext& context) {
             OpenEditorEssentials50kCppOrThrow(context);
             context.PumpFrames(8);
-            // Start every iteration at the top. The scenario body runs once per
-            // iteration but the SHELL persists across them, so the tab this
-            // re-opens is the one the previous iteration left parked at its
-            // sweep's end: 640 page-downs is ~28,800 rows against a 50k-line
-            // fixture, so iteration 1 ran out of document partway and every
-            // iteration after it paged against the bottom, repainting one
-            // unchanging screen. The baseline carried the signature --
-            // p50_allocations 168 against max 9,370, a 56x bimodality, and a
-            // 74% wall spread -- and PASSED (TD-2026-09-20-298).
             microide::editor::TextViewport& viewport = context.ActiveViewport();
             viewport.MoveCursorTo(0, 0, false);
             viewport.SetScrollLine(0);
             context.PumpFrames(1);
             std::vector<double> samples_us;
             samples_us.reserve(640);
-            // One downward sweep: ~640 page-downs over a 50k-line file paints a
-            // continuously fresh viewport, so glyph-cache misses accumulate the
-            // way they do when a user scrolls through a large file for real.
-            //
-            // Declared as a phase so the sweep is separable from the open that
-            // precedes it, which is what makes this an exact A/B against
-            // editor_cjk_scroll_paint's phase rather than a sweep-plus-setup
-            // compared against a sweep (TD-2026-09-06-289a).
             context.Measure("scroll_fresh_content.page_down_sweep", [&] {
               for (int i = 0; i < 640; ++i) {
                 const auto t0 = std::chrono::steady_clock::now();
@@ -739,16 +567,11 @@ void RegisterBuiltInScenarios() {
                     std::chrono::duration<double, std::micro>(t1 - t0).count());
               }
             });
-            // The guard the reset above exists for: a sweep that no longer
-            // scrolls has to fail loudly rather than report a smaller number
-            // forever.
             if (context.ActiveViewport().scroll_line() < 12000) {
               throw std::runtime_error(
                   "editor_scroll_fresh_content_large: the page-down sweep did not scroll "
                   "through fresh rows");
             }
-            // Advisory envelope only -- a loose ceiling to catch gross blowups;
-            // the real signal is p50 wall + the text_texture_cache_* counters.
             EnforceP95Microseconds("editor_scroll_fresh_content_large.page_down_frame",
                                    samples_us, 80'000.0);
             context.PumpFrames(2);
@@ -775,30 +598,11 @@ void RegisterBuiltInScenarios() {
   PerfHarness::RegisterScenario(Scenario{
       .name = "project_search_literal",
       .smoke = true,
-      // Decoupled tolerances (see perf-harness.md). Now that the async stages are
-      // driven to fixed states the ALLOCATION counts are exactly reproducible
-      // run to run -- that is the real oracle here, and it is gated tight. The
-      // measured work is a couple of milliseconds, where this shared runner's
-      // scheduler jitter is +/-20%, so the wall envelope is widened rather than
-      // letting jitter trip a gate every other run.
       .tolerance_p95_percent = tolerance::kJitterWallP95,
       .tolerance_max_percent = tolerance::kJitterWallMax,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/kernel_sized_project");
-            // `search` is Find in Buffer (Ctrl+F), not project search -- this
-            // scenario ran the wrong command against a query that appears in no
-            // file's CONTENT (`node_0001` is a filename in this fixture), then
-            // slept 50 ms. Its whole 52 ms wall was that sleep, and its
-            // allocations were whatever the background file-index build happened
-            // to have reached, which is why the committed baseline holds
-            // p50=193 against p95=91930 and max=166987.
-            //
-            // Run the search the name promises, over a query with real coverage
-            // (999 hits across the 1200-file fixture), and drive both async
-            // stages to fixed states as search_first_result does: the index build
-            // first (node_1200.cc is in the last subsystem directory, so its
-            // presence means the build completed), then the search itself.
             if (!context.WaitForFileIndexPath("subsys_19/node_1200.cc",
                                               std::chrono::seconds(15))) {
               throw std::runtime_error("project_search_literal: file index did not build in time");
@@ -813,14 +617,11 @@ void RegisterBuiltInScenarios() {
   PerfHarness::RegisterScenario(Scenario{
       .name = "project_search_regex",
       .smoke = true,
-      // See project_search_literal.
       .tolerance_p95_percent = tolerance::kJitterWallP95,
       .tolerance_max_percent = tolerance::kJitterWallMax,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/kernel_sized_project");
-            // See project_search_literal: same wrong command, same content-free
-            // query, same fixed-sleep sampling.
             if (!context.WaitForFileIndexPath("subsys_19/node_1200.cc",
                                               std::chrono::seconds(15))) {
               throw std::runtime_error("project_search_regex: file index did not build in time");
@@ -836,8 +637,6 @@ void RegisterBuiltInScenarios() {
   PerfHarness::RegisterScenario(Scenario{
       .name = "linter_on_save",
       .smoke = true,
-      // Revision 2: the diagnostics wait moved OUT of the measured window (see
-      // below). Phase names and counts before and after are not comparable.
       .measurement_revision = 2,
       .run =
           [](ScenarioContext& context) {
@@ -848,25 +647,6 @@ void RegisterBuiltInScenarios() {
             context.OpenTab(source);
             context.Measure("linter.type_invalid_edit", [&]() { context.Type("\nconst broken = ;"); });
             context.Measure("linter.save", [&]() { (void)context.ExecuteCommand("save"); });
-            // Diagnostics are PUBLISHED here, not waited for.
-            //
-            // This phase used to be `context.Measure("linter.wait_diagnostics",
-            // ... WaitForDiagnostics(source, 120ms))`, and it measured neither a
-            // linter nor diagnostics. Nothing in this repository lints
-            // JavaScript: there is no linter service, the fixture carries no
-            // linter config, and its node_modules/ is empty. Every run therefore
-            // spun the full 120 ms deadline, found nothing, and reported the
-            // POLL LOOP's allocations as an authoritative gated number -- one
-            // that counts how many times a wall-clock loop got round, so it moved
-            // with machine load and not with any code. Three runs of one
-            // unchanged binary read 3,561 / 3,644 / 3,711 against a committed
-            // baseline of 2,745 recorded on an idle runner.
-            //
-            // What this scenario is worth measuring is the DELIVERY path: the
-            // store update, the decoration rebuild it invalidates, and the frames
-            // that paint the squiggles and the status counts. That path is real
-            // and is what an LSP publish drives in production, so it is driven
-            // directly and deterministically here.
             std::vector<editor::Diagnostic> diagnostics;
             diagnostics.reserve(24);
             for (std::size_t i = 0; i < 24; ++i) {
@@ -885,9 +665,6 @@ void RegisterBuiltInScenarios() {
               context.PumpFrames(3);
             });
             if (!context.HasDiagnostics(source)) {
-              // The vacuity guard the old phase never had: a publish that did not
-              // land leaves three frames painting an unannotated document, which
-              // is a different measurement wearing the same name.
               context.SkipScenario("linter_on_save: published diagnostics did not reach the store");
             }
           },
@@ -913,26 +690,10 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(3);
           },
   });
-  // Both terminal scenarios below feed the emulator directly instead of launching
-  // a command and sleeping. The harness runs with placeholder terminals
-  // (SetUsePlaceholderTerminalsForTesting, PerfMain), so NO shell is ever spawned:
-  // the previous `yes` / `bash -lc` launches produced a terminal holding exactly
-  // one blank line, and both scenarios spent their whole measured window scrolling
-  // and toggling an EMPTY buffer. The committed baselines recorded that. Feeding
-  // bytes through the same path the pty reader thread uses makes them measure the
-  // emulator, the scrollback and the render path they are named for, and makes the
-  // allocation counts byte-identical run to run.
   PerfHarness::RegisterScenario(Scenario{
       .name = "terminal_scroll_long_output",
       .smoke = true,
-      // Iteration 0 pays the project open and the emulator's first buffer growth;
-      // without a warmup it alone governs p95/max and the gate flaps.
       .warmup_iterations = 1,
-      // Revision 2: f38ef7fd. Revision 1 scrolled an EMPTY buffer -- the harness
-      // spawns no real shell, so `yes` left the terminal holding one blank line --
-      // and this feeds 4,000 lines through the emulator instead. Its pre-v2.9.0
-      // numbers describe different work and must not be differenced against these
-      // (TD-2026-08-07-167).
       .measurement_revision = 2,
       .run =
           [](ScenarioContext& context) {
@@ -954,41 +715,18 @@ void RegisterBuiltInScenarios() {
               }
             });
             context.PumpFrames(2);
-            // The driver is shared across a scenario's iterations, so a terminal an
-            // iteration opens is still attached on the next one.
             context.CloseAllTerminals();
           },
   });
-  // `terminal_scroll_long_output` hands the emulator its whole 96 KB in ONE call,
-  // so the end-of-chunk scrollback trim runs exactly once, after every line has
-  // already been created. A real PTY delivers ~8 KB at a time, which interleaves
-  // trims with line creation — a different steady state, and the one that decides
-  // whether a trimmed line's cell buffer is still around to back the line that
-  // replaces it (TD-2026-08-14-231). Nothing measured that shape until this
-  // scenario, so the recycling it exercises was a blind spot rather than a
-  // regression risk.
-  //
-  // Its baseline's timing half is deliberately ADVISORY. Four consecutive runs of
-  // one unchanged binary gave p95 walls of 6.15 / 6.32 / 4.75 / 4.48 ms — a 41 %
-  // spread — tracking `harness.cpu_calibration_ns` at 673k / 674k / 501k / 467k,
-  // which the clock normalisation does not fully cancel (TD-2026-08-05-137,
-  // cpu time here measures the governor's residency state).
-  // The allocation count was byte-identical at 6,590 in all four. So the half that
-  // gates is the half that reproduces, and the wall number is reported rather than
-  // enforced (TD-2026-08-12-186).
   PerfHarness::RegisterScenario(Scenario{
       .name = "terminal_stream_chunked_output",
       .smoke = false,
-      // Iteration 0 pays the project open and the emulator's first buffer growth.
       .warmup_iterations = 1,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/small_project");
             context.PumpFrames(2);
             context.Measure("terminal.open", [&]() { context.OpenTerminal("perf-stream"); });
-            // Deliberately more lines than the 2,000-line scrollback cap, several
-            // times over, so the run reaches the trim/refill steady state rather
-            // than measuring only the initial fill.
             std::string output;
             output.reserve(12000 * 24);
             for (int i = 0; i < 12000; ++i) {
@@ -1007,15 +745,6 @@ void RegisterBuiltInScenarios() {
             context.CloseAllTerminals();
           },
   });
-  // The bottom panel's Output channel taking lines while a frame is painted per
-  // burst, the way a debug adapter's or a language server's log streams in: the
-  // derived-damage Output body (openspec derived-damage 3.1) against the
-  // whole-panel repaint it replaced. Then the same stream into a channel the
-  // panel does not show, which should repaint nothing there. Each frame carries
-  // only a 1x1 damage rect -- what made it run -- so the panel's repaint is
-  // whatever prep derives, as in the app.
-  //
-  // Advisory until a baseline is recorded on the reference runner.
   PerfHarness::RegisterScenario(Scenario{
       .name = "output_channel_stream_paint",
       .smoke = false,
@@ -1029,8 +758,6 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(2);
             const workspace::WorkspaceShell::RenderInvalidation frame_trigger{
                 .full = false, .rects = {SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f}}};
-            // The lines are built before the window opens: it measures the panel
-            // taking them, not the scenario's own string building.
             const auto lines = [] {
               std::vector<std::string> built;
               for (int line = 0; line < 40 * 8; ++line) {
@@ -1053,14 +780,6 @@ void RegisterBuiltInScenarios() {
             context.Measure("output.stream_hidden", [&]() { stream("perf.hidden", hidden); });
           },
   });
-  // The debug pane while a session steps: each step's variables response rewrites
-  // the values (a loop moves one in eight) and a partial frame is painted, as the
-  // adapter's responses arrive with no damage request. Then the same steps with
-  // the Call Stack up, which should repaint nothing in the pane. Each frame carries
-  // only a 1x1 damage rect -- what made it run -- so the pane's repaint is
-  // whatever prep derives (derived-damage 3.1).
-  //
-  // Advisory until a baseline is recorded on the reference runner.
   PerfHarness::RegisterScenario(Scenario{
       .name = "debug_pane_step_paint",
       .smoke = false,
@@ -1074,8 +793,6 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(2);
             const workspace::WorkspaceShell::RenderInvalidation frame_trigger{
                 .full = false, .rects = {SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f}}};
-            // Each step's response is built before the window opens: it measures the
-            // pane taking the values, not the scenario building them.
             const std::vector<ScenarioContext::DebugValues> steps = ScenarioContext::DebugVariableSteps(kValues, 40);
             const auto step = [&]() {
               for (const ScenarioContext::DebugValues& values : steps) {
@@ -1091,17 +808,9 @@ void RegisterBuiltInScenarios() {
             context.Measure("debug.step_hidden", [&]() { step(); });
           },
   });
-  // Pointer travel over a program that owns the mouse (Claude Code's fullscreen
-  // TUI: alternate screen, DECSET 1003 + SGR): every move resolves the cursor --
-  // which asks the session whether the program lit the cell under it
-  // (TerminalHoverAffordance) -- and reports the move to the program once per cell
-  // crossed. Half-cell steps, so half the moves stay in their cell and must cost
-  // no report; midway the program lights the control under the pointer, as
-  // Claude Code's "Jump to bottom" does on hover.
   PerfHarness::RegisterScenario(Scenario{
       .name = "terminal_mouse_owner_hover",
       .smoke = false,
-      // Iteration 0 pays the project open and the emulator's first buffer growth.
       .warmup_iterations = 1,
       .run =
           [](ScenarioContext& context) {
@@ -1126,7 +835,6 @@ void RegisterBuiltInScenarios() {
                 const auto result = context.MouseMoveHover(x, start.y);
                 context.PumpPartialFrame(result.redraw);
                 if (i == 160) {
-                  // The program lights the control the pointer is over.
                   context.FeedTerminalOutput(
                       "\x1b[22;40H\x1b[38;2;255;255;255;48;2;70;70;70m Jump to bottom (ctrl+End) \x1b[0m");
                 }
@@ -1143,21 +851,13 @@ void RegisterBuiltInScenarios() {
   PerfHarness::RegisterScenario(Scenario{
       .name = "terminal_alt_screen_toggle",
       .smoke = false,
-      // Iteration 0 pays the project open and the emulator's first buffer growth;
-      // without a warmup it alone governs p95/max and the gate flaps.
       .warmup_iterations = 1,
-      // Revision 2: f38ef7fd, the same change as terminal_scroll_long_output --
-      // revision 1 toggled the alternate screen over an empty primary buffer.
       .measurement_revision = 2,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/small_project");
             context.PumpFrames(2);
             context.Measure("terminal.open", [&]() { context.OpenTerminal("perf-alt-screen"); });
-            // Fill a deep primary scrollback, then toggle the alternate screen many
-            // times. Each toggle enters + exits, which previously deep-copied the
-            // full primary scrollback twice; this is what surfaces that cost (and
-            // confirms the move-based swap that replaced it).
             std::string scrollback;
             scrollback.reserve(2000 * 32);
             for (int i = 0; i < 2000; ++i) {
@@ -1178,17 +878,6 @@ void RegisterBuiltInScenarios() {
             context.CloseAllTerminals();
           },
   });
-  // The terminal's paint over output that changes colour every few cells -- what
-  // a compiler, `ls --color` or a TUI prints -- plain, then wholly selected. Every
-  // cell resolves its colours each frame (TerminalRowPaint) and a selected cell
-  // also composites the selection wash and corrects its contrast; the other
-  // terminal scenarios paint one-colour text and no selection, so neither cost
-  // showed anywhere. Full frames, so the panel is repainted each time. The two
-  // paint phases' allocation counts are equal (and equal to the build before the
-  // planner): selecting allocates nothing per frame. The gap between this
-  // scenario's total and its phases is the select-all and its copy to the
-  // primary selection. Introduced at 8.4 -> 6.3 us per plain panel paint
-  // (WorkspaceShell::RenderBottomPanel, MICROIDE_PERF_SUMMARY), ~14 us selected.
   PerfHarness::RegisterScenario(Scenario{
       .name = "terminal_paint_colored_selection",
       .smoke = false,
@@ -1225,14 +914,6 @@ void RegisterBuiltInScenarios() {
             context.CloseAllTerminals();
           },
   });
-  // A keystroke's echo: one row of a full, coloured screen changes and the frame
-  // that samples it is a partial one. The grid's rows are derived units
-  // (BottomPanelTerminalGridPaint.h), so that frame repaints the echo's row and
-  // paint skips the rows its clip cannot reach; it used to repaint the pane --
-  // every row planned and drawn -- for each echoed character, and the key before
-  // it had already repainted the panel's body. Typing and erasing, so the row
-  // never wraps and the screen never scrolls: every frame is one row's change.
-  // Not baseline_gated yet: no reference run on a quiet box has recorded it.
   PerfHarness::RegisterScenario(Scenario{
       .name = "terminal_echo_partial_frames",
       .smoke = false,
@@ -1259,7 +940,6 @@ void RegisterBuiltInScenarios() {
             output += "prompt$ ";
             context.FeedTerminalOutput(output);
             context.PumpFrames(2);
-            // What the session's wake asks for: a frame, no rect.
             workspace::WorkspaceShell::RenderInvalidation wake;
             wake.frame = true;
             context.Measure("terminal.echo_400_frames", [&]() {
@@ -1279,7 +959,6 @@ void RegisterBuiltInScenarios() {
       .smoke = false,
       .run =
           [](ScenarioContext& context) {
-            // Keep default runs practical; CI/nightly can override this via env.
             const std::uint64_t default_seconds = 3ULL;
             std::uint64_t soak_seconds = default_seconds;
             if (const char* env = std::getenv("MICROIDE_PERF_LONG_SOAK_SECONDS")) {
@@ -1329,50 +1008,17 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(1);
           },
   });
-  // CPU the process may spend across the 27 s soak window, summed over every
-  // thread. Set from measurement with headroom, not from a guess -- see the
-  // scenario body for what it does and does not cover.
-  // CPU the whole process may spend across the 27 s soak window, summed over
-  // every thread. Measured on perf-runner-v1 across ten iterations: 3.85, 3.95,
-  // 4.09, 4.16, 4.67, then 8.55, 9.25, 10.31, 10.57, 10.69 -- one run, one clean
-  // step where the governor walked the clock down (harness.cpu_calibration_ns
-  // 671 -> 857 us at the same boundary). 20 ms sits at ~2x the slow mode, which
-  // is 0.07% CPU across the window; a regression that so much as wakes a thread
-  // at 10 Hz for 27 s lands far above it. Do not tighten it toward the fast mode
-  // -- the fast mode is a property of the machine, not of the code.
   constexpr double kIdleSoakCpuBudgetMs = 20.0;
   PerfHarness::RegisterScenario(Scenario{
       .name = "idle_soak_30s",
       .smoke = false,
-      // One discarded pass. Opening the fixture project costs the watcher ~1000
-      // coalesced events and the file index a full build, none of which is what
-      // "idle" means; that pass measured 32-51 ms against a 14 ms steady state
-      // and owned this scenario's max and p95 outright.
       .warmup_iterations = 1,
-      // Replaced by the soak-window assertion in the body -- see gate_cpu_metrics
-      // in PerfHarness.h for why the iteration-level number cannot gate here.
       .gate_cpu_metrics = false,
       .run =
           [](ScenarioContext& context) {
             context.PumpFrames(2);
-            // Section 13.E.3: prime outline debounce + active snippet placeholder session, then verify no
-            // new SDL wake cadence during the soak window (same zero-wake assertion as before).
             context.PrimeEditorEssentialsIdleSoakSurface();
-            // Task 9.6: assert watcher/executor threads generate zero wake events after settling.
-            // Allow 3 s for background work to settle before the soak window begins.
             context.Wait(std::chrono::seconds(3));
-            // Scope the CPU assertion to the soak window itself. The iteration's
-            // baseline-gated p50_cpu_ms cannot do this job: 18 of the ~15 ms it
-            // measures are harness frames at ~0.83 ms each, and two or three of
-            // those are rendered on a core that just woke from 27 s of sleeping,
-            // at the 605 MHz hardware floor rather than the 5157 MHz ceiling.
-            // Whether the governor has ramped by then is what decides a 15 ms
-            // iteration from a 30 ms one -- the same binary passed and failed the
-            // same +100% gate on consecutive runs with byte-identical application
-            // counters. The application's own idle cost, which is the whole point
-            // of this scenario, is the ~2 ms residual underneath all that.
-            // Measured here it is directly assertable, exactly like the zero-wake
-            // budget, and immune to the clock question (TD-2026-08-05-137).
             const double cpu_before_soak = ProcessCpuMilliseconds();
             const std::uint64_t wakeups_during_soak =
                 context.Wait(std::chrono::seconds(27));
@@ -1390,16 +1036,6 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(1);
           },
   });
-  // Task 9.2: file_finder_cold — open large fixture, measure time-to-first file-finder result.
-  //
-  // The finder rebuilds its whole candidate cache whenever the file index version
-  // moves, and the index is built on a background thread, so WITHOUT the wait
-  // below the rebuild lands in one or two of the ten iterations at random: the
-  // measured allocations were 286 on the median and ~42,000 on the p95, and which
-  // run captured a baseline decided whether the gate passed. Waiting for the index
-  // to reach its last file puts the rebuild inside EVERY iteration -- which is
-  // also the case the scenario is named for, a *cold* finder over a fully indexed
-  // 10k-file project -- and makes the count identical run to run.
   PerfHarness::RegisterScenario(Scenario{
       .name = "file_finder_cold",
       .smoke = false,
@@ -1418,31 +1054,15 @@ void RegisterBuiltInScenarios() {
               throw std::runtime_error("file_finder_cold: file index did not finish building");
             }
             context.PumpFrames(2);
-            // Phased so the allocation tracer can be aimed at the finder rather
-            // than at opening and indexing a 10k-file project, which out-allocates
-            // it by orders of magnitude (TD-2026-08-06-151).
             context.Measure("file_finder_cold.open_finder", [&] {
               context.OpenFileFinder();
               context.PumpFrames(1);
             });
           },
   });
-  // Typing IN the finder, which is the interactive path and had no scenario at
-  // all: file_finder_cold measures the rebuild that happens once per index
-  // version change, and nothing measured the per-keystroke rank over the whole
-  // 10k-file candidate set. That is the loop the match scorer runs in, so a
-  // scoring change (TD-2026-08-06-154's ranking follow-up) had no gate.
-  //
-  // Each character is its own frame, as typing is. The first characters are the
-  // expensive ones: "f" matches nearly the whole index, and the forward-typing
-  // narrowing then shrinks the candidate set every keystroke — the counters
-  // (search.file_finder_candidates_scanned vs file_finder_refresh_calls) are
-  // what say by how much.
   PerfHarness::RegisterScenario(Scenario{
       .name = "file_finder_type_query",
       .smoke = false,
-      // The cache build lands in the first pass; discard it so every measured
-      // iteration is the warm, version-stable typing path.
       .warmup_iterations = 1,
       .tolerance_p95_percent = tolerance::kJitterWallP95,
       .tolerance_max_percent = tolerance::kJitterWallMax,
@@ -1470,9 +1090,6 @@ void RegisterBuiltInScenarios() {
                 context.PumpFrames(1);
               }
             });
-            // Backspacing is the case narrowing cannot serve: a shrinking query
-            // falls back to a full scan of the index, so it is the worst-case
-            // keystroke and the one a scoring regression shows up in first.
             context.Measure("file_finder_type_query.backspace_rescan", [&] {
               for (int i = 0; i < 4; ++i) {
                 context.KeyDown(SDLK_BACKSPACE);
@@ -1481,24 +1098,10 @@ void RegisterBuiltInScenarios() {
             });
           },
   });
-  // Task 9.4: git_sidebar_activate — open git fixture, activate sidebar, measure first status.
   PerfHarness::RegisterScenario(Scenario{
       .name = "git_sidebar_activate",
       .smoke = false,
-      // The activation dispatches an async git status; five frame pumps caught
-      // however much of it happened to have landed, so the allocation count --
-      // this suite's one deterministic oracle -- wandered 498/534/595/624/626
-      // across runs with `git.commands_run`, `subprocess.spawns` and
-      // `git.command_output_bytes` byte-identical. Waiting for the refresh to
-      // land puts the same work inside the window every time, and it is also what
-      // this scenario claims to measure ("first status"). The warmup discards the
-      // 4,137-allocation cold pass that owned max and p95.
       .warmup_iterations = 1,
-      // Revision 2: 23ccb088 (per-scenario cold child process) and b4bac8e0
-      // (isolated app root) changed what this scenario inherits from the process,
-      // and ae52a755 pointed it at a git_status_project that nothing had been
-      // generating. Its pre-v2.9.0 numbers describe a different measurement -- one
-      // of the three phantom "regressions" TD-2026-08-07-167 had to explain away.
       .measurement_revision = 2,
       .run =
           [](ScenarioContext& context) {
@@ -1512,41 +1115,13 @@ void RegisterBuiltInScenarios() {
             }
             context.PumpFrames(2);
             context.ActivateGitSidebar();
-            // Run the status the activation dispatched, synchronously, the way
-            // every git-workstation scenario does. Activating alone dispatches it
-            // onto the background executor and the five frame pumps below caught
-            // however much of it happened to have landed -- so this scenario's
-            // allocation count, the suite's one deterministic oracle, wandered
-            // 498/534/595/624/626 across runs with git.commands_run,
-            // subprocess.spawns and git.command_output_bytes byte-identical.
             workspace::WorkspaceShell::TestAccess::PerfRunGitSidebarRefreshSync(context.Shell());
             context.PumpFrames(5);
           },
   });
-  // The shell-thread cost of STARTING a project search when the file index has
-  // moved since the last one — which, in an editing session, is every search
-  // after every save.
-  //
-  // `search_first_result` next door cannot see this. It measures a steady state
-  // where the index has not changed, so `SnapshotPathsWithVersion` returns the
-  // cached list and the whole phase is 13 allocations. `FileIndex::ApplyBatch`
-  // marks both derived caches dirty on any change, and the next snapshot rebuilds
-  // the whole filtered path list — synchronously, on the shell thread, under the
-  // index's exclusive lock, at roughly two allocations per indexed file because a
-  // `std::filesystem::path` copy allocates its pathname AND its parsed component
-  // list. On this 10k-file fixture that is ~20,000 allocations between the
-  // keystroke and the first result, and until this scenario existed nothing
-  // measured it (TD-2026-08-17-259).
-  //
-  // Deterministic without a real watcher: SimulateExternalFileChange dispatches a
-  // synthetic FileIndexWatcher batch through the shell's own callback and drains
-  // it on this thread. It appends a byte because an Upsert whose mtime and size
-  // both match is not a change, and ApplyBatch returns early without invalidating
-  // anything — the fixture is restored by the harness afterwards.
   PerfHarness::RegisterScenario(Scenario{
       .name = "project_search_start_after_index_change",
       .smoke = false,
-      // The index build settles over several passes, same as search_first_result.
       .warmup_iterations = 4,
       .tolerance_p95_percent = tolerance::kJitterWallP95,
       .tolerance_max_percent = tolerance::kJitterWallMax,
@@ -1566,39 +1141,17 @@ void RegisterBuiltInScenarios() {
               throw std::runtime_error(
                   "project_search_start_after_index_change: file index did not build in time");
             }
-            // Warm the derived path cache, then DISMISS the overlay. An open
-            // project-search overlay re-runs itself when the project changes, so
-            // leaving it up meant the rebuild landed on the frame that delivered
-            // the change and the measured window found a warm cache — the phase
-            // read a cache hit while looking like it measured a rebuild.
-            // A DIFFERENT query from the measured one below. Re-running a search
-            // for the query already in the box is a no-op, so a warm-up that used
-            // the same string left the measured window doing nothing at all.
             context.StartSearch("symbol_00001");
             if (!context.WaitForProjectSearchFinished(std::chrono::seconds(15))) {
               throw std::runtime_error(
                   "project_search_start_after_index_change: warm-up search did not finish");
             }
-            // The incremental watcher batch, not SimulateExternalFileChange: that
-            // helper also runs a forced project check, and the forced path calls
-            // FileIndex::EnsureFresh, which rebuilds the cache EAGERLY inside the
-            // rescan. A save takes the watcher path. Only mtime/size on the change
-            // record move, so the fixture stays byte-identical (TD-2026-08-06-155).
-            //
-            // The dispatch is INSIDE the measured window, and deliberately: the
-            // rebuild lands wherever the first reader after the invalidation is,
-            // and that reader turned out to be the frame that applies the batch
-            // rather than the search start. Measuring only the search start read a
-            // cache hit while looking like it measured a rebuild — which is the
-            // failure mode TD-2026-08-17-258 is about, caught here by the guard
-            // below before a baseline was ever recorded. So the phase is the whole
-            // shell-thread sequence a save-then-search costs.
             platform::IndexUpdateBatch batch;
             batch.is_initial = false;
             platform::IndexUpdateBatch::Change change;
             change.kind = platform::IndexUpdateBatch::Kind::CreatedOrModified;
             change.entry.relative_path = "src_00/file_00000.cpp";
-            change.entry.size = 0;  // differs from the indexed size -> a real change
+            change.entry.size = 0;
             change.entry.mtime = std::filesystem::file_time_type::clock::now();
             batch.changes.push_back(std::move(change));
             const std::uint64_t rebuilds_before =
@@ -1613,10 +1166,6 @@ void RegisterBuiltInScenarios() {
               context.PumpFrames(1);
               context.StartSearch("symbol_09999");
             });
-            // A gate reading a number is not evidence that the operation it names
-            // happened (TD-2026-08-17-258). The derived-path-cache rebuild is the
-            // subject, so assert it ran: with a warm cache this phase collapses to
-            // a handful of allocations and stays green forever.
             if (util::ReadPerformanceCounter(util::PerfCounterId::FileIndexRebuilds) ==
                 rebuilds_before) {
               throw std::runtime_error(
@@ -1630,44 +1179,9 @@ void RegisterBuiltInScenarios() {
             }
           },
   });
-  // Task 9.5: search_first_result — search for a symbol near end of 10k-file corpus.
-  // Measures ~2.5 ms, which four consecutive runs of one unchanged binary
-  // spread by +-23%. Allocations are byte-identical across those runs, so they
-  // keep the tight gate and stay the real oracle here.
   PerfHarness::RegisterScenario(Scenario{
       .name = "search_first_result",
       .smoke = false,
-      // WHAT GATES THIS SCENARIO IS THE PHASE, NOT THE TOTAL. The scenario total
-      // is ~20,051 allocations and all but a handful of them are opening a 10k-file
-      // fixture and building its index; the search this scenario is named after is
-      // 13 on the shell thread (the counter is per-thread, so the worker's own work
-      // is charged to the worker — see AllocationCounter.cpp). That 13 is a
-      // STEADY-STATE reading: the index has not moved since the last search, so the
-      // derived path cache is warm. What a search costs after a save is a different
-      // number by three orders of magnitude, and it is
-      // `project_search_start_after_index_change` above that measures it.
-      // The total is deterministic and tightly gated and it would not notice the
-      // search doubling — a +0.7% move inside a +10% envelope. That claim used to
-      // live here as "the authoritative, precise regression signal", which was a
-      // statement about project open (TD-2026-08-06-153). The oracle is
-      // `phase[search_first_result.search_to_first_result].p50_allocations`, and
-      // the total is now a coarse backstop for the setup around it.
-      //
-      // Warm up until the process reaches steady state: the first pass builds the
-      // 10k-file index cold, and background subsystems (index watcher initial
-      // scan, etc.) keep allocating for several more passes before quiescing.
-      // Discarding those settling passes — combined with the single search worker,
-      // index-ready wait, and drain-once below — is what makes both the phase and
-      // the total reproduce run to run. Every iteration measures the same
-      // steady-state value, so the total's p95/max are the same metric under
-      // noise: their razor-thin baseline has no headroom, so a lone iteration
-      // spilled by an incidental background wake would trip them. Widen p95/max to
-      // absorb that irreducible tail noise rather than false-positive.
-      //
-      // That determinism is the ALLOCATION count, not the wall: the measured phase
-      // is ~2.5 ms and four consecutive runs of one unchanged binary spread its
-      // wall p50 by +-23%, so the wall envelopes are widened too and the allocation
-      // envelopes stay tight. Which is the point of decoupling them.
       .warmup_iterations = 16,
       .tolerance_p95_percent = tolerance::kJitterWallP95,
       .tolerance_max_percent = tolerance::kJitterWallMax,
@@ -1681,25 +1195,13 @@ void RegisterBuiltInScenarios() {
             if (!context.Open(fixture)) {
               throw std::runtime_error("search_first_result: failed to open fixture");
             }
-            // Determinism: the project search's candidate set is the file index
-            // and its result stream is async, so a bare PumpFrames snapshot
-            // measured a random point mid-index / mid-search (its
-            // p50_allocations swung ~80x run to run). Drive both async stages to
-            // fixed states so the whole-run metric is deterministic. symbol_09999
-            // lives in the last fixture file (src_49/file_09999.cpp), so its
-            // presence in the index means the initial build has fully completed.
             if (!context.WaitForFileIndexPath("src_49/file_09999.cpp",
                                               std::chrono::seconds(15))) {
               throw std::runtime_error("search_first_result: file index did not build in time");
             }
             bool search_finished = false;
             context.Measure("search_first_result.search_to_first_result", [&] {
-              // perf-measure-waits-on-clock: WaitForProjectSearchFinished is written
-              // NOT to pump the shell while spinning and to drain exactly once after
-              // completion, precisely so it can sit inside a measured window; its
-              // spin is a flag check plus sleep_for and allocates nothing. Verified
-              // the way TD-2026-08-10-179 prescribes -- three runs of one unchanged
-              // binary read p50_allocations 20,149 / 20,149 / 20,149.
+              // perf-measure-waits-on-clock: WaitForProjectSearchFinished spins on a flag and allocates nothing
               context.StartSearch("symbol_09999");
               search_finished = context.WaitForProjectSearchFinished(std::chrono::seconds(15));
               context.PumpFrames(2);
@@ -1709,8 +1211,6 @@ void RegisterBuiltInScenarios() {
             }
           },
   });
-  // Wall spread +33% p50 / +23% p95 across four consecutive runs of one
-  // unchanged binary; allocations byte-identical, so they stay tight.
   PerfHarness::RegisterScenario(Scenario{
       .name = "cold_startup_small_project",
       .smoke = true,
@@ -1722,8 +1222,6 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(5);
           },
   });
-  // Wall spread +29% p50 across four consecutive runs of one unchanged binary.
-  // Allocations are exact (the counter is per-thread), so they stay tight.
   PerfHarness::RegisterScenario(Scenario{
       .name = "cold_startup_large_project",
       .smoke = true,
@@ -1738,16 +1236,6 @@ void RegisterBuiltInScenarios() {
   PerfHarness::RegisterScenario(Scenario{
       .name = "switch_and_idle",
       .smoke = true,
-      // Net heap retention is not a measurement for this scenario, and the reason
-      // is the same one multi_project_switch records: memory this iteration
-      // allocates on the shell thread is released somewhere the per-thread
-      // counter cannot see -- a later iteration's teardown, or a background
-      // thread (the queued session-state write, whose encode runs here and whose
-      // buffer is freed by the writer). The reading is +86 KB EVERY iteration
-      // while `rss_growth_bytes` is 0-8 KB and trending to zero, so the metric
-      // claims ~780 KB retained across a run that grew ~119 KB and flattened.
-      // A gate that a flat RSS contradicts is not measuring retention
-      // (TD-2026-08-12-191). See Scenario::gate_net_heap_metrics.
       .gate_net_heap_metrics = false,
       .run =
           [](ScenarioContext& context) {
@@ -1768,8 +1256,6 @@ void RegisterBuiltInScenarios() {
             }
             context.PumpFrames(3);
 
-            // The two project opens above are the setup; this is the switch the
-            // scenario is named for, plus the idle settle after it.
             context.Measure("switch_and_idle.switch_and_settle", [&] {
               (void)context.Open(project_a);
               context.PumpFrames(1);
@@ -1779,7 +1265,6 @@ void RegisterBuiltInScenarios() {
           },
   });
 
-  // OpenSpec §13.B — block structure (folding, sticky scroll, indent guides / whitespace, outline).
   PerfHarness::RegisterScenario(Scenario{
       .name = "editor_fold_recompute",
       .smoke = true,
@@ -1792,8 +1277,6 @@ void RegisterBuiltInScenarios() {
             microide::editor::TextViewport& vp = TA::ActiveEditor(context.Shell());
             std::vector<double> samples_us;
             samples_us.reserve(28);
-            // Edits deep in the brace nest invalidate a broad prefix; `EnsureFoldingModelFresh` stays
-            // on the `ComputeWithBudget(2000)` path (WorkspaceFoldingRefresh.cpp).
             for (int i = 0; i < 24; ++i) {
               (void)context.ExecuteCommand("goto 25000");
               const auto t0 = std::chrono::steady_clock::now();
@@ -1825,9 +1308,6 @@ void RegisterBuiltInScenarios() {
             (void)TA::EnsureActiveFoldingModelFresh(context.Shell());
             std::vector<double> samples_us;
             samples_us.reserve(96);
-            // The reserve stays OUTSIDE the phase deliberately: the sample buffer
-            // is the harness's, not the scenario's, and one 96-double allocation
-            // charged to the phase would be the largest thing in an empty trace.
             context.Measure("editor_fold_viewport_refresh.scroll_frame", [&] {
               for (int i = 0; i < 96; ++i) {
                 const auto t0 = std::chrono::steady_clock::now();
@@ -1926,14 +1406,6 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(2);
           },
   });
-  // openspec change split-layout-revision-tiers — the contract scenario.
-  //
-  // After the tier split, pure scrolling over a syntax-highlighted file MUST
-  // NOT bump `content_revision`, `syntax_revision`, or `layout_shape_revision`.
-  // Only `presentation_revision` may move (selection caret, hover overlay).
-  // The scenario asserts the per-tier counters directly so a future change
-  // that re-introduces a cross-tier invalidation on the scroll path fails
-  // here regardless of wall-time impact.
   PerfHarness::RegisterScenario(Scenario{
       .name = "editor_scroll_only_no_content_bump",
       .smoke = true,
@@ -1941,8 +1413,6 @@ void RegisterBuiltInScenarios() {
           [](ScenarioContext& context) {
             OpenEditorEssentials50kCppOrThrow(context);
             context.PumpFrames(20);
-            // Capture counters AFTER warm-up so the initial file-load
-            // invalidations are excluded from the measurement window.
             const std::uint64_t content_before =
                 microide::util::ReadPerformanceCounter(
                     microide::util::PerfCounterId::EditorContentRevisionBumps);
@@ -1998,7 +1468,6 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(2);
           },
   });
-  // OpenSpec §13.C — pair and indent (editor_essentials_50k_cpp).
   PerfHarness::RegisterScenario(Scenario{
       .name = "editor_bracket_match_caret_motion",
       .smoke = false,
@@ -2006,14 +1475,6 @@ void RegisterBuiltInScenarios() {
           [](ScenarioContext& context) {
             OpenEditorEssentials50kCppOrThrow(context);
             microide::editor::TextViewport& vp = context.ActiveViewport();
-            // Measure FindBracketMatch, the entry point the editor actually calls on
-            // caret motion -- NOT the FindBracketMatchInLines test seam. The seam takes
-            // a caller-built line vector, so timing it excluded the per-call window
-            // materialization that production pays, and the old scenario prebuilt a
-            // view for all 50k lines outside the timed loop: exactly the O(file) shape
-            // FindBracketMatch was rewritten to stop doing. A regression in the window
-            // build was therefore invisible to this baseline.
-            // Shallow nest depth keeps bracket scans bounded while the 50k-line buffer is live.
             vp.MoveCursorTo(24, 8, false);
             std::vector<double> samples_us;
             samples_us.reserve(400);
@@ -2026,8 +1487,6 @@ void RegisterBuiltInScenarios() {
                   std::chrono::duration<double, std::micro>(t1 - t0).count());
               vp.MoveCursorHorizontal(1);
             }
-            // design.md targets ≤ 50µs for the balanced scan; `HighlightedLineTokens` on this path
-            // is heavier under Xvfb. Baseline + this envelope gate gross regressions on large fixtures.
             EnforceP95Microseconds("editor_bracket_match_caret_motion", samples_us, 125'000.0);
             context.PumpFrames(2);
           },
@@ -2053,13 +1512,10 @@ void RegisterBuiltInScenarios() {
                 throw std::runtime_error("editor_auto_close_typing: undo failed");
               }
             }
-            // Advisory: stay within practical typing latency on the large buffer (see design.md + typing_large_file).
             EnforceP95Microseconds("editor_auto_close_typing", samples_us, 200'000.0);
             context.PumpFrames(2);
           },
   });
-  // Wall spread +54% p50 / +90% max across four consecutive runs of one
-  // unchanged binary; allocations byte-identical, so they stay tight.
   PerfHarness::RegisterScenario(Scenario{
       .name = "editor_smart_indent_typing",
       .smoke = false,
@@ -2076,12 +1532,6 @@ void RegisterBuiltInScenarios() {
             vp.MoveCursorTo(header_line, vp.lines()[header_line].size(), false);
             std::vector<double> samples_us;
             samples_us.reserve(128);
-            // Declared as a phase so the numbers describe SMART INDENT. Without
-            // one, the scenario's allocation metric covered
-            // OpenEditorEssentials50kCppOrThrow — opening a 50,000-line C++ file
-            // — which dwarfs 120 newline+undo cycles, so a drift row against it
-            // was reporting movement in the file-open path under this scenario's
-            // name (TD-2026-08-12-193).
             context.Measure("smart_indent.newline_undo_burst", [&] {
               for (int i = 0; i < 120; ++i) {
                 const auto t0 = std::chrono::steady_clock::now();
@@ -2098,8 +1548,6 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(2);
           },
   });
-  // Wall spread +29% p50 / +37% p95 across four consecutive runs of one
-  // unchanged binary; allocations byte-identical, so they stay tight.
   PerfHarness::RegisterScenario(Scenario{
       .name = "editor_surround_multi_caret",
       .smoke = false,
@@ -2194,11 +1642,6 @@ util::JsonValue ToJson(const Aggregate& aggregate,
   for (const Iteration& iteration : aggregate.iterations) {
     util::JsonObject phase_duration_json;
     util::JsonObject phase_metrics_json;
-    // Repeats of one phase name within an iteration SUM, exactly as the gate
-    // aggregates them. Keying a JSON object by name and assigning meant the last
-    // call of a repeated phase silently replaced every earlier one, so a report
-    // consumer (tools/perf-compare.py) recomputing from these would disagree
-    // with the gate about what the iteration cost.
     std::unordered_map<std::string, Iteration::PhaseMetrics> phase_totals;
     std::vector<std::string> phase_order;
     for (const Iteration::PhaseMetrics& phase : iteration.phase_metrics) {
@@ -2247,11 +1690,6 @@ util::JsonValue ToJson(const Aggregate& aggregate,
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
-  // The gate's own verdict, recorded next to the measurement it was reached from.
-  // Without it a report says what was measured but not what it was measured
-  // against, so reading drift out of a directory of reports means re-deriving
-  // every envelope from the baselines as they exist *today* -- which is exactly
-  // the information a rebaseline destroys.
   util::JsonValue baseline_json = util::JsonValue();
   if (comparison.has_value()) {
     util::JsonArray metrics_json;
@@ -2266,10 +1704,6 @@ util::JsonValue ToJson(const Aggregate& aggregate,
           {"delta_percent", MetricDeltaPercent(metric)},
           {"envelope_used_percent", EnvelopeUsedPercent(metric)},
           {"passed", metric.passed},
-          // A metric can be measured, reported, and still not decide the run.
-          // A report that records only `passed` cannot tell a gate that held
-          // from one that was declined, which is the whole shape of a vacuous
-          // gate (validation-traps.md).
           {"enforced", metric.enforced},
           {"note", metric.note},
       });
@@ -2286,10 +1720,6 @@ util::JsonValue ToJson(const Aggregate& aggregate,
     baseline_json = util::JsonObject{{"gated", false}};
   }
 
-  // The aggregated phases, next to the scenario totals they are a share of.
-  // The per-iteration phase records were already in the report and nothing
-  // compared them to anything; this is the summary the gate reads
-  // (TD-2026-08-06-153).
   util::JsonArray phases_json;
   phases_json.reserve(aggregate.phases.size());
   for (const PhaseMetricSet& phase : aggregate.phases) {
@@ -2299,9 +1729,6 @@ util::JsonValue ToJson(const Aggregate& aggregate,
         {"max_allocations", phase.max_allocations},
         {"p50_wall_ms", phase.p50_wall_ms},
         {"iterations", static_cast<std::int64_t>(phase.iterations)},
-        // What share of the scenario total this phase is. The number that made
-        // search_first_result's "authoritative regression signal" read as 0.7%
-        // of its own gate.
         {"share_of_scenario_allocations",
          aggregate.metrics.p50_allocations > 0.0
              ? phase.p50_allocations / aggregate.metrics.p50_allocations
@@ -2336,37 +1763,18 @@ util::JsonValue ToJson(const Aggregate& aggregate,
   };
 }
 
-}  // namespace
-}  // namespace microide::tests::perf
+}
+}
 
 int main(int argc, char** argv) {
   using namespace microide::tests::perf;
-  // Scenarios drive the shell from this thread, so it is the main thread for
-  // trace-summary purposes.
   microide::util::MarkTracingMainThread();
-  // Pin project-search to a single worker for the whole run. The allocation
-  // counter is process-global (counts every thread), so N parallel search workers
-  // make a search scenario's measured allocations non-deterministic; one worker
-  // makes them reproducible. This is a regression harness, not an absolute-latency
-  // benchmark, so serialized-but-stable is the right trade (see perf-harness.md).
-  // Respects an existing value so a caller can override.
-  setenv("MICROIDE_SEARCH_WORKER_LIMIT", "1", /*overwrite=*/0);
-  // Placeholder terminals (no real shell spawn) during perf measurement; was a
-  // compile-time MICROIDE_TESTING fork, now a runtime switch (see TestMain.cpp).
+  setenv("MICROIDE_SEARCH_WORKER_LIMIT", "1", 0);
   microide::terminal::SetUsePlaceholderTerminalsForTesting(true);
   microide::workspace::SetNativeDialogsDisabledForTesting(true);
-  // Process-wide isolation floor (TD-2026-08-07-165). RunScenario establishes a
-  // fresh app-root per scenario, which is what gives each scenario a clean state
-  // directory — but for a long time it did so one statement after the Driver
-  // (and therefore the shell) was constructed, so the shell loaded the
-  // developer's real ~/.local/state/microide and every project-opening scenario's
-  // allocation count depended on how long microide had been used on that machine.
-  // The ordering is fixed there; this is the floor under it, so that ANY read
-  // that happens before a per-scenario root exists still lands in /tmp rather
-  // than in the operator's home.
   {
     std::string isolate_error;
-    if (EstablishIsolatedAppRoot(/*keep_artifacts=*/false, &isolate_error).empty()) {
+    if (EstablishIsolatedAppRoot(false, &isolate_error).empty()) {
       std::cerr << "[perf] failed to establish the process-level isolated app-root: "
                 << isolate_error << "\n";
       return 1;
@@ -2389,20 +1797,14 @@ int main(int argc, char** argv) {
   }
 
   if (options->print_build_config) {
-    // Stdout, one line, nothing else: this is a machine-read probe.
     std::cout << PerfBuildConfig() << '\n';
     return 0;
   }
 
   g_require_fixtures = options->require_fixtures;
 
-  // Before anything is measured: settle which CPUs this process runs on. On a
-  // hybrid machine the scheduler's choice is worth up to 2.4x on a small
-  // scenario, which is larger than most of the gates -- see PerfCpuAffinity.h.
   const CpuAffinityPlan affinity = ApplyPerfCpuAffinity(options->pin_cores);
   std::cerr << "[perf] cpu affinity: " << affinity.description << '\n';
-  // A run that declined the harness's own CPU set is measuring a different
-  // machine than the baselines describe, same as a windowed video lane.
   const bool unpinned_lane = options->pin_cores != "auto";
   if (unpinned_lane && options->update_baseline) {
     std::cerr << "--update-baseline is only valid with --pin-cores=auto; measuring on a "
@@ -2420,13 +1822,7 @@ int main(int argc, char** argv) {
   run_options.renderer_driver = options->renderer_driver;
   run_options.video_driver = options->video_driver;
 
-  // A non-software renderer is the advisory GPU lane: numbers are not
-  // cross-machine portable, so they are reported but never gated or written to
-  // baselines (mirrors the DAP advisory scenarios). The software lane stays the
-  // authoritative, baseline-gated reference.
   const bool gpu_lane = run_options.renderer_driver != "software";
-  // Isolation needs fork; on a platform without it the run silently falls back to
-  // the shared-process form rather than refusing to run at all, and says so.
   const bool isolate_scenarios = options->isolate_scenarios && ScenarioProcessIsolationAvailable();
   if (options->isolate_scenarios && !isolate_scenarios) {
     std::cerr << "[perf] per-scenario process isolation unavailable on this platform; "
@@ -2438,13 +1834,6 @@ int main(int argc, char** argv) {
               << ") is advisory and cannot write baselines\n";
     return 1;
   }
-  // Same rule for the video lane, and it is the one that actually bit: a real
-  // video driver adds window-system present cost to every frame-pumping
-  // scenario and none to the pure-unit ones, so a windowed run reads as a
-  // 2-12x regression across half the suite with byte-identical allocation
-  // counts. Two sessions chased that as a code regression before the lane was
-  // identified. Numbers from a windowed run are advisory and cannot be written
-  // back as baselines.
   const bool windowed_lane = run_options.video_driver != "dummy";
   if (windowed_lane && options->update_baseline) {
     std::cerr << "--update-baseline is only valid on the dummy video reference lane; "
@@ -2452,25 +1841,9 @@ int main(int argc, char** argv) {
               << ") measures window-system present cost and is advisory\n";
     return 1;
   }
-  // Is this run authoritative for the TIMING half of a baseline? Same predicate
-  // the report metadata uses for `provenance`, hoisted because the baselines are
-  // written inside the scenario loop below, long before the report is built.
-  //
-  // A run that is not authoritative can still write a baseline: the deterministic
-  // metrics (allocations, phase allocations, net heap) are portable, and the
-  // record carries `timing_is_advisory` so the machine-sensitive half is reported
-  // and explicitly not enforced until an idle reference run arms it. The
-  // alternative was all-or-nothing, which is why two scenarios shipped gating on
-  // nothing (TD-2026-08-12-186) and five allocation gates could not be tightened
-  // here (TD-2026-08-11-184).
   const bool reference_lane = !gpu_lane && !windowed_lane && !unpinned_lane &&
                               options->reference_runner.has_value() &&
                               *options->reference_runner == std::string("perf-runner-v1");
-  // A baseline recorded over fewer iterations than the gate will run is a gate
-  // that can never be held — the p95s land on a cold pass, and the resident mean
-  // records the settling series (memory: perf-baseline-drift-and-iteration-count,
-  // TD-2026-08-06-148). Same class of mistake as writing baselines from the GPU or
-  // windowed lane, so it is refused the same way rather than warned about.
   if (options->update_baseline && options->iterations < kDefaultIterations) {
     std::cerr << "--update-baseline requires at least " << kDefaultIterations
               << " iterations (got --iterations=" << options->iterations
@@ -2487,10 +1860,6 @@ int main(int argc, char** argv) {
     std::cerr << "remove or restore these scenarios before running perf baselines\n";
     return 1;
   }
-  // TD-2026-07-17-059: the reverse manifest direction — every baseline-gated
-  // scenario must have a committed baseline. A missing one would silently run
-  // against harness-default tolerances instead of a pinned budget. --update-baseline
-  // is exempt (that run is how a new scenario's baseline gets written).
   if (!options->update_baseline) {
     const auto missing_baselines = FindScenariosMissingBaseline(PerfHarness::RegisteredScenarios());
     if (!missing_baselines.empty()) {
@@ -2503,20 +1872,9 @@ int main(int argc, char** argv) {
     }
   }
   std::vector<Aggregate> aggregates;
-  // Keyed by scenario name so the report can record what each measurement was
-  // gated against, and so the end-of-run summary can rank PASSING metrics by how
-  // much of their envelope they consumed.
   std::unordered_map<std::string, BaselineComparison> comparisons;
   bool all_passed = true;
   std::size_t selected_count = 0;
-  // Integrity gate for the generated fixture trees: every tree with a committed
-  // manifest that is present must match it, or the run dies before measuring a
-  // different tree under the old name. A git fixture's digest includes its
-  // `git status`, so a scenario that left something staged is caught too. A tree
-  // that is ENTIRELY ABSENT is a skip (or a hard failure under --require-fixtures):
-  // they are gitignored and generated on demand by the ctest `microide_perf_fixtures`
-  // setup, so a fresh checkout legitimately has none of them -- and perf-canary runs
-  // microide_perf directly for one scenario that reads no fixture at all.
   if (options->require_fixtures) {
     static constexpr std::string_view kGeneratedFixtures[] = {
         "tests/perf/fixtures/kernel_sized_project",
@@ -2540,11 +1898,6 @@ int main(int argc, char** argv) {
   std::size_t run_index = 0;
   for (const Scenario& scenario : PerfHarness::RegisteredScenarios()) {
     PerfHarness::RunOptions probe = run_options;
-    // Mirror ShouldRunScenario exactly: with no explicit --scenarios list, an
-    // opt-in scenario (run_by_default=false, e.g. editor_moby_dick_workout whose
-    // fixture is a network fetch) is NOT selected. Without this the bare full
-    // run marked it selected while RunScenario skipped it, so the missing
-    // aggregate was misread as "scenario failed to run" and aborted the gate.
     const bool name_selected =
         probe.scenario_names.empty()
             ? scenario.run_by_default
@@ -2559,16 +1912,8 @@ int main(int argc, char** argv) {
       std::cerr << "[perf] running scenario " << run_index << "/" << selected_count << ": "
                 << scenario.name << '\n';
     }
-    // One child process per scenario when isolation is on, so a metric means
-    // what its name says instead of "this scenario, behind these fifty others"
-    // (TD-2026-08-06-152). The parent never initialises SDL or the shell and so
-    // stays single-threaded, which is what makes the fork safe.
     std::string isolation_error;
     std::optional<Aggregate> aggregate;
-    // `selected` mirrors ShouldRunScenario exactly (see above), so an unselected
-    // scenario is skipped here rather than costing a fork whose child would
-    // immediately decline it — a named single-scenario run would otherwise pay
-    // ~99 pointless process launches.
     if (isolate_scenarios && selected) {
       bool child_selected = true;
       aggregate = RunScenarioInChildProcess(scenario, run_options, &child_selected,
@@ -2588,18 +1933,9 @@ int main(int argc, char** argv) {
       }
       continue;
     }
-    // The scenario declared it cannot run (a missing fixture). Never compare it
-    // to a baseline, never write one from it, and never call it a pass: its
-    // metrics describe an empty function. Before this existed, such a scenario
-    // printed a line to stderr and then PASSED — `editor_moby_dick_workout`
-    // reported 7 allocations against a baseline of 138,599 and the run was green
-    // (TD-2026-08-10-170). A gated scenario that cannot run is a failed run; an
-    // advisory one is merely reported.
     if (!aggregate->skip_reason.empty()) {
       std::cerr << "[perf] SKIP " << scenario.name << " — " << aggregate->skip_reason << '\n';
       if (scenario.baseline_gated && !options->update_baseline) {
-        // Recorded, not returned on: one missing fixture must not hide the
-        // verdict of the eighty scenarios after it. The run still ends non-zero.
         std::cerr << "[perf] a baseline-gated scenario that cannot run is a failed run: its "
                      "committed baseline describes work this process did not do\n";
         all_passed = false;
@@ -2609,8 +1945,6 @@ int main(int argc, char** argv) {
     aggregates.push_back(*aggregate);
 
     if (gpu_lane) {
-      // Advisory GPU lane: report numbers, never gate or compare to the
-      // software baselines (different backend, non-portable timings).
       std::cerr << "[perf][gpu] " << scenario.name
                 << " p50=" << aggregate->metrics.p50_wall_ms << "ms"
                 << " p95=" << aggregate->metrics.p95_wall_ms << "ms\n";
@@ -2621,13 +1955,6 @@ int main(int argc, char** argv) {
         std::filesystem::path("tests/perf/baselines") / (scenario.name + ".json");
     if (options->update_baseline) {
       if (!scenario.baseline_gated) {
-        // Refusing to write an advisory scenario's baseline is right; aborting
-        // the whole run over it was not. A bare `--update-baseline` sweeps in
-        // every registered scenario, so one advisory entry made "rebaseline the
-        // suite" impossible -- the run died partway through and left every
-        // baseline it had not reached untouched, which is how the committed set
-        // drifted 3-8x stale. Skip it and carry on; fail only when the caller
-        // named it explicitly, where the request really is unsatisfiable.
         const bool named_explicitly =
             !options->scenarios.empty() &&
             std::find(options->scenarios.begin(), options->scenarios.end(), scenario.name) !=
@@ -2641,9 +1968,6 @@ int main(int argc, char** argv) {
         }
         continue;
       }
-      // A negative allocation tolerance means "inherit the matching wall
-      // tolerance" -- resolve it here so the written baseline always carries an
-      // explicit value.
       const auto resolve_alloc = [](double alloc_tol, double wall_tol) {
         return alloc_tol >= 0.0 ? alloc_tol : wall_tol;
       };
@@ -2659,70 +1983,24 @@ int main(int argc, char** argv) {
                                                             scenario.tolerance_p95_percent),
                          .alloc_max_percent = resolve_alloc(scenario.tolerance_alloc_max_percent,
                                                             scenario.tolerance_max_percent),
-                         // CPU carries the same scheduler jitter as wall, so it
-                         // inherits the scenario's *resolved* wall envelope rather
-                         // than the struct default. Writing the 10/20/50 default
-                         // next to a widened 100/150/200 wall envelope would gate
-                         // CPU ten times tighter than the metric it tracks, and
-                         // every scenario with a widened wall tolerance would flag
-                         // on CPU immediately.
                          .cpu_p50_percent = scenario.tolerance_p50_percent,
                          .cpu_p95_percent = scenario.tolerance_p95_percent,
                          .cpu_max_percent = scenario.tolerance_max_percent,
-                         // From the scenario, not the struct default: see
-                         // Scenario::tolerance_rss_percent for the rebaseline that
-                         // silently reset a deliberate widening.
                          .rss_mean_percent = scenario.tolerance_rss_percent,
                          .net_heap_percent = scenario.tolerance_net_heap_percent,
-                         // Phase allocation counts are a subset of the scenario
-                         // total measured on the same thread, so they inherit the
-                         // scenario's *resolved* allocation envelope rather than
-                         // the struct default -- a scenario that widened its
-                         // allocation gate for a reason widened it for its phases
-                         // too.
                          .phase_alloc_p50_percent = resolve_alloc(
                              scenario.tolerance_alloc_p50_percent,
                              scenario.tolerance_p50_percent)},
       };
-      // What the scenario actually measures, gated per phase (TD-2026-08-06-153).
-      // Written from the run, so a scenario with no Measure() call writes no
-      // phases and gates on its total exactly as before.
       record.phases = aggregate->phases;
       record.has_cpu_metrics = scenario.gate_cpu_metrics;
       record.has_rss_metrics = true;
-      // Always recorded, including at zero: unlike cpu/rss this metric is
-      // deterministic, so there is no run in which it is unmeasurable and a zero
-      // reading is a real one (TD-2026-08-06-150).
       record.has_net_heap_metrics = scenario.gate_net_heap_metrics;
-      // Record the clock this baseline was captured at, so a later run's CPU
-      // numbers can be compared in the same machine state instead of against a
-      // number that silently meant "measured on a core that happened to be at
-      // 5.1 GHz" (TD-2026-08-05-137).
       record.has_calibration = aggregate->metrics.p50_cpu_calibration_ns > 0.0;
-      // What the resident mean was averaged over, so a later short run is
-      // declined instead of gated against an incomparable number
-      // (TD-2026-08-06-148). From the aggregate, not from --iterations: a
-      // scenario that ran fewer iterations than requested must record what it
-      // actually measured.
       record.iterations = aggregate->iterations.size();
-      // Which revision of the scenario these numbers came from, so a later
-      // release diff can refuse to difference them against numbers taken from a
-      // different definition of the same scenario (TD-2026-08-07-167).
       record.measurement_revision = scenario.measurement_revision;
-      // Off the reference lane the timing half is a statement about THIS machine,
-      // so mark it as such rather than pretending otherwise. `=deterministic`
-      // preserves whatever the committed baseline already said (see the merge
-      // below), so a reference-recorded timing half is never downgraded by a
-      // local allocation rebaseline.
       record.timing_is_advisory = !reference_lane;
-      // Which build these numbers came out of. Written on both paths, including
-      // the deterministic merge below (which starts from `existing` and would
-      // otherwise carry an older configuration's label onto fresh numbers).
       record.build_config = PerfBuildConfig();
-      // The scenario's own jitter, measured on the run that is recording it. This
-      // is what lets the wall envelope be a property of the scenario instead of a
-      // constant nobody can review a hundred times (TD-2026-08-06-140 step two).
-      // From the NORMALISED series, because that is what the gate compares.
       record.wall_spread_percent =
           aggregate->metrics.p50_wall_ms > 0.0
               ? std::max(0.0, (aggregate->metrics.p95_wall_ms - aggregate->metrics.p50_wall_ms) /
@@ -2731,14 +2009,6 @@ int main(int argc, char** argv) {
       if (options->update_deterministic_only) {
         const std::optional<BaselineRecord> existing = LoadBaseline(baseline_path);
         if (!existing.has_value()) {
-          // No committed baseline to preserve the timing half of. This used to
-          // skip, on the grounds that minting a timing gate out of a measurement
-          // this mode exists to avoid taking would be worse than nothing. It is
-          // representable now: mint the record with its timing half marked
-          // advisory, so the deterministic metrics gate immediately and the
-          // machine-sensitive ones are reported and explicitly not enforced until
-          // a reference run arms them (TD-2026-08-12-186). Skipping meant a new
-          // scenario gated on NOTHING until somebody found an idle machine.
           BaselineRecord minted = record;
           minted.timing_is_advisory = true;
           if (!SaveBaseline(baseline_path, minted)) {
@@ -2783,12 +2053,6 @@ int main(int argc, char** argv) {
     }
     const BaselineComparison comparison = CompareToBaseline(*baseline, *aggregate);
     comparisons[scenario.name] = comparison;
-    // A windowed run measures window-system present cost the baselines never
-    // recorded, so its wall numbers are not comparable. Allocation counts are:
-    // they came out byte-identical across the dummy and x11 lanes on every
-    // scenario in the suite. Enforce the half that is still meaningful and
-    // annotate the other half rather than reporting a suite-wide wall failure
-    // that says nothing about the code.
     bool enforced_failure = false;
     for (const MetricComparison& metric : comparison.metrics) {
       if (metric.passed || !metric.enforced) {
@@ -2799,24 +2063,11 @@ int main(int argc, char** argv) {
       }
       enforced_failure = true;
     }
-    // Print a per-scenario verdict so a tripped gate is self-diagnosing: which
-    // scenario, which metric, baseline vs measured, the delta, and the tolerance
-    // it blew. Without this a failing run only surfaced a bare exit code and the
-    // offending metric had to be reverse-engineered from --report-json. Smoke
-    // runs do not enforce, so they annotate the line as advisory.
     const char* verdict = !enforced_failure ? "PASS" : (options->smoke ? "WARN" : "FAIL");
-    // Reported on every verdict line that earns it, not only on failures: which
-    // scenarios run on a clock that moves under them is exactly the audit
-    // TD-2026-08-05-137 says nobody has done, and this way it falls out of an
-    // ordinary run instead of needing its own sweep.
     const CalibrationSpread calibration = MeasureCalibrationSpread(*aggregate);
     const bool clock_moved = calibration.valid && calibration.ratio >= kCalibrationSpreadNoteRatio;
     const std::string calibration_note =
         clock_moved ? DescribeCalibrationSpread(calibration) : std::string{};
-    // Say when the CPU gate was compared in the baseline's machine state rather
-    // than in this run's. A normalisation that is invisible is a gate nobody can
-    // audit: it is the difference between "the CPU numbers agree" and "the CPU
-    // numbers agree after being scaled by 1.4x".
     const std::string clock_note = [&]() -> std::string {
       if (!comparison.clock.applied) {
         return {};
@@ -2834,23 +2085,13 @@ int main(int argc, char** argv) {
            << "]";
       return note.str();
     }();
-    // Any per-metric annotation the comparison attached: today, a resident gate
-    // that was declined or loosened because this run's iteration count does not
-    // match the baseline's. Printed on every verdict, pass or fail — an
-    // unenforced gate that only shows up in a failing run is a gate nobody knows
-    // stopped gating (TD-2026-08-06-148).
     std::string metric_notes;
     {
-      // Deduped by TEXT, and named metrics folded into one line. An
-      // advisory-timing baseline unenforces seven metrics for one reason, and
-      // seven copies of the same paragraph is a verdict line nobody reads.
-      std::vector<std::pair<std::string, std::string>> notes;  // (reason, metrics)
+      std::vector<std::pair<std::string, std::string>> notes;
       for (const MetricComparison& metric : comparison.metrics) {
         if (metric.note.empty()) {
           continue;
         }
-        // The note conventionally begins with the metric's own name; strip it so
-        // two metrics unenforced for the same reason collapse.
         std::string reason = metric.note;
         if (reason.rfind(metric.metric, 0) == 0) {
           reason = reason.substr(metric.metric.size());
@@ -2882,15 +2123,8 @@ int main(int argc, char** argv) {
         const bool advisory_metric =
             windowed_lane && metric.metric.find("wall") != std::string::npos;
         const double delta_percent = MetricDeltaPercent(metric);
-        // Duration metrics only. An allocation or RSS gate is unaffected by the
-        // clock, so annotating those would be actively misleading — allocation
-        // counts coming out identical across a clock step is the *evidence* that
-        // a cpu/wall failure is the machine and not the code.
         const bool duration_metric = metric.metric.find("cpu") != std::string::npos ||
                                      metric.metric.find("wall") != std::string::npos;
-        // A normalised metric prints both numbers. Reporting only the normalised
-        // one hides that the gate did arithmetic; reporting only the raw one makes
-        // the percentage next to it unreproducible.
         const bool normalized = metric.actual != metric.raw_actual;
         std::cerr << "[perf]   " << metric.metric << ": baseline=" << metric.expected
                   << " measured=" << metric.actual;
@@ -2913,29 +2147,18 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // Resolve report metadata once, after harness has had a chance to set SDL_*
-  // environment hints. SDL was already torn down per-scenario, so re-read from
-  // env rather than calling SDL_GetCurrentVideoDriver.
   ReportMetadata metadata;
   metadata.runner_class =
       options->reference_runner.value_or(std::string("local-advisory"));
-  // The GPU and windowed lanes are always advisory regardless of
-  // --reference-runner: only the software-renderer + dummy-video reference lane
-  // can be authoritative.
   metadata.cpu_affinity = affinity.description;
   metadata.provenance =
       !gpu_lane && !windowed_lane && !unpinned_lane && options->reference_runner.has_value() &&
               *options->reference_runner == std::string("perf-runner-v1")
           ? std::string("reference")
           : std::string("advisory");
-  // Report the video lane actually measured, read back from SDL. Reading
-  // SDL_VIDEODRIVER out of the environment described what was *requested* and
-  // said "default" for the common case, which is precisely the information a
-  // reviewer needs to spot a windowed run.
   const std::string resolved_video = PerfHarness::ResolvedVideoDriver();
   metadata.sdl_video_driver =
       resolved_video.empty() ? run_options.video_driver : resolved_video;
-  // Report the backend actually measured (the GPU lane resolves e.g. "opengl").
   const std::string resolved_renderer = PerfHarness::ResolvedRendererDriver();
   metadata.sdl_renderer_driver =
       resolved_renderer.empty() ? run_options.renderer_driver : resolved_renderer;
@@ -2946,9 +2169,6 @@ int main(int argc, char** argv) {
   metadata.iterations = options->iterations;
   metadata.layout_mode = options->layout_mode.value_or(std::string{});
   {
-    // A drift record has to be self-dating. Filesystem mtime does not survive a
-    // copy, an rsync or a git checkout, and a directory of reports whose order is
-    // guesswork is not a series (TD-2026-08-06-141).
     const std::time_t now = std::time(nullptr);
     std::tm utc{};
     if (gmtime_r(&now, &utc) != nullptr) {
@@ -2970,28 +2190,12 @@ int main(int argc, char** argv) {
       metadata.seed = 1337ULL;
     }
   }
-  // Note: per-scenario sandboxes are cleaned at shutdown by default, so this
-  // path is only meaningful with --keep-artifacts (then it points at the
-  // last scenario's sandbox).
   if (options->keep_artifacts) {
     metadata.isolated_app_root = "(retained per-scenario, see stderr for paths)";
   } else {
     metadata.isolated_app_root = "(per-scenario isolated, cleaned at shutdown)";
   }
 
-  // Envelope-headroom summary.
-  //
-  // TD-2026-08-06-139: five allocation gates drifted up -- one by 9.4% against a
-  // 10% tolerance -- and every one of them printed PASS. The run said nothing,
-  // because a pass/fail bit cannot tell "unchanged" from "one allocation short of
-  // red", and by the time anyone looked the drift had been rebaselined and was
-  // green forever. This is the leading indicator: which PASSING gates are close
-  // to their limit, ranked, in the same run that passed them.
-  //
-  // Allocation counts are the deterministic metrics (identical run to run on the
-  // same binary), so a near-miss there is a real code change and is listed first.
-  // Wall/CPU/RSS carry machine state, so a near-miss there is worth seeing but is
-  // not on its own evidence; they are listed separately and labelled.
   {
     struct HeadroomRow {
       const std::string* scenario = nullptr;
@@ -3003,11 +2207,9 @@ int main(int argc, char** argv) {
     for (const auto& [name, comparison] : comparisons) {
       for (const MetricComparison& metric : comparison.metrics) {
         if (!metric.passed) {
-          continue;  // Already reported in full by the FAIL verdict above.
+          continue;
         }
         if (!metric.enforced) {
-          // No envelope to consume: the comparison was declined, and ranking it
-          // by how close it came would read as a gate under pressure.
           continue;
         }
         const double used = EnvelopeUsedPercent(metric);
@@ -3054,7 +2256,6 @@ int main(int argc, char** argv) {
     }
   }
 
-  // Advisory banner so reviewers can distinguish local runs from gate runs.
   if (metadata.provenance == "advisory") {
     std::cerr << "[perf] advisory run (runner_class=" << metadata.runner_class
               << ", video=" << metadata.sdl_video_driver
@@ -3090,10 +2291,6 @@ int main(int argc, char** argv) {
             << "ms p95=" << aggregate.metrics.p95_wall_ms << "ms max="
             << aggregate.metrics.max_wall_ms << "ms alloc_p50="
             << aggregate.metrics.p50_allocations << "\n";
-        // What share of the total each measured phase is. Printed because the
-        // answer is routinely nothing like what the scenario's name implies:
-        // search_first_result's search is 0.7% of its own scenario total
-        // (TD-2026-08-06-153), and that is only visible next to the total.
         for (const PhaseMetricSet& phase : aggregate.phases) {
           out << "  phase " << phase.name << ": alloc_p50=" << phase.p50_allocations
               << " (" << (aggregate.metrics.p50_allocations > 0.0
@@ -3156,19 +2353,8 @@ int main(int argc, char** argv) {
     }
   }
 
-  // Aggregated allocation-site table, if MICROIDE_PERF_ALLOC_TRACE asked for one.
-  // At the end of the run rather than per scenario, because the interesting
-  // question ("what is doing all these small allocations") is usually asked with
-  // --scenarios= narrowing the run to the one that regressed.
-  // Under isolation each child dumped its own table before exiting; the parent's
-  // table is empty by construction, and printing it would emit the "filter never
-  // matched" warning for a process that never ran a phase.
   if (!isolate_scenarios) {
     Allocations::DumpTracedAllocationSites();
-    // MICROIDE_PERF_COUNTERS: the same readout the app prints at quit, here the
-    // run's counter totals (with --no-isolate: the child processes' counters are
-    // their own). A counter such as the bytes a scan read is a measurement the
-    // timing gates cannot make, and it used to be reachable only from a test.
     microide::util::DumpPerformanceCountersOnce();
   }
 

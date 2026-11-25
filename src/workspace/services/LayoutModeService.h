@@ -33,4 +33,4 @@ class LayoutModeService {
   bool status_bar_visible_ = true;
 };
 
-}  // namespace microide::workspace
+}

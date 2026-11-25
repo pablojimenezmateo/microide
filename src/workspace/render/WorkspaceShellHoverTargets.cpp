@@ -24,25 +24,10 @@ namespace microide::workspace {
 
 namespace {
 
-// Plugin- and debug-hover resolution runs per mouse-move frame and walks the
-// hovered line to map screen-x -> text column. Past this length the line is
-// pathological (a minified bundle / a single-line multi-hundred-MB file), the
-// same class of input the syntax highlighter already refuses to tokenize. Skip
-// hover resolution rather than copy the whole line and walk it every frame; a
-// hover popup on such a line is useless anyway. Guarding here also removes the
-// former per-hover full-line LineVisualColumnMap allocation (~16 bytes/char),
-// which for a 512 MB line was an ~8 GB alloc on a single mouse-move -> OOM.
-constexpr std::size_t kMaxHoverResolveLineBytes = 1u << 20;  // 1 MiB
+constexpr std::size_t kMaxHoverResolveLineBytes = 1u << 20;
 
-// How long "no hover here" stands for a cell before the next look asks again: the
-// server may have been loading (csharp-ls answers nothing until MSBuild is done).
 constexpr Uint64 kNoHoverRetryMs = 1000;
 
-// The debug-hover path runs on every mouse-move frame, so an unguarded trace
-// would flood the log. These dedupe on the reason's string-literal identity and
-// only emit when the furthest-reached gate changes, keeping the log readable
-// while still showing exactly where (and why) a debug hover stops short of a
-// popup. No string materialization here keeps the render-string lint satisfied.
 void LogHoverGate(const char* reason) {
   static const char* last = nullptr;
   if (!util::DebugTrace::Enabled() || reason == last) {
@@ -62,32 +47,13 @@ void LogHoverGate(const char* reason, std::string_view expr) {
 }
 
 
-// Resolve the command bound to a clickable end-of-line code lens under (x,y) for
-// a single viewport. Pure given its inputs: lays the line's EOL decorations out
-// with the same helper the renderer uses, so the hit rect matches the painted
-// lens exactly. Returns nullopt when nothing actionable is hit.
-// Result of hit-testing a point against the compare view's RIGHT text grid.
 struct CompareRightGridHit {
-  // Adjusted for the hit row: `text_x` carries the row's hanging indent and
-  // `horizontal_scroll` its first painted visual column, so everything that
-  // resolves an x into a column off this layout is wrap-correct without knowing
-  // about wrapping.
   TextGridInteractionLayout interaction;
-  std::size_t visual_row = 0;  // ON-SCREEN row -- the interaction layout's space
-  std::size_t model_row = 0;   // index into compare_tab.model.rows
+  std::size_t visual_row = 0;
+  std::size_t model_row = 0;
   std::size_t visible_columns = 0;
 };
 
-// Resolve (x, y) to the compare view's right pane, or nullopt when the point is
-// outside the grid, past the model, or on a row that has no right-file line (a
-// pure deletion). Both compare hover paths — the diagnostic underline hit-test
-// and the plugin hover query — resolved this with byte-identical code, so a fix
-// to the surface math in one silently missed the other.
-//
-// The grid's row space is ON-SCREEN rows, which is what `compare_tab.scroll_row`
-// counts. It used to be built with a model-row `line_count` against that scroll,
-// so the two disagreed as soon as the diff collapsed a run — and, now, as soon as
-// a line wrapped.
 std::optional<CompareRightGridHit> HitTestCompareRightGrid(const render::TextRenderer& text_renderer,
                                                            const workspace::CompareSurfaceLayout& surface,
                                                            const CompareTabState& compare_tab, float x, float y) {
@@ -164,7 +130,7 @@ std::optional<editor::CodeLensDecoration> CodeLensForViewport(
   return hit;
 }
 
-}  // namespace
+}
 
 std::optional<EditorHoverTarget> WorkspaceShell::DiagnosticHoverTargetForViewport(
     const editor::TextViewport& viewport,
@@ -185,8 +151,6 @@ std::optional<EditorHoverTarget> WorkspaceShell::DiagnosticHoverTargetForViewpor
   const float line_y =
       interaction.first_line_y +
       static_cast<float>(*line_index - interaction.scroll_line) * interaction.line_height;
-  // LineView, not lines[i]: `operator[]` copies the line into the buffer's line
-  // cache, and this runs per painted frame while the pointer is over the text.
   const std::string_view line = viewport.lines().LineView(*line_index);
   for (const editor::PublishedDiagnostic& diagnostic : diagnostics) {
     const auto rect = editor::DiagnosticUnderlineRect(
@@ -200,8 +164,6 @@ std::optional<EditorHoverTarget> WorkspaceShell::DiagnosticHoverTargetForViewpor
     if (Contains(hit_rect, x, y)) {
       return EditorHoverTarget{
           .kind = EditorHoverTarget::Kind::Diagnostic,
-          // The hovered word's row, not its 2-px underline: the card is placed
-          // against this, and above an underline it would cover the row's text.
           .anchor_rect = hit_rect,
           .blame_line_index = 0,
           .diagnostic = diagnostic,
@@ -241,24 +203,15 @@ std::optional<EditorHoverTarget> WorkspaceShell::PluginHoverTargetForLine(
   const std::size_t visual_column =
       interaction.horizontal_scroll +
       static_cast<std::size_t>(std::floor(local_x / std::max(1.0f, interaction.char_width)));
-  // TextColumnForVisualColumn walks only up to the hovered visual column and
-  // returns line.size() once visual_column reaches/exceeds the line's visual
-  // width, so an off-the-end hover is rejected here without materializing a
-  // full-line visual-column map just to read its width.
   const std::size_t text_column =
       editor::TextLayout::TextColumnForVisualColumn(line_text, visual_column, tab_size);
   if (text_column >= line_text.size()) {
     return std::nullopt;
   }
 
-  // Serve from the async cache: hit -> popup; pending/failed -> nothing; miss ->
-  // record a kickoff for the non-const UpdateEditorHover (no Lua runs on this hot
-  // hit-test path). The query itself runs on the plugin worker; its completion
-  // re-drives this resolution into a cache hit.
   const std::size_t query_line = document_line + 1;
   const std::size_t query_column = text_column + 1;
   plugin::PluginHost::HoverResult hover;
-  // A cell that got no answer asks again once kNoHoverRetryMs has passed.
   const bool retry_no_answer = plugin_hover_cache_.state == PluginHoverCache::State::Failed &&
                                SDL_GetTicks() - plugin_hover_cache_.failed_at_ms >= kNoHoverRetryMs;
   if (plugin_hover_cache_.Matches(path, query_line, query_column) && !retry_no_answer) {
@@ -273,13 +226,6 @@ std::optional<EditorHoverTarget> WorkspaceShell::PluginHoverTargetForLine(
         return std::nullopt;
     }
   } else {
-    // Cache miss for this cell: record the kickoff and show nothing yet.
-    //
-    // Field-by-field rather than `plugin_hover_cache_ = PluginHoverCache{...}`:
-    // the aggregate destroys and rebuilds the path and both result strings, where
-    // assignment reuses whatever capacity they already hold. The generation bump
-    // is what an in-flight async completion compares against to learn its cell was
-    // superseded, so it must happen on every re-point.
     plugin_hover_cache_.path = path;
     plugin_hover_cache_.line = query_line;
     plugin_hover_cache_.column = query_column;
@@ -298,7 +244,6 @@ std::optional<EditorHoverTarget> WorkspaceShell::PluginHoverTargetForLine(
                 line_text, editor::TextLayout::NextTextColumn(line_text, text_column), tab_size)
           : start_visual + 1;
   const float line_y = TextGridLineY(interaction, grid_row);
-  // The hovered character's whole row: the card opens above it (or below).
   const SDL_FRect anchor_rect =
       MakeRect(TextGridCursorX(interaction, start_visual), line_y,
                std::max(1.0f, static_cast<float>(std::max<std::size_t>(1, end_visual - start_visual)) *
@@ -318,9 +263,6 @@ std::optional<EditorHoverTarget> WorkspaceShell::PluginHoverTargetForViewport(
     const TextGridInteractionLayout& interaction,
     float x,
     float y) const {
-  // A buffer with unsaved edits resolves its cell like any other: a provider reads
-  // the live text through its buffer table. Returning early here once meant no
-  // hover at all.
   if (viewport.path().empty() || !Contains(interaction.rect, x, y)) {
     return std::nullopt;
   }
@@ -330,7 +272,6 @@ std::optional<EditorHoverTarget> WorkspaceShell::PluginHoverTargetForViewport(
     return std::nullopt;
   }
 
-  // Plain editor: the visible grid row and the document line are the same value.
   return PluginHoverTargetForLine(viewport.path(), viewport.lines().LineView(*line_index),
                                   *line_index,
                                   *line_index, viewport.tab_size(), interaction, x, y);
@@ -347,13 +288,6 @@ std::optional<EditorHoverTarget> WorkspaceShell::DiagnosticHoverTargetAtPosition
   }
   const WorkspaceLayout layout = *layout_state;
 
-  // The editor render filters diagnostics by diagnostics.min_severity before
-  // painting (WorkspaceShellRenderFrame). Apply the same filter here so hover
-  // targets never exist for a diagnostic the user hid — otherwise an unpainted
-  // diagnostic would still pop a card and its invisible span would intercept the
-  // pointer. "hint" (the default) shows all, so the filter returns the span
-  // untouched (zero cost). One reused scratch is safe: each filtered span is
-  // consumed by its hit-test before the next filter call.
   const editor::DiagnosticSeverity diagnostics_min_severity =
       editor::ParseDiagnosticSeverity(GetSettingValue("diagnostics.min_severity").value_or("hint"));
   static thread_local std::vector<editor::PublishedDiagnostic> tls_hover_filtered_diagnostics;
@@ -363,8 +297,6 @@ std::optional<EditorHoverTarget> WorkspaceShell::DiagnosticHoverTargetAtPosition
                                                         tls_hover_filtered_diagnostics);
       };
 
-  // A diff or merge in front of the focused group answers only over its own pane;
-  // over another pane of a split, that pane's editor does (TD-2026-11-13-445).
   const bool over_view_surface = Contains(ActiveTabSurface(layout), x, y);
   if (ActiveTabIsCompare() && over_view_surface) {
     const CompareTabState* compare_tab = ActiveCompareTab();
@@ -393,10 +325,6 @@ std::optional<EditorHoverTarget> WorkspaceShell::DiagnosticHoverTargetAtPosition
     const compare::CompareRow& row = compare_tab->model.rows[model_row_index];
 
     const std::size_t line_index = static_cast<std::size_t>(row.right_line - 1);
-    // Use the shared signed helper keyed on the clamped interaction scroll: the
-    // hand-rolled `*model_row - scroll_row` used the unclamped compare scroll_row,
-    // which size_t-underflows to a huge Y if scroll_row transiently exceeds the
-    // clamp (scrolled to bottom, then the window is enlarged before re-clamp).
     const float line_y = TextGridLineY(interaction, hit->visual_row);
     for (const editor::PublishedDiagnostic& diagnostic : diagnostics) {
       const auto rect = editor::DiagnosticUnderlineRect(
@@ -494,8 +422,6 @@ std::optional<EditorHoverTarget> WorkspaceShell::PluginHoverTargetAtPosition(
   }
   const WorkspaceLayout layout = *layout_state;
 
-  // A diff or merge in front of the focused group answers only over its own pane;
-  // over another pane of a split, that pane's editor does (TD-2026-11-13-445).
   const bool over_view_surface = Contains(ActiveTabSurface(layout), x, y);
   if (ActiveTabIsCompare() && over_view_surface) {
     const CompareTabState* compare_tab = ActiveCompareTab();
@@ -515,10 +441,6 @@ std::optional<EditorHoverTarget> WorkspaceShell::PluginHoverTargetAtPosition(
     const std::size_t model_row_index = hit->model_row;
     const compare::CompareRow& row = compare_tab->model.rows[model_row_index];
 
-    // Compare view: the visible grid row is the ON-SCREEN row (interaction space),
-    // while the plugin query line is the right-file line it maps to. Passing the
-    // file line for both (the old bug) made the row-identity check and anchor Y
-    // wrong whenever any diff hunk sat above the cursor, so hover never appeared.
     const std::size_t document_line = static_cast<std::size_t>(row.right_line - 1);
     return PluginHoverTargetForLine(compare_tab->right_viewport.path(), row.right_text,
                                     hit->visual_row, document_line,
@@ -579,11 +501,8 @@ std::optional<EditorHoverTarget> WorkspaceShell::DebugValueHoverTargetForViewpor
     return std::nullopt;
   }
 
-  // Debug execution + hover-eval state arrive through the view model (this is a
-  // covered render-surface TU; it must not read project state directly). The
-  // pointers are non-null only when the debug-hover gate held.
   const HoverTargetsViewModel hover_targets_vm =
-      RenderViewModelBuilder(context_).BuildHoverTargets(/*debug_hover_enabled=*/true);
+      RenderViewModelBuilder(context_).BuildHoverTargets(true);
   if (hover_targets_vm.debug_execution == nullptr || hover_targets_vm.debug_hover == nullptr) {
     LogHoverGate("vm-debug-state-null");
     return std::nullopt;
@@ -594,13 +513,6 @@ std::optional<EditorHoverTarget> WorkspaceShell::DebugValueHoverTargetForViewpor
     LogHoverGate("no-focused-frame");
     return std::nullopt;
   }
-  // Only evaluate in the focused frame's source file: evaluate(frameId) resolves
-  // names in that frame's lexical scope, so a token hovered in another file would
-  // silently resolve against the wrong scope. Match the same way the execution-line
-  // marker does (lexically-normalized generic strings).
-  // path_key() is this exact value (editor::NormalizedPathKey), cached on the
-  // document, so the hover path compares against it instead of re-normalizing and
-  // re-allocating the viewport's path on every resolve.
   if (viewport.path_key() != execution.FocusedPathNormalized()) {
     LogHoverGate("file-not-focused-frame");
     return std::nullopt;
@@ -615,10 +527,6 @@ std::optional<EditorHoverTarget> WorkspaceShell::DebugValueHoverTargetForViewpor
     return std::nullopt;
   }
 
-  // Map the screen position to a text byte column (same geometry as the plugin
-  // hover path), then resolve the identifier under it. TextColumnForVisualColumn
-  // walks only to the hovered column and returns line.size() past the visual end,
-  // so no full-line visual-column map is materialized on this per-frame path.
   const float local_x = std::max(0.0f, x - interaction.text_x);
   const std::size_t visual_column =
       interaction.horizontal_scroll +
@@ -636,8 +544,6 @@ std::optional<EditorHoverTarget> WorkspaceShell::DebugValueHoverTargetForViewpor
   }
   std::string expression(line_text.substr(range.start, range.end - range.start));
 
-  // Serve from the async cache: hit → popup; pending/failed → nothing; miss →
-  // record the kickoff for the non-const UpdateEditorHover (no DAP I/O here).
   const DebugHoverModel& hover = *hover_targets_vm.debug_hover;
   const int frame_id = frame->id;
   switch (hover.Classify(frame_id, expression)) {
@@ -680,13 +586,6 @@ std::optional<EditorHoverTarget> WorkspaceShell::DebugValueHoverTargetAtPosition
     float x,
     float y) const {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::DebugValueHoverTargetAtPosition");
-  // Cheap session-level gates first: only paused, debugger-enabled sessions, and
-  // only over editor tabs. We intentionally do NOT require the adapter to
-  // advertise supportsEvaluateForHovers — RequestEvaluate falls back to the "repl"
-  // context for adapters (e.g. GDB) that omit the capability but still evaluate.
-  // (The focused-frame and per-viewport checks live in
-  // DebugValueHoverTargetForViewport, which reads gated debug state via the view
-  // model.)
   if (!DebugEnabled()) {
     LogHoverGate("debug-disabled");
     return std::nullopt;
@@ -747,11 +646,6 @@ std::optional<EditorHoverTarget> WorkspaceShell::EditorHoverTargetAtPosition(
   }
 
   if (auto diagnostic = DiagnosticHoverTargetAtPosition(x, y); diagnostic.has_value()) {
-    // Under a squiggle the card is the problem AND what the symbol is (VS Code's
-    // card): a diagnostic used to hide the hover, so a stale one -- csharp-ls
-    // reports "System.Object is not defined" while it is still loading the
-    // project -- hid the signature for good. The symbol hover is asked as for
-    // any cell, and fills the card's second section when it answers.
     if (const auto symbol = PluginHoverTargetAtPosition(x, y);
         symbol.has_value() && symbol->plugin_hover.has_value()) {
       diagnostic->plugin_hover = symbol->plugin_hover;
@@ -759,7 +653,6 @@ std::optional<EditorHoverTarget> WorkspaceShell::EditorHoverTargetAtPosition(
     return diagnostic;
   }
 
-  // Debug values outrank LSP/plugin hover while a session is paused.
   if (const auto debug_value = DebugValueHoverTargetAtPosition(x, y); debug_value.has_value()) {
     return debug_value;
   }
@@ -819,4 +712,4 @@ std::optional<editor::CodeLensDecoration> WorkspaceShell::CodeLensAtPosition(flo
   return std::nullopt;
 }
 
-}  // namespace microide::workspace
+}

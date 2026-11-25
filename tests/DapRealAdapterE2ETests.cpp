@@ -1,17 +1,3 @@
-// End-to-end DAP coverage against a REAL debug adapter (gdb's built-in
-// `--interpreter=dap`), mirroring the clangd suite in LspRealServerE2ETests.cpp.
-//
-// This closes a coverage asymmetry: LSP had a real-server end-to-end test while
-// DAP — an equally large shipped subsystem, with a bundled gdb-dap plugin — had
-// only protocol unit tests and a stub-mode client test. Nothing exercised the
-// real transport against a real adapter: the Content-Length framing, the
-// initialize handshake, capability parsing, adapter-pushed events, and shutdown
-// were only ever driven by in-tree fakes that we also wrote.
-//
-// OPT-IN by availability, like the clangd suite: with no usable gdb the test logs
-// a skip and passes, so a machine without a debugger stays green. Set
-// $MICROIDE_TEST_DAP_GDB to force a specific binary. gdb only grew `--interpreter=dap`
-// in 14.x, so an older gdb on PATH also skips rather than failing.
 #include "TestSupport.h"
 #include "parity/LoopbackLocality.h"
 #include "project/remote/RemoteProcessLauncher.h"
@@ -34,8 +20,6 @@ namespace {
 using microide::workspace::DapClient;
 namespace dap_protocol = microide::workspace::dap_protocol;
 
-// Locate a gdb that supports `--interpreter=dap`: an explicit
-// $MICROIDE_TEST_DAP_GDB override first, then a PATH scan. Empty means skip.
 std::string LocateGdb() {
   if (const char* override_path = std::getenv("MICROIDE_TEST_DAP_GDB");
       override_path != nullptr && override_path[0] != '\0') {
@@ -70,8 +54,6 @@ std::string LocateGdb() {
   return {};
 }
 
-// A C compiler to build a debuggee with. Same availability-gated contract as
-// LocateGdb: no compiler means skip, not fail.
 std::string LocateCCompiler() {
   if (const char* override_path = std::getenv("MICROIDE_TEST_CC");
       override_path != nullptr && override_path[0] != '\0') {
@@ -106,9 +88,6 @@ std::string LocateCCompiler() {
   return {};
 }
 
-// -O0 -g so the breakpoint lands on the line it was set on and the arguments are
-// still live at it; an optimized build may fold both away and the assertions
-// below would be testing the optimizer.
 bool CompileDebuggee(const std::string& compiler,
                      const std::filesystem::path& source,
                      const std::filesystem::path& program) {
@@ -137,9 +116,6 @@ void TestDapRealAdapterGdbHandshakeAndShutdown() {
   DapClient client;
   client.SetWakeChannel(0);
 
-  // Adapter-pushed events arrive on the main thread via DrainCallbacks. gdb emits
-  // `output` events immediately at startup (its version banner), which is exactly
-  // the "server pushes before we ask anything" case the framer has to survive.
   std::mutex event_mutex;
   std::vector<std::string> events;
   client.SetEventCallback([&](const std::string& event, const util::JsonValue&) {
@@ -152,9 +128,6 @@ void TestDapRealAdapterGdbHandshakeAndShutdown() {
     return;
   }
 
-  // A gdb too old for --interpreter=dap exits immediately instead of speaking the
-  // protocol; treat that as unavailable rather than a failure, matching the
-  // clangd suite's availability-gated contract.
   if (!PumpUntil(client, [&]() { return client.IsInitialized() || !client.IsRunning(); }, 15000)) {
     client.Shutdown();
     std::fprintf(stderr, "[dap-e2e] SKIP: gdb did not answer initialize in time\n");
@@ -168,22 +141,14 @@ void TestDapRealAdapterGdbHandshakeAndShutdown() {
     return;
   }
 
-  // From here on the adapter is real and talking, so every assertion is
-  // unconditional — a regression in the transport must fail, not skip.
   Expect(client.IsRunning(), "the adapter process should still be running after initialize");
 
-  // Real capability negotiation. gdb advertises conditional breakpoints and
-  // configurationDone; asserting a capability we did not synthesize ourselves is
-  // the point of driving a real adapter.
   const auto capabilities = client.Capabilities();
   Expect(capabilities.supports_configuration_done_request,
          "gdb should advertise supportsConfigurationDoneRequest");
   Expect(capabilities.supports_conditional_breakpoints,
          "gdb should advertise supportsConditionalBreakpoints");
 
-  // A real request/response round trip over the real framing. `threads` before a
-  // launch is answered by gdb (with an empty or single-entry list) rather than
-  // erroring, which keeps this independent of having a debuggable binary.
   bool threads_answered = false;
   bool threads_success = false;
   Expect(client.SendRequestAsync("threads", util::JsonValue(nullptr),
@@ -196,44 +161,16 @@ void TestDapRealAdapterGdbHandshakeAndShutdown() {
          "gdb should answer a `threads` request over the real transport");
   Expect(threads_success, "gdb's `threads` response should report success");
 
-  // The adapter pushed at least one event before we asked for anything (gdb's
-  // startup banner arrives as `output` events). This is the cross-chunk,
-  // server-pushes-first path the Content-Length framer has to survive.
   {
     std::lock_guard lock(event_mutex);
     Expect(!events.empty(), "gdb should have pushed at least one adapter event");
   }
 
-  // Graceful shutdown: `disconnect` handshake, then the process exits.
   client.Shutdown();
   Expect(PumpUntil(client, [&]() { return !client.IsRunning(); }, 10000),
          "the adapter process should exit after Shutdown()");
 }
 
-// The launch -> breakpoint -> stopped -> inspect -> continue -> exit cycle,
-// against the same real gdb the handshake test drives.
-//
-// Everything past `initialize` used to be covered only in stub mode -- 85 tests
-// against a fake we also wrote -- which is the gap that hid the pending-breakpoint
-// tint bug (TD-2026-07-26-006). The parts that only a real adapter exercises are
-// the ones asserted here: a breakpoint set BEFORE the program is loaded comes back
-// `verified:false, reason:"pending"` and is re-reported verified through a
-// `breakpoint` event once the module loads; the `launch` response does not arrive
-// before `configurationDone`, so anything that waits on it deadlocks; and the stop
-// carries a real frame, real scopes and real argument values.
-//
-// Skips the same way the handshake test does, and for one more reason: a sandbox
-// without CAP_SYS_PTRACE (or with kernel.yama.ptrace_scope locked down) cannot let
-// gdb start an inferior at all. That is reported as a skip, but ONLY when the
-// adapter says so -- once a `stopped` event arrives every assertion is
-// unconditional, so a regression fails rather than quietly skipping.
-// A debug adapter runs on the host and names the HOST's files; the editor works in
-// the mirror. The transport's path translation (workspace/HostPathTranslator) must
-// carry the breakpoint's source and the launch program to the host, and bring the
-// stopped frame's source back as the mirror's file -- or the breakpoint never binds
-// and the editor would open the host's copy at the stop. Same real gdb as above,
-// driven through the parity suite's loopback locality with split host and mirror
-// trees; the binary is built in the HOST tree, so its debug info names host paths.
 struct GdbCycleResult {
   bool started = false;
   bool stopped = false;
@@ -241,9 +178,6 @@ struct GdbCycleResult {
   std::int64_t frame_line = 0;
 };
 
-// setBreakpoints(source, line 2) -> launch(program) -> configurationDone -> stopped
-// -> stackTrace, through `launcher`. What the caller passes is what the EDITOR
-// would send; translation, if any, is the transport's.
 GdbCycleResult RunGdbBreakpointCycle(const std::string& gdb,
                                      const platform::ProcessLauncher& launcher,
                                      const std::filesystem::path& cwd,
@@ -308,17 +242,6 @@ GdbCycleResult RunGdbBreakpointCycle(const std::string& gdb,
   return result;
 }
 
-// A debug adapter runs on the host and names the HOST's files; the editor works in
-// the mirror. The transport's path translation (workspace/HostPathTranslator) must
-// carry the breakpoint's source and the launch program to the host, and bring the
-// stopped frame's source back as the mirror's file -- or the program is not found,
-// the breakpoint never binds, and the editor would open the host's copy at the
-// stop. The binary is built in the HOST tree, so its debug info names host paths.
-//
-// The skip is decided by a LOCAL run of the same cycle against the host tree: only
-// a machine where gdb cannot stop an inferior at all skips. Once that works, the
-// loopback run not stopping is a failure -- deciding the skip from the loopback run
-// itself is how this test first passed with translation switched off.
 void TestDapRealAdapterGdbStopsInTheMirrorThroughALoopbackHost() {
   const std::string gdb = LocateGdb();
   const std::string compiler = LocateCCompiler();
@@ -347,9 +270,6 @@ void TestDapRealAdapterGdbStopsInTheMirrorThroughALoopbackHost() {
     return;
   }
 
-  // Both non-local localities: the in-process loopback, and the real server
-  // over a pipe (Phase 2a 6.4) -- where gdb is a `proc/spawn` child whose DAP
-  // stdio is the protocol's credit-windowed streams.
   const tests::parity::LoopbackPathMap map(mirror, host);
   const tests::parity::LoopbackProcessLauncher loopback(map);
   std::string error;
@@ -391,8 +311,6 @@ void TestDapRealAdapterGdbLaunchBreakpointStopCycle() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path source = temp_dir.path() / "debuggee.c";
   const std::filesystem::path program = temp_dir.path() / "debuggee";
-  // `add` is on line 2 and its body assigns before returning, so a breakpoint on
-  // line 2 stops with both arguments already bound to known values.
   WriteFile(source,
             "#include <stdio.h>\n"
             "int add(int a, int b) { int sum = a + b; return sum; }\n"
@@ -409,8 +327,6 @@ void TestDapRealAdapterGdbLaunchBreakpointStopCycle() {
   std::vector<std::string> event_names;
   bool saw_stopped = false;
   bool saw_exited = false;
-  // The re-report of a pending breakpoint once its module loads. gdb sends this
-  // as a `breakpoint` event with reason "changed"; nothing in stub mode does.
   bool breakpoint_verified_by_event = false;
   client.SetEventCallback([&](const std::string& event, const util::JsonValue& body) {
     std::lock_guard lock(event_mutex);
@@ -435,9 +351,6 @@ void TestDapRealAdapterGdbLaunchBreakpointStopCycle() {
     return;
   }
 
-  // (1) A breakpoint set before the program is loaded. The adapter has no module
-  //     to bind it to yet, so it must come back unverified-and-pending rather
-  //     than verified (which is what a fake would have been written to return).
   util::JsonObject breakpoint_line;
   breakpoint_line["line"] = util::JsonValue(static_cast<std::int64_t>(2));
   util::JsonObject source_ref;
@@ -464,9 +377,6 @@ void TestDapRealAdapterGdbLaunchBreakpointStopCycle() {
   Expect(breakpoint_reported_pending,
          "a breakpoint set before the module loads must report unverified, not verified");
 
-  // (2) Launch. gdb does NOT answer `launch` until after `configurationDone`, so
-  //     the response is deliberately not waited on here -- waiting on it is the
-  //     deadlock a stub-only suite never sees.
   util::JsonObject launch_args;
   launch_args["program"] = util::JsonValue(program.string());
   Expect(client.SendRequestAsync("launch", util::JsonValue(std::move(launch_args)), {}),
@@ -492,12 +402,9 @@ void TestDapRealAdapterGdbLaunchBreakpointStopCycle() {
     return;
   }
 
-  // From here the adapter really stopped at our breakpoint, so nothing below may
-  // skip.
   Expect(breakpoint_verified_by_event,
          "the pending breakpoint must be re-reported as verified once its module loads");
 
-  // (3) The stop is at OUR line, in OUR function.
   util::JsonObject stack_args;
   stack_args["threadId"] = util::JsonValue(static_cast<std::int64_t>(1));
   bool stack_answered = false;
@@ -524,8 +431,6 @@ void TestDapRealAdapterGdbLaunchBreakpointStopCycle() {
   Expect(top_frame_line == 2,
          "the stop should be on the breakpoint's line, got " + std::to_string(top_frame_line));
 
-  // (4) Real scopes and real values. A fake returns what we told it to; gdb
-  //     returns what the inferior actually holds.
   util::JsonObject scopes_args;
   scopes_args["frameId"] = util::JsonValue(top_frame_id);
   bool scopes_answered = false;
@@ -576,8 +481,6 @@ void TestDapRealAdapterGdbLaunchBreakpointStopCycle() {
          "the inferior's real argument values should come back, got a=" + a_value +
              " b=" + b_value);
 
-  // (5) Resume to exit. `continue` releases the inferior and the adapter reports
-  //     the process leaving on its own.
   util::JsonObject continue_args;
   continue_args["threadId"] = util::JsonValue(static_cast<std::int64_t>(1));
   Expect(client.SendRequestAsync("continue", util::JsonValue(std::move(continue_args)), {}),
@@ -591,7 +494,7 @@ void TestDapRealAdapterGdbLaunchBreakpointStopCycle() {
          "the adapter process should exit after Shutdown()");
 }
 
-}  // namespace
+}
 
 void RegisterDapRealAdapterE2ETests(std::vector<TestCase>& tests) {
   AddTest(tests, "DapRealAdapter/GdbHandshakeAndShutdown",
@@ -602,4 +505,4 @@ void RegisterDapRealAdapterE2ETests(std::vector<TestCase>& tests) {
           TestDapRealAdapterGdbLaunchBreakpointStopCycle);
 }
 
-}  // namespace microide::tests
+}

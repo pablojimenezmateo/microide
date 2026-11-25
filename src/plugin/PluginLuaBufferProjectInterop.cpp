@@ -13,11 +13,9 @@ namespace {
 
 constexpr const char* kBufferTextMetatable = "microide.buffer_text";
 
-// The userdata behind a buffer table's text methods. Owns the snapshot; the line
-// index is built on the first `line()` / `line_count()` and kept for the rest.
 struct BufferText {
   std::shared_ptr<const std::string> text;
-  std::vector<std::size_t> line_starts;  // byte offset of each line; empty until indexed
+  std::vector<std::size_t> line_starts;
 
   void IndexLines() {
     if (!line_starts.empty()) {
@@ -46,8 +44,6 @@ int BufferTextText(lua_State* state) {
   return 1;
 }
 
-// `buffer:line(n)` and `buffer.line(n)` both work: the line number is the last
-// argument either way.
 int BufferTextLine(lua_State* state) {
   const lua_Integer line = luaL_checkinteger(state, lua_gettop(state));
   BufferText* buffer = CheckBufferText(state);
@@ -62,7 +58,7 @@ int BufferTextLine(lua_State* state) {
                         ? buffer->line_starts[static_cast<std::size_t>(line)] - 1
                         : value.size();
   if (end > start && value[end - 1] == '\r') {
-    --end;  // a CRLF document's line ending
+    --end;
   }
   lua_pushlstring(state, value.data() + start, end - start);
   return 1;
@@ -75,7 +71,7 @@ int BufferTextLineCount(lua_State* state) {
   return 1;
 }
 
-}  // namespace
+}
 
 void PushProjectTable(lua_State* state, const std::filesystem::path& project_root) {
   lua_createtable(state, 0, 2);
@@ -102,10 +98,6 @@ void PushBufferTable(lua_State* state,
   }
 }
 
-// No C++ local with a destructor is live across a call that can raise (the
-// project links the C build of Lua; see src/plugin/LuaError.h): the snapshot is
-// taken by reference and copied straight into the userdata, which has its __gc
-// before anything else can fail.
 void PushBufferTextMethods(lua_State* state, const std::shared_ptr<const std::string>& text) {
   if (text == nullptr) {
     return;
@@ -118,8 +110,7 @@ void PushBufferTextMethods(lua_State* state, const std::shared_ptr<const std::st
   new (storage) BufferText{.text = text, .line_starts = {}};
   lua_pushvalue(state, -2);
   lua_setmetatable(state, -2);
-  lua_remove(state, -2);  // the metatable
-  // table, userdata: each method closes over the userdata.
+  lua_remove(state, -2);
   const struct {
     const char* name;
     lua_CFunction function;
@@ -136,6 +127,6 @@ void PushBufferTextMethods(lua_State* state, const std::shared_ptr<const std::st
   lua_pop(state, 1);
 }
 
-}  // namespace microide::plugin::lua_buffer_project_interop
+}
 
 #endif

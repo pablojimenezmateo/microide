@@ -28,12 +28,7 @@ namespace {
 using microide::platform::ControlRequestLineScan;
 using microide::platform::ScanControlRequestLines;
 
-// Pure, platform-independent: the byte-cap decision must reject a complete
-// over-cap line BEFORE it is copied out — the old ingest substr'd every complete
-// line and only bounded the residual (un-newlined) trailing line, so a hostile
-// peer could queue a multi-megabyte request just by terminating it with '\n'.
 void TestScanControlRequestLinesRejectsOversizeCompleteLine() {
-  // Baseline: complete lines split, CR stripped, incomplete trailing kept.
   {
     const ControlRequestLineScan scan = ScanControlRequestLines("a\r\nbb\nccc", 1024);
     Expect(scan.lines.size() == 2, "two complete lines are produced");
@@ -42,7 +37,6 @@ void TestScanControlRequestLinesRejectsOversizeCompleteLine() {
     Expect(scan.consumed_bytes == 6, "consumed covers 'a\\r\\n' + 'bb\\n', not the trailing 'ccc'");
     Expect(!scan.oversize_line, "no complete line exceeded the cap");
   }
-  // Empty lines are consumed but not queued.
   {
     const ControlRequestLineScan scan = ScanControlRequestLines("\n\nx\n", 1024);
     Expect(scan.lines.size() == 1 && scan.lines[0] == "x",
@@ -50,13 +44,10 @@ void TestScanControlRequestLinesRejectsOversizeCompleteLine() {
     Expect(scan.consumed_bytes == 4, "all three newlines are consumed");
     Expect(!scan.oversize_line, "blank lines never trip the cap");
   }
-  // A complete newline-terminated line over the cap trips the flag and stops the
-  // scan BEFORE it — earlier valid lines are still returned, the over-cap line is
-  // never materialized, and the caller sheds the connection.
   {
     std::string buffer = "ok\n";
     const std::size_t prefix = buffer.size();
-    buffer.append(std::string(64, 'z'));  // 64-byte complete line...
+    buffer.append(std::string(64, 'z'));
     buffer.push_back('\n');
     const ControlRequestLineScan scan = ScanControlRequestLines(buffer, 8);
     Expect(scan.oversize_line, "a complete line past the cap is flagged");
@@ -65,7 +56,6 @@ void TestScanControlRequestLinesRejectsOversizeCompleteLine() {
     Expect(scan.consumed_bytes == prefix,
            "the scan stops before the over-cap line (its bytes are not consumed)");
   }
-  // A boundary line exactly at the cap is accepted; one byte over is rejected.
   {
     const ControlRequestLineScan at_cap = ScanControlRequestLines("12345678\n", 8);
     Expect(!at_cap.oversize_line && at_cap.lines.size() == 1,
@@ -98,9 +88,6 @@ int ConnectUnix(const std::filesystem::path& path) {
 
 bool WriteAll(int fd, std::string_view data) {
   while (!data.empty()) {
-    // MSG_NOSIGNAL: the server may shed us mid-write (oversized-line / flood
-    // resilience tests), and a raw send() would otherwise raise SIGPIPE and kill
-    // the test process instead of returning an error.
     const ssize_t written = ::send(fd, data.data(), data.size(), MSG_NOSIGNAL);
     if (written <= 0) {
       return false;
@@ -110,8 +97,6 @@ bool WriteAll(int fd, std::string_view data) {
   return true;
 }
 
-// Read a single newline-terminated line with a wall-clock timeout. Returns
-// nullopt on EOF-without-line or timeout.
 std::optional<std::string> ReadLine(int fd, std::chrono::milliseconds timeout) {
   std::string buf;
   const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -138,7 +123,6 @@ std::optional<std::string> ReadLine(int fd, std::chrono::milliseconds timeout) {
   return std::nullopt;
 }
 
-// Drain inbound until one message arrives (acting as the host main thread).
 std::optional<ControlInboundMessage> DrainOne(ControlSocketServer& server,
                                               std::chrono::milliseconds timeout) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -163,13 +147,6 @@ bool WaitForConnectionCount(const ControlSocketServer& server, std::size_t targe
   return server.ConnectionCount() == target;
 }
 
-// The original bug: a client that half-closes its write side after sending (as
-// socat / `echo | nc` do) lost its reply because the server reaped the
-// connection in the same poll iteration as the EOF, before the host drained and
-// answered the request.
-// Regression: Start must not blindly unlink whatever sits at the socket path. If
-// a regular (non-socket) file is there, it refuses to start and leaves the file
-// intact rather than deleting a user-owned file.
 void TestStartRefusesToDeleteNonSocketFile() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path socket_path = temp_dir.path() / "not-a-socket";
@@ -181,7 +158,6 @@ void TestStartRefusesToDeleteNonSocketFile() {
   Expect(std::filesystem::exists(socket_path), "the user's file must not be deleted");
   Expect(ReadFile(socket_path) == "precious user data\n", "the file's contents are intact");
 
-  // A clean path still starts (and a subsequent restart clears its own stale socket).
   const std::filesystem::path clean_path = temp_dir.path() / "control.sock";
   ControlSocketServer clean_server;
   Expect(clean_server.Start(clean_path), "Start succeeds on a clean path");
@@ -196,7 +172,6 @@ void TestHalfClosedClientStillReceivesReply() {
   const int client = ConnectUnix(socket_path);
   Expect(client >= 0, "client should connect");
   Expect(WriteAll(client, "{\"id\":1,\"query\":\"status\"}\n"), "client should send a request");
-  // Half-close: client is done writing but still wants to read the reply.
   ::shutdown(client, SHUT_WR);
 
   const std::optional<ControlInboundMessage> message = DrainOne(server, 2s);
@@ -215,8 +190,6 @@ void TestHalfClosedClientStillReceivesReply() {
   server.Stop();
 }
 
-// A client that closes after sending only a partial (un-newlined) line produces
-// no request; the connection must still be reaped promptly, not hang.
 void TestPartialLineAtEofReapsCleanly() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path socket_path = temp_dir.path() / "control.sock";
@@ -233,8 +206,6 @@ void TestPartialLineAtEofReapsCleanly() {
   server.Stop();
 }
 
-// Backstop: a request that is never answered must not leak the fd forever — the
-// connection is reaped after the bounded linger grace period (~2s).
 void TestUnansweredRequestReapsAfterGrace() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path socket_path = temp_dir.path() / "control.sock";
@@ -246,8 +217,6 @@ void TestUnansweredRequestReapsAfterGrace() {
   Expect(WriteAll(client, "{\"id\":1,\"query\":\"status\"}\n"), "client should send a request");
   ::shutdown(client, SHUT_WR);
 
-  // Deliberately never reply. The connection must still reap within the grace
-  // period plus slack.
   Expect(WaitForConnectionCount(server, 0, 5s),
          "an unanswered half-closed connection should reap after the grace period");
 
@@ -255,9 +224,6 @@ void TestUnansweredRequestReapsAfterGrace() {
   server.Stop();
 }
 
-// A connection kept open across several request/reply round-trips is not reaped
-// until the client actually closes — the linger logic must not disturb the
-// common full-duplex case.
 void TestOpenConnectionHandlesMultipleRequests() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path socket_path = temp_dir.path() / "control.sock";
@@ -284,9 +250,6 @@ void TestOpenConnectionHandlesMultipleRequests() {
   server.Stop();
 }
 
-// Resilience: a hostile local client that streams bytes with no newline must not
-// grow the server's per-connection read buffer without bound (memory exhaustion).
-// Once the unframed line passes the per-request ceiling the connection is shed.
 void TestOversizedUnterminatedLineIsShed() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path socket_path = temp_dir.path() / "control.sock";
@@ -297,8 +260,6 @@ void TestOversizedUnterminatedLineIsShed() {
   Expect(client >= 0, "client should connect");
   Expect(WaitForConnectionCount(server, 1, 2s), "server should accept the connection");
 
-  // Stream ~4 MiB with no newline. WriteAll may fail partway once the server
-  // sheds us mid-stream (EPIPE) — that is the expected outcome, so ignore it.
   const std::string flood(4u * 1024 * 1024, 'x');
   (void)WriteAll(client, flood);
 
@@ -309,10 +270,6 @@ void TestOversizedUnterminatedLineIsShed() {
   server.Stop();
 }
 
-// Resilience: a client that floods complete request lines faster than the host
-// drains them must not grow the shared inbound queue without bound. This test
-// deliberately never drains (never calls TakeInbound), so the queue fills to its
-// cap and the offending connection is shed.
 void TestInboundQueueFloodIsShed() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path socket_path = temp_dir.path() / "control.sock";
@@ -323,7 +280,6 @@ void TestInboundQueueFloodIsShed() {
   Expect(client >= 0, "client should connect");
   Expect(WaitForConnectionCount(server, 1, 2s), "server should accept the connection");
 
-  // Far more small complete lines than the inbound-queue cap, none drained.
   std::string flood;
   flood.reserve(20000 * 3);
   for (int i = 0; i < 20000; ++i) {
@@ -338,12 +294,6 @@ void TestInboundQueueFloodIsShed() {
   server.Stop();
 }
 
-// Resilience: a single COMPLETE (newline-terminated) request line larger than
-// the per-request cap must be shed, not copied into the shared queue. Regression
-// for the bug where the cap was only checked against the residual incomplete
-// trailing line, so a >1 MiB line ending in '\n' was queued verbatim. The host
-// (never draining here proves the point is the shed, not the drain) must see the
-// connection reaped and no giant message surface.
 void TestOversizedCompleteLineIsShed() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path socket_path = temp_dir.path() / "control.sock";
@@ -354,8 +304,6 @@ void TestOversizedCompleteLineIsShed() {
   Expect(client >= 0, "client should connect");
   Expect(WaitForConnectionCount(server, 1, 2s), "server should accept the connection");
 
-  // ~2 MiB single line TERMINATED with a newline (past the 1 MiB per-request
-  // cap). WriteAll may fail partway as the server sheds us mid-stream — expected.
   std::string oversize(2u * 1024 * 1024, 'x');
   oversize.push_back('\n');
   (void)WriteAll(client, oversize);
@@ -369,8 +317,6 @@ void TestOversizedCompleteLineIsShed() {
   server.Stop();
 }
 
-// Resilience: idle local clients that connect and never send data must not grow
-// the server's connection map / poll set without bound.
 void TestIdleConnectionFloodIsCapped() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path socket_path = temp_dir.path() / "control.sock";
@@ -389,7 +335,6 @@ void TestIdleConnectionFloodIsCapped() {
   while (std::chrono::steady_clock::now() < deadline && server.ConnectionCount() < 128) {
     std::this_thread::sleep_for(5ms);
   }
-  // Give the I/O thread a short window to accept and shed any excess sockets.
   std::this_thread::sleep_for(100ms);
 
   Expect(server.ConnectionCount() <= 128,
@@ -403,12 +348,6 @@ void TestIdleConnectionFloodIsCapped() {
   server.Stop();
 }
 
-// Regression (TD-2026-07-17A-052): the write path advances a read offset over
-// partial sends and compacts the consumed prefix lazily, instead of erasing from
-// the front of write_buf on every send. A large multi-line broadcast (well over a
-// single socket send-buffer, forcing repeated EAGAIN/offset advances and prefix
-// compactions) must still be delivered intact, in order, with no lost, dropped,
-// or duplicated bytes.
 void TestLargeMultiLineBroadcastDeliveredInOrder() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path socket_path = temp_dir.path() / "control.sock";
@@ -419,9 +358,6 @@ void TestLargeMultiLineBroadcastDeliveredInOrder() {
   Expect(client >= 0, "client should connect");
   Expect(WaitForConnectionCount(server, 1, 2s), "server should accept the connection");
 
-  // 100 lines x ~16 KiB = ~1.6 MiB, far larger than a single socket send buffer,
-  // so FlushConnection must loop with the offset across many EAGAIN cycles. Each
-  // line is unique so reordering/duplication/loss is detectable.
   constexpr int kLineCount = 100;
   constexpr std::size_t kPadBytes = 16u << 10;
   std::vector<std::string> expected;
@@ -433,8 +369,6 @@ void TestLargeMultiLineBroadcastDeliveredInOrder() {
     server.Broadcast(line);
   }
 
-  // Read exactly kLineCount newline-framed lines, preserving any bytes recv()
-  // pulls past a newline (ReadLine drops them, so it cannot be looped here).
   std::vector<std::string> got;
   std::string buf;
   const auto deadline = std::chrono::steady_clock::now() + 10s;
@@ -458,7 +392,7 @@ void TestLargeMultiLineBroadcastDeliveredInOrder() {
     if (count > 0) {
       buf.append(chunk, static_cast<std::size_t>(count));
     } else if (count == 0) {
-      break;  // EOF
+      break;
     }
   }
 
@@ -478,23 +412,11 @@ void TestLargeMultiLineBroadcastDeliveredInOrder() {
   server.Stop();
 }
 
-// The client must not frame a request line the server will shed. These were two
-// constants of the same name in two files -- the client's comment claiming to
-// mirror the server's, at 16x the value -- so a request between the two ceilings
-// was framed, sent, and answered by dropping the socket with nothing saying why.
 void TestControlRequestCeilingIsOneValue() {
   Expect(microide::platform::kMaxControlRequestLineBytes == (1u << 20),
          "the shared control request ceiling is 1 MiB");
-  // Both directions of the wire read the shared constant rather than a private
-  // copy; the assertion that matters is that neither file defines its own, which
-  // the single definition in ControlSocketLimits.h now makes structural.
 }
 
-// Diagnosis: a shed client sees only EPIPE on its next send. The QA monkey's
-// channel went dead mid-run with the app still alive (soak 1d64e3925f2b, 618
-// failed queries), and nothing said which of the shed paths had fired. Every
-// shed is logged with its reason; the stalled reader is the one a long-lived
-// client that sleeps between requests can hit.
 void TestShedClientIsLoggedWithItsReason() {
   std::mutex mutex;
   std::vector<std::string> lines;
@@ -513,7 +435,6 @@ void TestShedClientIsLoggedWithItsReason() {
   Expect(client >= 0, "client should connect");
   Expect(WaitForConnectionCount(server, 1, 2s), "server should accept the connection");
 
-  // The client never reads: events pile up past the write buffer's cap.
   const std::string event(64u * 1024, 'e');
   for (int i = 0; i < 400 && server.ConnectionCount() == 1; ++i) {
     server.Broadcast(event);
@@ -531,7 +452,7 @@ void TestShedClientIsLoggedWithItsReason() {
   Expect(logged, "the shed should be logged with its reason");
 }
 
-}  // namespace
+}
 
 void RegisterControlSocketServerTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlSocketServer/RequestCeilingIsOneValue",
@@ -562,4 +483,4 @@ void RegisterControlSocketServerTests(std::vector<TestCase>& tests) {
           TestLargeMultiLineBroadcastDeliveredInOrder);
 }
 
-}  // namespace microide::tests
+}

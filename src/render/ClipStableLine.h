@@ -11,23 +11,6 @@
 
 namespace microide::render {
 
-// A line whose pixels do not depend on the clip rect it is drawn under.
-//
-// SDL's software renderer draws a line natively (it ignores
-// SDL_HINT_RENDER_LINE_METHOD) and clips it BEFORE rasterizing: Bresenham then
-// starts from the clipped endpoint, so a diagonal cut by a clip lands on other
-// pixels than the same line drawn whole (SDL_drawline.c says so itself: "We
-// don't actually want to clip, as it may change line slope"). A partial frame's
-// clip through an icon -- the overflow chevron beside an open menu -- then drew
-// it a pixel off from the full frame the redraw verifier compares it with (CI
-// qa-asan, monkey seed 4: QA-STALE at the clip's left edge).
-//
-// On that path the line is rasterized here, with SDL's own algorithm (BLINE in
-// SDL_draw.h, endpoints truncated as SW_QueueDrawLines does, the end pixel
-// drawn), and drawn as points, which are clipped one by one: the same pixels as
-// SDL's unclipped line, whatever the clip. Every other path -- a GPU renderer, a
-// scaled or logical view, where SDL draws lines as geometry -- is already
-// clip-stable and draws through SDL_RenderLine unchanged.
 inline void RenderClipStableLine(SDL_Renderer* renderer, float x1, float y1, float x2, float y2) {
   NotePaint(renderer, SDL_FRect{std::min(x1, x2), std::min(y1, y2), std::abs(x2 - x1) + 1.0f,
                                 std::abs(y2 - y1) + 1.0f});
@@ -63,7 +46,6 @@ inline void RenderClipStableLine(SDL_Renderer* renderer, float x1, float y1, flo
     yinc1 = -yinc1;
     yinc2 = -yinc2;
   }
-  // Icons are short strokes; a long rule goes in batches.
   std::array<SDL_FPoint, 64> batch{};
   std::size_t used = 0;
   int x = ix1;
@@ -89,4 +71,4 @@ inline void RenderClipStableLine(SDL_Renderer* renderer, float x1, float y1, flo
   }
 }
 
-}  // namespace microide::render
+}

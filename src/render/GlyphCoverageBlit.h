@@ -10,28 +10,6 @@
 
 namespace microide::render {
 
-// Straight-copy one glyph's coverage out of a coverage atlas into `dst`, tinted
-// to `color`, without going through SDL_BlitSurface.
-//
-// Worth its own path because of the CALL COUNT, not the pixel count: a rendered
-// row string composites one of these per character, so a 200-column row is 200
-// blitter dispatches back to back, and they measured 78.8 ms of the 84.5 ms that
-// `editor_soft_wrap_long_line_scroll` spends rasterizing strings -- 93 %
-// (TD-2026-08-30-276). Each individual glyph is ~8x17 pixels, far too small for
-// SDL's per-blit setup to amortize.
-//
-// The arithmetic is an identity rather than an approximation, which is what makes
-// this safe to substitute: a coverage atlas stores white coverage (RGB = 255,
-// A = the glyph's alpha), and modulating that by an opaque colour is
-// `255 * c / 255 == c` in every channel. So the result is a CONSTANT rgb word
-// carrying the source's alpha byte, and there is nothing to multiply per pixel.
-//
-// Returns false -- leaving `dst` untouched -- for anything this cannot serve
-// exactly, and the caller falls back to SDL_BlitSurface.
-//
-// Shared by AsciiGlyphAtlas and GlyphClusterAtlas: both store white coverage in
-// the renderer's texture format, so the identity above holds for both, and a
-// second copy of this loop is a second place for the clipping to be wrong.
 inline bool TintCopyCoverage(const SDL_Surface* atlas, SDL_Surface* dst, int dst_x, int src_x,
                              int width, int height, SDL_Color color) {
   if (atlas == nullptr || dst == nullptr) {
@@ -44,9 +22,6 @@ inline bool TintCopyCoverage(const SDL_Surface* atlas, SDL_Surface* dst, int dst
   if (details == nullptr || details->bytes_per_pixel != 4 || details->Amask == 0) {
     return false;
   }
-  // Clip to the destination the way SDL_BlitSurface's own clipping would, so a
-  // glyph overhanging the composite's right edge is truncated rather than wrapping
-  // into the next row of pixels.
   width = std::min(width, dst->w - dst_x);
   height = std::min(height, dst->h);
   if (dst_x < 0 || width <= 0 || height <= 0) {
@@ -78,6 +53,6 @@ inline bool TintCopyCoverage(const SDL_Surface* atlas, SDL_Surface* dst, int dst
   return true;
 }
 
-}  // namespace microide::render
+}
 
-#endif  // MICROIDE_HAS_SDL3_TTF
+#endif

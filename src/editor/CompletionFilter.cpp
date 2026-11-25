@@ -13,9 +13,6 @@ unsigned char FoldAscii(unsigned char c) {
   return IsAsciiUpper(c) ? static_cast<unsigned char>(c - 'A' + 'a') : c;
 }
 
-// A word starts at the text's start, after any non-alphanumeric ASCII byte (`_`,
-// `.`, `-`, `:`, a space), and at a camelCase hump (lower or digit, then upper).
-// Bytes >= 0x80 count as word characters, so a UTF-8 identifier is one word.
 bool IsWordStart(std::string_view text, std::size_t i) {
   if (i == 0) {
     return true;
@@ -28,7 +25,7 @@ bool IsWordStart(std::string_view text, std::size_t i) {
   return IsAsciiUpper(cur) && (IsAsciiLower(prev) || (prev >= '0' && prev <= '9'));
 }
 
-}  // namespace
+}
 
 int CompletionMatchScore(std::string_view candidate, std::string_view query) {
   if (query.empty()) {
@@ -38,9 +35,6 @@ int CompletionMatchScore(std::string_view candidate, std::string_view query) {
     return kNoCompletionMatch;
   }
   const unsigned char first = FoldAscii(static_cast<unsigned char>(query[0]));
-  // The first query byte must land on a word start. Try each such position in
-  // turn: `ab` against `xAb_ab` must not give up because the first word-start `a`
-  // happens to be followed by a poorer tail.
   int best = kNoCompletionMatch;
   for (std::size_t start = 0; start + query.size() <= candidate.size(); ++start) {
     if (FoldAscii(static_cast<unsigned char>(candidate[start])) != first ||
@@ -69,17 +63,13 @@ int CompletionMatchScore(std::string_view candidate, std::string_view query) {
         previous_matched = true;
         ++q;
       } else {
-        // A skipped byte costs a little, so the tighter of two matches wins.
         score -= 1;
         previous_matched = false;
       }
     }
     if (q < query.size()) {
-      // The tail did not fit from here; a later word start only has less room.
       break;
     }
-    // An exact prefix (the common case: the word typed IS the start of the
-    // label) outranks any scattered match of the same query.
     if (start == 0 && c == query.size()) {
       score += 10;
     }
@@ -88,4 +78,4 @@ int CompletionMatchScore(std::string_view candidate, std::string_view query) {
   return best;
 }
 
-}  // namespace microide::editor
+}

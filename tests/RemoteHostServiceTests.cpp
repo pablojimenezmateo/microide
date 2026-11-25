@@ -40,7 +40,7 @@ struct AssistServiceTestAccess {
     assist.navigation().NavigateToLspLocation(location, lsp_encoding::PositionEncoding::Utf16);
   }
 };
-}  // namespace microide::workspace
+}
 
 namespace microide::tests {
 namespace {
@@ -61,18 +61,11 @@ std::string ScreenText(const terminal::TerminalSession& session) {
   return text;
 }
 
-// The frame loop's part, for a test: drain what the sessions reported (the
-// project-file wake's drain site) and the terminals' frames.
 void Pump(WorkspaceShell& shell) {
   (void)WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false);
   WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
 }
 
-// `remote-disconnect` and wait until the link is down. The command returns before
-// it is: a save made in between still reaches the host, so a test that means to
-// save OFFLINE saved online instead -- AOneSidedConflictOffersNoMerge then found no
-// conflict, the edit having moved with the host's rename (about 1 run in 60 under
-// a parallel run, 2026-11-03).
 void DisconnectAndWait(WorkspaceShell& shell, const std::string& target) {
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-disconnect " + target), "disconnects");
   Expect(WaitUntil(
@@ -88,9 +81,6 @@ void DisconnectAndWait(WorkspaceShell& shell, const std::string& target) {
          });
 }
 
-// The shell's ssh is the fake host's shim. Automatic port forwarding is off: on a
-// shared machine (a parallel test run) another test's listener would be forwarded
-// and counted; the one test about it turns it back on.
 void PointAtFakeHost(WorkspaceShell& shell, const FakeSshHost& host, bool needs_auth = false) {
   std::string ssh;
   for (const std::string& word : host.SshArgv(needs_auth)) {
@@ -113,23 +103,13 @@ const workspace::NotificationService::Notification* FindRow(WorkspaceShell& shel
   return nullptr;
 }
 
-// Every terminal says where it runs (remote-connection-lifecycle, "Host and local
-// terminals are never confused", "A local shell from a remote-only window"): in a
-// remote project the authentication tab is `ssh · ` and runs here, Terminal > New
-// runs on the host, Remote: Open Local Terminal is `local · ` and runs here; a local
-// project's terminal carries no prefix, and the local-terminal command is not
-// offered there. Along the way: the host prompt completes, a hostile host is
-// refused, port forwards and a host terminal's localhost link reach the project's
-// host, and Disconnect ends the host terminal's link.
 void TestRemoteProjectTerminalsSayWhereTheyRun() {
   FakeSshHost host;
   const std::filesystem::path host_root = host.home / "src" / "terms";
   WriteFile(host_root / "a.txt", "a\n");
   TemporaryDirectory local_project;
   WorkspaceShell shell;
-  // The key has a passphrase: the batch master fails and ssh must ask in a terminal.
-  PointAtFakeHost(shell, host, /*needs_auth=*/true);
-  // A per-run host name: the control socket's path is derived from it.
+  PointAtFakeHost(shell, host, true);
   const std::string target = "dev@fake-terms-" + std::to_string(::getpid());
   Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open -oProxyCommand=x:/tmp"),
          "a hostile host is refused by the command itself");
@@ -164,7 +144,6 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
              std::chrono::seconds(30), std::chrono::milliseconds(5)),
          [&] { return "authenticated there, the project connects and the status bar names its host: '" + segment() + "'"; });
 
-  // Terminal > New in a remote project: a host terminal.
   const std::size_t before_host = WorkspaceShellTestAccess::TerminalTabCount(shell);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "term"), "Terminal > New");
   Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == before_host + 1, "a tab opens");
@@ -181,8 +160,6 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
              },
              std::chrono::seconds(15), std::chrono::milliseconds(5)),
          [&] { return "its shell runs on the host:\n" + ScreenText(host_session); });
-  // A program there that opens a page through $BROWSER (claude's login) opens it
-  // HERE, through the editor's opener -- the host has no display to open it on.
   {
     std::vector<std::string> opened;
     WorkspaceShellTestAccess::SetExternalUrlOpener(shell, [&](std::string_view url) {
@@ -206,10 +183,6 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
                std::chrono::seconds(15), std::chrono::milliseconds(5)),
            "and the program is told it opened");
   }
-  // A program there that runs its $EDITOR on a file (git's commit message, an
-  // agent CLI's prompt) gets a TAB here, not a vi drawn into the pane: the tab
-  // holds the file's text under its own name, the program waits while it is
-  // open, and closing it leaves what was saved in the host's file.
   {
     WriteFile(host_root / "COMMIT_EDITMSG", "subject\n\nbody\n");
     host_session.SendBytes("\"$EDITOR\" +3 COMMIT_EDITMSG; echo EDITOR-$?-DONE\n");
@@ -257,10 +230,8 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
     }
   }
 
-  // Remote: Open Local Terminal: a shell on this machine, and its title says so.
   Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, workspace::ActionId::RemoteOpenLocalTerminal),
          "the local terminal is offered in a remote project");
-  // `terminal.shell` names a program on THIS machine: the local terminal's shell.
   const std::filesystem::path wrapper = local_project.path() / "marked-shell";
   WriteFile(wrapper, "#!/bin/sh\nexport QA_SHELL_MARK=local-shell\nexec /bin/sh \"$@\"\n");
   std::filesystem::permissions(wrapper, std::filesystem::perms::owner_all);
@@ -289,7 +260,6 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
            "mixed, each says where it runs: '" + all[host_tab] + "' / '" + all[local_tab] + "'");
   }
 
-  // The host prompt completes from the open projects' hosts (and ~/.ssh/config).
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open"), "the prompt opens");
   Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell), "it is up");
   WorkspaceShellTestAccess::SetPromptSurfaceInput(shell, target.substr(0, target.size() - 2));
@@ -310,8 +280,6 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
   }
   Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell), "Escape closes it");
 
-  // Forward a Port: the row says where it is and offers the browser and the
-  // address; the status bar counts it; Stop Forwarding takes it away again.
   Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-forward-port 0"),
          "a port out of range is refused");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-forward-port 39218"),
@@ -334,9 +302,6 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
                (row != nullptr ? row->message : std::string()) + "'");
   }
   Expect(segment() == target + " \xc2\xb7 1 port", "the status bar counts it: '" + segment() + "'");
-  // A localhost link in a HOST terminal is the host's: clicking it forwards that
-  // port and opens the local end, path and query kept. The local terminal's would
-  // open as it is.
   std::vector<std::string> opened;
   WorkspaceShellTestAccess::SetExternalUrlOpener(shell, [&](std::string_view url) {
     opened.emplace_back(url);
@@ -358,8 +323,6 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
   Expect(opened.size() == 1 && opened[0].rfind("http://localhost:", 0) == 0 &&
              opened[0].ends_with("/app?x=1"),
          "at the local end of the forward: '" + (opened.empty() ? std::string() : opened[0]) + "'");
-  // The Remote menu's verbs are live with a host connected, and its Stop Forwarding
-  // a Port… offers the forwards there are rather than asking for a number.
   for (const ActionId id : {ActionId::RemoteShowStatus, ActionId::RemoteShowLog, ActionId::RemoteReconnect,
                             ActionId::RemoteDisconnect, ActionId::RemoteStopServer, ActionId::RemoteForwardPort,
                             ActionId::RemoteUnforwardPort, ActionId::RemoteShowHostChanges,
@@ -375,7 +338,6 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
     const auto& pick = WorkspaceShellTestAccess::QuickPick(shell);
     const auto lists = [&](std::string_view port) {
       return std::any_of(pick.items.begin(), pick.items.end(), [&](const auto& item) {
-        // The host is quoted as a command argument (QuoteCommandArg).
         return item.value.starts_with("remote-unforward-port " + std::string(port) + " ") &&
                item.value.find(target) != std::string::npos &&
                item.primary_label.starts_with(std::string(port) + " \u2192 localhost:") &&
@@ -408,8 +370,6 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
              std::chrono::seconds(15), std::chrono::milliseconds(5)),
          "and the count goes");
 
-  // A local project beside it: its terminals are local and say nothing about it,
-  // and there is no separate local terminal to offer.
   const std::size_t remote_index = WorkspaceShellTestAccess::ActiveProjectIndex(shell);
   Expect(WorkspaceShellTestAccess::OpenProjectTabWithLocality(shell, local_project.path(), {}), "a local project");
   Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, workspace::ActionId::RemoteOpenLocalTerminal),
@@ -434,7 +394,6 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
              std::chrono::seconds(10), std::chrono::milliseconds(5)),
          "the host terminal shows its link ended");
   Expect(local_session.running(), "the local one is not the host's to end");
-  // § 7.4a: its tab says it is detached, dimmed; the local terminal's does not.
   Expect(host_session.host_link_down(), "the host terminal's link is down, its shell detached");
   {
     const std::vector<std::string> strip = WorkspaceShellTestAccess::BottomPanelTerminalLabels(shell);
@@ -446,9 +405,6 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
   RemoveFakeMaster(target);
 }
 
-// A closed remote project stays down and never answers for its host: with an open
-// project on the same host, the host verbs (Show Log, Reconnect) reach the open
-// one's session, and Reconnect does not bring the closed tab's connection back.
 void TestAClosedProjectDoesNotAnswerForItsHost() {
   FakeSshHost host;
   const std::filesystem::path first_root = host.home / "src" / "first";
@@ -477,7 +433,6 @@ void TestAClosedProjectDoesNotAnswerForItsHost() {
                std::chrono::seconds(30), std::chrono::milliseconds(5)),
            "and connects");
   }
-  // Close whichever the service looks at first (its projects are keyed by mirror).
   const std::size_t closed = mirrors[0] < mirrors[1] ? 0 : 1;
   const std::filesystem::path open_mirror = mirrors[1 - closed];
   WorkspaceShellTestAccess::CloseProject(shell, closed);
@@ -504,9 +459,6 @@ void TestAClosedProjectDoesNotAnswerForItsHost() {
   RemoveFakeMaster(target);
 }
 
-// Forward a Port… with two hosts open and a local project active (TD-2026-10-27-405):
-// the port is asked first, then the host -- where the command used to be refused
-// with "Name the host". The same for Stop Forwarding typed with a port alone.
 void TestForwardAPortAsksForTheHostWhenSeveralAreOpen() {
   FakeSshHost host;
   TemporaryDirectory local_project;
@@ -555,8 +507,6 @@ void TestForwardAPortAsksForTheHostWhenSeveralAreOpen() {
   RemoveFakeMaster(second);
 }
 
-// A host with no server and installing turned off: the project's error row offers
-// the install command beside Reconnect and the ssh command.
 void TestAFailedInstallOffersTheInstallCommand() {
   FakeSshHost host;
   const std::filesystem::path host_root = host.home / "src" / "install";
@@ -597,9 +547,6 @@ void RemoveFakeMaster(const std::string& target) {
   }
 }
 
-// The host-terminal settings shape a remote PROJECT's terminals: they once reached
-// only the launcher of the removed terminal-only host session, so in a project
-// both read as their defaults whatever the user set.
 void TestHostTerminalSettingsReachTheProjectLauncher() {
   FakeSshHost host;
   const std::filesystem::path host_root = host.home / "src" / "settings";
@@ -622,9 +569,6 @@ void TestHostTerminalSettingsReachTheProjectLauncher() {
   RemoveFakeMaster(target);
 }
 
-// § 7.3: a file the mirror has not fetched (here: over remote.backfill_max_file_mib,
-// so it stays unfetched deterministically) is still listed — dimmed in the tree, in
-// quick-open — and opening it fetches it, then opens it.
 void TestUnfetchedFilesAreListedAndOpenWhenFetched() {
   FakeSshHost host;
   const std::filesystem::path host_root = host.home / "src" / "lazy";
@@ -693,9 +637,6 @@ void TestUnfetchedFilesAreListedAndOpenWhenFetched() {
   RemoveFakeMaster(target);
 }
 
-// A save conflict merged three ways in the merge editor: Merge opens the version
-// both started from, the host's and the mirror's; Mark Resolved pushes the result to
-// the host (not to git's index) and the conflict row goes.
 void TestConflictMergesThreeWaysToTheHost() {
   FakeSshHost host;
   const std::filesystem::path host_root = host.home / "src" / "merge";
@@ -715,10 +656,6 @@ void TestConflictMergesThreeWaysToTheHost() {
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
          "the mirror fills");
   WorkspaceShellTestAccess::OpenFile(shell, file);
-  // The agent edits the first line while the user saves an edit to the last. With
-  // the link up, the agent's edit could be pulled into the mirror before the save
-  // and the save was then refused as changed on disk (CI's UBSan job, 2026-11-03):
-  // the user saves offline instead, and the agent's edit is there at reconnect.
   DisconnectAndWait(shell, target);
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(2, 0);
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("X");
@@ -769,17 +706,6 @@ void TestConflictMergesThreeWaysToTheHost() {
   RemoveFakeMaster(target);
 }
 
-// Two or more conflicts are ONE counted row (§ 7.6: never a row per file -- a
-// branch checked out on the host makes dozens at once), whose Keep All Local and
-// Take All Remote settle every one and whose Manage… opens the Conflicts view:
-// the files, each ticked with Enter, and Keep Local / Take Remote / Merge rows that
-// act on the ticked ones. Down to one conflict, that one gets its own row again.
-// A conflict one side deleted -- the host archived the folder the file was in
-// while it was edited here -- has nothing to merge. Its row says which side
-// deleted it and offers only the two choices that mean something; a Merge asked
-// for anyway (the command, the Conflicts view) says so instead of failing with an
-// error toast; and Take Remote settles it -- which it could not do at all while a
-// missing parent directory read as an error on the host (TD-2026-10-29-421).
 void TestAOneSidedConflictOffersNoMerge() {
   FakeSshHost host;
   const std::filesystem::path host_root = host.home / "src" / "onesided";
@@ -830,8 +756,6 @@ void TestAOneSidedConflictOffersNoMerge() {
              },
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
          [&] {
-           // What the engine holds when the row did not come (seen once in ~50 runs
-           // under load): the mirror's counts, the local file and the host's tree.
            std::string host_files;
            for (const auto& entry : std::filesystem::recursive_directory_iterator(host_root)) {
              host_files += " " + std::filesystem::relative(entry.path(), host_root).string();
@@ -880,13 +804,9 @@ void TestAOneSidedConflictOffersNoMerge() {
   }
 }
 
-// Soak 464a40fee2bd: a save the host refuses for the path itself (here a folder
-// made read-only there) was a "Sync failed" error repeated at every reconnect,
-// with the save counted as unsent forever. It is blocked: a row of its own naming
-// the host's reason, with Retry and Replace on Host, counted apart from unsent.
 void TestASaveTheHostRefusesHasARowWithRetry() {
   if (::geteuid() == 0) {
-    return;  // permissions do not refuse root
+    return;
   }
   FakeSshHost host;
   const std::filesystem::path host_root = host.home / "src" / "refusing";
@@ -993,8 +913,6 @@ void TestConflictsBatchIntoOneRowAndTheConflictsView() {
              },
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
          "the mirror fills");
-  // Three saves made offline, three host edits meanwhile: on reconnect each push
-  // is refused, and the three conflicts arrive together.
   DisconnectAndWait(shell, target);
   for (std::size_t i = 0; const char* name : {"a.txt", "b.txt", "c.txt"}) {
     WorkspaceShellTestAccess::OpenFile(shell, mirror / name);
@@ -1036,7 +954,6 @@ void TestConflictsBatchIntoOneRowAndTheConflictsView() {
     Expect(own_rows() == 0, "and no row per file: " + std::to_string(own_rows()));
   }
 
-  // Manage…: the Conflicts view, with its action rows above the files.
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-conflicts"), "Manage… is accepted");
   Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "conflicts", "the Conflicts view opens");
   using Item = plugin::PluginHost::SidebarItem;
@@ -1055,7 +972,6 @@ void TestConflictsBatchIntoOneRowAndTheConflictsView() {
          "four action rows, then the three files unticked:" + row_ids());
   Expect(rows()[1].detail == "tick files first" && rows()[4].detail == "changed on both sides",
          "the actions say they need a tick: " + rows()[1].detail + " / " + rows()[4].detail);
-  // Enter on a file ticks it; the counts follow.
   WorkspaceShellTestAccess::SetPluginSidebarSelectedIndex(shell, 4);
   Expect(WorkspaceShellTestAccess::OpenSelectedPluginSidebarItem(shell), "Enter on a.txt is taken");
   Expect(rows().size() == 7 && rows()[4].label == "[x] a.txt" && rows()[0].detail == "1 of 3 selected" &&
@@ -1064,8 +980,6 @@ void TestConflictsBatchIntoOneRowAndTheConflictsView() {
   WorkspaceShellTestAccess::SetPluginSidebarSelectedIndex(shell, 5);
   Expect(WorkspaceShellTestAccess::OpenSelectedPluginSidebarItem(shell), "Enter on b.txt is taken");
   Expect(rows()[5].label == "[x] b.txt" && rows()[0].detail == "2 of 3 selected", "b.txt too:" + row_ids());
-  // Keep Local for the ticked two: the host takes them; c.txt stays a conflict --
-  // and, alone now, gets its own row while the counted one goes.
   WorkspaceShellTestAccess::SetPluginSidebarSelectedIndex(shell, 1);
   Expect(WorkspaceShellTestAccess::OpenSelectedPluginSidebarItem(shell), "Keep Local is taken");
   Expect(WaitUntil(
@@ -1080,8 +994,6 @@ void TestConflictsBatchIntoOneRowAndTheConflictsView() {
   Expect(rows().size() == 5 && rows()[4].id == "c.txt" && rows()[4].label == "[ ] c.txt" &&
              rows()[0].detail == "0 of 1 selected",
          "the view follows: one file left, its tick gone with the settled ones:" + row_ids());
-  // Select all, then the counted row's other button by command: Take Remote for
-  // the rest.
   WorkspaceShellTestAccess::SetPluginSidebarSelectedIndex(shell, 0);
   Expect(WorkspaceShellTestAccess::OpenSelectedPluginSidebarItem(shell), "Select all is taken");
   Expect(rows().size() == 5 && rows()[0].label == "Clear selection" && rows()[4].label == "[x] c.txt",
@@ -1100,18 +1012,10 @@ void TestConflictsBatchIntoOneRowAndTheConflictsView() {
   RemoveFakeMaster(target);
 }
 
-// A loopback listener on a free port the user would choose (below the ephemeral
-// range, where a bind to port 0 lands): fd and port, or fd -1.
-// Where this process's port scans start: the same test runs at once in the plain
-// and sanitizer lanes on one machine, and a fixed start made them scan, and take,
-// each other's ports -- one test's "restart on the same port" then found it taken.
 std::uint16_t ProcessPortBase(std::uint16_t range_start) {
   return static_cast<std::uint16_t>(range_start + (static_cast<unsigned>(::getpid()) % 100u) * 20u);
 }
 
-// A loopback socket bound to the first free port at or after `from`, not yet
-// listening: the port is held (no other process can take it) but no listener
-// shows on it until the caller's listen().
 std::pair<int, std::uint16_t> BindOnAChosenPort(std::uint16_t from) {
   for (std::uint32_t port = from; port < 32000; ++port) {
     const int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -1144,11 +1048,6 @@ std::pair<int, std::uint16_t> ListenOnAChosenPort(std::uint16_t from) {
   return {-1, 0};
 }
 
-// TD-2026-11-02-429 item 5: the default "project" source counts a port a project's
-// process holds -- which a server the project's terminal started in a container
-// (`docker run -p`) or one that double-forked is not, so it was never forwarded.
-// A port whose address that terminal printed is the project's too (VS Code's
-// "hybrid"); one nobody printed is still left alone.
 void TestMentionsLocalPortReadsADevServersBanner() {
   using workspace::RemoteHostService;
   Expect(RemoteHostService::MentionsLocalPort("  Local:   http://localhost:5173/", 5173), "Vite's banner");
@@ -1187,30 +1086,20 @@ void TestAPortTheProjectsTerminalPrintedIsTheProjects() {
   const auto forwarded = [&](std::uint16_t port) {
     return WorkspaceShellTestAccess::RemoteHosts(shell).CommandText(target, "port:" + std::to_string(port)).has_value();
   };
-  // Bound first and listening only after the print: the port is held throughout
-  // (probing it, closing it and binding it again let the same test in a parallel
-  // lane take it in between).
   auto [server, port] = BindOnAChosenPort(ProcessPortBase(23000));
   Expect(server >= 0, "a free port");
-  // What the terminal shows once the container is up (the host is this machine,
-  // and this process -- no process of the project's -- holds the socket).
   TerminalSessionTestAccess::AppendOutput(terminal, "  Local:   http://localhost:" + std::to_string(port) + "/\r\n");
   Expect(::listen(server, 1) == 0, "the server listens");
   auto [unprinted, unprinted_port] = ListenOnAChosenPort(static_cast<std::uint16_t>(port + 1));
   Expect(unprinted >= 0, "and a listener nobody printed");
   Expect(pump_until([&] { return forwarded(port); }, std::chrono::seconds(30)),
          "the printed one is forwarded as the project's");
-  (void)pump_until([] { return false; }, std::chrono::seconds(3));  // a few more polls
+  (void)pump_until([] { return false; }, std::chrono::seconds(3));
   Expect(!forwarded(unprinted_port), "the unprinted one is left alone");
   ::close(server);
   ::close(unprinted);
 }
 
-// Automatic port forwarding (VS Code's): a program on the host that starts
-// listening after the editor connected is forwarded and announced, with no
-// command; what already listened at connect is not. By default only a program a
-// project started counts, never one on an ephemeral port, a restart is not
-// announced twice, and the announcement can be turned off.
 void TestAPortThatStartsListeningIsForwarded() {
   FakeSshHost host;
   WorkspaceShell shell;
@@ -1256,38 +1145,26 @@ void TestAPortThatStartsListeningIsForwarded() {
         std::chrono::seconds(30), std::chrono::milliseconds(10));
   };
 
-  // The host is this machine: a listener here is one on the host.
   auto [fd, port] = ListenOnAChosenPort(ProcessPortBase(20000));
   Expect(fd >= 0, "a dev server starts listening on the host");
   Expect(pump_until([&] { return announced(port); }), "it is forwarded and announced");
   ::close(fd);
   Expect(pump_until([&] { return row_for(port) == nullptr && !forwarded(port); }),
          [&] {
-           // TD-2026-10-28-415: which half stayed.
            return std::string("when it stops listening the automatic forward goes, quietly (row ") +
                   (row_for(port) != nullptr ? "still shown" : "gone") + ", forward " +
                   (forwarded(port) ? "still registered" : "gone") + ")";
          });
-  // The dev server restarts on the same port: forwarded again, not announced again.
   auto [again, again_port] = ListenOnAChosenPort(port);
   Expect(again >= 0 && again_port == port, "the dev server restarts on its port");
   Expect(pump_until([&] { return forwarded(port); }), "its forward is made again");
   Expect(row_for(port) == nullptr, "without a second row");
   ::close(again);
 
-  // The default: only what a project started. A listener of no project (another
-  // user's daemon, a service) and a project's listener on an ephemeral port are
-  // left alone; the project's dev server on its chosen port is announced as the
-  // project's -- with two projects open on one host, a bare "Port N on <host>" row
-  // read as news about whichever project was in front.
   Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.auto_forward_ports_source", "project"),
          "back to the default");
   auto [stranger, stranger_port] = ListenOnAChosenPort(static_cast<std::uint16_t>(port + 1));
   Expect(stranger >= 0, "a program of no project starts listening");
-  // The child binds the first free port at or after `from` itself and prints it
-  // (0: the ephemeral range). A port probed here, closed and handed to the child
-  // left a window another process could bind in -- the same test in a parallel
-  // sanitizer lane scans the same range -- and the child then never listened.
   const auto spawn_listener = [&](platform::AsyncSubprocess& process, std::uint16_t from) -> std::uint16_t {
     Expect(WorkspaceShellTestAccess::ProjectLauncher(shell).StartAsync(
                process,
@@ -1314,7 +1191,7 @@ void TestAPortThatStartsListeningIsForwarded() {
     return port.has_value() ? static_cast<std::uint16_t>(*port) : std::uint16_t{0};
   };
   platform::AsyncSubprocess ephemeral;
-  (void)spawn_listener(ephemeral, 0);  // a bind to port 0: the ephemeral range
+  (void)spawn_listener(ephemeral, 0);
   platform::AsyncSubprocess dev_server;
   const std::uint16_t chosen = spawn_listener(dev_server, static_cast<std::uint16_t>(stranger_port + 1));
   Expect(pump_until([&] {
@@ -1325,12 +1202,6 @@ void TestAPortThatStartsListeningIsForwarded() {
          "the project's dev server is forwarded and announced as the project's");
   Expect(!forwarded(stranger_port) && row_for(stranger_port) == nullptr,
          "a listener no project started is not forwarded");
-  // Only rows for ports in the host's ephemeral range: the host is this machine,
-  // and test shards run beside each other on it -- under source "any" above, a
-  // listener another shard's test holds (RemoteHostService/APortTheProjects-
-  // TerminalPrintedIsTheProjects keeps two for seconds) is forwarded too, and
-  // counting every row read those as this listener's (CI's TSan job, 2026-11-02:
-  // "3 forward rows").
   std::ifstream range_file("/proc/sys/net/ipv4/ip_local_port_range");
   std::uint32_t low = 32768;
   std::uint32_t high = 60999;
@@ -1354,7 +1225,6 @@ void TestAPortThatStartsListeningIsForwarded() {
   ::close(stranger);
   Expect(pump_until([&] { return !forwarded(chosen); }), "the dev server's forward goes with it");
 
-  // Announcements off: forwarded all the same, silently.
   Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.auto_forward_ports_notify", "false"),
          "announcements off");
   platform::AsyncSubprocess quiet_server;
@@ -1365,8 +1235,6 @@ void TestAPortThatStartsListeningIsForwarded() {
   RemoveFakeMaster(target);
 }
 
-// § 7.3's status block: each stage as far as the connection got, a failure's
-// reason with the command that reproduces it and Retry, the sync's progress.
 void TestProjectHomeStatusBlockFollowsTheConnection() {
   using State = project::remote::RemoteHostSession::State;
   using Stage = editor::WelcomeStageState;
@@ -1400,17 +1268,6 @@ void TestProjectHomeStatusBlockFollowsTheConnection() {
          "then what it holds and what is not on the host yet");
 }
 
-// Remote: Open Folder on Host… end to end: the command prepares the mirror, the
-// editor opens it as the project root with the host's launcher, the mirror fills
-// from the host, and an edit saved in the editor lands in the HOST's file. Then
-// the mirror reopened as a plain path (what the recents list and a restored session
-// do) is recognized and given its remote locality again.
-// Remote: Remove Mirror. A mirror leaves the disk only through this (a copy of
-// the host's tree plus its metadata is a real cost: 47 MB + up to 170 MB for this
-// repository after churn), and only when nothing in it is still owed to the host.
-// Remove Mirror…'s row lights only for a mirror that is there (TD-2026-10-27-405):
-// a recent whose mirror was deleted outside the editor dims it once the pick has
-// looked -- it used to stay lit for good, and the pick then offered nothing.
 void TestRemoveMirrorDimsForAMirrorDeletedOutsideTheEditor() {
   TemporaryDirectory homes;
   const ScopedEnvVar state("XDG_STATE_HOME", (homes.path() / "state").string());
@@ -1444,10 +1301,6 @@ void TestRemoveMirrorDimsForAMirrorDeletedOutsideTheEditor() {
              },
              std::chrono::seconds(10), std::chrono::milliseconds(10)),
          "closed, its mirror is removable");
-  // Outside the editor, as `rm -rf` would: the closed project's engine may still
-  // be finishing a state write (a temp file and a rename) in that directory, and
-  // the throwing remove_all failed the test when the temp file went first ("cannot
-  // remove all: No such file or directory", CI 2026-10-29).
   for (int attempt = 0; attempt < 100 && std::filesystem::exists(mirror.parent_path()); ++attempt) {
     std::error_code ignored;
     std::filesystem::remove_all(mirror.parent_path(), ignored);
@@ -1487,10 +1340,7 @@ void TestRemoveMirrorDeletesAClosedMirrorAndKeepsUnsentSaves() {
          "an open project's mirror is not removed under it: " + outcome.error);
   Expect(std::filesystem::exists(mirror / "main.c"), "and nothing was deleted");
 
-  // A save the host never receives: disconnected, then edited and saved.
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-disconnect"), "disconnect");
-  // The link goes down asynchronously: a save made before it has would still be
-  // pushed, leaving nothing unsent (a parallel ctest run hit exactly that).
   Expect(WaitUntil(
              [&] {
                Pump(shell);
@@ -1512,14 +1362,10 @@ void TestRemoveMirrorDeletesAClosedMirrorAndKeepsUnsentSaves() {
              std::chrono::seconds(10), std::chrono::milliseconds(10)),
          "the project is closed");
 
-  // The Remote menu's Remove Mirror… offers the closed project's mirror (and only
-  // closed ones: an open project's mirror goes with its close).
   Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::RemoteRemoveMirror),
          "Remove Mirror is available for a closed remote project");
   Expect(WorkspaceShellTestAccess::ExecuteMenuAction(shell, ActionId::RemoteRemoveMirror), "the menu row runs");
   {
-    // Earlier tests in this process share the data directory, so their closed
-    // mirrors may be offered too: this one must be among them.
     const auto& pick = WorkspaceShellTestAccess::QuickPick(shell);
     const bool listed = std::any_of(pick.items.begin(), pick.items.end(), [&](const auto& item) {
       return item.value.starts_with("remote-remove-mirror ") && item.value.find(mirror.string()) != std::string::npos &&
@@ -1556,7 +1402,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
   FakeSshHost host;
   const std::filesystem::path host_root = host.home / "src" / "app";
   WriteFile(host_root / "main.c", "int main(void) { return 0; }\n");
-  // A repository, so git on the host has something to answer once it can.
   Expect(std::system(("git -C '" + host_root.string() +
                       "' init -q && git -C '" + host_root.string() +
                       "' -c user.name=t -c user.email=t@t add -A && git -C '" + host_root.string() +
@@ -1578,8 +1423,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
          "the project is the mirror, named after the host folder: " + mirror.string());
   Expect(!WorkspaceShellTestAccess::ProjectLauncher(shell).is_local(),
          "the project's processes run on the host");
-  // Named by its host folder wherever it is shown (project-identity), never by the
-  // mirror's directory under the data directory.
   {
     const std::string location = target + ":" + host_root.string();
     Expect(WorkspaceShellTestAccess::ProjectCatalogId(shell, 0) ==
@@ -1605,7 +1448,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              },
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
          "the mirror fills from the host");
-  // The home's status block follows it (§ 7.3).
   Expect(WaitUntil(
              [&] {
                Pump(shell);
@@ -1615,8 +1457,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              },
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
          "the project home shows the connection and the sync");
-  // The control channel reports the same, as a driver reads it: no notification
-  // text to parse for readiness.
   {
     const util::JsonValue status = WorkspaceShellTestAccess::ExecuteControlQuery(shell, "status");
     Expect(status.HasKey("remote"), "status carries the remote project");
@@ -1646,8 +1486,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              std::chrono::seconds(20), std::chrono::milliseconds(10)),
          [&] { return "and the edit reaches the host's file: '" + ReadFile(host_root / "main.c") + "'"; });
 
-  // An agent rewrites the file on the host while the user saves another edit: the
-  // push is refused, both versions survive, and a row offers the choice.
   WriteFile(host_root / "main.c", "// the agent's version\n");
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("// mine\n");
@@ -1704,18 +1542,10 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              std::chrono::seconds(20), std::chrono::milliseconds(10)),
          "the mirror takes the host's bytes and the row goes");
 
-  // Changed on Host (§ 7.9): an agent adds a file and rewrites one; one counted row
-  // with Show, a view listing both newest first, and a modified row opening a
-  // before/after compare.
-  // The row is timed and raised at most every 30 s, so it is watched for while the
-  // changes arrive rather than looked for afterwards.
   bool counted = false;
   const auto pump_watching = [&] {
     Pump(shell);
     for (const auto& note : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
-      // The row names its project and its Show carries that project's root: with
-      // two projects on one host, a bare "N files changed on <host>" row raised in
-      // whichever project was in front, and its Show opened THAT project's view.
       counted = counted || (note.key == "remote.changes." + mirror.string() && !note.actions.empty() &&
                             note.actions[0].label == "Show" &&
                             note.message.ends_with(" changed on " + target + " in app") &&
@@ -1768,8 +1598,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              std::chrono::seconds(10), std::chrono::milliseconds(10)),
          "and the cleared view is empty");
 
-  // File History: Clear emptied the list above, not what the mirror keeps. The
-  // file's earlier versions are a pick, and one opens against the file as it is.
   WorkspaceShellTestAccess::OpenFile(shell, mirror / "main.c");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-file-history"), "File History is accepted");
   {
@@ -1798,10 +1626,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
   Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-file-history ffffffffffff"),
          "a version that is not there is refused");
 
-  // Moving between machines. As "laptop-a" this window leaves what it has open on
-  // the host when its session is saved; as "laptop-b", reconnecting with the tab
-  // closed, it is offered that file and opens it at the caret. A machine is not
-  // offered its own.
   {
     workspace::RemoteHostService& hosts = WorkspaceShellTestAccess::RemoteHosts(shell);
     hosts.SetMachineNameForTesting("laptop-a");
@@ -1821,8 +1645,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
       const auto snapshot = hosts.SnapshotOf(mirror);
       return snapshot.has_value() && snapshot->state == LinkState::Ready;
     };
-    // A new connection, as a machine waking up makes one: the host is asked what
-    // was left once per connection.
     const auto reconnect = [&] {
       Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-disconnect " + target), "disconnect");
       Expect(WaitUntil([&] { Pump(shell); return !ready(); }, std::chrono::seconds(20), std::chrono::milliseconds(5)),
@@ -1830,12 +1652,9 @@ void TestOpenFolderOnHostEditsTheHostTree() {
       Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-reconnect " + target), "reconnect");
       Expect(WaitUntil([&] { Pump(shell); return ready(); }, std::chrono::seconds(30), std::chrono::milliseconds(10)),
              "the project is connected again");
-      // The host's answer about what was left comes a round trip after Ready.
       (void)WaitUntil([&] { Pump(shell); return offered().has_value(); }, std::chrono::seconds(1),
                       std::chrono::milliseconds(10));
     };
-    // What the host holds: found under the fake host's home, wherever its server
-    // keeps it.
     const auto left_on_host = [&]() -> std::string {
       std::error_code ec;
       for (std::filesystem::recursive_directory_iterator it(host.home, ec), end; !ec && it != end; it.increment(ec)) {
@@ -1849,8 +1668,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
     Expect(WaitUntil([&] { Pump(shell); return left_on_host().find("\"column\":4") != std::string::npos; },
                      std::chrono::seconds(20), std::chrono::milliseconds(10)),
            [&] { return "an opened file is left on the host at once, with its caret: " + left_on_host(); });
-    // A caret that moves is not worth a message at every pause in typing: it goes
-    // when the window loses focus -- when the machine is left.
     WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 2);
     WorkspaceShellTestAccess::SaveSessionState(shell);
     for (int i = 0; i < 30; ++i) {
@@ -1895,10 +1712,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
                !WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open-session " + mirror.string()),
            "the offer is taken once");
 
-    // The same files at the same carets, left by a third machine after this one
-    // closed them, are an offer: what this machine left stops standing for "what
-    // it has open" once it has nothing open. It was compared with the last upload
-    // for good, and the files were never offered.
     WorkspaceShellTestAccess::SaveSessionState(shell);
     Expect(WaitUntil([&] { Pump(shell); return left_on_host().find("\"laptop-b\"") != std::string::npos; },
                      std::chrono::seconds(20), std::chrono::milliseconds(10)),
@@ -1925,9 +1738,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
                  third.value_or("(no offer)"));
     }
 
-    // Review marks and notes move the same way, without an offer: what this
-    // machine notes is left on the host when its window is left, and what another
-    // machine left there -- changed later -- is this machine's on its next connect.
     {
       const auto review_file = [&]() -> std::filesystem::path {
         std::error_code ec;
@@ -1964,7 +1774,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              [&] { return "leaving the window leaves the review's notes on the host: " + review_on_host(); });
       Expect(review_on_host().find(mirror.string()) == std::string::npos, "without this machine's paths");
 
-      // The other machine went on with the review: its copy of the target is newer.
       compare::BranchReviewStateService theirs;
       const std::filesystem::path their_mirror = "/home/other/mirror";
       const compare::BranchReviewTargetIdentity their_target =
@@ -1981,7 +1790,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
       Expect(merged != nullptr && merged->reviewed_files.size() == 1 && merged->reviewed_files[0].path == "main.c",
              "with the files it marked reviewed");
 
-      // What this machine does next is the newer copy in turn, and replaces it.
       std::this_thread::sleep_for(std::chrono::milliseconds(5));
       review.SetNote(target, compare::BranchReviewNoteScope::File, mirror / "agent.c", std::nullopt, "and answered here");
       hosts.ReviewChanged(mirror);
@@ -1992,8 +1800,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
     }
   }
 
-  // With another project in front, the row's Show brings ITS project forward
-  // rather than opening the front project's view.
   {
     const std::filesystem::path other = host.home.parent_path() / "local-other";
     WriteFile(other / "notes.txt", "local\n");
@@ -2009,7 +1815,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
            "a root that is not a remote project is refused");
   }
 
-  // Disconnect and Reconnect reach a remote project's own channel too.
   const auto segment = [&] {
     return WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote);
   };
@@ -2021,7 +1826,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              },
              std::chrono::seconds(10), std::chrono::milliseconds(10)),
          [&] { return "the project's connection goes down: '" + segment() + "'"; });
-  // A save made offline is kept for the host, and the status bar counts it (§ 7.4).
   WorkspaceShellTestAccess::OpenFile(shell, mirror / "main.c");
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("// offline\n");
@@ -2042,10 +1846,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              std::chrono::seconds(60), std::chrono::milliseconds(10)),
          [&] { return "and comes back: '" + segment() + "'"; });
 
-  // Git while the link is down answers nothing — the status bar says unknown, not
-  // a made-up clean HEAD — and the reconnect asks git again by itself.
-  // Pump() also consumes terminal updates, which request a (throttled) git refresh
-  // of their own — an idle session does not, so this section must not either.
   const auto pump_quietly = [&] { (void)WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false); };
   const auto settle_git = [&] {
     pump_quietly();
@@ -2059,8 +1859,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
                    std::chrono::seconds(10), std::chrono::milliseconds(10)),
          "down again");
   (void)WorkspaceShellTestAccess::ExecuteCommandLine(shell, "git-refresh");
-  // 30 s, not 10: the refresh queues behind any one already in flight over the
-  // link, and under a parallel ctest run that took longer than 10 s.
   Expect(WaitUntil([&] { return settle_git().find("scm-unknown") != std::string::npos; },
                    std::chrono::seconds(30), std::chrono::milliseconds(10)),
          [&] { return "a git refresh that could not reach the host reads as unknown: '" + settle_git() + "'"; });
@@ -2069,7 +1867,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
                    std::chrono::seconds(60), std::chrono::milliseconds(10)),
          [&] { return "and the reconnect refreshes git by itself: '" + settle_git() + "'"; });
 
-  // The host server's log, in an output channel.
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-show-log " + target),
          "show log is accepted");
   Expect(WaitUntil(
@@ -2083,9 +1880,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              std::chrono::seconds(20), std::chrono::milliseconds(10)),
          "the host's server log arrives in an output channel");
 
-  // A host file outside the project — what a language server's definition in a
-  // system header names — maps to the out-of-project cache, never to a same-named
-  // local path, and opening it fetches it read-only from the host first.
   WriteFile(host.home / "include" / "outside.h", "#define FROM_THE_HOST 1\nint the_definition;\n");
   const std::filesystem::path cached = WorkspaceShellTestAccess::ProjectLauncher(shell).LocalPathFromHost(
       host.home / "include" / "outside.h");
@@ -2107,7 +1901,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
          "then opens the host's file");
   Expect(ReadFile(cached) == "#define FROM_THE_HOST 1\nint the_definition;\n", "with the host's bytes");
 
-  // Go to definition into a host header nobody fetched yet still lands on the line.
   WriteFile(host.home / "include" / "other.h", "\n\n\nint target;\n");
   workspace::LspClient::Location location;
   location.uri = workspace::FileUriForPath(
@@ -2126,12 +1919,8 @@ void TestOpenFolderOnHostEditsTheHostTree() {
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 3 &&
              WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 4,
          "at the definition, not at the top");
-  // It is a copy of a file outside the project: read-only, and never trusted on
-  // reopen — a local copy that went stale (or was tampered with) is refetched.
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).read_only(), "the host file's copy is read-only");
   {
-    // The path bar names the host's file; the cache it lives in is an
-    // implementation detail.
     const std::string crumb = WorkspaceShellTestAccess::BreadcrumbLabel(shell);
     const std::string host_file = ":" + (host.home / "include" / "other.h").generic_string();
     Expect(crumb.size() > host_file.size() &&
@@ -2142,7 +1931,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("typed");
   Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "and typing does not change it");
   {
-    // A real keystroke is refused out loud, not swallowed.
     SDL_Event typed{};
     typed.type = SDL_EVENT_TEXT_INPUT;
     const std::string text = "x";
@@ -2154,8 +1942,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
     }
     Expect(said && !WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
            "typing into the read-only copy says so");
-    // However the copy's view is made — a restored session, a split — it is
-    // read-only: every view's content passes through the preferences.
     editor::TextViewport restored;
     restored.LoadContent("int restored;\n",
                          WorkspaceShellTestAccess::ActiveEditor(shell).path());
@@ -2176,8 +1962,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              std::chrono::seconds(20), std::chrono::milliseconds(10)),
          "the copy is the host's current bytes, not the stale local ones");
 
-  // Closing the project drops its connection (and its status segment); reopening
-  // the mirror connects again.
   WorkspaceShellTestAccess::CloseProject(shell, 0);
   Expect(WaitUntil(
              [&] {
@@ -2204,7 +1988,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              }(); });
   }
   {
-    // A later run opening the mirror as a plain folder.
     WorkspaceShell shell;
     PointAtFakeHost(shell, host);
     Expect(WorkspaceShellTestAccess::OpenProjectTabWithLocality(shell, mirror, {}),
@@ -2213,9 +1996,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
            "and is recognized as the remote project it mirrors");
   }
   {
-    // The mirror deleted outside the editor (a wiped data directory). A recents
-    // row for it reopens by host and folder (Open Folder on Host, what the welcome
-    // row runs), which makes the mirror again and syncs it.
     std::filesystem::remove_all(mirror.parent_path());
     WorkspaceShell shell;
     PointAtFakeHost(shell, host);
@@ -2235,17 +2015,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
   RemoveFakeMaster(target);
 }
 
-// A session listing a local project (active) and a remote one (inactive): the
-// remote project's catalog entry is remote, and named by its host folder, from the
-// moment it is restored -- before any connection, without being activated. Both
-// session forms: one with identity records, and one written before them that names
-// the mirror tree by path alone.
-// Soak 500d49cd7220: a file of a remote project's mirror, opened while a LOCAL
-// project was in front (dropped on the window), saved through that project's
-// gate -- the plain local write. The mirror changed and the sync was never told:
-// it read settled, nothing pending, while the host kept the old text. A write's
-// gate is the one of the project whose tree holds the path (locality is the
-// path's, as the plugin API already has it), whichever project is in front.
 void TestASaveIntoAMirrorFromALocalProjectReachesTheHost() {
   FakeSshHost host;
   const std::filesystem::path host_root = host.home / "src" / "routed";
@@ -2294,7 +2063,6 @@ void TestARestoredRemoteProjectIsNamedBeforeItIsActivated() {
   const std::string host = "dev@restored-" + std::to_string(::getpid());
   const std::string host_root = "/home/dev/repo";
   const project::ProjectId remote_id = project::ProjectId::ForRemote(host, host_root);
-  // The mirror as an earlier run left it; nothing here connects.
   const std::filesystem::path tree = remote_id.IoRoot();
   std::filesystem::create_directories(tree);
   std::filesystem::create_directories(tree.parent_path() / "meta");
@@ -2311,10 +2079,6 @@ void TestARestoredRemoteProjectIsNamedBeforeItIsActivated() {
     const workspace::PersistenceService persistence;
     Expect(persistence.SaveWorkspaceSession(state_home.path() / "microide" / "workspace-session", session),
            "the session is written" + form);
-    // A save is accepted, not landed: the shell below reads the file through its
-    // own service, whose load flushes only its own queue. Unflushed, the restore
-    // raced the write on a slow runner, and the second form's write could land
-    // after the shell's save and overwrite it (CI, from 9201d8d6).
     persistence.FlushPendingWrites();
 
     WorkspaceShell shell;
@@ -2342,17 +2106,9 @@ void TestARestoredRemoteProjectIsNamedBeforeItIsActivated() {
   }
 }
 
-// What counts as a host-local link: http(s), a loopback name, an explicit port.
-// A mass delete the sync holds (§ 6.3) is a prompt the user can answer: its row
-// carries Apply and Disconnect, and Apply deletes what the host deleted. The row
-// once said "the deletion is held" with no button at all, so a hold lasted until
-// the next reconnect.
 void TestHeldMassDeleteIsAppliedFromItsRow() {
   FakeSshHost host;
   const std::filesystem::path host_root = host.home / "held";
-  // 140 files in one directory that goes at once (an unmount, an `rm -rf` of a
-  // tree). The hold counts over a window, so a delete split across watch batches
-  // is held too (TD-2026-10-27-402, MirrorSyncEngine/HoldsAMassDeleteSplitAcrossBatches).
   for (int i = 0; i < 150; ++i) {
     WriteFile(i < 140 ? host_root / "gone" / ("f" + std::to_string(i)) : host_root / ("f" + std::to_string(i)),
               "x");
@@ -2371,9 +2127,6 @@ void TestHeldMassDeleteIsAppliedFromItsRow() {
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
          "the mirror fills from the host");
 
-  // The whole first sync, not just a file of it: deleted while the backfill still
-  // fetches them, files never reach the mirror and are no mirror delete to hold
-  // (the rows are dropped as the host answers: TD-2026-10-27-403).
   Expect(WaitUntil(
              [&] {
                Pump(shell);
@@ -2383,7 +2136,6 @@ void TestHeldMassDeleteIsAppliedFromItsRow() {
              },
              std::chrono::seconds(60), std::chrono::milliseconds(10)),
          "the first sync completes, the directory mirrored too");
-  // Not a repository, so nothing explains the deletes: they are held.
   std::filesystem::rename(host_root / "gone", host.home / "gone-elsewhere");
   const auto held_row = [&]() -> const workspace::NotificationService::Notification* {
     for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
@@ -2435,9 +2187,6 @@ void TestLoopbackUrlsAreRecognized() {
          "no port, another host, another scheme or a bad port is not one");
 }
 
-// Show Status names the mirror under ~/.local/share: the home prefix is spelled
-// "~" so the part that differs survives the toast's three lines — and only a
-// whole leading component is, never a longer sibling's prefix.
 void TestStatusPathsAbbreviateHome() {
   using workspace::HomeAbbreviatedPath;
   Expect(HomeAbbreviatedPath("/home/u/.local/share/microide/remote/h/app-1/app", "/home/u") ==
@@ -2451,7 +2200,7 @@ void TestStatusPathsAbbreviateHome() {
          "no HOME, or HOME=/, abbreviates nothing");
 }
 
-}  // namespace
+}
 
 void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostService/ARestoredRemoteProjectIsNamedBeforeItIsActivated",
@@ -2492,4 +2241,4 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
           TestASaveIntoAMirrorFromALocalProjectReachesTheHost);
 }
 
-}  // namespace microide::tests
+}

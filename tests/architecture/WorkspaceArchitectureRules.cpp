@@ -11,10 +11,6 @@
 namespace microide::tests::architecture {
 
 const std::vector<NamedRule>& WorkspaceArchitectureRuleList() {
-  // Single source of truth for the workspace architecture rules. The test layer
-  // registers one ctest case per entry (parallelized by sharding) and
-  // RunWorkspaceArchitectureRules iterates the same list, so a new rule added
-  // here is picked up by both without any second edit.
   static const std::vector<NamedRule> rules = {
       {"CheckWorkspaceFriends", CheckWorkspaceFriends},
       {"CheckCoordinatorShellConstructors", CheckCoordinatorShellConstructors},
@@ -114,4 +110,4 @@ std::vector<RuleResult> RunWorkspaceArchitectureRules(const std::filesystem::pat
   return results;
 }
 
-}  // namespace microide::tests::architecture
+}

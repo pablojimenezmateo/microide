@@ -56,8 +56,6 @@ void TestProjectTraversalFilterUserExcludesAndReinclude() {
          "a '!build/' exclude re-includes the default-ignored build dir");
 }
 
-// The extraction must preserve the trailing-separator root normalization: a root
-// passed with a trailing slash must still terminate the ancestor walk correctly.
 void TestProjectTraversalFilterTrailingSeparatorRoot() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path base = temp_dir.path() / "repo";
@@ -72,12 +70,6 @@ void TestProjectTraversalFilterTrailingSeparatorRoot() {
          "a trailing-slash root should still skip VCS metadata");
 }
 
-// The per-entry hot path derives the relative text, the parent directory and the
-// ancestor chain from views into the candidate's own text rather than from
-// `path` operations (TD-2026-08-10-174). Those derivations are what every
-// .gitignore rule is matched against, so this pins the cases where a view-based
-// derivation could differ from the path-based one it replaced: a deep ancestor
-// that is itself ignored, an unnormalized input, and a path escaping the root.
 void TestProjectTraversalFilterDeepAncestorAndUnnormalizedInput() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -113,12 +105,6 @@ void TestProjectTraversalFilterDeepAncestorAndUnnormalizedInput() {
          "a sibling directory sharing the root's string prefix is not inside it");
 }
 
-// The "is any ancestor directory ignored?" answer is cached per directory rather
-// than recomputed per entry (it used to be ~70 % of a whole-tree scan). A memo is
-// only correct if it is keyed on everything the answer depends on, so this pins
-// the two ways a per-directory cache goes wrong: an answer computed for one
-// directory must not be reused for a sibling, and it must not depend on which
-// entry of the directory happened to be asked first.
 void TestProjectTraversalFilterAncestorMemoIsPerDirectory() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -127,8 +113,6 @@ void TestProjectTraversalFilterAncestorMemoIsPerDirectory() {
   std::filesystem::create_directories(root / "keep" / "vendor");
   WriteFile(root / ".gitignore", "vendor/\n");
 
-  // Interleaved on purpose: an ignored directory queried between two queries of an
-  // included one is what a shared-across-directories memo would get wrong.
   ProjectTraversalFilter interleaved(root);
   Expect(interleaved.Includes(root / "keep" / "inner" / "a.cpp", PathType::RegularFile),
          "a file under a kept directory is included");
@@ -141,8 +125,6 @@ void TestProjectTraversalFilterAncestorMemoIsPerDirectory() {
   Expect(!interleaved.Includes(root / "keep" / "vendor" / "a.cpp", PathType::RegularFile),
          "an ignored directory nested under a kept one still excludes its files");
 
-  // Reverse order, fresh filter: the first entry seen in a directory is the one
-  // that fills the memo, so the verdicts must not depend on which one that was.
   ProjectTraversalFilter reversed(root);
   Expect(!reversed.Includes(root / "keep" / "vendor" / "a.cpp", PathType::RegularFile),
          "verdict is independent of query order (nested ignored directory)");
@@ -151,8 +133,6 @@ void TestProjectTraversalFilterAncestorMemoIsPerDirectory() {
   Expect(reversed.Includes(root / "keep" / "inner" / "b.cpp", PathType::RegularFile),
          "verdict is independent of query order (kept directory)");
 
-  // The directory entries themselves take the same path through the memo as the
-  // files in them, and must answer the same way.
   ProjectTraversalFilter directories(root);
   Expect(directories.Includes(root / "keep" / "inner", PathType::Directory),
          "a kept directory is included");
@@ -162,7 +142,7 @@ void TestProjectTraversalFilterAncestorMemoIsPerDirectory() {
          "the ignored directory itself is excluded");
 }
 
-}  // namespace
+}
 
 void RegisterProjectTraversalFilterTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ProjectTraversalFilter/AncestorMemoIsPerDirectory",
@@ -179,4 +159,4 @@ void RegisterProjectTraversalFilterTests(std::vector<TestCase>& tests) {
           TestProjectTraversalFilterTrailingSeparatorRoot);
 }
 
-}  // namespace microide::tests
+}

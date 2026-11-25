@@ -1,6 +1,3 @@
-// PersistenceCoordinator's debug record: breakpoints, watch expressions,
-// exception-filter choices and launch configs, persisted per project apart from
-// the session's tabs (so they survive a project with no tabs open).
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 
 #include <filesystem>
@@ -28,12 +25,6 @@ void PersistenceCoordinator::SaveDebugState() {
   const ProjectWorkspaceState& state = CurrentProjectState();
 
   PersistedDebugState persisted;
-  // Views, not SnapshotAll. The header classes session persistence as a caller
-  // that KEEPS the snapshot across store mutations; it does not -- the loop below
-  // copies each breakpoint into the persisted struct and drops the snapshot before
-  // returning, with nothing mutating the store in between. SnapshotAll therefore
-  // deep-copied every file's whole breakpoint vector, on every session save, i.e.
-  // on every project switch, to be read once.
   std::vector<editor::BreakpointStore::FileBreakpointsView> breakpoint_files;
   state.breakpoint_store.FillSortedFileViews(&breakpoint_files);
   for (const auto& file : breakpoint_files) {
@@ -73,10 +64,6 @@ void PersistenceCoordinator::SaveDebugState() {
   persisted.exception_filters_seeded = state.debug_breakpoints_panel.Seeded();
   persisted.exception_filter_conditions = state.debug_breakpoints_panel.FilterConditions();
 
-  // Avoid leaving stale state when there is nothing to persist. Delete BOTH the
-  // primary file and its backup through the service — removing only the primary
-  // would let the reader fall back to `debug.bak` and resurrect cleared
-  // breakpoints / launch configs / watches on the next restore.
   if (persisted.files.empty() && persisted.launch_configs.empty() &&
       persisted.watch_expressions.empty() && persisted.enabled_exception_filters.empty() &&
       persisted.function_breakpoints.empty() && persisted.exception_filter_conditions.empty() &&
@@ -137,7 +124,6 @@ void PersistenceCoordinator::RestoreDebugState() {
     config.name = persisted_config.name;
     config.type = persisted_config.type;
     config.request = persisted_config.request;
-    // A corrupt arguments string must not nuke the rest; fall back to Null.
     if (!persisted_config.arguments_json.empty()) {
       if (auto parsed = util::ParseJson(persisted_config.arguments_json); parsed.has_value()) {
         config.arguments = std::move(*parsed);
@@ -145,9 +131,6 @@ void PersistenceCoordinator::RestoreDebugState() {
     }
     state.launch_configs.push_back(std::move(config));
   }
-  // A persisted index can be stale or out of range relative to the rebuilt
-  // config list. An out-of-range selection makes StartDebuggingWithDefaultConfig
-  // ignore every launch config, so clamp/reset it to a valid slot immediately.
   if (state.launch_configs.empty() ||
       persisted.selected_launch_config_index >= state.launch_configs.size()) {
     state.selected_launch_config_index = 0;
@@ -162,4 +145,4 @@ void PersistenceCoordinator::RestoreDebugState() {
   state.debug_breakpoints_panel.Rebuild(state.breakpoint_store, state.function_breakpoint_store);
 }
 
-}  // namespace microide::workspace
+}

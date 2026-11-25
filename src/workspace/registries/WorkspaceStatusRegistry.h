@@ -18,10 +18,7 @@ struct StatusItemView {
   std::string text;
   std::string tooltip;
   StatusAlignment alignment = StatusAlignment::Right;
-  int priority = 0;  // higher = rendered closer to the edge
-  // Phase D enrichments. `icon` is a gutter-icon name (resolved to a shape by the
-  // render path); empty = none. `tone` tints the item background. `command` runs
-  // on click when non-empty. `progress` < 0 means no bar, else clamped [0, 1].
+  int priority = 0;
   std::string icon;
   StatusTone tone = StatusTone::Default;
   std::string command;
@@ -29,28 +26,17 @@ struct StatusItemView {
   std::string plugin_id;
 };
 
-// Returns plugin-contributed status items, sorted by alignment then priority descending.
 std::vector<StatusItemView> ResolveStatusItems(const plugin::PluginHost& plugin_host);
 
-// Pure seam for the copy + parse + stable_sort rebuild, taking the contributed
-// items directly. This is the per-revision main-thread cost that the status-item
-// contribution cap bounds (TD-2026-07-17-019); the perf harness measures it at
-// the cap through this overload.
 std::vector<StatusItemView> ResolveStatusItems(
     const std::vector<plugin::PluginHost::ContributedStatusItem>& contributions);
 
-// Caches the resolved/sorted view so the per-frame render, hit-test, and hover
-// paths reuse a single build until the host's contributions change. `revision`
-// starts at an impossible value so the first resolve always rebuilds.
 struct StatusItemCache {
   std::vector<StatusItemView> items;
   std::uint64_t revision = std::numeric_limits<std::uint64_t>::max();
 };
 
-// Cache-aware resolve: rebuilds (copy + parse + sort) only when the host's
-// StatusItemsRevision() differs from the cached stamp; otherwise returns the
-// previously built view with no allocation or sort.
 const std::vector<StatusItemView>& ResolveStatusItems(const plugin::PluginHost& plugin_host,
                                                       StatusItemCache& cache);
 
-}  // namespace microide::workspace
+}

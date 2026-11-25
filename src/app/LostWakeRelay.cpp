@@ -18,17 +18,13 @@ LostWakeRelay::~LostWakeRelay() {
   thread_.join();
 }
 
-// Sequentially consistent on purpose, on both sides: either this push sees the
-// loop in its wait (and arms the relay), or the loop's EnterBlockingWait came after
-// the push -- and so after its event was enqueued, which the wait's own first queue
-// check then finds. No interleaving leaves a push both unseen and unarmed.
 void LostWakeRelay::NotePush() {
   pushes_.fetch_add(1, std::memory_order_seq_cst);
   if (!in_wait_.load(std::memory_order_seq_cst)) {
     return;
   }
   std::uint64_t none = 0;
-  (void)first_push_in_wait_ms_.compare_exchange_strong(  // only the first push of this wait
+  (void)first_push_in_wait_ms_.compare_exchange_strong(
       none, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                            std::chrono::steady_clock::now().time_since_epoch())
                                            .count()),
@@ -63,7 +59,6 @@ void LostWakeRelay::Run() {
       return;
     }
     armed_ = false;
-    // Give the wake its chance first: a delivered one ends the wait well inside this.
     if (wake_.wait_for(lock, delay_, [this] { return stop_; })) {
       return;
     }
@@ -76,4 +71,4 @@ void LostWakeRelay::Run() {
   }
 }
 
-}  // namespace microide::app
+}

@@ -38,21 +38,9 @@ std::vector<std::pair<std::string, std::optional<std::string>>> EnvOf(
 }
 
 int ExitStatus(std::optional<int> code, std::optional<int> signal) {
-  // As the local layer reports it: a signal is 128 + signo.
   return signal.has_value() ? 128 + *signal : code.value_or(-1);
 }
 
-// A host process materialized locally as two pipes, so AsyncSubprocess — and the
-// language server / debug adapter transports above it — drive it exactly like a
-// local child. A pump thread moves bytes: what the consumer writes to its stdin
-// pipe goes out as proc/stdin; proc/stdout is written into its stdout pipe, and is
-// acknowledged only once WRITTEN, so a consumer that stops reading stops the host
-// process through the credit window, end to end.
-//
-// It is spawned KEPT, so a dropped link does not end it on the host: on a
-// reconnect (RemoteConnection::Replace) it proc/attaches from the bytes it has
-// received, and what the consumer wrote meanwhile is held and sent then. A
-// connection gone for good (Disconnect, a host that restarted) ends it.
 class RemoteAsyncProcess final : public platform::AsyncProcessController, public Reattachable {
  public:
   RemoteAsyncProcess(std::shared_ptr<RemoteServerClient> client) : client_(std::move(client)) {
@@ -73,7 +61,6 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController, public
       stderr_offset = stderr_received_;
     }
     if (client == nullptr) {
-      // Gone for good: do not leave it running on the host for nobody.
       if (previous != nullptr) {
         previous->Signal(handle_, "KILL");
         previous->Release(handle_);
@@ -84,7 +71,7 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController, public
     client->RegisterProcess(handle_, Events());
     std::string error;
     if (!client->AttachProcess(handle_, stdout_offset, stderr_offset, &error)) {
-      Ended();  // the host restarted: the consumer sees EOF and starts over
+      Ended();
       return;
     }
     std::string held;
@@ -118,12 +105,11 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController, public
     }
   }
 
-  // The consumer's ends, for AsyncSubprocess::Adopt; nullopt when pipes fail.
   std::optional<std::pair<int, int>> MakePipes() {
     int in[2] = {-1, -1};
     int out[2] = {-1, -1};
-    if (!util::MakeCloexecPipe(in, /*nonblocking=*/false) ||
-        !util::MakeCloexecPipe(out, /*nonblocking=*/false)) {
+    if (!util::MakeCloexecPipe(in, false) ||
+        !util::MakeCloexecPipe(out, false)) {
       for (int fd : {in[0], in[1], out[0], out[1]}) {
         if (fd >= 0) ::close(fd);
       }
@@ -144,7 +130,7 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController, public
               if (stream == FrameType::ProcStdout) {
                 pending_out_.append(bytes);
               } else {
-                stderr_received_ += bytes.size();  // a remote server's stderr is not shown
+                stderr_received_ += bytes.size();
                 ack_dirty_ = true;
               }
               wake_.Wake();
@@ -201,13 +187,11 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController, public
     return client_;
   }
 
-  // The process is over as far as the consumer is concerned (EOF once its output
-  // is delivered), without the host having reported an exit.
   void Ended() {
     {
       std::lock_guard lock(mutex_);
       if (!exit_status_.has_value()) {
-        exit_status_ = 128 + 9;  // as a killed process reports
+        exit_status_ = 128 + 9;
       }
     }
     exited_cv_.notify_all();
@@ -222,7 +206,6 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController, public
       {
         std::lock_guard lock(mutex_);
         want_write = !pending_out_.empty() && stdout_write_ >= 0;
-        // Every byte delivered and the process gone: EOF on the consumer's stdout.
         finished = exit_status_.has_value() && pending_out_.empty();
       }
       if (finished && stdout_write_ >= 0) {
@@ -242,8 +225,6 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController, public
         const ssize_t n = ::read(stdin_read_, buffer, sizeof(buffer));
         if (n > 0) {
           const std::string_view bytes(buffer, static_cast<std::size_t>(n));
-          // The link is down: hold it for the reconnect rather than lose a
-          // request the consumer will wait on forever.
           const std::shared_ptr<RemoteServerClient> client = Client();
           if (client != nullptr && !client->WriteStdin(handle_, bytes)) {
             std::lock_guard lock(mutex_);
@@ -269,7 +250,7 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController, public
             stdout_delivered_ += static_cast<std::uint64_t>(n);
             ack_dirty_ = true;
           } else if (n < 0 && errno == EPIPE) {
-            pending_out_.clear();  // the consumer is gone
+            pending_out_.clear();
           }
         }
         if (ack_dirty_) {
@@ -287,7 +268,7 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController, public
     }
   }
 
-  std::shared_ptr<RemoteServerClient> client_;  // guarded by mutex_: a reconnect swaps it
+  std::shared_ptr<RemoteServerClient> client_;
   std::uint64_t handle_ = 0;
   int pid_ = -1;
   int stdin_read_ = -1;
@@ -299,14 +280,14 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController, public
   mutable std::mutex mutex_;
   std::condition_variable exited_cv_;
   std::string pending_out_;
-  std::string pending_stdin_;  // written while the link was down
+  std::string pending_stdin_;
   std::uint64_t stdout_delivered_ = 0;
   std::uint64_t stderr_received_ = 0;
   bool ack_dirty_ = false;
   std::optional<int> exit_status_;
 };
 
-}  // namespace
+}
 
 RemoteProcessLauncher::RemoteProcessLauncher(std::shared_ptr<RemoteConnection> connection,
                                              RemotePathMap map, Options options)
@@ -341,9 +322,6 @@ std::shared_ptr<terminal::TerminalHostChannel> RemoteProcessLauncher::OpenTermin
   OpenRequest host_request = request;
   host_request.credit_bytes = options_.terminal_credit_bytes;
   host_request.prefetch_lines = options_.terminal_prefetch_lines;
-  // A directory outside the project's tree has no host counterpart: the host
-  // starts the shell in the user's home rather than in a path that only exists
-  // here (empty = $HOME). A terminal-only connection has no tree at all.
   host_request.working_directory =
       map_.host_root().empty() ? std::filesystem::path()
                                : map_.ToHost(request.working_directory).value_or(std::filesystem::path());
@@ -365,7 +343,6 @@ std::filesystem::path RemoteProcessLauncher::LocalPathFromHost(
   if (std::optional<std::filesystem::path> local = map_.ToLocal(host_path)) {
     return *local;
   }
-  // Outside the project: the host's file, never a same-named local one.
   if (!options_.host_file_cache.empty() && host_path.is_absolute()) {
     return options_.host_file_cache / host_path.lexically_normal().relative_path();
   }
@@ -414,8 +391,6 @@ platform::SubprocessResult RemoteProcessLauncher::Run(std::vector<std::string> a
     result.stderr_text = "not connected to the host";
     return result;
   }
-  // A git command that may change a repository makes every pushed status from
-  // before it stale, until the host pushes one computed after it exits (§ 6.5).
   struct GitMutationScope {
     RemoteServerClient* client = nullptr;
     ~GitMutationScope() {
@@ -427,14 +402,8 @@ platform::SubprocessResult RemoteProcessLauncher::Run(std::vector<std::string> a
   if (git_mutation.client != nullptr) {
     git_mutation.client->BeginGitMutation();
   }
-  // The handle is learned only from the spawn reply, after output may have started
-  // arriving; acks go out once it is known.
   auto handle = std::make_shared<std::atomic<std::uint64_t>>(0);
-  // Acknowledge by counting what arrived, not what was captured: an uncaptured
-  // stream must not stall the process on its credit window.
   auto received = std::make_shared<std::pair<std::atomic<std::uint64_t>, std::atomic<std::uint64_t>>>();
-  // The client weakly: these handlers are held by the client itself (see
-  // RemoteTerminalChannel::Open for what a strong capture cost).
   const std::weak_ptr<RemoteServerClient> weak_client = client;
   RemoteServerClient::ProcessEvents events{
       .output =
@@ -452,7 +421,6 @@ platform::SubprocessResult RemoteProcessLauncher::Run(std::vector<std::string> a
                 if (target.size() + bytes.size() <= platform::kMaxSubprocessCaptureBytes) {
                   target.append(bytes);
                 } else if (!collected->truncated) {
-                  // As the local layer does at its ceiling: stop the firehose.
                   collected->truncated = true;
                   if (const std::uint64_t h = handle->load(); h != 0) {
                     client->Signal(h, "KILL");
@@ -490,10 +458,6 @@ platform::SubprocessResult RemoteProcessLauncher::Run(std::vector<std::string> a
 
   platform::SubprocessResult result;
   {
-    // In slices: a link that drops notifies nobody here, so the wait looks again
-    // every slice rather than sitting out the whole timeout — a git command running
-    // when the user disconnected held its worker (and the serial background queue
-    // behind it) for its full 60 s.
     constexpr auto kSlice = std::chrono::milliseconds(200);
     std::unique_lock lock(collected->mutex);
     const auto finished = [&]() { return collected->status.has_value() || !client->connected(); };
@@ -529,8 +493,6 @@ bool RemoteProcessLauncher::StartAsync(platform::AsyncSubprocess& process,
                                        const std::vector<std::string>& argv,
                                        const std::filesystem::path& cwd,
                                        const platform::SubprocessSandbox& sandbox) const {
-  // The sandbox is the local one's business (Landlock on THIS machine); a host
-  // process is confined by the host account it runs as.
   (void)sandbox;
   const std::shared_ptr<RemoteServerClient> client = connection_->client();
   if (client == nullptr || !client->connected()) {
@@ -542,7 +504,7 @@ bool RemoteProcessLauncher::StartAsync(platform::AsyncSubprocess& process,
     return false;
   }
   const RemoteServerClient::Spawned spawned =
-      client->Spawn(argv, ResolveWorkingDirectory(cwd), {}, /*keep_on_detach=*/true, remote->Events());
+      client->Spawn(argv, ResolveWorkingDirectory(cwd), {}, true, remote->Events());
   if (spawned.handle == 0) {
     ::close(consumer->first);
     ::close(consumer->second);
@@ -561,8 +523,6 @@ std::optional<RemoteServerClient::GitMetadata> RemoteProcessLauncher::Metadata(
     return std::nullopt;
   }
   const std::shared_ptr<RemoteServerClient> client = connection_->client();
-  // The host pushes what the root is with every git status (a `git init` there,
-  // a repository removed): newer than any answer held here.
   if (client != nullptr) {
     if (std::optional<RemoteServerClient::GitMetadata> pushed = client->PushedGitMetadata(host_root->string())) {
       std::lock_guard lock(mutex_);
@@ -592,7 +552,6 @@ std::optional<project::ProjectSearchCompletion> RemoteProcessLauncher::SearchOnH
     const project::ProjectSearchOptions& options, const project::ProjectSearchSink& sink,
     const std::atomic_bool& cancel, const util::CancellationToken& token) const {
   const std::shared_ptr<RemoteServerClient> client = connection_->client();
-  // The host searches its workspace root: anything narrower stays local.
   if (client == nullptr || !client->connected() ||
       root.lexically_normal() != map_.local_root().lexically_normal()) {
     return std::nullopt;
@@ -606,7 +565,7 @@ std::optional<project::ProjectSearchCompletion> RemoteProcessLauncher::SearchOnH
         std::size_t searched = 0;
         std::size_t total = 0;
         if (!ParseSearchResults(params, batch, &searched, &total)) {
-          return;  // a malformed batch is dropped whole
+          return;
         }
         received = true;
         if (!batch.empty()) {
@@ -619,8 +578,6 @@ std::optional<project::ProjectSearchCompletion> RemoteProcessLauncher::SearchOnH
   if (result.has_value()) {
     return ParseSearchCompletion(*result);
   }
-  // Refused before anything arrived (the link dropped as it was sent): the local
-  // copy, labelled. Mid-stream, the results shown so far stand with the reason.
   if (!received) {
     return std::nullopt;
   }
@@ -686,4 +643,4 @@ std::size_t RemoteProcessLauncher::spawn_count() const {
   return spawns_;
 }
 
-}  // namespace microide::project::remote
+}

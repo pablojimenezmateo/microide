@@ -83,32 +83,21 @@ struct FileCache {
   std::vector<Span> loaded_spans;
   std::uint64_t last_access_generation = 0;
   Clock::time_point last_validated_at = Clock::time_point::min();
-  // Which (file, clear) generation `last_validated_at` speaks for. The
-  // re-validation throttle below suppresses a repeat probe only while these still
-  // match, so a real edit or an explicit ClearCache re-probes immediately instead
-  // of waiting out the interval.
   std::uint64_t validated_file_generation = 0;
   std::uint64_t validated_clear_generation = 0;
 };
 
-// What Snapshot() reads: the main thread's copy of a file's blame, changed only by
-// ApplyReadyResults() (TD-2026-10-16-345). The worker's FileCache above says what
-// it has fetched; this says what the user may see, and the two differ exactly by
-// the results queued between a worker finishing and the wake being handled.
 struct PublishedFile {
   bool eligible = false;
   std::vector<Span> loaded_spans;
   std::unordered_map<std::size_t, GitBlameLine> lines;
 };
 
-// One finished piece of worker output, queued for ApplyReadyResults(). Carries the
-// generations it was produced under so a result overtaken by an InvalidatePath or
-// Clear on the main thread is dropped at apply instead of resurrecting stale blame.
 struct ReadyResult {
   enum class Kind : std::uint8_t {
-    State,  // the file's verdict changed: set `eligible`, drop every line
-    Lines,  // `lines` for `span` arrived (implies eligible)
-    Erase,  // the cache budget evicted the file
+    State,
+    Lines,
+    Erase,
   };
   Kind kind = Kind::State;
   std::string file_key;
@@ -144,9 +133,6 @@ bool FileIsWorkingTreeClean(const platform::ProcessLauncher& launcher,
 }
 
 std::optional<FileStamp> ReadFileStamp(const std::filesystem::path& path) {
-  // One stat. This was four -- exists(), is_regular_file(), file_size(),
-  // last_write_time() -- each re-resolving the same path, on a staleness probe
-  // the blame overlay runs per validated file.
   const std::optional<platform::FileMetadata> metadata = platform::ReadFileMetadata(path);
   if (!metadata || metadata->type != platform::PathType::RegularFile) {
     return std::nullopt;
@@ -162,9 +148,6 @@ Span NormalizeWindow(std::size_t visible_start_line,
   }
 
   const std::size_t clamped_start = std::min(visible_start_line, total_line_count - 1);
-  // Saturating add: a public/test seam can pass a near-SIZE_MAX visible_line_count,
-  // and a bare `clamped_start + visible_line_count - 1` would wrap and make the min
-  // pick a bogus (tiny) end, hiding data or marking stale coverage as fresh.
   const std::size_t visible_end = std::min(
       total_line_count - 1, util::SaturatingAdd(clamped_start, visible_line_count - 1));
   const std::size_t padding = std::max(visible_line_count, kPadLineCount);
@@ -187,13 +170,6 @@ Span NormalizeWindow(std::size_t visible_start_line,
   return Span{.start = start, .end = end};
 }
 
-// `lexically_normal` costs ~12 allocations and is purely lexical, so it is both
-// expensive and trivially memoizable -- see the note on
-// gitutil::AbsoluteToRelativePath. These two run on the same per-frame path
-// (Request and Snapshot are both called from frame prep whenever the inline
-// blame overlay paints), against a project root and a file path that change at
-// human speed. Per thread, so no lock: the shell thread paints while the
-// background executor runs git.
 const std::string& NormalizedRootText(const std::filesystem::path& root) {
   thread_local std::filesystem::path cached_root;
   thread_local std::string cached_text;
@@ -206,26 +182,11 @@ const std::string& NormalizedRootText(const std::filesystem::path& root) {
   return cached_text;
 }
 
-// `NormalizedPath` lived here too, memoizing `lexically_normal` for the one
-// caller that filled `GitBlameSnapshot::absolute_path`. That field was write-only
-// (TD-2026-08-14-223), so both are gone -- even memoized, the assignment out of
-// it was a path copy per painted frame.
-
 std::string BuildFileKey(const std::filesystem::path& root,
                          const std::filesystem::path& relative_path) {
   return NormalizedRootText(root) + '\n' + relative_path.generic_string();
 }
 
-// (root, absolute_path) -> {relative path, file key}, memoized per thread.
-//
-// Both halves are pure functions of those two paths -- `AbsoluteToRelativePath`
-// is lexical and the key is `normalized-root \n relative` -- so a memo cannot go
-// stale on git state. They were recomputed twice per painted frame, once in
-// `Request()` and once in `Snapshot()`, and the key alone is two allocations
-// (TD-2026-08-14-223).
-//
-// The returned reference is valid until the next call ON THIS THREAD. One slot:
-// only the active pane builds a blame overlay, so a frame asks about one file.
 struct ResolvedBlameFile {
   bool has_relative = false;
   std::filesystem::path relative_path;
@@ -256,18 +217,12 @@ const ResolvedBlameFile& ResolveBlameFile(const std::filesystem::path& root,
   return cached;
 }
 
-// Appends `value` as decimal without allocating; `std::to_string` builds a
-// std::string per number and this is called four times per painted frame.
 void AppendDecimal(std::string& out, std::uint64_t value) {
   std::array<char, 24> digits{};
   const auto result = std::to_chars(digits.data(), digits.data() + digits.size(), value);
   out.append(digits.data(), static_cast<std::size_t>(result.ptr - digits.data()));
 }
 
-// Built into a per-thread scratch rather than returned by value: this runs once
-// per painted frame in `Snapshot()` and again in `Request()`, and every caller
-// either compares it or copies it into an owner. The reference is valid until
-// the next call on this thread.
 const std::string& BuildRequestKey(const std::string& file_key,
                                    Span window,
                                    std::uint64_t file_generation,
@@ -405,7 +360,7 @@ GitBlameLine MakeBlameLine(std::size_t line, const GitBlameAttribution& attribut
   };
 }
 
-}  // namespace
+}
 
 struct GitBlameService::Impl {
   ~Impl() { Stop(); }
@@ -416,12 +371,10 @@ struct GitBlameService::Impl {
   }
 
   std::uint64_t CurrentFileGenerationLocked(std::string_view file_key) const {
-    const auto it = file_generations.find(file_key);  // transparent: no temp std::string
+    const auto it = file_generations.find(file_key);
     return it == file_generations.end() ? 0 : it->second;
   }
 
-  // Generation currency only: the request still describes the same file content
-  // and the same cache epoch, regardless of which window is now newest.
   bool GenerationsStillCurrentLocked(const PendingRequest& request) const {
     return request.clear_generation == clear_generation &&
            request.file_generation == CurrentFileGenerationLocked(request.file_key);
@@ -472,8 +425,6 @@ struct GitBlameService::Impl {
     PendingRequest pending_request;
     {
       std::lock_guard lock(mutex);
-      // Registered here, the one place a file's blame is asked for, so that
-      // InvalidatePath bumps only files something could hold a stale answer for.
       const std::uint64_t file_generation = file_generations.try_emplace(file_key, 0).first->second;
       const std::uint64_t request_clear_generation = clear_generation;
       const std::string& request_key =
@@ -484,19 +435,6 @@ struct GitBlameService::Impl {
         cache->last_access_generation = ++access_generation;
       }
 
-      // Re-validation throttle. It used to require `cache->eligible`, which meant
-      // a file blame can never answer for -- untracked, unborn HEAD, ignored, a
-      // path git does not know -- fell through it every single time. Request()
-      // runs once per rendered frame (the inline-blame overlay is built from the
-      // render path), so an ineligible file re-spawned `git rev-parse --verify
-      // HEAD`, and whenever HEAD did resolve also `git ls-files` and `git status`,
-      // on every frame for as long as the caret stayed in it. A 3-iteration
-      // compare-scroll run measured 68 git spawns; the answer was the same all 68
-      // times.
-      //
-      // Ineligibility does not depend on the requested window, so within the
-      // interval there is nothing a re-probe could learn; only an eligible cache
-      // has to additionally cover the window it is being asked about.
       const bool cache_answers_request =
           cache != nullptr && (!cache->eligible || SpansCoverWindow(cache->loaded_spans, window));
       if (cache_answers_request && cache->validated_file_generation == file_generation &&
@@ -524,12 +462,6 @@ struct GitBlameService::Impl {
       pending_request_files.emplace(request_key, file_key);
     }
 
-    // Coalesce by file: RemovePendingRequestsForFileLocked already dropped the
-    // superseded requests' bookkeeping, but their executor lambdas were still
-    // queued and would wake the single blame worker just to early-out on the
-    // staleness check. Keying the submit by file_key drops that obsolete queued
-    // work too, so rapid scrolling across a large file no longer accretes a deque
-    // of stale blame tasks ahead of the latest window.
     executor.Submit(
         pending_request.file_key,
         [this, pending_request](const util::CancellationToken& token) {
@@ -538,8 +470,6 @@ struct GitBlameService::Impl {
   }
 
   GitBlameSnapshot Snapshot(const GitBlameRequest& request) const {
-    // Queried from frame prep on every frame the caret line is blamed, so the
-    // hit rate here is what keeps inline blame off the git subprocess path.
     util::AddPerformanceCounter(util::PerfCounterId::GitBlameQueries);
     GitBlameSnapshot snapshot;
     snapshot.visible_start_line = request.visible_start_line;
@@ -553,15 +483,10 @@ struct GitBlameService::Impl {
 
     const Span visible_window{
         .start = std::min(request.visible_start_line, request.total_line_count - 1),
-        // Saturating add so a huge visible_line_count cannot wrap and collapse the
-        // window (see NormalizeWindow). visible_line_count is > 0 here.
         .end = std::min(request.total_line_count - 1,
                         util::SaturatingAdd(request.visible_start_line,
                                             request.visible_line_count - 1)),
     };
-    // Lines actually materialized into the snapshot: the caller's result window
-    // (caret +/- a row for inline blame) clamped to the loaded visible window, or
-    // the whole visible window when no result window was requested.
     const Span result_window =
         request.result_line_count == 0
             ? visible_window
@@ -569,9 +494,6 @@ struct GitBlameService::Impl {
                   .start = std::max(visible_window.start,
                                     std::min(request.result_start_line,
                                              request.total_line_count - 1)),
-                  // Saturating add matches the visible-window math above: a huge
-                  // result_start_line + result_line_count must not wrap and point
-                  // the window end at a small line. result_line_count is > 0 here.
                   .end = std::min(visible_window.end,
                                   std::min(request.total_line_count - 1,
                                            util::SaturatingAdd(request.result_start_line,
@@ -585,8 +507,6 @@ struct GitBlameService::Impl {
     const std::string& request_key = BuildRequestKey(file_key, normalized_window,
                                                      CurrentFileGenerationLocked(file_key),
                                                      clear_generation);
-    // Results the worker finished but the main thread has not applied are still
-    // loading as far as the caller can tell: they are not visible yet.
     const bool in_flight = request_key == active_request_key ||
                            pending_request_keys.count(request_key) > 0 || !ready_results.empty();
     const auto published_it = published.find(file_key);
@@ -619,11 +539,6 @@ struct GitBlameService::Impl {
 
     const std::string file_key = BuildFileKey(root, *relative_path);
     std::lock_guard lock(mutex);
-    // Only a file blame was requested for has a generation to overtake: every
-    // request registers its file first. `++file_generations[key]` inserted one
-    // entry per path ever invalidated -- every file a watcher batch, a first remote
-    // sync or a checkout touched -- and nothing but Clear() removed them (~1 MB
-    // after a 4,780-file first sync, growing for the whole session).
     const auto generation = file_generations.find(file_key);
     if (generation == file_generations.end()) {
       return;
@@ -662,7 +577,6 @@ struct GitBlameService::Impl {
         changed = published.erase(result.file_key) > 0 || changed;
         continue;
       }
-      // Overtaken on the main thread since the worker queued it.
       if (result.clear_generation != clear_generation ||
           result.file_generation != CurrentFileGenerationLocked(result.file_key)) {
         continue;
@@ -733,7 +647,6 @@ struct GitBlameService::Impl {
   }
 
   void ProcessRequest(const PendingRequest& request, const util::CancellationToken& token) {
-    // The request's own launcher: every git call of one blame runs on one machine.
     const platform::ProcessLauncher& launcher = *request.request.launcher;
     bool changed = false;
     if (token.IsCancellationRequested() || !RequestStillCurrent(request)) {
@@ -741,16 +654,9 @@ struct GitBlameService::Impl {
     }
 
     util::AddPerformanceCounter(util::PerfCounterId::GitBlameValidationProbes);
-    // The verdicts below are about the FILE, not the requested window: whether the
-    // root is a repo, whether HEAD resolves, whether the path is tracked. They
-    // stay true no matter where the viewport scrolled to while the probes ran, so
-    // they are recorded even once a newer window has superseded this request.
-    // Discarding them -- what the plain RequestStillCurrent early-return did --
-    // meant a continuous scroll never wrote a cache entry, so the re-validation
-    // throttle had nothing to hit and every window re-spawned `git rev-parse`.
     if (!GitMetadataFor(*request.request.launcher).IsRepository(request.request.root)) {
       changed = UpdateEligibility(request, false, std::nullopt, std::nullopt,
-                                  /*require_latest_request=*/false);
+                                  false);
       if (changed) {
         PushWakeEvent();
       }
@@ -765,15 +671,13 @@ struct GitBlameService::Impl {
     if (!head_id.has_value() || !stamp.has_value() ||
         !FileIsTracked(launcher, request.request.root, request.relative_path)) {
       changed = UpdateEligibility(request, false, head_id, stamp,
-                                  /*require_latest_request=*/false);
+                                  false);
       if (changed) {
         PushWakeEvent();
       }
       return;
     }
 
-    // Past here the work is window-specific (which spans to blame), so a
-    // superseded request stops rather than loading a window nobody is looking at.
     if (!RequestStillCurrent(request)) {
       return;
     }
@@ -800,8 +704,6 @@ struct GitBlameService::Impl {
         cache.loaded_spans.clear();
       }
       if (content_moved || !cache.eligible) {
-        // Every line already shown is about content that is gone (or there were
-        // none): the published copy drops them when this is applied.
         QueueResultLocked(request, ReadyResult{.kind = ReadyResult::Kind::State, .eligible = true});
         changed = true;
       }
@@ -812,9 +714,6 @@ struct GitBlameService::Impl {
     }
 
     for (const Span& span : missing_spans) {
-      // Gate on the newest window only *before* paying for a span: there is no
-      // point spawning `git blame` for a viewport nobody is looking at any more.
-      // Everything after the spawn is gated on generations instead -- see below.
       if (token.IsCancellationRequested() || !RequestStillCurrent(request)) {
         return;
       }
@@ -830,20 +729,6 @@ struct GitBlameService::Impl {
       arguments.push_back(request.relative_path.generic_string());
       const auto output =
           gitutil::ReadGitCommandOutput(launcher, request.request.root, std::move(arguments));
-      // Bank the span even if a newer window superseded this request while the
-      // subprocess ran. A span's attributions are a pure function of (file,
-      // head_id, stamp, line range) -- the viewport is not an input -- so the
-      // only thing that can invalidate them is a generation change. Discarding
-      // them on supersession is what let a continuous scroll run forever without
-      // ever writing a cache entry: every completed blame was thrown away, so
-      // `loaded_spans` stayed empty, so the re-validation throttle had nothing to
-      // hit, so the next frame re-spawned the whole probe chain. Measured on
-      // `compare_scroll_selection` in a full-suite process (where a larger
-      // address space makes each spawn dear enough that blame never catches up
-      // with the scroll): 45 git spawns and 264 ms of subprocess wait *per
-      // iteration*, against 2 spawns when the same scenario ran alone and blame
-      // did manage to win the race once. The same shape reached the earlier
-      // eligibility fix below; this is the window-data half of it.
       if (token.IsCancellationRequested() || !GenerationsStillCurrent(request)) {
         return;
       }
@@ -865,7 +750,7 @@ struct GitBlameService::Impl {
           lines.lines.push_back(MakeBlameLine(line, attribution));
         }
       }
-      RunBeforeCacheApplyHook();  // no-op unless a test installed a hook
+      RunBeforeCacheApplyHook();
       std::lock_guard lock(mutex);
       if (token.IsCancellationRequested() || !GenerationsStillCurrentLocked(request)) {
         return;
@@ -885,19 +770,9 @@ struct GitBlameService::Impl {
 
     {
       std::lock_guard lock(mutex);
-      // Generations only, for the same reason as the span merge above: this
-      // stamps the file-level verdict (eligible, head_id, stamp) and the
-      // re-validation timer, none of which depend on the window. A cache that
-      // does not yet cover the newest window still will not answer for it --
-      // `cache_answers_request` requires SpansCoverWindow for an eligible file --
-      // so marking it validated cannot mask a missing span.
       if (!GenerationsStillCurrentLocked(request)) {
         return;
       }
-      // Re-validate only if the entry survived EnforceCacheBudgets() in the span loop
-      // above. Using operator[] here would resurrect a just-evicted file as an
-      // empty-but-eligible cache, wasting the slot the eviction reclaimed and reporting
-      // eligible=true for a file with no blame data.
       if (auto cache_it = file_caches.find(request.file_key); cache_it != file_caches.end()) {
         FileCache& cache = cache_it->second;
         MarkValidatedLocked(cache, request);
@@ -919,8 +794,6 @@ struct GitBlameService::Impl {
                          const std::optional<FileStamp>& stamp,
                          bool require_latest_request = true) {
     std::lock_guard lock(mutex);
-    // A window-independent verdict only needs the generations to still match; the
-    // latest-request gate exists to stop a stale WINDOW's data from landing.
     if (require_latest_request ? !RequestStillCurrentLocked(request)
                                : !GenerationsStillCurrentLocked(request)) {
       return false;
@@ -947,10 +820,6 @@ struct GitBlameService::Impl {
     return changed;
   }
 
-  // Stamp `cache` as validated for the generation pair the request was issued
-  // under. Kept in one place so no validation site can record the timestamp
-  // without the generations it is only valid for -- a cache validated at an older
-  // generation must not satisfy the throttle in Request().
   static void MarkValidatedLocked(FileCache& cache, const PendingRequest& request) {
     cache.last_validated_at = Clock::now();
     cache.validated_file_generation = request.file_generation;
@@ -978,8 +847,6 @@ struct GitBlameService::Impl {
       return;
     }
 
-    // A file's loaded spans are exactly the lines its published copy holds once
-    // applied, so the budget is counted where the worker can see it.
     auto total_lines = [&]() {
       std::size_t sum = 0;
       for (const auto& [_, cache] : file_caches) {
@@ -1003,9 +870,6 @@ struct GitBlameService::Impl {
 
   void PushWakeEvent() const {
     std::lock_guard lock(mutex);
-    // Route through the checked pusher: on a rejected push the ready blame stays
-    // queued and the shared "wake owed" bit is latched so the idle poll schedules a
-    // fallback wait instead of stranding the overlay stale.
     util::PushWake(wake_channel);
   }
 
@@ -1015,8 +879,6 @@ struct GitBlameService::Impl {
   std::unordered_map<std::string, std::string> pending_request_files;
   std::string active_request_key;
   std::unordered_map<std::string, FileCache> file_caches;
-  // Main-thread view (Snapshot, ApplyReadyResults); the worker only appends to
-  // ready_results. Both under `mutex` all the same.
   std::unordered_map<std::string, PublishedFile> published;
   std::vector<ReadyResult> ready_results;
   std::unordered_map<std::string, std::uint64_t, util::TransparentStringHash, std::equal_to<>>
@@ -1025,7 +887,7 @@ struct GitBlameService::Impl {
   std::uint64_t clear_generation = 0;
   std::uint64_t access_generation = 0;
   util::TaskExecutor executor;
-  std::function<void()> before_cache_apply_hook;  // test seam; empty in production
+  std::function<void()> before_cache_apply_hook;
 };
 
 GitBlameService::GitBlameService() = default;
@@ -1102,4 +964,4 @@ void GitBlameService::SetBeforeCacheApplyHook(std::function<void()> hook) {
   impl_->SetBeforeCacheApplyHook(std::move(hook));
 }
 
-}  // namespace microide::project
+}

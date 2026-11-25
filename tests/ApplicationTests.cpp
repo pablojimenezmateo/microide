@@ -25,9 +25,6 @@
 
 namespace microide::tests {
 
-// Narrow seam onto Application's private headless lifecycle (declared a friend in
-// src/app/Application.h). Lets the suite drive Initialize()/Render()/Shutdown()
-// in-process under the dummy SDL video driver so teardown is verified under ASAN.
 struct ApplicationTestAccess {
   static bool Initialize(app::Application& application) { return application.Initialize(); }
   static void Render(app::Application& application, std::vector<SDL_FRect> dirty_rects = {}) {
@@ -58,8 +55,6 @@ struct ApplicationTestAccess {
                                const char* reason) {
     application.Render(std::move(dirty_rects), reason);
   }
-  // The frame the loop paints for `redraw`: its rects, or -- when it names none but
-  // owes a frame (a derived surface's change) -- what preparing the frame damages.
   static void RenderInvalidation(app::Application& application, const workspace::RenderInvalidation& redraw,
                                  const char* reason) {
     if (redraw.full || !redraw.rects.empty()) {
@@ -67,7 +62,7 @@ struct ApplicationTestAccess {
                                      : std::vector<SDL_FRect>(redraw.rects.begin(), redraw.rects.end()),
                          reason);
     } else if (redraw.frame) {
-      application.Render({}, reason, /*prepared_only=*/true);
+      application.Render({}, reason, true);
     }
   }
   static workspace::WorkspaceShell& Shell(app::Application& application) {
@@ -76,8 +71,6 @@ struct ApplicationTestAccess {
   static app::RedrawVerifier& Verifier(app::Application& application) {
     return application.redraw_verifier_;
   }
-  // Paint over the retained scene behind the shell's back: pixels no state
-  // explains, which is what a missed damage rect or a wrong surface skip leaves.
   static void CorruptScene(app::Application& application, const SDL_FRect& rect) {
     SDL_Renderer* renderer = application.renderer_;
     Expect(SDL_SetRenderTarget(renderer, application.scene_texture_.texture()),
@@ -140,11 +133,6 @@ void TestChooseIdleWaitMapsHints() {
          "CaretOnly should clamp a zero timeout to 1ms so the loop never busy-spins");
 }
 
-// The scheduled wake runs when a timed wait times out. A stream of events -- a
-// large file's highlight prefetch posts one after every frame -- ended every wait
-// before its timeout, and the crash-safety flush owed within 10 s of an edit did
-// not run while the stream lasted (soak 5fae008f5eb2). A timed wait an event ends
-// keeps its deadline; the loop runs the wake once that deadline has passed.
 void TestATimedWaitAnEventEndsKeepsItsDeadline() {
   using microide::app::IdleWaitDecision;
   using microide::app::OwedWakeDeadline;
@@ -166,8 +154,6 @@ void TestATimedWaitAnEventEndsKeepsItsDeadline() {
          "a poll an event ends keeps a deadline already owed");
 }
 
-// A blocking wait that ends late with wakes pushed during it is reported, with
-// whether the relay nudged and what ended it; an ordinary wait is not.
 void TestALateWakeIsDescribed() {
   using microide::app::DescribeLateWake;
   using microide::app::SdlWakeCounts;
@@ -184,28 +170,23 @@ void TestALateWakeIsDescribed() {
          "a late wait says how late, how many wakes and nudges, and what ended it: " + late.value_or(""));
 }
 
-// The event-drain budget yields to render ONLY once a redraw is pending and the
-// budget is reached; with no pending redraw the loop keeps draining. TD-2026-07-17A-100.
 void TestEventDrainBudgetYieldsOnlyWithPendingRedraw() {
   using microide::app::ShouldYieldEventDrain;
   using microide::app::kMaxEventsPerDrain;
 
-  // No pending redraw: never yield, no matter how many events processed.
-  Expect(!ShouldYieldEventDrain(kMaxEventsPerDrain + 1000, /*redraw_pending=*/false),
+  Expect(!ShouldYieldEventDrain(kMaxEventsPerDrain + 1000, false),
          "with no pending redraw the drain never yields (idle input still fully drains)");
-  // Pending redraw but under budget: keep draining.
-  Expect(!ShouldYieldEventDrain(kMaxEventsPerDrain - 1, /*redraw_pending=*/true),
+  Expect(!ShouldYieldEventDrain(kMaxEventsPerDrain - 1, true),
          "under the budget the drain continues even with a pending redraw");
-  // Pending redraw and at/over budget: yield to render.
-  Expect(ShouldYieldEventDrain(kMaxEventsPerDrain, /*redraw_pending=*/true),
+  Expect(ShouldYieldEventDrain(kMaxEventsPerDrain, true),
          "at the budget with a pending redraw the drain yields to render");
-  Expect(ShouldYieldEventDrain(kMaxEventsPerDrain + 1, /*redraw_pending=*/true),
+  Expect(ShouldYieldEventDrain(kMaxEventsPerDrain + 1, true),
          "past the budget with a pending redraw the drain yields to render");
 }
 
 void TestRedrawTraceAccumulatorCountsAndFlushes() {
   RedrawTraceAccumulator accumulator;
-  accumulator.Configure(/*enabled=*/true, /*verbose=*/false);
+  accumulator.Configure(true, false);
 
   const RedrawFrameStats full_frame{
       .full_redraw = true, .dirty_rect_count = 0, .rendered_clip_count = 0, .reason = "full"};
@@ -219,7 +200,6 @@ void TestRedrawTraceAccumulatorCountsAndFlushes() {
   Expect(accumulator.full_frames() == 1, "full frames should be tallied separately");
   Expect(accumulator.partial_frames() == 2, "partial frames should be tallied separately");
 
-  // Reaching the log interval flushes and resets the rolling counters.
   for (Uint64 i = accumulator.frames(); i < RedrawTraceAccumulator::kLogInterval; ++i) {
     accumulator.Record(full_frame);
   }
@@ -227,15 +207,12 @@ void TestRedrawTraceAccumulatorCountsAndFlushes() {
 }
 
 void TestRedrawTraceAccumulatorIgnoresFramesWhenDisabled() {
-  RedrawTraceAccumulator accumulator;  // disabled by default
+  RedrawTraceAccumulator accumulator;
   accumulator.Record(RedrawFrameStats{.full_redraw = true, .reason = "full"});
   Expect(accumulator.frames() == 0,
          "a disabled accumulator should not tally frames");
 }
 
-// Redirect config/state/session writes into a throwaway tree so the headless
-// lifecycle never touches the developer's real user profile. The returned guards
-// must outlive the Application under test.
 struct HeadlessHomeGuard {
   explicit HeadlessHomeGuard(const std::filesystem::path& root)
       : home(root / "home"),
@@ -261,8 +238,6 @@ struct HeadlessHomeGuard {
 
 app::AppStartupOptions HeadlessStartupOptions() {
   app::AppStartupOptions options;
-  // Run Initialize()/Shutdown() in-process instead of std::quick_exit()-ing, and
-  // keep the plugin runtime out of the headless path.
   options.quick_exit_on_shutdown = false;
   options.handle_termination_signals = false;
   options.disable_plugins = true;
@@ -296,8 +271,6 @@ void TestHeadlessInitializeAndShutdownTearsDownCleanly() {
   Expect(ApplicationTestAccess::Renderer(application) == nullptr,
          "Shutdown() should destroy and null the SDL renderer");
 
-  // Shutdown() must be idempotent: a second call on an already-torn-down app is a
-  // no-op rather than a double-free.
   ApplicationTestAccess::Shutdown(application);
   Expect(!ApplicationTestAccess::Initialized(application),
          "a second Shutdown() should remain a clean no-op");
@@ -312,9 +285,6 @@ void TestInitializeEnablesFocusClickThrough() {
   Expect(ApplicationTestAccess::Initialize(application),
          "headless Initialize() should succeed under the dummy video driver");
 
-  // The click that activates an unfocused window must reach the app so a single
-  // click both focuses microide and fires the button under the pointer, instead
-  // of SDL swallowing the focusing click and forcing a second click.
   const char* hint = SDL_GetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH);
   Expect(hint != nullptr && std::string_view(hint) == "1",
          "Initialize() should enable SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH");
@@ -338,17 +308,12 @@ void TestHeadlessRendersRetainedSceneFrame() {
   Expect(!ApplicationTestAccess::FirstRenderComplete(application),
          "no frame should be presented before the first Render()");
 
-  // A full frame renders into the retained scene render-target texture (the path
-  // the prior deferred note doubted the headless software renderer could drive)
-  // and then re-presents it.
   ApplicationTestAccess::Render(application);
   Expect(ApplicationTestAccess::FirstRenderComplete(application),
          "the first Render() should mark the frame presented");
   Expect(ApplicationTestAccess::SceneValid(application),
          "a full headless frame should populate and validate the retained scene texture");
 
-  // A subsequent partial frame replays a dirty clip rect against the retained
-  // texture without invalidating it.
   ApplicationTestAccess::Render(application, {SDL_FRect{0.0f, 0.0f, 64.0f, 64.0f}});
   Expect(ApplicationTestAccess::SceneValid(application),
          "a partial headless frame should keep the retained scene texture valid");
@@ -358,14 +323,6 @@ void TestHeadlessRendersRetainedSceneFrame() {
          "Shutdown() after rendering should destroy the renderer and scene texture");
 }
 
-// The retained scene must survive a logical size that is not the pixel size.
-// That is the normal case on a HiDPI display (display scale 2.0) and on any
-// non-default UI scale, and `Ensure` used to compare the logical size against
-// `SDL_GetRenderOutputSize` and return false whenever they differed — so the
-// scene texture was never created, every frame took the direct-to-window
-// fallback, and the whole partial-redraw path was dead with nothing reporting
-// it. The dummy driver reports a display scale of 1.0, so this drives the
-// scaled case directly rather than through Application's presentation math.
 void TestSceneTextureSurvivesScaledLogicalPresentation() {
   EnsureDummySdlVideoInitialized();
   SDL_Window* window = SDL_CreateWindow("scene-texture-scale", 320, 200, SDL_WINDOW_HIDDEN);
@@ -378,7 +335,6 @@ void TestSceneTextureSurvivesScaledLogicalPresentation() {
   Expect(SDL_GetRenderOutputSize(renderer, &output_width, &output_height) && output_width > 0,
          "the renderer should report a pixel output size");
 
-  // Half-size logical grid: the shape a 2.0 display scale produces.
   const app::RenderPresentation half{.logical_width = output_width / 2,
                                      .logical_height = output_height / 2,
                                      .scale_x = 2.0f,
@@ -391,9 +347,6 @@ void TestSceneTextureSurvivesScaledLogicalPresentation() {
   Expect(presenter.pixel_width() == output_width && presenter.pixel_height() == output_height,
          "the scene texture must be sized in device pixels, not logical units");
 
-  // The target's own view starts unscaled and keeps whatever it is given across
-  // unbind/rebind, so the shell's layout-unit drawing only lands correctly once
-  // that view has been mapped.
   Expect(SDL_SetRenderTarget(renderer, presenter.texture()), "binding the scene target");
   presenter.ApplyRenderTargetPresentation(renderer);
   float target_scale_x = 0.0f;
@@ -402,8 +355,6 @@ void TestSceneTextureSurvivesScaledLogicalPresentation() {
   Expect(target_scale_x == 2.0f && target_scale_y == 2.0f, "the scene target must carry the window's exact scale");
   Expect(SDL_SetRenderTarget(renderer, nullptr), "unbinding the scene target");
 
-  // A UI-scale change moves the logical grid without moving the drawable, so the
-  // texture is remapped rather than reallocated — and what it holds is stale.
   presenter.MarkValid();
   SDL_Texture* before = presenter.texture();
   const app::RenderPresentation unscaled{.logical_width = output_width, .logical_height = output_height};
@@ -432,11 +383,6 @@ void TestExposeRePresentsRetainedSceneInsteadOfRerendering() {
   Expect(ApplicationTestAccess::SceneValid(application),
          "the first frame should populate the retained scene texture");
 
-  // An expose damaged the window, not the scene. Every frame ends by blitting the
-  // whole retained scene texture and presenting it, so the repair is a present --
-  // re-rendering the workspace would recompute pixel-identical content. On the
-  // startup path that mattered: mapping the window fires SHOWN right after the
-  // first frame, and answering it with a full redraw rendered that frame twice.
   SDL_Event exposed{};
   exposed.type = SDL_EVENT_WINDOW_EXPOSED;
   const auto exposed_result = ApplicationTestAccess::HandleEvent(application, exposed);
@@ -451,13 +397,10 @@ void TestExposeRePresentsRetainedSceneInsteadOfRerendering() {
   Expect(!ApplicationTestAccess::HandleEvent(application, shown).redraw.full,
          "window-shown should take the same present-only path as an expose");
 
-  // With nothing retained to present, the expose has to be a real full redraw.
   ApplicationTestAccess::InvalidateScene(application);
   Expect(ApplicationTestAccess::HandleEvent(application, exposed).redraw.full,
          "an expose with no valid retained scene should fall back to a full redraw");
 
-  // A display-scale change alters what the scene should CONTAIN (every glyph is
-  // re-rasterized), so it keeps the full redraw even with a valid scene.
   ApplicationTestAccess::Render(application);
   Expect(ApplicationTestAccess::SceneValid(application), "the scene should be valid again");
   SDL_Event scale_changed{};
@@ -468,12 +411,6 @@ void TestExposeRePresentsRetainedSceneInsteadOfRerendering() {
   ApplicationTestAccess::Shutdown(application);
 }
 
-// The QA redraw verifier must be able to fail, or every quiet QA run proves
-// nothing (the perf-gate vacuity trap, dev-docs/project/validation-traps.md).
-// A partial frame over a correct retained scene is quiet; the same partial frame
-// over a scene holding pixels no state explains -- what a missed damage rect or a
-// wrong RenderClip skip leaves behind -- is exactly one QA-STALE report, which
-// names the stale region. A repaint that covers the region makes it quiet again.
 void TestRedrawVerifierReportsOnlyStaleFrames() {
   EnsureDummySdlVideoInitialized();
   TemporaryDirectory temp_dir;
@@ -522,11 +459,6 @@ void TestRedrawVerifierReportsOnlyStaleFrames() {
   ApplicationTestAccess::Shutdown(application);
 }
 
-// Damage requested while preparing a frame is painted in that frame. Preparing
-// settles state the frame then paints -- the status bar's Ln/Col among it -- and
-// the status-bar rect it asked for used to land in the NEXT frame, so every caret
-// move showed the old position for a frame. Found by the QA redraw verifier
-// (QA-STALE over the Ln/Col segment after a click in the editor).
 void TestPrepareTimeDamageIsPaintedInItsFrame() {
   EnsureDummySdlVideoInitialized();
   TemporaryDirectory temp_dir;
@@ -607,9 +539,6 @@ void TestHeadlessDestructorShutsDownInitializedApp() {
   TemporaryDirectory temp_dir;
   HeadlessHomeGuard homes(temp_dir.path());
 
-  // Initialize but never call Shutdown(): ~Application() must run teardown and
-  // join the syntax-warmup thread. ASAN/TSAN catch a leaked window/renderer or
-  // an unjoined worker here.
   {
     app::Application application(HeadlessStartupOptions());
     Expect(ApplicationTestAccess::Initialize(application),
@@ -619,18 +548,14 @@ void TestHeadlessDestructorShutsDownInitializedApp() {
   }
 }
 
-}  // namespace
+}
 
 
-// TD-2026-11-07-433: SDL 3.4 can lose a cross-thread push's wake (it checks the
-// queue, then publishes the window to wake, then blocks, with no re-check). The
-// relay re-delivers a wake pushed during a blocking wait that is still blocked a
-// moment later, and costs nothing otherwise.
 void TestLostWakeRelayNudgesAWaitStillBlockedAfterAPush() {
   std::atomic<int> nudged{0};
   app::LostWakeRelay relay(std::chrono::milliseconds(5), [&] { nudged.fetch_add(1); });
   relay.EnterBlockingWait();
-  relay.NotePush();  // its wake lost: the wait never ends on its own
+  relay.NotePush();
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   while (nudged.load() == 0 && std::chrono::steady_clock::now() < deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -642,17 +567,14 @@ void TestLostWakeRelayNudgesAWaitStillBlockedAfterAPush() {
 void TestLostWakeRelayStaysQuietWhenTheWakeArrives() {
   std::atomic<int> nudged{0};
   app::LostWakeRelay relay(std::chrono::milliseconds(20), [&] { nudged.fetch_add(1); });
-  // Pushed before the wait: the wait's own queue check finds the event.
   relay.NotePush();
   relay.EnterBlockingWait();
   std::this_thread::sleep_for(std::chrono::milliseconds(60));
   relay.LeaveBlockingWait();
-  // Pushed during the wait, which its wake ends in time.
   relay.EnterBlockingWait();
   relay.NotePush();
   relay.LeaveBlockingWait();
   std::this_thread::sleep_for(std::chrono::milliseconds(60));
-  // Idle: a wait with nothing pushed.
   relay.EnterBlockingWait();
   std::this_thread::sleep_for(std::chrono::milliseconds(60));
   relay.LeaveBlockingWait();
@@ -700,4 +622,4 @@ AddTest(tests, "Application/ALateWakeIsDescribed", TestALateWakeIsDescribed);
           TestHeadlessDestructorShutsDownInitializedApp);
 }
 
-}  // namespace microide::tests
+}

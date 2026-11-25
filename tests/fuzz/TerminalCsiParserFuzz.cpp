@@ -4,10 +4,6 @@
 #include <cstdint>
 #include <string_view>
 
-// Fuzz the hand-written CSI / SGR parameter tokenizers. These feed cursor moves,
-// erase/scroll counts, and SGR colour selectors straight from untrusted PTY
-// output, so they must never crash or invoke undefined behaviour (e.g. the old
-// std::atoi overflow) on arbitrary bytes.
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
   if (data == nullptr) {
     return 0;

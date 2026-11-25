@@ -1,18 +1,3 @@
-// Robustness and framing properties for the control channel wire.
-//
-// The control channel is JSONL over a socket: one request per line in, one
-// response per line out. Two things must hold for arbitrary input, because the
-// peer is an external program (a script, an agent) and not a cooperating part of
-// this process:
-//
-//   1. ParseControlRequest must never throw and never accept garbage as valid.
-//      It sees whatever bytes arrive, including truncated frames and binary.
-//   2. A serialized response must be exactly ONE line. If any field's text can
-//      smuggle a newline through unescaped, the client reads it as two frames
-//      and every subsequent response is attributed to the wrong request -- a
-//      desync that persists for the life of the connection, from nothing worse
-//      than a filename with a newline in it.
-
 #include "TestSupport.h"
 
 #include <cstdint>
@@ -34,9 +19,6 @@ using microide::workspace::ParseControlRequest;
 using microide::workspace::SerializeControlEvent;
 using microide::workspace::SerializeControlResponse;
 
-// Strings chosen to break a hand-rolled escaper: quotes, backslashes, every
-// flavour of line break, control characters, a NUL, a lone surrogate's bytes,
-// and invalid UTF-8.
 const std::vector<std::string>& HostileText() {
   static const std::vector<std::string> text = {
       "",
@@ -57,7 +39,7 @@ const std::vector<std::string>& HostileText() {
       "truncated \xE6\x97",
       "lone surrogate bytes \xED\xA0\x80",
       "}{ braces ][",
-      "\"}\n{\"",  // a whole fake frame boundary
+      "\"}\n{\"",
   };
   return text;
 }
@@ -77,8 +59,6 @@ std::string Render(std::string_view text) {
   return out;
 }
 
-// ---- 1. a response is always exactly one line --------------------------------
-
 void TestSerializedResponseIsAlwaysASingleLine() {
   for (const std::string& text : HostileText()) {
     for (const bool ok : {true, false}) {
@@ -97,7 +77,6 @@ void TestSerializedResponseIsAlwaysASingleLine() {
       Expect(line.find('\0') == std::string::npos,
              "a serialized response must not contain a raw NUL: " + Render(text));
 
-      // And it must still be readable as JSON by the client on the other end.
       const auto reparsed = ParseJson(line);
       Expect(reparsed.has_value(),
              "a serialized response must be valid JSON, got '" + Render(line) + "' for " +
@@ -122,8 +101,6 @@ void TestSerializedEventIsAlwaysASingleLine() {
   }
 }
 
-// The round trip that matters: whatever text goes into a response field comes
-// back out of the client's parse byte for byte.
 void TestResponseFieldsSurviveTheRoundTrip() {
   for (const std::string& text : HostileText()) {
     ControlResponse response;
@@ -134,7 +111,7 @@ void TestResponseFieldsSurviveTheRoundTrip() {
     const auto parsed = ParseJson(SerializeControlResponse(response));
     Expect(parsed.has_value(), "the response should parse back: " + Render(text));
     if (!parsed->HasKey("feedback")) {
-      continue;  // the field may legitimately be omitted when empty
+      continue;
     }
     const JsonValue& feedback = (*parsed)["feedback"];
     if (!feedback.IsString()) {
@@ -145,8 +122,6 @@ void TestResponseFieldsSurviveTheRoundTrip() {
                Render(feedback.AsString()));
   }
 }
-
-// ---- 2. parsing never throws and never accepts garbage -----------------------
 
 void TestParseRejectsMalformedInputWithoutThrowing() {
   const std::vector<std::string> malformed = {
@@ -167,13 +142,13 @@ void TestParseRejectsMalformedInputWithoutThrowing() {
       "{\"command\":null}",
       "{\"query\":[]}",
       "{\"id\":\"not a number\",\"command\":\"x\"}",
-      "{}",                                   // neither command nor query
-      "{\"command\":\"\",\"query\":\"\"}",     // both empty
-      "{\"command\":\"a\",\"query\":\"b\"}",   // both set
+      "{}",
+      "{\"command\":\"\",\"query\":\"\"}",
+      "{\"command\":\"a\",\"query\":\"b\"}",
       std::string("{\"command\":\"a\0b\"}", 18),
       "{\"command\":\"unterminated",
       "{\"command\":\"\xFF\xFE\"}",
-      "{\"args\":{\"x\":1}}",                  // args with no verb
+      "{\"args\":{\"x\":1}}",
   };
   for (const std::string& line : malformed) {
     const ControlRequest request = ParseControlRequest(line);
@@ -188,8 +163,6 @@ void TestParseRejectsMalformedInputWithoutThrowing() {
   }
 }
 
-// Every prefix of a well-formed request is a frame that could arrive truncated.
-// None may be accepted, and none may crash.
 void TestEveryTruncationOfAValidRequestIsRejected() {
   const std::vector<std::string> valid = {
       "{\"id\":1,\"command\":\"save\"}",
@@ -207,8 +180,6 @@ void TestEveryTruncationOfAValidRequestIsRejected() {
   }
 }
 
-// Single-byte corruption of a valid frame: must never be accepted as a DIFFERENT
-// valid request without saying so, and must never crash.
 void TestByteCorruptionOfAValidRequestStaysSafe() {
   const std::string base = "{\"id\":1,\"command\":\"save\"}";
   for (std::size_t index = 0; index < base.size(); ++index) {
@@ -228,8 +199,6 @@ void TestByteCorruptionOfAValidRequestStaysSafe() {
   }
 }
 
-// Deeply nested args are the classic recursive-descent stack overflow. The
-// parser must refuse depth rather than recurse into it.
 void TestDeeplyNestedArgsDoNotOverflow() {
   for (const std::size_t depth : {std::size_t{16}, std::size_t{256}, std::size_t{20000}}) {
     std::string line = "{\"query\":\"state\",\"args\":";
@@ -254,7 +223,7 @@ void TestDeeplyNestedArgsDoNotOverflow() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterControlProtocolRobustnessTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlProtocolRobustness/SerializedResponseIsAlwaysASingleLine",
@@ -273,4 +242,4 @@ void RegisterControlProtocolRobustnessTests(std::vector<TestCase>& tests) {
           TestDeeplyNestedArgsDoNotOverflow);
 }
 
-}  // namespace microide::tests
+}

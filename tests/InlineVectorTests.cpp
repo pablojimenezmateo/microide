@@ -22,9 +22,6 @@ void TestInlineVectorFillsAndReadsBack() {
 }
 
 void TestInlineVectorIteratesOnlyLiveElements() {
-  // The backing array holds `capacity()` value-initialised slots; the iterators
-  // must stop at `size()`, not at the array end, or every range-for over a
-  // partially-filled vector visits phantom zeroed elements.
   InlineVector<int, 4> values{7, 8};
   int seen = 0;
   int sum = 0;
@@ -101,9 +98,6 @@ void TestInlineVectorInsertAndEraseShiftLiveElements() {
   Expect(values.size() == 2 && values[1] == 2, "pop_back drops the tail element");
 }
 
-// The shift inside insert() walks over the slots, so an argument that ALIASES one
-// of them would be read after it was overwritten if the parameter were a
-// reference. Splitting a pane's weight in half writes exactly this line.
 void TestInlineVectorInsertAcceptsAnAliasingValue() {
   InlineVector<int, 4> values{10, 20, 30};
   values.insert(0, values[2]);
@@ -113,9 +107,6 @@ void TestInlineVectorInsertAcceptsAnAliasingValue() {
 }
 
 void TestInlineVectorDropsPushesPastCapacityInsteadOfCorrupting() {
-  // Debug builds assert; release builds must still keep `size() <= capacity()`
-  // so an over-push cannot walk off the backing array. Only exercised where
-  // NDEBUG is on, since the assert fires (correctly) otherwise.
 #ifdef NDEBUG
   InlineVector<int, 2> values{1, 2};
   values.push_back(3);
@@ -125,7 +116,7 @@ void TestInlineVectorDropsPushesPastCapacityInsteadOfCorrupting() {
   Expect(true, "capacity clamp checked where NDEBUG allows it");
 }
 
-}  // namespace
+}
 
 void RegisterInlineVectorTests(std::vector<TestCase>& tests) {
   AddTest(tests, "InlineVector/FillsAndReadsBack", TestInlineVectorFillsAndReadsBack);
@@ -145,4 +136,4 @@ void RegisterInlineVectorTests(std::vector<TestCase>& tests) {
           TestInlineVectorDropsPushesPastCapacityInsteadOfCorrupting);
 }
 
-}  // namespace microide::tests
+}

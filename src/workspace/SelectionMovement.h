@@ -5,8 +5,6 @@
 
 namespace microide::workspace {
 
-// Clamp `*selected_index + delta` into [0, item_count - 1]. Returns true when
-// the call had an effect (non-empty range and non-zero delta).
 inline bool MoveSelectionIndex(std::size_t item_count, std::size_t* selected_index, int delta) {
   if (item_count == 0 || selected_index == nullptr || delta == 0) {
     return false;
@@ -22,4 +20,4 @@ bool MoveSelectionIndex(const Range& range, std::size_t* selected_index, int del
   return MoveSelectionIndex(range.size(), selected_index, delta);
 }
 
-}  // namespace microide::workspace
+}

@@ -18,15 +18,6 @@
 namespace microide::tests::architecture {
 
 void RunDescriptorCloseOnExecRuleFixtures() {
-  // A fresh root: the rule scans every descriptor-creating call under src/, so a
-  // shared fixture tree would contaminate the counts.
-  //
-  // This fixture exists because the rule shipped with `openat?` as its `open`
-  // pattern — `?` binds to the single preceding `t`, so it matched `opena` /
-  // `openat` and NEVER plain `open(`. The rule therefore passed while two real
-  // unflagged `open()` sites sat in the tree. Every form gets both a violating
-  // and a clean fixture, so a pattern that stops matching its own call form
-  // fails here instead of going quietly blind.
   TemporaryDirectory cloexec_dir;
   const std::filesystem::path& root = cloexec_dir.path();
   std::filesystem::create_directories(root / "src/platform");
@@ -46,9 +37,6 @@ void RunDescriptorCloseOnExecRuleFixtures() {
          "close-on-exec rule must flag every unflagged descriptor-creating form, "
          "including plain open(), plain accept(), openpty() and forkpty()");
 
-  // Positive control: the same call forms carrying the atomic flag must produce
-  // ZERO violations. Without this half, a rule that matched nothing at all would
-  // still satisfy the negative case via the loud-missing-target guard.
   WriteFile(root / "src/platform/Descriptors.cpp",
             "int A(){ return open(\"/dev/null\", O_WRONLY | O_CLOEXEC); }\n"
             "int B(){ return ::openat(dir, \"f\", O_RDONLY | O_CLOEXEC); }\n"
@@ -60,7 +48,6 @@ void RunDescriptorCloseOnExecRuleFixtures() {
   Expect(CheckDescriptorCreationIsCloseOnExec(root).violations.empty(),
          "close-on-exec rule should accept every atomically-flagged creation form");
 
-  // Occurrences inside string literals and comments are not call sites.
   WriteFile(root / "src/platform/Descriptors.cpp",
             "int G(){ return inotify_init1(IN_CLOEXEC); }\n"
             "const char* kHelp = \"open(path) and socket(fd)\";\n"
@@ -68,20 +55,12 @@ void RunDescriptorCloseOnExecRuleFixtures() {
   Expect(CheckDescriptorCreationIsCloseOnExec(root).violations.empty(),
          "close-on-exec rule must code-mask string-literal and comment occurrences");
 
-  // Loud-missing-target guard: no creation sites at all is a hollowed-out rule.
   WriteFile(root / "src/platform/Descriptors.cpp", "int H(){ return 0; }\n");
   Expect(!CheckDescriptorCreationIsCloseOnExec(root).violations.empty(),
          "close-on-exec rule must fail loudly when it finds no creation sites to scan");
 }
 
 void RunTerminalExtractedImplRuleFixtures() {
-  // Five of this rule's patterns anchor a definition with `^`. std::regex only
-  // treats `^` as a line start when constructed with std::regex::multiline;
-  // without it `^` matches offset 0 of the whole file, which in a .cpp is always
-  // `#include` — so three of the five sub-checks could never fire and the other
-  // two only fired for one return-type spelling. Both halves below are needed:
-  // the violating fixture proves the patterns match a real definition, and the
-  // clean fixture proves they do not match the extracted-out shape.
   TemporaryDirectory impl_dir;
   const std::filesystem::path& root = impl_dir.path();
   std::filesystem::create_directories(root / "src/terminal");
@@ -110,11 +89,6 @@ void RunTerminalExtractedImplRuleFixtures() {
 }
 
 void RunDirectGitRepositoryRuleFixtures() {
-  // The original pattern was `GitRepository\s*\(`, which only matches a
-  // temporary. Every construction in the tree is the named-declaration form
-  // (`const project::GitRepository repo(root);`), so the rule was structurally
-  // unable to fire. The declaration forms below are the negative control; the
-  // reference/pointer/qualified-name forms are the false-positive control.
   TemporaryDirectory git_dir;
   const std::filesystem::path& root = git_dir.path();
   std::filesystem::create_directories(root / "src/workspace");
@@ -128,9 +102,6 @@ void RunDirectGitRepositoryRuleFixtures() {
          "direct-GitRepository rule must flag named declarations and brace init, not "
          "just a temporary");
 
-  // The sanctioned service TU is allowlisted, and neither a reference/pointer
-  // parameter, a qualified static call, nor a differently-named type is a
-  // construction.
   WriteFile(root / "src/workspace/git/GitRepositoryService.cpp",
             "void S(const Path& p){ const project::GitRepository repo(p); (void)repo; }\n");
   WriteFile(root / "src/workspace/SomeCoordinator.cpp",
@@ -145,12 +116,6 @@ void RunDirectGitRepositoryRuleFixtures() {
 }
 
 void RunActionIdReachabilityRuleFixtures() {
-  // An ActionId is dispatched and gated by `switch` statements, so an action can
-  // be fully implemented, compile cleanly, appear in three switches, and still be
-  // impossible to invoke because nothing PRODUCES it. Four actions were in that
-  // state: ToggleFullscreen (which reached SDL_SetWindowFullscreen), the two
-  // DebugBreakpointEdit* modifiers (hit-count breakpoints and logpoints had no
-  // menu entry), and the retired InlineCompletion.
   TemporaryDirectory action_dir;
   const std::filesystem::path& root = action_dir.path();
   std::filesystem::create_directories(root / "src/workspace");
@@ -163,18 +128,9 @@ void RunActionIdReachabilityRuleFixtures() {
       "  Commented,  // Orphan is named here in a comment only\n"
       "};\n";
   WriteFile(root / "src/workspace/actions/WorkspaceActionTypes.h", kEnum);
-  // Too few enumerators: the parse-shape guard must fire rather than silently
-  // reporting every action reachable.
   Expect(!CheckEveryActionIdIsReachable(root).violations.empty(),
          "a too-small ActionId parse must fail loudly, not pass vacuously");
 
-  // Pad the enum past the vacuity floor, then give each action a distinct fate.
-  // Two fates are checked, one per direction: `Orphan` is named ONLY in a case
-  // label (handled, but nothing can invoke it) and `NeverHandled` is produced by
-  // a menu item with no case label anywhere (invokable, but nothing acts on it).
-  // The padding actions are both produced and handled so they stay quiet --
-  // before the handled half existed they were produced only, which is how they
-  // turned into the positive control for it.
   std::string enum_text =
       "enum class ActionId {\n  Reachable,\n  Orphan,\n  ContextMenuOnly,\n  NeverHandled,\n";
   for (int i = 0; i < 25; ++i) {
@@ -198,8 +154,6 @@ void RunActionIdReachabilityRuleFixtures() {
   for (int i = 0; i < 25; ++i) {
     const std::string n = std::to_string(i);
     uses += "void P" + n + "(){ Bind(ActionId::Padding" + n + "); }\n";
-    // The case label must start its own line: that is how the rule tells a
-    // handler from a producer, and how every switch in the tree is written.
     uses += "void H" + n + "(ActionId id){ switch (id) {\n    case ActionId::Padding" + n +
             ":\n      return;\n  } }\n";
   }
@@ -222,10 +176,6 @@ void RunActionIdReachabilityRuleFixtures() {
   Expect(flags_orphan, "the case-only action must be flagged as unproduced");
   Expect(flags_unhandled, "the produced-but-uncased action must be flagged as unhandled");
 
-  // Positive control, both halves: giving the orphan any producer and the
-  // unhandled action any case label clears the rule. A context-menu call site
-  // counts as a producer, so documented context-menu-only actions need no
-  // allowlist.
   WriteFile(root / "src/workspace/Uses.cpp",
             uses + "void Fix(){ Dispatch(ActionId::Orphan); }\n" +
                 "void FixB(ActionId id){ switch (id) {\n    case ActionId::NeverHandled:\n"
@@ -235,9 +185,6 @@ void RunActionIdReachabilityRuleFixtures() {
 }
 
 void RunRegisteredSettingsAreReadRuleFixtures() {
-  // The mirror of the reads-must-be-registered rule. "Hover Delay (ms)" and
-  // "Scrollbar Size" both shipped declared-and-unread: shown in the overlay,
-  // persisted on change, consumed by nothing.
   TemporaryDirectory settings_dir;
   const std::filesystem::path& root = settings_dir.path();
   std::filesystem::create_directories(root / "src/workspace");
@@ -261,13 +208,11 @@ void RunRegisteredSettingsAreReadRuleFixtures() {
   Expect(flagged.violations.front().message.find("group.orphan_key") != std::string::npos,
          "the flagged setting must be the unread one");
 
-  // Positive control: give it a reader and the rule clears.
   WriteFile(root / "src/workspace/Reader.cpp",
             reader + "bool Orphan(){ return SettingFlagEnabled(cfg, \"group.orphan_key\"); }\n");
   Expect(CheckRegisteredSettingsAreRead(root).violations.empty(),
          "a setting with any consumer passes");
 
-  // Vacuity guard: too few parsed ids means the declaration shape moved.
   WriteFile(root / "src/workspace/registries/WorkspaceSettingsRegistry.cpp",
             "std::span<const SettingSpec> BuiltinSettingSpecs() { return {}; }\n");
   Expect(!CheckRegisteredSettingsAreRead(root).violations.empty(),
@@ -275,14 +220,10 @@ void RunRegisteredSettingsAreReadRuleFixtures() {
 }
 
 void RunCoordinatorOperationsAreCalledRuleFixtures() {
-  // The dead-hook rule. A wired-but-never-called Operations field compiles,
-  // reads as part of the contract, and does nothing; 35 had accumulated.
   TemporaryDirectory ops_dir;
   const std::filesystem::path& root = ops_dir.path();
   std::filesystem::create_directories(root / "src/workspace");
 
-  // Two coordinators. Each declares an Operations struct; the vacuity floor
-  // wants 20 structs and 200 fields, so pad with generated headers.
   for (int i = 0; i < 60; ++i) {
     std::string padded = "#pragma once\nclass Pad" + std::to_string(i) +
                          " {\n public:\n  struct Operations {\n";
@@ -322,10 +263,6 @@ void RunCoordinatorOperationsAreCalledRuleFixtures() {
             "  });\n"
             "}\n");
 
-  // Beta has a field spelled exactly like Alpha's, and Beta *does* call it.
-  // Nothing including Alpha.h can see this call, so Alpha's copy must still be
-  // reported — this is the case a name-only search gets wrong, and six real
-  // dead fields hid behind it.
   WriteFile(root / "src/workspace/Beta.h",
             "#pragma once\n"
             "class Beta {\n public:\n  struct Operations {\n"
@@ -349,7 +286,6 @@ void RunCoordinatorOperationsAreCalledRuleFixtures() {
          "a hook whose name is called only on an unrelated struct must still be flagged; reads "
          "are scoped by include graph, not by name");
 
-  // Positive control: a caller in a file that includes Alpha.h clears both.
   WriteFile(root / "src/workspace/AlphaExtra.cpp",
             "#include \"workspace/Alpha.h\"\n"
             "void Extra(Alpha::Operations& operations_) {\n"
@@ -359,7 +295,6 @@ void RunCoordinatorOperationsAreCalledRuleFixtures() {
   Expect(CheckCoordinatorOperationsAreCalled(root).violations.empty(),
          "a hook called from anything that includes its header passes");
 
-  // A null check counts as caring about the hook, not just a direct call.
   WriteFile(root / "src/workspace/AlphaExtra.cpp",
             "#include \"workspace/Alpha.h\"\n"
             "void Extra(Alpha::Operations& operations_) {\n"
@@ -369,7 +304,6 @@ void RunCoordinatorOperationsAreCalledRuleFixtures() {
   Expect(CheckCoordinatorOperationsAreCalled(root).violations.empty(),
          "testing a hook for null counts as a read");
 
-  // Vacuity guard: an empty tree must fail loudly rather than report nothing.
   TemporaryDirectory empty_dir;
   std::filesystem::create_directories(empty_dir.path() / "src/workspace");
   Expect(!CheckCoordinatorOperationsAreCalled(empty_dir.path()).violations.empty(),
@@ -381,9 +315,6 @@ void RunRenderTuTextCompositionRuleFixtures() {
   const std::filesystem::path root = temp_dir.path();
   std::filesystem::create_directories(root / "src/workspace");
   std::filesystem::create_directories(root / "src/editor");
-  // Both rules scan a fixed set of render TUs and report anything absent as a
-  // missing target, so every scanned file has to exist even when this fixture
-  // only cares about one of them.
   for (const char* name : {"WorkspaceShellRenderSidebar.cpp", "WorkspaceShellRenderCompare.cpp",
                            "WorkspaceShellRenderMerge.cpp", "WorkspaceShellHoverPopup.cpp",
                            "WorkspaceShellHoverTargets.cpp", "DebugPaneRender.cpp"}) {
@@ -401,16 +332,11 @@ void RunRenderTuTextCompositionRuleFixtures() {
   Expect(!CheckRenderTuDoesNotCallToStringOrFormat(root).violations.empty(),
          "the render-TU text rule must flag JoinHintSegments too, not just one composer");
 
-  // Positive control: the composed text arriving as a view is exactly the shape
-  // the fix takes, and must produce nothing on either channel.
   WriteFile(sidebar, "void F(std::string_view empty_text){ Draw(empty_text); }\n");
   const RuleResult clean = CheckRenderTuDoesNotCallToStringOrFormat(root);
   Expect(clean.violations.empty() && clean.missing_targets.empty(),
          "the render-TU text rule must pass when composed text arrives as a view");
 
-  // literal+ident concatenation is enforced on the surface render TUs now, not
-  // only on the four hot per-row ones. Before this it was scoped away, which is
-  // what let `"Error: " + state.error` live in the sidebar paint path.
   WriteFile(sidebar, "void F(const std::string& e){ auto s = \"Error: \" + e; (void)s; }\n");
   Expect(!CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
          "literal+ident concat in a surface render TU must be flagged");
@@ -418,23 +344,15 @@ void RunRenderTuTextCompositionRuleFixtures() {
   Expect(CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
          "a surface render TU drawing a precomposed view must pass");
 
-  // No carve-outs: the hover popup was the last render TU that concatenated
-  // (its word wrapper), and it now builds candidates in a reused scratch buffer.
-  // A regression there must fail like anywhere else.
   WriteFile(root / "src/workspace/render/WorkspaceShellHoverPopup.cpp",
             "void F(const std::string& a, const std::string& b){ auto s = a + \" \" + b; (void)s; }\n");
   Expect(!CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
          "the hover popup is no longer exempt from the concat rule");
   WriteFile(root / "src/workspace/render/WorkspaceShellHoverPopup.cpp", "// clean render TU fixture\n");
 
-  // TruncateToWidth hides an allocation behind a helper name, so none of the
-  // patterns above see it. The Settings overlay called it once per label per
-  // frame for exactly that reason.
   WriteFile(sidebar, "void F(){ Draw(text_renderer_.TruncateToWidth(label, w)); }\n");
   Expect(!CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
          "the owning TruncateToWidth must be flagged in a render TU");
-  // Positive control: the view variants are the fix and must not trip the rule --
-  // in particular the prefix-sharing Ephemeral name must not match.
   WriteFile(sidebar,
             "void F(){ Draw(text_renderer_.TruncateToWidthEphemeralView(label, w));"
             " Draw(TruncateLabelView(other, w)); }\n");
@@ -449,12 +367,10 @@ void RunPaintedScrollbarRuleFixtures() {
   std::filesystem::create_directories(root / "src/workspace");
   const std::filesystem::path pane = root / "src/workspace/SomePaneRender.cpp";
 
-  // Negative control: the literal that marks a bar nothing can drag.
   WriteFile(pane, "void F(){ DrawScrollbar(r, t, bar->track, bar->thumb, false); }\n");
   Expect(!CheckPaintedScrollbarsAreGrabbable(root).violations.empty(),
          "a scrollbar painted with a literal false active flag must be flagged");
 
-  // Positive control: the live drag-target comparison every grabbable bar passes.
   WriteFile(pane,
             "void F(){ DrawScrollbar(r, t, bar->track, bar->thumb,\n"
             "    state.drag_target == DragTarget::SomeScrollbar); }\n");
@@ -462,15 +378,11 @@ void RunPaintedScrollbarRuleFixtures() {
   Expect(clean.violations.empty() && clean.missing_targets.empty(),
          "a scrollbar whose active flag is a live drag-target comparison must pass");
 
-  // A flag threaded in as a parameter is equally live, and must not trip on the
-  // `false` that may appear elsewhere in the same statement.
   WriteFile(pane,
             "void F(bool active){ DrawScrollbar(r, t, MakeBar(x, false), bar->thumb, active); }\n");
   Expect(CheckPaintedScrollbarsAreGrabbable(root).violations.empty(),
          "a threaded active flag must pass even when the call has another false argument");
 
-  // Vacuity guard: an empty tree means the scan found nothing, which must fail
-  // loudly rather than read as a clean pass.
   TemporaryDirectory empty_dir;
   std::filesystem::create_directories(empty_dir.path() / "src/workspace");
   Expect(!CheckPaintedScrollbarsAreGrabbable(empty_dir.path()).violations.empty(),
@@ -481,17 +393,12 @@ void RunMissingRuleTargetFixtures() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path();
 
-  // An empty tree: the rule's target does not exist, so it can scan nothing.
-  // Before the guard this returned an empty result and read as a clean pass.
   const RuleResult absent = CheckEditorViewModelStickyAndOccurrenceAreSpans(root);
   Expect(!absent.missing_targets.empty(),
          "a rule whose target file is absent must report the missing target, not pass silently");
   Expect(absent.violations.empty(),
          "a missing target is a broken rule, not a code violation -- the two must stay separate");
 
-  // Positive control: with the target present and satisfying the rule, nothing is
-  // reported on either channel. Without this half, a guard that always reported a
-  // missing target would still satisfy the case above.
   WriteFile(root / "src/editor/EditorViewModel.h",
             "struct EditorViewModel {\n"
             "  std::span<const std::size_t> sticky_lines;\n"
@@ -504,15 +411,7 @@ void RunMissingRuleTargetFixtures() {
          "a present target satisfying the rule must produce no violations");
 }
 
-// One entry point for every rule fixture, so ArchitectureInvariantsTests.cpp stays
-// the thin dispatcher its own size rule asks for: adding a fixture no longer costs
-// a line there.
 void RunPerfCounterProducerRuleFixtures() {
-  // A green lint run is not evidence a rule works. This one scans for
-  // `PerfCounterId::<Id>` across src/, which is exactly the shape that goes
-  // quietly blind if the X-macro or the enum spelling is reworked -- and its
-  // whole job is to catch a counter that nothing increments, which is invisible
-  // by construction (it just never appears in any dump).
   TemporaryDirectory counter_dir;
   const std::filesystem::path& root = counter_dir.path();
   std::filesystem::create_directories(root / "src/util");
@@ -523,7 +422,6 @@ void RunPerfCounterProducerRuleFixtures() {
       "  X(WiredUp, \"a.wired_up\") \\\n"
       "  X(Orphan, \"a.orphan\")\n";
 
-  // Negative control: `Orphan` is declared and never incremented.
   WriteFile(root / "src/util/PerformanceCounters.h", kHeader);
   WriteFile(root / "src/workspace/User.cpp",
             "void f(){ AddPerformanceCounter(util::PerfCounterId::WiredUp); }\n");
@@ -531,17 +429,12 @@ void RunPerfCounterProducerRuleFixtures() {
   Expect(orphaned.violations.size() == 1,
          "perf-counter rule must flag a declared counter that nothing increments");
 
-  // Positive control: wire the orphan up and the rule must go quiet. Without
-  // this half, a rule that matched no producers at all would satisfy the
-  // negative case by flagging everything.
   WriteFile(root / "src/workspace/User.cpp",
             "void f(){ AddPerformanceCounter(util::PerfCounterId::WiredUp); }\n"
             "void g(){ AddPerformanceCounter(util::PerfCounterId::Orphan, 2); }\n");
   Expect(CheckEveryPerfCounterHasAProducer(root).violations.empty(),
          "perf-counter rule must accept a counter that is incremented anywhere in src/");
 
-  // The name table in PerformanceCounters.cpp mentions every id through the same
-  // macro expansion; treating it as a producer would make the rule vacuous.
   WriteFile(root / "src/util/PerformanceCounters.cpp",
             "const char* kNames[] = { \"a.wired_up\", \"a.orphan\" };\n"
             "void h(){ (void)PerfCounterId::Orphan; }\n");
@@ -550,8 +443,6 @@ void RunPerfCounterProducerRuleFixtures() {
   Expect(CheckEveryPerfCounterHasAProducer(root).violations.size() == 1,
          "perf-counter rule must not count the declaration or the name table as a producer");
 
-  // Loud-missing-target guard: an X-macro that no longer spells its ids the same
-  // way must fail, not scan nothing and report green.
   WriteFile(root / "src/util/PerformanceCounters.h",
             "#define MICROIDE_PERF_COUNTERS(X)\nenum class PerfCounterId { Count };\n");
   Expect(!CheckEveryPerfCounterHasAProducer(root).violations.empty(),
@@ -559,16 +450,10 @@ void RunPerfCounterProducerRuleFixtures() {
 }
 
 void RunEditorGroupsSplitTreeRuleFixtures() {
-  // The rule's claim is "a TU that reshapes the editor group vector also names the
-  // split tree", so both halves need pinning: a rule that flagged every mutation
-  // would break the two TUs that legitimately own them, and one whose code mask or
-  // method list was wrong would report green over the exact desync it exists to
-  // catch.
   TemporaryDirectory groups_dir;
   const std::filesystem::path& root = groups_dir.path();
   std::filesystem::create_directories(root / "src/workspace/coordinators");
 
-  // Negative control: a group is erased and the tree is never told.
   WriteFile(root / "src/workspace/coordinators/Groups.cpp",
             "void Collapse(std::size_t gi) {\n"
             "  state_.editor_groups.erase(state_.editor_groups.begin() + gi);\n"
@@ -576,7 +461,6 @@ void RunEditorGroupsSplitTreeRuleFixtures() {
   Expect(CheckEditorGroupsMutateWithTheSplitTree(root).violations.size() == 1,
          "editor-groups rule must flag a group erase in a TU that never names editor_split");
 
-  // Positive control: the same erase, with the tree kept in step.
   WriteFile(root / "src/workspace/coordinators/Groups.cpp",
             "void Collapse(std::size_t gi) {\n"
             "  state_.editor_groups.erase(state_.editor_groups.begin() + gi);\n"
@@ -585,7 +469,6 @@ void RunEditorGroupsSplitTreeRuleFixtures() {
   Expect(CheckEditorGroupsMutateWithTheSplitTree(root).violations.empty(),
          "editor-groups rule must accept a mutation whose TU moves the split tree too");
 
-  // A mention in a comment or a string is not a mutation site.
   WriteFile(root / "src/workspace/coordinators/Groups.cpp",
             "// editor_groups.erase(it) used to live here.\n"
             "const char* kDoc = \"editor_groups.push_back(group)\";\n"
@@ -596,8 +479,6 @@ void RunEditorGroupsSplitTreeRuleFixtures() {
          "editor-groups rule must not match comments or string literals, and must say so loudly "
          "when that leaves it scanning nothing");
 
-  // Reading the TREE is not moving it: a TU that only asks the split for geometry
-  // and then reshapes the vector is the desync the rule exists for.
   WriteFile(root / "src/workspace/coordinators/Groups.cpp",
             "void Collapse(std::size_t gi) {\n"
             "  const auto rects = ComputeEditorGroupRects(layout, state_.editor_split);\n"
@@ -606,8 +487,6 @@ void RunEditorGroupsSplitTreeRuleFixtures() {
   Expect(CheckEditorGroupsMutateWithTheSplitTree(root).violations.size() == 1,
          "editor-groups rule must flag a TU that only reads the tree it fails to update");
 
-  // Reading the vector is not mutating it: `size()` and indexing stay legal in
-  // every TU, which is what keeps the rule from becoming a ban on the field.
   WriteFile(root / "src/workspace/coordinators/Reader.cpp",
             "auto& Group(std::size_t gi) { return state_.editor_groups[gi]; }\n"
             "std::size_t Count() { return state_.editor_groups.size(); }\n");
@@ -621,10 +500,6 @@ void RunEditorGroupsSplitTreeRuleFixtures() {
 }
 
 void RunViewportFiletypeMemoRuleFixtures() {
-  // The rule's whole job is to distinguish two overloads of one name by arity, so
-  // both halves have to be pinned: a rule that flagged every DetectFiletype call
-  // would satisfy the negative control while breaking every legitimate path-only
-  // caller, and a rule whose arity walk was wrong would report green forever.
   TemporaryDirectory filetype_dir;
   const std::filesystem::path& root = filetype_dir.path();
   std::filesystem::create_directories(root / "src/editor");
@@ -635,22 +510,17 @@ void RunViewportFiletypeMemoRuleFixtures() {
             "  return language_id_;\n"
             "}\n");
 
-  // Negative control: a content-reading call outside the memo.
   WriteFile(root / "src/workspace/Caller.cpp",
             "void f(){ auto id = DetectFiletype(viewport.path(), viewport.lines()); }\n");
   Expect(CheckViewportFiletypeGoesThroughTheViewportMemo(root).violations.size() == 1,
          "viewport-filetype rule must flag DetectFiletype(path, lines) outside the memo");
 
-  // Positive control: the path-only overload is legal everywhere -- callers with
-  // no buffer in hand have nothing to memoize against. Nested parens in the
-  // argument must not read as a second argument.
   WriteFile(root / "src/workspace/Caller.cpp",
             "void f(){ auto id = DetectFiletype(bucket.path); }\n"
             "void g(){ auto id = DetectFiletype(Normalize(a, b)); }\n");
   Expect(CheckViewportFiletypeGoesThroughTheViewportMemo(root).violations.empty(),
          "viewport-filetype rule must accept the path-only overload, including a nested call");
 
-  // A mention in a comment or a string is not a call site.
   WriteFile(root / "src/workspace/Caller.cpp",
             "// DetectFiletype(path, lines) is what this used to do.\n"
             "const char* kDoc = \"DetectFiletype(path, lines)\";\n"
@@ -658,26 +528,17 @@ void RunViewportFiletypeMemoRuleFixtures() {
   Expect(CheckViewportFiletypeGoesThroughTheViewportMemo(root).violations.empty(),
          "viewport-filetype rule must not match comments or string literals");
 
-  // Loud-missing-target guard: if the memo stops calling DetectFiletype the rule
-  // is funnelling callers into nothing, so it must fail rather than pass.
   WriteFile(root / "src/editor/TextViewport.cpp", "void nothing() {}\n");
   Expect(!CheckViewportFiletypeGoesThroughTheViewportMemo(root).violations.empty(),
          "viewport-filetype rule must fail loudly when the memo no longer detects anything");
 }
 
 void RunPerfHarnessIsolationOrderRuleFixtures() {
-  // The rule orders two anchors inside one file, so all three states have to be
-  // pinned: the bug (isolation after the Driver), the fix (before it), and a
-  // renamed anchor — because a rule that can no longer find what it orders would
-  // otherwise report green forever, which is precisely how the defect it guards
-  // survived a suite built on exact allocation counts.
   TemporaryDirectory harness_dir;
   const std::filesystem::path& root = harness_dir.path();
   std::filesystem::create_directories(root / "tests/perf");
   const auto harness = root / "tests/perf/PerfHarness.cpp";
 
-  // Negative control: the shipped defect — the Driver (and therefore the shell)
-  // is constructed before the app-root is isolated.
   WriteFile(harness,
             "std::optional<Aggregate> PerfHarness::RunScenario() {\n"
             "  Driver driver;\n"
@@ -686,7 +547,6 @@ void RunPerfHarnessIsolationOrderRuleFixtures() {
   Expect(CheckPerfHarnessIsolatesBeforeConstructingTheShell(root).violations.size() == 1,
          "perf-isolation-order rule must flag isolation established after `Driver driver;`");
 
-  // Positive control: the fixed ordering.
   WriteFile(harness,
             "std::optional<Aggregate> PerfHarness::RunScenario() {\n"
             "  const auto root = EstablishIsolatedAppRoot(false, &error);\n"
@@ -696,8 +556,6 @@ void RunPerfHarnessIsolationOrderRuleFixtures() {
   Expect(CheckPerfHarnessIsolatesBeforeConstructingTheShell(root).violations.empty(),
          "perf-isolation-order rule must accept isolation established before the Driver");
 
-  // A mention in a comment or a string literal is not an anchor, so a file whose
-  // only "EstablishIsolatedAppRoot" is prose must not read as ordered.
   WriteFile(harness,
             "std::optional<Aggregate> PerfHarness::RunScenario() {\n"
             "  // EstablishIsolatedAppRoot used to run here.\n"
@@ -706,24 +564,17 @@ void RunPerfHarnessIsolationOrderRuleFixtures() {
   Expect(!CheckPerfHarnessIsolatesBeforeConstructingTheShell(root).violations.empty(),
          "perf-isolation-order rule must not accept a commented-out anchor as the real one");
 
-  // Loud-missing-anchor guard: a rename of either anchor must fail the rule
-  // rather than silently stop ordering anything.
   WriteFile(harness, "void nothing() {}\n");
   Expect(!CheckPerfHarnessIsolatesBeforeConstructingTheShell(root).violations.empty(),
          "perf-isolation-order rule must fail loudly when its anchors are gone");
 }
 
 void RunPerfMeasureBodyRuleFixtures() {
-  // Four states, because this rule has an opt-out and an opt-out is the usual way
-  // a lint quietly stops gating: the defect, the fix, the legitimate exemption,
-  // and the blind case.
   TemporaryDirectory scenarios_dir;
   const std::filesystem::path& root = scenarios_dir.path();
   std::filesystem::create_directories(root / "tests/perf");
   const auto scenario = root / "tests/perf/ExampleScenarios.cpp";
 
-  // Negative control: the shipped defect — the scenario composes its own input
-  // per iteration, so the gate measures operator+ and std::to_string.
   WriteFile(scenario,
             "void RunThing(ScenarioContext& context) {\n"
             "  context.Measure(\"thing.apply\", [&]() {\n"
@@ -735,8 +586,6 @@ void RunPerfMeasureBodyRuleFixtures() {
   Expect(CheckPerfMeasureBodiesDoNotBuildTheirOwnInput(root).violations.size() == 1,
          "perf-measure rule must flag string composition inside a Measure body");
 
-  // Positive control: the fix — the input is built before the window opens, and
-  // the body only calls the product function.
   WriteFile(scenario,
             "void RunThing(ScenarioContext& context) {\n"
             "  std::vector<std::string> input;\n"
@@ -750,8 +599,6 @@ void RunPerfMeasureBodyRuleFixtures() {
   Expect(CheckPerfMeasureBodiesDoNotBuildTheirOwnInput(root).violations.empty(),
          "perf-measure rule must accept composition done OUTSIDE the measured window");
 
-  // Positive control for the legitimate case the rule must not outlaw: a pure-unit
-  // scenario whose measured work IS the construction. It declares itself.
   WriteFile(scenario,
             "void RunThing(ScenarioContext& context) {\n"
             "  context.Measure(\"config.encode\", [&]() {\n"
@@ -764,23 +611,17 @@ void RunPerfMeasureBodyRuleFixtures() {
   Expect(CheckPerfMeasureBodiesDoNotBuildTheirOwnInput(root).violations.empty(),
          "perf-measure rule must honor a declared perf-measure-builds-input exemption");
 
-  // Loud-blind guard: no Measure body at all means the rule scans nothing, which
-  // must fail rather than report green.
   WriteFile(scenario, "void RunThing(ScenarioContext& context) { context.PumpFrames(2); }\n");
   Expect(!CheckPerfMeasureBodiesDoNotBuildTheirOwnInput(root).violations.empty(),
          "perf-measure rule must fail loudly when it finds no Measure body to scan");
 }
 
 void RunPerfMeasureWallClockWaitRuleFixtures() {
-  // Same four states as the sibling rule above, for the same reason: this one has
-  // an opt-out too, and an opt-out is the usual way a lint quietly stops gating.
   TemporaryDirectory scenarios_dir;
   const std::filesystem::path& root = scenarios_dir.path();
   std::filesystem::create_directories(root / "tests/perf");
   const auto scenario = root / "tests/perf/ExampleScenarios.cpp";
 
-  // Negative control: the shipped defect — linter_on_save's gated phase was a
-  // wall-clock deadline loop, so its allocation count counted poll iterations.
   WriteFile(scenario,
             "void RunThing(ScenarioContext& context) {\n"
             "  context.Measure(\"linter.wait_diagnostics\", [&]() {\n"
@@ -790,8 +631,6 @@ void RunPerfMeasureWallClockWaitRuleFixtures() {
   Expect(CheckPerfMeasureBodiesDoNotWaitOnWallClock(root).violations.size() == 1,
          "perf-wait rule must flag a wall-clock wait inside a Measure body");
 
-  // Positive control: the fix — the wait happens outside the window and the body
-  // measures the fixed work the wait was waiting for.
   WriteFile(scenario,
             "void RunThing(ScenarioContext& context) {\n"
             "  const bool ready = context.WaitForDiagnostics(source, kTimeout);\n"
@@ -803,8 +642,6 @@ void RunPerfMeasureWallClockWaitRuleFixtures() {
   Expect(CheckPerfMeasureBodiesDoNotWaitOnWallClock(root).violations.empty(),
          "perf-wait rule must accept a wait done OUTSIDE the measured window");
 
-  // Positive control for the legitimate case: a wait that provably allocates
-  // nothing while spinning, or an idle that IS the measurement. It declares itself.
   WriteFile(scenario,
             "void RunThing(ScenarioContext& context) {\n"
             "  context.Measure(\"repo_open.idle_500ms\", [&]() {\n"
@@ -815,7 +652,6 @@ void RunPerfMeasureWallClockWaitRuleFixtures() {
   Expect(CheckPerfMeasureBodiesDoNotWaitOnWallClock(root).violations.empty(),
          "perf-wait rule must honor a declared perf-measure-waits-on-clock exemption");
 
-  // Loud-blind guard: no Measure body at all means the rule scans nothing.
   WriteFile(scenario, "void RunThing(ScenarioContext& context) { context.PumpFrames(2); }\n");
   Expect(!CheckPerfMeasureBodiesDoNotWaitOnWallClock(root).violations.empty(),
          "perf-wait rule must fail loudly when it finds no Measure body to scan");
@@ -827,8 +663,6 @@ void RunShellGlueBindingRuleFixtures() {
   std::filesystem::create_directories(root / "src/workspace");
   const auto source = root / "src/workspace/ExampleGlue.cpp";
 
-  // Negative control: the shipped defect — a cached, reference-returning factory
-  // bound to a VALUE, which copies the whole coordinator per call.
   WriteFile(source,
             "void Shell::Sweep() {\n"
             "  EditorTabService editor_tabs = MakeEditorTabService();\n"
@@ -837,7 +671,6 @@ void RunShellGlueBindingRuleFixtures() {
   Expect(CheckShellGlueIsBoundByReference(root).violations.size() == 1,
          "the glue-binding rule must flag a value binding of a cached factory");
 
-  // ...including the `auto` spelling, which is the one that hides it best.
   WriteFile(source,
             "void Shell::Sweep() {\n"
             "  auto persistence = MakePersistenceCoordinator();\n"
@@ -846,7 +679,6 @@ void RunShellGlueBindingRuleFixtures() {
   Expect(CheckShellGlueIsBoundByReference(root).violations.size() == 1,
          "`auto` without `&` is the same copy and must be flagged too");
 
-  // Positive control: the required spelling.
   WriteFile(source,
             "void Shell::Sweep() {\n"
             "  auto& editor_tabs = MakeEditorTabService();\n"
@@ -857,7 +689,6 @@ void RunShellGlueBindingRuleFixtures() {
   Expect(CheckShellGlueIsBoundByReference(root).violations.empty(),
          "binding by reference is the fix and must pass");
 
-  // A temporary used and discarded in one expression binds nothing.
   WriteFile(source,
             "void Shell::Sweep() {\n"
             "  MakeEditorTabService().Save(0);\n"
@@ -866,8 +697,6 @@ void RunShellGlueBindingRuleFixtures() {
   Expect(CheckShellGlueIsBoundByReference(root).violations.empty(),
          "a discarded temporary is not a binding and must not be flagged");
 
-  // And the rule must say so loudly when it is scanning nothing at all, rather
-  // than reporting green — the failure mode that took the sibling rule blind.
   WriteFile(source, "void Shell::Sweep() {}\n");
   Expect(!CheckShellGlueIsBoundByReference(root).missing_targets.empty(),
          "a tree with no factory calls must report a missing target, not pass");
@@ -879,8 +708,6 @@ void RunFactoryCaptureRuleFixtures() {
   std::filesystem::create_directories(root / "src/workspace");
   const auto source = root / "src/workspace/ExampleFactory.cpp";
 
-  // Negative control: the shipped defect — a factory result captured by value
-  // into a hook, which heap-copies the whole service per hook per construction.
   WriteFile(source,
             "Coord Shell::MakeCoord() {\n"
             "  auto terminal_panel = MakeTerminalPanelService();\n"
@@ -893,7 +720,6 @@ void RunFactoryCaptureRuleFixtures() {
   Expect(CheckFactoryResultsAreNotCapturedByValue(root).violations.size() == 1,
          "factory-capture rule must flag a by-value capture of a Make*Service() local");
 
-  // Positive control: the fix — construct inside the body from `this`.
   WriteFile(source,
             "Coord Shell::MakeCoord() {\n"
             "  auto terminal_panel = MakeTerminalPanelService();\n"
@@ -907,11 +733,6 @@ void RunFactoryCaptureRuleFixtures() {
   Expect(CheckFactoryResultsAreNotCapturedByValue(root).violations.empty(),
          "factory-capture rule must accept constructing the service inside the body");
 
-  // Negative control for the spelling the sweep to `auto&` introduced. Binding by
-  // reference is required now, and it does NOT make `[terminal_panel]` free:
-  // capturing a reference by value copies the referent, which is the same
-  // per-hook heap copy. Matching only `auto x = ...` left the rule scanning
-  // nothing once every site became `auto& x = ...`.
   WriteFile(source,
             "Coord Shell::MakeCoord() {\n"
             "  auto& terminal_panel = MakeTerminalPanelService();\n"
@@ -924,7 +745,6 @@ void RunFactoryCaptureRuleFixtures() {
   Expect(CheckFactoryResultsAreNotCapturedByValue(root).violations.size() == 1,
          "a reference-bound factory local captured BY VALUE is still a per-hook copy");
 
-  // And the reference capture of a reference-bound local stays free.
   WriteFile(source,
             "Coord Shell::MakeCoord() {\n"
             "  auto& terminal_panel = MakeTerminalPanelService();\n"
@@ -937,8 +757,6 @@ void RunFactoryCaptureRuleFixtures() {
   Expect(CheckFactoryResultsAreNotCapturedByValue(root).violations.empty(),
          "a reference capture of a reference-bound factory local is free");
 
-  // Positive control: a REFERENCE capture is free and must not be flagged, and
-  // neither must the name appearing in a comment.
   WriteFile(source,
             "Coord Shell::MakeCoord() {\n"
             "  auto terminal_panel = MakeTerminalPanelService();\n"
@@ -950,9 +768,6 @@ void RunFactoryCaptureRuleFixtures() {
   Expect(CheckFactoryResultsAreNotCapturedByValue(root).violations.empty(),
          "factory-capture rule must not flag a reference capture or a comment mention");
 
-  // Loud-blind guard: no factory local at all means the rule scans nothing. This
-  // one earned its place — an earlier draft used `[^]` in the capture regex,
-  // which ECMAScript reads as "any character", and it passed on the defect above.
   WriteFile(source, "Coord Shell::MakeCoord() { return Coord(Ops{}); }\n");
   Expect(!CheckFactoryResultsAreNotCapturedByValue(root).violations.empty(),
          "factory-capture rule must fail loudly when it finds no factory local to scan");
@@ -964,19 +779,13 @@ void RunKernelWindowingLibraryRuleFixtures() {
   std::filesystem::create_directories(root / "src/util");
   std::filesystem::create_directories(root / "src/terminal");
   std::filesystem::create_directories(root / "src/render");
-  // The rule reads kernel membership out of the build, so the fixture root needs the
-  // same list the real repo has. Its absence is itself an assertion, at the end.
   const auto write_cmake = [&](std::string_view sources) {
     WriteFile(root / "CMakeLists.txt",
               std::string("set(MICROIDE_KERNEL_SOURCES\n") + std::string(sources) + ")\n");
   };
   write_cmake("  src/terminal/Leaf.cpp\n");
 
-  // Direct: a kernel TU naming an SDL type with no include of its own. This is the
-  // form the precompiled header hid — `Uint32` compiled everywhere because the PCH
-  // had already pulled SDL in, so an include-only rule would never have seen it.
   WriteFile(root / "src/util/Direct.h", "struct S { Uint32 wake = 0; };\n");
-  // Transitive: clean kernel header -> clean kernel header -> SDL-carrying header.
   WriteFile(root / "src/render/Paint.h", "#include <SDL3/SDL.h>\nstruct Paint {};\n");
   WriteFile(root / "src/util/Middle.h", "#include \"render/Paint.h\"\nstruct Middle {};\n");
   WriteFile(root / "src/terminal/Leaf.cpp", "#include \"util/Middle.h\"\nvoid F(){}\n");
@@ -985,22 +794,16 @@ void RunKernelWindowingLibraryRuleFixtures() {
          "kernel rule must flag the direct SDL token, the intermediate header, and the "
          "kernel TU that only reaches SDL transitively");
 
-  // Positive control: the same shapes, converted at the boundary. Without this half a
-  // rule that matched everything would still satisfy the negative case.
   WriteFile(root / "src/util/Direct.h", "#include <cstdint>\nstruct S { std::uint32_t wake = 0; };\n");
   WriteFile(root / "src/util/Middle.h", "#include \"util/Direct.h\"\nstruct Middle {};\n");
   Expect(CheckKernelStaysFreeOfTheWindowingLibrary(root).violations.empty(),
          "kernel rule must accept kernel files that name only plain types and include "
          "only clean kernel headers");
 
-  // A render TU may of course reach SDL; the rule is scoped to the kernel.
   WriteFile(root / "src/render/Uses.cpp", "#include \"render/Paint.h\"\nvoid G(){}\n");
   Expect(CheckKernelStaysFreeOfTheWindowingLibrary(root).violations.empty(),
          "kernel rule must not flag shell-layer files for using the windowing library");
 
-  // Membership comes from the build list, so a file OUTSIDE the kernel directories
-  // that the build compiles into the kernel is covered — this is the editor/
-  // SingleLineEditor case, and a directory-only rule would miss it entirely.
   std::filesystem::create_directories(root / "src/editor");
   WriteFile(root / "src/editor/Plain.cpp", "#include \"render/Paint.h\"\nvoid H(){}\n");
   Expect(CheckKernelStaysFreeOfTheWindowingLibrary(root).violations.empty(),
@@ -1010,15 +813,10 @@ void RunKernelWindowingLibraryRuleFixtures() {
          "naming a file in MICROIDE_KERNEL_SOURCES brings it under the rule wherever it lives");
   write_cmake("  src/terminal/Leaf.cpp\n");
 
-  // An include that resolves to nothing under src/ must be reported, not swallowed:
-  // an unfollowable edge is how a graph rule goes blind.
   WriteFile(root / "src/terminal/Leaf.cpp", "#include \"util/Typod.h\"\nvoid F(){}\n");
   Expect(!CheckKernelStaysFreeOfTheWindowingLibrary(root).missing_targets.empty(),
          "kernel rule must report an include it cannot resolve rather than assume it clean");
 
-  // And a build list it cannot find at all is a missing target, not a quiet fallback
-  // to directories — that fallback is precisely how the rule would stop covering the
-  // kernel files that live outside them.
   WriteFile(root / "src/terminal/Leaf.cpp", "void F(){}\n");
   WriteFile(root / "CMakeLists.txt", "set(MICROIDE_SOMETHING_ELSE)\n");
   Expect(!CheckKernelStaysFreeOfTheWindowingLibrary(root).missing_targets.empty(),
@@ -1030,7 +828,6 @@ void RunGitLayerLocalityRuleFixtures() {
   const std::filesystem::path& root = dir.path();
   std::filesystem::create_directories(root / "src/project");
 
-  // Negative control: a git unit that picks the local launcher for itself.
   WriteFile(root / "src/project/GitThing.cpp",
             "void F(const std::filesystem::path& root){\n"
             "  const GitRepository repo(root, platform::LocalProcessLauncher());\n}\n");
@@ -1040,14 +837,12 @@ void RunGitLayerLocalityRuleFixtures() {
   Expect(flagged.missing_targets.empty(),
          "and a GitRepository built from an argument still counts as something to scan");
 
-  // Positive control: the same unit taking its caller's launcher.
   WriteFile(root / "src/project/GitThing.cpp",
             "void F(const std::filesystem::path& root, const platform::ProcessLauncher& l){\n"
             "  const GitRepository repo(root, l);\n}\n");
   Expect(CheckGitLayerDoesNotChooseLocality(root).violations.empty(),
          "git-locality rule must accept a launcher passed in by the caller");
 
-  // Out of scope: a non-git unit, and prose that mentions the call.
   WriteFile(root / "src/project/Other.cpp", "void G(){ platform::LocalProcessLauncher(); }\n");
   WriteFile(root / "src/project/CommitNotes.cpp",
             "// used to call LocalProcessLauncher() here\n"
@@ -1055,7 +850,6 @@ void RunGitLayerLocalityRuleFixtures() {
   Expect(CheckGitLayerDoesNotChooseLocality(root).violations.empty(),
          "git-locality rule must ignore non-git units and comments");
 
-  // Loud-missing-target: nothing in scope builds a GitRepository.
   std::filesystem::remove(root / "src/project/GitThing.cpp");
   std::filesystem::remove(root / "src/project/CommitNotes.cpp");
   Expect(!CheckGitLayerDoesNotChooseLocality(root).missing_targets.empty(),
@@ -1067,11 +861,9 @@ void RunGitMetadataRuleFixtures() {
   const std::filesystem::path& root = dir.path();
   std::filesystem::create_directories(root / "src/project");
   std::filesystem::create_directories(root / "src/workspace");
-  // The rule reports a missing target unless the local source still wraps the probe.
   WriteFile(root / "src/project/GitMetadataSource.cpp",
             "bool A(const P& r){ return internal::HasGitMarker(r); }\n");
 
-  // Negative control: a workspace unit and a project unit statting `.git` themselves.
   WriteFile(root / "src/workspace/Probe.cpp",
             "bool F(const P& r){ return project::internal::HasGitMarker(r); }\n");
   WriteFile(root / "src/project/GitThing.cpp",
@@ -1081,7 +873,6 @@ void RunGitMetadataRuleFixtures() {
          "git-metadata rule must flag a local .git probe outside the metadata source");
   Expect(flagged.missing_targets.empty(), "and the local source still counts as its target");
 
-  // Positive control: the same units asking the project's source; prose is ignored.
   WriteFile(root / "src/workspace/Probe.cpp",
             "// used to call HasGitMarker(root) here\n"
             "bool F(const P& r, const L& l){ return GitMetadataFor(l).IsRepository(r); }\n");
@@ -1090,7 +881,6 @@ void RunGitMetadataRuleFixtures() {
   Expect(CheckGitMetadataIsAskedOfTheHost(root).violations.empty(),
          "git-metadata rule must accept probes routed through GitMetadataFor and comments");
 
-  // Loud-missing-target: the local source no longer wraps either primitive.
   WriteFile(root / "src/project/GitMetadataSource.cpp", "bool A(){ return true; }\n");
   Expect(!CheckGitMetadataIsAskedOfTheHost(root).missing_targets.empty(),
          "git-metadata rule must report a local source that no longer probes");
@@ -1101,8 +891,6 @@ void RunProcessLauncherRuleFixtures() {
   const std::filesystem::path& root = launcher_dir.path();
   std::filesystem::create_directories(root / "src/platform");
   std::filesystem::create_directories(root / "src/workspace");
-  // The rule reports a missing target unless the launcher itself still calls the
-  // primitive, so the fixture root carries one.
   WriteFile(root / "src/platform/ProcessLauncher.cpp",
             "SubprocessResult Run(){ return RunSubprocess(argv, options); }\n");
 
@@ -1115,7 +903,6 @@ void RunProcessLauncherRuleFixtures() {
          "spawn rule must flag both a direct RunSubprocess and an AsyncSubprocess start "
          "with no launcher-resolved argv");
 
-  // Positive control: the same two spawns routed through a launcher.
   WriteFile(root / "src/workspace/BadSync.cpp",
             "void F(){ platform::LocalProcessLauncher().Run({\"git\"}, {}); }\n");
   WriteFile(root / "src/workspace/BadAsync.cpp",
@@ -1124,22 +911,14 @@ void RunProcessLauncherRuleFixtures() {
   Expect(CheckEverySpawnGoesThroughAProcessLauncher(root).violations.empty(),
          "spawn rule must accept spawns routed through a ProcessLauncher");
 
-  // A file that merely STORES an AsyncSubprocess without starting one is fine: the
-  // transport holds the process and only writes to it.
   WriteFile(root / "src/workspace/Holder.h", "struct T { platform::AsyncSubprocess proc; };\n");
   Expect(CheckEverySpawnGoesThroughAProcessLauncher(root).violations.empty(),
          "spawn rule must not flag a file that only holds an AsyncSubprocess");
 
-  // Loud-missing-target guard: a launcher that no longer calls the primitive means the
-  // rule is scanning for a call form the tree does not use.
   WriteFile(root / "src/platform/ProcessLauncher.cpp", "SubprocessResult Run(){ return {}; }\n");
   Expect(!CheckEverySpawnGoesThroughAProcessLauncher(root).missing_targets.empty(),
          "spawn rule must report that the launcher no longer calls the spawn primitive");
 
-  // ...and the guard must survive the REAL tree's shape. It used to accept any exempt
-  // file naming the primitive, and Subprocess.h is exempt and DECLARES it — so the
-  // declaration satisfied the guard forever and the fixture above passed only because
-  // this synthetic root had no Subprocess.h. Materialize one.
   WriteFile(root / "src/platform/Subprocess.h",
             "SubprocessResult RunSubprocess(const std::vector<std::string>& argv,\n"
             "                              const SubprocessOptions& options = {});\n");
@@ -1147,15 +926,12 @@ void RunProcessLauncherRuleFixtures() {
          "spawn rule's vacuity guard must not be satisfied by the primitive's "
          "declaration in an exempt header");
 
-  // A mention in the launcher's own prose is not a call either.
   WriteFile(root / "src/platform/ProcessLauncher.cpp",
             "// Run() used to call RunSubprocess(argv, options) directly.\n"
             "SubprocessResult Run(){ return {}; }\n");
   Expect(!CheckEverySpawnGoesThroughAProcessLauncher(root).missing_targets.empty(),
          "spawn rule's vacuity guard must not be satisfied by a comment");
 
-  // Positive control for the guard: a real call in the launcher clears it, with the
-  // exempt header still present.
   WriteFile(root / "src/platform/ProcessLauncher.cpp",
             "SubprocessResult Run(){ return RunSubprocess(argv, options); }\n");
   Expect(CheckEverySpawnGoesThroughAProcessLauncher(root).missing_targets.empty(),
@@ -1169,11 +945,8 @@ void RunWriteGateRuleFixtures() {
   std::filesystem::create_directories(root / "src/workspace");
   std::filesystem::create_directories(root / "src/editor");
   std::filesystem::create_directories(root / "src/platform");
-  // The rule reports a missing target unless the gate itself still calls the
-  // primitive, so the fixture root carries one.
   WriteFile(root / "src/project/FileWriteGate.cpp",
             "bool W(){ return util::WriteTextFileAtomically(p, t); }\n");
-  // ...and the tree half's vacuity guard looks for the local tree ops' move.
   WriteFile(root / "src/project/LocalTreeOps.cpp",
             "bool M(){ return platform::MovePathNoOverwrite(a, b); }\n");
 
@@ -1181,8 +954,6 @@ void RunWriteGateRuleFixtures() {
             "void F(){ util::WriteTextFileAtomically(path, text); }\n");
   WriteFile(root / "src/editor/Save.cpp",
             "void G(){ util::WriteTextFileAtomically(path, text); }\n");
-  // The other spelling. Matching only the atomic helper left a whole way of
-  // creating file content invisible to a rule whose stated job is "one door".
   WriteFile(root / "src/plugin/Stream.cpp",
             "void H(){ std::ofstream out(path); out << text; }\n");
   const RuleResult flagged = CheckProjectWritesGoThroughTheWriteGate(root);
@@ -1190,7 +961,6 @@ void RunWriteGateRuleFixtures() {
          "the write-gate rule must flag a raw atomic write AND a raw ofstream in the "
          "layers that hold project files open");
 
-  // Positive control: the same writes routed through the gate.
   WriteFile(root / "src/workspace/Replace.cpp",
             "void F(){ project::LocalFileWriteGate().WriteText(path, text); }\n");
   WriteFile(root / "src/editor/Save.cpp",
@@ -1200,8 +970,6 @@ void RunWriteGateRuleFixtures() {
   Expect(CheckProjectWritesGoThroughTheWriteGate(root).violations.empty(),
          "the write-gate rule must accept writes routed through the gate");
 
-  // The one named exemption is exempt, and only that one. The LSP journal used to
-  // be a second — it moved into the gate (TD-2026-09-29-305), so it is checked now.
   std::filesystem::create_directories(root / "src/workspace/lsp");
   std::filesystem::create_directories(root / "src/workspace/control");
   WriteFile(root / "src/workspace/control/ControlChannelService.cpp",
@@ -1217,22 +985,13 @@ void RunWriteGateRuleFixtures() {
             "void L(){ std::ofstream created(target); }\n");
   Expect(CheckProjectWritesGoThroughTheWriteGate(root).violations.size() == 1,
          "the exemption is per FILE, not per directory");
-  // Clear it: the assertions below expect a clean tree, and a fixture that leaks
-  // state into the next one reports the wrong rule as broken.
   std::filesystem::remove(root / "src/workspace/lsp/Other.cpp");
 
-  // Layer scoping, and it is the half worth pinning: platform/ owns the atomic
-  // write primitive and its neighbours, and is NOT a layer that holds project files
-  // open. A rule that flagged it would have to grow an allowlist for the primitive
-  // itself.
   WriteFile(root / "src/platform/FsOps.cpp",
             "void H(){ util::WriteTextFileAtomically(path, text); }\n");
   Expect(CheckProjectWritesGoThroughTheWriteGate(root).violations.empty(),
          "the write-gate rule is scoped to the layers that hold project files open");
 
-  // TREE half. A platform tree primitive in any gated layer, and a raw
-  // std::filesystem mutation in a tree-acting directory, are both flagged; the same
-  // mutation in a directory that is NOT about the project tree is not.
   std::filesystem::create_directories(root / "src/workspace/coordinators");
   WriteFile(root / "src/workspace/coordinators/Sidebar.cpp",
             "void T(){ platform::MovePathToTrash(p); }\n");
@@ -1255,8 +1014,6 @@ void RunWriteGateRuleFixtures() {
   WriteFile(root / "src/project/LocalTreeOps.cpp",
             "bool M(){ return platform::MovePathNoOverwrite(a, b); }\n");
 
-  // Loud-missing-target guard: a gate that no longer writes means the rule is
-  // scanning for a call form the tree does not use.
   WriteFile(root / "src/project/FileWriteGate.cpp", "bool W(){ return false; }\n");
   Expect(!CheckProjectWritesGoThroughTheWriteGate(root).missing_targets.empty(),
          "the write-gate rule must report that the gate no longer calls the primitive");
@@ -1268,8 +1025,6 @@ void RunWorkerDeclarationOrderRuleFixtures() {
   std::filesystem::create_directories(root / "src/workspace");
   const auto header = root / "src/workspace/ExampleService.h";
 
-  // Negative control: the shipped defect -- the executor first, so it outlives
-  // the mailbox its jobs post into.
   WriteFile(header,
             "class ExampleService {\n"
             " private:\n"
@@ -1279,7 +1034,6 @@ void RunWorkerDeclarationOrderRuleFixtures() {
   Expect(CheckWorkersOutliveNothingTheyWrite(root).violations.size() == 1,
          "an executor declared before its mailbox must be flagged");
 
-  // Positive control: the fix.
   WriteFile(header,
             "class ExampleService {\n"
             " private:\n"
@@ -1291,7 +1045,6 @@ void RunWorkerDeclarationOrderRuleFixtures() {
   Expect(CheckWorkersOutliveNothingTheyWrite(root).missing_targets.empty(),
          "and a tree with the pair is not a missing target");
 
-  // Loud, not green, when nothing declares the pair.
   WriteFile(header, "class ExampleService {};\n");
   Expect(!CheckWorkersOutliveNothingTheyWrite(root).missing_targets.empty(),
          "a tree with no executor/mailbox pair must report a missing target");
@@ -1334,9 +1087,6 @@ void RunTextViewportDefaultedSpecialMembersRuleFixtures() {
 }
 
 void RunSdlDrawAllowlistRuleFixtures() {
-  // clip-discipline D5: a direct SDL draw call outside the allowlist is flagged, the
-  // allowlisted files are not, a call in a comment or string is not code, and an
-  // allowlisted file that stopped drawing (or is gone) fails rather than going stale.
   TemporaryDirectory dir;
   const std::filesystem::path& root = dir.path();
   for (const std::string_view entry : SdlDrawAllowlist()) {
@@ -1365,6 +1115,8 @@ void RunSdlDrawAllowlistRuleFixtures() {
 }
 
 void RunAllRuleFixtures() {
+  RunDecoratedGridBatchesFillsRuleFixtures();
+  RunExecutorPostThenFutureGetRuleFixtures();
   RunDescriptorCloseOnExecRuleFixtures();
   RunSdlDrawAllowlistRuleFixtures();
   RunTerminalExtractedImplRuleFixtures();
@@ -1402,4 +1154,4 @@ void RunAllRuleFixtures() {
   RunWaitFailureMessageRuleFixtures();
 }
 
-}  // namespace microide::tests::architecture
+}

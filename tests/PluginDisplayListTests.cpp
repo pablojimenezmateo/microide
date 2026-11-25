@@ -42,10 +42,6 @@ void TestTextOpOutOfBoundsFails() {
   Expect(!error.empty(), "rejection should report a reason");
 }
 
-// An empty (count == 0) text op with an out-of-range offset must still be
-// rejected: replay forms `text_arena.data() + data_offset`, and a past-the-end
-// offset is UB (invalid pointer formation) even though the zero-length view is
-// never dereferenced. Validation is the sole gate replay trusts.
 void TestEmptyTextOpOutOfBoundsOffsetFails() {
   PluginDisplayList list;
   list.text_arena = "abc";
@@ -56,8 +52,6 @@ void TestEmptyTextOpOutOfBoundsOffsetFails() {
   Expect(!error.empty(), "rejection should report a reason");
 }
 
-// A zero-length text op whose offset is exactly at the arena end is legal (a
-// one-past-the-end pointer with zero length is well-defined).
 void TestEmptyTextOpAtArenaEndPasses() {
   PluginDisplayList list;
   list.content_width = 1;
@@ -131,11 +125,8 @@ void TestHashIsStableAndSensitive() {
          "an intrinsic-size change should change the hash");
 }
 
-}  // namespace
+}
 
-// Plugin-supplied coordinates flow from Lua without a finiteness check, and replay
-// casts them to int (UB on NaN/inf). ValidateDisplayList must reject non-finite
-// geometry — the sole gate replay trusts.
 void TestNonFiniteRectRejected() {
   PluginDisplayList list;
   list.ops.push_back(DisplayOp{.op = DrawOp::ClipPush,
@@ -157,8 +148,6 @@ void TestNonFinitePolylinePointRejected() {
   Expect(!error.empty(), "rejection should report a reason");
 }
 
-// Content dimensions feed the host's scroll extents / intrinsic layout size, so a
-// NaN/inf/negative dimension must be rejected even when every op is valid.
 void TestNonFiniteContentDimensionRejected() {
   PluginDisplayList list;
   list.content_width = std::numeric_limits<float>::quiet_NaN();
@@ -193,4 +182,4 @@ void RegisterPluginDisplayListTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginDisplayList/HashIsStableAndSensitive", TestHashIsStableAndSensitive);
 }
 
-}  // namespace microide::tests
+}

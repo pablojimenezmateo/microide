@@ -16,11 +16,6 @@ namespace {
 using microide::project::FileWriteGate;
 using microide::project::LocalFileWriteGate;
 
-// Move `path`'s modification time somewhere unmistakably different. These tests all
-// need the STAT to differ — that is the precondition for the content confirmation —
-// and two back-to-back writes can land inside the same filesystem mtime tick. The
-// watcher tests learned this the hard way under `ctest -j`; these had the same
-// dependence and had not been fixed with them.
 void ForceDistinctModificationTime(const std::filesystem::path& path) {
   std::error_code error;
   std::filesystem::last_write_time(
@@ -35,9 +30,6 @@ void TestLocalGateWritesAndReportsTheSignature() {
       LocalFileWriteGate().WriteText(file, "one\n", FileWriteGate::Signature::Capture);
   Expect(created.ok, "the gate writes a file that did not exist");
   Expect(ReadFile(file) == "one\n", "the gate writes the text it was given");
-  // The signature is the whole reason the gate returns anything: it is what the
-  // caller records so the watcher's echo of this very write is recognised instead
-  // of read as an external change. Captured by the gate, so no caller re-stats.
   Expect(created.signature.exists, "the returned signature describes an existing file");
   Expect(created.signature.SameStatAs(util::StatFileSignature(file)),
          "the gate's signature matches the file it just wrote");
@@ -51,9 +43,6 @@ void TestLocalGateWritesAndReportsTheSignature() {
 
 void TestLocalGateReportsFailureWithoutTouchingTheFile() {
   TemporaryDirectory temp_dir;
-  // A directory is not a file the gate can replace, and the attempt must not claim
-  // success — a caller that believed it would clear its dirty flag on a buffer that
-  // was never written.
   const std::filesystem::path directory = temp_dir.path() / "not-a-file";
   std::filesystem::create_directories(directory);
 
@@ -66,10 +55,6 @@ void TestLocalGateReportsFailureWithoutTouchingTheFile() {
   Expect(std::filesystem::is_directory(directory), "the failed write left the path alone");
 }
 
-// The editor save is the gate's biggest caller, and the property that matters is
-// that the signature it records afterwards is the one the gate captured — that is
-// what makes the next DetectDiskConflict compare against what was actually written
-// rather than against a second, later stat.
 void TestEditorSaveRecordsTheGatesSignature() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path file = temp_dir.path() / "buffer.txt";
@@ -88,16 +73,6 @@ void TestEditorSaveRecordsTheGatesSignature() {
          "next conflict check does not report the save as an external change");
 }
 
-// Regression: a stat mismatch is not a content change. A `touch`, a `git checkout`
-// that restored byte-identical content, and an external formatter that produced no
-// change all move the mtime and leave the file exactly as it was — and the editor
-// refused the save and raised an external-change banner for every one of them.
-// Rewriting a file with the same bytes is what an agent editing alongside you does,
-// so this was the common case, not the exotic one.
-// TD-2026-11-02-429 item 6: Save As checked that its new name was free, then wrote
-// with a rename that REPLACES -- a file created at the name in between was lost,
-// silently. A buffer whose baseline found no file there (Save As's new name, a new
-// file's first save) now creates, never replaces; one that had a file replaces it.
 void TestASaveWhereNoFileWasNeverReplacesOneThatAppeared() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path original = temp_dir.path() / "original.txt";
@@ -105,8 +80,8 @@ void TestASaveWhereNoFileWasNeverReplacesOneThatAppeared() {
   WriteFile(original, "mine\n");
   editor::TextViewport viewport;
   Expect(viewport.OpenFile(original), "the fixture opens");
-  viewport.RebindToPath(file);  // what Save As does after finding the new name free
-  WriteFile(file, "theirs\n");  // ...and someone else creates it now
+  viewport.RebindToPath(file);
+  WriteFile(file, "theirs\n");
   std::error_code error;
   project::FileWriteGate& gate = LocalFileWriteGate();
   Expect(!viewport.Save(gate, &error), "the save is refused");
@@ -131,7 +106,6 @@ void TestIdenticalRewriteIsNotADiskConflict() {
   Expect(viewport.DetectDiskConflict() == editor::TextViewport::DiskConflict::None,
          "an untouched file is not a conflict");
 
-  // Rewrite with IDENTICAL content. The mtime moves; the bytes do not.
   WriteFile(file, "same bytes\n");
   ForceDistinctModificationTime(file);
   Expect(!util::StatFileSignature(file).SameStatAs(viewport.disk_signature()),
@@ -139,16 +113,10 @@ void TestIdenticalRewriteIsNotADiskConflict() {
   Expect(viewport.DetectDiskConflict() == editor::TextViewport::DiskConflict::None,
          "a byte-identical rewrite is not a disk conflict");
 
-  // …and the re-baseline means the next check does not have to read the file again
-  // to reach the same answer.
   Expect(util::StatFileSignature(file).SameStatAs(viewport.disk_signature()),
          "a confirmed-unchanged file is re-baselined to the new stat");
 }
 
-// A same-size rewrite inside one timestamp tick leaves mtime and size exactly as
-// they were (git's "racily clean" entry). Pinning the mtime back reproduces that
-// deterministically: a stat this fresh must not vouch for the bytes, so the
-// content hash decides — and the edit is caught (TD-2026-10-08-329).
 void TestSameTickRewriteIsStillADiskConflict() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path file = temp_dir.path() / "racy.txt";
@@ -164,11 +132,6 @@ void TestSameTickRewriteIsStillADiskConflict() {
          "a same-tick, same-size rewrite is still a conflict");
 }
 
-// A file read while another program was still writing it: the read took a prefix,
-// and the baseline's stat -- taken after the read -- saw the whole file. Matching it,
-// every later check (and the watcher, which calls such a match this buffer's own
-// echo) left the prefix in place for good, clean (soak adbdbecb317b). The baseline
-// must not vouch for bytes the buffer does not hold.
 void TestAReadThatRacedAWriterIsNotTheFile() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path file = temp_dir.path() / "streamed.txt";
@@ -177,7 +140,6 @@ void TestAReadThatRacedAWriterIsNotTheFile() {
     whole += std::to_string(i) + " the quick brown fox\n";
   }
   WriteFile(file, whole);
-  // Old enough that the stat is not racy: only the size can tell.
   std::filesystem::last_write_time(file, std::filesystem::last_write_time(file) - std::chrono::seconds(30));
   editor::TextViewport viewport;
   Expect(viewport.AdoptFileContent(file, whole.substr(0, whole.size() / 2)), "the prefix the read got loads");
@@ -185,9 +147,6 @@ void TestAReadThatRacedAWriterIsNotTheFile() {
          "the file on disk is not what the buffer read: it changed");
 }
 
-// The other half: a real change must still be caught. Same size, different bytes —
-// the case mtime+size alone would also catch, and the case a content hash must not
-// wave through.
 void TestRealEditIsStillADiskConflict() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path file = temp_dir.path() / "edited.txt";
@@ -195,19 +154,16 @@ void TestRealEditIsStillADiskConflict() {
 
   editor::TextViewport viewport;
   Expect(viewport.OpenFile(file), "the fixture file opens");
-  WriteFile(file, "SAME BYTES\n");  // identical length, different content
+  WriteFile(file, "SAME BYTES\n");
   ForceDistinctModificationTime(file);
   Expect(viewport.DetectDiskConflict() == editor::TextViewport::DiskConflict::Changed,
          "a same-length content change is still a conflict");
 
-  // A different length is a change too, and is answered without reading the file.
   WriteFile(file, "much longer content than before\n");
   Expect(viewport.DetectDiskConflict() == editor::TextViewport::DiskConflict::Changed,
          "a different-length change is still a conflict");
 }
 
-// A save records the hash of what it wrote, so the save's own mtime bump is not
-// mistaken for someone else's edit on the very next check.
 void TestSaveRecordsContentSoTheNextCheckIsClean() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path file = temp_dir.path() / "saved.txt";
@@ -220,18 +176,12 @@ void TestSaveRecordsContentSoTheNextCheckIsClean() {
   Expect(viewport.disk_signature().has_content_hash,
          "a save records the content it wrote, not just a stat");
 
-  // An identical external rewrite after the save is still recognised as no change.
   WriteFile(file, ReadFile(file));
   ForceDistinctModificationTime(file);
   Expect(viewport.DetectDiskConflict() == editor::TextViewport::DiskConflict::None,
          "the hash recorded by the save answers the next identical rewrite too");
 }
 
-// The case the rest of this file missed: DetectDiskConflict exists to guard a save,
-// so the buffer it guards is DIRTY — it differs from the file by construction. The
-// confirmation therefore has to compare the file against what was last ON DISK, not
-// against the buffer. A version that compared against the buffer passed every other
-// test here and would have reported a conflict on every real save.
 void TestIdenticalRewriteIsNotAConflictForADirtyBuffer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path file = temp_dir.path() / "dirty.txt";
@@ -248,16 +198,12 @@ void TestIdenticalRewriteIsNotAConflictForADirtyBuffer() {
          "a byte-identical rewrite is not a conflict even though the dirty buffer "
          "differs from the file");
 
-  // And a real external edit under a dirty buffer must still be refused.
   WriteFile(file, "SAME BYTES\n");
   ForceDistinctModificationTime(file);
   Expect(viewport.DetectDiskConflict() == editor::TextViewport::DiskConflict::Changed,
          "a real external edit still conflicts with a dirty buffer");
 }
 
-// The default is Signature::Skip, and that is load-bearing: replace-in-project
-// writes N files and reads only `ok`, so capturing a signature it discards is N
-// stats of files nobody asked about.
 void TestGateSkipsTheSignatureStatByDefault() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path file = temp_dir.path() / "bulk.txt";
@@ -268,8 +214,6 @@ void TestGateSkipsTheSignatureStatByDefault() {
          "a caller that did not ask for the signature does not pay for the stat");
 }
 
-// A gate that records every content write and then performs it locally — the
-// shape of a MirrorWriteGate, minus the push.
 class RecordingGate final : public FileWriteGate {
  public:
   std::vector<std::filesystem::path> writes;
@@ -286,10 +230,6 @@ class RecordingGate final : public FileWriteGate {
   }
 };
 
-// TD-2026-09-29-308. An editor save goes through the PROJECT's gate — and still
-// does after the file is reloaded from disk. That reload replaces the viewport
-// wholesale, which is exactly what made a gate STORED on the viewport unsafe: the
-// override was dropped, and the save wrote locally while reporting success.
 void TestAnEditorSaveGoesThroughTheProjectsGateEvenAfterAReload() {
   using microide::workspace::WorkspaceShell;
   using TA = WorkspaceShell::TestAccess;
@@ -318,13 +258,6 @@ void TestAnEditorSaveGoesThroughTheProjectsGateEvenAfterAReload() {
          "and the save after the reload still went through the project's gate");
 }
 
-// A reload of a clean buffer whose file holds exactly what the buffer holds -- the
-// echo of the editor's own save, reported late (a watcher verdict computed before
-// the save, a rescan sweep while a deferred save's signature is still landing) --
-// keeps the buffer, undo AND redo history included, as VS Code does. It swapped in
-// a freshly read document, so an undo followed by a save could lose the redo: the
-// editor-invariants sweep (`tools/qa/run.py invariants`) caught it in the first
-// seconds after launch.
 void TestReloadingIdenticalContentKeepsTheEditHistory() {
   using microide::workspace::WorkspaceShell;
   using TA = WorkspaceShell::TestAccess;
@@ -347,7 +280,6 @@ void TestReloadingIdenticalContentKeepsTheEditHistory() {
   Expect(TA::ActiveEditor(shell).lines().LineView(0) == "xone",
          "a reload of identical bytes must keep the redo history");
 
-  // A real change still reloads.
   Expect(TA::SaveTab(shell, TA::GroupActiveTabIndex(shell, 0)), "save the redo");
   WriteFile(file, "changed on disk\n");
   TA::ReloadCleanEditorTabsForPath(shell, file);
@@ -355,10 +287,6 @@ void TestReloadingIdenticalContentKeepsTheEditHistory() {
          "a file that really changed is reloaded");
 }
 
-// Soak 345e41d424a8: a Save As whose name took pasted binary (a NUL in it)
-// wrote the file under the name cut short at the NUL -- every system call stops
-// there -- while the tab went on titled with the whole name. A name with a NUL is
-// refused where it would reach the filesystem: the write and the tree ops.
 void TestFileWriteGateRefusesANameWithANul() {
   TemporaryDirectory temp;
   FileWriteGate& gate = LocalFileWriteGate();
@@ -377,7 +305,7 @@ void TestFileWriteGateRefusesANameWithANul() {
          "and the file stays where it was");
 }
 
-}  // namespace
+}
 
 void RegisterFileWriteGateTests(std::vector<TestCase>& tests) {
   AddTest(tests, "FileWriteGate/RefusesANameWithANul", TestFileWriteGateRefusesANameWithANul);
@@ -408,4 +336,4 @@ void RegisterFileWriteGateTests(std::vector<TestCase>& tests) {
           TestGateSkipsTheSignatureStatByDefault);
 }
 
-}  // namespace microide::tests
+}

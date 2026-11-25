@@ -12,40 +12,19 @@
 
 namespace microide::util {
 
-// Runtime scope tracer for the live app.
-//
-// Two independent modes, both off by default:
-//
-//   MICROIDE_PERF_TRACE=1     stream one stderr line per scope, indented by
-//                             nesting depth, filtered by
-//                             MICROIDE_PERF_TRACE_MIN_MS.
-//   MICROIDE_PERF_SUMMARY=1   accumulate per-label count/total/self/max and
-//                             print one table ranked by self time at shutdown.
-//
-// Prefer the summary when hunting a hotspot: streaming does a write+flush inside
-// the parent scope, so it distorts exactly the numbers you are reading.
 class PerformanceTrace : public TraceChannelFacade<PerformanceTrace> {
  public:
-  // Defined here so a Scope on a disabled channel inlines to one flag test
-  // (TD-2026-10-13-338). Function-local so the env read happens on first use
-  // rather than during static initialization of an arbitrary translation unit.
   static TraceChannel& Channel() {
     static TraceChannel channel("perf", "MICROIDE_PERF_TRACE", "MICROIDE_PERF_SUMMARY",
                                 "MICROIDE_PERF_TRACE_MIN_MS");
     return channel;
   }
 
-  // True only in streaming mode. Guard a bespoke stderr line with this rather
-  // than Enabled(), or a summary-only run pays for output it never wanted.
   static bool StreamEnabled() { return Channel().StreamEnabled(); }
   static double MinimumDurationMs() { return Channel().MinimumDurationMs(); }
 
-  // Generic env-flag reader for the adjacent opt-in trace flags
-  // (MICROIDE_TRACE_REDRAW and friends).
   static bool FlagEnabled(const char* env_name);
 
-  // Fold an already-measured duration into the ranked summary. See
-  // TraceChannel::RecordSample.
   static void RecordSample(std::string_view label, double duration_ms) {
     Channel().RecordSample(label, duration_ms);
   }
@@ -55,21 +34,9 @@ class PerformanceTrace : public TraceChannelFacade<PerformanceTrace> {
     }
   }
 
-  // Assembles a `Base(key=value,key=value)` label, doing the string work only
-  // when the channel is on.
-  //
-  // A trace label that carries the path/index/size it ran on is what makes a
-  // summary row actionable ("which file was slow", not "some file was"), but
-  // the concatenation is pure waste in a normal run. Every call site that
-  // wanted one was hand-rolling the same `if (Enabled())` guard around a
-  // `std::string +=` chain; a missed guard is an allocation per call in
-  // production.
   class ScopeLabel {
    public:
     explicit ScopeLabel(std::string_view base) : ScopeLabel(Channel(), base) {}
-    // Explicit-channel form. Production code uses the one-argument constructor;
-    // this exists so the formatting and the off-path contract are testable
-    // without a process-wide env var, rather than through a test backdoor.
     ScopeLabel(TraceChannel& channel, std::string_view base);
 
     ScopeLabel(const ScopeLabel&) = delete;
@@ -78,21 +45,12 @@ class PerformanceTrace : public TraceChannelFacade<PerformanceTrace> {
     ScopeLabel& Field(std::string_view key, std::string_view value);
     ScopeLabel& Field(std::string_view key, long long value);
 
-    // Paths are the most common field, so they get an overload rather than
-    // leaving each caller to reach for `.string()`, an allocation per field.
-    //
-    // Constrained to *exactly* std::filesystem::path: a plain
-    // `const std::filesystem::path&` overload is ambiguous against the
-    // string_view one for a std::string argument, since path and string_view are
-    // both one user-defined conversion away.
     template <typename P,
               typename = std::enable_if_t<std::is_same_v<std::decay_t<P>, std::filesystem::path>>>
     ScopeLabel& Field(std::string_view key, const P& value) {
       return FieldPath(key, value);
     }
 
-    // Empty when the channel is off -- Scope ignores the label in that case, so
-    // there is nothing to build.
     std::string_view View();
 
    private:
@@ -104,4 +62,4 @@ class PerformanceTrace : public TraceChannelFacade<PerformanceTrace> {
   };
 };
 
-}  // namespace microide::util
+}

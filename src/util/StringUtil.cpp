@@ -19,17 +19,13 @@ std::size_t ClampUtf8Offset(std::string_view text, std::size_t offset) {
   return std::min(offset, text.size());
 }
 
-}  // namespace
+}
 
 std::size_t FirstNonAsciiOrByte(std::string_view text, char also_match) {
   constexpr std::uint64_t kHighBits = 0x8080808080808080ULL;
   constexpr std::uint64_t kLowOnes = 0x0101010101010101ULL;
   const std::uint64_t match_word = kLowOnes * static_cast<unsigned char>(also_match);
   std::size_t index = 0;
-  // `word & kHighBits` flags any non-ASCII byte; the classic has-zero-byte trick
-  // over `word ^ match_word` flags any byte equal to `also_match`. A byte >= 0x80
-  // can produce a false positive in the second term, but it is already flagged by
-  // the first, so the union is exact and the scalar tail resolves the offset.
   for (; index + sizeof(std::uint64_t) <= text.size(); index += sizeof(std::uint64_t)) {
     std::uint64_t word = 0;
     std::memcpy(&word, text.data() + index, sizeof(word));
@@ -69,13 +65,6 @@ std::size_t LeadingByteRun(std::string_view text, char byte) {
   constexpr std::uint64_t kLowOnes = 0x0101010101010101ULL;
   const std::uint64_t match_word = kLowOnes * static_cast<unsigned char>(byte);
   std::size_t index = 0;
-  // A whole word matches iff it equals `match_word`; the scalar tail resolves
-  // where the run ends inside the first word that does not. This used to apply
-  // the has-zero-byte trick to `word ^ match_word` and demand every byte's flag
-  // be set, but that trick is only exact for "is there ANY zero byte": above a
-  // real zero byte the borrow chain also flags any 0x01 byte, so a byte equal to
-  // `byte ^ 0x01` (`!` in a space run, backspace in a tab run) counted as a match
-  // and the run over-reported by up to a word.
   for (; index + sizeof(std::uint64_t) <= text.size(); index += sizeof(std::uint64_t)) {
     std::uint64_t word = 0;
     std::memcpy(&word, text.data() + index, sizeof(word));
@@ -132,11 +121,6 @@ char32_t DecodeUtf8Codepoint(std::string_view glyph) {
     }
     codepoint = (codepoint << 6) | (byte & 0x3Fu);
   }
-  // Reject non-shortest-form (overlong) encodings, UTF-16 surrogates, and
-  // out-of-range scalars — the lead-byte-only length classification above does
-  // not enforce the second-byte range checks that IsValidUtf8 applies, so these
-  // must be caught here to avoid decoding an invalid scalar (e.g. ED A0 80 ->
-  // U+D800, E0 80 80 -> overlong U+0000, F4 BF BF BF -> U+13FFFF).
   static constexpr char32_t kMinForLength[] = {0, 0, 0x80, 0x800, 0x10000};
   if (codepoint < kMinForLength[length] || codepoint > 0x10FFFF ||
       (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
@@ -146,10 +130,6 @@ char32_t DecodeUtf8Codepoint(std::string_view glyph) {
 }
 
 void AppendUtf8(std::string& out, char32_t codepoint) {
-  // Never emit invalid UTF-8: surrogate scalars and values above U+10FFFF are
-  // not encodable and would produce a byte sequence no decoder accepts. Fold
-  // them to U+FFFD so callers (JSON \u escapes, terminal input) can never push
-  // malformed bytes downstream.
   if (codepoint > 0x10FFFF || (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
     codepoint = 0xFFFD;
   }
@@ -193,16 +173,12 @@ bool InSortedRanges(char32_t cp, const CodepointRange* ranges, std::size_t count
   return false;
 }
 
-}  // namespace
+}
 
 int CodepointDisplayWidth(char32_t codepoint) {
-  // Fast path: printable ASCII is always one column. This is the hot case for
-  // typical terminal output, so it skips the range searches below.
   if (codepoint >= 0x20 && codepoint < 0x7F) {
     return 1;
   }
-  // NUL and C0/C1 control codes contribute no advance (they are normally
-  // handled before reaching the grid, but stay defensive here).
   if (codepoint == 0) {
     return 0;
   }
@@ -210,13 +186,6 @@ int CodepointDisplayWidth(char32_t codepoint) {
     return 0;
   }
 
-  // Zero-width (nonspacing/enclosing marks, format characters, conjoining
-  // Hangul jamo) and East Asian Wide/Fullwidth ranges, generated from the
-  // Unicode data by tools/gen-unicode-tables.py. The hand-written tables these
-  // replaced covered the Latin/Greek/Cyrillic/Hebrew/Arabic/Thai marks and the
-  // CJK/emoji blocks and nothing else: the emoji in U+2600-27BF (⚡ ✅ ❌),
-  // Tangut, and the marks of every Indic script past Devanagari were miscounted,
-  // so a prompt or TUI showing them drifted a column per glyph.
   static constexpr CodepointRange kZeroWidth[] = {MICROIDE_ZERO_WIDTH_RANGES};
   if (InSortedRanges(codepoint, kZeroWidth, std::size(kZeroWidth))) {
     return 0;
@@ -330,10 +299,6 @@ std::size_t Utf8ByteBudgetPrefixLength(std::string_view text, std::size_t max_by
   if (text.size() <= max_bytes) {
     return text.size();
   }
-  // The byte at `cut` is the first byte that would be dropped; back the cut off any
-  // continuation byte (0b10xxxxxx) so the retained prefix ends on a code-point
-  // boundary and the straddling multi-byte sequence is dropped whole rather than
-  // chopped mid-character.
   std::size_t cut = max_bytes;
   while (cut > 0 && IsUtf8ContinuationByte(static_cast<unsigned char>(text[cut]))) {
     --cut;
@@ -485,10 +450,6 @@ bool QueryHasUppercaseAscii(std::string_view text) {
 
 namespace {
 
-// Unicode simple lowercase mappings as runs — see tools/gen-case-fold-table.py.
-// Sorted by `first`, disjoint, so a lookup is one binary search plus a stride
-// check. Restricted to mappings that keep the scalar's UTF-8 byte length: the
-// search paths index a raw line by offsets into its folded copy.
 struct CaseFoldRun {
   char32_t first;
   char32_t last;
@@ -499,22 +460,15 @@ constexpr CaseFoldRun kCaseFoldRuns[] = {
 #include "util/CaseFoldTable.inc"
 };
 
-}  // namespace
+}
 
 char32_t SimpleFoldCodepoint(char32_t cp) {
-  // ASCII fast path (the overwhelmingly common case for source code / paths).
   if (cp < 0x80) {
     return (cp >= 'A' && cp <= 'Z') ? cp + 0x20 : cp;
   }
   if (cp < kCaseFoldRuns[0].first) {
     return cp;
   }
-  // The hand-written predecessor covered Latin-1, Latin Extended-A, basic Greek
-  // and basic Cyrillic — 12 % of the mappings — so a case-insensitive search for
-  // Vietnamese, accented Greek, extended Cyrillic, Armenian, Georgian or
-  // fullwidth text simply found nothing. Turkish İ/ı stay unfolded (their fold is
-  // locale-sensitive, and İ's lowercase is two scalars), as does every mapping
-  // that would change the UTF-8 byte length (KELVIN SIGN, OHM SIGN, …).
   const CaseFoldRun* run = std::upper_bound(
       std::begin(kCaseFoldRuns), std::end(kCaseFoldRuns), cp,
       [](char32_t value, const CaseFoldRun& candidate) { return value < candidate.first; });
@@ -529,21 +483,18 @@ char32_t SimpleFoldCodepoint(char32_t cp) {
 }
 
 void Utf8CaseFoldAppend(std::string_view text, std::string& out) {
-  // A folded string is exactly as long as its input: every mapping in the table
-  // keeps the scalar's UTF-8 byte length (the generator enforces it), which is
-  // what lets the search paths index the raw line by folded offsets.
   out.reserve(out.size() + text.size());
   std::size_t offset = 0;
   while (offset < text.size()) {
     const unsigned char lead = static_cast<unsigned char>(text[offset]);
-    if (lead < 0x80) {  // ASCII fast path, no decode.
+    if (lead < 0x80) {
       out += (lead >= 'A' && lead <= 'Z') ? static_cast<char>(lead + 0x20)
                                           : static_cast<char>(lead);
       ++offset;
       continue;
     }
     const std::size_t length = Utf8SequenceLength(text, offset);
-    if (length == 0) {  // Invalid lead — copy the single byte and advance.
+    if (length == 0) {
       out += static_cast<char>(lead);
       ++offset;
       continue;
@@ -551,8 +502,6 @@ void Utf8CaseFoldAppend(std::string_view text, std::string& out) {
     const std::string_view scalar = text.substr(offset, length);
     const char32_t cp = DecodeUtf8Codepoint(scalar);
     if (cp == 0xFFFD && scalar != kUtf8ReplacementChar) {
-      // Malformed sequence — preserve the original bytes verbatim so byte
-      // offsets stay meaningful for callers that map matches back to the source.
       out.append(scalar);
     } else {
       AppendUtf8(out, SimpleFoldCodepoint(cp));
@@ -659,19 +608,11 @@ bool Utf8IsIdentifierCodepoint(char32_t cp) {
     return (cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z') ||
            (cp >= '0' && cp <= '9') || cp == '_';
   }
-  // Treat any non-ASCII letter-ish scalar as identifier content. This is a
-  // deliberately permissive superset (it includes marks/joiners) so word motion
-  // and identifier extraction do not split multi-byte identifiers mid-scalar;
-  // punctuation and symbol ranges below stay excluded.
-  if (cp >= 0x2000 && cp <= 0x206F) return false;   // general punctuation
-  if (cp >= 0x2190 && cp <= 0x2BFF) return false;   // arrows / symbols / dingbats
-  if (cp >= 0x3000 && cp <= 0x303F) return false;   // CJK symbols & punctuation
-  // Pictographs: emoji, their modifiers and regional indicators, mahjong and
-  // playing cards, legacy computing symbols. A symbol, not a letter -- a run of
-  // emoji was one "word", so a tab typed into it changed a token and the diff
-  // marked the whole line novel (soak 96055d2c8eec).
+  if (cp >= 0x2000 && cp <= 0x206F) return false;
+  if (cp >= 0x2190 && cp <= 0x2BFF) return false;
+  if (cp >= 0x3000 && cp <= 0x303F) return false;
   if (cp >= 0x1F000 && cp <= 0x1FBFF) return false;
-  if (cp == 0xA0 || cp == 0x3000) return false;     // no-break / ideographic space
+  if (cp == 0xA0 || cp == 0x3000) return false;
   return true;
 }
 
@@ -688,10 +629,6 @@ bool ContainsCaseInsensitiveAscii(std::string_view haystack, std::string_view ne
   if (needle.size() > haystack.size()) {
     return false;
   }
-  // Scan for a first-byte hit before entering the O(needle) compare. The naive
-  // nested loop re-entered the inner loop (and re-folded needle[0]) at every
-  // haystack position; the settings/font filters run this over every row on each
-  // keystroke, so the first-byte reject is the case that has to be tight.
   const char first_lower = ToLowerAsciiChar(needle[0]);
   const char first_upper = ToUpperAsciiChar(needle[0]);
   const std::size_t last = haystack.size() - needle.size();
@@ -794,8 +731,6 @@ std::string CollapseAsciiWhitespaceTrackingMatch(std::string_view text,
     const unsigned char c = static_cast<unsigned char>(text[i]);
     if (IsAsciiSpace(c)) {
       saw_whitespace = !collapsed.empty();
-      // A boundary landing on whitespace maps to where the next emitted byte
-      // (or pending space) will sit.
       if (i == match_start && mapped_start == std::string::npos) {
         mapped_start = collapsed.size();
       }
@@ -808,11 +743,6 @@ std::string CollapseAsciiWhitespaceTrackingMatch(std::string_view text,
       collapsed.push_back(' ');
       saw_whitespace = false;
     }
-    // The match can end within a whitespace run that collapses to this single
-    // space: match_end then points at THIS non-whitespace byte while the last
-    // matched byte was whitespace. Map the exclusive end to just after the flushed
-    // space so the collapsed space stays inside the match (otherwise mapped_end was
-    // missed entirely and the highlight collapsed to zero length).
     if (i == match_end && mapped_end == std::string::npos) {
       mapped_end = collapsed.size();
     }
@@ -895,7 +825,7 @@ LineEnding DominantLineEnding(const LineEndingCounts& counts) {
   return LineEnding::LF;
 }
 
-}  // namespace
+}
 
 LineEnding DetectLineEnding(std::string_view text) {
   return DominantLineEnding(CountLineEndings(text));
@@ -1031,7 +961,6 @@ std::vector<std::string_view> SplitLineViews(std::string_view content, std::size
     }
     line_start = i + 1;
   }
-  // Trailing partial line (no terminator) if we still have budget and content left.
   if (lines.size() < max_lines && line_start < content.size()) {
     lines.push_back(content.substr(line_start));
   }
@@ -1043,11 +972,6 @@ std::string JoinLines(std::span<const std::string> lines, std::string_view separ
     return {};
   }
 
-  // Accumulate the exact byte total with saturating adds so a pathological set of
-  // lines cannot wrap std::size_t and yield a too-small reserve (forcing repeated
-  // reallocation) or a wrapped-huge one. Separators are added per-line to sidestep
-  // a multiply overflow. A saturated (== max) total is treated as "do not reserve"
-  // — such a string could never be held in memory anyway, so we let it grow lazily.
   std::size_t size = 0;
   for (const std::string& line : lines) {
     size = SaturatingAdd(size, line.size());
@@ -1082,8 +1006,6 @@ int NaturalCompareIgnoreCase(std::string_view a, std::string_view b) {
   std::size_t j = 0;
   while (i < a.size() && j < b.size()) {
     if (is_digit(a[i]) && is_digit(b[j])) {
-      // Skip leading zeros, remembering how many, so equal magnitudes tie-break
-      // toward fewer leading zeros for a stable, deterministic order.
       const std::size_t zeros_a_start = i;
       const std::size_t zeros_b_start = j;
       while (i < a.size() && a[i] == '0') ++i;
@@ -1094,7 +1016,7 @@ int NaturalCompareIgnoreCase(std::string_view a, std::string_view b) {
       while (j < b.size() && is_digit(b[j])) ++j;
       const std::size_t len_a = i - digits_a_start;
       const std::size_t len_b = j - digits_b_start;
-      if (len_a != len_b) return len_a < len_b ? -1 : 1;  // more significant digits => larger
+      if (len_a != len_b) return len_a < len_b ? -1 : 1;
       const int cmp = a.substr(digits_a_start, len_a).compare(b.substr(digits_b_start, len_b));
       if (cmp != 0) return cmp < 0 ? -1 : 1;
       const std::size_t zeros_a = digits_a_start - zeros_a_start;
@@ -1115,4 +1037,4 @@ int NaturalCompareIgnoreCase(std::string_view a, std::string_view b) {
   return 0;
 }
 
-}  // namespace microide::util
+}

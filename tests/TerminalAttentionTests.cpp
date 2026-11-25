@@ -1,7 +1,3 @@
-// What a terminal's bell or notification does past its own pane: the decision
-// (DecideTerminalAlert) and the desktop notification's spacing, both without a
-// window, a terminal or a notification daemon.
-
 #include "TestSupport.h"
 
 #include "workspace/TerminalAttention.h"
@@ -62,8 +58,6 @@ void TestAlertBehindAnotherTabToastsAndMarks() {
   Expect(outcome.mark_tab && outcome.toast.empty(), "a bell marks the tab without a toast");
 }
 
-// The gap this closes: with the window unfocused and the terminal on screen,
-// nothing at all told the user an agent was waiting.
 void TestAlertInAnUnfocusedWindowReachesTheDesktop() {
   TerminalAlert alert = AgentAlert();
   alert.window_focused = false;
@@ -96,7 +90,7 @@ void TestDesktopNotificationsAreSpaced() {
   Expect(!AdmitDesktopNotification(kDesktopNotificationSpacingMs + 2, last), "and restarts the spacing");
 }
 
-}  // namespace
+}
 
 void RegisterTerminalAttentionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalAttention/SeenOnScreenInAFocusedWindowDoesNothing",
@@ -107,4 +101,4 @@ void RegisterTerminalAttentionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalAttention/DesktopNotificationsAreSpaced", TestDesktopNotificationsAreSpaced);
 }
 
-}  // namespace microide::tests
+}

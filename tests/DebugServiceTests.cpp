@@ -42,36 +42,11 @@ using microide::workspace::DebugWatchModel;
 using microide::workspace::LaunchConfig;
 namespace codec = microide::workspace::dap_protocol;
 
-// Same mock, but with a trailing "gdb" token (ignored by the script, which only
-// reads argv[1]) so DebugSession flags it as a gdb adapter and emits the
-// value-formatting limit commands on `initialized`.
 std::vector<std::string> GdbFlavoredAdapterCommand(const std::filesystem::path& server_path,
                                                    const std::string& mode) {
   return {"python3", server_path.string(), mode, "gdb"};
 }
 
-// Wait for something to HAPPEN, driving the callback drain while we wait.
-//
-// There is deliberately no per-call millisecond budget. Every predicate here is
-// waiting on a real mock-adapter SUBPROCESS, and how long a round trip takes is a
-// property of the machine -- TSAN instrumentation, the sharded suite running six
-// of these at once, whatever else the box is doing -- not of the product. A
-// deadline tuned on one machine measures that machine, and this suite has paid
-// for that twice already: `SessionResolvesStackOnStopAndStepsResume` timed out on
-// its fifth adapter round trip at the original 4 s, a global 4x sanitizer scale
-// was added to TestSupport to fix it, it timed out again behind that, and two
-// other call sites had meanwhile been hand-bumped to 20 s one at a time.
-//
-// The ceiling below is a HANG detector, not a budget. A wait returns the instant
-// its predicate holds, so a passing run pays nothing for the headroom, and only a
-// genuinely stuck test waits it out -- with the suite's own per-test watchdog
-// (MICROIDE_TEST_TIMEOUT_MS, 300 s, see TestMain.cpp) as the backstop behind it.
-// The point is that the OUTCOME stops depending on load anywhere in the range a
-// real machine can produce.
-//
-// This is the positive form only. Asserting something does NOT happen needs a
-// bounded settling window and is `PollStaysFalse` below -- the two read alike and
-// fail in opposite directions, which is why they are now separate names.
 constexpr std::chrono::milliseconds kAdapterHangCeiling{60000};
 
 bool PollUntil(DapManager& manager, const std::function<bool()>& predicate) {
@@ -79,12 +54,6 @@ bool PollUntil(DapManager& manager, const std::function<bool()>& predicate) {
                    [&manager]() { manager.DrainCallbacks(); });
 }
 
-// Assert something does NOT happen: give the (suppressed) work a real chance to
-// round-trip, then confirm it did not. This one genuinely wants a bounded window,
-// and its failure mode is the opposite of PollUntil's -- a slower machine yields a
-// longer effective window, which can only make the assertion stronger, never
-// flakier. Still scaled by TestSupport's sanitizer multiplier so the "chance to
-// round-trip" stays real under instrumentation.
 bool PollStaysFalse(DapManager& manager,
                     const std::function<bool()>& predicate,
                     std::chrono::milliseconds settle_window = std::chrono::milliseconds(2000)) {
@@ -181,9 +150,6 @@ void TestDebugSessionDrivesLaunchLifecycleWithConfigurationDone() {
   Expect(captured.output.find("hello from adapter") != std::string::npos,
          "adapter output event should reach the console callback");
   Expect(captured.got_terminated_event, "terminated should drive the session to Terminated");
-  // A clean DAP terminated also fires on_terminated, but reports failed=false with no
-  // reason — so the control channel emits a plain `terminated` and the console is
-  // dropped rather than retained.
   Expect(captured.got_terminated_callback, "on_terminated fires on a clean terminated event");
   Expect(!captured.terminated_failed, "a clean exit reports failed=false");
   Expect(captured.terminated_reason.empty(), "a clean exit carries no reason");
@@ -229,7 +195,6 @@ void TestDebugSessionLaunchHandshakeOrder() {
   CapturedSession captured;
   DebugSession::Callbacks callbacks = MakeCallbacks(captured);
 
-  // Two breakpoints on one file at 0-based lines 4 and 9 (DAP lines 5 and 10).
   const std::filesystem::path source_path = "/proj/main.py";
   callbacks.breakpoint_provider = [&]() {
     editor::BreakpointStore::FileBreakpoints file;
@@ -272,20 +237,8 @@ void TestDebugSessionLaunchHandshakeOrder() {
   Expect(verified_requested_lines == std::vector<int>({5, 10}),
          "verification should carry the requested 1-based lines in send order");
 
-  // The strict mock rejects configurationDone that arrives before launch (as gdb
-  // 17.2 does), so reaching Terminated cleanly already proves launch preceded it.
   Expect(!captured.terminated_failed, "spec-compliant handshake must not fail the session");
 
-  // Pin the DAP handshake order: setBreakpoints  ->  launch  ->  configurationDone.
-  // Both halves matter, and each was a shipped bug:
-  //   * launch before configurationDone -- gdb 17.x rejects a configurationDone
-  //     with no launch pending and then never answers the late launch (the strict
-  //     mock enforces this, so a regression hangs/fails the session here).
-  //   * breakpoints before launch -- gdb 15.x starts the debuggee on launch rather
-  //     than deferring to configurationDone, so a launch-first order let the
-  //     program run to completion before any breakpoint was armed.
-  // finish_launch() emits this command list while handling configurationDone, so
-  // by then setBreakpoints, launch, and configurationDone have all been recorded.
   const std::size_t order_pos = captured.output.find("commands:");
   Expect(order_pos != std::string::npos, "adapter should emit its command order");
   const std::size_t launch_pos = captured.output.find("launch", order_pos);
@@ -315,8 +268,6 @@ void TestDebugSessionResolvesStackOnStopAndStepsResume() {
   config.request = "launch";
   Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
 
-  // The adapter stops after configurationDone; the session resolves stackTrace
-  // and hands the frames to on_stopped (top frame first).
   Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }),
          "session should resolve a stack on the first stop");
   Expect(captured.last_stop_reason == "breakpoint", "stop reason should propagate");
@@ -328,7 +279,6 @@ void TestDebugSessionResolvesStackOnStopAndStepsResume() {
            "top frame should carry its source path");
   }
 
-  // Step over -> the adapter records `next` and re-stops.
   DebugSession* session = manager.ActiveSession();
   Expect(session != nullptr, "session should be active while stopped");
   const int stops_before = captured.stop_count;
@@ -339,16 +289,6 @@ void TestDebugSessionResolvesStackOnStopAndStepsResume() {
          "StepOver should send the DAP `next` command");
   Expect(captured.resume_count >= 1, "stepping should fire on_resumed optimistically");
 
-  // Step in / out map to their DAP commands.
-  //
-  // Each command has to wait for the session to be STOPPED again, not merely for
-  // the previous command's text to appear in the adapter log. `SendResumeRequest`
-  // drops a command outright when `state_ != Stopped`, and a resume flips the
-  // state to Running synchronously — so issuing the next step as soon as the
-  // previous one was written sends it into a Running session, where it vanishes
-  // and the following poll waits out the whole hang ceiling. That is a property of
-  // when the adapter's `stopped` event happens to be drained, i.e. of the machine,
-  // which is what made this test fail on a loaded runner and pass everywhere else.
   const auto step_and_wait = [&](const char* dap_command, auto&& send) {
     const int stops = captured.stop_count;
     const std::string marker = std::string("cmd:") + dap_command;
@@ -370,10 +310,6 @@ void TestDebugSessionResolvesStackOnStopAndStepsResume() {
   manager.ShutdownAll();
 }
 
-// Regression: a `stackTrace` response that resolves AFTER the user resumes must be
-// dropped, not re-projected as a stopped view. The adapter defers the first stack
-// response until it receives the resume, then flushes it late; a correct host
-// (state_ != Stopped guard in RequestStackTrace) never fires on_stopped for it.
 void TestDebugSessionDropsStaleStackResolvedAfterResume() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -388,8 +324,6 @@ void TestDebugSessionDropsStaleStackResolvedAfterResume() {
   config.request = "launch";
   Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
 
-  // The adapter stops but withholds the stackTrace response, so the session
-  // reaches Stopped with on_stopped still pending (stop_count == 0).
   Expect(PollUntil(manager,
                    [&]() {
                      const auto* s = manager.ActiveSession();
@@ -398,17 +332,12 @@ void TestDebugSessionDropsStaleStackResolvedAfterResume() {
          "session should reach Stopped while the stack is still pending");
   Expect(captured.stop_count == 0, "on_stopped must not fire before the stack resolves");
 
-  // Resume before the stack resolves. Continue() flips to Running synchronously;
-  // the adapter then flushes the now-stale stack + a sentinel on the same pipe.
   DebugSession* session = manager.ActiveSession();
   Expect(session != nullptr, "session should be active while stopped");
   session->Continue();
   Expect(session->CurrentState() == DebugSession::State::Running,
          "Continue flips the session to Running synchronously");
 
-  // The sentinel is written strictly after the stale stack on the adapter's pipe,
-  // so once we observe it the stale stack has already been received and processed
-  // — no timing assumption needed.
   Expect(PollUntil(manager,
                    [&]() {
                      return captured.output.find("stale-stack-flushed") != std::string::npos;
@@ -424,9 +353,6 @@ void TestDebugSessionDropsStaleStackResolvedAfterResume() {
   manager.ShutdownAll();
 }
 
-// Regression: when the adapter REJECTS a resume (continue/next/...), the host must
-// undo its optimistic Running flip and restore the stopped view rather than leaving
-// the UI showing Running while the target is still stopped.
 void TestDebugSessionRejectedResumeRestoresStoppedView() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -448,8 +374,6 @@ void TestDebugSessionRejectedResumeRestoresStoppedView() {
          "the session should be stopped before the resume");
   const int stops_before = captured.stop_count;
 
-  // Continue: the host flips to Running optimistically, the adapter rejects, and
-  // the host restores Stopped + re-projects the stop (a fresh on_stopped fires).
   session->Continue();
   Expect(PollUntil(manager,
                    [&]() {
@@ -476,7 +400,6 @@ void TestDebugSessionPauseFromRunning() {
   config.request = "launch";
   Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
 
-  // Adapter stays running after configurationDone.
   Expect(PollUntil(manager,
                    [&]() {
                      const auto* session = manager.ActiveSession();
@@ -485,7 +408,6 @@ void TestDebugSessionPauseFromRunning() {
                    }),
          "session should reach Running with no initial stop");
 
-  // Pause resolves a thread via `threads` then sends `pause`; the adapter stops.
   manager.ActiveSession()->Pause();
   Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }),
          "pause should drive the adapter to a stop");
@@ -494,12 +416,6 @@ void TestDebugSessionPauseFromRunning() {
   manager.ShutdownAll();
 }
 
-// TD-2026-10-21-375: on gdb 15.1 (Ubuntu 24.04) F6 did nothing. gdb 15 starts the
-// program inside `launch`; under load that `run` may not return until the program
-// stops, so configurationDone stays unanswered on gdb's one DAP thread and a
-// `pause` queues behind it forever. While configurationDone is unanswered the
-// session interrupts its local program with SIGINT itself -- what gdb's own
-// Ctrl+C does; gdb catches it and the program stops.
 void TestDebugSessionPauseInterruptsAGdbStillStartingTheProgram() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -528,12 +444,6 @@ void TestDebugSessionPauseInterruptsAGdbStillStartingTheProgram() {
   manager.ShutdownAll();
 }
 
-// QA dbg-sessions on gdb 15: Stop All Debug Sessions froze the window for
-// seconds. It joined every adapter's I/O thread on the UI thread, and a gdb 15
-// still holding configurationDone (TD-2026-10-21-375) answered the terminate
-// queued behind it only on a timeout. Stop All now asks each session to stop, as
-// Stop does -- interrupting a program whose gdb is still starting it -- and the
-// per-frame prune drops each as it ends.
 void TestDebugServiceStopAllDoesNotWaitOnAWedgedGdb() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -574,10 +484,6 @@ void TestDebugServiceStopAllDoesNotWaitOnAWedgedGdb() {
   Expect(::kill(pid, 0) != 0, "and its program is gone");
 }
 
-// QA dbg-pause: F6 on a program running under gdb did nothing. Pause asked the
-// adapter for its threads first, and gdb answers no request while the program
-// runs -- the `threads` request timed out and `pause` was never sent. The thread
-// the adapter announced by a `thread` event is the one to pause.
 void TestDebugSessionPausesAThreadAnnouncedByEvent() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -597,8 +503,6 @@ void TestDebugSessionPausesAThreadAnnouncedByEvent() {
                      return session != nullptr && session->CurrentState() == DebugSession::State::Running;
                    }),
          "session should reach Running");
-  // At once: the `thread` event may not have landed yet (an F6 pressed right
-  // after the start), and the pause must wait for it rather than be lost.
   manager.ActiveSession()->Pause();
   Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }),
          "pause should stop a program whose adapter answers no `threads` while it runs");
@@ -606,11 +510,6 @@ void TestDebugSessionPausesAThreadAnnouncedByEvent() {
   manager.ShutdownAll();
 }
 
-// QA: quitting the app while a launched program ran under gdb left the program
-// running. The teardown `disconnect` named no `terminateDebuggee`, and gdb's DAP
-// defaults it to false -- it detaches, and the program outlives the editor. A
-// launched debuggee is the session's own and ends with it (VS Code's rule); an
-// attached one was there before and is left running.
 void TestTeardownEndsALaunchedDebuggeeAndSparesAnAttachedOne() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -632,7 +531,7 @@ void TestTeardownEndsALaunchedDebuggeeAndSparesAnAttachedOne() {
                        return session != nullptr && session->CurrentState() == DebugSession::State::Running;
                      }),
            request + ": the session should run");
-    manager.ShutdownAll();  // what the app's teardown does
+    manager.ShutdownAll();
     const std::string sent = ReadFile(record);
     const bool terminates = sent.find("\"terminateDebuggee\": true") != std::string::npos;
     Expect(request == "launch" ? terminates : !terminates,
@@ -642,10 +541,6 @@ void TestTeardownEndsALaunchedDebuggeeAndSparesAnAttachedOne() {
   }
 }
 
-// QA dbg-pause: gdb under load stopped answering after the launch, and Shift+F5
-// then did nothing either -- `terminate` timed out and the session lived on, its
-// program spinning. A stop the adapter does not answer forces the adapter down and
-// ends the session, as VS Code does.
 void TestAStopTheAdapterDoesNotAnswerEndsTheSession() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -664,7 +559,7 @@ void TestAStopTheAdapterDoesNotAnswerEndsTheSession() {
                      return session != nullptr && session->CurrentState() == DebugSession::State::Running;
                    }),
          "session should reach Running");
-  manager.StopActiveSession();  // Shift+F5
+  manager.StopActiveSession();
   Expect(PollUntil(manager,
                    [&]() {
                      const auto* session = manager.ActiveSession();
@@ -675,8 +570,6 @@ void TestAStopTheAdapterDoesNotAnswerEndsTheSession() {
   manager.ShutdownAll();
 }
 
-// Reverse execution: an adapter advertising supportsStepBack accepts `stepBack`
-// and `reverseContinue`, each optimistically resuming like a forward step.
 void TestDebugSessionReverseStepAndContinue() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -714,15 +607,13 @@ void TestDebugSessionReverseStepAndContinue() {
   manager.ShutdownAll();
 }
 
-// Without supportsStepBack the reverse commands are dropped at the session layer:
-// nothing reaches the wire and no optimistic resume fires.
 void TestDebugSessionReverseGatedOnCapability() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "stop"));  // no supportsStepBack
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "stop"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -739,7 +630,6 @@ void TestDebugSessionReverseGatedOnCapability() {
   const int resumes_before = captured.resume_count;
   session->StepBack();
   session->ReverseContinue();
-  // Give the (suppressed) requests a chance to round-trip, then assert nothing did.
   Expect(!PollStaysFalse(manager,
                     [&]() {
                       return captured.output.find("cmd:stepBack") != std::string::npos ||
@@ -750,11 +640,6 @@ void TestDebugSessionReverseGatedOnCapability() {
   manager.ShutdownAll();
 }
 
-// Late capability: an adapter that omits supportsStepBack at initialize can turn it
-// on afterward via a DAP `capabilities` event (gdb does this once an rr replay or
-// gdb `record` target exists). The host must merge the partial event, flip the
-// stored capability, fire on_capabilities_changed (drives the toolbar redraw), and
-// then accept the reverse commands it previously gated out.
 void TestDebugSessionReverseEnabledByLateCapabilitiesEvent() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -772,7 +657,6 @@ void TestDebugSessionReverseEnabledByLateCapabilitiesEvent() {
 
   DebugSession* session = manager.ActiveSession();
   Expect(session != nullptr, "session should be active while stopped");
-  // At init the adapter does not advertise reverse execution, so the command is gated.
   Expect(!session->Client().Capabilities().supports_step_back,
          "adapter should not advertise supportsStepBack at init");
   const int resumes_before = captured.resume_count;
@@ -784,8 +668,6 @@ void TestDebugSessionReverseEnabledByLateCapabilitiesEvent() {
                     }),
          "step back is dropped before the capability is advertised");
 
-  // Start recording (as a user would type `record` in the debug console): the mock
-  // responds and emits a `capabilities` event turning supportsStepBack on.
   session->RequestEvaluate("record", 0, "repl", nullptr);
   Expect(PollUntil(manager,
                    [&]() { return session->Client().Capabilities().supports_step_back; }),
@@ -793,7 +675,6 @@ void TestDebugSessionReverseEnabledByLateCapabilitiesEvent() {
   Expect(captured.capabilities_changed_count >= 1,
          "on_capabilities_changed should fire so capability-gated chrome repaints");
 
-  // The reverse command now reaches the wire.
   session->StepBack();
   Expect(PollUntil(manager,
                    [&]() { return captured.output.find("cmd:stepBack") != std::string::npos; }),
@@ -801,9 +682,6 @@ void TestDebugSessionReverseEnabledByLateCapabilitiesEvent() {
   manager.ShutdownAll();
 }
 
-// Drives the real scopes/variables/setVariable round-trips against the mock
-// adapter, feeding responses into a DebugVariablesModel exactly as DebugService
-// does — exercising protocol + session + model end to end.
 void TestDebugSessionVariablesTreeAndSetVariable() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -827,8 +705,6 @@ void TestDebugSessionVariablesTreeAndSetVariable() {
   DebugVariablesModel model;
   model.BeginFrame(frame_id);
 
-  // scopes → Locals is open by default (auto-expanded); a sibling scope stays
-  // collapsed. ApplyScopes returns the bounded fetch the default expansion needs.
   std::vector<DebugValueTree::ChildFetch> scope_fetches;
   bool scopes_done = false;
   session->RequestScopes(frame_id, [&](std::vector<codec::DapScope> scopes) {
@@ -840,7 +716,6 @@ void TestDebugSessionVariablesTreeAndSetVariable() {
              model.Rows()[0].expanded,
          "Locals is the first scope and open by default");
 
-  // The default Locals expansion fetches its variables (x scalar, obj structured).
   Expect(scope_fetches.size() == 1 && scope_fetches[0].reference == 1000,
          "auto-expanding Locals requests its variablesReference exactly once");
   const int locals_ref = scope_fetches[0].reference;
@@ -859,7 +734,6 @@ void TestDebugSessionVariablesTreeAndSetVariable() {
   Expect(model.Rows()[2].display_name == "obj" && model.Rows()[2].has_children,
          "obj should be an expandable child");
 
-  // Expand obj → nested child at depth 2; collapsing removes it.
   const int obj_ref = model.ToggleRow(2).reference;
   Expect(obj_ref == 1001, "expanding obj should request its variablesReference");
   bool obj_done = false;
@@ -876,7 +750,6 @@ void TestDebugSessionVariablesTreeAndSetVariable() {
   Expect(model.ToggleRow(2).reference == 0 && model.Rows().size() == 4,
          "collapsing obj should drop its children without a refetch");
 
-  // setVariable on x → the adapter echoes the new value, applied authoritatively.
   const std::uint32_t x_node = model.Rows()[1].node_id;
   bool set_done = false;
   bool set_ok = false;
@@ -893,8 +766,6 @@ void TestDebugSessionVariablesTreeAndSetVariable() {
   manager.ShutdownAll();
 }
 
-// The session-level capability gate: an adapter without supportsSetVariable
-// rejects setVariable without sending anything on the wire.
 void TestDebugSessionSetVariableGatedOnCapability() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -923,9 +794,6 @@ void TestDebugSessionSetVariableGatedOnCapability() {
   manager.ShutdownAll();
 }
 
-// Drives the real `evaluate(context:"hover")` round-trip against the mock adapter
-// and feeds the result into a DebugHoverModel exactly as DebugService::EvaluateHover
-// does — protocol + session + model end to end, including dedup + generation guard.
 void TestDebugSessionEvaluateHover() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -948,8 +816,6 @@ void TestDebugSessionEvaluateHover() {
          "evaluate-mode adapter advertises supportsEvaluateForHovers");
   const int frame_id = captured.last_frames[0].id;
 
-  // Mirror DebugService::EvaluateHover's model interaction: Begin → request →
-  // Resolve under the in-flight generation.
   DebugHoverModel hover;
   Expect(hover.Classify(frame_id, "count") == DebugHoverModel::Lookup::Miss,
          "fresh model classifies any query as a miss");
@@ -975,10 +841,6 @@ void TestDebugSessionEvaluateHover() {
   manager.ShutdownAll();
 }
 
-// Watch expressions evaluate against the real mock adapter via the same
-// RequestEvaluate path as hover, but with context "watch" (which is NOT
-// capability-gated) and folding the result onto a DebugWatchModel root —
-// mirroring DebugService::EvaluateWatches.
 void TestDebugSessionWatchEvaluate() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -1017,10 +879,6 @@ void TestDebugSessionWatchEvaluate() {
   manager.ShutdownAll();
 }
 
-// The debug-console REPL evaluates against the real mock adapter via the same
-// RequestEvaluate path as watch/hover, but with context "repl" (ungated, like
-// watch) — mirroring DebugService::EvaluateRepl's wire interaction. Frame 0 is the
-// fallback when running; here we evaluate against the stopped top frame.
 void TestDebugSessionReplEvaluate() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -1054,9 +912,6 @@ void TestDebugSessionReplEvaluate() {
   Expect(repl_value == "answer@" + std::to_string(frame_id),
          "the adapter's repl-context result echoes the expression evaluated in the frame");
 
-  // Structured result: a "repl" evaluate of "obj" carries a variablesReference, which
-  // EvaluateRepl expands one level via a follow-up variables request (the two-step
-  // path exercised here: evaluate -> variables).
   bool struct_resolved = false;
   int struct_ref = 0;
   session->RequestEvaluate("obj", frame_id, "repl",
@@ -1084,17 +939,13 @@ void TestDebugSessionReplEvaluate() {
   manager.ShutdownAll();
 }
 
-// Hover-to-inspect without supportsEvaluateForHovers must NOT be dropped: the
-// session falls back to the universally-supported "repl" context so hovering a
-// symbol still resolves a value. (GDB-style adapters omit the capability but
-// evaluate fine; silently gating left users with no hover value at all.)
 void TestDebugSessionHoverFallsBackToReplWithoutCapability() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "stop"));  // no evaluate cap
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "stop"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -1124,14 +975,11 @@ void TestDebugSessionHoverFallsBackToReplWithoutCapability() {
   manager.ShutdownAll();
 }
 
-// Pure DebugHoverModel behavior (no adapter): classify keying, generation guard
-// dropping stale completions, and Clear.
 void TestDebugHoverModelBehavior() {
   DebugHoverModel hover;
   Expect(hover.status == DebugHoverModel::Status::Empty, "model starts Empty");
   Expect(hover.Classify(1, "x") == DebugHoverModel::Lookup::Miss, "empty model is a miss");
 
-  // A different frame or expression is always a miss (key = frame_id + expression).
   const std::uint64_t gen = hover.Begin(1, "x");
   Expect(hover.Classify(2, "x") == DebugHoverModel::Lookup::Miss, "different frame is a miss");
   Expect(hover.Classify(1, "y") == DebugHoverModel::Lookup::Miss, "different expr is a miss");
@@ -1141,7 +989,6 @@ void TestDebugHoverModelBehavior() {
   Expect(hover.Classify(1, "x") == DebugHoverModel::Lookup::Hit && hover.value == "42",
          "resolve under the live generation lands a hit");
 
-  // A stale completion (older generation, e.g. after a frame switch) is dropped.
   const std::uint64_t gen2 = hover.Begin(1, "x");
   hover.Resolve(gen, "stale", "int");
   Expect(hover.status == DebugHoverModel::Status::Pending && hover.value.empty(),
@@ -1155,15 +1002,11 @@ void TestDebugHoverModelBehavior() {
          "Clear resets to Empty and bumps the generation");
 }
 
-// Pure DebugVariablesModel behavior (no adapter): flatten ordering, lazy
-// expand/collapse, setVariable application, inline-edit targeting, selection.
 void TestDebugVariablesModelTreeBehavior() {
   DebugVariablesModel model;
   model.BeginFrame(7);
   Expect(model.FrameId() == 7, "BeginFrame should record the focused frame id");
 
-  // Use non-default scope names so this generic mechanics test is unaffected by the
-  // Locals-open-by-default policy (covered separately).
   std::vector<codec::DapScope> scopes = {
       codec::DapScope{.name = "Arguments", .variables_reference = 1000},
       codec::DapScope{.name = "Globals", .variables_reference = 2000},
@@ -1198,7 +1041,6 @@ void TestDebugVariablesModelTreeBehavior() {
   Expect(model.ToggleRow(2).reference == 0 && model.Rows().size() == 5,
          "re-expanding a loaded node does not refetch");
 
-  // Inline edit targeting + setVariable application.
   Expect(!model.BeginEdit(0), "scopes are not editable");
   Expect(model.BeginEdit(1) && model.IsEditing(), "a leaf variable enters edit");
   Expect(model.EditBuffer().text() == "1", "edit buffer seeds with the current value");
@@ -1211,7 +1053,6 @@ void TestDebugVariablesModelTreeBehavior() {
   model.CancelEdit();
   Expect(!model.IsEditing(), "cancel exits edit mode");
 
-  // Selection cursor clamps to row bounds.
   model.SetSelectedRow(99);
   Expect(model.SelectedRow() == model.Rows().size() - 1, "selection clamps to the last row");
   model.MoveSelection(-100);
@@ -1221,16 +1062,11 @@ void TestDebugVariablesModelTreeBehavior() {
   Expect(model.Empty() && model.Rows().empty(), "Clear empties the tree");
 }
 
-// Regression: expansion state is path-tracked across stops by node identity, and
-// two siblings that share a name (array pages, maps with repeated labels) must
-// NOT share expansion state. Previously the path key was the name chain only, so
-// expanding one "item" re-expanded every same-named sibling on the next stop.
 void TestDebugVariablesModelExpansionIsPerSiblingNotByNameOnly() {
   DebugVariablesModel model;
   model.BeginFrame(1);
   model.ApplyScopes({codec::DapScope{.name = "Arguments", .variables_reference = 1000}});
   Expect(model.ToggleRow(0).reference == 1000, "expanding the scope fetches its ref");
-  // Two expandable children that share the name "item".
   (void)model.ApplyVariables(1000,
                        {
                            codec::DapVariable{.name = "item",
@@ -1244,14 +1080,12 @@ void TestDebugVariablesModelExpansionIsPerSiblingNotByNameOnly() {
                        },
                        0);
   Expect(model.Rows().size() == 3, "scope plus two same-named children flatten to three rows");
-  // Expand ONLY the first "item".
   Expect(model.ToggleRow(1).reference == 1001, "expanding the first item fetches its ref");
   (void)model.ApplyVariables(
       1001, {codec::DapVariable{.name = "leaf", .value = "1", .variables_reference = 0}}, 0);
   Expect(model.Rows().size() == 4 && model.Rows()[1].expanded && !model.Rows()[3].expanded,
          "only the first item is expanded before the next stop");
 
-  // Next stop: references are not stable, so expansion is restored by path.
   model.BeginFrame(2);
   model.ApplyScopes({codec::DapScope{.name = "Arguments", .variables_reference = 2000}});
   const auto child_fetches = model.ApplyVariables(
@@ -1261,22 +1095,15 @@ void TestDebugVariablesModelExpansionIsPerSiblingNotByNameOnly() {
           codec::DapVariable{.name = "item", .value = "b", .type = "T", .variables_reference = 2002},
       },
       0);
-  // Only the first sibling was expanded, so only its (new) reference is refetched.
-  // With the name-only key both siblings would have been restored (size 2).
   Expect(child_fetches.size() == 1 && child_fetches[0].reference == 2001,
          "restore must re-expand only the specific sibling that was open, not every same-named one");
 }
 
-// Regression: an adapter that over-reports a container's total_count and then
-// answers a "load more" (start > 0) page with an empty success must not leave the
-// "show more…" affordance forever. The empty over-range page clears more_available.
 void TestDebugVariablesShowMoreClearsOnEmptyOverReportedPage() {
   DebugVariablesModel model;
   model.BeginFrame(1);
   model.ApplyScopes({codec::DapScope{.name = "Arguments", .variables_reference = 1000}});
-  model.ToggleRow(0);  // expand the scope
-  // A child container that CLAIMS 5 indexed children (count_reported) but will only
-  // ever return 2.
+  model.ToggleRow(0);
   (void)model.ApplyVariables(1000,
                        {codec::DapVariable{.name = "arr",
                                            .value = "[...]",
@@ -1285,7 +1112,6 @@ void TestDebugVariablesShowMoreClearsOnEmptyOverReportedPage() {
                                            .indexed_variables = 5,
                                            .count_reported = true}},
                        0);
-  // Expand arr and load its first (short) page of 2 of the claimed 5.
   std::size_t arr_row = 0;
   for (std::size_t i = 0; i < model.Rows().size(); ++i) {
     if (model.Rows()[i].display_name == "arr") {
@@ -1305,8 +1131,6 @@ void TestDebugVariablesShowMoreClearsOnEmptyOverReportedPage() {
   }
   Expect(has_show_more, "an over-reported total leaves a 'show more' affordance after the first page");
 
-  // The adapter answers the next page (start = 2) with an empty success; the
-  // affordance must clear rather than persist forever.
   (void)model.ApplyVariables(1001, {}, 2);
   bool still_show_more = false;
   for (const auto& row : model.Rows()) {
@@ -1316,9 +1140,6 @@ void TestDebugVariablesShowMoreClearsOnEmptyOverReportedPage() {
          "an empty over-range page clears 'show more' instead of persisting it forever");
 }
 
-// Locals is auto-expanded once per session (open by default) via the same bounded
-// re-expansion path a manual expand uses; a manual collapse is respected for the
-// rest of the session, and a new session (Clear) reopens it.
 void TestDebugVariablesLocalsOpenByDefault() {
   DebugVariablesModel model;
   model.BeginFrame(1);
@@ -1327,10 +1148,6 @@ void TestDebugVariablesLocalsOpenByDefault() {
       codec::DapScope{.name = "Registers", .variables_reference = 2000},
   };
 
-  // First stop: Locals comes up expanded with a fetch issued; a sibling scope stays
-  // collapsed. ApplyScopes returns the bounded fetch the service would issue. While
-  // the fetch is in flight Locals shows a loading placeholder, so the sibling scope
-  // is the last row.
   std::vector<DebugValueTree::ChildFetch> fetches = model.ApplyScopes(scopes);
   Expect(fetches.size() == 1 && fetches[0].reference == 1000,
          "the default Locals scope auto-issues exactly one bounded child fetch");
@@ -1339,7 +1156,6 @@ void TestDebugVariablesLocalsOpenByDefault() {
   Expect(model.Rows().back().display_name == "Registers" && !model.Rows().back().expanded,
          "a non-default scope stays collapsed");
 
-  // Populate Locals, then the user collapses it.
   (void)model.ApplyVariables(
       1000, {codec::DapVariable{.name = "x", .value = "1", .type = "int"}}, 0);
   Expect(model.Rows()[0].expanded && model.Rows()[1].display_name == "x",
@@ -1347,15 +1163,11 @@ void TestDebugVariablesLocalsOpenByDefault() {
   model.ToggleRow(0);
   Expect(!model.Rows()[0].expanded, "the user collapses Locals");
 
-  // Next stop in the SAME session (BeginFrame clears the tree but not the remembered
-  // collapse): Locals stays closed, no auto-refetch.
   model.BeginFrame(1);
   fetches = model.ApplyScopes(scopes);
   Expect(fetches.empty() && !model.Rows()[0].expanded,
          "a collapsed Locals stays collapsed on the next stop (no auto-refetch)");
 
-  // A new session re-arms the one-shot (DebugService calls BeginSession on launch):
-  // Locals opens again.
   model.BeginSession();
   model.BeginFrame(1);
   fetches = model.ApplyScopes(scopes);
@@ -1363,14 +1175,9 @@ void TestDebugVariablesLocalsOpenByDefault() {
          "a new session reopens Locals by default");
 }
 
-// A hostile/buggy adapter can report named+indexed variable counts that overflow
-// int when summed. ApplyScopes must sum in 64-bit and clamp (mirroring
-// ApplyVariables); a bare int+int is signed-overflow UB (UBSAN traps on the old
-// code) and a wrapped-negative total corrupts the paging math.
 void TestDebugVariablesScopeCountDoesNotOverflow() {
   DebugVariablesModel model;
   model.BeginFrame(1);
-  // named + indexed = 4e9, well past INT_MAX (~2.147e9).
   const std::vector<codec::DapScope> scopes = {
       codec::DapScope{.name = "Locals",
                       .variables_reference = 1000,
@@ -1379,8 +1186,6 @@ void TestDebugVariablesScopeCountDoesNotOverflow() {
                       .count_reported = true},
   };
   const std::vector<DebugValueTree::ChildFetch> fetches = model.ApplyScopes(scopes);
-  // Locals is open by default and issues exactly one bounded child fetch whose
-  // page count stays positive despite the huge (clamped) total.
   Expect(fetches.size() == 1 && fetches[0].reference == 1000,
          "a huge-count scope still issues one bounded child fetch");
   Expect(fetches[0].count >= 0, "the bounded page count must not be negative");
@@ -1388,17 +1193,12 @@ void TestDebugVariablesScopeCountDoesNotOverflow() {
          "the scope row is produced without overflow UB");
 }
 
-// Value-kind classification (drives render coloring) and the synthetic
-// "loading…" placeholder shown while a node's children are in flight.
 void TestDebugVariablesValueKindAndPlaceholder() {
   DebugVariablesModel model;
   model.BeginFrame(1);
-  // Non-default scope name keeps this placeholder test independent of the
-  // Locals-open-by-default policy.
   model.ApplyScopes({codec::DapScope{.name = "Registers", .variables_reference = 1000}});
   Expect(model.Rows()[0].kind == DebugValueKind::Scope, "a scope row classifies as Scope");
 
-  // Expanding before the children arrive shows exactly one placeholder child.
   Expect(model.ToggleRow(0).reference == 1000,
          "expanding a scope returns its reference to fetch");
   Expect(model.Rows().size() == 2, "an unloaded expanded scope shows one placeholder child");
@@ -1406,7 +1206,6 @@ void TestDebugVariablesValueKindAndPlaceholder() {
              model.Rows()[1].depth == 1 && !model.Rows()[1].has_children,
          "the placeholder is a dim, non-expandable depth-1 row");
 
-  // The response replaces the placeholder with the real children, each classified.
   (void)model.ApplyVariables(
       1000,
       {
@@ -1435,7 +1234,6 @@ void TestDebugVariablesValueKindAndPlaceholder() {
   Expect(kind_of("name") == DebugValueKind::Pointer, "a 0x… value classifies as Pointer");
   Expect(kind_of("pt") == DebugValueKind::Aggregate, "a structured value classifies as Aggregate");
 
-  // A loaded, expanded node recurses to children — no placeholder reappears.
   Expect(model.ToggleRow(6).reference == 1001, "expanding pt returns its reference");
   Expect(model.Rows().back().is_placeholder, "pt's children are still pending → placeholder");
   (void)model.ApplyVariables(1001, {codec::DapVariable{.name = "x", .value = "1", .type = "int"}}, 0);
@@ -1443,20 +1241,12 @@ void TestDebugVariablesValueKindAndPlaceholder() {
          "pt's fetched child replaces its placeholder");
 }
 
-// Bounded paging (the freeze fix), the in-flight guard, and the failure path. A
-// container is fetched in bounded pages — never all at once — so an adapter can
-// never be asked to enumerate a (possibly garbage / billions-long) container in
-// one shot; a failed fetch ends in an error row, never a permanent spinner.
 void TestDebugVariablesPagingAndErrors() {
   constexpr int kPage = DebugValueTree::kChildPageSize;
   DebugVariablesModel model;
   model.BeginFrame(1);
-  // A non-default scope name keeps these container-paging mechanics independent of
-  // the Locals-open-by-default policy (covered by VariablesLocalsOpenByDefault).
   model.ApplyScopes({codec::DapScope{.name = "Registers", .variables_reference = 1000}});
   Expect(model.ToggleRow(0).reference == 1000, "expanding the scope requests its children");
-  // The scope holds one big array that reports 300 indexed children (gdb reports
-  // indexedVariables; a garbage container would report billions here).
   (void)model.ApplyVariables(1000,
                        {codec::DapVariable{.name = "arr",
                                            .value = "{...}",
@@ -1468,7 +1258,6 @@ void TestDebugVariablesPagingAndErrors() {
   Expect(model.Rows().size() == 2 && model.Rows()[1].display_name == "arr",
          "the array child is present under the scope");
 
-  // Expanding the array must fetch only a bounded first page, NOT all 300.
   const DebugValueTree::ChildFetch first = model.ToggleRow(1);
   Expect(first.reference == 1001 && first.start == 0 && first.count == kPage,
          "expanding a 300-element array fetches a bounded first page, not the whole container");
@@ -1478,25 +1267,19 @@ void TestDebugVariablesPagingAndErrors() {
     page0.push_back(codec::DapVariable{.name = "[" + std::to_string(i) + "]", .value = "0"});
   }
   (void)model.ApplyVariables(1001, page0, 0);
-  // Locals + arr + kPage children + one trailing "show more…" row.
   Expect(model.Rows().size() == static_cast<std::size_t>(kPage) + 3,
          "the first page is followed by a clickable 'show more' row (300 > kPage)");
   Expect(model.Rows().back().is_show_more && !model.Rows().back().is_placeholder,
          "the trailing row is the 'show more' affordance");
 
-  // Clicking 'show more' fetches the next page at the loaded offset, clamped to the
-  // children that remain (300 - kPage) so we never ask gdb for more than exist (its
-  // DAP throws "list index out of range" on count > available).
   const DebugValueTree::ChildFetch more = model.ToggleRow(model.Rows().size() - 1);
   Expect(more.reference == 1001 && more.start == kPage && more.count == 300 - kPage,
          "'show more' fetches the remaining children at the loaded offset, clamped to the total");
   Expect(model.Rows().back().is_placeholder && !model.Rows().back().is_show_more,
          "the 'show more' row becomes a loading row while the next page is in flight");
-  // The in-flight loading row is inert — no duplicate fetch on a second click.
   Expect(model.ToggleRow(model.Rows().size() - 1).reference == 0,
          "an in-flight loading row issues no duplicate fetch (request-storm guard)");
 
-  // The final 100-element page reaches the reported total → paging stops.
   std::vector<codec::DapVariable> page1;
   for (int i = kPage; i < 300; ++i) {
     page1.push_back(codec::DapVariable{.name = "[" + std::to_string(i) + "]", .value = "0"});
@@ -1507,7 +1290,6 @@ void TestDebugVariablesPagingAndErrors() {
   Expect(model.Rows().back().display_name == "[299]" && !model.Rows().back().is_show_more,
          "paging stops once the adapter-reported total is reached");
 
-  // Failure path: a first-page fetch that errors ends in a finite error row.
   DebugVariablesModel errored;
   errored.BeginFrame(1);
   errored.ApplyScopes({codec::DapScope{.name = "Registers", .variables_reference = 2000}});
@@ -1519,10 +1301,6 @@ void TestDebugVariablesPagingAndErrors() {
              errored.Rows()[1].kind == DebugValueKind::Error,
          "a failed fetch replaces the spinner with a finite error row");
 
-  // Regression: a scope that reports only 9 children must not be expanded with
-  // count = kPage. gdb's DAP throws "list index out of range" when the request asks
-  // for more children than exist, which is what left the scope showing
-  // "<unavailable>". The fetch count is clamped to the scope's reported total.
   DebugVariablesModel small_scope;
   small_scope.BeginFrame(1);
   small_scope.ApplyScopes({codec::DapScope{.name = "Registers",
@@ -1533,9 +1311,6 @@ void TestDebugVariablesPagingAndErrors() {
   Expect(scoped.reference == 3000 && scoped.start == 0 && scoped.count == 9,
          "expanding a 9-variable scope requests exactly 9, not kPage (gdb count clamp)");
 
-  // Regression: an empty container (adapter reports zero children, e.g. an empty
-  // std::vector) is known-empty — expanding it must NOT fetch (a count request
-  // would make gdb throw "list index out of range"); it reads as expanded-empty.
   DebugVariablesModel empty_child;
   empty_child.BeginFrame(1);
   empty_child.ApplyScopes(
@@ -1549,22 +1324,17 @@ void TestDebugVariablesPagingAndErrors() {
                                                  .indexed_variables = 0,
                                                  .count_reported = true}},
                              0);
-  const DebugValueTree::ChildFetch empty_fetch = empty_child.ToggleRow(1);  // expand "v"
+  const DebugValueTree::ChildFetch empty_fetch = empty_child.ToggleRow(1);
   Expect(empty_fetch.reference == 0,
          "expanding a known-empty container issues no fetch (gdb would reject a count request)");
 
-  // Regression: expansion survives a stop. Variables references are NOT stable
-  // across stops, so expansion is tracked by path. Expand the scope → a struct
-  // child, then re-apply scopes with DIFFERENT refs (a new stop) and confirm the
-  // model asks to repopulate exactly the paths that were open, cascading into the
-  // child. Uses a non-default scope so the restore (not the default-open) is tested.
   DebugVariablesModel keep;
   keep.BeginFrame(1);
   Expect(keep.ApplyScopes({codec::DapScope{
                               .name = "Registers", .variables_reference = 1, .named_variables = 2}})
                  .empty(),
          "first stop: nothing was expanded yet, so nothing to restore");
-  keep.ToggleRow(0);  // expand the scope (ref 1)
+  keep.ToggleRow(0);
   (void)keep.ApplyVariables(1,
                       {codec::DapVariable{.name = "n", .value = "5", .type = "int"},
                        codec::DapVariable{.name = "pt",
@@ -1573,14 +1343,13 @@ void TestDebugVariablesPagingAndErrors() {
                                           .variables_reference = 9,
                                           .named_variables = 2}},
                       0);
-  keep.ToggleRow(2);  // expand "pt" (ref 9)
+  keep.ToggleRow(2);
   (void)keep.ApplyVariables(9,
                       {codec::DapVariable{.name = "x", .value = "1", .type = "int"},
                        codec::DapVariable{.name = "y", .value = "2", .type = "int"}},
                       0);
   Expect(keep.Rows().size() == 5, "Locals > {n, pt > {x, y}} is fully expanded");
 
-  // Next stop: same names, brand-new references (gdb reassigns them).
   const std::vector<DebugValueTree::ChildFetch> restore = keep.ApplyScopes(
       {codec::DapScope{.name = "Registers", .variables_reference = 100, .named_variables = 2}});
   Expect(restore.size() == 1 && restore[0].reference == 100,
@@ -1604,18 +1373,11 @@ void TestDebugVariablesPagingAndErrors() {
          "after the stop the tree is restored to Locals > {n, pt > {x, y}}");
 }
 
-// A gdb adapter must clamp value formatting on `initialized` (before the program
-// runs) so the first expand of an uninitialized/garbage STL container cannot drive
-// gdb into unbounded formatting (the host-freeze signature). The limits ride DAP
-// `evaluate` "repl" commands with the safe values and, critically, NO frameId — a
-// present frameId:0 pre-launch makes gdb's DAP error "list index out of range" and
-// the limits would silently never apply. A non-gdb adapter must send none.
 void TestGdbAdapterClampsValueFormatting() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
 
-  // gdb-flavored adapter: the limit commands must be on the wire with safe values.
   {
     DapManager manager;
     manager.RegisterAdapter("gdb-mock", platform::LocalProcessLauncher(), GdbFlavoredAdapterCommand(server_path, "no_config_done"));
@@ -1645,7 +1407,6 @@ void TestGdbAdapterClampsValueFormatting() {
     manager.ShutdownAll();
   }
 
-  // Non-gdb adapter: no value-limit commands at all.
   {
     DapManager manager;
     manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "no_config_done"));
@@ -1667,9 +1428,6 @@ void TestGdbAdapterClampsValueFormatting() {
   }
 }
 
-// Pure DebugWatchModel behavior (no adapter): persistent expression list +
-// transient evaluated tree, placeholder roots, lazy expand, edit/remove,
-// ExpressionIndexForRow, and ClearResults keeping the expressions.
 void TestDebugWatchModelBehavior() {
   DebugWatchModel model;
   Expect(!model.HasExpressions() && model.Rows().empty(), "an empty watch model has no rows");
@@ -1684,7 +1442,6 @@ void TestDebugWatchModelBehavior() {
   Expect(model.Rows()[0].editable && !model.Rows()[0].has_children,
          "an unevaluated scalar root is editable and not yet expandable");
 
-  // Fold async evaluate results onto the roots by index.
   model.ApplyEvaluate(
       0, codec::DapEvaluateResult{.result = "42", .type = "int", .variables_reference = 0});
   model.ApplyEvaluate(
@@ -1695,7 +1452,6 @@ void TestDebugWatchModelBehavior() {
   Expect(model.ExpressionIndexForRow(0) == std::optional<std::size_t>(0),
          "row 0 maps back to expression 0");
 
-  // Expand the structured watch root via the shared tree machinery.
   Expect(model.ToggleRow(1).reference == 900,
          "expanding a structured root returns its reference to fetch");
   const auto scalar_child_cascade = model.ApplyVariables(
@@ -1705,7 +1461,6 @@ void TestDebugWatchModelBehavior() {
   Expect(model.Rows().size() == 3 && model.Rows()[2].depth == 1, "the child folds at depth 1");
   Expect(!model.ExpressionIndexForRow(2).has_value(), "a child row is not an expression root");
 
-  // Edit rebuilds placeholder roots (dropping stale results); remove drops by index.
   model.EditExpression(0, "x + 1");
   Expect(model.Expressions()[0] == "x + 1", "EditExpression updates the string");
   Expect(model.Rows().size() == 2 && model.Rows()[0].display_value.empty(),
@@ -1716,7 +1471,6 @@ void TestDebugWatchModelBehavior() {
   model.EditExpression(0, "");
   Expect(model.Expressions().empty(), "editing an expression to empty removes it");
 
-  // SetExpressions (persistence restore) + ClearResults keeps the expressions.
   model.SetExpressions({"a", "b"});
   Expect(model.Expressions().size() == 2 && model.Rows().size() == 2,
          "SetExpressions rebuilds one root per restored expression");
@@ -1727,11 +1481,6 @@ void TestDebugWatchModelBehavior() {
          "ClearResults blanks evaluated values but keeps the placeholder rows");
 }
 
-// Regression (TD-2026-07-17A-050): the placeholder-rebuild freshness flag that
-// DebugService::EvaluateWatches uses to avoid a redundant second BeginEvaluation
-// per watch mutation. A mutation (add/edit/set) and ClearResults/BeginEvaluation
-// all leave the tree pristine (needs_placeholder_rebuild == false); folding a
-// value in flips it true so the next evaluation pass rebuilds exactly once.
 void TestDebugWatchModelPlaceholderRebuildFreshness() {
   DebugWatchModel model;
   Expect(!model.NeedsPlaceholderRebuild(), "a fresh model needs no rebuild");
@@ -1757,30 +1506,22 @@ void TestDebugWatchModelPlaceholderRebuildFreshness() {
   Expect(!model.NeedsPlaceholderRebuild(), "ClearResults leaves a pristine tree");
 }
 
-// Regression: a hostile/broken adapter can return a deeply nested one-child tree.
-// EraseSubtree must not recurse per level (stack overflow); the iterative walk
-// tears the whole chain down without growing the C++ stack.
 void TestDebugValueTreeDeepSubtreeEraseDoesNotOverflow() {
   DebugValueTree tree;
-  tree.AddRoot("root", "{...}", "T", /*variables_reference=*/1, /*is_scope=*/false);
+  tree.AddRoot("root", "{...}", "T", 1, false);
   int ref = 1;
-  constexpr int kDepth = 40000;  // far beyond any real debuggee; overflows if recursive
+  constexpr int kDepth = 40000;
   for (int d = 0; d < kDepth; ++d) {
     const int child_ref = ref + 1;
     tree.ApplyVariables(
         ref, {codec::DapVariable{.name = "c", .variables_reference = child_ref}}, 0);
     ref = child_ref;
   }
-  // Replacing root's first page erases the entire deep child chain via EraseSubtree.
-  // The point is that this completes without overflowing the stack.
   tree.ApplyVariables(1, {codec::DapVariable{.name = "fresh", .variables_reference = 0}}, 0);
   tree.Rebuild();
-  // Root is collapsed, so only its own row is flattened; the deep chain is gone.
   Expect(tree.Rows().size() == 1, "the deep subtree erase completed and left only the collapsed root");
 }
 
-// Watch expressions are re-evaluated on every stop, so the list and each string
-// are capped. A paste/control flood must not grow the list without bound.
 void TestDebugWatchModelCapsExpressions() {
   DebugWatchModel model;
   for (int i = 0; i < 1000; ++i) {
@@ -1797,17 +1538,12 @@ void TestDebugWatchModelCapsExpressions() {
   Expect(model.Expressions()[0].size() == 4096, "an over-long expression is truncated");
 }
 
-// Regression: DebugWatchModel::ApplyVariables must RETURN the cascade fetches produced
-// when a freshly-attached child auto-expands (its path was remembered), and the service
-// must issue them. The old service code discarded the return, so a nested watch child
-// re-attached after a re-evaluation sat on the "loading…" placeholder forever.
 void TestDebugWatchNestedChildCascadeFetchIsReturned() {
   DebugWatchModel model;
   model.AddExpression("obj");
   model.ApplyEvaluate(
       0, codec::DapEvaluateResult{.result = "{...}", .type = "Obj", .variables_reference = 900});
 
-  // Expand obj, then expand its structured child `inner` — recording the nested path.
   Expect(model.ToggleRow(0).reference == 900, "expanding obj returns its fetch reference");
   const auto obj_cascade = model.ApplyVariables(
       900, {codec::DapVariable{.name = "inner", .value = "{...}", .variables_reference = 901}}, 0);
@@ -1818,9 +1554,6 @@ void TestDebugWatchNestedChildCascadeFetchIsReturned() {
       901, {codec::DapVariable{.name = "leaf", .value = "7", .variables_reference = 0}}, 0);
   Expect(inner_cascade.empty(), "a scalar leaf cascades nothing");
 
-  // Re-apply obj's children as a re-evaluation would (fresh reference for the remembered
-  // `inner`): inner must auto-expand and its fetch must be RETURNED for the service to
-  // issue. Dropping it (the old bug) stranded inner on "loading…".
   const auto re_cascade = model.ApplyVariables(
       900, {codec::DapVariable{.name = "inner", .value = "{...}", .variables_reference = 921}}, 0);
   bool has_inner_fetch = false;
@@ -1834,8 +1567,6 @@ void TestDebugWatchNestedChildCascadeFetchIsReturned() {
          "nested child so the service can issue it");
 }
 
-// Restart via the DAP `restart` request: the adapter re-runs its handshake and
-// re-stops; the session re-sends configurationDone and reports a second stop.
 void TestDebugSessionRestartViaRestartRequest() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -1864,15 +1595,13 @@ void TestDebugSessionRestartViaRestartRequest() {
   manager.ShutdownAll();
 }
 
-// A session whose adapter lacks supportsRestartRequest performs no in-place
-// restart (the service layer terminates + relaunches instead).
 void TestDebugSessionRestartNoOpWithoutCapability() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "stop"));  // no restart cap
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "stop"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -1884,7 +1613,6 @@ void TestDebugSessionRestartNoOpWithoutCapability() {
   Expect(!session->Client().Capabilities().supports_restart_request,
          "stop-mode adapter does not advertise supportsRestartRequest");
   session->Restart();
-  // Give any erroneous restart a chance to surface, then confirm none was sent.
   (void)PollStaysFalse(
       manager, [&]() { return captured.output.find("cmd:restart") != std::string::npos; },
       std::chrono::milliseconds(200));
@@ -1893,8 +1621,6 @@ void TestDebugSessionRestartNoOpWithoutCapability() {
   manager.ShutdownAll();
 }
 
-// Multi-thread: on stop the session caches the full thread list via `threads`,
-// and SwitchThread re-resolves the picked thread's frames (observably different).
 void TestDebugSessionThreadsCachedAndSwitch() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -1909,7 +1635,6 @@ void TestDebugSessionThreadsCachedAndSwitch() {
   config.request = "launch";
   Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
   Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }), "adapter should stop");
-  // The thread list lands a beat after the stop (a second `threads` request).
   Expect(PollUntil(manager, [&]() { return captured.last_threads.size() == 2; }),
          "the session should cache the adapter's full thread list on stop");
   Expect(captured.last_threads[0].name == "main" && captured.last_threads[1].name == "worker",
@@ -1917,7 +1642,6 @@ void TestDebugSessionThreadsCachedAndSwitch() {
   Expect(captured.last_frames.size() == 2 && captured.last_frames[0].name == "main",
          "the initial stop resolves thread 1's frames");
 
-  // Switch to thread 2 → its frames re-resolve (top frame name differs).
   manager.ActiveSession()->SwitchThread(2);
   Expect(PollUntil(manager,
                    [&]() {
@@ -1928,10 +1652,6 @@ void TestDebugSessionThreadsCachedAndSwitch() {
   manager.ShutdownAll();
 }
 
-// A `thread` event (a thread started/exited mid-run) refreshes the cached thread
-// list, so the Call Stack thread selector stays current between stops. The adapter
-// reports a single thread at the stop, then announces a worker via a `thread`
-// event; the host must fetch the list a second time and grow it to two.
 void TestDebugSessionThreadEventRefreshesThreadList() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -1946,8 +1666,6 @@ void TestDebugSessionThreadEventRefreshesThreadList() {
   config.request = "launch";
   Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
   Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }), "adapter should stop");
-  // First fetch (from the stop) sees one thread; the `thread` event then drives a
-  // second fetch that adds the worker. Reaching two proves the event refreshed it.
   Expect(PollUntil(manager, [&]() { return captured.last_threads.size() == 2; }),
          "a thread event should refresh the cached thread list");
   Expect(captured.last_threads[1].id == 2 && captured.last_threads[1].name == "worker",
@@ -1955,9 +1673,6 @@ void TestDebugSessionThreadEventRefreshesThreadList() {
   manager.ShutdownAll();
 }
 
-// Exception filters: the adapter advertises filters at initialize; the session
-// surfaces them and sends the enabled ids via setExceptionBreakpoints on launch;
-// a live re-send reflects a toggle.
 void TestDebugSessionExceptionFiltersSentOnLaunchAndToggle() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -1968,8 +1683,6 @@ void TestDebugSessionExceptionFiltersSentOnLaunchAndToggle() {
 
   CapturedSession captured;
   DebugSession::Callbacks callbacks = MakeCallbacks(captured);
-  // The host's enabled-filter set (intersected with advertised filters by the
-  // session). "bogus" must be filtered out; only "raised" should reach the wire.
   std::vector<std::string> enabled = {"raised", "bogus"};
   callbacks.exception_filter_provider = [&enabled]() {
     std::vector<microide::workspace::ExceptionFilterRequest> requests;
@@ -1992,7 +1705,6 @@ void TestDebugSessionExceptionFiltersSentOnLaunchAndToggle() {
   Expect(captured.output.find("exc:raised\n") != std::string::npos,
          "only advertised enabled ids should be sent via setExceptionBreakpoints");
 
-  // Toggle: enable both, live re-send.
   enabled = {"raised", "uncaught"};
   manager.ActiveSession()->ResendExceptionFilters();
   Expect(PollUntil(manager,
@@ -2001,14 +1713,6 @@ void TestDebugSessionExceptionFiltersSentOnLaunchAndToggle() {
   manager.ShutdownAll();
 }
 
-// Pure DebugBreakpointsModel behavior (no adapter): default seeding, toggle,
-// EnabledAdvertisedIds intersection, and Rebuild's prebuilt rows.
-// DAP has two unverified states and they mean opposite things to a user.
-// `reason: "pending"` is "might be verified in the future" — gdb answers a
-// setBreakpoints sent BEFORE launch that way, and the breakpoint then binds and
-// hits. `reason: "failed"` is "cannot be verified without intervention". Marking
-// both as failed painted every pre-launch gdb breakpoint in the warning tint
-// while it worked perfectly.
 void TestDebugBreakpointsModelPendingIsNotFailed() {
   using microide::workspace::DebugBreakpointsModel;
   using microide::workspace::DebugBreakpointRowView;
@@ -2019,14 +1723,6 @@ void TestDebugBreakpointsModelPendingIsNotFailed() {
   store.Set(path, 7);
   editor::FunctionBreakpointStore function_store;
 
-  // Exactly what gdb 17.2 reports for a pre-launch setBreakpoints (the `reason`
-  // field, which DapProtocol maps onto `message`), plus a genuine failure.
-  // NOTE the line bases differ: VerifiedBreakpoint::line is 1-BASED (it echoes the
-  // requested DAP line) while Breakpoint::line is 0-based, so verifying the
-  // breakpoints set at 2 and 7 above means sending 3 and 8. Getting this wrong
-  // silently matches nothing, leaves the rows unverified, and makes a
-  // `!row.failed` assertion pass for the wrong reason — which is why the
-  // trailer-text assertions below matter as much as the tint ones.
   store.ApplyVerification(path, {
                                     editor::VerifiedBreakpoint{
                                         .id = 1, .verified = false, .line = 3,
@@ -2063,10 +1759,6 @@ void TestDebugBreakpointsModelPendingIsNotFailed() {
   Expect(saw_pending && saw_failed, "both breakpoint rows should be present");
 }
 
-// TD-2026-08-06-159: Rebuild reuses its row objects instead of freeing and
-// reallocating four strings and a filesystem::path per row. Reusing storage is
-// exactly how a stale field survives into a row that should not have it, so what
-// a SHRINKING rebuild produces is the thing worth asserting.
 void TestDebugBreakpointsModelRebuildReusesRows() {
   using microide::workspace::DebugBreakpointsModel;
   using microide::workspace::DebugBreakpointRowView;
@@ -2087,9 +1779,6 @@ void TestDebugBreakpointsModelRebuildReusesRows() {
   const std::size_t wide_rows = model.RowCount();
   Expect(wide_rows == 1 + 1 + 1 + 12, "one function header+row, one breakpoint header, 12 rows");
 
-  // Shrink: beta.cpp goes away entirely, and alpha's conditioned breakpoint loses
-  // its condition. A reused row must show neither the dropped file's path nor the
-  // dropped condition's trailer.
   store.ClearFile(b);
   store.SetCondition(a, 3, std::nullopt);
   model.Rebuild(store, functions);
@@ -2105,7 +1794,6 @@ void TestDebugBreakpointsModelRebuildReusesRows() {
            "a reused row must not keep the trailer of whatever occupied it before");
   }
 
-  // Grow back: the rows that return must be fully rebuilt, not half-populated.
   for (std::size_t line = 0; line < 6; ++line) {
     store.Set(b, line);
   }
@@ -2121,13 +1809,6 @@ void TestDebugBreakpointsModelRebuildReusesRows() {
   }
   Expect(beta_rows == 6, "every beta breakpoint comes back");
 
-  // `path` is the one field carried ACROSS the row reset (copy-assigning a
-  // filesystem::path is real work per row, and every breakpoint in a file wants
-  // the same value), so the row kinds that have no navigation target must clear it
-  // explicitly. Shifting the sections re-uses positions that held Breakpoint rows
-  // for headers and function rows, which is exactly where an inherited path would
-  // show up — and a non-empty path on such a row is not cosmetic: the pane's click
-  // and context-menu handlers key on `!row.path.empty()`.
   for (int i = 0; i < 8; ++i) {
     functions.Add("fn_" + std::to_string(i));
   }
@@ -2151,7 +1832,6 @@ void TestDebugBreakpointsModelBehavior() {
       codec::DapExceptionFilter{.filter = "raised", .label = "Raised", .default_enabled = false},
       codec::DapExceptionFilter{.filter = "uncaught", .label = "Uncaught", .default_enabled = true},
   };
-  // First advertise seeds defaults (only "uncaught" is default-on).
   Expect(model.SetAdvertisedFilters(filters), "first advertise seeds defaults (a change)");
   Expect(model.Seeded(), "the model records that defaults were seeded");
   Expect(model.IsEnabled("uncaught") && !model.IsEnabled("raised"),
@@ -2159,16 +1839,13 @@ void TestDebugBreakpointsModelBehavior() {
   Expect((model.EnabledAdvertisedIds() == std::vector<std::string>{"uncaught"}),
          "EnabledAdvertisedIds returns only enabled advertised ids in advertised order");
 
-  // Re-advertising does not re-seed (a user's choice persists).
   Expect(!model.SetAdvertisedFilters(filters), "re-advertise after seeding is not a change");
 
-  // Toggle raised on; an unknown id is a no-op.
   Expect(model.ToggleFilter("raised"), "toggling an advertised filter changes the set");
   Expect(!model.ToggleFilter("nope"), "toggling an unadvertised filter is a no-op");
   Expect((model.EnabledAdvertisedIds() == std::vector<std::string>{"raised", "uncaught"}),
          "both filters are now enabled, in advertised order");
 
-  // Rebuild rows: a header + one row per filter, then a breakpoints section.
   editor::BreakpointStore store;
   store.Set("/proj/a.py", 4);
   store.SetCondition("/proj/a.py", 9, "i > 3");
@@ -2203,9 +1880,6 @@ void TestDebugManagerRejectsUnknownAdapterType() {
   Expect(manager.ActiveSession() == nullptr, "no session should be created for an unknown type");
 }
 
-// LSP/DAP command lines carry private paths and one-shot credentials, so the
-// summary that goes into a spawn-failure error must show only the basename and an
-// argument count — never the full argv (which would leak a --token=… secret).
 void TestSummarizeCommandForErrorRedactsArgs() {
   using microide::workspace::SummarizeCommandForError;
   const std::string summary =
@@ -2229,8 +1903,6 @@ void TestDebugManagerRetainAdaptersDropsStaleTypes() {
   Expect(manager.HasAdapter("b"), "retained adapter 'b' should survive reconcile");
 }
 
-// AdapterDetails surfaces each adapter's type + spawn command for the control
-// channel's `adapters` query (so a headless driver sees what runs).
 void TestDebugManagerAdapterDetailsCarryCommand() {
   DapManager manager;
   manager.RegisterAdapter("gdb", platform::LocalProcessLauncher(), {"gdb", "--interpreter=dap"});
@@ -2241,10 +1913,6 @@ void TestDebugManagerAdapterDetailsCarryCommand() {
          "adapter spawn command should be carried");
 }
 
-// Pure DebugExecutionView: the Call Stack panel lays out optional session +
-// thread selectors above the frame list. PanelRowAt/PanelRowCount must dispatch
-// sessions → threads → frames, and Clear() must preserve the session selector
-// (sourced from DapManager) while dropping the stop-scoped state.
 void TestDebugExecutionViewPanelRowDispatch() {
   using microide::workspace::DebugExecutionView;
   using Kind = DebugExecutionView::PanelRowRef::Kind;
@@ -2264,13 +1932,11 @@ void TestDebugExecutionViewPanelRowDispatch() {
   Expect(view.PanelRowAt(4).kind == Kind::Frame && view.PanelRowAt(4).index == 0, "row 4 = frame 0");
   Expect(view.PanelRowAt(5).kind == Kind::Frame && view.PanelRowAt(5).index == 1, "row 5 = frame 1");
 
-  // A single session shows no session selector; the rows shift up.
   view.sessions = {{1, "only", false}};
   Expect(!view.HasSessionSelector(), "one session hides the selector");
   Expect(view.PanelRowCount() == 4, "no session rows: 2 threads + 2 frames");
   Expect(view.PanelRowAt(0).kind == Kind::Thread, "row 0 is now the first thread");
 
-  // Clear() keeps the session selector but drops the stop-scoped state.
   view.sessions = {{1, "a", false}, {2, "b", false}};
   view.focused_session_id = 2;
   view.Clear();
@@ -2280,10 +1946,6 @@ void TestDebugExecutionViewPanelRowDispatch() {
          "Clear drops the stop-scoped frames/threads/state");
 }
 
-// Two concurrent sessions against the real mock adapter: distinct ids, both reach
-// a stop, Sessions() exposes id/name/state/attention, the active session switches
-// and Reactivate re-projects, and stopping the active session prunes it so the
-// active advances — down to an empty manager.
 void TestDebugManagerMultipleConcurrentSessions() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -2329,7 +1991,7 @@ void TestDebugManagerMultipleConcurrentSessions() {
   Expect(PollUntil(manager, [&]() { return cap_a.stop_count > before; }),
          "Reactivate re-resolves the stack and re-fires on_stopped");
 
-  manager.StopActiveSession();  // stops id_a
+  manager.StopActiveSession();
   Expect(PollUntil(manager,
                    [&]() {
                      manager.PruneTerminated();
@@ -2338,7 +2000,7 @@ void TestDebugManagerMultipleConcurrentSessions() {
          "the stopped active session is pruned once its adapter terminates");
   Expect(manager.ActiveSessionId() == id_b, "the active session advances to the survivor");
 
-  manager.StopActiveSession();  // stops id_b
+  manager.StopActiveSession();
   Expect(PollUntil(manager,
                    [&]() {
                      manager.PruneTerminated();
@@ -2349,9 +2011,6 @@ void TestDebugManagerMultipleConcurrentSessions() {
   manager.ShutdownAll();
 }
 
-// The restart terminate+relaunch fallback replaces the active session in place:
-// the session set stays size 1 (no second row) and the replacement is active with
-// a fresh id.
 void TestDebugManagerReplaceActiveSession() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -2376,9 +2035,6 @@ void TestDebugManagerReplaceActiveSession() {
   manager.ShutdownAll();
 }
 
-// "Stop All Sessions" (Phase 10): BeginShutdownAll + ShutdownAll tears down every
-// live session at once; the subsequent prune empties the manager. This is the
-// manager path DebugService::StopAllDebugging wraps.
 void TestDebugManagerStopAllSessions() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -2399,7 +2055,7 @@ void TestDebugManagerStopAllSessions() {
          "both sessions reach a stop");
 
   manager.BeginShutdownAll();
-  manager.ShutdownAll();  // blocks until both adapter I/O threads join
+  manager.ShutdownAll();
   Expect(PollUntil(manager,
                    [&]() {
                      manager.PruneTerminated();
@@ -2409,11 +2065,6 @@ void TestDebugManagerStopAllSessions() {
   Expect(manager.ActiveSessionId() == 0, "no active session id remains after Stop All");
 }
 
-// Two-phase stop reporting at the DebugService level: notify_stop_began must fire
-// once with the real reason/thread BEFORE frames resolve, and notify_stop_resolved
-// must fire once AFTER ProjectStop populates the execution view. Regression for the
-// empty/late control-channel `stopped` event (the immediate phase let a headless
-// agent learn of the halt while a slow adapter still resolved the stack).
 void TestDebugServiceTwoPhaseStopReporting() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -2428,8 +2079,8 @@ void TestDebugServiceTwoPhaseStopReporting() {
     int resolved = 0;
     std::string began_reason;
     int began_thread = 0;
-    bool stopped_at_began = true;       // sentinel: should read false (not yet resolved)
-    std::size_t frames_at_began = 99;   // sentinel: should read 0 (not yet resolved)
+    bool stopped_at_began = true;
+    std::size_t frames_at_began = 99;
     bool stopped_at_resolved = false;
     std::size_t frames_at_resolved = 0;
     int order_began = 0;
@@ -2486,9 +2137,6 @@ void TestDebugServiceTwoPhaseStopReporting() {
   service.StopAllDebugging();
 }
 
-// Multi-session: a background session's stop must NOT drive the shared immediate
-// broadcast — notify_stop_began fires for the active session only (mirrors the
-// active-session guard the shared thread/stop selector already enforces).
 void TestDebugServiceBackgroundStopDoesNotBroadcast() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -2509,7 +2157,6 @@ void TestDebugServiceBackgroundStopDoesNotBroadcast() {
   config.type = "mock";
   config.request = "launch";
 
-  // Session A starts, stops, and stays parked (active + Stopped).
   config.name = "A";
   Expect(service.StartDebugging(config), "session A should start");
   const int id_a = manager.ActiveSessionId();
@@ -2522,10 +2169,8 @@ void TestDebugServiceBackgroundStopDoesNotBroadcast() {
     }
   }
   Expect(service.SessionState() == DebugSession::State::Stopped, "session A is parked at a stop");
-  began = 0;  // ignore A's (active) immediate broadcast; isolate B's behavior.
+  began = 0;
 
-  // Session B starts (active on launch); immediately re-focus A so A stays the
-  // active/parked session and B's incoming stop drains as a background stop.
   config.name = "B";
   Expect(service.StartDebugging(config), "session B should start");
   const int id_b = manager.ActiveSessionId();
@@ -2550,11 +2195,6 @@ void TestDebugServiceBackgroundStopDoesNotBroadcast() {
   service.StopAllDebugging();
 }
 
-// QA dbg-breakpoint-kinds: a program that ran to its end took its debug console
-// with it -- the clean-exit prune dropped the channel the same frame, so its
-// output and every logpoint line vanished as the program finished. The console
-// stays (marked as ended) until the next session starts, as VS Code's does; the
-// next start drops it, so dead consoles still do not pile up.
 void TestDebugConsoleOutlivesItsSessionUntilTheNext() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -2594,9 +2234,6 @@ void TestDebugConsoleOutlivesItsSessionUntilTheNext() {
   service.StopAllDebugging();
 }
 
-// Phase A defense-in-depth: node ids stay globally monotonic across the tree
-// rebuilds a frame switch / stop triggers, so a stale async response can never
-// alias a freshly-created node that would otherwise have reused the same id.
 void TestDebugValueTreeNodeIdsAreMonotonic() {
   DebugVariablesModel model;
   model.BeginFrame(1);
@@ -2604,7 +2241,6 @@ void TestDebugValueTreeNodeIdsAreMonotonic() {
   Expect(!model.Rows().empty(), "first frame builds a scope row");
   const std::uint32_t first_id = model.Rows()[0].node_id;
 
-  // A new frame Clears + rebuilds the tree. Ids must not restart at 1.
   model.BeginFrame(2);
   model.ApplyScopes({codec::DapScope{.name = "Arguments", .variables_reference = 1000}});
   Expect(!model.Rows().empty(), "second frame builds a scope row");
@@ -2612,15 +2248,10 @@ void TestDebugValueTreeNodeIdsAreMonotonic() {
   Expect(second_id > first_id, "node ids stay globally monotonic across rebuilds");
 }
 
-// A large indexed container (here 950 elements) must stream in bounded pages, not
-// in one shot — the bound is what stops a garbage/uninitialized container that
-// reports billions of elements from freezing the host. Walk the full paging
-// sequence and assert every fetch is bounded and the final page clamps to the
-// remainder.
 void TestDebugValueTreePagingBoundaries() {
   DebugValueTree tree;
-  tree.AddRoot("arr", "[950]", "int[950]", /*variables_reference=*/2000, /*is_scope=*/false,
-               /*total_count=*/950, /*total_known=*/true);
+  tree.AddRoot("arr", "[950]", "int[950]", 2000, false,
+               950, true);
   tree.Rebuild();
 
   DebugValueTree::ChildFetch fetch = tree.ToggleRow(0);
@@ -2661,16 +2292,11 @@ void TestDebugValueTreePagingBoundaries() {
   Expect(!tree.Rows().back().is_show_more, "no show-more affordance once fully paged");
 }
 
-// Variables references are not stable across stops, so expansion is tracked by
-// node path (the root→node name chain). A deep expansion (scope → struct → leaf)
-// must be restored on the next stop even though every reference is renumbered,
-// cascading down as each newly-attached child arrives.
 void TestDebugValueTreeDeepNestingRestoreAcrossStops() {
   DebugValueTree tree;
 
-  // Stop 1: expand Locals → its child struct `node` → reveal `leaf`.
-  tree.AddRoot("Locals", /*value=*/{}, /*type=*/{}, /*variables_reference=*/1000, /*is_scope=*/true,
-               /*total_count=*/1, /*total_known=*/true);
+  tree.AddRoot("Locals", {}, {}, 1000, true,
+               1, true);
   tree.Rebuild();
   Expect(tree.ToggleRow(0).reference == 1000, "expanding Locals fetches its scope ref");
   codec::DapVariable node;
@@ -2680,7 +2306,6 @@ void TestDebugValueTreeDeepNestingRestoreAcrossStops() {
   node.named_variables = 1;
   node.count_reported = true;
   tree.ApplyVariables(1000, {node}, 0);
-  // Find and expand `node`.
   std::size_t node_row = 0;
   for (std::size_t r = 0; r < tree.Rows().size(); ++r) {
     if (tree.Rows()[r].display_name == "node") {
@@ -2695,18 +2320,14 @@ void TestDebugValueTreeDeepNestingRestoreAcrossStops() {
   tree.ApplyVariables(1001, {leaf}, 0);
   Expect(tree.Rows().size() == 3, "Locals + node + leaf flatten to three rows");
 
-  // Stop 2: every reference is renumbered. Re-install the scope root with a fresh
-  // ref and restore the open tree by path.
   tree.ClearRoots();
-  tree.AddRoot("Locals", {}, {}, /*variables_reference=*/2000, /*is_scope=*/true,
-               /*total_count=*/1, /*total_known=*/true);
+  tree.AddRoot("Locals", {}, {}, 2000, true,
+               1, true);
   const std::vector<DebugValueTree::ChildFetch> restore = tree.RestoreExpandedRoots();
   tree.Rebuild();
   Expect(restore.size() == 1 && restore[0].reference == 2000,
          "the previously-expanded Locals scope re-expands against its new ref");
 
-  // The struct child comes back with a renumbered ref; the cascade must request it
-  // because the path Locals→node was open before the stop.
   codec::DapVariable node2;
   node2.name = "node";
   node2.value = "{...}";
@@ -2718,19 +2339,13 @@ void TestDebugValueTreeDeepNestingRestoreAcrossStops() {
          "nested expansion cascades to the renumbered struct ref by path tracking");
 }
 
-// Regression: two siblings that share a display name (array pages, maps with
-// repeated labels) must expand/collapse independently and restore independently
-// across a stop. The path key qualifies each segment with the sibling ordinal so
-// the two never collide; this also guards the O(1) cached-ordinal path (a wrong
-// cached ordinal would swap or merge the two siblings' expansion state).
 void TestDebugValueTreeSameNamedSiblingsExpandIndependently() {
   DebugValueTree tree;
-  tree.AddRoot("Locals", /*value=*/{}, /*type=*/{}, /*variables_reference=*/1000,
-               /*is_scope=*/true, /*total_count=*/2, /*total_known=*/true);
+  tree.AddRoot("Locals", {}, {}, 1000,
+               true, 2, true);
   tree.Rebuild();
   Expect(tree.ToggleRow(0).reference == 1000, "expanding Locals fetches its scope ref");
 
-  // Two children that share the name "item", each an expandable container.
   codec::DapVariable a;
   a.name = "item";
   a.value = "A";
@@ -2748,7 +2363,6 @@ void TestDebugValueTreeSameNamedSiblingsExpandIndependently() {
   Expect(tree.Rows()[1].display_name == "item" && tree.Rows()[2].display_name == "item",
          "both siblings share the display name");
 
-  // Expand ONLY the first "item". A colliding key would also expand the second.
   Expect(tree.ToggleRow(1).reference == 1001, "expanding the first item fetches its own ref");
   codec::DapVariable leaf;
   leaf.name = "leaf";
@@ -2760,11 +2374,9 @@ void TestDebugValueTreeSameNamedSiblingsExpandIndependently() {
   Expect(tree.Rows()[2].display_name == "leaf" && tree.Rows()[2].depth == 2,
          "the first sibling's child interleaves before the second sibling");
 
-  // Across a stop (refs renumbered), only the FIRST sibling re-expands — the
-  // ordinal in the path key keeps the two apart.
   tree.ClearRoots();
-  tree.AddRoot("Locals", {}, {}, /*variables_reference=*/2000, /*is_scope=*/true,
-               /*total_count=*/2, /*total_known=*/true);
+  tree.AddRoot("Locals", {}, {}, 2000, true,
+               2, true);
   tree.RestoreExpandedRoots();
   tree.Rebuild();
   codec::DapVariable a2 = a;
@@ -2776,9 +2388,6 @@ void TestDebugValueTreeSameNamedSiblingsExpandIndependently() {
          "only the first same-named sibling re-expands by its ordinal-qualified path");
 }
 
-// Phase C / Finding 1: an adapter that reaches Running and then exits WITHOUT a
-// DAP terminated/exited event must be reconciled to a terminal state and pruned,
-// not left as a zombie session forever.
 void TestDebugSessionReconciledWhenAdapterDiesSilently() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -2793,7 +2402,6 @@ void TestDebugSessionReconciledWhenAdapterDiesSilently() {
   config.request = "launch";
   Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
 
-  // The adapter acknowledges launch (reaching Running) then exits silently.
   Expect(PollUntil(manager,
                    [&]() {
                      const DebugSession* s = manager.ActiveSession();
@@ -2801,22 +2409,16 @@ void TestDebugSessionReconciledWhenAdapterDiesSilently() {
                    }),
          "adapter process should exit after reaching Running");
 
-  // With no terminated event and no pending requests, nothing has moved the session
-  // terminal: PruneTerminated alone would leave it forever.
   Expect(manager.PruneTerminated().empty(), "a non-terminal session is not prunable on its own");
   const DebugSession* before = manager.ActiveSession();
   Expect(before != nullptr && before->CurrentState() != DebugSession::State::Terminated &&
              before->CurrentState() != DebugSession::State::Failed,
          "the dead-but-unreconciled session is still non-terminal");
 
-  // Reconciliation transitions it to Failed (no stop was requested), then it prunes.
   Expect(manager.ReapExitedSessions(), "ReapExitedSessions should transition the dead session");
   const DebugSession* after = manager.ActiveSession();
   Expect(after != nullptr && after->CurrentState() == DebugSession::State::Failed,
          "a silently-dead adapter session becomes Failed");
-  // The terminal transition must fire on_terminated so a push observer (the control
-  // channel) emits `terminated` even though the adapter never sent a DAP terminated
-  // event. `failed` + a non-empty reason distinguish the crash from a clean exit.
   Expect(captured.got_terminated_callback,
          "on_terminated fires when the adapter dies without a DAP terminated event");
   Expect(captured.terminated_failed, "a silent adapter death reports failed=true");
@@ -2830,9 +2432,6 @@ void TestDebugSessionReconciledWhenAdapterDiesSilently() {
   Expect(manager.SessionCount() == 0, "no zombie session remains");
 }
 
-// Function breakpoints reach the wire (mock adapter): installed after setBreakpoints
-// and before configurationDone (the gdb launch order), with verification reflected
-// back into a FunctionBreakpointStore by requested name.
 void TestDebugSessionFunctionBreakpointsSentOnLaunch() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -2846,7 +2445,6 @@ void TestDebugSessionFunctionBreakpointsSentOnLaunch() {
   fn_store.Add("compute");
   fn_store.SetCondition(1, "n > 0");
 
-  // A line breakpoint too, so the full ordering (setBreakpoints first) is observable.
   editor::BreakpointStore line_store;
   line_store.Set("/proj/main.c", 9);
 
@@ -2875,7 +2473,6 @@ void TestDebugSessionFunctionBreakpointsSentOnLaunch() {
          "both function breakpoints should reach the wire by name");
   Expect(captured.output.find("fncond:,n > 0\n") != std::string::npos,
          "the per-breakpoint condition rides along (empty for the first)");
-  // Ordering: setBreakpoints, then setFunctionBreakpoints, then configurationDone.
   const std::string& out = captured.output;
   const std::size_t commands_pos = out.find("commands:");
   Expect(commands_pos != std::string::npos, "the adapter echoes its received command order");
@@ -2892,8 +2489,6 @@ void TestDebugSessionFunctionBreakpointsSentOnLaunch() {
   manager.ShutdownAll();
 }
 
-// Exception-filter conditions reach the wire as filterOptions when the adapter
-// advertises supportsExceptionFilterOptions + the filter advertises supportsCondition.
 void TestDebugSessionExceptionFilterConditionsSent() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -2923,8 +2518,6 @@ void TestDebugSessionExceptionFilterConditionsSent() {
   manager.ShutdownAll();
 }
 
-// Pure FunctionBreakpointStore behavior (no adapter): add/dedup/remove/toggle,
-// condition setters, and positional-by-name verification.
 void TestFunctionBreakpointStoreBehavior() {
   editor::FunctionBreakpointStore store;
   Expect(store.Add("main"), "adding a fresh name succeeds");
@@ -2938,8 +2531,6 @@ void TestFunctionBreakpointStoreBehavior() {
          "a condition is stored on the right breakpoint");
   Expect(store.ToggleEnabled(1) && !store.All()[1].enabled, "toggling disables the second");
 
-  // Verification is positional to the requested names, matched by name (not index).
-  // Request in reverse order; results must still land on the right rows.
   std::vector<std::string> requested = {"helper", "main"};
   std::vector<editor::VerifiedFunctionBreakpoint> results = {
       editor::VerifiedFunctionBreakpoint{.id = 7, .verified = false, .message = "pending"},
@@ -2959,17 +2550,14 @@ void TestFunctionBreakpointStoreBehavior() {
   Expect(store.Count() == 1 && store.All()[0].name == "helper", "Remove drops the right row");
 }
 
-// ReplaceAll (persistence restore) dedupes by name and drops empty names. The
-// dedupe now runs through a hash set (O(n)) instead of a per-entry linear scan;
-// this pins the observable behavior (first-writer-wins, order preserved).
 void TestFunctionBreakpointStoreReplaceAllDedupes() {
   editor::FunctionBreakpointStore store;
   std::vector<editor::FunctionBreakpoint> restored = {
       editor::FunctionBreakpoint{.name = "main", .verified = true, .adapter_id = 9},
-      editor::FunctionBreakpoint{.name = ""},       // dropped (empty)
+      editor::FunctionBreakpoint{.name = ""},
       editor::FunctionBreakpoint{.name = "helper"},
-      editor::FunctionBreakpoint{.name = "main"},   // dropped (duplicate)
-      editor::FunctionBreakpoint{.name = "helper"}, // dropped (duplicate)
+      editor::FunctionBreakpoint{.name = "main"},
+      editor::FunctionBreakpoint{.name = "helper"},
       editor::FunctionBreakpoint{.name = "tail"},
   };
   store.ReplaceAll(std::move(restored));
@@ -2981,21 +2569,18 @@ void TestFunctionBreakpointStoreReplaceAllDedupes() {
          "ReplaceAll drops persisted transient verification state");
 }
 
-// Verification with many function breakpoints must still land each result on the
-// row named by its requested name (the name->index map replaces the O(n^2) scan).
 void TestFunctionBreakpointStoreApplyVerificationManyNames() {
   editor::FunctionBreakpointStore store;
   constexpr int kCount = 2000;
   for (int i = 0; i < kCount; ++i) {
     Expect(store.Add("fn_" + std::to_string(i)), "each distinct name adds");
   }
-  // Verify a scattered subset by requested name; results are positional to names.
   std::vector<std::string> requested = {"fn_1999", "fn_0", "fn_1000", "fn_missing"};
   std::vector<editor::VerifiedFunctionBreakpoint> results = {
       editor::VerifiedFunctionBreakpoint{.id = 11, .verified = true},
       editor::VerifiedFunctionBreakpoint{.id = 22, .verified = true},
       editor::VerifiedFunctionBreakpoint{.id = 33, .verified = false, .message = "no code"},
-      editor::VerifiedFunctionBreakpoint{.id = 44, .verified = true},  // name absent: dropped
+      editor::VerifiedFunctionBreakpoint{.id = 44, .verified = true},
   };
   store.ApplyVerification(requested, results);
   const auto find = [&](const std::string& name) -> const editor::FunctionBreakpoint* {
@@ -3010,11 +2595,9 @@ void TestFunctionBreakpointStoreApplyVerificationManyNames() {
   Expect(find("fn_0")->verified && find("fn_0")->adapter_id == 22, "first name verifies");
   Expect(!find("fn_1000")->verified && find("fn_1000")->verify_message == "no code",
          "middle name reflects rejection");
-  // A name not present in the store must not have clobbered any row's adapter id.
   Expect(find("fn_500")->adapter_id == 0, "unrelated rows stay untouched");
 }
 
-// ---- Real gdb 17.x end-to-end (gated; skipped when gdb/gcc are unavailable) ----
 bool GdbDapAvailable() {
   FILE* pipe = ::popen("gdb --version 2>/dev/null", "r");
   if (pipe == nullptr) {
@@ -3036,26 +2619,12 @@ bool CompileWithGcc(const std::filesystem::path& source, const std::filesystem::
   return std::system(command.c_str()) == 0;
 }
 
-// Drive the real gdb 17.x DAP adapter through the production DapManager/DebugSession:
-// install a function breakpoint on `add`, launch a compiled C program, and assert
-// gdb stops inside add() with the breakpoint verified. This exercises the exact
-// launch ordering (launch -> setBreakpoints -> setFunctionBreakpoints ->
-// configurationDone) against the real adapter. Skipped when gdb/gcc are absent.
 void TestGdbRealFunctionBreakpointsE2E() {
   if (!GdbDapAvailable()) {
-    return;  // gated: no gdb on this host
+    return;
   }
   TemporaryDirectory temp_dir;
   const auto source = temp_dir.path() / "prog.c";
-  // The inferior calls add() in a long sleep-loop instead of once. Real gdb binds a
-  // function breakpoint asynchronously: it resumes the inferior on configurationDone
-  // and inserts the breakpoint a beat later, once gdb is scheduled. A program that
-  // calls add() once races that insertion and, under CPU load, runs to exit before
-  // the breakpoint lands (observed: breakpoint reported `verified` yet never hit).
-  // The loop keeps calling add() for far longer than the test's 20 s stop window, so
-  // the inferior never exits first — it waits for the debugger instead of racing it,
-  // making the hit deterministic regardless of host load. ShutdownAll() kills the
-  // still-looping inferior once the breakpoint has been observed.
   WriteFile(source,
             "#include <stdio.h>\n"
             "#include <unistd.h>\n"
@@ -3068,7 +2637,7 @@ void TestGdbRealFunctionBreakpointsE2E() {
             "}\n");
   const auto exe = temp_dir.path() / "prog";
   if (!CompileWithGcc(source, exe)) {
-    return;  // gated: no working gcc
+    return;
   }
 
   DapManager manager;
@@ -3083,13 +2652,6 @@ void TestGdbRealFunctionBreakpointsE2E() {
   {
     util::JsonObject args;
     args["program"] = JsonValue(exe.string());
-    // Deterministic gating: stop at the beginning of main BEFORE the inferior
-    // runs. The old flow resumed the inferior on configurationDone and inserted
-    // the pending function breakpoint "a beat later"; under CPU load gdb could
-    // start the program without ever binding it, so the test needed a bounded
-    // session-level retry to be reliable. Stopping at main first guarantees the
-    // program is loaded and halted while we confirm the breakpoint is bound, so
-    // the subsequent Continue() hits add() every time — no retry, no race.
     args["stopAtBeginningOfMainSubprogram"] = JsonValue(true);
     config.arguments = JsonValue(std::move(args));
   }
@@ -3107,8 +2669,6 @@ void TestGdbRealFunctionBreakpointsE2E() {
         }
         fn_store.ApplyVerification(names, results);
       };
-  // gdb reports a function breakpoint `pending` in the response, then verifies it
-  // via a `breakpoint` event once the inferior binds it — route that to the store.
   callbacks.on_breakpoint_changed = [&fn_store](const std::filesystem::path&,
                                                 const codec::DapBreakpoint& bp) {
     fn_store.ApplyBreakpointEvent(editor::VerifiedFunctionBreakpoint{
@@ -3118,9 +2678,6 @@ void TestGdbRealFunctionBreakpointsE2E() {
   Expect(manager.StartSession(config, std::move(callbacks)),
          "the gdb session should start");
 
-  // First stop: the beginning of main. gdb has loaded the program, so the pending
-  // `add` function breakpoint resolves here. Wait for it to be verified before
-  // resuming so nothing about the hit depends on timing.
   Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }),
          "gdb should stop at the beginning of main");
   const bool stopped_at_add_directly =
@@ -3132,7 +2689,6 @@ void TestGdbRealFunctionBreakpointsE2E() {
 
   bool stopped_in_add = stopped_at_add_directly;
   if (!stopped_in_add) {
-    // Resume from main; the loop calls add() and the now-bound breakpoint fires.
     const int stops_before = captured.stop_count;
     DebugSession* session = manager.ActiveSession();
     Expect(session != nullptr, "the session should be active while stopped at main");
@@ -3146,13 +2702,6 @@ void TestGdbRealFunctionBreakpointsE2E() {
   Expect(stopped_in_add, "gdb should stop inside add() via the function breakpoint");
 }
 
-// E3 regression (through the production DebugService callback wiring against the
-// real project BreakpointStore): the setBreakpoints RESPONSE anchors verification
-// to the line the user REQUESTED (keeping the gutter marker at the user's line),
-// records the adapter id, and DROPS any extra non-requested result rather than
-// applying it by the adapter's line. A later async `breakpoint` event that
-// relocates the breakpoint reconciles by that id and likewise keeps the requested
-// line — so the response and the event agree and the marker never jumps.
 void TestDebugServiceBreakpointVerificationStaysAtRequestedLine() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -3161,7 +2710,6 @@ void TestDebugServiceBreakpointVerificationStaysAtRequestedLine() {
   microide::workspace::WorkspaceContext context;
   context.current_project_state.root = temp_dir.path();
   const std::filesystem::path bp_path = temp_dir.path() / "main.c";
-  // Two breakpoints at 0-based lines 9 and 19 (DAP lines 10 and 20).
   context.current_project_state.breakpoint_store.Set(bp_path, 9);
   context.current_project_state.breakpoint_store.Set(bp_path, 19);
 
@@ -3175,9 +2723,6 @@ void TestDebugServiceBreakpointVerificationStaysAtRequestedLine() {
   config.request = "launch";
   Expect(service.StartDebugging(config), "the session should start");
 
-  // Wait until the setBreakpoints RESPONSE has been applied (both breakpoints
-  // verified). The relocate `breakpoint` event and `terminated` follow it in wire
-  // order, so a short settle after this flushes them deterministically.
   const auto both_verified = [&]() {
     const auto* v = context.current_project_state.breakpoint_store.FindByPath(bp_path);
     if (v == nullptr || v->size() != 2) {
@@ -3191,8 +2736,6 @@ void TestDebugServiceBreakpointVerificationStaysAtRequestedLine() {
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
   Expect(both_verified(), "both breakpoints should verify from the setBreakpoints response");
-  // Flush the async relocate `breakpoint` event (it follows the response) so the
-  // "stays at the requested line after the event" assertions see it applied.
   for (int i = 0; i < 25; ++i) {
     service.ConsumeDapCallbacks();
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
@@ -3201,8 +2744,8 @@ void TestDebugServiceBreakpointVerificationStaysAtRequestedLine() {
   const auto* bps = context.current_project_state.breakpoint_store.FindByPath(bp_path);
   Expect(bps != nullptr && bps->size() == 2, "both breakpoints remain, none added/dropped");
   if (bps != nullptr && bps->size() == 2) {
-    const editor::Breakpoint* first = nullptr;   // requested at 0-based line 9
-    const editor::Breakpoint* second = nullptr;  // requested at 0-based line 19
+    const editor::Breakpoint* first = nullptr;
+    const editor::Breakpoint* second = nullptr;
     for (const auto& bp : *bps) {
       if (bp.line == 9) first = &bp;
       if (bp.line == 19) second = &bp;
@@ -3218,10 +2761,6 @@ void TestDebugServiceBreakpointVerificationStaysAtRequestedLine() {
   service.StopAllDebugging();
 }
 
-// E4 regression: a `continued` event with allThreadsContinued=false (a single
-// thread resumed) must NOT tear down the shared stopped view — a multi-thread
-// session keeps its focused stack/execution state until a full resume or the next
-// stop. The mock stops, then emits a partial `continued` for a different thread.
 void TestDebugSessionPartialContinueDoesNotResume() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -3236,8 +2775,6 @@ void TestDebugSessionPartialContinueDoesNotResume() {
   config.request = "launch";
   Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
 
-  // The partial `continued` + its sentinel are written after the stop on the same
-  // pipe, so observing the sentinel means the `continued` was already handled.
   Expect(PollUntil(manager,
                    [&]() {
                      return captured.output.find("partial-continue-sent") != std::string::npos;
@@ -3252,10 +2789,6 @@ void TestDebugSessionPartialContinueDoesNotResume() {
   manager.ShutdownAll();
 }
 
-// J9 regression: a `stopped` event with no threadId must not drive a
-// stackTrace/continue targeting threadId 0. The host resolves a real thread (via a
-// threads query) first. The mock surfaces the threadId it received on stackTrace
-// and on resume so the test can assert it was the resolved thread, never 0.
 void TestDebugSessionStopWithoutThreadIdResolvesThread() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -3270,8 +2803,6 @@ void TestDebugSessionStopWithoutThreadIdResolvesThread() {
   config.request = "launch";
   Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
 
-  // Reaching a resolved stop (frames delivered) already proves the host resolved a
-  // concrete thread from the threadId-less stop before requesting the stack.
   Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }),
          "a threadId-less stop should still resolve a stack (via a resolved thread)");
   Expect(captured.output.find("stack-thread:1") != std::string::npos,
@@ -3292,9 +2823,6 @@ void TestDebugSessionStopWithoutThreadIdResolvesThread() {
   manager.ShutdownAll();
 }
 
-// `${workspaceFolder}` in a launch config's arguments becomes the project root,
-// in nested arrays and objects too (VS Code's launch variables). A plugin's config
-// is global and could not name a program under the project without it.
 void TestLaunchArgumentsExpandWorkspaceFolder() {
   auto parsed = util::ParseJson(
       R"({"program": "${workspaceFolder}/build/app", "args": ["--root", "${workspaceFolder}"],)"
@@ -3310,10 +2838,6 @@ void TestLaunchArgumentsExpandWorkspaceFolder() {
   Expect((*parsed)["stopOnEntry"].AsBool(), "non-strings are left alone");
 }
 
-// A stop shows the topmost frame whose source can be opened (VS Code's
-// getTopStackFrame): a pause inside a sleep lands in libc frames whose sources
-// are not on this machine, and the program's own frame further down is the one
-// to show (QA dbg-pause, which passed or failed by where the pause landed).
 void TestStopFocusesTheTopFrameWithSource() {
   using microide::workspace::TopFrameWithSource;
   using microide::workspace::dap_protocol::DapStackFrame;
@@ -3341,7 +2865,7 @@ void TestStopFocusesTheTopFrameWithSource() {
   Expect(TopFrameWithSource(std::vector<DapStackFrame>{}, on_disk) == 0, "no frames: index 0");
 }
 
-}  // namespace
+}
 
 void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/StopFocusesTheTopFrameWithSource", TestStopFocusesTheTopFrameWithSource);
@@ -3469,4 +2993,4 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
           TestDebugManagerReplaceActiveSession);
 }
 
-}  // namespace microide::tests
+}

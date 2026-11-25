@@ -10,10 +10,6 @@ FileDropRequest ResolveFileDrop(const std::filesystem::path& dropped, bool has_p
     return {};
   }
 
-  // Every filesystem query here is the non-throwing overload: a drop can name a
-  // dangling symlink, a path on a filesystem that just went away, or a URI SDL
-  // decoded into something unopenable, and none of those should propagate an
-  // exception out of the event loop.
   std::error_code ec;
   const std::filesystem::path path = std::filesystem::absolute(dropped, ec).lexically_normal();
   if (ec) {
@@ -27,8 +23,6 @@ FileDropRequest ResolveFileDrop(const std::filesystem::path& dropped, bool has_p
     };
   }
 
-  // is_regular_file rather than exists: a drop of a fifo, socket or device node
-  // would otherwise be handed to the editor, which then blocks opening it.
   if (!std::filesystem::is_regular_file(path, ec) || ec) {
     return {};
   }
@@ -70,9 +64,6 @@ bool ApplyFileDrop(const FileDropRequest& request, const FileDropOperations& ope
       if (!operations.open_project || !operations.open_file) {
         return false;
       }
-      // Stop on a failed project open rather than opening the file anyway: the
-      // shell would still be pointed at whatever was (or was not) open before, and
-      // a tab in the wrong project is worse than an ignored drop.
       if (!operations.open_project(request.project_root)) {
         return false;
       }
@@ -95,8 +86,6 @@ std::string TerminalDropText(const std::filesystem::path& path_on_shell_machine)
   if (plain) {
     out = path;
   } else {
-    // POSIX single quotes take everything literally but a quote, which closes,
-    // escapes and reopens: 'it'\''s'.
     out.push_back('\'');
     for (const char c : path) {
       if (c == '\'') {
@@ -111,4 +100,4 @@ std::string TerminalDropText(const std::filesystem::path& path_on_shell_machine)
   return out;
 }
 
-}  // namespace microide::workspace
+}

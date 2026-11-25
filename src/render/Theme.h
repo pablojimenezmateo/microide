@@ -34,7 +34,7 @@ struct Theme {
   SDL_Color text_disabled;
   SDL_Color row_highlight;
   SDL_Color selection_fill;
-  SDL_Color selection_strong;  // opaque selection fill for highlights over solid panels
+  SDL_Color selection_strong;
   SDL_Color search_match;
   SDL_Color search_match_active;
   SDL_Color bracket_match_background;
@@ -52,38 +52,22 @@ struct Theme {
   SDL_Color diff_added;
   SDL_Color diff_modified;
   SDL_Color diff_deleted;
-  // Lines a diff moved between hunks (`diff-moved`): neither added nor removed.
   SDL_Color diff_moved;
   SDL_Color diagnostic_error;
   SDL_Color diagnostic_warning;
   SDL_Color diagnostic_info;
   SDL_Color diagnostic_hint;
-  // Breakpoint gutter dot: solid `breakpoint` when the adapter has verified it,
-  // dimmed `breakpoint_unverified` otherwise (set but not yet bound / no session).
   SDL_Color breakpoint;
   SDL_Color breakpoint_unverified;
-  // Conditional / hit-count breakpoint dot: yellow (MATLAB-style) so a breakpoint
-  // carrying a condition reads differently from a plain red one. Logpoints instead
-  // render as a diamond (shape, not color) in `breakpoint`.
   SDL_Color breakpoint_conditional;
-  // Debugger execution line: full-width row fill + gutter arrow painted on the
-  // frame the session is stopped at (Phase 3).
   SDL_Color debug_execution_line;
   SDL_Color debug_execution_arrow;
 };
 
 Theme MakeDefaultTheme();
-// Built-in light theme, selectable as the "light" colorscheme alongside "default".
 Theme MakeLightTheme();
-// Derive a full Theme from a parsed highlight-group style map (the same map a
-// `.microide` colorscheme file parses to). Plugin-contributed themes reuse this
-// so their colour payload runs through the identical contrast-correction logic.
 Theme BuildThemeFromStyles(const ThemeStyleMap& styles);
-// Colour-space math primitives (RelativeLuminance/Contrast/BlendColors/
-// CompositeOver) live in render/ColorMath.h, included above.
 
-// The find widget's Find in Selection scope: a faint wash of the selection
-// colour, light enough for the matches and the selection to read over it.
 inline SDL_Color FindScopeFill(const Theme& theme) {
   const SDL_Color selection = theme.selection_fill;
   return SDL_Color{selection.r, selection.g, selection.b, static_cast<Uint8>(selection.a / 2)};
@@ -92,23 +76,8 @@ std::filesystem::path FindThemeDirectory();
 std::vector<std::string> ListAvailableThemeNames(
     const std::filesystem::path& theme_directory = {});
 
-// Host-owned memo over `ListAvailableThemeNames`. The colorscheme picker is
-// rebuilt on every project switch so it picks up plugin-contributed themes —
-// an in-memory list — and re-listing the themes directory for it cost a
-// resolve (nine candidate paths, each stat'd) plus a full directory walk with a
-// normalized path per entry: ~4,900 allocations per switch, 12 % of the
-// `multi_project.switch_cycles` phase (TD-2026-08-06-159).
-//
-// Validity is the directory's own mtime, which changes exactly when an entry is
-// created, removed or renamed — the only events that can change this list. A
-// `.microide` file's contents changing does not affect it.
-//
-// Not thread-safe by design: it is owned by the shell and read on the UI thread.
 class ThemeNameCatalog {
  public:
-  // `theme_directory` empty means "resolve the bundled themes directory", which
-  // is what the shell passes. A different argument than the cached one forces a
-  // rescan, so a test may pass its own directory without seeing a stale answer.
   const std::vector<std::string>& Names(const std::filesystem::path& theme_directory = {});
 
  private:
@@ -124,4 +93,4 @@ bool LoadThemeByName(std::string_view name,
                      std::string* error = nullptr,
                      const std::filesystem::path& theme_directory = {});
 
-}  // namespace microide::render
+}

@@ -11,11 +11,6 @@
 
 namespace microide::server {
 
-// The bytes of objects this server recently served, by hash: the bases a client's
-// next fetch of the same path can be a delta against (remote-projects.md § 6.2).
-// The client holds the version it was last sent; the host has only the current
-// file, so without this there is nothing to diff against. Bounded, least recently
-// used out; a miss costs a whole-file transfer, never correctness.
 class RecentObjects {
  public:
   explicit RecentObjects(std::size_t capacity_bytes) : capacity_(capacity_bytes) {}
@@ -23,7 +18,7 @@ class RecentObjects {
   void Put(std::string hash, std::string bytes) {
     std::lock_guard lock(mutex_);
     if (bytes.size() > capacity_ / 4) {
-      return;  // one object may not crowd out the rest
+      return;
     }
     if (const auto it = index_.find(hash); it != index_.end()) {
       order_.splice(order_.begin(), order_, it->second);
@@ -53,8 +48,8 @@ class RecentObjects {
   std::mutex mutex_;
   std::size_t capacity_;
   std::size_t size_ = 0;
-  std::list<std::pair<std::string, std::string>> order_;  // most recent first
+  std::list<std::pair<std::string, std::string>> order_;
   std::unordered_map<std::string, std::list<std::pair<std::string, std::string>>::iterator> index_;
 };
 
-}  // namespace microide::server
+}

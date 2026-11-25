@@ -27,28 +27,14 @@ namespace {
 
 using microide::plugin::LuaErrorString;
 
-// Robustness caps: a plugin syntax file is untrusted-ish input evaluated on the
-// reload/startup path, so bound every array length it can declare and the total
-// instructions its top-level chunk may execute. A malicious or accidental sparse
-// table with a huge `#` length, or a `while true do end`, must not hang or
-// exhaust memory during a plugin reload.
 constexpr std::size_t kMaxDefinitionsPerFile = 256;
 constexpr std::size_t kMaxStringArrayEntries = 4096;
 constexpr std::size_t kMaxRulesPerArray = 4096;
 constexpr int kSyntaxLoadInstructionBudget = 20'000'000;
-// Aggregate budgets across ALL discovered files: the per-file caps above bound one
-// file, but a plugin dir with thousands of tiny files (or many files each declaring
-// definitions) could still turn reload/startup into a large CPU+memory spike and inflate
-// the registry that every later file-open/tab-switch scans. Cap the discovered file
-// count and the total loaded runtime definitions. (TD-2026-07-16-23.)
 constexpr std::size_t kMaxDiscoveredSyntaxFiles = 8192;
 constexpr std::size_t kMaxTotalRuntimeDefinitions = 20000;
 
-void SyntaxLoadInstructionGuard(lua_State* state, lua_Debug* /*ar*/) {
-  // Fired once the instruction budget is exhausted. Raising a Lua error longjmps
-  // back to the enclosing lua_pcall (the project links the C build of Lua and
-  // there are no C++ locals on the interpreter frame between them), turning an
-  // infinite loop into a clean load failure instead of a frozen UI.
+void SyntaxLoadInstructionGuard(lua_State* state, lua_Debug* ) {
   luaL_error(state, "syntax definition exceeded the instruction budget");
 }
 
@@ -349,9 +335,6 @@ bool LoadDefinitionFile(const std::filesystem::path& source_path,
     return false;
   }
 
-  // Bound the top-level chunk's execution so a runaway loop cannot hang the
-  // reload/startup path. The hook fires every kSyntaxLoadInstructionBudget
-  // instructions and raises, which lua_pcall catches below.
   lua_sethook(state, SyntaxLoadInstructionGuard, LUA_MASKCOUNT, kSyntaxLoadInstructionBudget);
   const int pcall_status = lua_pcall(state, 0, 1, 0);
   lua_sethook(state, nullptr, 0, 0);
@@ -428,10 +411,6 @@ bool LoadDefinitionFile(const std::filesystem::path& source_path,
 std::vector<std::filesystem::path> DiscoverDefinitionFiles(
     const std::vector<std::filesystem::path>& directories) {
   std::vector<std::filesystem::path> files;
-  // Dedup files across directories: a syntax directory contributed via two
-  // routes (or two directory entries that normalize to the same path) must load,
-  // hash, and compile each definition exactly once, with deterministic
-  // first-directory-wins precedence.
   std::unordered_set<std::string> seen_directories;
   std::unordered_set<std::string> seen_files;
   for (const auto& directory : directories) {
@@ -456,7 +435,7 @@ std::vector<std::filesystem::path> DiscoverDefinitionFiles(
     files.insert(files.end(), directory_files.begin(), directory_files.end());
     if (files.size() >= kMaxDiscoveredSyntaxFiles) {
       files.resize(kMaxDiscoveredSyntaxFiles);
-      break;  // aggregate discovered-file budget reached
+      break;
     }
   }
   return files;
@@ -468,7 +447,7 @@ std::uint64_t Fnv1aAppend(std::uint64_t hash, std::string_view text) {
 
 #endif
 
-}  // namespace
+}
 
 std::vector<RuntimeSyntaxDefinitionData> LoadDefinitionsFromDirectories(
     const std::vector<std::filesystem::path>& directories,
@@ -480,11 +459,6 @@ std::vector<RuntimeSyntaxDefinitionData> LoadDefinitionsFromDirectories(
 
 #if MICROIDE_HAS_LUA_PLUGINS
   for (const auto& path : DiscoverDefinitionFiles(directories)) {
-    // Aggregate runtime-definition budget: stop once the total across all files reaches
-    // the cap so a plugin spreading hundreds of thousands of definitions across many
-    // files cannot inflate the registry that every later file-open scans. Surface a
-    // diagnostic so the truncated plugin is visible rather than a silently missing
-    // language. (TD-2026-07-16-23.)
     if (definitions.size() >= kMaxTotalRuntimeDefinitions) {
       if (errors != nullptr) {
         errors->push_back("syntax definitions truncated at the aggregate limit (" +
@@ -498,7 +472,6 @@ std::vector<RuntimeSyntaxDefinitionData> LoadDefinitionsFromDirectories(
       errors->push_back(std::move(error_message));
     }
   }
-  // A single file can push slightly past the cap (up to kMaxDefinitionsPerFile); trim.
   if (definitions.size() > kMaxTotalRuntimeDefinitions) {
     definitions.resize(kMaxTotalRuntimeDefinitions);
   }
@@ -515,15 +488,12 @@ std::uint64_t SyntaxSourceFingerprint::Compute(
   (void)directories;
   return 0;
 #else
-  // Guard the cache so Compute can run on the plugin worker (TD-2026-07-17A-108).
   std::lock_guard<std::mutex> lock(mutex_);
   std::uint64_t fingerprint = 0;
   for (const auto& path : DiscoverDefinitionFiles(directories)) {
     fingerprint = Fnv1aAppend(fingerprint, path.generic_string());
     fingerprint = Fnv1aAppend(fingerprint, "\n");
 
-    // One stat for the (mtime, size) staleness key; this ran two per definition
-    // file on every fingerprint pass, and the pass happens at launch.
     const std::optional<platform::FileMetadata> metadata = platform::ReadFileMetadata(path);
     const std::filesystem::file_time_type mtime =
         metadata ? metadata->mtime : std::filesystem::file_time_type{};
@@ -534,7 +504,6 @@ std::uint64_t SyntaxSourceFingerprint::Compute(
     const auto cached = cache_.find(key);
     if (metadata && cached != cache_.end() &&
         cached->second.mtime == mtime && cached->second.size == size) {
-      // Unchanged since the last compute: reuse the content hash, no re-read.
       content_hash = cached->second.content_hash;
     } else {
       const std::optional<std::string> content = util::ReadTextFile(path);
@@ -543,7 +512,6 @@ std::uint64_t SyntaxSourceFingerprint::Compute(
       if (metadata) {
         cache_[key] = Entry{mtime, size, content_hash};
       } else {
-        // Couldn't stat the file: don't cache, so the next compute re-reads it.
         cache_.erase(key);
       }
     }
@@ -556,4 +524,4 @@ std::uint64_t SyntaxSourceFingerprint::Compute(
 #endif
 }
 
-}  // namespace microide::editor::runtime_syntax
+}

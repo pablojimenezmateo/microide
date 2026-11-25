@@ -50,4 +50,4 @@ bool QueryHoverProvider(
     std::string* error_message);
 #endif
 
-}  // namespace microide::plugin::sidebar_hover_interop
+}

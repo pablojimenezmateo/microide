@@ -13,16 +13,6 @@
 
 namespace microide::editor::runtime_syntax {
 
-// Above this byte length a line is not tokenized: running the syntax rules over
-// the whole line is O(line) work on the UI thread on every token-cache miss, so a
-// single enormous line (a minified bundle with no newline) would stall the shell.
-// Such lines render unhighlighted (all Plain) — the same threshold behavior
-// mature editors use to disable tokenization on very long lines.
-//
-// Exported because it is the editor's one "this line does not get whole-line
-// treatment" threshold, and folding has to agree with it: past this length a line
-// has no syntax tokens, so nothing can tell a brace in a string literal from a
-// real one (see FoldingModel::kMaxBracketScanLineBytes).
 inline constexpr std::size_t kMaxHighlightLineBytes = 100000;
 
 struct RuntimeSyntaxRuleData {
@@ -55,70 +45,27 @@ RuntimeSyntaxReloadResult ReloadDefinitions(
     const std::vector<RuntimeSyntaxDefinitionData>& definitions,
     std::vector<std::string>* errors = nullptr);
 void EnsureInitialized();
-// Build the built-in registry on a background thread so its cost overlaps with
-// work the shell has to do anyway (SDL/window/renderer creation). Optional:
-// EnsureInitialized() joins the warm thread if one is running and otherwise
-// builds inline, so nothing depends on this having been called.
-//
-// Main-thread only, and at most once per process: both functions touch the same
-// non-atomic thread handle. Startup work is what this exists for.
 void WarmInBackground();
 std::size_t RegistryRevision();
-// Initial highlight state for a document. Like DetectFiletype, this only
-// inspects a bounded head (signature/shebang scan), so passing a LineSpan over
-// the live buffer never materializes the whole file.
 SyntaxState DetectState(const std::filesystem::path& path, LineSpan lines);
-// Same, for a caller holding the document as one text blob rather than as lines.
-// It splits only the bounded head into views instead of making the caller
-// materialize the whole document into owned lines to hand over sixty-four of them
-// (TD-2026-08-06-159).
 SyntaxState DetectState(const std::filesystem::path& path, std::string_view text);
-// Filetype detection only inspects the path and a bounded head of the document
-// (signature/shebang scan). Pass a LineSpan over the live buffer; only the head
-// is read, so no whole-document materialization happens on per-frame callers.
-// How many head lines a content-sensitive detection may read, and how many bytes
-// of each. A caller memoizing a detection result needs the first number to know
-// which edits can change it: an edit at or below `kFiletypeDetectHeadLines`
-// cannot.
 inline constexpr std::size_t kFiletypeDetectHeadLines = 64;
 
-// `content_consulted`, when non-null, reports whether the answer depended on the
-// buffer at all. It is false for the overwhelming majority of files: an
-// unambiguous extension (`.cpp`, `.py`, `.rs`, …) resolves to exactly one
-// definition and the head is never read. A caller that memoizes the result can
-// then hold it across content edits instead of re-detecting per keystroke.
 std::string DetectFiletype(const std::filesystem::path& path, LineSpan lines,
                            bool* content_consulted = nullptr);
-// Path-only detection for callers with no content available.
 std::string DetectFiletype(const std::filesystem::path& path);
 
-// Change Language Mode. A buffer's language set by hand names a filetype; Plain
-// Text is its own name and a definition id no definition has, which highlights
-// nothing (an id of 0 would mean "detect from the path" again).
 inline constexpr std::string_view kPlainTextFiletype = "plaintext";
 inline constexpr std::uint32_t kPlainTextDefinitionId = 0xFFFFFFFFu;
-// Every filetype the registry highlights, sorted, without duplicates.
 std::vector<std::string> FiletypeNames();
-// The initial highlight state of a buffer whose language was set to `filetype`:
-// that definition's, or Plain Text's for kPlainTextFiletype or a name no
-// definition carries.
 SyntaxState StateForFiletype(std::string_view filetype);
 
-// Eagerly compile a definition's lazily-built rule regexes. Safe to call from a
-// background worker: it is idempotent (std::call_once) and a no-op for an
-// unknown id or an already-compiled/eager definition. Used to prewarm a
-// cold filetype off the UI thread so the first visible-line highlight does not
-// pay the regex-compile cost on the render path.
 void CompileDefinition(std::uint32_t definition_id);
 
 HighlightedLine HighlightLine(std::string_view line,
                               const std::filesystem::path& path,
                               const SyntaxState& state,
                               std::string_view first_line);
-// HighlightLine writing its tokens into a caller-owned vector, so a per-line
-// token cache can retokenize into the buffer it already holds instead of
-// allocating one per line per repaint. `*tokens` is overwritten (and left empty
-// for a line that is not tokenized at all); its capacity is retained.
 SyntaxState HighlightLineInto(std::string_view line,
                               const std::filesystem::path& path,
                               const SyntaxState& state,
@@ -129,4 +76,4 @@ SyntaxState AdvanceState(std::string_view line,
                          const SyntaxState& state,
                          std::string_view first_line = {});
 
-}  // namespace microide::editor::runtime_syntax
+}

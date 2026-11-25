@@ -87,12 +87,8 @@ RuleResult CheckCompareRenderStructuralGate(const std::filesystem::path& repo_ro
       continue;
     }
     const std::string text = ReadText(entry.path());
-    // Both compare and merge render TUs must receive project state as injected POD
-    // parameters from the frame caller, never reach into context_.current_project_state.
     AppendViolations(result, entry.path(), text, direct_state_pattern,
                      "compare/merge render translation units must not read context_.current_project_state");
-    // ActiveTabIsCompare() is the compare-specific active-tab predicate; merge render
-    // legitimately resolves its tab through ActiveMergeTab(), so only gate compare here.
     if (is_compare_render) {
       AppendViolations(result, entry.path(), text, active_compare_pattern,
                        "compare render translation units must consume structural view-model gates, "
@@ -155,9 +151,6 @@ RuleResult CheckBuildEditorViewModelUsesIncrementalVectorWrites(
 }
 
 RuleResult CheckSidebarSurfaceFallbackUsesStringView(const std::filesystem::path& repo_root) {
-  // BuildSidebarSurface() is called multiple times per frame. The fallback text fields used to be
-  // std::string and allocated on every call. They are now std::string_view so the typical render
-  // frame is allocation-free. The header is the load-bearing surface for this rule.
   RuleResult result;
   result.label = "SidebarSurfaceViewModel fallback fields stay as std::string_view";
   result.hard_fail = true;
@@ -166,8 +159,6 @@ RuleResult CheckSidebarSurfaceFallbackUsesStringView(const std::filesystem::path
     return result;
   }
   const std::string text = ReadText(path);
-  // Require that the two fields are declared as `std::string_view`. A naive grep is enough because
-  // the field appears exactly once and never inside a comment.
   const std::regex query_pattern(R"(std::string_view\s+query_fallback_text\b)");
   const std::regex replace_pattern(R"(std::string_view\s+replace_fallback_text\b)");
   if (!std::regex_search(text, query_pattern)) {
@@ -190,11 +181,6 @@ RuleResult CheckSidebarSurfaceFallbackUsesStringView(const std::filesystem::path
 }
 
 RuleResult CheckMenuItemTextResolutionIsAllocationFree(const std::filesystem::path& repo_root) {
-  // A popup menu re-resolves every visible row's label and accelerator on each frame it
-  // is open — both while laying the popup out and while painting it. Both resolvers used
-  // to return std::string, so an open File menu cost two allocations per row per frame
-  // for as long as the pointer hovered it. They return borrowed views now (static
-  // registry literals, plus one reused buffer for the composed "(LSP: Starting…)" form).
   RuleResult result;
   result.label = "menu label/accelerator resolution returns borrowed views";
   result.hard_fail = true;
@@ -221,13 +207,6 @@ RuleResult CheckMenuItemTextResolutionIsAllocationFree(const std::filesystem::pa
 }
 
 RuleResult CheckRenderViewModelsOwnProjectState(const std::filesystem::path& repo_root) {
-  // TD-2026-07-17-084/26: render view models must be owned/precomputed data, not
-  // live pointers into project state, and the converted render TUs must not name
-  // the broad state types at all. Two documented escape hatches remain until the
-  // editor-surface and sidebar view-model passes land: FrameSurfaceViewModel and
-  // SidebarSurfaceViewModel may still carry a ProjectWorkspaceState pointer (and
-  // their render TUs, WorkspaceShellRenderFrame.cpp / WorkspaceShellRenderSidebar
-  // .cpp, may dereference it). Nothing else may — this rule is the ratchet.
   RuleResult result;
   result.label = "render view models own their state (no OverlayState/ProjectWorkspaceState)";
   result.hard_fail = true;
@@ -235,12 +214,9 @@ RuleResult CheckRenderViewModelsOwnProjectState(const std::filesystem::path& rep
   const std::filesystem::path header = repo_root / "src/workspace/render/RenderViewModelBuilder.h";
   if (std::filesystem::exists(header)) {
     const std::string text = ReadRuleTarget(result, header);
-    // OverlayState must not appear anywhere in the view-model header: the overlay
-    // model is fully owned (TD-2026-07-17-084).
     AppendCodeMaskRegexViolations(
         result, header, text, std::regex(R"(\bOverlayState\b)"),
         "render view models must not reference OverlayState (owned overlay model only)");
-    // ProjectWorkspaceState may appear only inside the two allowlisted structs.
     const std::regex struct_decl(R"(\bstruct\s+([A-Za-z_][A-Za-z0-9_]*)\b[^;{]*\{)");
     std::vector<std::pair<std::size_t, std::size_t>> allowed_ranges;
     for (std::sregex_iterator it(text.begin(), text.end(), struct_decl), end; it != end; ++it) {
@@ -268,7 +244,7 @@ RuleResult CheckRenderViewModelsOwnProjectState(const std::filesystem::path& rep
     for (std::sregex_iterator it(text.begin(), text.end(), state_token), end; it != end; ++it) {
       const std::size_t pos = static_cast<std::size_t>(it->position());
       if (pos < is_code.size() && !is_code[pos]) {
-        continue;  // comment or string literal
+        continue;
       }
       bool allowed = false;
       for (const auto& [range_start, range_end] : allowed_ranges) {
@@ -289,7 +265,6 @@ RuleResult CheckRenderViewModelsOwnProjectState(const std::filesystem::path& rep
     }
   }
 
-  // Converted render TUs: no broad state type names at all.
   const std::array<std::string_view, 6> converted_tus = {
       "src/workspace/render/WorkspaceShellRenderOverlay.cpp",
       "src/workspace/render/WorkspaceShellRenderBottomPanel.cpp",
@@ -314,8 +289,6 @@ RuleResult CheckRenderViewModelsOwnProjectState(const std::filesystem::path& rep
 }
 
 RuleResult CheckEditorViewModelStickyAndOccurrenceAreSpans(const std::filesystem::path& repo_root) {
-  // sticky_lines and occurrence_ranges are spans into thread_local builder caches. Reverting them
-  // to owning std::vectors reintroduces the per-frame element copy that Finding 11 closed.
   RuleResult result;
   result.label = "EditorViewModel sticky/occurrence fields stay as std::span";
   result.hard_fail = true;
@@ -345,11 +318,6 @@ RuleResult CheckEditorViewModelStickyAndOccurrenceAreSpans(const std::filesystem
   return result;
 }
 
-// Every string literal in `text` -- its body (escapes kept as written) and the
-// offset of its opening quote -- skipping comments and character literals. Walked
-// by hand: BuildCodeMask marks literal bodies as NOT code, so a mask-and-skip check
-// over them can never fire, and std::regex over a whole file recurses per character
-// and overflowed the stack on this repo's longer sources.
 template <typename Visit>
 void ForEachStringLiteral(const std::string& text, Visit&& visit) {
   enum class Lex { Code, LineComment, BlockComment, String, Char };
@@ -375,7 +343,7 @@ void ForEachStringLiteral(const std::string& text, Visit&& visit) {
       case Lex::String:
         if (c == '\\' && i + 1 < text.size()) { literal.push_back(c); literal.push_back(n); ++i; }
         else if (c == '"') { state = Lex::Code; visit(std::string_view(literal), literal_start); }
-        else if (c == '\n') { state = Lex::Code; }  // unterminated; resynchronise rather than run on
+        else if (c == '\n') { state = Lex::Code; }
         else { literal.push_back(c); }
         break;
       case Lex::Char:
@@ -386,18 +354,6 @@ void ForEachStringLiteral(const std::string& text, Visit&& visit) {
   }
 }
 
-// Key-hint lists join on " · " (WorkspaceUiText.h's kHintSeparator / JoinHintSegments
-// / AppendHintSegment). The rule exists because the shell drifted off it twice, in
-// the same way both times: GitSidebarCommandCenter.cpp and CompareTabReview.cpp each
-// grew a private byte-identical AppendHintSegment that joined on "  |  ", so the two
-// longest and most-read hint lines in the app -- the git sidebar's action line and
-// the compare review header, both also mirrored into Help/About -- were the two that
-// disagreed with the documented convention.
-//
-// Scoped to a re-declared AppendHintSegment rather than to the "  |  " literal:
-// that separator is legitimate between unrelated fields (the breadcrumb's
-// "path  |  left -> right", the merge status line), and banning the literal outright
-// would fail those honest uses.
 RuleResult CheckHintSegmentsUseTheSharedSeparator(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "key-hint lists use the shared separator";
@@ -416,24 +372,6 @@ RuleResult CheckHintSegmentsUseTheSharedSeparator(const std::filesystem::path& r
     return result;
   }
 
-  // The second half of the rule. Scoping to the redefined joiner caught the two
-  // TUs that grew a private copy of it -- and missed every line that simply typed
-  // the wrong separator inline, which on 2026-09-19 was two more: the dirty
-  // prompt's hint line, and the git sidebar action line's NO-SELECTION variant
-  // (so the very line the joiner cleanup was about still changed punctuation as
-  // the selection came and went).
-  //
-  // The honest uses the rule comment above defends -- the breadcrumb, the merge
-  // status line -- all write the separator as a BARE literal and join at runtime.
-  // A literal with "  |  " embedded in surrounding text is always a composed
-  // line, so that, and only that, is what this flags.
-  //
-  // This half walks string literals itself rather than reusing BuildCodeMask,
-  // which marks literal bodies as NOT code -- a mask-and-skip check over them is
-  // structurally incapable of firing, which is how the first draft of this rule
-  // passed green while blind. Walking the literals also means no regex over whole
-  // files: std::regex recurses per character and overflowed the stack outright on
-  // this repo's longer sources.
   constexpr std::string_view kPipeSeparator = "  |  ";
   const auto scan_composed_pipe_literals = [&](const std::filesystem::path& path,
                                                const std::string& text) {
@@ -460,7 +398,7 @@ RuleResult CheckHintSegmentsUseTheSharedSeparator(const std::filesystem::path& r
       continue;
     }
     if (entry.path().filename() == "WorkspaceUiText.h") {
-      continue;  // the definition itself
+      continue;
     }
     const std::string text = ReadText(entry.path());
     const std::vector<bool> is_code = BuildCodeMask(text);
@@ -481,25 +419,11 @@ RuleResult CheckHintSegmentsUseTheSharedSeparator(const std::filesystem::path& r
   return result;
 }
 
-// The two sides of a conflict, a merge or a compare are called Local and Remote in
-// every user-visible string -- buttons, menus, palette titles, toasts, row details,
-// pane captions -- never mine / yours / ours / theirs / the host's, nor current /
-// incoming (git's own mergetool names them $LOCAL and $REMOTE). The same two sides
-// had five names across the app: a remote conflict offered "Keep Mine" / "Take
-// Host's", the merge editor "Accept Ours" / "Accept Theirs", the palette "Accept
-// Current (Keep Ours)", a compare titled its side "(yours)" -- and a user reading a
-// row of 59 "changed on worky and here" toasts could not tell which button kept
-// what. Prose that merely addresses the user ("your ~/.ssh/config") is not a side
-// name and stays legal: the rule flags a side word only where it NAMES a side --
-// after Keep/Take/Accept/Copy/Use, as a parenthesised suffix, or as a whole caption.
 RuleResult CheckSideNamesAreLocalAndRemote(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "conflict, merge and compare sides are named Local and Remote";
   result.hard_fail = true;
 
-  // Anchored on the remote conflict row, the surface the rule was written for: if
-  // its buttons move, the rule says so instead of passing over a tree it no longer
-  // understands.
   const std::filesystem::path anchor = repo_root / "src/workspace/services/RemoteHostService.cpp";
   const std::string anchor_text = ReadRuleTarget(result, anchor);
   if (anchor_text.find("\"Keep Local\"") == std::string::npos ||
@@ -514,8 +438,6 @@ RuleResult CheckSideNamesAreLocalAndRemote(const std::filesystem::path& repo_roo
     return result;
   }
 
-  // Per literal, and only short ones: generated syntax tables hold literals of tens
-  // of kilobytes, which no label is and std::regex would recurse through.
   constexpr std::size_t kMaxLabelLiteral = 400;
   const std::regex verb_side(
       R"(\b(Keep|Take|Accept|Copy|Use)( All)? (Mine|Yours|Ours|Theirs|Current|Incoming|Host's)\b)");
@@ -573,10 +495,6 @@ RuleResult CheckEveryPerfCounterHasAProducer(const std::filesystem::path& repo_r
     return result;
   }
 
-  // Ids as declared, in order. The X-macro guarantees each has a *name*; nothing
-  // guarantees anything ever increments it, and a counter with no producer reads
-  // zero forever. That is worse than an absent counter: a reader sees the row
-  // missing from the dump and concludes the code path did not run.
   std::vector<std::pair<std::string, std::size_t>> declared;
   const std::regex declaration(R"(\bX\(\s*(\w+)\s*,)");
   for (std::sregex_iterator it(header_text.begin(), header_text.end(), declaration), last;
@@ -605,7 +523,7 @@ RuleResult CheckEveryPerfCounterHasAProducer(const std::filesystem::path& repo_r
     }
     if (entry.path().filename() == "PerformanceCounters.h" ||
         entry.path().filename() == "PerformanceCounters.cpp") {
-      continue;  // the declaration and the name table are not producers
+      continue;
     }
     const std::string text = ReadText(entry.path());
     for (std::sregex_iterator it(text.begin(), text.end(), use), last; it != last; ++it) {
@@ -615,7 +533,7 @@ RuleResult CheckEveryPerfCounterHasAProducer(const std::filesystem::path& repo_r
 
   for (const auto& [id, line] : declared) {
     if (id == "Count") {
-      continue;  // the enum terminator, not a counter
+      continue;
     }
     if (produced.count(id) == 0) {
       result.violations.push_back(Violation{
@@ -635,22 +553,6 @@ RuleResult CheckViewportFiletypeGoesThroughTheViewportMemo(const std::filesystem
   result.label = "buffer-content filetype detection goes through TextViewport::language_id()";
   result.hard_fail = true;
 
-  // Filetype detection is a bounded head scan plus regexes plus an owned string,
-  // and callers ask constantly about buffers that did not change: every prepared
-  // frame (fold refresh, status bar), every LSP/assist request, every save, and
-  // once per open tab on every settings change.
-  //
-  // Four independent memos had grown around that -- `runtime_syntax::FiletypeMemo`
-  // with two instances, plus `LspUiState::language_cache_*`, whose path-only key
-  // silently pinned a stale language for content-detected buffers (a shebang with
-  // no extension). Detection now lives behind `TextViewport::language_id()`, keyed
-  // on the inputs detection actually reads. This rule is the ratchet that stops a
-  // fifth from accreting: the two-argument `DetectFiletype(path, lines)` form --
-  // the one that reads buffer content -- is reserved for the memo itself.
-  //
-  // The one-argument path-only form stays legal everywhere: callers with no buffer
-  // in hand (session restore's language hint, a diagnostics bucket keyed by path)
-  // have nothing to memoize against.
   const std::filesystem::path memo = repo_root / "src/editor/TextViewport.cpp";
   if (RequireRuleTarget(result, memo)) {
     const std::string memo_text = ReadText(memo);
@@ -666,8 +568,6 @@ RuleResult CheckViewportFiletypeGoesThroughTheViewportMemo(const std::filesystem
     }
   }
 
-  // `DetectFiletype(` followed by a top-level comma before its closing paren, i.e.
-  // the two-argument content-reading overload.
   const std::regex call(R"(\bDetectFiletype\s*\()");
   std::size_t scanned_calls = 0;
   for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src")) {
@@ -679,7 +579,6 @@ RuleResult CheckViewportFiletypeGoesThroughTheViewportMemo(const std::filesystem
       continue;
     }
     const std::filesystem::path filename = entry.path().filename();
-    // The declaration/definition of the overload, and the memo that owns it.
     if (filename == "RuntimeSyntaxRegistry.h" || filename == "RuntimeSyntaxRegistry.cpp" ||
         filename == "TextViewport.cpp") {
       continue;
@@ -689,7 +588,7 @@ RuleResult CheckViewportFiletypeGoesThroughTheViewportMemo(const std::filesystem
     for (std::sregex_iterator it(text.begin(), text.end(), call), last; it != last; ++it) {
       const std::size_t open_paren = static_cast<std::size_t>(it->position() + it->length()) - 1;
       if (open_paren >= is_code.size() || !is_code[open_paren]) {
-        continue;  // a mention in a comment or a string literal is not a call
+        continue;
       }
       ++scanned_calls;
       std::size_t depth = 0;
@@ -710,7 +609,7 @@ RuleResult CheckViewportFiletypeGoesThroughTheViewportMemo(const std::filesystem
         }
       }
       if (!has_top_level_comma) {
-        continue;  // path-only overload
+        continue;
       }
       result.violations.push_back(Violation{
           .path = entry.path(),
@@ -733,4 +632,4 @@ RuleResult CheckViewportFiletypeGoesThroughTheViewportMemo(const std::filesystem
   return result;
 }
 
-}  // namespace microide::tests::architecture
+}

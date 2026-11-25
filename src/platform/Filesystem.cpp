@@ -15,22 +15,17 @@ namespace {
 
 void SortPaths(auto* entries) {
   std::sort(entries->begin(), entries->end(), [](const auto& lhs, const auto& rhs) {
-    // Entries come from directory_iterator, so paths are already normal; native()
-    // returns a const reference, avoiding a per-comparison normalize + string alloc.
     return lhs.path.native() < rhs.path.native();
   });
 }
 
-}  // namespace
+}
 
 std::optional<FileMetadata> ReadFileMetadata(const std::filesystem::path& path) {
   if (path.empty()) {
     return std::nullopt;
   }
   struct ::stat st {};
-  // stat(), not lstat(): std::filesystem::file_size / last_write_time / status
-  // all resolve symlinks, and this replaces those at call sites that compare
-  // stamps with them.
   if (::stat(path.c_str(), &st) != 0) {
     return std::nullopt;
   }
@@ -43,9 +38,6 @@ std::optional<FileMetadata> ReadFileMetadata(const std::filesystem::path& path) 
   } else {
     metadata.type = PathType::Other;
   }
-  // file_time_type's epoch is not the system clock's, so go through the
-  // documented conversion rather than constructing one from a raw duration.
-  // This is the same arithmetic libstdc++ performs inside last_write_time.
   using std::chrono::nanoseconds;
   using std::chrono::seconds;
   const std::chrono::sys_time<nanoseconds> system_time{seconds{st.st_mtim.tv_sec} +
@@ -107,8 +99,6 @@ std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(const std::vector<std::filesy
     std::uintmax_t size = 0;
     std::filesystem::file_time_type write_time{};
     if (type != PathType::Missing) {
-      // One stat for both, instead of file_size() + last_write_time() each
-      // running their own over every entry of the walk.
       if (const std::optional<FileMetadata> metadata = ReadFileMetadata(path)) {
         write_time = metadata->mtime;
         if (type == PathType::RegularFile) {
@@ -117,8 +107,6 @@ std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(const std::vector<std::filesy
       }
     }
     snapshot.push_back(TreeSnapshotEntry{
-        // Both call sites hand in an already-normal path (a normalized root, or
-        // an entry of a walk from one); the guard keeps the no-op off the walk.
         .path = util::NormalizedPath(path),
         .type = type,
         .size = size,
@@ -147,8 +135,6 @@ std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(const std::vector<std::filesy
       if (entry.type == PathType::Missing) {
         return WalkAction::Continue;
       }
-      // The filter speaks `path`, so the entry pays for one here; the walk itself
-      // built none.
       const std::filesystem::path path(entry.path);
       if (filter && !filter(path, entry.type)) {
         return WalkAction::Prune;
@@ -167,4 +153,4 @@ std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(const std::vector<std::filesy
   return snapshot;
 }
 
-}  // namespace microide::platform
+}

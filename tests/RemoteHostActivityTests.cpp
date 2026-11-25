@@ -29,9 +29,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-// remote-host-activity: the server's account of what it runs (server/status's
-// rows and, with `activity`, their CPU and memory), the subscription that pushes
-// it, the client's decoder and `microide-server status`'s table.
 namespace microide::tests {
 namespace {
 
@@ -56,10 +53,7 @@ remote::ServerStatus Parse(std::string_view text) {
   return remote::ServerStatusFromJson(json.value_or(util::JsonValue(nullptr)));
 }
 
-// A stat line is parsed from the LAST ')': a comm may hold spaces and parentheses.
 void TestStatLineParsesAroundAHostileComm() {
-  // pid (comm) state ppid pgrp session tty tpgid flags minflt cminflt majflt cmajflt
-  // utime stime cutime cstime prio nice threads itreal starttime vsize rss ...
   const std::string line =
       "4242 (a) b (c) R 17 4242 4242 0 -1 4194304 10 0 0 0 150 50 7 3 20 0 1 0 98765 1000 321 1 2 3\n";
   const std::optional<ProcessActivity::Stat> stat = ProcessActivity::ParseStat(line);
@@ -77,9 +71,6 @@ void TestStatLineParsesAroundAHostileComm() {
          "a tick count that is not a number");
 }
 
-// Measure over a synthetic table: subtree sums, the first sample's missing CPU,
-// the delta on the second, a reused pid starting over, and a parent loop that
-// cannot spin.
 void TestMeasureSumsSubtreesAndTakesDeltas() {
   using Stat = ProcessActivity::Stat;
   ProcessActivity activity;
@@ -96,39 +87,32 @@ void TestMeasureSumsSubtreesAndTakesDeltas() {
   Expect(first[0].rss_bytes == 60 * 4096 && first[0].cpu_permille == -1,
          "the subtree's memory, and no CPU share on the first sample");
   Expect(first[2].rss_bytes == -1, "a pid that is not there reports nothing");
-  table[2].ticks += 100;  // the grandchild spends a second of CPU over two seconds
+  table[2].ticks += 100;
   std::vector<ProcessActivity::Figures> second =
       activity.Measure(table, roots, t0 + std::chrono::seconds(2), 100, 4096);
   Expect(second[0].cpu_permille == 500, "half a core: " + std::to_string(second[0].cpu_permille));
-  // The same pid alone: its own previous sample, not the tree's.
   Expect(second[1].cpu_permille == 0, "the pid alone did not move: " + std::to_string(second[1].cpu_permille));
-  table[0].start_time = 999;  // pid 10 is a different process now
+  table[0].start_time = 999;
   std::vector<ProcessActivity::Figures> reused =
       activity.Measure(table, std::vector<ProcessActivity::Root>{{.pid = 10}}, t0 + std::chrono::seconds(4), 100, 4096);
   Expect(reused[0].cpu_permille == -1, "a reused pid has no previous sample");
-  table[2].ticks = 0;  // a child's ticks left with it: never a negative share
+  table[2].ticks = 0;
   std::vector<ProcessActivity::Figures> dropped =
       activity.Measure(table, std::vector<ProcessActivity::Root>{{.pid = 10}}, t0 + std::chrono::seconds(6), 100, 4096);
   Expect(dropped[0].cpu_permille == 0, "a sum that stepped back reads as idle");
-  // A loop in the parent links (impossible in /proc, but this is parsed text).
   std::vector<Stat> loop = {{.pid = 30, .ppid = 31, .rss_pages = 1}, {.pid = 31, .ppid = 30, .rss_pages = 1}};
   Expect(activity.Measure(loop, std::vector<ProcessActivity::Root>{{.pid = 30}}, t0, 100, 4096)[0].rss_bytes == 2 * 4096,
          "each process counted once");
 }
 
-// The state letter of `pid` in /proc ('R', 'S', 'D', ...), or 0 when it is gone.
 char ProcessState(pid_t pid) {
   std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
   std::string line;
   std::getline(stat, line);
-  // After the command, which is in parentheses and may hold spaces or ')'.
   const std::size_t close = line.rfind(')');
   return close != std::string::npos && close + 2 < line.size() ? line[close + 2] : '\0';
 }
 
-// `pid` and every child of it asleep. A child's comm turns to its program's at
-// exec, while the dynamic loader is still faulting its libraries in: its resident
-// size grows until it blocks in its program's own sleep.
 bool TreeAtRest(pid_t pid) {
   const std::string task = "/proc/" + std::to_string(pid) + "/task/" + std::to_string(pid);
   std::ifstream children(task + "/children");
@@ -143,7 +127,6 @@ bool TreeAtRest(pid_t pid) {
   return true;
 }
 
-// The comms of `pid`'s children, sorted.
 std::vector<std::string> ChildCommands(pid_t pid) {
   const std::string task = "/proc/" + std::to_string(pid) + "/task/" + std::to_string(pid);
   std::ifstream children(task + "/children");
@@ -158,12 +141,10 @@ std::vector<std::string> ChildCommands(pid_t pid) {
   return comms;
 }
 
-// Against the real /proc: a child tree's memory includes its children, and a busy
-// loop's share is reported from the second sample on.
 void TestSampleSeesARealChildTree() {
   const pid_t tree = ::fork();
   if (tree == 0) {
-    ::setpgid(0, 0);  // its own group, so one kill takes the sleeps too
+    ::setpgid(0, 0);
     ::execl("/bin/sh", "sh", "-c", "sleep 30 & sleep 30 & wait", static_cast<char*>(nullptr));
     ::_exit(127);
   }
@@ -178,12 +159,6 @@ void TestSampleSeesARealChildTree() {
   }
   ProcessActivity activity;
   const std::vector<ProcessActivity::Root> roots = {{.pid = tree}, {.pid = tree, .subtree = false}, {.pid = busy}};
-  // The tree is measured once it is whole: both children forked AND exec'd. A
-  // child between fork and exec is a copy of the shell, so "the tree holds more
-  // than the shell" was true with one sleep, and the two reads below then saw
-  // different trees (9.7 MB vs 17.5 MB on ubsan). And at rest: a sleep named
-  // "sleep" may still be loading its libraries, and under load the full walk read
-  // one 836 KB short of the sample after it (16723968 vs 17580032, tests lane).
   Expect(WaitUntil([&] {
                      return ChildCommands(tree) == std::vector<std::string>{"sleep", "sleep"} && TreeAtRest(tree);
                    },
@@ -193,8 +168,6 @@ void TestSampleSeesARealChildTree() {
   Expect(first[0].rss_bytes > first[1].rss_bytes && first[1].rss_bytes > 0,
          "the shell's tree holds more than the shell");
   Expect(first[2].cpu_permille == -1 || first[2].cpu_permille >= 0, "a figure or not reported");
-  // The sample reads only these trees (down the children files); a walk of every
-  // process on the box finds the same tree.
   {
     std::vector<ProcessActivity::Stat> everything;
     for (const auto& entry : std::filesystem::directory_iterator("/proc")) {
@@ -202,7 +175,6 @@ void TestSampleSeesARealChildTree() {
       if (name.empty() || name[0] < '1' || name[0] > '9') {
         continue;
       }
-      // A /proc file reports size 0: read it as a stream.
       std::ifstream file(entry.path() / "stat");
       std::string line;
       if (std::getline(file, line)) {
@@ -219,17 +191,11 @@ void TestSampleSeesARealChildTree() {
            "both see the shell's children: " + std::to_string(whole[0].rss_bytes) + "/" +
                std::to_string(whole[1].rss_bytes) + " " + std::to_string(trees[0].rss_bytes) + "/" +
                std::to_string(trees[1].rss_bytes));
-    // Resident sizes move a page or two between two reads; the tree's members do not.
     const auto close = [](std::int64_t a, std::int64_t b) { return std::abs(a - b) <= 64 * 4096; };
     Expect(close(whole[0].rss_bytes, trees[0].rss_bytes),
            "the tree read down the children files is the tree a full walk finds: " +
                std::to_string(whole[0].rss_bytes) + " vs " + std::to_string(trees[0].rss_bytes));
   }
-  // The share is checked against what the kernel says the busy child actually got
-  // over the same window, not against a fixed floor: with every core taken (the
-  // validation lanes run side by side) a spinning child gets ~10% of one, and
-  // "> 100 permille" read that as a unit error. The window is a second so that a
-  // tick (10 ms) is small against the CPU time it measures even under that load.
   const auto busy_ticks = [busy] {
     std::ifstream file("/proc/" + std::to_string(busy) + "/stat");
     std::string line;
@@ -249,8 +215,6 @@ void TestSampleSeesARealChildTree() {
                              .count();
   const double kernel_permille = static_cast<double>(ticks_after - ticks_before) * 1000.0 /
                                  static_cast<double>(::sysconf(_SC_CLK_TCK)) * 1000.0 / wall_ms;
-  // The kernel's window brackets the sampler's, so the sampler can only see less;
-  // two ticks either side is the granularity of both reads.
   const double slack = 2.0 * 1000.0 / static_cast<double>(::sysconf(_SC_CLK_TCK)) * 1000.0 / wall_ms;
   Expect(second[2].cpu_permille > 0 &&
              second[2].cpu_permille <= kernel_permille * 1.1 + slack &&
@@ -265,8 +229,6 @@ void TestSampleSeesARealChildTree() {
   ::waitpid(busy, nullptr, 0);
 }
 
-// server/status lists a terminal and a kept process under their own roots, with
-// pid, argv and the detach age; the figures appear only when asked.
 void TestStatusListsTerminalsAndProcessesAcrossRoots() {
   ShortServerDir dir;
   StartServer(dir);
@@ -283,7 +245,6 @@ void TestStatusListsTerminalsAndProcessesAcrossRoots() {
       [](const std::filesystem::path& path) { return path; });
   Expect(channel != nullptr, "the terminal opens");
   TerminalSessionTestAccess::EnterHostMode(shell, channel);
-  // Its row is asserted below: the open must have been answered first.
   Expect(WaitUntil([&] { return channel->handle() != 0; }, std::chrono::seconds(10)), "it is answered");
 
   int kept_pid = -1;
@@ -291,7 +252,7 @@ void TestStatusListsTerminalsAndProcessesAcrossRoots() {
   {
     auto b = ConnectWithRoot(dir, root_b);
     const remote::RemoteServerClient::Spawned spawned =
-        b->Spawn({"sleep", "120"}, root_b, {}, /*keep_on_detach=*/true, {});
+        b->Spawn({"sleep", "120"}, root_b, {}, true, {});
     if (spawned.handle == 0) {
       Expect(false, "spawned: " + spawned.error);
       return;
@@ -346,11 +307,9 @@ void TestStatusListsTerminalsAndProcessesAcrossRoots() {
   Expect(status->uptime.has_value() && status->pid.has_value() && !status->server.rss_bytes.has_value(),
          "the server's uptime, and no figures");
 
-  // With activity: figures on every live row, the CPU share once a previous
-  // sample exists.
-  (void)observer->Status(&error, /*activity=*/true);
+  (void)observer->Status(&error, true);
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
-  status = observer->Status(&error, /*activity=*/true);
+  status = observer->Status(&error, true);
   Expect(status.has_value() && status->server.rss_bytes.value_or(0) > 0 && status->server.cpu_permille.has_value(),
          "the server's own memory and share");
   for (const remote::ServerProcess& process : status->processes.value_or(std::vector<remote::ServerProcess>{})) {
@@ -367,8 +326,6 @@ void TestStatusListsTerminalsAndProcessesAcrossRoots() {
              status->terminals->front().command.empty(),
          "an idle shell has nothing in its foreground but itself: no command");
 
-  // What runs in the terminal names its row (TD-2026-10-27-407): the foreground
-  // process group's command, not the directory.
   for (const char c : std::string_view("sleep 30")) {
     TerminalSession::KeyPress press;
     press.key = TerminalSession::KeyPress::Key::Char;
@@ -380,7 +337,7 @@ void TestStatusListsTerminalsAndProcessesAcrossRoots() {
   (void)shell.SendKeyPress(enter);
   Expect(WaitUntil(
              [&] {
-               status = observer->Status(&error, /*activity=*/true);
+               status = observer->Status(&error, true);
                return status.has_value() && status->terminals.has_value() && !status->terminals->empty() &&
                       status->terminals->front().command == "sleep";
              },
@@ -391,15 +348,12 @@ void TestStatusListsTerminalsAndProcessesAcrossRoots() {
                   : std::string("?")) +
              "'"; });
 
-  // The table names both.
   const std::string table = remote::FormatServerStatusTable(*status);
   Expect(table.find(root_b.string()) != std::string::npos && table.find("sleep 120") != std::string::npos &&
              table.find("kept ") != std::string::npos && table.find("terminal #") != std::string::npos &&
              table.find("(sleep)") != std::string::npos,
          "the table lists the terminal and the kept process:\n" + table);
 
-  // proc/end from a client that did not spawn it: the kept process ends, and --
-  // with nobody holding it to release it -- leaves the listing.
   util::JsonObject end;
   end["handle"] = util::JsonValue(static_cast<std::int64_t>(kept_handle));
   observer->peer().Notify(remote::method::kProcEnd, util::JsonValue(std::move(end)));
@@ -414,9 +368,6 @@ void TestStatusListsTerminalsAndProcessesAcrossRoots() {
   shell.Stop();
 }
 
-// activity/subscribe pushes the status every interval while subscribed, and
-// nothing once the last subscriber unsubscribed; a subscriber whose connection
-// closes is dropped.
 void TestActivitySubscriptionPushesOnlyWhileSubscribed() {
   ShortServerDir dir;
   StartServer(dir);
@@ -431,7 +382,6 @@ void TestActivitySubscriptionPushesOnlyWhileSubscribed() {
          "the reply is the status with activity: " + error);
   Expect(WaitUntil([&] { return pushes.load() >= 2; }, std::chrono::seconds(15)), "pushes arrive every interval");
   client->UnsubscribeActivity();
-  // A push the server sent before it read the unsubscribe may still be in flight.
   std::this_thread::sleep_for(std::chrono::milliseconds(300));
   const int settled = pushes.load();
   std::this_thread::sleep_for(remote::kActivityInterval * 2 + std::chrono::milliseconds(500));
@@ -453,8 +403,6 @@ void TestActivitySubscriptionPushesOnlyWhileSubscribed() {
          "a subscriber whose connection closed is dropped");
 }
 
-// Every field of the reply is untrusted: a hostile row is dropped or its field
-// reads as not reported, never as a wrong number.
 void TestDecoderTrustsNoActivityField() {
   const remote::ServerStatus status = Parse(R"({
     "release": "2.1", "pid": 77,
@@ -538,8 +486,6 @@ void TestStatusTableAndFigureWords() {
       "    make -j8                                pid 5000    running             \xe2\x80\xa6 \xc2\xb7 \xe2\x80\xa6\n";
   Expect(table == expected, "the table:\n" + table + "\nexpected:\n" + expected);
 
-  // The disk a workspace is on: low under a tenth of it or 10 GB, whichever is
-  // less; a figure that is missing or absurd is not reported, never zero.
   const auto disk = [](std::string_view fields) {
     return Parse("{\"workspaces\": [{\"root\": \"/srv/p\", \"clients\": 1" + std::string(fields) + "}]}")
         .workspaces.front();
@@ -556,7 +502,7 @@ void TestStatusTableAndFigureWords() {
          "an older server's row, or a hostile one, shows no disk figure");
 }
 
-}  // namespace
+}
 
 void RegisterRemoteHostActivityTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostActivity/StatLineParsesAroundAHostileComm", TestStatLineParsesAroundAHostileComm);
@@ -570,4 +516,4 @@ void RegisterRemoteHostActivityTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostActivity/StatusTableAndFigureWords", TestStatusTableAndFigureWords);
 }
 
-}  // namespace microide::tests
+}

@@ -10,20 +10,6 @@
 
 namespace microide::tests {
 
-// A deliberately naive, cache-free fold computation used as the ORACLE for the
-// incremental model.
-//
-// The fold tests used to diff `FoldingModel` against `FoldingModel`: an
-// incrementally updated instance against a freshly constructed one. That catches
-// splice bugs, but it cannot catch anything wrong with the derivation itself,
-// because both sides run it. This re-derives folds from the raw lines with no
-// per-line caches, no block words and no windowing -- every structure the model
-// uses to be fast is absent here, so a disagreement points straight at one of
-// them.
-//
-// It deliberately does NOT model syntax suppression (brackets inside strings and
-// comments); callers that want that compare against a model built with no syntax
-// viewport, or assert on specific ranges instead.
 inline std::vector<editor::FoldRange> ReferenceFolds(
     const std::vector<std::string>& lines,
     const editor::FoldingModel::ComputeOptions& options) {
@@ -33,7 +19,6 @@ inline std::vector<editor::FoldRange> ReferenceFolds(
   const std::size_t tab_size = options.tab_size == 0 ? 1 : options.tab_size;
   std::vector<FoldRange> out;
 
-  // ---- bracket source: one stack, every byte of every line ----------------
   if (!options.bracket_pairs.empty()) {
     struct Open {
       char close;
@@ -51,8 +36,6 @@ inline std::vector<editor::FoldRange> ReferenceFolds(
             break;
           }
           if (byte == pair.second) {
-            // A closer that does not match the top is discarded, matching the
-            // model: an unbalanced `}` must not tear down an unrelated pair.
             if (!stack.empty() && stack.back().close == byte) {
               const Open top = stack.back();
               stack.pop_back();
@@ -67,7 +50,6 @@ inline std::vector<editor::FoldRange> ReferenceFolds(
     }
   }
 
-  // ---- indent source: a level stack over the non-blank lines --------------
   if (options.use_indent_source) {
     const auto measure = [&](std::string_view text) -> std::size_t {
       std::size_t indent = 0;
@@ -80,7 +62,7 @@ inline std::vector<editor::FoldRange> ReferenceFolds(
           return indent;
         }
       }
-      return static_cast<std::size_t>(-1);  // blank / whitespace only
+      return static_cast<std::size_t>(-1);
     };
     struct Level {
       std::size_t indent;
@@ -100,14 +82,12 @@ inline std::vector<editor::FoldRange> ReferenceFolds(
     for (std::size_t line = 0; line < lines.size(); ++line) {
       const std::size_t indent = measure(lines[line]);
       if (indent == static_cast<std::size_t>(-1)) {
-        continue;  // blank lines neither open nor close a block
+        continue;
       }
       close_to(indent);
       stack.push_back(Level{indent, line});
       last_nonblank = line;
     }
-    // End of document: every level still open genuinely ends at the last
-    // non-blank line.
     while (!stack.empty()) {
       const Level top = stack.back();
       stack.pop_back();
@@ -117,7 +97,6 @@ inline std::vector<editor::FoldRange> ReferenceFolds(
     }
   }
 
-  // ---- one range per opener: bracket wins, then the widest ----------------
   std::sort(out.begin(), out.end(), [](const FoldRange& a, const FoldRange& b) {
     if (a.opener_line != b.opener_line) {
       return a.opener_line < b.opener_line;
@@ -135,4 +114,4 @@ inline std::vector<editor::FoldRange> ReferenceFolds(
   return out;
 }
 
-}  // namespace microide::tests
+}

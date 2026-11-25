@@ -431,8 +431,8 @@ The floating widgets were missing from the hover catch-all.
 
 **Deliverables** (architecture rules, each with positive and negative fixtures):
 - `CheckEditorMetricsNameTheirStickyBand`: a `ComputeMetrics(..., 0, ...)` call in
-  `src/workspace` needs an adjacent comment saying why the band is ignored (the two-step sizing
-  callers); otherwise pass `sticky_band_rows()`.
+  `src/workspace` is flagged: pass `sticky_band_rows()`, or `editor::kNoStickyBand` where the band
+  cannot matter (it once accepted an adjacent comment instead; comments are gone from the tree).
 - `CheckHitTestsHonourModals`: mouse hit-test entry points that move focus must go through
   `FindSingleLineInputHit` or check `prompts.surface_visible` / `OverlayIsModal`.
 - `CheckPointerOverElementsAreHoverTargets`: every rect painted with `PointerOver(` in a render

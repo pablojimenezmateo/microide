@@ -153,13 +153,9 @@ class SidebarMouseCoordinator;
 class PanelMouseCoordinator;
 class DebugPaneMouseCoordinator;
 
-// Memoizes WorkspaceShell::BreadcrumbLabel across paints. The label is a path-derived
-// string rebuilt every chrome frame otherwise; cached against the inputs that shape it
-// so a repaint that changed none reuses it (TD-2026-07-17A-023). Namespace-scoped (not
-// nested in WorkspaceShell) to keep WorkspaceShellMembers.inc within its size budget.
 struct BreadcrumbLabelCache {
   bool valid = false;
-  int mode = 0;  // 0 editor, 1 compare, 2 merge
+  int mode = 0;
   bool placeholder = false;
   std::filesystem::path root;
   std::filesystem::path path;
@@ -172,4 +168,4 @@ class WorkspaceShell {
 #include "workspace/shell/WorkspaceShellMembers.inc"
 };
 
-}  // namespace microide::workspace
+}

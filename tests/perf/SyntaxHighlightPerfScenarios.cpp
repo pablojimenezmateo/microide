@@ -1,17 +1,3 @@
-// Performance scenarios for the per-line syntax-highlight hot path.
-//
-// `runtime_syntax::HighlightLine` is the dominant main-thread cost of scrolling
-// a highlighted file through fresh content: every newly exposed line is a token
-// cache miss, and the render path resolves it synchronously (the off-thread
-// prefetch cannot land inside the same frame that scrolled). The ranked scope
-// summary put it at the top of `editor_sticky_scroll_scroll`, yet the function
-// had no scenario of its own -- the interactive scenarios that exercise it also
-// pay file open, layout, render and present, so a 2x change in the highlighter
-// moved them only a few percent and no gate would have caught a regression.
-//
-// These are pure-unit micro-benchmarks: they read a fixture buffer once and call
-// the highlighter directly, threading `SyntaxState` line to line exactly as the
-// viewport's cache does. Deterministic and allocation-stable, so they are gated.
 #include "perf/PerfHarness.h"
 
 #include <cstddef>
@@ -26,9 +12,6 @@
 namespace microide::tests::perf {
 namespace {
 
-// Lines highlighted per measured pass. Well above a screenful so per-call
-// overhead is averaged out, and small enough that a pass stays in the tens of
-// milliseconds on the reference runner.
 constexpr std::size_t kHighlightLineCount = 4000;
 
 std::vector<std::string> ReadFixtureLines(const std::filesystem::path& path,
@@ -49,8 +32,6 @@ std::vector<std::string> ReadFixtureLines(const std::filesystem::path& path,
   return lines;
 }
 
-// Highlight `lines` in order, threading the end state forward the way
-// TextViewport's per-line cache does on a cold scroll.
 void RunHighlightOverFixture(ScenarioContext& context,
                              std::string_view scenario_name,
                              const std::filesystem::path& fixture,
@@ -61,8 +42,6 @@ void RunHighlightOverFixture(ScenarioContext& context,
     return;
   }
   const std::string_view first_line = lines.front();
-  // Warm the lazy per-definition regex compile outside the measured window; the
-  // production path pays it once per filetype per session, not per line.
   {
     editor::SyntaxState warm = editor::SyntaxHighlighter::InitialState(fixture, lines);
     for (std::size_t i = 0; i < 64; ++i) {
@@ -77,7 +56,6 @@ void RunHighlightOverFixture(ScenarioContext& context,
       editor::HighlightedLine highlighted =
           editor::SyntaxHighlighter::HighlightLine(line, fixture, state, first_line);
       state = highlighted.end_state;
-      // Consume the tokens so the whole call cannot be optimized away.
       token_checksum += highlighted.tokens.size();
     }
   });
@@ -98,10 +76,6 @@ void RunSyntaxHighlightPythonLines(ScenarioContext& context) {
                           "syntax.highlight_python_lines");
 }
 
-// The state-only replay the checkpoint chain runs (want_tokens = false). It skips
-// the pattern rules entirely and only tracks region open/close, so it must stay
-// far cheaper than the token path -- a regression that made it re-run pattern
-// rules would be invisible in the token scenarios above.
 void RunSyntaxAdvanceStateCppLines(ScenarioContext& context) {
   const std::filesystem::path fixture =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
@@ -128,24 +102,9 @@ void RunSyntaxAdvanceStateCppLines(ScenarioContext& context) {
   (void)depth_checksum;
 }
 
-// A reload with NO plugin definitions must ALIAS the built-in registry, not copy
-// it. `GetRegistry()` returns `BuiltInRegistry()` exactly when `MutableRegistry()`
-// is empty, so leaving it empty is the whole mechanism — and for a long time
-// `BuildRegistry` cloned the built-in tables into it anyway, which silently
-// disabled the alias and cost 1.7 ms of shell thread at every launch and at every
-// project switch whose syntax fingerprint moved.
-//
-// A pure-unit gate, because nothing else can see this: no interactive scenario
-// reloads syntax definitions (the fingerprint check early-returns after the
-// first), and the launch cost lives in the real binary, outside the harness. The
-// allocation count is the oracle — a re-introduced clone is ~3,600 rules and two
-// rule-index maps per definition, so it moves this from tens to tens of
-// thousands. The wall half is incidental.
 void RunSyntaxDefinitionsReloadNoPlugins(ScenarioContext& context) {
   editor::runtime_syntax::EnsureInitialized();
   const std::vector<editor::runtime_syntax::RuntimeSyntaxDefinitionData> no_definitions;
-  // Warm: the first reload after EnsureInitialized may still be publishing the
-  // built-in registry, and the measured loop wants the steady state.
   (void)editor::runtime_syntax::ReloadDefinitions(no_definitions, nullptr);
   context.Measure("syntax.reload_no_plugins", [&]() {
     for (int iter = 0; iter < 20; ++iter) {
@@ -157,10 +116,6 @@ void RunSyntaxDefinitionsReloadNoPlugins(ScenarioContext& context) {
   });
 }
 
-// Wall envelopes follow the tech-debt coverage precedent: allocation counts are
-// exactly deterministic here (one token vector per line) and stay the tight
-// complexity oracle, while the wall envelope absorbs this runner's scheduler
-// jitter on tens-of-milliseconds work.
 const ScenarioRegistration g_perf_syntax_highlight_cpp_lines({Scenario{
     .name = "syntax_highlight_cpp_lines",
     .smoke = true,
@@ -194,5 +149,5 @@ const ScenarioRegistration g_perf_syntax_advance_state_cpp_lines({Scenario{
     .run = RunSyntaxAdvanceStateCppLines,
 }});
 
-}  // namespace
-}  // namespace microide::tests::perf
+}
+}

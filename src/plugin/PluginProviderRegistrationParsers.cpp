@@ -16,14 +16,12 @@
 namespace microide::plugin::registration_parsers {
 namespace {
 
-// Field readers are centralized in lua_interop; ReadStringField here is the
-// optional-returning variant so parsers can detect missing required fields.
 using lua_interop::ReadBoolField;
 using lua_interop::ReadFunctionRefField;
 using lua_interop::ReadStringArrayField;
 constexpr auto& ReadStringField = lua_interop::ReadOptionalStringField;
 
-}  // namespace
+}
 
 bool ParseLanguageServerRegistration(lua_State* state,
                                      const std::string& plugin_id,
@@ -31,9 +29,6 @@ bool ParseLanguageServerRegistration(lua_State* state,
                                      std::string* error_message) {
   if (out == nullptr) return false;
   auto id_opt = ReadStringField(state, 1, "id");
-  // `command` is one argv; `commands` is a list of them, of which the first whose
-  // program exists where the server runs is started (TD-2026-10-19-365), with
-  // `install_hint` said when none does.
   std::optional<std::vector<std::string>> command_opt;
   if (auto candidates = lua_interop::ReadStringArrayListField(state, 1, "commands")) {
     std::erase_if(*candidates, [](const std::vector<std::string>& argv) { return argv.empty(); });
@@ -45,8 +40,6 @@ bool ParseLanguageServerRegistration(lua_State* state,
   } else {
     command_opt = ReadStringArrayField(state, 1, "command");
   }
-  // Accept either a `language_ids` array (one process serves several languages)
-  // or a single `language_id` string; the latter folds into a one-element list.
   std::vector<std::string> language_ids;
   if (auto ids = ReadStringArrayField(state, 1, "language_ids")) {
     language_ids = std::move(*ids);
@@ -56,9 +49,6 @@ bool ParseLanguageServerRegistration(lua_State* state,
       if (!single->empty()) language_ids.push_back(std::move(*single));
     }
   }
-  // Reject empty/whitespace-only language ids: an array like {"", "cpp"} would
-  // otherwise seed an unusable "" key into the activation table. The array must be
-  // non-empty AND every entry must be a real token.
   const auto is_blank = [](const std::string& value) {
     return value.empty() || value.find_first_not_of(" \t\r\n") == std::string::npos;
   };
@@ -75,8 +65,6 @@ bool ParseLanguageServerRegistration(lua_State* state,
       .settings = {},
       .eager_start = ReadBoolField(state, 1, "eager_start"),
   };
-  // initialization_options / settings are accepted as JSON-string fields and
-  // parsed host-side; malformed JSON is ignored (left Null).
   if (auto json = ReadStringField(state, 1, "initialization_options")) {
     if (auto parsed = util::ParseJson(*json)) {
       out->contributed.initialization_options = std::move(*parsed);
@@ -106,8 +94,6 @@ bool ParseLanguageQueryRegistration(lua_State* state,
   if (provide_ref == LUA_NOREF) {
     return util::Fail(error_message, "language provider requires a provide function");
   }
-  // Parameter hints open on these as they are typed, like a language server's
-  // signatureHelpProvider.triggerCharacters; a call's `(` and `,` by default.
   std::string trigger_characters;
   if (kind == runtime_types::LanguageQueryKind::SignatureHelp) {
     trigger_characters =
@@ -134,8 +120,6 @@ bool ParseDebugAdapterRegistration(lua_State* state,
   if (out == nullptr) return false;
   auto id_opt = ReadStringField(state, 1, "id");
   auto command_opt = ReadStringArrayField(state, 1, "command");
-  // `type` is the DAP adapter type id matched by a LaunchConfig; default it to
-  // the local id when omitted so a single-adapter plugin can stay terse.
   auto type_opt = ReadStringField(state, 1, "type");
   std::string type = (type_opt && !type_opt->empty()) ? std::move(*type_opt)
                      : (id_opt ? *id_opt : std::string());
@@ -160,10 +144,6 @@ bool ParseLaunchConfigRegistration(lua_State* state,
   if (!id_opt || id_opt->empty() || !type_opt || type_opt->empty()) return false;
   auto name_opt = ReadStringField(state, 1, "name");
   auto request_opt = ReadStringField(state, 1, "request");
-  // `arguments` is a JSON-string field (same convention as LSP
-  // initialization_options); the host parses it into the launch request body. Reject
-  // a present-but-malformed value up front rather than storing a string that fails to
-  // parse later at launch time. An empty/absent field stays allowed.
   std::string arguments_json;
   if (auto json = ReadStringField(state, 1, "arguments"); json && !json->empty()) {
     if (!util::ParseJson(*json)) {
@@ -194,11 +174,6 @@ bool ParseToolRegistration(lua_State* state,
   auto url_opt = ReadStringField(state, 1, "url");
   auto sha256_opt = ReadStringField(state, 1, "sha256");
   if (!id_opt || !platform_opt || !url_opt || !sha256_opt) return false;
-  // The sha256 is the ONLY integrity check the downloader performs on a fetched
-  // executable, so an empty / short / non-hex value is a silent trust hole: the
-  // downloader would serve an unverified cached binary. Require a real 64-char hex
-  // digest (either case) at registration rather than storing a bogus hash that fails
-  // to guard anything later. (See bug inventory J22.)
   const auto is_hex_sha256 = [](std::string_view value) {
     if (value.size() != 64) return false;
     for (const char c : value) {
@@ -209,9 +184,6 @@ bool ParseToolRegistration(lua_State* state,
   if (!is_hex_sha256(*sha256_opt)) {
     return util::Fail(error_message, "tool sha256 must be a 64-character hex digest");
   }
-  // Normalize to lowercase: registration accepts either case, but the downloader
-  // compares against `ComputeSha256Blocking`, which returns lowercase. An
-  // uppercase expected digest would otherwise fail verification for a correct file.
   for (char& c : *sha256_opt) {
     c = util::ToLowerAsciiChar(static_cast<char>(c));
   }
@@ -324,6 +296,6 @@ bool ParseAuthProviderRegistration(lua_State* state,
   return true;
 }
 
-}  // namespace microide::plugin::registration_parsers
+}
 
 #endif

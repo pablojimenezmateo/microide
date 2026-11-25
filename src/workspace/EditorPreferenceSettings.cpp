@@ -22,7 +22,6 @@ EditorPreferenceSettings ResolveEditorPreferenceSettings(
   resolved.surround = flag("editor.brackets.surround.enabled", true);
   resolved.smart_indent = flag("editor.indent.smart.enabled", true);
 
-  // "auto" (and anything unrecognized) keeps the file's detected ending.
   const std::optional<std::string> line_endings = get_setting("editor.line_endings");
   if (line_endings.has_value()) {
     if (*line_endings == "lf") {
@@ -34,4 +33,4 @@ EditorPreferenceSettings ResolveEditorPreferenceSettings(
   return resolved;
 }
 
-}  // namespace microide::workspace
+}

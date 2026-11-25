@@ -21,16 +21,8 @@ namespace {
 using path_interop::ContainPath;
 using path_interop::ResolveRuntimePath;
 
-// Backstop wall-clock cap on a plugin-spawned subprocess. A hung child (a tool
-// waiting on input, a stuck network call) would otherwise block the plugin worker
-// thread forever, stalling every subsequent plugin task behind it. Generous
-// enough for normal formatters/linters; run_async is the path for genuinely
-// long-lived work, and it too gets this backstop rather than an unbounded wait.
 constexpr int kPluginProcessTimeoutMs = 120'000;
 
-// Native form of the `process.run` arguments. Holds every heap-backed object the
-// call needs so the parse step can fail without leaving such an object alive on
-// the stack when the caller raises a Lua error (a C longjmp — see LuaError.h).
 struct ProcessRunArgs {
   std::vector<std::string> argv;
   std::filesystem::path cwd;
@@ -38,19 +30,12 @@ struct ProcessRunArgs {
   std::vector<platform::SubprocessEnvironmentOverride> environment_overrides;
 };
 
-// Parses the argv table (index 1) and optional options table (index 2) into
-// `out`. Returns nullptr on success, or a static error-message literal on a type
-// mismatch. Never calls luaL_error / luaL_checktype: those longjmp, which would
-// skip the destructors of `out`'s std::vector / std::string members. The caller
-// raises the returned literal only after `out` has gone out of scope.
 const char* ParseProcessRunArgs(lua_State* state,
                                 const std::filesystem::path& current_project_root,
                                 ProcessRunArgs* out) {
   if (lua_type(state, 1) != LUA_TTABLE) {
     return "process argv must be a table";
   }
-  // Clamp against a sparse-border table making lua_rawlen overstate the length
-  // (no real command needs thousands of argv entries): bound reserve and loop.
   constexpr lua_Integer kMaxProcessArgv = 4096;
   const lua_Integer argc =
       std::min<lua_Integer>(static_cast<lua_Integer>(lua_rawlen(state, 1)), kMaxProcessArgv);
@@ -61,8 +46,6 @@ const char* ParseProcessRunArgs(lua_State* state,
       lua_pop(state, 1);
       return "process argv entries must be strings";
     }
-    // NUL-reject each argv entry (TD-2026-07-17A-080): truncating "ls\0; rm -rf" at the
-    // NUL would launch the child with only the prefix while validation saw the same.
     std::optional<std::string> arg = lua_interop::ToHostString(state, -1);
     lua_pop(state, 1);
     if (!arg) {
@@ -78,8 +61,6 @@ const char* ParseProcessRunArgs(lua_State* state,
     }
     lua_interop::GetFieldProtected(state, 2, "cwd");
     if (lua_isstring(state, -1)) {
-      // NUL-reject the cwd (TD-2026-07-17A-080): a truncated path could pass containment
-      // as its prefix yet resolve to a different directory in the OS C-string call.
       std::optional<std::string> cwd_text = lua_interop::ToHostString(state, -1);
       if (!cwd_text) {
         lua_pop(state, 1);
@@ -93,8 +74,6 @@ const char* ParseProcessRunArgs(lua_State* state,
     if (lua_isstring(state, -1)) {
       size_t length = 0;
       const char* text = lua_tolstring(state, -1, &length);
-      // Cap process stdin independently of Lua's heap budget so one call cannot
-      // push an enormous payload through the plugin worker / subprocess pipe.
       constexpr size_t kMaxProcessStdinBytes = 16 * 1024 * 1024;
       if (length > kMaxProcessStdinBytes) {
         lua_pop(state, 1);
@@ -110,13 +89,8 @@ const char* ParseProcessRunArgs(lua_State* state,
         lua_pop(state, 1);
         return "process env must be a table";
       }
-      // Bound the env drain the same way argv is bounded above: lua_next is
-      // unbounded, so a malformed/hostile table could otherwise grow
-      // `environment_overrides` (and its backing key/value strings) without limit
-      // on the plugin worker thread. Cap both the entry count and the total
-      // key+value byte volume, rejecting once either is exceeded.
       constexpr std::size_t kMaxProcessEnvEntries = 4096;
-      constexpr std::size_t kMaxProcessEnvBytes = 1u << 20;  // 1 MiB of key+value data
+      constexpr std::size_t kMaxProcessEnvBytes = 1u << 20;
       std::size_t env_bytes = 0;
       lua_pushnil(state);
       while (lua_next(state, -2) != 0) {
@@ -124,23 +98,12 @@ const char* ParseProcessRunArgs(lua_State* state,
           lua_pop(state, 2);
           return "process env exceeds the maximum number of entries";
         }
-        // Strict string check on the KEY: lua_isstring() is also true for numbers,
-        // and calling lua_tostring() on a numeric key converts it in place, which
-        // corrupts the running lua_next() iteration (Lua raises "invalid key to
-        // 'next'"). That raise longjmps over the live ProcessRunArgs local. Reject
-        // non-string keys before touching them, matching the theme parser.
         if (lua_type(state, -2) != LUA_TSTRING) {
           lua_pop(state, 2);
           return "process env keys must be strings";
         }
 
         platform::SubprocessEnvironmentOverride override_entry;
-        // The key is a verified LUA_TSTRING (checked above), so lua_tolstring does NOT
-        // convert in place and cannot corrupt the running lua_next. Read it length-
-        // preserving and validate it as a real environment-variable name
-        // (TD-2026-07-17A-080/126): reject an empty name, an embedded NUL, and an '='.
-        // A key like "LD_PRELOAD=x" would otherwise be split by the child at the first
-        // '=' into an effective LD_PRELOAD entry rather than a harmless invalid key.
         {
           std::size_t name_len = 0;
           const char* name_ptr = lua_tolstring(state, -2, &name_len);
@@ -180,9 +143,6 @@ const char* ParseProcessRunArgs(lua_State* state,
   return nullptr;
 }
 
-// True when argv[0] satisfies the plugin's allowlist. An empty allowlist (with exec granted)
-// permits any binary; otherwise argv[0] must match an entry exactly (e.g. an absolute path) or
-// by basename, so a plugin allowing "eslint" accepts both "eslint" and "/usr/bin/eslint".
 bool ProgramAllowed(const PluginCapabilities& caps, const std::vector<std::string>& argv) {
   if (caps.process_allowlist.empty()) {
     return true;
@@ -199,8 +159,6 @@ bool ProgramAllowed(const PluginCapabilities& caps, const std::vector<std::strin
   return false;
 }
 
-// A spawned process may only be cwd'd inside the plugin's project root or data directory. An
-// empty cwd means "inherit the host's working directory" and is left untouched.
 bool CwdContained(const PluginFsContext& fs, const std::filesystem::path& cwd) {
   if (cwd.empty()) {
     return true;
@@ -209,15 +167,6 @@ bool CwdContained(const PluginFsContext& fs, const std::filesystem::path& cwd) {
   return ContainPath(std::span(roots), cwd).has_value();
 }
 
-// Builds the kernel-confinement descriptor for a plugin-spawned child. The child's
-// filesystem reach is tied to the plugin's DECLARED fs.read / fs.write levels
-// (TD-2026-07-17A-129): process.exec grants the ability to spawn, not an implicit
-// project/data read+write override. A plugin declaring fs = { read = "none", write =
-// "none" } gets a child with no project/data roots (only the system read/exec + scratch
-// roots the platform layer always adds), so an allowed helper cannot read or modify
-// project files. The root selection mirrors ctx.files.* AllowedRoots: project_root at
-// kProjectScoped+, the plugin data dir only at kProjectAndData. IPv4/IPv6 sockets are
-// blocked unless the plugin declared the network capability.
 platform::SubprocessSandbox MakeSandbox(const PluginFsContext& fs) {
   platform::SubprocessSandbox sandbox;
   sandbox.enabled = true;
@@ -236,15 +185,10 @@ platform::SubprocessSandbox MakeSandbox(const PluginFsContext& fs) {
   };
   add_roots_for_level(fs.caps.fs_read, sandbox.read_roots);
   add_roots_for_level(fs.caps.fs_write, sandbox.write_roots);
-  // A plugin allowed to spawn git must be able to run it: git aborts on an
-  // unreadable ~/.gitconfig rather than skipping it, so without this every
-  // plugin's git call failed on any machine whose user had ever set user.name.
   platform::AllowUserGitConfiguration(sandbox);
   return sandbox;
 }
 
-// Returns nullptr when the parsed call is permitted, or a static error-message literal to be
-// raised. Holds no heap state of its own so the caller can raise after `parsed` destructs.
 const char* CheckProcessCapability(const PluginFsContext& fs, const ProcessRunArgs& parsed) {
   if (!fs.caps.process_exec) {
     return "process execution not permitted; declare capabilities.process.exec";
@@ -261,19 +205,10 @@ const char* CheckProcessCapability(const PluginFsContext& fs, const ProcessRunAr
   return nullptr;
 }
 
-}  // namespace
+}
 
-// The two process entry points (`process.run`, `process.run_async`) ran the child
-// with a byte-identical option block and pushed a byte-identical result table.
-// Both are security-relevant (the sandbox and the capability-checked argv/cwd
-// flow through here), so a divergence between the copies would be exactly the
-// kind that goes unnoticed.
 static platform::SubprocessResult RunPluginSubprocess(const PluginFsContext& fs,
                                                       ProcessRunArgs& parsed) {
-  // Through the launcher the cwd's tree belongs to: a tool run in the project runs
-  // where the project does (the host, for a remote one), and one run in the plugin's
-  // own data directory runs here (TD-2026-10-06-318). The sandbox stays attached to
-  // the options because it is a property of the CHILD, not of where the child runs.
   const platform::ProcessLauncher& launcher = fs.LauncherFor(parsed.cwd);
   return launcher.Run(
       platform::ExpandWorkspaceFolder(parsed.argv, fs.project_root, launcher),
@@ -288,8 +223,6 @@ static platform::SubprocessResult RunPluginSubprocess(const PluginFsContext& fs,
                    });
 }
 
-// Pushes { exit_code, ok, stdout, stderr }. Only Lua stack calls, so it holds no
-// non-trivially-destructible local that a Lua memory error could longjmp over.
 static void PushProcessResultTable(lua_State* state, const platform::SubprocessResult& result) {
   lua_createtable(state, 0, 4);
   lua_pushinteger(state, result.exit_code);
@@ -336,14 +269,6 @@ int LuaProcessRunAsync(lua_State* state, const PluginFsContext& fs) {
       error = CheckProcessCapability(fs, parsed);
     }
     if (error == nullptr) {
-      // Runs on the plugin worker, so blocking on the subprocess never stalls the
-      // UI. The subprocess can legitimately outlast the enclosing call's watchdog
-      // budget (that is the whole point of run_async), so the callback is invoked
-      // through PCallNested, which gives it a fresh deadline instead of inheriting
-      // the already-spent outer one — otherwise the watchdog would abort a healthy
-      // callback on its first instruction. PCallNested is also protected, so a
-      // callback error cannot longjmp over the C++ locals (`parsed`, `result`)
-      // still alive here.
       const platform::SubprocessResult result = RunPluginSubprocess(fs, parsed);
       lua_pushvalue(state, 3);
       PushProcessResultTable(state, result);
@@ -356,16 +281,12 @@ int LuaProcessRunAsync(lua_State* state, const PluginFsContext& fs) {
     return lua_error_util::kPendingError;
   }
   if (callback_failed) {
-    // PCallNested extracted the callback's error message into `callback_error`;
-    // push it back for the wrapper, which records and raises it once this frame's
-    // locals have destructed. (callback_error itself is gone by then — the raise
-    // happens in the .inc wrapper after this function returns.)
     lua_error_util::PushMessage(state, callback_error, "process.run_async callback failed");
     return lua_error_util::kPendingError;
   }
   return 0;
 }
 
-}  // namespace microide::plugin::process_interop
+}
 
 #endif

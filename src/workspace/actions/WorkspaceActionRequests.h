@@ -52,9 +52,6 @@ struct MergeRequest {
 std::optional<MergeRequest> BuildMergeRequest(const std::vector<std::string>& args,
                                               const std::filesystem::path& project_root);
 
-// Two arbitrary paths for a non-git `compare-files <left> <right>` command.
-// Relative paths resolve against `project_root` when one is open; absolute paths
-// (files outside the project) pass through unchanged.
 struct CompareFilesRequest {
   std::filesystem::path left_path;
   std::filesystem::path right_path;
@@ -63,14 +60,9 @@ struct CompareFilesRequest {
 std::optional<CompareFilesRequest> BuildCompareFilesRequest(
     const std::vector<std::string>& args, const std::filesystem::path& project_root);
 
-// Result of a batch review verb (review-conflicts / review-branch / review-commit).
-// `message` is the human/agent-facing summary (file list on success, reason on
-// failure); it is surfaced as the control-channel feedback/error.
 struct ReviewOpenOutcome {
   bool ok = false;
   std::string message;
-  // The review's git work is still running off the shell thread; the real outcome
-  // is reported when it lands (ReviewSessionCoordinator::Operations::report_outcome).
   bool pending = false;
 };
 
@@ -81,8 +73,6 @@ struct OpenPathRequest {
 std::optional<OpenPathRequest> BuildOpenPathRequest(const std::vector<std::string>& args,
                                                     const std::filesystem::path& project_root);
 
-// A command-line path: relative ones resolve against the project root; the
-// result is lexically normal. Empty in, empty out.
 std::filesystem::path NormalizeCommandPath(const std::filesystem::path& project_root,
                                            std::filesystem::path path);
 
@@ -170,4 +160,4 @@ struct FocusRequest {
 
 FocusRequest BuildFocusRequest(const std::vector<std::string>& args);
 
-}  // namespace microide::workspace
+}

@@ -5,10 +5,6 @@
 
 namespace microide::project::remote {
 
-// The two-way map between the editor's tree (the mirror, in a remote project) and
-// the host's tree, component-wise. A path outside a root is not the project's and
-// maps to nothing. One implementation for the real remote launcher and the parity
-// suite's loopback stand-in, so the stand-in tests the map that ships.
 class RemotePathMap {
  public:
   RemotePathMap(std::filesystem::path local_root, std::filesystem::path host_root);
@@ -22,4 +18,4 @@ class RemotePathMap {
   std::filesystem::path host_root_;
 };
 
-}  // namespace microide::project::remote
+}

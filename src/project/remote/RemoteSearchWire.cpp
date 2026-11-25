@@ -24,8 +24,6 @@ std::optional<std::size_t> ReadSize(const util::JsonValue& value) {
   return static_cast<std::size_t>(value.AsInt());
 }
 
-// A host's relative path must stay relative and inside the tree: it becomes a
-// path under the mirror on this side.
 bool SafeRelativePath(const std::string& path) {
   if (path.empty() || path.front() == '/' || path.find('\0') != std::string::npos) {
     return false;
@@ -41,7 +39,7 @@ bool SafeRelativePath(const std::string& path) {
   return true;
 }
 
-}  // namespace
+}
 
 util::JsonValue SearchRunParams(const std::string& query, const ProjectSearchOptions& options) {
   util::JsonObject params;
@@ -169,4 +167,4 @@ ProjectSearchCompletion ParseSearchCompletion(const util::JsonValue& result) {
   return completion;
 }
 
-}  // namespace microide::project::remote
+}

@@ -43,38 +43,6 @@
 
 extern char** environ;
 
-// Remote data safety under fault injection: every step of a push, a pull and a
-// conflict resolution, with the client killed, the server killed, or the link
-// dropped at that step -- over a direct link and over a slow one -- and then the
-// recovery a user gets (the app relaunched on the mirror, or the connection
-// re-established), checked for loss on both sides.
-//
-// A "step" is a wire frame (tests/support/FaultRelay.h counts them once the
-// operation starts): the fault lands between every pair of frames the operation
-// exchanges, so a request the host never received, one it applied without the
-// answer arriving, and a reply the client got but never recorded are each a
-// cell. The host side is the real daemon (`microide-server start`), as in
-// production, so a dropped link leaves it running and finishing what it had,
-// and a killed one is SIGKILLed mid-whatever and restarted for the reconnect.
-// The client crash is a real one: the operation runs in this binary re-executed
-// as a helper (--mirror-fault-client), which raises SIGKILL on itself at the
-// step, so the mirror's disk is exactly what a crash leaves.
-//
-// A second axis steps on DISK writes instead (TD-2026-11-02-430 item 1): every
-// durable-write boundary the client passes -- a temporary written, a rename, a
-// directory or filesystem sync, a journal or state record, a hint appended, an
-// object stored -- is a util::CrashPoint, and the helper SIGKILLs itself at each
-// one in turn. That reaches a crash between two disk writes with no frame
-// between them (a save's tree file and the journal that records it), which the
-// frame axis reached only by its after-delivery timings.
-//
-// Every cell must end -- after reconnecting, syncing, and (for a resolution the
-// crash interrupted) choosing the same side again -- with no error, nothing
-// unsent, no conflict left, and both trees equal to exactly the expected files:
-// the one side's bytes when the operation was one-sided (where a conflict is
-// itself a finding), the chosen side's when it was a resolution. No stray file
-// on either side (a write's temporary left in the host tree would sync into the
-// mirror as a file the user never made).
 namespace microide::tests {
 
 int RunMirrorFaultClient(int argc, char** argv);
@@ -93,13 +61,9 @@ enum class Scenario {
 };
 enum class Fault { None, KillClient, KillClientAtDiskStep, PowerCutAtDiskStep, KillServer, DropLink };
 
-// The crash-point hook: counts the points the operation passes, and SIGKILLs
-// this process at the armed one. A plain function, because a hook is a pointer.
 std::atomic<std::size_t> g_disk_steps{0};
 std::atomic<std::size_t> g_disk_kill_at{std::numeric_limits<std::size_t>::max()};
 
-// A power cut's helper also journals every point (and, before each rename, the
-// target's bytes as they were) to this directory, for ApplyPowerCut to read.
 std::filesystem::path g_power_log_dir;
 std::mutex g_power_log_mutex;
 
@@ -129,23 +93,13 @@ void DiskStepHook(const char* site, std::string_view what) {
   }
 }
 
-// What a power cut at the helper's last point loses, under the POSIX contract the
-// mirror's writes are built on: a rename survives only once a sync of its
-// directory (or of the whole filesystem) follows it -- a deferred pull's only
-// once the batch's syncfs does, since its bytes were never fsynced -- and bytes
-// appended or objects stored since the last syncfs may be torn. A lost rename
-// leaves both of its names as they were before (their journaled pre-images, or
-// nothing): the record writer's `state -> state.bak` rotation undone brings
-// `state` back, not just the old `.bak`.
-// Renamed bytes are not modeled as torn: an fsynced file's are durable, and
-// ext4's default data=ordered writes a renamed file's data before the rename.
 void ApplyPowerCut(const std::filesystem::path& log_dir) {
   struct Undurable {
     std::size_t index = 0;
     bool had_bytes = false;
     bool deferred = false;
   };
-  std::map<std::string, Undurable> undurable;  // target -> its first unsynced rename
+  std::map<std::string, Undurable> undurable;
   std::vector<std::string> torn;
   std::ifstream log(log_dir / "log", std::ios::binary);
   std::string line;
@@ -174,7 +128,7 @@ void ApplyPowerCut(const std::filesystem::path& log_dir) {
         return !entry.second.deferred && std::filesystem::path(entry.first).parent_path() == what;
       });
     } else if (site == "tree.filesystem-synced") {
-      undurable.clear();  // syncfs: everything written on the filesystem so far
+      undurable.clear();
       torn.clear();
     } else if (site == "mirror.hint-appended" || site == "objects.renamed") {
       torn.push_back(what);
@@ -198,7 +152,6 @@ void ApplyPowerCut(const std::filesystem::path& log_dir) {
   }
 }
 
-// Installs the hook for one operation; removes it after.
 struct CountDiskSteps {
   explicit CountDiskSteps(std::size_t kill_at = std::numeric_limits<std::size_t>::max()) {
     g_disk_steps = 0;
@@ -211,9 +164,6 @@ struct CountDiskSteps {
   std::size_t counted() const { return g_disk_steps.load(); }
 };
 
-// When, relative to the step's frame: before it is delivered (a request the host
-// never got, a reply the client never saw), or this long after it was (the peer
-// part-way through handling it: a server mid-write, a client mid-record).
 using Timing = std::optional<std::chrono::microseconds>;
 const Timing kTimings[] = {std::nullopt, std::chrono::microseconds(0), std::chrono::microseconds(300),
                            std::chrono::microseconds(2000)};
@@ -255,17 +205,11 @@ bool IsResolution(Scenario scenario) {
   return scenario == Scenario::KeepLocal || scenario == Scenario::TakeRemote;
 }
 
-// The operation starts with a local change to the mirror's tree (a save, a
-// rename, a delete): a crash inside that change can leave it undone, which is a
-// correct outcome -- the user's buffer still holds the save -- as long as both
-// sides then hold the state before it, whole.
 bool StartsWithALocalChange(Scenario scenario) {
   return scenario == Scenario::PushEdit || scenario == Scenario::PushCreate || scenario == Scenario::PushLarge ||
          scenario == Scenario::PushRename || scenario == Scenario::PushDelete;
 }
 
-// Over the large-file threshold below, and several bulk chunks long: a push of it
-// is a request plus WriteData frames, a pull of it a streamed fetch.
 std::string Large(char tag) {
   std::string bytes;
   bytes.reserve(200 * 1024);
@@ -311,9 +255,6 @@ Files ReadTree(const std::filesystem::path& root) {
     if (it->is_directory(error)) {
       continue;
     }
-    // Read without throwing: the waits below read the tree while the engine is
-    // applying a pull, and a file it deletes between the listing and the read is
-    // simply not there (ReadFile throws for it -- an ASan run caught one).
     std::ifstream in(it->path(), std::ios::binary);
     if (in) {
       files[it->path().lexically_relative(root).generic_string()] =
@@ -331,14 +272,6 @@ std::string Describe(const Files& files) {
   return text + " }";
 }
 
-// The mirror's record of each path the matrix touches, as the engine reports it:
-// what a relaunch starts from. For a failing cell's message -- Slow/PushCreate/
-// KillClient lost a saved new file on both sides in CI and never locally, and the
-// trees alone could not say whether the relaunch found it unsent (dirty), sent
-// (local-only) or listed by the host (current).
-// Asked of the engine, which takes its lock: this used to walk the store's map
-// from the test's thread, while the engine's thread applied a watch delta to it
-// (ThreadSanitizer, Slow/WatchPull/DropLink in CI).
 std::string DescribeStore(const remote::MirrorSyncEngine& engine) {
   using State = remote::MirrorSyncEngine::ContentState;
   std::string text = "{";
@@ -365,11 +298,8 @@ struct Layout {
   std::filesystem::path mirror;
 };
 
-// Beside the mirror: where a power-cut helper journals its points.
 std::filesystem::path PowerLogDir(const Layout& layout) { return layout.mirror.parent_path() / "power-cut"; }
 
-// One client: a link through a FaultRelay to the daemon, and the mirror's store
-// and engine. Declared so that the engine goes first and the relay last.
 struct Client {
   std::vector<std::unique_ptr<FaultRelay>> relays;
   std::shared_ptr<remote::RemoteConnection> connection;
@@ -377,7 +307,6 @@ struct Client {
   std::unique_ptr<remote::MirrorStore> store;
   std::unique_ptr<remote::MirrorSyncEngine> engine;
 
-  // A new link through a new relay; nullptr when the daemon is not there.
   std::shared_ptr<remote::RemoteServerClient> Link(const Layout& layout, std::chrono::milliseconds one_way,
                                                    std::string* error) {
     const int upstream = platform::ConnectUnixSocket(remote::ServerSocketPath(layout.socket_dir));
@@ -408,9 +337,6 @@ struct Client {
 
   FaultRelay& relay() { return *relays.back(); }
 
-  // What RemoteProject does on every Ready: resubscribe the watch, then sync (the
-  // sync's manifest is what a delta's id is compared with). Only where the scenario
-  // is about the watch -- elsewhere a delta's frames would be steps too.
   void Subscribe() {
     bool native = false;
     std::string error;
@@ -441,11 +367,6 @@ std::optional<pid_t> DaemonPid(const Layout& layout) {
   return pid.has_value() && *pid > 0 ? std::optional<pid_t>(static_cast<pid_t>(*pid)) : std::nullopt;
 }
 
-// Until the killed daemon's listening socket refuses: what `start` asks before it
-// starts another. A SIGKILLed multi-threaded process can show as a zombie leader
-// while its other threads still hold its descriptors, so the process state is not
-// the answer -- `start` then found the socket answering, said "already running",
-// and nothing served the reconnect.
 void WaitUntilTheDaemonIsGone(const Layout& layout, pid_t pid) {
   for (int i = 0; i < 500; ++i) {
     const int fd = platform::ConnectUnixSocket(remote::ServerSocketPath(layout.socket_dir));
@@ -465,7 +386,7 @@ void WaitUntilTheDaemonIsGone(const Layout& layout, pid_t pid) {
       const int got = std::fscanf(stat, "%d %255s %c", &read_pid, comm, &state);
       std::fclose(stat);
       if (got == 3 && state == 'Z') {
-        return;  // refusing, and only a zombie left: its descriptors are closed
+        return;
       }
     }
     ::usleep(10 * 1000);
@@ -507,8 +428,6 @@ void ApplyOperation(Scenario scenario, Client& client, const Layout& layout) {
       client.engine->RequestSync();
       break;
     case Scenario::WatchPull: {
-      // The host changes; the delta and its pulls are the steps. Settled when the
-      // mirror has it, or the fault has cut the way there.
       ChangeHost(layout.host);
       const Files expected = Expected(Scenario::WatchPull);
       (void)WaitUntil([&] { return ReadTree(layout.mirror / "tree") == expected || client.relay().fired(); },
@@ -525,9 +444,6 @@ void ApplyOperation(Scenario scenario, Client& client, const Layout& layout) {
   client.engine->Flush();
 }
 
-// The state before the operation: both sides at the base, synced; then whatever
-// the scenario needs (the host's changes for a pull, a parked conflict for a
-// resolution). Over a direct link, and the engine closed again, as an app quits.
 void Prepare(Scenario scenario, const Layout& layout) {
   WriteFile(layout.host / "a.txt", "base\n");
   WriteFile(layout.host / "b.txt", "base\n");
@@ -540,7 +456,6 @@ void Prepare(Scenario scenario, const Layout& layout) {
       ChangeHost(layout.host);
       break;
     case Scenario::Replay: {
-      // Saved and renamed while offline: journaled, replayed by the next sync.
       client.engine.reset();
       remote::RemoteWorkspace offline(std::make_shared<remote::RemoteConnection>(nullptr));
       remote::MirrorSyncEngine engine(offline, *client.store, EngineOptions(), remote::MirrorSyncEngine::Callbacks{});
@@ -574,12 +489,10 @@ void Prepare(Scenario scenario, const Layout& layout) {
 struct Outcome {
   bool fired = false;
   std::size_t counted = 0;
-  std::size_t disk_steps = 0;  // crash points the operation passed (an undisturbed run)
-  pid_t killed_server = 0;  // KillServer: the daemon the fault killed
+  std::size_t disk_steps = 0;
+  pid_t killed_server = 0;
 };
 
-// The operation over a relay armed at `step`, in this process. The client is
-// left as the fault left it, for the recovery.
 Outcome RunInProcess(Scenario scenario, Fault fault, std::size_t step, const Timing& timing,
                      std::chrono::milliseconds one_way, const Layout& layout, Client& client) {
   client.Open(layout, one_way);
@@ -609,9 +522,6 @@ Outcome RunInProcess(Scenario scenario, Fault fault, std::size_t step, const Tim
                  .killed_server = fired ? daemon : 0};
 }
 
-// The operation in a helper process that SIGKILLs itself at `step`: a wire frame,
-// or with `at_disk_step` a crash point. `stall`: how long the armed helper waits
-// before it starts the operation (a machine that gave it no CPU for that long).
 Outcome RunCrashingClient(Scenario scenario, std::size_t step, const Timing& timing,
                           std::chrono::milliseconds one_way, const Layout& layout, Fault fault,
                           std::chrono::milliseconds stall) {
@@ -648,10 +558,6 @@ Outcome RunCrashingClient(Scenario scenario, std::size_t step, const Timing& tim
   return Outcome{.fired = false};
 }
 
-// After the fault: what the user's next connection does, then the user settling
-// what is left; then the checks.
-// The recovery's own link is direct: every fault has landed by then, and its
-// correctness does not depend on the link's speed -- only the cost does.
 void RecoverAndCheck(Scenario scenario, Fault fault, const Outcome& outcome, const Layout& layout,
                      Client& client, const std::string& label) {
   if (outcome.killed_server != 0) {
@@ -663,18 +569,14 @@ void RecoverAndCheck(Scenario scenario, Fault fault, const Outcome& outcome, con
   }
   if (fault == Fault::KillClient || fault == Fault::KillClientAtDiskStep || fault == Fault::PowerCutAtDiskStep ||
       client.engine == nullptr) {
-    client.Open(layout, std::chrono::milliseconds(0));  // the relaunch, on the mirror the crash left
+    client.Open(layout, std::chrono::milliseconds(0));
   } else {
-    // The surviving app: the link's end, then the reconnect (RemoteHostSession:
-    // Replace(nullptr) on close, Replace(new) when ready, then RequestSync).
     client.connection->Replace(nullptr);
     std::string error;
     auto fresh = client.Link(layout, std::chrono::milliseconds(0), &error);
     Expect(fresh != nullptr, label + ": reconnects: " + error);
     client.connection->Replace(fresh);
   }
-  // What the relaunch found, and what its first sync made of it: the failure's
-  // message carries both (see DescribeStore).
   const std::string store_at_relaunch = DescribeStore(*client.engine);
   client.Sync();
   const std::string after_first_sync = " (after the first recovery sync: store " + DescribeStore(*client.engine) +
@@ -691,8 +593,6 @@ void RecoverAndCheck(Scenario scenario, Fault fault, const Outcome& outcome, con
     conflicted = true;
     for (const std::string& path : conflicts) {
       conflicts_seen += " " + path;
-      // The interrupted resolution, chosen again; a one-sided operation that
-      // conflicted is already a finding, settled with the side that moved.
       const Resolution again = scenario == Scenario::TakeRemote || scenario == Scenario::Pull ||
                                        scenario == Scenario::PullLarge || scenario == Scenario::WatchPull
                                    ? Resolution::TakeRemote
@@ -717,13 +617,12 @@ void RecoverAndCheck(Scenario scenario, Fault fault, const Outcome& outcome, con
   const Files before = {{"a.txt", "base\n"}, {"b.txt", "base\n"}};
   if ((fault == Fault::KillClientAtDiskStep || fault == Fault::PowerCutAtDiskStep) &&
       StartsWithALocalChange(scenario) && mirror == before) {
-    expected = before;  // the crash undid the local change before it landed
+    expected = before;
   }
   Expect(host == expected, label + ": the host holds exactly " + Describe(expected) + state + after_first_sync);
   Expect(mirror == expected, label + ": the mirror holds exactly " + Describe(expected) + state + after_first_sync);
 }
 
-// One cell, on a fresh host, mirror and daemon. Returns the frames counted.
 Outcome RunCell(Scenario scenario, Fault fault, std::size_t step, const Timing& timing,
                 std::chrono::milliseconds one_way,
                 std::chrono::milliseconds helper_stall = std::chrono::milliseconds(0)) {
@@ -753,9 +652,6 @@ Outcome RunCell(Scenario scenario, Fault fault, std::size_t step, const Timing& 
 }
 
 void RunMatrix(Scenario scenario, Fault fault, std::chrono::milliseconds one_way) {
-  // The steps there are: the operation's frames on an undisturbed run (the
-  // cell itself is checked too). A run that happens to exchange fewer frames
-  // simply never fires its last step's fault; that cell still recovers.
   const std::size_t steps = RunCell(scenario, Fault::None, 0, std::nullopt, one_way).counted;
   Expect(steps > 0, std::string(Name(scenario)) + ": the operation exchanges frames");
   if (std::getenv("MICROIDE_FAULT_MATRIX_VERBOSE") != nullptr) {
@@ -770,17 +666,10 @@ void RunMatrix(Scenario scenario, Fault fault, std::chrono::milliseconds one_way
       fired += RunCell(scenario, fault, step, timing, one_way).fired ? 1 : 0;
     }
   }
-  // Most cells' faults must land, or the matrix is not testing faults. Not all: a
-  // run can exchange fewer frames than the undisturbed one did (a watch batches
-  // the host's changes into however many deltas its timing makes), and then its
-  // last steps have no frame to fire on.
   Expect(fired * 2 >= cells, std::string(Name(scenario)) + ", " + Name(fault) + ": only " +
                                      std::to_string(fired) + " of " + std::to_string(cells) + " faults fired");
 }
 
-// The disk axis: a crash at every crash point the operation passes on an
-// undisturbed run. Over the direct link only -- the link's speed moves when a
-// write happens, not which writes there are or their order.
 void RunDiskMatrix(Scenario scenario, Fault fault) {
   const std::size_t steps = RunCell(scenario, Fault::None, 0, std::nullopt, std::chrono::milliseconds(0)).disk_steps;
   Expect(steps > 0, std::string(Name(scenario)) + ": the operation writes to disk");
@@ -793,23 +682,12 @@ void RunDiskMatrix(Scenario scenario, Fault fault) {
                  ? 1
                  : 0;
   }
-  // As on the frame axis, a run can pass fewer points than the undisturbed one
-  // (a pull's batches follow the host's timing); most must land.
   Expect(fired * 2 >= steps, std::string(Name(scenario)) + ", disk: only " + std::to_string(fired) + " of " +
                                  std::to_string(steps) + " crashes fired");
 }
 
 constexpr int kSlowOneWayMs = 30;
 
-// The link's heartbeat is not a step of the operation. The client pings a quarter
-// interval after it connects and every interval after that (LinkHeartbeat), and
-// the relay counted those frames like any other: a helper the machine starved
-// past its first ping, between arming and its save, was killed "at step 0" on the
-// ping -- before it had written anything. Nothing was lost, there was nothing
-// yet; the cell read it as a saved new file gone from both sides
-// (Slow/PushCreate/KillClient, CI only: "the host holds exactly { a.txt b.txt
-// n.txt } (host { a.txt b.txt }, mirror { a.txt b.txt }, dirty 0 ...)"). The
-// stall here is that starvation, made certain.
 void TestTheHeartbeatIsNotAStep() {
   const std::chrono::milliseconds past_the_first_ping(
       remote::LinkHeartbeat::Config{}.interval_ms / 4 + 250);
@@ -841,13 +719,8 @@ void AddScenario(std::vector<TestCase>& tests, const std::string& name) {
   AddTest(tests, base + "Disk/" + name + "/PowerCut", TestDiskMatrix<kScenario, Fault::PowerCutAtDiskStep>);
 }
 
-}  // namespace
+}
 
-// The helper: argv = flag mode scenario step after_us one_way_ms socket_dir host
-// mirror stall_ms (mode `frame` or `disk`; after_us -1: before the frame arrives;
-// stall_ms: a wait between arming the relay and starting the operation). Runs the
-// operation and SIGKILLs this process at `step` -- the relay's frame, or the
-// crash point; exits 0 when the operation finished first.
 int RunMirrorFaultClient(int argc, char** argv) {
   if (argc != 11) {
     std::fprintf(stderr, "%s: expected 9 arguments\n", argv[1]);
@@ -907,4 +780,4 @@ void RegisterMirrorFaultMatrixTests(std::vector<TestCase>& tests) {
   AddScenario<Scenario::TakeRemote>(tests, "ResolveTakeRemote");
 }
 
-}  // namespace microide::tests
+}

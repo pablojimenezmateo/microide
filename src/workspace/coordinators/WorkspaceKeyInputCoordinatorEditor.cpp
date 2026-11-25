@@ -17,17 +17,9 @@ bool EditorShapingLineOpsSettingEnabled(const KeyInputCoordinator::Operations& o
     return true;
   }
   return SettingFlagEnabled(operations.get_setting_value("editor.shaping.line_ops.enabled"),
-                            /*default_value=*/true);
+                            true);
 }
 
-// One horizontal caret step for every multi-line text surface in the shell: the
-// editor, the compare and merge panes, and the git commit body. Ctrl makes the
-// step word-granular (VS Code's cursorWordStartLeft / cursorWordEndRight) and
-// Shift extends, in either granularity.
-//
-// It is a shared helper rather than four copies of the same `if` because the
-// four surfaces had already drifted once — three of them had no word step at
-// all, and neither did the editor.
 void MoveCursorHorizontalStep(editor::TextViewport& viewport, int delta, SDL_Keymod modifiers) {
   const bool extend_selection = (modifiers & SDL_KMOD_SHIFT) != 0;
   if ((modifiers & SDL_KMOD_CTRL) != 0) {
@@ -37,25 +29,6 @@ void MoveCursorHorizontalStep(editor::TextViewport& viewport, int delta, SDL_Key
   }
 }
 
-// The caret motion and text edits every multi-line `editor::TextViewport` surface
-// that is NOT the editor pane answers identically: the compare right pane, the
-// merge result pane, and the git commit body.
-//
-// Each of the three used to carry its own hand-maintained copy of this switch.
-// That is how the compare pane ended up without Shift+Tab outdent or
-// Tab-indents-a-multi-line-selection, with no error and no test to fail
-// (TD-2026-08-13-207) -- and the commit body's copy was still byte-identical to
-// the other two, which is a drift waiting to happen rather than one that had.
-//
-// TAB is deliberately NOT here. It is the one key whose meaning is per-surface:
-// an editing key on the compare and merge panes, and focus movement out of the
-// git commit box (VS Code's SCM input does the same), where it must keep falling
-// through to the sidebar. Each caller answers Tab for itself.
-//
-// `apply_edit` runs the mutation plus that surface's post-edit refresh (compare
-// rebuilds its diff model, merge re-syncs its conflict state, the commit body
-// repaints the sidebar); `after_navigation` is the surface's post-move sync.
-// Returns false for a key it does not own, so the caller keeps its own arms.
 template <typename ApplyEdit, typename AfterNavigation>
 bool HandleEditableViewportMotionAndEdit(editor::TextViewport& viewport,
                                          const SDL_KeyboardEvent& event,
@@ -125,9 +98,6 @@ bool HandleEditableViewportMotionAndEdit(editor::TextViewport& viewport,
   return false;
 }
 
-// The compare and merge panes: Tab edits, and everything else is the shared
-// switch above. Tab's three-way split is decided by editor::ClassifyTabKey, the
-// same call the editor pane makes, so those two cannot drift apart either.
 template <typename ApplyEdit, typename AfterNavigation>
 bool HandleEditablePaneKey(KeyInputCoordinator::Operations& operations,
                            editor::TextViewport& viewport,
@@ -188,12 +158,6 @@ bool ApplyDefaultEditorEdit(KeyInputCoordinator::Operations& operations,
         "KeyInputCoordinator::HandleDefaultEditorKeyDown::RequestLastChangeRedraw");
     operations.note_active_editable_edit();
   }
-  // The edit's damage names the lines it changed; the caret's current-line
-  // highlight is on the line the caret was on. An edit that leaves the caret on
-  // another line without changing that one (Tab over a selection ending at a
-  // line's start reselected the lines above it) left the highlight behind (QA
-  // monkey, qa-asan seed 4). Edits that change the line count -- Enter, the
-  // common case -- repaint the pane already.
   if (viewport.cursor_line() != cursor_before_line) {
     operations.request_frame();
   }
@@ -205,7 +169,7 @@ bool ApplyDefaultEditorEdit(KeyInputCoordinator::Operations& operations,
   return true;
 }
 
-}  // namespace
+}
 
 bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
                                                SDL_Keymod modifiers) {
@@ -220,7 +184,7 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       operations_.refresh_compare_tab_derived_state(*compare_tab);
       operations_.sync_compare_selection_from_viewport(*compare_tab, true);
       operations_.reset_caret_blink();
-      operations_.note_active_editable_edit();  // asks for the frame too
+      operations_.note_active_editable_edit();
       return true;
     };
     const auto sync_compare_navigation = [&]() {
@@ -230,7 +194,6 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       return true;
     };
 
-    // Alt+[ / Alt+] are registry bindings (diff-previous-change / -next-change).
     if ((modifiers & SDL_KMOD_ALT) != 0) {
       const char input_character = operations_.keycode_to_ascii(event.key, modifiers & ~SDL_KMOD_ALT);
       if (input_character == 'o') {
@@ -239,9 +202,6 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       }
     }
 
-    // Esc closes the compare tab rather than collapsing carets: a deliberate
-    // divergence from the editor pane, and the reason this path keeps an arm of
-    // its own in front of the shared switch.
     if (event.key == SDLK_ESCAPE) {
       operations_.request_close_active_tab();
       return true;
@@ -255,10 +215,6 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
     if (handled_by_shared_switch) {
       return result;
     }
-    // Typed into, the working side is an editor: a printable key is text (it
-    // arrives as a text-input event of its own), not one of the row-review
-    // letters below. Typing " edited" here inserted " e" and the `d` opened
-    // Discard Patch (QA compare-keys).
     if (compare_tab->right_editable &&
         (modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
         operations_.keycode_to_ascii(event.key, modifiers) != '\0') {
@@ -308,11 +264,6 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       operations_.open_working_file_from_compare();
       return true;
     default: {
-      // Only bare / Shift-modified printable keys drive these single-letter compare
-      // actions. An UNBOUND Ctrl+letter (e.g. Ctrl+O — the outline binding is Ctrl+Alt+O,
-      // not plain Ctrl+O) misses HandleGlobalKeyDown and falls through here; KeycodeToAscii
-      // ignores Ctrl/GUI and returns the base letter, so without this guard Ctrl+O would
-      // fire "open working file" and Ctrl+J would scroll the diff selection.
       if ((modifiers & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) != 0) {
         return false;
       }
@@ -370,7 +321,7 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
     edit();
     operations_.update_merge_tracking_after_viewport_edit(*merge_tab);
     operations_.reset_caret_blink();
-    operations_.note_active_editable_edit();  // asks for the frame too
+    operations_.note_active_editable_edit();
     return true;
   };
   const auto sync_merge_navigation = [&]() {
@@ -424,7 +375,6 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
     }
   }
 
-  // Esc closes the merge tab, as on the compare surface.
   if (event.key == SDLK_ESCAPE) {
     operations_.request_close_active_tab();
     return true;
@@ -439,10 +389,6 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
 
 bool KeyInputCoordinator::HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event,
                                                   SDL_Keymod modifiers) {
-  // The commit body is a self-contained multi-line field living in the git sidebar. It
-  // deliberately does NOT route through ActiveEditableViewport()/HandleDefaultEditorKeyDown
-  // (which are tab-bound and feed LSP/folding/blame) — it edits its own viewport directly,
-  // mirroring the compare/merge per-viewport handlers.
   editor::TextViewport& viewport = state_.sidebar.git.commit_workflow.body;
   const auto after_edit = [&]() {
     operations_.reset_caret_blink();
@@ -488,8 +434,6 @@ bool KeyInputCoordinator::HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event
     }
   }
 
-  // Motion and edits are the shared switch: identical to the compare and merge
-  // panes, which is what it used to be a third hand-maintained copy of.
   bool handled = false;
   const bool result = HandleEditableViewportMotionAndEdit(
       viewport, event, modifiers,
@@ -502,10 +446,6 @@ bool KeyInputCoordinator::HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event
   if (handled) {
     return result;
   }
-  // Plain character keys are inserted by the SDL_TextInput event; consume the
-  // keydown so it cannot fall through to a git-sidebar action. TAB deliberately
-  // does NOT map to a character, so it falls through and moves focus out of the
-  // box, as VS Code's SCM input does.
   return operations_.keycode_to_ascii != nullptr &&
          operations_.keycode_to_ascii(event.key, modifiers) != '\0';
 }
@@ -519,8 +459,6 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
   }
 
   if (event.key == SDLK_ESCAPE) {
-    // The find/replace widget is non-modal, so it can be open while the editor
-    // holds focus; Esc closes it first (VSCode behavior).
     if (state_.overlay.visible &&
         (state_.overlay.mode == OverlayMode::BufferSearch ||
          state_.overlay.mode == OverlayMode::BufferReplace)) {
@@ -531,23 +469,12 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       return true;
     }
     operations_.dismiss_inline_completion();
-    // Esc collapses a multi-caret set back to the primary caret (VS Code's
-    // `removeSecondaryCursors`). Without it the only way out of a Ctrl+D run was
-    // to click somewhere, and a stray caret left behind edits at a place the user
-    // has stopped looking at. Deliberately after the widget/snippet/completion
-    // arms, which are what Esc means while any of them is up, and deliberately
-    // NOT clearing the selection: Esc removes cursors, it does not deselect.
-    // `viewport`, not `editable_viewport`: removing carets is not an edit, and a
-    // read-only buffer holds a Ctrl+D caret set just as well as a writable one.
     if (viewport->has_multiple_carets()) {
       viewport->ClearSecondaryCarets();
       operations_.reset_caret_blink();
       operations_.request_frame();
       return true;
     }
-    // A single caret with a selection: Esc collapses it to the caret (VS Code's
-    // `cancelSelection`). With several carets that is the SECOND Esc, after the
-    // arm above has removed the secondaries -- the same two-step VS Code runs.
     if (viewport->has_selection()) {
       viewport->ClearSelection();
       operations_.reset_caret_blink();
@@ -589,9 +516,6 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
             "KeyInputCoordinator::HandleDefaultEditorKeyDown::IndentSelection",
             [&]() { editor::IndentSelection(*editable_viewport); });
       }
-      // A set where some cursors shift lines and others insert at their own
-      // column. Gated with the block case because half of what it does IS the
-      // block case (TD-2026-09-19-295).
       if (intent == editor::TabKeyIntent::kMixed) {
         if (!EditorShapingLineOpsSettingEnabled(operations_)) {
           return true;
@@ -623,9 +547,6 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
           operations_.try_snippet_backspace_in_editor(editable_viewport)) {
         return true;
       }
-      // Ctrl+Backspace deletes the word to the left, as everywhere else. The
-      // single-line surfaces have had this since they shipped; the main editor
-      // used to fall through here and delete one character.
       if ((modifiers & SDL_KMOD_CTRL) != 0) {
         return ApplyDefaultEditorEdit(
             operations_, *editable_viewport,
@@ -664,9 +585,6 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
     util::InvokeIfSet(operations_.notify_snippet_session_caret_moved);
   };
 
-  // Ctrl+Up/Down scroll the view one line and leave the caret where it is
-  // (VS Code scrollLineUp/Down). Ctrl+Shift+Alt+Up/Down is the column-select
-  // chord, dispatched by the keybinding registry before this handler runs.
   const bool ctrl_only =
       (modifiers & SDL_KMOD_CTRL) != 0 && (modifiers & (SDL_KMOD_SHIFT | SDL_KMOD_ALT)) == 0;
   switch (event.key) {
@@ -681,19 +599,13 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       return true;
     case SDLK_DOWN:
       if (ctrl_only) {
-        viewport->SetScrollLine(viewport->scroll_line() + 1);  // clamped to the last page
+        viewport->SetScrollLine(viewport->scroll_line() + 1);
         return true;
       }
       viewport->MoveCursorVertical(1, (modifiers & SDL_KMOD_SHIFT) != 0);
       after_editor_caret_motion();
       return true;
     case SDLK_L: {
-      // Ctrl+L: expand the selection to whole lines, one more line per press
-      // (VS Code expandLineSelection). The arithmetic lives on the viewport, where
-      // the caret SET lives: this handler read `cursor_line()` and called
-      // MoveCursorTo, so with three cursors it produced one line selection and two
-      // carets holding empty anchors -- and the next keystroke then replaced one
-      // line and inserted at two columns.
       if (!ctrl_only) {
         return false;
       }
@@ -702,9 +614,6 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       return true;
     }
     case SDLK_LEFT:
-      // Ctrl steps a word at a time. The column-select chord
-      // Ctrl+Shift+Alt+Left is dispatched by the keybinding registry before this
-      // handler runs, so Alt never reaches here holding Ctrl.
       MoveCursorHorizontalStep(*viewport, -1, modifiers);
       after_editor_caret_motion();
       return true;
@@ -722,9 +631,6 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       return true;
     case SDLK_HOME:
       if (modifiers & SDL_KMOD_CTRL) {
-        // A jump to the other end of the DOCUMENT collapses to one caret, as in
-        // VS Code: it would otherwise strand carets a screenful away from the one
-        // that just moved.
         viewport->JumpCursorTo(0, 0, (modifiers & SDL_KMOD_SHIFT) != 0);
       } else {
         viewport->MoveCursorLineStart((modifiers & SDL_KMOD_SHIFT) != 0);
@@ -746,4 +652,4 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
   }
 }
 
-}  // namespace microide::workspace
+}

@@ -20,20 +20,12 @@ class PatchApplyService {
  public:
   struct Callbacks {
     std::function<project::GitRepositoryState()> current_repository_state;
-    // The ACTIVE project's launcher, read on the main thread when a request is
-    // built so the apply's `git apply` runs where the project does
-    // (TD-2026-09-22-301). Null (or unset) means the process-wide local one.
     std::function<const platform::ProcessLauncher*()> project_launcher;
     std::function<void()> request_git_refresh;
     std::function<void(const std::filesystem::path&)> refresh_compare_tab_for_path;
     std::function<void(const std::filesystem::path&)> invalidate_editor_blame_path;
     std::function<void(const std::filesystem::path&)> reload_clean_editor_tabs_for_path;
     std::function<void(std::string_view)> set_command_feedback;
-    // The callbacks above act on the project in FRONT, but the user may switch
-    // before an apply finishes (TD-2026-11-01-427 item 1). So the project is read
-    // at dispatch, and a completion for one no longer in front leaves its compare
-    // tab, clean tabs and git state to catch up on activation, and names it in
-    // the feedback. Unset = always in front.
     std::function<std::filesystem::path()> front_project_root;
     std::function<bool(const std::filesystem::path& project_root)> is_in_front;
     std::function<std::string(const std::filesystem::path& project_root)> project_label;
@@ -46,23 +38,10 @@ class PatchApplyService {
 
   void SetCallbacks(Callbacks callbacks);
 
-  // The apply runs on the background executor; everything it then does to the
-  // shell — rebuilding the compare tab, reloading clean editor tabs, the
-  // feedback line, the sidebar refresh request — is main-thread state and is
-  // marshaled back through this mailbox, exactly as GitOperationService and
-  // CommitWorkflowService do. SetCompletionWakeEvent names the SDL user event
-  // that wakes the UI loop when a completion is queued; DrainCompletions runs
-  // the queued completions on the main thread (the shell calls it from
-  // ConsumeGitSidebarRefresh, the same drain as its two siblings).
   void SetCompletionWakeEvent(std::uint32_t event_type);
   void DrainCompletions();
   int PendingCompletionCount() const { return completion_mailbox_.PendingCount(); }
 
-  // The authoritative answer to "does this compare tab offer this verb?".
-  // Static because it reads nothing but the tab: every apply entry point goes
-  // through it, and it is what tests should assert against — the review
-  // header used to carry a parallel hint string encoding the same rule, which
-  // nothing painted (TD-2026-09-19-296).
   static bool CanApplyPatchToCompareTab(const CompareTabState& compare_tab,
                                         project::PatchOperationKind operation);
 
@@ -76,10 +55,6 @@ class PatchApplyService {
   bool ConfirmPendingDiscard();
   void CancelPendingDiscard();
 
-  // Test seam: builds a patch-apply request the same way the production request
-  // paths do, so tests can assert the request carries no full-model copy (the
-  // model stays UI-thread-local and only the compact target + patch text is
-  // dispatched to the background executor).
   std::optional<project::PatchApplyRequest> BuildRequestForTesting(
       CompareTabState& compare_tab, project::PatchOperationKind operation, bool line_scope) const {
     return BuildRequest(compare_tab, operation, line_scope);
@@ -91,22 +66,11 @@ class PatchApplyService {
     std::string patch_text;
   };
 
-  // The request plus the patch text it produced, once both have been resolved.
   struct ResolvedPatch {
     project::PatchApplyRequest request;
     std::string patch_text;
   };
 
-  // Shared prologue for every apply entry point. Refuses an ignore-whitespace
-  // apply, builds the request, builds the patch, and reports the right
-  // UnsupportedTarget feedback when either step comes back empty.
-  //
-  // The six public entry points (stage/unstage hunk, stage/unstage selected
-  // lines, discard hunk/lines preview) all began with these same five steps and
-  // differed only in the operation kind, whether the scope is a line selection,
-  // and the two feedback strings. What they do afterwards is where they actually
-  // differ — four dispatch the apply, two stash a pending discard and open the
-  // preview prompt — so that stays at the call sites.
   std::optional<ResolvedPatch> ResolvePatch(CompareTabState& compare_tab,
                                             project::PatchOperationKind operation,
                                             bool line_scope,
@@ -118,18 +82,10 @@ class PatchApplyService {
   std::optional<std::string> BuildPatchForRequest(const project::PatchApplyRequest& request,
                                                   const compare::CompareModel& model) const;
   void DispatchApply(project::PatchApplyRequest request, std::string patch_text);
-  // Stage / unstage: resolve the patch, then apply it at once (no preview).
   bool ResolveAndDispatch(CompareTabState& compare_tab, project::PatchOperationKind kind,
                           bool selected_lines, std::string_view unavailable_detail,
                           std::string_view empty_patch_detail);
   void ReportResult(const project::PatchApplyResult& result, std::string_view project_suffix = {});
-  // Ignore-whitespace narrows the diff model: lines that differ only in
-  // whitespace are folded into Unchanged rows, so a generated patch can neither
-  // stage a whitespace-only change nor discard cleanly (its context, built from
-  // the index side, no longer byte-matches the working tree). Rather than gate a
-  // single entry point, block every apply here — the shared choke point for both
-  // the keyboard and menu/coordinator paths — and surface why. Returns true (and
-  // reports feedback) when the operation must be refused.
   bool RejectIgnoreWhitespaceApply(const CompareTabState& compare_tab);
 
   project::ProjectBackgroundExecutor& background_executor_;
@@ -140,4 +96,4 @@ class PatchApplyService {
   std::optional<PendingDiscard> pending_discard_;
 };
 
-}  // namespace microide::workspace
+}

@@ -34,7 +34,7 @@ bool DecodeRecentFile(std::span<const std::byte> input, PersistedRecentFile* fil
       });
 }
 
-}  // namespace
+}
 
 bool EncodeMruRecord(const PersistedMruState& state, std::vector<std::byte>* out) {
   if (out == nullptr) {
@@ -45,8 +45,6 @@ bool EncodeMruRecord(const PersistedMruState& state, std::vector<std::byte>* out
                     [&](PrimitiveWriter& w) { return w.WriteU32(kSchemaVersion); }, out)) {
     return false;
   }
-  // Interleaved like the workspace session's projects: the identity, then its
-  // legacy path form for an older build.
   std::vector<std::byte> id_payload;
   for (std::size_t i = 0; i < std::max(state.recent_projects.size(), state.recent_project_roots.size());
        ++i) {
@@ -95,10 +93,6 @@ bool DecodeMruRecord(std::span<const std::byte> input, PersistedMruState* state)
                    if (!reader.ReadPath(&root) || reader.remaining() != 0) {
                      return false;
                    }
-                   // Records are newest-first and RecentsService truncates to the
-                   // front on load; drop anything past the cap here so a malformed
-                   // file cannot make the decoder allocate entries that will be
-                   // discarded immediately.
                    if (state->recent_project_roots.size() >= RecentsService::MaxProjects()) {
                      return true;
                    }
@@ -132,4 +126,4 @@ bool DecodeMruRecord(std::span<const std::byte> input, PersistedMruState* state)
          seen_schema;
 }
 
-}  // namespace microide::workspace
+}

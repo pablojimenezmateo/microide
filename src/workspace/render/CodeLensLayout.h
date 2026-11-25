@@ -16,11 +16,6 @@
 
 namespace microide::workspace {
 
-// The activatable code lenses painted at the end of `line_index`, each with its
-// rect, laid out exactly as the renderer lays them out: anchored past the line's
-// last glyph and any inlay hints (none on a soft-wrapped line, as the render path
-// omits them there). The click path hit-tests these rects and the control query
-// lists them, so a lens is clicked where it is drawn. `emit(lens, rect)`.
 template <typename Emit>
 void ForEachLineCodeLens(const render::TextRenderer& text_renderer,
                          const editor::TextViewport& viewport,
@@ -58,9 +53,6 @@ void ForEachLineCodeLens(const render::TextRenderer& text_renderer,
         !code_lenses[segment.index].activatable()) {
       continue;
     }
-    // The part of the lens inside the pane, which is what paint shows (the pane
-    // paints under its own clip): a pane shorter than its first line -- the panel
-    // maximized -- reported a lens over the panel's tabs (the overlap oracle).
     SDL_FRect shown{};
     if (SDL_GetRectIntersectionFloat(&segment.rect, &interaction.rect, &shown) && shown.w > 0.0f &&
         shown.h > 0.0f) {
@@ -69,4 +61,4 @@ void ForEachLineCodeLens(const render::TextRenderer& text_renderer,
   }
 }
 
-}  // namespace microide::workspace
+}

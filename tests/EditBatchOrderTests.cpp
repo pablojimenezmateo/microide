@@ -1,20 +1,3 @@
-// The application order for a batch of ranged edits, against an independent
-// oracle.
-//
-// `OrderEditsForApplication` and `EditsOverlap` are what three appliers (LSP
-// `TextEdit[]`, a plugin's `apply_edits`, a formatter result) share, and neither
-// had a test naming it. The header records the defect that created it: one
-// applier sorted on the start alone, which reverses two same-position inserts on
-// every libstdc++ and is unspecified elsewhere -- a silent text-scrambling bug
-// that only shows with two edits at one position.
-//
-// So the tie rules are what matter, and they are checked two ways: as stated
-// rules, and by APPLYING the batch. The application oracle is built the other
-// way round -- edits sorted ASCENDING and the result concatenated piece by piece
-// -- so it shares no code with the descending apply loop it judges. Two
-// same-position inserts agree between the two constructions only if the tie rule
-// is right.
-
 #include "TestSupport.h"
 
 #include <algorithm>
@@ -49,9 +32,6 @@ SelectionRange Normalized(SelectionRange range) {
   return range;
 }
 
-// O(n^2) pairwise oracle: two ranges intersect when they share a pre-edit byte.
-// Touching endpoints are not an overlap -- an insert at P beside a replace of
-// [P, Q) is the shape LSP explicitly permits.
 bool AnyPairIntersects(const std::vector<SelectionRange>& ranges) {
   for (std::size_t i = 0; i < ranges.size(); ++i) {
     for (std::size_t j = i + 1; j < ranges.size(); ++j) {
@@ -65,8 +45,6 @@ bool AnyPairIntersects(const std::vector<SelectionRange>& ranges) {
   return false;
 }
 
-// Apply a disjoint batch by CONCATENATION, ascending -- independent of the
-// descending apply loop under test.
 std::string ApplyAscending(const std::string& text,
                            const std::vector<SelectionRange>& ranges,
                            const std::vector<std::string>& replacements) {
@@ -79,9 +57,6 @@ std::string ApplyAscending(const std::string& text,
     const SelectionRange rb = Normalized(ranges[b]);
     if (Before(ra.start, rb.start)) return true;
     if (Before(rb.start, ra.start)) return false;
-    // Same start: the LONGER range is applied first by the code under test, so
-    // in ascending order it comes last -- an insert at P lands before a replace
-    // at P. Array order breaks a full tie.
     return Before(ra.end, rb.end);
   });
   std::string out;
@@ -96,7 +71,6 @@ std::string ApplyAscending(const std::string& text,
   return out;
 }
 
-// Apply in the order under test, highest first, splicing in place.
 std::string ApplyInBatchOrder(std::string text,
                               const std::vector<SelectionRange>& ranges,
                               const std::vector<std::string>& replacements) {
@@ -123,9 +97,6 @@ void TestOrderIsDescendingAndAPermutation() {
     for (std::size_t i = 0; i < count; ++i) {
       const std::size_t a = pick(10);
       const std::size_t b = pick(10);
-      // Deliberately including REVERSED ranges: the code normalizes them, and a
-      // normalization that only happened in one of the two functions would make
-      // the order and the overlap verdict disagree.
       ranges.push_back(pick(4) == 0 ? OnLine0(b, a) : OnLine0(std::min(a, b), std::max(a, b)));
     }
 
@@ -165,9 +136,6 @@ void TestOrderIsDescendingAndAPermutation() {
          "ordering exists: " + std::to_string(with_ties));
 }
 
-// Applying in the returned order must produce what an independent ascending
-// concatenation produces. Non-overlapping batches only -- an overlapping batch
-// is what EditsOverlap exists to refuse, and no applier runs one.
 void TestApplyingInOrderMatchesAnAscendingOracle() {
   std::mt19937 rng(20260924u);
   auto pick = [&](std::size_t n) {
@@ -181,11 +149,6 @@ void TestApplyingInOrderMatchesAnAscendingOracle() {
     std::vector<SelectionRange> ranges;
     std::vector<std::string> replacements;
     const std::size_t count = 1 + pick(4);
-    // Half the batches are drawn from a SINGLE column, as zero-width inserts.
-    // Uniform random ranges almost never collide -- the first version of this
-    // sweep produced two same-position insert pairs in 4,000 iterations, and
-    // same-position inserts are the entire reason this ordering exists. The
-    // vacuity guard below is what caught that.
     const bool insert_cluster = pick(2) == 0;
     const std::size_t cluster_column = pick(text.size() + 1);
     for (std::size_t i = 0; i < count; ++i) {
@@ -201,7 +164,7 @@ void TestApplyingInOrderMatchesAnAscendingOracle() {
     std::vector<std::size_t> order;
     OrderEditsForApplication(ranges, order);
     if (EditsOverlap(ranges, order)) {
-      continue;  // refused by every applier; nothing to compare
+      continue;
     }
     ++applied;
     for (std::size_t i = 1; i < order.size(); ++i) {
@@ -225,18 +188,13 @@ void TestApplyingInOrderMatchesAnAscendingOracle() {
          "unstable sort scrambled: " + std::to_string(insert_pairs));
 }
 
-// The two tie rules, stated directly rather than sampled.
 void TestTieRulesAreVsCodeOrder() {
-  // A replace and an insert at the same position: the replace applies first.
   const std::vector<SelectionRange> replace_then_insert = {OnLine0(2, 2), OnLine0(2, 5)};
   std::vector<std::size_t> order;
   OrderEditsForApplication(replace_then_insert, order);
   Expect(order.size() == 2 && order[0] == 1 && order[1] == 0,
          "the longer range at one start applies first, whatever the array order");
 
-  // Three inserts at one position come out in reverse array order, so that each
-  // applied insert pushes the earlier one right and the result reads left to
-  // right in array order.
   const std::vector<SelectionRange> three_inserts = {OnLine0(3, 3), OnLine0(3, 3), OnLine0(3, 3)};
   OrderEditsForApplication(three_inserts, order);
   Expect(order.size() == 3 && order[0] == 2 && order[1] == 1 && order[2] == 0,
@@ -244,7 +202,6 @@ void TestTieRulesAreVsCodeOrder() {
   Expect(ApplyInBatchOrder("abcdef", three_inserts, {"1", "2", "3"}) == "abc123def",
          "three inserts at one position read left to right in array order");
 
-  // Touching endpoints are not an overlap.
   const std::vector<SelectionRange> touching = {OnLine0(0, 3), OnLine0(3, 6)};
   OrderEditsForApplication(touching, order);
   Expect(!EditsOverlap(touching, order), "ranges that only touch do not overlap");
@@ -253,7 +210,7 @@ void TestTieRulesAreVsCodeOrder() {
   Expect(EditsOverlap(sharing, order), "ranges sharing a byte do overlap");
 }
 
-}  // namespace
+}
 
 void RegisterEditBatchOrderTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditBatchOrder/OrderIsDescendingAndAPermutation",
@@ -263,4 +220,4 @@ void RegisterEditBatchOrderTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditBatchOrder/TieRulesAreVsCodeOrder", TestTieRulesAreVsCodeOrder);
 }
 
-}  // namespace microide::tests
+}

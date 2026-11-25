@@ -1,8 +1,3 @@
-// RemoteHostService: a host program's $EDITOR (term/edit). The server's EDITOR
-// helper hands the file's text to the client attached to the terminal; it is
-// edited here in a tab on a private copy, and the tab closing sends back what
-// was saved, which the helper writes and exits on.
-
 #include "workspace/services/RemoteHostService.h"
 
 #include <algorithm>
@@ -21,14 +16,12 @@ void RemoteHostService::BeginTerminalEdit(const std::filesystem::path& root, std
                                           terminal::TerminalHostEdit edit) {
   const auto project = projects_.find(root);
   if (project == projects_.end() || project->second.closed) {
-    return;  // closing: its terminals detach, which ends the request on the host
+    return;
   }
   std::string name = std::filesystem::path(edit.path).filename().string();
   if (name.empty()) {
     name = "file";
   }
-  // Under the file's own name, so the tab reads COMMIT_EDITMSG and is
-  // highlighted as one.
   std::string error;
   const std::optional<std::filesystem::path> copy = platform::StoreTransientFile(
       platform::ResolveAppDirectory(platform::UserDirectoryKind::State, "microide") / "host-edit", name,
@@ -39,8 +32,6 @@ void RemoteHostService::BeginTerminalEdit(const std::filesystem::path& root, std
           .tone = NotificationService::Tone::Warning,
           .message = name + " from " + project->second.host + " could not be opened for editing: " + error});
     }
-    // The program must not wait for a tab that never opened: answered with no
-    // text, it leaves the file as it is.
     remote::RemoteWorkspace(project->second.project->session().connection())
         .FinishTerminalEdit(epoch, edit.token, std::nullopt, [](std::optional<bool>) {});
     return;
@@ -71,11 +62,8 @@ void RemoteHostService::SendTerminalEdit(TerminalEdit& edit) {
     return;
   }
   edit.sending = true;
-  // Over the project's connection (shared: a reconnect replaces its client).
   std::shared_ptr<remote::RemoteConnection> connection = project->second.project->session().connection();
   work_.Post([this, connection, epoch = edit.epoch, token = edit.token, copy = edit.copy]() {
-    // A copy that cannot be read back (removed under the tab) sends no text: the
-    // host file stays as it is rather than being emptied.
     remote::RemoteWorkspace(connection).FinishTerminalEdit(
         epoch, token, util::ReadTextFile(copy), [this, epoch, token](std::optional<bool> delivered) {
           mailbox_.Post([this, epoch, token, delivered]() { OnTerminalEditAnswered(token, epoch, delivered); });
@@ -93,14 +81,12 @@ void RemoteHostService::OnTerminalEditAnswered(std::uint64_t token, const std::s
   }
   edit->sending = false;
   if (!delivered.has_value()) {
-    return;  // the link is down: ResendTerminalEdits, on the next connect
+    return;
   }
   std::error_code ignored;
   if (*delivered) {
     std::filesystem::remove_all(edit->copy.parent_path(), ignored);
   } else if (operations_.notify) {
-    // Its program gave up (Ctrl+C) or its server restarted. What was written is
-    // not thrown away with it.
     operations_.notify(NotificationService::Request{
         .tone = NotificationService::Tone::Info,
         .message = "Nothing on the host waits for " + edit->copy.filename().string() +
@@ -117,4 +103,4 @@ void RemoteHostService::ResendTerminalEdits(const std::filesystem::path& root) {
   }
 }
 
-}  // namespace microide::workspace
+}

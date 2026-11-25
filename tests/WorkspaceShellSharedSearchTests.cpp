@@ -60,8 +60,6 @@ void TestWorkspaceSharedGitSidebarLineHelpers() {
   const BranchReviewStateService branch_review;
   const auto lines = BuildGitSidebarLines(BuildGitSidebarViewModel(
       git_state, std::filesystem::path{"/tmp/project"}, branch_review));
-  // Only the two populated groups are emitted; Conflicts/Staged/Untracked are empty
-  // and therefore absent, as they are in VSCode's source-control view.
   Expect(lines.size() == 7,
          "git sidebar lines should cover the populated groups and their tree rows only");
   Expect(lines[0].kind == GitSidebarLineKind::Header && lines[0].label == "Unstaged (2)",
@@ -96,8 +94,6 @@ void TestWorkspaceSharedGitSidebarEmptyStates() {
   const BranchReviewStateService clean_branch_review;
   const auto clean_lines = BuildGitSidebarLines(BuildGitSidebarViewModel(
       clean_state, std::filesystem::path{"/tmp/project"}, clean_branch_review));
-  // A clean tree hides every empty group (VSCode does the same) and says so once.
-  // Outgoing is the exception: its header carries the base-branch button.
   Expect(clean_lines.size() == 3,
          "a clean git sidebar should collapse to one line plus the outgoing group");
   Expect(clean_lines[0].kind == GitSidebarLineKind::Empty && clean_lines[0].label == "No changes",
@@ -213,28 +209,22 @@ void TestWorkspaceSharedLiteralSearchHelpers() {
          "literal replace helper should keep replacement offsets correct when replacement is shorter");
 }
 
-// TD-2026-07-16-58: buffer literal search folds non-ASCII case (café/CAFÉ, Δ/δ) to
-// match project search + ReplaceAll, and smart-case treats non-ASCII uppercase as
-// case-sensitive. Byte offsets stay valid because the folds are length-preserving.
 void TestWorkspaceSharedLiteralSearchUtf8Fold() {
   const std::vector<std::string> lines = {"café CAFÉ", "ΔELTA δelta"};
   const auto cafe = FindLiteralSearchMatches(lines, "café");
   Expect(cafe.size() == 2, "buffer search folds café/CAFÉ as a case-insensitive match");
   Expect(cafe[0].start.line == 0 && cafe[0].start.column == 0, "first café at column 0");
-  // "café" is 5 bytes (é is 2 bytes); the second match starts after "café " (6 bytes).
   Expect(cafe[1].start.line == 0 && cafe[1].start.column == 6,
          "second (uppercase) match's byte offset is preserved by the length-preserving fold");
 
   const auto delta = FindLiteralSearchMatches(lines, "δ");
   Expect(delta.size() == 2, "Greek Δ/δ fold as a case-insensitive match");
 
-  // Smart-case: a non-ASCII uppercase query is treated as case-sensitive.
   Expect(UsesCaseSensitiveLiteralMatch("CAFÉ"),
          "a non-ASCII uppercase query enables case-sensitive smart-case");
   Expect(!UsesCaseSensitiveLiteralMatch("café"),
          "an all-lowercase non-ASCII query stays case-insensitive");
 
-  // Replace folds non-ASCII case too, staying consistent with the match list.
   std::string content = "café CAFÉ";
   Expect(ReplaceLiteralMatchesInText(content, "café", "tea", false) == 2,
          "replace folds non-ASCII case variants like the visible match list");
@@ -242,9 +232,6 @@ void TestWorkspaceSharedLiteralSearchUtf8Fold() {
 }
 
 void TestWorkspaceSharedLiteralSearchDoesNotOverlap() {
-  // Regression: the find-all scan resumed one byte past the match start, so a
-  // self-overlapping needle produced overlapping ranges and inflated the count,
-  // diverging from find-next/replace which advance by the needle length.
   const std::vector<std::string> lines = {"aaaa", "banana"};
   const auto matches = FindLiteralSearchMatches(lines, "aa");
   Expect(matches.size() == 2,
@@ -260,21 +247,16 @@ void TestWorkspaceSharedLiteralSearchDoesNotOverlap() {
   Expect(ana.size() == 1,
          "literal find-all should not double-count the overlapping 'ana' in 'banana'");
 
-  // The find-all count must match what replace actually rewrites.
   std::string content = "aaaa";
   Expect(ReplaceLiteralMatchesInText(content, "aa", "aa", false) == 2 &&
              FindLiteralSearchMatches({content}, "aa").size() == 2,
          "find-all count and replace count must agree for overlapping needles");
 }
 
-// ReplaceRegexMatchesInText: per-line substitution with capture groups, mirroring
-// project-search line framing (trailing '\r' excluded from the match, terminators
-// preserved), only reassigning `content` when something changed.
 void TestWorkspaceSharedRegexReplaceInText() {
   const microide::util::CompiledRegex swap("(\\w+)=(\\w+)", 0);
   Expect(swap.valid(), "regex-replace fixture should compile");
 
-  // Capture-group expansion across multiple lines; each line substitutes globally.
   std::string content = "a=1 b=2\nc=3\n";
   const auto count = ReplaceRegexMatchesInText(content, swap, "$2:$1");
   Expect(count.has_value() && *count == 3,
@@ -282,38 +264,30 @@ void TestWorkspaceSharedRegexReplaceInText() {
   Expect(content == "1:a 2:b\n3:c\n",
          "regex replace should expand capture groups and preserve newline terminators");
 
-  // CRLF terminators: '\r' is excluded from the match window and preserved verbatim,
-  // and `$` still anchors at end-of-content (before the stripped '\r').
   const microide::util::CompiledRegex tail("o$", 0);
   std::string crlf = "foo\r\nbar\r\n";
   const auto crlf_count = ReplaceRegexMatchesInText(crlf, tail, "X");
   Expect(crlf_count.has_value() && *crlf_count == 1 && crlf == "foX\r\nbar\r\n",
          "regex replace should anchor per-line and preserve CRLF terminators");
 
-  // No match: content is left byte-identical and the count is 0.
   const microide::util::CompiledRegex none("zzz", 0);
   std::string untouched = "alpha\nbeta";
   const auto zero = ReplaceRegexMatchesInText(untouched, none, "X");
   Expect(zero.has_value() && *zero == 0 && untouched == "alpha\nbeta",
          "a no-match regex replace leaves content untouched with a count of 0");
 
-  // Invalid replacement escape -> nullopt (the caller aborts with a message).
   const microide::util::CompiledRegex any("a", 0);
   std::string bad = "aaa";
   Expect(!ReplaceRegexMatchesInText(bad, any, "\\q").has_value(),
          "an invalid replacement escape should surface as nullopt");
   Expect(bad == "aaa", "a failed regex replace must not partially rewrite content");
 
-  // Smart-case parity: a caseless pattern folds every variant.
   const microide::util::CompiledRegex caseless("foo", PCRE2_CASELESS);
   std::string mixed = "FOO foo Foo";
   const auto mixed_count = ReplaceRegexMatchesInText(mixed, caseless, "x");
   Expect(mixed_count.has_value() && *mixed_count == 3 && mixed == "x x x",
          "a caseless regex replace folds every case variant");
 
-  // An empty-matching, line-anchored pattern must fire once per REAL line, not on a
-  // phantom empty line after the trailing newline (mirrors the search worker's
-  // getline framing). `^` on "a\nb\n" prepends ">" to line a and line b only.
   const microide::util::CompiledRegex bol("^", 0);
   std::string anchored = "a\nb\n";
   const auto bol_count = ReplaceRegexMatchesInText(anchored, bol, ">");
@@ -321,8 +295,6 @@ void TestWorkspaceSharedRegexReplaceInText() {
          "a line-anchored empty match fires per real line, not on a trailing phantom line");
 }
 
-// FindRegexSearchMatches: per-line SelectionRanges over a buffer, feeding the
-// in-file find widget's navigation + overview ruler.
 void TestWorkspaceSharedRegexSearchMatches() {
   const microide::editor::TextBuffer buffer(
       std::vector<std::string>{"foo123 bar", "no digits", "9 and 42"});
@@ -338,31 +310,24 @@ void TestWorkspaceSharedRegexSearchMatches() {
   Expect(matches[2].start.line == 2 && matches[2].start.column == 6 && matches[2].end.column == 8,
          "the second match on a line resumes past the first");
 
-  // An invalid pattern yields no matches (the widget shows 0/0, no crash).
   const microide::util::CompiledRegex invalid("[unterminated", 0);
   Expect(!invalid.valid() && FindRegexSearchMatches(buffer, invalid).empty(),
          "an invalid regex produces an empty match set");
 }
 
-// Splitting multi-line matches into per-line highlight fragments: a fragment on a
-// non-final line ends one past its content so the renderer can draw a newline marker
-// (otherwise a `\n`-spanning match would be invisible).
 void TestWorkspaceSharedRegexHighlightFragments() {
   const microide::editor::TextBuffer buffer(std::vector<std::string>{"ab", "cd", "ef"});
 
-  // A `\n`-only match: end of line 0 -> start of line 1.
   const std::vector<microide::editor::SelectionRange> newline_match = {
       {{0, 2}, {1, 0}}};
   const auto frags = SplitRegexMatchHighlightFragments(buffer, newline_match);
   Expect(frags.size() == 2, "a `\\n` match splits into two per-line fragments");
-  // Line 0 fragment ends one PAST the 2-char content -> newline marker at the EOL.
   Expect(frags[0].start.line == 0 && frags[0].start.column == 2 && frags[0].end.line == 0 &&
              frags[0].end.column == 3,
          "the non-final line's fragment ends one past its content (newline marker)");
   Expect(frags[1].start.line == 1 && frags[1].start.column == 0 && frags[1].end.column == 0,
          "the final line's fragment ends at the match end column (no marker)");
 
-  // A single-line match passes through unchanged (no marker).
   const std::vector<microide::editor::SelectionRange> inline_match = {{{2, 0}, {2, 2}}};
   const auto inline_frags = SplitRegexMatchHighlightFragments(buffer, inline_match);
   Expect(inline_frags.size() == 1 && inline_frags[0].end.column == 2,
@@ -385,17 +350,17 @@ void TestWorkspaceSharedLiteralReplaceModeHelpers() {
 void TestWorkspaceLiteralNeedleScanCaseModeInLine() {
   using microide::workspace::FindLiteralNeedleInLine;
 
-  Expect(FindLiteralNeedleInLine("Foo foo FOO", 0, "foo", /*case_sensitive=*/false) == 0,
+  Expect(FindLiteralNeedleInLine("Foo foo FOO", 0, "foo", false) == 0,
          "case-insensitive scan should prefer the earliest offset");
-  Expect(FindLiteralNeedleInLine("Foo foo FOO", 1, "foo", /*case_sensitive=*/false) == 4,
+  Expect(FindLiteralNeedleInLine("Foo foo FOO", 1, "foo", false) == 4,
          "case-insensitive scan should skip earlier matches outside the slice");
-  Expect(!FindLiteralNeedleInLine("x Foo y", 0, "foo", /*case_sensitive=*/true).has_value(),
+  Expect(!FindLiteralNeedleInLine("x Foo y", 0, "foo", true).has_value(),
          "case-sensitive scan should reject byte mismatches against the seeded needle text");
-  const auto matched = FindLiteralNeedleInLine("Foo foo", 0, "Foo", /*case_sensitive=*/true);
+  const auto matched = FindLiteralNeedleInLine("Foo foo", 0, "Foo", true);
   Expect(matched.has_value() && *matched == 0,
          "case-sensitive scan should locate exact-case substrings");
 
-  Expect(FindLiteralNeedleInLine("ababa", 0, "aba", /*case_sensitive=*/true) == 0,
+  Expect(FindLiteralNeedleInLine("ababa", 0, "aba", true) == 0,
          "overlapping case-sensitive occurrences should expose the earliest match index");
 }
 
@@ -420,22 +385,22 @@ void TestWorkspaceNextLiteralMatchAfterSeedWrapOnce() {
   {
     const std::vector<std::string> dual{"foo foo"};
     const auto forward_then_wrap =
-        FindNextLiteralMatchAfterSeedWrapOnce(dual, 0, 4, 7, "foo", /*case_sensitive=*/true);
+        FindNextLiteralMatchAfterSeedWrapOnce(dual, 0, 4, 7, "foo", true);
     expect_pos(forward_then_wrap, 0, 0,
                "after the last occurrence on the line, wrap picks the earliest match");
     const auto forward_only =
-        FindNextLiteralMatchAfterSeedWrapOnce(dual, 0, 0, 3, "foo", /*case_sensitive=*/true);
+        FindNextLiteralMatchAfterSeedWrapOnce(dual, 0, 0, 3, "foo", true);
     expect_pos(forward_only, 0, 4,
                "forward scan prefers the occurrence after the seed span");
 
     const std::vector<std::string> single{"foo"};
     const auto lone =
-        FindNextLiteralMatchAfterSeedWrapOnce(single, 0, 0, 3, "foo", /*case_sensitive=*/true);
+        FindNextLiteralMatchAfterSeedWrapOnce(single, 0, 0, 3, "foo", true);
     expect_missing(lone, "only the seed occurrence yields no candidate after a single wrap");
 
     const std::vector<std::string> above_first{"foo", "foo"};
     const auto earlier_line = FindNextLiteralMatchAfterSeedWrapOnce(
-        above_first, 1, 0, 3, "foo", /*case_sensitive=*/true);
+        above_first, 1, 0, 3, "foo", true);
     expect_pos(earlier_line, 0, 0,
                "after the seed line exhausts forward matches, wrap finds an earlier line first");
   }
@@ -443,19 +408,19 @@ void TestWorkspaceNextLiteralMatchAfterSeedWrapOnce() {
   {
     const std::vector<std::string> mixed_case_line{"Foo foo"};
     const auto forward_ci = FindNextLiteralMatchAfterSeedWrapOnce(
-        mixed_case_line, 0, 0, 3, "Foo", /*case_sensitive=*/false);
+        mixed_case_line, 0, 0, 3, "Foo", false);
     expect_pos(forward_ci, 0, 4,
                "case-insensitive forward finds the next byte-different match on the same line");
 
     const std::vector<std::string> wrap_mixed{"foo FOO"};
     const auto wrap_ci = FindNextLiteralMatchAfterSeedWrapOnce(
-        wrap_mixed, 0, 4, 7, "FOO", /*case_sensitive=*/false);
+        wrap_mixed, 0, 4, 7, "FOO", false);
     expect_pos(wrap_ci, 0, 0,
                "case-insensitive wrap reaches the earlier mixed-case match before the seed span");
 
     const std::vector<std::string> lone_mixed{"Foo"};
     const auto none_ci = FindNextLiteralMatchAfterSeedWrapOnce(
-        lone_mixed, 0, 0, 3, "Foo", /*case_sensitive=*/false);
+        lone_mixed, 0, 0, 3, "Foo", false);
     expect_missing(none_ci,
                    "case-insensitive wrap still skips the sole seeded span and finds nothing else");
   }
@@ -479,19 +444,14 @@ void TestWorkspaceNextLiteralMatchAfterSeedWrapOnce() {
   }
 }
 
-// TD-2026-07-17A-031: "Add Cursor at All Matches" collects a ranged caret at
-// every occurrence except the seed, folding each line once (case-insensitive)
-// and capping the installed carets.
 void TestWorkspaceAddCursorMatchRanges() {
   using microide::workspace::CollectAddCursorMatchRanges;
   using microide::editor::TextBuffer;
 
   {
-    // Dense single-line match set, case-sensitive: seed at column 0 is skipped,
-    // every later occurrence is collected as a ranged caret.
     const TextBuffer buffer(std::vector<std::string>{"aa aa aa"});
-    const auto scan = CollectAddCursorMatchRanges(buffer, /*seed_line=*/0, /*seed_column=*/0,
-                                                  "aa", /*case_sensitive=*/true);
+    const auto scan = CollectAddCursorMatchRanges(buffer, 0, 0,
+                                                  "aa", true);
     Expect(!scan.truncated, "small match set is not truncated");
     Expect(scan.ranges.size() == 2, "seed occurrence is excluded; two others remain");
     Expect(scan.ranges[0].start.column == 3 && scan.ranges[0].end.column == 5,
@@ -501,11 +461,9 @@ void TestWorkspaceAddCursorMatchRanges() {
   }
 
   {
-    // Case-insensitive: mixed-case occurrences all match; folded byte offsets
-    // are valid columns because the fold is length-preserving.
     const TextBuffer buffer(std::vector<std::string>{"Foo foo", "FOO"});
-    const auto scan = CollectAddCursorMatchRanges(buffer, /*seed_line=*/0, /*seed_column=*/0,
-                                                  "foo", /*case_sensitive=*/false);
+    const auto scan = CollectAddCursorMatchRanges(buffer, 0, 0,
+                                                  "foo", false);
     Expect(scan.ranges.size() == 2, "the seed on line 0 col 0 is skipped; two matches remain");
     Expect(scan.ranges[0].start.line == 0 && scan.ranges[0].start.column == 4,
            "the second same-line occurrence is collected");
@@ -514,19 +472,17 @@ void TestWorkspaceAddCursorMatchRanges() {
   }
 
   {
-    // Case-sensitive must not match a different-cased occurrence.
     const TextBuffer buffer(std::vector<std::string>{"foo FOO"});
-    const auto scan = CollectAddCursorMatchRanges(buffer, /*seed_line=*/0, /*seed_column=*/0,
-                                                  "foo", /*case_sensitive=*/true);
+    const auto scan = CollectAddCursorMatchRanges(buffer, 0, 0,
+                                                  "foo", true);
     Expect(scan.ranges.empty(), "case-sensitive scan skips FOO and the seeded foo");
   }
 
   {
-    // Cap: a match set larger than max_matches truncates and stops at the cap.
-    const TextBuffer buffer(std::vector<std::string>{"x x x x x x x x"});  // 8 occurrences
-    const auto scan = CollectAddCursorMatchRanges(buffer, /*seed_line=*/0, /*seed_column=*/0,
-                                                  "x", /*case_sensitive=*/true,
-                                                  /*max_matches=*/3);
+    const TextBuffer buffer(std::vector<std::string>{"x x x x x x x x"});
+    const auto scan = CollectAddCursorMatchRanges(buffer, 0, 0,
+                                                  "x", true,
+                                                  3);
     Expect(scan.truncated, "exceeding the cap sets the truncation flag");
     Expect(scan.ranges.size() == 3, "no more than max_matches carets are collected");
   }
@@ -562,9 +518,6 @@ void TestWorkspaceSharedProjectSearchLineMapHelpers() {
          "project search line lookup should fall back to zero for missing results");
 }
 
-// The incremental find-as-you-type path must produce exactly what a fresh full
-// scan would: for every query that extends a prefix, refining the prefix's match
-// set over the buffer equals scanning the whole buffer for the longer query.
 void TestWorkspaceIncrementalLiteralSearch() {
   auto same = [](const std::vector<microide::editor::SelectionRange>& a,
                  const std::vector<microide::editor::SelectionRange>& b) {
@@ -593,12 +546,9 @@ void TestWorkspaceIncrementalLiteralSearch() {
   };
   microide::editor::TextBuffer buffer(lines);
 
-  // The TextBuffer overload must agree with the vector overload.
   Expect(same(FindLiteralSearchMatches(buffer, "alpha"), FindLiteralSearchMatches(lines, "alpha")),
          "buffer-scan overload should match the vector overload");
 
-  // The seed-relative next-match (Ctrl-D) buffer overload must also agree with the
-  // vector overload it replaced.
   using microide::workspace::FindNextLiteralMatchAfterSeedWrapOnce;
   for (std::size_t seed = 0; seed < lines.size(); ++seed) {
     const auto from_vec =
@@ -611,8 +561,6 @@ void TestWorkspaceIncrementalLiteralSearch() {
            "next-match buffer overload should match the vector overload");
   }
 
-  // Refining each prefix step must equal a fresh scan for the longer query --
-  // this is exactly the substitution RefreshBufferSearch makes per keystroke.
   const std::vector<std::string> queries = {"a", "al", "alp", "alph", "alpha", "alphab", "alphabe"};
   for (std::size_t i = 1; i < queries.size(); ++i) {
     const auto previous = FindLiteralSearchMatches(buffer, queries[i - 1]);
@@ -622,19 +570,11 @@ void TestWorkspaceIncrementalLiteralSearch() {
            "incremental refine of a prefix match set must equal a fresh full scan");
   }
 
-  // A refine that starts from an empty match set yields nothing (callers must not
-  // refine across a non-extending query); and refine over an empty query is empty.
   Expect(RefineLiteralSearchMatches(buffer, "alpha", {}).empty(),
          "refine over an empty previous set yields nothing");
   Expect(RefineLiteralSearchMatches(buffer, "", FindLiteralSearchMatches(buffer, "a")).empty(),
          "refine with an empty query yields nothing");
 
-  // Self-overlapping needle regression: extending "a" -> "aa" over a run of 'a's.
-  // The prefix set holds a hit at EVERY offset ("aaaa" -> a@0,1,2,3), so a naive
-  // refine that kept each still-matching offset would report overlapping ranges
-  // {0,2},{1,3},{2,4} and desync next/prev/replace. RefineLiteralSearchMatches now
-  // de-overlaps by advancing past each kept match, matching the fresh scan's
-  // {0,2},{2,4}. Verify refine == fresh for the pathological all-'a' buffer.
   const microide::editor::TextBuffer overlap_buffer(
       std::vector<std::string>{"aaaa", "aaa", "aXaa"});
   const auto overlap_prev = FindLiteralSearchMatches(overlap_buffer, "a");
@@ -644,14 +584,6 @@ void TestWorkspaceIncrementalLiteralSearch() {
          "refine of a self-overlapping needle must de-overlap to equal a fresh scan");
   Expect(!overlap_refined.empty(), "self-overlapping refine should still find matches");
 
-  // The two refine strategies, pinned at their boundary. A prefix that cannot
-  // occur inside itself ("ab" has no proper border) means the cold scan's
-  // advance-by-length skipped nothing, so `previous` holds every occurrence and
-  // refine may check just those columns -- the fast path. A prefix that can
-  // ("aa") means it did skip some, so refine must rescan the matched lines. Both
-  // must equal the cold scan; the second buffer is one where the naive
-  // column-only refine loses a match ("aab" starts at column 1 of "aaab", an
-  // offset the "aa" scan never recorded).
   const microide::editor::TextBuffer border_buffer(
       std::vector<std::string>{"abab abc", "ab", "xabc"});
   const auto border_prev = FindLiteralSearchMatches(border_buffer, "ab");
@@ -667,14 +599,8 @@ void TestWorkspaceIncrementalLiteralSearch() {
   Expect(!skipped_refined.empty(), "the de-overlapped hits are really there");
 }
 
-}  // namespace
+}
 
-// The find-as-you-type refine path runs on every keystroke that extends the
-// query: it filters the previous match set instead of rescanning the buffer, and
-// it is only correct if that filter reproduces the cold scan exactly — the same
-// hits, the same de-overlap, in the same order — over any buffer and any
-// extension, under either case mode. Enumerate that against the cold scan over a
-// small alphabet where self-overlapping needles and mixed case are the norm.
 void TestWorkspaceSharedRefineMatchesTheColdScan() {
   using microide::editor::SelectionRange;
   using microide::editor::TextBuffer;
@@ -692,8 +618,6 @@ void TestWorkspaceSharedRefineMatchesTheColdScan() {
     }
     return true;
   };
-  // ASCII letters in both cases, a two-byte letter with a case pair (é/É, folded
-  // length-preserving), and separators.
   const std::vector<std::string> alphabet = {"a", "A", "b", "B", "\xc3\xa9", "\xc3\x89", " ", "_"};
   std::mt19937 rng(20260906);
   std::size_t checked = 0;
@@ -709,11 +633,9 @@ void TestWorkspaceSharedRefineMatchesTheColdScan() {
     std::string query;
     const std::size_t query_length = 1 + rng() % 4;
     for (std::size_t i = 0; i < query_length; ++i) {
-      query += alphabet[rng() % (alphabet.size() - 2)];  // letters only
+      query += alphabet[rng() % (alphabet.size() - 2)];
     }
     const BufferSearchOptions options{.case_sensitive = (rng() % 2) == 0, .whole_word = false};
-    // Type the query one unit at a time: each step's set refined from the last must
-    // equal a cold scan of the longer query.
     std::vector<SelectionRange> previous;
     std::string typed;
     std::size_t offset = 0;
@@ -723,8 +645,6 @@ void TestWorkspaceSharedRefineMatchesTheColdScan() {
       offset += unit;
       const std::vector<SelectionRange> cold = FindLiteralSearchMatches(buffer, typed, options);
       if (!previous.empty() || typed.size() == unit) {
-        // A refine over an empty previous set is the shell's cold-path case (it
-        // only refines a non-empty prior query); the first unit seeds it.
       }
       if (typed.size() > unit) {
         Expect(options.case_sensitive || QueryExtendsCaseInsensitive(typed.substr(0, typed.size() - unit), typed),
@@ -749,13 +669,6 @@ void TestWorkspaceSharedRefineMatchesTheColdScan() {
   Expect(checked > 2000, "the enumeration exercised the refine path");
 }
 
-// Three literal replace-all implementations must agree on any text: the project
-// replace over a file blob (`ReplaceLiteralMatchesInText`), the find widget's
-// default path (`TextViewport::ReplaceAll`, always case-insensitive) and its
-// toggled path (`ReplaceAllRanges` over `FindLiteralSearchMatches`). VS Code has one
-// answer for "replace all occurrences"; here there are three code paths, so pin
-// them to each other over a small mixed-case alphabet where self-overlapping
-// needles, multi-line replacements and folded two-byte letters are the norm.
 void TestWorkspaceSharedReplaceAllPathsAgree() {
   using microide::editor::TextViewport;
   using microide::workspace::BufferSearchOptions;
@@ -860,4 +773,4 @@ void RegisterWorkspaceShellSharedSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedProjectSearchLineMapHelpers);
 }
 
-}  // namespace microide::tests
+}

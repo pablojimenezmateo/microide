@@ -43,14 +43,6 @@ std::vector<SidebarViewPolicy> RuntimeSidebarPolicies(
   return runtime;
 }
 
-// One-time migration for project configs written by builds that auto-persisted the
-// resolved canonical editor preferences into EVERY project's settings vector on save
-// (the old SyncCanonicalProjectSettings). Now that a per-project override wins over
-// the user-level default, such an auto-synced entry left at the spec default would
-// silently shadow the "set as default" feature. Drop canonical editor entries whose
-// value equals the spec default so user defaults take effect; genuine non-default
-// per-project overrides are preserved untouched. The cleaned layer is rewritten by
-// the next SaveConfigState, so this self-heals after one load.
 void DropDefaultValuedCanonicalOverrides(
     std::vector<std::pair<std::string, std::string>>& settings) {
   for (std::string_view id : {"editor.tab_size", "editor.indent_width", "editor.font_size",
@@ -63,13 +55,13 @@ void DropDefaultValuedCanonicalOverrides(
     const auto parsed = ParseSettingValue(*spec, *stored);
     if (!parsed.has_value() ||
         SerializeSettingValue(*parsed) != SerializeSettingValue(DefaultSettingValue(*spec))) {
-      continue;  // Absent, unparseable, or a genuine non-default override: keep it.
+      continue;
     }
     settings_layer::Erase(settings, id);
   }
 }
 
-}  // namespace
+}
 
 void PersistenceCoordinator::MaterializeCanonicalPreferences() {
   ProjectWorkspaceState& state = CurrentProjectState();
@@ -87,11 +79,6 @@ void PersistenceCoordinator::MaterializeCanonicalPreferences() {
                               "editor.soft_tabs", "editor.wrap"}) {
     ApplyCanonicalEditorPreference(state.editor_preferences, id, resolve(id));
   }
-  // Colorscheme is not materialized here: it is a theme to load, not a number to
-  // copy. A write of the setting applies it (ApplyCanonicalPreferenceSideEffects),
-  // the colorscheme command applies it directly, and either way the active name is
-  // persisted in the project config's colorscheme_name field, which
-  // RestoreConfigState applies.
 }
 
 void PersistenceCoordinator::RefreshAvailableColorschemeNames() {
@@ -115,9 +102,6 @@ bool PersistenceCoordinator::ApplyColorscheme(std::string_view name,
   std::string resolved_name;
   std::string error;
   const std::string requested_name = name.empty() ? "default" : std::string(name);
-  // Plugin-contributed themes take precedence over built-in/filesystem themes:
-  // a plugin theme id is namespaced (`"<plugin>.<id>"`) so it cannot collide with
-  // a built-in name, and resolving it derives a full Theme from its style map.
   bool resolved_from_plugin = false;
   if (operations_.resolve_plugin_theme) {
     if (auto plugin_theme = operations_.resolve_plugin_theme(requested_name)) {
@@ -187,8 +171,6 @@ bool PersistenceCoordinator::RestoreUserConfig() {
   context_.user_settings.clear();
   context_.disabled_keybinding_ids = state.disabled_keybinding_ids;
   context_.disabled_plugin_ids = state.disabled_plugin_ids;
-  // Canonicalized as the setter would store them: the file may be hand-edited,
-  // and a reader with its own parse of "no" or "Off" then disagreed with the rest.
   for (auto& [id, value] : state.settings) {
     CanonicalizeLoadedSettingValue(id, value);
     settings_layer::Upsert(context_.user_settings, id, std::move(value));
@@ -196,10 +178,8 @@ bool PersistenceCoordinator::RestoreUserConfig() {
 
   const bool applied_scale = ApplyUiScale(state.ui_scale, false, false);
   if (applied_scale) {
-    // Keep overlay rows in sync with the canonical ui_scale field.
     settings_layer::Upsert(context_.user_settings, "ui.scale", SerializeSettingValue(ui_scale_));
   }
-  // The user layer was reloaded in place; rebuild the store's resolved index.
   settings_store_.Reindex();
   return applied_scale;
 }
@@ -248,10 +228,6 @@ bool PersistenceCoordinator::RestoreConfigState() {
       .branch_review = {},
   };
   if (!operations_.persistence_service->LoadProjectConfig(config_path, &persisted_state)) {
-    // No saved config (a project opened for the first time) is no overrides, not
-    // no settings: the user's defaults still apply. Returning before this left a
-    // new project on the built-in defaults -- its store unindexed and its editor
-    // preferences never materialized -- whatever the user had made their default.
     settings_store_.Reindex();
     MaterializeCanonicalPreferences();
     operations_.apply_editor_preferences_to_all_tabs();
@@ -265,27 +241,15 @@ bool PersistenceCoordinator::RestoreConfigState() {
   mutable_current.sidebar.git.commit_workflow.loaded_persisted_draft = persisted_state.commit_draft;
   LoadBranchReviewStateFromPersisted(persisted_state.branch_review,
                                      &mutable_current.branch_review);
-  // The project settings vector holds only explicit per-project overrides; the
-  // canonical editor preferences are materialized from the store (project override →
-  // user default → spec default) below. The colorscheme is the exception: it persists
-  // in its own typed field (colorscheme_name) and is applied explicitly after
-  // materialization, because its enum spec only validates "default" and real theme
-  // names never round-trip through the layered store.
   for (auto& [id, value] : persisted_state.settings) {
-    CanonicalizeLoadedSettingValue(id, value);  // as the user layer's, above
+    CanonicalizeLoadedSettingValue(id, value);
     settings_layer::Upsert(mutable_current.settings, id, std::move(value));
   }
-  // Strip auto-synced default-valued canonical editor entries left by older builds
-  // so they can no longer shadow the user-level "set as default" (see helper).
   DropDefaultValuedCanonicalOverrides(mutable_current.settings);
-  // The project layer was reloaded in place; rebuild the store's resolved index
-  // before materializing so the resolved values reflect the loaded overrides.
   settings_store_.Reindex();
   MaterializeCanonicalPreferences();
   operations_.apply_editor_preferences_to_all_tabs();
-  // Colorscheme persists via its dedicated typed field (see
-  // MaterializeCanonicalPreferences), so apply it explicitly here.
-  ApplyColorscheme(persisted_state.colorscheme_name, /*persist=*/false, /*log_feedback=*/false);
+  ApplyColorscheme(persisted_state.colorscheme_name, false, false);
   return true;
 }
 
@@ -315,4 +279,4 @@ void PersistenceCoordinator::SaveConfigState() const {
   operations_.persistence_service->SaveProjectConfig(config_path, persisted);
 }
 
-}  // namespace microide::workspace
+}

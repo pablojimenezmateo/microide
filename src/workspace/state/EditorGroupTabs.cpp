@@ -62,4 +62,4 @@ std::filesystem::path EditorViewPath(const TabEntry::EditorTabState& editor_stat
                                         : editor_state.viewport.path().lexically_normal();
 }
 
-}  // namespace microide::workspace
+}

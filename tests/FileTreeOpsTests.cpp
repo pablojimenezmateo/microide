@@ -12,7 +12,6 @@ namespace {
 using microide::project::FileWriteGate;
 using TreeOp = FileWriteGate::TreeOp;
 
-// The single-op calls these tests were written against, now through the gate.
 FileWriteGate::TreeResult Op(TreeOp op) {
   return microide::project::LocalFileWriteGate().ApplyTreeOp(op);
 }
@@ -30,9 +29,6 @@ FileWriteGate::TreeResult TrashPath(const std::filesystem::path& p) {
   return Op({.kind = TreeOp::Kind::Trash, .path = p});
 }
 
-// Copy: a file, and a folder with what it holds, to a new path -- never over an
-// existing one, never a folder into itself; and a batch that fails after a copy
-// takes the copy back.
 void TestTreeOpCopy() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -55,15 +51,9 @@ void TestTreeOpCopy() {
   const auto into_itself = Op({.kind = TreeOp::Kind::Copy, .path = root / "dir", .new_path = root / "dir" / "inner" / "dir"});
   Expect(!into_itself.ok && !std::filesystem::exists(root / "dir" / "inner" / "dir"),
          "a folder is not copied into itself");
-  // Nor into a subfolder whose NAME starts with "..": that is a child, and the
-  // guard's text-prefix test read `..cache/dir` as outside the source and copied
-  // the folder into its own copy (TD-2026-10-29-423).
   std::filesystem::create_directories(root / "dir" / "..cache");
   const auto into_dotdot_child =
       Op({.kind = TreeOp::Kind::Copy, .path = root / "dir", .new_path = root / "dir" / "..cache" / "dir"});
-  // Refused up front, not attempted: the old guard let the copy recurse into its
-  // own output until the path grew too long, and only the failed copy's cleanup
-  // left the tree as it was -- after copying the folder a few hundred times.
   Expect(!into_dotdot_child.ok && !std::filesystem::exists(root / "dir" / "..cache" / "dir") &&
              into_dotdot_child.error_message.find("into itself") != std::string::npos,
          "a folder is refused a copy into a child folder named ..cache: " + into_dotdot_child.error_message);
@@ -133,14 +123,11 @@ void TestCreateDirectoryClassifiesExistingTargets() {
   const auto root = temp_dir.path() / "workspace";
   std::filesystem::create_directories(root);
 
-  // Re-creating an existing directory reports "already exists", not a hard error.
   const auto again = CreateDirectory(root);
   Expect(!again.ok, "creating an existing directory should fail");
   Expect(again.error_message == "The directory already exists",
          "existing directory is classified distinctly");
 
-  // A regular file occupying the target path is reported as a non-directory
-  // clash (the create-first path classifies via status, no TOCTOU probe).
   const auto file_target = root / "occupied";
   WriteFile(file_target, "not a directory");
   const auto clash = CreateDirectory(file_target);
@@ -151,10 +138,6 @@ void TestCreateDirectoryClassifiesExistingTargets() {
          "the pre-existing file must be left untouched");
 }
 
-// Regression: the .trashinfo file is now reserved atomically with O_EXCL, so a
-// trash whose base name's metadata already exists must NOT overwrite it — it must
-// skip to the next suffix. The old truncating ofstream silently clobbered the
-// existing metadata (and, on a real concurrent race, the trashed file itself).
 void TestTrashReservationDoesNotOverwriteExistingMetadata() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -163,8 +146,6 @@ void TestTrashReservationDoesNotOverwriteExistingMetadata() {
   const auto trash_home = temp_dir.path() / "xdg-data-home";
   ScopedEnvVar scoped_xdg_data_home("XDG_DATA_HOME", trash_home.string());
 
-  // Pre-occupy the base name's metadata slot with a sentinel the trash must not
-  // touch (simulating a prior/concurrent trash of a same-named file).
   const auto info_dir = trash_home / "Trash" / "info";
   std::filesystem::create_directories(info_dir);
   const auto sentinel_info = info_dir / "trash-me.txt.trashinfo";
@@ -189,9 +170,6 @@ void TestTrashReservationDoesNotOverwriteExistingMetadata() {
          "the new metadata should record the trashed source path");
 }
 
-// TD-2026-07-16-49: when a file already occupies Trash/files/<name> (a slot the
-// .trashinfo reservation did not gate), the final content move must NOT overwrite it —
-// the trash retries the next suffix instead of clobbering the existing trashed file.
 void TestTrashFinalMoveRefusesExistingFilesDestination() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -200,7 +178,6 @@ void TestTrashFinalMoveRefusesExistingFilesDestination() {
   const auto trash_home = temp_dir.path() / "xdg-data-home";
   ScopedEnvVar scoped_xdg_data_home("XDG_DATA_HOME", trash_home.string());
 
-  // Pre-occupy the base name's FILES slot (not the metadata slot) with a sentinel.
   const auto files_dir = trash_home / "Trash" / "files";
   std::filesystem::create_directories(files_dir);
   const auto sentinel_file = files_dir / "collide.txt";
@@ -220,11 +197,6 @@ void TestTrashFinalMoveRefusesExistingFilesDestination() {
          "the newly trashed content lands at the retried slot");
 }
 
-// A DANGLING symlink occupying the trash slot must be treated as occupied, so the
-// delete retries the next suffix. The final move already classified the slot by the
-// node (it refuses a dangling link); the retry test beside it used `exists()`, which
-// follows the link and reported the slot free — the two disagreed, the retry was
-// skipped, and deleting the file failed outright.
 void TestTrashRetriesPastADanglingSlot() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -255,11 +227,8 @@ void TestTrashRetriesPastADanglingSlot() {
          "the trashed content lands at the retried slot");
 }
 
-}  // namespace
+}
 
-// Regression: renaming onto an existing destination must fail WITHOUT clobbering
-// it — the move is no-overwrite (renameat2 RENAME_NOREPLACE) so it cannot destroy
-// unrelated content that occupies the target.
 void TestRenamePathRefusesToOverwriteExistingDestination() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -277,8 +246,6 @@ void TestRenamePathRefusesToOverwriteExistingDestination() {
   Expect(ReadFile(source) == "SOURCE", "the source must be left intact when the move is refused");
 }
 
-// The platform primitive itself must refuse an existing destination (this is the
-// race-free guarantee RenamePath relies on, independent of any exists() pre-check).
 void TestMovePathNoOverwriteRefusesExistingDestination() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -293,7 +260,6 @@ void TestMovePathNoOverwriteRefusesExistingDestination() {
   Expect(ReadFile(dest) == "B", "the destination content must be preserved");
   Expect(ReadFile(source) == "A", "the source must remain when the move is refused");
 
-  // A fresh destination still moves successfully.
   const auto fresh = root / "c.txt";
   Expect(microide::platform::MovePathNoOverwrite(source, fresh),
          "MovePathNoOverwrite must succeed onto a non-existent destination");
@@ -301,9 +267,6 @@ void TestMovePathNoOverwriteRefusesExistingDestination() {
   Expect(ReadFile(fresh) == "A", "the content is at the new path");
 }
 
-// TD-2026-07-17A-125: a dangling symlink is a real directory entry the file manager
-// should be able to rename. The source pre-check used std::filesystem::exists, which
-// follows the link and reports a broken target as absent, so the rename was refused.
 void TestRenamePathAcceptsDanglingSymlinkSource() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -323,12 +286,6 @@ void TestRenamePathAcceptsDanglingSymlinkSource() {
          "the original link node is gone after the rename");
 }
 
-// A move that FAILS must be a no-op. The rollback that removes a partially copied
-// destination is gated on whether the destination pre-existed, and that check used
-// `exists()`, which follows a symlink — so a DANGLING destination symlink read as
-// "did not pre-exist" and the rollback deleted a directory entry the move never
-// created. MovePathNoOverwrite already classified with symlink_status for exactly
-// this reason (TD-2026-07-17A-132); MovePath did not.
 void TestFailedMovePathLeavesADanglingDestinationSymlinkAlone() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -339,19 +296,12 @@ void TestFailedMovePathLeavesADanglingDestinationSymlinkAlone() {
   Expect(!ec, "dangling symlink fixture created");
   Expect(!std::filesystem::exists(dangling), "the symlink target is absent (dangling)");
 
-  // A source that does not exist makes the rename fail and the copy fallback fail,
-  // which is the shortest path to the rollback.
   Expect(!microide::platform::MovePath(root / "does_not_exist", dangling),
          "moving a missing source must fail");
   Expect(std::filesystem::symlink_status(dangling).type() !=
              std::filesystem::file_type::not_found,
          "a failed move must not delete the destination entry it found there");
 }
-
-// ---- The transaction (TD-2026-09-29-305) -----------------------------------
-//
-// The LSP's workspace-edit resource ops are all-or-nothing, and that journal now
-// lives in the gate. These pin it at the gate, where any caller gets it.
 
 std::size_t CountEntries(const std::filesystem::path& dir) {
   std::size_t count = 0;
@@ -361,9 +311,6 @@ std::size_t CountEntries(const std::filesystem::path& dir) {
   return count;
 }
 
-// One failure undoes everything before it, in reverse: a created file goes, a
-// rename goes back, a deleted file comes back byte-identical, and a chain of
-// parent directories created on the way is removed whole.
 void TestATreeBatchIsAllOrNothing() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -377,7 +324,6 @@ void TestATreeBatchIsAllOrNothing() {
       {.kind = TreeOp::Kind::CreateFile, .path = root / "deep" / "er" / "new.txt"},
       {.kind = TreeOp::Kind::Rename, .path = root / "move.txt", .new_path = root / "moved.txt"},
       {.kind = TreeOp::Kind::Delete, .path = root / "victim.txt"},
-      // Fails: the destination exists and overwrite is off.
       {.kind = TreeOp::Kind::Rename, .path = root / "keep.txt",
        .new_path = root / "occupied.txt"},
   };
@@ -393,9 +339,6 @@ void TestATreeBatchIsAllOrNothing() {
   Expect(CountEntries(root) == 4, "with no staging debris left behind");
 }
 
-// An overwrite stages the victim aside and, once the batch lands, disposes of it:
-// a staged FILE is unlinked by the gate itself, so nothing hidden is left for the
-// file index to find before the caller refreshes.
 void TestAnOverwritingRenameLeavesNoStagingEntry() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -412,8 +355,6 @@ void TestAnOverwritingRenameLeavesNoStagingEntry() {
          "and the replaced file is gone, not parked under a hidden name");
 }
 
-// A non-recursive delete of a directory is an rmdir: the KERNEL refuses a
-// non-empty one, so content cannot be taken along by racing an emptiness check.
 void TestANonRecursiveDeleteRefusesANonEmptyDirectory() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -464,4 +405,4 @@ void RegisterFileTreeOpsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Project/TrashRetriesPastADanglingSlot", TestTrashRetriesPastADanglingSlot);
 }
 
-}  // namespace microide::tests
+}

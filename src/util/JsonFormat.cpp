@@ -14,9 +14,6 @@ namespace microide::util {
 
 namespace {
 
-// Mirror ParseJson's recursion ceiling so a pathologically nested payload cannot
-// overflow the native stack. Legitimate config/JSON nests only a handful of
-// levels, so this never trips on real input.
 constexpr int kMaxDepth = 200;
 
 
@@ -26,7 +23,6 @@ struct Formatter {
   std::size_t pos = 0;
   int depth = 0;
 
-  // Error state. `failed` short-circuits the whole walk once set.
   bool failed = false;
   std::size_t err_off = 0;
   std::string err;
@@ -53,12 +49,10 @@ struct Formatter {
     for (int i = 0; i < level; ++i) out.append(indent_unit);
   }
 
-  // Copy a quoted string token verbatim (escapes preserved) into `out`, validating
-  // escapes and rejecting raw control bytes exactly as the parser does.
   bool CopyString(std::string& out) {
     const std::size_t start = pos;
     out.push_back('"');
-    ++pos;  // opening quote
+    ++pos;
     while (pos < s.size()) {
       const std::size_t run_start = pos;
       while (pos < s.size() && s[pos] != '"' && s[pos] != '\\' &&
@@ -74,7 +68,6 @@ struct Formatter {
         ++pos;
         return true;
       }
-      // Backslash escape: copy it and its payload verbatim after validating.
       out.push_back('\\');
       ++pos;
       if (pos >= s.size()) return Fail(start, "unterminated escape");
@@ -105,7 +98,6 @@ struct Formatter {
     return Fail(start, "unterminated string");
   }
 
-  // Copy a number token verbatim, validating RFC 8259 grammar.
   bool CopyNumber(std::string& out) {
     const std::size_t start = pos;
     if (Peek() == '-') ++pos;
@@ -169,8 +161,6 @@ struct Formatter {
     }
   }
 
-  // One object member: its sort key (literal text between the quotes) and the
-  // fully-formatted `"key": value` text to emit.
   struct Member {
     std::string_view key;
     std::string text;
@@ -178,7 +168,7 @@ struct Formatter {
 
   bool Object(std::string& out, int level) {
     if (++depth > kMaxDepth) return Fail(pos, "nesting too deep");
-    ++pos;  // '{'
+    ++pos;
     SkipWhitespace();
     if (Peek() == '}') {
       ++pos;
@@ -193,7 +183,6 @@ struct Formatter {
       Member member;
       const std::size_t key_start = pos;
       if (!CopyString(member.text)) return false;
-      // Content between the surrounding quotes drives the ordering.
       member.key = s.substr(key_start + 1, (pos - key_start) - 2);
       SkipWhitespace();
       if (Peek() != ':') return Fail(pos, "expected ':' after key");
@@ -214,8 +203,6 @@ struct Formatter {
       }
       return Fail(pos, "expected ',' or '}'");
     }
-    // Human-alphabetical ordering of keys, stable so any duplicate keys keep
-    // their source order. Subkeys are already sorted by the recursive Value().
     std::stable_sort(members.begin(), members.end(), [](const Member& a, const Member& b) {
       return NaturalCompareIgnoreCase(a.key, b.key) < 0;
     });
@@ -235,7 +222,7 @@ struct Formatter {
 
   bool Array(std::string& out, int level) {
     if (++depth > kMaxDepth) return Fail(pos, "nesting too deep");
-    ++pos;  // '['
+    ++pos;
     SkipWhitespace();
     if (Peek() == ']') {
       ++pos;
@@ -250,7 +237,6 @@ struct Formatter {
       first = false;
       out.push_back('\n');
       WriteIndent(out, level + 1);
-      // Array element order is semantic — never reordered, only reindented.
       if (!Value(out, level + 1)) return false;
       SkipWhitespace();
       const char c = Peek();
@@ -271,7 +257,7 @@ struct Formatter {
   }
 };
 
-}  // namespace
+}
 
 JsonFormatResult FormatJson(std::string_view src, std::string_view indent_unit) {
   Formatter f;
@@ -290,4 +276,4 @@ JsonFormatResult FormatJson(std::string_view src, std::string_view indent_unit) 
   return JsonFormatResult{true, std::move(out), 0, {}};
 }
 
-}  // namespace microide::util
+}

@@ -28,4 +28,4 @@ inline constexpr std::array<std::string_view, 3> kUiScaleCommands = {
     "up",
 };
 
-}  // namespace microide::workspace
+}

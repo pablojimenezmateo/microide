@@ -12,13 +12,11 @@ namespace {
 using project::ProjectId;
 namespace remote = project::remote;
 
-// Mirrors live under the data directory: one per test, so a test sees only its own.
 struct ScopedDataHome {
   TemporaryDirectory dir;
   ScopedEnvVar env{"XDG_DATA_HOME", dir.path().string()};
 };
 
-// A mirror as Open leaves one, without a connection: its tree and its record.
 std::filesystem::path MakeMirror(const std::string& host, const std::string& host_root) {
   const std::filesystem::path tree = remote::RemoteProject::DefaultTree(host, host_root);
   std::filesystem::create_directories(tree);
@@ -50,8 +48,6 @@ void TestLocationIsThePathOrHostColonPath() {
          "host:/path for a remote project");
 }
 
-// The id names the project; the I/O root is derived from it, and resolving that
-// root again gives the same id back.
 void TestIoRootRoundTrips() {
   const ScopedDataHome data;
   const ProjectId local = ProjectId::ForLocal("/home/me/repo");
@@ -72,7 +68,6 @@ void TestACopiedMirrorIsLocal() {
   const ScopedDataHome data;
   TemporaryDirectory dir;
   const std::filesystem::path tree = MakeMirror("box", "/srv/copied");
-  // The whole mirror directory copied elsewhere: its record still names the host.
   const std::filesystem::path copy = dir.path() / "elsewhere";
   std::filesystem::copy(tree.parent_path(), copy, std::filesystem::copy_options::recursive);
   const std::filesystem::path copied_tree = copy / tree.filename();
@@ -83,9 +78,6 @@ void TestACopiedMirrorIsLocal() {
          "an ordinary folder is local");
 }
 
-// The catalog dedupes by I/O root, which is only sound if two different ids never
-// share one: distinct remotes get distinct trees, and a local id equal to a mirror
-// tree is not what that tree resolves to.
 void TestDistinctIdsNeverShareAnIoRoot() {
   const ScopedDataHome data;
   const ProjectId a = ProjectId::ForRemote("box", "/srv/app");
@@ -98,7 +90,7 @@ void TestDistinctIdsNeverShareAnIoRoot() {
          "the tree's own path resolves remote, never to a second, local id");
 }
 
-}  // namespace
+}
 
 void RegisterProjectIdTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ProjectId/LabelsAreTheLastNamedComponent", TestLabelsAreTheLastNamedComponent);
@@ -108,4 +100,4 @@ void RegisterProjectIdTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ProjectId/DistinctIdsNeverShareAnIoRoot", TestDistinctIdsNeverShareAnIoRoot);
 }
 
-}  // namespace microide::tests
+}

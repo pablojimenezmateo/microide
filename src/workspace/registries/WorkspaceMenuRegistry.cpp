@@ -24,7 +24,7 @@ MenuItemSpec MenuSeparator() {
       ActionId::Colorscheme, {}, {}, {}, 0, true, false, MenuId::None, {}};
 }
 
-}  // namespace
+}
 
 bool IsLspDrivenMenuAction(ActionId id) {
   return id == ActionId::GoToDefinition || id == ActionId::GoToTypeDefinition ||
@@ -69,8 +69,6 @@ std::string_view LspDrivenMenuActionLabel(ActionId id,
   if (!IsLspDrivenMenuAction(id) || IsLspMenuActionReady(snapshot)) {
     return ready_label;
   }
-  // "Go to Definition (LSP: Starting…)" — the same word the status bar shows, so the
-  // greyed-out entry and the bar never disagree about why the action is unavailable.
   std::string word_scratch;
   const std::string_view word = LspReadinessText(snapshot, word_scratch);
   scratch.assign(ready_label);
@@ -215,13 +213,9 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::GitSwitchBranch, "Switch Branch…"),
       MenuItem(ActionId::GitWorktrees, "Switch Worktree…"),
       MenuItem(ActionId::GitCommits, "Review Commit…"),
-      // The review's comments, for an agent: labelled with their count
-      // (WorkspaceShell::MenuItemLabel).
       MenuItem(ActionId::CopyBranchReviewNotes, "Copy Review Comments"),
       MenuItem(ActionId::TerminalInsertBranchReviewNotes, "Send Review Comments to Terminal"),
       MenuSeparator(),
-      // Sync first: it is the everyday verb, and grouping pull/push under it keeps
-      // the individual halves available without making them the default choice.
       MenuItem(ActionId::GitSync, "Sync"),
       MenuItem(ActionId::GitFetch, "Fetch"),
       MenuItem(ActionId::GitPull, "Pull"),
@@ -248,13 +242,6 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::MergeCopyCurrent, "Copy Local Side"),
       MenuItem(ActionId::MergeResetConflict, "Reset Conflict"),
   });
-  // Every remote verb that needs no typed argument, in one place (the Remote menu
-  // between Git and Terminal: where work lives, like a repository). The menu is
-  // the category, so the labels drop the palette's "Remote: " prefix; the palette
-  // keeps it, because there the prefix is what typing "remote" finds. Resolve
-  // Conflict, Resolve All Conflicts, Copy Command, Clear Changed on Host and Apply
-  // Held Deletes act on a row or a view and stay there; New Local Terminal is a
-  // terminal verb.
   static const auto kRemoteItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::RemoteOpenFolder, "Open Folder on Host…"),
       MenuSeparator(),
@@ -380,10 +367,6 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuSpec{MenuId::TerminalTabContext, "Terminal", kTerminalTabContextItems},
       MenuSpec{MenuId::ProjectTabContext, "Project", kProjectTabContextItems},
   });
-  // The cap the menu-bar layout's inline storage is sized from. Adding a menu
-  // past this without raising the constant would silently drop it from the bar
-  // in a release build (InlineVector asserts in debug and clamps in release), so
-  // it is checked here, next to the table, rather than trusted.
   static_assert(std::tuple_size_v<decltype(kMenus)> <= kMaxMenuBarItems,
                 "raise kMaxMenuBarItems: the menu-bar layout's inline storage is sized from it");
   return kMenus;
@@ -455,24 +438,15 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       MenuSeparator(),
       MenuItem(ActionId::TreeRefresh, "Refresh"),
   });
-  // Breakpoint gutter context menu (MATLAB-style). The menu only opens on an
-  // existing breakpoint; the toggle item's label flips between "Disable" and
-  // "Enable" in WorkspaceShell::MenuItemLabel based on the breakpoint's state.
   static const auto kBreakpointItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::DebugBreakpointToggleEnabled, "Disable Breakpoint"),
       MenuItem(ActionId::DebugBreakpointEditCondition, "Set Condition…"),
-      // Hit-count breakpoints and logpoints are implemented end-to-end (the
-      // Breakpoint fields, the SetBreakpointHitCondition/SetBreakpointLogMessage
-      // prompts, EditBreakpointModifierFromMenu's cases, and the DAP resend all
-      // exist) but had no menu entry, so neither could be set from the UI.
       MenuItem(ActionId::DebugBreakpointEditHitCondition, "Set Hit Count…"),
       MenuItem(ActionId::DebugBreakpointEditLogMessage, "Set Log Message…"),
       MenuItem(ActionId::DebugBreakpointClearCondition, "Clear Condition"),
       MenuSeparator(),
       MenuItem(ActionId::DebugBreakpointRemove, "Remove Breakpoint"),
   });
-  // Git sidebar entry context menu. The Stage/Unstage label flips in
-  // WorkspaceShell::MenuItemLabel based on the selected entry's staged flag.
   static const auto kGitEntryItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::GitOpenChanges, "Open Changes"),
       MenuItem(ActionId::GitOpenFileEntry, "Open File"),
@@ -489,16 +463,11 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       MenuItem(ActionId::CopyBranchReviewNotes, "Copy Review Comments"),
       MenuItem(ActionId::TerminalInsertBranchReviewNotes, "Send Review Comments to Terminal"),
   });
-  // A git sidebar directory (or the Outgoing header): its review comments.
   static const auto kGitReviewScopeItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::CopyBranchReviewNotes, "Copy Review Comments"),
       MenuItem(ActionId::TerminalInsertBranchReviewNotes, "Send Review Comments to Terminal"),
   });
 
-  // Search hits, problems and tests are all "a row that points at a file". The
-  // file tree and git sidebar had context menus from the start; these three
-  // swallowed the right button entirely, so the path of a search hit could only
-  // be copied by opening the file and using the tab menu.
   static const auto kResultRowItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::RevealInFileTree),
       MenuSeparator(),
@@ -507,11 +476,6 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       MenuItem(ActionId::CopyAbsolutePath),
   });
 
-  // Debug pane Variables / Watch rows. The pane was the last interactive list
-  // surface in the shell with no right-click menu at all; its Breakpoints rows
-  // reuse the gutter's BreakpointLine menu, and its two value surfaces share this
-  // one. Both items act on the pane's selected row and disable themselves when
-  // that row carries nothing to copy or watch.
   static const auto kDebugValueRowItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::DebugCopyValue, "Copy Value"),
       MenuItem(ActionId::DebugAddToWatch, "Add to Watch"),
@@ -543,9 +507,6 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
 }
 
 MenuId ParseMenuId(std::string_view name) {
-  // Every menu on the bar, by its label lower-cased (registration lower-cases the
-  // name and refuses others). Read from the table: a hand-kept list here once
-  // trailed the bar by a menu.
   for (const MenuSpec& spec : WorkspaceMenuSpecs()) {
     if (IsMenuBarTopLevelMenu(spec.id) && spec.label.size() == name.size() &&
         std::equal(spec.label.begin(), spec.label.end(), name.begin(), [](char a, char b) {
@@ -577,4 +538,4 @@ std::vector<ContributedMenuItemView> ContributedMenuItems(
   return result;
 }
 
-}  // namespace microide::workspace
+}

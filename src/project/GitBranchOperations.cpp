@@ -13,8 +13,6 @@ bool Contains(std::string_view haystack, std::string_view needle) {
   return haystack.find(needle) != std::string_view::npos;
 }
 
-// A single user-facing sentence per outcome. The raw git output still reaches the
-// output panel; this is the line the status surface shows.
 std::string DefaultDetail(const GitOperationOutcome outcome, const std::string_view verb) {
   switch (outcome) {
     case GitOperationOutcome::Success:
@@ -59,16 +57,12 @@ GitOperationReport MakeReport(const GitOperationOutcome outcome,
   report.output = std::move(output);
   util::TrimTrailingLineEndings(&report.output);
   report.detail = DefaultDetail(outcome, verb);
-  // A generic failure is far more useful with git's own words than with ours.
   if (outcome == GitOperationOutcome::UnknownError && !report.output.empty()) {
     report.detail = report.output;
   }
   return report;
 }
 
-// Runs one git write command and folds the result into a report. Every operation in
-// this file funnels through here so the timeout/classification contract cannot drift
-// between them.
 GitOperationReport RunOperation(const std::filesystem::path& repository_root,
                                 const platform::ProcessLauncher& launcher,
                                 std::vector<std::string> arguments,
@@ -80,9 +74,6 @@ GitOperationReport RunOperation(const std::filesystem::path& repository_root,
   if (!repo.IsValid()) {
     return MakeReport(GitOperationOutcome::NotARepo, verb, {});
   }
-  // Network operations and checkout hooks can legitimately take a while, so use the
-  // generous write cap. GIT_TERMINAL_PROMPT=0 (set in GitCommandUtil) means a
-  // credential prompt fails immediately instead of consuming the whole budget.
   const GitRepository::CommandResult result =
       repo.Execute(arguments, false, internal::kGitWriteTimeoutMs);
   if (result.timed_out) {
@@ -92,7 +83,7 @@ GitOperationReport RunOperation(const std::filesystem::path& repository_root,
                     result.output);
 }
 
-}  // namespace
+}
 
 bool GitOperationSucceeded(const GitOperationOutcome outcome) {
   return outcome == GitOperationOutcome::Success || outcome == GitOperationOutcome::NothingToDo;
@@ -103,22 +94,15 @@ GitOperationOutcome ClassifyGitOperationFailure(const int exit_code,
   const std::string lowered = util::ToLowerAscii(std::string(output));
 
   if (exit_code == 0) {
-    // git exits 0 for several no-op cases; report them as such so the UI does not
-    // claim work was done. "up to date" covers both git's "Already up to date."
-    // (pull/merge) and "Everything up-to-date" (push).
     if (Contains(lowered, "up to date") || Contains(lowered, "up-to-date")) {
       return GitOperationOutcome::NothingToDo;
     }
     return GitOperationOutcome::Success;
   }
 
-  // execvp's ENOENT (Subprocess.cpp): no git to run. A hook or alias that exits 127
-  // says something on stderr, so only a silent 127 is this.
   if (exit_code == 127 && (util::TrimAsciiWhitespaceView(lowered).empty() || Contains(lowered, "execvp"))) {
     return GitOperationOutcome::GitNotFound;
   }
-  // Order matters: the more specific phrase wins. Auth is checked before network
-  // because an auth failure over https also mentions the remote URL.
   if (Contains(lowered, "authentication failed") || Contains(lowered, "could not read username") ||
       Contains(lowered, "could not read password") || Contains(lowered, "permission denied") ||
       Contains(lowered, "terminal prompts disabled") ||
@@ -171,7 +155,6 @@ GitOperationReport SwitchGitBranch(const std::filesystem::path& repository_root,
   if (branch.empty()) {
     return MakeReport(GitOperationOutcome::BadRef, "switch", {});
   }
-  // `--` terminates options so a branch named like a flag cannot inject one.
   return RunOperation(repository_root, launcher, {"switch", "--", std::string(branch)}, "switch");
 }
 
@@ -196,8 +179,6 @@ GitOperationReport RunGitRemoteOperation(const std::filesystem::path& repository
                                          const bool set_upstream) {
   switch (kind) {
     case GitRemoteOperationKind::Fetch:
-      // --prune keeps the remote-branch list from accumulating refs deleted upstream,
-      // which is what makes the branch picker trustworthy after a fetch.
       return RunOperation(repository_root, launcher, {"fetch", "--prune"}, "fetch");
     case GitRemoteOperationKind::Pull:
       return RunOperation(repository_root, launcher, {"pull"}, "pull");
@@ -230,8 +211,6 @@ GitOperationReport StashGitChanges(const std::filesystem::path& repository_root,
     arguments.emplace_back(message);
   }
   GitOperationReport report = RunOperation(repository_root, launcher, std::move(arguments), "stash");
-  // `git stash push` with a clean tree exits 0 and says so; report it as a no-op
-  // rather than letting the caller claim changes were stashed.
   if (report.outcome == GitOperationOutcome::Success &&
       util::ToLowerAscii(report.output).find("no local changes") != std::string::npos) {
     report.outcome = GitOperationOutcome::NothingToDo;
@@ -263,8 +242,6 @@ GitOperationReport ResolveGitConflictWithSide(const std::filesystem::path& repos
   if (!repo.IsValid()) {
     return MakeReport(GitOperationOutcome::NotARepo, kVerb, {});
   }
-  // The unmerged index entries say which sides still have the file:
-  // `<mode> <object> <stage>\t<path>` per stage, NUL-terminated.
   const GitRepository::CommandResult stages =
       repo.Execute({"ls-files", "-u", "-z", "--", relative_path});
   if (!stages.success()) {
@@ -295,7 +272,6 @@ GitOperationReport ResolveGitConflictWithSide(const std::filesystem::path& repos
   }
   const std::string path(relative_path);
   if (!wanted_stage) {
-    // That side deleted it: keeping that side is the deletion.
     return RunOperation(repository_root, launcher, {"rm", "--quiet", "-f", "--", path}, kVerb);
   }
   GitOperationReport report = RunOperation(
@@ -307,4 +283,4 @@ GitOperationReport ResolveGitConflictWithSide(const std::filesystem::path& repos
   return RunOperation(repository_root, launcher, {"add", "--", path}, kVerb);
 }
 
-}  // namespace microide::project
+}

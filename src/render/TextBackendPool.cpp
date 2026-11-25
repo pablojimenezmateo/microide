@@ -30,7 +30,6 @@ std::unique_ptr<TextRendererBackend> CreatePlatformBackend(SDL_Renderer* rendere
   return std::make_unique<DebugTextBackend>();
 }
 
-// Returns whether the family changed; the caller knows whether the size did.
 bool ApplyFont(TextRendererBackend& backend, const FontRequest& font) {
   const bool family_changed = backend.SetFontFamily(font.family);
   const bool style_changed = backend.SetFontStyle(font.style);
@@ -38,7 +37,7 @@ bool ApplyFont(TextRendererBackend& backend, const FontRequest& font) {
   return family_changed || style_changed;
 }
 
-}  // namespace
+}
 
 float FontRequest::ClampPointSize(float points) {
   return std::clamp(points, kMinFontPointSize, kMaxFontPointSize);
@@ -85,8 +84,6 @@ bool TextBackendPool::Acquire(const FontRequest& font, std::shared_ptr<TextRende
     }
   }
 
-  // Nobody else draws with `held`, so it can take the new font itself: a size
-  // change on a lone backend resizes its open fonts rather than opening new ones.
   if (held.use_count() == 1) {
     if (Entry* entry = FindEntry(held.get()); entry != nullptr) {
       const bool size_changed = entry->font.point_size != font.point_size;
@@ -115,4 +112,4 @@ TextBackendPool::Entry* TextBackendPool::FindEntry(const TextRendererBackend* ba
   return it != entries_.end() ? &*it : nullptr;
 }
 
-}  // namespace microide::render
+}

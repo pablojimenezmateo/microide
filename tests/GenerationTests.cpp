@@ -1,5 +1,3 @@
-// util::Generation tests — the epoch-token staleness guard.
-
 #include "TestSupport.h"
 
 #include "util/Generation.h"
@@ -36,7 +34,7 @@ void TestCapturedTokenGoesStaleAfterBump() {
   Expect(gen.is_current(refreshed), "re-capturing after the bump is current again");
 }
 
-}  // namespace
+}
 
 void RegisterGenerationTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Generation/StartsAtZero", TestStartsAtZero);
@@ -44,4 +42,4 @@ void RegisterGenerationTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Generation/CapturedTokenGoesStaleAfterBump", TestCapturedTokenGoesStaleAfterBump);
 }
 
-}  // namespace microide::tests
+}

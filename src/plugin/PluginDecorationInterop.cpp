@@ -22,17 +22,11 @@ using lua_interop::ReadBoolField;
 using lua_interop::ReadOptionalColorField;
 using lua_interop::ReadStringField;
 
-// Cap per-kind entries so a malformed or hostile plugin cannot force an
-// unbounded allocation/sort on the shell thread.
 constexpr lua_Integer kMaxEntriesPerKind = 100000;
 
-// Reads a required positive (1-based) integer field into a 0-based uint32.
 bool ReadOneBasedField(lua_State* state, int table_index, const char* key, std::uint32_t* out,
                        std::string* error_message) {
   lua_interop::GetFieldProtected(state, table_index, key);
-  // The value is stored 0-based (value - 1), so the largest representable 1-based
-  // input is UINT32_MAX + 1. Reject anything above that: without the upper bound
-  // the cast below wraps (e.g. 2^32 + 1 -> 0), silently mislocating the decoration.
   constexpr lua_Integer kMaxOneBased =
       static_cast<lua_Integer>(std::numeric_limits<std::uint32_t>::max()) + 1;
   if (!lua_isinteger(state, -1) || lua_tointeger(state, -1) <= 0 ||
@@ -46,9 +40,6 @@ bool ReadOneBasedField(lua_State* state, int table_index, const char* key, std::
   return true;
 }
 
-// Begin iterating an optional array field `key`. Returns false (with the field
-// already popped) when absent; otherwise leaves the array table on the stack at
-// the returned absolute index and reports its length.
 bool BeginArrayField(lua_State* state, int table_index, const char* key, int* array_index,
                      lua_Integer* count, std::string* error_message) {
   lua_interop::GetFieldProtected(state, table_index, key);
@@ -60,7 +51,7 @@ bool BeginArrayField(lua_State* state, int table_index, const char* key, int* ar
   if (!lua_istable(state, -1)) {
     util::SetError(error_message, std::string(key) + " must be an array");
     lua_pop(state, 1);
-    *count = -1;  // signal error to caller
+    *count = -1;
     return false;
   }
   *array_index = lua_absindex(state, -1);
@@ -102,9 +93,6 @@ bool ReadTextStyles(lua_State* state, int table_index, editor::PluginDecorationD
                   !ReadOneBasedField(state, entry, "end_col", &ts.end_column, error_message))) {
         ok = false;
       } else if (!whole && ts.start_column > ts.end_column) {
-        // Reject an inverted column range at parse time: downstream render/merge
-        // assumes start <= end, and a negative-width span would style nothing or
-        // corrupt layout assumptions.
         util::SetError(error_message, "text_styles entry start_col must not exceed end_col");
         ok = false;
       } else if (!ReadOptionalColorField(state, entry, "fg", &ts.foreground, error_message) ||
@@ -120,9 +108,9 @@ bool ReadTextStyles(lua_State* state, int table_index, editor::PluginDecorationD
         data->text_styles.push_back(ts);
       }
     }
-    lua_pop(state, 1);  // entry
+    lua_pop(state, 1);
   }
-  lua_pop(state, 1);  // array
+  lua_pop(state, 1);
   return ok;
 }
 
@@ -200,7 +188,6 @@ bool ReadInlineText(lua_State* state, int table_index, editor::PluginDecorationD
                  !ReadOptionalColorField(state, entry, "bg", &inl.background, error_message)) {
         ok = false;
       } else {
-        // `eol` (default true) anchors at end of line; otherwise `col` (1-based).
         lua_interop::GetFieldProtected(state, entry, "eol");
         const bool eol = lua_isnil(state, -1) ? true : (lua_toboolean(state, -1) != 0);
         lua_pop(state, 1);
@@ -253,7 +240,7 @@ bool ReadCodeLenses(lua_State* state, int table_index, editor::PluginDecorationD
   return ok;
 }
 
-}  // namespace
+}
 
 bool PublishDecorations(lua_State* state,
                         std::string_view plugin_id,
@@ -305,6 +292,6 @@ bool ClearDecorations(std::string_view plugin_id,
   return true;
 }
 
-}  // namespace microide::plugin::decoration_interop
+}
 
 #endif

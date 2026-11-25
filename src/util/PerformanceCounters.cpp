@@ -9,9 +9,6 @@
 namespace microide::util {
 namespace {
 
-// Positionally aligned with PerfCounterId by construction: both are expanded
-// from the same MICROIDE_PERF_COUNTERS list, so an id cannot exist without its
-// name or drift out of position.
 constexpr std::array<std::string_view, kPerfCounterCount> kCounterNames = {
 #define MICROIDE_PERF_COUNTER_NAME(id, name) std::string_view(name),
     MICROIDE_PERF_COUNTERS(MICROIDE_PERF_COUNTER_NAME)
@@ -23,7 +20,7 @@ bool& DumpedFlag() {
   return dumped;
 }
 
-}  // namespace
+}
 
 void ResetPerformanceCounters() {
   for (std::atomic<std::uint64_t>& counter : detail::g_perf_counters) {
@@ -110,4 +107,4 @@ void DumpPerformanceCountersOnce() {
   WritePerformanceCounters(stderr);
 }
 
-}  // namespace microide::util
+}

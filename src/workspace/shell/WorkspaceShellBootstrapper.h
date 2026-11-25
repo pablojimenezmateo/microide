@@ -12,8 +12,6 @@ class WorkspaceShell::Bootstrapper {
   [[nodiscard]] ActionAvailability BuildActionAvailability() const;
   [[nodiscard]] WorkspaceEventDispatcher BuildEventDispatcher() const;
   [[nodiscard]] WorkspaceWakeController BuildWakeController() const;
-  // The constructor's service wiring, one service per call, in this order: each
-  // Configure()s a shell-owned service with the shell callbacks it needs.
   void WireQuickPick() const;
   void WireTabStrip() const;
   void WireLsp() const;
@@ -27,4 +25,4 @@ class WorkspaceShell::Bootstrapper {
   WorkspaceShell& shell_;
 };
 
-}  // namespace microide::workspace
+}

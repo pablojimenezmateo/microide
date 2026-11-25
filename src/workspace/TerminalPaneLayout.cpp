@@ -34,8 +34,6 @@ void InsertTerminalPaneWeight(TerminalPaneWeights& weights, std::size_t index) {
     weights.push_back(1.0f);
     return;
   }
-  // The pane being split is the one the new pane sits next to: its left
-  // neighbour, or the first pane when inserting at the front.
   const std::size_t source = index == 0 ? 0 : index - 1;
   const float half = weights[source] * 0.5f;
   weights[source] = half;
@@ -105,13 +103,11 @@ TerminalPaneRectsLayout ComputeTerminalPaneRects(const SDL_FRect& body,
           .rect = SDL_FRect{divider_x, body.y, kTerminalPaneDividerThickness, body.h},
           .boundary = i,
           .pair_start = x,
-          .pair_extent = 0.0f,  // filled below once the right pane's width is known
+          .pair_extent = 0.0f,
       });
       x = divider_x + kTerminalPaneDividerThickness;
     }
   }
-  // A pair's span runs from the left pane's start to the right pane's end
-  // (divider band included); the drag's share is expressed over that span.
   for (TerminalPaneDividerRect& divider : layout.dividers) {
     const SDL_FRect& right = layout.panes[divider.boundary + 1];
     divider.pair_extent = std::max(0.0f, right.x + right.w - divider.pair_start);
@@ -129,4 +125,4 @@ std::size_t TerminalPaneIndexAt(const TerminalPaneRectsLayout& rects, float x, f
   return rects.panes.size();
 }
 
-}  // namespace microide::workspace
+}

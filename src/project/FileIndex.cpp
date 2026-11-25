@@ -20,10 +20,6 @@ namespace microide::project {
 
 namespace {
 
-// A batch-supplied "relative" path that is absolute or begins with ".." escapes
-// the project root once resolved as `root / relative`. Native watchers, poll
-// diffs, or hostile/test batches can present such paths; reject them so the index
-// (and every file-finder/search/open that resolves through it) stays contained.
 bool BatchPathEscapesRoot(const std::filesystem::path& relative_path) {
   if (relative_path.is_absolute()) {
     return true;
@@ -36,9 +32,6 @@ ProjectFile BuildProjectFile(const std::filesystem::path& absolute_root,
                              const std::filesystem::path& relative_path) {
   ProjectFile file;
   file.relative_path = util::NormalizedPath(relative_path);
-  // One stat for the whole triple. This was `status()` to classify, then
-  // `file_size()`, then `last_write_time()` -- three syscalls per file of a full
-  // rescan, each re-resolving the same path.
   const std::filesystem::path absolute_path = absolute_root / file.relative_path;
   if (const std::optional<platform::FileMetadata> metadata =
           platform::ReadFileMetadata(absolute_path);
@@ -49,15 +42,6 @@ ProjectFile BuildProjectFile(const std::filesystem::path& absolute_root,
   return file;
 }
 
-// `files` is sorted by `relative_path.native()`, so a directory's subtree is a
-// CONTIGUOUS run: the entries beneath `dir` are exactly those with the byte prefix
-// "dir/", and every string carrying that prefix sorts into [dir/, dir<sep+1>).
-// Two binary searches bound it instead of a scan of the whole index.
-//
-// A directory covers at most TWO runs, not one: its own path (should a batch ever
-// have indexed the directory itself as a file) sorts before the prefix run but is
-// not adjacent to it -- "sub.txt" sorts between "sub" and "sub/a.cpp", because '.'
-// (0x2E) precedes '/' (0x2F). Both are appended.
 void AppendSubtreeRanges(const std::vector<ProjectFile>& files,
                          const std::filesystem::path& relative_dir,
                          std::vector<std::pair<std::size_t, std::size_t>>& out) {
@@ -78,7 +62,7 @@ void AppendSubtreeRanges(const std::vector<ProjectFile>& files,
   prefix.assign(dir_text);
   prefix.push_back(static_cast<Text::value_type>(std::filesystem::path::preferred_separator));
   Text prefix_end = prefix;
-  ++prefix_end.back();  // '/' -> '0': the first string past every "dir/" prefix.
+  ++prefix_end.back();
 
   const auto subtree_first = std::lower_bound(files.begin(), files.end(), prefix, less_text);
   const auto subtree_last = std::lower_bound(subtree_first, files.end(), prefix_end, less_text);
@@ -92,7 +76,7 @@ void AppendSubtreeRanges(const std::vector<ProjectFile>& files,
   }
 }
 
-}  // namespace
+}
 
 FileIndex::FileIndex(FileIndex&& other) noexcept {
   std::unique_lock other_lock(other.files_mutex_);
@@ -115,10 +99,6 @@ void FileIndex::TakeStateFrom(FileIndex& other) {
   files_ = std::move(other.files_);
   pending_ = std::move(other.pending_);
   version_ = other.version_;
-  // The symlink-containment flag is per-project state applied at root config time,
-  // not re-applied on activation — so it MUST survive the move (a project switch
-  // move-assigns FileIndex). Dropping it silently reverts to containment-enforced,
-  // hiding out-of-root-symlinked files for users who enabled following them.
   follow_out_of_root_symlinks_.store(
       other.follow_out_of_root_symlinks_.load(std::memory_order_relaxed),
       std::memory_order_relaxed);
@@ -146,9 +126,6 @@ bool FileIndex::SetRoot(const std::filesystem::path& root,
   util::StartupTrace::Scope trace_scope("FileIndex::SetRoot");
   std::error_code error;
   const auto absolute_root = std::filesystem::absolute(root, error);
-  // Non-throwing probes: selecting a root that is inaccessible, a symlink cycle,
-  // or on a flaky/unmounted volume must fail the open cleanly rather than throw
-  // out of sidebar/index setup.
   if (error || !std::filesystem::exists(absolute_root, error) || error ||
       !std::filesystem::is_directory(absolute_root, error) || error) {
     return false;
@@ -159,9 +136,6 @@ bool FileIndex::SetRoot(const std::filesystem::path& root,
     root_ = absolute_root;
     files_.clear();
     pending_.reset();
-    // A previous root may have hit the entry budget; the new root has not been
-    // scanned yet, so clear the stale truncation status (Refresh/ApplyBatch below
-    // reassigns it from the real scan).
     scan_status_ = {};
     ++version_;
     exclude_hidden_cache_ = {};
@@ -212,11 +186,6 @@ void FileIndex::ReplaceScannedFiles(std::vector<ProjectFile> files, ProjectFileS
   {
     std::unique_lock lock(files_mutex_);
     files_ = std::move(files);
-    // A full rescan replaces the file list, so it also replaces the completeness
-    // status: adopt this scan's outcome rather than leaving a prior root's
-    // watcher-batch "truncated" state asserted over a freshly scanned (often
-    // smaller) tree. `status` records why (if at all) the scan returned a prefix
-    // (TD-2026-07-17-008/033).
     scan_status_ = status;
     ++version_;
     exclude_hidden_cache_.needs_refresh = true;
@@ -230,10 +199,6 @@ bool FileIndex::ReplaceScannedFilesReportingChanges(
     std::vector<platform::IndexUpdateBatch::Change>* out_changes) {
   {
     std::unique_lock lock(files_mutex_);
-    // Both sides are sorted by LessProjectFile (ScanFiles sorts its result;
-    // ApplyBatch upserts in order), so the difference is a single merge walk with
-    // no allocation for the entries that are unchanged -- which, on the forced
-    // path this serves, is essentially all of them.
     bool differs = false;
     const auto append_upsert = [&](const ProjectFile& file) {
       differs = true;
@@ -276,8 +241,6 @@ bool FileIndex::ReplaceScannedFilesReportingChanges(
       ++scanned_index;
     }
     if (!differs && status == scan_status_) {
-      // Byte-identical to what the index already holds: leave it — and its version
-      // — alone, so a forced check on a quiet tree invalidates no derived cache.
       return false;
     }
     files_ = std::move(files);
@@ -313,31 +276,17 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
                               batch.changes.size());
   if (batch.is_initial) {
     util::PerformanceTrace::Scope initial_scope("FileIndex::ApplyBatch::InitialBulkLoad");
-    // Also a STARTUP scope, and the reason is its `ms total` column rather than
-    // its duration: this is the moment the project index exists, so the file
-    // finder, project search and every index-backed lookup start answering. The
-    // startup channel measures from the top of Application::Initialize, so the
-    // line reads as "the project was ready at T ms" — the launch number nothing
-    // else reported. The perf channel above measures the same region but has no
-    // origin, so it can only say how long the load took, not when it landed.
     util::StartupTrace::Scope startup_scope("FileIndex::InitialIndexReady");
-    // Poll the cancellation predicate periodically (not every iteration) so an
-    // abandoned load bails promptly without per-entry overhead.
     constexpr std::size_t kCancelCheckStride = 4096;
     std::size_t since_cancel_check = 0;
     std::vector<ProjectFile> rebuilt;
     rebuilt.reserve(batch.changes.size());
-    // The batch's paths come out of the watcher's walk already normal, and
-    // `lexically_normal()` is ~12 allocations whether or not it changes anything
-    // (TD-2026-08-10-174). At 46,805 files that no-op ran twice per entry -- once
-    // here and once more inside ToProjectFile, whose result the caller then threw
-    // away. The scratch is written only for an oddly-spelled input.
     std::filesystem::path normalize_scratch;
     for (const auto& change : batch.changes) {
       if (is_cancelled && ++since_cancel_check >= kCancelCheckStride) {
         since_cancel_check = 0;
         if (is_cancelled()) {
-          return false;  // abandon before committing; index left unchanged
+          return false;
         }
       }
       if (change.kind != platform::IndexUpdateBatch::Kind::CreatedOrModified) {
@@ -353,7 +302,7 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
     }
 
     if (is_cancelled && is_cancelled()) {
-      return false;  // abandon before the (also non-trivial) sort/commit
+      return false;
     }
     std::sort(rebuilt.begin(), rebuilt.end(), LessProjectFile);
     rebuilt.erase(std::unique(rebuilt.begin(), rebuilt.end(),
@@ -365,23 +314,12 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
     std::unique_lock lock(files_mutex_);
     files_ = std::move(rebuilt);
     ++version_;
-    // The watcher's initial batch only truncates on the entry budget (BuildInitialBatch),
-    // so map its bool onto the budget cause (TD-2026-07-17-008/033).
     scan_status_ = ProjectFileScanStatus{.truncated_by_budget = batch.truncated};
     exclude_hidden_cache_.needs_refresh = true;
     include_hidden_cache_.needs_refresh = true;
     return true;
   }
 
-  // Everything that allocates -- normalizing, building each ProjectFile -- happens
-  // before the lock: readers (the shell thread's finder and search snapshots) wait
-  // on it. Then the batch is applied in its order, a segment at a time between
-  // runs of recursive deletions. Within a segment the last change to a path wins,
-  // a modified entry is replaced in place, and every insertion and removal lands
-  // in ONE merge pass. Applied one at a time, each insertion shifted the tail of
-  // the sorted vector: a first sync's batch of a thousand new files into a few
-  // thousand held the lock for 137 ms, and the shell thread waited it out
-  // (TD-2026-10-28-418).
   const std::scoped_lock scratch_lock(batch_scratch_mutex_);
   std::vector<BatchOp>& ops = batch_ops_;
   ops.clear();
@@ -411,12 +349,6 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
   std::vector<BatchOp*>& segment = batch_segment_;
   for (std::size_t i = 0; i < ops.size();) {
     if (ops[i].recursive) {
-      // Consume the whole consecutive run of recursive deletions and drop it in
-      // one compaction. A `rm -rf`, a branch switch, or a build cleaning its
-      // output arrives as exactly such a run -- one change per removed directory,
-      // doubled because the parent watch and the directory's own watch each
-      // report it. They are idempotent and commute, so the run is just the union
-      // of their ranges.
       subtree_run.clear();
       for (; i < ops.size() && ops[i].recursive; ++i) {
         subtree_run.push_back(std::move(ops[i].deleted_path));
@@ -430,7 +362,7 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
     }
     changed = ApplySegmentLocked(segment) || changed;
   }
-  ops.clear();  // the moved-from files; the capacity stays for the next batch
+  ops.clear();
   segment.clear();
   subtree_run.clear();
   if (!changed) {
@@ -443,8 +375,6 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
 }
 
 bool FileIndex::ApplySegmentLocked(std::vector<BatchOp*>& segment) {
-  // The last change to each path wins: stable-sort by path and keep the last of
-  // every equal run.
   std::stable_sort(segment.begin(), segment.end(),
                    [](const BatchOp* lhs, const BatchOp* rhs) { return lhs->path().native() < rhs->path().native(); });
   std::size_t kept = 0;
@@ -457,21 +387,19 @@ bool FileIndex::ApplySegmentLocked(std::vector<BatchOp*>& segment) {
   segment.resize(kept);
 
   bool changed = false;
-  std::size_t structural = 0;  // insertions and removals, still to merge
+  std::size_t structural = 0;
   for (BatchOp*& op : segment) {
     const auto it = std::lower_bound(files_.begin(), files_.end(), op->path(), LessProjectPath);
     const bool present = it != files_.end() && it->relative_path == op->path();
-    // A local the guard is visible on: through `op->` clang-tidy's optional check
-    // cannot see the has_value() it is under.
     std::optional<ProjectFile>& file = op->file;
     if (file.has_value() && present) {
       if (it->mtime != file->mtime || it->size != file->size) {
         *it = std::move(*file);
         changed = true;
       }
-      op = nullptr;  // done in place
+      op = nullptr;
     } else if (!file.has_value() && !present) {
-      op = nullptr;  // removing what is not there
+      op = nullptr;
     } else {
       ++structural;
     }
@@ -479,7 +407,7 @@ bool FileIndex::ApplySegmentLocked(std::vector<BatchOp*>& segment) {
   if (structural == 0) {
     return changed;
   }
-  if (structural == 1) {  // one shift is cheaper than a rebuild
+  if (structural == 1) {
     for (BatchOp* op : segment) {
       if (op == nullptr) {
         continue;
@@ -504,9 +432,9 @@ bool FileIndex::ApplySegmentLocked(std::vector<BatchOp*>& segment) {
       merged.push_back(std::move(files_[f++]));
     }
     if (op->file.has_value()) {
-      merged.push_back(std::move(*op->file));  // not present: an insertion
+      merged.push_back(std::move(*op->file));
     } else {
-      ++f;  // present: the removal skips it
+      ++f;
     }
   }
   while (f < files_.size()) {
@@ -555,10 +483,6 @@ std::uint64_t FileIndex::VisitRelativePaths(
     return version_;
   }
   const auto visit_file = [&](const std::filesystem::path& relative_path) {
-    // The same two filters RebuildCacheLocked applies, and for the same
-    // reasons: hidden paths are a mode question, and an in-flight atomic-write
-    // staging temp exists only between a save's write and its rename, so
-    // surfacing it only ever shows the user a file that is already gone.
     if (mode == ProjectFileScanMode::ExcludeHidden && IsHiddenRelativePath(relative_path)) {
       return;
     }
@@ -567,8 +491,6 @@ std::uint64_t FileIndex::VisitRelativePaths(
     }
     visit(relative_path);
   };
-  // Both lists are bytewise sorted: one merge, and a pending path that has landed
-  // on disk meanwhile is visited once, as the file it now is.
   const std::vector<std::string> no_pending;
   const std::vector<std::string>& pending = pending_ != nullptr ? pending_->files() : no_pending;
   auto next_pending = pending.begin();
@@ -610,8 +532,6 @@ std::size_t FileIndex::CacheIndex(ProjectFileScanMode mode) {
 
 bool FileIndex::IsHiddenRelativePath(const std::filesystem::path& path) {
   for (const auto& part : path) {
-    // c_str()[0] reads the first character without allocating a std::string per
-    // component; an empty component yields '\0', which is correctly not hidden.
     if (part.c_str()[0] == '.') {
       return true;
     }
@@ -673,9 +593,6 @@ bool FileIndex::RemoveProjectSubtreesLocked(
   if (relative_dirs.empty()) {
     return false;
   }
-  // "." denotes the project root spelled as a relative path: every entry is within
-  // it, and no byte prefix expresses that (util::NormalizedPathEqualsOrWithin
-  // special-cases it for the same reason). One such entry subsumes the whole run.
   for (const std::filesystem::path& relative_dir : relative_dirs) {
     const std::filesystem::path::string_type& text = relative_dir.native();
     if (text.size() == 1 && text[0] == '.') {
@@ -689,8 +606,6 @@ bool FileIndex::RemoveProjectSubtreesLocked(
     }
   }
 
-  // Every range is computed against the UNMODIFIED vector, so they are all valid
-  // together; the single compaction below applies their union.
   std::vector<std::pair<std::size_t, std::size_t>> ranges;
   ranges.reserve(relative_dirs.size() * 2);
   for (const std::filesystem::path& relative_dir : relative_dirs) {
@@ -710,21 +625,12 @@ bool FileIndex::EraseIndexRangesLocked(std::vector<std::pair<std::size_t, std::s
     return false;
   }
   std::sort(ranges.begin(), ranges.end());
-  // One left-to-right sweep: move each surviving block down over the gap the
-  // ranges before it opened, then truncate. Erasing the ranges one at a time
-  // would shift the vector's tail once per range instead of once in total.
   std::size_t write = ranges.front().first;
   std::size_t read = write;
   for (const std::pair<std::size_t, std::size_t>& range : ranges) {
-    // A range that ends at or before the cursor is already erased -- ranges are
-    // sorted, so this is an enclosed one. Skipping it is load-bearing, not a
-    // shortcut: assigning `read` from it would rewind the cursor into ground the
-    // enclosing range covered, and the tail copy would resurrect those entries.
     if (range.second <= read) {
       continue;
     }
-    // No clamp needed on the low end: `range.first` may sit before the cursor when
-    // two ranges overlap, and this loop is already bounded below by `read`.
     for (std::size_t i = read; i < range.first; ++i) {
       files_[write++] = std::move(files_[i]);
     }
@@ -743,19 +649,6 @@ bool FileIndex::EraseIndexRangesLocked(std::vector<std::pair<std::size_t, std::s
 void FileIndex::RebuildCacheLocked(ProjectFileScanMode mode, CacheBucket& cache) const {
   util::PerformanceTrace::Scope perf_scope("FileIndex::RebuildCacheLocked");
   util::AddPerformanceCounter(util::PerfCounterId::FileIndexRebuilds);
-  // Recycle the previous list when nothing else is holding it. A one-file change
-  // invalidates the whole cache, and rebuilding into the old vector lets each
-  // `std::string` assignment reuse the capacity already sized for that entry — so
-  // the common case (one file changed, ten thousand entries identical) allocates
-  // nothing at all instead of once per file. A consumer still holding the previous
-  // snapshot (an in-flight search) keeps it: use_count says so, and we build fresh.
-  // `use_count() == 1` is sound here in both directions. Every other owner is a
-  // `FilePathSnapshot` handed out by SnapshotPathsWithVersion, which takes this
-  // same exclusive lock, so no new owner can appear while we hold it — and an
-  // owner going away concurrently only drops the count, which at worst makes us
-  // read 2 and build fresh. The unsafe direction (reading 1 while a live consumer
-  // still holds it) cannot happen, so const_pointer_cast has no observer to
-  // surprise.
   std::shared_ptr<std::vector<std::string>> rebuilt;
   if (cache.files != nullptr && cache.files.use_count() == 1) {
     rebuilt = std::const_pointer_cast<std::vector<std::string>>(cache.files);
@@ -771,31 +664,14 @@ void FileIndex::RebuildCacheLocked(ProjectFileScanMode mode, CacheBucket& cache)
   }
 
   rebuilt->reserve(files_.size());
-  // Overwrite in place rather than clear-and-push: `clear()` on a vector of
-  // strings runs every destructor, which hands back exactly the buffers the next
-  // entry is about to ask for. Assigning into a live string reuses its capacity,
-  // so an unchanged entry costs a memcpy and no allocation. The tail is trimmed
-  // once at the end.
   std::size_t out = 0;
   for (const auto& file : files_) {
     if (mode == ProjectFileScanMode::ExcludeHidden && IsHiddenRelativePath(file.relative_path)) {
       continue;
     }
-    // Every document save stages a temp beside its target inside the project tree
-    // and renames it into place. A watcher batch that lands in that window would
-    // otherwise leave a phantom entry in the file finder and in the project-search
-    // candidate set until the next full rescan. Filtered here (rather than only at
-    // the batch sites) so the full-scan path is covered too, and in both modes so
-    // "include hidden files" does not expose them either.
     if (IsTemporaryStagingRelativePath(file.relative_path)) {
       continue;
     }
-    // `native()`, not `generic_string()`: this is the POSIX host (see AGENTS.md
-    // § non-Linux backends), where the native separator IS '/', so the two are
-    // the same bytes — and native() returns a reference while generic_string()
-    // returns a fresh std::string, which is the allocation this loop exists to
-    // avoid. The paths were normalized on ingress by MakeGitRepositoryPathIdentity
-    // / NormalizedPathView, so no separator folding is owed here either.
     if (out < rebuilt->size()) {
       (*rebuilt)[out].assign(file.relative_path.native());
     } else {
@@ -808,4 +684,4 @@ void FileIndex::RebuildCacheLocked(ProjectFileScanMode mode, CacheBucket& cache)
   cache.needs_refresh = false;
 }
 
-}  // namespace microide::project
+}

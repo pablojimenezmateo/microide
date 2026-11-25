@@ -19,4 +19,6 @@ RuleResult CheckReactivationDoesNotReloadPlugins(const std::filesystem::path& re
 RuleResult CheckNoFallbackEditorViewportSymbols(const std::filesystem::path& repo_root);
 RuleResult CheckCoordinatorOperationsAreCalled(const std::filesystem::path& repo_root);
 
-}  // namespace microide::tests::architecture
+void RunExecutorPostThenFutureGetRuleFixtures();
+
+}

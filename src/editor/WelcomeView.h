@@ -14,27 +14,18 @@ struct Theme;
 
 namespace microide::editor {
 
-// A single curated keyboard-shortcut row on the welcome surface. Sourced from the
-// command registry so the displayed key chord can never drift from the real binding.
 struct WelcomeShortcut {
   std::string keys;
   std::string label;
 };
 
-// A recent entry. `name` is the primary text (a project's name, a file's name),
-// `path_display` the muted context (a project's location; a file's folder
-// relative to its project), and `path` the value opened when the row is clicked.
 struct WelcomeRecent {
   std::string name;
   std::string path_display;
   std::filesystem::path path;
-  // A remote project's `host:/path` ("" for anything local): it opens through Open
-  // Folder on Host, which makes its mirror again if that is gone, not by `path`.
   std::string remote_folder;
 };
 
-// A remote project's connection, on its home (remote-projects.md § 7.3): one entry
-// per stage — the link, the server, the sync — each marked with how it stands.
 enum class WelcomeStageState { Done, Active, Attention, Failed };
 struct WelcomeRemoteStage {
   std::string text;
@@ -42,18 +33,15 @@ struct WelcomeRemoteStage {
   friend bool operator==(const WelcomeRemoteStage&, const WelcomeRemoteStage&) = default;
 };
 struct WelcomeRemoteStatus {
-  std::string heading;  // `host:/path`
+  std::string heading;
   std::vector<WelcomeRemoteStage> stages;
-  // A failed stage's reason and the command that reproduces it in a terminal.
   std::string detail;
-  std::string host;     // what Retry reconnects
-  bool retry = false;   // offer Retry
+  std::string host;
+  bool retry = false;
   bool empty() const { return stages.empty(); }
   friend bool operator==(const WelcomeRemoteStatus&, const WelcomeRemoteStatus&) = default;
 };
 
-// How the connection stands as a whole: its worst stage. A status not reported yet
-// is a connection still being made.
 inline WelcomeStageState WorstRemoteStage(const WelcomeRemoteStatus& status) {
   const auto rank = [](WelcomeStageState state) {
     switch (state) {
@@ -73,55 +61,36 @@ inline WelcomeStageState WorstRemoteStage(const WelcomeRemoteStatus& status) {
   return worst;
 }
 
-// A stage's colour, wherever a connection's state is drawn: the welcome page's
-// stage squares and a remote project tab's corner.
 SDL_Color WelcomeStageColor(const render::Theme& theme, WelcomeStageState state);
 
-// The welcome surface renders one of two layouts depending on whether a project is
-// open. NoProject is the cold-start home (open a folder / recent projects); ProjectHome
-// is shown when a project is open but its focused editor group has no tab (recent files
-// in this project / new-file / open-file / find-in-project).
 enum class WelcomeKind { NoProject, ProjectHome };
 
-// Number of recent files surfaced on the ProjectHome variant. Shared by the renderer and
-// the shell hit-test so both agree on how many rows exist.
 inline constexpr std::size_t kWelcomeRecentFileLimit = 8;
 
-// View model for the welcome / placeholder surface. All display strings are
-// precomputed by RenderViewModelBuilder so the render TU only draws them.
 struct WelcomeViewModel {
-  // Which build of the page this is: the builder memoizes one model and rebuilds
-  // it IN PLACE, so its address says nothing -- a frame that paints the page keys
-  // on this (RenderViewModelBuilder::BuildWelcomeView).
   std::uint64_t generation = 0;
   WelcomeKind kind = WelcomeKind::NoProject;
   std::string title;
   std::string subtitle;
-  // NoProject captions/labels.
   std::string start_heading;
   std::string recents_heading;
   std::string open_folder_label;
   std::string open_remote_folder_label;
   std::string empty_recents_label;
-  // ProjectHome captions/labels.
   std::string actions_heading;
   std::string recent_files_heading;
   std::string new_file_label;
   std::string open_file_label;
   std::string find_in_project_label;
   std::string empty_recent_files_label;
-  // A remote project's connection, above the panels; empty for a local one.
   WelcomeRemoteStatus remote;
   std::string retry_label;
-  // Shared right column.
   std::string shortcuts_heading;
-  std::vector<WelcomeRecent> recent_projects;  // NoProject
-  std::vector<WelcomeRecent> recent_files;      // ProjectHome
+  std::vector<WelcomeRecent> recent_projects;
+  std::vector<WelcomeRecent> recent_files;
   std::vector<WelcomeShortcut> shortcuts;
 };
 
-// An interactive region on the welcome surface, produced by ComputeWelcomeLayout and
-// shared by the renderer (to draw it) and the shell (to hit-test clicks / hover).
 struct WelcomeHitRegion {
   enum class Kind {
     RecentProject,
@@ -135,7 +104,7 @@ struct WelcomeHitRegion {
   };
   SDL_FRect rect{};
   Kind kind = Kind::OpenFolder;
-  std::size_t recent_index = 0;  // valid when kind == RecentProject or RecentFile
+  std::size_t recent_index = 0;
 };
 
 struct WelcomeLayout {
@@ -144,21 +113,13 @@ struct WelcomeLayout {
   SDL_FRect recents_panel{};
   SDL_FRect shortcuts_panel{};
   SDL_FRect open_folder_rect{};
-  SDL_FRect open_remote_folder_rect{};  // NoProject: the slot under open_folder_rect
-  // The remote status block (WelcomeViewModel::remote), between the header and the
-  // panels; zero-sized for a local project.
+  SDL_FRect open_remote_folder_rect{};
   SDL_FRect remote_block{};
-  // Y at which recent-project rows (or the empty-state caption) begin. The
-  // renderer draws the empty state here so it can never collide with the
-  // open-folder button, which now owns a dedicated slot above this point.
   float recents_rows_top = 0.0f;
   std::vector<WelcomeHitRegion> hit_regions;
 };
 
-// Pure geometry: lay out the welcome card, its two panels, the recent-project rows,
-// and the open-folder affordance for a given editor rect + model. Deterministic so
-// the renderer and the shell hit-test stay in lock-step.
 WelcomeLayout ComputeWelcomeLayout(const SDL_FRect& rect, const WelcomeViewModel& model,
                                    float line_height);
 
-}  // namespace microide::editor
+}

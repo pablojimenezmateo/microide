@@ -1,9 +1,3 @@
-// Fuzzes the JSON parser that backs every control-channel sink (--control-spec
-// files, socket request lines, instance descriptor files) plus DAP/LSP message
-// decoding. The parser must never crash on arbitrary bytes — in particular the
-// recursion depth guard must keep a deeply nested payload from overflowing the
-// stack. When a payload parses, we serialize it back to exercise the writer's
-// matching depth bound too.
 #include "util/JsonValue.h"
 
 #include <cstddef>

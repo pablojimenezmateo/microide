@@ -19,7 +19,7 @@ void LogLsp(const AssistHost& host, const char* message) {
   host.output().AppendLine("lsp.log", "LSP Log", message);
 }
 
-}  // namespace
+}
 
 std::string RefactorAssist::SymbolAtCursor() const {
   editor::TextViewport* viewport = host_.ops().active_editable_viewport();
@@ -50,14 +50,9 @@ bool RefactorAssist::RenameSymbol(const std::string& new_name, std::string* erro
   const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
   const LspClient::Position position =
       ByteColumnToLspPosition(*viewport, viewport->cursor_line(), viewport->cursor_column(), encoding);
-  // The text the edit's positions are in. Versioned edits are checked against
-  // the server's versions below; most servers send unversioned `changes`, which
-  // only this revision can vouch for.
   const std::uint64_t revision = viewport->content_revision();
   client->RequestRenameAsync(
       FileUriForPath(request_path), position, new_name,
-      // `client` cannot dangle: the callback is stored on the client and invoked
-      // from its own DrainCallbacks (live or retiring), so the client outlives it.
       [this, request_path, new_name, client, revision](LspResult<LspClient::WorkspaceEdit> edit) {
         ApplyRenameResult(request_path, new_name, *client, revision, std::move(edit));
       });
@@ -81,18 +76,12 @@ void RefactorAssist::ApplyRenameResult(const std::filesystem::path& request_path
     LogLsp(host_, "No rename edits returned");
     return;
   }
-  // Version gate: a versioned TextDocumentEdit pinned to a document version
-  // we have since advanced past is stale — applying it would corrupt the
-  // buffer the user kept typing in. LSP requires failing the whole edit.
   if (const editor::TextViewport* viewport = ops.active_editable_viewport();
       viewport == nullptr || viewport->content_revision() != revision ||
       !lsp_workspace_edit::VersionsCurrent(client, *edit)) {
     LogLsp(host_, "Rename aborted: the document changed while the server computed the rename");
     return;
   }
-  // Flatten resource ops (file create/rename/delete — e.g. rust-analyzer
-  // renames the file when a module is renamed). An undecodable target URI
-  // refuses the whole rename, mirroring the text-edit rule below.
   std::optional<std::vector<WorkspaceResourceOp>> flattened_ops =
       lsp_workspace_edit::FlattenResourceOps(edit->resource_ops);
   if (!flattened_ops.has_value()) {
@@ -100,18 +89,10 @@ void RefactorAssist::ApplyRenameResult(const std::filesystem::path& request_path
     return;
   }
   const std::vector<WorkspaceResourceOp> resource_ops = *std::move(flattened_ops);
-  // Flatten the URI-keyed WorkspaceEdit into the shared edit records. The host
-  // decides whether to apply in place or open + save the files that are not
-  // currently open.
   std::vector<CodeActionEdit> workspace_edits;
   for (const auto& [uri, text_edits] : edit->changes) {
     const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
     if (!path.has_value()) {
-      // A rename that touches a target whose URI cannot be decoded (non-local
-      // authority, malformed percent escape, unsupported scheme) must not be
-      // silently applied as a partial rename — and must never fall back to the
-      // empty "active buffer" path. Refuse the whole rename so the user is not
-      // left with a half-renamed symbol.
       LogLsp(host_, "Rename aborted: server returned an unusable edit target URI");
       return;
     }
@@ -119,7 +100,6 @@ void RefactorAssist::ApplyRenameResult(const std::filesystem::path& request_path
       workspace_edits.push_back(assist::ToCodeActionEdit(*path, range, new_text));
     }
   }
-  // Applies in place when every file is open, or asks before writing closed ones.
   host_.edits().ApplyRename(new_name, workspace_edits, resource_ops);
 }
 
@@ -130,11 +110,11 @@ void RefactorAssist::PrepareRenameForCursor(std::function<void(bool, std::string
   const AssistHost::Operations& ops = host_.ops();
   editor::TextViewport* viewport = ops.active_editable_viewport();
   if (viewport == nullptr || viewport->path().empty()) {
-    return;  // no callback: the caller keeps its heuristic seed
+    return;
   }
   LspClient* client = ops.lsp_client_for_viewport(*viewport, nullptr);
   if (client == nullptr || !client->SupportsPrepareRename()) {
-    return;  // no server / no prepareRename provider — keep the heuristic seed
+    return;
   }
   const std::filesystem::path request_path = viewport->path();
   const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
@@ -145,12 +125,11 @@ void RefactorAssist::PrepareRenameForCursor(std::function<void(bool, std::string
       FileUriForPath(request_path), position,
       [this, request_path, callback = std::move(callback)](
           LspResult<LspClient::PrepareRename> result) {
-        // Only meaningful while the same buffer is active; a switch abandons refine.
         if (host_.IsStale(request_path)) {
           return;
         }
         if (!result.has_value()) {
-          return;  // no provider / timeout / error — the caller keeps its heuristic seed
+          return;
         }
         callback(result->can_rename, result->placeholder);
       });
@@ -162,27 +141,18 @@ bool RefactorAssist::FormatActiveDocument(std::string* error_message) {
   if (viewport == nullptr) {
     return false;
   }
-  // Formatting is LSP-only (no plugin provider path). PrepareLspRequest resolves the
-  // client, opens the document, begins the tracked request, and records the
-  // unavailable-server message when there is none.
   LspClient* client = host_.PrepareLspRequest(*viewport, error_message);
   if (client == nullptr) {
     return false;
   }
   const std::filesystem::path request_path = viewport->path();
   const int tab_size = static_cast<int>(viewport->indent_width() > 0 ? viewport->indent_width() : 4);
-  // The buffer's own indentation: a file indented with tabs asked to be
-  // formatted with spaces came back re-indented.
   const bool insert_spaces = viewport->soft_tabs();
-  // The text the edits will be computed for. TextEdit[] carries no document
-  // version, so a result for a buffer that has changed since is dropped.
   const std::uint64_t revision = viewport->content_revision();
   const auto on_result = [this, request_path, revision](
                              LspResult<std::vector<LspClient::TextEdit>> edits) {
     ApplyFormattingResult(request_path, revision, std::move(edits));
   };
-  // Format the SELECTION only when there is one (VSCode "Format Selection"), else the
-  // whole document. Both return the same TextEdit[] shape and apply identically.
   if (viewport->has_selection()) {
     if (const std::optional<editor::SelectionRange> selection = viewport->selection_range()) {
       const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
@@ -207,7 +177,6 @@ void RefactorAssist::ApplyFormattingResult(const std::filesystem::path& request_
                                            LspResult<std::vector<LspClient::TextEdit>> edits) {
   const AssistHost::Operations& ops = host_.ops();
   ops.finish_tracked_lsp_request();
-  // Drop superseded results (buffer switched/closed) before mutating.
   if (host_.IsStale(request_path)) {
     return;
   }
@@ -224,7 +193,6 @@ void RefactorAssist::ApplyFormattingResult(const std::filesystem::path& request_
     LogLsp(host_, "No formatting changes");
     return;
   }
-  // Apply the whole set together, highest-position-first.
   std::vector<CodeActionEdit> workspace_edits;
   workspace_edits.reserve(edits->size());
   for (const auto& [range, new_text] : *edits) {
@@ -235,4 +203,4 @@ void RefactorAssist::ApplyFormattingResult(const std::filesystem::path& request_
   }
 }
 
-}  // namespace microide::workspace
+}

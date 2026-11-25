@@ -35,24 +35,14 @@ class PromptSurfaceService {
                            std::size_t dirty_count,
                            const std::filesystem::path& path);
   void DismissDirtyPrompt(bool restore_focus);
-  // A tab closed: a tab prompt asking about it has nothing left to ask, and
-  // closes. The prompt's own Confirm dismisses before it closes its tabs.
   void OnTabClosed(std::uint64_t stable_id);
-  // Where focus goes when a prompt closes: whatever is still on top (the other
-  // prompt, an overlay), else `previous` while it is still shown.
   FocusTarget FocusAfterPrompt(FocusTarget previous) const;
   void DismissPromptSurface(bool restore_focus);
-  // Cancels whichever prompts are up, focus back where they were opened from. The
-  // prompts are the window's but act on the project in front (its tab, its path),
-  // while focus is the project's: a project leaving the front under one would keep
-  // focus on a prompt that is closed later, elsewhere (soak 1dd177bb2104).
   void CancelOpenPrompts();
   void OpenPromptSurface(PromptSurfaceState::Action action,
                          PromptSurfaceState::Kind kind,
                          const std::filesystem::path& path,
                          std::string input);
-  // The comment prompt of a review diff (PromptSurfaceState::ReviewComment): the
-  // note's text to edit, where it goes, and the line that says so.
   struct ReviewCommentPrompt {
     std::filesystem::path path;
     std::string text;
@@ -63,13 +53,9 @@ class PromptSurfaceService {
   };
   void OpenReviewCommentPrompt(ReviewCommentPrompt prompt);
   void OpenExternalUrlPrompt(std::string url);
-  // Ask `question`, and run `command_line` on yes (PromptSurfaceState::ConfirmCommand).
   void OpenConfirmCommandPrompt(std::string command_line, std::string question);
 
  private:
-  // Assign (if needed) and return the stable id of the focused group's tab at
-  // `index`; 0 if out of range. Used to make dirty prompts index-shift-safe
-  // (TD-2026-07-17-024).
   std::uint64_t EnsureFocusedTabStableId(std::size_t index);
   std::vector<std::uint64_t> StableIdsForFocusedTabs(const std::vector<std::size_t>& indices);
 
@@ -78,4 +64,4 @@ class PromptSurfaceService {
   Operations operations_;
 };
 
-}  // namespace microide::workspace
+}

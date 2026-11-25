@@ -23,9 +23,6 @@ void FlattenTerminalLine(const TerminalLine& line,
                          TerminalSearchScratch& scratch) {
   scratch.text.clear();
   scratch.columns.clear();
-  // Reserve against the cell count rather than the byte count: ASCII rows (all of
-  // them, in practice) then fill without a single reallocation, and the buffers
-  // stay warm for every later row.
   scratch.text.reserve(line.cells.size());
   scratch.columns.reserve(line.cells.size());
 
@@ -33,15 +30,10 @@ void FlattenTerminalLine(const TerminalLine& line,
   for (std::size_t column = 0; column < line.cells.size(); ++column) {
     const TerminalCell& cell = line.cells[column];
     if (cell.style.wide_trailing()) {
-      // The spacer half of a double-width glyph carries no text of its own; the
-      // lead cell's entry already covers both columns via the end-column mapping
-      // below.
       continue;
     }
     const std::string_view glyph = cell.DisplayText();
     if (glyph.empty()) {
-      // An untouched cell reads as a blank, matching how the row paints and how
-      // selection copy slices it, so a query with a space still lines up.
       scratch.text.push_back(' ');
       scratch.columns.push_back(static_cast<std::uint32_t>(column));
       continue;
@@ -52,9 +44,6 @@ void FlattenTerminalLine(const TerminalLine& line,
       scratch.columns.push_back(static_cast<std::uint32_t>(column));
       continue;
     }
-    // Multi-byte glyph. Fold it through the shared UTF-8 folder (so `É` finds
-    // `é`, matching the file-search literal path) rather than copying bytes: this
-    // branch is rare enough that the per-glyph call costs nothing measurable.
     const std::string_view appended = [&]() -> std::string_view {
       if (!fold_case) {
         return glyph;
@@ -90,15 +79,11 @@ bool FindTerminalLineMatches(const TerminalLine& line,
       return true;
     }
     const std::size_t end = start + query.needle.size();
-    // Advance by one byte, not by the needle length: overlapping occurrences
-    // ("aa" in "aaa") are distinct matches, and the caller navigates between them.
     from = start + 1;
     if (query.whole_word && !util::SearchMatchStandsAlone(text, start, end)) {
       continue;
     }
     const std::size_t first_column = scratch.columns[start];
-    // The column the NEXT glyph starts at bounds the match, so a wide glyph's
-    // trailing spacer is covered and no gap is left mid-highlight.
     const std::size_t end_column =
         end < scratch.columns.size() ? scratch.columns[end] : line.cells.size();
     out.push_back(TerminalSearchMatch{
@@ -112,4 +97,4 @@ bool FindTerminalLineMatches(const TerminalLine& line,
   }
 }
 
-}  // namespace microide::terminal
+}

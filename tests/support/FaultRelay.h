@@ -1,26 +1,5 @@
 #pragma once
 
-// A frame-aware link between a remote client and microide-server, for fault
-// injection: it splices an upstream descriptor (the daemon's socket) to a fresh
-// socketpair whose other end the client takes, forwards whole wire frames
-// (project/remote/RemoteFrame.h), optionally after a one-way delay, and counts
-// them once armed. When the count reaches the armed step, it runs the fault --
-// SIGKILL a process, raise SIGKILL on itself, or cut the link -- at that exact
-// frame boundary, so a matrix can put the same fault between every pair of
-// frames an operation exchanges.
-//
-// Ack frames are the transport's own flow control, not a step of any operation,
-// and are forwarded uncounted. So is the link's heartbeat -- a link/ping request
-// and its answer (LinkHeartbeat: a quarter interval after the client connects,
-// then every interval): it runs on the client's clock, not the operation's, so a
-// client the machine starved past a ping had that ping counted as its "step 0"
-// and was killed before it had done anything (MirrorFaultMatrix/Slow/PushCreate/
-// KillClient in CI: a new file "lost" from both sides that was never written).
-// A cut drops the frame that triggered it and
-// everything after, in both directions, and shuts both sockets: the client sees
-// the link close, the daemon sees its connection end (and, like over a dead ssh
-// link, carries on with whatever it had already received).
-
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -48,7 +27,6 @@ namespace microide::tests {
 
 class FaultRelay {
  public:
-  // Takes ownership of `upstream_fd`.
   FaultRelay(int upstream_fd, std::chrono::milliseconds one_way) : upstream_fd_(upstream_fd), one_way_(one_way) {
     int pair[2] = {-1, -1};
     if (upstream_fd_ >= 0 && ::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) == 0) {
@@ -99,11 +77,6 @@ class FaultRelay {
     return fd;
   }
 
-  // From now on, count frames; when frame number `step` (0-based) arrives, run
-  // `fault` on the relay's thread before forwarding it, and with `cut` drop it
-  // and close the link. With `after`, the frame is delivered first and the fault
-  // runs that long after it was (the peer is part-way through handling it).
-  // SIZE_MAX counts without ever firing.
   void Arm(std::size_t step, std::function<void()> fault, bool cut,
            std::optional<std::chrono::microseconds> after = std::nullopt) {
     std::lock_guard lock(count_mutex_);
@@ -124,14 +97,6 @@ class FaultRelay {
     std::lock_guard lock(count_mutex_);
     return fired_;
   }
-  // Ends the arming once the operation is over, and says whether the fault fired --
-  // after it has run, if it did (a delayed one runs later): what follows a fault
-  // must not start before it, or the fault lands on the recovery. No frame fires it
-  // after this. Left armed, a frame still in flight on a slow link (the watch
-  // delta's, after the mirror already held the change) ran the server kill in the
-  // middle of the recovery: on the restarted daemon, or under the fresh link -- "no
-  // error after recovering (error 'not connected')" and "reconnects: connection
-  // closed" (MirrorFaultMatrix/Slow/WatchPull/KillServer, CI and 16-way stress).
   bool Disarm() {
     std::unique_lock lock(count_mutex_);
     armed_ = false;
@@ -148,7 +113,7 @@ class FaultRelay {
   struct Chunk {
     std::chrono::steady_clock::time_point due;
     std::string bytes;
-    bool fire_after = false;  // run the fault once this is delivered
+    bool fire_after = false;
   };
   enum class Verdict { Forward, Drop, ForwardThenFire };
   struct Direction {
@@ -157,11 +122,9 @@ class FaultRelay {
     std::mutex mutex;
     std::condition_variable wake;
     std::deque<Chunk> queue;
-    bool eof = false;  // the reader saw the end of stream (mutex)
-    // The link/ping requests read on this direction whose answers have not come
-    // back on the other one yet, by request id (count_mutex_).
+    bool eof = false;
     std::set<std::uint64_t> pings;
-    Direction* back = nullptr;  // the opposite direction
+    Direction* back = nullptr;
     std::thread reader;
     std::thread writer;
   };
@@ -179,7 +142,6 @@ class FaultRelay {
     }
   }
 
-  // The link's own liveness: a link/ping request, or the answer to one.
   bool IsHeartbeat(Direction& d, std::uint16_t type, std::uint64_t id, std::string_view payload) {
     if (type == kRequestType) {
       const std::optional<util::JsonValue> body = util::ParseJson(payload);
@@ -198,7 +160,6 @@ class FaultRelay {
     return d.back->pings.erase(id) > 0;
   }
 
-  // Counts the frame and runs the fault on its step.
   Verdict Count(Direction& d, std::uint16_t type, std::uint64_t id, std::string_view payload) {
     const Verdict pass = cut_ ? Verdict::Drop : Verdict::Forward;
     if (type == kAckType || IsHeartbeat(d, type, id, payload)) {
@@ -242,7 +203,6 @@ class FaultRelay {
     fault_cv_.notify_all();
   }
 
-  // The delayed fault, once its frame is on the peer's socket.
   void FireAfterDelivery() {
     std::function<void()> fault;
     std::chrono::microseconds delay{0};
@@ -280,7 +240,6 @@ class FaultRelay {
         if (n < 0 && (errno == EINTR || errno == EAGAIN)) {
           continue;
         }
-        // Pass the end of stream on once what is queued has gone.
         std::lock_guard lock(d.mutex);
         d.eof = true;
         d.wake.notify_all();
@@ -290,7 +249,7 @@ class FaultRelay {
       while (pending.size() >= kHeader) {
         std::uint32_t length = 0;
         std::uint16_t type = 0;
-        std::memcpy(&length, pending.data(), 4);  // little-endian hosts only, like the tests
+        std::memcpy(&length, pending.data(), 4);
         std::memcpy(&type, pending.data() + 4, 2);
         std::uint64_t id = 0;
         std::memcpy(&id, pending.data() + 7, 8);
@@ -367,10 +326,10 @@ class FaultRelay {
   bool fault_ran_ = false;
   std::condition_variable fault_cv_;
   std::optional<std::chrono::microseconds> after_;
-  std::thread timer_;  // the delayed fault (one per arming)
+  std::thread timer_;
 
   Direction to_server_;
   Direction to_client_;
 };
 
-}  // namespace microide::tests
+}

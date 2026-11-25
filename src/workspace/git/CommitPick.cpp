@@ -16,7 +16,6 @@ std::vector<QuickPickItem> BuildCommitPickItems(std::span<const project::GitComm
       continue;
     }
     QuickPickItem item;
-    // The full hash: an abbreviation that is unique today need not stay so.
     item.value = "review-commit " + commit.hash;
     item.primary_label = commit.subject.empty() ? commit.short_hash : commit.subject;
     item.secondary_label = commit.short_hash;
@@ -32,4 +31,4 @@ std::vector<QuickPickItem> BuildCommitPickItems(std::span<const project::GitComm
   return items;
 }
 
-}  // namespace microide::workspace
+}

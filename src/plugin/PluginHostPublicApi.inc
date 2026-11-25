@@ -21,12 +21,7 @@ bool PluginHost::Reload(const std::filesystem::path& project_root, ProjectLocali
 #if MICROIDE_HAS_LUA_PLUGINS
   const std::filesystem::path next_project_root =
       project_root.empty() ? std::filesystem::path{} : project_root.lexically_normal();
-  // Discovery is pure filesystem work; keep it on the calling thread so a project
-  // with no plugins never spawns the worker (zero-cost-when-unused).
   std::vector<std::filesystem::path> plugin_roots = impl_->DiscoverPluginRoots();
-  // The whole load — teardown, state creation, setup, project-open — touches
-  // lua_States, so it must run on the worker whenever one is (or becomes) live.
-  // When there is genuinely nothing to run, stay inline and leave the worker unspawned.
   const bool needs_worker =
       impl_->worker_ != nullptr &&
       (impl_->worker_->started() || !plugin_roots.empty() || !impl_->plugins.empty());
@@ -40,13 +35,9 @@ bool PluginHost::Reload(const std::filesystem::path& project_root, ProjectLocali
                         locality.write_gate);
   };
   if (needs_worker) {
-    // Synchronous round-trip: the UI thread parks until the worker finishes. Direct
-    // callers (and the test suite) depend on Reload's synchronous bool result. This
-    // is the ONE blocking call that is genuine setup, so it allows registration; every
-    // other blocking caller (queries/providers/commands) takes the safe default (false).
-    impl_->RunOnWorkerBlocking(snapshot, load_body, /*allow_registration=*/true);
+    impl_->RunOnWorkerBlocking(snapshot, load_body, true);
   } else {
-    impl_->ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/true, load_body);
+    impl_->ExecuteWithContext(&snapshot, true, true, load_body);
   }
 #endif
 
@@ -83,9 +74,7 @@ void PluginHost::ReloadAsync(const std::filesystem::path& project_root,
   snapshot.project_launcher = locality.launcher;
   snapshot.project_write_gate = locality.write_gate;
   if (!needs_worker) {
-    // Nothing to run on a worker: stay inline and complete synchronously, exactly like
-    // the no-plugin Reload path. Keeps no-worker callers (and most tests) synchronous.
-    impl_->ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/true,
+    impl_->ExecuteWithContext(&snapshot, true, true,
                               [&]() {
                                 impl_->RunReloadLoad(next_project_root, plugin_roots,
                                                      locality.launcher, locality.write_gate);
@@ -95,8 +84,6 @@ void PluginHost::ReloadAsync(const std::filesystem::path& project_root,
     on_complete(impl_->errors.empty());
     return;
   }
-  // Detached: the worker runs the Lua load while the UI thread keeps painting; the
-  // rebuilt snapshot is published and on_complete fires during the next mailbox drain.
   impl_->ReloadDetached(std::move(snapshot), std::move(plugin_roots), std::move(on_complete));
 #else
   impl_->SetReloadSummary();
@@ -160,17 +147,12 @@ void PluginHost::OnBufferSave(const std::filesystem::path& path) {
 }
 
 PluginHost::EditorEventInterest PluginHost::EditorEventInterests() const {
-  // Published (race-free) value; recomputed from the live `plugins` vector each time a
-  // snapshot is built on the worker.
   return impl_->published_.editor_event_interests;
 }
 
 void PluginHost::OnBufferChange(const std::filesystem::path& path,
                                 std::size_t start_line,
                                 std::size_t end_line) {
-  // Gate on the published interest bit BEFORE CaptureSnapshot + worker post
-  // (TD-2026-07-17A-077): with no plugin subscribed to buffer_change, every keystroke
-  // would otherwise snapshot the active buffer and wake the worker only to no-op.
   if (!impl_->enabled() || path.empty() ||
       !impl_->published_.editor_event_interests.buffer_change) {
     return;
@@ -199,15 +181,11 @@ void PluginHost::OnBufferChange(const std::filesystem::path& path,
 void PluginHost::OnCursorMove(const std::filesystem::path& path,
                               std::size_t line,
                               std::size_t column) {
-  // Gate on the interest bit before any snapshot/worker cost (TD-2026-07-17A-077).
   if (!impl_->enabled() || path.empty() ||
       !impl_->published_.editor_event_interests.cursor_move) {
     return;
   }
 #if MICROIDE_HAS_LUA_PLUGINS
-  // Latest-only per buffer (TD-2026-07-17A-078): a fast caret sweep must not queue
-  // hundreds of stale positions behind a slow plugin callback; each new move drops the
-  // superseded queued job for the same buffer so the plugin observes the latest caret.
   impl_->RunOnWorkerDetached(impl_->CaptureSnapshot(),
                              [impl = impl_.get(), path, line, column]() {
     for (auto& plugin : impl->plugins) {
@@ -234,14 +212,11 @@ void PluginHost::OnSelectionChange(const std::filesystem::path& path,
                                    std::size_t start_column,
                                    std::size_t end_line,
                                    std::size_t end_column) {
-  // Gate on the interest bit before any snapshot/worker cost (TD-2026-07-17A-077).
   if (!impl_->enabled() || path.empty() ||
       !impl_->published_.editor_event_interests.selection_change) {
     return;
   }
 #if MICROIDE_HAS_LUA_PLUGINS
-  // Latest-only per buffer (TD-2026-07-17A-078): a selection drag emits a move per frame;
-  // coalesce to the latest so a slow plugin never processes a backlog of stale ranges.
   impl_->RunOnWorkerDetached(
       impl_->CaptureSnapshot(),
       [impl = impl_.get(), path, has_selection, start_line, start_column, end_line, end_column]() {
@@ -327,8 +302,6 @@ bool PluginHost::HasCommand(std::string_view name) const {
   if (!impl_->enabled()) {
     return false;
   }
-  // Probe the published command-name view (sorted, UI-thread-owned) instead of the
-  // live `commands` map the worker rebuilds on reload.
   return std::binary_search(impl_->published_.command_names.begin(),
                             impl_->published_.command_names.end(), name);
 #else
@@ -352,7 +325,7 @@ void PluginHost::ExecuteCommandAsync(
     std::string feedback;
   };
   impl_->RunQueryAsync<CommandResult>(
-      /*dedup_key=*/{},  // every command invocation must run; never supersede.
+      {},
       [this, name = std::move(name), args = std::move(args)]() {
         CommandResult result;
         result.ran = provider_query_interop::ExecuteCommand(
@@ -373,8 +346,6 @@ void PluginHost::ExecuteCommandAsync(
 }
 
 const std::vector<std::string>& PluginHost::CommandNames() const {
-  // The sorted view is resolved once when the snapshot is published (registration
-  // only flips the dirty bit); the UI reads the immutable published copy here.
   return impl_->published_.command_names;
 }
 
@@ -383,9 +354,6 @@ const std::vector<PluginHost::SidebarProviderInfo>& PluginHost::SidebarProviders
 }
 
 const PluginHost::SidebarProviderInfo* PluginHost::FindSidebarProvider(std::string_view id) const {
-  // Search the published view (UI-thread-owned) rather than the live `sidebars` map
-  // the worker rebuilds on reload. Providers are few, so a linear scan is cheap and
-  // the returned pointer stays valid until the next publish (also on the UI thread).
   for (const auto& provider : impl_->published_.sidebar_providers) {
     if (provider.id == id) {
       return &provider;
@@ -399,13 +367,11 @@ bool PluginHost::DispatchSidebarQuery(std::string_view id,
                                       std::string* error_message,
                                       [[maybe_unused]] const char* unavailable_message,
                                       [[maybe_unused]] WorkerOp worker_op) {
-  // Fast-reject unknown ids against the published view (no round-trip, race-free).
   if (FindSidebarProvider(id) == nullptr) {
     return util::Fail(error_message, "unknown plugin sidebar: " + std::string(id));
   }
 #if MICROIDE_HAS_LUA_PLUGINS
   bool ok = false;
-  // Resolve the live provider on the worker (the lua-ref-bearing map is worker-owned).
   impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
     const auto it = impl_->sidebars.find(std::string(id));
     if (it == impl_->sidebars.end()) {
@@ -493,8 +459,6 @@ bool PluginHost::QueryHover(const std::filesystem::path& path,
 }
 
 std::vector<std::filesystem::path> PluginHost::DataDirectories(std::string_view subdirectory) const {
-  // Resolve against the published, enabled plugin roots (UI-thread-owned) rather than
-  // the live `plugins` vector the worker rebuilds on reload.
   std::vector<std::filesystem::path> roots;
   roots.reserve(impl_->published_.loaded_plugins.size());
   for (const auto& plugin : impl_->published_.loaded_plugins) {
@@ -537,13 +501,9 @@ bool PluginHost::RunSaveParticipants(const std::filesystem::path& path,
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  // Pass a copy, not a move: on timeout the worker may still be transforming its
-  // copy, so the caller's `*text` must stay intact to save untransformed.
   PluginHost::Impl::SaveParticipantResult result =
       impl_->RunSaveParticipantsBounded(path, *text);
   if (result.timed_out) {
-    // Never wedge a save: proceed with the caller's untransformed `*text` (left
-    // intact -- we passed a copy to the worker) and surface a toast.
     if (impl_->raw_callbacks.show_notification) {
       impl_->raw_callbacks.show_notification(
           "warning", "save participants timed out; saved without plugin transforms");
@@ -863,12 +823,6 @@ void PluginHost::QueryHoverAsync(const std::filesystem::path& path,
     on_result(false, HoverResult{});
     return;
   }
-  // Fast-reject before resolving anything: with no hover provider registered the
-  // worker query can only answer "no", and hover resolution runs on every painted
-  // frame the pointer spends over text — during a scroll the cell under a
-  // stationary pointer changes every frame, so this fired per frame to resolve a
-  // runtime path, capture a plugin snapshot and dispatch a query that had nothing
-  // to ask (TD-2026-08-06-159). Reads the published view, like SnapshotSidebarAsync.
   if (!impl_->published_.has_hover_providers) {
     on_result(false, HoverResult{});
     return;
@@ -893,8 +847,6 @@ void PluginHost::QueryHoverAsync(const std::filesystem::path& path,
       },
       std::move(buffer));
 #else
-  // `resolved_path` is inside the #if above, so naming it here never compiled;
-  // no default lane builds with MICROIDE_HAS_LUA_PLUGINS off, which is why it sat.
   (void)path;
   on_result(false, HoverResult{});
 #endif
@@ -903,8 +855,6 @@ void PluginHost::QueryHoverAsync(const std::filesystem::path& path,
 void PluginHost::SnapshotSidebarAsync(
     std::string id,
     std::function<void(bool, std::vector<SidebarItem>, std::string)> on_result) {
-  // Fast-reject an unknown provider against the published view (race-free); the worker
-  // closure below re-checks the live map. Nothing to run on the worker for an unknown id.
   if (FindSidebarProvider(id) == nullptr) {
     on_result(false, {}, "unknown plugin sidebar: " + id);
     return;
@@ -1396,9 +1346,6 @@ std::string PluginHost::ReloadSummary() const {
 }
 
 std::size_t PluginHost::LoadedPluginCount() const {
-  // Count the enabled plugins in the published view (UI-thread-owned); the live
-  // `plugins` vector is worker-owned and rebuilt on reload. Disabled plugins appear in
-  // loaded_plugins with enabled=false and are excluded, matching the live count.
   std::size_t count = 0;
   for (const auto& plugin : impl_->published_.loaded_plugins) {
     if (plugin.enabled) {
@@ -1416,4 +1363,4 @@ std::vector<PluginHost::LoadedPlugin> PluginHost::LoadedPlugins() const {
   return impl_->published_.loaded_plugins;
 }
 
-}  // namespace microide::plugin
+}

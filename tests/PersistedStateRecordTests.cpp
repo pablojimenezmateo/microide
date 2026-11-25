@@ -47,9 +47,6 @@ using microide::workspace::PersistedSidebarViewPolicy;
 using microide::workspace::PersistedUserConfigState;
 using microide::workspace::PersistedWorkspaceSessionState;
 
-// Regression: a config record with duplicate setting ids (a corrupt/hand-edited
-// file) must decode to a single last-writer-wins entry, not a split-brain state
-// where the UI shows one value and layering applies another.
 void TestPersistedStateConfigDedupesDuplicateSettingIds() {
   PersistedUserConfigState user{
       .ui_scale = 1.0f,
@@ -72,8 +69,6 @@ void TestPersistedStateConfigDedupesDuplicateSettingIds() {
   Expect(tab_size_value == "8", "the last value wins for a duplicate setting id");
 }
 
-// TD-2026-07-16-36: repeated disabled keybinding/plugin ids dedupe by value on decode
-// so stale duplicates cannot inflate downstream resolution.
 void TestPersistedStateConfigDedupesDisabledIds() {
   PersistedUserConfigState user{
       .ui_scale = 1.0f,
@@ -89,13 +84,9 @@ void TestPersistedStateConfigDedupesDisabledIds() {
   Expect(decoded.disabled_plugin_ids.size() == 1, "duplicate disabled plugin ids dedupe");
 }
 
-// TD-2026-07-16-37: a persisted commit-draft body over the inline-editor budget must
-// fail decode (fail closed) rather than load a huge string into the sidebar editor. A
-// normal-sized draft round-trips.
 void TestPersistedStateCommitDraftBodyBudget() {
   using microide::workspace::PersistedCommitDraftState;
 
-  // Normal draft round-trips.
   PersistedProjectConfigState ok_config;
   ok_config.commit_draft = PersistedCommitDraftState{
       .head_oid = "abc123", .branch_name = "main", .subject = "fix", .body = "details\n"};
@@ -106,7 +97,6 @@ void TestPersistedStateCommitDraftBodyBudget() {
   Expect(ok_decoded.commit_draft.has_value() && ok_decoded.commit_draft->subject == "fix",
          "a normal commit draft round-trips");
 
-  // Oversized body (> 1 MiB) must fail decode closed.
   PersistedProjectConfigState big_config;
   big_config.commit_draft = PersistedCommitDraftState{
       .head_oid = "abc123",
@@ -170,10 +160,6 @@ void TestPersistedStateUserAndProjectConfigRecordRoundTrip() {
 }
 
 
-// Encode/decode of the user and project config records over random content:
-// setting keys and values with control bytes, multi-byte scalars, an embedded
-// NUL, empty strings and long runs; id lists of random length; a random color.
-// Every field must come back byte for byte.
 void TestPersistedStateConfigRecordsRoundTripRandomContent() {
   std::uint64_t state = 0xC0FFEE1234567890ull;
   const auto next = [&state](std::uint64_t bound) {
@@ -202,15 +188,12 @@ void TestPersistedStateConfigRecordsRoundTripRandomContent() {
   for (int round = 0; round < 40; ++round) {
     PersistedUserConfigState user;
     user.ui_scale = 0.5f + static_cast<float>(next(300)) / 100.0f;
-    // Keys are distinct valid ids (the decoder dedupes last-writer-wins and drops
-    // an invalid id — that policy has its own test below); values are hostile.
     const std::size_t settings = next(6);
     for (std::size_t i = 0; i < settings; ++i) {
       user.settings.emplace_back("k" + std::to_string(round) + "." + std::to_string(i) +
                                      std::string(next(2), '-'),
                                  random_string(6, true));
     }
-    // Disabled ids dedupe on decode (covered above), so keep them distinct here.
     const std::size_t keybindings = next(5);
     for (std::size_t i = 0; i < keybindings; ++i) {
       user.disabled_keybinding_ids.push_back(std::to_string(i) + random_string(3, false));
@@ -289,12 +272,6 @@ void TestPersistedStateConfigRecordsRoundTripRandomContent() {
 }
 
 
-// TD-2026-07-16-36 kept malformed ids (control char / space / empty) out of the
-// runtime by failing the decode. One malformed setting id now costs that entry
-// and nothing else — the validation choke still holds. Decoding used to
-// fail the whole record — every setting and disabled id gone for one bad key,
-// which is what a later version's tighter id rule does to a config an earlier
-// one wrote — and the encoder wrote such an id without complaint.
 void TestPersistedStateConfigRecordDropsOnlyTheInvalidSettingId() {
   PersistedUserConfigState user{
       .ui_scale = 1.25f,
@@ -311,7 +288,6 @@ void TestPersistedStateConfigRecordDropsOnlyTheInvalidSettingId() {
          "the valid settings survive, in order");
   Expect(decoded.disabled_keybinding_ids.size() == 1 && decoded.disabled_plugin_ids.size() == 1,
          "the disabled ids survive");
-  // The encoder never writes an invalid id: the bytes carry no trace of it.
   const std::string bytes(reinterpret_cast<const char*>(encoded.data()), encoded.size());
   Expect(bytes.find("has space") == std::string::npos, "an invalid id is not written");
 
@@ -371,7 +347,6 @@ PersistedProjectSessionState BuildProjectSessionFixture() {
   group_one.tabs = {second_group_tab};
   session.groups = {group_zero, group_one};
   session.focused_group_index = 1;
-  // A stacked pair, weighted 0.4/0.6 — the tree shape the session must carry now.
   {
     microide::workspace::EditorSplitTree tree;
     tree.InsertLeaf(0, microide::workspace::EditorSplitOrientation::Horizontal, false);
@@ -389,13 +364,6 @@ PersistedProjectSessionState BuildProjectSessionFixture() {
   return session;
 }
 
-// TD-2026-07-16-20: project-session decode caps repeated nested records. A group with
-// more tabs than the per-group budget must fail closed rather than materialize them.
-// Editor groups are capped at 2, and the third-and-later groups must be skipped BEFORE
-// their nested tab payloads are decoded (TD-2026-07-17A-059). A forged session that lists
-// an oversized third group (here: one that would fail DecodeEditorGroup because it exceeds
-// the per-group tab cap) must still decode successfully with two groups — proving the
-// over-cap group's payload was never materialized/validated.
 void TestPersistedStateProjectSessionSkipsOverCapGroupsBeforeDecoding() {
   PersistedProjectSessionState session;
   for (std::size_t i = 0; i < microide::workspace::kMaxEditorGroups; ++i) {
@@ -406,9 +374,6 @@ void TestPersistedStateProjectSessionSkipsOverCapGroupsBeforeDecoding() {
     group.tabs.push_back(std::move(tab));
     session.groups.push_back(std::move(group));
   }
-  // One group past the cap, whose payload would FAIL to decode (over the 4096
-  // per-group tab cap): if the decoder reached and validated it, the whole record
-  // would fail closed.
   PersistedEditorGroupState over_cap_group;
   for (std::size_t i = 0; i < 4097; ++i) {
     PersistedEditorTabState tab;
@@ -428,18 +393,11 @@ void TestPersistedStateProjectSessionSkipsOverCapGroupsBeforeDecoding() {
          "only as many editor groups as the editor area can hold are kept");
 }
 
-// A session stream that carries the split-tree record twice describes one tree:
-// the later record replaces the earlier, as every other single-valued field here
-// does. ReadSplitTree appended instead, so two in-bounds trees (each node count
-// checked against the cap on its own) overran the fixed-capacity node list --
-// an assert in debug builds, a silently truncated, mismatched tree otherwise
-// (fuzz-smoke, ProjectSessionRecordFuzz crash-2320f7e60a8b, CI run 43086794492).
 void TestPersistedStateProjectSessionRepeatedSplitTreeReplaces() {
   const auto session_with_leaves = [](std::size_t leaves) {
     PersistedProjectSessionState session;
     microide::workspace::EditorSplitTree tree;
     for (std::size_t i = 1; i < leaves; ++i) {
-      // Alternating directions nests every split: 2N-1 nodes for N panes.
       tree.InsertLeaf(i - 1,
                       i % 2 == 0 ? microide::workspace::EditorSplitOrientation::Vertical
                                  : microide::workspace::EditorSplitOrientation::Horizontal,
@@ -464,10 +422,6 @@ void TestPersistedStateProjectSessionRepeatedSplitTreeReplaces() {
          "the later split-tree record replaces the earlier one, not appends to it");
 }
 
-// The terminal layout round-trips: tabs, panes (cwd + command, and a host pane's
-// terminal), shares, the active tab and pane, the maximized panel. A forged
-// session cannot revive more tabs or panes than the caps, nor half a host
-// identity; a session written without one revives fresh shells.
 void TestPersistedStateProjectSessionTerminalLayoutRoundTrips() {
   using microide::workspace::TerminalPaneRecord;
   using microide::workspace::TerminalTabRecord;
@@ -500,8 +454,6 @@ void TestPersistedStateProjectSessionTerminalLayoutRoundTrips() {
              layout.tabs[0].panes[0].host.empty() && layout.tabs[1].panes[0].host.empty(),
          "a host pane keeps its terminal; the others name none");
 
-  // Half an identity names nothing, and an epoch past the hello's cap is no
-  // server's: the pane revives fresh (the record still decodes).
   PersistedProjectSessionState halves;
   halves.terminal_layout.tabs.push_back(TerminalTabRecord{
       .panes = {TerminalPaneRecord{.cwd = "/h", .host = {.epoch = "", .handle = 9}},
@@ -537,8 +489,6 @@ void TestPersistedStateProjectSessionTerminalLayoutRoundTrips() {
          "but only up to the tab and pane caps");
 }
 
-// An editor's collapsed folds ride with its tab, and the recently closed editors
-// with the session (TD-2026-10-24-390, TD-2026-10-18-355).
 void TestPersistedStateProjectSessionRoundTripsFoldsAndClosedEditors() {
   PersistedProjectSessionState session;
   PersistedEditorGroupState group;
@@ -569,7 +519,6 @@ void TestPersistedStateProjectSessionRoundTripsFoldsAndClosedEditors() {
 void TestPersistedStateProjectSessionDecodeHonorsTabCap() {
   PersistedProjectSessionState session;
   PersistedEditorGroupState group;
-  // One past the per-group tab cap (4096). Each tab is minimal.
   for (std::size_t i = 0; i < 4097; ++i) {
     PersistedEditorTabState tab;
     tab.kind = "editor";
@@ -623,8 +572,6 @@ void TestPersistedStateProjectSessionRoundTripOmitsChatRegistry() {
                  static_cast<std::uint8_t>(microide::workspace::DebugPaneMode::Watch),
          "project session right-pane fields should round-trip");
 
-  // A record stream lacking the right-pane tags (older session file) decodes to
-  // the struct defaults rather than failing.
   PersistedProjectSessionState legacy = BuildProjectSessionFixture();
   legacy.right_pane_visible = false;
   legacy.right_pane_width = 288.0f;
@@ -665,8 +612,6 @@ void TestPersistedStateProjectSessionRoundTripOmitsChatRegistry() {
              decoded_workspace.active_project_index == 1,
          "workspace session should round-trip");
 
-  // Regression: duplicate roots (a corrupt session) are deduped at decode so
-  // restore does not open duplicate project tabs.
   PersistedWorkspaceSessionState dup{
       .project_roots = {"/tmp/p", "/tmp/p", "/tmp/./p", "/tmp/q"},
       .active_project_index = 0,
@@ -678,7 +623,6 @@ void TestPersistedStateProjectSessionRoundTripOmitsChatRegistry() {
   Expect(decoded_dup.project_roots.size() == 2,
          "duplicate/equivalent roots collapse to unique entries at decode");
 
-  // The Host view's collapsed groups ride with the workspace session.
   PersistedWorkspaceSessionState host_view{
       .project_roots = {"/tmp/p"},
       .host_view_collapsed = {"group:processes", "@dev@box:2222", "@dev@other group:terminals"},
@@ -691,10 +635,6 @@ void TestPersistedStateProjectSessionRoundTripOmitsChatRegistry() {
          "the collapsed Host view groups round-trip, in order");
 }
 
-// The workspace session's projects as identities (project-identity), written
-// beside their legacy root paths. Three readers: this build (prefers the ids), a
-// file written before the ids (legacy roots only), and an older build, which knows
-// only the root tag and skips every other tag as unknown.
 void TestPersistedStateWorkspaceSessionProjectIds() {
   using microide::project::ProjectId;
   const ProjectId local = ProjectId::ForLocal("/tmp/project-a");
@@ -714,13 +654,12 @@ void TestPersistedStateWorkspaceSessionProjectIds() {
   Expect(decoded.project_roots.size() == 2 && decoded.project_roots[1] == remote.IoRoot(),
          "and the legacy roots are written beside them, in the same order");
 
-  // What an older build sees: the root tags, in order, among tags it skips.
   std::vector<std::filesystem::path> legacy_view;
   std::size_t offset = 0;
   while (offset < record.size()) {
     microide::persistence::TaggedRecordView view;
     Expect(microide::persistence::ReadTaggedRecord(record, &offset, &view), "the stream frames");
-    if (view.tag == 2) {  // WorkspaceSessionTag::ProjectRoot
+    if (view.tag == 2) {
       microide::persistence::PrimitiveReader reader(view.payload);
       std::filesystem::path root;
       Expect(reader.ReadPath(&root), "a root path");
@@ -729,8 +668,6 @@ void TestPersistedStateWorkspaceSessionProjectIds() {
   }
   Expect(legacy_view == decoded.project_roots, "an older build restores the same projects by path");
 
-  // A file written before the identities: roots only, and no ids invented for it
-  // (the coordinator names them, ResolveProjectId, since that reads the disk).
   PersistedWorkspaceSessionState legacy{.project_roots = {"/tmp/old-a", "/tmp/old-b"}};
   std::vector<std::byte> legacy_record;
   Expect(EncodeWorkspaceSessionRecord(legacy, &legacy_record), "legacy encode");
@@ -739,7 +676,6 @@ void TestPersistedStateWorkspaceSessionProjectIds() {
   Expect(decoded_legacy.projects.empty() && decoded_legacy.project_roots.size() == 2,
          "a legacy file decodes to its roots alone");
 
-  // An id that names nothing usable -- a relative host root -- is skipped, not fatal.
   PersistedWorkspaceSessionState bad{
       .projects = {ProjectId::ForRemote("box", "relative/root"), local, local}};
   std::vector<std::byte> bad_record;
@@ -784,8 +720,6 @@ void TestPersistedStateProjectSessionRoundTripsTreeState() {
              decoded.sidebar_scroll_row == 7 && decoded.sidebar_view_id == "git",
          "selected node, sidebar scroll, and active view should round-trip");
 
-  // An older session file lacking the tree/sidebar tags decodes to the empty/zero
-  // defaults rather than failing (additive backward compatibility).
   PersistedProjectSessionState legacy = BuildProjectSessionFixture();
   legacy.expanded_tree_paths.clear();
   legacy.collapsed_tree_paths.clear();
@@ -806,11 +740,6 @@ void TestPersistedStateProjectSessionRoundTripsTreeState() {
          "absent tree/sidebar tags decode to defaults");
 }
 
-// Every field of the project session record round-trips over random content:
-// hostile paths and strings (blanks, quotes, control bytes, NUL, non-ASCII, 3 KB
-// runs), extreme counters, every tab kind, both line endings, several groups and
-// a real split tree. The literal fixtures above check one value per field; this
-// checks the encoding of each field, not the fixture.
 void TestPersistedStateProjectSessionRoundTripsRandomContent() {
   std::uint64_t state = 0x9e3779b97f4a7c15ULL;
   const auto next = [&](std::size_t bound) {
@@ -836,8 +765,6 @@ void TestPersistedStateProjectSessionRoundTripsRandomContent() {
     }
     return out;
   };
-  // Counters are stored as u32 (WriteSize refuses larger, deliberately: a
-  // 4-billion-line cursor is not a session, it is corruption).
   const auto random_size = [&]() -> std::size_t {
     switch (next(4)) {
       case 0: return 0;
@@ -935,7 +862,7 @@ void TestPersistedStateProjectSessionRoundTripsRandomContent() {
               if (next(3) != 0) {
                 tab.disk_baseline = microide::workspace::PersistedEditorTabState::DiskBaseline{
                     .exists = next(2) == 0, .mtime_ticks = random_size(), .size = random_size()};
-                if (next(2) == 0) {  // the content hash and its probe (tag 36)
+                if (next(2) == 0) {
                   tab.disk_baseline->content_hash = random_size();
                   tab.disk_baseline->hash_probe = random_size();
                 }
@@ -970,7 +897,7 @@ void TestPersistedStateProjectSessionRoundTripsRandomContent() {
             tab.merge_left_divider_fraction = random_float();
             tab.merge_right_divider_fraction = random_float();
             tab.merge_hunk_choices = random_lines(5);
-            if (next(2) == 0) {  // a typed result: its text and its conflicts (tag 38)
+            if (next(2) == 0) {
               tab.dirty_snapshot = true;
               tab.path = tab.merge_output_path;
               tab.buffer = microide::editor::DocumentSnapshot::FromLines(random_lines(6));
@@ -1008,7 +935,7 @@ void TestPersistedStateProjectSessionRoundTripsRandomContent() {
     session.expanded_tree_paths = random_lines(4);
     session.collapsed_tree_paths = random_lines(4);
     session.selected_tree_path = random_string(4);
-    session.sidebar_scroll_row = static_cast<int>(next(1u << 31));  // negatives clamp to 0
+    session.sidebar_scroll_row = static_cast<int>(next(1u << 31));
     session.sidebar_view_id = random_string(3);
 
     std::vector<std::byte> encoded;
@@ -1058,22 +985,13 @@ void TestPersistedStateProjectSessionRoundTripsRandomContent() {
   }
 }
 
-// A1 regression: compare `review_mode` and `staging_view` must survive a binary
-// session round-trip. Before the fix the tab schema had no tags for these fields,
-// so EncodeEditorTab/DecodeEditorTab dropped them and a rebuilt CompareTabState
-// silently reverted to the default WorkingTree/Combined lens. This asserts the
-// *rebuilt* CompareTabState (built exactly as RestoreSessionState builds it from
-// the decoded persisted tab), not only the decoded intermediate struct.
 void TestPersistedStateCompareTabReviewFieldsRoundTrip() {
   using microide::compare::CompareReviewMode;
   using microide::compare::WorkingTreeStagingView;
   using microide::workspace::CompareTabState;
 
-  // Mirror of the RestoreSessionState mapping (WorkspacePersistenceCoordinator
-  // Session.cpp): translate the persisted string labels back into a rebuilt
-  // CompareTabState's review_mode / staging_view.
   const auto rebuild_compare = [](const PersistedEditorTabState& tab) {
-    CompareTabState compare_state;  // defaults: WorkingTree + Combined
+    CompareTabState compare_state;
     if (!tab.compare_review_mode.empty()) {
       if (tab.compare_review_mode == "commit") {
         compare_state.review_mode = CompareReviewMode::Commit;
@@ -1105,8 +1023,8 @@ void TestPersistedStateCompareTabReviewFieldsRoundTrip() {
   compare_tab.compare_commit_hash = "abcdef123456";
   compare_tab.compare_commit_short_hash = "abcdef1";
   compare_tab.compare_right_ref = "WORKTREE";
-  compare_tab.compare_review_mode = "commit";   // non-default (default is WorkingTree)
-  compare_tab.compare_staging_view = "staged";  // non-default (default is Combined)
+  compare_tab.compare_review_mode = "commit";
+  compare_tab.compare_staging_view = "staged";
 
   PersistedEditorGroupState group;
   group.active_tab_index = 0;
@@ -1135,9 +1053,6 @@ void TestPersistedStateCompareTabReviewFieldsRoundTrip() {
   Expect(rebuilt.staging_view == WorkingTreeStagingView::Staged,
          "rebuilt CompareTabState should preserve the staged staging view");
 
-  // Backward compatibility: an older record with no review/staging tags must
-  // decode to empty strings so the rebuilt tab keeps the struct defaults instead
-  // of failing to decode.
   PersistedEditorTabState legacy_tab = compare_tab;
   legacy_tab.compare_review_mode.clear();
   legacy_tab.compare_staging_view.clear();
@@ -1316,10 +1231,6 @@ void TestPersistedStateDebugStateRoundTrip() {
 }
 
 void TestPersistedStateDebugStateBackwardCompatNoWatch() {
-  // A pre-Phase-6 record carried no WatchExpression tags. The new encoder emits
-  // none when the list is empty, producing byte-identical output, so this also
-  // proves an old record decodes with the new (additive-tag) decoder: the
-  // breakpoints survive and watch_expressions defaults empty (no schema bump).
   PersistedDebugState state;
   PersistedFileBreakpoints file;
   file.path = "/proj/legacy.py";
@@ -1341,18 +1252,15 @@ void TestPersistedStateDebugStateBackwardCompatNoWatch() {
   Expect(decoded.selected_launch_config_index == 2, "selected index survives a watch-free record");
 }
 
-// Watch expressions, conditions, and log messages can contain quotes, newlines,
-// and non-ASCII — the length-prefixed binary format must round-trip them verbatim
-// (a previous concern was special characters corrupting the record).
 void TestPersistedStateDebugStateSpecialCharacters() {
   PersistedDebugState state;
   PersistedFileBreakpoints file;
-  file.path = "/proj/π/main.py";  // non-ASCII path component
+  file.path = "/proj/π/main.py";
   file.breakpoints.push_back(PersistedBreakpoint{
       .line = 7,
       .enabled = true,
-      .condition = std::string("s == \"a\\tb\" && n > 0\nx"),  // quotes, tab, newline
-      .log_message = std::string("héllo {x}\nline2"),          // unicode + newline
+      .condition = std::string("s == \"a\\tb\" && n > 0\nx"),
+      .log_message = std::string("héllo {x}\nline2"),
   });
   state.files.push_back(std::move(file));
   state.watch_expressions = {"\"quoted\"", "a\nb", "ünïcödé", "tab\tsep", ""};
@@ -1377,23 +1285,16 @@ void TestPersistedStateDebugStateSpecialCharacters() {
 }
 
 void TestPersistedStateDebugStateRequiresSchema() {
-  // A body without the Schema tag must be rejected (mirrors project-session).
   std::vector<std::byte> body;
   PersistedDebugState empty;
-  // Encode then strip is awkward; instead decode an empty/garbage buffer.
   PersistedDebugState decoded;
   Expect(!DecodeDebugStateRecord(std::span<const std::byte>(body), &decoded),
          "empty body (no schema tag) should fail to decode");
 }
 
-// J16 regression: the debug-state decoder must bound each repeated collection so
-// a corrupt or hostile state file cannot force huge allocations before the
-// project UI opens. A record whose watch-expression count exceeds the per-section
-// cap (4096) must fail cleanly rather than materialize every entry.
 void TestPersistedStateDebugStateEnforcesDecodeCaps() {
   PersistedDebugState state;
   state.selected_launch_config_index = 0;
-  // 5000 > the 4096 per-section cap.
   for (int i = 0; i < 5000; ++i) {
     state.watch_expressions.push_back("w");
   }
@@ -1404,7 +1305,6 @@ void TestPersistedStateDebugStateEnforcesDecodeCaps() {
   Expect(!DecodeDebugStateRecord(encoded, &decoded),
          "a record exceeding the per-section watch cap should fail to decode");
 
-  // A record right at the cap still decodes so legitimate state is not rejected.
   PersistedDebugState at_cap;
   at_cap.selected_launch_config_index = 0;
   for (int i = 0; i < 4096; ++i) {
@@ -1419,17 +1319,11 @@ void TestPersistedStateDebugStateEnforcesDecodeCaps() {
          "at-cap watch expressions should all decode");
 }
 
-}  // namespace
+}
 
-// Regression: a corrupt/adversarial length prefix must not drive an unbounded
-// reservation. PrimitiveReader::ReadVector reads a count up to 2^32-1; a tiny
-// buffer claiming a huge count must fail cleanly rather than attempt a multi-
-// gigabyte allocation (previously a bad_alloc/OOM on session restore). The
-// split-node decoder uses the identical bounded-reserve pattern.
 void TestPersistedStateRejectsAdversarialLengthWithoutOom() {
   using microide::persistence::PrimitiveReader;
 
-  // u32 count = 0xFFFFFFFF, then no element bytes.
   const std::vector<std::byte> bytes = {std::byte{0xFF}, std::byte{0xFF}, std::byte{0xFF},
                                         std::byte{0xFF}};
   PrimitiveReader reader(bytes);
@@ -1465,11 +1359,6 @@ void TestPersistedStateMruRecordRoundTrip() {
          "mru recent files should round-trip with their project root");
 }
 
-// J17 regression: the MRU decoder must enforce RecentsService::MaxProjects() /
-// MaxFiles() so a malformed recents file cannot allocate every entry during
-// startup only for the service to discard almost all of them. Records are
-// newest-first, so the decoder keeps the leading cap-many entries and drops the
-// rest.
 void TestPersistedStateMruRecordEnforcesCaps() {
   using microide::workspace::RecentsService;
   PersistedMruState mru;
@@ -1491,7 +1380,6 @@ void TestPersistedStateMruRecordEnforcesCaps() {
          "mru decode should cap project roots at MaxProjects()");
   Expect(decoded.recent_files.size() == RecentsService::MaxFiles(),
          "mru decode should cap recent files at MaxFiles()");
-  // The retained entries are the leading (newest-first) ones.
   Expect(decoded.recent_project_roots.front() == std::filesystem::path("/home/u/proj/0"),
          "mru decode should keep the newest project roots");
   Expect(decoded.recent_files.front().path == std::filesystem::path("/home/u/proj/file/0"),
@@ -1499,7 +1387,6 @@ void TestPersistedStateMruRecordEnforcesCaps() {
 }
 
 void TestPersistedStateMruRecordRequiresSchema() {
-  // A stream that omits the schema record must be rejected (mirrors debug state).
   PersistedMruState empty;
   std::vector<std::byte> encoded;
   Expect(EncodeMruRecord(empty, &encoded), "empty mru record encode should succeed");
@@ -1510,10 +1397,6 @@ void TestPersistedStateMruRecordRequiresSchema() {
 }
 
 void TestPersistedStateProjectConfigMigratesLegacyEditorPrefTags() {
-  // Retired typed tags 2 (EditorTabSize, U32) / 3 (EditorIndentWidth, U32) /
-  // 4 (EditorSoftTabs, Bool) predate the layered `Setting` records. A config that
-  // carried indentation ONLY in these tags must migrate the values into the settings
-  // layer on decode instead of silently reverting to the spec default.
   PersistedProjectConfigState base{
       .colorscheme_name = {},
       .project_base_color = std::nullopt,
@@ -1563,7 +1446,6 @@ void TestPersistedStateProjectConfigMigratesLegacyEditorPrefTags() {
   Expect(soft_tabs != nullptr && *soft_tabs == "true",
          "legacy EditorSoftTabs should migrate into editor.soft_tabs");
 
-  // A modern `Setting` record for the same id wins: the legacy tag must not clobber it.
   PersistedProjectConfigState with_setting{
       .colorscheme_name = {},
       .project_base_color = std::nullopt,
@@ -1595,9 +1477,6 @@ void TestPersistedStateProjectConfigMigratesLegacyEditorPrefTags() {
          "a modern editor.tab_size setting should win over the legacy tag");
 }
 
-// Regression: when the primary state file is present but corrupt, a recovery
-// from the `.bak` must NOT auto-overwrite the still-recoverable primary with
-// stale backup state — only a genuine user mutation may heal it.
 void TestPersistenceServiceGuardsCorruptPrimaryFromBackupOverwrite() {
   using microide::persistence::PersistedRecordReader;
   using microide::persistence::PersistedRecordWriter;
@@ -1607,12 +1486,8 @@ void TestPersistenceServiceGuardsCorruptPrimaryFromBackupOverwrite() {
   const std::filesystem::path path = temp_dir.path() / "user.config";
   PersistenceService service;
 
-  // Save v1 then v2: the second save rotates v1 into the `.bak` sibling.
   PersistedUserConfigState v1{.ui_scale = 1.0f, .settings = {{"theme", "backup-good"}}};
   Expect(service.SaveUserConfig(path, v1), "first save should succeed");
-  // Land v1 before saving v2. Saves coalesce per path, so back-to-back saves are
-  // ONE write of the latest body -- and this test needs two real writes for the
-  // first to be rotated into the backup by the second.
   service.FlushPendingWrites();
   PersistedUserConfigState v2{.ui_scale = 1.0f, .settings = {{"theme", "current"}}};
   Expect(service.SaveUserConfig(path, v2), "second save should rotate v1 into the backup");
@@ -1620,17 +1495,13 @@ void TestPersistenceServiceGuardsCorruptPrimaryFromBackupOverwrite() {
   Expect(std::filesystem::exists(PersistedRecordWriter::BackupPathFor(path)),
          "a backup of the prior primary should exist");
 
-  // Corrupt the primary in place; the valid backup remains.
   WriteFile(path, "corrupt-not-a-valid-record-header");
 
-  // Load recovers the backup (v1) and arms the overwrite guard for this path.
   PersistedUserConfigState loaded;
   Expect(service.LoadUserConfig(path, &loaded), "load should recover from the backup");
   Expect(loaded.settings.size() == 1 && loaded.settings[0].second == "backup-good",
          "the recovered state should be the backup contents (v1)");
 
-  // An immediate save of the unchanged recovered state must be suppressed so the
-  // still-recoverable corrupt primary is preserved for manual recovery.
   Expect(service.SaveUserConfig(path, loaded), "no-op save should report success");
   service.FlushPendingWrites();
   {
@@ -1639,7 +1510,6 @@ void TestPersistenceServiceGuardsCorruptPrimaryFromBackupOverwrite() {
            "the primary must still be corrupt (the stale overwrite was suppressed)");
   }
 
-  // A genuine mutation lifts the guard: the save now heals the primary on disk.
   loaded.settings[0].second = "user-edited";
   Expect(service.SaveUserConfig(path, loaded), "a mutated save should write through");
   service.FlushPendingWrites();
@@ -1654,11 +1524,6 @@ void TestPersistenceServiceGuardsCorruptPrimaryFromBackupOverwrite() {
   }
 }
 
-// A save whose encoded body already sits on disk is skipped -- these writes are
-// durable (temp + fsync + backup rotation + rename) and run on the shell thread,
-// so re-writing identical bytes is a stall for nothing. The two things that skip
-// must never break: a record that changed still writes, and a record whose file
-// went away underneath the memo is recreated rather than assumed present.
 void TestPersistenceServiceSkipsRewritingIdenticalState() {
   using microide::persistence::PersistedRecordReader;
   using microide::persistence::PersistedRecordWriter;
@@ -1670,21 +1535,16 @@ void TestPersistenceServiceSkipsRewritingIdenticalState() {
 
   PersistedUserConfigState state{.ui_scale = 1.0f, .settings = {{"theme", "dark"}}};
   Expect(service.SaveUserConfig(path, state), "first save should succeed");
-  // Saves are applied on a background worker; this test asserts on-disk effects,
-  // so it waits for them rather than racing the writer.
   service.FlushPendingWrites();
   Expect(std::filesystem::exists(path), "the record should exist after the first save");
   Expect(!std::filesystem::exists(PersistedRecordWriter::BackupPathFor(path)),
          "a first save has no prior primary to rotate into a backup");
 
-  // Identical state: skipped, so no backup rotation happens. That absence is the
-  // observable proof the durable write did not run.
   Expect(service.SaveUserConfig(path, state), "an unchanged save should report success");
   service.FlushPendingWrites();
   Expect(!std::filesystem::exists(PersistedRecordWriter::BackupPathFor(path)),
          "an unchanged save must not rewrite the record (no backup rotation)");
 
-  // Changed state writes through, and now there is a prior primary to rotate.
   state.settings[0].second = "light";
   Expect(service.SaveUserConfig(path, state), "a changed save should write through");
   service.FlushPendingWrites();
@@ -1699,7 +1559,6 @@ void TestPersistenceServiceSkipsRewritingIdenticalState() {
            "the rewritten primary should hold the changed state");
   }
 
-  // The file disappearing must invalidate the memo: an identical save recreates it.
   std::error_code error;
   std::filesystem::remove(path, error);
   Expect(!std::filesystem::exists(path), "the record should be gone before the recreate check");
@@ -1708,8 +1567,6 @@ void TestPersistenceServiceSkipsRewritingIdenticalState() {
   Expect(std::filesystem::exists(path),
          "a save must not be skipped against a record that no longer exists");
 
-  // A load also seeds the memo, so the very first save after a restore of
-  // unchanged state is skipped too.
   PersistenceService fresh_service;
   PersistedUserConfigState loaded;
   Expect(fresh_service.LoadUserConfig(path, &loaded), "load should succeed");
@@ -1783,4 +1640,4 @@ void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
           TestPersistedStateCompareTabReviewFieldsRoundTrip);
 }
 
-}  // namespace microide::tests
+}

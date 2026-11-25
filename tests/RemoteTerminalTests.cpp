@@ -52,7 +52,6 @@ std::shared_ptr<remote::RemoteServerClient> ConnectWithRoot(const ShortServerDir
   return client;
 }
 
-// The server's terminal listing, asked over a fresh connection of its own.
 std::vector<remote::ServerTerminal> ListedTerminals(const ShortServerDir& dir) {
   auto client = Connect(dir);
   std::string error;
@@ -99,11 +98,6 @@ void TypeLine(TerminalSession& session, std::string_view text) {
   (void)session.SendKeyPress(enter);
 }
 
-// A terminal started through a remote project's launcher runs its shell ON THE
-// HOST, in the host's copy of the directory: typed keys reach it as semantic
-// events, and what it prints comes back as frames. OSC 7 comes back mapped into
-// the editor's tree, a title set with OSC 0 becomes the tab's label, and a resize
-// reaches the host's pty.
 void TestHostTerminalRunsTheShellOnTheHost() {
   ShortServerDir dir;
   StartServer(dir);
@@ -138,12 +132,6 @@ void TestHostTerminalRunsTheShellOnTheHost() {
   session.Stop();
 }
 
-// A program in a host terminal that opens a URL through $BROWSER (Claude Code's
-// login, `gh auth login --web`, xdg-open on a host with no display) reaches the
-// EDITOR, which opens it on the user's machine: the server gives its shells a
-// BROWSER that hands the URL to the client attached to that terminal, out of
-// band -- printing the same text does nothing. A URL the opener would refuse is
-// refused at the host, with a failing exit so the program prints it instead.
 void TestHostTerminalBrowserOpensOnTheClient() {
   ShortServerDir dir;
   StartServer(dir);
@@ -173,8 +161,6 @@ void TestHostTerminalBrowserOpensOnTheClient() {
   session.Stop();
 }
 
-// Answers the edit `token` over `client` with `text` (none: leave the file), and
-// says whether a program took it.
 bool AnswerEdit(remote::RemoteServerClient& client, std::uint64_t token, std::optional<std::string> text) {
   util::JsonObject params;
   params["token"] = util::JsonValue(static_cast<std::int64_t>(token));
@@ -197,13 +183,6 @@ std::optional<terminal::TerminalHostEdit> WaitForEdit(TerminalSession& session) 
   return edit;
 }
 
-// A program in a host terminal that runs its $EDITOR on a file (git's commit
-// message, an agent CLI's prompt) reaches the EDITOR instead of a vi drawn into
-// the pane: the server gives its shells an EDITOR that hands the file's text to
-// the client attached to that terminal and waits. The client's answer -- its tab
-// closed -- is written to the file and the program goes on; an answer with no
-// text leaves the file alone; and a helper that was interrupted waits for
-// nothing, so a late answer is told so.
 void TestHostTerminalEditorEditsOnTheClient() {
   ShortServerDir dir;
   StartServer(dir);
@@ -236,7 +215,6 @@ void TestHostTerminalEditorEditsOnTheClient() {
   Expect(util::ReadTextFile(host / "COMMIT_EDITMSG") == "the message\n", "with what was saved in the file");
   Expect(!AnswerEdit(*client, edit->token, "again\n"), "a second answer finds nothing waiting");
 
-  // A file that does not exist yet is created by a save, not by a closed tab.
   TypeLine(session, "\"$EDITOR\" new.txt; echo NEW=$?");
   edit = WaitForEdit(session);
   Expect(edit.has_value() && edit->text.empty() && edit->line == 0, "a missing file arrives empty");
@@ -244,7 +222,6 @@ void TestHostTerminalEditorEditsOnTheClient() {
   Expect(WaitForText(session, "NEW=0"), "the program goes on");
   Expect(!std::filesystem::exists(host / "new.txt"), "and no file was made");
 
-  // Interrupted: the request is withdrawn with the helper.
   TypeLine(session, "\"$EDITOR\" COMMIT_EDITMSG");
   edit = WaitForEdit(session);
   Expect(edit.has_value(), "a third edit arrives");
@@ -262,11 +239,6 @@ void TestHostTerminalEditorEditsOnTheClient() {
   session.Stop();
 }
 
-// What the forwarder cannot serve runs the terminal's own editor, as if EDITOR
-// had not been set: a client older than the request (wire version 4), several
-// files, an option it does not know. And a client that leaves the terminal on
-// purpose ends the requests it holds there, so a closed project does not leave a
-// `git commit` waiting on the host for a tab nobody has.
 void TestHostTerminalEditorFallsBackAndIsAbandoned() {
   ShortServerDir dir;
   StartServer(dir);
@@ -274,7 +246,6 @@ void TestHostTerminalEditorFallsBackAndIsAbandoned() {
   const std::filesystem::path bin = dir.scratch() / "bin";
   std::filesystem::create_directories(root);
   std::filesystem::create_directories(bin);
-  // A stand-in for the host's terminal editor: it records what it was run on.
   WriteFile(bin / "sensible-editor", "#!/bin/sh\necho \"terminal-editor $*\" > \"$EDIT_MARK\"\n");
   std::filesystem::permissions(bin / "sensible-editor", std::filesystem::perms::owner_all);
   const std::string mark = (dir.scratch() / "ran").string();
@@ -319,7 +290,7 @@ void TestHostTerminalEditorFallsBackAndIsAbandoned() {
   TypeLine(session, "\"$EDITOR\" note.txt; echo LEFT=$?");
   const std::optional<terminal::TerminalHostEdit> edit = WaitForEdit(session);
   Expect(edit.has_value(), "an edit arrives");
-  channel->Detach();  // a quit, a closed project
+  channel->Detach();
   TerminalSessionTestAccess::EnterHostMode(session, nullptr);
 
   TerminalSession again;
@@ -334,10 +305,6 @@ void TestHostTerminalEditorFallsBackAndIsAbandoned() {
   TerminalSessionTestAccess::EnterHostMode(again, nullptr);
 }
 
-// The pty belongs to the server, not to the connection: a dropped link signals
-// nothing in it. The shell keeps running and producing output, and a second
-// connection that attaches to the same handle sees what it printed before AND
-// while nobody was attached, and can keep typing into it.
 void TestHostTerminalSurvivesADroppedConnection() {
   ShortServerDir dir;
   StartServer(dir);
@@ -359,7 +326,7 @@ void TestHostTerminalSurvivesADroppedConnection() {
     Expect(WaitForText(session, "before-2"), [&] { return std::string("output before the drop:\n" + ScreenText(session)); });
     handle = channel->handle();
     Expect(handle != 0, "the open was answered");
-    first->peer().Fail("link dropped");  // nothing is closed on the host
+    first->peer().Fail("link dropped");
     Expect(WaitUntil([&] { return !session.running(); }, std::chrono::seconds(5)),
            "the dropped link shows as an ended session");
     Expect(ScreenText(session).find("connection to the host lost") != std::string::npos,
@@ -383,11 +350,6 @@ void TestHostTerminalSurvivesADroppedConnection() {
   session.Stop();
 }
 
-// Over a link with a real round trip (tests/support/DelayRelay.h): a typed
-// character is drawn in the keystroke's own call, predicted, and the host's echo
-// confirms it about one round trip later. With the server stalled the prediction
-// stays pending -- nothing is invented in its place -- and it confirms once the
-// stall clears. The relay itself is what the remote perf scenarios measure with.
 void TestPredictionLeadsTheEchoByARoundTrip() {
   ShortServerDir dir;
   StartServer(dir);
@@ -415,7 +377,6 @@ void TestPredictionLeadsTheEchoByARoundTrip() {
       session, identity);
   Expect(channel != nullptr, "the terminal opens");
   TerminalSessionTestAccess::EnterHostMode(session, channel);
-  // Split so the echoed command line cannot match the prompt it sets.
   TypeLine(session, "PS1='rea''dy> '");
   Expect(WaitForText(session, "ready> "), [&] { return std::string("the prompt arrives:\n" + ScreenText(session)); });
 
@@ -454,9 +415,6 @@ void TestPredictionLeadsTheEchoByARoundTrip() {
   channel.reset();
 }
 
-// A reconnect from the SAME session is warm: it keeps everything it already
-// mirrored and receives only what the shell printed since — the history is not
-// re-sent, and nothing appears twice.
 void TestWarmReattachKeepsTheMirrorAndDuplicatesNothing() {
   ShortServerDir dir;
   StartServer(dir);
@@ -499,13 +457,6 @@ void TestWarmReattachKeepsTheMirrorAndDuplicatesNothing() {
   channel.reset();
 }
 
-// Two clients on one host terminal SHARE it (spec "Two clients share one pty at
-// the size of the one typing"): both see every byte and both can type, and the
-// pty is the pane of whoever typed last -- the smaller of the two only until one
-// of them has. A machine left attached elsewhere (a suspended laptop) used to
-// hold the other to its window for as long as its link took to time out. A
-// one-shot signal (the bell) reaches each of them, and when one leaves the other
-// has its own size. A second attach used to take the terminal over from the first.
 void TestTwoClientsShareAHostTerminalAtTheSizeOfTheOneTyping() {
   ShortServerDir dir;
   StartServer(dir);
@@ -532,15 +483,10 @@ void TestTwoClientsShareAHostTerminalAtTheSizeOfTheOneTyping() {
   Expect(channel_b != nullptr, "the second client attaches");
   TerminalSessionTestAccess::EnterHostMode(b, channel_b);
   b.Resize(10, 40);
-  // Nobody has typed: the smaller pane, so each sees the whole screen.
   Expect(WaitUntil([&] { return a.rows() == 10 && a.columns() == 40; }, std::chrono::seconds(10)),
          "until someone types, the pty is the smaller pane and the larger client mirrors it");
 
-  // The first client types: the pty is its pane now, and the smaller client
-  // mirrors a screen larger than its own.
   TypeLine(a, "echo ready-$((1+1)); stty size");
-  // On a blank screen, whether any frame arrived at all (TD-2026-10-27-406): the
-  // server's log is printed with the failure (ShortServerDir).
   Expect(WaitForText(a, "ready-2"), [&] { return std::string("the first client sees its shell (handle " +
                                         std::to_string(channel_a->handle()) + ", " +
                                         std::to_string(channel_a->received_bytes()) + " frame bytes):\n" +
@@ -550,7 +496,6 @@ void TestTwoClientsShareAHostTerminalAtTheSizeOfTheOneTyping() {
   Expect(WaitUntil([&] { return b.rows() == 20 && b.columns() == 80; }, std::chrono::seconds(5)),
          "the smaller client mirrors the typist's size");
 
-  // The second client types: the size follows it.
   TypeLine(b, "stty size");
   Expect(WaitForText(b, "10 40") && WaitForText(a, "10 40"), [&] { return std::string("the pty follows whoever typed last:\n" + ScreenText(a)); });
   Expect(WaitUntil([&] { return a.rows() == 10 && a.columns() == 40; }, std::chrono::seconds(5)),
@@ -564,18 +509,10 @@ void TestTwoClientsShareAHostTerminalAtTheSizeOfTheOneTyping() {
              WaitUntil([&] { return b.ConsumeBell(); }, std::chrono::seconds(5)),
          "a bell rings for both clients, not only the first frame's");
 
-  // The second machine closes its tab, then goes away. Its tab's term/close
-  // leaves the terminal to the first client: it does not end a shell someone else
-  // is using. (Flushed: whether the close was written before the socket closed
-  // used to decide whether the first client's shell survived.)
   TerminalSessionTestAccess::EnterHostMode(b, nullptr);
   channel_b.reset();
   Expect(second->peer().Flush(std::chrono::seconds(5), std::chrono::seconds(5)), "the second client's close is sent");
   second.reset();
-  // The host's own answer, not a sleep: the remaining client's view is back at
-  // its size with no output needed (the detach used to wait for the program to
-  // print), and under a sanitizer on a loaded machine the host took longer than
-  // the half-second sleep this test once relied on.
   Expect(WaitUntil([&] { return a.rows() == 20 && a.columns() == 80; }, std::chrono::seconds(20)),
          "the host detaches the second client and the remaining one's view is its own size again");
   TypeLine(a, "stty size");
@@ -583,10 +520,6 @@ void TestTwoClientsShareAHostTerminalAtTheSizeOfTheOneTyping() {
   a.Stop();
 }
 
-// An attach prefetches only the newest history; scrolling to the top of a host
-// terminal asks for the page before it (term/scrollback), until the host holds
-// nothing older. Every line arrives exactly once and in order, and the rows the
-// mirror already held keep their absolute index (the trim total goes DOWN).
 void TestScrollingUpFetchesOlderHostHistory() {
   ShortServerDir dir;
   StartServer(dir);
@@ -614,7 +547,6 @@ void TestScrollingUpFetchesOlderHostHistory() {
     TerminalSessionTestAccess::EnterHostMode(writer, nullptr);
   }
 
-  // A second client attaches (the terminal prefetches 100 lines) and pages back.
   auto second = Connect(dir);
   TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 10, 40);
@@ -630,7 +562,6 @@ void TestScrollingUpFetchesOlderHostHistory() {
       for (const auto& cell : line.cells) {
         text += cell.DisplayText();
       }
-      // "row-N", possibly after a prompt that raced the first line ("$ row-1").
       if (const std::size_t at = text.find("row-"); at != std::string::npos &&
                                                      text.find("echo") == std::string::npos) {
         numbers.push_back(std::stoi(text.substr(at + 4)));
@@ -638,14 +569,11 @@ void TestScrollingUpFetchesOlderHostHistory() {
     }
     return numbers;
   };
-  // The screen and the prefetched history can land in separate frames: wait for
-  // the rows, and never read front() of an empty result (that was a TSAN SEGV).
   Expect(WaitUntil([&] { return !rows().empty(); }, std::chrono::seconds(10)), [&] { return std::string("the attach mirrors the prefetched rows:\n" + ScreenText(session)); });
   const std::vector<int> prefetched = rows();
   Expect(!prefetched.empty() && prefetched.size() < 200 && prefetched.front() > 1000,
          "only the newest history was prefetched (" + std::to_string(prefetched.size()) + " rows)");
   const std::uint64_t trim_before = session.ScrollbackTrimTotal();
-  // Page back until the host has nothing older: the mirror stops growing.
   for (int page = 0; page < 10; ++page) {
     const std::size_t held = session.SnapshotLines().size();
     session.RequestOlderHostHistory();
@@ -665,9 +593,6 @@ void TestScrollingUpFetchesOlderHostHistory() {
   session.Stop();
 }
 
-// server/status lists every live terminal -- attached, detached, exited -- under
-// the workspace root of the connection that opened it, with its directory and
-// its attached clients; the per-workspace count is derived from the same rows.
 void TestServerStatusListsTerminalsAcrossRoots() {
   ShortServerDir dir;
   StartServer(dir);
@@ -706,7 +631,7 @@ void TestServerStatusListsTerminalsAcrossRoots() {
     TypeLine(left, "echo left-$((2+2))");
     Expect(WaitForText(left, "left-4"), "the third shell answers");
     detached_handle = left_channel->handle();
-    b->peer().Fail("link dropped");  // nothing is closed on the host
+    b->peer().Fail("link dropped");
     Expect(WaitUntil([&] { return !left.running(); }, std::chrono::seconds(5)), "its link is gone");
     Expect(!left.host_shell_exited(), "a lost link is not an exited shell");
     TerminalSessionTestAccess::EnterHostMode(left, nullptr);
@@ -749,9 +674,6 @@ void TestServerStatusListsTerminalsAcrossRoots() {
   exited.Stop();
 }
 
-// The listing is untrusted on the client: a malformed row is dropped rather than
-// guessed at, and a reply with no listing (an older server, whose `terminals` is
-// a count) lists nothing -- it is not an error.
 void TestServerStatusDecoderTrustsNothing() {
   const auto parse = [](std::string_view text) {
     const std::optional<util::JsonValue> json = util::ParseJson(text);
@@ -801,10 +723,6 @@ void TestServerStatusDecoderTrustsNothing() {
   Expect(parse(many).terminals->size() == remote::kMaxListedTerminals, "a flood is capped");
 }
 
-// A terminal-only session (no workspace root) holds an on-demand server past its
-// idle timeout once its connection goes without term/close -- the idle rule
-// counts terminals -- and a shell that exits while nobody is attached keeps its
-// terminal listed, exited, for the next attach to see.
 void TestADetachedTerminalHoldsAnOnDemandServer() {
   ShortServerDir dir;
   std::uint64_t handle = 0;
@@ -825,22 +743,13 @@ void TestADetachedTerminalHoldsAnOnDemandServer() {
     TypeLine(session, "sleep 1; exit");
     Expect(WaitUntil([&] { return channel->handle() != 0; }, std::chrono::seconds(10)), "it is answered");
     handle = channel->handle();
-    channel->Detach();  // what quit does: no term/close
+    channel->Detach();
     TerminalSessionTestAccess::EnterHostMode(session, nullptr);
-  }  // the client and its attach relay go
-  // Twenty idle timeouts with no client: an on-demand server that counted only
-  // connections would be gone.
+  }
   std::this_thread::sleep_for(std::chrono::milliseconds(2000));
   std::vector<remote::ServerTerminal> rows = ListedTerminals(dir);
   Expect(Listed(rows, handle) != nullptr, "the server outlived its idle timeout and still holds the terminal");
-  // The shell's `sleep 1; exit` finishes on the host's own time (a loaded
-  // machine starts it late): wait for it rather than assume it.
-  // What the last poll saw, so a failure says which of "the server let go of the
-  // terminal", "the shell never ran the typed line" and "it ran but was not
-  // reaped" happened (TD-2026-10-28-413).
   std::string last_seen = "never listed";
-  // The wait runs before the message is built: as one Expect(WaitUntil(...), [&] { return std::string(// "..." + last_seen); }) the argument order is unspecified, and GCC built the
-  // message first -- every failure then read "never listed".
   const bool exited = WaitUntil(
              [&] {
                rows = ListedTerminals(dir);
@@ -858,16 +767,6 @@ void TestADetachedTerminalHoldsAnOnDemandServer() {
          "exited while detached, attached to nobody, under no workspace");
 }
 
-// A detach that keeps the connection (TD-2026-10-27-399) tells the host: the
-// terminal is listed with no client -- what a second machine is offered as
-// unclaimed -- while the connection that detached it is still open, and the
-// shell keeps running.
-// Closing a terminal and then the connection (what quit does: Stop() every exited
-// shell, then drop the client) must still close it on the host. The client's
-// destructor stopped its transport without flushing, so a term/close still queued
-// behind other frames was dropped and the host kept the shell, unclaimed, holding
-// the server -- seen as RemoteTerminalRestore/HostTerminalLifetimeAndUnclaimedTerminals
-// failing under load. The backlog here makes the close wait behind other frames.
 void TestAClosedTerminalIsClosedOnTheHostWhenTheClientGoesAtOnce() {
   ShortServerDir dir;
   StartServer(dir);
@@ -883,11 +782,6 @@ void TestAClosedTerminalIsClosedOnTheHostWhenTheClientGoesAtOnce() {
     TerminalSessionTestAccess::EnterHostMode(session, channel);
     Expect(WaitUntil([&] { return channel->handle() != 0; }, std::chrono::seconds(10)), "it is answered");
     handle = channel->handle();
-    // Harmless frames ahead of the close: more than the socket buffers hold, so
-    // the close is still queued when the client goes (2000 already fails 5 of 5
-    // without the flush). On a loaded sanitizer build the host reads them for
-    // longer than any fixed deadline allowed, which is why the flush gives up on a
-    // stall rather than at one.
     constexpr int kBacklogFrames = 20000;
     util::JsonObject ack;
     ack["handle"] = util::JsonValue(static_cast<std::int64_t>(handle));
@@ -898,7 +792,7 @@ void TestAClosedTerminalIsClosedOnTheHostWhenTheClientGoesAtOnce() {
     }
     channel->Close();
     TerminalSessionTestAccess::EnterHostMode(session, nullptr);
-  }  // the channel, the session and the client go at once
+  }
   const bool closed = WaitUntil([&] { return Listed(ListedTerminals(dir), handle) == nullptr; },
                                 std::chrono::seconds(10), std::chrono::milliseconds(100));
   Expect(closed, "the close queued before the client went reached the host");
@@ -938,11 +832,6 @@ void TestADetachThatKeepsTheConnectionReleasesTheTerminal() {
   Expect(row != nullptr && !row->exited, "and the shell still runs");
 }
 
-// What was typed while term/open was in flight reaches the shell even when the
-// terminal is detached the moment its handle is known: the held input is queued
-// before the handle is visible, so term/detach cannot overtake it (the host drops
-// input from a connection no longer attached). Spun on the handle, many times:
-// the window was microseconds wide.
 void TestInputTypedBeforeTheOpenSurvivesAnImmediateDetach() {
   ShortServerDir dir;
   StartServer(dir);
@@ -988,11 +877,6 @@ void TestInputTypedBeforeTheOpenSurvivesAnImmediateDetach() {
   (void)closer->peer().Flush(std::chrono::seconds(5), std::chrono::seconds(5));
 }
 
-// Quit and close-project detach a host terminal rather than close it; a reopen
-// reattaches it COLD from the recorded identity -- the screen, what the shell
-// printed meanwhile, a dim rule under the restored history. A recorded identity
-// from another server process, or a handle the server no longer has, opens a
-// fresh shell instead and says which. Closing still ends the terminal.
 void TestADetachedHostTerminalIsReattachedByIdentity() {
   ShortServerDir dir;
   StartServer(dir);
@@ -1017,13 +901,8 @@ void TestADetachedHostTerminalIsReattachedByIdentity() {
     session.DetachFromHost();
     Expect(!session.running() && session.host_identity() == recorded,
            "detached: not running, the identity kept for the session to record");
-  }  // the session (destroyed detached) and the connection go
+  }
   {
-    // The listing comes over a NEW connection, which the server serves
-    // independently of the first one's detach and close: under load it can
-    // answer before it has processed them and still count the old client. What
-    // is asserted is where it settles -- attached to nobody -- and that the
-    // terminal is never closed on the way there.
     std::string last = "never listed";
     const bool settled = WaitUntil(
         [&] {
@@ -1031,7 +910,7 @@ void TestADetachedHostTerminalIsReattachedByIdentity() {
           const remote::ServerTerminal* row = Listed(rows, recorded.handle);
           if (row == nullptr || row->exited) {
             last = row == nullptr ? "not listed" : "exited";
-            return true;  // settled, wrongly: reported below
+            return true;
           }
           last = "clients=" + std::to_string(row->clients);
           return row->clients == 0;
@@ -1057,7 +936,6 @@ void TestADetachedHostTerminalIsReattachedByIdentity() {
   TypeLine(reopened, "echo again-$((8*8))");
   Expect(WaitForText(reopened, "again-64"), "and it takes input");
 
-  // Recorded under another server process: a fresh shell, never that handle here.
   TerminalSession restarted;
   Expect(restarted.Start(launcher, mirror, {}, "sh", terminal::HostIdentity{.epoch = "gone", .handle = recorded.handle}),
          "a stale-epoch start");
@@ -1067,7 +945,6 @@ void TestADetachedHostTerminalIsReattachedByIdentity() {
   Expect(WaitForText(restarted, "fresh-9"), [&] { return std::string("a fresh shell:\n" + ScreenText(restarted)); });
   Expect(restarted.host_identity().handle != recorded.handle, "a different terminal");
 
-  // A handle the server does not have: refused, then a fresh shell.
   TerminalSession gone;
   Expect(gone.Start(launcher, mirror, {}, "sh",
                     terminal::HostIdentity{.epoch = recorded.epoch, .handle = 999'999}),
@@ -1078,7 +955,6 @@ void TestADetachedHostTerminalIsReattachedByIdentity() {
   Expect(gone.host_identity().handle != 999'999 && !gone.host_identity().empty(),
          "the identity is the new terminal's");
 
-  // Closing ends it on the host.
   reopened.Stop();
   Expect(WaitUntil([&] { return Listed(ListedTerminals(dir), recorded.handle) == nullptr; },
                    std::chrono::seconds(10)),
@@ -1087,15 +963,6 @@ void TestADetachedHostTerminalIsReattachedByIdentity() {
   gone.Stop();
 }
 
-// A host terminal asked for before the connection is up is PENDING: it shows
-// one status line, drops input (it must not reach a shell that may turn out to be
-// another), and starts -- the open it was waiting for -- once the connection is.
-// A live host terminal whose server is killed: the reconnect reaches the server
-// that replaced it, where the terminal's handle names nothing -- its shell ended
-// with the old process. The pane is then an ended shell that says why (Enter
-// starts a new one), claiming no handle; it used to stay "detached" for good,
-// waiting on a link that was long back, with no word of what happened (remote.py
-// Z: both host tabs read "bash · detached" after a server kill, the project ready).
 void TestALiveTerminalWhoseServerRestartedEndsAndSaysWhy() {
   ShortServerDir dir;
   StartServer(dir);
@@ -1119,7 +986,6 @@ void TestALiveTerminalWhoseServerRestartedEndsAndSaysWhy() {
   ::kill(static_cast<pid_t>(before.value_or(remote::ServerStatus{}).pid.value_or(0)), SIGKILL);
   Expect(WaitUntil([&] { return session.host_link_down(); }, std::chrono::seconds(10)),
          "the server's death drops the link");
-  // Until its socket refuses: `start` asks that before starting another.
   Expect(WaitUntil([&] {
            const int fd = platform::ConnectUnixSocket(remote::ServerSocketPath(dir.path()));
            if (fd >= 0) {
@@ -1162,7 +1028,7 @@ void TestAPendingHostTerminalStartsOnceConnected() {
   Expect(ScreenText(session).find("[connecting to fake") != std::string::npos,
          "its one line says what it waits for:\n" + ScreenText(session));
   TypeLine(session, "echo DROPPED");
-  (void)session.StartPendingOnHost(launcher);  // not ready yet: it waits again
+  (void)session.StartPendingOnHost(launcher);
   Expect(session.host_pending(), "still pending while the host is not connected");
 
   connection->Replace(Connect(dir));
@@ -1177,7 +1043,7 @@ void TestAPendingHostTerminalStartsOnceConnected() {
   session.Stop();
 }
 
-}  // namespace
+}
 
 void RegisterRemoteTerminalTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteTerminal/ServerStatusListsTerminalsAcrossRoots",
@@ -1215,4 +1081,4 @@ void RegisterRemoteTerminalTests(std::vector<TestCase>& tests) {
           TestTwoClientsShareAHostTerminalAtTheSizeOfTheOneTyping);
 }
 
-}  // namespace microide::tests
+}

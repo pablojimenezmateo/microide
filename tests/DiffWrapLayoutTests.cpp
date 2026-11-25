@@ -1,18 +1,3 @@
-// The row table behind soft wrap on the compare and merge surfaces.
-//
-// Those surfaces align their panes row-for-row, which soft wrap breaks: one
-// aligned unit occupies N rows on the left and M on the right. The table gives
-// the unit max(N, M) rows and pads the shorter side with absent rows, so the
-// panes stay locked together while each side wraps to its own width. Everything
-// downstream -- gutters, diff markers, hit tests, the caret -- reads that
-// padding through `left_present` / `right_present`, so a unit whose two sides
-// disagree about their row count is the case worth enumerating.
-//
-// This is header-only arithmetic shared by both surfaces and had no direct
-// tests: the checks here rebuild the expected rows straight from
-// `TextLayout::WrapLineSegments`, which is itself property-tested against a
-// partition/resume oracle in TextLayoutTests.
-
 #include "TestSupport.h"
 
 #include <cstdint>
@@ -56,7 +41,7 @@ void Build(const DiffWrapLayout& layout,
            std::size_t columns,
            std::size_t tab_size,
            std::uint64_t revision = 1) {
-  layout.Ensure(revision, /*soft_wrap=*/true, columns, columns, tab_size, units.size(),
+  layout.Ensure(revision, true, columns, columns, tab_size, units.size(),
                 [&](std::size_t unit) {
                   DiffWrapLayout::UnitText text;
                   text.has_left = units[unit].has_left;
@@ -67,12 +52,9 @@ void Build(const DiffWrapLayout& layout,
                 });
 }
 
-// Wrap off is the identity: no rows resident, every accessor answers from the
-// unit index, and `RowAt` synthesizes a both-panes-present row so callers need
-// no branch.
 void TestInactiveLayoutIsTheIdentity() {
   DiffWrapLayout layout;
-  layout.Ensure(1, /*soft_wrap=*/false, 40, 40, 4, 5,
+  layout.Ensure(1, false, 40, 40, 4, 5,
                 [](std::size_t) { return DiffWrapLayout::UnitText{}; });
   Expect(!layout.active(), "wrap off leaves the table inactive");
   Expect(layout.RowCount(5) == 5, "row count is the unit count");
@@ -84,8 +66,6 @@ void TestInactiveLayoutIsTheIdentity() {
          "the synthesized row has both panes");
 }
 
-// The core invariant, over units whose two sides wrap to different row counts in
-// both directions, plus units present on one side only and an empty unit.
 void TestRowsMatchTheSegmentsAndPadTheShorterSide() {
   const std::vector<Unit> units = {
       {"short", "a much longer right side that has to wrap several times", true, true},
@@ -156,41 +136,34 @@ void TestRowsMatchTheSegmentsAndPadTheShorterSide() {
   }
 }
 
-// Column -> row within a unit: a column inside a segment lands on that segment's
-// row, a column past end-of-line lands on the LAST row carrying that side (where
-// the caret goes), and a side that ran out of rows falls back onto its own last
-// row rather than onto a row it does not occupy.
 void TestRowForUnitColumnLandsOnTheSegmentOrTheLastRowOfThatSide() {
   const std::vector<Unit> units = {
       {"aaaabbbbcccc", "dddd", true, true},
   };
   DiffWrapLayout layout;
-  Build(layout, units, /*columns=*/4, /*tab_size=*/4);
+  Build(layout, units, 4, 4);
   const std::size_t first = layout.FirstRowForUnit(0);
   Expect(layout.RowSpanForUnit(0) == 3, "the left side takes three rows, the right one");
 
-  Expect(layout.RowForUnitColumn(0, 0, /*right_side=*/false) == first,
+  Expect(layout.RowForUnitColumn(0, 0, false) == first,
          "column 0 is on the first row");
-  Expect(layout.RowForUnitColumn(0, 5, /*right_side=*/false) == first + 1,
+  Expect(layout.RowForUnitColumn(0, 5, false) == first + 1,
          "a column in the second segment is on the second row");
-  Expect(layout.RowForUnitColumn(0, 12, /*right_side=*/false) == first + 2,
+  Expect(layout.RowForUnitColumn(0, 12, false) == first + 2,
          "a column at end-of-line falls back to the last row");
-  Expect(layout.RowForUnitColumn(0, 99, /*right_side=*/false) == first + 2,
+  Expect(layout.RowForUnitColumn(0, 99, false) == first + 2,
          "a column past the line falls back to the last row");
 
-  Expect(layout.RowForUnitColumn(0, 2, /*right_side=*/true) == first,
+  Expect(layout.RowForUnitColumn(0, 2, true) == first,
          "the right side's only row holds its columns");
-  Expect(layout.RowForUnitColumn(0, 99, /*right_side=*/true) == first,
+  Expect(layout.RowForUnitColumn(0, 99, true) == first,
          "a right column past the line stays on the row the right side occupies");
 }
 
-// A unit index or row index from a stale build must clamp into the table rather
-// than index past it -- these are read from const geometry paths that can run
-// between a content change and the rebuild that follows it.
 void TestStaleIndicesClamp() {
   const std::vector<Unit> units = {{"a", "b", true, true}, {"cc", "dd", true, true}};
   DiffWrapLayout layout;
-  Build(layout, units, /*columns=*/8, /*tab_size=*/4);
+  Build(layout, units, 8, 4);
   const std::size_t rows = layout.RowCount(units.size());
 
   Expect(layout.FirstRowForUnit(99) < rows, "a stale unit index lands inside the table");
@@ -199,26 +172,23 @@ void TestStaleIndicesClamp() {
   Expect(layout.RowForUnitColumn(99, 0, false) < rows, "a stale unit column lands inside");
 }
 
-// Rebuild keying: the table is rebuilt when the width, tab size, unit count or
-// revision moves, and reused when none of them has.
 void TestRebuildFollowsItsKey() {
   const std::vector<Unit> units = {{"aaaaaaaaaaaa", "aaaaaaaaaaaa", true, true}};
   DiffWrapLayout layout;
-  Build(layout, units, /*columns=*/4, /*tab_size=*/4, /*revision=*/1);
+  Build(layout, units, 4, 4, 1);
   Expect(layout.RowSpanForUnit(0) == 3, "at width 4 the line takes three rows");
   Expect(layout.built_left_columns() == 4, "the table records the width it was built at");
 
-  Build(layout, units, /*columns=*/16, /*tab_size=*/4, /*revision=*/1);
+  Build(layout, units, 16, 4, 1);
   Expect(layout.RowSpanForUnit(0) == 1, "a width change rebuilds even at the same revision");
   Expect(layout.built_left_columns() == 16, "the recorded width follows");
 
-  // Wrap off resets, so nothing is resident while it is unused.
-  layout.Ensure(1, /*soft_wrap=*/false, 16, 16, 4, units.size(),
+  layout.Ensure(1, false, 16, 16, 4, units.size(),
                 [](std::size_t) { return DiffWrapLayout::UnitText{}; });
   Expect(!layout.active() && layout.RowCount(7) == 7, "turning wrap off resets to the identity");
 }
 
-}  // namespace
+}
 
 void RegisterDiffWrapLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DiffWrapLayout/InactiveLayoutIsTheIdentity", TestInactiveLayoutIsTheIdentity);
@@ -230,4 +200,4 @@ void RegisterDiffWrapLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DiffWrapLayout/RebuildFollowsItsKey", TestRebuildFollowsItsKey);
 }
 
-}  // namespace microide::tests
+}

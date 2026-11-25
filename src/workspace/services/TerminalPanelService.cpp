@@ -82,8 +82,6 @@ void TerminalPanelService::HidePanel() {
   ClearBottomPanelContent(state_);
 }
 
-// --- strip tabs ---------------------------------------------------------------
-
 void TerminalPanelService::OpenTerminal(std::string command, bool focus_terminal, bool log_feedback) {
   (void) log_feedback;
   if (state_.root.empty()) {
@@ -102,7 +100,7 @@ bool TerminalPanelService::OpenTerminalOn(std::shared_ptr<const platform::Proces
   const bool was_visible = PanelVisible();
   return PushTerminalTab(operations_.make_started_pane(std::move(command), std::move(launcher),
                                                        std::move(label_prefix), {}, {}),
-                         /*show=*/true, /*focus=*/true, was_visible);
+                         true, true, was_visible);
 }
 
 bool TerminalPanelService::OpenTerminalAttached(terminal::HostIdentity identity) {
@@ -111,7 +109,7 @@ bool TerminalPanelService::OpenTerminalAttached(terminal::HostIdentity identity)
   }
   const bool was_visible = PanelVisible();
   return PushTerminalTab(operations_.make_started_pane({}, {}, {}, {}, std::move(identity)),
-                         /*show=*/true, /*focus=*/true, was_visible);
+                         true, true, was_visible);
 }
 
 bool TerminalPanelService::AdoptHostTerminal(ProjectWorkspaceState& state, terminal::HostIdentity identity) {
@@ -127,7 +125,6 @@ bool TerminalPanelService::AdoptHostTerminal(ProjectWorkspaceState& state, termi
   if (first) {
     state.active_terminal_tab_index = 0;
   }
-  // The session the next save writes names it, as it names every started pane.
   state.host_terminals_unrecorded = true;
   if (&state == &state_) {
     operations_.note_layout_inputs_changed();
@@ -154,18 +151,11 @@ bool TerminalPanelService::PushTerminalTab(std::unique_ptr<TerminalPaneState> pa
 void TerminalPanelService::OpenTerminalsForProjectInit() {
   TerminalLayoutRecord layout = std::move(state_.terminal_layout_to_revive);
   state_.terminal_layout_to_revive = {};
-  // The project's terminal is shown, but the keyboard starts in the editor, as in
-  // VS Code: the first Ctrl+N or typed letter of a session is not the shell's
-  // (TD-2026-10-16-348). Unless the panel comes back MAXIMIZED: then there is no
-  // editor on screen to hold the keyboard, and leaving it there made the first
-  // frame's SyncPanelMaximizedWithFocus read "the editor took focus" and restore
-  // the panel the session had just revived maximized.
   const bool focus_panel = state_.panel.maximized;
   if (!layout.empty() && (!operations_.revive_terminals || operations_.revive_terminals())) {
     for (TerminalTabRecord& record : layout.tabs) {
       std::unique_ptr<TerminalTabState> tab;
       for (TerminalPaneRecord& pane_record : record.panes) {
-        // A directory that is gone starts at the project root, as a fresh one does.
         std::error_code error;
         if (!pane_record.cwd.empty() && !std::filesystem::is_directory(pane_record.cwd, error)) {
           pane_record.cwd.clear();
@@ -179,13 +169,12 @@ void TerminalPanelService::OpenTerminalsForProjectInit() {
         if (tab == nullptr) {
           tab = MakeTerminalTab(std::move(pane));
         } else {
-          (void)tab->InsertPane(tab->pane_count(), std::move(pane));  // capped by decode
+          (void)tab->InsertPane(tab->pane_count(), std::move(pane));
         }
       }
       if (tab == nullptr) {
         continue;
       }
-      // The saved shares only when they still describe these panes.
       if (record.weights.size() == tab->pane_count() &&
           std::all_of(record.weights.begin(), record.weights.end(),
                       [](float w) { return std::isfinite(w) && w > 0.0f; })) {
@@ -205,15 +194,12 @@ void TerminalPanelService::OpenTerminalsForProjectInit() {
       return;
     }
   }
-  // Test mode stands in for shells this machine starts only: a remote project's
-  // terminal is a host terminal (on the test's fake host) in tests as well.
   if (!terminal::UsePlaceholderTerminalsForTesting() ||
       terminal::HostTerminalsFor(state_.launcher()) != nullptr) {
     OpenTerminal({}, focus_panel, false);
     ShowTerminalContent(focus_panel);
     return;
   }
-  // Test mode: a bare, unstarted pane — no real shell spawn.
   state_.terminal_tabs.push_back(MakeTerminalTab(std::make_unique<TerminalPaneState>()));
   state_.active_terminal_tab_index = state_.terminal_tabs.size() - 1;
   ShowTerminalContent(focus_panel);
@@ -241,9 +227,6 @@ TerminalLayoutRecord TerminalPanelService::CaptureLayout(const ProjectWorkspaceS
     if (record.panes.empty()) {
       continue;
     }
-    // A tab that lost an own-launcher pane (the auth tab, a local terminal in a
-    // remote project: neither is revived) keeps its panes, evenly: the shares were
-    // the whole row's.
     if (all_panes_kept) {
       record.weights.assign(tab.weights.begin(), tab.weights.end());
     }
@@ -257,7 +240,6 @@ TerminalLayoutRecord TerminalPanelService::CaptureLayout(const ProjectWorkspaceS
 
 namespace {
 
-// The first line of `text`: a multi-line invocation's transcript header.
 std::string FirstLine(std::string_view text) {
   return std::string(text.substr(0, text.find('\n')));
 }
@@ -267,8 +249,6 @@ template <typename Visit>
 void ForEachProjectHostPane(ProjectWorkspaceState& state, Visit&& visit) {
   for (const std::unique_ptr<TerminalTabState>& tab : state.terminal_tabs) {
     for (const std::unique_ptr<TerminalPaneState>& pane : tab->panes) {
-      // A pane with its own launcher (the ssh tab, a local terminal) is not the
-      // project's host's.
       if (pane != nullptr && pane->launcher == nullptr) {
         visit(*pane);
       }
@@ -276,7 +256,7 @@ void ForEachProjectHostPane(ProjectWorkspaceState& state, Visit&& visit) {
   }
 }
 
-}  // namespace
+}
 
 bool TerminalPanelService::HasUnseenTerminalActivity(const ProjectWorkspaceState& state) {
   return std::any_of(state.terminal_tabs.begin(), state.terminal_tabs.end(), [](const auto& tab) {
@@ -330,7 +310,7 @@ void TerminalPanelService::ReleaseHostTerminals(ProjectWorkspaceState& state) co
   const bool keep = !operations_.revive_terminals || operations_.revive_terminals();
   ForEachProjectHostPane(state, [keep](TerminalPaneState& pane) {
     if (!pane.session.is_host_terminal()) {
-      return;  // local, pending (nothing on the host yet), or already let go
+      return;
     }
     if (!keep || pane.session.host_shell_exited()) {
       pane.session.Stop();
@@ -346,7 +326,7 @@ std::size_t TerminalPanelService::StartPendingHostPanes(ProjectWorkspaceState& s
   ForEachProjectHostPane(state, [&](TerminalPaneState& pane) {
     if (pane.session.host_pending() && pane.session.StartPendingOnHost(launcher)) {
       ++started;
-      pane.reattach_unreported = true;  // its outcome is news for the connect's summary
+      pane.reattach_unreported = true;
     }
   });
   if (started != 0) {
@@ -361,15 +341,12 @@ void TerminalPanelService::SetPendingHostStatus(ProjectWorkspaceState& state, st
 
 std::filesystem::path TerminalPanelService::PaneWorkingDirectory(const ProjectWorkspaceState& state,
                                                                 const TerminalPaneState& pane) {
-  // OSC 7 when the shell sends it; else, for a shell this machine runs, its
-  // process's own cwd (bash sends no OSC 7 unless configured to).
   const platform::ProcessLauncher& launcher =
       pane.launcher != nullptr ? *pane.launcher : state.launcher();
   std::filesystem::path cwd = pane.session.reported_working_directory();
   if (cwd.empty() && launcher.is_local()) {
     cwd = platform::ProcessWorkingDirectory(pane.session.child_process_id());
   }
-  // A host shell reports a host path; the editor's tree is the mirror.
   if (!cwd.empty() && !launcher.is_local()) {
     cwd = launcher.LocalPathFromHost(std::move(cwd));
   }
@@ -396,8 +373,6 @@ void TerminalPanelService::CloseTerminalTab(std::size_t index) {
       operations_.note_layout_inputs_changed();
       operations_.request_window_redraw();
     } else {
-      // The panel stays up showing an output channel, and its tab strip still
-      // lists the terminal that just closed.
       operations_.request_bottom_panel_redraw();
     }
     return;
@@ -406,7 +381,6 @@ void TerminalPanelService::CloseTerminalTab(std::size_t index) {
       std::min(state_.active_terminal_tab_index > index ? state_.active_terminal_tab_index - 1
                                                         : state_.active_terminal_tab_index,
                state_.terminal_tabs.size() - 1);
-  // A different tab is on screen now, and its panes may need another grid.
   operations_.note_layout_inputs_changed();
   operations_.request_bottom_panel_redraw();
 }
@@ -436,8 +410,6 @@ bool TerminalPanelService::FindHostTerminal(const terminal::HostIdentity& identi
     TerminalTabState& tab = *state_.terminal_tabs[t];
     for (std::size_t p = 0; p < tab.panes.size(); ++p) {
       const TerminalPaneState* pane = tab.panes[p].get();
-      // A pane with its own launcher (a local terminal in a remote project) is
-      // not a host terminal, whatever it once held.
       if (pane == nullptr || pane->launcher != nullptr || pane->session.host_identity() != identity) {
         continue;
       }
@@ -464,18 +436,12 @@ bool TerminalPanelService::CycleTerminalTab(int delta) {
   return ActivateTerminalTab(wrapped);
 }
 
-// --- panes --------------------------------------------------------------------
-
 bool TerminalPanelService::SplitActivePane() {
   TerminalTabState* tab = state_.active_terminal_tab();
   const TerminalPaneState* active = tab != nullptr ? tab->active() : nullptr;
-  // A split of a host terminal is another terminal on that host.
   if (tab == nullptr || tab->full() || (state_.root.empty() && (active == nullptr || !active->launcher))) {
     return false;
   }
-  // The new pane starts where the one it splits is now (VS Code's default
-  // `terminal.integrated.splitCwd: inherited`). A host terminal's split starts
-  // where host terminals start: its directory is the host's, not the tree's.
   std::unique_ptr<TerminalPaneState> pane = operations_.make_started_pane(
       {}, active != nullptr ? active->launcher : nullptr,
       active != nullptr ? active->label_prefix : std::string(),
@@ -486,7 +452,6 @@ bool TerminalPanelService::SplitActivePane() {
     return false;
   }
   const bool was_visible = PanelVisible();
-  // VS Code puts the new pane after the active one.
   if (!tab->InsertPane(tab->active_pane + 1, std::move(pane))) {
     return false;
   }
@@ -524,8 +489,6 @@ bool TerminalPanelService::FocusPaneInDirection(int delta) {
   }
   operations_.clear_terminal_selection();
   tab->active_pane = static_cast<std::size_t>(target);
-  // Shown, as switching terminal tabs shows it: setting the focus alone left the
-  // keyboard on a hidden panel when it was asked for by name (soak c0c5719bdbce).
   const bool was_visible = PanelVisible();
   ShowTerminalContent(true);
   operations_.note_layout_inputs_changed();
@@ -560,8 +523,6 @@ bool TerminalPanelService::ActivatePaneAt(const WorkspaceLayout& layout, float x
 
 bool TerminalPanelService::RelaunchActivePane() {
   TerminalPaneState* pane = state_.active_terminal_pane();
-  // A pending pane is not an exited one: it starts by itself once connected, and
-  // relaunching it would forget the host terminal it is waiting to reattach to.
   if (pane == nullptr || pane->session.running() || pane->session.host_pending() ||
       !operations_.relaunch_pane) {
     return false;
@@ -577,15 +538,12 @@ bool TerminalPanelService::RelaunchActivePane() {
   pane->has_last_command = false;
   pane->pending_input.clear();
   pane->pending_input_truncated = false;
-  // A fresh session starts at a 0x0 grid until the next frame regrids it.
   if (TerminalTabState* tab = state_.active_terminal_tab(); tab != nullptr) {
     ++tab->layout_revision;
   }
   operations_.request_bottom_panel_redraw();
   return true;
 }
-
-// --- geometry -----------------------------------------------------------------
 
 TerminalPaneRectsLayout TerminalPanelService::PaneRects(const WorkspaceLayout& layout) const {
   const TerminalTabState* tab = state_.active_terminal_tab();
@@ -619,8 +577,6 @@ bool TerminalPanelService::ResizeActiveTabDivider(std::size_t boundary, float fi
 bool TerminalPanelService::ResetActiveTabDivider(std::size_t boundary) {
   return ResizeActiveTabDivider(boundary, 0.5f);
 }
-
-// --- panel --------------------------------------------------------------------
 
 void TerminalPanelService::TogglePanel() {
   const bool was_visible = PanelVisible();
@@ -677,7 +633,6 @@ bool TerminalPanelService::RevealTerminal() {
 void TerminalPanelService::SetPanelMaximized(bool maximized) {
   const bool was_visible = PanelVisible();
   if (maximized && !PanelVisible()) {
-    // Maximizing a hidden panel means "show me the terminal, large".
     if (state_.terminal_tabs.empty()) {
       state_.panel.maximized = true;
       OpenTerminal({}, true, false);
@@ -689,7 +644,7 @@ void TerminalPanelService::SetPanelMaximized(bool maximized) {
     state_.surface.focus = FocusTarget::Panel;
   }
   if (maximized != state_.panel.maximized) {
-    state_.panel.maximized_seen_focus.reset();  // a new maximize: the next frame sets the baseline
+    state_.panel.maximized_seen_focus.reset();
   }
   state_.panel.maximized = maximized;
   operations_.note_layout_inputs_changed();
@@ -712,12 +667,6 @@ void TerminalPanelService::SyncPanelMaximizedWithFocus() {
       focus == FocusTarget::Editor || focus == FocusTarget::Sidebar || focus == FocusTarget::DebugPane;
   const bool editor_overlay = focus == FocusTarget::Overlay && state_.overlay.visible &&
                               !OverlayIsQuickOpen(state_.overlay.mode);
-  // Edge-triggered (TD-2026-11-01-427 item 3): the first frame that sees the
-  // panel maximized takes the focus as it found it -- a session restore, a
-  // project switch back, a tab hydrated on load all arrive with the keyboard
-  // wherever their state put it, and reading that as "the editor took focus"
-  // restored the panel the user had left maximized. A keyboard on a surface the
-  // maximized panel hides goes to the panel instead: the one thing on screen.
   if (!state_.panel.maximized_seen_focus.has_value()) {
     if (hidden_surface) {
       state_.surface.focus = FocusTarget::Panel;
@@ -734,7 +683,6 @@ void TerminalPanelService::SyncPanelMaximizedWithFocus() {
   if (!moved) {
     return;
   }
-  // Then a MOVE of the keyboard to another surface brings it back.
   const auto restore = [this]() {
     state_.panel.maximized = false;
     state_.panel.maximized_seen_focus.reset();
@@ -748,12 +696,6 @@ void TerminalPanelService::SyncPanelMaximizedWithFocus() {
       restore();
       break;
     case FocusTarget::Overlay:
-      // The find widget, completion and code actions are the editor's: with the
-      // editor collapsed under a maximized panel they were drawn over the panel's
-      // tab strip and transcript, aimed at a buffer nobody could see (the QA
-      // monkey's stale terminal highlights, TD-2026-10-22-379, sat under one).
-      // Like focusing the editor, they bring it back. A quick-open modal is
-      // centered over whatever is there and leaves the panel as it is.
       if (editor_overlay) {
         restore();
       }
@@ -798,12 +740,6 @@ std::string TerminalPanelService::SelectedText(const ProjectWorkspaceState& stat
   if (!selection.has_value() || terminal_tab == nullptr) {
     return {};
   }
-  // Read in reused chunks, so a selection over the whole scrollback costs one
-  // chunk of rows, not one vector per selected row. Each chunk carries the row
-  // after it, which says whether its last row's line break is real. The PTY
-  // reader can trim or (host terminal) shift rows between two chunks; a read
-  // that saw either is taken again, and the last attempt stands, as the single
-  // snapshot this replaced stood whatever moved after it.
   constexpr std::size_t kChunkRows = 256;
   const terminal::TerminalSession& session = terminal_tab->session;
   std::vector<terminal::TerminalLine> chunk;
@@ -837,9 +773,6 @@ bool TerminalPanelService::SelectAll() {
   if (pane == nullptr) {
     return false;
   }
-  // Everything up to the last row that shows text: the grid below the prompt is
-  // padding, and a copy must not end in a run of empty lines. Only the screen's
-  // worth of rows at the end can be that padding.
   const std::size_t line_count = pane->session.LineCount();
   const std::size_t tail = std::min(line_count, std::max<std::size_t>(1, pane->session.rows()));
   const std::vector<terminal::TerminalLine> last_rows = pane->session.SnapshotLineRange(line_count - tail, tail);
@@ -859,10 +792,6 @@ bool TerminalPanelService::SelectAll() {
 }
 
 bool TerminalPanelService::HasLastCommand(const ProjectWorkspaceState& state) {
-  // Cheap predicate for action enablement: the exact precondition under which
-  // LastCommandText() is guaranteed to return a value. Menu/context enablement
-  // must not snapshot + join the whole scrollback transcript just to answer "is Copy Last
-  // Command available?" (TD-2026-07-17A-065).
   const auto* terminal_tab = state.active_terminal_pane();
   return terminal_tab != nullptr && terminal_tab->has_last_command &&
          !terminal_tab->last_command_invocation.empty();
@@ -882,11 +811,6 @@ std::optional<std::string> TerminalPanelService::LastCommandText(const ProjectWo
   if (terminal_tab->last_command_start_row >= line_count) {
     return terminal_tab->last_command_invocation;
   }
-  // Cap the snapshot to a bounded window of the most-recent-command output. A
-  // long-running command can retain output up to the full scrollback cap, so copying
-  // every retained row (and then joining a second full transcript) would let the invoke
-  // path allocate unboundedly on the UI thread (TD-2026-07-17A-037). Keep the head of the
-  // output and mark the tail truncated.
   const std::size_t available = line_count - terminal_tab->last_command_start_row;
   const std::size_t capped_lines = std::min(available, kDefaultLastTerminalCommandMaxLines);
   const bool source_truncated = available > capped_lines;
@@ -910,4 +834,4 @@ std::optional<std::string> TerminalPanelService::LastCommandText(const ProjectWo
                             : std::optional<std::string>(std::move(transcript));
 }
 
-}  // namespace microide::workspace
+}

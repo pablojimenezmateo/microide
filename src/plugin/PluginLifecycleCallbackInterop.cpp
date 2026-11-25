@@ -200,8 +200,6 @@ bool LoadPluginRoot(const std::filesystem::path& plugin_root,
     return false;
   }
 
-  // Disabled plugins load only far enough to learn their id, then stop: no duplicate
-  // check, no setup, no lifecycle. They are recorded for the UI and torn down.
   if (is_plugin_disabled && is_plugin_disabled(plugin.id)) {
     if (record_disabled) {
       record_disabled(plugin);
@@ -232,6 +230,6 @@ bool LoadPluginRoot(const std::filesystem::path& plugin_root,
   return true;
 }
 
-}  // namespace microide::plugin::lifecycle_callback_interop
+}
 
 #endif

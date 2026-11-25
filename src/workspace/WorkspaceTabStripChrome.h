@@ -19,44 +19,22 @@ namespace microide::workspace {
 struct WorkspaceContext;
 class LayoutModeService;
 
-// Adapts shell-held data (project catalog, current project state, text
-// renderer measurement, presentation labels) into the stateless
-// TabStripService geometry/scroll math, and owns the per-frame bottom-panel
-// tab activation/close coordination. Previously these adapters were
-// shell-member methods in WorkspaceShellChrome.cpp; pulling them onto this
-// type removes 12 entries from the WorkspaceShell symbol surface and lets
-// non-shell call sites depend on the service directly, as described in
-// dev-docs/project/known-tech-debt.md item #16.
 class WorkspaceTabStripChrome {
  public:
   struct Operations {
     std::function<std::string(std::size_t)> project_tab_display_title;
     std::function<std::string(std::size_t)> project_tab_tooltip_label;
     std::function<const ProjectWorkspaceState*(std::size_t)> project_catalog_entry;
-    // Returns a reference into the catalog: this is called once per project tab
-    // per painted frame, and a by-value path is a copy of a string plus a
-    // component list for something nobody mutates.
     std::function<const std::filesystem::path&(std::size_t)> project_catalog_root;
     std::function<std::string(std::size_t group_index, std::size_t index)> editor_tab_display_title;
     std::function<std::string(std::size_t group_index, std::size_t index)> editor_tab_tooltip_label;
     std::function<std::optional<SDL_FRect>()> current_window_rect;
-    // Width of one editor group's tab strip. The project strip spans the window,
-    // but a split pane's editor strip does not — the reveal math must size
-    // against the pane it scrolls, not the window.
     std::function<float(std::size_t group_index)> editor_group_tab_strip_width;
     std::function<float(std::string_view)> measure_width;
     std::function<void(std::string_view)> ensure_output_channel_tab_open;
     std::function<void(std::string_view)> close_output_channel_tab;
     std::function<void(std::size_t)> close_terminal_tab;
-    // The bottom panel's strip scrolled, a tab of it took the front or was
-    // closed: its header's tabs and what its body shows are derived (the header's
-    // units, the body's chrome unit, the output's rows, a pane's snapshot), so a
-    // frame repaints them. It named the panel's rect.
     std::function<void()> request_bottom_panel_frame;
-    // A strip scrolled to show other tabs repaints itself: the overflow chip's
-    // click and the wheel change what a strip shows, and the shell's "nothing was
-    // damaged, repaint the window" fallback does not fire when the same click
-    // damaged anything else (focus moving into the group did).
     std::function<void()> request_tab_strip_redraw;
   };
 
@@ -69,20 +47,11 @@ class WorkspaceTabStripChrome {
                  Operations operations);
 
   void EnsureActiveProjectVisible();
-  // Memoized; see ProjectStripSourceCache below for the key. Returned by
-  // reference because paint, tooltip, cursor-shape, hit-test and the mouse
-  // coordinator each ask for this list per frame or per motion event.
   const std::vector<VisibleStripTab>& ComputeVisibleProjectTabs(
       const SDL_FRect& project_tab_strip) const;
 
-  // Editor-tab chrome is per-group. The no-index overloads operate on the
-  // currently focused group; the *ForGroup variants target an explicit group so
-  // the render/mouse/cursor paths can drive both strips in a split.
   void EnsureActiveTabVisible();
   void EnsureActiveTabVisibleForGroup(std::size_t group_index);
-  // Every pane, not just the focused one: a window resize (or a layout change)
-  // narrows all the strips at once, and an unfocused pane's active tab is just
-  // as capable of ending up scrolled out of its own strip.
   void EnsureActiveTabVisibleForAllGroups();
   const std::vector<VisibleStripTab>& ComputeVisibleTabs(const SDL_FRect& tab_strip) const;
   const std::vector<VisibleStripTab>& ComputeVisibleTabsForGroup(
@@ -113,17 +82,6 @@ class WorkspaceTabStripChrome {
   bool CloseBottomPanelTab(std::size_t model_index);
 
  private:
-  // The project strip used to be rebuilt from scratch by every caller that asked
-  // what was on it — a display title, a tooltip label, a badge label and a text
-  // measurement per project, several times per frame, plus a
-  // lexically_normal().string() per project inside the default badge color
-  // (TD-2026-08-13-198). Two caches, mirroring the editor strip's pair:
-  // the sources (what is expensive to produce) and the laid-out visible list.
-  //
-  // The source key is a content fingerprint of everything the titles/badges are
-  // derived from — the catalog roots' native() bytes, each project's dirty bit
-  // and base color, the layout mode, and TabStripService's geometry epoch (font
-  // metrics). It never hashes the produced titles, which is the whole point.
   struct ProjectStripSourceCache {
     std::uint64_t fingerprint = 0;
     std::uint64_t version = 0;
@@ -156,4 +114,4 @@ class WorkspaceTabStripChrome {
   Operations operations_;
 };
 
-}  // namespace microide::workspace
+}

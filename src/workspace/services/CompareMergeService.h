@@ -7,10 +7,6 @@
 
 namespace microide::workspace {
 
-// The compare/merge surface's two halves, owned together: opening diff and merge
-// tabs (DiffTabCoordinator) and everything done inside one (the commit picker,
-// selection, hunks, staging, merge choices: CompareInteractionCoordinator).
-// Callers reach the half they use; this class adds no behaviour of its own.
 class CompareMergeService {
  public:
   CompareMergeService(DiffTabCoordinator diff_tabs, CompareInteractionCoordinator interactions)
@@ -26,4 +22,4 @@ class CompareMergeService {
   CompareInteractionCoordinator interactions_;
 };
 
-}  // namespace microide::workspace
+}

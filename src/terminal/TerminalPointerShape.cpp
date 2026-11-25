@@ -7,7 +7,6 @@ namespace microide::terminal {
 std::optional<TerminalPointerShape> TerminalPointerShapeFromName(std::string_view name) {
   using S = TerminalPointerShape;
   static constexpr std::pair<std::string_view, TerminalPointerShape> kNames[] = {
-      // CSS cursor keywords.
       {"default", S::Default},         {"auto", S::Default},          {"text", S::Text},
       {"vertical-text", S::Text},      {"pointer", S::Pointer},       {"help", S::Default},
       {"context-menu", S::Default},    {"wait", S::Wait},             {"progress", S::Progress},
@@ -20,7 +19,6 @@ std::optional<TerminalPointerShape> TerminalPointerShapeFromName(std::string_vie
       {"ne-resize", S::NeResize},      {"se-resize", S::SeResize},    {"sw-resize", S::SwResize},
       {"nw-resize", S::NwResize},      {"alias", S::Default},         {"copy", S::Default},
       {"zoom-in", S::Default},         {"zoom-out", S::Default},
-      // X cursor-font names (xterm's pointerShape / OSC 22).
       {"left_ptr", S::Default},        {"arrow", S::Default},         {"top_left_arrow", S::Default},
       {"xterm", S::Text},              {"ibeam", S::Text},            {"hand1", S::Pointer},
       {"hand2", S::Pointer},           {"pointing_hand", S::Pointer}, {"watch", S::Wait},
@@ -42,13 +40,13 @@ std::optional<TerminalPointerShape> TerminalPointerShapeFromName(std::string_vie
 
 std::optional<TerminalPointerShape> TerminalPointerShapeFromOsc22(std::string_view payload) {
   if (!payload.empty() && payload.front() == '?') {
-    return std::nullopt;  // a query: not answered, nothing changes
+    return std::nullopt;
   }
   if (!payload.empty() && (payload.front() == '>' || payload.front() == '=')) {
     payload.remove_prefix(1);
   }
   if (payload.empty() || payload.front() == '<') {
-    return TerminalPointerShape::None;  // reset (or a pop: no stack here)
+    return TerminalPointerShape::None;
   }
   while (!payload.empty()) {
     const std::size_t comma = payload.find(',');
@@ -57,7 +55,7 @@ std::optional<TerminalPointerShape> TerminalPointerShapeFromOsc22(std::string_vi
     }
     payload = comma == std::string_view::npos ? std::string_view() : payload.substr(comma + 1);
   }
-  return std::nullopt;  // nothing known: leave it as it was
+  return std::nullopt;
 }
 
-}  // namespace microide::terminal
+}

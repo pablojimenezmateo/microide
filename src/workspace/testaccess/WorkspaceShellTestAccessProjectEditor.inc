@@ -31,24 +31,11 @@
         shell.context_.current_project_state.sidebar.git.tree_git_badges_materialized);
     shell.ConsumeGitSidebarRefresh();
   }
-  // Force the git sidebar into a deterministic, fully-settled state. Showing the git
-  // sidebar dispatches an asynchronous `git status` on the background executor whose
-  // result lands on a later frame; any test that renders or compares pixels after
-  // switching to git must call this first, or it races the executor (the in-flight
-  // refresh may or may not have landed by capture time — see the retained-vs-full
-  // redraw fixtures, which render twice and so resolve the race differently than a
-  // single full render). Cancel drains the pending async result, then a synchronous
-  // refresh recomputes the same snapshot regardless of whether the async one landed.
   static void SettleGitSidebarRefresh(WorkspaceShell& shell) {
     shell.project_background_executor_.Cancel();
     PerfRunGitSidebarRefreshSync(shell);
   }
 
-  // Drive the off-thread forced rescan (TD-2026-07-17-081/082) to completion: post
-  // the scan, wait for the background worker to run it, then drain the mailbox so the
-  // result applies on this (main) thread. Deterministic — no sleeps.
-  // Wait for all currently-queued project background work to run (a trailing barrier
-  // task runs after everything already posted on the serial worker). No sleeps.
   static void DrainProjectBackgroundExecutor(WorkspaceShell& shell) {
     std::promise<void> ran;
     std::future<void> ran_future = ran.get_future();
@@ -58,10 +45,6 @@
 
   static void ForceFileIndexRefreshAndDrain(WorkspaceShell& shell) {
     shell.RequestFileIndexRefresh();
-    // Wait for the queued scan to RUN (not cancel it): a trailing barrier task runs
-    // after the scan on the serial worker, so its completion means the scan's
-    // mailbox.Post has already happened. (Executor::Drain() would cancel the still-
-    // queued scan instead of running it.)
     std::promise<void> ran;
     std::future<void> ran_future = ran.get_future();
     shell.project_background_executor_.Post([&ran]() { ran.set_value(); });
@@ -94,8 +77,6 @@
     return *shell.ActiveEditorViewport();
   }
 
-  // Editor viewport of a specific tab in the focused group (not necessarily the
-  // active one), for asserting all-tab preference application.
   static editor::TextViewport& FocusedGroupTabEditor(WorkspaceShell& shell,
                                                      std::size_t tab_index) {
     return shell.context_.current_project_state.focused_group()
@@ -114,7 +95,6 @@
     shell.SamplePluginEditorEvents();
   }
 
-  // Ghost text (Copilot inline suggestion) drivers + state inspection.
   static void PublishGhostText(WorkspaceShell& shell, std::string_view owner,
                                const plugin::PluginHost::GhostTextRequest& request) {
     shell.PublishPluginGhostText(owner, request);
@@ -137,7 +117,6 @@
   static bool HasPluginPresentation(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.plugin_presentation_if_present() != nullptr;
   }
-  // Publishes decorations as a plugin's ctx.decorations.set does (owner, file).
   static void PublishPluginDecorationsForTest(WorkspaceShell& shell, std::string_view owner,
                                               const std::filesystem::path& path,
                                               editor::PluginDecorationData data) {
@@ -177,8 +156,6 @@
   static std::string ActiveEditorSelectedText(WorkspaceShell& shell) {
     return shell.ActiveEditorViewport()->SelectedText();
   }
-  // What the control channel's `buffer`, navigation and the pane report as the
-  // active editor's view (WorkspaceShell::ActiveNavigableViewport).
   static const editor::TextViewport* ActiveNavigableViewport(WorkspaceShell& shell) {
     return shell.ActiveNavigableViewport();
   }
@@ -189,9 +166,6 @@
   static WorkspaceShell::CompareTabState& ActiveCompare(WorkspaceShell& shell) {
     return shell.context_.current_project_state.focused_group().active_tab().compare.value();
   }
-  // The editor viewport for an OPEN tab on `path`, whichever tab is in front.
-  // A test that switches tabs mid-gesture still has to read the buffer it armed
-  // the gesture against.
   static editor::TextViewport* EditorViewportForPath(WorkspaceShell& shell,
                                                      const std::filesystem::path& path) {
     for (auto& group : shell.context_.current_project_state.editor_groups) {
@@ -204,9 +178,6 @@
     }
     return nullptr;
   }
-  // Null when the front tab is not an editor tab (or there is none). An action
-  // sweep must re-resolve rather than hold a reference: opening a tab pushes onto
-  // the group's tab vector, and a reallocation there dangles every reference into it.
   static editor::TextViewport* ActiveEditorOrNull(WorkspaceShell& shell) {
     auto& group = shell.context_.current_project_state.focused_group();
     if (group.active_tab_index >= group.open_tabs.size()) {
@@ -215,8 +186,6 @@
     auto& editor_tab = group.active_tab().editor_state;
     return editor_tab.has_value() ? &editor_tab->viewport : nullptr;
   }
-  // Null when the front tab is not a compare tab (or there is none) -- an action
-  // sweep needs to know it is still looking at the same surface before judging it.
   static WorkspaceShell::CompareTabState* ActiveCompareOrNull(WorkspaceShell& shell) {
     auto& group = shell.context_.current_project_state.focused_group();
     if (group.active_tab_index >= group.open_tabs.size()) {
@@ -228,7 +197,6 @@
   static const std::vector<TabEntry>& FocusedGroupTabs(WorkspaceShell& shell) {
     return shell.context_.current_project_state.focused_group().open_tabs;
   }
-  // The front compare tab of pane `group_index`, whichever pane has focus.
   static WorkspaceShell::CompareTabState* GroupActiveCompareOrNull(WorkspaceShell& shell,
                                                                    std::size_t group_index) {
     auto& groups = shell.context_.current_project_state.editor_groups;
@@ -238,7 +206,6 @@
     auto& compare = groups[group_index].active_tab().compare;
     return compare.has_value() ? &*compare : nullptr;
   }
-  // The watcher's path for an external change to a compared file.
   static void MarkCompareTabsStaleForPath(WorkspaceShell& shell,
                                           const std::filesystem::path& path) {
     shell.MarkCompareTabsStaleForPath(path);
@@ -249,10 +216,6 @@
   static WorkspaceShell::MergeTabState& ActiveMerge(WorkspaceShell& shell) {
     return shell.context_.current_project_state.focused_group().active_tab().merge.value();
   }
-  // Null when the front tab is not a merge tab (or there is none).
-  // Drives the watcher-side staleness decision directly: the path a real file
-  // change takes to un-mark a resolution. A test that sets external_result_stale by
-  // hand exercises a shape the product never produces.
   static void InvalidateMergeTabsForPath(WorkspaceShell& shell,
                                          const std::filesystem::path& path) {
     shell.InvalidateMergeTabsForPath(path);
@@ -328,8 +291,6 @@
   static std::size_t ActiveComparePresentationRowCount(WorkspaceShell& shell) {
     return CompareTabPresentationRowCount(ActiveCompare(shell));
   }
-  // Wrap accessors: the surface layout is what warms the wrap table, so ask for it
-  // first -- otherwise these report the pre-layout (identity) answer.
   static std::size_t ActiveCompareVisualRowCount(WorkspaceShell& shell) {
     (void)ActiveCompareSurfaceLayout(shell);
     return CompareTabVisualRowCount(ActiveCompare(shell));
@@ -397,12 +358,6 @@
     if (row == nullptr || row->kind != compare::ComparePresentationRowKind::CollapsedContext) {
       return {};
     }
-    // Must be CompareCollapsedContextBlockRect, not a hand-rolled row rect: the
-    // block excludes the vertical-scrollbar reserve and applies a 4px inset, so
-    // rects built from the full row are shifted from the painted buttons. This
-    // accessor used to hand-roll it, which made every test asserting on these
-    // rects assert against the wrong place — the centered `all` button still
-    // overlapped enough to pass, the left-aligned `previous` button did not.
     const SDL_FRect block_rect = CompareCollapsedContextBlockRect(
         shell.ActiveTabSurface(layout), surface.rows_y, surface.line_height, surface.show_vertical,
         visible_row);
@@ -445,9 +400,6 @@
     const auto toolbar = shell.ComputeMergeToolbarLayout(shell.ActiveTabSurface(layout), surface);
     return {toolbar.prev_rect, toolbar.next_rect};
   }
-  // The divider grab rects themselves come from workspace/render/DiffDividerGeometry.h,
-  // which tests include directly: it takes WorkspaceShell by name, so it cannot be
-  // reached from inside the class body this file is textually part of.
 
   static void PrepareRenamePrompt(WorkspaceShell& shell,
                                   const std::filesystem::path& path,
@@ -469,7 +421,6 @@
     return shell.context_.prompts.surface;
   }
   static void ConfirmPromptSurface(WorkspaceShell& shell) { shell.ConfirmPromptSurface(); }
-  // As the dirty prompt does after its Save / Discard choice.
   static void ConfirmPromptSurfaceSavingDirtyBuffers(WorkspaceShell& shell) {
     shell.ConfirmPromptSurface(DirtyPathResolution::Save);
   }
@@ -487,8 +438,6 @@
                                        const std::filesystem::path& path) {
     return shell.OpenComparePickerForPath(path, {});
   }
-  // Async compare-picker seam: inject fake git providers so a test can block the
-  // background query (assert the loading overlay) and control when results land.
   static void SetComparePickerFileHistoryProvider(
       WorkspaceShell& shell,
       std::function<project::GitFileHistoryResult(const std::filesystem::path&,
@@ -570,10 +519,6 @@
     shell.Render(nullptr, shell.window_presentation_.logical_width,
                  shell.window_presentation_.logical_height);
   }
-  // Paint with a real renderer. RenderFrame's null renderer stops at the
-  // `if (renderer == nullptr) return;` guard every surface opens with, so it
-  // validates layout and view-model construction but never the drawing itself.
-  // Pass a tests::HeadlessRenderTarget renderer here to execute the paint code.
   static void RenderFrameWithRenderer(WorkspaceShell& shell, SDL_Renderer* renderer) {
     shell.Render(renderer, shell.window_presentation_.logical_width,
                  shell.window_presentation_.logical_height);
@@ -582,9 +527,6 @@
     return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::ProjectOpen, {}, WorkspaceShell::ActionSource::Menu);
   }
-  // Generic form of the two above: a palette row and a menu item both dispatch
-  // their ActionId with NO arguments and ActionSource::Menu, which is the only
-  // way to reach the UI-surface branch of a verb whose argument is optional.
   static bool ExecuteActionFromMenu(WorkspaceShell& shell, WorkspaceShell::ActionId id) {
     return ActionCoordinator(shell.MakeActionContext())
         .Execute(id, {}, WorkspaceShell::ActionSource::Menu);
@@ -674,7 +616,6 @@
       std::function<bool(WorkspaceShell&, const std::filesystem::path&)> launcher) {
     shell.open_file_dialog_state_.launcher = std::move(launcher);
   }
-  // Launch the native Open File… picker as the UI does; returns why it did not open.
   static std::string LaunchNativeFilePicker(WorkspaceShell& shell) {
     std::string error;
     (void)shell.OpenNativeFilePicker(&error);
@@ -696,7 +637,6 @@
   static void ConsumePendingOpenFileDialogResult(WorkspaceShell& shell) {
     shell.ConsumePendingOpenFileDialogResult();
   }
-  // The wake event every native picker posts when its answer is latched.
   static Uint32 DialogWakeEventType(const WorkspaceShell& shell) {
     return shell.project_open_dialog_event_type_;
   }
@@ -711,13 +651,6 @@
   static void RequestCloseTab(WorkspaceShell& shell, std::size_t index) {
     shell.RequestCloseTab(index);
   }
-  // Unconditional close, bypassing the dirty prompt RequestCloseTab raises.
-  //
-  // The perf harness needs it: a scenario that re-runs `merge ...` per iteration
-  // against a driver that reuses the already-open tab measures a RE-SHOW on every
-  // iteration but the first, so its p50 describes an operation the scenario's
-  // name does not (TD-2026-08-12-190). Closing between iterations is what makes
-  // every iteration an open.
   static void CloseTab(WorkspaceShell& shell, std::size_t index) { shell.CloseTab(index); }
   static void CloseProject(WorkspaceShell& shell, std::size_t index) { shell.CloseProject(index); }
   static void OpenFile(WorkspaceShell& shell, const std::filesystem::path& path) {
@@ -752,8 +685,6 @@
                                           const std::filesystem::path& path) {
     return shell.CountOpenBufferViews(path);
   }
-  // The watcher's "is this our own write coming back?" verdict, for a failure
-  // message that has to distinguish a suppressed change from one nobody looked at.
   static bool DiskSignatureMatchesOpenView(WorkspaceShell& shell,
                                            const std::filesystem::path& path) {
     return shell.MakeEditorTabService().DiskSignatureMatchesOpenView(path);
@@ -761,7 +692,6 @@
   static std::unordered_map<std::string, std::size_t> OpenBufferViewCounts(WorkspaceShell& shell) {
     return shell.OpenBufferViewCounts();
   }
-  // The compare tab in front of group `group_index` (which need not be focused).
   static WorkspaceShell::CompareTabState& ActiveCompareInGroup(WorkspaceShell& shell,
                                                                std::size_t group_index) {
     return *shell.context_.current_project_state.editor_groups.at(group_index).active_tab().compare;
@@ -769,16 +699,12 @@
   static std::size_t FocusedGroupIndex(WorkspaceShell& shell) {
     return shell.context_.current_project_state.focused_group_index;
   }
-  // Focus a pane by index, for tests that walk every pane rather than navigating.
   static void FocusEditorGroup(WorkspaceShell& shell, std::size_t group_index) {
     if (group_index >= shell.context_.current_project_state.editor_groups.size()) {
       throw std::runtime_error("no such editor group");
     }
     shell.context_.current_project_state.focused_group_index = group_index;
   }
-  // Orientation of the editor area's OUTERMOST split (None when there is one
-  // pane). The split model is a tree now, so this is a summary, not the whole
-  // layout — reach for `EditorSplit` when a test cares about the shape.
   static microide::workspace::EditorSplitOrientation GroupSplitOrientation(WorkspaceShell& shell) {
     const auto& tree = shell.context_.current_project_state.editor_split;
     return tree.node(tree.root()).orientation;
@@ -786,8 +712,6 @@
   static const microide::workspace::EditorSplitTree& EditorSplit(WorkspaceShell& shell) {
     return shell.context_.current_project_state.editor_split;
   }
-  // Move divider `boundary` of the root branch to `first_share` directly on the
-  // tree, the way the divider drag does once it has resolved the pointer.
   static bool ResizeRootSplitDivider(WorkspaceShell& shell, std::size_t boundary,
                                      float first_share) {
     auto& split = shell.context_.current_project_state.editor_split;
@@ -802,8 +726,6 @@
     return shell.MakeEditorTabService().MoveTabToNewGroup(from_group, from_index, target_group,
                                                           orientation, insert_before);
   }
-  // The model-level cross-group move the drag commits, callable without staging a
-  // pointer gesture.
   static bool MoveTabToGroup(WorkspaceShell& shell,
                              std::size_t from_group,
                              std::size_t from_index,
@@ -811,9 +733,6 @@
                              std::size_t to_slot) {
     return shell.MakeEditorTabService().MoveTabToGroup(from_group, from_index, to_group, to_slot);
   }
-  // The viewport that is the FILE for tab `ti` in group `gi`: a loaded editor
-  // tab's, or a compare tab's editable side. Nullptr for a merge tab, a
-  // read-only compare, or a restore-pending tab.
   static const editor::TextViewport* GroupTabViewport(WorkspaceShell& shell, std::size_t gi,
                                                       std::size_t ti) {
     const auto& tab = shell.context_.current_project_state.editor_groups[gi].open_tabs[ti];
@@ -833,23 +752,6 @@
   static std::size_t GroupTabCount(WorkspaceShell& shell, std::size_t gi) {
     return shell.context_.current_project_state.editor_groups[gi].open_tabs.size();
   }
-  // Per-tab retained memory, summed across every open editor tab in every group,
-  // plus the per-tab folding models the viewport cannot attribute to itself.
-  //
-  // Answers the question TD-2026-08-06-142 opened with — "how much does an open
-  // tab cost to keep open?" — which had no answer at all before this. It is a
-  // measurement surface, not a product path: nothing in the shell calls it, so
-  // it costs a shipped build nothing. The perf scenario
-  // `editor_tab_derived_cache_residency` and the unit tests are the callers.
-  //
-  // The `editor.tab_derived_cache_*` counters are published from HERE rather than
-  // from the perf scenario, and that is the point rather than a convenience: a
-  // counter whose only producer lives in tests/ reads zero forever in any dump
-  // taken from the real app, which is exactly what
-  // CheckEveryPerfCounterHasAProducer exists to prevent. Publishing at the point
-  // of measurement means any future production caller — a memory-pressure hook, a
-  // diagnostics dump — reports the same numbers through the same names without
-  // anyone having to remember to wire it up.
   struct DerivedCacheResidency {
     editor::TextViewportDerivedCacheBytes viewports;
     std::size_t folding_models = 0;
@@ -900,7 +802,6 @@
     }
     return paths;
   }
-  // The active editor viewport of group `gi` (path + scroll line live here).
   static const editor::TextViewport& GroupActiveViewport(WorkspaceShell& shell, std::size_t gi) {
     auto& group = shell.context_.current_project_state.editor_groups[gi];
     return *workspace::GroupActiveViewport(group);
@@ -924,12 +825,7 @@
   static bool ExecuteCommandLine(WorkspaceShell& shell, const std::string& command_line) {
     return shell.MakeCommandLineCoordinator().ExecuteCommandLine(command_line);
   }
-  // Deliver plugin-worker query results (definition/references/...) that were
-  // posted back to the main thread; the frame loop does this once per frame.
-  // Spawn the plugin worker as a project with plugins would have: a reload then
-  // runs off the UI thread and completes through the mailbox, as in the app.
   static void EnsurePluginWorkerStarted(WorkspaceShell& shell) {
-    // What WorkspaceLifecycleCoordinator's wake registration does in the app.
     shell.plugin_runtime_.Host().SetWorker(&shell.plugin_runtime_.Thread());
     shell.plugin_runtime_.Thread().EnsureStarted();
   }
@@ -948,9 +844,6 @@
   static bool HasFormatterForLanguage(WorkspaceShell& shell, std::string_view language_id) {
     return FindFormatter(shell.formatter_registry_, language_id) != nullptr;
   }
-  // Register a formatter without a plugin. The save pipeline's behaviour is a
-  // property of the pipeline, not of Lua, and a test that had to load a plugin to
-  // reach it would be testing the plugin host instead.
   static void RegisterFormatterForTesting(WorkspaceShell& shell,
                                           std::string language_id,
                                           std::vector<std::string> command) {
@@ -1009,23 +902,6 @@
     }
     return changed;
   }
-  // Push a synthetic batch through the LIVE watcher's dispatch, so the shell's own
-  // batch callback runs — index apply, coalescer ingest, truncation notice, wake —
-  // rather than only the index apply that ApplyFileIndexBatchForTesting covers.
-  // Returns false when no watcher is running (the project has no root).
-  // Stop the live watcher's native/poll threads while KEEPING the watcher and its
-  // callback, so DispatchFileIndexWatcherBatchForTesting still delivers.
-  //
-  // A test that dispatches a synthetic batch and asserts on the result otherwise
-  // has two sources of batches: its own, and the real inotify watcher reacting to
-  // the same writes the fixture just made. The second one is uncontrolled — it may
-  // arrive before, during or after the synthetic batch, or not at all within the
-  // test's window — and that is the leading suspect for TD-2026-09-29-311, where
-  // a real external change was twice reported as our own echo under load.
-  // `Unwatch()` also JOINS those threads, so any in-flight batch has landed by the
-  // time this returns rather than racing the assertions.
-  // The off-thread echo confirm's verdict for a digest the worker computed:
-  // `read_signature` is the file's stat when that digest was read.
   static bool ExternalChangeIsOwnEchoForTesting(WorkspaceShell& shell,
                                                 const std::filesystem::path& path,
                                                 std::uint64_t digest,
@@ -1047,21 +923,15 @@
     shell.file_index_watcher_->DispatchBatchForTesting(std::move(batch));
     return true;
   }
-  // Generation of the last project-change batch the shell actually APPLIED.
-  // `ApplyProjectChangeBatch` drops a batch whose generation it has already seen,
-  // so "the batch was delivered" and "the batch was acted on" are different
-  // questions and a fixture that only checks the first can pass while nothing ran.
   static std::uint64_t LastAppliedProjectChangeGeneration(const WorkspaceShell& shell) {
     return shell.last_applied_project_change_generation_;
   }
   static std::uint64_t ProjectFileIndexVersion(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.file_index.version();
   }
-  // A remote project's home status block, as the home would draw it.
   static const editor::WelcomeRemoteStatus& ProjectRemoteStatus(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.remote_status;
   }
-  // What quick-open lists: the index's paths, pending ones included.
   static std::vector<std::string> ProjectFinderPaths(const WorkspaceShell& shell) {
     std::vector<std::string> paths;
     shell.context_.current_project_state.file_index.VisitRelativePaths(
@@ -1069,9 +939,6 @@
         [&](const std::filesystem::path& path) { paths.push_back(path.generic_string()); });
     return paths;
   }
-  // Drives the background-rescan APPLY step directly, with a caller-chosen
-  // dispatch version, so the "a scan landed after a watcher batch" ordering can be
-  // exercised without racing a real scan against a real watcher.
   static void ApplyForcedFileIndexRefreshForTesting(WorkspaceShell& shell,
                                                     const std::filesystem::path& root,
                                                     std::vector<project::ProjectFile> files,
@@ -1079,10 +946,6 @@
     shell.ApplyForcedFileIndexRefresh(root, std::move(files), project::ProjectFileScanStatus{},
                                       index_version_at_dispatch);
   }
-  // Whether the project file index currently holds `relative_path`. Lets a test
-  // assert the observable end state of an index mutation instead of the
-  // ApplyBatch "changed" bit, which is legitimately false when the live
-  // filesystem watcher applied the same entry first.
   static bool ProjectFileIndexContains(const WorkspaceShell& shell,
                                        const std::filesystem::path& relative_path) {
     const std::vector<project::ProjectFile> files =
@@ -1131,8 +994,6 @@
                                                               std::string_view id) {
     return shell.OutputChannelEntries(id);
   }
-  // A line into an output channel, as a result arriving later does (creating the
-  // channel with its label when it is new).
   static void AppendOutputLine(WorkspaceShell& shell, std::string_view id, std::string_view label,
                                std::string line) {
     shell.output_channels_.AppendLine(id, label, std::move(line));
@@ -1145,9 +1006,6 @@
     panel.output.open_channel_ids = std::move(open_channel_ids);
     panel.output.channel_id = std::move(active_channel_id);
   }
-  // Drives the bottom panel's Output channel: fill one channel with more lines
-  // than fit, show it, and park the scroll at the top so a keyboard or wheel move
-  // has somewhere to go in both directions.
   static void ShowOutputChannelWithLines(WorkspaceShell& shell,
                                          std::string_view id,
                                          std::size_t line_count) {
@@ -1162,8 +1020,6 @@
     panel.output.follow_tail = false;
     panel.output.scroll_row = 0;
   }
-  // Same as ShowOutputChannelWithLines, with the caller's own lines (a
-  // `path:line:col` reference row, say) instead of generated filler.
   static void ShowOutputChannelWithEntries(WorkspaceShell& shell,
                                            std::string_view id,
                                            const std::vector<std::string>& lines) {
@@ -1177,7 +1033,6 @@
     panel.output.follow_tail = false;
     panel.output.scroll_row = 0;
   }
-  // A point inside Output row `row` (in the active channel), for mouse tests.
   static SDL_FPoint OutputPanelRowPoint(WorkspaceShell& shell, std::size_t row) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const auto* entries =
@@ -1247,9 +1102,6 @@
                                             snippet_body);
   }
 
-  /// Perf harness only: expand a minimal placeholder snippet on the active editor so an idle soak can
-  /// assert no periodic wakes while `SnippetSessionState::active` remains true (outline debounce is
-  /// primed separately in `ScenarioContext::PrimeEditorEssentialsIdleSoakSurface`).
   static void PerfHarnessPrimeSnippetPlaceholderSession(WorkspaceShell& shell) {
     WorkspaceShell::TabEntry::EditorTabState* editor_tab = shell.ActiveEditorTab();
     editor::TextViewport* viewport = shell.ActiveEditorViewport();

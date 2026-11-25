@@ -12,4 +12,4 @@ ProjectBackgroundExecutor::ProjectBackgroundExecutor()
              },
              util::SerialWorkQueue::Limits{}, "project-bg") {}
 
-}  // namespace microide::project
+}

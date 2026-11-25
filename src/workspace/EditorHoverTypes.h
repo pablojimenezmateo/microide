@@ -11,17 +11,12 @@
 
 namespace microide::workspace {
 
-// Debug hover-to-inspect popup payload (Phase 5): the evaluated value + its type
-// for the identifier under the cursor while a session is Stopped. Strings are
-// prebuilt by DebugService (off the render path).
 struct DebugHoverValue {
   std::string value;
   std::string type;
   bool operator==(const DebugHoverValue&) const = default;
 };
 
-// What the pointer rests on in an editor pane that has a hover card: a line's
-// inline blame, a diagnostic, a plugin hover or a debug value.
 struct EditorHoverTarget {
   enum class Kind {
     Blame,
@@ -46,9 +41,6 @@ struct EditorHoverTarget {
   }
 };
 
-// The hover card for a target, laid out: where it goes, what it shows and where
-// its button is. Frame prep lays it out once per frame (PreparedFrameState) and
-// paint draws that one.
 struct EditorHoverPopupLayout {
   EditorHoverTarget::Kind kind = EditorHoverTarget::Kind::Blame;
   SDL_FRect anchor_rect{};
@@ -60,4 +52,4 @@ struct EditorHoverPopupLayout {
   std::optional<SDL_FRect> primary_action_rect;
 };
 
-}  // namespace microide::workspace
+}

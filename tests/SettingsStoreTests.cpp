@@ -27,19 +27,12 @@ void TestUserLayerWinsOverProject() {
   Expect(ResolveOr(store, "editor.theme", "?") == "dark",
          "project layer should win over the user-level default");
 
-  // Project-only key still resolves.
   store.SetProject("project.only", "p");
   Expect(ResolveOr(store, "project.only", "?") == "p", "project-only key should resolve");
 
-  // Unknown key resolves to nullptr.
   Expect(store.Resolve("missing.key") == nullptr, "unknown key resolves to nullptr");
 }
 
-// A setting's declared SettingScope steers only where the Settings overlay WRITES;
-// Resolve is project-over-user for every key regardless. That matters whenever a
-// setting's scope is changed — `terminal.shell` moved User -> Project — because the
-// change must not orphan a value someone already has in their user config. Without
-// this assertion a scope move reads as green while doing nothing observable.
 void TestUserLevelValueStillResolvesForAProjectScopedSetting() {
   SettingsLayer user;
   SettingsLayer project;
@@ -68,12 +61,10 @@ void TestResetRestoresUnderlyingLayer() {
   store.SetProject("debug.enabled", "true");
   Expect(ResolveOr(store, "debug.enabled", "?") == "true", "project override active");
 
-  // Dropping the project override should surface the user-level default again.
   store.ResetProject("debug.enabled");
   Expect(ResolveOr(store, "debug.enabled", "?") == "false",
          "resetting the project override surfaces the user-level default");
 
-  // Dropping the user value too leaves the key unset.
   store.ResetUser("debug.enabled");
   Expect(store.Resolve("debug.enabled") == nullptr, "resetting both layers unsets the key");
 }
@@ -83,27 +74,21 @@ void TestRebindActiveProjectAfterMove() {
   SettingsStore store;
   store.BindUserLayer(&user);
 
-  // Simulate a project's settings vector, then a wholesale move into a new
-  // location (the dangling-pointer hazard the store guards against on project
-  // switch). After re-binding, only the new project's values resolve.
   SettingsLayer project_a;
   store.BindActiveProject(&project_a);
   store.SetProject("project.scoped", "a");
   Expect(ResolveOr(store, "project.scoped", "?") == "a", "first project value resolves");
 
-  SettingsLayer project_b = std::move(project_a);  // vector contents move to a new object
-  project_a = SettingsLayer{};                      // old location is now reset/empty
-  store.BindActiveProject(&project_b);              // re-point at the live vector
+  SettingsLayer project_b = std::move(project_a);
+  project_a = SettingsLayer{};
+  store.BindActiveProject(&project_b);
   Expect(ResolveOr(store, "project.scoped", "?") == "a",
          "re-bound project value resolves after the move");
 
-  // Mutating the old (now-detached) vector must not affect resolution.
   microide::workspace::settings_layer::Upsert(project_a, "project.scoped", "stale");
   Expect(ResolveOr(store, "project.scoped", "?") == "a",
          "writes to the detached vector do not leak into the store");
 
-  // Binding a fresh empty project clears project-scoped resolution but keeps the
-  // user layer.
   store.SetUser("user.scoped", "u");
   SettingsLayer project_empty;
   store.BindActiveProject(&project_empty);
@@ -118,8 +103,6 @@ void TestReindexAfterInPlaceReload() {
   store.BindUserLayer(&user);
   store.BindActiveProject(&project);
 
-  // The persistence restore paths clear + refill the backing vector in place,
-  // then call Reindex(). Model that here.
   user.clear();
   user.emplace_back("ui.scale", "1.5");
   user.emplace_back("debug.enabled", "true");
@@ -128,9 +111,6 @@ void TestReindexAfterInPlaceReload() {
   Expect(ResolveOr(store, "debug.enabled", "?") == "true", "reindex picks up second key");
 }
 
-// Regression: invalid setting ids (empty, whitespace, control bytes, newlines)
-// must be rejected at the mutation boundary so they never reach the persisted
-// layer where they would corrupt the text encoding / overlays / LSP mapping.
 void TestRejectsInvalidSettingIds() {
   Expect(SettingsStore::IsValidSettingId("editor.tab_size"), "a normal dotted id is valid");
   Expect(SettingsStore::IsValidSettingId("plugin_id.setting-1"), "dashes/underscores are valid");
@@ -159,21 +139,17 @@ void TestRevisionOnlyBumpsOnEffectiveChange() {
   const std::uint64_t r1 = store.Revision();
   Expect(r1 > 0, "the first effective setting bumps the revision");
 
-  // Rebinding to a layer that resolves identically must not bump the revision —
-  // downstream live-settings/render work keys on Revision() and should not re-run.
   store.BindActiveProject(&project);
   Expect(store.Revision() == r1, "rebinding to an identical resolution does not bump the revision");
 
-  // A no-op set (same value) resolves identically → no bump.
   store.SetUser("a", "1");
   Expect(store.Revision() == r1, "a no-op set does not bump the revision");
 
-  // A real value change bumps.
   store.SetUser("a", "2");
   Expect(store.Revision() > r1, "an effective value change bumps the revision");
 }
 
-}  // namespace
+}
 
 void RegisterSettingsStoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SettingsStore/RevisionOnlyBumpsOnEffectiveChange",
@@ -187,4 +163,4 @@ void RegisterSettingsStoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SettingsStore/ReindexAfterInPlaceReload", TestReindexAfterInPlaceReload);
 }
 
-}  // namespace microide::tests
+}

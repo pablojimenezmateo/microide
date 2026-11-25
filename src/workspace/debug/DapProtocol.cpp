@@ -15,23 +15,15 @@ using util::JsonValue;
 
 namespace {
 
-// Narrow a JSON integer field to `int` deterministically: out-of-int-range
-// values clamp to the nearest int bound instead of relying on the
-// implementation-defined `static_cast<int>` of an out-of-range int64 (a hostile
-// adapter could otherwise wrap a huge id into a small/negative one). See
-// workspace/ProtocolNumeric.h.
 int AsInt(const JsonValue& value, int fallback = 0) {
   return protocol_numeric::JsonIntInRange(value, fallback);
 }
 
-// JsonValue::AsString() already returns a static empty string for non-string
-// values, so return its reference directly — no per-call copy across the ~29
-// Parse* field extractions (the field assignment at the call site copies once).
 const std::string& AsString(const JsonValue& value) { return value.AsString(); }
 
 constexpr std::size_t kMaxDapListEntries = 10000;
 
-}  // namespace
+}
 
 std::string AdapterHitCondition(std::string_view hit_condition, bool ignore_count_semantics) {
   if (!ignore_count_semantics) {
@@ -180,10 +172,6 @@ JsonValue MakeEvaluateArguments(const std::string& expression, int frame_id,
                                 const std::string& context) {
   JsonObject args;
   args["expression"] = JsonValue(expression);
-  // gdb numbers the *top* stack frame as id 0, so frame 0 is a real, evaluable
-  // frame — omitting its frameId makes gdb evaluate locals in global scope ("No
-  // symbol in current context"). Only a negative id means "no frame" (e.g.
-  // pre-launch REPL settings, or evaluate while running): then omit frameId.
   if (frame_id >= 0) {
     args["frameId"] = JsonValue(static_cast<std::int64_t>(frame_id));
   }
@@ -195,9 +183,6 @@ JsonValue MakeEvaluateArguments(const std::string& expression, int frame_id,
 
 JsonValue MakeRequest(int seq, const std::string& command, JsonValue arguments) {
   JsonObject req;
-  // Exact reserve: `operator[]` inserts one member at a time, so an envelope with
-  // a known member count otherwise grows its storage at 1, 2 and 4 -- three
-  // allocations and two moves of every member built so far, per request sent.
   req.reserve(4);
   req["seq"] = JsonValue(static_cast<std::int64_t>(seq));
   req["type"] = JsonValue("request");
@@ -211,7 +196,7 @@ JsonValue MakeRequest(int seq, const std::string& command, JsonValue arguments) 
 JsonValue MakeResponse(int seq, int request_seq, const std::string& command, bool success,
                        const std::string& message, JsonValue body) {
   JsonObject resp;
-  resp.reserve(7);  // see MakeRequest
+  resp.reserve(7);
   resp["seq"] = JsonValue(static_cast<std::int64_t>(seq));
   resp["type"] = JsonValue("response");
   resp["request_seq"] = JsonValue(static_cast<std::int64_t>(request_seq));
@@ -273,8 +258,6 @@ DapCapabilities ParseCapabilities(const JsonValue& body) {
 }
 
 void MergeCapabilities(DapCapabilities& caps, const JsonValue& body) {
-  // Presence-checked overlay: only fields the body carries are updated. Keep this
-  // list aligned with ParseCapabilities above.
   if (body.HasKey("supportsConfigurationDoneRequest"))
     caps.supports_configuration_done_request = body["supportsConfigurationDoneRequest"].AsBool();
   if (body.HasKey("supportsConditionalBreakpoints"))
@@ -297,8 +280,6 @@ void MergeCapabilities(DapCapabilities& caps, const JsonValue& body) {
     caps.supports_step_back = body["supportsStepBack"].AsBool();
   if (body.HasKey("supportsExceptionFilterOptions"))
     caps.supports_exception_filter_options = body["supportsExceptionFilterOptions"].AsBool();
-  // The exception-filter list is replaced wholesale only when the body restates it
-  // (an adapter that re-advertises filters sends the full array, not a delta).
   if (body.HasKey("exceptionBreakpointFilters"))
     caps.exception_filters = ParseCapabilities(body).exception_filters;
 }
@@ -318,17 +299,6 @@ DapThread ParseThread(const JsonValue& value) {
   return thread;
 }
 
-// Parse a capped DAP array field.
-//
-// Every list an adapter sends is attacker-shaped in the same way: the adapter
-// treats our requested count as a hint at best, and a sub-64 MiB frame can pack
-// millions of tiny objects, each of which becomes several strings materialized
-// on the main thread. So every one of these is read the same way — take the
-// array, clamp to kMaxDapListEntries, reserve, parse item by item.
-//
-// The five call sites each spelled that out; only the field name, the element
-// parser and the reason the cap is safe differed. The reasons are worth keeping
-// and stay at the call sites.
 template <typename ParseItem>
 auto ParseCappedArray(const JsonValue& body, std::string_view key, ParseItem&& parse_item) {
   const auto& array = body[key].AsArray();
@@ -342,7 +312,6 @@ auto ParseCappedArray(const JsonValue& body, std::string_view key, ParseItem&& p
 }
 
 std::vector<DapThread> ParseThreads(const JsonValue& body) {
-  // 10000 is far beyond any real process's thread count, and threads feed a UI picker.
   return ParseCappedArray(body, "threads", ParseThread);
 }
 
@@ -358,9 +327,6 @@ DapStackFrame ParseStackFrame(const JsonValue& value) {
 }
 
 std::vector<DapStackFrame> ParseStackFrames(const JsonValue& body) {
-  // An adapter can ignore our `levels` cap; each frame becomes a filesystem::path
-  // plus display strings on the main thread in BuildExecutionView. 10000 is far
-  // beyond any call stack a human pages through.
   return ParseCappedArray(body, "stackFrames", ParseStackFrame);
 }
 
@@ -377,7 +343,6 @@ DapScope ParseScope(const JsonValue& value) {
 }
 
 std::vector<DapScope> ParseScopes(const JsonValue& body) {
-  // A frame has only a handful of real scopes.
   return ParseCappedArray(body, "scopes", ParseScope);
 }
 
@@ -395,9 +360,6 @@ DapVariable ParseVariable(const JsonValue& value) {
 }
 
 std::vector<DapVariable> ParseVariables(const JsonValue& body) {
-  // The largest and most frequent DAP array (container expansion): the adapter
-  // treats our requested `count` as a hint, and each item becomes four strings on
-  // the main thread plus a tree Node downstream.
   return ParseCappedArray(body, "variables", ParseVariable);
 }
 
@@ -406,8 +368,6 @@ DapBreakpoint ParseBreakpoint(const JsonValue& value) {
   breakpoint.id = AsInt(value["id"]);
   breakpoint.verified = value["verified"].AsBool(false);
   breakpoint.message = AsString(value["message"]);
-  // gdb 17.2 omits `message` and instead reports `reason` ("pending"/"failed") for
-  // an unverified breakpoint; surface that as the message so the panel has a reason.
   if (breakpoint.message.empty()) {
     breakpoint.message = AsString(value["reason"]);
   }
@@ -417,7 +377,6 @@ DapBreakpoint ParseBreakpoint(const JsonValue& value) {
 }
 
 std::vector<DapBreakpoint> ParseBreakpoints(const JsonValue& body) {
-  // A setBreakpoints reply mirrors what we sent, so a flood beyond this is adversarial.
   return ParseCappedArray(body, "breakpoints", ParseBreakpoint);
 }
 
@@ -426,8 +385,6 @@ DapStoppedEvent ParseStoppedEvent(const JsonValue& body) {
   event.reason = AsString(body["reason"]);
   event.description = AsString(body["description"]);
   event.text = AsString(body["text"]);
-  // threadId is OPTIONAL on `stopped`: keep it unset when the adapter omits it so
-  // the session resolves a real thread instead of requesting threadId:0.
   if (body.HasKey("threadId")) {
     event.thread_id = AsInt(body["threadId"]);
   }
@@ -443,14 +400,9 @@ DapStoppedEvent ParseStoppedEvent(const JsonValue& body) {
 
 DapContinuedEvent ParseContinuedEvent(const JsonValue& body) {
   DapContinuedEvent event;
-  // threadId is required by the DAP spec on `continued`, but treat it as optional
-  // for robustness (mirrors ParseStoppedEvent): absent → unset, not 0.
   if (body.HasKey("threadId")) {
     event.thread_id = AsInt(body["threadId"]);
   }
-  // Absent allThreadsContinued is treated as false (single-thread continue) so a
-  // partial resume never tears down the shared stopped view; a full resume the
-  // adapter really means will set the flag explicitly.
   event.all_threads_continued = body["allThreadsContinued"].AsBool(false);
   return event;
 }
@@ -484,4 +436,4 @@ DapSetVariableResult ParseSetVariableResult(const JsonValue& body) {
   return result;
 }
 
-}  // namespace microide::workspace::dap_protocol
+}

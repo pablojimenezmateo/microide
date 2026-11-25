@@ -51,14 +51,6 @@
 
 namespace microide::tests {
 
-// Every class in src/render that owns a raw SDL/TTF handle must be non-copyable:
-// the implicit copy constructor duplicates the handle (double free on the second
-// destructor) and, for the two glyph caches, also duplicates an INTRUSIVE LRU
-// whose links point into the SOURCE object's map nodes -- the shape that shipped
-// as a use-after-free in the editor's visible-line layout cache
-// (TD-2026-09-07-291). Five of the six deleted the copy; SdlTtfTextBackend was
-// the exception, and a static_assert is the right enforcement because a copy of
-// any of them must not compile in the first place.
 static_assert(!std::is_copy_constructible_v<microide::render::SdlTtfTextBackend>,
               "SdlTtfTextBackend owns SDL/TTF handles and an intrusive LRU: copying it "
               "double-frees the handles and strands the LRU in the source's map nodes");
@@ -78,8 +70,6 @@ struct TextRendererTestAccess {
   static const microide::render::TextRendererBackend* Backend(const microide::render::TextRenderer& renderer) {
     return renderer.backend_.get();
   }
-  // Gives `renderer` a pool of its own whose first backend is `backend`, bound
-  // (with no SDL renderer, at scale 1) and resolved, as a first frame would.
   static void SetBackend(microide::render::TextRenderer& renderer,
                          std::unique_ptr<microide::render::TextRendererBackend> backend) {
     using microide::render::TextRendererBackend;
@@ -102,12 +92,6 @@ struct TextRendererTestAccess {
 
 namespace {
 
-// A translucent draw composites over what is already there and leaves the target
-// opaque — the frame is painted into a retained RGBA scene texture that is blitted
-// whole to a window that is never cleared, so a sub-255 alpha left in the target
-// re-composites on every present until the region goes flat. Underlines are dimmed
-// to 55%, so their pixels are a mix of the severity colour and the row beneath,
-// not the severity colour with a 140 alpha stamped on it.
 void ExpectDimmedOver(SDL_Surface* pixels,
                       int x,
                       int y,
@@ -229,10 +213,6 @@ const CountingTextBackend::DrawCall* FindDrawCall(const std::vector<CountingText
   return it == calls.end() ? nullptr : &*it;
 }
 
-// Gutter line numbers reach a backend through whichever entry point the renderer
-// judges cheapest for text that never repeats, so `with_background` is a property
-// of that choice and not of the gutter. These two ask what the gutter contract
-// actually is: the logical line number was drawn, once, at this position.
 std::size_t CountDrawCallsWithText(const std::vector<CountingTextBackend::DrawCall>& calls,
                                    std::string_view text) {
   return static_cast<std::size_t>(
@@ -319,25 +299,10 @@ PixelBounds NonBackgroundBounds(SDL_Surface* surface, SDL_Color background) {
 }
 
 struct PixelFootprintComparison {
-  std::size_t inked_pixels = 0;  // pixels `lhs` painted over the background
-  int max_channel_delta = 0;     // largest per-channel difference between lhs and rhs
+  std::size_t inked_pixels = 0;
+  int max_channel_delta = 0;
 };
 
-// Compare two renderings of the same text, plus the background they were drawn
-// over so "something was actually drawn" can be checked rather than assumed.
-//
-// The comparison is a bound on the per-channel difference rather than equality.
-// The composite path modulates colour into a SURFACE and then blends the result;
-// the atlas paths modulate and blend in one step, and SDL's integer pipelines
-// round those differently -- a couple of dozen pixels of a digit land exactly 1
-// unit apart. Equality would be asserting something SDL does not promise, and the
-// GPU geometry path (float modulation in the renderer) could not meet it either.
-//
-// A bound of 1 is still a strong statement, because every way this can actually
-// break is enormous: a wrong cell offset shifts a glyph body by a full column, a
-// clipped or unclipped overhang adds or removes one, a dropped glyph removes all
-// of it, and an alpha-less atlas paints a solid rectangle. Those move pixels by
-// tens to hundreds of units, not one.
 PixelFootprintComparison CompareInkFootprints(SDL_Surface* lhs, SDL_Surface* rhs,
                                               SDL_Surface* background) {
   Expect(lhs != nullptr && rhs != nullptr && background != nullptr,
@@ -366,8 +331,6 @@ PixelFootprintComparison CompareInkFootprints(SDL_Surface* lhs, SDL_Surface* rhs
     for (int x = 0; x < lhs->w; ++x) {
       const auto lhs_pixel = read(lhs, x, y);
       const auto rhs_pixel = read(rhs, x, y);
-      // Well clear of the one-unit rounding spread, so a glyph's faintest fringe
-      // cannot be counted as ink on one reading and background on the other.
       if (delta(lhs_pixel, read(background, x, y)) > 8) {
         ++result.inked_pixels;
       }
@@ -468,9 +431,6 @@ void TestSdlTtfAsciiUiLabelsDoNotIntroduceExtraGlyphGaps() {
   expect_label_matches("if (path.", "isAbsolute(inputPath))");
 }
 
-// Opens a monospace TTF font for atlas tests, mirroring the backend's discovery
-// order (bundled JetBrains Mono first, then common system monospace fonts) and
-// the same hinting/kerning configuration. Returns nullptr if none is available.
 TTF_Font* OpenTestMonospaceFont() {
   Expect(TTF_Init(), "atlas tests should initialize SDL_ttf");
   std::vector<std::filesystem::path> candidates;
@@ -497,11 +457,6 @@ TTF_Font* OpenTestMonospaceFont() {
   return nullptr;
 }
 
-// The atlas stores one colour-independent (white) coverage bitmap per glyph and
-// tints it via colour modulation when assembling a composite. This proves the
-// tinted atlas blit is byte-identical to rendering the glyph directly at that
-// colour, which is the invariant that lets the per-(char, colour) glyph cache be
-// replaced by a single atlas without changing on-screen pixels.
 void TestAsciiGlyphAtlasMatchesPerColorRendering() {
   EnsureDummySdlVideo();
   TTF_Font* font = OpenTestMonospaceFont();
@@ -511,11 +466,11 @@ void TestAsciiGlyphAtlasMatchesPerColorRendering() {
   Expect(atlas != nullptr, "atlas should build from a usable font");
 
   const std::vector<SDL_Color> colors = {
-      SDL_Color{0xff, 0xff, 0xff, 0xff},  // white (the atlas's stored colour)
-      SDL_Color{0xff, 0x00, 0x00, 0xff},  // red
-      SDL_Color{0x00, 0xff, 0x00, 0xff},  // green
-      SDL_Color{0x56, 0x9c, 0xd6, 0xff},  // a typical keyword blue
-      SDL_Color{0x80, 0x40, 0x20, 0xff},  // an asymmetric tone that exercises rounding
+      SDL_Color{0xff, 0xff, 0xff, 0xff},
+      SDL_Color{0xff, 0x00, 0x00, 0xff},
+      SDL_Color{0x00, 0xff, 0x00, 0xff},
+      SDL_Color{0x56, 0x9c, 0xd6, 0xff},
+      SDL_Color{0x80, 0x40, 0x20, 0xff},
   };
   const std::string sample = "Ag0 {}[]();<>/*-_=+!~\"'`";
 
@@ -540,8 +495,6 @@ void TestAsciiGlyphAtlasMatchesPerColorRendering() {
     }
   }
 
-  // Translucent colours are intentionally not served by the atlas; the backend
-  // falls back to the whole-string SDL_ttf path for them.
   SDL_Surface* translucent_target = SDL_CreateSurface(32, atlas->FontHeightPx(), SDL_PIXELFORMAT_RGBA32);
   Expect(translucent_target != nullptr, "translucent target should allocate");
   Expect(!atlas->BlitInto(translucent_target, 0, 'A', SDL_Color{0xff, 0xff, 0xff, 0x80}),
@@ -551,22 +504,6 @@ void TestAsciiGlyphAtlasMatchesPerColorRendering() {
   TTF_CloseFont(font);
 }
 
-// The gutter draws line numbers through DrawEphemeralRuns, which on the software
-// renderer skips the whole-string texture cache and blits each digit straight from
-// the coverage atlas. That is a performance choice, and a performance choice that
-// moves a pixel is a bug: this renders the same string both ways through the real
-// backend on a real software renderer and demands they be identical.
-//
-// It is aimed at the failure this codebase has already had once. Coverage lives in
-// the alpha channel, so any path that loses alpha paints text as solid blocks
-// rather than as nothing -- a difference no allocation count or draw-call count
-// would report, and one the atlas's own unit tests missed by passing a format that
-// happened to have alpha.
-// A glyph no face of the fixed fallback chain has is looked up with fontconfig
-// and drawn with the face it names, as terminals do -- gdb 17's error prefix
-// (U+274C CROSS MARK, followed by VS16) drew as a box in the hero video's debug
-// console (TD-2026-11-01-427 item 5). Compared against a private-use code point,
-// which no face has: that one IS the box.
 void TestAGlyphNoFallbackHasIsFoundWithFontconfig() {
   EnsureDummySdlVideo();
   if (microide::render::SdlTtfTextBackend::FaceCoveringCodepointForTesting(0x274C).empty()) {
@@ -593,17 +530,12 @@ void TestAGlyphNoFallbackHasIsFoundWithFontconfig() {
     SDL_DestroySurface(pixels);
     return on;
   };
-  const std::vector<bool> box = lit("\xee\x80\x80");          // U+E000: no face has it
-  const std::vector<bool> cross = lit("\xe2\x9d\x8c\xef\xb8\x8f");  // U+274C U+FE0F, as gdb prints it
+  const std::vector<bool> box = lit("\xee\x80\x80");
+  const std::vector<bool> cross = lit("\xe2\x9d\x8c\xef\xb8\x8f");
   Expect(std::count(cross.begin(), cross.end(), true) > 0, "the cross mark draws something");
   Expect(cross != box, "and it is the glyph, not the box a missing one draws");
 }
 
-// A code point no face has is asked of fontconfig once (~0.4 ms), not on every raster
-// of its row. The answers were kept in a set capped at 4096 code points; a document
-// with more distinct ones than that asked again for each further glyph whenever a
-// row holding it was drawn. 4,200 plane-15 private-use code points (which no face
-// has), drawn twice in different strings: the second pass asks nothing.
 void TestAFallbackQueryIsAskedOncePerCodepoint() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(400, 40);
@@ -649,17 +581,7 @@ void TestEphemeralRunsMatchTheCachedCompositePath() {
   microide::render::StringTextureCache texture_cache;
 
   const SDL_Color color{0x9c, 0xdc, 0xfe, 0xff};
-  // Multi-cell digit strings of every width the gutter produces, so a rounding
-  // error in the per-glyph cell offset shows up as a shifted glyph...
   std::vector<std::string> samples = {"1", "42", "12345", "1000000", "0189"};
-  // ...then every printable ASCII glyph on its own. A one-cell run puts the glyph
-  // hard against the run's right edge, which is where the composite surface clips
-  // a bitmap wider than the font's advance. Whether any glyph in the font actually
-  // overhangs is a property of the font -- JetBrains Mono's ASCII does not, so
-  // naming a few likely characters would have proved nothing. Sweeping the range
-  // means the case is covered on whichever font this runs against.
-  // From 0x21: a space is deliberately no coverage at all on every path, so it
-  // would only trip the "did this draw anything" guard below.
   for (char ch = 0x21; ch < 0x7f; ++ch) {
     samples.emplace_back(1, ch);
   }
@@ -684,8 +606,8 @@ void TestEphemeralRunsMatchTheCachedCompositePath() {
       return pixels;
     };
 
-    SDL_Surface* cached = paint(/*ephemeral=*/false);
-    SDL_Surface* atlas_drawn = paint(/*ephemeral=*/true);
+    SDL_Surface* cached = paint(false);
+    SDL_Surface* atlas_drawn = paint(true);
     Expect(SDL_SetRenderDrawColor(canvas.renderer(), 0x1e, 0x1e, 0x1e, 0xff),
            "ephemeral-run test should set the canvas background");
     Expect(SDL_RenderClear(canvas.renderer()), "ephemeral-run test should clear the canvas");
@@ -693,7 +615,6 @@ void TestEphemeralRunsMatchTheCachedCompositePath() {
     Expect(blank != nullptr, "ephemeral-run test should read back the blank canvas");
 
     const PixelFootprintComparison footprint = CompareInkFootprints(atlas_drawn, cached, blank);
-    // Without this the comparison below is vacuous: two blank canvases match.
     Expect(footprint.inked_pixels > 0,
            std::string("the per-glyph atlas draw must put glyph pixels on the canvas for \"") +
                sample + "\", not nothing");
@@ -707,17 +628,6 @@ void TestEphemeralRunsMatchTheCachedCompositePath() {
   }
 }
 
-// Regression: the atlas is allocated in the renderer's preferred texture format,
-// and the SOFTWARE renderer advertises SDL_PIXELFORMAT_XRGB8888 first -- a format
-// with no alpha channel. A glyph render is the text colour at EVERY pixel with
-// the shape carried entirely by per-pixel alpha, so an alpha-less atlas discarded
-// the shape and left an opaque rectangle: under the software renderer every ASCII
-// character painted as a solid block, and only strings containing a non-ASCII byte
-// (which skip the atlas for the whole-string path) came out right.
-//
-// The two atlas tests above both passed SDL_PIXELFORMAT_RGBA32, which has alpha --
-// which is exactly why they stayed green while the shipped software-renderer path
-// was blind. Pass the format that actually broke it.
 void TestAsciiGlyphAtlasKeepsCoverageUnderAlphaLessFormat() {
   EnsureDummySdlVideo();
   TTF_Font* font = OpenTestMonospaceFont();
@@ -732,9 +642,6 @@ void TestAsciiGlyphAtlasKeepsCoverageUnderAlphaLessFormat() {
   Expect(details != nullptr && details->Amask != 0,
          "the atlas must upgrade an alpha-less request: coverage has nowhere else to live");
 
-  // 'M' is dense but never fills its cell. Blit it and count distinct alpha
-  // values: a real glyph has partially covered edge pixels, a discarded-alpha
-  // block is uniformly opaque.
   SDL_Surface* scratch = SDL_CreateSurface(64, atlas->FontHeightPx(), SDL_PIXELFORMAT_RGBA32);
   Expect(scratch != nullptr, "alpha-less atlas scratch surface should allocate");
   Expect(SDL_FillSurfaceRect(scratch, nullptr, 0), "scratch should clear");
@@ -770,8 +677,6 @@ void TestAsciiGlyphAtlasKeepsCoverageUnderAlphaLessFormat() {
   TTF_CloseFont(font);
 }
 
-// The format choice itself, independent of any font: the renderer's preference
-// order is respected, but entries that cannot hold coverage are skipped.
 void TestGlyphSurfaceFormatChoiceAlwaysCarriesAlpha() {
   using microide::render::ChooseGlyphSurfaceFormat;
   using microide::render::EnsureAlphaCapableFormat;
@@ -781,19 +686,16 @@ void TestGlyphSurfaceFormatChoiceAlwaysCarriesAlpha() {
     return details != nullptr && details->Amask != 0;
   };
 
-  // What the software renderer actually advertises: alpha-less first.
   const SDL_PixelFormat software_like[] = {SDL_PIXELFORMAT_XRGB8888, SDL_PIXELFORMAT_XBGR8888,
                                            SDL_PIXELFORMAT_ARGB8888, SDL_PIXELFORMAT_UNKNOWN};
   Expect(ChooseGlyphSurfaceFormat(software_like) == SDL_PIXELFORMAT_ARGB8888,
          "an alpha-less preferred format should be skipped for the first one with alpha");
 
-  // A GPU renderer already offers alpha first; keep its preference exactly.
   const SDL_PixelFormat gpu_like[] = {SDL_PIXELFORMAT_ARGB8888, SDL_PIXELFORMAT_XRGB8888,
                                       SDL_PIXELFORMAT_UNKNOWN};
   Expect(ChooseGlyphSurfaceFormat(gpu_like) == SDL_PIXELFORMAT_ARGB8888,
          "a renderer whose preferred format has alpha should keep it");
 
-  // Nothing usable advertised, and no list at all: still never alpha-less.
   const SDL_PixelFormat no_alpha_at_all[] = {SDL_PIXELFORMAT_XRGB8888, SDL_PIXELFORMAT_UNKNOWN};
   Expect(has_alpha(ChooseGlyphSurfaceFormat(no_alpha_at_all)),
          "a list with no alpha format at all must still yield one");
@@ -822,7 +724,6 @@ void TestAsciiGlyphAtlasCoversPrintableRange() {
   for (int code = 0x20; code <= 0x7E; ++code) {
     const char ch = static_cast<char>(code);
     Expect(atlas->Covers(ch), "atlas should cover the full printable ASCII range");
-    // Force lazy rasterization of every slot and confirm it succeeds.
     Expect(SDL_FillSurfaceRect(scratch, nullptr, 0), "coverage scratch should clear");
     Expect(atlas->BlitInto(scratch, 0, ch, color),
            "atlas should lazily rasterize and blit every printable glyph");
@@ -836,11 +737,6 @@ void TestAsciiGlyphAtlasCoversPrintableRange() {
   TTF_CloseFont(font);
 }
 
-// The non-ASCII counterpart of the atlas pixel-identity test, and the invariant
-// the cluster coverage cache stands on: a cluster served out of the atlas must be
-// byte-identical to the direct TTF_RenderText_Blended the composite loop used to
-// do per occurrence. If it is not, the cache is a rendering change wearing a
-// performance change's clothes.
 void TestGlyphClusterAtlasMatchesDirectRendering() {
   EnsureDummySdlVideo();
   TTF_Font* font = OpenTestMonospaceFont();
@@ -852,15 +748,13 @@ void TestGlyphClusterAtlasMatchesDirectRendering() {
                                                           font_height);
   Expect(atlas != nullptr, "cluster atlas should build from a usable font");
 
-  // Wide code points, a Latin accent, a Greek letter, and a base + combining mark
-  // cluster — the shapes the grid composite hands this class.
   const std::vector<std::string> clusters = {
-      "\xE6\x97\xA5",          // U+65E5 CJK, double width
-      "\xE6\x9C\xAC",          // U+672C CJK, double width
-      "\xED\x95\x9C",          // U+D55C Hangul, double width
-      "\xC3\xA9",              // U+00E9 e-acute
-      "\xCE\xBB",              // U+03BB lambda
-      "e\xCC\x81",             // e + U+0301 combining acute: one cluster, two code points
+      "\xE6\x97\xA5",
+      "\xE6\x9C\xAC",
+      "\xED\x95\x9C",
+      "\xC3\xA9",
+      "\xCE\xBB",
+      "e\xCC\x81",
   };
   const std::vector<SDL_Color> colors = {
       SDL_Color{0xff, 0xff, 0xff, 0xff},
@@ -874,7 +768,7 @@ void TestGlyphClusterAtlasMatchesDirectRendering() {
       SDL_Surface* reference =
           TTF_RenderText_Blended(font, cluster.data(), cluster.size(), color);
       if (reference == nullptr) {
-        continue;  // no font on this box covers it; nothing to compare
+        continue;
       }
       const int width = std::min(reference->w, slot_width);
       const int height = std::min(reference->h, font_height);
@@ -885,7 +779,6 @@ void TestGlyphClusterAtlasMatchesDirectRendering() {
       Expect(SDL_FillSurfaceRect(expected, nullptr, 0), "expected surface should clear");
       Expect(SDL_FillSurfaceRect(actual, nullptr, 0), "actual surface should clear");
 
-      // The direct path the composite loop takes when the atlas declines.
       SDL_SetSurfaceBlendMode(reference, SDL_BLENDMODE_NONE);
       SDL_Rect src{0, 0, width, height};
       SDL_Rect dst{0, 0, width, height};
@@ -901,13 +794,9 @@ void TestGlyphClusterAtlasMatchesDirectRendering() {
       SDL_DestroySurface(reference);
     }
   }
-  // Without this the whole loop above is vacuous on a box whose fonts cover
-  // nothing: every BlitInto could decline and every assertion would be skipped.
   Expect(served >= clusters.size(),
          "the cluster atlas should have served at least one full colour pass of the sample");
 
-  // Repeated occurrences are the entire point: the second ask for a cluster must
-  // not add a slot.
   const std::size_t resident = atlas->ResidentClusters();
   SDL_Surface* scratch = SDL_CreateSurface(slot_width, font_height, SDL_PIXELFORMAT_RGBA32);
   Expect(scratch != nullptr, "repeat scratch should allocate");
@@ -918,8 +807,6 @@ void TestGlyphClusterAtlasMatchesDirectRendering() {
   Expect(atlas->ResidentClusters() == resident,
          "re-blitting a resident cluster must not grow the atlas");
 
-  // Translucency breaks the tint identity, so the atlas declines and the backend
-  // keeps its exact fallback.
   Expect(!atlas->BlitInto(scratch, 0, slot_width, clusters.front(),
                           SDL_Color{0xff, 0xff, 0xff, 0x80}),
          "the cluster atlas must decline translucent colours");
@@ -928,9 +815,6 @@ void TestGlyphClusterAtlasMatchesDirectRendering() {
   TTF_CloseFont(font);
 }
 
-// The slot cap is a real bound, and a bound that silently stops working is worse
-// than none: past it the atlas must DECLINE rather than return a wrong slot, so
-// the composite loop falls back to the direct render it always had.
 void TestGlyphClusterAtlasStopsAtItsSlotCap() {
   EnsureDummySdlVideo();
   TTF_Font* font = OpenTestMonospaceFont();
@@ -944,9 +828,6 @@ void TestGlyphClusterAtlasStopsAtItsSlotCap() {
   SDL_Surface* scratch = SDL_CreateSurface(32, font_height, SDL_PIXELFORMAT_RGBA32);
   Expect(scratch != nullptr, "cap scratch should allocate");
 
-  // Walk a contiguous run of CJK code points — more than the cap — and count what
-  // the atlas admitted. Some may fail to render on a bare box; the assertions
-  // below are about the CAP, and both of them hold either way.
   const std::size_t capacity = atlas->SlotCapacity();
   for (std::size_t i = 0; i < capacity + 64; ++i) {
     const char32_t code = static_cast<char32_t>(0x4E00 + i);
@@ -966,11 +847,6 @@ void TestGlyphClusterAtlasStopsAtItsSlotCap() {
   TTF_CloseFont(font);
 }
 
-// Non-ASCII text is measured and drawn on the cell grid: a wide code point is
-// two cells, a combining mark none, and every glyph lands on its cell. The
-// shaper used to answer with the fallback font's own advances (an emoji measured
-// 1.75 cells here; a CJK glyph inside ASCII text nearly 3), which is what
-// dragged the editor's caret off the pixels after any wide character.
 void TestSdlTtfNonAsciiMeasuresAndDrawsOnTheCellGrid() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(320, 120);
@@ -986,8 +862,6 @@ void TestSdlTtfNonAsciiMeasuresAndDrawsOnTheCellGrid() {
   Expect(std::abs(cells("ab\xE4\xB8\xAD\x63\x64") - 6.0f) <= 0.01f,
          "ASCII around a wide glyph: 1 + 1 + 2 + 1 + 1");
 
-  // Pixels: draw `a 中 b` and check `b` sits in cell 3 -- the cell the layout puts
-  // it in -- with nothing painted past cell 4.
   const float x = 16.0f;
   const float y = 8.0f;
   const SDL_Color white{255, 255, 255, 255};
@@ -1023,10 +897,6 @@ void TestSdlTtfNonAsciiMeasuresAndDrawsOnTheCellGrid() {
   SDL_DestroySurface(pixels);
 }
 
-// A one-cell symbol the fallback font draws wider than its cell keeps the ink
-// that falls on a blank cell after it, and loses only what would land on a
-// neighbour's ink. Claude Code titles its terminal "✳ Claude Code"; the tab drew
-// the ✳ with its right arm sheared off at the cell edge, over a space.
 void TestSdlTtfAWideSymbolOverhangsIntoTheBlankCellAfterIt() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(320, 120);
@@ -1036,7 +906,6 @@ void TestSdlTtfAWideSymbolOverhangsIntoTheBlankCellAfterIt() {
   const float cw = renderer.CharWidth();
   const float x = 16.0f;
   const float y = 8.0f;
-  // Ink per pixel column of cells [first, last) after drawing `text`.
   const auto columns = [&](const char* text, std::size_t first, std::size_t last) {
     SDL_SetRenderDrawColor(canvas.renderer(), 0, 0, 0, 255);
     SDL_RenderClear(canvas.renderer());
@@ -1063,19 +932,13 @@ void TestSdlTtfAWideSymbolOverhangsIntoTheBlankCellAfterIt() {
   const auto any = [](const std::vector<int>& ink) {
     return std::any_of(ink.begin(), ink.end(), [](int v) { return v > 64; });
   };
-  const char* const kStar = "\xE2\x9C\xB3";  // U+2733, one cell wide
+  const char* const kStar = "\xE2\x9C\xB3";
   Expect(any(columns(kStar, 0, 1)), "a font on this machine covers U+2733, or the test proves nothing");
-  // With a blank cell after it, nothing there to protect: the star is drawn
-  // whole. Where the fallback font draws it wider than the cell (this machine's)
-  // its right arm reaches into the blank cell; where it fits (CI's fonts) it
-  // never touches its own cell's right edge. Ink AT that edge and none past it
-  // is the one shape that means it was cut.
   const std::vector<int> cell_one = columns((std::string(kStar) + " b").c_str(), 1, 2);
   const std::vector<int> cell_zero = columns((std::string(kStar) + " b").c_str(), 0, 1);
   const bool reaches_edge = !cell_zero.empty() && cell_zero.back() > 64;
   Expect(any(cell_one) || !reaches_edge,
          "the star's right arm reaches into the blank cell after it instead of being cut at its own cell");
-  // A neighbour with ink keeps its cell: `✳b` paints cell 1 exactly as ` b` does.
   Expect(columns((std::string(kStar) + "b").c_str(), 1, 2) == columns(" b", 1, 2),
          "a symbol never paints over the ink of the cell after it");
 }
@@ -1096,12 +959,6 @@ void TestSdlTtfAsciiRepeatedGlyphsMeasureByCharWidth() {
          "triple glyph width should match three character widths");
 }
 
-// TD-2026-08-14-224: the glyph-texture cache's LRU order is intrusive now (two
-// pointers inside the entry) rather than a `std::list<CacheKey>` that stored a
-// second copy of every key string. The mechanism that has to survive that is the
-// one TD-2026-08-12-189 named for the other cache: a HIT must protect an entry
-// from the next miss's eviction, or a hot string is evicted by cold ones and
-// re-rasterized forever.
 void TestSdlTtfTextureCacheLruProtectsARepeatedlyDrawnString() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(320, 96);
@@ -1111,7 +968,6 @@ void TestSdlTtfTextureCacheLruProtectsARepeatedlyDrawnString() {
          "the texture-cache LRU test must exercise the SDL_ttf backend");
 
   const SDL_Color color{255, 255, 255, 255};
-  // Past the 4,096-entry cap, so eviction is what decides what survives.
   constexpr int kDistinct = 5000;
   const std::uint64_t misses_before = microide::util::ReadPerformanceCounter(
       microide::util::PerfCounterId::RenderTextTextureCacheMisses);
@@ -1137,8 +993,6 @@ void TestSdlTtfTextureCacheLruProtectsARepeatedlyDrawnString() {
 
   Expect(evictions > 0,
          "5,000 distinct strings against a 4,096-entry cap must evict, or this proves nothing");
-  // One miss per distinct cold string plus exactly one for "hot". Any more and
-  // "hot" was evicted between two of its own draws.
   Expect(misses == static_cast<std::uint64_t>(kDistinct) + 1,
          "a string drawn on every pass must never be evicted by the cold ones around it");
 }
@@ -1285,8 +1139,6 @@ void TestSdlTtfSetFontPointSizeResizesGlyphMetrics() {
   Expect(base_char_width > 0.0f && base_line_height > 0.0f,
          "baseline font metrics should be positive");
 
-  // The metrics generation must advance on a point-size change so external caches keyed
-  // on MeasureWidth results (the menu-bar/popup label caches) know to drop stale widths.
   const std::size_t base_generation = renderer.MetricsGeneration();
 
   renderer.SetFontPointSize(24.0f);
@@ -1302,8 +1154,6 @@ void TestSdlTtfSetFontPointSizeResizesGlyphMetrics() {
   Expect(std::abs(renderer.MeasureWidth("MM") - 2.0f * large_char_width) <= 0.5f,
          "measured ASCII width should track the resized monospace advance");
 
-  // Restoring the default size restores the original metrics (the backend re-opens
-  // the same font at the original point size and refreshes metrics).
   renderer.SetFontPointSize(13.0f);
   Expect(renderer.MetricsGeneration() != large_generation,
          "restoring the point size must advance the metrics generation again");
@@ -1312,18 +1162,11 @@ void TestSdlTtfSetFontPointSizeResizesGlyphMetrics() {
   Expect(std::abs(renderer.LineHeight() - base_line_height) <= 0.5f,
          "restoring the default point size should restore the baseline line height");
 
-  // Out-of-range requests clamp into the supported 8..32 range instead of breaking
-  // metrics.
   renderer.SetFontPointSize(1000.0f);
   Expect(renderer.CharWidth() > base_char_width,
          "an oversized request should clamp to the max supported size, not zero metrics");
 }
 
-// A size asked for before the first frame is the size the first frame draws at.
-// The renderer starts on a stand-in backend and swaps in SDL_ttf on its first
-// EnsureInitialized -- at the default 13pt, so a size set before that (`--set
-// editor.font_size`, a control spec, a project's saved size on a fast start) was
-// silently dropped (QA control-spec).
 void TestSdlTtfFontSizeSetBeforeInitializeIsKept() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(320, 160);
@@ -1341,10 +1184,6 @@ void TestSdlTtfFontSizeSetBeforeInitializeIsKept() {
              std::to_string(early.LineHeight()) + " vs " + std::to_string(reference.LineHeight()));
 }
 
-// A family's styled face is its own file when it has one (TD-2026-11-05-432
-// item 1): the sibling naming every packaged family uses, then fontconfig; a
-// family without one is synthesized, and a bold face then draws heavier than
-// the regular one on any machine.
 void TestSdlTtfStyledFacesResolveToTheFamilysFilesOrSynthesize() {
   using microide::render::FontStyle;
   using microide::render::SdlTtfTextBackend;
@@ -1399,8 +1238,6 @@ void TestSdlTtfSetFontFamilyResilientToUnresolved() {
   const float base_char_width = renderer.CharWidth();
   Expect(base_char_width > 0.0f, "baseline metrics should be positive");
 
-  // An unresolved family name must be a no-op: it reports no change and leaves the
-  // current font (and metrics) intact rather than nulling out the backend.
   Expect(!renderer.SetFontFamily("this-font-does-not-exist-zzz"),
          "an unresolved font family should report no change");
   Expect(std::abs(renderer.CharWidth() - base_char_width) <= 0.01f,
@@ -1408,17 +1245,10 @@ void TestSdlTtfSetFontFamilyResilientToUnresolved() {
   Expect(renderer.MeasureWidth("MM") > 0.0f,
          "text rendering stays functional after an unresolved family request");
 
-  // Empty family resolves to the default file already open -> no visual change.
   Expect(!renderer.SetFontFamily(""),
          "empty family resolves to the current default and reports no change");
 }
 
-// A family name is a font's family, not any run of letters inside one. The
-// matcher accepted a font whose name merely CONTAINED the request, so the soak's
-// `editor.font_family x` picked "Noto Sans Tifinagh Rhissa Ixa" -- a Tifinagh
-// font, whose Latin text set wide and tall -- for the editor and the chrome both,
-// and the chrome's line outgrew its 18-px rows (soak 44006d93d642). A fragment
-// from inside an installed family's name is unresolved, as any unknown name is.
 void TestSdlTtfAFragmentOfAFamilyNameIsNoFamily() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(320, 160);
@@ -1439,7 +1269,6 @@ void TestSdlTtfAFragmentOfAFamilyNameIsNoFamily() {
     if (letters.size() < 10) {
       continue;
     }
-    // Four letters from the middle of the name: neither its start nor its end.
     const std::string fragment = letters.substr(letters.size() / 2 - 2, 4);
     bool names_a_family = false;
     for (const std::string& other : families) {
@@ -1452,7 +1281,7 @@ void TestSdlTtfAFragmentOfAFamilyNameIsNoFamily() {
       names_a_family = names_a_family || other_letters.starts_with(fragment);
     }
     if (names_a_family) {
-      continue;  // the fragment begins some family's name: a prefix may select it
+      continue;
     }
     Expect(!renderer.SetFontFamily(fragment),
            "'" + fragment + "', from inside '" + family + "', names no family");
@@ -1460,10 +1289,6 @@ void TestSdlTtfAFragmentOfAFamilyNameIsNoFamily() {
   }
 }
 
-// Repeatedly switching families must not leak fallback fonts (each switch reloads
-// the fallback chain). We can't read the private fallback vector here, so this
-// exercises many swaps and asserts the backend stays functional; ASAN/LSAN in the
-// sanitizer presets catches the actual TTF_Font handle leak this guards against.
 void TestSdlTtfRepeatedFontFamilySwapsStayFunctional() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(320, 160);
@@ -1473,8 +1298,6 @@ void TestSdlTtfRepeatedFontFamilySwapsStayFunctional() {
          "font-family swap test should exercise the SDL_ttf backend");
 
   const std::vector<std::string> families = renderer.AvailableFontFamilies();
-  // Cycle through resolvable families (falling back to a couple of common ones
-  // when enumeration is empty) plus the default several times over.
   std::vector<std::string> cycle = {"", "DejaVu Sans Mono", "Liberation Mono", ""};
   for (std::size_t i = 0; i < families.size() && i < 6; ++i) {
     cycle.push_back(families[i]);
@@ -1488,11 +1311,9 @@ void TestSdlTtfRepeatedFontFamilySwapsStayFunctional() {
              "text rendering stays functional across repeated font-family swaps");
     }
   }
-  renderer.SetFontFamily("");  // restore default
+  renderer.SetFontFamily("");
 }
 
-// AvailableFontFamilies must be callable and return well-formed entries (no crash,
-// no empty strings). It may be empty on a bare CI image with no system fonts.
 void TestSdlTtfAvailableFontFamiliesWellFormed() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(320, 160);
@@ -1506,31 +1327,24 @@ void TestSdlTtfAvailableFontFamiliesWellFormed() {
   }
 }
 
-// The no-fontconfig fallback derives family names from file stems. Weight/style
-// variants (including abbreviated and concatenated tails) must collapse to a single
-// family so the picker does not list "C 059" and "C 059 Bd Ita" as separate fonts.
 void TestSdlTtfFontDisplayNameCollapsesWeightVariants() {
   using microide::render::SdlTtfTextBackend;
   const auto name = [](std::string_view stem) {
     return SdlTtfTextBackend::FontDisplayNameFromStemForTesting(stem);
   };
 
-  // URW base35 variants all reduce to the same family (this was the reported bug).
   Expect(name("C059-Roman") == "C 059", "C059-Roman should map to 'C 059'");
   Expect(name("C059-Bold") == "C 059", "C059-Bold should map to 'C 059'");
   Expect(name("C059-Italic") == "C 059", "C059-Italic should map to 'C 059'");
   Expect(name("C059-BdIta") == "C 059", "C059-BdIta (abbrev) should map to 'C 059'");
 
-  // DejaVu concatenated tails.
   Expect(name("DejaVuSansMono") == "Deja Vu Sans Mono", "base DejaVu stem splits camelCase");
   Expect(name("DejaVuSansMono-Bold") == "Deja Vu Sans Mono", "-Bold tail stripped");
   Expect(name("DejaVuSansMono-BoldOblique") == "Deja Vu Sans Mono",
          "concatenated BoldOblique tail stripped");
 
-  // Multiple separated style tails.
   Expect(name("SomeFont-Bold-Italic") == "Some Font", "multiple separated style tails stripped");
 
-  // A non-style trailing word is preserved (not everything after a '-' is a weight).
   Expect(name("Source-Code") == "Source Code", "non-style tail kept");
 }
 
@@ -1635,9 +1449,6 @@ void TestEditorViewRendererPaintsSelectedRowsAndInlineHighlightsThroughDecorated
              b == theme.row_highlight.b && a == theme.row_highlight.a,
          "selected editor rows should paint the whole row highlight across the gutter");
 
-  // Text-region pixels sit 8px further right than before: the gutter reserves a
-  // marker column so breakpoint/execution markers no longer overlap line numbers,
-  // widening it from 48 to 56 here (see editor/GutterMetrics.h).
   Expect(SDL_ReadSurfacePixel(pixels, 69, 10, &r, &g, &b, &a),
          "editor renderer test should read the active search pixel");
   Expect(r == theme.search_match_active.r && g == theme.search_match_active.g &&
@@ -1665,16 +1476,6 @@ void TestEditorViewRendererPaintsSelectedRowsAndInlineHighlightsThroughDecorated
   SDL_DestroySurface(pixels);
 }
 
-// The editor render path must read lines through the piece tree's zero-copy
-// `LineView`, never through the `operator[]` compatibility accessor.
-//
-// `operator[]` materializes a heap copy of the line into TextBuffer's line cache
-// and keeps it until the next mutation, so a render path that used it left a
-// second copy of every line it ever painted resident -- scrolling a large file
-// end to end duplicated the whole document. The accessor
-// `materialized_line_count()` exists for exactly this assertion and had no
-// caller, so nothing noticed that the hottest per-line path in the app was the
-// one violating the rule.
 void TestEditorViewRendererReadsLinesWithoutMaterializingThem() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(320, 240);
@@ -1690,7 +1491,6 @@ void TestEditorViewRendererReadsLinesWithoutMaterializingThem() {
   viewport.LoadContent(content, "/tmp/editor-render-zero-copy.cpp");
 
   microide::editor::EditorViewRenderer renderer;
-  // Paint several windows, scrolling between them, exactly as a wheel scroll does.
   for (std::size_t top = 0; top < 300; top += 20) {
     viewport.SetScrollLine(top);
     renderer.Render(canvas.renderer(), text_renderer, theme, viewport,
@@ -2056,9 +1856,6 @@ void TestHighestDiagnosticSeverityForLinePrefersTheMostSevereMatch() {
          "line severity should report no marker when a line has no diagnostics");
 }
 
-// LSP diagnostic ranges are half-open: a multi-line range ending at column 0 of
-// line N does not cover line N, so neither the gutter severity nor an underline
-// should appear there. Single-line zero-width ranges still render.
 void TestDiagnosticRangesAreHalfOpenAtLineEnd() {
   using microide::editor::DiagnosticSeverity;
   using microide::editor::DiagnosticUnderlineRect;
@@ -2091,7 +1888,6 @@ void TestDiagnosticRangesAreHalfOpenAtLineEnd() {
   const std::vector<PublishedDiagnostic> diagnostics = {
       multi_line_to_col0, single_line_zero_width, normal_single_line};
 
-  // Gutter severity: line 0 covered, line 1 NOT covered, lines 2 and 3 covered.
   Expect(HighestDiagnosticSeverityForLine(diagnostics, 0) == DiagnosticSeverity::Error,
          "a range (0,2)->(1,0) must cover its start line");
   Expect(HighestDiagnosticSeverityForLine(diagnostics, 1) == std::nullopt,
@@ -2341,7 +2137,7 @@ void TestEditorViewRendererBracketMatchCacheReusesAcrossFramesWithoutChange() {
 
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
                   std::nullopt, std::nullopt, {}, nullptr,
-                  /*bracket_match_highlight_enabled=*/true);
+                  true);
   Expect(renderer.bracket_match_cache_misses() == 1,
          "first frame with bracket-match enabled should populate the cache");
   Expect(renderer.last_bracket_match_pair().has_value(),
@@ -2352,7 +2148,7 @@ void TestEditorViewRendererBracketMatchCacheReusesAcrossFramesWithoutChange() {
 
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
                   std::nullopt, std::nullopt, {}, nullptr,
-                  /*bracket_match_highlight_enabled=*/true);
+                  true);
   Expect(renderer.bracket_match_cache_hits() == 1,
          "second frame with unchanged caret/layout should reuse the cached pair");
   Expect(renderer.bracket_match_cache_misses() == 1,
@@ -2376,14 +2172,14 @@ void TestEditorViewRendererBracketMatchCacheInvalidatesOnCaretMove() {
 
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
                   std::nullopt, std::nullopt, {}, nullptr,
-                  /*bracket_match_highlight_enabled=*/true);
+                  true);
   Expect(renderer.bracket_match_cache_misses() == 1,
          "first frame should compute the pair");
 
   viewport.MoveCursorTo(0, 0);
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
                   std::nullopt, std::nullopt, {}, nullptr,
-                  /*bracket_match_highlight_enabled=*/true);
+                  true);
   Expect(renderer.bracket_match_cache_misses() == 2,
          "moving the caret should invalidate the cache and force a fresh compute");
   Expect(!renderer.last_bracket_match_pair().has_value(),
@@ -2407,13 +2203,13 @@ void TestEditorViewRendererBracketMatchCacheClearsWhenToggleOff() {
 
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
                   std::nullopt, std::nullopt, {}, nullptr,
-                  /*bracket_match_highlight_enabled=*/true);
+                  true);
   Expect(renderer.last_bracket_match_pair().has_value(),
          "toggle-on frame should compute a bracket-match pair");
 
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
                   std::nullopt, std::nullopt, {}, nullptr,
-                  /*bracket_match_highlight_enabled=*/false);
+                  false);
   Expect(!renderer.last_bracket_match_pair().has_value(),
          "toggle-off frame should clear the cached pair so no paint occurs");
   Expect(renderer.bracket_match_cache_misses() == 1,
@@ -2442,9 +2238,9 @@ void TestEditorViewRendererIndentGuidesCacheReusesAcrossUnchangedFrames() {
 
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
                   std::nullopt, std::nullopt, {}, nullptr,
-                  /*bracket_match_highlight_enabled=*/false,
-                  /*indent_guides_enabled=*/true,
-                  /*render_whitespace_enabled=*/false);
+                  false,
+                  true,
+                  false);
   Expect(renderer.indent_guides_cache_misses() == 1,
          "first frame with indent guides enabled should populate the cache");
   Expect(!renderer.last_indent_guide_runs().empty(),
@@ -2452,9 +2248,9 @@ void TestEditorViewRendererIndentGuidesCacheReusesAcrossUnchangedFrames() {
 
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
                   std::nullopt, std::nullopt, {}, nullptr,
-                  /*bracket_match_highlight_enabled=*/false,
-                  /*indent_guides_enabled=*/true,
-                  /*render_whitespace_enabled=*/false);
+                  false,
+                  true,
+                  false);
   Expect(renderer.indent_guides_cache_hits() == 1,
          "second frame with unchanged caret/scroll should reuse the indent-guide runs");
 }
@@ -2545,8 +2341,6 @@ void TestMeasureWidthCacheClearsWhenPresentationScaleChanges() {
          "scale changes should force a fresh backend measurement");
 }
 
-// A backend that records the font it was asked for, so pool tests can tell which
-// renderer draws with which backend and whether a size change was made in place.
 class FontTrackingBackend final : public microide::render::TextRendererBackend {
  public:
   const char* Name() const override { return "font-tracking"; }
@@ -2601,15 +2395,11 @@ struct FontTrackingPool {
           });
 };
 
-// The chrome, the editor and the terminal each have a renderer, and by default
-// all three ask for one font. One backend per renderer filled three identical
-// atlases and glyph caches (TD-2026-10-26-394): renderers sharing a pool share a
-// backend while their fonts match, and only while they do.
 void TestTextBackendPoolSharesABackendWhileFontsMatch() {
   FontTrackingPool fixture;
   microide::render::TextRenderer chrome(fixture.pool);
   microide::render::TextRenderer editor(fixture.pool);
-  editor.SetFontPointSize(microide::render::kDefaultFontPointSize);  // what the shell does
+  editor.SetFontPointSize(microide::render::kDefaultFontPointSize);
   chrome.EnsureInitialized(nullptr);
   editor.EnsureInitialized(nullptr);
   Expect(*fixture.created == 1 && fixture.pool->LiveBackendCount() == 1,
@@ -2623,7 +2413,6 @@ void TestTextBackendPoolSharesABackendWhileFontsMatch() {
          "the editor's size must not reach the chrome through a shared backend: editor " +
              std::to_string(editor.CharWidth()) + ", chrome " + std::to_string(chrome.CharWidth()));
 
-  // Alone on its backend, the editor resizes it rather than opening another.
   Expect(editor.SetFontPointSize(24.0f), "a second size change changes the glyphs again");
   Expect(*fixture.created == 2 && editor.CharWidth() == 24.0f,
          "a renderer that is a backend's only user changes it in place, created " +
@@ -2635,7 +2424,6 @@ void TestTextBackendPoolSharesABackendWhileFontsMatch() {
   Expect(fixture.pool->LiveBackendCount() == 1 && *fixture.created == 2,
          "a font that matches again shares again, and the backend it left is released");
 
-  // A family change reaches only the renderer that asked for it.
   Expect(chrome.SetFontFamily("Mono B"), "a new family changes the chrome's glyphs");
   Expect(fixture.pool->LiveBackendCount() == 2, "the chrome's new family takes its own backend");
   Expect(editor.SetFontFamily("Mono B"), "the editor follows to the same family");
@@ -2643,10 +2431,6 @@ void TestTextBackendPoolSharesABackendWhileFontsMatch() {
          "the same family at the same size is shared again");
 }
 
-// The terminal draws SGR 1 / 3 text in the family's bold and italic faces
-// (TD-2026-11-05-432 item 1). A face is a renderer of its own on the same pool,
-// made only when something draws in it, and it follows its regular renderer's
-// family and size.
 void TestTextRendererFacesAreMadeOnFirstUseAndFollowTheFont() {
   using microide::render::FontStyle;
   FontTrackingPool fixture;
@@ -2676,10 +2460,6 @@ void TestTextRendererFacesAreMadeOnFirstUseAndFollowTheFont() {
          "two renderers' bold faces of one font share a backend");
 }
 
-// Sharing a backend shares its glyphs, not its composites. The chrome's labels and
-// the editor's rows in one bounded cache evicted each other: a scroll through wide
-// CJK rows re-rasterized chrome labels every frame and lost the cache's node
-// recycling (editor_cjk_scroll_paint, +15% allocations, TD-2026-10-26-394).
 void TestTextBackendPoolKeepsEachRenderersCompositesApart() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(320, 80);
@@ -2701,7 +2481,6 @@ void TestTextBackendPoolKeepsEachRenderersCompositesApart() {
              std::to_string(TextRendererTestAccess::TextureCacheSize(chrome)) + ", editor " +
              std::to_string(TextRendererTestAccess::TextureCacheSize(editor)));
 
-  // The editor's font change rebuilds the editor's composites, not the chrome's.
   editor.SetFontPointSize(20.0f);
   editor.DrawString(canvas.renderer(), 4.0f, 44.0f, white, "int value = 0;");
   Expect(TextRendererTestAccess::TextureCacheSize(chrome) == 1 &&
@@ -2709,8 +2488,6 @@ void TestTextBackendPoolKeepsEachRenderersCompositesApart() {
          "a font change clears only its own renderer's composites");
 }
 
-// A size set before the pool is bound is the size the first frame draws at,
-// whichever renderer binds the pool.
 void TestTextBackendPoolResolvesEarlyRequestsOnBind() {
   FontTrackingPool fixture;
   microide::render::TextRenderer chrome(fixture.pool);
@@ -2724,8 +2501,6 @@ void TestTextBackendPoolResolvesEarlyRequestsOnBind() {
   Expect(*fixture.created == 2, "two fonts, two backends");
 }
 
-// One renderer's EnsureInitialized rescales a backend another renderer also
-// draws with; the other renderer's memoized widths are stale from that moment.
 void TestTextBackendPoolRescaleInvalidatesEverySharersWidthCache() {
   FontTrackingPool fixture;
   microide::render::TextRenderer chrome(fixture.pool);
@@ -2759,8 +2534,6 @@ void TestMeasureWidthCacheStatsTrackQueriesAndHits() {
          "width cache stats should count repeated lookups as cache hits");
 }
 
-// The real monospaced backend answers a run of ASCII arithmetically and only
-// shapes the rest; this mirrors that split so the memo policy can be tested.
 class MonospacedishTextBackend final : public microide::render::TextRendererBackend {
  public:
   const char* Name() const override { return "monospacedish"; }
@@ -2787,23 +2560,16 @@ class MonospacedishTextBackend final : public microide::render::TextRendererBack
   mutable std::size_t measure_width_calls_ = 0;
 };
 
-// Scrolling a large diff measures every visible ROW of the document, and those
-// rows are ASCII -- one multiply each. Memoizing them cost a heap copy per row
-// and, because the memo is a bounded LRU, evicted the chrome labels it exists
-// for. A cheap measurement must therefore not enter the cache at all.
 void TestCheapMeasurementsDoNotEvictShapedEntries() {
   microide::render::TextRenderer renderer;
   auto backend = std::make_unique<MonospacedishTextBackend>();
   auto* backend_ptr = backend.get();
   TextRendererTestAccess::SetBackend(renderer, std::move(backend));
 
-  // A label the backend has to shape: it goes in the memo.
   const std::string shaped_label = "Branch \xE2\x80\xA6 main";
   (void)renderer.MeasureWidth(shaped_label);
   const std::size_t after_shaped = backend_ptr->measure_width_calls();
 
-  // Far more distinct ASCII rows than the memo could hold, the way a scroll
-  // through a large file arrives.
   for (int row = 0; row < 20000; ++row) {
     const std::string line = "    const auto value_" + std::to_string(row) + " = compute(row);";
     (void)renderer.MeasureWidth(line);
@@ -2949,8 +2715,6 @@ void TestParseStickyScrollMaxDepthSettingClamp() {
   Expect(ParseStickyScrollMaxDepthSetting(std::string("0")) == 1, "Too-small values clamp up");
   Expect(ParseStickyScrollMaxDepthSetting(std::string("99")) == 8,
          "Too-large values clamp down");
-  // The previous implementation used try/catch around std::stol. The util::ParseInt rewrite must
-  // preserve the "garbage input falls back to default" behavior without exceptions.
   Expect(ParseStickyScrollMaxDepthSetting(std::string("abc")) == 3,
          "non-numeric setting should fall back to the default sticky depth");
   Expect(ParseStickyScrollMaxDepthSetting(std::string("3xyz")) == 3,
@@ -2981,10 +2745,8 @@ void TestComputeStickyScrollLinesRespectsNestingAndDepth() {
       "  }\n"
       "}\n",
       "/tmp/sticky-nested.cpp");
-  // Narrow height so ClampScrollState does not clamp scroll_line to zero when the
-  // buffer fits wholly in view (sticky uses the first visible logical line).
   viewport.SetViewportSize(3, 120);
-  viewport.SetScrollLine(2);  // first visible row is logical line 2 ("    body();")
+  viewport.SetScrollLine(2);
   std::vector<std::size_t> sticky;
   ComputeStickyScrollLinesUncached(viewport, &model, true, 3, sticky);
   Expect(sticky.size() == 2 && sticky[0] == 0 && sticky[1] == 1,
@@ -3096,9 +2858,9 @@ void TestEditorEssentialsDisablingLayersClearsRendererCaches() {
   microide::editor::EditorViewRenderer renderer;
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "hello",
                   std::nullopt, std::nullopt, {}, &vm_on,
-                  /*bracket_match_highlight_enabled=*/true,
-                  /*indent_guides_enabled=*/true,
-                  /*render_whitespace_enabled=*/true,
+                  true,
+                  true,
+                  true,
                   &folding_model);
   Expect(!renderer.last_fold_gutter_marks().empty(),
          "enabled render pass should mirror fold gutter marks");
@@ -3106,9 +2868,9 @@ void TestEditorEssentialsDisablingLayersClearsRendererCaches() {
   microide::editor::EditorViewModel vm_empty{};
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "", std::nullopt,
                   std::nullopt, {}, &vm_empty,
-                  /*bracket_match_highlight_enabled=*/false,
-                  /*indent_guides_enabled=*/false,
-                  /*render_whitespace_enabled=*/false,
+                  false,
+                  false,
+                  false,
                   nullptr);
 
   Expect(renderer.last_fold_gutter_marks().empty(),
@@ -3119,15 +2881,6 @@ void TestEditorEssentialsDisablingLayersClearsRendererCaches() {
          "indent guides off should clear cached guide runs");
 }
 
-// Regression (QA-STALE at ui.scale 1.75, TD-2026-11-10-437): under the software
-// renderer a texture blit's device rect is (int)(x * scale), (int)(w * scale) in
-// float. A run `w` device pixels wide drawn at logical width w / scale often comes
-// back as w - 0.00001 after the multiply and truncates to w - 1, which turns a 1:1
-// copy into a NEAREST-scaled one -- a glyph column dropped -- and a scaled blit
-// samples differently when a clip edge cuts it. So a partial frame whose damage
-// clip crossed a line of text painted that text one shade off from the full frame,
-// and the redraw verifier reported it as stale paint. Every run, clipped at every
-// logical column it spans, must paint exactly the pixels the unclipped draw does.
 void TestTextBlitsAreClipInvariantAtFractionalScale() {
   EnsureDummySdlVideo();
   constexpr float kScale = 1.75f;
@@ -3140,7 +2893,7 @@ void TestTextBlitsAreClipInvariantAtFractionalScale() {
   backend->SetPresentationScale(kScale, kScale);
   microide::render::StringTextureCache texture_cache;
   const SDL_Color color{0xd4, 0xd4, 0xd4, 0xff};
-  constexpr std::uint32_t kOutside = 0xff00ffff;  // magenta: a pixel the clip kept out
+  constexpr std::uint32_t kOutside = 0xff00ffff;
 
   auto paint = [&](std::string_view text, float x, bool ephemeral, const SDL_Rect* clip) {
     SDL_SetRenderClipRect(canvas.renderer(), nullptr);
@@ -3212,9 +2965,6 @@ void TestTextBlitsAreClipInvariantAtFractionalScale() {
 void TestDeviceAlignedOriginSnapsToPhysicalPixelGrid() {
   using microide::render::DeviceAlignedOrigin;
 
-  // The renderer truncates (int)(value * scale): every whole device pixel count,
-  // either sign, must survive that round trip, or a glyph run is copied one pixel
-  // short (TD-2026-11-10-437).
   for (const float scale : {1.25f, 1.5f, 1.75f, 2.5f, 1.1f, 3.0f}) {
     for (int px = -600; px <= 4000; ++px) {
       const float logical = microide::render::DeviceExactLogical(static_cast<float>(px), scale);
@@ -3226,20 +2976,15 @@ void TestDeviceAlignedOriginSnapsToPhysicalPixelGrid() {
     }
   }
 
-  // Integer scales are an exact no-op: glyph origins are already grid-aligned.
   Expect(DeviceAlignedOrigin(18.0f, 1.0f) == 18.0f,
          "scale 1.0 must leave the origin unchanged");
   Expect(DeviceAlignedOrigin(123.0f, 2.0f) == 123.0f,
          "integer scale must leave an aligned origin unchanged");
   Expect(DeviceAlignedOrigin(0.0f, 1.25f) == 0.0f, "zero origin stays at zero");
 
-  // Non-positive / non-finite scales fall back to the input untouched.
   Expect(DeviceAlignedOrigin(17.3f, 0.0f) == 17.3f,
          "non-positive scale must not divide by zero");
 
-  // Under a fractional scale the snapped origin must map onto a whole physical
-  // pixel: result * scale is integral. These are the exact overlay offsets that
-  // smeared before the fix (content_x=+18, list_top=+10 at 125% display scale).
   const float scales[] = {1.25f, 1.5f, 1.75f, 2.5f};
   const float origins[] = {10.0f, 18.0f, 26.0f, 134.5f, 207.0f};
   for (const float scale : scales) {
@@ -3248,7 +2993,6 @@ void TestDeviceAlignedOriginSnapsToPhysicalPixelGrid() {
       const float physical = aligned * scale;
       Expect(std::fabs(physical - std::round(physical)) < 1e-3f,
              "snapped origin must land on an integer physical pixel");
-      // Snapping never moves the origin by more than half a physical pixel.
       Expect(std::fabs(aligned - origin) * scale <= 0.5f + 1e-3f,
              "snap must stay within half a physical pixel of the request");
     }
@@ -3258,7 +3002,6 @@ void TestDeviceAlignedOriginSnapsToPhysicalPixelGrid() {
 void TestTextLayoutIdentifierRangeAt() {
   using microide::editor::TextLayout;
 
-  // Cursor anywhere inside an identifier yields the full word range.
   const std::string line = "  int count_2 = other->x;";
   const std::size_t c = line.find("count_2");
   for (std::size_t off = 0; off < std::string("count_2").size(); ++off) {
@@ -3267,7 +3010,6 @@ void TestTextLayoutIdentifierRangeAt() {
            "any byte inside count_2 resolves to the whole identifier");
   }
 
-  // Non-identifier bytes (space, punctuation, past end-of-line) resolve to empty.
   Expect(TextLayout::IdentifierRangeAt(line, 0).empty(), "leading space is not an identifier");
   Expect(TextLayout::IdentifierRangeAt(line, line.find('=')).empty(),
          "operator byte is not an identifier");
@@ -3275,18 +3017,12 @@ void TestTextLayoutIdentifierRangeAt() {
          "past end-of-line is empty");
   Expect(TextLayout::IdentifierRangeAt("", 0).empty(), "empty line is empty");
 
-  // Member access now extends leftward across `->` so a hover on the trailing
-  // member evaluates the whole chain (`other->x`), not just the bare word `x`.
   const std::size_t x = line.find("->x") + 2;
   const auto rx = TextLayout::IdentifierRangeAt(line, x);
   Expect(!rx.empty() && line.substr(rx.start, rx.end - rx.start) == "other->x",
          "member access absorbs the `->` chain to the left of the hovered member");
 
-  // Non-ASCII identifiers are one target: any byte of `größe` (including a
-  // continuation byte of `ö`) resolves to the whole word, and a chain through
-  // `.` keeps working across it. The byte-wise ASCII scan used to reject every
-  // non-ASCII byte, so a hover over such a name found nothing at all.
-  const std::string umlaut = "x = gr\xc3\xb6\xc3\x9f" "e + 1";  // "x = größe + 1"
+  const std::string umlaut = "x = gr\xc3\xb6\xc3\x9f" "e + 1";
   const std::size_t g = umlaut.find("gr");
   const std::size_t word_end = g + std::string("gr\xc3\xb6\xc3\x9f" "e").size();
   for (std::size_t off = 0; off < word_end - g; ++off) {
@@ -3296,22 +3032,18 @@ void TestTextLayoutIdentifierRangeAt() {
   }
   Expect(TextLayout::IdentifierRangeAt(umlaut, umlaut.find('+')).empty(),
          "operator after a non-ASCII identifier is not an identifier");
-  const std::string cjk_chain = "obj.\xe5\xa4\x89\xe6\x95\xb0";  // "obj.変数"
+  const std::string cjk_chain = "obj.\xe5\xa4\x89\xe6\x95\xb0";
   const auto rc = TextLayout::IdentifierRangeAt(cjk_chain, 4);
   Expect(!rc.empty() && rc.start == 0 && rc.end == cjk_chain.size(),
          "a member chain through a CJK member resolves the whole expression");
 
-  // Tabs/leading indent do not affect byte-offset resolution.
   const std::string tabbed = "\t\tvalue";
   const auto rt = TextLayout::IdentifierRangeAt(tabbed, 3);
   Expect(!rt.empty() && rt.start == 2 && rt.end == tabbed.size(),
          "identifier after tabs resolves by byte offset");
 
-  // B9: member-access chains. Hovering the trailing member of a `.`, `->`, or a
-  // nested mixed chain resolves the full expression; hovering an interior member
-  // resolves only up to that member (leftward only, never rightward).
   const auto dot = [](std::string_view s, std::string_view member) {
-    const std::size_t pos = s.find(member) + member.size() - 1;  // last byte of member
+    const std::size_t pos = s.find(member) + member.size() - 1;
     return TextLayout::IdentifierRangeAt(s, pos);
   };
   {
@@ -3341,45 +3073,30 @@ void TestTextLayoutIdentifierRangeAt() {
            "hovering the last member of a->b->c resolves the full nested arrow chain");
   }
   {
-    // Mixed operators chain too.
     const std::string s = "obj.ptr->name";
     const auto r = dot(s, "name");
     Expect(s.substr(r.start, r.end - r.start) == "obj.ptr->name",
            "mixed `.`/`->` chains resolve end to end");
   }
   {
-    // A stray `>` that is not part of `->` must not be absorbed (greater-than).
     const std::string s = "a>b";
     const auto r = dot(s, "b");
     Expect(s.substr(r.start, r.end - r.start) == "b",
            "a bare `>` (not `->`) does not extend the identifier range");
   }
   {
-    // A non-ASCII LETTER before the dot is identifier content and joins the chain
-    // (`é.field` is one expression), while a non-ASCII SYMBOL (`→`, U+2192) still
-    // bounds it deterministically.
-    const std::string s = std::string("\xC3\xA9") + ".field";  // "é.field"
-    const std::size_t pos = s.find("field") + 4;  // last byte of field
+    const std::string s = std::string("\xC3\xA9") + ".field";
+    const std::size_t pos = s.find("field") + 4;
     const auto r = TextLayout::IdentifierRangeAt(s, pos);
     Expect(s.substr(r.start, r.end - r.start) == s,
            "a non-ASCII letter before `.` is part of the chain");
-    const std::string arrow = std::string("\xE2\x86\x92") + ".field";  // "→.field"
+    const std::string arrow = std::string("\xE2\x86\x92") + ".field";
     const auto ra = TextLayout::IdentifierRangeAt(arrow, arrow.find("field") + 4);
     Expect(arrow.substr(ra.start, ra.end - ra.start) == "field",
            "a non-ASCII symbol before `.` bounds the chain");
   }
 }
 
-// The render-whitespace markers have two producers: the fast view-model path
-// (CSR-indexed whitespace_glyph_runs) and the text-iteration fallback used when
-// no view model is supplied. Both now build their fill rects through the shared
-// PushWhitespaceMarker helper, so for a fully-visible, non-wrapped buffer they
-// must paint pixel-for-pixel identically. This guards the dedup that unified them.
-// `soft_wrap` + a narrow `columns` is what exercises the two paths' shared
-// resume-at-the-row optimization: both start their walk at the row's own start
-// when every byte before it is plain single-cell ASCII, and fall back to a
-// walk from byte 0 otherwise. Getting that condition wrong on either side moves
-// every marker on a continuation row.
 void ExpectWhitespaceMarkerParity(std::string_view content,
                                   int canvas_width,
                                   int canvas_height,
@@ -3410,44 +3127,37 @@ void ExpectWhitespaceMarkerParity(std::string_view content,
            "whitespace parity test should set the canvas background");
     Expect(SDL_RenderClear(canvas.renderer()), "whitespace parity test should clear the canvas");
     microide::editor::EditorViewRenderer renderer;
-    renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, /*draw_caret=*/false,
-                    /*search_query=*/{}, /*active_search_match=*/std::nullopt,
-                    /*blame_overlay=*/std::nullopt, /*diagnostics=*/{}, view_model,
-                    /*bracket_match_highlight_enabled=*/false, /*indent_guides_enabled=*/false,
-                    /*render_whitespace_enabled=*/true);
+    renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false,
+                    {}, std::nullopt,
+                    std::nullopt, {}, view_model,
+                    false, false,
+                    true);
   };
 
-  // The RENDERER owns the viewport's geometry: it derives rows/columns from the
-  // rect and calls SetViewportSize itself. So the view model has to be built
-  // against the size a render leaves behind, exactly as the shell does it -- a
-  // size set by the test here is overwritten by the first render, and the view
-  // model would then describe a different wrap width than the pixels it is
-  // compared against.
   SoftwareCanvas warmup_canvas(canvas_width, canvas_height);
-  render_to(warmup_canvas, /*view_model=*/nullptr);
+  render_to(warmup_canvas, nullptr);
   const std::size_t visible_rows = viewport.visible_lines();
   Expect(expect_wrapped_rows == (viewport.visual_line_count() > viewport.lines().size()),
          "whitespace parity fixture must wrap exactly when the case says it does");
 
-  // View-model path: build the CSR whitespace glyph runs the fast path iterates.
   microide::workspace::WorkspaceContext ctx;
   microide::workspace::RenderViewModelBuilder builder(ctx);
   microide::workspace::RenderViewModelBuilder::ResetOccurrenceCachesForTesting();
   microide::workspace::RenderViewModelBuilder::ResetStickyScrollCacheForTesting();
   microide::editor::EditorViewModel vm;
-  builder.BuildEditorViewModelInto(vm, viewport, visible_rows, /*folding_model=*/nullptr,
-                                   /*occurrences_highlight_enabled=*/false,
-                                   /*occurrences_case_sensitive=*/false,
-                                   /*sticky_scroll_enabled=*/false,
-                                   /*sticky_max_depth=*/3,
-                                   /*render_whitespace_enabled=*/true);
+  builder.BuildEditorViewModelInto(vm, viewport, visible_rows, nullptr,
+                                   false,
+                                   false,
+                                   false,
+                                   3,
+                                   true);
   Expect(!vm.whitespace_glyph_runs.empty(),
          "whitespace parity test should produce glyph runs to exercise the view-model path");
 
   SoftwareCanvas vm_canvas(canvas_width, canvas_height);
   SoftwareCanvas fallback_canvas(canvas_width, canvas_height);
   render_to(vm_canvas, &vm);
-  render_to(fallback_canvas, /*view_model=*/nullptr);
+  render_to(fallback_canvas, nullptr);
 
   SDL_Surface* vm_pixels = SDL_RenderReadPixels(vm_canvas.renderer(), nullptr);
   SDL_Surface* fallback_pixels = SDL_RenderReadPixels(fallback_canvas.renderer(), nullptr);
@@ -3461,23 +3171,13 @@ void ExpectWhitespaceMarkerParity(std::string_view content,
 }
 
 void TestEditorViewRendererWhitespaceMarkersMatchAcrossViewModelAndFallbackPaths() {
-  // The third line starts with a multibyte character: the view-model builder used
-  // to step its whitespace walk one BYTE per cell, so every marker after a
-  // multibyte glyph landed a cell to the right of the real grid -- while the
-  // fallback path stepped by code point and got it right. An ASCII-only fixture
-  // could not tell the two apart.
   ExpectWhitespaceMarkerParity("\tint x = 1;\n  two  spaces\ncaf\xc3\xa9  au lait\n",
-                               /*canvas_width=*/320, /*canvas_height=*/96, /*soft_wrap=*/false,
-                               /*expect_wrapped_rows=*/false,
+                               320, 96, false,
+                               false,
                                "view-model whitespace path and text-iteration fallback must paint "
                                "identical pixels");
 }
 
-// The parity test above cannot see the resume at all: walking from byte 0 gives
-// the same markers, only slower. So the resume needs its own instrument.
-// EditorWhitespaceMarkerWalkBytes counts the bytes each row's walk visits, in
-// both producers. Under soft wrap a from-byte-0 walk is quadratic in the rows of
-// one wrapped line; a resuming walk is linear in the line (TD-2026-08-12-187).
 struct WhitespaceWalkReading {
   std::uint64_t walk_bytes = 0;
   std::uint64_t prefix_bytes = 0;
@@ -3507,15 +3207,15 @@ void ExpectWhitespaceWalkBytes(std::string_view content,
     microide::render::TextRenderer text_renderer;
     TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
     microide::editor::EditorViewRenderer renderer;
-    renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, /*draw_caret=*/false,
-                    /*search_query=*/{}, /*active_search_match=*/std::nullopt,
-                    /*blame_overlay=*/std::nullopt, /*diagnostics=*/{}, vm,
-                    /*bracket_match_highlight_enabled=*/false, /*indent_guides_enabled=*/false,
-                    /*render_whitespace_enabled=*/true);
+    renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false,
+                    {}, std::nullopt,
+                    std::nullopt, {}, vm,
+                    false, false,
+                    true);
   };
 
   SoftwareCanvas canvas(96, 700);
-  render_to(canvas, /*vm=*/nullptr);  // settles the renderer-owned geometry
+  render_to(canvas, nullptr);
   out.rows = viewport.visual_line_count();
   out.visible_rows = viewport.visible_lines();
   Expect(out.rows > viewport.lines().size(), "the walk-bytes fixture must actually wrap");
@@ -3533,15 +3233,15 @@ void ExpectWhitespaceWalkBytes(std::string_view content,
     microide::workspace::RenderViewModelBuilder::ResetStickyScrollCacheForTesting();
     microide::editor::EditorViewModel vm;
     builder.BuildEditorViewModelInto(vm, viewport, viewport.visible_lines(),
-                                     /*folding_model=*/nullptr,
-                                     /*occurrences_highlight_enabled=*/false,
-                                     /*occurrences_case_sensitive=*/false,
-                                     /*sticky_scroll_enabled=*/false,
-                                     /*sticky_max_depth=*/3,
-                                     /*render_whitespace_enabled=*/true);
+                                     nullptr,
+                                     false,
+                                     false,
+                                     false,
+                                     3,
+                                     true);
     Expect(!vm.whitespace_glyph_runs.empty(), "the view-model walk must produce runs");
   } else {
-    render_to(canvas, /*vm=*/nullptr);
+    render_to(canvas, nullptr);
   }
   out.walk_bytes = microide::util::ReadPerformanceCounter(
                        microide::util::PerfCounterId::EditorWhitespaceMarkerWalkBytes) -
@@ -3556,15 +3256,11 @@ void ExpectWhitespaceWalkBytes(std::string_view content,
 }
 
 void TestEditorViewRendererWhitespaceWalkResumesAtTheRow() {
-  // One long line of plain ASCII: every visible row can resume, so the total
-  // bytes walked is bounded by the line, not by line x rows.
   std::string plain;
   for (int i = 0; i < 120; ++i) {
     plain += "word ";
   }
   plain += "\n";
-  // Same length, but a TAB in column 0 makes byte offset stop being visual
-  // column, so no row past the first can resume and every row walks from 0.
   const std::string tabbed = "\t" + plain;
 
   for (const bool use_view_model : {false, true}) {
@@ -3575,25 +3271,12 @@ void TestEditorViewRendererWhitespaceWalkResumesAtTheRow() {
 
     Expect(plain_read.rows > 8 && tabbed_read.rows > 8,
            "the fixtures must wrap into enough rows for the bound below to mean anything");
-    // Linear: each row visits only its own slice, so the sum is about one pass
-    // over the line (plus the rows that end mid-codepoint, which is none here).
     Expect(plain_read.walk_bytes <= plain.size() * 2,
            "a resuming whitespace walk must cost about one pass over the line, not one per row");
-    // The tab in column 0 is what used to make this the quadratic case: byte
-    // offset stops being visual column, so no row past the first could derive its
-    // own start and every row walked from 0. Carrying the previous row's stopping
-    // point does not care what is in the line (TD-2026-08-14-218).
     Expect(tabbed_read.walk_bytes <= tabbed.size() * 2,
            "a leading tab must not cost a walk from byte 0 on every row");
-    // And the prefix probe that TD-2026-08-12-187 put in front of the walk is not
-    // paid per row either -- it is the SAME quadratic shape one level down, since
-    // it reads [0, row_start) to decide. Only the first row of a line probes, and
-    // that row starts at column 0, so this is ~nothing.
     Expect(plain_read.prefix_bytes <= plain.size() && tabbed_read.prefix_bytes <= tabbed.size(),
            "the resume probe must be paid once per line, not once per row");
-    // The mechanism, measured directly: every visible row except the first of
-    // each logical line carried. Two logical lines here (the content plus the
-    // empty tail), so allow that many non-carrying rows plus slack.
     Expect(plain_read.visible_rows > 8 && tabbed_read.visible_rows > 8,
            "the visible window must hold enough rows of one line for a carry to happen");
     Expect(plain_read.rows_carried + 4 >= plain_read.visible_rows &&
@@ -3601,66 +3284,44 @@ void TestEditorViewRendererWhitespaceWalkResumesAtTheRow() {
            "all but each line's first visible row must resume from the previous row");
   }
 
-  // Positive control for the two bounds above, which a walk that had silently
-  // stopped resuming would still pass if the fixture stopped wrapping. Drive the
-  // resolver itself: with no cursor it can only fall back to byte 0 on the tabbed
-  // line, and with one it returns the carried offset.
   const microide::editor::WhitespaceWalkStart cold =
-      microide::editor::ResolveWhitespaceWalkStart(tabbed, /*row_visual_start=*/400,
+      microide::editor::ResolveWhitespaceWalkStart(tabbed, 400,
                                                    microide::editor::WhitespaceRowResume{});
   Expect(cold.byte == 0 && cold.visual_col == 0,
          "without a cursor a tabbed line has no cheap start, which is the cost being removed");
-  microide::editor::WhitespaceWalkCursor cursor{/*line_key=*/7, /*byte=*/321, /*visual_col=*/400,
-                                                /*valid=*/true};
+  microide::editor::WhitespaceWalkCursor cursor{7, 321, 400,
+                                                true};
   const microide::editor::WhitespaceWalkStart warm =
       microide::editor::ResolveWhitespaceWalkStart(
-          tabbed, /*row_visual_start=*/400,
-          microide::editor::WhitespaceRowResume{&cursor, /*line_key=*/7});
+          tabbed, 400,
+          microide::editor::WhitespaceRowResume{&cursor, 7});
   Expect(warm.byte == 321 && warm.visual_col == 400,
          "a cursor on the same line hands the row its start with no reading at all");
   const microide::editor::WhitespaceWalkStart other_line =
       microide::editor::ResolveWhitespaceWalkStart(
-          tabbed, /*row_visual_start=*/400,
-          microide::editor::WhitespaceRowResume{&cursor, /*line_key=*/8});
+          tabbed, 400,
+          microide::editor::WhitespaceRowResume{&cursor, 8});
   Expect(other_line.byte == 0,
          "a cursor from a DIFFERENT line must not be carried onto this one");
 }
 
-// TD-2026-08-12-187: both producers resume their whitespace walk at the row's own
-// start when the bytes before it are plain single-cell ASCII, instead of
-// re-walking the logical line from byte 0 once per visible row. The fallback got
-// that only on 2026-08-12; before then it was asymptotically different from the
-// path production paints from, so this parity test only held on fixtures where no
-// line wrapped.
-//
-// Three lines, each hitting a different branch of the resume condition: plain
-// ASCII (resumes), a tab before the wrap point (cannot resume -- byte offset is
-// not visual column past a tab), and a multibyte glyph before it (same).
 void TestEditorViewRendererWhitespaceMarkersMatchUnderSoftWrap() {
-  // Narrow canvas: the renderer derives the wrap width from the rect, so this is
-  // what makes the lines below wrap at all (the fixture control in the helper
-  // fails if they stop).
   ExpectWhitespaceMarkerParity(
       "aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk lll mmm nnn ooo ppp qqq\n"
       "\txx yy zz ww vv uu tt ss rr qq pp oo nn mm ll kk jj hh gg ff dd ss\n"
       "caf\xc3\xa9 one two three four five six seven eight nine ten eleven twelve\n",
-      /*canvas_width=*/96, /*canvas_height=*/224, /*soft_wrap=*/true,
-      /*expect_wrapped_rows=*/true,
+      96, 224, true,
+      true,
       "under soft wrap the two whitespace producers must still paint identical pixels -- the "
       "row-resume condition has to match on both sides");
 }
 
-// TD-2026-07-17-042: TruncateToWidthEphemeralView returns a view into a
-// thread-local scratch that the NEXT truncation on the same thread overwrites.
-// This test documents (and pins) that contract so a future refactor that stored
-// the returned view would fail here. The default DebugTextBackend measures 8px per
-// char deterministically.
 void TestTruncateToWidthEphemeralViewIsInvalidatedByNextCall() {
-  microide::render::TextRenderer renderer;  // default DebugTextBackend: 8px/char
+  microide::render::TextRenderer renderer;
 
   const std::string long_a(80, 'a');
-  const std::string long_b(80, 'b');  // SAME length so the scratch does not reallocate
-  const float max_width = 80.0f;       // forces truncation (640px) yet fits the "…" (3 bytes)
+  const std::string long_b(80, 'b');
+  const float max_width = 80.0f;
 
   const std::string_view view_a = renderer.TruncateToWidthEphemeralView(long_a, max_width);
   Expect(!view_a.empty() && view_a.substr(view_a.size() - 3) == "\xE2\x80\xA6",
@@ -3668,7 +3329,6 @@ void TestTruncateToWidthEphemeralViewIsInvalidatedByNextCall() {
   Expect(view_a.front() == 'a', "the first ephemeral view initially reflects string A");
   const std::string captured_a(view_a);
 
-  // A second truncation overwrites the shared scratch the first view points into.
   const std::string_view view_b = renderer.TruncateToWidthEphemeralView(long_b, max_width);
   Expect(view_b.front() == 'b', "the second view reflects string B");
   Expect(view_a == view_b,
@@ -3677,14 +3337,9 @@ void TestTruncateToWidthEphemeralViewIsInvalidatedByNextCall() {
          "the first ephemeral view is invalidated (no longer equals its original content)");
 }
 
-// TD-2026-07-17A-105: MeasureWidth passed the full (possibly untrusted, very large)
-// string to the shaper and cached it as a width-cache key, so a huge label could shape a
-// large buffer and retain a large key. Over-budget strings must be measured as a bounded
-// clipped width and never cached — observable via the cache-hit stat.
 void TestMeasureWidthDoesNotCacheOversizedStrings() {
   microide::render::TextRenderer renderer;
 
-  // A normal string is cached: the second measure is a cache hit.
   renderer.ResetCacheStats();
   const std::string normal(64, 'a');
   renderer.MeasureWidth(normal);
@@ -3692,8 +3347,6 @@ void TestMeasureWidthDoesNotCacheOversizedStrings() {
   Expect(renderer.CacheStats().width_cache_hits >= 1,
          "a normal string must be cached (its second measure hits)");
 
-  // An over-budget string (> 8 KiB) must never be cached: repeated measures never hit,
-  // and the returned width is a stable clipped width.
   renderer.ResetCacheStats();
   const std::string huge(100000, 'b');
   const float first = renderer.MeasureWidth(huge);
@@ -3704,11 +3357,6 @@ void TestMeasureWidthDoesNotCacheOversizedStrings() {
 }
 
 
-// SDL's software renderer clips a line BEFORE rasterizing it, so a clip through
-// a diagonal moved its pixels: the overflow chevron beside an open menu came out
-// a pixel off on the partial frame the redraw verifier compared with a full one
-// (CI qa-asan, monkey seed 4). RenderClipStableLine draws SDL's own pixels for
-// the whole line, whatever the clip.
 void TestClipStableLineKeepsItsPixelsUnderAClip() {
   constexpr int kSize = 24;
   const auto paint = [&](bool stable, std::optional<SDL_Rect> clip) {
@@ -3752,7 +3400,7 @@ void TestClipStableLineKeepsItsPixelsUnderAClip() {
   Expect(inside(paint(true, clip), paint(true, std::nullopt)),
          "under a clip, the stable line keeps the pixels it has unclipped");
 }
-}  // namespace
+}
 
 void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextRenderer clip-stable line keeps its pixels under a clip",
@@ -3954,4 +3602,4 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
 #endif
 }
 
-}  // namespace microide::tests
+}

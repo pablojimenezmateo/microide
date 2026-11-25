@@ -18,11 +18,6 @@ namespace microide::tests::perf {
 
 namespace {
 
-// One-byte-at-a-time little-endian u64, for the two-field envelope the payload
-// travels inside (a kind tag, then either the encoded Aggregate or an error
-// string). Deliberately local rather than reaching into the payload codec: the
-// codec is a separate translation unit precisely so `microide_tests` can link it
-// without the fork side.
 void AppendU64(std::string& out, std::uint64_t value) {
   char bytes[8];
   for (int i = 0; i < 8; ++i) {
@@ -55,9 +50,6 @@ bool WriteAll(int fd, std::string_view bytes) {
   return true;
 }
 
-// Drain to EOF BEFORE waiting on the child. A pipe holds ~64 KiB, and a
-// ten-iteration aggregate with per-iteration counters is comfortably past that,
-// so waiting first deadlocks: the child blocks in write, the parent in waitpid.
 bool ReadAll(int fd, std::string* out) {
   char buffer[16384];
   while (true) {
@@ -76,7 +68,7 @@ bool ReadAll(int fd, std::string* out) {
 }
 #endif
 
-}  // namespace
+}
 
 bool ScenarioProcessIsolationAvailable() { return MICROIDE_PERF_CAN_FORK != 0; }
 
@@ -99,9 +91,6 @@ std::optional<Aggregate> RunScenarioInChildProcess(const Scenario& scenario,
   return fail("per-scenario process isolation is not available on this platform");
 #else
   int fds[2] = {-1, -1};
-  // CLOEXEC on the creating call, per the repository's descriptor rule: a
-  // scenario spawns terminal shells, language servers and git, and an inherited
-  // report pipe would keep the parent's read blocked past the child's exit.
   if (::pipe2(fds, O_CLOEXEC) != 0) {
     return fail(std::string("pipe2 failed: ") + std::strerror(errno));
   }
@@ -118,30 +107,19 @@ std::optional<Aggregate> RunScenarioInChildProcess(const Scenario& scenario,
     ::close(fds[0]);
     std::string header;
     std::string payload;
-    // Everything below runs in a process that has never initialised SDL, the
-    // shell, or a thread. `RunScenario` does all of that from scratch and tears
-    // it down again before returning.
     const std::optional<Aggregate> aggregate = PerfHarness::RunScenario(scenario, options);
     if (aggregate.has_value()) {
       AppendU64(header, 1);
       payload = EncodeScenarioAggregate(*aggregate);
     } else {
-      // Distinguish "not selected" (no error text) from a real failure, so the
-      // parent can reproduce RunScenario's own contract exactly.
       const std::string message = PerfHarness::LastError();
       AppendU64(header, message.empty() ? 2 : 0);
       AppendU64(payload, message.size());
       payload.append(message);
     }
-    // The allocation tracer's table lives in THIS address space, and `_exit` runs
-    // no atexit handler, so the parent's end-of-main dump would print an empty
-    // (and, with a phase filter, actively misleading) table. Dump here instead.
     Allocations::DumpTracedAllocationSites();
     const bool wrote = WriteAll(fds[1], header) && WriteAll(fds[1], payload);
     ::close(fds[1]);
-    // _exit, never exit: the parent's atexit handlers and static destructors are
-    // in this address space too, and running them here would (at best) delete the
-    // parent's artifacts and (at worst) flush its buffers twice.
     ::_exit(wrote ? 0 : 1);
   }
 
@@ -185,7 +163,6 @@ std::optional<Aggregate> RunScenarioInChildProcess(const Scenario& scenario,
     }
   }
   if (kind == 2) {
-    // Not selected: the same nullopt-with-no-error contract RunScenario has.
     if (selected != nullptr) {
       *selected = false;
     }
@@ -198,4 +175,4 @@ std::optional<Aggregate> RunScenarioInChildProcess(const Scenario& scenario,
 #endif
 }
 
-}  // namespace microide::tests::perf
+}

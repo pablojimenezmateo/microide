@@ -19,27 +19,6 @@ struct JsonObjectEntry;
 
 using JsonArray = std::vector<JsonValue>;
 
-// A JSON object as a flat vector of key/value pairs, kept sorted by key.
-//
-// This was `std::unordered_map<std::string, JsonValue>`, which charges one node
-// allocation per member plus a bucket array per object. JSON objects are small
-// and numerous -- a DAP `variables` response is hundreds of four-key objects,
-// an LSP `documentSymbol` outline is a tree of them -- so the node-per-member
-// cost dominated every parse, copy, and decode on the wire paths. Copying the
-// 500-entry variables body in dap_protocol_encode_decode cost five allocations
-// per element object where a flat vector costs one, and the map alternative
-// alone made every JsonValue 64 bytes instead of 40, so an array of them
-// touched 60% more cache lines.
-//
-// Sorted rather than insertion-ordered for three reasons: lookup is a binary
-// search instead of a hash plus a pointer chase (n is single digits, so this
-// wins outright); equality is a straight vector compare that stays
-// key-order-independent, which is what the unordered_map gave for free; and
-// serialization becomes deterministic, so the same value always produces the
-// same bytes on the wire and in a log.
-//
-// Duplicate keys are unspecified in RFC 8259. Last-wins is preserved, matching
-// the `obj[key] = value` the parser used to do.
 class JsonObject {
  public:
   using value_type = JsonObjectEntry;
@@ -72,17 +51,11 @@ class JsonObject {
   std::size_t count(std::string_view key) const;
   bool contains(std::string_view key) const;
 
-  // Insert-if-missing, like the map's. Returns a reference to the (possibly
-  // freshly default-constructed) value.
   JsonValue& operator[](std::string_view key);
   std::size_t erase(std::string_view key);
 
   bool operator==(const JsonObject& other) const;
 
-  // Parser seam. The parser appends members in document order and sorts once at
-  // the closing brace: inserting each key in sorted position instead would make
-  // an object with k members cost O(k^2) element moves, which a hostile payload
-  // could aim at.
   void AppendInDocumentOrder(std::string key, JsonValue value);
   void SortAfterParse();
 
@@ -117,11 +90,6 @@ struct JsonValue {
     if (const auto* b = std::get_if<bool>(&v)) return *b;
     return fallback;
   }
-  // The int64 case forced inline, everything else out of line. The perf build's
-  // inliner left AsInt as a call in protocol decode loops (three per semantic
-  // token, 25 % of that decode; TD-2026-10-09-335) -- and kept doing so after the
-  // double clamping moved out and the body was one branch, so the attribute is
-  // what makes it inline, not the size.
   [[gnu::always_inline]] std::int64_t AsInt(std::int64_t fallback = 0) const {
     if (const auto* n = std::get_if<std::int64_t>(&v)) [[likely]] {
       return *n;
@@ -149,30 +117,18 @@ struct JsonValue {
     return kEmpty;
   }
 
-  // AsInt for anything but an int64: a double clamped to int64 (see JsonValue.cpp),
-  // else `fallback`.
   std::int64_t AsIntSlow(std::int64_t fallback) const;
 
-  // Lookup in object; returns null JsonValue if missing or not an object.
   const JsonValue& operator[](std::string_view key) const;
-  // Lookup by index in array.
   const JsonValue& operator[](std::size_t idx) const;
 
   bool HasKey(std::string_view key) const;
 
-  // Mutable accessors (additive; the const API above is unchanged). Opt-in for
-  // consumers that own the JsonValue and want to move data out instead of copying —
-  // e.g. an LSP response parser moving result strings out on the main thread. Each
-  // returns nullptr when the stored alternative does not match.
   JsonValue* MutableAt(std::string_view key);
   JsonArray* MutableArray() { return std::get_if<JsonArray>(&v); }
   std::string* MutableString() { return std::get_if<std::string>(&v); }
   JsonObject* MutableObject() { return std::get_if<JsonObject>(&v); }
 
-  // Structural equality: recurses through the variant, so objects compare
-  // key-order-independently (unordered_map ==) and arrays compare element-wise.
-  // This is both allocation-free and more correct than comparing SerializeJson
-  // strings, whose object key order depends on hash-map iteration order.
   bool operator==(const JsonValue&) const = default;
 };
 
@@ -183,17 +139,7 @@ struct JsonObjectEntry {
   bool operator==(const JsonObjectEntry&) const = default;
 };
 
-// JsonObject's members are defined here, after JsonObjectEntry is complete.
-// They stay in the header (not the .cpp) because find/operator[] sit on the
-// LSP/DAP/control decode hot path and want to inline.
 namespace detail {
-// Order by (length, bytes), not plain lexicographic. The ordering is an internal
-// detail -- find, operator[], and the parse-time sort only have to agree on one
-// strict weak ordering -- and putting length first turns most comparisons on the
-// lookup path into a single integer compare instead of a memcmp. JSON member keys
-// are short and mostly differ in length ("id" / "name" / "method" / "children"),
-// so the memcmp usually never runs. Serialization stays deterministic, which is
-// what the order actually has to guarantee.
 inline bool JsonKeyOrderLess(std::string_view a, std::string_view b) {
   if (a.size() != b.size()) {
     return a.size() < b.size();
@@ -203,7 +149,7 @@ inline bool JsonKeyOrderLess(std::string_view a, std::string_view b) {
 inline bool JsonKeyLess(const JsonObjectEntry& entry, std::string_view key) {
   return JsonKeyOrderLess(entry.key, key);
 }
-}  // namespace detail
+}
 
 inline JsonObject::JsonObject() = default;
 inline JsonObject::JsonObject(std::initializer_list<JsonObjectEntry> init) : entries_(init) {
@@ -271,18 +217,14 @@ inline JsonValue* JsonValue::MutableAt(std::string_view key) {
 }
 
 inline void JsonObject::AppendInDocumentOrder(std::string key, JsonValue value) {
-  // Seed the capacity so a typical object allocates its storage once instead of
-  // regrowing at 1/2/4. Most JSON objects on these wire paths carry 2-8 members.
   if (entries_.empty()) {
     entries_.reserve(8);
   }
   entries_.push_back(JsonObjectEntry{std::move(key), std::move(value)});
 }
 
-// Parse JSON text; returns nullopt on parse error.
 std::optional<JsonValue> ParseJson(std::string_view text);
 
-// Serialize to compact JSON string.
 std::string SerializeJson(const JsonValue& value);
 
-}  // namespace microide::util
+}

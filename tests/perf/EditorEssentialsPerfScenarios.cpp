@@ -95,11 +95,6 @@ void RunEditorAddCursorNextMatch(ScenarioContext& context) {
   });
 }
 
-// Keyboard column selection materializes one caret per spanned line on every
-// keystroke, so a long gesture rebuilds a growing caret set repeatedly -- the one
-// shape where a single held-down chord can go quadratic. The 10,000-caret cap in
-// SetBoxSelection bounds the size; nothing bounded the rebuild rate, and no
-// scenario covered box selection at all (keyboard or mouse).
 void RunEditorColumnSelectionBurst(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
@@ -112,15 +107,8 @@ void RunEditorColumnSelectionBurst(ScenarioContext& context) {
   vp.ClearSecondaryCarets();
   vp.ClearColumnSelection();
   vp.MoveCursorTo(5000, 8, false);
-  // A column-select gesture always happens on a pane that has painted, and the
-  // paint builds the per-line width table the box mapping reads; a viewport that
-  // never painted would build it inside the first measured step instead (an
-  // O(document) allocation burst no real gesture pays).
   context.PumpFrames(1);
 
-  // 400 Down steps: the caret set grows by one line per step and is rebuilt whole
-  // each time, so allocations here scale with the SUM of the span, not its final
-  // size. That is the number worth watching.
   context.Measure("column_selection.extend_down", [&] {
     editor::ColumnSelectionState state = vp.column_selection();
     for (int i = 0; i < 400; ++i) {
@@ -135,8 +123,6 @@ void RunEditorColumnSelectionBurst(ScenarioContext& context) {
     }
   });
 
-  // Horizontal extension re-scans the span for the longest line on every step,
-  // which is the cost the keyboard gesture adds over the mouse one.
   context.Measure("column_selection.extend_right", [&] {
     editor::ColumnSelectionState state = vp.column_selection();
     for (int i = 0; i < 64; ++i) {
@@ -152,16 +138,6 @@ void RunEditorColumnSelectionBurst(ScenarioContext& context) {
   });
 }
 
-// Arrow keys over a caret set that already exists. Box selection had a gate for
-// BUILDING the set (`editor_column_selection_burst`) and multi-caret editing had
-// one for applying an edit to it, but nothing measured the step in between --
-// which is what a user does constantly: box-select a few hundred lines, then
-// press End, then Up/Down, then type.
-//
-// Every motion verb runs the same tail (advance each caret, then sort + dedupe +
-// merge the whole set), so this is the one place a per-keystroke O(n log n) over
-// a thousand carets would show, and the caret set is large enough here that an
-// accidental per-caret allocation is loud rather than lost in the noise.
 void RunEditorMultiCaretMotionBurst(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
@@ -174,16 +150,7 @@ void RunEditorMultiCaretMotionBurst(ScenarioContext& context) {
   vp.ClearSecondaryCarets();
   vp.ClearColumnSelection();
   vp.MoveCursorTo(5000, 4, false);
-  // The pane has painted before any real gesture, so the per-line width table
-  // the caret arithmetic reads is already built -- see the column-select
-  // scenario for why measuring its construction instead would be a fiction.
   context.PumpFrames(1);
-  // One box over 1,200 lines, rebuilt before EACH burst and outside the measured
-  // closure. Rebuilt, not built once: a motion that walks a caret off the end of
-  // its line spills it onto the next one, where it merges with the caret already
-  // there -- so a burst that ran first would hand the next burst a collapsed set
-  // and the four numbers would describe four different set sizes. The count
-  // check after each burst is what makes that visible instead of silent.
   const auto place_box = [&] {
     vp.ClearSecondaryCarets();
     vp.SetBoxSelection(editor::TextPosition{4400, 4}, editor::TextPosition{5600, 12});
@@ -203,13 +170,6 @@ void RunEditorMultiCaretMotionBurst(ScenarioContext& context) {
     }
   };
 
-  // The four bursts move the carets WITHOUT extending. That is not a softer
-  // workload, it is the only one that keeps the set the same size across all
-  // four: an EXTENDING vertical step grows every caret's selection down into the
-  // row its neighbour occupies, so the whole set merges -- 1,200 cursors to one
-  // on a single Shift+Down, which is VS Code's rule too. That cascade is worth a
-  // number of its own and gets one below; mixing it into these would leave each
-  // burst describing a different set size.
   place_box();
   context.Measure("multi_caret_motion.horizontal_burst", [&] {
     for (int i = 0; i < 32; ++i) {
@@ -226,7 +186,6 @@ void RunEditorMultiCaretMotionBurst(ScenarioContext& context) {
   });
   require_set_survived("vertical_burst");
 
-  // End/Home: one bounded read of every caret's own line, per caret, per press.
   place_box();
   context.Measure("multi_caret_motion.line_edge_burst", [&] {
     for (int i = 0; i < 16; ++i) {
@@ -236,7 +195,6 @@ void RunEditorMultiCaretMotionBurst(ScenarioContext& context) {
   });
   require_set_survived("line_edge_burst");
 
-  // Word motion: the boundary scan, at every caret.
   place_box();
   context.Measure("multi_caret_motion.word_burst", [&] {
     for (int i = 0; i < 16; ++i) {
@@ -245,12 +203,9 @@ void RunEditorMultiCaretMotionBurst(ScenarioContext& context) {
   });
   require_set_survived("word_burst");
 
-  // The worst case the normalise tail has: ONE keystroke that makes every
-  // cursor's selection overlap its neighbour's, so the merge walks the whole set
-  // and returns a single cursor. Nothing else in the suite reaches it.
   place_box();
   context.Measure("multi_caret_motion.merge_cascade", [&] {
-    vp.MoveCursorVertical(1, /*extend_selection=*/true);
+    vp.MoveCursorVertical(1, true);
   });
   if (caret_count() != 1) {
     throw std::runtime_error(
@@ -260,19 +215,6 @@ void RunEditorMultiCaretMotionBurst(ScenarioContext& context) {
   }
 }
 
-// The EDIT half of the large-caret-set story. `editor_multi_caret_motion_burst`
-// covers moving a thousand cursors and `editor_shaping_multi_caret` covers one
-// line op over 32 of them; the verbs that arrived with the 2026-09 multi-caret
-// work — the per-cursor Tab (TD-2026-09-19-295), the per-caret block comment,
-// Join Lines, and Add Cursor Below — landed with no perf coverage at all, and
-// they are exactly the shape where a per-site rebuild goes quadratic: each one
-// plans N edits against the pre-edit buffer, sorts them, applies them
-// highest-first, and then rebuilds the caret set from where they landed.
-//
-// Every phase restores the buffer, so the ten iterations measure the same work,
-// and every phase asserts its verb actually did something — a phase whose subject
-// is an interaction needs that or it can drift onto a no-op and report a smaller
-// number forever (see the two scroll sweeps, TD-2026-09-20-298).
 void RunEditorMultiCaretEditBurst(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
@@ -290,9 +232,6 @@ void RunEditorMultiCaretEditBurst(ScenarioContext& context) {
   vp.ClearSecondaryCarets();
   vp.ClearColumnSelection();
   vp.MoveCursorTo(4400, 4, false);
-  // The pane has painted before any real gesture, so the per-line width table the
-  // caret arithmetic reads is already built — measuring its construction instead
-  // would be a fiction no gesture pays.
   context.PumpFrames(1);
 
   const auto caret_count = [&] { return vp.secondary_caret_range_view().size() + 1; };
@@ -319,29 +258,19 @@ void RunEditorMultiCaretEditBurst(ScenarioContext& context) {
     }
   };
 
-  // One indent unit at each of 1,200 cursors' own columns. The per-cursor Tab
-  // plans a soft tab per SITE (each aligns to its own next tab stop) where the
-  // old machine decided one intent for the whole set.
   place_box();
   context.Measure("multi_caret_edit.soft_tab", [&] { vp.InsertTab(); });
   restore("soft_tab");
 
-  // A block comment per caret region: N `TextInRange` reads and N wrapped
-  // replacements, planned together and applied as one undo entry.
   place_box();
   context.Measure("multi_caret_edit.toggle_block_comment",
                   [&] { (void)editor::ToggleBlockComment(vp, "/*", "*/"); });
   restore("toggle_block_comment");
 
-  // Join Lines folds each caret's region onto one line: 1,200 separate joins in
-  // one edit, each reading its own line and the one below it.
   place_box();
   context.Measure("multi_caret_edit.join_lines", [&] { (void)editor::JoinLinesAtCarets(vp); });
   restore("join_lines");
 
-  // Growing the set rather than editing with it: one step from EVERY seed, then a
-  // dedupe, so a naive implementation doubles the column per press instead of
-  // adding one row to it. 32 presses over a set that starts at 1,200.
   place_box();
   const std::size_t carets_before_growth = caret_count();
   context.Measure("multi_caret_edit.add_cursor_below", [&] {
@@ -397,13 +326,6 @@ void RunEditorToggleCommentLargeSelection(ScenarioContext& context) {
   if (vp.lines().size() <= last) {
     throw std::runtime_error("editor_toggle_comment_large_selection: file too short");
   }
-  // Repeated so the median is measurable: one toggle resolves in ~1.3 ms, and
-  // this runner's CPU modes are tens of percent apart, so the gate flaked at any
-  // envelope narrow enough to be worth having. The selection has to be
-  // re-established each time -- a toggle collapses it, and without this the
-  // repetitions are no-ops that inflate the loop count without doing the work
-  // (the allocation count is what says which of the two you have). Toggling an
-  // even number of times also leaves the buffer as it started.
   context.Measure("toggle_line_comment.1000_lines", [&] {
     for (int i = 0; i < 16; ++i) {
       vp.MoveCursorTo(first, 0, false);
@@ -490,30 +412,6 @@ void RunMenuHoverSwitch(ScenarioContext& context) {
   context.PumpFrames(1);
 }
 
-// The painted counterpart of the typing scenarios: each keystroke is followed
-// by one partial frame carrying exactly the damage that keystroke produced, so
-// the measured phase is the app's real steady-state edit loop and the painted
-// clip SIZE is under a gate. Every other typing scenario paints full frames,
-// which means a keystroke whose damage rect silently grew from a line band to
-// the whole editor surface would change nothing any gate could see — repaint
-// scope is the regression class with the largest real-world typing-latency
-// effect and, until this scenario, zero paint-time coverage.
-// The non-ASCII render path, which had no perf coverage of any kind.
-//
-// `SdlTtfTextBackend::BuildGridCompositeSurface` draws a string containing any
-// non-ASCII one glyph CLUSTER at a time so each lands on its own grid cell, and
-// every cluster that misses the ASCII atlas is its own `TTF_RenderText_Blended`.
-// A row of CJK is therefore N rasterizations on its FIRST paint and a
-// texture-cache hit afterwards, so the cost only shows where the cache keeps
-// missing -- scrolling through fresh rows, not typing in one.
-//
-// Deliberately the same gesture and shape as `editor_scroll_fresh_content_large`,
-// which sweeps ASCII: the pair is a controlled A/B that isolates the per-cluster
-// path from everything else a scroll does.
-// `render.grid_composite_cluster_rasterizations` is the number TD-2026-09-06-289a
-// deferred its per-glyph coverage cache on -- that entry gated the fix on "a
-// CJK-heavy file measurably pays for it", and nothing in the suite could measure
-// it, so the condition could never be observed either way.
 void RunEditorCjkScrollPaint(ScenarioContext& context) {
   const std::filesystem::path cjk =
       "tests/perf/fixtures/editor_essentials_cjk/synthetic_cjk.py";
@@ -527,32 +425,17 @@ void RunEditorCjkScrollPaint(ScenarioContext& context) {
   }
   context.PumpFrames(8);
 
-  // Start every iteration at the top of the file. The scenario body runs once per
-  // iteration but the SHELL persists across them, so `OpenTab` on the second
-  // iteration re-focuses the tab this one left parked wherever the sweep ended.
-  // 160 page-downs is ~7,200 rows, so the warmup and the first two iterations
-  // walked the fixture's 20,000 lines to its end and every iteration after that
-  // paged against the bottom, painting one unchanging screen: zero composites,
-  // zero texture-cache misses, zero allocations. The gated p50 was that no-op,
-  // which is the collapse case `dev-docs/performance/perf-harness.md` describes —
-  // it read 0 phase allocations and PASSED (TD-2026-09-20-298).
   editor::TextViewport& viewport = context.ActiveViewport();
   viewport.MoveCursorTo(0, 0, false);
   viewport.SetScrollLine(0);
   context.PumpFrames(1);
 
-  // One downward sweep through continuously fresh rows, so string-texture cache
-  // misses accumulate the way they do when a user scrolls a large file for real.
   context.Measure("cjk_scroll_paint.page_down_sweep", [&] {
     for (int i = 0; i < 160; ++i) {
       context.KeyDown(SDLK_PAGEDOWN);
       context.PumpFrames(1);
     }
   });
-  // The guard the reset above exists for: a sweep that no longer scrolls has to
-  // fail loudly rather than report a smaller number forever. Half the nominal
-  // distance is slack for a viewport shorter than the one this was written
-  // against, and still an order of magnitude above the no-op it is aimed at.
   if (context.ActiveViewport().scroll_line() < 3000) {
     throw std::runtime_error(
         "editor_cjk_scroll_paint: the page-down sweep did not scroll through fresh rows");
@@ -574,7 +457,6 @@ void RunEditorTypingPaint(ScenarioContext& context) {
   }
   vp.MoveCursorTo(10000, 0, false);
   context.PumpFrames(2);
-  // Drain the setup's own damage so every measured frame is one keystroke's.
   context.PumpPartialFrames(1);
 
   context.Measure("typing_paint.160_keystrokes", [&] {
@@ -585,14 +467,6 @@ void RunEditorTypingPaint(ScenarioContext& context) {
   context.PumpFrames(1);
 }
 
-// menu_hover_switch measures the EVENT cost of hovering along the bar; every
-// frame the damage those events queue would cause is left unpainted until one
-// trailing full pump. This scenario is the painted half: each hover switch is
-// followed by one PumpPartialFrames frame, so the measured phase is the app's
-// real steady-state loop — event, coalesce, partial paint — and its wall/cpu
-// carry the FILL cost of whatever clip the coalescer produced. It is the only
-// scenario that exercises the dirty-region partial-redraw pipeline at all
-// (TD-2026-08-30-281): PumpFrames-based scenarios paint every frame full.
 void RunMenuHoverPaint(ScenarioContext& context) {
   context.ResizeWindow(1280, 720);
   context.PumpFrames(1);
@@ -614,8 +488,6 @@ void RunMenuHoverPaint(ScenarioContext& context) {
   if (!workspace::WorkspaceShell::TestAccess::FileMenuOpen(context.Shell())) {
     throw std::runtime_error("menu_hover_paint: File menu did not stay open");
   }
-  // Drain the open's own damage so the measured loop starts from a clean queue
-  // and every measured frame is one hover switch's damage, nothing else's.
   context.PumpPartialFrames(1);
 
   context.Measure("menu_hover_paint.160_hover_frames", [&] {
@@ -752,10 +624,6 @@ void RunEditorSaveNormalization(ScenarioContext& context) {
   if (!RequireFixture(context, fixture, "editor_save_normalization")) {
     return;
   }
-  // Saved as a copy in the temp directory (tmpfs on perf-runner-v1): the phase is
-  // the normalization and the write, not the checkout volume's fsync, whose stalls
-  // on that encrypted ext4 disk put up to 37 ms in p95/max one run in three -- the
-  // same at every commit, and none on tmpfs (TD-2026-10-26-393).
   std::error_code ec;
   const std::filesystem::path dir =
       std::filesystem::temp_directory_path(ec) / "microide_perf_save_normalization";
@@ -777,30 +645,7 @@ void RunEditorSaveNormalization(ScenarioContext& context) {
   context.PumpFrames(1);
 }
 
-// Gates `ApplyEditorPreferencesToAllTabs`, which is O(open tabs) and runs on the
-// shell thread on every live setting change, project activation, and session
-// restore. TD-2026-07-17A-103 split that work into families precisely so a
-// project with many restored tabs would not rebuild every tab's language
-// contract for a checkbox — but nothing measured it, so the win had no gate and
-// anything added to the per-tab path was invisible. The harness even carried an
-// unused `ScenarioContext::ApplyEditorPreferencesToAllTabs()` helper for it.
-//
-// Two measured phases, because the two setting families cost very differently
-// and a regression in either is a distinct bug:
-//   - cheap family: a save-normalization toggle touches only the per-viewport
-//     setters. This phase must NOT scale with contract-rebuild cost.
-//   - contract family: an auto-close toggle forces the filetype detect plus
-//     language-contract build for every tab. This is the expensive path TD-103
-//     bounded, and the one a careless change re-triggers for the cheap family.
-//
-// A `.editorconfig` sits in the fixture so per-tab EditorConfig resolution is on
-// the measured path too. Its memo is what keeps that resolution off this budget,
-// so an allocation regression there (e.g. re-materializing the lookup key on a
-// memo hit) shows up here as rising per-iteration allocations.
 void RunSettingsChangeManyTabs(ScenarioContext& context) {
-  // A dedicated fixture rather than large_project: dropping a `.editorconfig`
-  // into a shared fixture would silently move multi_tab_cycle,
-  // cold_startup_large_project and multi_project_switch off their baselines.
   const std::filesystem::path project = "tests/perf/fixtures/settings_tabs_project";
   if (!RequireFixture(context, project, "settings_change_many_tabs")) {
     return;
@@ -808,9 +653,6 @@ void RunSettingsChangeManyTabs(ScenarioContext& context) {
   (void)context.Open(project);
   context.PumpFrames(2);
 
-  // 40 tabs: enough that per-tab cost dominates the fixed overhead, small enough
-  // that the scenario stays well inside the per-iteration budget. `.cpp` so
-  // filetype detection resolves a real language contract -- the expensive half.
   constexpr int kTabCount = 40;
   int opened = 0;
   for (int index = 1; index <= kTabCount; ++index) {
@@ -824,28 +666,14 @@ void RunSettingsChangeManyTabs(ScenarioContext& context) {
     ++opened;
   }
   if (opened == 0) {
-    // Same rule as a missing fixture: a scenario that opened no tabs measures
-    // nothing, and must not be compared to a baseline (TD-2026-08-10-170).
     context.SkipScenario("settings_change_many_tabs: no fixture files opened under " +
                          (project / "src").string());
     return;
   }
   context.PumpFrames(2);
 
-  // Pass count is set by what makes the scenario-level allocation gate able to
-  // FAIL, not by realism. Opening the tabs costs ~1.1k allocations each, so at a
-  // handful of passes the setup is >80% of the iteration and a per-tab
-  // regression drowns in it: the 10% default allocation tolerance would sit at
-  // ~5.4k, an order of magnitude above the ~440 (one per resolve) that this
-  // scenario was written to catch. At 24 passes the measured work is the
-  // majority of the iteration and the same regression is ~2.5% -- catchable with
-  // the tightened tolerance below. Allocations here are deterministic (the
-  // counter is shell-thread only), so a tight envelope is safe; the observed
-  // p50/max spread is ~0.5%.
   constexpr int kPasses = 24;
 
-  // Cheap family: per-viewport setters only. Toggled rather than re-set to the
-  // same value so the setting genuinely changes each pass.
   bool trim = false;
   context.Measure("settings.apply_cheap_family_all_tabs", [&] {
     for (int pass = 0; pass < kPasses; ++pass) {
@@ -854,18 +682,6 @@ void RunSettingsChangeManyTabs(ScenarioContext& context) {
     }
   });
 
-  // Contract family: the filetype detect + language-contract application per tab.
-  // Measured separately so the two costs can never hide inside one number --
-  // TD-2026-07-17A-103's whole win was keeping the cheap family off this path,
-  // and one merged metric would let that regress invisibly.
-  //
-  // As of TD-2026-08-03-110 NEITHER family allocates per tab: both memoize, so
-  // running this scenario at kTabCount 10 instead of 40 leaves the cheap family
-  // byte-identical (10,564) and the contract family within 2 allocations
-  // (10,752 vs 10,754). What each phase measures now is the fixed per-settings-
-  // change overhead, so a regression that reintroduces per-tab allocation shows
-  // up as a large jump here rather than as a few percent -- and re-running at a
-  // different kTabCount is the cheap way to confirm that is what happened.
   bool auto_close = false;
   context.Measure("settings.apply_contract_family_all_tabs", [&] {
     for (int pass = 0; pass < kPasses; ++pass) {
@@ -885,24 +701,13 @@ void RunEditorIndentDetectOpen(ScenarioContext& context) {
   (void)context.Open("tests/perf/fixtures/small_project");
   context.SetSetting("editor.indent.detect_on_open", "true");
   context.Measure("open_tab.with_indent_detect", [&] { context.OpenTab(file); });
-  // Zero-copy LineSpan path (TD-2026-07-17A-003): detect over the live buffer without
-  // a Snapshot() materialization.
   const editor::IndentDetection det = editor::DetectIndent(context.ActiveViewport().lines());
-  if (det.non_blank_lines_inspected > 1024) {  // DetectIndent's default window
+  if (det.non_blank_lines_inspected > 1024) {
     throw std::runtime_error("editor_indent_detect_open: DetectIndent exceeded non-blank budget");
   }
   context.PumpFrames(1);
 }
 
-// Reproduces the multi-second first-paint freeze recorded in
-// dev-docs/performance/performance-findings.md (§4.8): restoring a session whose
-// saved cursor/scroll sat deep in a large syntax-highlighted file forces the
-// syntax-checkpoint chain to replay from line 0 synchronously on the main thread
-// during the first paint at that position. The existing large-file scenarios open
-// at the top (replay distance ~0) and so never exercise this. We jump deep with a
-// cold highlight cache *inside* the measured region; the driver persists across
-// iterations, so InvalidateSyntaxHighlighting() resets the checkpoint cursors to
-// keep every iteration cold and the measurement stable.
 void RunLargeFileRestoreDeepScrollFirstPaint(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
@@ -916,7 +721,6 @@ void RunLargeFileRestoreDeepScrollFirstPaint(ScenarioContext& context) {
   if (vp.lines().size() <= kDeepLine) {
     throw std::runtime_error("large_file_restore_deep_scroll_first_paint: file too short");
   }
-  // Settle at the top so each measured jump starts from a comparable scroll state.
   vp.MoveCursorTo(0, 0, false);
   context.PumpFrames(1);
   context.Measure("deep_restore.jump_and_first_paint", [&] {
@@ -926,12 +730,6 @@ void RunLargeFileRestoreDeepScrollFirstPaint(ScenarioContext& context) {
   });
 }
 
-// Single-character line-count churn (Enter then Backspace) in the *middle* of a
-// 50k-line file. With the vector<std::string> document model every newline
-// insert/delete shifts ~n/2 line entries (O(n)); this scenario is the oracle for
-// the piece-tree migration (Phase 3) which makes mid-file edits O(log n). The
-// deep region is warmed before the measured burst so this isolates edit-apply
-// cost from the syntax-replay first-paint cost measured above.
 void RunMidFileEditLatencyLargeFile(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
@@ -946,7 +744,7 @@ void RunMidFileEditLatencyLargeFile(ScenarioContext& context) {
     throw std::runtime_error("mid_file_edit_latency_large_file: file too short");
   }
   vp.MoveCursorTo(kMidLine, 0, false);
-  context.PumpFrames(2);  // warm highlights/layout for the visible window
+  context.PumpFrames(2);
   context.Measure("mid_file_edit.enter_backspace_burst", [&] {
     for (int i = 0; i < 24; ++i) {
       context.KeyDown(SDLK_RETURN);
@@ -956,17 +754,6 @@ void RunMidFileEditLatencyLargeFile(ScenarioContext& context) {
   });
 }
 
-// Typing inside a file with NO line breaks -- a minified bundle. Every per-line
-// cost in the editor is a per-DOCUMENT cost here, so this is where a stray copy
-// of "the affected line" stops being a rounding error and becomes megabytes per
-// keystroke.
-//
-// Nothing measured this shape before: every editor fixture in the tree is
-// ordinary line-broken text (the widest line in `large_project` is 20 bytes), so
-// a one-character insert allocating 13x the affected line passed the whole perf
-// suite unnoticed. Allocations are the metric that matters here -- they scale
-// exactly with how many times the edit path walks the line, which is the thing
-// that regresses.
 void RunEditorTypingMinifiedLine(ScenarioContext& context) {
   const std::filesystem::path minified =
       "tests/perf/fixtures/editor_essentials_minified/bundle.min.js";
@@ -980,18 +767,14 @@ void RunEditorTypingMinifiedLine(ScenarioContext& context) {
     throw std::runtime_error(
         "editor_typing_minified_line: fixture is not a single line (regenerate it)");
   }
-  // Mid-line, so the composed replacement has a real prefix and a real suffix
-  // rather than degenerating into an append.
   vp.MoveCursorTo(0, vp.lines().front().size() / 2, false);
-  context.PumpFrames(2);  // warm the visible window's layout/highlight
+  context.PumpFrames(2);
   context.Measure("minified_line.type_burst", [&] {
     for (int i = 0; i < 16; ++i) {
       context.Type("x");
       context.PumpFrames(1);
     }
   });
-  // Backspace runs a different composition path (empty replacement) and its own
-  // coalesce run, so it is not covered by the insert burst above.
   context.Measure("minified_line.backspace_burst", [&] {
     for (int i = 0; i < 16; ++i) {
       context.KeyDown(SDLK_BACKSPACE);
@@ -1000,15 +783,6 @@ void RunEditorTypingMinifiedLine(ScenarioContext& context) {
   });
 }
 
-// The three scenarios below extend the no-line-breaks coverage from *typing* to
-// the other things a person does with such a file. TD-2026-08-05-130/131/132 all
-// existed because no fixture in the tree had a long line, so a whole class of
-// proportional-to-line-length costs had nowhere to show up; closing that for one
-// interaction leaves the same hole open for every other one.
-//
-// Opens the fixture and returns its viewport, or nullptr when the fixture is
-// absent (the generated trees are gitignored, so a scenario must degrade rather
-// than fail). Shared by the three below so the shape assertion lives once.
 editor::TextViewport* OpenMinifiedFixtureOrSkip(ScenarioContext& context,
                                                 const char* scenario_name) {
   const std::filesystem::path minified =
@@ -1026,14 +800,6 @@ editor::TextViewport* OpenMinifiedFixtureOrSkip(ScenarioContext& context,
   return &viewport;
 }
 
-// Moving the caret along a line with no line breaks in it, which is what
-// horizontal scrolling IS in this editor -- the scroll offset follows the caret.
-//
-// Nothing measured horizontal scrolling at all before this: every scroll scenario
-// in the suite is vertical, and on ordinary text the horizontal offset never
-// leaves the first screenful. Here End puts it a megabyte in, and every render
-// path that resolves "which byte is the first visible cell" has to answer that
-// from the new offset, on every visible row, on every frame.
 void RunEditorLongLineHorizontalScroll(ScenarioContext& context) {
   editor::TextViewport* viewport =
       OpenMinifiedFixtureOrSkip(context, "editor_long_line_horizontal_scroll");
@@ -1041,10 +807,8 @@ void RunEditorLongLineHorizontalScroll(ScenarioContext& context) {
     return;
   }
   viewport->MoveCursorTo(0, 0, false);
-  context.PumpFrames(2);  // warm the visible window's layout/highlight
+  context.PumpFrames(2);
 
-  // End -> Home is the largest possible jump in the horizontal scroll offset: the
-  // visible-line layout cache is keyed on that offset, so both ends miss.
   context.Measure("long_line_scroll.end_home_jumps", [&] {
     for (int i = 0; i < 8; ++i) {
       context.KeyDown(SDLK_END);
@@ -1054,9 +818,6 @@ void RunEditorLongLineHorizontalScroll(ScenarioContext& context) {
     }
   });
 
-  // Word motion from deep in the line: small offset changes, but each one still
-  // re-keys the layout cache, so this is the steady-state cost of reading along a
-  // long line rather than the cost of jumping to its end.
   context.KeyDown(SDLK_END);
   context.PumpFrames(2);
   context.Measure("long_line_scroll.word_motion_burst", [&] {
@@ -1067,14 +828,6 @@ void RunEditorLongLineHorizontalScroll(ScenarioContext& context) {
   });
 }
 
-// Find-in-buffer on a line with no line breaks in it. The buffer search is framed
-// per line, so "search this line" is "search this document", and every match in
-// the file lands on one row -- which is also the row the renderer has to paint the
-// match fills for.
-//
-// Two queries on purpose: one that occurs once (measures the scan) and one that
-// occurs in every record (measures the match set and the per-row fill path,
-// including whatever cap bounds it).
 void RunEditorLongLineBufferSearch(ScenarioContext& context) {
   editor::TextViewport* viewport =
       OpenMinifiedFixtureOrSkip(context, "editor_long_line_buffer_search");
@@ -1084,8 +837,6 @@ void RunEditorLongLineBufferSearch(ScenarioContext& context) {
   viewport->MoveCursorTo(0, 0, false);
   context.PumpFrames(2);
 
-  // A token that appears once, deep in the line: the search has to read the whole
-  // line to find it, and the reveal scrolls a megabyte in.
   context.Measure("long_line_search.rare_query", [&] {
     if (!context.ExecuteCommand("search item_12000")) {
       throw std::runtime_error("editor_long_line_buffer_search: search command failed");
@@ -1093,7 +844,6 @@ void RunEditorLongLineBufferSearch(ScenarioContext& context) {
     context.PumpFrames(2);
   });
 
-  // A token in every record: thousands of matches on one row.
   context.Measure("long_line_search.common_query", [&] {
     if (!context.ExecuteCommand("search \"name\"")) {
       throw std::runtime_error("editor_long_line_buffer_search: search command failed");
@@ -1101,9 +851,6 @@ void RunEditorLongLineBufferSearch(ScenarioContext& context) {
     context.PumpFrames(2);
   });
 
-  // Enter cycles to the next match with the widget open (VSCode-style). Each step
-  // reveals a different match, which moves the horizontal scroll offset and
-  // repaints the row's fills against it.
   context.Measure("long_line_search.next_match_burst", [&] {
     for (int i = 0; i < 16; ++i) {
       context.KeyDown(SDLK_RETURN);
@@ -1114,20 +861,6 @@ void RunEditorLongLineBufferSearch(ScenarioContext& context) {
   context.PumpFrames(1);
 }
 
-// Soft wrap had NO perf coverage at all -- not one scenario in the suite turned
-// it on -- while being the mode where a long line is most expensive: wrapping a
-// megabyte line at ~200 columns turns it into thousands of visual rows, and every
-// per-row cost is paid on every one of them that is on screen.
-//
-// Two hard invariants are asserted here rather than gated on a baseline, so they
-// fail loudly on any box:
-//
-//   * a pure scroll must not re-measure the logical line a row belongs to
-//     (editor.line_width_measure_bytes), which is what a row build does when it
-//     is not told the width the wrapped-row table already knows;
-//   * a pure scroll must not rebuild the wrapped-row table
-//     (editor.ensure_wrapped_row_layouts_rebuilds) -- that table is O(document)
-//     to build and depends on nothing a scroll changes.
 void RunEditorSoftWrapLongLineScroll(ScenarioContext& context) {
   editor::TextViewport* viewport =
       OpenMinifiedFixtureOrSkip(context, "editor_soft_wrap_long_line_scroll");
@@ -1172,9 +905,6 @@ void RunEditorSoftWrapLongLineScroll(ScenarioContext& context) {
         std::to_string(rebuilds_after - rebuilds_before) + " times)");
   }
 
-  // Vertical caret motion through wrapped rows: each step resolves the caret's
-  // visual row inside a line with thousands of them, then re-resolves it for the
-  // preferred column and again for the render pass.
   context.Measure("soft_wrap_long_line.down_arrow_burst", [&] {
     for (int i = 0; i < 64; ++i) {
       context.KeyDown(SDLK_DOWN);
@@ -1189,9 +919,6 @@ void RunEditorSoftWrapLongLineScroll(ScenarioContext& context) {
   });
 }
 
-// Typing inside a soft-wrapped long line. The wrapped-row table is maintained
-// incrementally on edits; if that splice ever stops applying, this is where the
-// O(document) rebuild per keystroke shows up.
 void RunEditorSoftWrapLongLineTyping(ScenarioContext& context) {
   editor::TextViewport* viewport =
       OpenMinifiedFixtureOrSkip(context, "editor_soft_wrap_long_line_typing");
@@ -1219,17 +946,6 @@ void RunEditorSoftWrapLongLineTyping(ScenarioContext& context) {
   });
 }
 
-// Render-whitespace ON, under soft wrap, scrolled deep into a line with no line
-// breaks in it. Nothing measured that combination: `editor_render_whitespace_paint`
-// runs on the 50k C++ fixture (short lines, no wrap), and the two soft-wrap
-// scenarios leave the setting at its default of off. The gap mattered, because the
-// whitespace producers derive each row's start FROM THE LINE'S START -- which is
-// exactly the shape soft wrap makes quadratic, and the deeper the scroll the worse
-// it gets (TD-2026-08-14-218).
-//
-// The invariants below are hard, not baseline-derived, so they gate on any box: a
-// frame may read a bounded multiple of what its visible rows cover, and may not
-// read a multiple of the LINE.
 void RunEditorSoftWrapWhitespacePaint(ScenarioContext& context) {
   editor::TextViewport* viewport =
       OpenMinifiedFixtureOrSkip(context, "editor_soft_wrap_whitespace_paint");
@@ -1250,9 +966,6 @@ void RunEditorSoftWrapWhitespacePaint(ScenarioContext& context) {
         "editor_soft_wrap_whitespace_paint: the fixture line did not wrap into rows");
   }
 
-  // Scroll a long way in before measuring. The cost being gated grows with the
-  // row's distance from the line's start, so measuring at the top of the file
-  // would read near zero whether the fix is present or not.
   for (int i = 0; i < 200; ++i) {
     context.Scroll(-3);
   }
@@ -1284,11 +997,6 @@ void RunEditorSoftWrapWhitespacePaint(ScenarioContext& context) {
           microide::util::PerfCounterId::EditorWhitespaceMarkerPrefixBytesScanned) -
       prefix_before;
 
-  // A row covers at most `visible_columns` cells and a cell is at most 4 bytes of
-  // UTF-8; 8x that per row leaves room for the rows a scroll re-paints and for the
-  // partial cell each row ends on. Against the un-resumed shape this is four
-  // orders of magnitude tight: one frame there read ~`deep_scroll_row` columns per
-  // row, and there are `kFrames` of them.
   const std::uint64_t per_row_budget =
       8ull * 4ull * static_cast<std::uint64_t>(context.ActiveViewport().visible_columns() + 1);
   const std::uint64_t budget =
@@ -1300,13 +1008,6 @@ void RunEditorSoftWrapWhitespacePaint(ScenarioContext& context) {
         " a visible-window-bounded walk can need — it is deriving each row's start from the "
         "line's start again");
   }
-  // The resume PROBE has the same shape one level down: it reads [0, row_start) to
-  // decide whether the walk may start at the row. What is gated here is that it is
-  // paid once per LINE per frame, not once per row — a row's own probe is bounded
-  // by how far into the line the row sits, so per-row it is the very cost the
-  // resume was added to remove. Four probes a frame leaves room for the second
-  // producer and for the frames a scroll repaints; per-row is `visible_rows` of
-  // them, an order of magnitude past this.
   const std::uint64_t deepest_row_start =
       static_cast<std::uint64_t>(deep_scroll_row + visible_rows + kFrames + 8) *
       static_cast<std::uint64_t>(context.ActiveViewport().visible_columns() + 1);
@@ -1319,15 +1020,6 @@ void RunEditorSoftWrapWhitespacePaint(ScenarioContext& context) {
   }
 }
 
-// Whole-document edit verbs on a line with no line breaks in it: select all, cut,
-// paste, undo, redo. The same five the Moby-Dick workout drives, on the file shape
-// where "the affected line" is the whole document -- so the undo entry, the
-// clipboard round-trip and the buffer splice are each megabyte-scale, and an entry
-// that has to be widened from the column form to the line form is a full copy.
-//
-// The net effect is the identity transform, so the byte count must come back
-// unchanged whether or not the headless clipboard round-trips; that doubles as a
-// corruption check.
 void RunEditorLongLineSelectAllEdit(ScenarioContext& context) {
   editor::TextViewport* viewport =
       OpenMinifiedFixtureOrSkip(context, "editor_long_line_select_all_edit");
@@ -1364,9 +1056,6 @@ void RunEditorLongLineSelectAllEdit(ScenarioContext& context) {
         "editor_long_line_select_all_edit: buffer corrupted after select-all/cut/paste/undo/redo");
   }
 
-  // A grouped edit is the one path that widens a column-scoped undo entry back to
-  // the line form, which costs a full copy of the line. Typing inside a selection
-  // that spans the whole line is the ordinary way to reach it.
   viewport->MoveCursorTo(0, original_bytes / 2, false);
   context.PumpFrames(1);
   context.Measure("long_line_edit.replace_selection_burst", [&] {
@@ -1378,14 +1067,6 @@ void RunEditorLongLineSelectAllEdit(ScenarioContext& context) {
   });
 }
 
-// Same burst as above, on the FIRST line instead of the middle of the file.
-//
-// This exists because the two were not the same cost and nothing measured the
-// difference: a content edit anchored at line 0 took a wholesale-invalidation
-// branch that dropped the per-line visual-column table, so the next frame
-// rebuilt the width of every line in the buffer -- an O(document) rebuild per
-// keystroke that an edit one line lower did not pay. Typing at the top of a
-// large file is an ordinary thing to do, and it was the slowest place to type.
 void RunFirstLineEditLatencyLargeFile(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
@@ -1399,7 +1080,7 @@ void RunFirstLineEditLatencyLargeFile(ScenarioContext& context) {
     throw std::runtime_error("first_line_edit_latency_large_file: file too short");
   }
   vp.MoveCursorTo(0, 0, false);
-  context.PumpFrames(2);  // warm highlights/layout for the visible window
+  context.PumpFrames(2);
   context.Measure("first_line_edit.enter_backspace_burst", [&] {
     for (int i = 0; i < 24; ++i) {
       context.KeyDown(SDLK_RETURN);
@@ -1409,19 +1090,6 @@ void RunFirstLineEditLatencyLargeFile(ScenarioContext& context) {
   });
 }
 
-// The "Moby Dick workout" (hogbaysoftware.com/posts/moby-dick-workout): a
-// full-novel responsiveness test. Drives the six canonical steps on the real
-// ~1.2 MB / ~22k-line Project Gutenberg Moby-Dick body through the same SDL
-// input path the app uses -- select-all / cut / paste / undo / redo run as real
-// Ctrl-key chords (the keyboard + control-channel editing verbs), and the
-// window is resized at the end and the middle. Deterministic: one fixed
-// fixture, software renderer, fixed window; the per-phase Measure() calls yield
-// p50/p95/max wall + allocation counts.
-//
-// The fixture is opt-in (a network fetch; see
-// generate_editor_essentials_perf_fixtures.py --fixture moby), so this scenario
-// is run_by_default=false -- select it explicitly on the reference runner:
-//   microide_perf --scenarios=editor_moby_dick_workout
 void RunMobyDickWorkout(ScenarioContext& context) {
   const std::filesystem::path moby =
       "tests/perf/fixtures/editor_essentials_moby_dick/moby-dick.txt";
@@ -1430,7 +1098,6 @@ void RunMobyDickWorkout(ScenarioContext& context) {
   }
   (void)context.Open("tests/perf/fixtures/small_project");
 
-  // Step 1: open the novel and reach first stable paint.
   context.Measure("moby.open_first_paint", [&] {
     context.OpenTab(moby);
     context.PumpFrames(2);
@@ -1443,7 +1110,6 @@ void RunMobyDickWorkout(ScenarioContext& context) {
   const std::size_t last_line = total_lines - 1;
   const std::size_t mid_line = total_lines / 2;
 
-  // Step 2: navigate to the end, then resize the window (shrink + restore).
   context.Measure("moby.scroll_to_end", [&] {
     vp.MoveCursorTo(last_line, 0, false);
     context.PumpFrames(2);
@@ -1455,7 +1121,6 @@ void RunMobyDickWorkout(ScenarioContext& context) {
     context.PumpFrames(1);
   });
 
-  // Step 3: jump to the middle, then resize again.
   context.Measure("moby.jump_to_middle", [&] {
     vp.MoveCursorTo(mid_line, 0, false);
     context.PumpFrames(2);
@@ -1467,11 +1132,6 @@ void RunMobyDickWorkout(ScenarioContext& context) {
     context.PumpFrames(1);
   });
 
-  // Step 4: whole-document edit ops -- select all, cut, paste, undo, redo, each
-  // a real Ctrl chord. The net effect is the identity transform, so the line
-  // count must return to the original regardless of whether the headless
-  // clipboard round-trips (if cut/paste are no-ops the buffer never changed);
-  // this doubles as a corruption check.
   vp.MoveCursorTo(0, 0, false);
   context.Measure("moby.select_all", [&] {
     context.KeyDown(SDLK_A, SDL_KMOD_CTRL);
@@ -1500,10 +1160,8 @@ void RunMobyDickWorkout(ScenarioContext& context) {
         "editor_moby_dick_workout: buffer corrupted after select-all/cut/paste/undo/redo");
   }
 
-  // Step 5: mid-document editing. Typing must not lag or scroll-jump to the top,
-  // so we assert the scroll stays anchored near the middle after the burst.
   vp.MoveCursorTo(mid_line, 0, false);
-  context.PumpFrames(2);  // settle scroll/highlights before the measured burst
+  context.PumpFrames(2);
   const std::size_t scroll_before = vp.scroll_line();
   context.Measure("moby.mid_edit_burst", [&] {
     context.Type("call me Ishmael ");
@@ -1513,8 +1171,6 @@ void RunMobyDickWorkout(ScenarioContext& context) {
     }
     context.PumpFrames(1);
   });
-  // A regression that resets the viewport to line 0 on a mid-document edit would
-  // drop scroll_line from ~mid to ~0; allow a small legitimate drift.
   if (vp.scroll_line() + 100 < scroll_before) {
     throw std::runtime_error(
         "editor_moby_dick_workout: mid-document edit scroll-jumped toward the top");
@@ -1524,13 +1180,6 @@ void RunMobyDickWorkout(ScenarioContext& context) {
 const ScenarioRegistration g_perf_editor_occurrences_scan({Scenario{
     .name = "editor_occurrences_scan",
     .smoke = false,
-    // Iteration 0 does one-time cold work every later iteration reuses (font and
-    // glyph-atlas fill, the project's initial file-index build, the first session
-    // write), and this scenario is short enough that the cold pass dominates the
-    // percentiles: measured at 13907 allocations on iteration 0 against a ~4.6k
-    // steady state, with every other iteration at or below baseline. Discarding
-    // it makes p95/max describe the measured work instead of which iteration
-    // index the cold pass landed on.
     .warmup_iterations = 1,
     .run = RunEditorOccurrencesScan,
 }});
@@ -1542,96 +1191,48 @@ const ScenarioRegistration g_perf_editor_add_cursor_next_match({Scenario{
 const ScenarioRegistration g_perf_editor_shaping_multi_caret({Scenario{
     .name = "editor_shaping_multi_caret",
     .smoke = false,
-    // 12 warmup passes so rss_growth_bytes is measured on the flat part of the
-    // curve. This scenario retains ~18,714 net allocations per iteration while a
-    // bounded structure (undo history) fills, then drops to 12 net at iteration
-    // ~11 and settles onto a stable ~1.56 MB/iteration plateau. Measured across
-    // that step, the rss p50 is bimodal and the gate is a coin flip.
     .warmup_iterations = 12,
     .run = RunEditorShapingMultiCaret,
 }});
 const ScenarioRegistration g_perf_editor_toggle_comment_large({Scenario{
     .name = "editor_toggle_comment_large_selection",
     .smoke = false,
-    // Same reason as editor_shaping_multi_caret: net allocations run at 32,052 per
-    // iteration until iteration ~8, then fall to 12 with resident growth settling
-    // at a stable ~2.8 MB/iteration. The first rebaseline recorded a p50 from the
-    // 9.8 MB pre-step plateau and the very next validation run measured the 2.8 MB
-    // post-step one, failing at +148%. Warm past the step and both are stable.
-    //
-    // The 2.8 MB plateau itself is NOT warmup and NOT a leak -- see
-    // TD-2026-08-04-130. Allocation counts are balanced there; the resident set
-    // grows anyway.
     .warmup_iterations = 12,
     .run = RunEditorToggleCommentLargeSelection,
 }});
 const ScenarioRegistration g_perf_editor_mouse_selection_drag({Scenario{
     .name = "editor_mouse_selection_drag",
     .smoke = false,
-    // Iteration 0 does one-time cold work every later iteration reuses (font and
-    // glyph-atlas fill, the project's initial file-index build, the first session
-    // write), and this scenario is short enough that the cold pass dominates the
-    // percentiles: measured at 13065 allocations on iteration 0 against a ~5k
-    // steady state, with every other iteration at or below baseline. Discarding
-    // it makes p95/max describe the measured work instead of which iteration
-    // index the cold pass landed on.
     .warmup_iterations = 1,
     .run = RunEditorMouseSelectionDrag,
 }});
 const ScenarioRegistration g_perf_menu_hover_switch({Scenario{
     .name = "menu_hover_switch",
     .smoke = false,
-    // Iteration 0 does one-time cold work every later iteration reuses (font and
-    // glyph-atlas fill, the project's initial file-index build, the first session
-    // write), and this scenario is short enough that the cold pass dominates the
-    // percentiles: measured at 16648 allocations on iteration 0 against a ~8.9k
-    // steady state, with every other iteration at or below baseline. Discarding
-    // it makes p95/max describe the measured work instead of which iteration
-    // index the cold pass landed on.
     .warmup_iterations = 1,
     .run = RunMenuHoverSwitch,
 }});
 const ScenarioRegistration g_perf_editor_cjk_scroll_paint({Scenario{
     .name = "editor_cjk_scroll_paint",
     .smoke = false,
-    // Iteration 0 pays the cold open plus the font/atlas fill. Note what the
-    // steady state then measures: every iteration sweeps the SAME rows, so after
-    // the first the string-texture cache is warm and this reports HITS. That is
-    // the honest steady state for scrolling back over seen content; the
-    // first-paint miss cost is what the cluster-rasterization counter carries.
     .warmup_iterations = 1,
     .run = RunEditorCjkScrollPaint,
 }});
 const ScenarioRegistration g_perf_editor_typing_paint({Scenario{
     .name = "editor_typing_paint",
     .smoke = false,
-    // Iteration 0 pays the cold open (file-index build, first frame's
-    // process-lifetime allocations) and, uniquely here, the iteration whose
-    // inserts have not yet pushed the edited line past the pane's right edge —
-    // from iteration 1 on the damage clip is saturated at pane width and the
-    // iterations are uniform.
     .warmup_iterations = 1,
     .run = RunEditorTypingPaint,
 }});
 const ScenarioRegistration g_perf_menu_hover_paint({Scenario{
     .name = "menu_hover_paint",
     .smoke = false,
-    // Iteration 0 does one-time cold work every later iteration reuses (font and
-    // glyph-atlas fill, the first full frame's process-lifetime allocations);
-    // discard it so the percentiles describe the steady-state hover loop.
     .warmup_iterations = 1,
     .run = RunMenuHoverPaint,
 }});
 const ScenarioRegistration g_perf_menu_popup_hover_rows({Scenario{
     .name = "menu_popup_hover_rows",
     .smoke = false,
-    // Iteration 0 does one-time cold work every later iteration reuses (font and
-    // glyph-atlas fill, the project's initial file-index build, the first session
-    // write), and this scenario is short enough that the cold pass dominates the
-    // percentiles: measured at 10694 allocations on iteration 0 against a ~3k
-    // steady state, with every other iteration at or below baseline. Discarding
-    // it makes p95/max describe the measured work instead of which iteration
-    // index the cold pass landed on.
     .warmup_iterations = 1,
     .run = RunMenuPopupHoverRows,
 }});
@@ -1643,26 +1244,12 @@ const ScenarioRegistration g_perf_editor_sort_lines_large({Scenario{
 const ScenarioRegistration g_perf_editor_snippet_expand({Scenario{
     .name = "editor_snippet_expand",
     .smoke = false,
-    // Iteration 0 does one-time cold work every later iteration reuses (font and
-    // glyph-atlas fill, the project's initial file-index build, the first session
-    // write), and this scenario is short enough that the cold pass dominates the
-    // percentiles: measured at 9958 allocations on iteration 0 against a ~850
-    // steady state, with every other iteration at or below baseline. Discarding
-    // it makes p95/max describe the measured work instead of which iteration
-    // index the cold pass landed on.
     .warmup_iterations = 1,
     .run = RunEditorSnippetExpand,
 }});
 const ScenarioRegistration g_perf_editor_snippet_placeholder_edit({Scenario{
     .name = "editor_snippet_placeholder_edit",
     .smoke = false,
-    // Iteration 0 does one-time cold work every later iteration reuses (font and
-    // glyph-atlas fill, the project's initial file-index build, the first session
-    // write), and this scenario is short enough that the cold pass dominates the
-    // percentiles: measured at 11411 allocations on iteration 0 against a ~2.3k
-    // steady state, with every other iteration at or below baseline. Discarding
-    // it makes p95/max describe the measured work instead of which iteration
-    // index the cold pass landed on.
     .warmup_iterations = 1,
     .run = RunEditorSnippetPlaceholderEdit,
 }});
@@ -1679,11 +1266,6 @@ const ScenarioRegistration g_perf_editor_indent_detect_open({Scenario{
 const ScenarioRegistration g_perf_large_file_restore_deep_scroll_first_paint({Scenario{
     .name = "large_file_restore_deep_scroll_first_paint",
     .smoke = false,
-    // warmup: the first pass on a fresh driver also pays the project's cold
-    // open (background file-index build, initial watch batch, session write),
-    // which no later iteration repeats -- 5.6k allocations against a 1.8k
-    // steady state. Discarding it keeps p95/max describing the tail of the
-    // measured work instead of which iteration index the cold pass landed on.
     .warmup_iterations = 1,
     .run = RunLargeFileRestoreDeepScrollFirstPaint,
 }});
@@ -1701,30 +1283,8 @@ const ScenarioRegistration g_perf_settings_change_many_tabs({Scenario{
     .name = "settings_change_many_tabs",
     .smoke = false,
     .baseline_gated = true,
-    // warmup: the first pass pays the project's cold open (background file-index
-    // build, initial watch batch) plus every tab's first syntax/layout build,
-    // which dwarfs the measured re-apply. Left un-warmed it lands in one measured
-    // iteration and governs p95/max, exactly as it did for multi_tab_cycle.
     .warmup_iterations = 1,
-    // Allocations on this path are deterministic (shell-thread counter only), so
-    // the default 10% envelope is far looser than the signal warrants -- it would
-    // pass a regression that adds an allocation per tab per settings change,
-    // which is exactly what this scenario exists to catch. Observed spread is
-    // 0.24% (p50 104,803 / max 105,052), so 1% is 4x the noise while still
-    // failing on the ~2k regression this was written to catch (+1.95%) -- which
-    // 2% would have let through by a hair. This follows the policy stated on
-    // Scenario itself: allocations are the oracle, keep it tight.
     .tolerance_alloc_p50_percent = 1.0,
-    // Net heap retention is not a measurement for this scenario, and the reason
-    // is the same one multi_project_switch records: memory this iteration
-    // allocates on the shell thread is released somewhere the per-thread
-    // counter cannot see -- a later iteration's teardown, or a background
-    // thread (the queued session-state write, whose encode runs here and whose
-    // buffer is freed by the writer). The reading is +86 KB EVERY iteration
-    // while `rss_growth_bytes` is 0-8 KB and trending to zero, so the metric
-    // claims ~780 KB retained across a run that grew ~119 KB and flattened.
-    // A gate that a flat RSS contradicts is not measuring retention
-    // (TD-2026-08-12-191). See Scenario::gate_net_heap_metrics.
     .gate_net_heap_metrics = false,
     .run = RunSettingsChangeManyTabs,
 }});
@@ -1732,8 +1292,6 @@ const ScenarioRegistration g_perf_editor_multi_caret_motion_burst({Scenario{
     .name = "editor_multi_caret_motion_burst",
     .smoke = false,
     .baseline_gated = true,
-    // warmup: the first pass pays the project's cold open and this buffer's
-    // first layout/width build, which dwarf the measured motion bursts.
     .warmup_iterations = 1,
     .run = RunEditorMultiCaretMotionBurst,
 }});
@@ -1741,8 +1299,6 @@ const ScenarioRegistration g_perf_editor_multi_caret_edit_burst({Scenario{
     .name = "editor_multi_caret_edit_burst",
     .smoke = false,
     .baseline_gated = true,
-    // warmup: the first pass pays the project's cold open and this buffer's first
-    // layout/width build, which dwarf the measured edits.
     .warmup_iterations = 1,
     .run = RunEditorMultiCaretEditBurst,
 }});
@@ -1756,24 +1312,10 @@ const ScenarioRegistration g_perf_editor_typing_minified_line({Scenario{
     .name = "editor_typing_minified_line",
     .smoke = false,
     .baseline_gated = true,
-    // warmup: the first pass pays the project's cold open plus this buffer's
-    // first layout/width build, which dwarfs the measured typing burst.
     .warmup_iterations = 1,
-    // Allocations are the oracle here and they are exact: 4,970 / 4,971 / 4,971
-    // across p50/p95/max, a 0.02% spread. The default 10% envelope is far too
-    // loose for what this scenario exists to catch -- the regression it was
-    // written for (the edit path walking the line 13 times instead of 5) is
-    // +12 allocations per keystroke, ~7.7% over this burst, and 10% would pass
-    // it. 1% is 50x the observed noise and still fails on that.
     .tolerance_alloc_p50_percent = 1.0,
     .run = RunEditorTypingMinifiedLine,
 }});
-// The three long-line scenarios share `editor_typing_minified_line`'s reasoning
-// for both settings: one warmup iteration because the project's cold open and the
-// buffer's first layout build dwarf the measured work, and a 1% allocation
-// envelope because allocations are the oracle for this file shape -- they scale
-// with how many times a path walks the line, which is exactly the regression these
-// exist to catch, and the default 10% is wide enough to pass one.
 const ScenarioRegistration g_perf_editor_long_line_horizontal_scroll({Scenario{
     .name = "editor_long_line_horizontal_scroll",
     .smoke = false,
@@ -1798,13 +1340,6 @@ const ScenarioRegistration g_perf_editor_long_line_select_all_edit({Scenario{
     .tolerance_alloc_p50_percent = 1.0,
     .run = RunEditorLongLineSelectAllEdit,
 }});
-// Both soft-wrap scenarios carry their own hard invariants (see the bodies), so
-// they gate on any box without a baseline. Baseline-gated as of 2026-08-12 with
-// the timing half marked ADVISORY: allocations and net-heap retention are
-// deterministic and gate immediately, while wall/cpu/rss are reported and
-// explicitly not enforced until a reference run arms them. That beats the
-// previous state, where "no quiet machine available" meant gating on nothing at
-// all (TD-2026-08-12-186).
 const ScenarioRegistration g_perf_editor_soft_wrap_long_line_scroll({Scenario{
     .name = "editor_soft_wrap_long_line_scroll",
     .smoke = true,
@@ -1819,8 +1354,6 @@ const ScenarioRegistration g_perf_editor_soft_wrap_long_line_typing({Scenario{
     .warmup_iterations = 1,
     .run = RunEditorSoftWrapLongLineTyping,
 }});
-// Carries hard invariants of its own (see the body), so it gates on any box with
-// or without a baseline. Not baseline_gated yet: no reference run has recorded it.
 const ScenarioRegistration g_perf_editor_soft_wrap_whitespace_paint({Scenario{
     .name = "editor_soft_wrap_whitespace_paint",
     .smoke = true,
@@ -1831,11 +1364,9 @@ const ScenarioRegistration g_perf_editor_moby_dick_workout({Scenario{
     .name = "editor_moby_dick_workout",
     .smoke = false,
     .baseline_gated = true,
-    // Opt-in: the fixture is a network fetch (--fixture moby), so this does not
-    // run in the default/smoke suites; select it explicitly on the reference runner.
     .run_by_default = false,
     .run = RunMobyDickWorkout,
 }});
 
-}  // namespace
-}  // namespace microide::tests::perf
+}
+}

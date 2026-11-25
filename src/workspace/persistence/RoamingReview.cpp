@@ -18,7 +18,6 @@ constexpr std::size_t kMaxRefBytes = 512;
 constexpr std::size_t kMaxNoteBytes = 16 * 1024;
 using Limits = compare::BranchReviewStateService;
 
-// A 64-bit hash does not fit a JSON number: as decimal text.
 util::JsonValue Unsigned(std::uint64_t value) {
   return util::JsonValue(std::to_string(value));
 }
@@ -41,14 +40,11 @@ std::uint64_t Time(const util::JsonValue& value) {
   return value.IsInt() && value.AsInt() > 0 ? static_cast<std::uint64_t>(value.AsInt()) : 0;
 }
 
-// A commit or ref name: printable, bounded, possibly empty (no merge base).
 bool IsRefText(const util::JsonValue& value) {
   return value.IsString() && value.AsString().size() <= kMaxRefBytes &&
          std::ranges::none_of(value.AsString(), [](unsigned char c) { return c < 0x20 || c == 0x7f; });
 }
 
-// Stored relative to the repository when under it (NormalizeReviewPath); a path
-// that is not names nothing on another machine.
 std::optional<std::string> PortablePath(const std::filesystem::path& path) {
   std::string text = path.generic_string();
   return util::IsPortableRelativePath(text, kMaxRoamingPathBytes) ? std::optional<std::string>(std::move(text))
@@ -188,7 +184,7 @@ std::optional<PersistedBranchReviewTarget> TargetFromJson(const util::JsonValue&
       if (!entry["hunk"].IsNull()) {
         note.hunk_identity = HunkFromJson(entry["hunk"], *path);
         if (!note.hunk_identity.has_value()) {
-          continue;  // a hunk's note with no hunk to hang on
+          continue;
         }
         note.scope = "hunk";
       }
@@ -203,7 +199,7 @@ bool SameTarget(const PersistedBranchReviewTarget& left, const PersistedBranchRe
          left.head_commit == right.head_commit && left.merge_base_commit == right.merge_base_commit;
 }
 
-}  // namespace
+}
 
 std::string EncodeRoamingReview(const PersistedBranchReviewState& state, const std::filesystem::path& root,
                                 std::size_t max_bytes) {
@@ -216,8 +212,6 @@ std::string EncodeRoamingReview(const PersistedBranchReviewState& state, const s
   if (mine.empty()) {
     return {};
   }
-  // The most recently changed first, and a fixed order among equals: the text is
-  // compared to tell whether the host already holds these marks.
   std::ranges::stable_sort(mine, [](const PersistedBranchReviewTarget* left, const PersistedBranchReviewTarget* right) {
     if (left->last_accessed_unix_ms != right->last_accessed_unix_ms) {
       return left->last_accessed_unix_ms > right->last_accessed_unix_ms;
@@ -230,7 +224,7 @@ std::string EncodeRoamingReview(const PersistedBranchReviewState& state, const s
   for (const PersistedBranchReviewTarget* target : mine) {
     const std::string row = util::SerializeJson(TargetJson(*target));
     if (text.size() + row.size() + 3 > max_bytes) {
-      break;  // older reviews stay on the machine that made them
+      break;
     }
     text += any ? "," : "";
     text += row;
@@ -269,7 +263,6 @@ bool MergeRoamingReview(std::vector<PersistedBranchReviewTarget> theirs, Persist
       state->targets.push_back(std::move(their));
       changed = true;
     } else if (their.last_accessed_unix_ms > mine->last_accessed_unix_ms) {
-      // The session's own count of git refreshes is not the other machine's.
       their.snapshot_generation = mine->snapshot_generation;
       *mine = std::move(their);
       changed = true;
@@ -278,4 +271,4 @@ bool MergeRoamingReview(std::vector<PersistedBranchReviewTarget> theirs, Persist
   return changed;
 }
 
-}  // namespace microide::workspace
+}

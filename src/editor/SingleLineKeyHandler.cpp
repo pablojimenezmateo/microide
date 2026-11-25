@@ -11,7 +11,7 @@ bool HasAccel(SDL_Keymod modifiers) {
   return (modifiers & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) != 0;
 }
 
-}  // namespace
+}
 
 bool SingleLineKeyHandler::HandleKeyDown(SingleLineEditor& editor,
                                          SDL_Keycode key,
@@ -46,8 +46,6 @@ bool SingleLineKeyHandler::HandleKeyDown(SingleLineEditor& editor,
         return pasted.has_value() && editor.Paste(*pasted);
       }
       case SDLK_LEFT:
-        // Ctrl+Left/Right are word-granular (Ctrl+Shift extends the selection), matching the
-        // main editor; plain Home/End still jump to the line edges.
         return editor.MoveWordLeft(extend_selection);
       case SDLK_RIGHT:
         return editor.MoveWordRight(extend_selection);
@@ -78,4 +76,4 @@ bool SingleLineKeyHandler::HandleKeyDown(SingleLineEditor& editor,
   }
 }
 
-}  // namespace microide::editor
+}

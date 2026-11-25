@@ -1,23 +1,11 @@
 #pragma once
 
-// A scriptable DAP adapter for tests: a Python program speaking the Debug
-// Adapter Protocol over stdio, whose behaviour argv[1] selects (see the `mode`
-// table at the top of the script). Shared by the DAP client/session tests and
-// the shell-level tests that need a real stop, step and resume without gdb
-// (tests/QaFlowRegressionTests.cpp). Write MockAdapterSource() to a file and
-// register MockAdapterCommand(path, mode) as an adapter.
-
 #include <filesystem>
 #include <string>
 #include <vector>
 
 namespace microide::tests {
 
-// A minimal DAP adapter that walks the Phase 1 launch lifecycle:
-//   initialize -> (initialized event) -> launch -> configurationDone ->
-//   output event -> terminated event. Capabilities are toggled by argv[1] so a
-//   single script covers both the configurationDone-supported and
-//   not-supported code paths.
 inline const char* MockAdapterSource() {
   return R"py(import json
 import sys
@@ -422,4 +410,4 @@ inline std::vector<std::string> MockAdapterCommand(const std::filesystem::path& 
 }
 
 
-}  // namespace microide::tests
+}

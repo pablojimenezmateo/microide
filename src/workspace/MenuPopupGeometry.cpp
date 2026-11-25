@@ -34,4 +34,4 @@ std::optional<SDL_FRect> PopupRowRectByIndex(std::span<const MenuItemSpec> items
   return found;
 }
 
-}  // namespace microide::workspace
+}

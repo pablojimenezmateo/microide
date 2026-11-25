@@ -67,6 +67,7 @@ roadmap entry describes intended rather than shipped state.
 - Keep deterministic logic out of SDL event glue and paint code when possible. Thin orchestration layers are easier to test and safer to refactor.
 - Avoid hidden coupling through mutable global state, shared singleton-style services, or broad friend access.
 - Treat performance-sensitive work as measurable engineering. Use `dev-docs/performance/startup-tracing.md` and `dev-docs/performance/runtime-profiling.md` instead of guessing.
+- Do not write comments in source code. Make the code say it through names, types and small functions; put the why in the commit message or `dev-docs/`. The only comments allowed are tool directives: `NOLINT`, `IWYU pragma`, and the perf harness's `perf-measure-builds-input:` / `perf-measure-waits-on-clock:` exemptions.
 
 ## Development Workflow
 
@@ -153,12 +154,12 @@ Rendering
 - View models own their data: no `OverlayState` in `RenderViewModelBuilder.h`, a `ProjectWorkspaceState*` only in `FrameSurfaceViewModel` / `SidebarSurfaceViewModel`, and no pointers to the shell, coordinators or services. `CheckRenderViewModelsOwnProjectState` (pointers to services: reviewer)
 - Render TUs materialize no strings in hot paths. Compare/merge render TUs keep their `WorkspaceShellRender*` names, paint through the reused scratch rows and truncate through `TruncateLabelView`. `CheckRenderTuDoesNotMaterializeStrings`, `CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings`, `CheckCompareMergeRenderUsesScratchRows`
 - Frame preparation runs once per frame; `ComputeLayout()` only when the layout is dirty; the idle loop never spins `SDL_PollEvent` at zero delay (`IdleHint`). Reviewer.
-- Repaint damage is derived, not requested: a derived surface's `Prepare*Frame` lays out its units (a rect plus a fingerprint of everything that unit paints) and `DerivedDamage::Commit` damages what changed; its paint reads only that prepared snapshot. A change to a derived surface asks for a frame (`RequestPreparedFrame` / a `request_frame` operation), never a rect; a hand-written rect is only for what is not derived yet, with its reason. Every surface commits every frame, shown or not. Every Chrome unit names its `ChromePainter`; `RenderClip` skips passes only by their prepared extents, and a pass drawing outside its extent is a `pass:` overrun. `CheckDerivedSurfacePaintReadsOnlyItsSnapshot` (body, parameter types, and the shell members it calls); key completeness: the QA redraw verifier, the `*RowDamageFollowsEveryStateTransition` property tests and `ASettledFrameDerivesNoDamage`.
+- Repaint damage is derived, not requested: a derived surface's `Prepare*Frame` lays out its units (a rect plus a fingerprint of everything that unit paints) and `DerivedDamage::Commit` damages what changed; its paint reads only that prepared snapshot. A change to a derived surface asks for a frame (`RequestPreparedFrame` / a `request_frame` operation), never a rect; a hand-written rect is only for what is not derived yet. Every surface commits every frame, shown or not. Every Chrome unit names its `ChromePainter`; `RenderClip` skips passes only by their prepared extents, and a pass drawing outside its extent is a `pass:` overrun. `CheckDerivedSurfacePaintReadsOnlyItsSnapshot` (body, parameter types, and the shell members it calls); key completeness: the QA redraw verifier, the `*RowDamageFollowsEveryStateTransition` property tests and `ASettledFrameDerivesNoDamage`.
 
 Persistence, files and processes
 - Workspace state persists through `PersistenceService` + `PersistedRecordReader`/`Writer`; no hand-rolled format, no direct file I/O elsewhere, no legacy persistence symbols. `CheckPersistenceFileIoBoundary`, `CheckNoLegacyPersistenceSymbols`
 - Every descriptor-creating call requests close-on-exec on the call itself (`SOCK_CLOEXEC`/`O_CLOEXEC`/`IN_CLOEXEC`); no plain `accept(`. `CheckDescriptorCreationIsCloseOnExec`
-- Write/start APIs whose dropped result is a silent failure are `[[nodiscard]]`; a deliberate discard is `(void)` plus the reason. Reviewer.
+- Write/start APIs whose dropped result is a silent failure are `[[nodiscard]]`; a deliberate discard is an explicit `(void)`. Reviewer.
 - `FileWriteGate::WriteText` captures a post-write signature only on `Signature::Capture` (the editor's save). Reviewer.
 - Git availability is three states (`GitAvailability{Unknown, Repository, NotARepository}`), never a bool. Reviewer.
 - Numeric tokens parse through `util/Parse.h`; no `try`/`catch` around `std::sto*`. `CheckThrowingStoParsers`

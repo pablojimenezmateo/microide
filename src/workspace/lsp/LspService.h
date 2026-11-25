@@ -28,193 +28,91 @@ struct ProjectWorkspaceState;
 struct CodeActionEdit;
 struct WorkspaceResourceOp;
 
-// Host-owned home for the LSP glue that used to live directly on WorkspaceShell:
-// per-project server management, document synchronization, diagnostics publishing,
-// provider-presence queries, readiness/status strings, and the in-flight request
-// indicator. WorkspaceShell keeps thin forwarders; render/menu/plugin TUs are
-// unchanged. The shell wiring is injected through the narrow Operations seam.
 class LspService {
  public:
   struct Operations {
     std::function<editor::TextViewport*()> active_editable_viewport;
     std::function<void()> refresh_problems_sidebar;
-    // A frame: what a publish changes -- diagnostics, decorations, occurrence
-    // highlights -- the editor and diff rows key on, so they repaint what moved.
     std::function<void()> request_frame;
-    // Apply a server-initiated workspace/applyEdit (WorkspaceEditService::
-    // ApplyServerEdit); returns whether it was accepted. Null: refused.
     std::function<bool(const LspClient&, LspClient::WorkspaceEdit)> apply_server_workspace_edit;
-    // Resolve a setting value (project-over-user) for LSP feature gating: the lsp.*
-    // toggles plus inlay-hint gating (editor.inlay_hints.enabled). Bound to
-    // WorkspaceShell::GetSettingValue; null in headless setups (treated as "on").
     std::function<std::optional<std::string>(std::string_view)> get_setting_value;
-    // Whether a plugin registered a definition / references provider for the
-    // language (PluginHost::HasLanguageProvider). Go to Definition and Find
-    // References are served by plugins as well as language servers, so
-    // availability must consult both or the actions stay disabled (menu,
-    // Ctrl+click) for plugin-only languages. Null in headless setups.
     std::function<bool(std::string_view)> plugin_has_definition_provider;
     std::function<bool(std::string_view)> plugin_has_references_provider;
   };
 
   LspService() = default;
-  // Blocks (bounded) on any still-retiring clients — app teardown only. Moving the
-  // block here (instead of the per-project ~LspManager) is the point of the
-  // host-owned retirement pool: project switches no longer stall (TD-2026-07-17-091).
   ~LspService();
 
   void Configure(WorkspaceContext& context, CompletionRegistry& completion_registry,
                  CodeActionRegistry& code_action_registry, Operations operations);
   void SetWakeChannel(Uint32 event_type);
-  // Live pointer to the host-owned active theme used to bake semantic-token colors
-  // (the address is stable; a theme switch mutates it in place). Optional: when
-  // null, semantic-token publishing is skipped.
   void SetTheme(const render::Theme* theme);
 
-  // Reconcile running state to the current `lsp.*` feature settings. Called from
-  // WorkspaceShell::ApplyLiveSettings when the settings revision changes. When the
-  // master switch is off it stops the active project's servers and drops all
-  // LSP-owned diagnostics/semantic decorations; when on it clears or re-requests the
-  // two decoration-backed features (diagnostics, semantic tokens) to match. Idempotent.
   void ReconcileFeatureSettings();
 
-  // Provider-presence queries for the active editable viewport.
   std::string ActiveLanguageIdForProvider() const;
-  // Plugin-only halves of HasActiveDefinitionProvider / HasActiveReferencesProvider:
-  // true when a plugin serves the action for the active language regardless of any
-  // language server. The menus use these to skip the LSP-readiness gate and its
-  // "(LSP: …)" suffix for actions a plugin can answer without a server.
   bool HasActivePluginDefinitionProvider() const;
   bool HasActivePluginReferencesProvider() const;
-  // A language server is registered for the active editable buffer's language
-  // (started or not). Gates the server-only menu entries (rename, format).
   bool HasActiveLanguageServer() const;
   bool HasActiveCompletionProvider() const;
   bool HasActiveCodeActionProvider() const;
   bool HasActiveDefinitionProvider() const;
   bool HasActiveReferencesProvider() const;
 
-  // Per-project server manager access and main-thread callback pump.
   LspManager& CurrentLspManager();
   const LspManager& CurrentLspManager() const;
   LspManager& EnsureProjectLspManager(ProjectWorkspaceState& state);
   void ConsumeLspCallbacks();
 
-  // Begin async shutdown of the CURRENT project's LSP servers and move the retiring
-  // clients into the host-owned pool, so a following project-state teardown never
-  // blocks the shell thread on their shutdown handshake. The pool drains each frame
-  // via ConsumeLspCallbacks and only blocks (bounded) at app teardown (~LspService).
   void RetireCurrentProjectServers();
 
-  // Tests: number of clients still draining in the host-owned retirement pool.
   std::size_t RetiringClientCountForTesting() const { return retiring_clients_.size(); }
 
-  // Semantic tone of the active server's status, derived from typed readiness
-  // state rather than substring-matching the label. `Idle` = calm/ready/off,
-  // `Busy` = starting/indexing/request-in-flight, `Error` = failed to start.
   enum class LspStatusSeverity : std::uint8_t { Idle, Busy, Error };
 
-  // Status-bar readiness for the active server.
   LspClient::ReadinessSnapshot ActiveLspReadinessSnapshot(bool ensure_started = true);
-  // When `severity` is non-null it receives the typed tone for the produced
-  // status text, so callers never re-derive tone from the label text.
   void ActiveLspStatusStrings(bool ensure_started, std::string& text, std::string& tooltip,
                               LspStatusSeverity* severity = nullptr);
 
-  // In-flight request indicator (drives the "LSP: working..." status segment).
   void BeginTrackedLspRequest();
   void FinishTrackedLspRequest();
   void ExpireTrackedLspRequestIfNeeded();
 
-  // Deferred hydration for a newly-activated editor document. `ScheduleBufferOpen`
-  // records the path (latest wins) without touching the LSP client;
-  // `ConsumeDeferredBufferOpen` runs the actual didOpen + semantic-token/inlay-hint
-  // requests, but only if the recorded path is still the active editable buffer
-  // (a rapid second switch supersedes it). The host drains this after the
-  // tab-switch frame is presented so a large file's hydration never blocks the tab
-  // becoming visible (TD-2026-07-17A-033). Returns true when hydration ran.
   void ScheduleBufferOpen(const std::filesystem::path& path);
   bool ConsumeDeferredBufferOpen();
   bool HasPendingBufferOpen() const { return pending_buffer_open_.has_value(); }
 
-  // Report on-disk changes the editor did not make (a branch switch, a pull, a
-  // generated file) to every running server that registered a matching watcher.
-  // Returns the number of servers notified.
-  //
-  // Called from the project-change fan-out, so it must stay cheap when no server
-  // is running or none registered watchers: it returns before allocating anything
-  // in that case.
   std::size_t NotifyWatchedFileChanges(const std::vector<project::ProjectFileChange>& changes);
 
-  // Document lifecycle / synchronization.
-  // The buffer for `uri` closed: drop what the sync kept for it, or the per-URI
-  // state grows by one entry for every file synced in a session.
   void ForgetDocument(const std::string& uri);
   std::size_t synced_document_count() const { return synced_content_revision_.size(); }
   LspClient* LspClientForViewport(const editor::TextViewport& viewport, std::string* language_id);
-  // `precomputed_uri`, when non-empty, is used verbatim instead of re-deriving the
-  // document URI from the viewport path (FileUriForPath does path normalization +
-  // percent-encoding). The per-keystroke sync path already computes the URI once and
-  // threads it in so the encode does not run twice per keystroke.
   void EnsureLspDocumentOpen(const editor::TextViewport& viewport, LspClient& client,
                              std::string_view language_id,
                              std::string_view precomputed_uri = {});
   void PublishLspDiagnostics(ProjectWorkspaceState& state, std::string uri,
                              lsp_encoding::PositionEncoding encoding,
                              std::vector<LspClient::Diagnostic> diagnostics);
-  // Request textDocument/semanticTokens/full for `viewport` and publish the
-  // recolor decorations under owner "lsp:semantic" when the response arrives.
-  // Each request bumps a per-URI generation captured in the response closure so a
-  // response superseded by a newer request (the buffer changed meanwhile) is
-  // dropped in PublishLspSemanticTokens instead of painting stale colors.
   void RequestLspSemanticTokens(const editor::TextViewport& viewport, LspClient& client);
   void PublishLspSemanticTokens(ProjectWorkspaceState& state, std::string uri,
                                 std::uint64_t request_generation,
                                 lsp_encoding::PositionEncoding encoding,
                                 std::vector<std::string> legend,
                                 std::vector<LspClient::SemanticToken> tokens);
-  // Request textDocument/inlayHint for `viewport`'s document and publish the
-  // resulting mid-line virtual text under owner "lsp:inlay". Gated on
-  // editor.inlay_hints.enabled and the server's inlayHintProvider. Generation-
-  // guarded exactly like semantic tokens so a response the buffer has moved past
-  // is dropped rather than positioned against stale text.
   void RequestLspInlayHints(const editor::TextViewport& viewport, LspClient& client);
   void PublishLspInlayHints(ProjectWorkspaceState& state, std::string uri,
                             std::uint64_t request_generation,
                             lsp_encoding::PositionEncoding encoding,
                             std::vector<LspClient::InlayHint> hints);
 
-  // Request textDocument/codeLens for `viewport`'s document and publish the results
-  // as "lsp:codelens" CodeLensDecorations (rendered end-of-line, or as above-line
-  // strips under `plugins.code_lens_above`). Pulled on the same triggers as inlay
-  // hints — didOpen, save, and a clean-landing undo/redo — never per keystroke.
-  // Lenses the server returned without a command are filled in through
-  // codeLens/resolve first, so servers that only answer that way (rust-analyzer,
-  // typescript-language-server) are not silently blank; the whole document
-  // publishes once, after the last resolve lands.
   void RequestLspCodeLenses(const editor::TextViewport& viewport, LspClient& client);
   void PublishLspCodeLenses(ProjectWorkspaceState& state, std::string uri,
                             std::uint64_t request_generation, std::string language_id,
                             lsp_encoding::PositionEncoding encoding,
                             std::vector<LspClient::CodeLens> lenses);
-  // Run the server command behind a clicked code lens (workspace/executeCommand).
-  // A handle from a superseded publish resolves to nothing and is ignored — the
-  // lens the click landed on no longer exists.
   void ActivateCodeLens(std::uint64_t payload);
 
-  // Keep the caret's semantic occurrence highlights fresh. Drained once per
-  // presented frame (WorkspaceShell::OnFramePresented), because a caret can move
-  // through mouse, keyboard, search, go-to-definition and folding paths and this is
-  // the one place all of them converge. The steady state is four integer compares
-  // against the last request's identity — a request only goes out when the active
-  // buffer, its content revision, or the caret position actually changed, so
-  // holding a cursor still costs nothing. Suppressed while the caret is being
-  // driven by active typing, which is exactly when the render path suppresses
-  // occurrence highlighting anyway.
   void MaybeRequestDocumentHighlights();
-  // Store a documentHighlight response as the active buffer's semantic occurrence
-  // set (converting server positions to byte columns) and repaint. Drops a
-  // response superseded by a newer request, a content edit or a reload.
   void PublishLspDocumentHighlights(ProjectWorkspaceState& state,
                                     const std::filesystem::path& path,
                                     const void* document,
@@ -225,31 +123,16 @@ class LspService {
                                     std::vector<LspClient::DocumentHighlight> highlights);
   void SyncLspForActiveEditableChange(const std::vector<std::string>& before_lines,
                                       const std::vector<std::string>& after_lines);
-  // Compact description of a bulk buffer change, replacing the two full
-  // before/after line-vector snapshots callers used to materialize (TD-2026-07-17A-
-  // 015/016). The AFTER content is read live from the viewport (streamed for
-  // didChange); the diagnostic-shift only needs the pre-change line count plus the
-  // first line whose content differs, both cheap to compute at the change site.
   struct BufferChangeDelta {
     std::size_t before_line_count = 0;
-    std::size_t first_changed_line = 0;  // 0-based; ignored when line counts match
+    std::size_t first_changed_line = 0;
   };
-  // Full-document re-sync for an arbitrary edited buffer (not necessarily the
-  // active one). Used by multi-buffer workspace edits so every edited buffer's
-  // server mirror + stored diagnostics stay in sync, not just the active tab's.
-  // Reads the post-change text straight from `viewport` (no after-snapshot).
   void SyncLspForBufferChange(const editor::TextViewport& viewport, BufferChangeDelta delta);
   void SyncLspForActiveEditableLastChange();
 
  private:
   ProjectWorkspaceState& CurrentProjectState();
 
-  // Shared preamble for the two didChange paths: resolve the server for `viewport`,
-  // compute its document URI once, capture whether the document was already open
-  // (BEFORE opening it — a fresh didOpen carries the current buffer text, so the
-  // caller must skip the following didChange or it double-applies and desyncs the
-  // server), then ensure it is open. Returns nullopt when no server serves the
-  // buffer. Allocation-free beyond the URI string (no std::function on the hot path).
   struct BufferSyncTarget {
     LspClient* client = nullptr;
     std::string uri;
@@ -259,13 +142,6 @@ class LspService {
   std::optional<BufferSyncTarget> ResolveOpenDocumentForSync(const editor::TextViewport& viewport,
                                                              std::string_view uri = {});
 
-  // Shared publish scaffolding for the generation-guarded absolute-position overlays
-  // (semantic tokens, inlay hints): drop a superseded response, resolve the file's
-  // path + open viewport, let `build` produce the decoration payload from `items`
-  // (the only per-overlay part), then replace it under `owner_key` and redraw. The
-  // `build` callable is `(const editor::TextViewport*, lsp_encoding::PositionEncoding,
-  // std::vector<Item>&) -> editor::PluginDecorationData`. Defined in LspService.cpp
-  // (only instantiated there).
   template <typename Item, typename Build>
   void PublishGuardedOverlay(ProjectWorkspaceState& state, std::string_view owner_key,
                              std::unordered_map<std::string, std::uint64_t>& generations,
@@ -273,53 +149,23 @@ class LspService {
                              lsp_encoding::PositionEncoding encoding, std::vector<Item> items,
                              Build build);
 
-  // Per-URI overlay generation guard, shared by the semantic-token and inlay-hint
-  // overlays (each owns its own generation map). NextOverlayGeneration bumps and
-  // returns the current value (captured in a request's response closure);
-  // OverlayGenerationCurrent reports whether a captured value is still the latest,
-  // i.e. not superseded by a later request or a clear.
   static std::uint64_t NextOverlayGeneration(
       std::unordered_map<std::string, std::uint64_t>& generations, const std::string& uri);
   static bool OverlayGenerationCurrent(
       const std::unordered_map<std::string, std::uint64_t>& generations, const std::string& uri,
       std::uint64_t generation);
 
-  // Apply `transform` to every stored "lsp" diagnostic range for `viewport`'s file
-  // (single-sources the owner tag + path). Instantiated only in LspService.cpp.
   template <typename Transform>
   void TransformLspDiagnostics(const editor::TextViewport& viewport, Transform&& transform);
 
-  // Keep stored "lsp" diagnostics positioned as the buffer changes, before the
-  // server republishes. The single-edit path maps positions precisely through the
-  // viewport's last applied edit; the bulk path (paste/undo/format) shifts
-  // diagnostics below the first changed line by the net line delta.
-  // Through the whole step from `followed_revision` (the revision the diagnostics
-  // were last placed at) when the edit record covers it, else the latest edit;
-  // never through a record that is no longer the latest change.
   void ShiftLspDiagnosticsForAppliedEdit(const editor::TextViewport& viewport,
                                          std::optional<std::uint64_t> followed_revision);
-  // `after_line_count` is read from the viewport; only the pre-change line count
-  // and the first differing line (both supplied by the change site) are needed to
-  // slide diagnostics below the edit by the net line delta.
   void ShiftLspDiagnosticsForBulkChange(const editor::TextViewport& viewport,
                                         std::size_t before_line_count,
                                         std::size_t first_changed_line);
 
-  // Drop the absolute-positioned "lsp:semantic" recolor overlay for `viewport`'s
-  // file. The overlay is invalid the moment the buffer's line/column geometry
-  // shifts, so any content edit clears it (the lexical highlighter keeps painting
-  // until a fresh semantic response lands); a stale overlay would otherwise paint
-  // wrong colors once the buffer returns to a clean, render-visible state.
   void ClearLspSemanticTokensForFile(const editor::TextViewport& viewport);
 
-  // Drop the edit-invalidated LSP overlays for `viewport`'s file: the "lsp:inlay"
-  // mid-line virtual text and the "lsp:codelens" lines. Both are absolute positions,
-  // so any content edit invalidates them until the next clean pull. Runs on EVERY
-  // keystroke, so the file's URI — a fresh string — is built at most once, and only
-  // when an inlay or lens request could be in flight to invalidate: with no such
-  // request ever issued (no server, or one without either capability) the
-  // generation maps are empty and the keystroke allocates nothing here
-  // (TD-2026-09-20-302).
   void ClearLspEditOverlaysForFile(const editor::TextViewport& viewport);
 
   WorkspaceContext* context_ = nullptr;
@@ -329,57 +175,25 @@ class LspService {
   Operations operations_{};
   Uint32 wake_event_type_ = 0;
 
-  // Path of an editor document whose LSP hydration was scheduled by tab activation
-  // and not yet run. Drained post-frame by ConsumeDeferredBufferOpen so the didOpen
-  // + token/inlay requests do not block the tab switch (TD-2026-07-17A-033).
   std::optional<std::filesystem::path> pending_buffer_open_;
 
-  // Per-URI document content revision the server-facing state last caught up to
-  // (a didOpen, a didChange, or the keystroke sync's diagnostic shift). A keystroke
-  // that changed nothing -- typing a closer steps over the auto-inserted one --
-  // still reports "the last change", and the viewport's last_applied_edit is then
-  // the PREVIOUS keystroke's: re-sending it duplicated that edit on the server and
-  // shifted the diagnostics twice. The keystroke sync acts only when the revision
-  // moved since.
   std::unordered_map<std::string, std::uint64_t> synced_content_revision_;
-  // The keystroke sync's URI for the path it last saw: the revision check runs on
-  // every keystroke, with or without a server, and FileUriForPath builds a string
-  // longer than the small-string buffer -- an allocation per keystroke that the
-  // serverless path had not paid before the check existed.
   std::filesystem::path sync_uri_path_;
   std::string sync_uri_;
 
-  // Per-URI monotonic generation for semantic-token requests. Bumped on every
-  // request; the response closure captures its value and PublishLspSemanticTokens
-  // drops any response whose captured generation is no longer current (superseded
-  // by a later request because the buffer changed).
   std::unordered_map<std::string, std::uint64_t> semantic_token_generation_;
-  // Per-URI monotonic generation for inlay-hint requests (same stale-response
-  // guard as semantic tokens). Shares NextSemanticGeneration's helper pattern via
-  // a dedicated map so the two overlays never invalidate each other.
   std::unordered_map<std::string, std::uint64_t> inlay_hint_generation_;
 
-  // Per-URI generation guard for code-lens requests (same stale-response rule as
-  // the two overlays above).
   std::unordered_map<std::string, std::uint64_t> code_lens_generation_;
-  // Executable payloads behind the published lenses. A CodeLensDecoration cannot
-  // carry a server command with JSON arguments, so it carries a handle into here
-  // instead; a click resolves the handle back to something runnable. Rebuilt per
-  // publish (each publish drops the previous entries for that URI), so it stays
-  // proportional to what is currently on screen rather than growing forever.
   struct CodeLensCommand {
     std::string uri;
-    std::string language_id;  // which server to run the command on
+    std::string language_id;
     std::string command;
     std::vector<util::JsonValue> arguments;
   };
   std::unordered_map<std::uint64_t, CodeLensCommand> code_lens_commands_;
   std::uint64_t next_code_lens_payload_ = 0;
 
-  // Identity of the last documentHighlight request, so MaybeRequestDocumentHighlights
-  // fires only on a real change. A single counter (not a per-URI map like the two
-  // overlays above) because only one caret is ever live: a newer request always
-  // supersedes the outstanding one, whatever buffer it was for.
   std::uint64_t document_highlight_generation_ = 0;
   std::filesystem::path document_highlight_request_path_;
   std::uint64_t document_highlight_request_revision_ = 0;
@@ -388,9 +202,6 @@ class LspService {
   std::size_t document_highlight_request_column_ = 0;
   bool document_highlight_request_valid_ = false;
 
-  // Last feature-enablement state applied by ReconcileFeatureSettings, so it acts
-  // only on actual transitions (shut down / clear / re-request) instead of redoing
-  // work on every unrelated settings mutation.
   struct FeatureEnablement {
     bool master = false;
     bool diagnostics = false;
@@ -401,19 +212,11 @@ class LspService {
   };
   std::optional<FeatureEnablement> last_feature_enablement_;
 
-  // Drop every LSP-owned editor overlay for the current project and invalidate the
-  // request generations behind them, so an in-flight response cannot repaint what
-  // was just cleared. Used when the master switch goes off — each overlay also has
-  // its own per-feature clear for its own toggle. Returns whether anything changed.
   bool ClearAllLspOverlays(ProjectWorkspaceState& state);
 
-  // Host-owned graveyard of clients whose servers are shutting down. Outlives every
-  // per-project LspManager, so a project switch hands its retiring clients here and
-  // is not blocked by their shutdown handshake. Drained (non-blocking reap of
-  // completed clients) each frame by DrainRetiringClients (TD-2026-07-17-091).
   std::vector<std::unique_ptr<LspClient>> retiring_clients_;
   void RetireClients(std::vector<std::unique_ptr<LspClient>> clients);
   void DrainRetiringClients();
 };
 
-}  // namespace microide::workspace
+}

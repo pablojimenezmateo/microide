@@ -80,4 +80,4 @@ void RedrawTraceAccumulator::Reset() {
   max_rendered_clips_ = 0;
 }
 
-}  // namespace microide::app
+}

@@ -30,7 +30,7 @@ std::size_t ModelRowFromSelectionLine(const CompareTabState& compare_tab, std::s
   return CompareTabModelRowForRightLine(compare_tab, line);
 }
 
-}  // namespace
+}
 
 PatchApplyService::PatchApplyService(project::ProjectBackgroundExecutor& background_executor,
                                      GitRepositoryService& git_repository_service)
@@ -76,8 +76,6 @@ std::optional<project::PatchApplyRequest> PatchApplyService::BuildRequest(
     return std::nullopt;
   }
 
-  // Unwired (a shell built without its lifecycle, as the every-action tests build
-  // it): no repository to apply to.
   if (!callbacks_.current_repository_state) {
     return std::nullopt;
   }
@@ -86,11 +84,6 @@ std::optional<project::PatchApplyRequest> PatchApplyService::BuildRequest(
     return std::nullopt;
   }
 
-  // Path math only — no repository object. GitRepository::ToRelative is a thin
-  // wrapper over this helper, and constructing one here both allocated a
-  // subprocess-capable handle for a pure lexical operation and put a
-  // GitRepository construction in a workspace TU (the shell must go through
-  // GitRepositoryService for anything that actually talks to git).
   const std::optional<std::filesystem::path> relative_path =
       project::internal::AbsoluteToRelativePath(repository_state.repository_root,
                                                 compare_tab.path);
@@ -119,14 +112,6 @@ std::optional<project::PatchApplyRequest> PatchApplyService::BuildRequest(
     }
     const std::size_t first_row =
         ModelRowFromSelectionLine(compare_tab, selection->start.line);
-    // selection_range() reports an EXCLUSIVE end. A whole-line selection made with
-    // the standard gesture (anchor at line N's start, cursor dragged to line N+1's
-    // start) yields end.column == 0 and end.line == N+1, but line N+1 is not part
-    // of the selection. Without this correction the patch spans one extra line —
-    // and for Discard Selected Lines that silently destroys an unselected
-    // working-tree change (irreversible). Mirror the end.column==0 adjustment used
-    // by every other line-oriented consumer (WorkspaceShellInteraction line-copy,
-    // ShapingActions, DiagnosticsRender, redraw).
     std::size_t end_line = selection->end.line;
     if (selection->end.column == 0 && selection->end.line > selection->start.line) {
       --end_line;
@@ -148,13 +133,6 @@ std::optional<project::PatchApplyRequest> PatchApplyService::BuildRequest(
     target.hunk = project::PatchHunkTarget{.hunk_index = hunk_index};
   }
 
-  // A Combined view diffs HEAD against the working tree, but a stage is applied
-  // to the index and an unstage taken out of it, so the tab's patch only fits
-  // while the index still equals HEAD: after the first staged hunk its line
-  // numbers are stale (git refuses to shift a hunk anchored at either end of the
-  // file) and a hunk already staged would apply twice. Carry the change's window
-  // as its HEAD and working-tree line ranges, and let the apply build the patch
-  // against the index as it is then (see PatchChangeSpan).
   const bool stage = operation == PatchOperationKind::StageHunk ||
                      operation == PatchOperationKind::StageSelectedLines;
   const bool unstage = operation == PatchOperationKind::UnstageHunk ||
@@ -178,12 +156,6 @@ std::optional<project::PatchApplyRequest> PatchApplyService::BuildRequest(
     target.working_tree_exists = compare_tab.build_options.right_exists.value_or(true);
   }
 
-  // Deliberately do NOT copy compare_tab.model into the request. The patch text
-  // is generated synchronously (BuildPatchForRequest) from the live model before
-  // dispatch, and the background apply path (project::ApplyPatchRequest) never
-  // reads request.model. Copying a whole CompareModel here — every row and hunk
-  // of a potentially huge diff — just to stage one small hunk was pure UI-thread
-  // overhead. The .model field is left value-initialized (empty).
   return project::PatchApplyRequest{
       .operation = operation,
       .target = std::move(target),
@@ -209,57 +181,25 @@ std::optional<std::string> PatchApplyService::BuildPatchForRequest(
 }
 
 void PatchApplyService::DispatchApply(project::PatchApplyRequest request, std::string patch_text) {
-  // Durable: a project switch cancels the executor's backlog, and a write
-  // dropped there never completes -- the service stayed busy, refusing every git
-  // action after (WorkspaceShell/GitOperationFinishingInTheBackground...).
-  // Whose apply it is: the project in front now, which the user may leave before
-  // it finishes.
   std::filesystem::path project_root =
       callbacks_.front_project_root ? callbacks_.front_project_root() : std::filesystem::path{};
   background_executor_.PostDurable([this, request = std::move(request), patch_text = std::move(patch_text),
                                     project_root = std::move(project_root)]() mutable {
-    // Background half: the `git apply` itself and the repository-service
-    // invalidation (mutex-protected). Everything that touches shell state waits
-    // for the main thread below.
-    //
-    // No repository-generation gate. One refused any request whose generation had
-    // moved since it was built, and every git refresh moves it -- including the
-    // one an apply asks for itself, so `c` pressed right after `a` failed with
-    // "Diff is stale" (QA suite on CI, diff-hunk-keys). What keeps a patch off
-    // content it was not built for is git's own preflight: ApplyGitPatch runs
-    // `git apply --check` first, and the hunk's three context lines must match
-    // the index or the worktree exactly, which reports StaleDiff when they do not.
-    //
-    // The project's launcher, captured when the request was built: a patch
-    // applied on the wrong machine is exactly the silent wrong answer the
-    // launcher exists to prevent.
     PatchApplyResult result = project::ApplyPatchRequest(*request.launcher, request, patch_text);
     const bool patch_applied = result.category == PatchApplyResultCategory::Success;
     if (patch_applied) {
       git_repository_service_.MarkStale();
     }
 
-    // Main-thread half. This used to run right here, on the executor's thread:
-    // the compare tab was rebuilt and reassigned, clean editor tabs were reloaded
-    // from disk, and the feedback line was written while the main thread could be
-    // rendering all three — a data race no test exercised because the tests
-    // drained the executor before looking. The two sibling git services already
-    // marshal their completions through a mailbox; this one does now too.
     completion_mailbox_.Post([this, request = std::move(request), result = std::move(result), patch_applied,
                               project_root = std::move(project_root)]() mutable {
       const bool in_front =
           project_root.empty() || !callbacks_.is_in_front || callbacks_.is_in_front(project_root);
-      // If the patch actually applied, the working tree / index changed ON DISK —
-      // so run the cache invalidations for the applied path, whatever refresh
-      // raced it: skipping them left blame/compare/clean-tab caches stale until
-      // an unrelated refresh and produced a misleading "nothing applied" message.
-      // The refresh, the clean-tab reload and the compare rebuild act on the
-      // project in front: for another, its own catch up on activation.
       if (patch_applied) {
         const std::filesystem::path absolute_path =
             request.target.repository_root / request.target.relative_path;
         if (callbacks_.invalidate_editor_blame_path != nullptr) {
-          callbacks_.invalidate_editor_blame_path(absolute_path);  // keyed by path, not project
+          callbacks_.invalidate_editor_blame_path(absolute_path);
         }
         if (!in_front) {
           util::InvokeIfSet(callbacks_.defer_to_project, project_root);
@@ -275,8 +215,6 @@ void PatchApplyService::DispatchApply(project::PatchApplyRequest request, std::s
           }
         }
       }
-      // A patch that applied is reported as applied, whatever refresh landed
-      // while it ran: "Diff is stale; try again" sent the user to apply it twice.
       ReportResult(result, in_front || !callbacks_.project_label ? std::string()
                                                                   : " in " + callbacks_.project_label(project_root));
     });
@@ -447,4 +385,4 @@ void PatchApplyService::CancelPendingDiscard() {
 }
 
 
-}  // namespace microide::workspace
+}

@@ -66,11 +66,8 @@ RuleResult CheckEveryPerfCounterHasAProducer(const std::filesystem::path& repo_r
 RuleResult CheckViewportFiletypeGoesThroughTheViewportMemo(
     const std::filesystem::path& repo_root);
 
-// The full ordered list of workspace rules, each with a stable name. Both
-// RunWorkspaceArchitectureRules and the per-rule ctest registration iterate
-// this, so adding a rule here wires it into both automatically.
 const std::vector<NamedRule>& WorkspaceArchitectureRuleList();
 
 std::vector<RuleResult> RunWorkspaceArchitectureRules(const std::filesystem::path& repo_root);
 
-}  // namespace microide::tests::architecture
+}

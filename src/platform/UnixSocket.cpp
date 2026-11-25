@@ -26,15 +26,15 @@ bool FillAddress(const std::string& path, sockaddr_un* address) {
   return true;
 }
 
-}  // namespace
+}
 
 bool ClearStaleSocketPath(const std::filesystem::path& path) {
   struct stat st{};
   if (::lstat(path.c_str(), &st) != 0) {
-    return errno == ENOENT;  // nothing there → clear; other errors → refuse
+    return errno == ENOENT;
   }
   if (!S_ISSOCK(st.st_mode) || st.st_uid != ::geteuid()) {
-    return false;  // not our socket — do not delete it
+    return false;
   }
   return ::unlink(path.c_str()) == 0 || errno == ENOENT;
 }
@@ -44,8 +44,6 @@ int ConnectUnixSocket(const std::filesystem::path& path) {
   if (!FillAddress(path.string(), &address)) {
     return -1;
   }
-  // Close-on-exec atomically at creation: every process the editor or the server
-  // spawns would otherwise inherit a live connected handle.
   const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
   if (fd < 0) {
     return -1;
@@ -90,4 +88,4 @@ int ListenUnixSocket(const std::filesystem::path& path, std::string* error) {
   return fd;
 }
 
-}  // namespace microide::platform
+}

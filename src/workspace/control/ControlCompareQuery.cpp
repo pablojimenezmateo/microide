@@ -27,11 +27,6 @@ const char* RowKindName(compare::CompareRowKind kind) {
   return "unchanged";
 }
 
-// A side's exact bytes as hex, for a line that is not valid UTF-8: JSON can only
-// carry such a line with U+FFFD in place of each bad run, which moves every byte
-// offset after it -- and the spans are byte offsets into the real line. The
-// structural oracle read them against the lossy text and reported spans
-// "splitting a character" that were on boundaries (soak 1b3aae58e0b7).
 std::string HexBytes(std::string_view text) {
   static constexpr char kDigits[] = "0123456789abcdef";
   std::string out;
@@ -54,7 +49,7 @@ util::JsonValue SpansJson(const std::vector<compare::CompareTextSpan>& spans) {
   return util::JsonValue(std::move(out));
 }
 
-}  // namespace
+}
 
 util::JsonValue BuildControlCompareJson(const CompareTabState* compare,
                                         const ControlCompareQueryOptions& options) {
@@ -99,4 +94,4 @@ util::JsonValue BuildControlCompareJson(const CompareTabState* compare,
   return util::JsonValue(std::move(result));
 }
 
-}  // namespace microide::workspace
+}

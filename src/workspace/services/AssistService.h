@@ -12,14 +12,9 @@
 
 namespace microide::workspace {
 
-// The editor's language assists, one focused unit per feature over a shared
-// AssistHost (the shell seam and the helpers every feature needs). Callers reach
-// the feature they mean — `assist.completion().ApplySelectedCompletion()` — so no
-// one object accretes every assist's state and entry points again.
 class AssistService {
  public:
   using Operations = AssistHost::Operations;
-  // Each feature's own callbacks, beside the shared Operations.
   struct Ports {
     CompletionAssist::Port completion;
     CodeActionAssist::Port code_actions;
@@ -53,7 +48,6 @@ class AssistService {
   RefactorAssist& refactor() { return refactor_; }
   SignatureHelpAssist& signature_help() { return signature_help_; }
 
-  // The editor's typing hook: completion and parameter hints both follow typing.
   void AfterTyping(std::string_view typed) {
     completion_.AfterTyping(typed);
     signature_help_.AfterTyping(typed);
@@ -69,4 +63,4 @@ class AssistService {
   SignatureHelpAssist signature_help_{host_};
 };
 
-}  // namespace microide::workspace
+}

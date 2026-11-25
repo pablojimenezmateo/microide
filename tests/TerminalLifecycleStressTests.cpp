@@ -11,19 +11,6 @@
 #include <string_view>
 #include <vector>
 
-// Terminal lifecycle platform stress suite (TD-2026-07-17-015): real PTY-backed
-// sessions driven through the teardown paths the placeholder-terminal shell
-// tests never exercise — stop during heavy output, stop on the alternate
-// screen, stop racing (and after) child exit, many concurrent sessions torn
-// down while streaming, and rapid start/stop reuse of one session object.
-// Closing a terminal tab in the shell just destroys its TerminalPaneState, whose
-// TerminalSession destructor runs the same Stop() path, so these session-level
-// cases cover the tab-close-during-output/exit lifecycle directly. The child
-// shutdown ladder (SIGHUP -> SIGTERM -> SIGKILL) is bounded (~325ms worst
-// case), so every assertion here is a bounded wait, never a hang. The suite's
-// real teeth come from the sanitizer runs: a teardown race or fd/thread leak
-// on these paths surfaces under ASAN/TSAN.
-
 namespace microide::tests {
 namespace {
 
@@ -31,7 +18,6 @@ using microide::terminal::TerminalSession;
 
 constexpr std::string_view kShell = "/bin/sh";
 
-// An unkillable-by-HUP-free flood: spins printf forever until signalled.
 constexpr std::string_view kFloodCommand =
     "while :; do printf 'terminal-stress-line-of-output\\n'; done";
 
@@ -53,14 +39,11 @@ bool SnapshotContains(TerminalSession& session, std::string_view needle) {
   return false;
 }
 
-// Stop() while the child is mid-flood: the reader thread is parked in read()/
-// poll() with more output always pending, so this exercises the wake-pipe
-// interrupt + child shutdown ladder under load.
 void TestTerminalStressStopDuringHeavyOutput() {
   TemporaryDirectory temp;
   TerminalSession session;
   if (!session.Start(microide::platform::LocalProcessLauncher(), temp.path(), kFloodCommand, kShell)) {
-    return;  // no PTY available in this environment; nothing to assert
+    return;
   }
   Expect(WaitForOutputGrowth(session, 50),
          "a flooding child should stream output through the PTY");
@@ -68,8 +51,6 @@ void TestTerminalStressStopDuringHeavyOutput() {
   Expect(!session.running(), "Stop during heavy output should leave the session stopped");
 }
 
-// Stop() while the child holds the alternate screen (a full-screen app being
-// closed): teardown must not depend on the child restoring the primary screen.
 void TestTerminalStressStopDuringAlternateScreen() {
   TemporaryDirectory temp;
   TerminalSession session;
@@ -85,10 +66,6 @@ void TestTerminalStressStopDuringAlternateScreen() {
          "Stop should reset the alternate-screen mode for the next Start");
 }
 
-// The shell's environment says which terminal it runs in -- this one, not the
-// terminal microide was launched from -- and that it opens OSC 8 hyperlinks, so
-// tools that only emit links for terminals they know (Claude Code's login URL)
-// emit them here. A launch environment is set on top and wins.
 void TestTerminalEnvironmentNamesThisTerminal() {
   TemporaryDirectory temp;
   ScopedEnvVar inherited_vte("VTE_VERSION", "7000");
@@ -107,9 +84,6 @@ void TestTerminalEnvironmentNamesThisTerminal() {
   session.Stop();
 }
 
-// Child exits on its own first (the close-during-exit half): the session must
-// notice, emit the exit marker, and a subsequent Stop() must reap the
-// already-dead child without hanging.
 void TestTerminalStressStopAfterChildExit() {
   TemporaryDirectory temp;
   TerminalSession session;
@@ -122,13 +96,10 @@ void TestTerminalStressStopAfterChildExit() {
   Expect(WaitUntil([&] { return SnapshotContains(session, "[process exited]"); },
                    std::chrono::seconds(5), std::chrono::milliseconds(2)),
          "a self-exiting child should leave the process-exit marker");
-  session.Stop();  // reap path for an already-dead child; bounded
+  session.Stop();
   Expect(!session.running(), "Stop after child exit should stay stopped");
 }
 
-// Stop() racing a child that exits immediately: repeated so the race lands on
-// both sides (child dead before Stop / Stop first). Alternates with Start on
-// the same session object, which itself calls Stop() — the open/close loop.
 void TestTerminalStressOpenCloseLoopRacesChildExit() {
   TemporaryDirectory temp;
   TerminalSession session;
@@ -138,13 +109,9 @@ void TestTerminalStressOpenCloseLoopRacesChildExit() {
       return;
     }
     if (i % 2 == 0) {
-      // The previous iteration flooded the grid; Start() resets it synchronously,
-      // and this iteration's child ("true") emits nothing, so any flood line seen
-      // here leaked across the restart.
       Expect(!SnapshotContains(session, "terminal-stress-line"),
              "Start should reset the grid (no stale lines from the previous run)");
     } else {
-      // Give the flood a moment to stream so half the iterations stop mid-output.
       Expect(WaitForOutputGrowth(session, 1), "flood iterations should produce output");
     }
     session.Stop();
@@ -152,9 +119,6 @@ void TestTerminalStressOpenCloseLoopRacesChildExit() {
   }
 }
 
-// Many concurrent flooding sessions torn down together: half via explicit
-// Stop(), half straight through the destructor (the shell's tab-close path,
-// which destroys TerminalPaneState without a prior Stop call).
 void TestTerminalStressMultiTerminalShutdown() {
   TemporaryDirectory temp;
   constexpr std::size_t kSessions = 6;
@@ -162,7 +126,7 @@ void TestTerminalStressMultiTerminalShutdown() {
   for (std::size_t i = 0; i < kSessions; ++i) {
     auto session = std::make_unique<TerminalSession>();
     if (!session->Start(microide::platform::LocalProcessLauncher(), temp.path(), kFloodCommand, kShell)) {
-      return;  // no PTY: skip (earlier sessions are cleaned up by unique_ptr)
+      return;
     }
     sessions.push_back(std::move(session));
   }
@@ -170,16 +134,14 @@ void TestTerminalStressMultiTerminalShutdown() {
     Expect(WaitForOutputGrowth(*session, 10),
            "every concurrent session should stream output");
   }
-  // Explicitly stop the first half while the rest keep flooding...
   for (std::size_t i = 0; i < kSessions / 2; ++i) {
     sessions[i]->Stop();
     Expect(!sessions[i]->running(), "explicitly stopped sessions should be stopped");
   }
-  // ...then destroy everything (destructor teardown for the still-running half).
   sessions.clear();
 }
 
-}  // namespace
+}
 
 void RegisterTerminalLifecycleStressTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalLifecycleStress/EnvironmentNamesThisTerminal", TestTerminalEnvironmentNamesThisTerminal);
@@ -195,4 +157,4 @@ void RegisterTerminalLifecycleStressTests(std::vector<TestCase>& tests) {
           TestTerminalStressMultiTerminalShutdown);
 }
 
-}  // namespace microide::tests
+}

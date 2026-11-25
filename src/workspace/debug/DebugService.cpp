@@ -53,24 +53,9 @@ void DebugService::ConsumeDapCallbacks() {
   DapManager& manager = CurrentDapManager();
   const int active_before = manager.ActiveSessionId();
   manager.DrainCallbacks();
-  // Reconcile any session whose adapter process died without a DAP terminated/
-  // exited event (crash / external kill / RLIMIT_AS cap) so it transitions terminal
-  // and can be pruned below instead of lingering as a zombie row. Done after
-  // DrainCallbacks (so a real terminated event wins) and before PruneTerminated.
-  // A reconciled session is always dead (IsRunning() already false), so the prune
-  // below removes it the same frame; its row also re-syncs via on_state_changed.
   manager.ReapExitedSessions();
-  // Prune sessions whose adapter has terminated and whose I/O thread has joined
-  // (done outside DrainCallbacks so a session is never destroyed inside its own
-  // callback). When the *active* session was the one removed, re-project the new
-  // active session; a background prune leaves the active view untouched.
   const std::vector<PrunedSession> removed = manager.PruneTerminated();
   if (!removed.empty()) {
-    // Settle each pruned session's console. A clean exit keeps it, says so, and
-    // drops it when the next session starts (VS Code's debug console reads the
-    // same way): dropping it here took a finished program's output with it. A
-    // non-clean end (crash / kill / launch rejection) keeps its console for good
-    // and appends why it ended -- otherwise the session would vanish silently.
     for (const PrunedSession& pruned : removed) {
       if (pruned.failed) {
         if (!pruned.error.empty()) {
@@ -100,19 +85,12 @@ bool DebugService::IsActiveSession(int session_id) const {
   return CurrentDapManager().ActiveSessionId() == session_id;
 }
 
-// ProjectStop, BuildSessionCallbacks, and ClearTransientDebugViews (plus the
-// BuildExecutionView / BuildThreadViews prebuilt-view helpers) live in
-// DebugServiceCallbacks.cpp.
-
 int DebugService::LaunchSession(const LaunchConfig& unexpanded, const std::string& cwd, bool replace) {
   LaunchConfig config = unexpanded;
   ExpandLaunchVariables(config.arguments, cwd);
   last_launch_config_ = config;
   last_cwd_ = cwd;
-  // A new session: forget the prior session's variable expansion and re-arm the
-  // Locals-open-by-default one-shot so Locals opens on this session's first stop.
   CurrentProjectState().debug_variables.BeginSession();
-  // The ended sessions' consoles were kept for reading until now.
   if (operations_.remove_debug_console) {
     for (const int ended : ended_console_ids_) {
       operations_.remove_debug_console(ended);
@@ -128,31 +106,22 @@ int DebugService::LaunchSession(const LaunchConfig& unexpanded, const std::strin
   if (id != 0) {
     util::InvokeIfSet(operations_.show_debug_console, id, label);
   }
-  // Re-sync unconditionally: on spawn failure the failing session fired a
-  // synchronous Failed state-change (and a SyncSessionsPanel) while it was still in
-  // the manager's list, then was popped — so the panel holds a phantom row until we
-  // rebuild from the now-current session set.
   SyncSessionsPanel();
   return id;
 }
 
 bool DebugService::StartDebugging(const LaunchConfig& config, const std::string& cwd) {
-  return LaunchSession(config, cwd, /*replace=*/false) != 0;
+  return LaunchSession(config, cwd, false) != 0;
 }
 
 void DebugService::StopDebugging() {
   DapManager& manager = CurrentDapManager();
-  // Stopping the last live session resets the project-shared adapter state
-  // (breakpoint verification + advertised exception filters). With other sessions
-  // still live, leave that shared state intact — they still rely on it.
   const bool last_session = manager.SessionCount() <= 1;
   manager.StopActiveSession();
   if (last_session) {
     ResetAdapterBreakpointState();
   }
   SyncBreakpointsPanel();
-  // Drop the execution view + variables; the next-frame prune advances the active
-  // session and re-projects it when one remains.
   ClearTransientDebugViews();
   SyncSessionsPanel();
 }
@@ -162,14 +131,7 @@ void DebugService::StopAllDebugging() {
   if (manager.SessionCount() == 0) {
     return;
   }
-  // Ask every session to stop, as Stop does for one: a terminate each, an adapter
-  // that does not answer forced down. Not ShutdownAll -- that joins every adapter's
-  // I/O thread on the UI thread, and a wedged gdb froze the window for seconds
-  // (QA dbg-sessions on gdb 15). The next-frame prune drops each session as it ends
-  // and cleans its console.
   manager.BeginShutdownAll();
-  // All sessions are gone, so reset the project-shared adapter state (same as
-  // StopDebugging's last-session branch).
   ResetAdapterBreakpointState();
   SyncBreakpointsPanel();
   ClearTransientDebugViews();
@@ -182,19 +144,14 @@ void DebugService::Restart() {
     return;
   }
   if (session->Client().Capabilities().supports_restart_request) {
-    // In-place restart: the adapter relaunches the debuggee and re-emits its
-    // initialized/stopped sequence. Clear the current stop's transient views.
     session->Restart();
     ClearTransientDebugViews();
     return;
   }
-  // Fallback: terminate + relaunch with the same config, replacing the active
-  // session in place so no second session row appears. ReplaceActiveSession blocks
-  // on the prior session's shutdown, so this is a clean synchronous relaunch.
   CurrentProjectState().breakpoint_store.ResetVerification();
   CurrentProjectState().function_breakpoint_store.ResetVerification();
   ClearTransientDebugViews();
-  LaunchSession(last_launch_config_, last_cwd_, /*replace=*/true);
+  LaunchSession(last_launch_config_, last_cwd_, true);
 }
 
 void DebugService::FocusSession(int session_id) {
@@ -205,13 +162,10 @@ void DebugService::FocusSession(int session_id) {
   }
   manager.SetActiveSession(session_id);
   manager.SetSessionAttention(session_id, false);
-  // Drop the previously-active session's projection, then re-project this one.
   ClearTransientDebugViews();
   const std::string label = manager.SessionLabel(session_id);
   util::InvokeIfSet(operations_.show_debug_console, session_id, label);
   SyncSessionsPanel();
-  // Re-project the picked session's current stop (no-op if it is running): the
-  // stack/threads re-resolve and re-fire on_stopped through the active path.
   session->Reactivate();
 }
 
@@ -250,15 +204,8 @@ void DebugService::SwitchSession(int index) {
 }
 
 void DebugService::ResetAdapterBreakpointState() {
-  // Verification state is tied to the adapter; drop it so a fresh session
-  // re-verifies from scratch and the gutter shows unverified until then.
   CurrentProjectState().breakpoint_store.ResetVerification();
   CurrentProjectState().function_breakpoint_store.ResetVerification();
-  // The advertised exception filters stay: the enabled ones are sent to every
-  // later session, so the rows that turn them off must stay too. Dropping them
-  // here left a filter that could be neither seen nor turned off until a session
-  // was running again (QA dbg-exception-breakpoints). VS Code keeps the
-  // checkboxes between sessions; the next session's `initialized` replaces them.
 }
 
 void DebugService::SyncSessionsPanel() {
@@ -312,8 +259,6 @@ void DebugService::FocusThread(int thread_id) {
 }
 
 bool DebugService::HasInFlightDapWork() const {
-  // Read the manager directly (no EnsureProjectDapManager) so this query, called
-  // from the idle loop, has no side effects.
   const ProjectWorkspaceState& state = CurrentProjectState();
   if (state.dap_manager == nullptr) {
     return false;
@@ -393,4 +338,4 @@ DebugSession::State DebugService::SessionState() const {
 
 std::string DebugService::LastError() const { return CurrentDapManager().LastError(); }
 
-}  // namespace microide::workspace
+}

@@ -195,4 +195,4 @@ void RegisterPhase3Tests(std::vector<TestCase>& tests) {
   tests.emplace_back("Phase3.ToolRegistryMultiplePlatforms", &TestToolRegistryMultiplePlatforms);
 }
 
-}  // namespace microide::tests
+}

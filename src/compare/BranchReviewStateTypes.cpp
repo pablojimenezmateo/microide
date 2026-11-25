@@ -9,10 +9,6 @@ namespace microide::compare {
 
 namespace {
 
-// FNV-1a, accumulated in place. This used to serialize the whole hunk into a
-// std::ostringstream and hash the resulting string — several allocations plus a
-// full copy of the hunk's text, per hunk, on a path that resolves every hunk of a
-// file on the compare tab's derived-state refresh.
 constexpr std::uint64_t kFnvOffsetBasis = util::kFnv1aOffsetBasis;
 
 void HashBytes(std::uint64_t* hash, std::string_view bytes) {
@@ -77,8 +73,6 @@ std::uint64_t HashHunkContent(const CompareModel& model, const CompareHunk& hunk
     }
     const CompareRow& compare_row = model.rows[static_cast<std::size_t>(row)];
     HashInteger(&hash, static_cast<std::uint64_t>(static_cast<int>(compare_row.kind)));
-    // Length-prefix each field so left/right can't merge into an ambiguous byte
-    // stream: ("hello","world") and ("hell","oworld") must hash differently.
     HashInteger(&hash, compare_row.left_text.size());
     HashBytes(&hash, compare_row.left_text);
     HashInteger(&hash, compare_row.right_text.size());
@@ -87,7 +81,7 @@ std::uint64_t HashHunkContent(const CompareModel& model, const CompareHunk& hunk
   return hash;
 }
 
-}  // namespace
+}
 
 std::filesystem::path NormalizeReviewPath(const std::filesystem::path& repository_root,
                                           const std::filesystem::path& path) {
@@ -170,4 +164,4 @@ BranchReviewHunkIdentity ComputeBranchReviewHunkIdentity(const CompareModel& mod
                                          path);
 }
 
-}  // namespace microide::compare
+}

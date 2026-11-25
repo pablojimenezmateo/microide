@@ -6,12 +6,6 @@
 #include <span>
 #include <vector>
 
-// Fuzz the session decoders in WorkspacePersistenceBinaryFormatSessions: the
-// per-project session (editor groups, split tree, sidebar and tree state, the
-// terminal layout to revive, the closed editors, each editor's collapsed folds,
-// and a typed merge result's conflict spans), and the workspace session (the open projects, as project-identity
-// records and legacy root paths, and the Host view's collapsed groups). Neither may crash on arbitrary bytes, and what
-// they accept must stay inside the caps a restore trusts.
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
   if (data == nullptr) {
     return 0;
@@ -26,7 +20,6 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     if (workspace.projects.size() > 256 || workspace.project_roots.size() > 256) {
       __builtin_trap();
     }
-    // The Host view's collapsed groups: bounded in count and in each id's length.
     if (workspace.host_view_collapsed.size() > 1024) {
       __builtin_trap();
     }
@@ -36,7 +29,6 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
       }
     }
     for (const auto& id : workspace.projects) {
-      // A decoded id is always usable: a path, or a host with an absolute root.
       const auto* remote = id.remote();
       if (remote != nullptr ? (remote->host.empty() || remote->host_root.empty() || remote->host_root.front() != '/')
                             : id.empty()) {
@@ -73,8 +65,6 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
           tab.weights.size() > microide::workspace::kMaxTerminalPanes) {
         __builtin_trap();
       }
-      // A recorded host terminal is whole or absent: a reopen must never attach
-      // a handle with no server to tell it by.
       for (const auto& pane : tab.panes) {
         if (!pane.host.empty() && (pane.host.epoch.empty() ||
                                    pane.host.epoch.size() > microide::workspace::kMaxRecordedHostEpochBytes)) {

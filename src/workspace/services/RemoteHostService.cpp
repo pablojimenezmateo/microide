@@ -29,8 +29,6 @@ namespace {
 namespace remote = project::remote;
 using State = remote::RemoteHostSession::State;
 
-// Short, private and per user: the ControlMaster sockets live here, and AF_UNIX
-// caps the path.
 std::filesystem::path ControlDirectory() {
   if (const char* runtime = std::getenv("XDG_RUNTIME_DIR"); runtime != nullptr && runtime[0] == '/') {
     return std::filesystem::path(runtime) / "microide-ssh";
@@ -46,15 +44,12 @@ std::size_t SettingSize(const std::optional<std::string>& value) {
   return parsed.has_value() && *parsed > 0 ? static_cast<std::size_t>(*parsed) : 0;
 }
 
-// The local machine's launcher, as the shared pointer a pane holds: the ssh
-// authentication terminal and a local terminal run HERE whatever the project's
-// locality.
 std::shared_ptr<const platform::ProcessLauncher> LocalLauncher() {
   return std::shared_ptr<const platform::ProcessLauncher>(&platform::LocalProcessLauncher(),
                                                           [](const platform::ProcessLauncher*) {});
 }
 
-}  // namespace
+}
 
 RemoteHostService::RemoteHostService(Operations operations) : operations_(std::move(operations)) {
   char name[256] = {};
@@ -65,11 +60,9 @@ RemoteHostService::RemoteHostService(Operations operations) : operations_(std::m
 
 RemoteHostService::~RemoteHostService() {
   work_.Shutdown();
-  // A local project's write in flight into a mirror finishes before its gate goes.
   for (const auto& [root, project] : projects_) {
     local_project_write_gate_.Unregister(project.project->tree());
   }
-  // Sessions next: their threads post into the mailbox until they are joined.
   projects_.clear();
 }
 
@@ -80,8 +73,6 @@ remote::RemoteHostSession::Config RemoteHostService::SessionConfig(
   };
   remote::RemoteHostSession::Config config;
   config.target = target;
-  // One list per host: every session to it shares the ControlMaster its ports
-  // ride on.
   std::shared_ptr<remote::HostPortForwards>& forwards = forwards_[target.Display()];
   if (forwards == nullptr) {
     forwards = std::make_shared<remote::HostPortForwards>();
@@ -171,7 +162,6 @@ RemoteHostService::Project* RemoteHostService::OpenProject(const remote::RemoteH
     });
   };
   auto project = std::make_unique<remote::RemoteProject>(std::move(config), [this, tree]() {
-    // Coalesced: only the latest state matters by the time the UI runs.
     mailbox_.PostLatest("remote-project:" + tree.string(), [this, tree]() { ApplyProject(tree); });
   });
   Project entry;
@@ -185,7 +175,6 @@ RemoteHostService::Project* RemoteHostService::OpenProject(const remote::RemoteH
     projects_.erase(tree);
     return nullptr;
   }
-  // From now on a local project's write into this mirror is this project's write.
   if (project::FileWriteGate* gate = raw->locality().write_gate; gate != nullptr) {
     local_project_write_gate_.Register(raw->tree(), *gate);
   }
@@ -213,12 +202,8 @@ std::optional<project::ProjectLocality> RemoteHostService::LocalityFor(const pro
   }
   const std::filesystem::path root = id.IoRoot();
   if (const auto existing = projects_.find(root); existing != projects_.end()) {
-    // Reopened after a close (which disconnected it): connect again. A no-op when
-    // the project is still connected or connecting.
     existing->second.closed = false;
     ++open_generation_;
-    // Reopened before its session acted on the close's Disconnect, it is simply
-    // still connected and reports no new state: show it again from here.
     existing->second.project->session().Connect();
     ApplyProject(root);
     return existing->second.project->locality();
@@ -241,21 +226,16 @@ std::optional<project::ProjectLocality> RemoteHostService::LocalityFor(const pro
 
 namespace {
 
-// " in <project>": every row about one project's files says which project. Two
-// projects on one host otherwise raised indistinguishable rows ("3 files changed
-// on build-host") in whichever project was in front, which read as news about
-// that one.
 std::string InProject(const std::string& host, const std::string& host_root) {
   return " in " + project::ProjectId::ForRemote(host, host_root).Label();
 }
 
-// What the project's server said it is in its hello; "" before one answered.
 std::string ServerRelease(remote::RemoteProject& project) {
   const std::shared_ptr<remote::RemoteServerClient> client = project.session().connection()->client();
   return client != nullptr ? client->hello().release : std::string();
 }
 
-}  // namespace
+}
 
 void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
   const auto it = projects_.find(tree);
@@ -264,7 +244,7 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
   }
   Project& entry = it->second;
   if (entry.closed) {
-    return;  // its rows went with its tab
+    return;
   }
   remote::RemoteProject& project = *entry.project;
   const remote::RemoteHostSession::Status status = project.session().status();
@@ -274,24 +254,15 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
                              status.error != entry.status.error;
   entry.status = status;
   if (state_changed && host_view_.visible) {
-    // The Host view follows its connection: resubscribe once it is back (a new
-    // connection, a new subscription), and its Server row says the state.
     UpdateActivitySubscription();
     BuildHostRows();
   }
   if (came_back && operations_.project_reconnected) {
     operations_.project_reconnected(tree);
   }
-  // Terminals asked for while the connection was down say what they wait for,
-  // rewritten only when that changes; on Ready they start, and the connect is
-  // summed up in one row once the server lists its terminals.
   if (state_changed && status.state != State::Ready && operations_.host_terminals_waiting) {
     operations_.host_terminals_waiting(tree, PendingTerminalLine(tree));
   }
-  // Waiting terminals start on every apply that finds the link up, not only on
-  // the not-Ready -> Ready edge: a terminal opened after the link died but before
-  // "Reconnecting" was applied waits too, and a wake that coalesced Reconnecting
-  // into Ready shows no edge at all (TD-2026-10-28-414). A no-op when none waits.
   if (status.state == State::Ready && operations_.start_host_terminals) {
     operations_.start_host_terminals(tree);
   }
@@ -301,8 +272,6 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
   if (came_back) {
     ListHostTerminals(tree, entry);
   }
-  // Once per connection, told by its client rather than by the Ready edge: a
-  // reconnect whose reports coalesce shows this thread no edge at all.
   if (status.state == State::Ready) {
     const std::shared_ptr<remote::RemoteServerClient> client = project.session().connection()->client();
     if (client != nullptr && entry.roaming_checked.lock() != client) {
@@ -357,7 +326,6 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
             NotificationAction{.label = "Copy ssh Command", .id = ActionId::RemoteCopyCommand,
                                .args = {record.host, "ssh"}, .keep_open = true},
         };
-        // A server that could not be installed: the command that installs it by hand.
         if (status.error.find("install") != std::string::npos) {
           actions.push_back(NotificationAction{.label = "Copy Install Command", .id = ActionId::RemoteCopyCommand,
                                                .args = {record.host, "install"}, .keep_open = true});
@@ -371,7 +339,6 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
       AdviseAboutHostServer(record.host, project.session());
       WatchPorts(record.host, project.session());
       if (project.watch_native() == std::optional(false) && !entry.warned_polling && operations_.notify) {
-        // Degraded freshness is reported, never presented as normal (§ 6.3).
         entry.warned_polling = true;
         operations_.notify(NotificationService::Request{
             .tone = Tone::Warning,
@@ -436,9 +403,6 @@ void RemoteHostService::PublishHostChanges(const std::filesystem::path& tree, Pr
   const bool grew = sync.host_changes > entry.seen_host_changes;
   entry.seen_host_changes = sync.host_changes;
   util::InvokeIfSet(operations_.host_changes_updated, tree);
-  // § 7.6: never a row per file — agents rewrite hundreds at a time. One counted
-  // row, replaced by key, raised at most every 30 s; the list itself is always
-  // current in the view it opens.
   constexpr auto kAnnounceEvery = std::chrono::seconds(30);
   const auto now = std::chrono::steady_clock::now();
   if (!grew || sync.host_changed_files == 0 || !operations_.notify ||
@@ -452,8 +416,6 @@ void RemoteHostService::PublishHostChanges(const std::filesystem::path& tree, Pr
       .key = "remote.changes." + tree.string(),
       .message = std::to_string(count) + (count == 1 ? " file" : " files") + " changed on " +
                  entry.host + InProject(entry.host, entry.host_root),
-      // The row names its project: Show brings that one forward, not whichever
-      // project happens to be in front when it is clicked.
       .actions = {NotificationAction{.label = "Show",
                                      .id = ActionId::RemoteShowHostChanges,
                                      .args = {tree.string()}}},
@@ -478,18 +440,9 @@ bool RemoteHostService::RemoveMirror(const std::filesystem::path& root, bool dis
     return false;
   }
   if (it != projects_.end()) {
-    // A save tells the engine through its queue (NotifyLocalWrite journals it there),
-    // so a removal right after a save could count before the journal and delete an
-    // edit the host never got (CI hit it). Let the queue drain first, and the state
-    // reach the disk the count below reads: the project is closed, so what is left
-    // is that journaling and any push already under way.
     it->second.project->engine().Flush();
     it->second.project->engine().PersistNow();
   }
-  // Counted from the disk -- the journal AND the tree, the tree being what a crash
-  // between a write and its journal leaves the only record of -- for a mirror open
-  // this run or not. One whose state cannot be read is not counted as empty: it is
-  // refused, as a mirror with work in it is.
   remote::MirrorStore store(root.parent_path(), root.filename().string());
   std::string open_error;
   if (!store.Open(&open_error) && !discard_unsent) {
@@ -513,7 +466,6 @@ bool RemoteHostService::RemoveMirror(const std::filesystem::path& root, bool dis
     return false;
   }
   if (it != projects_.end()) {
-    // Its session and engine stop here, before the directory they write goes.
     if (operations_.dismiss_notification) {
       operations_.dismiss_notification("remote.project." + root.string());
     }
@@ -557,8 +509,6 @@ bool RemoteHostService::UploadDroppedFile(const std::filesystem::path& root, con
     return true;
   }
   say(NotificationService::Tone::Info, "Sending " + name + " to " + host + "\xe2\x80\xa6");
-  // Over the project's connection (shared: a reconnect replaces its client, and
-  // the project may close meanwhile without leaving this a dangling pointer).
   std::shared_ptr<remote::RemoteConnection> connection = it->second.project->session().connection();
   work_.Post([this, connection, root, terminal, local_path, host, name, say]() {
     const auto finish = [this, root, terminal, host, name, say](std::optional<std::string> path, std::string why) {
@@ -582,7 +532,7 @@ bool RemoteHostService::UploadDroppedFile(const std::filesystem::path& root, con
       finish(std::nullopt, size_error ? size_error.message() : "it is over 64 MiB");
       return;
     }
-    std::optional<std::string> bytes = util::ReadTextFile(local_path);  // binary-safe, regular files only
+    std::optional<std::string> bytes = util::ReadTextFile(local_path);
     if (!bytes.has_value()) {
       finish(std::nullopt, "it could not be read");
       return;
@@ -697,7 +647,6 @@ std::vector<plugin::PluginHost::SidebarItem> RemoteHostService::HostChangeRows(
     row.label = change.path;
     row.id = change.path;
     row.detail = change.kind == Kind::Added ? "added" : change.kind == Kind::Deleted ? "deleted" : "modified";
-    // The local copy's state, when it is not simply the host's version yet (§ 7.9).
     switch (change.kind == Kind::Deleted ? ContentState::Current : engine.StateOf(change.path)) {
       case ContentState::Stale:
       case ContentState::Absent:
@@ -764,8 +713,6 @@ bool RemoteHostService::OpenHostChange(const std::filesystem::path& root, const 
         const std::string name = current.filename().string();
         why = operations_.compare_files(*copy, name + " (before)", current, name + " (on " + host + ")");
       } else if (!deleted && operations_.open_file) {
-        // The earlier bytes are gone (over the object store's size, or swept): the
-        // file itself is still worth showing.
         operations_.open_file(current);
       }
       if (!why.empty() && operations_.notify) {
@@ -813,7 +760,7 @@ bool RemoteHostService::OpenFileVersion(const std::filesystem::path& root, const
           std::error_code ignored;
           if (copy.has_value() && !std::filesystem::exists(path, ignored)) {
             if (operations_.open_file) {
-              operations_.open_file(*copy);  // deleted on the host: the version alone
+              operations_.open_file(*copy);
             }
           } else if (copy.has_value() && operations_.compare_files) {
             const std::string name = path.filename().string();
@@ -869,9 +816,6 @@ void RemoteHostService::SessionSaved(const std::filesystem::path& root,
       std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
           .count());
   RoamingSession roaming = CaptureRoamingSession(session, root, machine_name_, now);
-  // Nothing open is nothing to pick up, and must not replace what another
-  // machine left. It is also no longer "what this machine has open": the same
-  // files left by another machine are then an offer, not an echo of this one's.
   if (roaming.empty()) {
     entry.roaming_pending.reset();
     entry.roaming_left.clear();
@@ -912,7 +856,6 @@ void RemoteHostService::LeaveReview(const std::filesystem::path& root, Project& 
   }
   std::string text = operations_.review_text(root);
   entry.review_changed = false;
-  // Nothing to say is not a reason to replace what another machine left.
   if (text.empty() || text == entry.review_on_host) {
     return;
   }
@@ -923,7 +866,6 @@ void RemoteHostService::LeaveReview(const std::filesystem::path& root, Project& 
       if (error.empty()) {
         return;
       }
-      // Not kept (the link dropped, an older server): the next leave tries again.
       mailbox_.Post([this, root]() {
         if (const auto failed = projects_.find(root); failed != projects_.end()) {
           failed->second.review_on_host.clear();
@@ -944,8 +886,6 @@ void RemoteHostService::OnRoamingReview(const std::filesystem::path& tree, const
   if (text.has_value() && operations_.take_review) {
     operations_.take_review(tree, *text);
   }
-  // What this machine holds beyond the host's copy -- marks made while the link
-  // was down, or before a quit that left nothing -- goes there now.
   if (operations_.review_text && operations_.review_text(tree) != entry.review_on_host) {
     LeaveReview(tree, entry);
   }
@@ -961,7 +901,6 @@ void RemoteHostService::LeaveSession(const std::filesystem::path& root, Project&
       if (error.empty()) {
         return;
       }
-      // Not kept (the link dropped, an older server): the next save tries again.
       mailbox_.Post([this, root]() {
         if (const auto failed = projects_.find(root); failed != projects_.end()) {
           failed->second.roaming_left.clear();
@@ -980,13 +919,10 @@ void RemoteHostService::CheckRoamingSession(const std::filesystem::path& tree, P
   work_.Post([this, connection, tree]() {
     remote::RemoteWorkspace(connection).GetState("session", [this, tree](std::optional<std::string> text,
                                                                          std::string) {
-      if (text.has_value()) {  // none kept, or a server that keeps none: nothing to offer
+      if (text.has_value()) {
         mailbox_.Post([this, tree, text = std::move(*text)]() { OnRoamingSession(tree, text); });
       }
     });
-    // The review marks another machine left, merged without asking. An answer of
-    // "none kept" still matters (this machine's are then left); a host that
-    // could not be asked -- an older server -- is left alone.
     remote::RemoteWorkspace(connection).GetState("review", [this, tree](std::optional<std::string> text,
                                                                         std::string error) {
       if (text.has_value() || error.empty()) {
@@ -1005,13 +941,12 @@ void RemoteHostService::OnRoamingSession(const std::filesystem::path& tree, cons
   Project& entry = it->second;
   std::string fingerprint = RoamingSessionFingerprint(*roaming);
   if (roaming->client == machine_name_) {
-    // This machine's own, from before a restart: it is already on the host.
     entry.roaming_left = std::move(fingerprint);
     entry.roaming_left_files = RoamingSessionFileList(*roaming);
     return;
   }
   if (fingerprint == entry.roaming_offered || fingerprint == entry.roaming_left) {
-    return;  // offered already, or the very files this machine has open
+    return;
   }
   entry.roaming_offered = std::move(fingerprint);
   const std::uint64_t now = static_cast<std::uint64_t>(
@@ -1047,7 +982,6 @@ bool RemoteHostService::OpenOfferedSession(const std::filesystem::path& root) {
   if (operations_.dismiss_notification) {
     operations_.dismiss_notification("remote.session." + root.string());
   }
-  // The one that was in front goes last, so it ends in front here too.
   const RoamingSession::File* front = nullptr;
   for (const RoamingSession::File& file : offer.files) {
     if (file.active) {
@@ -1072,12 +1006,6 @@ bool RemoteHostService::ApplyHeldDeletes(const std::filesystem::path& root) {
 }
 
 void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, Project& entry) {
-  // Nothing is settled automatically, and a row stays until it is (§ 6.3). One
-  // conflict gets a row of its own with the choice on it (VS Code's save-conflict
-  // row). From two on there is ONE counted row (§ 7.6: never a row per file -- a
-  // branch checked out on the host makes dozens at once) whose Keep All Local and
-  // Take All Remote settle every one of them, and whose Manage… opens the
-  // Conflicts view (§ 7.9b) to choose per file.
   std::vector<remote::MirrorSyncEngine::Conflict> details = entry.project->engine().ConflictDetails();
   std::vector<std::string> conflicts;
   conflicts.reserve(details.size());
@@ -1089,7 +1017,6 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
     return "remote.conflict." + (tree / path).string();
   };
   if (conflicts != entry.conflicts) {
-    // A tick on a file no longer in conflict goes with it.
     for (auto it = entry.selected_conflicts.begin(); it != entry.selected_conflicts.end();) {
       it = std::binary_search(conflicts.begin(), conflicts.end(), *it) ? std::next(it)
                                                                         : entry.selected_conflicts.erase(it);
@@ -1112,9 +1039,6 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
     const std::string absolute = (tree / path).string();
     entry.conflict_rows.push_back(path);
     if (operations_.notify) {
-      // One side deleted it: there is nothing to merge, and the row says which
-      // side so the two buttons read right (Keep Local on a file the remote
-      // deleted puts it back there; Take Remote removes it here).
       const remote::MirrorSyncEngine::Conflict& detail = details.front();
       std::vector<NotificationAction> actions;
       if (detail.on_host && detail.in_mirror) {
@@ -1166,9 +1090,6 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
 }
 
 void RemoteHostService::PublishBlockedRows(const std::filesystem::path& tree, Project& entry) {
-  // Shown until the host takes the save or the user replaces it; a save's
-  // refusal is said once per file, not at every reconnect (the generic "Sync
-  // failed" row used to repeat it, and the save sat counted as unsent).
   const std::vector<remote::MirrorSyncEngine::Blocked> blocked = entry.project->engine().BlockedSaves();
   const std::string summary_key = "remote.blocked." + tree.string();
   const auto row_key = [&](const std::string& path) { return "remote.blocked-save." + (tree / path).string(); };
@@ -1258,9 +1179,6 @@ bool RemoteHostService::ResolveAllConflicts(const std::filesystem::path& root, b
 void RemoteHostService::ResolveConflicts(Project& entry, const std::vector<std::string>& paths,
                                          bool keep_local) {
   using Resolution = remote::MirrorSyncEngine::Resolution;
-  // Each is a job at the FRONT of the engine's queue, so the last posted runs
-  // first: posted in reverse, they settle in list order, and the counted row
-  // counts down as each lands.
   for (auto it = paths.rbegin(); it != paths.rend(); ++it) {
     entry.project->engine().ResolveConflict(*it, keep_local ? Resolution::KeepLocal : Resolution::TakeRemote);
   }
@@ -1287,7 +1205,6 @@ std::vector<plugin::PluginHost::SidebarItem> RemoteHostService::ConflictRows(
   const std::string chosen = std::to_string(selected);
   const std::string files = chosen + (selected == 1 ? " file" : " files");
   const bool all = selected == conflicts.size();
-  // Short: the sidebar shows some thirty characters of label and detail together.
   const std::string none = "tick files first";
   rows.reserve(conflicts.size() + 4);
   rows.push_back(Item{.label = all ? "Clear selection" : "Select all",
@@ -1337,7 +1254,7 @@ bool RemoteHostService::ActivateConflictRow(const std::filesystem::path& root, s
     return true;
   }
   if (id == kConflictKeepLocal || id == kConflictTakeRemote || id == kConflictMerge) {
-    std::vector<std::string> selected;  // in list order
+    std::vector<std::string> selected;
     for (const std::string& path : conflicts) {
       if (entry.selected_conflicts.contains(path)) {
         selected.push_back(path);
@@ -1420,22 +1337,13 @@ bool RemoteHostService::IsHostFileCopy(const std::filesystem::path& path) const 
 
 bool RemoteHostService::OpenWhenFetched(const std::filesystem::path& path,
                                         std::function<void(const std::filesystem::path&)> opened) {
-  // Every open in the editor passes through here, so the local case must cost
-  // nothing: normalizing the path allocated per component on each open of a
-  // local file, ~10 allocations an open since v2.12.0.
   if (projects_.empty()) {
     return false;
   }
   if (!fetching_copy_.empty() && fetching_copy_ == path.lexically_normal()) {
-    return false;  // the fetched copy itself, opening now: open it as it is
+    return false;
   }
   for (auto& [tree, entry] : projects_) {
-    // A file of the project the host has moved on from (stale), or that has not
-    // arrived yet (absent): pull it now, on the interactive lane ahead of the
-    // backfill (§ 7.3). A stale one opens at once — callers jump to a line right
-    // after the open — and the clean buffer reloads when the host's bytes land; an
-    // absent one has nothing to open yet, so it opens when it arrives (offline, the
-    // pull fails at once and the open reports the missing file as before).
     const std::string& tree_text = tree.native();
     const std::string& path_text = path.native();
     if (path_text.size() > tree_text.size() + 1 && path_text.compare(0, tree_text.size(), tree_text) == 0 &&
@@ -1450,7 +1358,6 @@ bool RemoteHostService::OpenWhenFetched(const std::filesystem::path& path,
       if (state != ContentState::Absent) {
         return false;
       }
-      // Nothing opens until it lands, so say so (§ 7.3's "fetching from host…").
       const std::string key = "remote.fetching." + path.lexically_normal().string();
       if (operations_.notify) {
         operations_.notify(NotificationService::Request{
@@ -1549,8 +1456,6 @@ bool RemoteHostService::MergeConflict(const std::filesystem::path& path) {
       relative, [this, mirror_file](std::optional<remote::MirrorSyncEngine::MergeSides> sides, std::string error) {
         mailbox_.Post([this, mirror_file, sides = std::move(sides), error = std::move(error)]() {
           if (!sides.has_value()) {
-            // No base kept (a file over the object store's per-file size): the two
-            // versions side by side are the most there is to show.
             if (!CompareConflict(mirror_file) && operations_.notify) {
               operations_.notify(NotificationService::Request{
                   .tone = NotificationService::Tone::Error,
@@ -1560,8 +1465,6 @@ bool RemoteHostService::MergeConflict(const std::filesystem::path& path) {
           }
           std::string why = "the merge editor is not available";
           if (operations_.open_merge) {
-            // The mirror's file is both the local side and where the result goes; Mark
-            // Resolved pushes it over exactly the host version merged against.
             why = operations_.open_merge(sides->base, sides->host, mirror_file, mirror_file);
             if (why.empty()) {
               merges_[mirror_file] = sides->host_hash;
@@ -1584,11 +1487,9 @@ bool RemoteHostService::ResolveMerged(const std::filesystem::path& path) {
     host_hash = merge->second;
     merges_.erase(merge);
     if (entry == nullptr) {
-      return true;  // settled another way meanwhile: nothing left to push
+      return true;
     }
   } else if (entry != nullptr) {
-    // A merge tab restored from a session: its incoming side is the host copy it
-    // was opened with, still on disk.
     host_hash = util::HashFileContent(entry->project->engine().HostCopyPath(relative));
   }
   if (entry == nullptr || !host_hash.has_value()) {
@@ -1610,16 +1511,11 @@ void RemoteHostService::ProjectClosed(const std::filesystem::path& root) {
   }
   it->second.closed = true;
   ++open_generation_;
-  // The close detaches its terminals, which is what tells the host that the
-  // files its programs had open here are not coming back (term/detach).
   std::erase_if(terminal_edits_, [&](const TerminalEdit& edit) { return edit.root == root; });
   it->second.project->session().Disconnect();
   it->second.announced_sync = false;
-  // Not a state any reopen should compare against: a reopen's Ready is a connect
-  // (its terminals start and are summed up), even one the close never got to end.
   it->second.status = remote::RemoteHostSession::Status{};
   it->second.unclaimed_terminals.clear();
-  // A host may have left the view (its last project closed) or lost a row.
   UpdateActivitySubscription();
   if (host_view_.visible) {
     BuildHostRows();
@@ -1633,8 +1529,6 @@ void RemoteHostService::ProjectClosed(const std::filesystem::path& root) {
 
 bool RemoteHostService::Reconnect(std::string_view host) {
   bool found = false;
-  // A host's open remote projects each have their own channel: they reconnect with
-  // it. A closed one stays down: its tab is gone, and reopening it connects.
   for (auto& [tree, project] : projects_) {
     (void)tree;
     if (!project.closed && project.host == host) {
@@ -1647,8 +1541,6 @@ bool RemoteHostService::Reconnect(std::string_view host) {
 }
 
 void RemoteHostService::Disconnect(std::string_view host) {
-  // The mirror stays open and editable; saves queue in its journal until the next
-  // connection.
   for (auto& [tree, project] : projects_) {
     (void)tree;
     if (!project.closed && (host.empty() || project.host == host)) {
@@ -1704,7 +1596,7 @@ bool RemoteHostService::HasRemovableMirror() const {
   const std::uint64_t revision = operations_.recents_revision ? operations_.recents_revision() : 0;
   if (!removable_mirror_.has_value() || removable_mirror_->recents_revision != revision ||
       removable_mirror_->open_generation != open_generation_ || !operations_.recents_revision) {
-    (void)RemovableMirrors();  // records the answer
+    (void)RemovableMirrors();
   }
   return removable_mirror_.has_value() && removable_mirror_->any;
 }
@@ -1749,7 +1641,6 @@ std::vector<project::ProjectId> RemoteHostService::RemovableMirrors() const {
       mirrors.push_back(id);
     }
   }
-  // What the menu row reads until the recents or the open projects change.
   removable_mirror_ = RemovableMirrorAnswer{
       .recents_revision = operations_.recents_revision ? operations_.recents_revision() : 0,
       .open_generation = open_generation_,
@@ -1758,22 +1649,15 @@ std::vector<project::ProjectId> RemoteHostService::RemovableMirrors() const {
 }
 
 bool RemoteHostService::StopServer(std::string_view host) {
-  // A remote project's own session: looking only in the (since removed)
-  // terminal-only host entries once answered "No remote host" for every host the
-  // user had opened a folder on (QA remote P).
   remote::RemoteHostSession* session = SessionFor(host);
   if (session == nullptr) {
     return false;
   }
-  // An ssh round trip: never on the UI thread. Joined by the destructor before
-  // the sessions it uses go.
   const std::string key(host);
   work_.Post([this, session, key]() {
     std::string error;
     const bool stopped = session->StopServer(&error);
     mailbox_.Post([this, key, stopped, error]() {
-      // A stopped server takes the pending update with it: the reconnect starts
-      // the installed binary.
       if (stopped) {
         std::erase(update_offered_, key);
         if (operations_.dismiss_notification) {
@@ -1838,7 +1722,7 @@ std::optional<RemoteHostService::LoopbackUrl> RemoteHostService::ParseLoopbackUr
   const std::string_view authority = url.substr(0, authority_end);
   const std::size_t colon = authority.rfind(':');
   if (colon == std::string_view::npos) {
-    return std::nullopt;  // no explicit port: nothing a dev server printed
+    return std::nullopt;
   }
   std::string_view name = authority.substr(0, colon);
   if (name != "localhost" && name != "127.0.0.1" && name != "0.0.0.0" && name != "[::1]" &&
@@ -1904,7 +1788,6 @@ bool RemoteHostService::StartForward(std::string_view host, std::uint16_t port,
         return;
       }
       const std::string row_key = "remote.forward." + key + "." + std::to_string(port);
-      // " in <project>" for a port a project's program opened (ListenerOwners.h).
       const std::string in_project = owner_root.empty() ? std::string() : InProject(key, owner_root);
       if (!forward.has_value()) {
         operations_.notify(NotificationService::Request{
@@ -1934,11 +1817,9 @@ void RemoteHostService::WatchPorts(const std::string& host, remote::RemoteHostSe
   std::shared_ptr<remote::RemoteServerClient> client = session.connection()->client();
   PortWatch& watch = port_watches_[host];
   if (client == nullptr || watch.client.lock() == client) {
-    return;  // one subscription per connection: the host's other sessions share it
+    return;
   }
   watch.client = client;
-  // The host's own range when its server says (a host that moved or narrowed it
-  // has its dev servers on chosen ports outside it); else Linux's default.
   watch.ephemeral = client->hello().ephemeral_ports.value_or(remote::PortRange{});
   work_.Post([this, host, client]() {
     std::string error;
@@ -1946,22 +1827,13 @@ void RemoteHostService::WatchPorts(const std::string& host, remote::RemoteHostSe
         [this, host](const remote::RemoteServerClient::HostPorts& ports) { PostHostPorts(host, ports); },
         &error);
     if (!now.has_value()) {
-      return;  // a server that predates it: forwards stay a command and a click
+      return;
     }
-    // The first answer sets the baseline; after a reconnect it says what started
-    // or stopped while the link was down. Either way it is the host's list as of
-    // now, like a push, and goes through the same coalescing key.
     PostHostPorts(host, *now);
   });
 }
 
 void RemoteHostService::PostHostPorts(const std::string& host, remote::RemoteServerClient::HostPorts ports) {
-  // ONE key for the subscription's answer and its pushes. The mailbox replaces a
-  // keyed action IN PLACE, so a push posted before the answer and replaced by a
-  // newer push ran ahead of the (older) answer when the answer used a plain Post:
-  // the newer list stopped a closed port's forward, then the stale answer listed it
-  // again and forwarded it anew, with no later push to stop it
-  // (TD-2026-10-28-415). Coalesced, only the newest list ever runs.
   mailbox_.PostLatest("remote-ports:" + host,
                       [this, host, ports = std::move(ports)]() { OnHostPorts(host, ports); });
 }
@@ -1976,12 +1848,9 @@ void RemoteHostService::OnHostPorts(const std::string& host,
   const std::vector<std::uint16_t>& ports = listening.ports;
   PortWatch& watch = port_watches_[host];
   if (!watch.baseline.has_value()) {
-    // What already listened when the editor first connected is not news.
     watch.baseline = std::set<std::uint16_t>(ports.begin(), ports.end());
     return;
   }
-  // A port that stopped listening: its program ended. Seen again it is news again,
-  // and a forward made for it automatically goes with it, quietly (VS Code's).
   for (auto it = watch.baseline->begin(); it != watch.baseline->end();) {
     if (std::binary_search(ports.begin(), ports.end(), *it)) {
       ++it;
@@ -1990,16 +1859,13 @@ void RemoteHostService::OnHostPorts(const std::string& host,
     const std::uint16_t gone = *it;
     it = watch.baseline->erase(it);
     if (watch.auto_forwarded.count(gone) > 0) {
-      (void)StopForward(host, gone, /*announce=*/false);
+      (void)StopForward(host, gone, false);
     }
   }
   const auto setting = [&](std::string_view name) {
     return operations_.setting ? operations_.setting(name) : std::optional<std::string>();
   };
   const bool forward = SettingFlagEnabled(setting("remote.auto_forward_ports"), true);
-  // Only ports a project's own program opened, unless asked for any: a shared box
-  // runs other users' daemons and services that listen and stop all day, and each
-  // was a "Port N is available" row nobody asked for.
   const bool any_program = setting("remote.auto_forward_ports_source").value_or("project") == "any";
   const bool notify = SettingFlagEnabled(setting("remote.auto_forward_ports_notify"), true);
   const auto now = std::chrono::steady_clock::now();
@@ -2007,25 +1873,14 @@ void RemoteHostService::OnHostPorts(const std::string& host,
   std::erase_if(watch.announced, [&](const auto& item) { return now - item.second >= kReannounceAfter; });
   const auto known = forwards_.find(host);
   for (const std::uint16_t port : ports) {
-    // Below 1024 is a system service (sshd), never a program the user started.
-    // The ephemeral range is where bind(port 0) lands -- a test's server, a
-    // debugger, a language server -- never a port the user chose to serve on.
     if (!watch.baseline->insert(port).second || port < 1024 || !forward || watch.ephemeral.Contains(port)) {
       continue;
     }
     if (known != forwards_.end() && known->second->Find(port).has_value()) {
       continue;
     }
-    // A port a project's terminal or process opened is that project's: the row
-    // names it, and a project not open in this window (another machine's, or one
-    // closed here) is not forwarded into it. A port of no project -- a shell the
-    // user ssh'd in with -- is the host's, as before.
     const auto owner = listening.roots.find(port);
     std::string owner_root = owner != listening.roots.end() ? owner->second : std::string();
-    // A server the project's terminal started whose socket no process of the
-    // project's own holds -- a container (`docker run -p`), a service that
-    // double-forked -- is the project's when that terminal printed its address
-    // (VS Code's "hybrid" source; TD-2026-11-02-429 item 5).
     if (owner_root.empty() && !any_program) {
       owner_root = ProjectPrintingPort(host, port);
     }
@@ -2078,7 +1933,7 @@ std::string RemoteHostService::ProjectPrintingPort(std::string_view host, std::u
 }
 
 bool RemoteHostService::CancelForward(std::string_view host, std::uint16_t port) {
-  return StopForward(host, port, /*announce=*/true);
+  return StopForward(host, port, true);
 }
 
 bool RemoteHostService::StopForward(std::string_view host, std::uint16_t port, bool announce) {
@@ -2087,7 +1942,7 @@ bool RemoteHostService::StopForward(std::string_view host, std::uint16_t port, b
     return false;
   }
   if (const auto watch = port_watches_.find(host); watch != port_watches_.end()) {
-    watch->second.auto_forwarded.erase(port);  // the user's call from here on
+    watch->second.auto_forwarded.erase(port);
   }
   const std::string key(host);
   work_.Post([this, session, key, port, announce]() {
@@ -2174,7 +2029,6 @@ std::optional<std::string> RemoteHostService::CommandText(std::string_view host,
 
 namespace {
 
-// ", ports 3000→localhost:3000 8080→localhost:41733" for Show Status.
 void AppendForwards(std::string& text, const remote::RemoteHostSession& session) {
   const std::vector<remote::RemoteHostSession::PortForward> forwards = session.forwards();
   for (std::size_t i = 0; i < forwards.size(); ++i) {
@@ -2183,7 +2037,7 @@ void AppendForwards(std::string& text, const remote::RemoteHostSession& session)
   }
 }
 
-}  // namespace
+}
 
 std::string RemoteHostService::PendingTerminalLine(const std::filesystem::path& root) const {
   const auto it = projects_.find(root);
@@ -2192,8 +2046,6 @@ std::string RemoteHostService::PendingTerminalLine(const std::filesystem::path& 
   }
   const std::string host = it->second.host;
   const remote::RemoteHostSession::Status& status = it->second.status;
-  // Typed keys are dropped, not queued: a shell that turns out to be another one
-  // (a reattach that fell back) must not run them.
   constexpr std::string_view kIgnored = " \xc2\xb7 keys typed until then are ignored]";
   switch (status.state) {
     case State::Connecting:
@@ -2222,9 +2074,6 @@ void RemoteHostService::ListHostTerminals(const std::filesystem::path& tree, Pro
   if (client == nullptr) {
     return;
   }
-  // Asked AFTER the reattaches went out on the same connection, so the server has
-  // taken them by the time it lists: a terminal this window is claiming is
-  // attached (or held by a pane) and never offered back.
   work_.Post([this, client, tree]() {
     std::string error;
     std::optional<remote::ServerStatus> status = client->Status(&error);
@@ -2244,13 +2093,11 @@ void RemoteHostService::OnHostTerminals(const std::filesystem::path& tree,
       operations_.host_terminals_claimed ? operations_.host_terminals_claimed(tree) : HostTerminalClaims{};
   entry.unclaimed_terminals.clear();
   if (status.has_value()) {
-    // The Host view's rows and StatusText's totals, until the view's own pushes.
     last_status_[record.host] = *status;
     if (host_view_.visible) {
       BuildHostRows();
     }
   }
-  // An older server lists none: nothing is offered, and that is not an error.
   if (status.has_value() && status->terminals.has_value()) {
     for (const remote::ServerTerminal& terminal : *status->terminals) {
       if (terminal.root == record.host_root && terminal.clients == 0 &&
@@ -2259,28 +2106,19 @@ void RemoteHostService::OnHostTerminals(const std::filesystem::path& tree,
       }
     }
   }
-  // What nobody claims is this project's own work -- a session that ended without
-  // recording it (a crash, a kill, a power cut) or another machine's window that
-  // detached -- so it comes back the way a recorded one does, in a tab of its own,
-  // as VS Code revives a workspace's detached terminals. Only with
-  // terminal.restore_sessions off (quit then ends every host terminal, so these are
-  // leftovers the user opted out of keeping) are they offered instead.
   std::size_t adopted = 0;
   if (!entry.unclaimed_terminals.empty() && operations_.attach_host_terminal &&
       SettingFlagEnabled(operations_.setting ? operations_.setting("terminal.restore_sessions")
                                              : std::optional<std::string>(),
                          true)) {
-    // The identity a reopen would record: the epoch of the server that listed it
-    // (the connection's hello names the same one; an older reply may omit it).
     const std::shared_ptr<remote::RemoteServerClient> client = entry.project->session().connection()->client();
-    // (`status` is set: unclaimed terminals come only from its listing.)
     const std::string epoch = status.has_value() && !status->daemon_epoch.empty() ? status->daemon_epoch
                               : client != nullptr ? client->hello().daemon_epoch
                                                   : std::string();
     std::erase_if(entry.unclaimed_terminals, [&](const remote::ServerTerminal& terminal) {
       const terminal::HostIdentity identity{.epoch = epoch, .handle = terminal.handle};
-      if (identity.epoch.empty() || !operations_.attach_host_terminal(tree, identity, /*focus=*/false)) {
-        return false;  // still offered: Attach says why it cannot
+      if (identity.epoch.empty() || !operations_.attach_host_terminal(tree, identity, false)) {
+        return false;
       }
       ++adopted;
       return true;
@@ -2294,7 +2132,6 @@ void RemoteHostService::OnHostTerminals(const std::filesystem::path& tree,
     return std::to_string(n) + " " + std::string(n == 1 ? one : many);
   };
   const std::size_t fresh = claims.server_restarted + claims.gone;
-  // An adopted terminal was running with no tab and has one now: say so, once.
   const std::string adopted_text =
       adopted == 0 ? std::string() : count(adopted, "terminal", "terminals") + " left running with no tab, reopened";
   if (fresh == 0 && entry.unclaimed_terminals.empty()) {
@@ -2312,8 +2149,6 @@ void RemoteHostService::OnHostTerminals(const std::filesystem::path& tree,
     }
     return;
   }
-  // § 7.4a's "reattached to build-box" row: the whole connect in one row --
-  // reattached, started fresh and why, running with no tab -- never one per terminal.
   std::string message = record.host + InProject(record.host, record.host_root) + ":";
   const auto part = [&](std::string text) {
     message += (message.back() == ':' ? " " : " \xc2\xb7 ") + text;
@@ -2369,11 +2204,10 @@ bool RemoteHostService::AttachHostTerminals(const std::filesystem::path& active_
   }
   for (const std::uint64_t handle : handles) {
     const terminal::HostIdentity identity{.epoch = client->hello().daemon_epoch, .handle = handle};
-    // One a tab already holds is brought forward, not attached a second time.
-    if (operations_.host_terminal_tab && operations_.host_terminal_tab(identity, /*focus=*/true)) {
+    if (operations_.host_terminal_tab && operations_.host_terminal_tab(identity, true)) {
       continue;
     }
-    (void)operations_.attach_host_terminal(active_root, identity, /*focus=*/true);
+    (void)operations_.attach_host_terminal(active_root, identity, true);
   }
   DropUnclaimed(host, handles);
   return true;
@@ -2389,7 +2223,6 @@ bool RemoteHostService::CloseHostTerminals(std::string_view host, const std::vec
   for (const std::uint64_t handle : handles) {
     util::JsonObject params;
     params["handle"] = util::JsonValue(static_cast<std::int64_t>(handle));
-    // Ends it unless another client is attached, whose it then stays.
     client->peer().Notify(remote::method::kTermClose, util::JsonValue(std::move(params)));
   }
   DropUnclaimed(host, handles);
@@ -2430,7 +2263,6 @@ std::string RemoteHostService::StatusText() const {
             std::to_string(sync.dirty) + " to push, " + std::to_string(sync.conflicts) +
             " conflicts), mirror " + HomeAbbreviatedPath(tree, home != nullptr ? home : "");
     AppendForwards(text, entry.project->session());
-    // Terminals left running on the host with no tab (the connect's row offers them).
     if (!entry.closed && !entry.unclaimed_terminals.empty()) {
       text += "; " + std::to_string(entry.unclaimed_terminals.size()) + " host terminal" +
               (entry.unclaimed_terminals.size() == 1 ? "" : "s") + " with no tab:";
@@ -2440,8 +2272,6 @@ std::string RemoteHostService::StatusText() const {
       }
     }
   }
-  // Each host's totals, from the last status it sent: what Show Status's view
-  // shows, for the control channel, which has no sidebar.
   for (const auto& [host, status] : last_status_) {
     if (SessionFor(host) == nullptr) {
       continue;
@@ -2487,8 +2317,6 @@ void RemoteHostService::AdviseAboutHostServer(const std::string& host,
   if (client == nullptr) {
     return;
   }
-  // VS Code updates its remote server per release; here the old one keeps its
-  // terminals until the user lets it go, so the restart is offered, not done.
   if (session.update_installed() && operations_.notify &&
       std::find(update_offered_.begin(), update_offered_.end(), host) == update_offered_.end()) {
     update_offered_.push_back(host);
@@ -2529,10 +2357,8 @@ void RemoteHostService::PublishStatusSegment() {
   if (!operations_.set_status_segment) {
     return;
   }
-  // Every connection the editor holds: one per open remote project.
   std::vector<std::pair<std::string, State>> connections;
   std::size_t ports = 0;
-  // § 7.4: a first sync's progress, and saves not yet on the host.
   std::size_t sync_files = 0;
   std::size_t sync_absent = 0;
   bool first_sync = false;
@@ -2562,14 +2388,12 @@ void RemoteHostService::PublishStatusSegment() {
     operations_.set_status_segment(StatusBarSegmentValue{});
     return;
   }
-  // A host's ports once, however many of its sessions are open.
   for (const auto& [host, forwards] : forwards_) {
     if (std::any_of(connections.begin(), connections.end(),
                     [&](const auto& connection) { return connection.first == host; })) {
       ports += forwards->list().size();
     }
   }
-  // The worst state wins the segment: one offline host is what needs attention.
   const auto rank = [](State state) {
     switch (state) {
       case State::Ready:
@@ -2606,10 +2430,8 @@ void RemoteHostService::PublishStatusSegment() {
                           std::to_string(sync_files)
                     : std::string()) +
                (unsent > 0 && state != State::Ready ? " · " + std::to_string(unsent) + " unsent" : std::string()) +
-               // Shown whatever the state: a blocked save goes nowhere on its own.
                (blocked > 0 ? " · " + std::to_string(blocked) + " blocked" : std::string()) +
                (ports == 0 ? std::string() : " · " + std::to_string(ports) + (ports == 1 ? " port" : " ports"));
-  // The click lists the remote verbs (the Remote menu) rather than running one.
   value.tooltip = tooltip + "Remote menu";
   value.menu = MenuId::Remote;
   value.tone = rank(state) >= 3 || blocked > 0 ? StatusTone::Error
@@ -2618,4 +2440,4 @@ void RemoteHostService::PublishStatusSegment() {
   operations_.set_status_segment(std::move(value));
 }
 
-}  // namespace microide::workspace
+}

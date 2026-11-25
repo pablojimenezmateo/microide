@@ -49,8 +49,6 @@ void TestParseRawCommand() {
 }
 
 void TestParseCommandKeepsTrailingFlags() {
-  // Unknown --flags (debug-run's --type) belong to the command; recognized
-  // control-send flags (--type is not one) are consumed wherever they appear.
   const ControlSendOptions options =
       ParseControlSendArgs({"--timeout", "9", "debug-run", "./app", "--type", "gdb"});
   Expect(options.valid, "command with trailing flags should parse");
@@ -62,8 +60,6 @@ void TestParseCommandKeepsTrailingFlags() {
 }
 
 void TestParseConsumesControlFlagsAnywhere() {
-  // Agents naturally append --wait/--timeout after the command; they must still
-  // be consumed by control-send, not leaked into the command.
   const ControlSendOptions options =
       ParseControlSendArgs({"debug-run", "./app", "--wait", "stopped", "--timeout", "30"});
   Expect(options.valid, "trailing control-send flags should parse");
@@ -111,18 +107,14 @@ void TestParseJsonPreservesOwnId() {
          "an explicit id in --json should be preserved");
 }
 
-// The receiving instance re-parses the serialized `command` string with
-// ParseCommandLine, so each argv token must round-trip verbatim through the client's
-// quoting. A bare space-join would split a path with spaces and mangle quotes /
-// backslashes / apostrophes. Regression for inventory J14.
 void TestControlSendCommandTokensRoundTripThroughParser() {
   const std::vector<std::vector<std::string>> cases = {
-      {"open", "dir/a b.cpp"},          // embedded space
-      {"open", "O'Brien.cpp"},          // apostrophe
-      {"open", "a\\b\\c"},              // backslashes
-      {"open", "say \"hi\""},           // embedded double quotes + space
-      {"debug-run", "./app", "--type", "gdb"},  // an argument that starts with --
-      {"open", "plain.cpp"},            // no special bytes (unquoted fast path)
+      {"open", "dir/a b.cpp"},
+      {"open", "O'Brien.cpp"},
+      {"open", "a\\b\\c"},
+      {"open", "say \"hi\""},
+      {"debug-run", "./app", "--type", "gdb"},
+      {"open", "plain.cpp"},
   };
   for (const std::vector<std::string>& tokens : cases) {
     const ControlSendOptions options = ParseControlSendArgs(tokens);
@@ -162,9 +154,6 @@ using microide::platform::ControlInboundMessage;
 using microide::platform::ControlSocketServer;
 using namespace std::chrono_literals;
 
-// A background host driver: replies to each inbound request with caller-supplied
-// lines (keyed off the request id), so RunControlSend can run against a real
-// socket. Stops when the flag is cleared.
 struct ScopedDriver {
   ControlSocketServer& server;
   std::atomic<bool> stop{false};
@@ -194,7 +183,6 @@ struct ScopedDriver {
   }
 };
 
-// Run RunControlSend with a captured stdout/stderr and an argv built from tokens.
 int RunCaptured(const std::vector<std::string>& tokens, std::string* out) {
   std::vector<std::string> argv_storage = {"microide", "control-send"};
   argv_storage.insert(argv_storage.end(), tokens.begin(), tokens.end());
@@ -253,7 +241,6 @@ void TestRunControlSendWaitsForResolvedStop() {
   const std::filesystem::path socket_path = temp_dir.path() / "control.sock";
   ControlSocketServer server;
   Expect(server.Start(socket_path), "server should start");
-  // Reply, then the two-phase stop: framesPending:true first, resolved second.
   ScopedDriver driver(server, [](int id) {
     return std::vector<std::string>{
         R"({"id":)" + std::to_string(id) + R"(,"ok":true})",
@@ -274,7 +261,6 @@ void TestRunControlSendWaitTimesOut() {
   const std::filesystem::path socket_path = temp_dir.path() / "control.sock";
   ControlSocketServer server;
   Expect(server.Start(socket_path), "server should start");
-  // Reply ok, but only ever emit the first phase — --wait must time out (exit 3).
   ScopedDriver driver(server, [](int id) {
     return std::vector<std::string>{
         R"({"id":)" + std::to_string(id) + R"(,"ok":true})",
@@ -294,9 +280,6 @@ void TestRunControlSendConnectFailureExitsTwo() {
   Expect(code == 2, "a failed connection should exit 2");
 }
 
-// A raw AF_UNIX peer that accepts the connection but never reads from it. Used to
-// prove SendLine honors its write deadline instead of blocking forever once the
-// socket buffers fill. It never recv()s, so the kernel send buffer saturates.
 struct SilentPeer {
   int listen_fd = -1;
   int conn_fd = -1;
@@ -320,8 +303,6 @@ struct SilentPeer {
     if (::listen(listen_fd, 1) != 0) {
       return false;
     }
-    // Accept once on a background thread, then hold the connection without ever
-    // reading a byte from it.
     accept_thread = std::thread([this]() { conn_fd = ::accept(listen_fd, nullptr, nullptr); });
     return true;
   }
@@ -348,10 +329,7 @@ void TestSendLineTimesOutWhenPeerNeverReads() {
   platform::ControlSocketClient client;
   Expect(client.Connect(socket_path), "connecting to the silent peer should succeed");
 
-  // A payload comfortably larger than any socket buffer, with a short deadline: the
-  // peer never drains, so the kernel send buffer fills and SendLine must give up at
-  // the deadline instead of blocking indefinitely.
-  const std::string big_line(8u << 20, 'x');  // 8 MiB, under the 16 MiB cap
+  const std::string big_line(8u << 20, 'x');
   const auto start = std::chrono::steady_clock::now();
   const bool sent = client.SendLine(big_line, std::chrono::milliseconds(400));
   const auto elapsed = std::chrono::steady_clock::now() - start;
@@ -381,12 +359,12 @@ void TestSendLineRejectsOversizeLine() {
 
   platform::ControlSocketClient client;
   Expect(client.Connect(socket_path), "connecting should succeed");
-  const std::string oversize(17u << 20, 'x');  // 17 MiB, above the 16 MiB cap
+  const std::string oversize(17u << 20, 'x');
   Expect(!client.SendLine(oversize, std::chrono::seconds(2)),
          "an over-cap outbound line must be rejected before framing");
 }
 
-}  // namespace
+}
 
 void RegisterControlClientTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlClient/ParseRawCommand", TestParseRawCommand);
@@ -415,4 +393,4 @@ void RegisterControlClientTests(std::vector<TestCase>& tests) {
           TestSendLineRejectsOversizeLine);
 }
 
-}  // namespace microide::tests
+}

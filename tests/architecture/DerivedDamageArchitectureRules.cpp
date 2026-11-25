@@ -1,6 +1,3 @@
-// The derived-damage paint rule (openspec derived-damage D2): what a migrated
-// paint function reads, what it is handed, and what the shell members it calls
-// read. Its own translation unit: it outgrew the view-model rules' size cap.
 #include "architecture/WorkspaceViewModelArchitectureRules.h"
 
 #include "architecture/ArchitectureFileScanner.h"
@@ -18,18 +15,8 @@
 
 namespace microide::tests::architecture {
 
-// Derived damage (openspec derived-damage): a migrated surface's damage is the
-// diff of a fingerprint prep folds from the values its paint draws, so paint
-// must draw nothing else. Each migrated paint function is listed here with the
-// file it lives in; its body may read the prepared frame (`frame_state_`), the
-// theme and the text renderer -- not workspace state, a service, the live
-// pointer, the clock or a freshly built view model. A function the rule cannot
-// find is a violation, not a pass: a rename would otherwise leave it scanning
-// nothing.
 namespace {
 
-// The identifiers in `text[begin, end)` that are code (not comments or strings),
-// each with its offset, namespaces dropped (editor::DiagnosticsStore -> DiagnosticsStore).
 std::vector<std::pair<std::string, std::size_t>> CodeIdentifiers(const std::string& text,
                                                                  const std::vector<bool>& mask, std::size_t begin,
                                                                  std::size_t end) {
@@ -42,8 +29,6 @@ std::vector<std::pair<std::string, std::size_t>> CodeIdentifiers(const std::stri
     if (at < mask.size() && !mask[at]) {
       continue;
     }
-    // A qualifier, not the type: `NotificationService::Kind` is an enum the
-    // service declares, `editor::DiagnosticsStore` is the store.
     const std::size_t after = at + static_cast<std::size_t>(it->length());
     if (text.compare(after, 2, "::") == 0) {
       continue;
@@ -53,23 +38,17 @@ std::vector<std::pair<std::string, std::size_t>> CodeIdentifiers(const std::stri
   return found;
 }
 
-// A type a paint function could ASK: a store, a service, a coordinator, a
-// registry, the shell or the project's state. Reaching one from paint means paint
-// can read something frame prep neither resolved nor fingerprinted.
 bool IsLiveSourceType(const std::string& name) {
   static const std::regex live(
       R"(^(\w+Store|\w+Service|\w+Coordinator|\w+Registry|WorkspaceContext|WorkspaceShell|ProjectWorkspaceState|PluginRuntime\w*)$)");
   return std::regex_match(name, live);
 }
 
-// A struct of prepared paint inputs, which the rule looks inside: what a migrated
-// paint function is handed must not smuggle a live source in a field.
 bool IsPreparedInputsType(const std::string& name) {
   static const std::regex prepared(R"(^(\w+Inputs|\w+Paint|\w+ViewModel|PreparedFrameState)$)");
   return std::regex_match(name, prepared);
 }
 
-// Every header under src, read once per run of the rule: (path, text, code mask).
 struct HeaderText {
   std::filesystem::path path;
   std::string text;
@@ -89,8 +68,6 @@ const std::vector<HeaderText>& SourceHeaders(const std::filesystem::path& repo_r
   return cache;
 }
 
-// Where `struct name {` (or class) is defined under src: the header and the
-// offset of its opening brace, or null when it is defined in none.
 struct TypeDefinition {
   const HeaderText* header = nullptr;
   std::size_t open = 0;
@@ -122,12 +99,6 @@ std::size_t MatchingBrace(const std::string& text, std::size_t open) {
   return cursor;
 }
 
-// The other half of the snapshot rule: what a migrated paint function is HANDED.
-// Its body may not name the shell's context or a service (the caller's check), but
-// a parameter can carry one in: RenderCompareSurface took a DiagnosticsStore
-// through CompareRenderProjectInputs and asked it for the file's diagnostics at
-// paint, which its row units never folded. A parameter's type, and every field of
-// the prepared-inputs structs reachable from it, must not be a live source.
 void CheckPaintParametersReachNoLiveSource(RuleResult& result, const std::vector<HeaderText>& headers,
                                            const std::filesystem::path& path, const std::string& text,
                                            const std::vector<bool>& mask, const char* function, std::size_t start) {
@@ -143,7 +114,6 @@ void CheckPaintParametersReachNoLiveSource(RuleResult& result, const std::vector
   }
   const std::size_t line = LineNumberAt(text, start);
   std::set<std::string> visited;
-  // (type to look inside, how it was reached)
   std::vector<std::pair<std::string, std::string>> pending;
   const auto consider = [&](const std::string& name, const std::string& via) {
     if (IsLiveSourceType(name)) {
@@ -181,11 +151,6 @@ void CheckPaintParametersReachNoLiveSource(RuleResult& result, const std::vector
   }
 }
 
-// Every WorkspaceShell member defined under src/workspace, by name: the file and
-// its body's braces. The other half of the snapshot rule follows a migrated
-// paint's calls into the shell's members, so a helper it calls cannot read what
-// the paint itself may not (risk: RenderEditorHoverPopup was clean and asked the
-// blame service through a call).
 struct MemberBody {
   const HeaderText* file = nullptr;
   std::size_t open = 0;
@@ -212,7 +177,6 @@ const MemberIndex& ShellMemberIndex(const std::filesystem::path& repo_root, std:
       if (at < file.mask.size() && !file.mask[at]) {
         continue;
       }
-      // Past the parameter list, a definition opens its body before any ';'.
       std::size_t cursor = at + static_cast<std::size_t>(it->length());
       int depth = 1;
       while (cursor < file.text.size() && depth > 0) {
@@ -229,8 +193,6 @@ const MemberIndex& ShellMemberIndex(const std::filesystem::path& repo_root, std:
   return index;
 }
 
-// The members `function`'s body calls, followed down: each one reading a live
-// source is a violation of the paint that reached it.
 void CheckPaintCalleesReadNoLiveSource(RuleResult& result, const MemberIndex& index, const std::regex& forbidden,
                                        const std::filesystem::path& path, const std::string& text,
                                        const std::vector<bool>& mask, std::size_t open, std::size_t close,
@@ -279,7 +241,7 @@ void CheckPaintCalleesReadNoLiveSource(RuleResult& result, const MemberIndex& in
                          callee.file->path.filename().string() + ":" +
                          std::to_string(LineNumberAt(callee_text, read_at)) +
                          ") -- a derived-damage paint and everything it calls read only what prep fingerprinted"});
-          break;  // one report per callee
+          break;
         }
         pending.push_back(Pending{&callee_text, &callee.file->mask, callee.open, callee.close, via});
       }
@@ -287,7 +249,7 @@ void CheckPaintCalleesReadNoLiveSource(RuleResult& result, const MemberIndex& in
   }
 }
 
-}  // namespace
+}
 
 RuleResult CheckDerivedSurfacePaintReadsOnlyItsSnapshot(const std::filesystem::path& repo_root) {
   RuleResult result;
@@ -371,7 +333,7 @@ RuleResult CheckDerivedSurfacePaintReadsOnlyItsSnapshot(const std::filesystem::p
     for (std::sregex_iterator it(body.begin(), body.end(), forbidden), end; it != end; ++it) {
       const std::size_t at = open + static_cast<std::size_t>(it->position());
       if (at < mask.size() && !mask[at]) {
-        continue;  // a comment or a string
+        continue;
       }
       result.violations.push_back(Violation{
           .path = path,
@@ -383,4 +345,4 @@ RuleResult CheckDerivedSurfacePaintReadsOnlyItsSnapshot(const std::filesystem::p
   return result;
 }
 
-}  // namespace microide::tests::architecture
+}

@@ -11,14 +11,10 @@ namespace microide::workspace {
 class ProjectCatalogService {
  public:
   struct Operations {
-    // (id, root, restore persistence, log feedback, activate the restored tab, the
-    // root is missing (ProjectWorkspaceState::root_missing), locality)
     std::function<bool(const project::ProjectId&, const std::filesystem::path&, bool, bool, bool, bool,
                        const project::ProjectLocality&)>
         initialize_current_project;
     std::function<void()> sync_active_editor_tab;
-    // PromptSurfaceService::CancelOpenPrompts: a prompt up over the project that is
-    // leaving the front is cancelled, so its focus is stored where it was.
     std::function<void()> cancel_open_prompts;
     std::function<void()> stop_project_search;
     std::function<void()> close_tree_context_menu;
@@ -34,11 +30,7 @@ class ProjectCatalogService {
     std::function<void()> ensure_terminal_tab_open;
     std::function<bool()> activate_current_tab_after_state_load;
     std::function<void()> refresh_plugin_surfaces_for_reactivation;
-    // ProjectWorkspaceState::catch_up_on_activate: what the project missed while
-    // it was in the background.
     std::function<void()> catch_up_background_changes;
-    // Every re-activation: re-reads the clean buffers whose files changed while
-    // the project's watcher was stopped (one stat per open file when none did).
     std::function<void()> reload_clean_open_buffers;
     std::function<void()> save_config_state;
     std::function<void()> save_session_state;
@@ -72,4 +64,4 @@ class ProjectCatalogService {
   ProjectCatalogCoordinator coordinator_;
 };
 
-}  // namespace microide::workspace
+}

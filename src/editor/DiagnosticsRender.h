@@ -17,11 +17,6 @@ std::optional<DiagnosticSeverity> HighestDiagnosticSeverityForLine(
     std::span<const PublishedDiagnostic> diagnostics,
     std::size_t line_index);
 
-// Whether any diagnostic in `diagnostics` covers `line_index`. Cheap (a span walk
-// over the file's diagnostics, no text), and the render row loop asks it before
-// deciding whether it needs the line's bytes at all -- underlines are the only
-// consumer of the whole line on the editor's row path, and reading it there
-// copies any piece-tree line that spans pieces (TD-2026-08-05-133).
 bool AnyDiagnosticCoversLine(std::span<const PublishedDiagnostic> diagnostics,
                              std::size_t line_index);
 SDL_FRect DiagnosticGutterMarkerRect(float gutter_x,
@@ -60,4 +55,4 @@ void AppendDiagnosticUnderlines(DecoratedTextRow& row,
                                 std::size_t tab_size,
                                 std::span<const PublishedDiagnostic> diagnostics);
 
-}  // namespace microide::editor
+}

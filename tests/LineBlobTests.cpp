@@ -40,10 +40,6 @@ void ExpectMatches(const LineBlob& blob, const std::vector<std::string>& model, 
   Expect(blob.ToVector() == model, "ToVector reproduces the model" + at);
 }
 
-// The undo group's aggregate is prepended to once per region of a multi-region
-// edit, and prepending used to shift the whole blob each time (TD-2026-09-20-301).
-// The blob now keeps front slack; every operation has to keep meaning the same
-// lines however much slack sits in front of them.
 void TestLineBlobMatchesAVectorModelUnderEveryOperation() {
   std::mt19937 rng(20261026);
   LineBlob blob;
@@ -100,17 +96,11 @@ void TestLineBlobMatchesAVectorModelUnderEveryOperation() {
     }
     ExpectMatches(blob, model, step);
   }
-  // Prepending a blob to itself doubles it.
   blob = LineBlob::Of({"x", "y"});
   blob.prepend(blob);
   ExpectMatches(blob, {"x", "y", "x", "y"}, -1);
 }
 
-// What the slack is for: a prepend writes in front of the content and moves none
-// of it, except on the O(log N) prepends that regrow the buffers -- so N
-// prepends move O(N) bytes rather than O(N^2). The old in place insert also
-// regrew only logarithmically; what it paid was shifting every byte on every
-// call, which is exactly what the address of the last line shows.
 void TestLineBlobPrependDoesNotMoveTheContent() {
   LineBlob blob = LineBlob::Of({"seed"});
   constexpr int kPrepends = 10000;
@@ -130,7 +120,7 @@ void TestLineBlobPrependDoesNotMoveTheContent() {
                       "times, moved it " + std::to_string(moves));
 }
 
-}  // namespace
+}
 
 void RegisterLineBlobTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LineBlob/MatchesAVectorModelUnderEveryOperation",
@@ -138,4 +128,4 @@ void RegisterLineBlobTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LineBlob/PrependDoesNotMoveTheContent", TestLineBlobPrependDoesNotMoveTheContent);
 }
 
-}  // namespace microide::tests
+}

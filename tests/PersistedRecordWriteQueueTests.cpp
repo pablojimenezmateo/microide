@@ -14,17 +14,6 @@
 #include "workspace/persistence/PersistenceService.h"
 #include "workspace/persistence/WorkspacePersistenceFormat.h"
 
-// Persisted workspace state (session, config, recents) is written on a background
-// worker so saving never stalls the shell. That trades a synchronous guarantee
-// for a queued one, and the whole point of these tests is that the trade never
-// costs data: whatever the last accepted save said must be what ends up on disk,
-// through coalescing, through deletes, through teardown, and through a failed
-// write.
-//
-// Note what is NOT in scope here: the user's own files. Document saves go through
-// util::WriteFileBytesDurable on the calling thread and are unchanged -- see
-// TextFileIO. This queue only ever touches the state record store.
-
 namespace microide::tests {
 namespace {
 
@@ -50,14 +39,11 @@ std::string BodyText(const std::vector<std::byte>& body) {
   return out;
 }
 
-// Reads the record back, following the reader's own primary/backup fallback.
 std::string ReadRecordText(const std::filesystem::path& path) {
   const auto record = PersistedRecordReader::ReadFile(path);
   return record.has_value() ? BodyText(record->body) : std::string{};
 }
 
-// A body encoded on the worker lands like a queued one, takes its place in the
-// path's coalescing, and an encode that fails writes nothing over what is there.
 void TestEncodedWriteLandsCoalescesAndDropsAFailedEncode() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "session.record";
@@ -74,10 +60,6 @@ void TestEncodedWriteLandsCoalescesAndDropsAFailedEncode() {
   Expect(ReadRecordText(path) == "latest", "a failed encode leaves the record as it was");
 }
 
-// settled() is what the control channel's `persistence` query answers, and what
-// the QA monkey waits on before a kill -9: true only once every queued job has
-// finished. A job held mid-encode keeps it false, and so do the two coalesced
-// behind it -- the replacement of a superseded job must not strand it either.
 void TestSettledWaitsForEveryQueuedJobIncludingCoalescedOnes() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "session.record";
@@ -88,7 +70,7 @@ void TestSettledWaitsForEveryQueuedJobIncludingCoalescedOnes() {
   std::atomic<bool> encoding{false};
   queue.QueueEncoded(path, [&](std::vector<std::byte>* body) {
     encoding = true;
-    const std::lock_guard hold(gate);  // held until the test releases it
+    const std::lock_guard hold(gate);
     *body = Body("first");
     return true;
   }, 1u);
@@ -96,7 +78,7 @@ void TestSettledWaitsForEveryQueuedJobIncludingCoalescedOnes() {
     std::this_thread::yield();
   }
   queue.Queue(path, Body("second"), 1u);
-  queue.Queue(path, Body("third"), 1u);  // supersedes "second" while it waits
+  queue.Queue(path, Body("third"), 1u);
   Expect(!queue.settled(), "a job mid-encode, and two queued behind it, are not settled");
   gate.unlock();
   queue.Flush();
@@ -107,7 +89,6 @@ void TestSettledWaitsForEveryQueuedJobIncludingCoalescedOnes() {
   Expect(queue.settled(), "a dropped encode still finishes its job");
 }
 
-// The core promise: an accepted save reaches disk.
 void TestQueuedWriteLandsAfterFlush() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "state.record";
@@ -120,8 +101,6 @@ void TestQueuedWriteLandsAfterFlush() {
   Expect(ReadRecordText(path) == "hello", "the record must hold exactly what was queued");
 }
 
-// Coalescing must keep the NEWEST body. Dropping the newest instead of the oldest
-// would silently persist stale state -- the exact data loss this design risks.
 void TestCoalescedWritesKeepTheLatestBody() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "state.record";
@@ -138,25 +117,18 @@ void TestCoalescedWritesKeepTheLatestBody() {
          "coalescing must not write more times than it was asked to");
 }
 
-// Teardown must not drop the backlog. SerialWorkQueue's own destructor CANCELS
-// queued jobs, so a queue that merely relied on it would lose the final save of
-// every session -- the most valuable one.
 void TestDestructorFlushesPendingWrites() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "state.record";
   {
     PersistedRecordWriteQueue queue;
     queue.Queue(path, Body("last-write-before-exit"), 1u);
-    // No Flush(): destruction is what has to save it.
   }
   Expect(std::filesystem::exists(path), "destruction must land a still-queued write");
   Expect(ReadRecordText(path) == "last-write-before-exit",
          "the write the destructor landed must be the queued one");
 }
 
-// Save-then-delete and delete-then-save must resolve in submission order. Both
-// run on the same key, so this is really a test that the delete does not jump
-// ahead of (or fall behind) a write it was ordered against.
 void TestDeleteAndWriteResolveInSubmissionOrder() {
   TemporaryDirectory temp_dir;
   PersistedRecordWriteQueue queue;
@@ -179,9 +151,6 @@ void TestDeleteAndWriteResolveInSubmissionOrder() {
   Expect(ReadRecordText(revived) == "second", "the surviving record must be the later write");
 }
 
-// The skip-identical-body memo is the one place an optimization could eat data:
-// if it claimed a body was on disk when it was not, that state would be lost
-// until the bytes happened to change again.
 void TestMemoNeverSkipsAWriteThatIsNotOnDisk() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "state.record";
@@ -191,13 +160,11 @@ void TestMemoNeverSkipsAWriteThatIsNotOnDisk() {
   queue.Flush();
   const std::size_t after_first = queue.applied_write_count();
 
-  // Identical body: correctly skipped, since those exact bytes are already there.
   queue.Queue(path, Body("same"), 1u);
   queue.Flush();
   Expect(queue.applied_write_count() == after_first,
          "an identical body over an existing record should skip the rewrite");
 
-  // ...but the file going missing must invalidate that reasoning.
   std::error_code error;
   std::filesystem::remove(path, error);
   std::filesystem::remove(PersistedRecordWriter::BackupPathFor(path), error);
@@ -208,22 +175,8 @@ void TestMemoNeverSkipsAWriteThatIsNotOnDisk() {
   Expect(ReadRecordText(path) == "same", "the recreated record must hold the queued body");
 }
 
-// A write can fail. The next save of the SAME body must still be attempted -- a
-// memo that recorded the failed write as persisted would strand that state
-// permanently, because every later save of it would be skipped as "already on
-// disk" against a record that never received it.
-//
-// Two failure shapes, and they are protected by different things:
-//   * the record is GONE      -> the existence probe catches it
-//   * the record still EXISTS, holding the PREVIOUS body, because the write
-//     failed partway -> only the not-remembering catches it, and it is the
-//     dangerous one: the file looks fine, so nothing else notices the loss.
 void TestFailedWriteIsRetriedOnTheNextSave() {
   TemporaryDirectory temp_dir;
-  // A regular FILE where the record's parent directory should be. The writer
-  // cannot work around this: create_directories fails outright, so the write
-  // fails before it ever stages a temp. (A directory at the record path itself is
-  // not a blocker -- the backup rotation renames it aside and the write succeeds.)
   const std::filesystem::path blocker = temp_dir.path() / "blocked";
   WriteFile(blocker, "not a directory");
   const std::filesystem::path missing_path = blocker / "state.record";
@@ -243,9 +196,6 @@ void TestFailedWriteIsRetriedOnTheNextSave() {
          "a save that failed with the record MISSING must be retried");
   Expect(ReadRecordText(missing_path) == "payload", "the retried write must hold the queued body");
 
-  // Now the shape the existence probe cannot see. Land body A, then make the
-  // directory read-only so staging the temp file fails while the record itself
-  // survives holding A, then queue body B.
   const std::filesystem::path dir = temp_dir.path() / "locked";
   std::filesystem::create_directories(dir);
   const std::filesystem::path path = dir / "state.record";
@@ -263,8 +213,6 @@ void TestFailedWriteIsRetriedOnTheNextSave() {
   std::filesystem::permissions(dir, std::filesystem::perms::owner_all,
                                std::filesystem::perm_options::replace, error);
 
-  // Running as root ignores the mode bits, so the write is not actually blocked
-  // and there is nothing to assert. Say so rather than passing vacuously.
   if (!write_was_blocked) {
     Expect(ReadRecordText(path) == "B",
            "unblocked (running with permission overrides): the write should have landed");
@@ -278,8 +226,6 @@ void TestFailedWriteIsRetriedOnTheNextSave() {
   }
 }
 
-// Interleaved saves across several records must not lose or cross-contaminate
-// any of them, including while writes are actively draining.
 void TestManyRecordsAllLandWithTheirOwnBodies() {
   TemporaryDirectory temp_dir;
   PersistedRecordWriteQueue queue;
@@ -292,7 +238,7 @@ void TestManyRecordsAllLandWithTheirOwnBodies() {
                   Body("record" + std::to_string(record) + "-round" + std::to_string(round)), 1u);
     }
     if (round % 3 == 0) {
-      queue.Flush();  // drain mid-stream so some rounds race a draining queue
+      queue.Flush();
     }
   }
   queue.Flush();
@@ -306,9 +252,6 @@ void TestManyRecordsAllLandWithTheirOwnBodies() {
   }
 }
 
-// The service-level contract: a save followed by a load returns the saved state
-// without the caller flushing. Loads flush internally precisely so no caller has
-// to know the write is asynchronous.
 void TestServiceLoadSeesAnUnflushedSave() {
   using microide::workspace::PersistedUserConfigState;
   using microide::workspace::PersistenceService;
@@ -319,7 +262,6 @@ void TestServiceLoadSeesAnUnflushedSave() {
 
   const PersistedUserConfigState saved{.ui_scale = 1.5f, .settings = {{"theme", "async"}}};
   Expect(service.SaveUserConfig(path, saved), "save should be accepted");
-  // Deliberately no FlushPendingWrites() here.
 
   PersistedUserConfigState loaded;
   Expect(service.LoadUserConfig(path, &loaded), "load should succeed against a pending write");
@@ -327,7 +269,7 @@ void TestServiceLoadSeesAnUnflushedSave() {
          "a load must never overtake a save that was already accepted");
 }
 
-}  // namespace
+}
 
 void RegisterPersistedRecordWriteQueueTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PersistedRecordWriteQueue/EncodedWriteLandsCoalescesAndDropsAFailedEncode",
@@ -352,4 +294,4 @@ void RegisterPersistedRecordWriteQueueTests(std::vector<TestCase>& tests) {
           TestServiceLoadSeesAnUnflushedSave);
 }
 
-}  // namespace microide::tests
+}

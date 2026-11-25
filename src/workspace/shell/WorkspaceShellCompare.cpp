@@ -26,9 +26,6 @@ namespace microide::workspace {
 
 namespace {
 
-// The length of the bytes two texts share from their start. In blocks: this runs
-// over the working side's whole text above an edit on every keystroke in a diff,
-// and a byte loop that can stop anywhere is not vectorized.
 std::size_t CommonPrefixLength(std::string_view a, std::string_view b) {
   const std::size_t limit = std::min(a.size(), b.size());
   constexpr std::size_t kBlock = 4096;
@@ -53,7 +50,7 @@ std::size_t CompareMaxVisualColumns(const compare::CompareModel& model) {
   return max_columns;
 }
 
-}  // namespace
+}
 
 std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
     const std::filesystem::path& path,
@@ -65,14 +62,9 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
                                    context_.current_project_state.launcher(), normalized_path,
                                    commit.hash);
   if (!content.has_value() || content->truncated) {
-    // Absent revision -> nullopt; a truncated blob was clipped at the subprocess
-    // capture ceiling, so diffing the partial bytes as truth would be bogus.
     return std::nullopt;
   }
 
-  // Distinguish an absent working-tree file (a legitimate whole-file-deleted diff)
-  // from an unreadable or binary one; the latter must not masquerade as empty text
-  // or an editable compare could save a false empty file over it.
   const util::TextFileReadResult working = util::ReadTextFileClassified(normalized_path);
   if (working.is_error()) {
     return std::nullopt;
@@ -95,14 +87,10 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
   return compare_tab;
 }
 
-// `sides`: the ref-named sides already read (off the shell thread, for a refresh);
-// a side it does not hold is read here, as an open or a reopen does.
 std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
     const std::filesystem::path& path,
     const CompareTabState& compare_tab,
     const CompareRevisionSides* sides) const {
-  // A stand-in still owes its asynchronous load; rebuilding it here would be the
-  // very synchronous read the load exists to avoid. Its load reads the file fresh.
   if (compare_tab.load_pending) {
     return std::nullopt;
   }
@@ -111,10 +99,6 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
       (compare_tab.left_path.empty() ? normalized_path : compare_tab.left_path).lexically_normal();
   const std::filesystem::path right_source_path =
       (compare_tab.right_path.empty() ? normalized_path : compare_tab.right_path).lexically_normal();
-  // A side named by a full object id is content nothing can change, and the tab
-  // already holds it: re-reading it spawned a blocking git per side, per tab, on
-  // every change to the file -- seconds of the shell thread with a few dozen
-  // compares of one file open (soak eee6ac0a5e0b, 32325094bfef).
   std::optional<project::GitFileContentAtCommit> left_content;
   if (sides != nullptr && sides->left.has_value()) {
     left_content = sides->left;
@@ -138,8 +122,6 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
     if (compare_tab.right_viewport.dirty()) {
       right_content = compare_tab.right_viewport.SerializeDocumentText();
     } else {
-      // Only a truly-absent worktree file maps to empty; an unreadable or binary
-      // file is an error state, not a whole-file-deleted diff.
       const util::TextFileReadResult working = util::ReadTextFileClassified(right_source_path);
       if (working.is_error()) {
         return std::nullopt;
@@ -176,9 +158,6 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
   rebuilt->compare->right_path = right_source_path;
   rebuilt->compare->scroll_row = compare_tab.scroll_row;
   rebuilt->compare->horizontal_scroll = compare_tab.horizontal_scroll;
-  // Only the user's toggle carries over: the existence flags were just set from
-  // what this rebuild read, and the old tab's could be stale (a file deleted or
-  // recreated since).
   rebuilt->compare->build_options.ignore_whitespace = compare_tab.build_options.ignore_whitespace;
   rebuilt->compare->show_whitespace = compare_tab.show_whitespace;
   rebuilt->compare->opened_from_commit_picker = compare_tab.opened_from_commit_picker;
@@ -199,8 +178,6 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
         rebuilt->compare->model.rows.empty()
             ? 0
             : std::min(compare_tab.selected_row, rebuilt->compare->model.rows.size() - 1);
-    // Rejoin the buffer the file has open elsewhere; the tab being rebuilt is
-    // still in the group, so its own old side is not a candidate.
     AdoptLiveBufferForCompareRightSide(context_.current_project_state.editor_groups,
                                        *rebuilt->compare, &compare_tab.right_viewport);
   }
@@ -264,14 +241,6 @@ const WorkspaceShell::CompareTabState* WorkspaceShell::ActiveCompareTab() const 
 
 workspace::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout(const SDL_FRect& rect,
                                                                             const CompareTabState& compare_tab) const {
-  // The gutter renders actual file line numbers (left_line/right_line), so it must
-  // be sized from the largest displayed line number — i.e. the longer of the two
-  // files — not the presentation-row count. In a collapsed diff of large files the
-  // presentation collapses to a handful of rows while the visible line numbers stay
-  // in the thousands, and sizing by row count clipped them. The left line count is
-  // cached in derived state (recomputed only on a fingerprint rebuild), so this hot
-  // path — render/hit-test/scroll/cursor — no longer rescans left_content for '\n'
-  // per call (TD-2026-07-17A-094).
   const std::size_t gutter_max_line = std::max<std::size_t>(
       {compare_tab.derived_left_line_count, compare_tab.right_viewport.lines().size(), 1});
   const auto measure = [&](bool reserve_vertical, bool reserve_horizontal) {
@@ -297,21 +266,12 @@ workspace::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout(cons
         reserve_horizontal ? (kWorkspaceScrollbarThickness + kWorkspaceScrollbarInset) : 0.0f;
     const float char_width = std::max(1.0f, editor_text_renderer_.CharWidth());
     const float min_pane_width = 8.0f + char_width;
-    // Everything fits in `rect`, however narrow the pane: the gutters give way
-    // first, then the two text panes split what is left. The content width was
-    // floored at two minimum panes whatever the pane held, and in an editor split
-    // three ways the right pane ran past its pane and the window (soak
-    // 33efed186772: divider at x 817..829 in an 824-wide window).
-    // In a pane narrower than the divider and its margins (a nested split's
-    // sliver), the margins give way too, then the divider (soak 33efed186772 at
-    // 14 px: the divider sat 8 px in and past the pane's right edge).
     layout.divider_width = std::min(layout.divider_width, std::max(1.0f, rect.w - reserved_width));
     const float margin = std::clamp((rect.w - reserved_width - layout.divider_width) * 0.5f, 0.0f, 8.0f);
     layout.left_x = rect.x + margin;
     const float fixed_width = reserved_width + layout.divider_width + margin * 2.0f;
     layout.gutter_width = std::min(layout.gutter_width, std::max(0.0f, (rect.w - fixed_width) * 0.5f));
     const float content_width = std::max(0.0f, rect.w - fixed_width - layout.gutter_width * 2.0f);
-    // Each pane keeps its minimum while both fit; below that they share evenly.
     const float min_fraction = content_width >= min_pane_width * 2.0f
                                    ? min_pane_width / content_width
                                    : 0.5f;
@@ -339,20 +299,13 @@ workspace::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout(cons
     return layout;
   };
 
-  // Soft wrap: the panes never scroll horizontally, and the wrapped row count
-  // depends on the pane width — which would depend on whether a vertical scrollbar
-  // is reserved, which depends on the row count. That loop does not converge, and
-  // re-wrapping the whole diff up to four times per layout call would be the most
-  // expensive thing on the surface. Reserve the vertical scrollbar strip
-  // unconditionally instead: the wrap columns are then a pure function of the rect,
-  // one measure() answers, and the strip is where the overview lane lives anyway.
   if (compare_tab.right_viewport.soft_wrap()) {
-    CompareSurfaceLayout layout = measure(/*reserve_vertical=*/true, /*reserve_horizontal=*/false);
-    EnsureCompareWrapLayout(compare_tab, /*soft_wrap=*/true, layout.left_visible_columns,
+    CompareSurfaceLayout layout = measure(true, false);
+    EnsureCompareWrapLayout(compare_tab, true, layout.left_visible_columns,
                             layout.right_visible_columns);
     return layout;
   }
-  EnsureCompareWrapLayout(compare_tab, /*soft_wrap=*/false, 0, 0);
+  EnsureCompareWrapLayout(compare_tab, false, 0, 0);
 
   bool show_vertical = false;
   bool show_horizontal = false;
@@ -382,9 +335,6 @@ TextGridInteractionLayout WorkspaceShell::BuildCompareRightInteractionLayout(
                static_cast<float>(surface.visible_rows) * surface.line_height),
       surface.right_x + surface.gutter_width, surface.rows_y, surface.line_height,
       editor_text_renderer_.CharWidth(), static_cast<std::size_t>(std::max(0, compare_tab.scroll_row)),
-      // On-screen rows, not model rows: `scroll_line` above is one, so a mismatched
-      // `line_count` clamped hit-tests into a different row space (the pointer-drag
-      // path resolved a presentation row as if it were a model row).
       CompareTabVisualRowCount(compare_tab), compare_tab.horizontal_scroll,
       static_cast<std::size_t>(surface.visible_rows), surface.right_visible_columns);
 }
@@ -399,9 +349,6 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCompareRowRangeRect(std::size_t 
 
   const SDL_FRect surface = ActiveTabSurface(*layout);
   const CompareSurfaceLayout surface_layout = ComputeCompareSurfaceLayout(surface, *compare_tab);
-  // Callers name PRESENTATION rows (a selection, a hover); the surface scrolls in
-  // on-screen rows, which soft wrap makes a different space. Project the range,
-  // covering every wrapped row of the last presentation row in it.
   const std::size_t visual_start = ComparePresentationRowToVisualRow(*compare_tab, start_row);
   const std::size_t visual_end =
       end_row == std::numeric_limits<std::size_t>::max() || end_row <= start_row
@@ -419,16 +366,9 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCompareRowRangeRect(std::size_t 
   const float y = surface_layout.rows_y +
                   static_cast<float>(rect_start - scroll_row) * surface_layout.line_height;
   const float h = static_cast<float>(rect_end - rect_start) * surface_layout.line_height;
-  // The whole surface's width: the selected change's markers sit at its outer
-  // edges, outside the panes' text (QA compare-keys left them behind).
   return DirtyRectWithHalo(MakeRect(surface.x, y, surface.w, h));
 }
 
-// The visible window's syntax tokens, for a compare surface painted into `rect`.
-// Frame prep, not paint: the tokenizer is capped per call, so tokenizing while
-// painting let the redraw verifier's second paint of a frame run 256 rows ahead
-// of the partial paint it checks, and the two disagreed on which rows were
-// highlighted (QA monkey, commands profile, seed 20).
 void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compare_tab,
                                                           const SDL_FRect& rect) {
   if (!compare_tab.syntax_highlighting_enabled || compare_tab.model.rows.empty() ||
@@ -436,18 +376,10 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
     return;
   }
   const CompareSurfaceLayout surface = ComputeCompareSurfaceLayout(rect, compare_tab);
-  // The clamp paint applies, applied first so both read the same scroll row.
   ClampCompareScrollRow(compare_tab, surface.visible_rows);
   const std::size_t visible_start_row = static_cast<std::size_t>(std::max(0, compare_tab.scroll_row));
   const std::size_t visible_end_row =
       visible_start_row + static_cast<std::size_t>(std::max(1, surface.visible_rows)) + 64;
-  // The compare view collapses large unchanged runs, so a visible presentation row
-  // can map to a MODEL row far below its presentation index. The window is found
-  // in MODEL space first, from the presentation rows actually on screen (a
-  // CollapsedContext row spans through the end of its run), and then in each
-  // pane's lines below. Feeding the presentation scroll position directly capped
-  // tokenization far below the visible model rows, leaving hunks deep in a
-  // collapsed diff unhighlighted.
   const std::size_t presentation_row_count = compare_tab.presentation.rows.size();
   const auto model_row_for_visual = [&](std::size_t visual_index) -> std::size_t {
     if (presentation_row_count == 0) {
@@ -468,13 +400,6 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
   const std::size_t window_start = model_row_for_visual(visible_start_row);
   const std::size_t window_end =
       std::min(compare_tab.model.rows.size(), model_row_for_visual(visible_end_row) + 1);
-  // The rows that window spans but no presentation row shows: the collapsed runs
-  // on screen. Their lines are walked (the rows below resume from them) and not
-  // tokenized: nothing draws them. A run of 2,500 rows between two changes was
-  // tokenized on both panes each time the window reached it -- and, while the
-  // windows restarted on every keystroke, on every keystroke.
-  // On the stack: a window shows a handful. Past its capacity a run's rows are
-  // tokenized as they were, which costs time and draws nothing wrong.
   util::InlineVector<std::pair<std::size_t, std::size_t>, 64> hidden_runs;
   if (presentation_row_count > 0) {
     const std::size_t first_presentation =
@@ -487,9 +412,6 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
           row->collapsed_line_count <= 0) {
         continue;
       }
-      // The run it names is the whole unchanged stretch; what it hides is the
-      // middle of it, after the context rows shown above (the row before this
-      // one is the last of them).
       std::size_t hidden_start = row->collapsed_run_start_model_row;
       if (row->context_above && index > 0) {
         if (const compare::ComparePresentationRow* above = CompareTabPresentationRowAt(compare_tab, index - 1);
@@ -504,18 +426,12 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
     }
   }
   const auto row_is_drawn = [&hidden_runs](std::size_t row) {
-    // (In presentation order, so ascending and apart.)
     const auto after = std::upper_bound(hidden_runs.begin(), hidden_runs.end(), row,
                                         [](std::size_t value, const auto& run) { return value < run.first; });
     return after == hidden_runs.begin() || row >= std::prev(after)->second;
   };
-  // 95 % of `RenderCompareSurface`'s per-frame self time sat here, with nothing
-  // naming it (TD-2026-08-15-248).
   util::PerformanceTrace::Scope syntax_scope("WorkspaceShell::RenderCompareSurface::SyntaxTokens");
 
-  // A model replaced by anyone but the keystroke's rebuild (which re-points the
-  // windows at the first changed line): an asynchronous load's result, a language
-  // whose rules were reloaded. From the top.
   if (compare_tab.token_windows_stale) {
     compare_tab.left_token_window.Reset(
         compare_tab.left_line_rows.size(),
@@ -528,16 +444,6 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
     compare_tab.token_windows_stale = false;
   }
 
-  // Each pane tokenizes cumulatively down its own LINES, so reaching a line means
-  // walking every line above it. SurfaceTokenWindow does that walk with
-  // `AdvanceState` -- which allocates nothing -- and keeps token buffers only for a
-  // bounded band around the viewport, where this used to hold one heap buffer per
-  // row of the diff for the tab's life (TD-2026-08-15-242).
-  //
-  // The band, in each pane's lines: from the first line the visible model rows
-  // show of it to the last. A pane the rows show nothing of (a long run the other
-  // side added) still walks to where they are, so its state is there when its
-  // lines come back.
   const std::vector<compare::CompareRow>& rows = compare_tab.model.rows;
   const auto lines_of = [&](int compare::CompareRow::* line, std::size_t line_count) {
     std::size_t first = line_count;
@@ -559,9 +465,6 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
   const auto [left_start, left_end] = lines_of(&compare::CompareRow::left_line, compare_tab.left_line_rows.size());
   const auto [right_start, right_end] =
       lines_of(&compare::CompareRow::right_line, compare_tab.right_line_rows.size());
-  // 256 rows a step, and more steps while the frame's walk time lasts: a plain
-  // file's walk to row 30,000 then takes a frame or two, not ~117 repaints of the
-  // pane (soak a64655101a5a), and a costly syntax's still stops at its budget.
   constexpr std::size_t kCompareSyntaxRowsPerFrame = 256;
   const SurfaceTokenWindow::WalkBudget walk_budget{
       kCompareSyntaxRowsPerFrame, std::chrono::steady_clock::now() + kSyntaxWalkTimePerFrame};
@@ -572,20 +475,10 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
   compare_tab.right_token_window.EnsureWindow(
       right_start, right_end, compare_tab.path, walk_budget,
       [&](std::size_t line) -> std::string_view { return rows[compare_tab.right_line_rows[line]].right_text; },
-      // Skip, too, the rows whose tokens the render site will read from the LEFT
-      // window -- an unchanged row identical on both sides. Left is ensured first,
-      // so its states are current when this asks.
       [&](std::size_t line) {
         const std::size_t row = compare_tab.right_line_rows[line];
         return row_is_drawn(row) && !CompareRowRightTokensAliasLeft(compare_tab, row);
       });
-  // (Rows this step reached repaint in this frame through their own units: each
-  // row keys on its tokens, CompareRowUnits. This asked for the whole surface
-  // whenever the walk advanced -- on every keystroke, since an edit restarts it.)
-  // Capped per frame: if a pane has not yet reached its deepest visible line (after
-  // scrolling far down a large file), the next frame takes the next step
-  // (PreparedFrameState::syntax_catch_up_owed). Against each window's own line
-  // count: one never sized walks nothing, and would otherwise ask forever.
   const auto behind = [](const SurfaceTokenWindow& window, std::size_t end) {
     return window.frontier() < std::min(end, window.line_count());
   };
@@ -593,12 +486,6 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
     frame_state_.syntax_catch_up_owed = true;
   }
 }
-
-// Scroll the smallest amount that brings the selected presentation row's rows on
-// screen. Under soft wrap a presentation row spans several on-screen rows, so
-// revealing it means bringing its FIRST row above the fold and its LAST row below
-// it; with wrap off both collapse to the row itself and this is the old two-branch
-// nudge. Kept in one place because the reveal ran from three call sites, each with
 
 void WorkspaceShell::RevealActiveCompareSelection() {
   CompareTabState* compare_tab = ActiveCompareTab();
@@ -639,9 +526,6 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildCompareTextI
       static_cast<std::size_t>(std::max(0, compare_tab->scroll_row)),
       CompareTabVisualRowCount(*compare_tab), compare_tab->horizontal_scroll,
       static_cast<std::size_t>(surface_layout.visible_rows), surface_layout.right_visible_columns);
-  // The IME box follows the caret's ON-SCREEN cell. It used to be placed at the
-  // caret's MODEL row against a scroll offset in presentation rows, which drifts
-  // apart as soon as the diff collapses a run -- and wraps a line.
   const CompareRightCaretPlacement placement = CompareRightCaretPlacementFor(
       *compare_tab, compare_tab->right_viewport.cursor_line(),
       compare_tab->right_viewport.cursor_visual_column());
@@ -662,27 +546,11 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildCompareTextI
 
 void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab) const {
   util::PerformanceTrace::Scope trace_scope("WorkspaceShell::RefreshCompareTabDerivedState");
-  // The model, syntax state, and per-row token buffers derive purely from the two
-  // content buffers and the build options. This refresh fires from ~10 call sites (key
-  // input, mouse, focus, plugin refresh, external change), many of which leave the
-  // compared content untouched. Detect a real change with O(1)/allocation-free signals
-  // instead of serializing the whole right buffer and hashing both buffers on every
-  // refresh: the editable right pane changes exactly when its viewport `content_revision`
-  // (or line ending) advances, so it needs no per-refresh serialize; the read-only left
-  // side is an immutable shared buffer, compared by identity (O(1) — see the field's
-  // comment); the ignore-whitespace option and the language's diff syntax change
-  // the model with no content change. The serialize below then runs only on an actual rebuild.
-  // The review/presentation markers further down depend on external git + branch-review
-  // state and always refresh.
   const std::uint64_t right_content_revision = compare_tab.right_viewport.content_revision();
   const util::LineEnding right_line_ending = compare_tab.right_viewport.line_ending();
   const bool ignore_whitespace = compare_tab.build_options.ignore_whitespace;
-  // The file's language decides how each hunk is read structurally. A rename, a
-  // content-detected language change or a language-contract refresh changes the
-  // rules, and the per-language shared pointer says so by identity.
   compare_tab.build_options.syntax =
       language_contract_.ResolveDiffSyntax(compare_tab.right_viewport.language_id());
-  // The first line of each pane the rebuild changes (none: max): see the rebuild.
   std::size_t left_first_changed_line = 0;
   std::size_t right_first_changed_line = 0;
   const bool content_changed =
@@ -696,12 +564,6 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
     util::PerformanceTrace::Scope rebuild_scope(
         "WorkspaceShell::RefreshCompareTabDerivedState::RebuildModel");
     std::string right_content = compare_tab.right_viewport.SerializeDocumentText(right_line_ending);
-    // What the token windows can keep (they are addressed by each pane's lines):
-    // nothing unless they describe the model being replaced and the language's
-    // rules stand. Then the left pane's are untouched while its buffer is the
-    // same one, and the right pane's stand above the first line that differs --
-    // found in the bytes, so a keystroke, a paste, an undo and a reload from disk
-    // all name it the same way.
     const bool windows_describe_model =
         !compare_tab.token_windows_stale && compare_tab.derived_fingerprint_valid &&
         compare_tab.derived_syntax == compare_tab.build_options.syntax && compare_tab.model.right_source != nullptr;
@@ -718,16 +580,9 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
               : static_cast<std::size_t>(std::count(right_content.begin(),
                                                     right_content.begin() + static_cast<std::ptrdiff_t>(shared), '\n'));
     }
-    // In place, recycling the previous build's row storage: a fresh model is two
-    // string allocations per row, and this runs on every keystroke in the
-    // editable pane (TD-2026-08-13-208).
-    // Both buffers are ADOPTED, not copied: the left side is the tab's own
-    // shared buffer and the right side is the serialize above, moved in.
     compare::BuildCompareModelInto(compare_tab.model, compare_tab.left_content,
                                    compare::MakeCompareText(std::move(right_content)),
                                    compare_tab.build_options);
-    // The left line count is recounted only when the LEFT buffer is new; a
-    // keystroke in the right pane rebuilds the model but cannot move it.
     const std::size_t left_line_count =
         compare_tab.derived_fingerprint_valid &&
                 compare_tab.derived_left_content == compare_tab.left_content
@@ -744,12 +599,6 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
   };
   const compare::CompareSemanticFileMetadata semantic_before = compare_tab.semantic_file;
   ApplyCompareTabReviewMetadata(compare_tab, review_input);
-  // The presentation model is a whole-file row list built from the compare model,
-  // the semantic metadata, and the whitespace option — nothing else. Rebuilding it
-  // unconditionally made every keystroke and mouse event on a compare tab O(rows)
-  // with a fresh row vector; the guard below keeps that cost on the events that
-  // actually change one of its inputs. Collapse-state edits refresh the
-  // presentation through RefreshCompareTabPresentation directly, which revalidates.
   const bool presentation_inputs_changed =
       !compare_tab.presentation_valid ||
       compare_tab.presentation_built_model_revision != compare_tab.model_revision ||
@@ -764,11 +613,6 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
                                        context_.current_project_state.branch_review);
   RefreshCompareReviewHeader(compare_tab);
   if (content_changed) {
-    // The windows follow the rebuild: each restarts at its pane's first changed
-    // line (ResetFrom; from the top when nothing of it can be kept). The initial
-    // states come straight off the buffers: detection reads a bounded head, where
-    // splitting the left side into owned lines was 14 % of a large compare's open
-    // (TD-2026-08-06-159) and materializing the right side's snapshot 20 % of it.
     compare_tab.left_token_window.ResetFrom(
         left_first_changed_line, compare_tab.left_line_rows.size(),
         editor::SyntaxHighlighter::InitialState(compare_tab.path, *compare_tab.left_content));
@@ -779,8 +623,6 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
     compare_tab.syntax_highlighting_enabled = true;
     compare_tab.max_visual_columns = CompareMaxVisualColumns(compare_tab.model);
   }
-  // Review/presentation markers may have changed even when content did not, so
-  // rebuild the scrollbar overlay cache lazily regardless.
   compare_tab.scrollbar_marker_cache_valid = false;
   compare_tab.scrollbar_marker_cache.clear();
   const std::size_t presentation_rows = CompareTabPresentationRowCount(compare_tab);
@@ -802,16 +644,8 @@ void WorkspaceShell::SyncCompareViewportScroll(CompareTabState& compare_tab) con
         ComputeCompareSurfaceLayout(ActiveTabSurface(*layout_state, &compare_tab), compare_tab);
     compare_tab.right_viewport.SetViewportSize(static_cast<std::size_t>(surface_layout.visible_rows),
                                                surface_layout.right_visible_columns);
-    // The two panes scroll horizontally in lock-step off this shared offset. Clamp it
-    // against the longest line across BOTH panes; the editable right viewport would
-    // otherwise bottleneck the shared scroll to its own document, killing horizontal
-    // scrolling whenever the long content lives on the (read-only) left pane.
     ClampCompareHorizontalScroll(compare_tab, surface_layout.visible_columns);
   }
-  // Push the (combined-clamped) offset into the right viewport for caret geometry and
-  // edit reveal. SetHorizontalScroll re-clamps to the right document internally, but we
-  // intentionally do NOT read that narrower value back as the shared offset. Caret-driven
-  // horizontal reveal flows the other way through SyncCompareSelectionFromViewport.
   compare_tab.right_viewport.SetHorizontalScroll(compare_tab.horizontal_scroll);
   const std::size_t scroll_row = static_cast<std::size_t>(std::max(0, compare_tab.scroll_row));
   const std::size_t presentation_scroll_row =
@@ -855,4 +689,4 @@ void WorkspaceShell::SyncCompareSelectionFromViewport(CompareTabState& compare_t
   }
 }
 
-}  // namespace microide::workspace
+}

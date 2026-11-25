@@ -24,34 +24,19 @@ using microide::editor::TextLayout;
 
 constexpr std::size_t kTabSize = 4;
 
-// Representative rows exercising every width class the display-column service
-// must agree on: pure ASCII, leading tabs, interior tabs, a CJK codepoint
-// (3 UTF-8 bytes, TWO cells -- util::GridCellWidth), a combining mark (no cell
-// of its own: it rides on the code point before it), and a mix of all of them.
 const char* const kRows[] = {
-    "abcdef",             // ASCII
-    "\t\tindented",       // leading tabs
-    "ab\tcd\tef",         // interior tabs
-    // 'b' is spelled \x62 rather than written plainly: a hex escape consumes as many
-    // hex digits as it can, so "a\xE4\xB8\xADb" would swallow the b into \xAD. The
-    // previous fix for that was to split the literal ("a\xE4\xB8\xAD" "b"), which is
-    // correct but reads exactly like a missing comma in an array of strings — clang
-    // warns on it for that reason. Escaping the byte keeps the row unambiguous.
-    "a\xE4\xB8\xAD\x62",  // a 中 b  (中 = U+4E2D, 3 bytes)
-    "e\xCC\x81xy",        // e + combining acute (U+0301, 2 bytes)
-    "\t\xE4\xB8\xAD\t\xCC\x81z",  // tab, CJK, tab, combining, ASCII
+    "abcdef",
+    "\t\tindented",
+    "ab\tcd\tef",
+    "a\xE4\xB8\xAD\x62",
+    "e\xCC\x81xy",
+    "\t\xE4\xB8\xAD\t\xCC\x81z",
 };
 
-// True when `column` sits on a codepoint boundary (ClampTextColumn is a no-op).
 bool IsBoundary(std::string_view line, std::size_t column) {
   return TextLayout::ClampTextColumn(line, column) == column;
 }
 
-// TD-2026-08-06-159: `VisualColumnsAreIdentity` is what lets a row render skip
-// building a whole-line `LineVisualColumnMap` — two heap vectors per row — and use
-// the identity mapping instead. A false positive silently misplaces every
-// selection fill and caret on the row, so this asserts the claim directly at every
-// column of every width class, and asserts the answer is not vacuously "no".
 void TestVisualColumnsAreIdentityMatchesTheWalk() {
   bool saw_identity = false;
   bool saw_non_identity = false;
@@ -71,7 +56,6 @@ void TestVisualColumnsAreIdentityMatchesTheWalk() {
   }
   Expect(saw_identity && saw_non_identity,
          "the fixture must contain both identity and non-identity rows");
-  // The boundary cases the byte scan has to get right.
   Expect(TextLayout::VisualColumnsAreIdentity(""), "an empty line is trivially identity");
   Expect(!TextLayout::VisualColumnsAreIdentity("\t"), "a lone tab is not identity");
   Expect(!TextLayout::VisualColumnsAreIdentity("abc\t"), "a trailing tab is not identity");
@@ -88,13 +72,9 @@ void TestAdvanceVisualColumnTabStops() {
   Expect(TextLayout::AdvanceVisualColumn(4, '\t', 4) == 8, "tab on a stop advances a full width");
   Expect(TextLayout::AdvanceVisualColumn(3, 'a', 4) == 4, "non-tab advances one cell");
   Expect(TextLayout::AdvanceVisualColumn(0, 'a', 4) == 1, "ascii from 0 -> 1");
-  // tab_size 0 is guarded to width 1 (never a divide-by-zero or a stall).
   Expect(TextLayout::AdvanceVisualColumn(5, '\t', 0) == 6, "tab_size 0 guarded to width 1");
 }
 
-// The precomputed LineVisualColumnMap must return byte-identical results to the
-// direct VisualColumnForTextColumn walk at every codepoint boundary, on every
-// width class. This is the invariant every cached-vs-uncached caller relies on.
 void TestVisualColumnMapMatchesDirectWalk() {
   for (const char* row : kRows) {
     const std::string_view line(row);
@@ -112,9 +92,6 @@ void TestVisualColumnMapMatchesDirectWalk() {
   }
 }
 
-// Text<->visual column mapping round-trips at every codepoint boundary: the
-// visual column of a boundary maps back to exactly that boundary (caret placement
-// after a mouse hit / vertical move must not drift across tabs or wide glyphs).
 void TestTextVisualRoundTrip() {
   for (const char* row : kRows) {
     const std::string_view line(row);
@@ -122,9 +99,6 @@ void TestTextVisualRoundTrip() {
       if (!IsBoundary(line, c)) {
         continue;
       }
-      // A boundary that a zero-width mark follows shares its visual column with
-      // the boundary after the mark, and the inverse lands after the mark (a
-      // caret between a base and its accent is not a position the grid has).
       if (c < line.size() &&
           TextLayout::VisualColumnForTextColumn(line, TextLayout::NextTextColumn(line, c),
                                                 kTabSize) ==
@@ -138,13 +112,8 @@ void TestTextVisualRoundTrip() {
   }
 }
 
-// The grid's cell widths: a wide code point takes two cells, a combining mark
-// none, everything else one -- the model VS Code's editor and the terminal grid
-// share. The editor counted one cell per code point while the renderer shaped
-// non-ASCII text at the font's own advances, so the caret drifted a fraction of
-// a cell for every wide character before it.
 void TestWideAndZeroWidthCodepointsTakeTheirCells() {
-  const std::string_view cjk = "a\xE4\xB8\xAD\x62";  // a 中 b
+  const std::string_view cjk = "a\xE4\xB8\xAD\x62";
   Expect(TextLayout::VisualColumnForTextColumn(cjk, 4, kTabSize) == 3,
          "`a` + 中 = three cells before the `b`");
   Expect(TextLayout::VisualColumnForTextColumn(cjk, 5, kTabSize) == 4, "the line is four cells");
@@ -155,7 +124,7 @@ void TestWideAndZeroWidthCodepointsTakeTheirCells() {
   Expect(TextLayout::TextColumnForVisualColumn(cjk, 3, kTabSize) == 4,
          "visual 3 is the boundary after the wide glyph");
 
-  const std::string_view accent = "e\xCC\x81xy";  // e + U+0301 x y
+  const std::string_view accent = "e\xCC\x81xy";
   Expect(TextLayout::VisualColumnForTextColumn(accent, 1, kTabSize) == 1, "the base is a cell");
   Expect(TextLayout::VisualColumnForTextColumn(accent, 3, kTabSize) == 1,
          "the combining mark adds no cell");
@@ -165,14 +134,12 @@ void TestWideAndZeroWidthCodepointsTakeTheirCells() {
          "visual 1 lands after the mark, never between base and mark");
   Expect(TextLayout::TextColumnForVisualColumn(accent, 0, kTabSize) == 0, "visual 0 is the start");
 
-  const std::string_view emoji = "\xF0\x9F\x98\x80!";  // 😀 !
+  const std::string_view emoji = "\xF0\x9F\x98\x80!";
   Expect(TextLayout::VisualColumnForTextColumn(emoji, 4, kTabSize) == 2, "an emoji is wide");
   Expect(TextLayout::MeasureLineFacts(emoji, kTabSize).visual_columns == 3,
          "MeasureLineFacts agrees");
   Expect(!TextLayout::MeasureLineFacts(emoji, kTabSize).plain_ascii, "and is not plain ASCII");
 
-  // The layout cells: a wide glyph's trailing cell carries no text and the same
-  // source column; a mark joins its base's cell.
   const LayoutLine wide = TextLayout::BuildVisibleLine(cjk, 0, 16, kTabSize);
   Expect(wide.source_columns.size() == 4, "four cells for a 中 b");
   Expect(wide.source_columns[1] == 1 && wide.source_columns[2] == 1,
@@ -184,26 +151,16 @@ void TestWideAndZeroWidthCodepointsTakeTheirCells() {
   Expect(marked.source_columns.size() == 3, "three cells for e-acute x y");
   Expect(marked.text == "e\xCC\x81xy" && marked.text_offsets[1] == 3,
          "the mark's bytes belong to the base's cell");
-  // A mark after a wide glyph: inserted before the trailing cell's (empty) slot.
   const LayoutLine wide_marked =
       TextLayout::BuildVisibleLine("\xE4\xB8\xAD\xCC\x81z", 0, 16, kTabSize);
   Expect(wide_marked.source_columns.size() == 3 && wide_marked.text == "\xE4\xB8\xAD\xCC\x81z" &&
              wide_marked.text_offsets[1] == 5 && wide_marked.text_offsets[2] == 5,
          "the mark joins the wide glyph's lead cell, the trailing cell stays empty");
-  // Scrolled so the wide glyph's lead cell is off-screen: the trailing cell is a
-  // blank placeholder, not half a glyph.
   const LayoutLine scrolled = TextLayout::BuildVisibleLine(cjk, 2, 16, kTabSize);
   Expect(scrolled.source_columns.size() == 2 && scrolled.text == " b",
          "a wide glyph cut by the scroll edge leaves a blank trailing cell");
 }
 
-// Soft wrap steps by the same widths: a wide glyph never splits across rows and
-// counts two cells against the row width.
-// Soft wrap over random lines of tabs, wide glyphs, combining marks and ASCII:
-// the rows partition the line's cells, every break sits on a code-point
-// boundary, no row overflows its width unless it holds a single code point,
-// and restarting the wrap from any row boundary (WrapLineSegmentsFrom, which
-// the incremental layout cache relies on) reproduces the rows that follow.
 void TestWrapRowsPartitionTheLineAndResumeFromAnyBoundary() {
   std::uint64_t state = 0x9E3779B97F4A7C15ull;
   const auto next = [&state](std::uint64_t bound) {
@@ -242,7 +199,6 @@ void TestWrapRowsPartitionTheLineAndResumeFromAnyBoundary() {
            "rows span the whole line: " + context);
     const TextLayout::LineVisualColumnMap map(line, tab_size);
     const auto is_boundary = [&](std::size_t visual) {
-      // A visual column is a boundary when some code-point boundary maps to it.
       for (std::size_t c = 0; c <= line.size(); ++c) {
         if (TextLayout::ClampTextColumn(line, c) == c && map.VisualColumnFor(c) == visual) {
           return true;
@@ -265,7 +221,6 @@ void TestWrapRowsPartitionTheLineAndResumeFromAnyBoundary() {
              "a break sits on a code-point boundary: " + context);
       const std::size_t budget = wrap_columns - row.indent;
       if (row.end - row.start > budget) {
-        // Only a single code point wider than the row can overflow it.
         const std::size_t start_byte =
             TextLayout::TextColumnForVisualColumn(line, row.start, tab_size);
         std::size_t after = start_byte;
@@ -275,7 +230,6 @@ void TestWrapRowsPartitionTheLineAndResumeFromAnyBoundary() {
       }
     }
 
-    // Resume from every row boundary: the tail must wrap into the same rows.
     for (std::size_t r = 1; r < rows.size(); ++r) {
       const std::size_t boundary_byte =
           TextLayout::TextColumnForVisualColumn(line, rows[r].start, tab_size);
@@ -301,7 +255,7 @@ void TestWrapRowsPartitionTheLineAndResumeFromAnyBoundary() {
 }
 
 void TestWrapCountsWideGlyphsAsTwoCells() {
-  const std::string_view line = "ab\xE4\xB8\xAD\xE6\x96\x87";  // ab 中 文 = 6 cells
+  const std::string_view line = "ab\xE4\xB8\xAD\xE6\x96\x87";
   std::vector<std::pair<std::size_t, std::size_t>> rows;
   TextLayout::WrapLineSegments(line, kTabSize, 5,
                                [&](std::size_t start, std::size_t end, std::size_t) {
@@ -312,16 +266,10 @@ void TestWrapCountsWideGlyphsAsTwoCells() {
          "the break falls before the glyph that would not fit whole");
 }
 
-// 023: the inlay-hint column resolver and the row-decoration column resolver are
-// the same function (TextLayout::ResolveVisualColumn). Both the cell-grid
-// `layout` path and the `visual_map` path must agree with each other and with the
-// direct text-layout walk, so a hint's phantom cells anchor on exactly the visual
-// column its annotated glyph renders at.
 void TestResolveVisualColumnMatchesTextLayout() {
   for (const char* row : kRows) {
     const std::string_view line(row);
     const std::size_t width = TextLayout::VisualColumnForTextColumn(line, line.size(), kTabSize);
-    // Full-width window: layout describes the whole line.
     const LayoutLine layout = TextLayout::BuildVisibleLine(line, 0, width + 8, kTabSize);
     const TextLayout::LineVisualColumnMap map(line, kTabSize);
     for (std::size_t c = 0; c <= line.size(); ++c) {
@@ -339,15 +287,6 @@ void TestResolveVisualColumnMatchesTextLayout() {
   }
 }
 
-// VisualColumnForTextColumn skips decoding over the plain-ASCII prefix of a line
-// and only walks code points from the first tab / first byte >= 0x80. That prefix
-// scan reads eight bytes at a time, so the interesting cases are exactly the ones
-// a hand-written row array does not cover: the special byte landing at every
-// offset inside a chunk, on the chunk boundary, and in the sub-chunk tail.
-//
-// Differentially check the fast path against a straightforward per-code-point
-// reference walk for a special byte at EVERY offset of lines spanning several
-// chunk lengths, at every query column.
 void TestVisualColumnFastPathMatchesReferenceWalk() {
   const auto reference_walk = [](std::string_view line, std::size_t text_column) {
     const std::size_t clamped = TextLayout::ClampTextColumn(line, text_column);
@@ -356,7 +295,6 @@ void TestVisualColumnFastPathMatchesReferenceWalk() {
       const std::size_t length = util::Utf8SequenceLength(line, i);
       visual = TextLayout::AdvanceVisualColumn(visual, line[i], kTabSize);
       if (length > 1) {
-        // The per-byte step charges one cell; the grid charges the code point's.
         visual += util::GridCellWidth(util::DecodeUtf8Codepoint(line.substr(i, length))) - 1;
       }
       i += length;
@@ -364,13 +302,9 @@ void TestVisualColumnFastPathMatchesReferenceWalk() {
     return visual;
   };
 
-  // Tab, a 2-byte code point, a 3-byte code point, and a lone invalid byte (which
-  // the decoder charges as one cell) — every class the prefix scan must refuse to
-  // swallow.
   const std::string kSpecials[] = {"\t", "\xC3\xA9", "\xE4\xB8\xAD", "\xFF"};
   for (std::size_t length = 0; length <= 20; ++length) {
     const std::string ascii(length, 'a');
-    // The all-plain line itself: the fast path returns without decoding at all.
     for (std::size_t c = 0; c <= ascii.size(); ++c) {
       Expect(TextLayout::VisualColumnForTextColumn(ascii, c, kTabSize) == reference_walk(ascii, c),
              "plain-ASCII fast path matches the reference walk");
@@ -389,15 +323,6 @@ void TestVisualColumnFastPathMatchesReferenceWalk() {
   }
 }
 
-// BuildVisibleLineInto no longer steps code points from column 0 to reach the
-// horizontal scroll offset: it starts at the line's first tab-or-multibyte byte,
-// where visual column can first stop tracking byte offset, and a caller holding
-// `LineLayoutFacts` for an all-plain line skips even that scan (TD-2026-08-05-132).
-//
-// Both are claims about EVERY line, not fast paths for a special case, so pin them
-// differentially against a reference that walks from byte 0 the old way — with the
-// special byte at every offset of lines spanning several eight-byte scan chunks,
-// and at every scroll offset including past end-of-line.
 void TestBuildVisibleLineMatchesWalkFromColumnZero() {
   const auto reference_build = [](std::string_view line, std::size_t horizontal_scroll,
                                   std::size_t visible_columns) {
@@ -426,7 +351,7 @@ void TestBuildVisibleLineMatchesWalkFromColumnZero() {
         } else if (cell == 0) {
           out.text.append(line, i, next_text - i);
         } else if (absolute_cell == horizontal_scroll) {
-          out.text.push_back(' ');  // a wide glyph's trailing cell with the lead scrolled off
+          out.text.push_back(' ');
         }
         out.source_columns.push_back(i);
       }
@@ -485,16 +410,6 @@ void TestBuildVisibleLineMatchesWalkFromColumnZero() {
   }
 }
 
-// TD-2026-08-05-133: the visible-row build reads a bounded byte window of the
-// line instead of all of it, so a piece-tree line that spans pieces -- every line
-// an in-line edit has touched -- is no longer copied whole to render one row.
-//
-// Two things have to hold and only the first is obvious: the window build must
-// agree with the whole-line build (same glyphs, same source columns, same offsets)
-// AND the window must be big enough that the walk never runs off the end of it. A
-// window one byte short does not crash; it silently drops the row's last cell. So
-// the oracle is the whole-line build, over the same generated line set that pins
-// the prefix-skipping walk, at every scroll offset and several widths.
 void TestBuildVisibleLineWindowMatchesWholeLineBuild() {
   const auto same = [](const LayoutLine& a, const LayoutLine& b) {
     return a.text == b.text && a.source_columns == b.source_columns &&
@@ -514,18 +429,13 @@ void TestBuildVisibleLineWindowMatchesWholeLineBuild() {
       }
     }
   }
-  // Long lines too, since the window sizing is the whole point and a 20-byte line
-  // is shorter than any window it can ask for. The all-multibyte ones are what
-  // makes the four-bytes-per-cell factor load-bearing: on a line of four-byte code
-  // points the walk consumes exactly four bytes per visual column, so a window
-  // sized on columns alone -- or one byte short -- drops the row's last cells.
   lines.push_back(std::string(600, 'x') + "\t" + std::string(600, 'y'));
   lines.push_back(std::string(600, 'x') + "\xE4\xB8\xAD" + std::string(600, 'y'));
   std::string four_byte;
   std::string three_byte;
   for (int i = 0; i < 300; ++i) {
-    four_byte += "\xf0\x9f\x98\x80";  // U+1F600, four bytes, two cells
-    three_byte += "\xE4\xB8\xAD";     // U+4E2D, three bytes, two cells
+    four_byte += "\xf0\x9f\x98\x80";
+    three_byte += "\xE4\xB8\xAD";
   }
   lines.push_back(four_byte);
   lines.push_back(three_byte);
@@ -535,14 +445,8 @@ void TestBuildVisibleLineWindowMatchesWholeLineBuild() {
   LayoutLine windowed;
   std::string scratch;
   for (const std::string& line : lines) {
-    // Fragment the line so every window read that crosses a piece boundary takes
-    // LineWindow's copying path rather than its zero-copy one.
     microide::editor::TextBuffer buffer;
     buffer.ResetFromText(line + "\n");
-    // Fragment without changing the content: insert a byte mid-line and delete it
-    // again. The tree never re-merges pieces, so every window read that crosses
-    // the seam takes LineWindow's copying path. A zero-length splice is a no-op
-    // and would leave the line contiguous.
     if (line.size() >= 2) {
       const std::size_t mid = line.size() / 2;
       buffer.ReplaceTextRange(0, mid, 0, mid, "Z");
@@ -551,8 +455,6 @@ void TestBuildVisibleLineWindowMatchesWholeLineBuild() {
     const microide::editor::LineSpan span(buffer);
     const LineLayoutFacts facts = TextLayout::MeasureLineFacts(line, kTabSize);
     if (line.size() >= 2) {
-      // The fixture claims the line spans pieces; prove it, or the copying path
-      // this exercises is never taken and the loop below measures nothing.
       util::ResetPerformanceCounters();
       (void)buffer.LineView(0);
       Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializations) == 1,
@@ -566,7 +468,6 @@ void TestBuildVisibleLineWindowMatchesWholeLineBuild() {
            {std::size_t{0}, std::size_t{1}, std::size_t{4}, std::size_t{32}}) {
         TextLayout::BuildVisibleLineInto(line, scroll, columns, kTabSize, expected, facts);
 
-        // Exactly what TextLayoutCache does to size and read the window.
         const std::size_t probe = std::min(scroll, line.size());
         const std::size_t plain_prefix_end =
             facts.plain_ascii
@@ -591,32 +492,7 @@ void TestBuildVisibleLineWindowMatchesWholeLineBuild() {
   }
 }
 
-}  // namespace
-
-// TextLayoutCache::InvalidateAll documents that it "wipes every cache + every
-// cache key", and TextViewport's copy and move constructors call it precisely to
-// hand the new viewport clean derived state. It had drifted from that contract:
-// it left the visible-line layout LRU populated, because the visible-line half
-// of the wipe was duplicated in ClearVisibleLineAndMaxColumns rather than shared.
-//
-// The visible-line cache is keyed on {line_index, horizontal_scroll,
-// visible_columns, tab_size} and NOT on the content revision, so anything that
-// claims to wipe it has to actually do so — a retained entry serves the layout of
-// a line that no longer exists.
-// TD-2026-07-25-104: VisibleLineLayoutRefCached hands out a reference INTO the
-// LRU, so an eviction is the only thing that can dangle a reference a caller
-// still holds. The safety argument is "a frame's working set is far below
-// kVisibleLineCacheLimit, so a frame never evicts what it is still reading" —
-// which was documented but unmeasured, so nothing failed if someone lowered the
-// limit or a caller started querying many more lines at once.
-//
-// Pin both halves: a realistically-large visible working set evicts nothing, and
-// a set that genuinely exceeds the limit does evict (so this is not passing just
-// because the counter is never incremented).
-// The plain-ASCII prefix memo survives an edit (TD-2026-08-30-274's "left open":
-// typing at column C rescanned [0, C) of its line every keystroke). Each case edits a line the memo has read, carries the memo, and
-// checks the answer against a cold cache and the bytes the warm one re-read.
-
+}
 
 void TestTextLayoutCachePlainPrefixMemoSurvivesAnEdit() {
   using microide::editor::TextLayoutCache;
@@ -626,7 +502,7 @@ void TestTextLayoutCachePlainPrefixMemoSurvivesAnEdit() {
     std::string before;
     std::string after;
     std::size_t edit_line;
-    std::size_t column;  // kNoEditColumn: the edit did not say
+    std::size_t column;
     std::size_t max_rescanned;
   };
   const std::string clean(1000, 'a');
@@ -651,7 +527,7 @@ void TestTextLayoutCachePlainPrefixMemoSurvivesAnEdit() {
   for (const Case& c : cases) {
     std::vector<std::string> lines = {c.before, "second line"};
     TextLayoutCache warm;
-    (void)warm.PlainAsciiPrefixEnd(lines, 0, c.before.size(), /*content_revision=*/1);
+    (void)warm.PlainAsciiPrefixEnd(lines, 0, c.before.size(), 1);
     if (c.edit_line == 0) {
       lines[0] = c.after;
     } else {
@@ -670,25 +546,17 @@ void TestTextLayoutCachePlainPrefixMemoSurvivesAnEdit() {
   }
 }
 
-// The same through a soft-wrapped viewport, where no width table exists to
-// splice: every edit took the width table's "cannot splice" reset, and that reset
-// also dropped the prefix memo, so each keystroke re-read its line from byte 0
-// (editor_soft_wrap_long_line_typing: 370 MB over its 352 keystrokes).
 void TestSoftWrapTypingKeepsThePlainPrefixMemo() {
   microide::editor::TextViewport viewport;
-  // A tab at the end keeps the line from being plain, so the memo is consulted.
   std::string line(200000, 'a');
   line += "\t";
   viewport.LoadContent(line + "\n");
   viewport.SetViewportSize(40, 80);
   viewport.SetSoftWrap(true);
-  // A tab-size change drops the width table, and under soft wrap nothing builds
-  // it again: the state a wrapped editor types in.
   viewport.SetTabSize(3);
   viewport.MoveCursorTo(0, 100000);
-  (void)viewport.PlainAsciiPrefixEnd(0, 150000);  // what a paint of the rows does
+  (void)viewport.PlainAsciiPrefixEnd(0, 150000);
   for (int i = 0; i < 3; ++i) {
-    // Counted across the keystroke: the edit's own caret work asks too.
     util::ResetPerformanceCounters();
     viewport.InsertText("x");
     (void)viewport.PlainAsciiPrefixEnd(0, 150000);
@@ -707,52 +575,39 @@ void TestTextLayoutCacheVisibleWorkingSetDoesNotEvict() {
   }
   microide::editor::TextLayoutCache cache;
 
-  // A generous visible row count — far above any real editor pane, and still
-  // comfortably under the cache limit.
   constexpr std::size_t kGenerousVisibleRows = 200;
   cache.ResetStats();
   for (std::size_t pass = 0; pass < 3; ++pass) {
     for (std::size_t i = 0; i < kGenerousVisibleRows; ++i) {
-      (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize, /*content_revision=*/0);
+      (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize, 0);
     }
   }
   Expect(cache.stats().visible_line_evictions == 0,
          "a frame-sized visible working set must never evict, or a reference handed to the "
          "renderer could dangle mid-frame");
 
-  // Control: exceed the limit and confirm the counter does move, so the check
-  // above cannot pass vacuously.
   cache.InvalidateAll();
   cache.ResetStats();
   for (std::size_t i = 0; i < lines.size(); ++i) {
-    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize, /*content_revision=*/0);
+    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize, 0);
   }
   Expect(cache.stats().visible_line_evictions > 0,
          "querying more distinct lines than the cache holds must evict — otherwise the "
          "no-eviction assertion above proves nothing");
 }
 
-// Regression: an eviction now RECYCLES the evicted map node — its LayoutLine keeps
-// its text/source_columns/text_offsets buffers and is rebuilt in place — so that
-// scrolling through fresh content stops paying four allocations per row. A reuse
-// that forgot to reset any part of the recycled LayoutLine would serve the
-// previous line's content under the new key, which the caller cannot detect.
-// Every recycled entry must therefore be byte-identical to a freshly built one.
 void TestTextLayoutCacheRecycledEntriesMatchFreshBuilds() {
   std::vector<std::string> lines;
   lines.reserve(600);
   for (std::size_t i = 0; i < 600; ++i) {
-    // Deliberately varied: different lengths, a tab, and a multibyte glyph, so a
-    // stale buffer tail or a stale visual_columns would show up.
     lines.push_back(std::string(i % 37, 'x') + "\tline-" + std::to_string(i) + " \xc3\xa9 end");
   }
   microide::editor::TextLayoutCache cache;
 
-  // Walk far past the cache limit so most of these are served by the recycle path.
   cache.ResetStats();
   for (std::size_t i = 0; i < lines.size(); ++i) {
     const microide::editor::LayoutLine& cached =
-        cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize, /*content_revision=*/0);
+        cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize, 0);
     const microide::editor::LayoutLine fresh =
         microide::editor::TextLayout::BuildVisibleLine(lines[i], 0, 80, kTabSize);
     Expect(cached.text == fresh.text, "a recycled entry must hold the new line's visible text");
@@ -768,11 +623,9 @@ void TestTextLayoutCacheRecycledEntriesMatchFreshBuilds() {
   Expect(cache.stats().visible_line_evictions > 0,
          "the walk must actually evict, or the recycle path was never exercised");
 
-  // Same content at a horizontal scroll: the recycled buffers are longer than the
-  // window here, so a missing clear would leave a stale tail behind.
   for (std::size_t i = 0; i < lines.size(); ++i) {
     const microide::editor::LayoutLine& cached =
-        cache.VisibleLineLayoutRefCached(lines, i, 20, 16, kTabSize, /*content_revision=*/0);
+        cache.VisibleLineLayoutRefCached(lines, i, 20, 16, kTabSize, 0);
     const microide::editor::LayoutLine fresh =
         microide::editor::TextLayout::BuildVisibleLine(lines[i], 20, 16, kTabSize);
     Expect(cached.text == fresh.text, "a recycled entry must not keep a stale text tail");
@@ -781,17 +634,6 @@ void TestTextLayoutCacheRecycledEntriesMatchFreshBuilds() {
   }
 }
 
-// TD-2026-08-12-189: the recency order used to be a FIFO over insertions, so a
-// HIT did not protect an entry from the next miss's eviction. An entry inserted
-// many frames ago sat at the front of the queue no matter how recently it had
-// been read, so a caller holding the reference VisibleLineLayoutRefCached hands
-// out could have that node recycled underneath it — the node stays alive
-// (extract/insert rewrites it in place), so the symptom is a row painted with
-// another row's glyphs, not a crash.
-//
-// Pin the property that distinguishes an LRU from a FIFO: an entry read on every
-// round survives an unbounded number of misses, and the reference stays pointed
-// at its own content.
 void TestTextLayoutCacheHitProtectsEntryFromEviction() {
   std::vector<std::string> lines;
   lines.reserve(1024);
@@ -800,24 +642,20 @@ void TestTextLayoutCacheHitProtectsEntryFromEviction() {
   }
   microide::editor::TextLayoutCache cache;
 
-  // Fill past the limit so every query below takes the eviction path.
   for (std::size_t i = 0; i < 512; ++i) {
-    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize, /*content_revision=*/0);
+    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize, 0);
   }
 
   const microide::editor::LayoutLine& pinned =
-      cache.VisibleLineLayoutRefCached(lines, 0, 0, 80, kTabSize, /*content_revision=*/0);
+      cache.VisibleLineLayoutRefCached(lines, 0, 0, 80, kTabSize, 0);
   const std::string expected = pinned.text;
   Expect(expected.find("line 0 ") == 0, "the pinned entry must hold line 0's own text");
 
   cache.ResetStats();
   for (std::size_t i = 512; i < lines.size(); ++i) {
-    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize, /*content_revision=*/0);
-    // Re-reading line 0 every round is what an LRU is for. Under the old FIFO
-    // this was a miss after the very first eviction, and the node `pinned` refers
-    // to had already been recycled for line 512.
+    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize, 0);
     const microide::editor::LayoutLine& again =
-        cache.VisibleLineLayoutRefCached(lines, 0, 0, 80, kTabSize, /*content_revision=*/0);
+        cache.VisibleLineLayoutRefCached(lines, 0, 0, 80, kTabSize, 0);
     Expect(&again == &pinned, "an entry hit every round must not be evicted or relocated");
     Expect(pinned.text == expected, "a held reference must never observe another row's glyphs");
   }
@@ -827,47 +665,32 @@ void TestTextLayoutCacheHitProtectsEntryFromEviction() {
          "each round's re-read of line 0 must be a hit");
 }
 
-// TD-2026-08-06-143: MaxVisualColumns rebuilt on a tab-size or line-count change
-// but NOT on a content-revision change — and then stamped the new revision onto
-// the table it had just declined to verify. `LineWidthsAreCurrent`, the predicate
-// every reader of the per-line width table goes through, checks all three, so a
-// content edit that kept the line count and did not splice the table left it
-// stale AND marked current: the max came from pre-edit widths, and every later
-// LineFactsIfCurrent caller believed a width for text that was no longer there.
-//
-// No edit path in the tree does that today, which is exactly why this has to be
-// tested at the cache boundary — the defect is that nothing STOPS one, not that
-// one exists. Mutating the lines behind the cache's back is the point.
 void TestTextLayoutCacheStaleContentRevisionRebuildsWidthTable() {
   std::vector<std::string> lines = {"aaaa", "bbbbbbbb", "cc"};
   microide::editor::TextLayoutCache cache;
 
-  Expect(cache.MaxVisualColumns(lines, kTabSize, /*content_revision=*/1) == 8,
+  Expect(cache.MaxVisualColumns(lines, kTabSize, 1) == 8,
          "the first build must measure the widest line");
-  Expect(cache.LineFactsIfCurrent(lines.size(), 1, kTabSize, /*content_revision=*/1)
+  Expect(cache.LineFactsIfCurrent(lines.size(), 1, kTabSize, 1)
                  .visual_columns == 8,
          "the width table must describe the line it was built from");
 
-  // A content change that keeps the line count, with no splice and no
-  // invalidation — i.e. the shape of the path this entry exists to make safe.
   lines[1] = "b";
 
   util::ResetPerformanceCounters();
-  Expect(cache.MaxVisualColumns(lines, kTabSize, /*content_revision=*/2) == 4,
+  Expect(cache.MaxVisualColumns(lines, kTabSize, 2) == 4,
          "a new content revision must not be answered from pre-edit widths");
   Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineWidthRebuildStaleRevision) == 1,
          "the rebuild must be attributed to the stale revision, not silently folded into "
          "another reason — this counter is what makes such a path findable in a perf run");
   Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineWidthTableBuilds) == 1,
          "exactly one build, and its reason counter must sum to it");
-  Expect(cache.LineFactsIfCurrent(lines.size(), 1, kTabSize, /*content_revision=*/2)
+  Expect(cache.LineFactsIfCurrent(lines.size(), 1, kTabSize, 2)
                  .visual_columns == 1,
          "the rebuilt table must describe the post-edit line");
 
-  // Control: the same query at an unchanged revision must NOT rebuild, or the
-  // assertion above would pass for a cache that simply rebuilds every time.
   util::ResetPerformanceCounters();
-  Expect(cache.MaxVisualColumns(lines, kTabSize, /*content_revision=*/2) == 4,
+  Expect(cache.MaxVisualColumns(lines, kTabSize, 2) == 4,
          "an unchanged revision must be served from the memoized maximum");
   Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineWidthTableBuilds) == 0,
          "an unchanged revision must not rebuild the width table");
@@ -878,22 +701,20 @@ void TestTextLayoutCacheInvalidateAllClearsVisibleLineCache() {
   const std::vector<std::string> lines = {"alpha alpha", "bravo bravo", "charlie charlie"};
   microide::editor::TextLayoutCache cache;
 
-  // Warm the visible-line LRU.
   for (std::size_t i = 0; i < lines.size(); ++i) {
-    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize, /*content_revision=*/0);
+    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize, 0);
   }
   cache.ResetStats();
   for (std::size_t i = 0; i < lines.size(); ++i) {
-    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize, /*content_revision=*/0);
+    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize, 0);
   }
   Expect(cache.stats().visible_line_hits == lines.size(),
          "the warmed visible-line cache should serve every repeat query from cache");
 
-  // After InvalidateAll every one of those keys must miss again.
   cache.InvalidateAll();
   cache.ResetStats();
   for (std::size_t i = 0; i < lines.size(); ++i) {
-    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize, /*content_revision=*/0);
+    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize, 0);
   }
   Expect(cache.stats().visible_line_queries == lines.size(),
          "every line should be queried again after InvalidateAll");
@@ -901,26 +722,16 @@ void TestTextLayoutCacheInvalidateAllClearsVisibleLineCache() {
          "InvalidateAll must clear the visible-line cache — it documents wiping EVERY cache, "
          "and the viewport copy/move constructors depend on that");
 
-  // ClearVisibleLineAndMaxColumns keeps doing the same thing on its own.
   for (std::size_t i = 0; i < lines.size(); ++i) {
-    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize, /*content_revision=*/0);
+    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize, 0);
   }
   cache.ClearVisibleLineAndMaxColumns();
   cache.ResetStats();
-  (void)cache.VisibleLineLayoutRefCached(lines, 0, 0, 40, kTabSize, /*content_revision=*/0);
+  (void)cache.VisibleLineLayoutRefCached(lines, 0, 0, 40, kTabSize, 0);
   Expect(cache.stats().visible_line_hits == 0,
          "ClearVisibleLineAndMaxColumns must still clear the visible-line cache");
 }
 
-// ClampTextColumn rounds a byte offset down to the start of the code point that
-// contains it. It used to answer that by re-tiling the line from byte 0, one
-// UTF-8 sequence at a time -- an O(1) question at O(column) cost, run four times
-// per keystroke on the edit path (TD-2026-08-05-131). It now steps back over
-// continuation bytes instead, which is exact because UTF-8 is self-synchronizing.
-//
-// Differential: for WELL-FORMED UTF-8 the backward step must agree with the
-// forward tiling at every offset of every line. That is the whole claim, so test
-// it exhaustively rather than on a hand-picked row list.
 void TestClampTextColumnMatchesForwardTiling() {
   const auto forward_tiling = [](std::string_view line, std::size_t text_column) {
     const std::size_t clamped = std::min(text_column, line.size());
@@ -938,8 +749,6 @@ void TestClampTextColumnMatchesForwardTiling() {
     return current;
   };
 
-  // One representative of each UTF-8 sequence length, plus a tab and plain ASCII,
-  // so every continuation-byte run length (0..3) appears at every alignment.
   const std::string units[] = {"a", "\t", "\xC3\xA9", "\xE4\xB8\xAD", "\xF0\x9F\x98\x80"};
   std::vector<std::string> lines = {"", "a", "\xF0\x9F\x98\x80"};
   for (const std::string& first : units) {
@@ -961,8 +770,6 @@ void TestClampTextColumnMatchesForwardTiling() {
       Expect(clamped == line.size() ||
                  (static_cast<unsigned char>(line[clamped]) & 0xC0u) != 0x80u,
              "ClampTextColumn must land on a lead byte, never inside a code point");
-      // The neighbours the caret actually steps to must stay inside the line and
-      // on boundaries too.
       const std::size_t previous = TextLayout::PreviousTextColumn(line, column);
       const std::size_t next = TextLayout::NextTextColumn(line, column);
       Expect(previous <= clamped && next >= clamped && next <= line.size(),
@@ -971,15 +778,12 @@ void TestClampTextColumnMatchesForwardTiling() {
   }
 }
 
-// Malformed bytes must still produce a usable clamp: inside the line, never past
-// what was asked, and bounded -- a run of stray continuation bytes must not walk
-// backwards forever.
 void TestClampTextColumnBoundsMalformedSequences() {
   const std::string malformed[] = {
-      std::string("\x80\x80\x80\x80\x80\x80", 6),   // continuation bytes with no lead
-      std::string("a\xC3", 2),                       // truncated 2-byte sequence
-      std::string("\xF0\x9F\x98", 3),                // truncated 4-byte sequence
-      std::string("\xFF\xFE" "ab", 4),               // invalid lead bytes
+      std::string("\x80\x80\x80\x80\x80\x80", 6),
+      std::string("a\xC3", 2),
+      std::string("\xF0\x9F\x98", 3),
+      std::string("\xFF\xFE" "ab", 4),
   };
   for (const std::string& line : malformed) {
     for (std::size_t column = 0; column <= line.size() + 2; ++column) {
@@ -993,13 +797,6 @@ void TestClampTextColumnBoundsMalformedSequences() {
   }
 }
 
-// Soak 5a2cb8ba7f6b: on a line of every byte value the status bar said Col 117
-// with the caret after 117 bytes. The forward tiling (Utf8SequenceLength) takes a
-// byte no lead claims as a one-byte unit, so the caret steps onto the boundary
-// between \x7F and a stray \x80; the backward re-sync stepped over ANY
-// continuation byte and put that boundary one byte earlier -- so the visual
-// column, and a backspace there, disagreed with where the caret stood. On ANY
-// bytes, malformed included, the backward answers must equal the forward tiling.
 void TestColumnStepsAgreeWithForwardTilingOnAnyBytes() {
   const auto tiling = [](std::string_view line) {
     std::vector<std::size_t> starts;
@@ -1051,10 +848,6 @@ void TestColumnStepsAgreeWithForwardTilingOnAnyBytes() {
          "the caret between \\x7F and a stray \\x80 is one column in");
 }
 
-// The facts carry a tab-indented line's shape (leading tabs, then plain ASCII)
-// so column conversions and the box mapping are arithmetic on such lines and the
-// table build does not walk them byte by byte. Checked against the walk on
-// random lines, packed through the width table's entry and back.
 void TestMeasureLineFactsRecordsTabIndentation() {
   std::uint64_t state = 0x1234567887654321ULL;
   const auto next = [&](std::size_t bound) {
@@ -1089,10 +882,9 @@ void TestMeasureLineFactsRecordsTabIndentation() {
            "tab-indented means leading tabs then plain ASCII only");
     Expect(facts.plain_ascii == (run == 0 && plain_after),
            "plain ASCII means no tab and no multi-byte character anywhere");
-    // Through the width table's packed entry: a run over 255 tabs forgoes the flag.
     microide::editor::TextLayoutCache cache;
     std::vector<std::string> lines = {line};
-    (void)cache.MaxVisualColumns(lines, tab_size, /*content_revision=*/1);
+    (void)cache.MaxVisualColumns(lines, tab_size, 1);
     const LineLayoutFacts packed = cache.LineFactsIfCurrent(1, 0, tab_size, 1);
     Expect(packed.known && packed.visual_columns == width && packed.plain_ascii == facts.plain_ascii,
            "the packed entry keeps the width and the plain flag");
@@ -1147,4 +939,4 @@ void RegisterTextLayoutTests(std::vector<TestCase>& tests) {
           TestResolveVisualColumnMatchesTextLayout);
 }
 
-}  // namespace microide::tests
+}

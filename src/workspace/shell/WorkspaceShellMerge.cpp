@@ -19,7 +19,7 @@ namespace microide::workspace {
 namespace {
 
 constexpr float kMergeToolbarRowGap = 6.0f;
-}  // namespace
+}
 
 bool WorkspaceShell::ActiveTabIsMerge() const {
   return ActiveMergeTab() != nullptr;
@@ -50,11 +50,6 @@ workspace::MergeToolbarLayout WorkspaceShell::ComputeMergeToolbarLayout(const SD
       open_rect.x - kMergeToolbarButtonGap - make_button_rect(0.0f, "Next").w, "Next");
   const SDL_FRect prev_rect = make_button_rect(
       next_rect.x - kMergeToolbarButtonGap - make_button_rect(0.0f, "Prev").w, "Prev");
-  // Laid right to left, so a pane narrower than the row pushed the leading
-  // buttons left of it, over the sidebar (soak 780af9fe3d1d); and below the
-  // pane's top whatever its height, so a pane shorter than the row ran it over
-  // the bottom panel's tabs (soak 000c9b180769). A button with no room is not
-  // laid out: an empty rect is neither drawn nor hit.
   const float min_x = rect.x + kMergeToolbarEdgeInset;
   const float max_bottom = rect.y + rect.h;
   const auto fitted = [min_x, max_bottom](const SDL_FRect& button) {
@@ -73,9 +68,6 @@ std::optional<SDL_FRect> WorkspaceShell::ComputeMergeSecondaryToolbarButtonRect(
     const MergeSurfaceLayout& surface,
     std::string_view label) const {
   const float width = ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth(label));
-  // The same bounds as the first row: a button with no room is not laid out,
-  // and neither is any button left of it. In a pane shorter than both rows the
-  // second ran over the bottom panel's tabs (soak 598f8491c248, 075ba8eec673).
   const float min_x = rect.x + kMergeToolbarEdgeInset;
   const float max_bottom = rect.y + rect.h;
   const auto fitted = [&](float x) -> std::optional<SDL_FRect> {
@@ -126,11 +118,6 @@ workspace::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(const SD
     layout.button_y = rect.y + 6.0f;
     layout.secondary_button_y =
         layout.button_y + kMergeToolbarButtonHeight + kMergeToolbarRowGap;
-    // The base band (Toggle Base) sits between the toolbar and the pane headers:
-    // reserved here, so the headers and rows move down under it. Painted upward
-    // from the headers instead, it covered the toolbar and the status line and its
-    // title ran over the breadcrumb (QA merge-toolbar). The render reads the band
-    // back as [below the toolbar, header_y).
     const float base_band_height =
         merge_tab.base_pane_visible && !merge_tab.model.base_lines.empty()
             ? layout.line_height *
@@ -151,13 +138,6 @@ workspace::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(const SD
                                       : 0.0f;
     const float char_width = std::max(1.0f, editor_text_renderer_.CharWidth());
     const float min_pane_width = 8.0f + char_width;
-    // Everything fits in `rect`, however narrow the pane: the gutters give way
-    // first, then the three text panes split what is left. The content width was
-    // floored at three minimum panes whatever the pane held, and a merge in a
-    // narrow split ran its dividers past the pane and the window (soak
-    // 82935dcbd8bc; the compare's twin, 33efed186772).
-    // In a pane narrower than the dividers and their margins (a nested split's
-    // sliver), the margins give way too, then the dividers.
     layout.divider_width = std::min(layout.divider_width, std::max(1.0f, (rect.w - reserved_width) * 0.5f));
     const float margin =
         std::clamp((rect.w - reserved_width - layout.divider_width * 2.0f) * 0.5f, 0.0f, 8.0f);
@@ -165,15 +145,9 @@ workspace::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(const SD
     const float fixed_width = reserved_width + layout.divider_width * 2.0f + margin * 2.0f;
     layout.gutter_width = std::min(layout.gutter_width, std::max(0.0f, (rect.w - fixed_width) / 3.0f));
     const float content_width = std::max(0.0f, rect.w - fixed_width - layout.gutter_width * 3.0f);
-    // Each pane keeps its minimum while all three fit; below that they share evenly.
     const float min_fraction = content_width >= min_pane_width * 3.0f
                                    ? min_pane_width / content_width
                                    : 1.0f / 3.0f;
-    // Each bound pair is ordered explicitly: at the degenerate width where
-    // min_fraction saturates to 1/3, `1 - min_fraction * 2` computes one float
-    // ulp BELOW min_fraction (1/3 is not representable), and std::clamp with an
-    // inverted range is UB — caught as a real abort by the _GLIBCXX_ASSERTIONS
-    // sweep at exactly the window sizes the degenerate-size render test drives.
     const float left_hi = std::max(min_fraction, 1.0f - min_fraction * 2.0f);
     const float left_fraction =
         std::clamp(merge_tab.left_divider_fraction, min_fraction, left_hi);
@@ -203,17 +177,13 @@ workspace::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(const SD
     return layout;
   };
 
-  // Same convergence problem as the compare surface: with wrap on the row count
-  // depends on the pane width, which depends on the scrollbar, which depends on
-  // the row count. Reserve the vertical strip unconditionally, drop horizontal
-  // scroll, and answer in one measure().
   if (merge_tab.result_viewport.soft_wrap()) {
     const MergeSurfaceLayout layout =
-        measure(/*reserve_vertical=*/true, /*reserve_horizontal=*/false);
-    EnsureMergeWrapLayout(merge_tab, /*soft_wrap=*/true, layout.visible_columns);
+        measure(true, false);
+    EnsureMergeWrapLayout(merge_tab, true, layout.visible_columns);
     return layout;
   }
-  EnsureMergeWrapLayout(merge_tab, /*soft_wrap=*/false, 0);
+  EnsureMergeWrapLayout(merge_tab, false, 0);
 
   bool show_vertical = false;
   bool show_horizontal = false;
@@ -240,10 +210,6 @@ TextGridInteractionLayout WorkspaceShell::BuildMergeSourceInteractionLayout(
     bool incoming) const {
   const float pane_x = incoming ? surface.left_x : surface.right_x;
   const float pane_width = incoming ? surface.left_width : surface.right_width;
-  // On-screen rows, not document lines: `scroll_line` below is one, and the hit
-  // tests built on this layout resolve into the projected (row-space) conflicts.
-  // Under wrap the two source panes share a padded row budget, so they share this
-  // count; without it each pane still bounds hit-testing by its own length.
   const std::size_t line_count =
       merge_tab.wrap_layout.active()
           ? MergeSourceVisualRowCount(merge_tab)
@@ -263,7 +229,6 @@ workspace::MergeResultInteractionLayout WorkspaceShell::BuildMergeResultInteract
   const SDL_FRect result_rect = ComputeMergeResultViewportRect(
       rect, surface.center_x, surface.rows_y, surface.gutter_width, surface.center_width,
       surface.show_horizontal);
-  // The merge result pane has no sticky band (it pins no headers).
   const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
       editor_text_renderer_, merge_tab.result_viewport, result_rect, editor::kNoStickyBand,
       LineNumbersEnabled());
@@ -294,17 +259,9 @@ workspace::MergeInteractionLayout WorkspaceShell::BuildMergeInteractionLayout(co
                                        kWorkspaceScrollbarInset)
                                     : 0.0f;
   MergeResultInteractionLayout result = BuildMergeResultInteractionLayout(rect, surface, merge_tab);
-  // The layout builder is const now, because the cursor path asks for the same
-  // layout from a const tab and was maintaining its own copy of it rather than
-  // const_casting -- which is how that copy came to disagree with this one about
-  // the grid's row total. The one side effect it used to carry stays here, at the
-  // caller that owns a mutable tab.
   const std::size_t scroll_before_sizing = merge_tab.result_viewport.scroll_line();
   merge_tab.result_viewport.SetViewportSize(result.metrics.visible_rows,
                                             result.metrics.visible_columns);
-  // Sizing re-clamps the scroll to the pane's rows: the layout read the scroll
-  // before, and placed the conflict boxes a row off the text the paint draws at
-  // the clamped one (soak 4c6d45903600, the CI half of it).
   if (merge_tab.result_viewport.scroll_line() != scroll_before_sizing) {
     result = BuildMergeResultInteractionLayout(rect, surface, merge_tab);
   }
@@ -380,11 +337,6 @@ SDL_FRect WorkspaceShell::BuildMergeSourceActionButtonRect(
     const MergeInteractionLayout& interaction,
     const MergeTrackedConflict& conflict,
     bool incoming) const {
-  // Source panes render from the merge tab's own scroll_row (see RenderMergeSurface),
-  // which can exceed the result viewport's clamped scroll_line when a source pane has
-  // more rows than the result. Anchoring the source accept button to the result scroll
-  // would drift it off its rendered source row, so use the source scroll here. Fall
-  // back to the result scroll only if the active merge tab is unexpectedly absent.
   const MergeTabState* merge_tab = const_cast<WorkspaceShell*>(this)->ActiveMergeTab();
   const int source_scroll_row =
       merge_tab != nullptr ? std::max(0, merge_tab->scroll_row)
@@ -392,8 +344,6 @@ SDL_FRect WorkspaceShell::BuildMergeSourceActionButtonRect(
   return ComputeMergeSourceActionButtonRect(
       incoming ? surface.left_x : surface.right_x, surface.gutter_width, surface.rows_y,
       surface.line_height, source_scroll_row,
-      // `conflict` is already in on-screen row space at every caller (the render
-      // TU and the hover classifier both project it), so this end is a row.
       incoming ? conflict.incoming_end_line : conflict.current_end_line, interaction.content_bottom,
       incoming ? interaction.incoming_accept_button_width : interaction.current_accept_button_width,
       kMergeToolbarButtonHeight,
@@ -472,4 +422,4 @@ void WorkspaceShell::RevealActiveMergeSelection() {
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
 }
 
-}  // namespace microide::workspace
+}

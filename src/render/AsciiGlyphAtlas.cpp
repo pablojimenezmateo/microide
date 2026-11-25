@@ -12,7 +12,7 @@ namespace microide::render {
 
 namespace {
 constexpr SDL_Color kWhite{255, 255, 255, 255};
-}  // namespace
+}
 
 std::unique_ptr<AsciiGlyphAtlas> AsciiGlyphAtlas::Build(TTF_Font* font,
                                                         SDL_PixelFormat surface_format) {
@@ -22,9 +22,6 @@ std::unique_ptr<AsciiGlyphAtlas> AsciiGlyphAtlas::Build(TTF_Font* font,
 
   const int font_height = std::max(1, TTF_GetFontHeight(font));
 
-  // Measure (without rasterizing) the widest printable glyph so every slot can
-  // reserve a uniform cell that any glyph fits into. Lazy fill then rasterizes
-  // individual glyphs into their slot on first use.
   int max_glyph_width = 1;
   for (std::size_t i = 0; i < kSlotCount; ++i) {
     const char ch = static_cast<char>(kFirstChar + i);
@@ -34,24 +31,17 @@ std::unique_ptr<AsciiGlyphAtlas> AsciiGlyphAtlas::Build(TTF_Font* font,
       max_glyph_width = std::max(max_glyph_width, w);
     }
   }
-  // A little headroom: rendered widths can exceed the measured extent by a pixel
-  // for glyphs with horizontal overhang.
   const int reserved = max_glyph_width + 2;
 
   auto atlas = std::unique_ptr<AsciiGlyphAtlas>(new AsciiGlyphAtlas());
   atlas->font_ = font;
   atlas->font_height_px_ = font_height;
   atlas->reserved_slot_width_ = reserved;
-  // Every slot holds one glyph's coverage, and coverage IS the alpha channel --
-  // an alpha-less surface silently turns each glyph into an opaque rectangle.
-  // The caller already picks an alpha-capable format; enforce it here too,
-  // because this class is the one that cannot function without it.
   atlas->atlas_ = SDL_CreateSurface(static_cast<int>(kSlotCount) * reserved, font_height,
                                     EnsureAlphaCapableFormat(surface_format));
   if (atlas->atlas_ == nullptr) {
     return nullptr;
   }
-  // Fully transparent; lazy glyph blits supply coverage as glyphs are first used.
   SDL_FillSurfaceRect(atlas->atlas_, nullptr, 0);
 
   for (std::size_t i = 0; i < kSlotCount; ++i) {
@@ -88,17 +78,9 @@ bool AsciiGlyphAtlas::EnsureSlotFilled(std::size_t index, char ch) {
     return false;
   }
 
-  // Straight-copy the white coverage into the reserved slot so per-pixel alpha
-  // is preserved exactly (default blending would mix coverage with the zero
-  // destination alpha and thin the glyph).
   SDL_SetSurfaceBlendMode(glyph, SDL_BLENDMODE_NONE);
   const int w = std::min(glyph->w, reserved_slot_width_);
   const int h = std::min(glyph->h, font_height_px_);
-  // Clip on the SOURCE rect. SDL_BlitSurface ignores dstrect's width/height (it
-  // takes the size from the source), so passing a null srcrect made the clamps
-  // above dead code: a rendered glyph wider than the measured advance + 2 px of
-  // headroom — real for italic or overhanging glyphs — blitted straight over the
-  // start of the NEXT slot, corrupting that character in the atlas.
   SDL_Rect src{0, 0, w, h};
   SDL_Rect dst{slot.x, 0, w, h};
   const bool blitted = SDL_BlitSurface(glyph, &src, atlas_, &dst);
@@ -169,9 +151,6 @@ bool AsciiGlyphAtlas::BlitInto(SDL_Surface* dst, int dst_x, char ch, SDL_Color c
     return true;
   }
 
-  // Modulate the white coverage by the requested colour and straight-copy it.
-  // For opaque colours this yields (color.rgb, coverage) — identical to
-  // rendering the glyph directly at `color`, since 255 * c / 255 == c.
   SDL_SetSurfaceColorMod(atlas_, color.r, color.g, color.b);
   SDL_SetSurfaceAlphaMod(atlas_, 255);
   SDL_SetSurfaceBlendMode(atlas_, SDL_BLENDMODE_NONE);
@@ -181,6 +160,6 @@ bool AsciiGlyphAtlas::BlitInto(SDL_Surface* dst, int dst_x, char ch, SDL_Color c
   return SDL_BlitSurface(atlas_, &src, dst, &dst_rect);
 }
 
-}  // namespace microide::render
+}
 
-#endif  // MICROIDE_HAS_SDL3_TTF
+#endif

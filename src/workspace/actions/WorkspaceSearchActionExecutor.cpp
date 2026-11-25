@@ -38,10 +38,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       return DispatchResult::Handled;
     case ActionId::TerminalFocusPaneLeft:
     case ActionId::TerminalFocusPaneRight:
-      // Declined SILENTLY (empty feedback) from the Alt+Left/Right shortcut when
-      // there is no pane that way: the key then falls through to the shell, so a
-      // single-pane terminal keeps the chord for its own programs. Asked for by
-      // name, the answer says why ("command failed" said nothing).
       if (!context_.terminal_panel().FocusPaneInDirection(
               id == ActionId::TerminalFocusPaneLeft ? -1 : 1)) {
         if (source == ActionSource::Shortcut) {
@@ -67,7 +63,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
            context_.ActiveProjectIndex() != target->project)) {
         return reject("The project with the waiting terminal could not be brought forward");
       }
-      // Showing the tab is what clears its mark (NoteActiveTabShown).
       return context_.terminal_panel().ActivateTerminalTab(target->tab) ? DispatchResult::Handled
                                                                          : reject("No terminal");
     }
@@ -107,10 +102,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       }
       return DispatchResult::Handled;
     case ActionId::Files: {
-      // Go to File, its field seeded with the arguments (Ctrl+P and typing). It
-      // used to read its argument as a project root and OPEN it, a second project
-      // tab as the side effect of a finder (TD-2026-10-20-370); `project-open` is
-      // that verb, and `find [query]`, which did this, is folded in here.
       if (source == ActionSource::Shortcut && context_.OverlayVisible()) {
         context_.DismissOverlay();
         return DispatchResult::Handled;
@@ -130,9 +121,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
-      // VS Code seeds Find in Files with the editor's selection (one line of it).
-      // Without a query on the command line it is the search box's key: the
-      // keyboard goes into the query field, whatever was searched last.
       std::string query = JoinCommandArguments(args, 0);
       const bool focus_query = query.empty();
       if (query.empty()) {
@@ -217,7 +205,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       return DispatchResult::Handled;
     }
     case ActionId::CompareFiles: {
-      // Works with no project open — arbitrary/outside-project paths allowed.
       const std::optional<CompareFilesRequest> request = BuildCompareFilesRequest(
           args, context_.HasProjectRoot() ? context_.ProjectRoot() : std::filesystem::path{});
       if (!request.has_value()) {
@@ -318,4 +305,4 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
   }
 }
 
-}  // namespace microide::workspace
+}

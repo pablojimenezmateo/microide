@@ -62,8 +62,6 @@ void TestToCommandsResolvesAndConverts() {
   })");
   Expect(spec.valid, "spec should parse");
   const std::vector<std::string> commands = ControlSpecToCommands(spec, "/home/u/proj");
-  // Relative path resolved against the project root; line stays 1-based for the
-  // command (the executor converts to 0-based).
   Expect(ContainsCommand(commands, "breakpoint-set /home/u/proj/src/main.cpp 42"),
          "breakpoint-set should carry the resolved path and 1-based line");
   Expect(ContainsCommand(commands, "breakpoint-condition /home/u/proj/src/main.cpp 42 'x > 10'"),
@@ -72,7 +70,6 @@ void TestToCommandsResolvesAndConverts() {
          "logmessage should be emitted");
   Expect(ContainsCommand(commands, "breakpoint-disable /home/u/proj/src/log.cpp 5"),
          "disabled breakpoint should emit a disable command");
-  // With no explicit open list, the first breakpoint file is revealed at its line.
   Expect(ContainsCommand(commands, "open /home/u/proj/src/main.cpp"),
          "first breakpoint file should be opened");
   Expect(ContainsCommand(commands, "goto 42"), "first breakpoint line should be revealed");
@@ -139,22 +136,16 @@ void TestParseSettingsRejectsBadShape() {
          "non-string settings value should be rejected");
   Expect(!ParseControlSpec(R"({"settings": "nope"})").valid,
          "scalar settings should be rejected");
-  // Parity with the array form's empty-id guard: an empty object key is rejected
-  // rather than flowing downstream as a silently-ignored ("", value) override.
   Expect(!ParseControlSpec(R"({"settings": {"": "true"}})").valid,
          "empty object-form setting id should be rejected");
   Expect(!ParseControlSpec(R"({"settings": [["", "true"]]})").valid,
          "empty array-form setting id should be rejected");
 }
 
-// A cold-start spec must not enqueue an unbounded startup workload: each section is
-// capped at kMaxControlSpecSectionEntries and exceeding it is a hard parse error.
-// TD-2026-07-17A-038.
 void TestParseRejectsOversizedSections() {
   using microide::workspace::kMaxControlSpecSectionEntries;
   const std::size_t over = kMaxControlSpecSectionEntries + 1;
 
-  // Oversized "commands" section.
   std::string commands = R"({"commands": [)";
   for (std::size_t i = 0; i < over; ++i) {
     commands += (i ? ",\"noop\"" : "\"noop\"");
@@ -164,7 +155,6 @@ void TestParseRejectsOversizedSections() {
   Expect(!commands_spec.valid && commands_spec.parse_error.find("commands") != std::string::npos,
          "an over-cap commands section is rejected");
 
-  // Oversized "breakpoints" section.
   std::string bps = R"({"breakpoints": [)";
   for (std::size_t i = 0; i < over; ++i) {
     bps += (i ? "," : "");
@@ -175,7 +165,6 @@ void TestParseRejectsOversizedSections() {
   Expect(!bps_spec.valid && bps_spec.parse_error.find("breakpoints") != std::string::npos,
          "an over-cap breakpoints section is rejected");
 
-  // A section right at the cap still parses.
   std::string at_cap = R"({"open": [)";
   for (std::size_t i = 0; i < kMaxControlSpecSectionEntries; ++i) {
     at_cap += (i ? ",\"f\"" : "\"f\"");
@@ -184,7 +173,7 @@ void TestParseRejectsOversizedSections() {
   Expect(ParseControlSpec(at_cap).valid, "a section exactly at the cap still parses");
 }
 
-}  // namespace
+}
 
 void RegisterControlSpecTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlSpec/ParseRejectsOversizedSections", TestParseRejectsOversizedSections);
@@ -199,4 +188,4 @@ void RegisterControlSpecTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlSpec/ParseSettingsRejectsBadShape", TestParseSettingsRejectsBadShape);
 }
 
-}  // namespace microide::tests
+}

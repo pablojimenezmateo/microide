@@ -17,8 +17,6 @@ using microide::editor::SelectionRange;
 using microide::editor::TextPosition;
 using microide::editor::VerifiedBreakpoint;
 
-// Build an AppliedEdit that replaced [start_line,start_col .. end_line,end_col)
-// with `replacement`.
 AppliedEdit MakeEdit(std::size_t start_line, std::size_t start_col, std::size_t end_line,
                      std::size_t end_col, std::string replacement) {
   return AppliedEdit{SelectionRange{TextPosition{start_line, start_col},
@@ -93,20 +91,12 @@ void TestBreakpointStoreApplyVerificationByIndex() {
   Expect(!(*store.FindByPath(path))[0].verified, "ResetVerification should clear verified flags");
 }
 
-// The verification race fix: a setBreakpoints response is positional to the
-// REQUEST, so the caller passes each result's requested line. Matching by that
-// line (not by current-store index) means a stale response — sent before the user
-// toggled another breakpoint in the same file — still lands on the right lines.
 void TestBreakpointStoreApplyVerificationMatchesByLineNotIndex() {
   BreakpointStore store;
   const std::filesystem::path path = "/tmp/project/main.py";
-  // Current store: 0-based lines 20 and 30 (the user removed line 10 a moment ago).
   store.Toggle(path, 20);
   store.Toggle(path, 30);
 
-  // A stale response for the OLD [10,20,30] request (1-based lines 11,21,31). The
-  // first result is for the now-removed line; index-matching would have shifted it
-  // onto line 20.
   store.ApplyVerification(
       path, {
                 VerifiedBreakpoint{.id = 1, .verified = false, .line = 11, .message = "gone"},
@@ -114,7 +104,7 @@ void TestBreakpointStoreApplyVerificationMatchesByLineNotIndex() {
                 VerifiedBreakpoint{.id = 3, .verified = true, .line = 31},
             });
 
-  const auto* bps = store.FindByPath(path);  // sorted ascending: [20, 30]
+  const auto* bps = store.FindByPath(path);
   Expect(bps != nullptr && bps->size() == 2, "two breakpoints expected");
   Expect((*bps)[0].line == 20 && (*bps)[0].verified && (*bps)[0].adapter_id == 2,
          "line 20 should match by requested line (id 2), not by index");
@@ -124,23 +114,20 @@ void TestBreakpointStoreApplyVerificationMatchesByLineNotIndex() {
          "line 30 should match by requested line (id 3)");
 }
 
-// Verification against a large sorted breakpoint set must land each result on the
-// breakpoint at its requested line (the binary search replaces the O(n) scan).
 void TestBreakpointStoreApplyVerificationManyLines() {
   BreakpointStore store;
   const std::filesystem::path path = "/tmp/project/big.py";
   constexpr std::size_t kCount = 4000;
   for (std::size_t i = 0; i < kCount; ++i) {
-    store.Toggle(path, i * 2);  // even 0-based lines 0,2,4,...
+    store.Toggle(path, i * 2);
   }
-  // Verify a scattered subset. VerifiedBreakpoint.line is the 1-based requested line.
   store.ApplyVerification(
       path, {
-                VerifiedBreakpoint{.id = 1, .verified = true, .line = 1},        // 0-based 0
-                VerifiedBreakpoint{.id = 2, .verified = true, .line = 4001},     // 0-based 4000
+                VerifiedBreakpoint{.id = 1, .verified = true, .line = 1},
+                VerifiedBreakpoint{.id = 2, .verified = true, .line = 4001},
                 VerifiedBreakpoint{.id = 3, .verified = false, .line = 7999,
-                                   .message = "no code"},                        // 0-based 7998
-                VerifiedBreakpoint{.id = 4, .verified = true, .line = 5000},     // 0-based 4999: odd, absent
+                                   .message = "no code"},
+                VerifiedBreakpoint{.id = 4, .verified = true, .line = 5000},
             });
   const auto* bps = store.FindByPath(path);
   Expect(bps != nullptr && bps->size() == kCount, "all breakpoints retained");
@@ -156,28 +143,23 @@ void TestBreakpointStoreApplyVerificationManyLines() {
   Expect(find(4000)->verified && find(4000)->adapter_id == 2, "line 4000 verifies by requested line");
   Expect(!find(7998)->verified && find(7998)->verify_message == "no code",
          "line 7998 reflects its rejection");
-  // The odd requested line 4999 has no breakpoint; it must not clobber a neighbour.
   Expect(find(4998)->adapter_id == 0 && find(5000)->adapter_id == 0,
          "an absent requested line does not bleed onto neighbours");
 }
 
-// The async DAP `breakpoint` event updates verification after the initial
-// response: matched by the adapter id assigned at setBreakpoints time.
 void TestBreakpointStoreApplyBreakpointEvent() {
   BreakpointStore store;
   const std::filesystem::path path = "/tmp/project/main.py";
-  store.Toggle(path, 20);  // 0-based line 20 → 1-based 21
+  store.Toggle(path, 20);
   store.ApplyVerification(path, {VerifiedBreakpoint{.id = 7, .verified = false, .line = 21,
                                                     .message = "pending bind"}});
   Expect(!(*store.FindByPath(path))[0].verified, "starts unverified");
 
-  // The adapter later binds the breakpoint and emits a `breakpoint` event (id 7).
   store.ApplyBreakpointEvent(path, VerifiedBreakpoint{.id = 7, .verified = true, .line = 21});
   const auto* bps = store.FindByPath(path);
   Expect(bps != nullptr && (*bps)[0].verified && (*bps)[0].verify_message.empty(),
          "the breakpoint event should flip the breakpoint to verified");
 
-  // With no source path on the event, the id still locates it across files.
   store.ApplyBreakpointEvent({}, VerifiedBreakpoint{.id = 7, .verified = false, .line = 21,
                                                     .message = "invalidated"});
   Expect(!(*store.FindByPath(path))[0].verified &&
@@ -185,19 +167,13 @@ void TestBreakpointStoreApplyBreakpointEvent() {
          "a path-less event should match by adapter id across all files");
 }
 
-// Regression: a `breakpoint` event whose id belongs to a *function* breakpoint
-// (gdb resolves `break foo` to a concrete source line and emits an event carrying
-// that line) must not clobber a line breakpoint that happens to sit at the same
-// resolved line. The line fallback only binds still-unbound breakpoints.
 void TestBreakpointStoreEventForeignIdDoesNotClobberBoundBreakpoint() {
   BreakpointStore store;
   const std::filesystem::path path = "/tmp/project/main.cpp";
-  store.Toggle(path, 9);  // 0-based line 9 → 1-based 10
-  // Bind it to adapter id 5 (as setBreakpoints would).
+  store.Toggle(path, 9);
   store.ApplyVerification(path, {VerifiedBreakpoint{.id = 5, .verified = true, .line = 10}});
   Expect((*store.FindByPath(path))[0].adapter_id == 5, "line breakpoint is bound to id 5");
 
-  // A function breakpoint (id 99) resolves to the same line and emits an event.
   store.ApplyBreakpointEvent(
       path, VerifiedBreakpoint{.id = 99, .verified = false, .line = 10, .message = "func bp"});
 
@@ -208,8 +184,7 @@ void TestBreakpointStoreEventForeignIdDoesNotClobberBoundBreakpoint() {
   Expect((*bps)[0].verified && (*bps)[0].verify_message.empty(),
          "a foreign-id event must not overwrite the bound breakpoint's verify state");
 
-  // But an event carrying the still-unbound breakpoint's real id still binds it.
-  store.Toggle(path, 20);  // a fresh, unbound breakpoint at 1-based line 21
+  store.Toggle(path, 20);
   store.ApplyBreakpointEvent(path,
                              VerifiedBreakpoint{.id = 42, .verified = true, .line = 21});
   const auto* after = store.FindByPath(path);
@@ -260,8 +235,6 @@ void TestBreakpointStoreModifierSetters() {
   BreakpointStore store;
   const std::filesystem::path path = "/tmp/project/mod.py";
 
-  // Setting a modifier on a bare line materializes the breakpoint (so the
-  // context menu's "Set Condition…" doubles as "Add Conditional Breakpoint").
   store.SetCondition(path, 12, "i > 5");
   Expect(store.HasBreakpoint(path, 12), "setting a condition creates the breakpoint");
   const auto* bps = store.FindByPath(path);
@@ -275,8 +248,6 @@ void TestBreakpointStoreModifierSetters() {
              (*after)[0].log_message == std::optional<std::string>("value={x}"),
          "hit condition + log message are stored");
 
-  // A nullopt clears the field (an empty prompt commit / "Clear Condition"). The
-  // MATLAB-style menu clears only the condition; hit-count + log message persist.
   const std::uint64_t before_clear = store.revision();
   store.SetCondition(path, 12, std::nullopt);
   const auto* cleared = store.FindByPath(path);
@@ -286,7 +257,6 @@ void TestBreakpointStoreModifierSetters() {
          "clearing the condition keeps the hit-count and log-message modifiers");
   Expect(store.revision() != before_clear, "clearing a modifier bumps the revision");
 
-  // A no-op assignment does not bump the revision.
   const std::uint64_t before_noop = store.revision();
   store.SetHitCondition(path, 12, ">10");
   Expect(store.revision() == before_noop, "an unchanged modifier does not bump the revision");
@@ -296,7 +266,6 @@ void TestBreakpointStoreShiftInsertLineAboveMovesDown() {
   BreakpointStore store;
   const std::filesystem::path path = "/tmp/project/main.py";
   store.Toggle(path, 10);
-  // Insert a blank line at line 2 (a newline before line 2's content).
   Expect(store.ShiftForAppliedEdit(path, MakeEdit(2, 0, 2, 0, "\n")),
          "inserting a line above a breakpoint should shift it");
   Expect(store.HasBreakpoint(path, 11) && !store.HasBreakpoint(path, 10),
@@ -307,7 +276,6 @@ void TestBreakpointStoreShiftDeleteLineAboveMovesUp() {
   BreakpointStore store;
   const std::filesystem::path path = "/tmp/project/main.py";
   store.Toggle(path, 10);
-  // Delete line 2 entirely: replace [2,0 .. 3,0) with nothing.
   Expect(store.ShiftForAppliedEdit(path, MakeEdit(2, 0, 3, 0, "")),
          "deleting a line above a breakpoint should shift it");
   Expect(store.HasBreakpoint(path, 9) && !store.HasBreakpoint(path, 10),
@@ -327,7 +295,6 @@ void TestBreakpointStoreShiftInlineEditIsNoop() {
   BreakpointStore store;
   const std::filesystem::path path = "/tmp/project/main.py";
   store.Toggle(path, 5);
-  // Replace two chars within line 5 with one char: no net line change.
   Expect(!store.ShiftForAppliedEdit(path, MakeEdit(5, 2, 5, 4, "x")),
          "an in-line edit with no line delta should be a no-op");
   Expect(store.HasBreakpoint(path, 5), "the breakpoint stays on line 5");
@@ -338,8 +305,6 @@ void TestBreakpointStoreShiftDeletedLineSlidesToEditEnd() {
   const std::filesystem::path path = "/tmp/project/main.py";
   store.Toggle(path, 5);
   store.Toggle(path, 9);
-  // Delete lines 4..6 (replace [4,0 .. 7,0) with nothing). The breakpoint on the
-  // interior line 5 slides to the edit's end line (4); the one at 9 shifts up by 3.
   Expect(store.ShiftForAppliedEdit(path, MakeEdit(4, 0, 7, 0, "")),
          "a multi-line delete spanning a breakpoint should shift the set");
   Expect(store.HasBreakpoint(path, 4), "the breakpoint on a removed line slides to the edit end");
@@ -352,7 +317,6 @@ void TestBreakpointStoreShiftCollisionDedupes() {
   const std::filesystem::path path = "/tmp/project/main.py";
   store.Toggle(path, 4);
   store.Toggle(path, 5);
-  // Delete line 4 (replace [4,0 .. 5,0)): line 4 stays put, line 5 slides onto 4.
   Expect(store.ShiftForAppliedEdit(path, MakeEdit(4, 0, 5, 0, "")),
          "the shift should report a change");
   const auto* bps = store.FindByPath(path);
@@ -360,7 +324,7 @@ void TestBreakpointStoreShiftCollisionDedupes() {
          "two breakpoints colliding on one line dedupe to a single breakpoint");
 }
 
-}  // namespace
+}
 
 void RegisterBreakpointStoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "BreakpointStore/ShiftInsertLineAboveMovesDown",
@@ -397,4 +361,4 @@ void RegisterBreakpointStoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "BreakpointStore/RevisionBumps", TestBreakpointStoreRevisionBumps);
 }
 
-}  // namespace microide::tests
+}

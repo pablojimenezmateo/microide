@@ -17,7 +17,7 @@ constexpr std::array<std::string_view, 29> kQueryVerbs = {
     "code-coverage",
 };
 
-}  // namespace
+}
 
 std::span<const std::string_view> ControlQueryVerbs() {
   return {kQueryVerbs.data(), kQueryVerbs.size()};
@@ -310,4 +310,4 @@ std::string ControlChannelHelpText() {
   return text;
 }
 
-}  // namespace microide::workspace
+}

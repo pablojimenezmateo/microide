@@ -7,22 +7,6 @@
 #include <string>
 #include <vector>
 
-// Ctrl+Shift+\ -- jump to the matching bracket.
-//
-// FindBracketMatch itself is well covered (EditorEssentialsTests), but the JUMP
-// had no test at any level: neither the ActionId nor its command name appeared
-// anywhere in tests/. What was untested was the one decision the handler makes
-// on top of the scanner -- which end of the pair to jump to -- and it was wrong
-// on the commonest shape there is.
-//
-// The handler re-derived "is the caret at the opener?" as
-//   cursor_column == open_column || cursor_column == open_column + 1
-// rather than reading `caret_at_opener`, which the scanner already returns. The
-// two agree everywhere except an EMPTY pair, where close_column IS
-// open_column + 1: in `()` with the caret between the brackets the hand-rolled
-// test said "at the opener" and jumped to the closer, which is the column the
-// caret was already on. The command did nothing on `()`, `[]` and `{}`.
-
 namespace microide::tests {
 namespace {
 
@@ -39,7 +23,6 @@ struct Caret {
   }
 };
 
-// A shell with `text` open in the editor, positioned at (line, column).
 struct BracketFixture {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -51,8 +34,6 @@ struct BracketFixture {
     source = root / "main.cpp";
     WriteFile(source, text);
     WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-    // A real viewport size: a null renderer leaves the viewport one line tall,
-    // which makes any caret move scroll and confuses row-based assertions.
     WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 800);
     WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
   }
@@ -75,11 +56,9 @@ struct BracketFixture {
 };
 
 void TestJumpMovesOutOfAnEmptyPair() {
-  // The regression. Before the fix every one of these left the caret where it
-  // was, so the keystroke appeared to do nothing on the commonest bracket shape.
   for (const std::string& pair : {std::string("()"), std::string("[]"), std::string("{}")}) {
     BracketFixture fixture("int main" + pair + " {}\n");
-    fixture.PlaceCaret(0, 9);  // between the two brackets of `pair`
+    fixture.PlaceCaret(0, 9);
     Expect(fixture.caret() == Caret{0, 9}, "the fixture should start between the brackets");
     fixture.Jump();
     Expect(fixture.caret() == (Caret{0, 8}),
@@ -88,10 +67,6 @@ void TestJumpMovesOutOfAnEmptyPair() {
 }
 
 void TestJumpMovesWhereverAMatchExists() {
-  // The general property, and the one the empty-pair bug violated: when the
-  // scanner reports a match, the jump must MOVE the caret. Landing back on the
-  // column you started from is never a correct answer, because the two ends of a
-  // pair are always distinct positions.
   const std::string text =
       "void outer(int a, int b) {\n"
       "  if (a > b) { return f(a, g(b), h()); }\n"
@@ -134,28 +109,18 @@ void TestJumpMovesWhereverAMatchExists() {
 
       Expect(!(after == before),
              "a bracket jump with a match available must move the caret");
-      // It must land on one of the two ends of the pair it matched.
       const bool at_open = after == (Caret{match->open_line, match->open_column});
       const bool at_close = after == (Caret{match->close_line, match->close_column});
       Expect(at_open || at_close,
              "a bracket jump must land on one end of the matched pair");
     }
   }
-  // The fixture yields 40 matched positions and 8 empty pairs as written. Both
-  // floors sit well below that rather than on it, so they bind if the fixture
-  // degrades without failing on an off-by-one.
   Expect(matches >= 30, "the fixture must offer plenty of matches, or this proves nothing");
-  // Vacuity guard for the regression specifically: the property above is only
-  // interesting if the sweep actually visits empty pairs, which are the shape
-  // the old code got wrong. `h()` and `{}` supply them.
   Expect(empty_pair_cases >= 4,
          "the sweep must include empty bracket pairs, or it cannot see the bug it is for");
 }
 
 void TestJumpFromABracketIsAnInvolution() {
-  // Standing on a bracket and jumping twice must return to that bracket. From an
-  // ADJACENT column it need not -- the first jump normalises onto a bracket
-  // position -- so this is asserted only from the bracket characters themselves.
   const std::string line = "f(a, [b, {c}], d)";
   BracketFixture fixture(line + "\n");
   int checked = 0;
@@ -186,7 +151,6 @@ void TestJumpAcrossLinesAndWithNoMatch() {
       "}\n";
   BracketFixture fixture(text);
 
-  // Multi-line pair: the `(` on line 0 matches the `)` on line 2.
   fixture.PlaceCaret(0, 6);
   fixture.Jump();
   Expect(fixture.caret() == (Caret{2, 9}),
@@ -194,7 +158,6 @@ void TestJumpAcrossLinesAndWithNoMatch() {
   fixture.Jump();
   Expect(fixture.caret() == (Caret{0, 6}), "and back again");
 
-  // No bracket adjacent: the caret must not move at all.
   fixture.PlaceCaret(3, 4);
   const Caret before = fixture.caret();
   fixture.Jump();
@@ -203,30 +166,23 @@ void TestJumpAcrossLinesAndWithNoMatch() {
 }
 
 void TestJumpLeavesUnbalancedBracketsAlone() {
-  // An opener with no closer and a closer with no opener both report no match,
-  // so both must be no-ops rather than jumping somewhere arbitrary.
-  //
-  // Two separate documents, deliberately. The first attempt put both on adjacent
-  // lines of one buffer -- and the scanner spans lines, so the stray `(` matched
-  // the stray `)` and the fixture was balanced after all. An "unmatched" bracket
-  // is only unmatched with respect to the WHOLE scan window.
   {
     BracketFixture opener_only("int a = f(1, 2;\n");
-    opener_only.PlaceCaret(0, 9);  // the `(` with no closer anywhere
+    opener_only.PlaceCaret(0, 9);
     const Caret before = opener_only.caret();
     opener_only.Jump();
     Expect(opener_only.caret() == before, "an unmatched opener must not move the caret");
   }
   {
     BracketFixture closer_only("int b = 3);\n");
-    closer_only.PlaceCaret(0, 9);  // the `)` with no opener anywhere
+    closer_only.PlaceCaret(0, 9);
     const Caret before = closer_only.caret();
     closer_only.Jump();
     Expect(closer_only.caret() == before, "an unmatched closer must not move the caret");
   }
 }
 
-}  // namespace
+}
 
 void RegisterEditorBracketJumpTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorBracketJump/MovesOutOfAnEmptyPair", TestJumpMovesOutOfAnEmptyPair);
@@ -240,4 +196,4 @@ void RegisterEditorBracketJumpTests(std::vector<TestCase>& tests) {
           TestJumpLeavesUnbalancedBracketsAlone);
 }
 
-}  // namespace microide::tests
+}

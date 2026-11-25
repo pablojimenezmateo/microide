@@ -14,26 +14,12 @@ namespace microide::workspace {
 
 namespace {
 
-// The tree is keyed on '/'-separated generic text, not on `std::filesystem::path`.
-// Every path in a row arrives normalized (`MakeGitRepositoryPathIdentity` does it
-// on ingress), and a normalized generic path IS its text — so the whole grouping
-// is substring work over one string per row instead of `parent_path()`,
-// `lexically_normal()` and `generic_string()` temporaries per ancestor level
-// (TD-2026-08-06-159; same shape as the status-refresh fix in a43cbb10).
 struct GitSidebarTreeNode {
-  std::string path;  // generic, '/'-joined, no leading or trailing separator
+  std::string path;
   std::map<std::string, GitSidebarTreeNode, std::less<>> directories;
   std::vector<const struct KeyedRow*> files;
 };
 
-// A row paired with its sort/group key, computed ONCE. The comparator used to
-// derive this key from scratch on both sides of every comparison, which made the
-// sort O(n log n) path normalizations for an O(n) amount of distinct text.
-//
-// The key is a VIEW into the row's own `relative_path`, which is already the
-// normalized generic text git reported (TD-2026-08-11-183) — so grouping a
-// 3,000-file refresh no longer copies 3,000 strings out of it. The rows live in the
-// caller's view model and outlive every use of these views.
 struct KeyedRow {
   const GitSidebarRowViewModel* row = nullptr;
   std::string_view key;
@@ -89,9 +75,6 @@ void EmitGitSidebarTreeLines(const GitSidebarTreeNode& node,
     }
     const GitSidebarRowViewModel* row = keyed->row;
     std::string leaf = FileLeafLabel(*row, keyed->key);
-    // Assemble the render-ready primary text once here (with the branch-review
-    // "[<marker>] " prefix) so the sidebar render TU draws it directly instead of
-    // rebuilding it per paint (TD-2026-07-17A-008).
     std::string display_label;
     if (!row->review_marker_label.empty()) {
       display_label.reserve(row->review_marker_label.size() + leaf.size() + 3);
@@ -114,15 +97,10 @@ void EmitGitSidebarTreeLines(const GitSidebarTreeNode& node,
   }
 }
 
-}  // namespace
+}
 
 GitSidebarEntryTextModel BuildGitSidebarEntryTextModel(std::string_view relative_path,
                                                        bool staged) {
-  // The input is the normalized generic text git reported, so the leaf and its
-  // parent are one `find_last_of('/')`. This used to run `lexically_normal()` plus
-  // `filename()` plus `parent_path()` per changed file — roughly fifteen
-  // allocations each, on the path that rebuilds the whole git panel
-  // (TD-2026-08-11-183).
   GitSidebarEntryTextModel model;
   const std::size_t slash = relative_path.find_last_of('/');
   const std::string_view leaf =
@@ -188,15 +166,8 @@ std::vector<GitSidebarLine> BuildGitSidebarLines(
     GitSidebarTreeNode root;
     for (const KeyedRow& keyed : sorted_rows) {
       GitSidebarTreeNode* node = &root;
-      // Cap tree depth. A hostile repo can contain a pathologically deep path;
-      // descending one node per segment builds a chain that then overflows the
-      // stack in the recursive EmitGitSidebarTreeLines. Beyond the cap the file
-      // is grouped at the capped depth (a shallow display for absurd paths).
       constexpr int kMaxGitSidebarTreeDepth = 64;
       int depth = 0;
-      // Every '/'-separated component except the last names an ancestor
-      // directory. An empty component is a leading '/' or a trailing one and
-      // names nothing, matching what the path-iterator form skipped.
       const std::string_view key = keyed.key;
       const std::size_t last_slash = key.find_last_of('/');
       std::size_t begin = 0;
@@ -243,14 +214,6 @@ std::optional<std::size_t> FindSelectedGitSidebarLineIndex(
 
 namespace {
 
-// Exact snapshot of every input `BuildGitSidebarViewModel` + `BuildGitSidebarLines`
-// read. Comparing this field-by-field against live state (rather than hashing it)
-// means the cache can never false-hit. `entries` is captured by
-// (snapshot_generation, size): entry *content* is only ever assigned in
-// ApplyGitRefreshSnapshot (which bumps snapshot_generation) and the no-repo
-// entries.clear() (which drops size to 0), so the pair is authoritative. If a new
-// git-state field starts feeding the view model, add it here AND to the equivalence
-// fuzz test (GitSidebarPresentationCache/CachedMatchesUncached) will fail until it is.
 struct GitSidebarPresentationKey {
   std::uint64_t snapshot_generation = 0;
   std::size_t entries_size = 0;
@@ -293,9 +256,6 @@ GitSidebarPresentationKey CaptureGitSidebarPresentationKey(
   };
 }
 
-// Field-by-field equality against live state without allocating a temporary key on
-// the hit path (the cheap comparisons short-circuit before the O(collapsed) set
-// compare).
 bool GitSidebarPresentationKeyMatches(const GitSidebarPresentationKey& key,
                                       const GitSidebarState& git,
                                       const std::filesystem::path& root,
@@ -317,17 +277,14 @@ bool GitSidebarPresentationKeyMatches(const GitSidebarPresentationKey& key,
 struct GitSidebarPresentationCache {
   bool valid = false;
   GitSidebarPresentationKey key;
-  // Replaced, never mutated, on a rebuild: a holder keeps the build it took.
   std::shared_ptr<const GitSidebarPresentation> presentation;
 };
 
 thread_local GitSidebarPresentationCache g_git_sidebar_presentation_cache;
-// thread_local to match the cache: if a non-main thread ever builds the
-// presentation it keeps its own counters/cache with no cross-thread race.
 thread_local std::uint64_t g_git_sidebar_cache_hits = 0;
 thread_local std::uint64_t g_git_sidebar_cache_misses = 0;
 
-}  // namespace
+}
 
 std::shared_ptr<const GitSidebarPresentation> SharedGitSidebarPresentation(
     const GitSidebarState& git, const std::filesystem::path& root,
@@ -351,7 +308,6 @@ std::shared_ptr<const GitSidebarPresentation> SharedGitSidebarPresentation(
 const GitSidebarPresentation& CachedGitSidebarPresentation(
     const GitSidebarState& git, const std::filesystem::path& root,
     const compare::BranchReviewStateService& branch_review) {
-  // The cache keeps it alive until the next rebuild on this thread.
   return *SharedGitSidebarPresentation(git, root, branch_review);
 }
 
@@ -365,11 +321,10 @@ std::uint64_t GitSidebarPresentationCacheHitsForTesting() { return g_git_sidebar
 std::uint64_t GitSidebarPresentationCacheMissesForTesting() { return g_git_sidebar_cache_misses; }
 
 std::string_view GitSidebarDirectoryPath(const GitSidebarLine& line) {
-  // The inverse of DirectoryNodeKey: "<section>|<path>".
   const std::string_view key = line.tree_node_key;
   const std::size_t bar = key.find('|');
   return line.kind == GitSidebarLine::Kind::Directory && bar != std::string_view::npos ? key.substr(bar + 1)
                                                                                        : std::string_view();
 }
 
-}  // namespace microide::workspace
+}

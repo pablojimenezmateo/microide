@@ -15,62 +15,29 @@ class LifecycleCoordinator {
     std::function<void()> initialize_project_search_runtime;
     std::function<void()> register_wake_events;
     std::function<void()> restore_user_config;
-    // The `--set` overrides, applied over the user config before any project opens.
     std::function<void()> apply_startup_setting_overrides;
     std::function<void()> refresh_available_colorscheme_names;
     std::function<void(bool)> reset_project_scoped_state;
     std::function<bool()> skip_workspace_session_restore;
-    // Whether the project opened at launch restores its own saved state (its
-    // config and its session: tabs, splits, carets). Off in safe mode and with
-    // session.restore_on_launch off -- but NOT for a project named on the command
-    // line, which only replaces the multi-project workspace session.
     std::function<bool()> restore_project_persistence;
     std::function<bool()> restore_workspace_session;
     std::function<void()> reload_plugins_for_current_project;
     std::function<bool(const std::filesystem::path&, bool, bool)> open_project_tab;
-    // A path given at startup that names a FILE opens that file inside its
-    // directory (`microide notes.txt`, as `code notes.txt` does); this is the
-    // second half of that, after open_project_tab has opened the directory.
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<void()> shutdown_plugin_runtime;
     std::function<void()> save_user_config;
     std::function<void()> stop_git_blame_service;
-    // First, a bounded wait for host terminals whose open is still being answered,
-    // so each is recorded with the identity the reopen reattaches by.
     std::function<void()> await_host_terminal_opens;
-    // Every open project's host terminals, active or not, let go of explicitly
-    // (TerminalPanelService::ReleaseHostTerminals) before anything is persisted:
-    // whether a host shell survives a quit must not depend on how the process
-    // ends -- quick_exit runs no destructor, the test binaries run them all.
     std::function<void()> release_host_terminals;
-    // An inactive project's session was written when it was switched away from;
-    // a host terminal that started in it afterwards (its connection came up in
-    // the background) is re-recorded here, or the next connect finds that shell
-    // with no tab to reattach to. Only those projects: the rest are unchanged.
     std::function<void()> record_inactive_host_terminals;
     std::function<void()> persist_active_project;
     std::function<void()> save_workspace_session;
-    // The recents MRU coalesces its durable writes, so a burst of opens can leave
-    // one pending. The process leaves via quick_exit(), so shutdown is the only
-    // point that can land it.
     std::function<void()> flush_recents;
-    // Persisted workspace state (session, config, project state) is written on a
-    // background worker so a save never stalls the shell. Same reason as
-    // flush_recents: the process leaves via quick_exit(), which runs no
-    // destructors, so shutdown is the only point that can land what is queued.
     std::function<void()> flush_persisted_state;
-    // Every remote mirror's sync state written now (RemoteHostService::PersistMirrors).
     std::function<void()> persist_remote_mirrors;
     std::function<void()> shutdown_project_search_runtime;
     std::function<void()> stop_control_channel;
-    // End every debug session, each with its launched debuggee. quick_exit() does
-    // not end them: the adapter only sees its pipes close, gdb then exits, and
-    // whether the program it ran goes with it is a race (2 runs in 5 left it
-    // running, QA). A disconnect that asks for the debuggee's end does it.
     std::function<void()> stop_debug_sessions;
-    // There is deliberately no clear_terminal_tabs / destroy_cursors here: see
-    // the note at the end of Shutdown(). Both existed as wired-but-never-called
-    // fields for long enough to read as steps the coordinator performs.
   };
 
   LifecycleCoordinator(WorkspaceContext& context, bool& quit_requested, Operations operations);
@@ -86,4 +53,4 @@ class LifecycleCoordinator {
   Operations operations_;
 };
 
-}  // namespace microide::workspace
+}

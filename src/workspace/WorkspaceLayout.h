@@ -33,13 +33,6 @@ struct LayoutModeInputs {
   friend bool operator==(const LayoutModeInputs&, const LayoutModeInputs&) = default;
 };
 
-// Every value `ComputeLayout` reads, as one struct. The layout is a pure function
-// of this and nothing else, which is what lets the shell memoize it by comparing
-// INPUTS rather than by trusting a dirty flag (TD-2026-08-30-280): a flag has to
-// be raised at every site that changes any of these fields, and one missed site
-// turns a hit test stale in the place a wrong rect is least visible; a key cannot
-// be wrong, only unequal. Memberwise `==`, so a NaN never matches and simply
-// recomputes.
 struct WorkspaceLayoutInputs {
   float window_width = 0.0f;
   float window_height = 0.0f;
@@ -52,8 +45,6 @@ struct WorkspaceLayoutInputs {
   bool right_pane_visible = false;
   float right_pane_width = 0.0f;
   bool project_tab_strip_visible = true;
-  // Maximized ("immersive") bottom panel: with the panel visible, everything
-  // below the menu bar and project strip belongs to it. See `WorkspaceLayout`.
   bool bottom_panel_maximized = false;
 
   friend bool operator==(const WorkspaceLayoutInputs&, const WorkspaceLayoutInputs&) = default;
@@ -72,16 +63,8 @@ struct WorkspaceLayout {
   SDL_FRect breadcrumb{};
   SDL_FRect editor_surface{};
   SDL_FRect status_bar{};
-  // Where the centred overlays (quick open, command palette, Settings) and their
-  // backdrop sit: the editor area, or the bottom panel while it is maximized and
-  // the editor area has collapsed to nothing. Ctrl+P has to work in immersive
-  // mode, and an overlay centred in a zero-height rect is invisible.
   SDL_FRect overlay_anchor{};
   LayoutMode layout_mode = LayoutMode::Regular;
-  // The panel owns the window below the project strip: the editor column, the
-  // sidebar, the debug pane, the tab strip and the status bar are all
-  // zero-height, and the panel's resize handle is gone (its stored height is
-  // what restoring returns to).
   bool panel_maximized = false;
 };
 
@@ -99,15 +82,9 @@ struct ScrollbarGeometry {
   bool vertical = true;
 };
 
-// A coalesced run of same-kind changed rows in the compare presentation, ready to be
-// mapped onto the overview lane. Geometry + color are applied by the render TU via
-// overview::BuildMarkers; this stays a pure, testable walk over the diff model.
 struct CompareScrollbarRun {
   compare::CompareRowKind kind = compare::CompareRowKind::Unchanged;
-  // Every row of the run changed only in layout (compare::CompareRowIsLayoutOnly):
-  // drawn muted, so the lane points at the changes that carry new tokens.
   bool layout_only = false;
-  // Every row of the run is drawn as moved between hunks (CompareRow::*_moved).
   bool moved = false;
   int start_row = 0;
   int end_row = 0;
@@ -186,7 +163,6 @@ struct MergeHoverSurfaceLayout {
   float right_x = 0.0f;
   float rows_y = 0.0f;
   float line_height = 14.0f;
-  // Each pane's width: a conflict's buttons stay inside their pane.
   float left_width = 0.0f;
   float center_width = 0.0f;
   float right_width = 0.0f;
@@ -198,10 +174,6 @@ struct MergeHoverResultLayout {
   TextGridInteractionLayout text{};
 };
 
-// Whether any of rows [start, end) of a pane show, scrolled to `scroll_line` with
-// `visible_rows` rows (an empty span counts as its first row). A conflict with no
-// row on screen has no buttons: they clamped to the pane's edge, where hovering
-// them acted on a conflict out of sight (QA merge-panes).
 inline bool MergeRowsOnScreen(std::size_t start, std::size_t end, std::size_t scroll_line,
                               std::size_t visible_rows) {
   return start < scroll_line + visible_rows && std::max(end, start + 1) > scroll_line;
@@ -248,38 +220,23 @@ struct ScrollSurfaceLayout {
 };
 
 
-// Rects for one editor group's chrome. `breadcrumb` has w==0 when the group has
-// no breadcrumb band (any pane that does not start at the top of the editor
-// area, which synthesizes only a tab strip above its surface).
 struct EditorGroupRects {
   SDL_FRect tab_strip{};
   SDL_FRect breadcrumb{};
   SDL_FRect editor_surface{};
 };
 
-// One divider between two adjacent panes of a split branch. `node`/`boundary`
-// address it in the tree (stable across a resize, which is what a live drag
-// needs); `pair_start`/`pair_extent` are the axis span the two panes SHARE, so a
-// drag converts a pointer position into that pair's share without re-walking the
-// tree or knowing where the branch sits.
 struct EditorSplitDividerRect {
   SDL_FRect rect{};
   std::uint8_t node = 0;
   std::uint8_t boundary = 0;
-  bool vertical = true;  // true: separates side-by-side panes
+  bool vertical = true;
   float pair_start = 0.0f;
   float pair_extent = 0.0f;
 };
 
-// Rects for every editor group carved out of the editor column, in visual order
-// (== editor group order). For a single group the rects are byte-identical to
-// `layout.tab_strip` / `.breadcrumb` / `.editor_surface`.
 struct EditorGroupRectsLayout {
-  // Heap-free: this is rebuilt on hit-test, cursor-shape, redraw-rect and render
-  // paths (three times per mouse-motion event during a selection drag), and it
-  // carries at most `kMaxEditorGroups` 48-byte structs — see TD-2026-08-06-145.
   util::InlineVector<EditorGroupRects, kMaxEditorGroups> groups;
-  // One per adjacent pane pair, in the same visual order.
   util::InlineVector<EditorSplitDividerRect, kMaxEditorGroups - 1> dividers;
 };
 
@@ -290,19 +247,10 @@ inline constexpr float kWorkspaceScrollbarThickness = 10.0f;
 inline constexpr float kWorkspaceScrollbarInset = 2.0f;
 inline constexpr float kWorkspaceScrollbarMinThumbLength = 24.0f;
 inline constexpr float kWorkspaceMaxRightPaneWidth = 520.0f;
-// Out-of-the-box pane sizes. These are what a fresh project gets, what a session
-// restore falls back to when the persisted value is unusable, and what
-// double-clicking a resize divider returns to — one definition so all three agree.
 inline constexpr float kWorkspaceDefaultSidebarWidth = 288.0f;
 inline constexpr float kWorkspaceDefaultBottomPanelHeight = 156.0f;
 inline constexpr float kWorkspaceDefaultRightPaneWidth = 320.0f;
-// An even split is the default for two editor groups, and what double-clicking the
-// split divider restores.
 inline constexpr float kWorkspaceDefaultEditorSplitFraction = 0.5f;
-// Compare splits evenly; merge splits into equal thirds. Same three roles as the
-// pane sizes above (fresh tab, session-restore fallback, double-click reset), and
-// the values were previously written out twice — once in the tab state and once in
-// the persisted-state defaults — with nothing tying them together.
 inline constexpr float kWorkspaceDefaultCompareDividerFraction = 0.5f;
 inline constexpr float kWorkspaceDefaultMergeLeftDividerFraction = 1.0f / 3.0f;
 inline constexpr float kWorkspaceDefaultMergeRightDividerFraction = 2.0f / 3.0f;
@@ -312,8 +260,6 @@ inline constexpr float kWorkspaceBottomPanelHeaderHeight = 28.0f;
 inline constexpr float kWorkspaceOverlayMaxHeight = 360.0f;
 inline constexpr float kWorkspaceEditorSplitDividerThickness = 6.0f;
 inline constexpr float kWorkspaceSidebarRowHeight = 20.0f;
-// Tree-row geometry shared by the file tree, git tree, and plugin tree sidebars
-// so render and click hit-testing agree on indentation and the disclosure slot.
 inline constexpr float kWorkspaceSidebarTreeIndentWidth = 14.0f;
 inline constexpr float kWorkspaceSidebarTreeChevronSlotWidth = 12.0f;
 inline constexpr float kWorkspaceSidebarHorizontalInset = 10.0f;
@@ -327,8 +273,6 @@ inline constexpr float kWorkspaceDiffScrollbarReserve = 12.0f;
 inline constexpr float kWorkspaceStatusBarHeight = 22.0f;
 inline constexpr float kWorkspaceMenuOverflowChevronWidth = 28.0f;
 inline constexpr float kWorkspaceTabCloseHitInflate = 3.0f;
-// Resize dividers: the grab (hit) region equals the cursor-change region. A single
-// inflate governs both so they can never drift — see *ResizeHitRect/*ResizeCursorRect.
 inline constexpr float kWorkspaceResizeHandleCursorInflate = 1.0f;
 inline constexpr float kWorkspaceScrollbarHitInflate = 4.0f;
 inline constexpr float kWorkspaceWindowControlButtonHitInflate = 2.0f;
@@ -336,18 +280,12 @@ inline constexpr float kWorkspaceLayoutCompactBreakpointDefault = 720.0f;
 inline constexpr float kWorkspaceLayoutCompactHysteresis = 12.0f;
 inline constexpr float kWorkspaceEditorBannerHeight = 30.0f;
 
-// The non-blocking editor banner's buttons. Each banner kind names its own list
-// (see EditorBannerButtonsFor); the layout places them right to left before the
-// dismiss X, which every banner has. A list, not a fixed rect per verb: a kind
-// with one action (Retry) needs no slot for the four the external-change banner
-// carries.
 enum class EditorBannerAction {
   Compare,
   Reload,
   Overwrite,
   Keep,
   Retry,
-  // A read-only file's banner: clear the read-only bit and save; save elsewhere.
   OverwriteReadOnly,
   SaveAs,
 };
@@ -359,31 +297,18 @@ struct EditorBannerButton {
 };
 inline constexpr std::size_t kMaxEditorBannerButtons = 4;
 struct EditorBannerButtonLayout {
-  std::span<const EditorBannerButton> buttons;  // static storage, in display order
-  std::array<SDL_FRect, kMaxEditorBannerButtons> rects{};  // rects[i] is buttons[i]
+  std::span<const EditorBannerButton> buttons;
+  std::array<SDL_FRect, kMaxEditorBannerButtons> rects{};
   SDL_FRect dismiss{};
-  // Left edge of the leftmost control: where the banner's message must stop.
   [[nodiscard]] float controls_left() const { return buttons.empty() ? dismiss.x : rects[0].x; }
 };
 
 SDL_FRect MakeRect(float x, float y, float w, float h);
 
-// Turns a content rect into the dirty rect that stands for it: one pixel of halo
-// on every side, for antialiased glyph edges and 1px underlines/stripes that sit
-// just outside the nominal row box.
-//
-// The three row-range redraw-rect builders (editor, compare, merge) each nudged
-// the top up by a pixel and left the height alone, so the LAST pixel row of a
-// partially repainted range was never invalidated — a stale sliver of whatever
-// had been drawn there survived. The blame overlay made it visible: typing to
-// dirty a buffer suppresses blame, but the bottom row of the blame line below the
-// caret kept its old text.
 inline SDL_FRect DirtyRectWithHalo(const SDL_FRect& content) {
   return SDL_FRect{content.x - 1.0f, content.y - 1.0f, content.w + 2.0f, content.h + 2.0f};
 }
 WorkspaceLayout ComputeLayout(const WorkspaceLayoutInputs& inputs);
-// Positional form of the same function, for call sites that build the inputs
-// inline (tests, mostly). Same result, by construction: it only packs the struct.
 inline WorkspaceLayout ComputeLayout(float window_width,
                                      float window_height,
                                      bool sidebar_visible,
@@ -409,18 +334,8 @@ inline WorkspaceLayout ComputeLayout(float window_width,
       .project_tab_strip_visible = project_tab_strip_visible,
   });
 }
-// Carve the editor column into one rect set per leaf of `split`, in visual order.
-// A single-leaf tree hands back the layout's own strip/breadcrumb/surface rects
-// unchanged; every deeper tree lays its branches out along their axis with the
-// per-child weights and reports the dividers between them.
 EditorGroupRectsLayout ComputeEditorGroupRects(const WorkspaceLayout& layout,
                                                const EditorSplitTree& split);
-// The focused group's pane surface: where the tab in front of that group lays
-// out, and where the widgets floating over that tab (find/replace, the debug
-// toolbar) sit. With one group it is `layout.editor_surface`. The column is never
-// right in a split: a diff, a merge or a floating widget anchored to it lands on
-// another pane (TD-2026-11-11-439). The shell's `ActiveTabSurface` is the
-// memoized form; this one is for code with the state but not the shell.
 SDL_FRect FocusedGroupSurface(const WorkspaceLayout& layout,
                               const EditorSplitTree& split,
                               std::size_t focused_group);
@@ -428,47 +343,23 @@ SDL_FRect FocusedGroupSurface(const EditorGroupRectsLayout& rects,
                               std::size_t focused_group,
                               const WorkspaceLayout& layout);
 
-// Which way a directional pane verb points. `focus-other-group` cycles; these are
-// VS Code's `focusLeftGroup` / `moveActiveEditorGroupLeft` family, which is what a
-// grid of more than two panes actually needs (TD-2026-08-18-266).
 enum class EditorGroupDirection : std::uint8_t { Left, Right, Up, Down };
 
-// No pane lies that way.
 inline constexpr std::size_t kNoEditorGroup = static_cast<std::size_t>(-1);
 
-// The pane adjacent to `from` in `direction`, by the geometry already computed for
-// the frame: among the panes wholly on that side, the nearest one, tie-broken by
-// how much of the cross axis it shares with `from` and then by centre distance.
-// Pure: no state, no tree walk, and the answer is exactly what is on screen.
 std::size_t AdjacentEditorGroup(const EditorGroupRectsLayout& rects,
                                 std::size_t from,
                                 EditorGroupDirection direction);
-// Half-open: a point on the right or bottom edge is outside. Defined here so the
-// per-motion hit tests (PointerOver, CursorKindForPosition) inline it; out of line
-// the LTO build kept it as a call (TD-2026-10-13-338).
 inline bool Contains(const SDL_FRect& rect, float x, float y) {
   return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
 }
-// Union of an optional accumulator rect with another rect. The result spans
-// both inputs; if the accumulator is nullopt, the result is simply `rhs`.
 std::optional<SDL_FRect> UnionOptionalRects(std::optional<SDL_FRect> lhs,
                                             const SDL_FRect& rhs);
 float ClampSidebarWidth(float width, float window_width);
-// Clamp the right debug pane width so the sidebar + pane together never starve the
-// editor below kWorkspaceMinEditorAreaWidth. `sidebar_width` is the currently
-// resolved sidebar width (0 when hidden).
 float ClampRightPaneWidth(float width, float window_width, float sidebar_width);
-// Whether the debug pane fits at its minimum width beside the sidebar and an editor
-// column of kWorkspaceMinEditorAreaWidth. Where it does not, the layout leaves it
-// out, as the compact layout does: ClampRightPaneWidth cannot go under the pane's
-// minimum, and a pane kept there ran past the window's edge.
 bool RightPaneFits(float window_width, float sidebar_width);
 float ClampBottomPanelHeight(float height, float window_height);
 int BottomPanelVisibleRowsForHeight(float panel_height, float line_height);
-// Resolve the vertical coordinate `y` to an absolute bottom-panel log line index, or
-// nullopt when `y` is above the first row, below the last visible row, or past the
-// content. Floors the row offset so coordinates above `text_y` reject rather than
-// snapping to row 0. Single-sourced for the panel click and hover-cursor paths.
 std::optional<std::size_t> BottomPanelLineIndexAtY(float text_y,
                                                    float line_height,
                                                    int visible_rows,
@@ -479,8 +370,6 @@ int TailScrollRowForContent(std::size_t line_count, int visible_rows);
 int ClampScrollRowToContent(int scroll_row, std::size_t line_count, int visible_rows);
 SDL_FRect SidebarResizeHandleRect(const WorkspaceLayout& layout);
 SDL_FRect BottomPanelResizeHandleRect(const WorkspaceLayout& layout);
-// Right debug pane resize handle, anchored on the pane's LEFT edge (where it meets
-// the editor area), mirroring the sidebar handle on the opposite side.
 SDL_FRect RightPaneResizeHandleRect(const WorkspaceLayout& layout);
 SDL_FRect SidebarResizeCursorRect(const WorkspaceLayout& layout);
 SDL_FRect BottomPanelResizeCursorRect(const WorkspaceLayout& layout);
@@ -491,16 +380,10 @@ SDL_FRect RightPaneResizeHitRect(const WorkspaceLayout& layout);
 SDL_FRect VerticalScrollbarHitRect(const ScrollbarGeometry& geometry);
 SDL_FRect HorizontalScrollbarHitRect(const ScrollbarGeometry& geometry);
 SDL_FRect TabCloseHitRect(const SDL_FRect& close_visual_rect, const SDL_FRect& tab_rect);
-// The "Welcome" placeholder tab rect painted (and hit-tested) when no tabs are open.
-// Shared so the render, click, and cursor paths cannot drift apart.
 SDL_FRect EmptyTabStripPlaceholderRect(const SDL_FRect& tab_strip);
 SDL_FRect WindowControlButtonHitRect(const SDL_FRect& button_rect);
 LayoutMode ResolveLayoutMode(float window_width, const LayoutModeInputs& inputs);
 SDL_FRect ComputeMenuOverflowPopupRect(const SDL_FRect& chevron_rect, std::size_t item_count);
-// One overflow-popup row, and the row a point lands on. Shared so the render,
-// click, motion, and keyboard paths cannot drift apart — the click path used to
-// do its own floor division while the render path re-derived the same rect
-// inline (TD-2026-09-19-296).
 SDL_FRect MenuOverflowPopupRowRect(const SDL_FRect& popup, std::size_t index);
 std::optional<std::size_t> MenuOverflowPopupRowAt(const SDL_FRect& popup,
                                                   std::size_t item_count,
@@ -509,8 +392,6 @@ std::optional<std::size_t> MenuOverflowPopupRowAt(const SDL_FRect& popup,
 SDL_FRect BottomPanelContentRect(const WorkspaceLayout& layout);
 SDL_FRect ComputeDirtyPromptRect(const SDL_FRect& full);
 std::array<SDL_FRect, 3> ComputeDirtyPromptButtonRects(const SDL_FRect& dialog);
-// The banner strip occupies the top `kWorkspaceEditorBannerHeight` of the editor
-// surface; editor content is laid out below it (see ComputeEditorPaneLayouts).
 SDL_FRect ComputeEditorBannerStripRect(const SDL_FRect& editor_surface);
 EditorBannerButtonLayout ComputeEditorBannerButtonRects(const SDL_FRect& strip,
                                                         std::span<const EditorBannerButton> buttons);
@@ -551,25 +432,14 @@ ScrollableListLayout ComputeScrollableListLayout(const SDL_FRect& container,
                                                  float list_bottom_padding = 0.0f,
                                                  float scrollbar_bottom_padding = 0.0f,
                                                  bool fractional_visible_units = false);
-// Smallest scroll offset that keeps `selected_index` inside the window of
-// `visible_rows` rows starting at `scroll_row`: unchanged when the row is already
-// on screen, otherwise just far enough to bring it to the near edge. Callers clamp
-// against their own max. Split out of RevealScrollableListIndex so the surfaces
-// whose scroll model is a ScrollSurfaceLayout rather than a ScrollableListLayout
-// (the debug pane) reveal by the same rule instead of restating it.
 int RevealedScrollRow(int scroll_row, int visible_rows, int selected_index);
 int RevealScrollableListIndex(const ScrollableListLayout& layout, int selected_index);
 std::optional<int> ScrollableListIndexAtY(const ScrollableListLayout& layout, float y);
 SDL_FRect ScrollableListRowRect(const ScrollableListLayout& layout, int visible_row);
-// The item under `y` among `item_count` items: ScrollableListIndexAtY with the
-// range check every caller needs, nullopt above, below or past the last item.
 std::optional<std::size_t> ScrollableListItemAtY(const ScrollableListLayout& layout, float y,
                                                  std::size_t item_count);
-// The item whose row rect contains (x, y). Stricter than ScrollableListItemAtY:
-// rows are inset from the list's edges, and the inset is not on any row.
 std::optional<std::size_t> ScrollableListItemAt(const ScrollableListLayout& layout, float x,
                                                 float y, std::size_t item_count);
-// The row rect of `item_index`, which is on screen (from ScrollableListItemAtY).
 SDL_FRect ScrollableListItemRect(const ScrollableListLayout& layout, std::size_t item_index);
 std::optional<SDL_FRect> ComputeScrollbarThumb(const SDL_FRect& track,
                                                float total_units,
@@ -590,10 +460,6 @@ float ScrollUnitsForPointer(const ScrollbarGeometry& geometry,
                             float pointer_coordinate,
                             float grab_offset);
 
-// The grab offset for a scrollbar press: grabbing the thumb keeps the point under
-// the pointer, pressing the bare track centres the thumb on it. Spelled out four
-// times across the compare and merge coordinators (vertical and horizontal each),
-// which is four chances to get "centre the thumb" subtly different.
 float ScrollbarGrabOffset(const ScrollbarGeometry& geometry,
                           float pointer_coordinate,
                           bool vertical);
@@ -601,17 +467,10 @@ float ScrollbarGrabOffset(const ScrollbarGeometry& geometry,
 std::vector<CompareScrollbarRun> BuildCompareScrollbarRuns(
     const compare::ComparePresentationModel& presentation,
     const compare::CompareModel& model);
-// Into-form for the overview-lane cache, which is invalidated by every
-// presentation-revision bump — so on the keystroke path in an editable diff the
-// returning form allocated and freed this list per keystroke (TD-2026-08-17-261).
 void BuildCompareScrollbarRunsInto(const compare::ComparePresentationModel& presentation,
                                    const compare::CompareModel& model,
                                    std::vector<CompareScrollbarRun>& runs);
 float ComputeChromeButtonWidth(float measured_label_width);
-// Fills `out` rather than returning a fresh vector. Both strip builders run
-// their layout several times to settle the overflow reserve, so a returning form
-// materialises the same list three or four times per rebuild
-// (TD-2026-08-14-222); the returning form below is this plus a temporary.
 void ComputeVisibleStripLayoutsInto(std::vector<StripSlotLayout>& out,
                                     const std::vector<float>& widths,
                                     float start_x,
@@ -629,9 +488,6 @@ std::size_t EnsureVisibleStripIndex(const std::vector<float>& widths,
                                     float max_x,
                                     std::size_t current_first_index,
                                     std::size_t active_index);
-// Same contract as ComputeVisibleStripLayoutsInto, and the reuse matters more
-// here: each item owns two strings, so a returning form allocates two per tab per
-// pass and frees the identical two when the next pass replaces the vector.
 void BuildChromeTabRenderItemsInto(std::vector<ChromeTabRenderItem>& out,
                                    std::span<const StripSlotLayout> slots,
                                    float tab_y,
@@ -710,24 +566,11 @@ std::optional<MergeHoverState> ClassifyMergeHoverState(
     std::span<const MergeTrackedConflict> conflicts,
     float x,
     float y);
-// The centered modal cards, sized and placed on `editor_area` and kept inside
-// `bounds` (the window): a card whose minimum is wider than a narrow editor area
-// shifts, or shrinks, rather than leaving the window.
 SDL_FRect ComputeQuickOpenOverlaySurfaceRect(const SDL_FRect& editor_area, const SDL_FRect& bounds);
 SDL_FRect ComputeSettingsOverlaySurfaceRect(const SDL_FRect& editor_area, const SDL_FRect& bounds);
 
-// Geometry of the floating (non-modal) find / find-replace widget anchored at the
-// top-right of the editor area. These sub-rects are the single source of truth
-// shared by the renderer, the field hit-test, and button mouse handling so they
-// cannot drift apart. Rects for controls that only exist in replace mode are
-// zero-sized when replace_mode is false.
-// Upper bound on the mode toggles a find widget can carry. Fixed-size so the
-// layout stays a trivially copyable value.
 inline constexpr std::size_t kFindWidgetMaxToggles = 4;
 
-// The in-file find widget's toggles, in paint / hit-test / tooltip order. The
-// first two match the terminal find bar's `Aa` and `ab` exactly, so the two find
-// surfaces read the same left to right; Find in Selection last, as in VS Code.
 enum class BufferFindToggle : std::size_t {
   MatchCase = 0,
   WholeWord = 1,
@@ -738,7 +581,6 @@ enum class BufferFindToggle : std::size_t {
 inline constexpr std::size_t kBufferFindToggleCount =
     static_cast<std::size_t>(BufferFindToggle::Count);
 static_assert(kBufferFindToggleCount <= kFindWidgetMaxToggles);
-// Toggles on the terminal find bar: `Aa` and `ab`, the same first two.
 inline constexpr std::size_t kTerminalFindToggleCount = 2;
 
 struct FindWidgetLayout {
@@ -746,10 +588,6 @@ struct FindWidgetLayout {
   SDL_FRect search_field{};
   SDL_FRect replace_field{};
   SDL_FRect count_rect{};
-  // Mode toggles, laid out left to right between the search field and the match
-  // count; only `[0, toggle_count)` are populated and the rest stay zero-sized, so
-  // the generic hover/hit-test loops can scan the whole array. Which toggle means
-  // what is the caller's business — the layout only reserves the slots.
   std::array<SDL_FRect, kFindWidgetMaxToggles> toggle_buttons{};
   std::size_t toggle_count = 0;
   SDL_FRect prev_button{};
@@ -760,9 +598,6 @@ struct FindWidgetLayout {
   bool replace_mode = false;
 };
 
-// The widget floats a margin below `editor_area`'s top-right corner. When the
-// area is too short to hold it there, it is lifted -- but never above `bounds`,
-// the region it may float over (the area itself unless the caller says more).
 SDL_FRect ComputeFindWidgetRect(const SDL_FRect& editor_area,
                                 bool replace_mode,
                                 std::optional<SDL_FRect> bounds = std::nullopt);
@@ -771,13 +606,6 @@ FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area,
                                          std::size_t toggle_count,
                                          std::optional<SDL_FRect> bounds = std::nullopt);
 
-// The in-file find widget's layout. Resolve it through this rather than calling
-// ComputeFindWidgetLayout directly: paint, hit-test and the tooltip resolver all
-// have to agree on the toggle count or the buttons move out from under the mouse.
-//
-// Laid out inside its pane or not at all, as the terminal's find bar is: in a pane
-// shorter than the widget it hung past the pane and the window's bottom edge (soak
-// 938ea521923b). Every rect is then empty, so nothing paints, hit-tests or reports.
 inline FindWidgetLayout ComputeBufferFindWidgetLayout(const SDL_FRect& editor_area,
                                                       bool replace_mode) {
   FindWidgetLayout fw = ComputeFindWidgetLayout(editor_area, replace_mode, kBufferFindToggleCount);
@@ -789,27 +617,16 @@ inline FindWidgetLayout ComputeBufferFindWidgetLayout(const SDL_FRect& editor_ar
   }
   return fw;
 }
-// The terminal's find bar floats over the active pane's body, lifted within the
-// panel's body (never over its tab row) when the pane is too short to hold it.
-// A panel body that cannot hold it at all lays out no bar: hanging below the
-// body put it past the window's bottom (soak 23535aaf3151), and lifting it over
-// the tab row covered the panel tabs and the new-terminal button (soak
-// 0ead4679e247, e04d9f4e8b95). Every rect is then empty, so nothing paints,
-// hit-tests or reports it. One helper, because paint, hit test, cursor and
-// tooltip must agree on it.
 FindWidgetLayout ComputeTerminalFindWidgetLayout(const SDL_FRect& terminal_body,
                                                  const WorkspaceLayout& layout);
 
-// Floating, icon-only debug control bar anchored top-right of the editor area
-// while a session is active. Like FindWidgetLayout, a single shared layout drives
-// both the renderer and the mouse hit-test so they cannot drift apart.
 enum class DebugToolbarButton : std::uint8_t {
-  ContinuePause = 0,  // Continue when stopped, Pause when running
+  ContinuePause = 0,
   StepOver,
   StepInto,
   StepOut,
-  ReverseContinue,  // Present only when the adapter advertises supportsStepBack
-  StepBack,         //   (same gate; both are skipped for ordinary adapters)
+  ReverseContinue,
+  StepBack,
   Restart,
   Stop,
   Count,
@@ -817,28 +634,15 @@ enum class DebugToolbarButton : std::uint8_t {
 
 struct DebugToolbarLayout {
   SDL_FRect widget{};
-  // `buttons[i]` is the rect for the i-th *active* button, identified by
-  // `kinds[i]`; only `[0, button_count)` are populated. Inactive trailing slots are
-  // zero so the generic hover/cursor loops that scan the whole array still work.
   std::array<SDL_FRect, static_cast<std::size_t>(DebugToolbarButton::Count)> buttons{};
   std::array<DebugToolbarButton, static_cast<std::size_t>(DebugToolbarButton::Count)> kinds{};
   std::size_t button_count = 0;
 };
 
-// `avoid_below_y`, when set, anchors the bar just below that y so it stacks under
-// the find widget when both are visible; otherwise it sits at the editor top.
-// `include_reverse` adds the Reverse Continue / Step Back buttons (only when the
-// active adapter supports reverse execution); when false the bar is identical to
-// the pre-reverse layout.
 DebugToolbarLayout ComputeDebugToolbarLayout(const SDL_FRect& editor_area,
                                              std::optional<float> avoid_below_y,
                                              bool include_reverse);
 
-// Tooltip label for a toolbar button, including the two run-state substitutions
-// (Continue reads "Pause" while running; a step control reads "Pause to step").
-// Defined in DebugToolbarSurface.cpp beside the button specs and consumed by the
-// shared hover-tooltip surface, so the label and the button it describes cannot
-// drift apart.
 std::string_view DebugToolbarButtonTooltip(DebugToolbarButton button, bool session_stopped);
 
-}  // namespace microide::workspace
+}

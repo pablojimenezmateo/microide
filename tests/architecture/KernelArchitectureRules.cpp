@@ -17,21 +17,6 @@ namespace microide::tests::architecture {
 
 namespace {
 
-// The kernel: data, filesystem, process model and the terminal emulator, with no
-// window. Everything here must compile and run in a process that never opened a
-// display — which `microide_kernel_link_probe` demonstrates by doing it.
-//
-// Membership is READ FROM `MICROIDE_KERNEL_SOURCES` in CMakeLists.txt rather than
-// restated here, because the build and the lint disagreeing about what the kernel is
-// would be the one failure neither could report. The directory prefixes below are an
-// additional root set, so a kernel HEADER that no kernel .cpp happens to include is
-// still covered. `editor/` is not among them on purpose: it includes upward into
-// `workspace/`, so directory is not layer there — its two SDL-free members
-// (`SingleLineEditor`, `WordBoundary`) join the kernel by being named in the CMake
-// list, not by living anywhere in particular.
-//
-// `server/` is not kernel but is held to the same rule: microide-server links the
-// kernel and nothing else, and runs on hosts that have no display at all.
 constexpr std::array<std::string_view, 7> kKernelDirectories = {
     "util/", "platform/", "project/", "compare/", "persistence/", "terminal/", "server/",
 };
@@ -45,9 +30,6 @@ bool IsKernelDirectory(std::string_view relative) {
   return false;
 }
 
-// Parse `set(MICROIDE_KERNEL_SOURCES ... )` out of CMakeLists.txt, returning
-// src-relative paths. An empty result means the list moved or was renamed, which the
-// caller reports as a missing target rather than scanning a shrunken kernel.
 std::vector<std::string> ReadKernelSourceList(const std::filesystem::path& repo_root) {
   std::vector<std::string> sources;
   const std::string text = ReadText(repo_root / "CMakeLists.txt");
@@ -70,7 +52,7 @@ bool IsSourceExtension(const std::filesystem::path& path) {
   return ext == ".h" || ext == ".hpp" || ext == ".cpp" || ext == ".inc";
 }
 
-}  // namespace
+}
 
 RuleResult CheckKernelStaysFreeOfTheWindowingLibrary(const std::filesystem::path& repo_root) {
   RuleResult result;
@@ -83,14 +65,8 @@ RuleResult CheckKernelStaysFreeOfTheWindowingLibrary(const std::filesystem::path
 
   const std::regex local_include(R"RX(#\s*include\s*"([^"]+)")RX");
   const std::regex sdl_include(R"(#\s*include\s*<SDL3/[^>]+>)");
-  // Direct token use without an include is just as much a dependency, and it is the
-  // form a precompiled header hides: `Uint32` and `SDL_Color` compiled fine in every
-  // kernel TU precisely because the PCH had already pulled SDL in.
   const std::regex sdl_token(R"(\bSDL_[A-Za-z0-9_]+|\bUint(?:8|16|32|64)\b|\bSint(?:8|16|32|64)\b)");
 
-  // Pass 1: index every source file under src/ by its src-relative path, recording
-  // whether it names SDL itself (in code, not in prose) and which local headers it
-  // includes.
   struct FileFacts {
     std::filesystem::path path;
     bool names_sdl = false;
@@ -134,19 +110,12 @@ RuleResult CheckKernelStaysFreeOfTheWindowingLibrary(const std::filesystem::path
     return result;
   }
 
-  // Pass 2: transitive closure, memoized. `taint_via` records WHICH include tainted a
-  // file so the violation can print the route rather than just the verdict — a
-  // one-line "reaches SDL" on a file that includes six headers is not actionable.
-  // An include that resolves to nothing under src/ is reported as a missing target
-  // rather than assumed clean: today the only such include in the tree is the
-  // vendored `stb_image.h`, and a rule that silently swallows an unresolvable
-  // include is a rule that goes blind the moment someone mistypes a path.
-  std::map<std::string, int, std::less<>> memo;  // -1 in progress, 0 clean, 1 tainted
+  std::map<std::string, int, std::less<>> memo;
   std::map<std::string, std::string, std::less<>> taint_via;
   std::function<bool(const std::string&)> taints = [&](const std::string& key) -> bool {
     const auto it = files.find(key);
     if (it == files.end()) {
-      return false;  // not under src/ (vendored); reported separately below
+      return false;
     }
     if (it->second.names_sdl) {
       return true;
@@ -154,7 +123,7 @@ RuleResult CheckKernelStaysFreeOfTheWindowingLibrary(const std::filesystem::path
     const auto cached = memo.find(key);
     if (cached != memo.end()) {
       if (cached->second == -1) {
-        return false;  // include cycle: already being evaluated higher up
+        return false;
       }
       return cached->second == 1;
     }
@@ -170,8 +139,6 @@ RuleResult CheckKernelStaysFreeOfTheWindowingLibrary(const std::filesystem::path
     return false;
   };
 
-  // Roots: everything the build compiles into microide_kernel, plus every file in
-  // the kernel directories (so a header no kernel .cpp includes is still covered).
   std::set<std::string, std::less<>> roots;
   const std::vector<std::string> cmake_kernel_sources = ReadKernelSourceList(repo_root);
   if (cmake_kernel_sources.empty()) {
@@ -241,11 +208,6 @@ RuleResult CheckKernelStaysFreeOfTheWindowingLibrary(const std::filesystem::path
   return result;
 }
 
-// microide-server links microide_kernel and its own sources, nothing else
-// (CMakeLists.txt). A server TU that includes a shell header still COMPILES when the
-// header is inline-only, and then the server quietly depends on the shell's layer;
-// the link only catches the out-of-line half. So: a src/server file includes only
-// kernel directories and src/server itself.
 RuleResult CheckServerIncludesOnlyTheKernel(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "microide-server includes only the kernel";
@@ -299,35 +261,13 @@ RuleResult CheckEverySpawnGoesThroughAProcessLauncher(const std::filesystem::pat
     return result;
   }
 
-  // Locality is OWNED, not chosen per call: a project holds a launcher and every spawn
-  // that belongs to it goes through that launcher, or a session silently splits across
-  // two machines. Both spawn primitives are covered — scoping this to RunSubprocess
-  // would let the language server and the debug adapter, the two whose answers are
-  // line numbers in the user's buffer, escape it entirely.
-  //
-  // Only ProcessLauncher.cpp may name the primitives: it IS the launcher. A spawn
-  // that must never follow the project — `xdg-open` in HostIntegration.cpp, because
-  // opening a file manager on the build server is always wrong — still goes through
-  // a launcher, the explicit `LocalProcessLauncher()`, and so needs no exemption.
-  // The primitives' own definitions are excluded by path, not allowlisted.
   static constexpr std::array<const char*, 5> kExemptSuffixes = {
       "src/platform/ProcessLauncher.cpp", "src/platform/ProcessLauncher.h",
       "src/platform/Subprocess.cpp",      "src/platform/Subprocess.h",
       "src/platform/AsyncSubprocess.cpp",
   };
-  // The vacuity guard below watches THIS file alone, and for a CALL. Scoping it to
-  // "any exempt file" is what it used to do, and Subprocess.h is exempt and declares
-  // `SubprocessResult RunSubprocess(...)` — so a declaration satisfied the guard
-  // forever and the rule could go blind while still reporting green, which is the
-  // failure this suite exists to prevent (dev-docs/project/validation-traps.md).
   static constexpr std::string_view kLauncherSuffix = "src/platform/ProcessLauncher.cpp";
   const std::regex run_subprocess(R"(\bRunSubprocess\s*\()");
-  // The asynchronous half is checked per FILE rather than per call. Matching the call
-  // shape would mean pinning an argument name or a receiver spelling, and a rule whose
-  // pattern stops matching its own call form is the failure mode this repo keeps
-  // finding (dev-docs/project/validation-traps.md). A file that starts an
-  // AsyncSubprocess must name ResolveArgv; that is what the language-server and the
-  // debug-adapter spawns do, and it is coarse in the safe direction.
   const std::regex async_start(R"(\.Start\s*\()");
   const std::regex async_type(R"(\bAsyncSubprocess\b)");
   const std::regex resolve_argv(R"(\bResolveArgv\s*\()");
@@ -346,16 +286,11 @@ RuleResult CheckEverySpawnGoesThroughAProcessLauncher(const std::filesystem::pat
     }
     const std::string text = ReadText(entry.path());
     if (exempt) {
-      // The launcher is also where the primitive must actually BE. If it stops
-      // calling one, the rule is scanning for a call form that no longer exists and
-      // would pass forever. A declaration or a mention in a comment does not count.
       if (generic.ends_with(kLauncherSuffix) && CodeMaskedPatternAppears(text, run_subprocess)) {
         saw_any_primitive = true;
       }
       continue;
     }
-    // Literal prefilters: std::regex over every file in src/ is what made this
-    // rule take seconds, and a pattern cannot match where its literal is absent.
     if (text.find("RunSubprocess") != std::string::npos) {
       AppendCodeMaskRegexViolations(
           result, entry.path(), text, run_subprocess,
@@ -392,31 +327,10 @@ RuleResult CheckEveryUserSaveRunsTheSamePreparation(const std::filesystem::path&
   result.label = "every user-initiated save runs the same preparation";
   result.hard_fail = true;
 
-  // `TextViewport::Save()` writes the buffer and nothing else. The save PARTICIPANTS,
-  // format-on-save and the disk-conflict check all live above it, so a call site that
-  // reaches Save() directly is a second save door with different behaviour — and the
-  // difference is invisible until someone notices that "Save" in the dirty prompt did
-  // not run their formatter, or, as it actually happened, that it overwrote a file that
-  // had changed on disk with no banner.
-  //
-  // Enforced per FILE: a file that calls `<something viewport>.Save()` must also name a
-  // preparation. That is coarse in the safe direction and does not depend on a receiver
-  // spelling, which is the pattern-rot this repo keeps finding. One file is exempt,
-  // and its saves are PROGRAMMATIC rather than user-initiated — the same
-  // distinction autosave already makes when it suppresses formatters.
   static constexpr std::array<const char*, 1> kProgrammaticSaveFiles = {
-      // Applying an LSP workspace edit: to buffers that happen to be open, and to
-      // closed files through a scratch viewport used purely as a read-modify-write.
-      // The edit is the server's, not the user's; running a formatter over it would
-      // rewrite a rename's result behind the user's back.
       "src/workspace/services/WorkspaceEditService.cpp",
   };
-  // Any argument list: `Save` takes the project's write gate since TD-2026-09-29-308,
-  // and a pattern pinned to `Save()` would have stopped matching every call at once.
   const std::regex viewport_save(R"([Vv]iewport(_)?\s*(\.|->)\s*Save\s*\()");
-  // Only the preparation itself counts. An earlier draft also accepted `SaveGroupTab`
-  // and `EditorTabService`, which appear in most of the workspace, so every file it
-  // scanned passed on a name that had nothing to do with preparing a save.
   const std::regex prepares(R"(prepare_editor_view_for_save|PrepareEditorViewportForSave)");
 
   bool saw_any_save = false;
@@ -486,43 +400,10 @@ RuleResult CheckProjectWritesGoThroughTheWriteGate(const std::filesystem::path& 
     return result;
   }
 
-  // `util::WriteTextFileAtomically` is the primitive that replaces a file's
-  // contents. Six subsystems used to call it (or its neighbours) directly and share
-  // nothing above it: no common notion of what the write was computed against, no
-  // serialization between them, and no single place that knows a file under the
-  // project root just changed — which is why each of them grew its own post-write
-  // fixup. `project::FileWriteGate` is that place, and it is the seam a remote
-  // project needs (MirrorWriteGate writes into the mirror and enqueues the push).
-  //
-  // Scope, stated precisely because a lint that implies more than it checks is
-  // worse than one that admits its edges (dev-docs/project/validation-traps.md).
-  //
-  // Two halves.
-  //
-  // CONTENT: the primitives that replace a file's contents —
-  // `WriteTextFileAtomically` and a writing `std::ofstream` — in the three layers
-  // that hold project files open.
-  //
-  // TREE (TD-2026-09-29-305): create/rename/delete/trash. The platform primitives
-  // that do them (`MovePath*`, `RemovePath`, `CopyPath`, `MovePathToTrash`) may not
-  // be named in those layers at all — the gate's ApplyTreeOps is the door, with one
-  // transactional journal instead of the two that used to exist. And the
-  // `std::filesystem` mutators are banned in the three directories whose files act
-  // on the project tree (coordinators/, lsp/, git/). Not everywhere in the gated
-  // layers: persistence, the tool-download cache, the plugin data directory and the
-  // control descriptor all legitimately create and remove files that are NOT in a
-  // project tree, and naming that list file by file is how this rule would stop
-  // meaning anything.
   static constexpr std::array<const char*, 3> kGatedDirectories = {
       "workspace/", "plugin/", "editor/",
   };
-  // Files in a gated layer that do not write into a project tree, each named with
-  // the reason rather than lumped together — an allowlist whose entries are not
-  // individually justified is how a rule stops meaning anything.
   static constexpr std::array<const char*, 1> kWritersOutsideTheGate = {
-      // Publishes the per-instance control descriptor under $XDG_RUNTIME_DIR. Not
-      // a project file at all, and its temp-then-rename is its own atomicity
-      // contract for a concurrent reader racing startup.
       "workspace/control/ControlChannelService.cpp",
   };
   const std::regex raw_write(
@@ -575,7 +456,6 @@ RuleResult CheckProjectWritesGoThroughTheWriteGate(const std::filesystem::path& 
     if (outside_the_gate) {
       continue;
     }
-    // Literal prefilters, as in CheckEverySpawnGoesThroughAProcessLauncher.
     if (text.find("WriteTextFileAtomically") != std::string::npos ||
         text.find("ofstream") != std::string::npos) {
       AppendCodeMaskRegexViolations(
@@ -633,22 +513,7 @@ RuleResult CheckGitLayerDoesNotChooseLocality(const std::filesystem::path& repo_
     return result;
   }
 
-  // TD-2026-09-22-301 threaded the project's launcher through every git entry
-  // point in three slices: status, the read side, then the write side and blame.
-  // Before it, 17 `LocalProcessLauncher()` constructions lived INSIDE these units,
-  // each one a place where a remote project's git would quietly run on this
-  // machine — against whatever tree happens to share the path. The caller knows
-  // which project a query belongs to; the git layer never does, so it must not be
-  // the one deciding. A spawn that must stay local whatever the project says
-  // (xdg-open) lives outside this layer and names the local launcher there.
-  //
-  // Scoped to .cpp: a copyable request struct (GitBlameRequest, PatchApplyRequest)
-  // needs SOME default for its launcher pointer, and the request's builder is what
-  // overwrites it — that is a value, not a decision.
   const std::regex local_launcher(R"(\bLocalProcessLauncher\s*\()");
-  // Vacuity guard: the rule is only meaningful while these files still build
-  // GitRepository objects from a launcher they were handed. If nothing in scope
-  // constructs one, the layer was renamed or moved and this scans nothing.
   const std::regex repository_from_launcher(
       R"(\bGitRepository\s+\w+\s*\(\s*\w[\w.]*\s*,\s*\*?\w+)");
   bool saw_repository_construction = false;
@@ -691,14 +556,6 @@ RuleResult CheckGitMetadataIsAskedOfTheHost(const std::filesystem::path& repo_ro
   if (!RequireRuleTarget(result, src_dir)) {
     return result;
   }
-  // TD-2026-10-06-319: every place that decided "is this a repository?" or "where is
-  // the git directory?" did it by statting `.git` under the project root on THIS
-  // machine. A remote project's root is a mirror with no `.git`, so each of those
-  // answered "not a repository" and the git call it guarded never reached the host.
-  // They now ask GitMetadataFor(launcher). The two primitives stay legal where they
-  // are defined, in the local source that wraps them, and in the metadata tracker's
-  // change sampling (a watcher of the LOCAL git directory, which a remote project
-  // replaces with pushed metadata -- the rest of G9).
   const std::regex probe(R"(\b(HasGitMarker|ResolveGitDirectory)\s*\()");
   constexpr std::string_view kAllowed[] = {
       "project/GitCommandUtil.cpp",
@@ -746,14 +603,6 @@ RuleResult CheckWorkersOutliveNothingTheyWrite(const std::filesystem::path& repo
   if (!RequireRuleTarget(result, src_dir)) {
     return result;
   }
-  // Members are destroyed in reverse declaration order, and a util::TaskExecutor's
-  // destructor is what joins its workers. Declared BEFORE the util::MainThreadMailbox
-  // its jobs post their completions into, it outlives the mailbox: a job finishing
-  // during teardown posts into freed memory. SaveFormatterService had exactly that
-  // (ASan, a shell destroyed mid-format). A class that shuts its executor down by
-  // hand in its destructor is not this shape (the shell's executors are
-  // ProjectBackgroundExecutors and are shut down explicitly), so the rule reads
-  // only these two member types.
   const std::regex executor(R"(^\s*util::TaskExecutor\s+\w+\s*[{;=])");
   const std::regex mailbox(R"(^\s*util::MainThreadMailbox\s+\w+\s*[{;=])");
   bool saw_pair = false;
@@ -823,4 +672,4 @@ const std::vector<NamedRule>& KernelArchitectureRuleList() {
   return rules;
 }
 
-}  // namespace microide::tests::architecture
+}

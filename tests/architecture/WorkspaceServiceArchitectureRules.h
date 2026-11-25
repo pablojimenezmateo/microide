@@ -27,4 +27,6 @@ RuleResult CheckWheelHandlersDoNotMoveFocus(const std::filesystem::path& repo_ro
 RuleResult CheckPointerHandlersReadQueuedModifiers(const std::filesystem::path& repo_root);
 RuleResult CheckDebugSubsystemThreadingBehindDapClient(const std::filesystem::path& repo_root);
 
-}  // namespace microide::tests::architecture
+void RunDecoratedGridBatchesFillsRuleFixtures();
+
+}

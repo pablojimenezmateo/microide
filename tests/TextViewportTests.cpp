@@ -38,18 +38,12 @@ struct ScopedRuntimeSyntaxRegistryReset {
   ~ScopedRuntimeSyntaxRegistryReset() { microide::editor::runtime_syntax::ReloadDefinitions({}); }
 };
 
-// Regression: a split pane shares its sibling's DocumentState but keeps its own
-// highlight caches. When the sibling edits the shared buffer, this pane's stored
-// content_revision goes stale; EnsureHighlightCaches must drop the per-line token
-// cache on that mismatch (the cache is NOT cursor-gated -- HighlightedLineTokens
-// does a bare find()), or the pane keeps painting pre-edit colors until eviction.
 void TestTextViewportSplitSiblingEditRefreshesHighlightTokens() {
   TextViewport pane_a;
   pane_a.LoadContent("int a = 1;\nint b = 2;\nint c = 3;\n", "/tmp/split-highlight.cpp");
   (void)pane_a.HighlightedLineTokens(0);
   (void)pane_a.HighlightedLineTokens(1);
 
-  // Split: pane B shares the same DocumentState (shared_ptr) but copies the caches.
   TextViewport pane_b = pane_a;
   const auto before_span = pane_b.HighlightedLineTokens(1);
   const std::vector<SyntaxTokenKind> before(before_span.begin(), before_span.end());
@@ -57,14 +51,9 @@ void TestTextViewportSplitSiblingEditRefreshesHighlightTokens() {
                      [](SyntaxTokenKind kind) { return kind != SyntaxTokenKind::Comment; }),
          "line 1 should start as non-comment code");
 
-  // Edit through pane A only: open an unterminated block comment on line 0. This
-  // bumps the shared content_revision and purges pane A's caches -- but not pane
-  // B's, whose stored revision now trails the document.
   pane_a.MoveCursorTo(0, 0);
   pane_a.InsertText("/*");
 
-  // Pane B repaints and must recompute line 1 as inside the multiline comment,
-  // not serve its stale cached tokens.
   const auto& after = pane_b.HighlightedLineTokens(1);
   Expect(!after.empty() &&
              std::all_of(after.begin(), after.end(),
@@ -72,10 +61,6 @@ void TestTextViewportSplitSiblingEditRefreshesHighlightTokens() {
          "the split sibling pane must recompute tokens after the shared buffer changed");
 }
 
-// Two panes on one buffer share ONE undo history (VS Code keeps it on the model).
-// Each view used to carry its own stack, and an entry is a splice against the
-// buffer as it was when recorded: undo in pane B after pane A had typed replayed
-// B's splice at a stale offset and removed A's bytes instead of B's.
 void TestTextViewportSplitSiblingsShareOneUndoHistory() {
   TextViewport pane_a;
   pane_a.LoadContent("alpha\n", "/tmp/split-undo.txt");
@@ -89,7 +74,6 @@ void TestTextViewportSplitSiblingsShareOneUndoHistory() {
   pane_a.InsertText("Z");
   Expect(pane_b.lines().LineView(0) == "ZYXalpha", "both panes see every edit");
 
-  // Undo from pane B takes back the LAST edit on the document — pane A's "Z".
   Expect(pane_b.Undo(), "pane B can undo");
   Expect(pane_b.lines().LineView(0) == "YXalpha",
          "undo from either pane steps the shared history: got " +
@@ -100,22 +84,12 @@ void TestTextViewportSplitSiblingsShareOneUndoHistory() {
   Expect(pane_a.lines().LineView(0) == "YXalpha", "pane A sees pane B's redo");
   Expect(pane_a.dirty(), "the buffer is dirty");
 
-  // A fresh copy (a third pane) inherits the same history rather than none.
   TextViewport pane_c = pane_a;
   Expect(pane_c.Undo() && pane_c.Undo(), "a new pane can undo edits made before it existed");
   Expect(pane_b.lines().LineView(0) == "alpha", "the document is back to its loaded text");
   Expect(!pane_b.dirty(), "undoing to the saved point cleans every pane");
 }
 
-// A split pane holds the caret set it had BEFORE the other pane's edit, and
-// those positions can name lines the document no longer has.
-//
-// Delete three lines in pane A and pane B's carets sat past the end of a
-// three-line document -- primary on line 4, a secondary on line 3. The next
-// keystroke in pane B then clamped both onto the SAME position without
-// normalising, so typing one character inserted two. The panes share one
-// DocumentState, so this is the whole split grid and the compare pane over a
-// file an editor tab also has open.
 void TestTextViewportSplitSiblingCaretsSurviveAForeignEdit() {
   TextViewport pane_a;
   pane_a.SetViewportSize(20, 200);
@@ -127,9 +101,8 @@ void TestTextViewportSplitSiblingCaretsSurviveAForeignEdit() {
   pane_b.AddSecondaryCaret(3, 2);
   Expect(pane_b.has_multiple_carets(), "pane B starts with two carets low in the file");
 
-  // Pane A deletes the first three lines out from under pane B.
   pane_a.MoveCursorTo(0, 0);
-  pane_a.MoveCursorTo(3, 0, /*extend_selection=*/true);
+  pane_a.MoveCursorTo(3, 0, true);
   pane_a.Backspace();
   Expect(pane_b.line_count() == 3, "pane B sees the shorter document");
 
@@ -145,9 +118,6 @@ void TestTextViewportSplitSiblingCaretsSurviveAForeignEdit() {
          "pane B's caret is inside the document");
 }
 
-// The same reconciliation, checked on every verb rather than on one: a stale
-// sibling must not be able to reach ANY entry point with a caret that names a
-// line the document no longer has.
 void TestTextViewportStaleSiblingIsReconciledByEveryVerb() {
   struct Verb {
     const char* name;
@@ -188,7 +158,7 @@ void TestTextViewportStaleSiblingIsReconciledByEveryVerb() {
     pane_b.MoveCursorTo(4, 3);
     pane_b.AddSecondaryCaret(3, 2);
     pane_a.MoveCursorTo(0, 0);
-    pane_a.MoveCursorTo(3, 0, /*extend_selection=*/true);
+    pane_a.MoveCursorTo(3, 0, true);
     pane_a.Backspace();
 
     verb.run(pane_b);
@@ -213,11 +183,6 @@ void TestTextViewportStaleSiblingIsReconciledByEveryVerb() {
   }
 }
 
-// derived-damage 2.2: an edit that leaves the syntax state its line carries out
-// unchanged leaves every line below highlighting as before, so settling it makes
-// their token entries current again without retokenizing them -- and an edit
-// that changes the carry (an opened block comment) does not. Settled tokens must
-// equal a fresh tokenization of the same text; that is the whole risk.
 void TestTextViewportSettledEditKeepsTheLinesBelowCurrent() {
   std::string text;
   for (int i = 0; i < 80; ++i) {
@@ -229,7 +194,7 @@ void TestTextViewportSettledEditKeepsTheLinesBelowCurrent() {
     (void)viewport.HighlightedLineTokens(line);
   }
   viewport.MoveCursorTo(40, 4);
-  viewport.InsertText("x");  // same line count, same carry
+  viewport.InsertText("x");
   Expect(!viewport.CurrentHighlightedLineTokens(60).has_value(), "the edit stales the lines below it");
   viewport.SettleHighlightAfterLastEdit();
   for (const std::size_t line : {41u, 60u, 79u}) {
@@ -244,19 +209,12 @@ void TestTextViewportSettledEditKeepsTheLinesBelowCurrent() {
   Expect(viewport.CurrentHighlightedLineTokens(40).has_value(), "the edited line itself was tokenized");
 
   viewport.MoveCursorTo(50, 0);
-  viewport.InsertText("/*");  // the carry changes: the rest of the file is a comment
+  viewport.InsertText("/*");
   viewport.SettleHighlightAfterLastEdit();
   Expect(!viewport.CurrentHighlightedLineTokens(60).has_value(),
          "a changed carry leaves the lines below stale, to be retokenized");
 }
 
-// The per-line token cache stopped ERASING invalidated entries -- it stamps them
-// with a generation and retokenizes into the buffer they already hold, so typing
-// no longer frees and reallocates a screenful of token vectors per keystroke.
-// The whole risk of that is a stale entry read as current, so these assert the
-// three staleness rules rather than the allocation win: an edit stales its own
-// line and everything after it, leaves the lines before it valid, and the stale
-// entries must not surface through the cached-only accessors either.
 void TestTextViewportEditStalesTokenCacheSuffixOnly() {
   TextViewport viewport;
   viewport.LoadContent(
@@ -272,8 +230,6 @@ void TestTextViewportEditStalesTokenCacheSuffixOnly() {
   }
   const std::vector<SyntaxTokenKind> line0_before = viewport.HighlightedLineTokens(0);
 
-  // Open an unterminated block comment on line 2. Lines 0-1 are unaffected;
-  // lines 2-4 are all inside the comment from here on.
   viewport.MoveCursorTo(2, 0);
   viewport.InsertText("/*");
 
@@ -286,8 +242,6 @@ void TestTextViewportEditStalesTokenCacheSuffixOnly() {
            "an edit at line 2 must stale line 2 and everything after it");
   }
 
-  // The surviving entry must be RIGHT, not merely present: line 0's bytes did not
-  // change, so its tokens must be exactly what they were before the edit.
   Expect(viewport.HighlightedLineTokens(0) == line0_before,
          "the retained entry above the edit must still hold line 0's real tokens");
   for (std::size_t line = 3; line < 5; ++line) {
@@ -300,9 +254,6 @@ void TestTextViewportEditStalesTokenCacheSuffixOnly() {
   }
 }
 
-// A retained-but-stale entry must not survive a whole-document invalidation
-// either: a syntax-definition reload changes what every line means, and the
-// generation bump is what has to cover it.
 void TestTextViewportSyntaxReloadStalesEveryTokenCacheEntry() {
   TextViewport viewport;
   viewport.LoadContent("int a = 1;\nint b = 2;\n", "/tmp/token-reload.cpp");
@@ -320,17 +271,6 @@ void TestTextViewportSyntaxReloadStalesEveryTokenCacheEntry() {
          "the next query must recompute rather than return the retained buffer");
 }
 
-// The visible-line layout cache retires an invalidated row's whole map NODE into
-// a pool instead of destroying it, so the repaint that follows an edit builds the
-// rows below the caret into the map allocation and the three layout buffers it
-// already owns. Asserted two ways: through the recycle counter the eviction path
-// already published (without the pool, an edit plus repaint recycles nothing at
-// all), and -- where the counting allocator is armed -- as a hard zero, because
-// a pool that reuses everything has nothing left to ask the allocator for.
-//
-// The zero is the point. Pooling only the LayoutLine left the map node, and one
-// node per visible row per keystroke was HALF of everything the typing-latency
-// perf phases did (TD-2026-08-15-235).
 void TestTextViewportEditRecyclesVisibleLineLayouts() {
   TextViewport viewport;
   std::string content;
@@ -339,10 +279,6 @@ void TestTextViewportEditRecyclesVisibleLineLayouts() {
   }
   viewport.LoadContent(content, "/tmp/layout-recycle.cpp");
   viewport.SetViewportSize(30, 80);
-  // By reference, which is what the render path uses. The by-value sibling copies
-  // the LayoutLine's three buffers out, so a paint through it allocates three
-  // times per row no matter what the cache does -- and would measure the copy
-  // rather than the cache.
   const auto paint = [&]() {
     for (std::size_t line = 0; line < 30; ++line) {
       (void)viewport.VisibleLineLayoutRef(line);
@@ -363,31 +299,18 @@ void TestTextViewportEditRecyclesVisibleLineLayouts() {
 
 #if MICROIDE_PERF_HARNESS_BUILD
   namespace perf = microide::tests::perf;
-  // One more edit-and-repaint, now that every buffer in flight is sized for rows
-  // of this shape and the pool is warm. Every row the edit invalidates is rebuilt
-  // from a pooled node, so the layout cache asks the allocator for nothing.
   const auto snapshot = perf::Allocations::Snapshot();
   viewport.MoveCursorTo(0, 0);
   viewport.InsertText("y");
   paint();
   const auto delta = perf::Allocations::DeltaSince(snapshot);
 
-  // Not zero for the whole call: the edit itself touches the piece tree, the undo
-  // history and the width table. 30 rows rebuilt from nothing would be 120
-  // allocations on their own (a node plus three buffers each), which is what this
-  // separates from the edit's own fixed cost.
   Expect(delta.allocations < 30,
          "an edit plus repaint must rebuild every invalidated row into a pooled "
          "node, not allocate one per visible row");
 #endif
 }
 
-// TD-2026-08-14-220: the plain-ASCII prefix scan is memoized per (line, length,
-// content revision), and every visible-row build depends on its answer being
-// exact -- an overstated prefix starts the row's walk at a byte whose visual
-// column is not its byte offset, which mislays every glyph on the row. Compared
-// against the definition rather than against itself, at probes that grow, shrink
-// and cross the offending byte, before and after an edit.
 void TestTextViewportPlainAsciiPrefixMemoMatchesTheDefinition() {
   const auto first_non_plain = [](std::string_view line, std::size_t probe) {
     const std::size_t limit = std::min(probe, line.size());
@@ -400,7 +323,6 @@ void TestTextViewportPlainAsciiPrefixMemoMatchesTheDefinition() {
     return limit;
   };
 
-  // Three shapes: all plain, a tab in the middle, a multi-byte glyph early.
   const std::string plain(600, 'x');
   const std::string tabbed = std::string(300, 'a') + "\t" + std::string(300, 'b');
   const std::string wide = std::string(40, 'c') + "\xc3\xa9" + std::string(500, 'd');
@@ -410,10 +332,8 @@ void TestTextViewportPlainAsciiPrefixMemoMatchesTheDefinition() {
   TextViewport viewport;
   viewport.LoadContent(content, "/tmp/prefix-memo.txt");
 
-  // Probes out of order on purpose: the memo extends a scan forwards and answers
-  // a shorter probe from what it already knows, and those are different branches.
   const std::array<std::size_t, 8> probes{0, 700, 10, 301, 300, 299, 650, 41};
-  for (int round = 0; round < 3; ++round) {  // repeat so every query is a memo hit
+  for (int round = 0; round < 3; ++round) {
     for (std::size_t line = 0; line < lines.size(); ++line) {
       for (const std::size_t probe : probes) {
         const std::size_t expected = first_non_plain(lines[line], probe);
@@ -423,8 +343,6 @@ void TestTextViewportPlainAsciiPrefixMemoMatchesTheDefinition() {
     }
   }
 
-  // An edit bumps the content revision, and the memo must not answer for the old
-  // bytes: insert a tab before the first line's first byte.
   viewport.MoveCursorTo(0, 0);
   viewport.InsertText("\t");
   for (const std::size_t probe : probes) {
@@ -434,23 +352,15 @@ void TestTextViewportPlainAsciiPrefixMemoMatchesTheDefinition() {
   }
 }
 
-// TD-2026-08-14-219: the per-line token cache is capped, so scrolling through a
-// file misses on every newly visible line and evicts the LRU one to make room.
-// Erasing and re-inserting freed the map node AND the token vector it owned, then
-// allocated both back on the same call -- the two biggest allocation sites of
-// every scroll phase in the perf suite. Re-keying the evicted node hands both
-// straight over.
 void TestTextViewportScrollRecyclesHighlightCacheNodes() {
   TextViewport viewport;
   std::string content;
-  // Comfortably past kHighlightCacheLimit (256) so the cap is what decides.
   for (int i = 0; i < 900; ++i) {
     content += "int value_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
   }
   viewport.LoadContent(content, "/tmp/highlight-recycle.cpp");
   Expect(viewport.syntax_highlighting_enabled(), "the fixture must actually tokenize");
 
-  // Fill the cache to its cap.
   for (std::size_t line = 0; line < 300; ++line) {
     (void)viewport.HighlightedLineTokens(line);
   }
@@ -474,16 +384,11 @@ void TestTextViewportScrollRecyclesHighlightCacheNodes() {
   Expect(recycled == evictions,
          "every eviction past the cap must hand its node to the line replacing it");
 
-  // The recycled buffer must not carry the evicted line's tokens: the line it now
-  // belongs to is a different length, and `assign` is what resizes it.
   const std::vector<SyntaxTokenKind>& last = viewport.HighlightedLineTokens(899);
   Expect(last.size() == viewport.lines()[899].size(),
          "a recycled token buffer must be resized to the line it now caches");
 }
 
-// The allocation claim the entry above is actually about. Deterministic (counts,
-// not durations), so it cannot go flaky -- but it only compiles in the perf
-// harness build, which is what arms the counting operator new.
 void TestTextViewportScrollHighlightCacheStopsAllocatingAtTheCap() {
 #if MICROIDE_PERF_HARNESS_BUILD
   namespace perf = microide::tests::perf;
@@ -494,8 +399,6 @@ void TestTextViewportScrollHighlightCacheStopsAllocatingAtTheCap() {
   }
   viewport.LoadContent(content, "/tmp/highlight-recycle-alloc.cpp");
 
-  // Warm past the cap so every line below is a steady-state evict-and-refill, and
-  // the token buffers in flight are already sized for lines of this shape.
   for (std::size_t line = 0; line < 400; ++line) {
     (void)viewport.HighlightedLineTokens(line);
   }
@@ -506,9 +409,6 @@ void TestTextViewportScrollHighlightCacheStopsAllocatingAtTheCap() {
   }
   const auto delta = perf::Allocations::DeltaSince(before);
 
-  // 500 lines. Before the re-key this was a map node plus a token vector each --
-  // 1,000 allocations minimum. What is left is the highlighter's own state
-  // bookkeeping, which is not per line.
   Expect(delta.allocations < 200,
          "scrolling past the token cache's cap must reuse the evicted entry, not "
          "free and re-allocate one per line");
@@ -589,10 +489,6 @@ void TestTextViewportEditingPastFormerLargeFileLineThresholdKeepsSyntaxHighlight
 
 void TestTextViewportEditingPastFormerLargeFileByteThresholdKeepsSyntaxHighlighting() {
   TextViewport viewport;
-  // Two lines: the edit below grows line 0 past the per-line tokenization cutoff,
-  // while line 1 stays short. The point of this test is that crossing a byte
-  // threshold does not disable highlighting for the DOCUMENT — so line 1 is what
-  // carries the assertion once line 0 is individually too long to scan.
   viewport.LoadContent("int value = 42;\nint other = 7;\n", "/tmp/threshold.cpp");
 
   viewport.MoveCursorTo(0, viewport.lines().front().size());
@@ -651,10 +547,6 @@ void TestTextViewportCaretMovementKeepsVisibleLineLayoutCached() {
          "cursor-only movement should reuse cached visible-line text layout");
 }
 
-// Drives the off-thread checkpoint backfill synchronously to completion for
-// `target_line`, mirroring the shell's schedule (TakeHighlightCheckpointBackfillRequest)
-// + worker (ComputeHighlightCheckpoints) + install (InstallHighlightCheckpoints)
-// loop. Lets single-threaded tests observe the converged (exact) highlight state.
 void DrainHighlightCheckpointBackfill(TextViewport& viewport, std::size_t target_line) {
   for (int guard = 0; guard < 1000; ++guard) {
     (void)viewport.HighlightedLineTokens(target_line);
@@ -680,9 +572,6 @@ void TestTextViewportHighlightCheckpointsBoundFarReplay() {
 
   (void)viewport.HighlightedLineTokens(0);
 
-  // A deep cold jump must NOT synchronously replay the whole prefix (that was the
-  // multi-second first-paint freeze). The first far query bounds its synchronous
-  // replay and arms an off-thread checkpoint backfill for the rest.
   viewport.ResetCacheStats();
   const auto& first_tokens = viewport.HighlightedLineTokens(4095);
   Expect(!first_tokens.empty(), "far-line syntax queries should produce tokens immediately");
@@ -692,8 +581,6 @@ void TestTextViewportHighlightCheckpointsBoundFarReplay() {
   Expect(viewport.TakeHighlightCheckpointBackfillRequest().has_value(),
          "a deep cold jump should arm an off-thread checkpoint backfill");
 
-  // Once the backfill converges, a far query resumes from a nearby checkpoint and
-  // replays at most one checkpoint window.
   DrainHighlightCheckpointBackfill(viewport, 4095);
   viewport.ResetCacheStats();
   const auto& tokens = viewport.HighlightedLineTokens(4095);
@@ -752,10 +639,6 @@ void TestTextViewportCheckpointBackfillConvergesToExactMultilineState() {
   viewport.LoadContent(content, "/tmp/highlight-backfill-comment.cpp");
   (void)viewport.HighlightedLineTokens(0);
 
-  // Deep cold jump well beyond the synchronous replay cap, into the middle of a
-  // multiline comment. The first paint is bounded (possibly approximate); the
-  // off-thread checkpoint backfill must converge to the exact comment state —
-  // this is the correctness guarantee for the first-paint freeze fix.
   DrainHighlightCheckpointBackfill(viewport, 1000);
   const auto& inside = viewport.HighlightedLineTokens(1000);
   Expect(!inside.empty(), "deep query inside a multiline comment should produce tokens");
@@ -804,9 +687,6 @@ void TestTextViewportEditingNearTailDoesNotRebuildFarCheckpoints() {
   viewport.LoadContent(content, "/tmp/highlight-edit-tail.cpp");
 
   (void)viewport.HighlightedLineTokens(4095);
-  // Build the full checkpoint chain (the off-thread backfill in production) so
-  // this exercises a *post-convergence* tail edit, matching the invariant under
-  // test: a tail edit must not rebuild previously valid far checkpoints.
   DrainHighlightCheckpointBackfill(viewport, 4095);
   viewport.MoveCursorTo(4095, viewport.lines().back().size());
   viewport.InsertText(" // tail");
@@ -816,12 +696,6 @@ void TestTextViewportEditingNearTailDoesNotRebuildFarCheckpoints() {
   Expect(!tokens.empty(), "tail edits should preserve syntax tokens for the edited line");
 
   const auto stats = viewport.CacheStats();
-  // The edit truncates the checkpoint chain at the edited window only; checkpoints
-  // below it stay valid (no replay from line 0). Rebuilding the single edited
-  // window may replay up to one checkpoint interval when its per-line states were
-  // filled off-thread (the backfill snapshots checkpoint states, not every line
-  // state) rather than by a synchronous paint — that is at most one window, never
-  // the whole chain, which is the invariant under test.
   Expect(stats.highlight_checkpoint_advances <= 128,
          "tail edits must not rebuild the whole checkpoint chain (at most one window)");
   Expect(stats.highlight_state_advances < 128,
@@ -845,16 +719,10 @@ void TestTextViewportInsertNewlineCopiesLeadingIndentation() {
          "newline insertion should place the caret after the copied indentation");
 }
 
-// Regression: Enter over a top-to-bottom (downward) selection must take its
-// auto-indent from the insertion point (range.start, the surviving prefix line),
-// not from cursor_line_ which sits on the removed line at range.end. Previously
-// the inherited indent came from the bottom line, so replacing a selection could
-// drop or corrupt the leading indentation of the new line.
 void TestTextViewportInsertNewlineOverDownwardSelectionIndentsFromStartLine() {
   TextViewport viewport;
   viewport.LoadContent("    alpha\nbeta\n", "/tmp/indent-newline-sel.cpp");
 
-  // Select from end of the indented line 0 down to end of the unindented line 1.
   viewport.MoveCursorTo(0, viewport.lines()[0].size(), false);
   viewport.MoveCursorTo(1, viewport.lines()[1].size(), true);
   viewport.InsertNewline();
@@ -903,9 +771,6 @@ void TestTextViewportMultiCaretNewlineCopiesIndentationPerCaret() {
 }
 
 void TestTextViewportSameLineCountUndoOnLargeFilePreservesContent() {
-  // Single-line replacements through Apply/Undo/Redo (the same-line-count
-  // fast path) must produce the same document contents as the slow path on
-  // a buffer large enough that vector tail-shifts would normally dominate.
   const std::size_t kLineCount = 4096;
   std::string body;
   body.reserve(kLineCount * 12);
@@ -949,16 +814,6 @@ void TestTextViewportSameLineCountUndoOnLargeFilePreservesContent() {
          "redo via fast path must preserve line count");
 }
 
-// TD-2026-07-17A-092: a range replacement whose text equals the covered content is a
-// no-op. It must not bump content_revision, dirty the buffer, or create an undo entry.
-// TD-2026-08-06-142: nothing reported what an open tab costs to keep open, so a
-// cap for the sum across tabs could only ever have been a guess.
-//
-// The test that matters is not "the number is plausible" -- it is that the
-// accounting RESPONDS to each cache independently. A total that silently omits
-// one of five components still returns a number, and a number is exactly what
-// makes an omission invisible. So each assertion drives one cache and checks
-// that its own field moved.
 void TestTextViewportDerivedCacheBytesTracksEachCache() {
   TextViewport viewport;
   std::string content;
@@ -970,8 +825,6 @@ void TestTextViewportDerivedCacheBytesTracksEachCache() {
   const auto empty = viewport.DerivedCacheBytes();
   Expect(empty.undo_history == 0, "a freshly loaded buffer holds no undo history");
 
-  // Width table + visible-line LRU: measuring the widest line is what builds the
-  // per-line width table, and painting rows is what fills the LRU.
   viewport.SetViewportSize(40, 120);
   (void)viewport.max_visual_columns();
   for (std::size_t row = 0; row < 40; ++row) {
@@ -981,8 +834,6 @@ void TestTextViewportDerivedCacheBytesTracksEachCache() {
   Expect(warmed.layout_cache > empty.layout_cache,
          "warming the width table and the visible-line LRU must move layout_cache");
 
-  // Highlight token LRU and the per-line state chain, which grows with the
-  // highlighted prefix (not the window, and no longer the whole document).
   for (std::size_t line = 0; line < 200; ++line) {
     (void)viewport.HighlightedLineTokens(line);
   }
@@ -992,8 +843,6 @@ void TestTextViewportDerivedCacheBytesTracksEachCache() {
   Expect(highlighted.highlight_states > 0,
          "the per-line highlighter state chain holds the highlighted prefix");
 
-  // Undo history. It is the one component with a declared per-tab ceiling and
-  // the one that grows with use rather than with document size.
   viewport.MoveCursorTo(0, 0, false);
   for (int i = 0; i < 8; ++i) {
     viewport.InsertCharacter('x');
@@ -1008,18 +857,9 @@ void TestTextViewportDerivedCacheBytesTracksEachCache() {
          "that stops being counted disappears silently");
 }
 
-// TD-2026-09-29-317: the per-line highlighter state chain was resized to the
-// document on first paint — 40 bytes per line, a 32 MB zero-fill (~12 ms on the
-// shell thread) the moment an 800k-line file's off-thread open landed, for
-// entries no reader trusts until the contiguous frontier reaches them. It grows
-// with the frontier now. Painting the top of a large file must not cost the
-// whole file, and highlighting must still be exact after an edit and deep in
-// the file.
 void TestTextViewportHighlightStatesGrowWithTheFrontier() {
   TextViewport viewport;
   std::string content;
-  // More lines than the initial reservation (64k), so a document-sized chain
-  // and a frontier-sized one are told apart by capacity.
   constexpr std::size_t kLines = 300'000;
   for (std::size_t i = 0; i < kLines; ++i) {
     content += i % 100 == 0 ? "/* a block\n" : i % 100 == 1 ? "   comment */\n" : "int x = 1;\n";
@@ -1035,7 +875,6 @@ void TestTextViewportHighlightStatesGrowWithTheFrontier() {
          "painting the top must not size the state chain to the document: " +
              std::to_string(bytes) + " bytes");
 
-  // Deep and after an edit: the tokens must match a fresh viewport's.
   viewport.MoveCursorTo(5, 0, false);
   viewport.InsertText("/* opened ");
   viewport.InsertText("*/");
@@ -1050,10 +889,6 @@ void TestTextViewportHighlightStatesGrowWithTheFrontier() {
   Expect(deep_tokens == fresh_tokens, "deep highlighting after an edit matches a fresh buffer");
 }
 
-// A tab-size change parks the per-line width table instead of dropping it, so a
-// round trip back to the size it was built at re-measures nothing. The large-file
-// open builds the table on the reader thread at the final tab size, and the
-// completion's preference-then-detection flip goes away and back.
 void TestTextViewportTabSizeRoundTripKeepsTheWidthTable() {
   TextViewport viewport;
   std::string content;
@@ -1072,14 +907,12 @@ void TestTextViewportTabSizeRoundTripKeepsTheWidthTable() {
   Expect(microide::util::ReadPerformanceCounter(microide::util::PerfCounterId::EditorLineWidthFullMeasures) == 0,
          "and measures no line again");
 
-  // Control: a real change of size measures, and gets the new answer.
   viewport.SetTabSize(8);
   Expect(viewport.max_visual_columns() == at_four + 12, "three tabs widen by 4 columns each");
   Expect(microide::util::ReadPerformanceCounter(
              microide::util::PerfCounterId::EditorLineWidthFullMeasures) == viewport.line_count(),
          "a new size measures every line once");
 
-  // An edit in between invalidates the parked table: no stale width comes back.
   microide::util::ResetPerformanceCounters();
   viewport.SetTabSize(4);
   viewport.PrebuildLineWidths();
@@ -1097,46 +930,39 @@ void TestTextViewportNoOpRangeReplaceDoesNotDirty() {
   const std::uint64_t revision_before = viewport.content_revision();
   Expect(!viewport.dirty(), "freshly loaded buffer is clean");
 
-  // Replace "world" (line 0, cols 6..11) with the identical text.
   const microide::editor::SelectionRange range{
       .start = microide::editor::TextPosition{0, 6},
       .end = microide::editor::TextPosition{0, 11}};
-  const bool changed = viewport.ReplaceRange(range, "world", /*record_undo=*/true);
+  const bool changed = viewport.ReplaceRange(range, "world", true);
   Expect(!changed, "an identical range replacement reports no change");
   Expect(viewport.content_revision() == revision_before,
          "a no-op range replacement must not bump content_revision");
   Expect(!viewport.dirty(), "a no-op range replacement must not dirty the buffer");
   Expect(!viewport.Undo(), "a no-op range replacement must not create an undo entry");
 
-  // A genuine change still applies.
-  Expect(viewport.ReplaceRange(range, "WORLD", /*record_undo=*/true),
+  Expect(viewport.ReplaceRange(range, "WORLD", true),
          "a real range replacement still applies");
   Expect(viewport.content_revision() != revision_before, "a real edit bumps content_revision");
   Expect(viewport.dirty(), "a real edit dirties the buffer");
 }
 
-// TD-2026-07-17A-091/093: replacing a line span with byte-identical content (e.g. Sort
-// Lines on an already-sorted selection) is a no-op and must not dirty or create undo.
 void TestTextViewportNoOpLineReplaceDoesNotDirty() {
   TextViewport viewport;
   viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/noop-line.txt");
   const std::uint64_t revision_before = viewport.content_revision();
 
-  const bool changed = viewport.ReplaceLines(0, 2, {"alpha", "beta"}, /*record_undo=*/true);
+  const bool changed = viewport.ReplaceLines(0, 2, {"alpha", "beta"}, true);
   Expect(!changed, "an identical line replacement reports no change");
   Expect(viewport.content_revision() == revision_before,
          "a no-op line replacement must not bump content_revision");
   Expect(!viewport.dirty(), "a no-op line replacement must not dirty the buffer");
   Expect(!viewport.Undo(), "a no-op line replacement must not create an undo entry");
 
-  // Sorting an already-sorted selection is the canonical no-op (routes to ReplaceLines).
-  Expect(viewport.ReplaceLines(0, 2, {"beta", "alpha"}, /*record_undo=*/true),
+  Expect(viewport.ReplaceLines(0, 2, {"beta", "alpha"}, true),
          "a reordering line replacement still applies");
   Expect(viewport.dirty(), "a real line replacement dirties the buffer");
 }
 
-// A line replacement that shrinks the span (real deletion of content) must still
-// apply — the no-op guard only skips edits that leave the buffer byte-identical.
 void TestTextViewportCenterLinePutsTheLineMidViewportAndClamps() {
   TextViewport viewport;
   std::string text;
@@ -1160,8 +986,6 @@ void TestTextViewportCenterLinePutsTheLineMidViewportAndClamps() {
   viewport.CenterLine(100000);
   Expect(viewport.scroll_line() == max_scroll, "an out-of-range line clamps to the end");
 
-  // `reveal` centres a tab in the same step that opens it, before its first
-  // frame sizes it. The first real sizing must re-centre, once.
   TextViewport fresh;
   fresh.LoadContent(text, "/tmp/center-line-fresh.txt");
   fresh.CenterLine(100);
@@ -1171,12 +995,10 @@ void TestTextViewportCenterLinePutsTheLineMidViewportAndClamps() {
   fresh.SetViewportSize(30, 80);
   Expect(fresh.scroll_line() == 10, "the request is one-shot: a later resize does not re-centre");
 
-  // Soft wrap: the view scrolls in visual rows, so wrapped lines above the target
-  // push it down.
   TextViewport wrapped;
   std::string wrapped_text;
   for (int i = 0; i < 100; ++i) {
-    wrapped_text += std::string(30, 'x') + "\n";  // 3 visual rows at width 10
+    wrapped_text += std::string(30, 'x') + "\n";
   }
   wrapped.LoadContent(wrapped_text, "/tmp/center-line-wrapped.txt");
   wrapped.SetSoftWrap(true);
@@ -1191,16 +1013,13 @@ void TestTextViewportEmptyLineDeleteIsNotTreatedAsNoOp() {
   viewport.LoadContent("a\nb\nc\n", "/tmp/line-shrink.txt");
   const std::size_t lines_before = viewport.lines().size();
 
-  // Collapse lines [0,2) ("a","b") into a single line "ab": a real edit.
-  const bool changed = viewport.ReplaceLines(0, 2, {"ab"}, /*record_undo=*/true);
+  const bool changed = viewport.ReplaceLines(0, 2, {"ab"}, true);
   Expect(changed, "collapsing two lines into one is a real edit, not a no-op");
   Expect(viewport.lines().size() == lines_before - 1, "the line count shrinks by one");
   Expect(viewport.dirty(), "a real line-count change dirties the buffer");
 }
 
 void TestTextViewportSameLineCountEditInvalidatesSyntaxCache() {
-  // After a fast-path edit the highlight token kinds for the affected line
-  // must reflect the new content rather than a stale cache.
   TextViewport viewport;
   viewport.LoadContent("int x;\nint y;\n", "/tmp/applied-edit-fast-path-syntax.cpp");
   viewport.MoveCursorTo(0, 4);
@@ -1255,21 +1074,15 @@ void TestTextViewportLastAppliedEditTracksInsertUndoRedo() {
          "redo should restore the forward replacement text");
 }
 
-// A disjoint multi-caret line delete cannot be represented as one contiguous
-// AppliedEdit. It must clear last_applied_edit_ (like the other aggregate paths)
-// so the incremental LSP sync and breakpoint shifter fall back to a full resync
-// instead of replaying the previous single-caret edit's stale range/replacement.
 void TestTextViewportMultiCaretDeleteLineClearsLastAppliedEdit() {
   TextViewport viewport;
   viewport.LoadContent("alpha\nbeta\ngamma\ndelta\n", "/tmp/multi-delete-applied.txt");
 
-  // A prior single-caret insert leaves a concrete applied edit behind.
   viewport.MoveCursorTo(0, 2);
   viewport.InsertText("Z");
   Expect(viewport.last_applied_edit().has_value(),
          "single-caret insert should publish an applied edit as the stale baseline");
 
-  // Drop a second caret on a non-adjacent line and delete both lines at once.
   viewport.MoveCursorTo(0, 0);
   viewport.AddSecondaryCaret(2, 0);
   Expect(viewport.has_multiple_carets(),
@@ -1281,9 +1094,6 @@ void TestTextViewportMultiCaretDeleteLineClearsLastAppliedEdit() {
          "multi-caret line delete must clear last_applied_edit_ so LSP/breakpoints resync");
 }
 
-// Replace All (by needle and by precomputed ranges) rewrites several regions;
-// it once left the PREVIOUS edit's AppliedEdit in place, so the diagnostics and
-// breakpoint shifters, and the find widget's scope, applied that old edit again.
 void TestTextViewportReplaceAllClearsLastAppliedEdit() {
   TextViewport viewport;
   viewport.LoadContent("cat\ndog cat\ncat\n", "/tmp/replace-all-applied.txt");
@@ -1301,15 +1111,12 @@ void TestTextViewportReplaceAllClearsLastAppliedEdit() {
   Expect(!viewport.last_applied_edit().has_value(), "ReplaceAllRanges must not leave the previous edit behind");
 }
 
-// Replace All by ranges left every caret where it was: replacing a long run with
-// nothing left the caret at 2:801 on a line now empty (soak 872c8984d39b). The
-// carets and anchors ride the replacements, as the text around them does.
 void TestTextViewportReplaceAllRangesCarriesTheCarets() {
   TextViewport viewport;
   viewport.LoadContent("aaaa bb aaaa\nkeep\naaaa\n", "/tmp/replace-all-carets.txt");
-  viewport.MoveCursorTo(2, 4);                          // the end of line 3's match
-  viewport.AddSecondaryCaret(0, 12);                    // after the second match on line 1
-  viewport.AddSecondaryCaret(0, 6);                     // inside "bb", between the matches
+  viewport.MoveCursorTo(2, 4);
+  viewport.AddSecondaryCaret(0, 12);
+  viewport.AddSecondaryCaret(0, 6);
   const std::optional<std::size_t> replaced = viewport.ReplaceAllRanges(
       {SelectionRange{{0, 0}, {0, 4}}, SelectionRange{{0, 8}, {0, 12}}, SelectionRange{{2, 0}, {2, 4}}}, "");
   Expect(replaced == std::optional<std::size_t>{3}, "the three runs are replaced");
@@ -1328,13 +1135,11 @@ void TestTextViewportReplaceAllRangesCarriesTheCarets() {
   Expect(inside_bb, "the caret inside \"bb\" moves left with it, to column 2");
   Expect(viewport.CaretBoundsFault().empty(), "no caret is left past its line: " + viewport.CaretBoundsFault());
 
-  // Replace All by needle, the same: the caret at the end of a long line of
-  // matches replaced with nothing lands on the emptied line's end.
   TextViewport by_needle;
   by_needle.LoadContent("x\nxyxyxyxy\n", "/tmp/replace-all-needle-carets.txt");
   by_needle.MoveCursorTo(1, 8);
   by_needle.AddSecondaryCaret(1, 2);
-  by_needle.AddSecondaryCaret(1, 4);  // meets the first once "xy" is gone
+  by_needle.AddSecondaryCaret(1, 4);
   Expect(by_needle.ReplaceAll("xy", "") == 4, "the four runs are replaced");
   Expect(by_needle.cursor_line() == 1 && by_needle.cursor_column() == 0,
          "the caret ends on the emptied line's end: " + std::to_string(by_needle.cursor_line()) + ":" +
@@ -1343,12 +1148,6 @@ void TestTextViewportReplaceAllRangesCarriesTheCarets() {
   Expect(by_needle.CaretBoundsFault().empty(), "no caret is left past its line: " + by_needle.CaretBoundsFault());
 }
 
-// Undo back onto a placeholder buffer (welcome / empty-pane text) re-flagged it
-// a placeholder, which turns highlighting off, and the invalidation that follows
-// re-seeded the highlight checkpoints from the initial state that "off" had just
-// reset: an empty optional dereferenced (soak f6a4d30a66f4, an abort under
-// _GLIBCXX_ASSERTIONS; undefined behaviour without them). No highlighting, no
-// checkpoints to seed.
 void TestTextViewportUndoOntoAPlaceholderBufferKeepsNoHighlightState() {
   TextViewport viewport;
   viewport.SetPlaceholderText("Welcome\nOpen a file to start\nor create one\n");
@@ -1362,9 +1161,6 @@ void TestTextViewportUndoOntoAPlaceholderBufferKeepsNoHighlightState() {
   Expect(viewport.lines()[1] == "Open a file to start", "the text is back as it was");
 }
 
-// Change End of Line Sequence (TD-2026-10-18-361): the line ending changes as an
-// edit -- the buffer is dirty and saves with the new ending, undo puts the old one
-// back and the buffer is clean again at the save point, redo redoes it.
 void TestTextViewportSetLineEndingIsAnUndoableEdit() {
   TextViewport viewport;
   viewport.LoadContent("one\r\ntwo\r\n", "/tmp/eol-change.txt");
@@ -1401,16 +1197,9 @@ void TestTextViewportLastAppliedEditTracksMultilineReplacement() {
          "multiline replacement should publish normalized replacement text");
 }
 
-// TD-2026-07-16-31: merge conflict tracking derives its changed-line span from
-// last_applied_edit_line_span() instead of diffing a whole-buffer snapshot. The
-// span must be whole-line-trimmed (matching WorkspaceShell::ComputeChangedLineSpan),
-// which differs from the character-level AppliedEdit at line boundaries — e.g.
-// pressing Enter at the end of a line is a PURE line insertion (old_start ==
-// old_end) even though the char edit sits on the preceding line.
 void TestTextViewportLastAppliedEditLineSpanMatchesWholeLineDiff() {
   using microide::editor::AppliedEditLineSpan;
 
-  // Mid-line insert: exactly one before-line changed, no line-count delta.
   {
     TextViewport viewport;
     viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/line-span-insert.txt");
@@ -1422,8 +1211,6 @@ void TestTextViewportLastAppliedEditLineSpanMatchesWholeLineDiff() {
            "mid-line insert must report a single changed line, no line delta");
   }
 
-  // Enter at end of a line: the char edit is on line 0, but the whole-line diff
-  // sees line 0 unchanged and a new line inserted after it -> PURE insertion.
   {
     TextViewport viewport;
     viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/line-span-newline.txt");
@@ -1435,7 +1222,6 @@ void TestTextViewportLastAppliedEditLineSpanMatchesWholeLineDiff() {
            "Enter at end-of-line must trim to a pure line insertion (old_start == old_end)");
   }
 
-  // Backspace joining line 1 into line 0: two before-lines collapse to one.
   {
     TextViewport viewport;
     viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/line-span-join.txt");
@@ -1447,7 +1233,6 @@ void TestTextViewportLastAppliedEditLineSpanMatchesWholeLineDiff() {
            "line-join must span the two collapsed before-lines and end one line shorter");
   }
 
-  // Undo/redo of a single edit publishes the reverse/forward span.
   {
     TextViewport viewport;
     viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/line-span-undo.txt");
@@ -1465,8 +1250,6 @@ void TestTextViewportLastAppliedEditLineSpanMatchesWholeLineDiff() {
            "redo must restore the forward pure-insertion span");
   }
 
-  // A disjoint multi-caret edit cannot be one contiguous span; it must be empty so
-  // merge tracking (and other single-range consumers) take the resync fallback.
   {
     TextViewport viewport;
     viewport.LoadContent("alpha\nbeta\ngamma\ndelta\n", "/tmp/line-span-multicaret.txt");
@@ -1604,8 +1387,6 @@ void TestTextViewportTypedCharactersCoalesceIntoWordUndoSteps() {
   Expect(viewport.lines().size() == 1 && viewport.lines()[0] == "foo bar",
          "typing should build the full word run");
 
-  // First undo removes the second word; the trailing space stays attached to
-  // the first word's run.
   Expect(viewport.Undo(), "first undo after a typing run should succeed");
   Expect(viewport.lines()[0] == "foo ",
          "undo should remove a whole word, not a single character");
@@ -1617,7 +1398,6 @@ void TestTextViewportTypedCharactersCoalesceIntoWordUndoSteps() {
   Expect(!viewport.Undo(),
          "two undos should exhaust a 'foo bar' typing run (no per-character entries)");
 
-  // Redo should restore the runs symmetrically.
   Expect(viewport.Redo() && viewport.lines()[0] == "foo ",
          "redo should restore the first word run");
   Expect(viewport.Redo() && viewport.lines()[0] == "foo bar",
@@ -1631,8 +1411,6 @@ void TestTextViewportCaretJumpBreaksTypingCoalesce() {
   viewport.InsertCharacter('a');
   viewport.InsertCharacter('b');
   viewport.InsertCharacter('c');
-  // Typing resumes at a different caret offset; that discontinuity must start a
-  // fresh undo entry rather than extending the "abc" run.
   viewport.MoveCursorTo(0, 1);
   viewport.InsertCharacter('X');
   Expect(viewport.lines()[0] == "aXbc", "fixture should insert 'X' inside 'abc'");
@@ -1648,13 +1426,10 @@ void TestTextViewportCaretRoundTripBreaksTypingCoalesce() {
   viewport.LoadContent("Z", "/tmp/undo-coalesce-roundtrip.txt");
   viewport.MoveCursorTo(0, 0);
 
-  viewport.InsertCharacter('a');  // "aZ", caret between 'a' and 'Z' at column 1
-  // Arrow right past 'Z' then back returns the caret to the exact same column.
-  // The run must break on the explicit navigation; otherwise 'a' and 'b' coalesce
-  // into one undo step even though the user moved the caret in between.
+  viewport.InsertCharacter('a');
   viewport.MoveCursorHorizontal(1);
   viewport.MoveCursorHorizontal(-1);
-  viewport.InsertCharacter('b');  // "abZ"
+  viewport.InsertCharacter('b');
   Expect(viewport.lines()[0] == "abZ", "fixture should type 'ab' around a caret round-trip");
 
   Expect(viewport.Undo() && viewport.lines()[0] == "aZ",
@@ -1663,21 +1438,16 @@ void TestTextViewportCaretRoundTripBreaksTypingCoalesce() {
          "the first character should undo separately");
 }
 
-// A mouse-click / goto caret jump goes through MoveCursorTo, which must also end
-// the typing coalesce run. Clicking away and back to the exact column the previous
-// run ended at (same before-cursor == run's after-cursor) would otherwise let the
-// next character merge into the prior run's single undo step.
 void TestTextViewportMoveCursorToSameColumnBreaksTypingCoalesce() {
   TextViewport viewport;
   viewport.LoadContent("", "/tmp/undo-coalesce-clickback.txt");
 
   viewport.InsertCharacter('a');
   viewport.InsertCharacter('b');
-  viewport.InsertCharacter('c');  // "abc", run's after-cursor at column 3
-  // Simulate a mouse click elsewhere then a click back to the SAME column 3.
+  viewport.InsertCharacter('c');
   viewport.MoveCursorTo(0, 0);
   viewport.MoveCursorTo(0, 3);
-  viewport.InsertCharacter('d');  // "abcd"
+  viewport.InsertCharacter('d');
   Expect(viewport.lines()[0] == "abcd", "fixture should append 'd' after a click round-trip");
 
   Expect(viewport.Undo() && viewport.lines()[0] == "abc",
@@ -1686,15 +1456,6 @@ void TestTextViewportMoveCursorToSameColumnBreaksTypingCoalesce() {
          "the original 'abc' run should undo as one step");
 }
 
-// TD-2026-08-05-131. An edit that stays inside one line is now recorded as
-// {column, removed_text, inserted_text} rather than as the whole line before and
-// after. That is a SECOND representation of "what changed", and a second
-// representation is exactly where undo/redo silently drifts from the buffer.
-//
-// Differential test: drive a viewport with random in-line edits against a naive
-// string model, then walk the entire undo stack back and the entire redo stack
-// forward, comparing at every step. A caret move before each edit ends the
-// coalesce run so one Undo reverses exactly one recorded edit.
 void TestTextViewportInlineUndoRedoMatchesNaiveModel() {
   struct Rng {
     std::uint64_t state = 0x2026080531ull;
@@ -1709,9 +1470,6 @@ void TestTextViewportInlineUndoRedoMatchesNaiveModel() {
 
   for (std::uint64_t seed : {1ull, 7ull, 0xC0FFEEull, 0xBEEFull}) {
     Rng rng{seed};
-    // Tabs and a multi-byte code point, because the caret's preferred (visual)
-    // column is computed from the pre-edit line plus the replacement rather than
-    // from a composed post-edit line.
     const std::string initial = "alpha\tbeta gamma\nsecond line\n\tthird\xC3\xA9 line\n";
     TextViewport viewport;
     viewport.LoadContent(initial, "/tmp/inline-undo-model.txt");
@@ -1735,8 +1493,6 @@ void TestTextViewportInlineUndoRedoMatchesNaiveModel() {
       const std::size_t length = model[line].size();
       std::size_t start = rng.Below(length + 1);
       std::size_t end = start + rng.Below(length - start + 1);
-      // Byte columns must land on code-point boundaries or the edit clamps and
-      // the model would have to model the clamp too.
       const auto snap = [&](std::size_t column) {
         while (column > 0 && column < model[line].size() &&
                (static_cast<unsigned char>(model[line][column]) & 0xC0u) == 0x80u) {
@@ -1752,13 +1508,12 @@ void TestTextViewportInlineUndoRedoMatchesNaiveModel() {
         replacement.push_back(static_cast<char>('A' + static_cast<char>(rng.Below(26))));
       }
       if (start == end && replacement.empty()) {
-        continue;  // exact no-op: records nothing by design
+        continue;
       }
       if (model[line].compare(start, end - start, replacement) == 0) {
-        continue;  // exact no-op
+        continue;
       }
 
-      // End any open coalesce run so undo steps map 1:1 onto recorded edits.
       viewport.MoveCursorTo(line, start, false);
       Expect(viewport.ReplaceRange(SelectionRange{TextPosition{line, start},
                                                   TextPosition{line, end}},
@@ -1783,10 +1538,6 @@ void TestTextViewportInlineUndoRedoMatchesNaiveModel() {
   }
 }
 
-// The routing itself, pinned. Both entry shapes produce identical buffer content,
-// so nothing above this line would notice if in-line edits quietly went back to
-// storing the whole affected line twice -- only the allocation gate would, and
-// that one only runs under a perf-harness build.
 void TestTextViewportInLineEditsRecordColumnScopedUndoEntries() {
   TextViewport viewport;
   viewport.LoadContent("alpha beta\nsecond line\n", "/tmp/inline-entry-shape.txt");
@@ -1808,15 +1559,13 @@ void TestTextViewportInLineEditsRecordColumnScopedUndoEntries() {
   Expect(viewport.TopUndoEntryIsColumnScopedForTesting(),
          "an in-line range replacement must record a column-scoped undo entry");
 
-  // Anything that changes the line structure must NOT -- the column form cannot
-  // express it, and silently taking it would corrupt the document.
   viewport.MoveCursorTo(0, 2, false);
   viewport.InsertNewline();
   Expect(!viewport.TopUndoEntryIsColumnScopedForTesting(),
          "splitting a line must fall back to the line-vector entry");
 
   viewport.MoveCursorTo(1, 0, false);
-  viewport.Backspace();  // joins the split back together
+  viewport.Backspace();
   Expect(!viewport.TopUndoEntryIsColumnScopedForTesting(),
          "joining two lines must fall back to the line-vector entry");
 
@@ -1825,8 +1574,6 @@ void TestTextViewportInLineEditsRecordColumnScopedUndoEntries() {
   Expect(!viewport.TopUndoEntryIsColumnScopedForTesting(),
          "a multi-line insertion must fall back to the line-vector entry");
 
-  // And a grouped in-line child is widened on the way into the frame, because the
-  // group's aggregation is expressed in line coordinates.
   viewport.BeginUndoGroup();
   Expect(viewport.ReplaceRange(SelectionRange{TextPosition{0, 0}, TextPosition{0, 1}}, "Q", true),
          "the grouped child edit applies");
@@ -1835,25 +1582,10 @@ void TestTextViewportInLineEditsRecordColumnScopedUndoEntries() {
          "a grouped in-line child must be widened to the line form before it is recorded");
 }
 
-// The column-scoped coalesce has three compose shapes, and only two of them are
-// reachable by typing (append: an insert or delete-forward run; prepend: a
-// backspace run). The third -- an edit landing wholly inside what the run itself
-// inserted -- is defensive, mirroring the line form's contained-splice case, so
-// drive all three through the history's own API rather than leaving one untested.
-//
-// TD-2026-08-06-157: `ApplyEntryToBuffer` is a public static that takes ANY entry,
-// and the live undo path reaches multi-range entries through TextViewport (which
-// interleaves each part's splice with its cache update). That leaves this helper's
-// multi-range branch unexercised by the viewport tests — and a version of it that
-// silently applied only the primary range would corrupt a buffer rather than fail
-// loudly. Drive it directly, in both directions, with parts whose line counts
-// change so a coordinate that ignored the shift shows up.
 void TestApplyEntryToBufferAppliesEveryDisjointPart() {
   using microide::editor::TextBuffer;
   using microide::editor::TextViewportUndoHistory;
 
-  // Joined WITHOUT a trailing newline: one would add a final empty line and make
-  // every index below off by nothing but the comparison off by one row.
   const auto load = [](TextBuffer& buffer, const std::vector<std::string>& lines) {
     std::string text;
     for (std::size_t i = 0; i < lines.size(); ++i) {
@@ -1870,9 +1602,6 @@ void TestApplyEntryToBufferAppliesEveryDisjointPart() {
     return out;
   };
 
-  // line0..line9. Three disjoint edits: line 1 -> two lines (+1), line 5 -> one
-  // line (0), line 8 -> nothing (-1). Their after-coordinates therefore differ
-  // from their before-coordinates by +1 and 0 respectively.
   const std::vector<std::string> before = {"line0", "line1", "line2", "line3", "line4",
                                            "line5", "line6", "line7", "line8", "line9"};
   const std::vector<std::string> after = {"line0", "ONE-a", "ONE-b", "line2", "line3",
@@ -1893,17 +1622,15 @@ void TestApplyEntryToBufferAppliesEveryDisjointPart() {
 
   TextBuffer buffer;
   load(buffer, before);
-  TextViewportUndoHistory::ApplyEntryToBuffer(buffer, entry, /*forward=*/true);
+  TextViewportUndoHistory::ApplyEntryToBuffer(buffer, entry, true);
   Expect(dump(buffer) == after,
          "applying a multi-range entry forward must apply every part, not just the first");
 
-  TextViewportUndoHistory::ApplyEntryToBuffer(buffer, entry, /*forward=*/false);
+  TextViewportUndoHistory::ApplyEntryToBuffer(buffer, entry, false);
   Expect(dump(buffer) == before,
          "applying it backward must restore every part");
 }
 
-// Oracle: applying the coalesced entry must give the same buffer as applying the
-// two entries in sequence, and undoing it must give back the original.
 void TestInlineUndoEntriesCoalesceLikeSequentialApplication() {
   using microide::editor::CoalesceHint;
   using microide::editor::CoalesceKind;
@@ -1919,15 +1646,10 @@ void TestInlineUndoEntriesCoalesceLikeSequentialApplication() {
     const char* second_inserted;
   };
   const Shape shapes[] = {
-      // Typing run: "ab" appended at column 3 as two entries.
       {"append", 3, "", "a", 4, "", "b"},
-      // Backspace run: delete column 4 then column 3.
       {"prepend", 4, "e", "", 3, "d", ""},
-      // Delete-forward run: both delete at the same column.
       {"delete-forward", 3, "d", "", 3, "e", ""},
-      // Contained: the second edit rewrites a byte the first one inserted.
       {"contained", 3, "", "XY", 4, "Y", "Z"},
-      // Contained, widening: replaces the whole insertion.
       {"contained-wide", 2, "cd", "PQ", 2, "PQ", "R"},
   };
 
@@ -1945,8 +1667,6 @@ void TestInlineUndoEntriesCoalesceLikeSequentialApplication() {
       entry.after_state.cursor_column = after_column;
       return entry;
     };
-    // The run only continues when the next edit begins exactly where the previous
-    // one left off, so thread the caret through both entries.
     const std::size_t first_after =
         shape.first_column + std::string(shape.first_inserted).size();
     const TextViewportUndoHistory::Entry first =
@@ -1956,10 +1676,9 @@ void TestInlineUndoEntriesCoalesceLikeSequentialApplication() {
         make(shape.second_column, shape.second_removed, shape.second_inserted, first_after,
              shape.second_column + std::string(shape.second_inserted).size());
 
-    // Oracle: apply both entries in order to a buffer.
     microide::editor::TextBuffer sequential({line});
-    TextViewportUndoHistory::ApplyEntryToBuffer(sequential, first, /*forward=*/true);
-    TextViewportUndoHistory::ApplyEntryToBuffer(sequential, second, /*forward=*/true);
+    TextViewportUndoHistory::ApplyEntryToBuffer(sequential, first, true);
+    TextViewportUndoHistory::ApplyEntryToBuffer(sequential, second, true);
 
     TextViewportUndoHistory history;
     const CoalesceHint hint{.kind = CoalesceKind::Insert, .changed_is_space = false};
@@ -1979,13 +1698,13 @@ void TestInlineUndoEntriesCoalesceLikeSequentialApplication() {
                .c_str());
 
     microide::editor::TextBuffer coalesced({line});
-    TextViewportUndoHistory::ApplyEntryToBuffer(coalesced, merged, /*forward=*/true);
+    TextViewportUndoHistory::ApplyEntryToBuffer(coalesced, merged, true);
     Expect(coalesced.LineView(0) == sequential.LineView(0),
            std::string("the coalesced entry must produce the same text as applying both for ")
                .append(shape.name)
                .c_str());
 
-    TextViewportUndoHistory::ApplyEntryToBuffer(coalesced, merged, /*forward=*/false);
+    TextViewportUndoHistory::ApplyEntryToBuffer(coalesced, merged, false);
     Expect(coalesced.LineView(0) == line,
            std::string("undoing the coalesced entry must restore the original line for ")
                .append(shape.name)
@@ -1993,9 +1712,6 @@ void TestInlineUndoEntriesCoalesceLikeSequentialApplication() {
   }
 }
 
-// A non-contiguous second edit must NOT fold into the run: it would splice at a
-// column the aggregate says nothing about. This is the guard that keeps the merge
-// shapes above from being an "always true" test.
 void TestInlineUndoEntriesRefuseNonContiguousCoalesce() {
   using microide::editor::CoalesceHint;
   using microide::editor::CoalesceKind;
@@ -2009,9 +1725,9 @@ void TestInlineUndoEntriesRefuseNonContiguousCoalesce() {
   first.after_state.cursor_column = 3;
 
   TextViewportUndoHistory::Entry second = first;
-  second.start_column = 7;  // a gap the aggregate does not cover
+  second.start_column = 7;
   second.inserted_text = "b";
-  second.before_state.cursor_column = 3;  // caret continuity holds; the columns do not
+  second.before_state.cursor_column = 3;
   second.after_state.cursor_column = 8;
 
   const CoalesceHint hint{.kind = CoalesceKind::Insert, .changed_is_space = false};
@@ -2023,10 +1739,6 @@ void TestInlineUndoEntriesRefuseNonContiguousCoalesce() {
          "a non-contiguous in-line edit must start a fresh undo entry, not splice into the run");
 }
 
-// An in-line edit reports its delta as a character-level range, which is what the
-// LSP incremental-sync bridge and the marker stores shift by. The column-scoped
-// entry has to derive that from {column, removed, inserted} instead of from a
-// prefix/suffix diff of two whole lines.
 void TestTextViewportInlineEditPublishesCharacterLevelAppliedEdit() {
   TextViewport viewport;
   viewport.LoadContent("alpha beta gamma\n", "/tmp/inline-applied-edit.txt");
@@ -2042,32 +1754,23 @@ void TestTextViewportInlineEditPublishesCharacterLevelAppliedEdit() {
          "the applied edit must end at the replaced range's end column");
   Expect(applied->replacement_text == "BETA", "the applied edit must carry the replacement");
 
-  // Undo publishes the inverse.
   Expect(viewport.Undo(), "undo must succeed");
   const auto undone = viewport.last_applied_edit();
   Expect(undone.has_value() && undone->replacement_text == "beta",
          "undo must publish the inverse replacement");
 
-  // Shared bytes at either end are trimmed off, exactly as the line form does, so
-  // markers are not dragged across text that did not change.
   viewport.MoveCursorTo(0, 0, false);
   Expect(viewport.ReplaceRange(
              SelectionRange{TextPosition{0, 0}, TextPosition{0, 5}}, "alpaca", true),
          "the second replacement must apply");
   const auto trimmed = viewport.last_applied_edit();
   Expect(trimmed.has_value(), "the second edit must publish an applied edit");
-  // "alpha" -> "alpaca": shared prefix "alp", shared suffix "a", so the reported
-  // delta is the single byte "h" becoming "ac".
   Expect(trimmed->range_before.start.column == 3 && trimmed->range_before.end.column == 4,
          "a shared prefix and suffix must be trimmed out of the reported range");
   Expect(trimmed->replacement_text == "ac",
          "only the changed bytes belong in the replacement text");
 }
 
-// The encoding classification is upgrade-only and incremental. The column-scoped
-// entry scans only the bytes it splices in -- every other byte on the line was
-// classified when it entered the document -- so the scan must still notice a
-// non-ASCII insert, and must not be fooled into a downgrade.
 void TestTextViewportInlineEditUpgradesEncodingFromTheDeltaAlone() {
   TextViewport viewport;
   viewport.LoadContent("plain ascii line\n", "/tmp/inline-encoding.txt");
@@ -2080,8 +1783,6 @@ void TestTextViewportInlineEditUpgradesEncodingFromTheDeltaAlone() {
   Expect(viewport.encoding() == TextEncoding::UTF8,
          "an in-line insert of a non-ASCII code point must raise the classification");
 
-  // Undo restores ASCII content but the classification is upgrade-only, matching
-  // the line form (a full re-detection happens on reload).
   Expect(viewport.Undo(), "undo must succeed");
   Expect(viewport.encoding() == TextEncoding::UTF8,
          "the incremental encoding refresh never downgrades");
@@ -2094,10 +1795,6 @@ void TestTextViewportInlineEditUpgradesEncodingFromTheDeltaAlone() {
          "an in-line insert of a NUL must raise the classification to Bytes");
 }
 
-// A grouped edit's aggregation is expressed entirely in line coordinates, so an
-// in-line child has to be widened before it enters a group frame. Get that wrong
-// and a snippet / multi-caret / plugin apply_edits group silently records an undo
-// entry that restores the wrong text.
 void TestTextViewportGroupedInlineEditsUndoAtomically() {
   TextViewport viewport;
   const std::string initial = "one two\nthree four\nfive six\n";
@@ -2133,9 +1830,6 @@ void TestTextViewportGroupedInlineEditsUndoAtomically() {
          "redo must restore every line the group touched");
 }
 
-// A run of keystrokes coalesces by appending to the entry's two small strings, so
-// the entry's recorded byte size has to be restamped on every merge -- otherwise
-// the total-byte history budget trims against a stale size.
 void TestInlineCoalescedEntryRestampsItsByteSize() {
   using microide::editor::CoalesceHint;
   using microide::editor::CoalesceKind;
@@ -2168,7 +1862,6 @@ void TestTextViewportBackspaceCoalescesIntoWordUndoSteps() {
   }
   Expect(viewport.lines()[0].empty(), "backspacing should clear the line");
 
-  // The deletion run splits on the word boundary, mirroring the typing rule.
   Expect(viewport.Undo() && viewport.lines()[0] == "foo",
          "first undo should restore the most recently deleted word run");
   Expect(viewport.Undo() && viewport.lines()[0] == "foo bar",
@@ -2192,18 +1885,6 @@ void TestTextViewportMultiCaretInsertAndUndoAreAtomic() {
          "undo should revert all multi-caret insertions atomically");
 }
 
-// TD-2026-08-06-157: a multi-caret / grouped edit records the SET of ranges it
-// touched, not one range spanning the outermost carets. Undo is the part of an
-// editor where a wrong answer is least recoverable, so this checks the model
-// against an oracle rather than against itself: the buffer's own content, snapshot
-// after every step, then replayed backwards through Undo and forwards through Redo.
-//
-// The edit sequence deliberately mixes the shapes that break a naive
-// disjoint-range model — two carets on ONE line (their footprints must merge, or
-// the second capture reads the first's edit), carets on ADJACENT lines, edits that
-// change the line count in the middle of the document (Enter, and a Backspace at
-// column 0 that joins two lines), and an ordinary single-caret edit in between so
-// the multi-range entries sit inside a normal history.
 void TestTextViewportMultiCaretUndoMatchesSnapshotOracle() {
   auto whole_document = [](const TextViewport& viewport) {
     std::string out;
@@ -2230,45 +1911,36 @@ void TestTextViewportMultiCaretUndoMatchesSnapshotOracle() {
     snapshots.push_back(now);
   };
 
-  // 1. Far-apart carets, one character each.
   step("scattered insert", [&] {
     viewport.MoveCursorTo(10, 0);
     viewport.SetSecondaryCarets({{120, 2}, {250, 4}, {399, 0}});
     viewport.InsertText("X");
   });
-  // 2. Two carets on the SAME line plus one far away.
   step("two carets on one line", [&] {
     viewport.MoveCursorTo(30, 1);
     viewport.SetSecondaryCarets({{30, 5}, {300, 0}});
     viewport.InsertText("Y");
   });
-  // 3. Adjacent lines.
   step("adjacent lines", [&] {
     viewport.MoveCursorTo(60, 0);
     viewport.SetSecondaryCarets({{61, 0}, {62, 0}});
     viewport.InsertText("Z");
   });
-  // 4. Line-count changes in the middle: Enter at scattered carets.
   step("scattered newline", [&] {
     viewport.MoveCursorTo(15, 3);
     viewport.SetSecondaryCarets({{150, 3}, {280, 3}});
     viewport.InsertNewline();
   });
-  // 5. A Backspace at column 0 joins lines — a negative line delta per caret.
   step("scattered joining backspace", [&] {
     viewport.MoveCursorTo(20, 0);
     viewport.SetSecondaryCarets({{200, 0}, {330, 0}});
     viewport.Backspace();
   });
-  // 6. An ordinary single-caret edit, so the multi-range entries are not the only
-  //    thing on the stack.
   step("single caret typing", [&] {
     viewport.SetSecondaryCarets({});
     viewport.MoveCursorTo(5, 0);
     viewport.InsertText("plain");
   });
-  // 7. A grouped shaping op across scattered carets (the FinishActiveGroup path,
-  //    which builds its multi-range entry differently from ApplyMultiCaretEdit).
   step("grouped indent across carets", [&] {
     viewport.MoveCursorTo(40, 0);
     viewport.SetSecondaryCarets({{140, 0}, {340, 0}});
@@ -2278,20 +1950,16 @@ void TestTextViewportMultiCaretUndoMatchesSnapshotOracle() {
   const std::size_t steps = snapshots.size() - 1;
   Expect(steps == 7, "the fixture must have performed every step");
 
-  // Backwards: each Undo must land on the snapshot before it.
   for (std::size_t i = steps; i-- > 0;) {
     Expect(viewport.Undo(), "undo " + std::to_string(i) + " should succeed");
     Expect(whole_document(viewport) == snapshots[i],
            "undo " + std::to_string(i) + " must restore the recorded document exactly");
   }
-  // Forwards again.
   for (std::size_t i = 0; i < steps; ++i) {
     Expect(viewport.Redo(), "redo " + std::to_string(i) + " should succeed");
     Expect(whole_document(viewport) == snapshots[i + 1],
            "redo " + std::to_string(i) + " must reproduce the recorded document exactly");
   }
-  // And back once more, so a one-shot coordinate error that only shows on the
-  // second traversal is caught too.
   for (std::size_t i = steps; i-- > 0;) {
     Expect(viewport.Undo(), "second-pass undo " + std::to_string(i) + " should succeed");
     Expect(whole_document(viewport) == snapshots[i],
@@ -2299,9 +1967,6 @@ void TestTextViewportMultiCaretUndoMatchesSnapshotOracle() {
   }
 }
 
-// The cost claim: an entry for carets far apart must be proportional to what the
-// carets edited, not to the distance between them. Without this the oracle test
-// above passes just as happily on the old spanning-range model.
 void TestTextViewportMultiCaretUndoEntryDoesNotSpanTheGap() {
   std::string content;
   for (int i = 0; i < 4000; ++i) {
@@ -2316,9 +1981,6 @@ void TestTextViewportMultiCaretUndoEntryDoesNotSpanTheGap() {
   viewport.InsertText("X");
   const std::size_t entry_bytes = viewport.DerivedCacheBytes().undo_history - before_bytes;
 
-  // Four one-line ranges: about 4 x 2 x (line length) bytes of content. The span
-  // between the outermost carets is 3,891 lines, which the old model captured
-  // twice — well over 100 KB.
   Expect(entry_bytes < 4096,
          "an undo entry for four far-apart carets must cost its four ranges, not the "
          "3,891-line span between them (held " +
@@ -2329,18 +1991,6 @@ void TestTextViewportMultiCaretUndoEntryDoesNotSpanTheGap() {
          "undo restores every caret's line");
 }
 
-// A grouped multi-region edit must not cost O(carets^2).
-//
-// Every child entry recorded inside an undo group used to capture the full view
-// state THREE times — once for the entry's before-image, once as the base of its
-// after-image, once when the applied entry was saved — and each capture deep-copied
-// the whole secondary-caret vector. `FinishActiveGroup` then throws all of them
-// away: the aggregate's states come from the frame's own captures and the disjoint
-// extra parts carry no state at all. With one region per caret (which is what
-// TD-2026-08-07-160 made the shaping ops do) that is 3 x N copies of an N-element
-// vector per keystroke, all discarded.
-//
-// Bytes, not duration, so this cannot go flaky.
 void TestTextViewportGroupedChildEntriesDoNotCopyTheCaretSet() {
 #if MICROIDE_PERF_HARNESS_BUILD
   namespace perf = microide::tests::perf;
@@ -2363,23 +2013,18 @@ void TestTextViewportGroupedChildEntriesDoNotCopyTheCaretSet() {
   }
   viewport.SetSecondaryCarets(carets);
 
-  // Warm: the first pass pays one-off costs (undo stack growth, cache priming).
   Expect(microide::editor::IndentSelection(viewport), "the warm-up indent must apply");
 
   const auto before = perf::Allocations::Snapshot();
   Expect(microide::editor::IndentSelection(viewport), "the measured indent must apply");
   const auto delta = perf::Allocations::DeltaSince(before);
 
-  // Measured: 381,680 bytes with the grouped capture, 12,903,200 without it
-  // (probed by forcing CaptureViewStateForGroupedEntry to copy). 1 MiB sits 2.7x
-  // above the one and 12.6x below the other.
   constexpr std::uint64_t kBudget = 1u << 20;
   Expect(static_cast<std::uint64_t>(delta.bytes_allocated) < kBudget,
          "a 256-region grouped indent must cost its regions, not carets x regions "
          "copies of the caret set (allocated " +
              std::to_string(delta.bytes_allocated) + " bytes)");
 
-  // The states that ARE read still work: undo restores every caret.
   Expect(viewport.Undo(), "the grouped multi-region indent must undo");
   Expect(viewport.secondary_carets().size() == kCarets - 1,
          "undo restores the whole secondary caret set from the group's own captures");
@@ -2497,10 +2142,6 @@ void TestTextViewportSoftWrapMoveCursorVerticalUsesWrappedRows() {
          "moving back onto the short continuation row should clamp again while preserving the target column");
 }
 
-// A collapsed fold is one row on screen, so the verbs that act on "the caret's
-// line" act on the whole hidden block (VS Code): copy/cut with nothing selected,
-// delete line, move line, duplicate line. Acting on the opener alone deleted a
-// function's signature and left its body behind.
 void TestTextViewportLineVerbsTreatACollapsedFoldAsOneLine() {
   const auto make = [](TextViewport& viewport, FoldingModel& folding_model) {
     viewport.LoadContent("a\n{\n  b\n}\nc\n", "/tmp/fold-line-verbs.c");
@@ -2541,13 +2182,12 @@ void TestTextViewportLineVerbsTreatACollapsedFoldAsOneLine() {
     TextViewport viewport;
     FoldingModel folding_model;
     make(viewport, folding_model);
-    Expect(CopyLines(viewport, /*downward=*/true), "duplicate line dispatches");
+    Expect(CopyLines(viewport, true), "duplicate line dispatches");
     Expect(viewport.lines().Snapshot() ==
                std::vector<std::string>{"a", "{", "  b", "}", "{", "  b", "}", "c", ""},
            "the whole block is duplicated");
   }
   {
-    // An expanded fold is ordinary lines again.
     TextViewport viewport;
     FoldingModel folding_model;
     make(viewport, folding_model);
@@ -2559,15 +2199,12 @@ void TestTextViewportLineVerbsTreatACollapsedFoldAsOneLine() {
   }
 }
 
-// Regression: with soft-wrap on, a collapsed fold whose opener line wraps into
-// multiple visual rows used to report a single-row range ({R, R}) for the opener,
-// so vertical motion got stuck on it and never crossed the fold.
 void TestTextViewportSoftWrapCollapsedFoldOpenerVerticalMotionEscapes() {
   TextViewport viewport;
   viewport.LoadContent(
       "top\nvoid aaaaaaaaaaaaaaaaaaaaaaaa() {\n  x();\n  y();\n}\nbottom\n",
       "/tmp/soft-wrap-fold.cpp");
-  viewport.SetViewportSize(6, 8);  // narrow: the long opener wraps into several rows
+  viewport.SetViewportSize(6, 8);
   viewport.SetSoftWrap(true);
 
   FoldingModel folding_model;
@@ -2580,21 +2217,14 @@ void TestTextViewportSoftWrapCollapsedFoldOpenerVerticalMotionEscapes() {
   Expect(folding_model.Collapse(1), "the wrapping function opener should collapse");
   viewport.SetFoldingModel(&folding_model);
 
-  // Caret at the end of the collapsed opener (its last wrapped visual row).
   viewport.MoveCursorTo(1, 1000);
   Expect(viewport.cursor_line() == 1, "caret starts on the collapsed opener line");
 
-  // Moving down must leave the opener and land on the line after the folded body,
-  // not stay stuck cycling the opener's own wrapped rows.
   viewport.MoveCursorVertical(1);
   Expect(viewport.cursor_line() == 5,
          "down from a collapsed soft-wrapped opener must cross the fold to the next visible line");
 }
 
-// TD-2026-08-12-188: Home/End are VIEW-line verbs in VS Code (`cursorHome` /
-// `cursorEnd`), with `cursorLineStart`/`cursorLineEnd` as the separate
-// logical-line pair. This editor moved by logical line in both, so with word wrap
-// on, Home on the fourth wrapped row of a paragraph scrolled back up three rows.
 void TestTextViewportHomeAndEndMoveWithinTheWrappedRow() {
   TextViewport viewport;
   viewport.LoadContent("aaaa bbbb cccc dddd eeee ffff gggg hhhh\n", "/tmp/home-end-wrap.txt");
@@ -2619,8 +2249,6 @@ void TestTextViewportHomeAndEndMoveWithinTheWrappedRow() {
   Expect(viewport.cursor_column() == line_length,
          "End on the LAST wrapped row lands at the end of the logical line");
 
-  // A middle row: End stops at the wrap point, and the caret stays on that row
-  // rather than rendering at the start of the next one.
   viewport.MoveCursorTo(0, 0);
   const std::size_t first_row = viewport.cursor_visual_row();
   viewport.MoveCursorLineEnd();
@@ -2630,9 +2258,6 @@ void TestTextViewportHomeAndEndMoveWithinTheWrappedRow() {
          "an End that lands exactly on a wrap point must render at that row's trailing edge");
 }
 
-// The other half of the same entry: VS Code's Home goes to the first
-// non-whitespace character and toggles to true column 0 when the caret is
-// already there.
 void TestTextViewportHomeTogglesBetweenIndentAndColumnZero() {
   TextViewport viewport;
   viewport.LoadContent("    int x = 1;\n", "/tmp/home-indent.txt");
@@ -2646,7 +2271,6 @@ void TestTextViewportHomeTogglesBetweenIndentAndColumnZero() {
   viewport.MoveCursorLineStart();
   Expect(viewport.cursor_column() == 4, "and toggles back to the indent");
 
-  // A line with no indent has nothing to toggle between.
   viewport.LoadContent("int y = 2;\n", "/tmp/home-no-indent.txt");
   viewport.MoveCursorTo(0, 5);
   viewport.MoveCursorLineStart();
@@ -2654,25 +2278,18 @@ void TestTextViewportHomeTogglesBetweenIndentAndColumnZero() {
   viewport.MoveCursorLineStart();
   Expect(viewport.cursor_column() == 0, "and stays there");
 
-  // A blank line: first-non-whitespace does not exist, so both are column 0.
   viewport.LoadContent("      \n", "/tmp/home-blank.txt");
   viewport.MoveCursorTo(0, 6);
   viewport.MoveCursorLineStart();
   Expect(viewport.cursor_column() == 0, "an all-whitespace line homes to column 0");
 }
 
-// TD-2026-08-12-185: the row-offset table stores, for every hidden line, the row
-// where the last VISIBLE line STARTED — so with soft wrap on, a collapsed opener
-// that wraps into rows [R, R+3] answered R for every line it hides. A caret
-// parked inside the fold (a search hit, a restored session, a jump-to-definition
-// into a folded body) therefore resolved to the opener's FIRST row and needed one
-// Down per wrapped row to escape a fold it is not even in.
 void TestTextViewportSoftWrapCaretOnFoldHiddenLineEscapesInOneStep() {
   TextViewport viewport;
   viewport.LoadContent(
       "top\nvoid aaaaaaaaaaaaaaaaaaaaaaaa() {\n  x();\n  y();\n}\nbottom\n",
       "/tmp/soft-wrap-fold-hidden.cpp");
-  viewport.SetViewportSize(6, 8);  // narrow: the long opener wraps into several rows
+  viewport.SetViewportSize(6, 8);
   viewport.SetSoftWrap(true);
 
   FoldingModel folding_model;
@@ -2686,8 +2303,6 @@ void TestTextViewportSoftWrapCaretOnFoldHiddenLineEscapesInOneStep() {
   viewport.SetFoldingModel(&folding_model);
   Expect(folding_model.IsLineHidden(2), "line 2 must be inside the collapsed fold");
 
-  // Control: the opener really does span more than one wrapped row, or the whole
-  // distinction between its first and last row is vacuous.
   Expect(viewport.VisualRowForLine(5) - viewport.VisualRowForLine(1) > 1,
          "the collapsed opener must wrap into several rows for this fixture to test anything");
 
@@ -2720,10 +2335,6 @@ void TestTextViewportSoftWrapPageMovesByVisibleRows() {
          "page up should move back by visible wrapped rows under soft wrap");
 }
 
-// Regression: Shift+PageUp / Shift+PageDown must extend the selection like every
-// other shifted motion key. Page() used to drop the modifier entirely and always
-// move with extend_selection=false, so a paging motion discarded the selection
-// instead of growing it.
 void TestTextViewportShiftPageExtendsSelection() {
   TextViewport viewport;
   std::string content;
@@ -2737,7 +2348,7 @@ void TestTextViewportShiftPageExtendsSelection() {
   viewport.MoveCursorTo(20, 2);
   Expect(!viewport.selection_range().has_value(), "no selection before a paging motion");
 
-  viewport.Page(-1, /*extend_selection=*/true);
+  viewport.Page(-1, true);
   const auto selection = viewport.selection_range();
   Expect(selection.has_value(), "Shift+PageUp must create a selection");
   Expect(viewport.cursor_line() < 20, "the caret must move up a page");
@@ -2748,8 +2359,7 @@ void TestTextViewportShiftPageExtendsSelection() {
              normalized.start.column == viewport.cursor_column(),
          "the selection start follows the paged caret");
 
-  // A paging motion WITHOUT shift collapses the selection, matching arrow keys.
-  viewport.Page(1, /*extend_selection=*/false);
+  viewport.Page(1, false);
   Expect(!viewport.selection_range().has_value(),
          "PageDown without shift must clear the selection");
 }
@@ -2807,15 +2417,6 @@ void TestTextViewportSoftWrapContinuationHitsUseVisualOffset() {
 }
 
 #ifndef NDEBUG
-// A wrap-width change rebuilds the wrapped-row table at most ONCE, and every
-// read after it reuses that build.
-//
-// Which side of the resize the build lands on depends on whether the view is
-// scrolled. At the top there is nothing to re-anchor, so the rebuild stays lazy
-// (the first query after the resize pays it). Scrolled, the new scroll position
-// is a row index in the table being invalidated, so re-anchoring has to resolve
-// it in the new row space -- that build is not extra work, it is the one the next
-// paint would have done, and what matters is that there is still only one.
 void TestTextViewportSoftWrapViewportResizeRebuildsWrapCacheOncePerWidth() {
   TextViewport viewport;
   viewport.LoadContent("abcdefghijklmnopqrst\nabcdefghijklmnopqrst\nabcdefghijklmnopqrst\n",
@@ -2826,7 +2427,6 @@ void TestTextViewportSoftWrapViewportResizeRebuildsWrapCacheOncePerWidth() {
   (void)viewport.VisibleWrappedRowLayout(0);
   const std::size_t first_build_count = viewport.WrappedRowLayoutBuildCountForDebug();
 
-  // At the top of the document: still lazy.
   viewport.SetViewportSize(2, 12);
   Expect(viewport.WrappedRowLayoutBuildCountForDebug() == first_build_count,
          "a resize with the view at the top does not eagerly rebuild wrapped rows");
@@ -2839,14 +2439,11 @@ void TestTextViewportSoftWrapViewportResizeRebuildsWrapCacheOncePerWidth() {
   Expect(viewport.WrappedRowLayoutBuildCountForDebug() == first_build_count + 1,
          "repeated wrapped-row queries without edits or resize should reuse the cached layout");
 
-  // A resize that does NOT change the wrap width must not rebuild at all.
   viewport.SetViewportSize(4, 12);
   (void)viewport.VisibleWrappedRowLayout(0);
   Expect(viewport.WrappedRowLayoutBuildCountForDebug() == first_build_count + 1,
          "changing only the row count leaves the wrapped-row table alone");
 
-  // Scrolled: the resize re-anchors, which costs exactly one rebuild, and the
-  // next query reuses it.
   viewport.SetScrollLine(2);
   Expect(viewport.visual_scroll_line() == 2, "the fixture scrolls off the top row");
   const std::size_t scrolled_build_count = viewport.WrappedRowLayoutBuildCountForDebug();
@@ -2866,7 +2463,6 @@ void TestTextViewportSoftWrapPrefersWhitespaceBoundaries() {
   viewport.SetViewportSize(10, 12);
   viewport.SetSoftWrap(true);
 
-  // Four content rows from the long sentence plus the trailing empty-line row.
   Expect(viewport.VisualRowCount() == 5,
          "soft wrap should split a long sentence into multiple word-aligned rows");
 
@@ -2886,13 +2482,11 @@ void TestTextViewportSoftWrapPrefersWhitespaceBoundaries() {
 
 void TestTextViewportSoftWrapHardBreaksInsideLongWords() {
   TextViewport viewport;
-  // No whitespace within wrap_columns of the row start → must hard break.
   viewport.LoadContent("abcdefghijklmnopqrst\n",
                        "/tmp/soft-wrap-hard.txt");
   viewport.SetViewportSize(10, 8);
   viewport.SetSoftWrap(true);
 
-  // Three content rows plus the trailing empty-line row.
   Expect(viewport.VisualRowCount() == 4,
          "long word with no whitespace should still wrap at the column boundary");
   const auto row0 = viewport.VisibleWrappedRowLayout(0);
@@ -2924,10 +2518,6 @@ void TestTextViewportSoftWrapForcesHorizontalScrollToZero() {
 }
 
 void TestTextViewportSoftWrapVerticalMotionFollowsNonUniformRows() {
-  // Regression: caret row resolution must use the builder's actual word-wrapped
-  // spans, not uniform caret_visual / wrap_columns division. At wrap 12 this
-  // sentence wraps to spans [0,12) [12,16) [16,26) [26,36); visual column 20
-  // lives in row 2, but the old division landed on row 1.
   TextViewport viewport;
   viewport.LoadContent("hello brave new wonderful world here\n",
                        "/tmp/soft-wrap-nonuniform.txt");
@@ -2949,11 +2539,6 @@ void TestTextViewportSoftWrapVerticalMotionFollowsNonUniformRows() {
          "downward motion advances by one real visual row");
 }
 
-// Soft-wrapped rows go through the same visible-line LRU the unwrapped path
-// uses, and are built from the width the wrapped-row table already knows. Before
-// that, a wrapped frame rebuilt EVERY visible row from scratch and each build
-// walked the whole logical line to measure it -- on a file with no line breaks
-// in it, megabytes per row, per frame.
 void TestTextViewportSoftWrapRowsReuseTheVisibleLineCache() {
   TextViewport viewport;
   std::string content(20000, 'a');
@@ -2979,8 +2564,6 @@ void TestTextViewportSoftWrapRowsReuseTheVisibleLineCache() {
   Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineWidthMeasureBytes) == 0,
          "and no row re-measures the logical line it belongs to");
 
-  // A cold pass over fresh rows must not measure the line either -- the width
-  // comes from the wrapped-row table.
   util::ResetPerformanceCounters();
   for (std::size_t row = 40; row < 80 && row < wrapped.visual_line_count(); ++row) {
     (void)wrapped.VisibleWrappedRowLayoutRef(row);
@@ -2989,16 +2572,6 @@ void TestTextViewportSoftWrapRowsReuseTheVisibleLineCache() {
          "building a wrapped row uses the width the wrap table already computed");
 }
 
-// Regression (the wrap-boundary caret): a wrapped row ends where the next one
-// begins, so the wrap point is one text position that TWO rows can claim. It
-// used to always go to the next row, which made vertical motion bounce:
-//
-//   "aaaa bbbb cc dddddddddd" at wrap 10 wraps to [0,10) [10,13) [13,23).
-//
-// Pressing Up from the last row with a preferred column past 3 resolved to
-// column 13 -- the start of the row it just left -- so the caret never moved, no
-// matter how many times Up was pressed. Down had the mirror bug: it skipped the
-// short row entirely. See WrapRowAffinity.
 void TestTextViewportSoftWrapVerticalMotionCrossesShortRows() {
   TextViewport viewport;
   viewport.LoadContent("aaaa bbbb cc dddddddddd\nX\n", "/tmp/soft-wrap-boundary.txt");
@@ -3029,9 +2602,6 @@ void TestTextViewportSoftWrapVerticalMotionCrossesShortRows() {
          "down off the clamped short row restores the preferred column");
 }
 
-// The caret that sits on a wrap boundary renders at the END of the row it was
-// moved onto (VS Code's PositionAffinity.Left), not at the start of the row
-// below -- otherwise "up" looks like it did nothing even when the model moved.
 void TestTextViewportSoftWrapCaretRendersAtWrappedRowEnd() {
   TextViewport viewport;
   viewport.LoadContent("aaaa bbbb cc dddddddddd\n", "/tmp/soft-wrap-boundary-render.txt");
@@ -3046,7 +2616,6 @@ void TestTextViewportSoftWrapCaretRendersAtWrappedRowEnd() {
   Expect(!viewport.VisibleWrappedRowLayout(2).caret_visible,
          "the row below must not also claim the boundary caret");
 
-  // A horizontal step is unambiguous again: the boundary belongs to the next row.
   viewport.MoveCursorHorizontal(-1);
   Expect(viewport.cursor_visual_row() == 1 && viewport.cursor_column() == 12,
          "left off the boundary steps back inside the short row");
@@ -3055,7 +2624,6 @@ void TestTextViewportSoftWrapCaretRendersAtWrappedRowEnd() {
          "an ordinary placement at the wrap point resets to the next row");
 }
 
-// A click past a wrapped row's last glyph keeps the caret on the clicked row.
 void TestTextViewportSoftWrapClickPastRowEndStaysOnThatRow() {
   TextViewport viewport;
   viewport.LoadContent("aaaa bbbb cc dddddddddd\n", "/tmp/soft-wrap-boundary-click.txt");
@@ -3069,10 +2637,6 @@ void TestTextViewportSoftWrapClickPastRowEndStaysOnThatRow() {
          "and the caret stays on the row that was clicked, not the one below");
 }
 
-// Vertical motion preserves the ON-SCREEN column. Continuation rows are drawn
-// shifted right by the hanging indent, so a preferred column that measured the
-// offset INTO the row moved the caret sideways by the indent width every time
-// motion crossed between a first row and a continuation row.
 void TestTextViewportSoftWrapHangingIndentPreservesScreenColumn() {
   TextViewport viewport;
   viewport.LoadContent("    aaaa bbbb cccc dddd eeee\n", "/tmp/soft-wrap-indent-column.txt");
@@ -3082,7 +2646,7 @@ void TestTextViewportSoftWrapHangingIndentPreservesScreenColumn() {
   Expect(row1.indent == 4 && row1.visual_start == 9,
          "fixture: the first continuation row carries a 4-column hanging indent");
 
-  viewport.MoveCursorTo(0, 6);  // screen column 6 on the first row (no indent)
+  viewport.MoveCursorTo(0, 6);
   viewport.MoveCursorVertical(1);
   Expect(viewport.cursor_visual_row() == 1,
          "down from the first row lands on the continuation row");
@@ -3094,10 +2658,6 @@ void TestTextViewportSoftWrapHangingIndentPreservesScreenColumn() {
          "and the round trip back over the indent boundary returns to the same screen column");
 }
 
-// A wrap-width change renumbers every visual row, so scroll_line_ -- a visual row
-// index -- has to be re-derived. It used to be left as-is AND skip the clamp, so
-// widening a soft-wrapped pane both jumped to an unrelated place and could park
-// the scroll past the last row, painting an empty editor.
 void TestTextViewportSoftWrapWidthChangeReanchorsScroll() {
   std::string content;
   for (int i = 0; i < 10; ++i) {
@@ -3123,7 +2683,6 @@ void TestTextViewportSoftWrapWidthChangeReanchorsScroll() {
          "and the re-anchored scroll stays inside the document");
 }
 
-// Same contract for the wrap toggle itself.
 void TestTextViewportSoftWrapToggleReanchorsScroll() {
   std::string content;
   for (int i = 0; i < 10; ++i) {
@@ -3144,8 +2703,6 @@ void TestTextViewportSoftWrapToggleReanchorsScroll() {
 }
 
 void TestTextViewportSoftWrapHangingIndentAlignsContinuationRows() {
-  // Four leading spaces become the hanging indent for continuation rows. At
-  // wrap 12 the indent is min(4, 12/2) = 4.
   TextViewport viewport;
   viewport.LoadContent("    aaaa bbbb cccc dddd eeee\n",
                        "/tmp/soft-wrap-hanging-indent.txt");
@@ -3168,22 +2725,16 @@ void TestTextViewportSoftWrapHangingIndentAlignsContinuationRows() {
          "continuation-row hit-testing subtracts the hanging indent before mapping the column");
 }
 
-// Editing under soft-wrap must keep the wrapped-row table in sync with the
-// buffer. The wrapped table is built lazily on first access; these tests force
-// a build with the pre-edit content, then edit, then assert the post-edit
-// visual-row mapping — the exact scenario left stale when the table was keyed
-// only on layout_shape_revision (which content edits do not bump).
 void TestTextViewportSoftWrapEditGrowsWrapRowCount() {
   TextViewport viewport;
   viewport.LoadContent("abc\nXYZ\n", "/tmp/soft-wrap-edit-grow.txt");
   viewport.SetViewportSize(10, 8);
   viewport.SetSoftWrap(true);
 
-  // Force a build with the pre-edit content: 3 single-row logical lines.
   Expect(viewport.VisualRowCount() == 3, "pre-edit: three single-row lines");
 
   viewport.MoveCursorTo(0, 3);
-  viewport.InsertText("defghijkl");  // line0 -> "abcdefghijkl" (12 cols -> 2 rows)
+  viewport.InsertText("defghijkl");
 
   Expect(viewport.VisualRowCount() == 4,
          "growing a line past the wrap width must add a visual row");
@@ -3205,7 +2756,7 @@ void TestTextViewportSoftWrapEnterSplitUpdatesRowMapping() {
   Expect(viewport.VisualRowCount() == 3, "pre-edit: three single-row lines");
 
   viewport.MoveCursorTo(0, 3);
-  viewport.InsertNewline();  // "abcdef" -> "abc" / "def"
+  viewport.InsertNewline();
 
   Expect(viewport.VisualRowCount() == 4,
          "splitting a line with Enter must add a logical line and its visual row");
@@ -3226,7 +2777,7 @@ void TestTextViewportSoftWrapBackspaceMergeUpdatesRowMapping() {
   Expect(viewport.VisualRowCount() == 4, "pre-edit: four single-row lines");
 
   viewport.MoveCursorTo(1, 0);
-  viewport.Backspace();  // merges "def" onto "abc" -> "abcdef"
+  viewport.Backspace();
 
   Expect(viewport.VisualRowCount() == 3,
          "merging two logical lines must drop a visual row");
@@ -3234,8 +2785,6 @@ void TestTextViewportSoftWrapBackspaceMergeUpdatesRowMapping() {
          "the merged line remains at index 0");
   Expect(viewport.WrappedVisualRowLayout(1).line_index == 1,
          "the line after the merge must map to the new index 1 (ZZ)");
-  // Would read document_->lines[2] out of bounds if the table kept its stale
-  // pre-merge row count / line indices.
   const auto last = viewport.VisibleWrappedRowLayout(2);
   Expect(last.text.empty(),
          "the trailing empty-line row must resolve without a stale line index");
@@ -3249,7 +2798,7 @@ void TestTextViewportSoftWrapEditUpdatesWrapIncrementally() {
   viewport.SetViewportSize(10, 8);
   viewport.SetSoftWrap(true);
 
-  (void)viewport.VisualRowCount();  // force the initial full build
+  (void)viewport.VisualRowCount();
   const std::size_t builds = viewport.WrappedRowLayoutBuildCountForDebug();
 
   viewport.MoveCursorTo(0, 0);
@@ -3261,40 +2810,28 @@ void TestTextViewportSoftWrapEditUpdatesWrapIncrementally() {
          "not trigger a full O(document) rebuild");
 }
 
-// TD-2026-07-17A-022: a common single-line edit near the top of a large
-// soft-wrapped buffer must not walk the rest of the document. When the edit
-// preserves the affected line's wrap-row count and the logical-line count, the
-// incremental update takes the O(edit-size) in-place fast path: it overwrites
-// only the edited line's rows and its own offset, and touches none of the
-// O(document) suffix (no row line_index shift, no offset-table rebuild, no
-// visual-column erase/insert memmove).
 void TestTextViewportSoftWrapLargeBufferInlineEditIsInPlace() {
   TextViewport viewport;
   std::string content;
   content.reserve(4000 * 4);
   for (int i = 0; i < 4000; ++i) {
-    content += "abc\n";  // each a single wrapped row; slack under wrap width
+    content += "abc\n";
   }
   viewport.LoadContent(content, "/tmp/soft-wrap-large-inline.txt");
   viewport.SetViewportSize(20, 12);
   viewport.SetSoftWrap(true);
-  const int rows_before = viewport.VisualRowCount();  // force the initial build
-  (void)viewport.max_visual_columns();  // warm the per-line visual-column cache
+  const int rows_before = viewport.VisualRowCount();
+  (void)viewport.max_visual_columns();
 
   const std::size_t builds = viewport.WrappedRowLayoutBuildCountForDebug();
   const std::size_t inplace_before = viewport.WrappedRowIncrementalInplaceCountForDebug();
   const std::size_t splice_before = viewport.WrappedRowIncrementalSpliceCountForDebug();
   const std::size_t vcol_before = viewport.VisualColumnIncrementalInplaceCountForDebug();
 
-  // Insert one char near the top (line 1): "abc" -> "abZc" stays a single row,
-  // so neither the wrap-row count nor the logical-line count changes. (Line 0 is
-  // avoided only because a content edit at line 0 deliberately drops the whole
-  // visible-line + visual-column cache in InvalidateDerivedCaches; the
-  // wrapped-row table — the expensive one — still updates in place there too.)
   viewport.MoveCursorTo(1, 2);
   viewport.InsertText("Z");
   (void)viewport.VisualRowCount();
-  (void)viewport.max_visual_columns();  // exercise the maintained width cache
+  (void)viewport.max_visual_columns();
 
   Expect(viewport.WrappedRowLayoutBuildCountForDebug() == builds,
          "an in-line edit under soft wrap must not trigger a full O(document) rebuild");
@@ -3305,7 +2842,6 @@ void TestTextViewportSoftWrapLargeBufferInlineEditIsInPlace() {
   Expect(viewport.VisualColumnIncrementalInplaceCountForDebug() == vcol_before + 1,
          "the visual-column cache must also update the edited line in place");
 
-  // The edited row and a deep-suffix row must both still resolve correctly.
   Expect(viewport.WrappedVisualRowLayout(1).line_index == 1,
          "the edited line stays at visual row 1");
   Expect(viewport.WrappedVisualRowLayout(3999).line_index == 3999,
@@ -3314,9 +2850,6 @@ void TestTextViewportSoftWrapLargeBufferInlineEditIsInPlace() {
          "an in-line edit must not change the visual row count");
 }
 
-// Correctness companion: incremental splice/fast-path updates over a soft-wrapped
-// buffer with genuinely multi-row lines must stay identical to a fresh full
-// build after a mix of in-line edits, newline splits, and merges.
 void TestTextViewportSoftWrapIncrementalEditsMatchFreshBuild() {
   const char* kSeed =
       "the quick brown fox jumps over the lazy dog\n"
@@ -3330,23 +2863,16 @@ void TestTextViewportSoftWrapIncrementalEditsMatchFreshBuild() {
   viewport.SetSoftWrap(true);
   (void)viewport.VisualRowCount();
 
-  // In-line insert (in-place or splice depending on whether the row count shifts).
   viewport.MoveCursorTo(0, 4);
   viewport.InsertText("VERYLONGTOKEN");
-  // Delete a char (in-line).
   viewport.MoveCursorTo(1, 3);
   viewport.Backspace();
-  // Split a line (line_delta > 0 -> splice with a positive line_index shift).
   viewport.MoveCursorTo(2, 10);
   viewport.InsertNewline();
-  // Merge two lines (line_delta < 0 -> splice with a negative line_index shift).
   viewport.MoveCursorTo(4, 0);
   viewport.Backspace();
   (void)viewport.VisualRowCount();
 
-  // Reconstruct the post-edit content and build a fresh viewport from it. The
-  // buffer's trailing empty line already stands for the final newline, so join
-  // the lines WITHOUT a trailing newline to reproduce identical content.
   const std::vector<std::string> snapshot = viewport.lines().Snapshot();
   std::string rebuilt;
   for (std::size_t i = 0; i < snapshot.size(); ++i) {
@@ -3361,7 +2887,6 @@ void TestTextViewportSoftWrapIncrementalEditsMatchFreshBuild() {
   fresh.SetSoftWrap(true);
   (void)fresh.VisualRowCount();
 
-  // Sanity: at least one edit exercised each incremental path.
   Expect(viewport.WrappedRowIncrementalInplaceCountForDebug() >= 1 &&
              viewport.WrappedRowIncrementalSpliceCountForDebug() >= 1,
          "the edit mix must exercise both the in-place fast path and the splice path");
@@ -3409,10 +2934,6 @@ void TestTextViewportCollapsedFoldHidesBodyRows() {
 }
 
 void TestTextViewportCollapsedFoldRowSpansTrackHorizontalScroll() {
-  // Regression: with a collapsed fold and soft wrap off, a row's visible span
-  // must reflect the live horizontal scroll. The fold-but-no-wrap path used to
-  // bake horizontal_scroll into the cached span without keying on it, so the
-  // span went stale after scrolling and highlights clipped to the wrong window.
   TextViewport viewport;
   viewport.LoadContent(
       "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\nvoid f() {\n  a();\n  b();\n}\nx();\n",
@@ -3440,27 +2961,23 @@ void TestTextViewportCollapsedFoldRowSpansTrackHorizontalScroll() {
 
 void TestTextViewportHorizontalMotionCrossesLineBoundaries() {
   TextViewport viewport;
-  viewport.LoadContent("abc\nde\nf", "/tmp/hmotion.cpp");  // no trailing newline: 3 lines
+  viewport.LoadContent("abc\nde\nf", "/tmp/hmotion.cpp");
 
-  // Right at end-of-line steps to the start of the next line (VS Code semantics).
-  viewport.MoveCursorTo(0, 3);  // end of "abc"
+  viewport.MoveCursorTo(0, 3);
   viewport.MoveCursorHorizontal(1);
   Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 0,
          "Right at end-of-line should move to the start of the next line");
 
-  // Left at column 0 steps to the end of the previous line.
   viewport.MoveCursorHorizontal(-1);
   Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 3,
          "Left at column 0 should move to the end of the previous line");
 
-  // Left at the very start of the document is a no-op (nothing before it).
   viewport.MoveCursorTo(0, 0);
   viewport.MoveCursorHorizontal(-1);
   Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 0,
          "Left at the document start should stay put");
 
-  // Right at the very end of the last line is a no-op (does not fall off buffer).
-  viewport.MoveCursorTo(2, 1);  // end of "f"
+  viewport.MoveCursorTo(2, 1);
   viewport.MoveCursorHorizontal(1);
   Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 1,
          "Right at the document end should stay put");
@@ -3563,18 +3080,6 @@ void TestTextViewportMaxVisualColumnsUpdatesIncrementally() {
          "shrinking the former widest line should recompute the new maximum width");
 }
 
-// Typing on the WIDEST line must not walk the whole width table.
-//
-// `ClampScrollState` runs on every paint and reads MaxVisualColumns() once the
-// horizontal offset is non-zero, and the memoized maximum used to be dropped
-// whenever the widest line was rewritten -- even when the rewrite made it wider.
-// The two conditions are correlated: you only scroll horizontally while working
-// on a long line, so the guard that was supposed to make the rescan rare was
-// satisfied exactly when the rescan fired. On a 50k-line file that was a
-// 50,000-entry deque walk per keystroke (TD-2026-09-20-297).
-//
-// The oracle is a from-scratch measure, so the fast path cannot be "fast but
-// wrong"; the counters are what say it was actually taken.
 void TestTextViewportTypingOnTheWidestLineDoesNotRescanTheWidthTable() {
   using microide::editor::TextLayout;
   TextViewport viewport;
@@ -3599,11 +3104,10 @@ void TestTextViewportTypingOnTheWidestLineDoesNotRescanTheWidthTable() {
     return widest;
   };
 
-  (void)viewport.max_visual_columns();  // warm the table and the memo, as a paint does
+  (void)viewport.max_visual_columns();
   Expect(viewport.max_visual_columns() == fresh_widest(),
          "the warmed maximum should match a fresh measure");
 
-  // Typing on the widest line: it stays the widest, so nothing else need be read.
   const auto before = util::CapturePerformanceCounters();
   viewport.MoveCursorTo(widest_line, viewport.lines()[widest_line].size());
   viewport.InsertText("X");
@@ -3619,9 +3123,6 @@ void TestTextViewportTypingOnTheWidestLineDoesNotRescanTheWidthTable() {
              before[static_cast<std::size_t>(util::PerfCounterId::EditorLineWidthMaxKeptOnReplace)],
          "the widened-replacement path is what should have answered, and it should say so");
 
-  // Shrinking the widest line is the case that genuinely cannot be answered
-  // without reading other lines: its old width is gone and the runner-up is
-  // recorded nowhere. It must still be CORRECT, and it is allowed to scan.
   viewport.MoveCursorTo(widest_line, 0);
   viewport.ReplaceRange({{widest_line, 0}, {widest_line, viewport.lines()[widest_line].size()}},
                         "tiny");
@@ -3645,9 +3146,6 @@ void TestTextViewportReplaceAllUndoRedoHandlesLargeSparseDocument() {
   }
   viewport.LoadContent(content, "/tmp/replace-all-large.txt");
 
-  // TD 022 (standing backlog #9): batch replace + undo/redo on a large document
-  // must stay affected-range-only — no whole-buffer TextBuffer::Snapshot()
-  // materialization anywhere in the edit funnel.
   microide::editor::TextBuffer::reset_snapshot_build_count();
 
   const std::size_t replaced = viewport.ReplaceAll("TARGET", "hit");
@@ -3679,12 +3177,6 @@ void TestTextViewportReplaceAllUndoRedoHandlesLargeSparseDocument() {
          "replace-all + undo + redo on a large document must never materialize the whole buffer");
 }
 
-// TD 022 (standing backlog #9): the single-caret edit funnel — character insert,
-// newline split, backspace join, multi-line paste, and a spanning range delete —
-// must stay affected-range-only on a large buffer (no TextBuffer::Snapshot()
-// whole-document materialization), and the full undo chain must restore the
-// original content exactly. Complements the multi-caret grouped-edit snapshot
-// guards in EditorMultiCaretTests.
 void TestTextViewportLargeBufferSingleCaretEditWorkoutAvoidsSnapshot() {
   using microide::editor::TextBuffer;
   TextViewport viewport;
@@ -3705,14 +3197,13 @@ void TestTextViewportLargeBufferSingleCaretEditWorkoutAvoidsSnapshot() {
   TextBuffer::reset_snapshot_build_count();
 
   viewport.MoveCursorTo(kMidLine, 0);
-  viewport.InsertText("Z");     // same-line insert (line-edit fast path)
-  viewport.InsertNewline();     // line split (+1)
-  viewport.Backspace();         // col-0 join back (-1)
-  viewport.InsertText("A\nB\n");  // multi-line paste (+2)
-  // Spanning range delete removing exactly the pasted "A\nB\n" (-2).
+  viewport.InsertText("Z");
+  viewport.InsertNewline();
+  viewport.Backspace();
+  viewport.InsertText("A\nB\n");
   viewport.ReplaceRange(SelectionRange{.start = TextPosition{kMidLine, 1},
                                        .end = TextPosition{kMidLine + 2, 0}},
-                        "", /*record_undo=*/true);
+                        "", true);
 
   Expect(TextBuffer::snapshot_build_count() == 0,
          "the single-caret edit workout must never materialize the whole buffer");
@@ -3742,10 +3233,6 @@ void TestTextViewportLargeBufferSingleCaretEditWorkoutAvoidsSnapshot() {
 }
 
 void TestTextViewportReplaceAllMultiMatchRespectsUnequalLengths() {
-  // Regression for a coordinate-system desync: the per-line loop used to mutate its
-  // lowered scratch line and resume searching from the mutated position while still
-  // indexing the unmodified source line, so every match after the first was placed
-  // wrong whenever replacement.size() != needle.size().
   {
     TextViewport viewport;
     viewport.LoadContent("axaxa", "/tmp/replace-grow.txt");
@@ -3763,7 +3250,6 @@ void TestTextViewportReplaceAllMultiMatchRespectsUnequalLengths() {
            "replace-all with a shorter replacement must not corrupt source bytes");
   }
   {
-    // Multiple lines, replacement longer than needle, matches also at line edges.
     TextViewport viewport;
     viewport.LoadContent("xax\nbxb", "/tmp/replace-multiline.txt");
     const std::size_t replaced = viewport.ReplaceAll("x", "zz");
@@ -3774,9 +3260,6 @@ void TestTextViewportReplaceAllMultiMatchRespectsUnequalLengths() {
 }
 
 void TestTextViewportReplaceAllUnicodeCaseInsensitive() {
-  // Case-insensitive replace matches non-ASCII case variants. "café" (é) folds to
-  // match "CAFÉ" (É) and "Café"; the fold is length-preserving so the offset
-  // arithmetic that indexes the source line by folded-buffer offsets stays correct.
   TextViewport viewport;
   viewport.LoadContent("café CAFÉ Café x", "/tmp/replace-unicode.txt");
   const std::size_t replaced = viewport.ReplaceAll("café", "tea");
@@ -3786,10 +3269,6 @@ void TestTextViewportReplaceAllUnicodeCaseInsensitive() {
 }
 
 void TestTextViewportReplaceAllMultiLineReplacementSplitsLines() {
-  // Regression: a replacement containing a newline used to be stuffed into a single
-  // logical line via SetLine, leaving the PieceTree's line_count disagreeing with
-  // the buffer (an embedded '\n' inside one "line"), which corrupts later edits and
-  // undo. It must splice in as real physical lines instead.
   {
     TextViewport viewport;
     viewport.LoadContent("x", "/tmp/replace-newline.txt");
@@ -3798,13 +3277,11 @@ void TestTextViewportReplaceAllMultiLineReplacementSplitsLines() {
     Expect(viewport.line_count() == 2, "a newline replacement must expand into two lines");
     Expect(viewport.lines()[0] == "a" && viewport.lines()[1] == "b",
            "multi-line replacement must produce real lines, not an embedded newline");
-    // Line views never contain a newline when line_count is consistent.
     Expect(std::string(viewport.lines()[0]).find('\n') == std::string::npos &&
                std::string(viewport.lines()[1]).find('\n') == std::string::npos,
            "no line should hide an embedded newline");
   }
   {
-    // Across several source lines, and CRLF in the replacement is normalized.
     TextViewport viewport;
     viewport.LoadContent("foo\nbar\nfoo", "/tmp/replace-newline-multi.txt");
     const std::size_t replaced = viewport.ReplaceAll("foo", "one\r\ntwo");
@@ -3817,7 +3294,6 @@ void TestTextViewportReplaceAllMultiLineReplacementSplitsLines() {
            "multi-line replacements must splice correctly around unchanged lines");
   }
   {
-    // Undo must restore the original buffer exactly after a multi-line replace.
     TextViewport viewport;
     viewport.LoadContent("x\ny", "/tmp/replace-newline-undo.txt");
     viewport.ReplaceAll("x", "a\nb");
@@ -3829,10 +3305,6 @@ void TestTextViewportReplaceAllMultiLineReplacementSplitsLines() {
   }
 }
 
-// TD-2026-07-17A-028: ReplaceAllRanges applies a precomputed match set as one
-// grouped edit and must be byte-identical to the scanning ReplaceAll (including
-// undo/redo). It must also validate its input and leave the document untouched
-// (returning nullopt) when the caller's ranges are stale/inconsistent.
 void TestTextViewportReplaceAllRangesMatchesScanningReplaceAll() {
   using microide::editor::SelectionRange;
   using microide::editor::TextPosition;
@@ -3842,12 +3314,9 @@ void TestTextViewportReplaceAllRangesMatchesScanningReplaceAll() {
   };
 
   {
-    // Multiple matches per line, across lines, longer replacement. Compare a
-    // range-driven apply to a freshly-scanned ReplaceAll on identical content.
     const char* content = "xax\nbetween\nxxb";
     TextViewport range_view;
     range_view.LoadContent(content, "/tmp/replace-ranges-a.txt");
-    // Matches of "x": (0,0),(0,2),(2,0),(2,1). Ascending, single-line, non-overlapping.
     const std::vector<SelectionRange> matches = {
         make_range(0, 0, 1), make_range(0, 2, 3), make_range(2, 0, 1), make_range(2, 1, 2)};
     const auto applied = range_view.ReplaceAllRanges(matches, "zz");
@@ -3860,7 +3329,6 @@ void TestTextViewportReplaceAllRangesMatchesScanningReplaceAll() {
     Expect(range_view.lines().Snapshot() == scan_view.lines().Snapshot(),
            "range-driven replace-all must equal scanning replace-all byte-for-byte");
 
-    // Undo restores the exact original for the range-driven edit.
     Expect(range_view.Undo(), "undo after range replace-all succeeds");
     Expect(range_view.lines()[0] == "xax" && range_view.lines()[1] == "between" &&
                range_view.lines()[2] == "xxb",
@@ -3870,7 +3338,6 @@ void TestTextViewportReplaceAllRangesMatchesScanningReplaceAll() {
   }
 
   {
-    // A multi-line replacement splices in real lines, matching ReplaceAll.
     TextViewport range_view;
     range_view.LoadContent("foo\nbar\nfoo", "/tmp/replace-ranges-nl.txt");
     const std::vector<SelectionRange> matches = {make_range(0, 0, 3), make_range(2, 0, 3)};
@@ -3883,8 +3350,6 @@ void TestTextViewportReplaceAllRangesMatchesScanningReplaceAll() {
   }
 
   {
-    // Validation: an out-of-range / unsorted / overlapping set must bail with
-    // nullopt and leave the buffer untouched.
     TextViewport view;
     view.LoadContent("abc", "/tmp/replace-ranges-invalid.txt");
     Expect(!view.ReplaceAllRanges({make_range(0, 1, 1)}, "z").has_value(),
@@ -3917,20 +3382,15 @@ void TestRuntimeSyntaxCarriesRegionAcrossBlankLine() {
   const std::filesystem::path path = "/tmp/region.c";
   const std::string opener = "int x; /* start of a block comment";
 
-  // The opener leaves an unterminated block comment open (region depth > 0).
   microide::editor::SyntaxState opened = rs::AdvanceState(opener, path, {}, opener);
   Expect(opened.region_depth > 0, "an unterminated block comment opens a region");
 
-  // Regression: a blank line inside the comment must carry the open region
-  // forward, not reset to top level (which would resume the rest of the file as
-  // code and mis-highlight everything after the blank line).
   const microide::editor::SyntaxState after_blank = rs::AdvanceState("", path, opened, opener);
   Expect(after_blank.region_depth == opened.region_depth,
          "a blank line inside a block comment must preserve the open region");
   Expect(after_blank.definition_id == opened.definition_id,
          "the definition id is preserved across a blank line");
 
-  // The next line still resumes inside the comment and its */ closes it.
   const microide::editor::SyntaxState after_close =
       rs::AdvanceState("still inside */", path, after_blank, opener);
   Expect(after_close.region_depth == 0, "the closing */ ends the carried region");
@@ -3947,19 +3407,11 @@ void TestRuntimeSyntaxDetectFiletypeDisambiguatesObjectiveCSource() {
          "Objective-C source files should still resolve to the Objective-C syntax definition");
 }
 
-// TD-2026-08-05-133: signature detection reads a bounded head of each line, but it
-// used to ASK for the whole line and slice afterwards. On a piece-tree buffer that
-// materializes the line, and detection re-runs on every content revision — so a
-// file with no line breaks in it paid a multi-megabyte copy per keystroke to look
-// at 4 KiB. Assert the work, not the answer: the answer was always right.
 void TestRuntimeSyntaxDetectFiletypeReadsOnlyABoundedHead() {
   namespace rs = microide::editor::runtime_syntax;
   constexpr std::size_t kLineBytes = 512u * 1024u;
   microide::editor::TextBuffer buffer;
   buffer.ResetFromText("#!/bin/sh\n" + std::string(kLineBytes, 'x'));
-  // Split line 1 the way an in-line edit does, so LineView(1) can only be served
-  // by copying it. Without that the detection path is contiguous and the
-  // assertion below would pass for the wrong reason.
   buffer.ReplaceTextRange(1, kLineBytes / 2, 1, kLineBytes / 2, "MID");
 
   util::ResetPerformanceCounters();
@@ -3971,8 +3423,6 @@ void TestRuntimeSyntaxDetectFiletypeReadsOnlyABoundedHead() {
          "signature detection must not materialize a line it only reads 4 KiB of (copied " +
              std::to_string(materialized_bytes) + " bytes)");
 
-  // Reachability control: the same buffer read whole DOES materialize, so the
-  // zero above is a property of the detection path, not of this fixture.
   (void)buffer.LineView(1);
   Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializedBytes) >=
              kLineBytes,
@@ -3990,16 +3440,6 @@ void TestRuntimeSyntaxDetectFiletypeKeepsCMakeLists() {
          "CMakeLists.txt should still resolve to the CMake syntax definition");
 }
 
-// One keystroke inside one line must cost a bounded multiple of that line, not an
-// open-ended one. On ordinary source lines the difference is invisible; the file
-// that makes it visible is the one with no line breaks -- a minified bundle, a
-// newline-free JSON blob -- where the "affected line" is the whole document and
-// every extra pass over it is megabytes of copying per character typed.
-//
-// Composing the replacement as `prefix + replacement + suffix` walked that line
-// about three times over (into `prefix`, into `suffix`, into the temporary from
-// the first `+`, then into the result) on top of the copy the undo entry needs.
-// Bytes, not duration, so this cannot go flaky.
 void TestTextViewportSingleLineEditAllocatesABoundedMultipleOfTheLine() {
 #if MICROIDE_PERF_HARNESS_BUILD
   namespace perf = microide::tests::perf;
@@ -4008,34 +3448,12 @@ void TestTextViewportSingleLineEditAllocatesABoundedMultipleOfTheLine() {
   viewport.LoadContent(std::string(kLineBytes, 'x') + "\n", "/tmp/minified-edit.txt");
   viewport.MoveCursorTo(0, 100);
 
-  // Warm: the first edit pays one-off costs (undo stack growth, cache priming).
   viewport.InsertText("a");
 
   const auto before = perf::Allocations::Snapshot();
   viewport.InsertText("b");
   const auto delta = perf::Allocations::DeltaSince(before);
 
-  // Two line-sized copies are inherent to the current history model: the undo
-  // entry keeps the pre-edit line, and the post-edit line has to be built. The
-  // budget is 3x so a third full pass fails; it measured ~5x before.
-  // Measured 5x on this path: the undo entry's pre-edit copy, the composed
-  // post-edit line, the piece tree's replacement buffer and its add-buffer append,
-  // and the undo run's coalesce. 6x leaves headroom for allocator rounding while
-  // still failing the 10x and 13x this measured before the surrounding commits.
-  // The remaining 5 are the whole-line history model itself, not stray copies.
-  // Measured 1.00x in 9 allocations (4,195,125 bytes for a 4 MiB line). The one
-  // remaining line-sized copy is the piece tree materializing the edited line into
-  // its per-revision cache, which the renderer and the visual-width scan both need
-  // as one contiguous view -- it is shared, not per-caller. Everything else on the
-  // path is now proportional to the delta:
-  //   * the undo entry stores {column, removed_text, inserted_text}, not the line
-  //     before and after (TD-2026-08-05-131),
-  //   * the piece tree splices bytes at two offsets instead of rebuilding the line
-  //     into a replacement buffer and appending that to `add_`,
-  //   * the typing run coalesces by appending to those two small strings,
-  //   * the encoding upgrade scans the spliced-in bytes, not the rebuilt line.
-  // 2x leaves room for allocator rounding while failing the moment a second full
-  // pass over the line comes back. It measured 13x, then 5x, before this.
   const std::uint64_t budget = 2u * kLineBytes;
   Expect(static_cast<std::uint64_t>(delta.bytes_allocated) < budget,
          "a one-character edit must cost its delta plus the one shared line "
@@ -4043,24 +3461,12 @@ void TestTextViewportSingleLineEditAllocatesABoundedMultipleOfTheLine() {
 #endif
 }
 
-// TD-2026-08-05-132 item 2: a keystroke inside a line must not re-measure that
-// line's visual width. It does not have to: a line already known to be plain
-// ASCII (no tab, no byte >= 0x80) stays plain exactly when the spliced-in text is,
-// and a plain line's width is its byte count -- so the new width follows from the
-// splice without reading the line at all.
-//
-// The correctness half is the interesting half: the derivation is only valid while
-// both halves of that precondition hold, so this pins the width against a
-// from-scratch measurement across the transitions that break it (a tab typed in, a
-// multibyte code point typed in, and undo/redo back across both).
 void TestTextViewportInlineEditDerivesLineWidthFromTheSplice() {
   using microide::editor::TextLayout;
   microide::editor::TextViewport viewport;
   viewport.LoadContent("plain ascii line\nsecond\n", "/tmp/inline-width.txt");
   const std::size_t tab_size = viewport.tab_size();
 
-  // The width the cache reports must always equal a fresh measurement of the
-  // widest line -- that is the whole contract of the incremental table.
   const auto expect_width_matches_a_fresh_measure = [&](const char* what) {
     std::size_t widest = 0;
     for (std::size_t i = 0; i < viewport.line_count(); ++i) {
@@ -4084,8 +3490,6 @@ void TestTextViewportInlineEditDerivesLineWidthFromTheSplice() {
   const std::size_t derived_after_ascii = viewport.VisualColumnSpliceDerivedCountForDebug();
 #endif
 
-  // A tab breaks the precondition on the way in: the width must come from a real
-  // measurement, and every later edit on that line must keep doing so.
   viewport.InsertText("\t");
   expect_width_matches_a_fresh_measure("a tab typed into a plain line re-measures the line");
 #ifndef NDEBUG
@@ -4099,7 +3503,6 @@ void TestTextViewportInlineEditDerivesLineWidthFromTheSplice() {
          "a line that is no longer plain ASCII must not take the splice-derived path");
 #endif
 
-  // A multibyte code point breaks it the other way: bytes stop being cells.
   Expect(viewport.Undo(), "undo the trailing character");
   Expect(viewport.Undo(), "undo the tab");
   expect_width_matches_a_fresh_measure("undoing back to a plain line restores its width");
@@ -4111,16 +3514,6 @@ void TestTextViewportInlineEditDerivesLineWidthFromTheSplice() {
   expect_width_matches_a_fresh_measure("redoing a multibyte insert re-measures the line");
 }
 
-// max_visual_columns() is memoized as (widest width, which line is widest), and an
-// edit maintains that pair instead of dropping it -- dropping it costs a
-// whole-document rescan of the width table on the next reader, and an edit that
-// WIDENS lines used to be the common way to trigger one (commenting out 1000 lines
-// of a 50k-line file measured 16 rescans of 50k entries each).
-//
-// Two things have to hold together, so this checks both on every step: the answer
-// still equals a from-scratch scan, and the rescan only happens for the one edit
-// that genuinely needs it -- rewriting or deleting the widest line itself, whose
-// old width is gone and whose successor is not recorded anywhere.
 void TestTextViewportWidestLineIsMaintainedAcrossEdits() {
   using microide::editor::TextLayout;
   using microide::util::PerfCounterId;
@@ -4137,7 +3530,6 @@ void TestTextViewportWidestLineIsMaintainedAcrossEdits() {
     }
     return widest;
   };
-  // Returns how many whole-table max scans the edit + read cost.
   const auto scans_for = [&](const char* what, const std::function<void()>& edit) {
     edit();
     const std::uint64_t before =
@@ -4147,9 +3539,8 @@ void TestTextViewportWidestLineIsMaintainedAcrossEdits() {
     return microide::util::ReadPerformanceCounter(PerfCounterId::EditorLineWidthMaxScans) - before;
   };
 
-  (void)viewport.max_visual_columns();  // warm the table + the memo
+  (void)viewport.max_visual_columns();
 
-  // A narrower line growing, but staying under the widest: nothing moves.
   Expect(scans_for("widening a narrow line keeps the recorded maximum",
                    [&] {
                      viewport.MoveCursorTo(0, 5);
@@ -4157,8 +3548,6 @@ void TestTextViewportWidestLineIsMaintainedAcrossEdits() {
                    }) == 0,
          "an edit that cannot beat the maximum must not rescan the table");
 
-  // A narrow line growing PAST the widest. The new maximum is the line just
-  // written, which is known without looking at any other line.
   Expect(scans_for("a line growing past the maximum becomes the new maximum",
                    [&] {
                      viewport.MoveCursorTo(2, 3);
@@ -4166,9 +3555,6 @@ void TestTextViewportWidestLineIsMaintainedAcrossEdits() {
                    }) == 0,
          "an edit that raises the maximum must not rescan the table");
 
-  // Inserting lines ABOVE the widest line shifts its index. If the shift is
-  // wrong the memo names some other line and the next edit to the real widest
-  // line goes unnoticed -- which the following step is what catches.
   Expect(scans_for("splitting a line above the maximum keeps the maximum",
                    [&] {
                      viewport.MoveCursorTo(0, 2);
@@ -4176,8 +3562,6 @@ void TestTextViewportWidestLineIsMaintainedAcrossEdits() {
                    }) == 0,
          "a line-count change above the maximum must not rescan the table");
 
-  // Now shrink the widest line itself. Its old width is gone and the second
-  // widest is unrecorded, so this one legitimately rescans.
   Expect(scans_for("shrinking the widest line falls back to a rescan",
                    [&] {
                      viewport.MoveCursorTo(3, 3);
@@ -4186,7 +3570,6 @@ void TestTextViewportWidestLineIsMaintainedAcrossEdits() {
                    }) == 1,
          "rewriting the widest line has to rescan -- nothing else knows the runner-up");
 
-  // Deleting the widest line outright is the same story.
   Expect(scans_for("deleting the widest line falls back to a rescan",
                    [&] {
                      std::size_t widest_index = 0;
@@ -4205,7 +3588,6 @@ void TestTextViewportWidestLineIsMaintainedAcrossEdits() {
                    }) == 1,
          "deleting the widest line has to rescan");
 
-  // And undo/redo across all of it stays exact.
   for (int i = 0; i < 6 && viewport.Undo(); ++i) {
     Expect(viewport.max_visual_columns() == fresh_widest(),
            "undoing back through the edits keeps the maximum exact");
@@ -4216,19 +3598,13 @@ void TestTextViewportWidestLineIsMaintainedAcrossEdits() {
   }
 }
 
-// The caret's byte column <-> visual column conversions answer in O(1) on a
-// plain-ASCII line by reading the layout cache's per-line facts instead of walking
-// the line (TD-2026-08-05-132). That shortcut is only correct while the facts are
-// current, and the facts are only present once something has populated the width
-// table -- so the two paths must agree whether the table is cold or warm, and
-// across the edits that change a line's class.
 void TestTextViewportCaretColumnConversionsMatchTheDirectWalk() {
   using microide::editor::TextLayout;
   const std::vector<std::string> rows = {
-      "plain ascii row",           // one cell per byte
-      "tabbed\tcolumns\there",     // tab stops
-      "caf\xC3\xA9 \xE4\xB8\xAD",  // multibyte
-      "",                          // empty
+      "plain ascii row",
+      "tabbed\tcolumns\there",
+      "caf\xC3\xA9 \xE4\xB8\xAD",
+      "",
   };
   std::string content;
   for (const std::string& row : rows) {
@@ -4252,8 +3628,6 @@ void TestTextViewportCaretColumnConversionsMatchTheDirectWalk() {
   };
 
   {
-    // Cold: nothing has built the width table yet, so every query must fall back
-    // to the walk and still be right.
     microide::editor::TextViewport viewport;
     viewport.LoadContent(content, "/tmp/caret-columns.txt");
     check_every_column(viewport, "cold width table");
@@ -4261,12 +3635,9 @@ void TestTextViewportCaretColumnConversionsMatchTheDirectWalk() {
 
   microide::editor::TextViewport viewport;
   viewport.LoadContent(content, "/tmp/caret-columns.txt");
-  (void)viewport.max_visual_columns();  // populate the per-line facts
+  (void)viewport.max_visual_columns();
   check_every_column(viewport, "warm width table");
 
-  // Typing a tab into the plain row moves it out of the plain class; typing a
-  // multibyte code point does the same by a different route. Both must be
-  // reflected before the next conversion, or the caret lands on the wrong cell.
   viewport.MoveCursorTo(0, 5);
   viewport.InsertText("\t");
   check_every_column(viewport, "after a tab is typed into a plain row");
@@ -4277,31 +3648,7 @@ void TestTextViewportCaretColumnConversionsMatchTheDirectWalk() {
   check_every_column(viewport, "after undoing back to the plain row");
 }
 
-// Typing deep inside a long plain-ASCII line must not walk the line to work out
-// where the caret is -- not once, from any of the caret paths that run per
-// keystroke and per rendered row (TD-2026-08-05-132).
-//
-// The correctness test above cannot see this: a walk and a lookup return the same
-// answer. `editor.visual_column_walk_bytes` counts what the fallback actually
-// read, so "no walk happened" is assertable, and the number is the blind spot's
-// own units -- bytes of line re-read per keystroke.
-// TD-2026-08-05-133: typing in a line with no line breaks in it must not COPY the
-// line, on any path a keystroke reaches. `PieceTree::LineView` materializes any
-// line that spans pieces -- which every line becomes on its first in-line edit --
-// so a single caller reaching for the whole line puts a multi-megabyte copy back
-// on the keystroke path, and it is invisible: the copy is shared and cached, so it
-// is charged to whichever consumer asks first and moves between scopes as the code
-// around it changes.
-//
-// The counter is what makes this testable at all. Every one of the callers that
-// used to do this returned the right answer; only the amount of work differed.
 void TestTextViewportTypingInALongLineCopiesNothing() {
-  // MICROIDE_VERIFY_LINE_WIDTH_TABLE turns on an opt-in O(document) checker that
-  // re-measures every line from the buffer on every width-table read -- which
-  // materializes them, which is the exact thing this test counts. The two cannot
-  // both be on, and until this guard existed the verifier could not be soaked
-  // over this suite at all: it failed here, on its own observation effect,
-  // before reaching anything it was meant to check.
   if (const char* verify = std::getenv("MICROIDE_VERIFY_LINE_WIDTH_TABLE");
       verify != nullptr && verify[0] != '\0' && verify[0] != '0') {
     std::fprintf(stderr,
@@ -4314,8 +3661,6 @@ void TestTextViewportTypingInALongLineCopiesNothing() {
   viewport.LoadContent(std::string(kLineBytes, 'x') + "\n", "/tmp/long-line-copies.txt");
   viewport.SetViewportSize(40, 120);
   viewport.MoveCursorTo(0, kLineBytes / 2, false);
-  // Warm what a first frame warms: the width table, the caret row, the line's
-  // tokens and its fold-relevant facts.
   (void)viewport.max_visual_columns();
   (void)viewport.CaretForLine(0);
   (void)viewport.HighlightedLineTokens(0);
@@ -4336,8 +3681,6 @@ void TestTextViewportTypingInALongLineCopiesNothing() {
   Expect(copied == 0, "typing in a long line must copy none of it (copied " +
                           std::to_string(copied) + " bytes over 16 edits)");
 
-  // Reachability control: the counter can move on this very buffer, so the zero
-  // above is a property of the edit path and not of a counter that never fires.
   (void)viewport.lines().LineView(0);
   Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializedBytes) >=
              kLineBytes,
@@ -4351,7 +3694,6 @@ void TestTextViewportTypingInALongLineDoesNotWalkItForCaretColumns() {
   viewport.LoadContent(std::string(kLineBytes, 'x') + "\n", "/tmp/long-line-caret.txt");
   viewport.SetViewportSize(40, 120);
   viewport.MoveCursorTo(0, kLineBytes / 2, false);
-  // Warm the width table the way a rendered frame does.
   (void)viewport.max_visual_columns();
   (void)viewport.CaretForLine(0);
 
@@ -4359,7 +3701,6 @@ void TestTextViewportTypingInALongLineDoesNotWalkItForCaretColumns() {
       util::ReadPerformanceCounter(util::PerfCounterId::EditorVisualColumnWalkBytes);
   for (int i = 0; i < 8; ++i) {
     viewport.InsertText("y");
-    // What a frame asks for: the caret's row decoration and its scroll clamp.
     (void)viewport.CaretForLine(0);
     (void)viewport.cursor_visual_column();
   }
@@ -4369,8 +3710,6 @@ void TestTextViewportTypingInALongLineDoesNotWalkItForCaretColumns() {
          "typing in a long plain-ASCII line must not re-walk it for caret columns (walked " +
              std::to_string(walked) + " bytes)");
 
-  // And the fallback is still reachable -- a counter that can never move is not
-  // evidence. A tab makes the line non-plain, and the very next conversion walks.
   viewport.InsertText("\t");
   const std::uint64_t before_tabbed =
       util::ReadPerformanceCounter(util::PerfCounterId::EditorVisualColumnWalkBytes);
@@ -4380,39 +3719,13 @@ void TestTextViewportTypingInALongLineDoesNotWalkItForCaretColumns() {
          "a line that is no longer plain ASCII must fall back to the walk");
 }
 
-// The soft-wrap counterpart of the test above, and the reason it is a separate
-// test rather than a second loop inside it: that one calls `max_visual_columns()`
-// to "warm the width table the way a rendered frame does", and under soft wrap NO
-// frame does. Soft wrap has no horizontal scrollbar, so the scrollbar geometry
-// skips MaxVisualColumns and ClampScrollState returns early at horizontal_scroll
-// == 0. Nothing else builds the table, `LineFactsIfCurrent` therefore always
-// answers "unknown", and the O(1) conversion path was unreachable in exactly the
-// mode where lines are longest -- 2.2 GB of walking in one perf scenario, invisible
-// because the existing test primed the table by hand (TD-2026-08-30-274).
-//
-// So: no priming here. That absence is the test.
-// The wrapped-row table is spliced incrementally on every edit, and since
-// TD-2026-08-30-275 the re-wrap also RESUMES mid-line: rows that provably could
-// not have examined the edited byte are kept, and only the rest is re-wrapped.
-// Both are optimizations whose failure mode is silent -- a wrong row table lays
-// glyphs in the wrong place, it does not crash.
-//
-// So compare against the cache-free oracle: the same content loaded fresh into a
-// second viewport, whose table is built in one pass with no splice at all. Debug
-// builds also assert this inside the splice itself, but `cmake -S . -B build` is
-// Release, where that assert compiles to nothing -- this is the half that runs in
-// the default lane.
 void TestTextViewportSoftWrapIncrementalRowsMatchAFullRewrap() {
-  // Words and spaces, so the break decisions are real word-wrap choices rather
-  // than uniform hard breaks, and a resume point one row off changes the answer.
   std::string line;
   while (line.size() < 4000) {
     line += "alpha beta gamma delta epsilon zeta eta theta ";
   }
   const std::string content = line + "\n";
 
-  // Edit columns spanning the interesting cases: the very start (nothing can be
-  // kept), inside the first row, a row boundary deep in, mid-line, and the tail.
   for (const std::size_t column : {std::size_t{0}, std::size_t{5}, std::size_t{79},
                                    std::size_t{80}, std::size_t{81}, line.size() / 2,
                                    line.size() - 3, line.size()}) {
@@ -4421,8 +3734,6 @@ void TestTextViewportSoftWrapIncrementalRowsMatchAFullRewrap() {
       incremental.LoadContent(content, "/tmp/wrap-incremental.txt");
       incremental.SetViewportSize(20, 80);
       incremental.SetSoftWrap(true);
-      // Build the table BEFORE the edit, so the edit takes the splice path rather
-      // than a cold build.
       (void)incremental.visual_line_count();
       incremental.MoveCursorTo(0, column, false);
       incremental.InsertText(inserted);
@@ -4474,13 +3785,9 @@ void TestTextViewportSoftWrappedLongLineDoesNotWalkItForCaretColumns() {
   Expect(walked == 0,
          "a soft-wrapped long plain-ASCII line must not be walked for caret columns (walked " +
              std::to_string(walked) + " bytes)");
-  // The width table is genuinely absent here -- otherwise this would be passing
-  // for the same reason the non-wrapped test does, and would not cover the hole.
   Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorVisualColumnWalkFactsUnknown) == 0,
          "no conversion should have fallen through to a walk at all");
 
-  // Reachability control: a counter that cannot move is not evidence. A tab makes
-  // the prefix non-plain, and the next conversion past it walks.
   viewport.MoveCursorTo(0, 16, false);
   viewport.InsertText("\t");
   viewport.MoveCursorTo(0, kLineBytes / 2, false);
@@ -4496,12 +3803,8 @@ void TestTextViewportLanguageIdMemoIsAllocationFreeOnASettledBuffer() {
   microide::editor::TextViewport viewport;
   viewport.LoadContent("int main() { return 0; }\n", "/tmp/memo-settled.cpp");
 
-  // First resolve is the cold one (head scan + owned string).
   Expect(viewport.language_id() == "c++", "cold resolve should detect the C++ definition");
 
-  // Every later ask about an unchanged buffer must be a pure field compare.
-  // Before the memo moved onto the viewport, ApplyEditorPreferences re-detected
-  // the filetype of every open tab on every settings change (TD-2026-08-03-110).
   const auto before = perf::Allocations::Snapshot();
   for (int i = 0; i < 64; ++i) {
     Expect(viewport.language_id() == "c++", "warm resolve should return the memoized filetype");
@@ -4512,17 +3815,11 @@ void TestTextViewportLanguageIdMemoIsAllocationFreeOnASettledBuffer() {
 
 void TestTextViewportLanguageIdMemoInvalidatesOnContentChange() {
   using microide::editor::runtime_syntax::DetectFiletype;
-  // No extension, so detection depends entirely on the shebang line. The memo
-  // this replaced (LspUiState::language_cache_*) was keyed on the path alone, so
-  // it pinned the first answer forever and an edited shebang kept reporting the
-  // stale language to every LSP/provider caller.
   const std::filesystem::path path = "/tmp/memo-shebang";
   const std::vector<std::string> shell_lines = {"#!/bin/sh", "echo hi"};
   const std::vector<std::string> python_lines = {"#!/usr/bin/env python3", "print('hi')"};
   const std::string shell_id = DetectFiletype(path, shell_lines);
   const std::string python_id = DetectFiletype(path, python_lines);
-  // Guard the guard: if shebang detection ever stops distinguishing these, the
-  // rest of the test would pass vacuously.
   Expect(!shell_id.empty() && shell_id != python_id,
          "the two shebangs must detect as different languages for this test to mean anything");
 
@@ -4535,11 +3832,6 @@ void TestTextViewportLanguageIdMemoInvalidatesOnContentChange() {
          "a content change must re-detect; a path-keyed cache would pin the first answer");
 }
 
-// A `.cpp` path resolves to exactly one definition without the detector reading a
-// byte of the buffer, so the answer cannot change when the buffer does. The memo
-// used to key on the whole content revision anyway, which meant every keystroke
-// re-ran the detector: a fresh candidate vector, a linear scan of the definition
-// table, and a filetype string returned by value, per character typed.
 void TestTextViewportLanguageIdMemoSurvivesEditsWhenTheExtensionDecides() {
   namespace perf = microide::tests::perf;
   microide::editor::TextViewport viewport;
@@ -4548,8 +3840,6 @@ void TestTextViewportLanguageIdMemoSurvivesEditsWhenTheExtensionDecides() {
 
   const std::uint64_t scans_before =
       util::ReadPerformanceCounter(util::PerfCounterId::EditorFiletypeSignatureScans);
-  // Measured around the QUERY only: the edit itself legitimately allocates, so
-  // wrapping the pair would hide the very thing under test behind that noise.
   std::size_t query_allocations = 0;
   for (int i = 0; i < 64; ++i) {
     viewport.MoveCursorTo(0, 0);
@@ -4566,10 +3856,6 @@ void TestTextViewportLanguageIdMemoSurvivesEditsWhenTheExtensionDecides() {
              std::to_string(query_allocations) + " allocations)");
 }
 
-// When the extension does NOT decide, detection reads a bounded head window --
-// so an edit below that window cannot change the answer either, and re-running
-// four signature regexes over 64 lines per keystroke at line 5,000 of a header
-// is work nothing can consume.
 void TestTextViewportLanguageIdMemoRedetectsOnlyForHeadEdits() {
   namespace perf = microide::tests::perf;
   using microide::editor::runtime_syntax::DetectFiletype;
@@ -4590,14 +3876,6 @@ void TestTextViewportLanguageIdMemoRedetectsOnlyForHeadEdits() {
   viewport.LoadContent(content, path);
   Expect(viewport.language_id() == shell_id, "shebang should drive the initial detection");
 
-  // Deep edit: below the head window, so the memo must hold. Measured around the
-  // QUERY only -- the edit allocates on its own and would drown the signal.
-  //
-  // Allocations, not the signature-scan counter: this path's ambiguity is
-  // resolved by the header regex rather than by a multi-candidate signature scan,
-  // so that counter stays at zero whether the memo holds or not. It was probed
-  // with the head tier disarmed and did not move, which is exactly the vacuous
-  // check validation-traps.md warns about.
   std::size_t query_allocations = 0;
   for (int i = 0; i < 32; ++i) {
     viewport.MoveCursorTo(kFiletypeDetectHeadLines * 2, 0);
@@ -4610,7 +3888,6 @@ void TestTextViewportLanguageIdMemoRedetectsOnlyForHeadEdits() {
          "an edit below the detector's head window must not re-detect (" +
              std::to_string(query_allocations) + " allocations)");
 
-  // Head edit: the shebang itself, which genuinely decides the answer.
   viewport.MoveCursorTo(0, 0);
   viewport.SelectLineAtCursor();
   viewport.InsertText("#!/usr/bin/env python3\n");
@@ -4639,10 +3916,6 @@ void TestRuntimeSyntaxInitialStateAllocationIsDocumentSizeIndependent() {
   using microide::editor::TextBuffer;
   namespace perf = microide::tests::perf;
 
-  // InitialState only inspects a bounded head (kSignatureDetectLineLimit lines),
-  // so its allocation cost must be independent of document size. The previous
-  // implementation snapshot-copied the whole document (one heap allocation per
-  // line) before detection -- this guards against reintroducing that.
   const std::filesystem::path path = "/tmp/initial-state-alloc.txt";
 
   const auto make_buffer = [](std::size_t line_count) {
@@ -4659,7 +3932,6 @@ void TestRuntimeSyntaxInitialStateAllocationIsDocumentSizeIndependent() {
   const TextBuffer small = make_buffer(1000);
   const TextBuffer large = make_buffer(100000);
 
-  // Warm one-time registry init so it does not skew the measured deltas.
   (void)SyntaxHighlighter::InitialState(path, small);
 
   const auto before_small = perf::Allocations::Snapshot();
@@ -4670,9 +3942,6 @@ void TestRuntimeSyntaxInitialStateAllocationIsDocumentSizeIndependent() {
   (void)SyntaxHighlighter::InitialState(path, large);
   const auto large_delta = perf::Allocations::DeltaSince(before_large);
 
-  // The 100x-larger document must not cost ~100x the bytes. A whole-document
-  // materialization of the large buffer would allocate megabytes (>> head);
-  // generous additive slack still catches that by orders of magnitude.
   Expect(large_delta.bytes_allocated < small_delta.bytes_allocated + 64 * 1024,
          "InitialState bytes must not scale with document size (bounded head only)");
   Expect(large_delta.allocations < small_delta.allocations + 256,
@@ -4732,9 +4001,6 @@ void TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories() {
          "plugin region syntax definitions should highlight string spans");
 }
 
-// Regression: a syntax definition file with a runaway top-level loop must not
-// hang the reload/startup path. The instruction-count hook turns it into a clean
-// load error. (Without the hook this test would loop forever.)
 void TestRuntimeSyntaxLoaderBoundsInfiniteLoop() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4754,11 +4020,6 @@ void TestRuntimeSyntaxLoaderBoundsInfiniteLoop() {
          "the instruction budget surfaces a load error instead of hanging");
 }
 
-// Regression: a syntax rule that matches single characters on a long (but under
-// the overlong cap) line must not produce an unbounded match list. FindAllRegex
-// caps matches per rule per line (8192), so highlighting stays bounded: the first
-// matches are colored, bytes past the budget fall back to Plain, and the
-// one-token-per-byte contract holds.
 void TestRuntimeSyntaxMatchBudgetBoundsPathologicalRule() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4766,7 +4027,6 @@ void TestRuntimeSyntaxMatchBudgetBoundsPathologicalRule() {
   ScopedRuntimeSyntaxRegistryReset syntax_reset;
   TemporaryDirectory temp_dir;
   const std::filesystem::path syntax_dir = temp_dir.path() / "syntax";
-  // A rule whose pattern matches every single 'a' — pathological match density.
   WriteFile(syntax_dir / "dense.lua",
             R"(return {
   filetype = "dense",
@@ -4782,11 +4042,10 @@ void TestRuntimeSyntaxMatchBudgetBoundsPathologicalRule() {
   std::vector<std::string> reload_errors;
   microide::editor::runtime_syntax::ReloadDefinitions(definitions, &reload_errors);
 
-  std::string line(20000, 'a');  // under the overlong cap, so rules DO run
+  std::string line(20000, 'a');
   TextViewport viewport;
   viewport.LoadContent(line + "\n", "/tmp/dense.dense");
   const auto& tokens = viewport.HighlightedLineTokens(0);
-  // Contract preserved and highlighting completed (no hang) despite 20k potential matches.
   Expect(tokens.size() == line.size(), "one token per byte is preserved on a dense-match line");
   Expect(tokens.front() == SyntaxTokenKind::Keyword,
          "the first matches within the budget are highlighted");
@@ -4794,10 +4053,6 @@ void TestRuntimeSyntaxMatchBudgetBoundsPathologicalRule() {
          "bytes past the per-line match budget fall back to Plain instead of matching unbounded");
 }
 
-// Regression: a `^`-anchored pattern rule must match only at a TRUE line start,
-// not at the head of a mid-line segment (the tail after a region on the same
-// line). PCRE2_NOTBOL is passed for mid-line segments so `^foo` colours only the
-// leading `foo`, never the `foo` that follows a region on the same line.
 void TestRuntimeSyntaxCaretAnchorHonorsTrueLineStart() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4823,26 +4078,18 @@ void TestRuntimeSyntaxCaretAnchorHonorsTrueLineStart() {
   microide::editor::runtime_syntax::ReloadDefinitions(definitions, &reload_errors);
   Expect(reload_errors.empty(), "the caret syntax definition should reload cleanly");
 
-  // Layout: foo ( x ) foo  -> a region splits the line into two `foo` segments.
   TextViewport viewport;
   viewport.LoadContent("foo(x)foo\n", "/tmp/sample.caret");
   const auto& tokens = viewport.HighlightedLineTokens(0);
   Expect(tokens.size() == 9, "one token per byte");
-  // The leading foo (bytes 0..2) is at a true line start -> Keyword.
   Expect(tokens[0] == SyntaxTokenKind::Keyword && tokens[1] == SyntaxTokenKind::Keyword &&
              tokens[2] == SyntaxTokenKind::Keyword,
          "^foo matches the leading foo at the true line start");
-  // The trailing foo (bytes 6..8) follows a region mid-line -> NOT Keyword.
   Expect(tokens[6] != SyntaxTokenKind::Keyword && tokens[7] != SyntaxTokenKind::Keyword &&
              tokens[8] != SyntaxTokenKind::Keyword,
          "^foo must NOT match the foo after a mid-line region (PCRE2_NOTBOL)");
 }
 
-// A pathologically long line (a minified bundle with no newline) must not be
-// tokenized synchronously on the UI thread: highlighting scans the whole line
-// with the syntax rules, O(line) work on every token-cache miss. Over the length
-// cap the line renders unhighlighted (all Plain), while the exact
-// one-token-per-byte contract is preserved so downstream indexing stays safe.
 void TestSyntaxHighlightSkipsOverlongLine() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4865,8 +4112,6 @@ void TestSyntaxHighlightSkipsOverlongLine() {
   std::vector<std::string> reload_errors;
   microide::editor::runtime_syntax::ReloadDefinitions(definitions, &reload_errors);
 
-  // Control: a short line with the keyword is highlighted, proving the definition
-  // works and that only length disables it below.
   {
     TextViewport shortv;
     shortv.LoadContent("TODO here\n", "/tmp/short.todo");
@@ -4876,13 +4121,6 @@ void TestSyntaxHighlightSkipsOverlongLine() {
            "a short line with the keyword should highlight");
   }
 
-  // A >100 KB line beginning with the keyword must NOT be tokenized. It renders
-  // all-Plain, and it does so by returning NO tokens rather than one Plain token
-  // per byte: every consumer already reads an absent entry as Plain (the same
-  // convention HighlightedLineTokens uses when highlighting is off), so filling
-  // the vector only made declining to tokenize cost what tokenizing would have —
-  // an 8 MB alloc + memset per cache miss on a minified file, then held in the
-  // per-line LRU.
   std::string huge = "TODO ";
   huge.append(300000, 'x');
   TextViewport bigv;
@@ -4894,9 +4132,6 @@ void TestSyntaxHighlightSkipsOverlongLine() {
                      [](SyntaxTokenKind k) { return k == SyntaxTokenKind::Plain; }),
          "an overlong line must be left unhighlighted (all Plain)");
 
-  // The cutoff is per LINE, not per document: a short line in the same buffer is
-  // still tokenized. Without this, the assertion above would also pass if the
-  // whole file had silently stopped highlighting.
   TextViewport mixedv;
   mixedv.LoadContent(huge + "\nTODO here\n", "/tmp/mixed.todo");
   Expect(mixedv.HighlightedLineTokens(0).empty(),
@@ -4945,7 +4180,6 @@ void TestSyntaxHighlightNestedRegionResumesParentScope() {
 
   const std::vector<std::string> no_lines;
   SyntaxState state = SyntaxHighlighter::InitialState(path, no_lines);
-  // AdvanceState must agree with HighlightLine's end_state at every step.
   const auto step = [&](std::string_view text) {
     const auto highlighted = SyntaxHighlighter::HighlightLine(text, path, state);
     Expect(SyntaxHighlighter::AdvanceState(text, path, state) == highlighted.end_state,
@@ -4979,16 +4213,9 @@ void TestSyntaxHighlightNestedRegionResumesParentScope() {
   Expect(state.region_depth == 0, "closing the outer region returns to the top level");
 }
 
-// Built-in language rule regexes are compiled lazily on first highlight of that
-// definition. Two threads highlighting the same never-yet-highlighted built-in
-// language must not race: EnsureDefinitionCompiled's per-definition call_once
-// serializes the compile. Run under TSan to catch a data race on the mutable
-// per-rule CompiledRegex fields.
 void TestRuntimeSyntaxLazyCompileIsThreadSafeForSameLanguage() {
   using microide::editor::SyntaxHighlighter;
   ScopedRuntimeSyntaxRegistryReset syntax_reset;
-  // Fresh registry clone with uncompiled (lazy) built-in definitions and fresh
-  // per-definition guards, so the compile genuinely happens under contention.
   microide::editor::runtime_syntax::ReloadDefinitions({});
 
   const std::filesystem::path path = "/tmp/lazy_race.cpp";
@@ -5023,9 +4250,6 @@ void TestRuntimeSyntaxLazyCompileIsThreadSafeForSameLanguage() {
          "every concurrent highlight of a built-in language should produce syntax tokens");
 }
 
-// After a plugin reload, the built-in definitions live in a fresh registry
-// clone (still lazy) with their own guard table. Highlighting a built-in
-// language before and after a reload must both compile and colorize correctly.
 void TestRuntimeSyntaxLazyCompileSurvivesReload() {
   using microide::editor::SyntaxHighlighter;
   ScopedRuntimeSyntaxRegistryReset syntax_reset;
@@ -5040,8 +4264,6 @@ void TestRuntimeSyntaxLazyCompileSurvivesReload() {
   Expect(has_syntax(SyntaxHighlighter::HighlightLine(line, path, {})),
          "built-in C++ should colorize before any plugin reload");
 
-  // A valid, in-code plugin definition for an unrelated filetype forces the
-  // mutable-registry clone path (built-in defs copied in, lazy, fresh guards).
   microide::editor::runtime_syntax::RuntimeSyntaxDefinitionData plugin;
   plugin.filetype = "lazyfixture";
   plugin.filename_patterns = {"\\.lazyfixture$"};
@@ -5058,8 +4280,6 @@ void TestRuntimeSyntaxLazyCompileSurvivesReload() {
          "built-in C++ should still colorize after a plugin reload (lazy compile in the clone)");
 }
 
-// Plugin/runtime definitions stay eagerly compiled, so a malformed plugin regex
-// must surface as a reload error at reload time (not be silently deferred).
 void TestRuntimeSyntaxBadPluginRegexReportsErrorEagerly() {
   ScopedRuntimeSyntaxRegistryReset syntax_reset;
 
@@ -5069,7 +4289,7 @@ void TestRuntimeSyntaxBadPluginRegexReportsErrorEagerly() {
   microide::editor::runtime_syntax::RuntimeSyntaxRuleData rule;
   rule.kind = microide::editor::runtime_syntax::GeneratedRuleKind::Pattern;
   rule.group_name = "keyword";
-  rule.pattern = "([unterminated";  // invalid: unbalanced group/class
+  rule.pattern = "([unterminated";
   plugin.rules.push_back(rule);
 
   std::vector<std::string> reload_errors;
@@ -5078,14 +4298,11 @@ void TestRuntimeSyntaxBadPluginRegexReportsErrorEagerly() {
          "an invalid plugin regex should be reported at reload time (runtime defs stay eager)");
 }
 
-// A cold (never-highlighted) registry must still resolve built-in multi-line
-// regions: EnsureDefinitionCompiled has to run before the region start/end
-// .valid() checks, or the region rules would be silently skipped.
 void TestRuntimeSyntaxLazyCompileColorsBuiltInBlockComment() {
   using microide::editor::SyntaxHighlighter;
   using microide::editor::SyntaxState;
   ScopedRuntimeSyntaxRegistryReset syntax_reset;
-  microide::editor::runtime_syntax::ReloadDefinitions({});  // cold, uncompiled clone
+  microide::editor::runtime_syntax::ReloadDefinitions({});
 
   const std::filesystem::path path = "/tmp/block_comment.c";
   const std::vector<std::string> no_lines;
@@ -5101,10 +4318,6 @@ void TestRuntimeSyntaxLazyCompileColorsBuiltInBlockComment() {
          "a line wholly inside a C block comment should be comment-colored from a cold registry");
 }
 
-// Exercises lazy compilation across many built-in definitions: each first
-// highlight compiles a different definition. Guards against a definition whose
-// deferred compile fails or is skipped (recovers the eager-validation sweep
-// startup used to perform implicitly).
 void TestRuntimeSyntaxLazyCompileSweepsCommonLanguages() {
   using microide::editor::SyntaxHighlighter;
   ScopedRuntimeSyntaxRegistryReset syntax_reset;
@@ -5153,7 +4366,6 @@ void TestHighlightPrefetchInstallPopulatesCacheAndRespectsStaleness() {
   TextViewport reference;
   reference.LoadContent(content, "/tmp/prefetch-ref.cpp");
 
-  // A range well below the viewport top is not in the LRU yet.
   Expect(viewport.HasHighlightPrefetchGap(40, 8), "uncached lines should report a prefetch gap");
 
   const auto request = viewport.BuildHighlightPrefetchRequest(40, 8);
@@ -5171,7 +4383,6 @@ void TestHighlightPrefetchInstallPopulatesCacheAndRespectsStaleness() {
   Expect(viewport.HighlightedLineTokens(42) == reference.HighlightedLineTokens(42),
          "prefetched tokens must match a synchronous highlight of the same line");
 
-  // A result whose revision no longer matches the document must be discarded.
   auto stale = microide::editor::ComputeHighlightPrefetch(
       viewport.BuildHighlightPrefetchRequest(10, 4));
   stale.content_revision = viewport.content_revision() + 1;
@@ -5181,12 +4392,6 @@ void TestHighlightPrefetchInstallPopulatesCacheAndRespectsStaleness() {
          "a stale-revision prefetch result should be dropped, leaving the gap intact");
 }
 
-// Soak a64655101a5a: an idle editor woke hundreds of times a second. A pane tall
-// enough that three screens of lines outgrew the highlight cache prefetched a
-// window the cache could not hold -- installing its last lines evicted its first,
-// the gap never closed, the next frame asked again, and every answer repainted
-// the editor. The window is capped to the cache, and the service admits the same
-// window only once in a row.
 void TestAHighlightPrefetchWindowFitsTheCacheAndIsNotAskedTwice() {
   const std::size_t capacity = TextViewport::HighlightCacheCapacity();
   std::string content;
@@ -5196,21 +4401,17 @@ void TestAHighlightPrefetchWindowFitsTheCacheAndIsNotAskedTwice() {
   TextViewport viewport;
   viewport.LoadContent(content, "/tmp/prefetch-tall.cpp");
 
-  // The premise: a window past the capacity cannot be closed by installing it.
   const std::size_t too_many = capacity + capacity / 2;
   viewport.InstallPrefetchedHighlights(
       microide::editor::ComputeHighlightPrefetch(viewport.BuildHighlightPrefetchRequest(0, too_many)));
   Expect(viewport.HasHighlightPrefetchGap(0, too_many),
          "a window larger than the cache keeps a gap after it is installed (the loop's cause)");
-  // A window of the capacity closes.
   TextViewport fits;
   fits.LoadContent(content, "/tmp/prefetch-fits.cpp");
   fits.InstallPrefetchedHighlights(
       microide::editor::ComputeHighlightPrefetch(fits.BuildHighlightPrefetchRequest(0, capacity)));
   Expect(!fits.HasHighlightPrefetchGap(0, capacity), "a window the cache can hold closes once installed");
 
-  // The same window twice in a row is admitted once; another window, then the
-  // first again, are admitted.
   microide::editor::HighlightPrefetchService service;
   using Key = microide::editor::HighlightPrefetchService::WindowKey;
   const Key first{.viewport = &viewport, .content_revision = 1, .syntax_revision = 1, .start_line = 0, .count = 50};
@@ -5276,7 +4477,6 @@ void TestHighlightCheckpointBackfillServiceRunsOnWorkerThread() {
   std::atomic<int> wakes{0};
   service.SetWakeCallback([&]() { wakes.fetch_add(1); });
 
-  // A deep cold jump arms an off-thread checkpoint backfill (the freeze fix path).
   (void)viewport.HighlightedLineTokens(2000);
   auto request = viewport.TakeHighlightCheckpointBackfillRequest();
   Expect(request.has_value(), "a deep jump should arm a checkpoint backfill request");
@@ -5295,8 +4495,6 @@ void TestHighlightCheckpointBackfillServiceRunsOnWorkerThread() {
   Expect(wakes.load() >= 1, "the checkpoint worker should fire the wake callback");
   viewport.InstallHighlightCheckpoints(results.front());
 
-  // Line 2000 sits inside the multiline comment; after the backfill installs the
-  // chain, the deep query resolves to the exact comment state (not approximate).
   const auto& inside = viewport.HighlightedLineTokens(2000);
   Expect(!inside.empty(), "deep query inside the comment should produce tokens");
   Expect(std::all_of(inside.begin(), inside.end(),
@@ -5355,28 +4553,22 @@ void TestTextViewportOccurrenceSeedSpanNoWordInWhitespace() {
 }
 
 void TestTextLayoutVisualColumnFromLayoutClippedMatchesWalk() {
-  // 2026-05-15 perf deep-dive round 2 Finding 13: the binary-search resolution from an
-  // already-built LayoutLine must agree with the legacy O(line_length) walk for source columns
-  // inside the row window, and must return clipping sentinels for columns outside the window.
   using microide::editor::TextLayout;
-  const std::string line = "ab\tcd\tef";  // 2 ASCII, tab → col 4, ASCII, tab → col 8, ASCII
+  const std::string line = "ab\tcd\tef";
   const std::size_t tab_size = 4;
 
-  // Full-line window: source_columns covers every visible cell.
   {
-    const auto layout = TextLayout::BuildVisibleLine(line, /*horizontal_scroll=*/0,
-                                                      /*visible_columns=*/80, tab_size);
+    const auto layout = TextLayout::BuildVisibleLine(line, 0,
+                                                      80, tab_size);
     for (std::size_t c = 0; c <= line.size(); ++c) {
       const std::size_t walked = TextLayout::VisualColumnForTextColumn(line, c, tab_size);
       const std::size_t clipped = TextLayout::VisualColumnFromLayoutClipped(
-          layout, /*row_start_visual=*/0, /*row_end_visual=*/80, c);
-      // Inside the window, the helper must return the exact visual column.
+          layout, 0, 80, c);
       Expect(clipped == walked,
              "VisualColumnFromLayoutClipped must match VisualColumnForTextColumn inside the row");
     }
   }
 
-  // Scrolled window: only the trailing part of the line is in the layout's source_columns.
   {
     const std::size_t horizontal_scroll = 4;
     const std::size_t visible_columns = 8;
@@ -5385,8 +4577,6 @@ void TestTextLayoutVisualColumnFromLayoutClippedMatchesWalk() {
     const std::size_t row_start = horizontal_scroll;
     const std::size_t row_end = horizontal_scroll + visible_columns;
 
-    // Source column 0 is before the row window. Helper should return a value <= row_start so
-    // std::max(.., row_start) clips correctly to row_start.
     const std::size_t before = TextLayout::VisualColumnFromLayoutClipped(layout, row_start,
                                                                           row_end, 0);
     Expect(before <= row_start,
@@ -5394,17 +4584,12 @@ void TestTextLayoutVisualColumnFromLayoutClippedMatchesWalk() {
     Expect(std::max<std::size_t>(before, row_start) == row_start,
            "clipping via std::max with row_start must produce row_start");
 
-    // Source column at or past line end maps to "just past the last visible source byte". For a
-    // line that fits entirely within the row, that visual column equals the position immediately
-    // after the last char — std::min with row_end produces the correct end-of-line decoration
-    // boundary.
     const std::size_t at_end = TextLayout::VisualColumnFromLayoutClipped(
         layout, row_start, row_end, line.size());
     const std::size_t past_end = TextLayout::VisualColumnFromLayoutClipped(
         layout, row_start, row_end, line.size() + 5);
     Expect(at_end == past_end,
            "source columns at/past line end must return the same end-of-line visual column");
-    // The legacy walk gives the visual column of the position past the last char of "ab\\tcd\\tef".
     const std::size_t walked_end =
         TextLayout::VisualColumnForTextColumn(line, line.size(), tab_size);
     Expect(at_end == walked_end || at_end >= row_end,
@@ -5413,13 +4598,10 @@ void TestTextLayoutVisualColumnFromLayoutClippedMatchesWalk() {
 }
 
 void TestTextLayoutLineVisualColumnMapMatchesWalk() {
-  // 2026-05-19 perf deep-dive round 3 Finding 11: the per-line precomputed visual-column map
-  // (LineVisualColumnMap) must agree with the legacy walk for every text column on a line that
-  // mixes tabs and multi-byte UTF-8.
   using microide::editor::TextLayout;
   const std::string ascii_only = "hello world";
   const std::string with_tabs = "ab\tcd\tef";
-  const std::string with_utf8 = "α\tβγ\tδε";  // 2-byte code points
+  const std::string with_utf8 = "α\tβγ\tδε";
   const std::size_t tab_size = 4;
   for (const auto* line_ptr : {&ascii_only, &with_tabs, &with_utf8}) {
     const std::string& line = *line_ptr;
@@ -5436,9 +4618,6 @@ void TestTextLayoutLineVisualColumnMapMatchesWalk() {
 }
 
 void TestTextViewportSecondaryCaretPositionsCacheStability() {
-  // 2026-05-15 perf deep-dive round 2 Finding 10: secondary_caret_positions() must reuse the
-  // same underlying storage across calls when the carets are unchanged, so the render path does
-  // not allocate a fresh vector per frame.
   TextViewport viewport;
   viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/secondary-carets-span.txt");
   viewport.AddSecondaryCaret(1, 2);
@@ -5451,9 +4630,6 @@ void TestTextViewportSecondaryCaretPositionsCacheStability() {
   Expect(first.data() == second.data(),
          "back-to-back secondary_caret_positions calls must reuse storage (no per-call alloc)");
 
-  // After a mutation, the cache must refresh — and may pick a new data pointer if it had to grow,
-  // but in steady state it should typically stay put. The functional invariant is that the
-  // returned positions match secondary_carets_.
   viewport.AddSecondaryCaret(0, 1);
   const auto third = viewport.secondary_caret_positions();
   Expect(third.size() == 3,
@@ -5461,9 +4637,6 @@ void TestTextViewportSecondaryCaretPositionsCacheStability() {
 }
 
 void TestTextViewportTrivialWrappedLayoutFastPath() {
-  // 2026-05-15 perf deep-dive round 2 Finding 5: when soft-wrap is off and no fold is collapsed,
-  // EnsureWrappedRowLayouts must not allocate the per-line wrapped_row_layouts_ vector. The public
-  // accessors must still return the identity-mapped values.
   std::string content;
   for (int i = 0; i < 4000; ++i) {
     content += "line " + std::to_string(i) + "\n";
@@ -5474,17 +4647,14 @@ void TestTextViewportTrivialWrappedLayoutFastPath() {
   viewport.SetSoftWrap(false);
   viewport.SetScrollLine(100);
 
-  // Visual row count must equal the document line count when in trivial mode.
   Expect(viewport.visual_line_count() == viewport.lines().size(),
          "trivial layout: visual row count must equal document line count");
 
-  // Identity mapping for VisualRowLineIndex and VisualRowForLine.
   Expect(viewport.VisualRowLineIndex(2500) == 2500,
          "trivial layout: VisualRowLineIndex must be identity");
   Expect(viewport.VisualRowForLine(1234) == 1234,
          "trivial layout: VisualRowForLine must be identity");
 
-  // WrappedVisualRowLayout must report sensible values without indexing a populated vector.
   const auto row = viewport.WrappedVisualRowLayout(500);
   Expect(row.line_index == 500,
          "trivial layout: wrapped visual row layout returns synthesized line index");
@@ -5493,8 +4663,6 @@ void TestTextViewportTrivialWrappedLayoutFastPath() {
   Expect(row.visual_end == viewport.horizontal_scroll() + 120,
          "trivial layout: visual_end equals horizontal_scroll + visible_columns");
 
-  // Editing once must not blow up. The trivial fast-path is the point of the test, so we also
-  // sanity-check that an edit keeps the identity invariant (no soft-wrap, no folds).
   viewport.MoveCursorTo(50, 0);
   viewport.InsertText("X");
   Expect(viewport.visual_line_count() == viewport.lines().size(),
@@ -5555,7 +4723,7 @@ void TestTextViewportSyntaxConfigBumpsSyntaxAndPresentationOnly() {
 void TestTextViewportLayoutShapeBumpsLayoutShapeAndPresentationOnly() {
   TextViewport viewport;
   viewport.LoadContent("alpha\n", "/tmp/tier-layout.cpp");
-  viewport.SetTabSize(4);  // baseline so toggle is not a no-op
+  viewport.SetTabSize(4);
   const auto before = CaptureTierBumps();
   viewport.SetTabSize(2);
   const auto delta = Delta(before, CaptureTierBumps());
@@ -5581,10 +4749,8 @@ void TestTextViewportSyntaxConfigDoesNotInvalidateWrappedRowLayouts() {
   viewport.LoadContent("a\nb\nc\nd\ne\n", "/tmp/tier-wrapped-rows.cpp");
   viewport.SetSoftWrap(true);
   viewport.SetViewportSize(4, 8);
-  // Warm the wrapped-row-layouts cache.
   (void)viewport.WrappedVisualRowLayout(0);
   const std::size_t before_builds = viewport.WrappedRowLayoutBuildCountForDebug();
-  // SyntaxConfig must NOT cause the wrapped-row-layouts cache to rebuild.
   viewport.InvalidateSyntaxHighlighting();
   (void)viewport.WrappedVisualRowLayout(0);
   const std::size_t after_builds = viewport.WrappedRowLayoutBuildCountForDebug();
@@ -5596,16 +4762,12 @@ void TestTextViewportSyntaxConfigDoesNotInvalidateWrappedRowLayouts() {
 void TestTextViewportSyntaxConfigForcesHighlightCacheMiss() {
   TextViewport viewport;
   viewport.LoadContent("int v = 1;\nint w = 2;\n", "/tmp/tier-highlight.cpp");
-  // Warm the per-line highlight cache.
   (void)viewport.HighlightedLineTokens(0);
   (void)viewport.HighlightedLineTokens(0);
   const auto stats_warm = viewport.CacheStats();
-  // SyntaxConfig drops the highlight cache, so the next read SHALL be a miss.
   viewport.InvalidateSyntaxHighlighting();
   (void)viewport.HighlightedLineTokens(0);
   const auto stats_after = viewport.CacheStats();
-  // Hits should not increase across the syntax bump (cache was wiped, so the
-  // request after the bump misses).
   Expect(stats_after.highlight_queries > stats_warm.highlight_queries,
          "post-syntax-bump read should issue another highlight query");
   Expect(stats_after.highlight_hits == stats_warm.highlight_hits,
@@ -5613,9 +4775,6 @@ void TestTextViewportSyntaxConfigForcesHighlightCacheMiss() {
 }
 
 void TestTextViewportContentEditInvalidatesBracketAndHighlightCaches() {
-  // Mirrors the new cache-key contract: a content edit invalidates every
-  // content-keyed cache. This is the "still correct after the split" leg —
-  // companion to the spec scenarios in tiered-document-revisions.
   TextViewport viewport;
   viewport.LoadContent("int v = 1;\n", "/tmp/tier-content-edit.cpp");
   (void)viewport.HighlightedLineTokens(0);
@@ -5626,8 +4785,6 @@ void TestTextViewportContentEditInvalidatesBracketAndHighlightCaches() {
          "ContentEdit bumps content_revision so downstream caches re-key correctly");
 }
 
-// --- Phase 4: large-file direct-load fast path (no split/rejoin round-trip) ---
-
 std::filesystem::path WriteScratchFile(const std::string& name, std::string_view bytes) {
   const std::filesystem::path path =
       std::filesystem::temp_directory_path() / ("microide-phase4-" + name);
@@ -5637,10 +4794,6 @@ std::filesystem::path WriteScratchFile(const std::string& name, std::string_view
 }
 
 void TestTextViewportFastLoadMatchesCrlfDecode() {
-  // An LF file and a CRLF file with identical logical lines must open to the
-  // same buffer content and line count -- the '\r'-free fast path and the
-  // DecodeLines path are required to agree on everything but the line-ending
-  // label.
   const std::string lf = "alpha\nbeta\ngamma\n";
   const std::string crlf = "alpha\r\nbeta\r\ngamma\r\n";
   TextViewport lf_view;
@@ -5709,16 +4862,6 @@ void TestTextViewportFastLoadEmptyFile() {
          "empty file is a single empty line");
 }
 
-// A UTF-8 byte order mark is file metadata, not text: with it in the buffer the
-// caret sat before an invisible zero-width character at Home, `^`-anchored
-// highlighting and shebang detection missed line 1, and typing at the start of
-// the file put the new text in front of the mark. VS Code strips it on load and
-// writes it back on save; so does this.
-// Soak 88696b6b00ac: a BOM file with CRLF endings, then a paste of bytes that
-// are not UTF-8. The edit reclassified the buffer as opaque bytes, and Save took
-// "opaque" to mean "opened as bytes": it dropped the mark the open had stripped
-// and joined the lines with LF. The buffer (and its session snapshot) kept both;
-// the file on disk lost them on an autosave.
 void TestTextViewportABufferThatBecameBytesSavesItsMarkAndEndings() {
   const std::filesystem::path path =
       WriteScratchFile("bom-crlf.txt", "\xEF\xBB\xBFwith a\r\nmark\r\n");
@@ -5752,8 +4895,6 @@ void TestTextViewportUtf8BomIsStrippedOnOpenAndWrittenOnSave() {
          "the mark is written back ahead of text typed at the start of the file");
   Expect(view.has_utf8_bom(), "saving keeps the BOM flag");
 
-  // An all-ASCII file behind the mark classifies as ASCII once it is stripped,
-  // and a plain file never grows one.
   TextViewport plain;
   Expect(plain.OpenFile(WriteScratchFile("nobom.txt", "plain\n")), "plain file opens");
   Expect(!plain.has_utf8_bom() && plain.EncodingLabel() == "UTF-8",
@@ -5761,8 +4902,6 @@ void TestTextViewportUtf8BomIsStrippedOnOpenAndWrittenOnSave() {
   Expect(plain.Save(microide::project::LocalFileWriteGate()) && microide::util::ReadTextFile(plain.path()).value_or("") == "plain\n",
          "saving a plain file adds no mark");
 
-  // LoadContent (the compare pane's right side, a merge result) follows the
-  // same rule so a BOM file compared against its own blob has no line-0 change.
   TextViewport loaded;
   loaded.LoadContent("\xEF\xBB\xBF" "alpha\r\nbeta\r\n", path);
   Expect(loaded.has_utf8_bom() && loaded.lines().LineView(0) == "alpha",
@@ -5770,7 +4909,6 @@ void TestTextViewportUtf8BomIsStrippedOnOpenAndWrittenOnSave() {
   Expect(loaded.SerializeDocumentText() == "\xEF\xBB\xBF" "alpha\r\nbeta\r\n",
          "the CRLF disk form round-trips through LoadContent");
 
-  // A file that is only a mark is an empty buffer that still saves as a mark.
   TextViewport only;
   const std::filesystem::path only_path = WriteScratchFile("onlybom.txt", "\xEF\xBB\xBF");
   Expect(only.OpenFile(only_path) && only.line_count() == 1 &&
@@ -5787,8 +4925,6 @@ void TestTextViewportFastLoadDetectsEncoding() {
   Expect(utf8.EncodingLabel() == "UTF-8",
          "fast path classifies non-ASCII UTF-8 as UTF-8");
 
-  // ASCII is UTF-8: the status bar must not flip its encoding readout the moment
-  // the user types a non-ASCII character into an all-ASCII file.
   TextViewport ascii;
   Expect(ascii.OpenFile(WriteScratchFile("ascii.txt", "plain\ntext\n")),
          "ascii file opens via fast path");
@@ -5804,14 +4940,6 @@ void TestTextViewportFastLoadDetectsEncoding() {
   Expect(bytes.line_count() == 2, "NUL is in-line content, only '\\n' splits lines");
 }
 
-// Opening a file classifies its line endings and normalizes them to LF. Both
-// halves grew fast paths -- the classifier answers an LF-only file from a single
-// `memchr` without counting anything, and the normalizer copies the runs between
-// carriage returns instead of one byte at a time -- so pin the results against a
-// deliberately naive reference implementation over every arrangement of CR, LF
-// and CRLF that a real file can present, including the ones that straddle the
-// run boundaries: a lone CR at the very end (no byte follows to test for LF), a
-// CRLF split so the LF starts the next run, and back-to-back CRs.
 void TestTextViewportOpenNormalizesEveryLineEndingMix() {
   const auto reference_normalize = [](std::string_view content) {
     std::string out;
@@ -5841,7 +4969,6 @@ void TestTextViewportOpenNormalizesEveryLineEndingMix() {
     TextViewport view;
     Expect(view.OpenFile(WriteScratchFile(name, body)), "line-ending mix fixture opens");
 
-    // The buffer must hold exactly the LF-normalized bytes, split on LF.
     const std::string expected_text = reference_normalize(body);
     std::string actual_text;
     for (std::size_t line = 0; line < view.line_count(); ++line) {
@@ -5853,7 +4980,6 @@ void TestTextViewportOpenNormalizesEveryLineEndingMix() {
     Expect(actual_text == expected_text,
            "opening a file must produce exactly the LF-normalized content");
 
-    // And the classifier's verdict must match a plain count of each style.
     std::size_t crlf = 0;
     std::size_t lf = 0;
     std::size_t cr = 0;
@@ -5886,15 +5012,8 @@ void TestTextViewportOpenNormalizesEveryLineEndingMix() {
   }
 }
 
-// Editing line 0 invalidates the highlight state chain (the syntax state chains
-// forward from line 0, so everything below it is suspect) by zeroing the
-// validity cursors rather than by clearing the per-line state vectors. The
-// entries below a zeroed cursor are unreachable, so this must be behaviourally
-// identical to wiping them -- pin that a multi-line construct opened ON line 0
-// still colours the lines below it correctly after the opening line is edited.
 void TestTextViewportFirstLineEditRehighlightsFollowingLines() {
   TextViewport viewport;
-  // A block comment opened on line 0 swallows the lines below it.
   viewport.LoadContent("/* comment\nstill inside\nalso inside\n", "/tmp/first-line-syntax.cpp");
   viewport.SetViewportSize(10, 40);
 
@@ -5905,14 +5024,12 @@ void TestTextViewportFirstLineEditRehighlightsFollowingLines() {
   Expect(line_is_comment(1) && line_is_comment(2),
          "lines under a block comment opened on line 0 should start out commented");
 
-  // Close the comment on line 0. Everything below must stop being comment.
   viewport.MoveCursorTo(0, viewport.lines()[0].size());
   viewport.InsertText(" */");
   Expect(!line_is_comment(1) && !line_is_comment(2),
          "closing the block comment on line 0 must re-highlight every line below it — the "
          "state chain from line 0 is exactly what the line-0 invalidation has to drop");
 
-  // And reopening it must bring them back.
   viewport.MoveCursorTo(0, viewport.lines()[0].size());
   for (int i = 0; i < 3; ++i) {
     viewport.Backspace();
@@ -5921,24 +5038,8 @@ void TestTextViewportFirstLineEditRehighlightsFollowingLines() {
          "reopening the block comment on line 0 must re-comment the lines below it");
 }
 
-// A content edit anchored at line 0 must go down the SAME incremental
-// visual-column path as an edit anywhere else.
-//
-// It did not: the line-0 branch of InvalidateDerivedCaches dropped the whole
-// per-line width table along with the visible-line layouts, so the next
-// MaxVisualColumns() recomputed the width of every line in the buffer. On a
-// 50k-line file an identical enter/backspace burst measured 121 full rebuilds
-// at line 0 against 1 at line 25000 -- typing at the top of a large file was
-// the slowest place to type. Line 0 is special for the highlight state (the
-// syntax chain starts there); it is not special for widths, because a line's
-// visual width depends on that line's bytes and nothing else.
-//
-// Pinned two ways: the horizontal-scroll clamp still tracks the widest line
-// after editing line 0 (correctness -- a stale table would clamp wrong), and
-// the edit takes the in-place incremental branch rather than a rebuild.
 void TestTextViewportFirstLineEditKeepsVisualColumnCacheIncremental() {
   TextViewport viewport;
-  // Line 0 is the widest line, so the max-column bookkeeping has to follow it.
   viewport.LoadContent(std::string(200, 'w') + "\nshort\nshorter\n", "/tmp/first-line-edit.txt");
   viewport.SetViewportSize(10, 20);
 
@@ -5954,7 +5055,6 @@ void TestTextViewportFirstLineEditKeepsVisualColumnCacheIncremental() {
   const std::size_t inplace_before = viewport.VisualColumnIncrementalInplaceCountForDebug();
 #endif
 
-  // Widen line 0 by ten columns, in place (no line-count change).
   viewport.MoveCursorTo(0, 0);
   for (int i = 0; i < 10; ++i) {
     viewport.InsertText("x");
@@ -5970,7 +5070,6 @@ void TestTextViewportFirstLineEditKeepsVisualColumnCacheIncremental() {
          "widening the widest line by ten columns must widen the horizontal scroll range by "
          "exactly ten");
 
-  // And narrowing it again must pull the range back.
   for (int i = 0; i < 10; ++i) {
     viewport.Backspace();
   }
@@ -5978,15 +5077,12 @@ void TestTextViewportFirstLineEditKeepsVisualColumnCacheIncremental() {
          "narrowing the widest line back must restore the horizontal scroll range");
 }
 
-// LoadLines (dirty-tab session restore) moves an already line-split buffer straight
-// in, skipping the LoadContent(SerializeLines(...)) join-then-resplit. It must be
-// exactly equivalent to that old round-trip: same lines, same line ending, dirty.
 void TestTextViewportLoadLinesMatchesSerializeRoundTrip() {
   const std::vector<std::vector<std::string>> cases = {
       {"solo"},
       {"a", "b", "c"},
-      {"a", "b", "c", ""},  // trailing empty line
-      {"", "", ""},         // only empty lines
+      {"a", "b", "c", ""},
+      {"", "", ""},
       {"  indented", "\ttab", "end"},
   };
   const util::LineEnding endings[] = {util::LineEnding::LF, util::LineEnding::CRLF};
@@ -6011,11 +5107,6 @@ void TestTextViewportLoadLinesMatchesSerializeRoundTrip() {
   }
 }
 
-// The edit record answers for one step only. AppliedEditFromRevision(rev) is the
-// last edit when it is the whole step from `rev` to now; LatestAppliedEdit() when
-// nothing changed the text after it. A consumer that mirrors the buffer (the LSP
-// sync, breakpoints, diagnostics, the find scope) slides through it only then
-// (TD-2026-11-03-431).
 void TestAppliedEditRecordAnswersForOneStepOnly() {
   TextViewport viewport;
   viewport.LoadContent("one\ntwo\n", "/tmp/applied-edit-record.txt");
@@ -6041,9 +5132,6 @@ void TestAppliedEditRecordAnswersForOneStepOnly() {
   Expect(viewport.LatestAppliedEdit() != nullptr, "an undo is a step of its own, recorded");
 }
 
-// The smallest shape of soak 76e3925879dc: a formatter's edits, applied last-first
-// in one group -- one inside line 1, then one joining line 0 onto it. The second
-// replaces lines the first already changed.
 void TestTextViewportAGroupedJoinOverAnEditedLineUndoesAndRedoesExactly() {
   TextViewport viewport;
   viewport.LoadContent("abcdefgh\nwxyz\n", "/tmp/grouped-join.cpp");
@@ -6059,10 +5147,6 @@ void TestTextViewportAGroupedJoinOverAnEditedLineUndoesAndRedoesExactly() {
          "the redo replays the group as it was, without a second copy of line 1");
 }
 
-// Soak d54631ea30df, minimized to "open src/main.cpp; format-document": clangd's
-// own edits for the taskflow fixture -- each replaces a line break and the next
-// line's indent, so neighbouring edits share lines -- applied the way
-// WorkspaceEditService::ApplyBatch applies them (last first, one group).
 void TestTextViewportClangdFormattingEditsUndoAndRedoExactly() {
   struct Edit {
     TextPosition start;
@@ -6099,15 +5183,8 @@ void TestTextViewportClangdFormattingEditsUndoAndRedoExactly() {
          "the redo restores the formatted text:\n" + viewport.SerializeText());
 }
 
-// Soak 76e3925879dc, 822fc591ce19, d54631ea30df: k undos then k redos are the
-// identity, whatever mix of typing, single replaces and grouped multi-range edits
-// (a language server's formatting) built the history. A grouped edit that joined
-// lines an earlier edit of the same group had changed was recorded as a range
-// beside that one instead of over it, and the redo duplicated the line.
 void TestTextViewportUndoThenRedoIsTheIdentityOverRandomHistories() {
   for (std::uint32_t round = 0; round < 600; ++round) {
-    // Odd rounds undo and redo one step after every edit, which names the edit
-    // whose entry was recorded wrong; even rounds ask for 1-4 at random moments.
     const bool stepwise = (round & 1U) != 0;
     const std::uint32_t seed = round / 2 + 1;
     std::uint32_t state = seed * 2654435761u;
@@ -6143,7 +5220,6 @@ void TestTextViewportUndoThenRedoIsTheIdentityOverRandomHistories() {
         viewport.Backspace();
         log += "bs@" + std::to_string(at.line) + ":" + std::to_string(at.column) + "\n";
       } else {
-        // A batch: disjoint ranges applied last-first inside one group.
         std::vector<TextPosition> points;
         const std::uint32_t count = 1 + next(4);
         for (std::uint32_t i = 0; i < count * 2; ++i) {
@@ -6202,17 +5278,10 @@ void TestTextViewportUndoThenRedoIsTheIdentityOverRandomHistories() {
   }
 }
 
-}  // namespace
+}
 
-// The undo history caps total bytes, not just entry count: a handful of
-// large-range edits (each copying a big line range into before/after_lines) must
-// not accumulate into a multi-GB history. Continuous eviction keeps peak memory
-// near the budget, so pushing many large entries leaves far fewer than the
-// 128-entry count cap alive.
 void TestUndoHistoryEnforcesByteBudget() {
   microide::editor::TextViewportUndoHistory history;
-  // ~4 MiB per entry; the 256 MiB byte budget admits ~64 of these — well under the
-  // 128-entry count cap, so a survivor count below 128 proves the byte cap acted.
   for (int i = 0; i < 200; ++i) {
     microide::editor::TextViewportUndoHistory::Entry entry;
     entry.after_lines.push_back(std::string(4u * 1024 * 1024, 'x'));
@@ -6229,8 +5298,6 @@ void TestUndoHistoryEnforcesByteBudget() {
          "the byte budget must evict below the entry-count cap for large entries");
 }
 
-// A column/box select across a very tall document must not allocate one caret per
-// line without bound (a single-gesture OOM/hang). The caret set is capped.
 void TestTextViewportColumnCaretsAreCapped() {
   microide::editor::TextViewport viewport;
   std::string content;
@@ -6246,10 +5313,6 @@ void TestTextViewportColumnCaretsAreCapped() {
          "a column select should still place some carets");
 }
 
-// Mirrors WorkspaceEditService::ApplyLspEdit for a multi-line "remove unused
-// includes" fix: several non-contiguous single-line deletions, clamped, sorted
-// highest-position-first, applied inside one undo group. A single Undo must fully
-// restore the original document (else save-after-undo persists truncated content).
 void TestTextViewportGroupedNonContiguousDeletesUndoFully() {
   TextViewport viewport;
   std::string content;
@@ -6260,7 +5323,6 @@ void TestTextViewportGroupedNonContiguousDeletesUndoFully() {
   viewport.LoadContent(content, "/tmp/grouped-undo.cpp");
   const auto original = viewport.lines().Snapshot();
 
-  // Delete lines 1, 4, 7, 10 (non-contiguous), each as a full-line range.
   std::vector<SelectionRange> edits = {
       {{1, 0}, {2, 0}}, {{4, 0}, {5, 0}}, {{7, 0}, {8, 0}}, {{10, 0}, {11, 0}}};
   std::sort(edits.begin(), edits.end(), [](const SelectionRange& a, const SelectionRange& b) {
@@ -6269,7 +5331,7 @@ void TestTextViewportGroupedNonContiguousDeletesUndoFully() {
 
   viewport.BeginUndoGroup();
   for (const auto& range : edits) {
-    viewport.ReplaceRange(range, "", /*record_undo=*/true);
+    viewport.ReplaceRange(range, "", true);
   }
   viewport.EndUndoGroup();
   Expect(viewport.lines().size() == original.size() - 4,
@@ -6284,9 +5346,6 @@ void TestTextViewportGroupedNonContiguousDeletesUndoFully() {
          "a single Undo must fully restore the original buffer after grouped non-contiguous deletes");
 }
 
-// Data-integrity: after a save, undoing PAST the saved point must mark the buffer
-// dirty, because its content now differs from what is on disk. Regression guard for
-// the "edit -> save -> undo shows clean -> content silently lost on reopen" bug.
 void TestTextViewportUndoPastSaveMarksDirty() {
   const std::filesystem::path path =
       std::filesystem::temp_directory_path() / "microide-undo-save-dirty.txt";
@@ -6296,7 +5355,7 @@ void TestTextViewportUndoPastSaveMarksDirty() {
   Expect(!viewport.dirty(), "a freshly loaded buffer is clean");
   const auto original = viewport.lines().Snapshot();
 
-  viewport.ReplaceRange(SelectionRange{{1, 0}, {2, 0}}, "", /*record_undo=*/true);
+  viewport.ReplaceRange(SelectionRange{{1, 0}, {2, 0}}, "", true);
   Expect(viewport.dirty(), "deleting a line marks the buffer dirty");
   Expect(viewport.Save(microide::project::LocalFileWriteGate()), "save should succeed");
   Expect(!viewport.dirty(), "a successful save clears the dirty flag");
@@ -6306,24 +5365,16 @@ void TestTextViewportUndoPastSaveMarksDirty() {
   Expect(viewport.dirty(),
          "undoing past a save must mark the buffer dirty; the content now differs from disk");
 
-  // Redoing back to the saved content must return to clean.
   Expect(viewport.Redo(), "redo should succeed");
   Expect(!viewport.dirty(), "redoing back to the saved content returns to clean");
   std::filesystem::remove(path);
 }
 
-// Data-integrity (dirty-baseline family): a dirty buffer whose file comes to hold
-// exactly its text -- another view of the file saved it, the watcher's echo of a
-// save landed late -- is taken clean by adopting the disk baseline. That adoption
-// moves the clean point exactly as a save does: undoing back to the loaded text must
-// read dirty, because the file no longer holds it. It read clean, and a clean buffer
-// that differs from its file is an edit nothing will ever save (soak: "the clean
-// buffer of code.py differs from its file on disk").
 void TestTextViewportAdoptedDiskBaselineMovesTheCleanPoint() {
   TextViewport viewport;
   viewport.LoadContent("def f(x):\n", "/tmp/microide-adopt-baseline/code.py");
   const auto original = viewport.lines().Snapshot();
-  viewport.ReplaceRange(SelectionRange{{0, 0}, {0, 0}}, "        ", /*record_undo=*/true);
+  viewport.ReplaceRange(SelectionRange{{0, 0}, {0, 0}}, "        ", true);
   Expect(viewport.dirty(), "the indent marks the buffer dirty");
 
   TextViewport disk;
@@ -6340,19 +5391,13 @@ void TestTextViewportAdoptedDiskBaselineMovesTheCleanPoint() {
   Expect(!viewport.dirty(), "redoing back to the file's text returns to clean");
 }
 
-// Revert File installs the file's lines as they are. It inserted them as one
-// '\n'-joined text instead, and inserted text breaks a line at a lone '\r' too --
-// right for typed text, wrong for an opaque (binary) document, whose lines split
-// on '\n' only and keep their CR bytes. The reverted buffer then held a line
-// break where the file holds byte 13, and was marked clean: a save would have
-// rewritten the file (soak fea34952ad53, binary.bin, first difference at byte 13).
 void TestTextViewportRevertToDiskKeepsTheCarriageReturnsOfABinaryFile() {
   const std::string bytes("\x00\x01\n\x0b\x0c\r\x0e\x0f\n\x10", 10);
   TextViewport viewport;
   viewport.LoadContent(bytes, "/tmp/microide-revert-binary/binary.bin");
   Expect(viewport.encoding() == TextViewport::TextEncoding::Bytes, "NUL bytes load as an opaque document");
   Expect(viewport.SerializeDocumentText() == bytes, "an opaque document serializes back byte for byte");
-  viewport.ReplaceRange(SelectionRange{{0, 0}, {0, 0}}, "x", /*record_undo=*/true);
+  viewport.ReplaceRange(SelectionRange{{0, 0}, {0, 0}}, "x", true);
   Expect(viewport.dirty(), "the edit marks the buffer dirty");
 
   TextViewport disk;
@@ -6366,9 +5411,6 @@ void TestTextViewportRevertToDiskKeepsTheCarriageReturnsOfABinaryFile() {
   Expect(viewport.dirty(), "undoing the revert brings the discarded edit back, dirty");
 }
 
-// Data-integrity (dirty-baseline family): saving while parked ABOVE undone edits must
-// make the saved position the sole clean point — redoing forward off it re-dirties, and
-// undoing past it dirties, because both differ from what is on disk.
 void TestTextViewportSaveAboveUndoneEditsDirtiesRedo() {
   const std::filesystem::path path =
       std::filesystem::temp_directory_path() / "microide-save-above-undone.txt";
@@ -6376,10 +5418,9 @@ void TestTextViewportSaveAboveUndoneEditsDirtiesRedo() {
   TextViewport viewport;
   viewport.LoadContent("L\n", path);
 
-  // Two discrete (non-coalescing) edits on different lines -> two undo entries.
-  viewport.ReplaceRange(SelectionRange{{0, 0}, {0, 0}}, "a", /*record_undo=*/true);  // E1
-  viewport.ReplaceRange(SelectionRange{{1, 0}, {1, 0}}, "b", /*record_undo=*/true);  // E2
-  Expect(viewport.Undo(), "undo should reverse the second insert");  // parked at E1's result
+  viewport.ReplaceRange(SelectionRange{{0, 0}, {0, 0}}, "a", true);
+  viewport.ReplaceRange(SelectionRange{{1, 0}, {1, 0}}, "b", true);
+  Expect(viewport.Undo(), "undo should reverse the second insert");
 
   Expect(viewport.Save(microide::project::LocalFileWriteGate()), "saving while above an undone edit should succeed");
   Expect(!viewport.dirty(), "the just-saved (undone-to) position is clean");
@@ -6395,10 +5436,6 @@ void TestTextViewportSaveAboveUndoneEditsDirtiesRedo() {
   std::filesystem::remove(path);
 }
 
-// Data-integrity: a contiguous keystroke immediately after a save must start a FRESH
-// undo entry, never coalesce into the just-saved top entry. Coalescing would rewrite the
-// saved position's after-state back to dirty and make the saved content unreachable by
-// undo — silently losing it.
 void TestTextViewportSaveThenCoalescingKeystrokeStartsFreshEntry() {
   const std::filesystem::path path =
       std::filesystem::temp_directory_path() / "microide-save-then-type.txt";
@@ -6410,7 +5447,7 @@ void TestTextViewportSaveThenCoalescingKeystrokeStartsFreshEntry() {
   Expect(viewport.Save(microide::project::LocalFileWriteGate()), "save should succeed");
   Expect(!viewport.dirty(), "save clears dirty");
 
-  viewport.InsertCharacter('b');  // contiguous with 'a' — must NOT fold into the saved entry
+  viewport.InsertCharacter('b');
   Expect(viewport.dirty(), "typing after a save dirties the buffer");
 
   Expect(viewport.Undo(), "undo should reverse only the post-save keystroke");
@@ -6420,10 +5457,6 @@ void TestTextViewportSaveThenCoalescingKeystrokeStartsFreshEntry() {
   std::filesystem::remove(path);
 }
 
-// Regression: nested undo groups must not double-count child edits. RecordEntry
-// fans each child into every active frame, so when the inner group flushes it must
-// NOT re-record its aggregate into the still-active outer frame (which already
-// captured the same children). Only the outermost group commits one entry.
 void TestTextViewportNestedUndoGroupsDoNotDoubleCount() {
   const std::filesystem::path path =
       std::filesystem::temp_directory_path() / "microide-undo-nested.txt";
@@ -6434,11 +5467,11 @@ void TestTextViewportNestedUndoGroupsDoNotDoubleCount() {
 
   viewport.BeginUndoGroup();
   viewport.InsertText("A");
-  viewport.BeginUndoGroup();  // nested
+  viewport.BeginUndoGroup();
   viewport.InsertText("B");
-  viewport.EndUndoGroup();    // closes inner — must not push into the outer frame
+  viewport.EndUndoGroup();
   viewport.InsertText("C");
-  viewport.EndUndoGroup();    // closes outer — the single committed entry
+  viewport.EndUndoGroup();
 
   Expect(viewport.lines().LineView(0) == "helloABC", "all three inserts should apply");
   Expect(!viewport.UndoGroupActive(), "no undo group should remain active");
@@ -6455,8 +5488,6 @@ void TestTextViewportNestedUndoGroupsDoNotDoubleCount() {
   std::filesystem::remove(path);
 }
 
-// Data-integrity: a grouped (single-undo) multi-edit interacts with save the same way a
-// single edit does — undo past the save dirties, redo back to it cleans.
 void TestTextViewportGroupedEditSaveUndoMarksDirty() {
   const std::filesystem::path path =
       std::filesystem::temp_directory_path() / "microide-grouped-save.txt";
@@ -6466,8 +5497,8 @@ void TestTextViewportGroupedEditSaveUndoMarksDirty() {
   const auto original = viewport.lines().Snapshot();
 
   viewport.BeginUndoGroup();
-  viewport.ReplaceRange(SelectionRange{{2, 0}, {3, 0}}, "", /*record_undo=*/true);
-  viewport.ReplaceRange(SelectionRange{{0, 0}, {1, 0}}, "", /*record_undo=*/true);
+  viewport.ReplaceRange(SelectionRange{{2, 0}, {3, 0}}, "", true);
+  viewport.ReplaceRange(SelectionRange{{0, 0}, {1, 0}}, "", true);
   viewport.EndUndoGroup();
   Expect(viewport.dirty(), "a grouped edit dirties the buffer");
   Expect(viewport.Save(microide::project::LocalFileWriteGate()), "save should succeed");
@@ -6481,9 +5512,6 @@ void TestTextViewportGroupedEditSaveUndoMarksDirty() {
   std::filesystem::remove(path);
 }
 
-// Data-integrity: once the undo history evicts the saved entry (history cap), undoing as
-// far as possible must NEVER report clean for content that differs from disk. Eviction
-// removing the clean marker must fail safe to "dirty", not "clean".
 void TestTextViewportSaveEvictionNeverFalseClean() {
   const std::filesystem::path path =
       std::filesystem::temp_directory_path() / "microide-save-eviction.txt";
@@ -6491,18 +5519,14 @@ void TestTextViewportSaveEvictionNeverFalseClean() {
   TextViewport viewport;
   viewport.LoadContent("seed\n", path);
 
-  viewport.ReplaceRange(SelectionRange{{0, 0}, {0, 0}}, "x", /*record_undo=*/true);
+  viewport.ReplaceRange(SelectionRange{{0, 0}, {0, 0}}, "x", true);
   Expect(viewport.Save(microide::project::LocalFileWriteGate()), "save should succeed");
   Expect(!viewport.dirty(), "save clears dirty");
 
-  // Push well past the 128-entry cap with discrete (non-coalescing) edits so the saved
-  // entry (and its clean-bridging successor) are both evicted from the front of the
-  // undo stack.
   for (int i = 0; i < 200; ++i) {
-    viewport.ReplaceRange(SelectionRange{{0, 0}, {0, 0}}, "z", /*record_undo=*/true);
+    viewport.ReplaceRange(SelectionRange{{0, 0}, {0, 0}}, "z", true);
   }
   while (viewport.Undo()) {
-    // Walk all the way back to the oldest surviving entry.
   }
   Expect(viewport.dirty(),
          "after the saved entry is evicted, the oldest reachable content differs from disk "
@@ -6510,9 +5534,6 @@ void TestTextViewportSaveEvictionNeverFalseClean() {
   std::filesystem::remove(path);
 }
 
-// Data-integrity: re-saving moves the sole clean point forward. After a second save,
-// undoing to the FIRST save's content reads dirty (disk now holds the second), and
-// redoing back to the second save reads clean.
 void TestTextViewportDoubleSaveRebaselines() {
   const std::filesystem::path path =
       std::filesystem::temp_directory_path() / "microide-double-save.txt";
@@ -6534,15 +5555,6 @@ void TestTextViewportDoubleSaveRebaselines() {
   std::filesystem::remove(path);
 }
 
-// Regression: vertical caret movement must preserve the target column even when
-// the view is horizontally scrolled. The non-soft-wrap branch of
-// ResolveSoftWrapCursorColumnForTargetRow used to add horizontal_scroll_ to the
-// (already absolute) preferred column, double-counting the scroll and marching the
-// caret to end-of-line. Invisible whenever horizontal_scroll_ == 0.
-// A reload that preserves view state has to preserve the SCROLL too, including
-// when there is a selection. The save path used to restore the selection after the
-// scroll, and MoveCursorTo runs EnsureCursorVisible — so selecting the whole
-// buffer and saving through a formatter snapped the view to the end of the file.
 void TestTextViewportReloadPreservingViewStateKeepsScrollUnderSelection() {
   TextViewport viewport;
   std::string text;
@@ -6552,12 +5564,10 @@ void TestTextViewportReloadPreservingViewStateKeepsScrollUnderSelection() {
   viewport.LoadContent(text, "/tmp/reload.txt");
   viewport.SetViewportSize(20, 80);
 
-  // Scroll into the middle, then select the whole buffer (Ctrl+A leaves the
-  // selection end at the last line, far below the visible window).
   viewport.SetScrollLine(100);
   viewport.MoveCursorTo(0, 0);
   viewport.SetScrollLine(100);
-  viewport.MoveCursorTo(399, 0, /*extend_selection=*/true);
+  viewport.MoveCursorTo(399, 0, true);
   viewport.SetScrollLine(100);
   const std::size_t scroll_before = viewport.scroll_line();
   const auto selection_before = viewport.selection_range();
@@ -6596,32 +5606,23 @@ void TestTextViewportVerticalMovePreservesColumnWhenScrolled() {
          "moving up while horizontally scrolled must preserve the target column (150)");
 }
 
-// In soft-wrap mode preferred_column_ is stored relative to the wrapped-row start.
-// ClampCursorColumn (called from SetTabSize) used to feed it into
-// TextColumnForVisualColumn as an absolute column, snapping the caret to near the
-// start of the logical line whenever it sat on a continuation row.
 void TestTextViewportSoftWrapTabSizeChangePreservesWrappedColumn() {
   TextViewport viewport;
-  const std::string long_line(200, 'a');  // no tabs: wrapping is tab-size-invariant
+  const std::string long_line(200, 'a');
   viewport.LoadContent(long_line + "\n" + long_line + "\n", "/tmp/soft-wrap-tab.txt");
   viewport.SetViewportSize(10, 80);
   viewport.SetSoftWrap(true);
-  viewport.SetTabSize(4);  // known baseline so the change below is not a no-op
+  viewport.SetTabSize(4);
 
-  viewport.MoveCursorTo(0, 150);  // column 150 lands on the 2nd wrapped row (row [80,160))
+  viewport.MoveCursorTo(0, 150);
   Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 150,
          "precondition: caret is at column 150 on a continuation row");
 
-  viewport.SetTabSize(8);  // triggers ClampCursorColumn
+  viewport.SetTabSize(8);
   Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 150,
          "changing tab size must keep the wrapped caret column, not snap to line start");
 }
 
-// The AppliedEdit contract, which the LSP incremental sync and the merge
-// conflict tracker consume: after any single-region edit, splicing
-// `replacement_text` into the PREVIOUS text at `range_before` must give the new
-// text exactly. Random edits over a small alphabet with multi-byte scalars and
-// line breaks, including undo/redo, which replay history entries.
 void TestTextViewportAppliedEditReplaysRandomEdits() {
   using microide::editor::SelectionRange;
   using microide::editor::TextPosition;
@@ -6710,9 +5711,6 @@ void TestTextViewportAppliedEditReplaysRandomEdits() {
 }
 
 
-// Undo/redo as a round trip: N random edits, then undo them all must give back
-// the original text and redo them all the final text, with the same edit set
-// as the AppliedEdit test (multi-byte scalars, line breaks, range replacements).
 void TestTextViewportUndoRedoRoundTripRandomEdits() {
   using microide::editor::SelectionRange;
   using microide::editor::TextPosition;
@@ -6769,7 +5767,7 @@ void TestTextViewportUndoRedoRoundTripRandomEdits() {
     for (std::size_t i = after_each.size(); i-- > 0;) {
       const std::string expected = i == 0 ? original : after_each[i - 1];
       if (after_each[i] == expected) {
-        continue;  // a no-op edit recorded nothing to undo
+        continue;
       }
       Expect(viewport.Undo(), "an edit that changed the text can be undone");
       Expect(serialize(viewport) == expected,
@@ -6788,20 +5786,12 @@ void TestTextViewportUndoRedoRoundTripRandomEdits() {
   }
 }
 
-// The visible-line layout cache keeps an intrusive recency list threaded through
-// its `unordered_map`'s own nodes. A COPIED map has its own nodes at their own
-// addresses, so the raw entry pointers copied alongside it point into the SOURCE's
-// nodes — and a viewport is copied whenever a pane is split or a tab vector
-// reallocates. Once the source dies, the copy's next repaint writes through freed
-// pointers: a heap-use-after-free on the shell thread, which is how this was
-// found (ASAN, while driving the real binary).
 void TestTextViewportCopiedLayoutCacheDoesNotAliasTheSource() {
   std::string content;
   for (int line = 0; line < 400; ++line) {
     content += "line " + std::to_string(line) + " with some text to lay out\n";
   }
 
-  // The oracle: an independently built viewport that was never copied.
   TextViewport reference;
   reference.LoadContent(content);
   reference.SetViewportSize(40, 80);
@@ -6811,23 +5801,16 @@ void TestTextViewportCopiedLayoutCacheDoesNotAliasTheSource() {
     TextViewport source;
     source.LoadContent(content);
     source.SetViewportSize(40, 80);
-    // Fill the cache past nothing in particular — enough entries that the list
-    // has real interior links to dangle.
     for (std::size_t line = 0; line < 200; ++line) {
       (void)source.VisibleLineLayoutRef(line);
     }
     copy = source;
     Expect(source.VisibleLineLruIsConsistentForTesting(),
            "the source's own recency list must be well formed to begin with");
-    // Checked while the source is still ALIVE: the copy's list must already be
-    // this map's own nodes, not the source's. Under ASAN the check after the
-    // source dies would abort before it could report; this one just fails.
     Expect(copy.VisibleLineLruIsConsistentForTesting(),
            "a copied cache's recency list must link its OWN map nodes");
-  }  // The source's map nodes are freed here.
+  }
 
-  // Well past the 256-entry cache limit, so eviction walks the recency list —
-  // the exact read that used to follow a copied pointer into freed memory.
   for (std::size_t round = 0; round < 3; ++round) {
     for (std::size_t line = 0; line < 400; ++line) {
       const microide::editor::LayoutLine& laid_out = copy.VisibleLineLayoutRef(line);
@@ -6837,8 +5820,6 @@ void TestTextViewportCopiedLayoutCacheDoesNotAliasTheSource() {
     }
   }
 
-  // And the invalidation path, which UNLINKS entries: an edit after a copy walked
-  // the same dangling links.
   copy.MoveCursorTo(10, 0);
   copy.InsertText("x");
   for (std::size_t line = 0; line < 400; ++line) {
@@ -6850,14 +5831,11 @@ void TestTextViewportCopiedLayoutCacheDoesNotAliasTheSource() {
          "eviction and invalidation must leave the recency list well formed");
 }
 
-// TD-2026-10-08-324: a formatter's output is an EDIT. Undo takes the formatting
-// back in one step, and the user's own typing before the save is still there to
-// undo after it — a reload would have thrown both away.
 void TestFormattedTextIsOneUndoStepAndKeepsHistory() {
   TextViewport view;
   view.LoadContent("int  a;\nint b;\nint c;\n", "/tmp/format-undo.cpp");
   view.MoveCursorTo(1, 5);
-  view.InsertText("x");  // the user's edit: "int bx;"
+  view.InsertText("x");
   Expect(view.ApplyFormattedText("int a;\nint bx;\nint c;\n"), "the formatting applies");
   Expect(view.SerializeDocumentText() == "int a;\nint bx;\nint c;\n", "formatted");
   Expect(view.cursor_line() == 1 && view.cursor_column() == 6, "the cursor stays where it was");
@@ -6868,7 +5846,6 @@ void TestFormattedTextIsOneUndoStepAndKeepsHistory() {
   Expect(view.Redo() && view.Redo() && view.SerializeDocumentText() == "int a;\nint bx;\nint c;\n",
          "redo replays both");
 
-  // Lines removed, lines added, and an output equal to the buffer.
   TextViewport shrink;
   shrink.LoadContent("a\n\n\nb\n", "/tmp/format-shrink.txt");
   Expect(shrink.ApplyFormattedText("a\nb\n") && shrink.SerializeDocumentText() == "a\nb\n",
@@ -6880,7 +5857,6 @@ void TestFormattedTextIsOneUndoStepAndKeepsHistory() {
          "a formatter that adds lines");
   Expect(!grow.ApplyFormattedText("{\n}\n"), "an output equal to the buffer is no edit");
 
-  // The buffer keeps its line endings: the comparison is on canonical lines.
   TextViewport crlf;
   crlf.LoadContent("a\r\nb\r\n", "/tmp/format-crlf.txt");
   Expect(crlf.ApplyFormattedText("a\r\nB\r\n") && crlf.SerializeDocumentText() == "a\r\nB\r\n",
@@ -6888,32 +5864,25 @@ void TestFormattedTextIsOneUndoStepAndKeepsHistory() {
 }
 
 
-// A viewport over a document another viewport edited reads its selection as the
-// next use of it will see it, reconciled into the document -- not the positions
-// the other viewport's edit left behind. The compare pane over a file an editor
-// tab also has open held a selection on "abcd"; the tab turned that line empty,
-// and the control channel's `buffer` query read the pane's selected text off the
-// stale positions: std::out_of_range from string_view::substr, terminate (soak
-// e041d436ae59).
 void TestSelectedTextOfAViewportAnotherViewportEditedStaysInTheDocument() {
   TextViewport pane;
   pane.LoadContent("one\ntwo\nsix\nabcd\nefghi\n", "/tmp/shared-selection.txt");
   pane.MoveCursorTo(3, 4);
-  pane.MoveCursorTo(4, 5, /*extend_selection=*/true);
+  pane.MoveCursorTo(4, 5, true);
   Expect(pane.SelectedText() == "\nefghi", "the pane selects across lines 4 and 5");
 
-  TextViewport tab = pane;  // shares the DocumentState, as the editor tab does
+  TextViewport tab = pane;
   tab.MoveCursorTo(3, 0);
-  tab.MoveCursorTo(4, 5, /*extend_selection=*/true);
-  tab.Backspace();          // line 4 is now "" and line 5 "" ...
-  tab.InsertText("\n\n"); // ... and more lines follow it
+  tab.MoveCursorTo(4, 5, true);
+  tab.Backspace();
+  tab.InsertText("\n\n");
 
   const auto range = pane.selection_range();
   Expect(!range.has_value() || (range->end.line < pane.line_count() &&
                                 range->end.column <= pane.lines().LineLength(range->end.line) &&
                                 range->start.column <= pane.lines().LineLength(range->start.line)),
          "the pane's selection lies inside the document the other viewport left");
-  const std::string read = pane.SelectedText();  // threw std::out_of_range
+  const std::string read = pane.SelectedText();
   pane.ReconcileCaretsWithDocument();
   Expect(read == pane.SelectedText(),
          "a read before the pane's next use sees what that use will: '" + read + "' vs '" +
@@ -6921,10 +5890,6 @@ void TestSelectedTextOfAViewportAnotherViewportEditedStaysInTheDocument() {
 }
 
 
-// Every way a cut can delete with several carets up leaves every caret inside the
-// document: the selections (DeleteMultiCaretSelections), the primary's selection
-// alone (DeleteSelectedText), or every caret's line (DeleteCurrentLine). A cut in
-// the soak left a secondary caret at 7:801 on a line 728 long (soak 00b41f141357).
 void TestEveryCutPathLeavesEveryCaretInside() {
   const std::string long_line(800, 'x');
   const std::string text = "a\n" + long_line + "\nshort\n" + long_line + "\nend\n";
@@ -6951,7 +5916,7 @@ void TestEveryCutPathLeavesEveryCaretInside() {
     TextViewport view;
     view.LoadContent(text, "/tmp/cut-primary.txt");
     view.MoveCursorTo(0, 0);
-    view.MoveCursorTo(2, 3, /*extend_selection=*/true);
+    view.MoveCursorTo(2, 3, true);
     view.AddSecondaryCaret(3, 800);
     view.DeleteSelectedText();
     inside(view, "the primary's selection cut with a bare secondary caret below it");
@@ -6960,7 +5925,7 @@ void TestEveryCutPathLeavesEveryCaretInside() {
     TextViewport view;
     view.LoadContent(text, "/tmp/cut-multi.txt");
     view.MoveCursorTo(0, 0);
-    view.MoveCursorTo(1, 800, /*extend_selection=*/true);
+    view.MoveCursorTo(1, 800, true);
     view.AddSecondaryCaretWithRange(editor::SelectionRange{{3, 0}, {3, 800}});
     view.DeleteMultiCaretSelections();
     inside(view, "every caret's selection cut");
@@ -6968,17 +5933,15 @@ void TestEveryCutPathLeavesEveryCaretInside() {
 }
 
 
-// The caret-bounds trace's check (MICROIDE_TRACE_CARET_BOUNDS): a position outside
-// the document is described, an inside one is not.
 void TestCaretBoundsFaultNamesTheCaretOutsideTheDocument() {
   TextViewport behind;
   behind.LoadContent("one\ntwo three\nfour\n", "/tmp/bounds.txt");
   behind.MoveCursorTo(1, 9);
   Expect(behind.CaretBoundsFault().empty(), "a caret inside its line is no fault");
-  TextViewport front = behind;  // shares the document
+  TextViewport front = behind;
   front.MoveCursorTo(1, 0);
-  front.MoveCursorTo(1, 9, /*extend_selection=*/true);
-  front.Backspace();  // line 2 is now empty under the view behind
+  front.MoveCursorTo(1, 9, true);
+  front.Backspace();
   const std::string fault = behind.CaretBoundsFault();
   Expect(fault == "caret at 2:10 (line length 0, 4 lines)", "the stale caret is described: '" + fault + "'");
   behind.ReconcileCaretsWithDocument();
@@ -7394,4 +6357,4 @@ AddTest(tests, "TextViewport/UndoThenRedoIsTheIdentityOverRandomHistories",
           TestTextViewportEmptyLineDeleteIsNotTreatedAsNoOp);
 }
 
-}  // namespace microide::tests
+}

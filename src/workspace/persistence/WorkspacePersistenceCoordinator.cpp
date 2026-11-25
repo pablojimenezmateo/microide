@@ -103,13 +103,10 @@ PersistenceCoordinator& WorkspaceShell::MakePersistenceCoordinator() {
           .capture_terminal_layout = [this]() { return MakeTerminalPanelService().CaptureLayout(); },
           .session_saved =
               [this](const PersistedProjectSessionState& session) {
-                // Only a remote project's, and only once it has a connection to leave it on.
                 if (context_.current_project_state.id.IsRemote() && glue_->remote_host_service != nullptr) {
                   glue_->remote_host_service->SessionSaved(context_.current_project_state.root, session);
                 }
               },
-          // No service, nothing collapsed: one exists whenever a restored session
-          // had any (restore makes it), so a save never drops them.
           .host_view_collapsed =
               [this]() {
                 return glue_->remote_host_service != nullptr
@@ -129,4 +126,4 @@ PersistenceCoordinator& WorkspaceShell::MakePersistenceCoordinator() {
   return *glue_->persistence_coordinator;
 }
 
-}  // namespace microide::workspace
+}

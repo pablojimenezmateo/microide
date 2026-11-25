@@ -14,7 +14,7 @@ bool Comparable(const PixelImageView& image) {
          image.pitch >= image.width * kBytesPerPixel;
 }
 
-}  // namespace
+}
 
 PixelDiffResult DiffPixels(const PixelImageView& lhs, const PixelImageView& rhs) {
   PixelDiffResult result;
@@ -55,4 +55,4 @@ PixelDiffResult DiffPixels(const PixelImageView& lhs, const PixelImageView& rhs)
   return result;
 }
 
-}  // namespace microide::render
+}

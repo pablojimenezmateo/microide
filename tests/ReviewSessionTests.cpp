@@ -54,8 +54,6 @@ bool HasCompareTabFor(const WorkspaceShell& shell, const std::filesystem::path& 
   return false;
 }
 
-// review-commit opens one compare tab per file changed by the last commit, and a
-// rerun reuses them rather than opening duplicates.
 void TestReviewCommitOpensCompareTabsPerChangedFile() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -64,31 +62,26 @@ void TestReviewCommitOpensCompareTabsPerChangedFile() {
   InitializeGitRepo(repo_path);
   CommitAll(repo_path, "first", "first commit");
 
-  WriteFile(repo_path / "a.txt", "a2\n");        // modify a
-  WriteFile(repo_path / "c.txt", "c1\n");        // add c
+  WriteFile(repo_path / "a.txt", "a2\n");
+  WriteFile(repo_path / "c.txt", "c1\n");
   CommitAll(repo_path, "second", "second commit");
 
   WorkspaceShell shell;
   TestAccess::SetProjectRoot(shell, repo_path);
 
   Expect(TestAccess::ExecuteCommandLine(shell, "review-commit"), "review-commit should succeed");
-  TestAccess::FlushPendingFileReads(shell);  // the review's git work runs off-thread
+  TestAccess::FlushPendingFileReads(shell);
   Expect(CountTabsOfKind(shell, TabEntry::Kind::Compare) == 2,
          "review-commit opens a compare tab for each file in the last commit");
   Expect(HasCompareTabFor(shell, repo_path / "a.txt"), "modified file gets a compare tab");
   Expect(HasCompareTabFor(shell, repo_path / "c.txt"), "added file gets a compare tab");
 
-  // Rerun: dedup, no duplicate tabs.
   Expect(TestAccess::ExecuteCommandLine(shell, "review-commit"), "review-commit rerun should succeed");
-  TestAccess::FlushPendingFileReads(shell);  // the review's git work runs off-thread
+  TestAccess::FlushPendingFileReads(shell);
   Expect(CountTabsOfKind(shell, TabEntry::Kind::Compare) == 2,
          "rerunning review-commit reuses the existing compare tabs (no duplicates)");
 }
 
-// QA diff-review-files: a review opened one tab per file and left the LAST one
-// active, so the reviewer started at the end and Next File had nowhere to go.
-// It opens on its first file, as VS Code's commit changes do, and Next/Previous
-// File step through the rest in order.
 void TestReviewCommitOpensOnItsFirstFile() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -116,8 +109,6 @@ void TestReviewCommitOpensOnItsFirstFile() {
          "Next File goes to the second");
 }
 
-// review-branch opens compare tabs for files differing from a ref, then closes
-// stale (clean) review tabs when a file stops differing on a rerun.
 void TestReviewBranchOpensAndCleansCompareTabs() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -137,26 +128,22 @@ void TestReviewBranchOpensAndCleansCompareTabs() {
 
   Expect(TestAccess::ExecuteCommandLine(shell, "review-branch feature"),
          "review-branch should succeed");
-  TestAccess::FlushPendingFileReads(shell);  // the review's git work runs off-thread
+  TestAccess::FlushPendingFileReads(shell);
   Expect(CountTabsOfKind(shell, TabEntry::Kind::Compare) == 2,
          "review-branch opens a compare tab per differing file");
   Expect(HasCompareTabFor(shell, repo_path / "a.txt"), "a.txt differs from feature");
   Expect(HasCompareTabFor(shell, repo_path / "b.txt"), "b.txt differs from feature");
 
-  // Make b.txt match feature's content; it no longer differs.
   WriteFile(repo_path / "b.txt", "b2\n");
   Expect(TestAccess::ExecuteCommandLine(shell, "review-branch feature"),
          "review-branch rerun should succeed");
-  TestAccess::FlushPendingFileReads(shell);  // the review's git work runs off-thread
+  TestAccess::FlushPendingFileReads(shell);
   Expect(CountTabsOfKind(shell, TabEntry::Kind::Compare) == 1,
          "the no-longer-differing file's stale compare tab is closed on rerun");
   Expect(HasCompareTabFor(shell, repo_path / "a.txt"), "still-differing file's tab is kept");
   Expect(!HasCompareTabFor(shell, repo_path / "b.txt"), "stale compare tab was cleaned up");
 }
 
-// TD-2026-10-07-323: a review's git work -- the changed-file list and the bulk
-// blob read -- runs on the file reader, not the shell thread; the tabs and the
-// summary land with the completion.
 void TestReviewRunsItsGitOffTheShellThread() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -181,10 +168,6 @@ void TestReviewRunsItsGitOffTheShellThread() {
          "and the summary is reported then: " + TestAccess::CommandFeedbackText(shell));
 }
 
-// Opening one conflicted file (the git sidebar's click) reads its three index
-// stages on the file reader, not the shell thread: three `git show` runs are three
-// round trips in a remote project, with the window frozen for all of them
-// (TD-2026-09-29-312). The tab appears when the stages are in hand.
 void TestConflictMergeOpensOffTheShellThread() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -213,8 +196,6 @@ void TestConflictMergeOpensOffTheShellThread() {
          "and it holds the conflict between ours and theirs");
 }
 
-// review-conflicts opens one merge tab per conflicted working-tree file, and a
-// rerun reuses them.
 void TestReviewConflictsOpensMergeTabsPerConflict() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -230,7 +211,6 @@ void TestReviewConflictsOpensMergeTabsPerConflict() {
   WriteFile(repo_path / "conflict.txt", "ours change\n");
   CommitAll(repo_path, "ours", "ours commit");
 
-  // Conflicting merge; non-zero exit is expected (the merge leaves a conflict).
   RunGitCommand(repo_path, {"merge", "theirs"});
 
   WorkspaceShell shell;
@@ -238,22 +218,18 @@ void TestReviewConflictsOpensMergeTabsPerConflict() {
 
   Expect(TestAccess::ExecuteCommandLine(shell, "review-conflicts"),
          "review-conflicts should succeed");
-  TestAccess::FlushPendingFileReads(shell);  // the review's git work runs off-thread
+  TestAccess::FlushPendingFileReads(shell);
   Expect(CountTabsOfKind(shell, TabEntry::Kind::Merge) == 1,
          "review-conflicts opens a merge tab for the conflicted file");
   Expect(HasMergeTabFor(shell, repo_path / "conflict.txt"), "conflicted file gets a merge tab");
 
   Expect(TestAccess::ExecuteCommandLine(shell, "review-conflicts"),
          "review-conflicts rerun should succeed");
-  TestAccess::FlushPendingFileReads(shell);  // the review's git work runs off-thread
+  TestAccess::FlushPendingFileReads(shell);
   Expect(CountTabsOfKind(shell, TabEntry::Kind::Merge) == 1,
          "rerunning review-conflicts reuses the existing merge tab (no duplicates)");
 }
 
-// A review verb against a very large changed-file set must not open one tab per
-// file: it caps at kMaxReviewSessionOpenTabs and reports the remainder as
-// truncated instead of stalling the shell building thousands of compare models.
-// TD-2026-07-17A-041.
 void TestReviewCommitCapsOpenedTabs() {
   using microide::workspace::ReviewSessionCoordinator;
   const std::size_t cap = ReviewSessionCoordinator::kMaxReviewSessionOpenTabs;
@@ -275,16 +251,13 @@ void TestReviewCommitCapsOpenedTabs() {
 
   Expect(TestAccess::ExecuteCommandLine(shell, "review-commit"),
          "review-commit should succeed even for a huge changed-file set");
-  TestAccess::FlushPendingFileReads(shell);  // the review's git work runs off-thread
+  TestAccess::FlushPendingFileReads(shell);
   Expect(CountTabsOfKind(shell, TabEntry::Kind::Compare) == cap,
          "review opens at most kMaxReviewSessionOpenTabs compare tabs");
   Expect(TestAccess::CommandFeedbackText(shell).find("not opened") != std::string::npos,
          "the review summary reports the un-opened remainder as truncated");
 }
 
-// QA flow compare-merge: a merge result goes stale (or saved) asynchronously --
-// a git refresh, the file watcher -- and the merge header's status read the old
-// state, because whatever damage brought the change never covered the header.
 void TestMergeHeaderRepaintsWhenTheResultGoesStale() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -318,7 +291,6 @@ void TestMergeHeaderRepaintsWhenTheResultGoesStale() {
   shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
 
-  // The change arrives with some unrelated damage (here: the menu bar strip).
   TestAccess::ActiveMerge(shell).index_stale = true;
   workspace::RenderInvalidation unrelated;
   unrelated.rects.push_back(SDL_FRect{0.0f, 0.0f, static_cast<float>(kWidth), 20.0f});
@@ -326,13 +298,8 @@ void TestMergeHeaderRepaintsWhenTheResultGoesStale() {
   Expect(diff.identical(), "the merge header should repaint its new status; " + DescribePixelDiff(diff));
 }
 
-}  // namespace
+}
 
-// Every review compare tab carries the file list the next/previous-review-file
-// jump walks, and its own position in that list. The position used to be computed
-// by looking for the tab's ABSOLUTE path in a list of PROJECT-RELATIVE ones, which
-// never matched: every tab opened at index 0, so "next review file" went to the
-// second file of the review no matter which one you were looking at.
 void TestReviewCommitTabsCarryTheirOwnReviewFileIndex() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -350,7 +317,7 @@ void TestReviewCommitTabsCarryTheirOwnReviewFileIndex() {
   WorkspaceShell shell;
   TestAccess::SetProjectRoot(shell, repo_path);
   Expect(TestAccess::ExecuteCommandLine(shell, "review-commit"), "review-commit should succeed");
-  TestAccess::FlushPendingFileReads(shell);  // the review's git work runs off-thread
+  TestAccess::FlushPendingFileReads(shell);
 
   std::size_t compare_tabs = 0;
   std::vector<std::size_t> indices;
@@ -359,8 +326,6 @@ void TestReviewCommitTabsCarryTheirOwnReviewFileIndex() {
       continue;
     }
     ++compare_tabs;
-    // The review list is the COMMIT's files — not `<commit>~1...HEAD`, which for a
-    // historical commit is everything committed since.
     Expect(tab.compare->review_files.size() == 3,
            "each review tab lists exactly the commit's changed files");
     Expect(tab.compare->review_file_index < tab.compare->review_files.size(),
@@ -377,9 +342,6 @@ void TestReviewCommitTabsCarryTheirOwnReviewFileIndex() {
          "the three tabs occupy three distinct positions, not all of them position 0");
 }
 
-// Git: Switch Worktree…: the pick opens loading, git lists the repository's
-// working trees off the shell thread, and choosing one opens it as a project --
-// where a parallel agent's work is one command away from the tree it is in.
 void TestWorktreePickListsTheTreesAndOpensTheChosenOne() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -389,7 +351,6 @@ void TestWorktreePickListsTheTreesAndOpensTheChosenOne() {
   CommitAll(repo_path, "base", "base commit");
   RequireGitCommandSuccess(repo_path, {"worktree", "add", "-b", "agent", agent_path.string()},
                            "add a linked working tree");
-  // What an agent left in its tree: an edit and a new file.
   WriteFile(agent_path / "a.txt", "a2\n");
   WriteFile(agent_path / "new.txt", "n\n");
 
@@ -398,7 +359,7 @@ void TestWorktreePickListsTheTreesAndOpensTheChosenOne() {
   Expect(TestAccess::ExecuteCommandLine(shell, "git-worktrees"), "git-worktrees is accepted");
   Expect(TestAccess::QuickPick(shell).loading && TestAccess::QuickPickMatchLabels(shell).empty(),
          "the pick opens before git has answered");
-  TestAccess::FlushPendingFileReads(shell);  // git's answer arrives off-thread
+  TestAccess::FlushPendingFileReads(shell);
   const std::vector<std::string> labels = TestAccess::QuickPickMatchLabels(shell);
   Expect(labels == std::vector<std::string>({"repo", "repo-agent"}),
          "both working trees are listed, the main one first: " + std::to_string(labels.size()));
@@ -413,17 +374,11 @@ void TestWorktreePickListsTheTreesAndOpensTheChosenOne() {
          "and the tree an agent left work in says how much: " +
              TestAccess::QuickPick(shell).matches[1].secondary_label);
 
-  TestAccess::SelectAndConfirmLaunchConfig(shell, 1);  // Enter on the second row
+  TestAccess::SelectAndConfirmLaunchConfig(shell, 1);
   Expect(TestAccess::ProjectRoot(shell) == agent_path.lexically_normal(),
          "choosing a tree opens it as the project: " + TestAccess::ProjectRoot(shell).string());
 }
 
-// "Since I last looked": review-checkpoint-mark records the working tree as it
-// is -- untracked files included -- and review-checkpoint opens one compare tab
-// per file that differs from it now, whatever was committed in between. A file
-// that was untracked then and is unchanged is NOT listed, and one created since
-// is: the two answers a diff against a commit gets wrong. Nothing in the index or
-// the tree is touched.
 void TestReviewCheckpointShowsWhatChangedSinceItWasMarked() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -433,8 +388,6 @@ void TestReviewCheckpointShowsWhatChangedSinceItWasMarked() {
   CommitAll(repo_path, "base", "base commit");
   WriteFile(repo_path / "untracked-same.txt", "same\n");
   WriteFile(repo_path / "untracked-edited.txt", "u1\n");
-  // A file git cannot read is left out of the snapshot: `git add` stopped at it,
-  // and one such file anywhere in the tree failed every checkpoint.
   WriteFile(repo_path / "unreadable.bin", "no permission\n");
   std::filesystem::permissions(repo_path / "unreadable.bin", std::filesystem::perms::none);
 
@@ -459,8 +412,6 @@ void TestReviewCheckpointShowsWhatChangedSinceItWasMarked() {
              TestAccess::CommandFeedbackText(shell).find("no changes since the checkpoint") != std::string::npos,
          "finds nothing changed: " + TestAccess::CommandFeedbackText(shell));
 
-  // An agent's afternoon: a commit, an uncommitted edit, a new file, an edit to a
-  // file git never tracked.
   WriteFile(repo_path / "committed.txt", "c2\n");
   RequireGitCommandSuccess(repo_path, {"commit", "-m", "agent", "--", "committed.txt"}, "the agent's commit");
   WriteFile(repo_path / "edited.txt", "e2\n");
@@ -487,12 +438,6 @@ void TestReviewCheckpointShowsWhatChangedSinceItWasMarked() {
          "the repository's own index is as it was: untracked files are still untracked\n" + status);
 }
 
-// A save writes its bytes to a temporary beside the file and renames it into
-// place. A checkpoint marked in that window must not take the temporary in: the
-// review then listed it as deleted since, opened a compare tab under the
-// temporary's name, and a save from that tab wrote a file of that name into the
-// project (soak 5f05c7931622). Abandoned temporaries of a crashed save are the
-// app's own too, nested or at the root, in a repository with or without a commit.
 void TestReviewCheckpointLeavesSaveTemporariesOut() {
   for (const bool born : {true, false}) {
     TemporaryDirectory temp_dir;
@@ -518,7 +463,6 @@ void TestReviewCheckpointLeavesSaveTemporariesOut() {
                tree.find("mixed.txt") != std::string::npos,
            std::string(born ? "" : "unborn: ") + "the snapshot has the files and not the temporaries:\n" + tree);
 
-    // The save lands: the temporaries are gone, the file has its new bytes.
     std::filesystem::remove(root_temporary);
     std::filesystem::remove(nested_temporary);
     WorkspaceShell shell;
@@ -532,9 +476,6 @@ void TestReviewCheckpointLeavesSaveTemporariesOut() {
   }
 }
 
-// What a review found goes back to the agent that wrote the code: the notes of
-// the review the active tab belongs to -- every file's, not just this tab's --
-// are copied as `path:line: note` lines, or typed into the running terminal.
 void TestReviewNotesAreHandedOverAsReferences() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -560,7 +501,6 @@ void TestReviewNotesAreHandedOverAsReferences() {
              !TestAccess::ExecuteCommandLine(shell, "copy-review-comments"),
          "with no notes there is nothing to copy, and the command says so");
 
-  // A note on each file's change, whichever tab is in front first.
   const auto note_on_active_tab = [&](std::string_view text) {
     Expect(TestAccess::ExecuteCommandLine(shell, "branch-review-comment " + std::string(text)), "a note is taken");
   };
@@ -591,9 +531,6 @@ void TestReviewNotesAreHandedOverAsReferences() {
          "with no terminal there is nowhere to type them");
 }
 
-// Git: Review Commit…: the branch's recent commits, newest first, and Enter on
-// one opens that commit's review -- what an agent committed overnight is read
-// without typing a hash.
 void TestCommitPickListsRecentCommitsAndReviewsTheChosenOne() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -617,7 +554,7 @@ void TestCommitPickListsRecentCommitsAndReviewsTheChosenOne() {
   if (labels.size() != 3) {
     return;
   }
-  TestAccess::SelectAndConfirmLaunchConfig(shell, 1);  // Enter on the middle commit
+  TestAccess::SelectAndConfirmLaunchConfig(shell, 1);
   TestAccess::FlushPendingFileReads(shell);
   Expect(HasCompareTabFor(shell, repo_path / "a.txt") && !HasCompareTabFor(shell, repo_path / "b.txt") &&
              CountTabsOfKind(shell, TabEntry::Kind::Compare) == 1,
@@ -652,4 +589,4 @@ void RegisterReviewSessionTests(std::vector<TestCase>& tests) {
           TestReviewConflictsOpensMergeTabsPerConflict);
 }
 
-}  // namespace microide::tests
+}

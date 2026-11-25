@@ -25,6 +25,6 @@ struct GitBlameServiceTestAccess {
   }
 };
 
-}  // namespace microide::tests
+}
 
 #endif

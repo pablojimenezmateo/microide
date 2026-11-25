@@ -33,22 +33,16 @@ class WorkspaceEventDispatcher {
   struct Operations {
     std::function<void()> sync_terminal_focus;
     std::function<RenderInvalidation()> consume_pending_render_invalidation;
-    // Every native dialog's result (folder, Open File…, font file): they share one
-    // wake event, and each consume is a no-op when its result is not ready.
     std::function<void()> consume_pending_dialog_results;
     std::function<bool(bool)> reload_plugins_if_assets_changed;
     std::function<bool(Uint32)> plugin_runtime_consume_wake_event;
     std::function<bool(bool)> reload_project_if_files_changed;
     std::function<bool(Uint32)> project_search_handles_event;
     std::function<void()> consume_project_search_updates;
-    // A frame owed: the editor, compare and merge surfaces derive their damage
-    // (RequestPreparedFrame); a request names no rect.
     std::function<void()> request_frame;
     std::function<void()> consume_git_sidebar_refresh;
-    // Makes finished blame visible; true when what the overlay reads changed.
     std::function<bool()> apply_git_blame_results;
     std::function<void()> consume_highlight_prefetch_results;
-    // Lays decoded plugin rasters out at their real size and repaints them.
     std::function<void()> apply_decoded_raster_sizes;
     std::function<void()> consume_lsp_callbacks;
     std::function<void()> consume_dap_callbacks;
@@ -64,30 +58,13 @@ class WorkspaceEventDispatcher {
     std::function<bool(const SDL_TextInputEvent&)> handle_text_input;
     std::function<void()> handle_window_mouse_leave;
     std::function<void()> force_cursor_reassert;
-    // The window took the keyboard back: what may have changed outside it while it
-    // had not (a project folder put back) is worth one look. Optional.
     std::function<void()> window_focus_gained;
-    // Shift went down or up with the pointer still: Shift is part of what the
-    // pointer means over a terminal whose program owns the mouse (it selects
-    // instead), so the cursor is resolved again where it rests.
     std::function<void()> pointer_modifiers_changed;
-    // Autosave hook fired when the window loses focus (honors editor.autosave).
     std::function<void()> autosave_on_focus_lost;
-    // End any in-flight mouse selection gesture. Fired on focus loss: the
-    // button-up will be delivered to whoever took the focus, not to us, so a
-    // gesture left open here is still open on the next click -- and selection
-    // autoscroll, which asks for idle wakes, would keep scrolling with no
-    // button down. A callback rather than more `State` fields because this
-    // dispatcher deliberately borrows one flag, not the interaction state.
     std::function<void()> end_selection_gesture;
     std::function<void()> request_window_redraw;
     std::function<bool(const SDL_KeyboardEvent&)> handle_key_down;
-    // A key let go. Only the recent-editors pick listens: releasing Ctrl after
-    // Ctrl+Tab opens the editor it has selected, as in VS Code.
     std::function<bool(const SDL_KeyboardEvent&)> handle_key_up;
-    // Files dropped onto the window. Takes the raw SDL path; the decision of what
-    // a drop means lives in WorkspaceFileDrop.h, not here and not in the shell.
-    // A file dropped at (x, y), render coordinates.
     std::function<bool(const char*, float, float)> handle_file_drop;
   };
 
@@ -97,10 +74,7 @@ class WorkspaceEventDispatcher {
 
  private:
   std::optional<EventResult> HandleWakeEvent(const SDL_Event& event) const;
-  // The result of a handled (or not) event, with any redraw a handler requested
-  // on the side.
   EventResult Finish(bool handled) const;
-  // Track the keyboard modifiers; a Shift change re-reads what the pointer means.
   void NoteKeyModifiers(SDL_Keymod modifiers) const;
 
   Runtime runtime_;
@@ -124,4 +98,4 @@ class WorkspaceWakeController {
   Operations operations_;
 };
 
-}  // namespace microide::workspace
+}

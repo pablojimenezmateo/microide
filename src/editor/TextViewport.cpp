@@ -23,13 +23,6 @@ std::uint64_t TextViewport::NextDocumentRevisionBase() {
   return (documents.fetch_add(1, std::memory_order_relaxed) + 1) << 32;
 }
 
-// `kHighlightCheckpointInterval` is declared in editor/TextViewportInternal.h
-// (detail namespace) so the highlight-cache sibling TU sees the same value.
-// `PositionLess`, `SelectionRangeForSecondaryCaret`, `RangeEndExclusive`,
-// `ValidateRangeColumns`, and `TextBetweenLines` live in
-// `editor/TextViewportInternal.h` so they are shared with the language-behavior
-// sibling translation unit. Use them via `detail::`.
-
 TextViewport::TextViewport() {
   document_ = std::make_shared<DocumentState>();
   SetPlaceholderText(
@@ -45,7 +38,6 @@ void TextViewport::SetLanguageOverride(std::string language) {
     return;
   }
   document_->language_override = std::move(language);
-  // Every view's highlight caches and initial state key on this.
   ++document_->syntax_revision;
   language_id_valid_ = false;
 }
@@ -57,9 +49,6 @@ const std::string& TextViewport::language_override() const {
 
 const std::string& TextViewport::language_id() const {
   util::AddPerformanceCounter(util::PerfCounterId::EditorFiletypeMemoQueries);
-  // A language set by hand wins over detection. Plain Text reads as the registry's
-  // fallback id, which is what an unrecognized file is (the status bar's "Plain
-  // Text"; no language server, the default contract).
   if (document_ != nullptr && !document_->language_override.empty()) {
     static const std::string kFallbackLanguage = "unknown";
     return document_->language_override == runtime_syntax::kPlainTextFiletype ? kFallbackLanguage
@@ -67,14 +56,6 @@ const std::string& TextViewport::language_id() const {
   }
   const void* document = document_.get();
   const std::size_t registry_revision = runtime_syntax::RegistryRevision();
-  // Which revision this memo keys on depends on whether the last detection read
-  // the buffer. It usually did not: an unambiguous extension resolves to one
-  // definition without a byte of content, and keying such an answer on
-  // `content_revision` re-detected it on EVERY keystroke -- a fresh
-  // `std::vector<std::uint32_t>`, a linear scan of the definition table and a
-  // returned-by-value filetype string, per character typed. When content WAS
-  // read, only the head can change the answer, so `head_content_revision` is the
-  // key and an edit below line `kFiletypeDetectHeadLines` keeps the memo warm.
   const std::uint64_t revision =
       document == nullptr ? 0
       : language_id_content_sensitive_ ? document_->head_content_revision
@@ -90,8 +71,6 @@ const std::string& TextViewport::language_id() const {
   if (document == nullptr) {
     language_id_.clear();
   } else {
-    // Bounded head scan only -- LineSpan reads through the live buffer, so this
-    // never materializes the document.
     language_id_ = runtime_syntax::DetectFiletype(document_->path, LineSpan(document_->lines),
                                                   &content_consulted);
     language_id_path_ = document_->path;
@@ -119,10 +98,6 @@ TextViewport::LineCaret TextViewport::CaretForLine(std::size_t line_index) const
   if (line_index != cursor_line_ || line_index >= document_->lines.size()) {
     return {};
   }
-  // Through VisualColumnAt, not the raw walk: this runs once per rendered row per
-  // frame, so on a line with no newlines in it the raw form re-walked to the caret
-  // -- a megabyte -- on every frame, which is what the render path's remaining
-  // self time turned out to be once the layout and folding passes were fixed.
   const std::size_t caret_visual = VisualColumnAt(line_index, cursor_column_);
   if (caret_visual >= horizontal_scroll_ &&
       caret_visual <= horizontal_scroll_ + visible_columns_) {
@@ -195,15 +170,6 @@ const LayoutLine& TextViewport::VisibleWrappedRowLayoutRef(std::size_t visual_ro
   }
   const std::size_t row_columns =
       row.visual_end > row.visual_start ? row.visual_end - row.visual_start : 0;
-  // Through the visible-line LRU, keyed on (line, row start, row width): a soft-
-  // wrapped row is exactly a windowed slice of its logical line, so it is the
-  // same cache entry shape the non-wrapped path uses. Building it fresh every frame
-  // was the whole difference between the two paths -- a wrapped frame rebuilt
-  // every visible row from scratch while an unwrapped one rebuilt none.
-  //
-  // The facts hint is what keeps that build off the whole line: the line's total
-  // visual width is where its LAST wrapped row ends, which the row table already
-  // knows. `plain_ascii` is deliberately understated (see the hint's contract).
   return layout_cache_.VisibleLineLayoutRefCached(
       document_->lines, row.line_index, row.visual_start,
       std::min(visible_columns_, row_columns), tab_size_, document_->content_revision,
@@ -273,8 +239,6 @@ TextViewport::VisualHit TextViewport::ResolveVisualHit(int visual_row, int visua
       std::min<std::size_t>(std::max(0, visual_row), row_count - 1);
   const WrappedRowLayout layout = WrappedRowAt(clamped_row);
   const std::size_t width = layout.visual_end - layout.visual_start;
-  // Continuation rows render their content shifted right by `indent` cells, so
-  // subtract that gutter before mapping the click to a content column.
   const std::size_t hit_col = static_cast<std::size_t>(std::max(0, visual_col));
   const std::size_t local = hit_col > layout.indent ? hit_col - layout.indent : 0;
   const std::size_t clamped_local = std::min<std::size_t>(local, width);
@@ -285,8 +249,6 @@ TextViewport::VisualHit TextViewport::ResolveVisualHit(int visual_row, int visua
               .line = layout.line_index,
               .column = TextColumnAtVisualColumn(layout.line_index, target_visual),
           },
-      // A click past the row's last glyph resolves to the wrap point, which the
-      // next row also owns. Keep the caret on the row that was actually clicked.
       .affinity = AffinityForRowLanding(clamped_row, target_visual),
   };
 }
@@ -302,7 +264,7 @@ void TextViewport::MoveCursorToVisualHit(int visual_row, int visual_col, bool ex
   const std::size_t line_length = document_->lines.LineLength(clamped_line);
   const std::size_t clamped_column = TextLayout::ClampTextColumn(
       document_->lines.LineView(clamped_line), std::min(hit.position.column, line_length));
-  PlacePrimaryCaret(clamped_line, clamped_column, /*keep_preferred_column=*/false, hit.affinity);
+  PlacePrimaryCaret(clamped_line, clamped_column, false, hit.affinity);
   for (SecondaryCaret& caret : secondary_carets_) {
     caret.preferred_column = PreferredColumnForCaret(caret.position, caret.wrap_affinity);
   }
@@ -372,8 +334,6 @@ std::vector<TextViewportUndoHistory::SecondaryCaret> TextViewport::secondary_car
 }
 
 std::span<const TextPosition> TextViewport::secondary_caret_positions() const {
-  // Quick reject: matching sizes + identical elements means the cache is current and we can
-  // hand out the existing view without touching the heap.
   const bool in_sync =
       secondary_caret_positions_cache_.size() == secondary_carets_.size() &&
       std::equal(secondary_carets_.begin(), secondary_carets_.end(),
@@ -402,14 +362,6 @@ void TextViewport::AddSecondaryCaret(std::size_t line, std::size_t column) {
   if (position == TextPosition{cursor_line_, cursor_column_}) {
     return;
   }
-  // secondary_carets_ is sorted by position at every mutation site that leaves
-  // this class (SetSecondaryCarets, AddSecondaryCaretWithRange, the column-caret
-  // build, and the post-edit remap all sort; the ViewState restore copies an
-  // already-sorted vector), so the duplicate check and the insertion point are
-  // one binary probe. The previous form paid a linear find_if AND a full re-sort
-  // per insert, so a run of Ctrl+clicks on top of an existing column selection
-  // (capped at kMaxColumnCarets = 10,000) was O(k * n log n) for no reason — the
-  // same redundant-re-sort problem SetSecondaryCarets was already fixed for.
   const auto at = std::lower_bound(
       secondary_carets_.begin(), secondary_carets_.end(), position,
       [](const SecondaryCaret& caret, const TextPosition& value) {
@@ -423,8 +375,6 @@ void TextViewport::AddSecondaryCaret(std::size_t line, std::size_t column) {
                                    .preferred_column = PreferredColumnForCaret(position),
                                    .selection_anchor = std::nullopt,
                                });
-  // A collapsed caret dropped onto or against a selection merges into it (VS
-  // Code); with no selection anywhere the sorted insert above is the whole rule.
   MergeOverlappingCaretRanges();
 }
 
@@ -478,20 +428,10 @@ void TextViewport::AddSecondaryCaretWithRange(SelectionRange range) {
     return;
   }
   secondary_carets_.push_back(candidate);
-  // No sort here: DedupeSecondaryCaretsAgainstPrimary sorts as its first act,
-  // and sorting twice is what made adding k carets in a loop O(k^2 log k).
   DedupeSecondaryCaretsAgainstPrimary();
 }
 
 void TextViewport::SetSecondaryCarets(std::vector<TextPosition> carets) {
-  // Single-pass rebuild: clamp every position, sort once, then emit while
-  // dropping duplicates and the primary caret. The previous implementation
-  // called AddSecondaryCaret in a loop, and AddSecondaryCaret itself does a
-  // linear find_if plus a full std::sort on every insert -- so rebuilding k
-  // carets was O(k^2 log k), redundantly re-sorting an already-clamped set.
-  // This is O(k log k) and produces the identical final set/order (clamping is
-  // monotonic, so sorting after clamping matches AddSecondaryCaret's
-  // sort-by-clamped-position, and the primary skip mirrors its cursor check).
   secondary_carets_.clear();
   if (carets.empty() || document_->lines.empty()) {
     return;
@@ -520,13 +460,6 @@ void TextViewport::SetSecondaryCarets(std::vector<TextPosition> carets) {
 }
 
 void TextViewport::SetSecondaryCaretsWithRanges(std::span<const SelectionRange> ranges) {
-  // Ranged rebuild mirroring SetSecondaryCarets, but each caret keeps its
-  // selection anchor. Ctrl+D ("add cursor at next/all match") needs the
-  // secondaries to retain their match selection so a following keystroke
-  // REPLACES each occurrence (and copy aggregates them); routing bare positions
-  // through SetSecondaryCarets drops the anchors and corrupts the edit. Build
-  // all candidates, sort once, then drop duplicates and the primary -- O(k log k)
-  // instead of the O(k^2 log k) of calling AddSecondaryCaretWithRange in a loop.
   secondary_carets_.clear();
   if (ranges.empty() || document_->lines.empty()) {
     return;
@@ -534,20 +467,12 @@ void TextViewport::SetSecondaryCaretsWithRanges(std::span<const SelectionRange> 
   const TextPosition primary{cursor_line_, cursor_column_};
   std::vector<SecondaryCaret>& candidates = secondary_caret_candidates_scratch_;
   candidates.clear();
-  // Geometric, not exact: a held column-select gesture calls this with a span one
-  // line longer each keystroke, and `reserve` allocates exactly what is asked for.
   util::ReserveGrowing(candidates, ranges.size());
   for (const SelectionRange& range : ranges) {
     const SelectionRange norm = NormalizeRange(range);
     if (!detail::ValidateRangeColumns(document_->lines, norm)) {
       continue;
     }
-    // Bounds-check via the normalized range, but keep the caret on the side the
-    // caller specified: `range.start` is the anchor and `range.end` is the caret.
-    // A leftward box drag (or a line-move restore of a caret-before-anchor
-    // secondary selection) passes an inverted range whose caret must stay at
-    // `range.end`; normalizing to max would strand every secondary caret on the
-    // opposite edge from the primary, breaking column alignment and shift-extension.
     TextPosition anchor = range.start;
     TextPosition cursor_end = range.end;
     anchor.column = TextLayout::ClampTextColumn(document_->lines.LineView(anchor.line), anchor.column);
@@ -560,10 +485,6 @@ void TextViewport::SetSecondaryCaretsWithRanges(std::span<const SelectionRange> 
         .selection_anchor = empty_range ? std::nullopt : std::optional<TextPosition>(anchor),
     });
   }
-  // Both production callers already produce candidates in document order — the box
-  // rebuild walks lines low→high, and the Ctrl+D match scan walks the buffer
-  // forwards — so the common case is an O(k) verification instead of an O(k log k)
-  // sort. std::sort on sorted input is not free: it still recurses and partitions.
   if (!std::is_sorted(candidates.begin(), candidates.end(), detail::SecondaryCaretPositionLess)) {
     std::sort(candidates.begin(), candidates.end(), detail::SecondaryCaretPositionLess);
   }
@@ -601,9 +522,6 @@ void TextViewport::PlaceColumnCaretsBetweenLines(std::size_t anchor_line,
                                                  std::size_t target_line,
                                                  std::size_t column) {
   SyncCaretsIfDocumentChangedElsewhere();
-  // Zero-width column carets are the degenerate box selection where both corners
-  // share a visual column; delegate so the span cap and caret-set construction
-  // live once.
   const std::size_t visual = BoxCornerVisualColumn(TextPosition{anchor_line, column});
   SetBoxSelectionVisual(anchor_line, visual, target_line, visual);
 }
@@ -646,17 +564,11 @@ std::size_t TextViewport::BoxCornerVisualColumn(TextPosition corner) const {
   corner.line = std::min(corner.line, document_->lines.size() - 1);
   const std::size_t line_length = document_->lines.LineLength(corner.line);
   const std::size_t within = std::min(corner.column, line_length);
-  // Past the end of the line the column is virtual: one cell per byte, so a box
-  // dragged out into the void keeps its width when it reaches a longer line.
   return VisualColumnAt(corner.line, within) + (corner.column - within);
 }
 
 namespace {
 
-// Text column for a visual column on a line made of `tabs` leading tabs followed
-// by plain single-cell ASCII (every indented line of a tab-indented file):
-// arithmetic instead of a walk. Inside a tab's cells the nearest boundary wins,
-// exactly as TextLayout::TextColumnForVisualColumn rounds.
 std::size_t TabIndentedTextColumn(std::size_t visual_column, std::size_t tabs,
                                   std::size_t tab_size, std::size_t line_length) {
   const std::size_t indent_width = tabs * tab_size;
@@ -668,16 +580,11 @@ std::size_t TabIndentedTextColumn(std::size_t visual_column, std::size_t tabs,
   return into_tab * 2 <= tab_size ? tab_index : tab_index + 1;
 }
 
-}  // namespace
+}
 
 void TextViewport::BoxColumnsOnLine(std::size_t line, std::size_t anchor_visual_column,
                                     std::size_t caret_visual_column, std::size_t* anchor_column,
                                     std::size_t* caret_column) {
-  // The per-line width table (current on any pane that has painted) answers a
-  // plain-ASCII line (visual column == byte column) and a tab-indented one
-  // (leading tabs, then one cell per byte) without reading the line at all --
-  // the two shapes that are every line of an indented source file. A held
-  // column-select gesture does this for every spanned line on every keystroke.
   const LineLayoutFacts facts = CachedLineFacts(line);
   if (facts.known && facts.plain_ascii) {
     const std::size_t line_length = facts.visual_columns;
@@ -694,12 +601,6 @@ void TextViewport::BoxColumnsOnLine(std::size_t line, std::size_t anchor_visual_
         TabIndentedTextColumn(caret_visual_column, facts.leading_tabs, tab_size_, line_length);
     return;
   }
-  // Otherwise one line view (zero-copy off the piece the line lives in) and two
-  // eight-bytes-at-a-time scans bounded by the prefix the box can reach -- a byte
-  // is at least one cell, so `reach` bytes cover `reach` visual columns -- settle
-  // the same two shapes; only a line with a multi-byte character or a tab past
-  // its indentation walks, and that walk needs the whole line: zero-width or wide
-  // characters put a visual column further along, or nearer, than its byte count.
   const std::string_view text = document_->lines.LineView(line);
   const std::size_t line_length = text.size();
   const std::size_t reach = std::min(std::max(anchor_visual_column, caret_visual_column), line_length);
@@ -738,12 +639,6 @@ void TextViewport::SetBoxSelectionVisual(std::size_t anchor_line,
     return;
   }
   util::AddPerformanceCounter(util::PerfCounterId::EditorBoxSelectionBuilds);
-  // Every spanned line's column mapping (BoxColumnsOnLine) reads the per-line
-  // width table when it is current — it always is on a pane that has painted,
-  // which built it for its scrollbar and splices it on every edit — and falls
-  // back to a bounded read of the line otherwise. It is not primed here: an
-  // O(document) build hidden in a keystroke is the wrong trade for a viewport
-  // that never painted, which is only ever a headless one.
   const std::size_t last_line = document_->lines.size() - 1;
   anchor_line = std::min(anchor_line, last_line);
   caret_line = std::min(caret_line, last_line);
@@ -751,11 +646,6 @@ void TextViewport::SetBoxSelectionVisual(std::size_t anchor_line,
   std::size_t lo = std::min(anchor_line, caret_line);
   std::size_t hi = std::max(anchor_line, caret_line);
 
-  // Cap the caret span. A column/box-select gesture across a multi-million-line
-  // file would otherwise allocate one caret per line (and every later multi-caret
-  // edit becomes O(N) per keystroke) — a single-gesture OOM/hang. Keep the window
-  // nearest the drag target, where the user is actually working. A real column
-  // edit spans a modest number of lines.
   constexpr std::size_t kMaxColumnCarets = 10000;
   if (hi - lo + 1 > kMaxColumnCarets) {
     if (caret_line >= hi) {
@@ -767,14 +657,7 @@ void TextViewport::SetBoxSelectionVisual(std::size_t anchor_line,
 
   ClearSecondaryCarets();
 
-  // Build the ranged secondary set once (single clamp+sort+dedupe pass in
-  // SetSecondaryCaretsWithRanges) for every line except the primary/caret line.
-  // Each line maps the two visual columns to its own nearest character boundary
-  // (a visual column beyond the line lands on its end), so ValidateRangeColumns
-  // accepts them; an anchor==caret range on a line yields a zero-width caret.
   util::AddPerformanceCounter(util::PerfCounterId::EditorBoxSelectionCaretsPlaced, hi - lo + 1);
-  // Reused across keystrokes: a held column-select gesture rebuilds the whole set
-  // every step, so a fresh vector here is one growing allocation per keystroke.
   std::vector<SelectionRange>& ranges = box_ranges_scratch_;
   ranges.clear();
   util::ReserveGrowing(ranges, hi - lo);
@@ -788,9 +671,6 @@ void TextViewport::SetBoxSelectionVisual(std::size_t anchor_line,
     ranges.push_back(SelectionRange{TextPosition{line, a}, TextPosition{line, c}});
   }
 
-  // Primary caret+selection on the caret line: land on the anchor column (clearing
-  // any prior selection), then extend to the caret column so the primary row spans
-  // the box. Equal columns leave an empty selection -> a plain column caret.
   std::size_t primary_anchor = 0;
   std::size_t primary_caret = 0;
   BoxColumnsOnLine(caret_line, anchor_visual_column, caret_visual_column, &primary_anchor,
@@ -811,10 +691,6 @@ std::optional<SelectionRange> TextViewport::selection_range() const {
 
   TextPosition cursor{cursor_line_, cursor_column_};
   TextPosition anchor = *selection_anchor_;
-  // Read as the next use of this viewport will see it: another viewport over the
-  // same document may have edited it since, and the positions it left can name
-  // columns or lines the document no longer has. Text read off them threw out of
-  // the control channel's `buffer` query (soak e041d436ae59).
   if (CaretsLagDocument()) {
     cursor = ClampedToDocument(cursor);
     anchor = ClampedToDocument(anchor);
@@ -904,8 +780,6 @@ void TextViewport::AppendCaretLineVerbLines(std::vector<std::size_t>* out) const
     return;
   }
   const std::size_t last_line = document_->lines.size() - 1;
-  // A collapsed fold is one row on screen, so a caret on its opener names the
-  // whole block -- the same rule CollapsedFoldEndAt gives the single-caret paths.
   const auto append_block = [&](std::size_t line) {
     const std::size_t start = std::min(line, last_line);
     const std::size_t end = std::min(CollapsedFoldEndAt(start), last_line);
@@ -970,11 +844,6 @@ bool TextViewport::DeleteCurrentLine() {
     return false;
   }
   if (has_multiple_carets()) {
-    // The SAME set the clipboard reads (AppendCaretLineVerbLines), so a cut puts
-    // on the clipboard exactly what it removes. This branch used to take each
-    // caret's own line and skip the collapsed-fold expansion its single-caret
-    // sibling does -- so two carets, one on a fold's opener, deleted the opener
-    // and orphaned the body, while one caret deleted the block.
     std::vector<std::size_t> lines_to_delete;
     lines_to_delete.reserve(secondary_carets_.size() + 1);
     AppendCaretLineVerbLines(&lines_to_delete);
@@ -1002,7 +871,6 @@ bool TextViewport::DeleteCurrentLine() {
     document_->placeholder = false;
     document_->dirty = true;
     RefreshEncoding();
-    // Multi-line delete is a content edit; bump the content tier.
     InvalidateDerivedCaches(InvalidationReason::ContentEdit, 0);
     InvalidateVisualColumnCache();
     EnsureCursorVisible();
@@ -1018,17 +886,11 @@ bool TextViewport::DeleteCurrentLine() {
         std::move(before_lines), before_state,
         document_->lines.SliceLinesBlob(after_lines_start, after_lines_end), CaptureViewState());
     aggregate_entry.start_line += before_lines_start;
-    // A disjoint multi-line delete cannot be described by one contiguous
-    // AppliedEdit; leaving the previous single-caret edit's value in place would
-    // feed a stale range/replacement to the incremental LSP sync and the
-    // breakpoint shifter. Clear it so both fall back to a full resync, matching
-    // the sibling aggregate paths (TextViewportMultiCaret / LanguageBehavior).
     ClearLastAppliedEdit();
     PushHistoryEntry(std::move(aggregate_entry));
     return true;
   }
 
-  // A collapsed fold under the caret is deleted whole (see CollapsedFoldEndAt).
   const std::size_t last = CollapsedFoldEndAt(cursor_line_);
   if (cursor_line_ == 0 && last + 1 == document_->lines.size()) {
     return ApplyRangeEdit(SelectionRange{
@@ -1067,10 +929,6 @@ void TextViewport::SelectAll() {
   if (document_->lines.empty()) {
     return;
   }
-  // One selection replaces the whole caret set (VS Code). Secondary carets left
-  // inside the whole-buffer selection made every later edit an overlapping
-  // multi-caret edit, which the engine refuses -- typing after Ctrl+A did nothing
-  // until a plain caret move.
   ClearSecondaryCarets();
 
   selection_anchor_ = TextPosition{0, 0};
@@ -1086,9 +944,6 @@ std::optional<SelectionRange> TextViewport::WordRangeAt(TextPosition position) c
   }
   const std::string_view line = document_->lines.LineView(position.line);
   const std::size_t col = std::min(position.column, line.size());
-  // Touching, not "at": a caret typed to the end of an identifier still names it
-  // (VS Code's getWordAtPosition is inclusive at both ends). Without that, Ctrl+D
-  // and double-click were no-ops on the trailing half of a word's last character.
   const WordSpan span = IdentifierRunTouching(line, col);
   if (span.empty()) {
     return std::nullopt;
@@ -1101,8 +956,6 @@ SelectionRange TextViewport::LineRangeAt(std::size_t line_index) const {
     return SelectionRange{TextPosition{0, 0}, TextPosition{0, 0}};
   }
   const std::size_t line = std::min(line_index, document_->lines.size() - 1);
-  // End-exclusive at the start of the next line, so a multi-line line-granular
-  // selection joins up rather than leaving the newlines out.
   if (line + 1 < document_->lines.size()) {
     return SelectionRange{TextPosition{line, 0}, TextPosition{line + 1, 0}};
   }
@@ -1172,8 +1025,6 @@ std::optional<SelectionRange> TextViewport::OccurrenceSeedSpanForHighlight() con
   const std::size_t line_index = cursor_line_;
   const std::string_view line = document_->lines.LineView(line_index);
   const std::size_t col = std::min(cursor_column_, line.size());
-  // A caret sitting just PAST a word still seeds on that word, which is what
-  // makes the highlight follow a caret typed to the end of an identifier.
   const WordSpan span = IdentifierRunTouching(line, col);
   if (span.empty()) {
     return std::nullopt;
@@ -1187,12 +1038,6 @@ void TextViewport::SelectLineAtCursor() {
   if (document_->lines.empty()) {
     return;
   }
-  // Through the START of the next line, not to end-of-line: VS Code's
-  // `CursorMoveCommands.line` selects `[line, 1]`..`[line + 1, 1]`, so Delete
-  // after a triple-click removes the line instead of leaving a blank one, and a
-  // copy carries the newline. The drag that continues the gesture already used
-  // this range (LineRangeAt); only the initiating click did not, so triple-click
-  // and triple-click-then-drag-one-line disagreed about their own first line.
   const SelectionRange range = LineRangeAt(cursor_line_);
   selection_anchor_ = range.start;
   cursor_line_ = range.end.line;
@@ -1209,8 +1054,6 @@ bool TextViewport::ExpandSelection() {
   if (!next.has_value()) {
     return false;
   }
-  // The ladder continues only from the range its last step selected; a
-  // selection made any other way starts a new one from itself.
   const bool continues = !expand_selection_history_.empty() &&
                          expand_selection_history_.back().start == current.start &&
                          expand_selection_history_.back().end == current.end;
@@ -1234,7 +1077,7 @@ bool TextViewport::ShrinkSelection() {
   expand_selection_history_.pop_back();
   SelectRangeForExpansion(expand_selection_history_.back());
   if (expand_selection_history_.size() == 1) {
-    expand_selection_history_.clear();  // back where the ladder started
+    expand_selection_history_.clear();
   }
   return true;
 }
@@ -1254,8 +1097,6 @@ void TextViewport::SelectRangeForExpansion(const SelectionRange& range) {
 void TextViewport::SetDocumentPath(const std::filesystem::path& path) {
   document_->path = path;
   document_->path_key = NormalizedPathKey(path);
-  // One realpath, at open, save-as and rename only. A link loop or an unreadable
-  // link resolves to `path` itself, which records nothing.
   document_->real_path.clear();
   if (!path.empty()) {
     if (std::filesystem::path real = util::ResolveRealPath(path); real != path) {
@@ -1272,8 +1113,6 @@ void TextViewport::ResetState(std::vector<std::string> lines,
                               bool placeholder,
                               bool dirty) {
   EnsureDocument();
-  // Reset reads the lines (it joins them into its own buffer), so pass them as is
-  // rather than materializing a temporary vector.
   if (lines.empty()) {
     document_->lines.Reset(std::vector<std::string>{""});
   } else {
@@ -1315,18 +1154,8 @@ void TextViewport::ResetMetadataAfterContent(const std::filesystem::path& path,
   document_->undo_history.Clear();
   document_->placeholder = placeholder;
   document_->dirty = dirty;
-  // Capture the file's on-disk identity as our conflict-detection baseline. For
-  // untitled buffers (empty path) this records "absent", so first saves are
-  // never treated as conflicts.
   document_->disk_signature = util::StatFileSignature(path);
   InvalidateVisualColumnCache();
-  // ResetState replaces every line; classify as a content edit so the
-  // content tier reflects the change and dependent caches are dropped.
-  // ResetState replaces every line, so the invalidation above already marked the
-  // whole fold span dirty -- which is what the model's per-line caches need. The
-  // old code reset the fold anchor to its idle sentinel here; with a real cache
-  // downstream that would claim a freshly loaded document matches the previous
-  // document's cached lines.
   InvalidateDerivedCaches(InvalidationReason::ContentEdit, 0);
   EnsureCursorVisible();
 }
@@ -1337,28 +1166,13 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason) {
 
 void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_t start_line,
                                            std::optional<ContentSplice> splice) {
-  // Traced because the three post-edit steps of `ApplyHistoryEntry` -- this, the
-  // width-table splice and the wrapped-row splice -- were collectively 60 % of
-  // that function's self time with no scope of their own, so the profile could
-  // say "the edit apply is slow" and nothing more.
   util::PerformanceTrace::Scope perf_scope("TextViewport::InvalidateDerivedCaches");
   EnsureDocument();
-  // Tier fan-out: each reason bumps exactly the tiers it implies. Every
-  // reason bumps presentation_revision because any cause of invalidation
-  // changes at least the rendered pixels. Counters are incremented per tier
-  // bump so a smoke run can assert which tiers moved.
   ++document_->presentation_revision;
   util::AddPerformanceCounter(util::PerfCounterId::EditorPresentationRevisionBumps);
   if (reason == InvalidationReason::ContentEdit) {
     ++document_->content_revision;
-    // The viewport running the edit remaps its own carets as part of it, so it
-    // is current by construction. Stamping here is what keeps the sibling check
-    // (SyncCaretsIfDocumentChangedElsewhere) free for everyone but a stale
-    // sibling.
     carets_synced_content_revision_ = document_->content_revision;
-    // The head tier moves only when the edit could have changed what a filetype
-    // signature scan reads. `start_line` is the first affected line, so an edit
-    // strictly below the head window leaves it alone.
     if (start_line < runtime_syntax::kFiletypeDetectHeadLines) {
       ++document_->head_content_revision;
     }
@@ -1371,13 +1185,8 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
     util::AddPerformanceCounter(util::PerfCounterId::EditorLayoutShapeRevisionBumps);
   }
 
-  // Caches below are content-derived (visible-line layout, highlight tokens,
-  // fold edit anchor). They only need rebuilding on a content edit; pure
-  // syntax/layout-shape/presentation invalidations do not touch them.
   if (reason != InvalidationReason::ContentEdit) {
     if (reason == InvalidationReason::SyntaxConfig) {
-      // Highlight cache depends on syntax_revision. Drop it fully — the
-      // start_line argument is meaningless for a theme/contract change.
       DropHighlightTokenCache();
       initial_highlight_state_.reset();
       line_highlight_states_.clear();
@@ -1391,9 +1200,6 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
   }
 
   const std::size_t safe_start = std::min(start_line, document_->lines.size());
-  // Before the validity cursor drops below it: the state the edit's last line
-  // carried out, if this viewport had it for the content just replaced (its
-  // caches are one revision behind the bump above, and on the same syntax).
   edit_carry_before_.reset();
   if (splice.has_value() && splice->removed == splice->inserted && splice->inserted > 0) {
     const std::size_t last = safe_start + splice->inserted - 1;
@@ -1412,48 +1218,20 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
   util::AddPerformanceCounter(util::PerfCounterId::EditorInvalidateDerivedCachesLines,
                               document_->lines.size() - safe_start);
 
-  // Accumulate what the folding model has to resync. A reported splice gives it
-  // an exact window, so its per-line indent/bracket caches keep everything
-  // outside that window; without one, nothing from `safe_start` on is reusable.
   if (splice.has_value()) {
     fold_edit_span_.NoteSplice(safe_start, splice->removed, splice->inserted);
   } else {
     fold_edit_span_.NoteSuffixReplaced(safe_start);
   }
-  // The plain-ASCII prefix memo answers for bytes, not rows: the lines above the
-  // edit are untouched, and so is the edited line before the edit's column. Kept
-  // across the keystroke, typing at column C no longer rescans [0, C) of its line.
   layout_cache_.CarryPlainPrefixMemosAcrossEdit(
       LineSpan(document_->lines), safe_start,
       splice.has_value() ? splice->edit_column : TextLayoutCache::kNoEditColumn,
       document_->content_revision - 1, document_->content_revision);
 
   if (safe_start == 0) {
-    // Drop the visible-line layouts from line 0 -- i.e. all of them -- but NOT the
-    // per-line visual-column table, which is what ClearVisibleLineAndMaxColumns
-    // would also have taken.
-    //
-    // Line 0 is special for the highlight state below, because the syntax state
-    // chains forward from it. It is not special for widths: a line's visual column
-    // count depends on that line's bytes and nothing else, and the incremental
-    // UpdateVisualColumnCacheAfterEdit that every edit path runs right after this
-    // handles line 0 exactly like any other line. Wiping the table here meant the
-    // next MaxVisualColumns() rebuilt the width of every line in the buffer, so
-    // an edit anchored at line 0 cost an O(document) rebuild that the same edit
-    // one line lower did not: on the 50k-line fixture, an identical
-    // enter/backspace burst measured 121 full rebuilds (269.7 ms) at line 0
-    // against 1 (3.1 ms) at line 25000. Typing at the top of a large file was the
-    // slowest place to type.
     layout_cache_.InvalidateVisibleLineCacheFrom(0, document_->content_revision);
     DropHighlightTokenCache();
     initial_highlight_state_.reset();
-    // Drop the validity cursors, NOT the storage. Every read of these two is
-    // gated on its cursor (`line < line_highlight_states_valid_through_`,
-    // `index < highlight_checkpoints_valid_through_`), so stale entries below a
-    // zeroed cursor are unreachable -- while clearing the vectors made
-    // EnsureHighlightCaches resize them straight back, value-initialising ~50k
-    // SyntaxStates (2 MB) on every keystroke. This is the same lazy invalidation
-    // the non-zero-start path below already documents; the two had simply drifted.
     line_highlight_states_valid_through_ = 0;
     highlight_checkpoints_valid_through_ = 0;
     highlight_state_content_revision_ = document_->content_revision;
@@ -1463,15 +1241,8 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
 
   layout_cache_.InvalidateVisibleLineCacheFrom(safe_start, document_->content_revision);
 
-  // Stale the suffix rather than erase it: the entries at or after the edit are
-  // no longer valid, but their token buffers are exactly the ones this frame's
-  // repaint is about to refill. Erasing them freed a hash node and a token vector
-  // per visible line below the caret, per keystroke, and allocated both back on
-  // the same frame.
   StaleHighlightTokensFrom(safe_start);
 
-  // Lazy invalidation: drop the validity cursor instead of looping
-  // SyntaxState{} into ~50 000 entries on every keystroke.
   line_highlight_states_valid_through_ =
       std::min(line_highlight_states_valid_through_, safe_start);
 
@@ -1486,9 +1257,6 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
       std::min(highlight_checkpoints_valid_through_, checkpoint_start);
   if (!highlight_checkpoints_.empty()) {
     EnsureInitialHighlightState();
-    // A buffer with highlighting off (a placeholder: Undo can put one back) has
-    // no initial state, so no checkpoint chains from it (soak f6a4d30a66f4: the
-    // empty optional was dereferenced).
     if (initial_highlight_state_.has_value()) {
       highlight_checkpoints_.front() = *initial_highlight_state_;
       if (highlight_checkpoints_valid_through_ < 1) {
@@ -1511,29 +1279,16 @@ LineEditSpan TextViewport::ConsumeFoldEditSpan() {
 void TextViewport::InvalidateVisualColumnCache() { layout_cache_.InvalidateAll(); }
 
 void TextViewport::InvalidateLayoutCaches() {
-  // The only remaining caller (ReplaceAll) just mutated buffer content, so
-  // route this through the content tier. We still wipe the visual-column
-  // cache because the column metrics depend on the new line widths.
   InvalidateVisualColumnCache();
   InvalidateDerivedCaches(InvalidationReason::ContentEdit, 0);
 }
 
 void TextViewport::InvalidateSyntaxHighlighting() {
-  // External callers invoke this when language identification or theme
-  // configuration changes — a syntax-tier mutation, not a content edit.
-  // The visual-column cache and wrapped-row layouts are unaffected by a
-  // syntax change, so leave them in place.
   InvalidateDerivedCaches(InvalidationReason::SyntaxConfig, 0);
 }
 
 void TextViewport::BeginSelectionIfNeeded(bool extend_selection) {
-  // Anchoring/collapsing must be symmetric across EVERY caret, primary and
-  // secondary. Each move method advances the secondary positions in its own loop;
-  // this only fixes up the anchors, before those positions move.
   if (extend_selection) {
-    // Extending (Shift) move: start a selection at any caret that lacks one so a
-    // multi-caret Shift+Arrow selects at every cursor (VSCode), not just the
-    // primary. Carets that already own a selection (Ctrl+D / box set) keep it.
     if (!selection_anchor_.has_value()) {
       selection_anchor_ = TextPosition{cursor_line_, cursor_column_};
     }
@@ -1544,11 +1299,6 @@ void TextViewport::BeginSelectionIfNeeded(bool extend_selection) {
     }
     return;
   }
-  // Plain (non-extending) move collapses EVERY caret's selection. Without this a
-  // Ctrl+D / box-select set kept ghost selections on the secondary carets after an
-  // arrow key: they still rendered, and the next keystroke REPLACED those stale
-  // selections (or the edit was refused as overlapping) instead of inserting at the
-  // collapsed caret -- diverging from the primary and from VSCode.
   selection_anchor_.reset();
   for (SecondaryCaret& caret : secondary_carets_) {
     caret.selection_anchor.reset();
@@ -1570,8 +1320,6 @@ void TextViewport::UpdateWrappedRowsAfterEdit(std::size_t start_line,
                                               std::size_t inserted_count,
                                               std::size_t edit_column) {
   util::PerformanceTrace::Scope perf_scope("TextViewport::UpdateWrappedRowsAfterEdit");
-  // Fast path for the pure soft-wrap case: splice only the edited rows. Any
-  // unsupported shape returns false and the content_revision guard rebuilds.
   layout_cache_.UpdateWrappedRowsAfterEdit(start_line, removed_count, inserted_count,
                                            document_->lines, tab_size_, visible_columns_,
                                            soft_wrap_, folding_model_,
@@ -1609,4 +1357,4 @@ bool TextViewport::IsBefore(const TextPosition& lhs, const TextPosition& rhs) {
   return detail::PositionLess(lhs, rhs);
 }
 
-}  // namespace microide::editor
+}

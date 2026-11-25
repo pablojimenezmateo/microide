@@ -59,4 +59,4 @@ std::optional<render::Theme> WorkspaceThemeRegistry::Resolve(std::string_view id
   return theme;
 }
 
-}  // namespace microide::workspace
+}

@@ -11,7 +11,6 @@ namespace {
 
 constexpr std::int64_t kFormatVersion = 1;
 
-// `path` as a root-relative '/'-separated path; empty when it is not under `root`.
 std::string RelativeUnder(const std::filesystem::path& root, const std::filesystem::path& path) {
   if (path.empty() || root.empty() || path.is_relative()) {
     return {};
@@ -40,12 +39,12 @@ util::JsonValue FilesJson(const RoamingSession& roaming) {
 }
 
 std::size_t Count(const util::JsonValue& value) {
-  constexpr std::int64_t kMaxPosition = 100'000'000;  // a line or column past this is no position
+  constexpr std::int64_t kMaxPosition = 100'000'000;
   return value.IsInt() && value.AsInt() >= 0 && value.AsInt() <= kMaxPosition ? static_cast<std::size_t>(value.AsInt())
                                                                               : 0;
 }
 
-}  // namespace
+}
 
 RoamingSession CaptureRoamingSession(const PersistedProjectSessionState& session,
                                      const std::filesystem::path& root, std::string client,
@@ -53,7 +52,6 @@ RoamingSession CaptureRoamingSession(const PersistedProjectSessionState& session
   RoamingSession roaming;
   roaming.client = std::move(client);
   roaming.saved_at = saved_at;
-  // The focused group first: its active tab is the one that was in front.
   std::vector<std::size_t> order;
   if (session.focused_group_index < session.groups.size()) {
     order.push_back(session.focused_group_index);
@@ -72,7 +70,6 @@ RoamingSession CaptureRoamingSession(const PersistedProjectSessionState& session
         continue;
       }
       const bool active = group_index == session.focused_group_index && i == group.active_tab_index;
-      // A file open in two groups is one file to open.
       const auto seen = std::find_if(roaming.files.begin(), roaming.files.end(),
                                      [&](const RoamingSession::File& file) { return file.path == relative; });
       if (seen != roaming.files.end()) {
@@ -131,7 +128,7 @@ std::optional<RoamingSession> DecodeRoamingSession(std::string_view text) {
       }
       const util::JsonValue& path = row["path"];
       if (!row.IsObject() || !path.IsString() || !util::IsPortableRelativePath(path.AsString(), kMaxRoamingPathBytes)) {
-        continue;  // a row that names nothing under the root is dropped, not trusted
+        continue;
       }
       const bool active = !has_active && row["active"].IsBool() && row["active"].AsBool();
       has_active = has_active || active;
@@ -144,4 +141,4 @@ std::optional<RoamingSession> DecodeRoamingSession(std::string_view text) {
   return roaming;
 }
 
-}  // namespace microide::workspace
+}

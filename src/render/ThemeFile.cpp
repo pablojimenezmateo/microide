@@ -18,7 +18,7 @@ SDL_Color MakeColor(Uint8 r, Uint8 g, Uint8 b, Uint8 a = 0xff) {
   return SDL_Color{r, g, b, a};
 }
 
-}  // namespace
+}
 
 std::optional<SDL_Color> ParseThemeColor(std::string_view text) {
   const std::string token = util::ToLowerAscii(util::TrimAsciiWhitespace(text));
@@ -34,10 +34,6 @@ std::optional<SDL_Color> ParseThemeColor(std::string_view text) {
   }
 
   if (util::IsAllAsciiDigits(token)) {
-    // Only 0..255 name a real 256-colour palette entry. Reject out-of-range or
-    // overflowing tokens (`256`, a huge number) as an invalid color instead of
-    // silently collapsing them to black inside Ansi256Color, so the caller can
-    // treat the group as unset/default rather than mis-render it.
     const auto index = util::ParseInt(token);
     if (!index || *index < 0 || *index > 255) {
       return std::nullopt;
@@ -116,9 +112,6 @@ ThemeStyle ParseThemeStyle(std::string_view text) {
   const std::string foreground = comma == std::string::npos ? colors : colors.substr(0, comma);
   const std::string background =
       comma == std::string::npos ? std::string{} : colors.substr(comma + 1);
-  // Assigned in the final order rather than parsed-then-swapped: std::swap over
-  // two std::optional<SDL_Color> is what makes GCC 13 emit a -Wmaybe-uninitialized
-  // false positive here, and picking the order up front reads better anyway.
   std::optional<SDL_Color> parsed_foreground = ParseThemeColor(foreground);
   std::optional<SDL_Color> parsed_background = ParseThemeColor(background);
   style.foreground = style.reverse ? parsed_background : parsed_foreground;
@@ -171,7 +164,7 @@ bool ParseColorLink(std::string_view line, std::string& group, ThemeStyle& style
   return !group.empty();
 }
 
-}  // namespace
+}
 
 std::filesystem::path FindThemeFile(const std::filesystem::path& theme_directory,
                                     std::string_view name) {
@@ -179,18 +172,6 @@ std::filesystem::path FindThemeFile(const std::filesystem::path& theme_directory
     return {};
   }
 
-  // A colorscheme is named, never pathed. Without this the resolution below is
-  // `theme_directory / name`, and `operator/` REPLACES the whole path when `name`
-  // is absolute — so `include "/etc/x"` read /etc/x.microide and `include "../y"`
-  // walked out of the theme directory. Both break this function's stated contract
-  // (resolve `<theme_directory>/<name>.microide`) and both are reachable from a
-  // shared or downloaded `.microide` file, which is the kind of thing users copy
-  // from the internet.
-  //
-  // It also repairs the include-cycle guard, which keys on the file STEM: that is
-  // an identity only while every candidate lives in one directory. With traversal
-  // allowed, two different files could share a stem and be treated as the same
-  // include, and one file could be visited twice under different spellings.
   if (name.empty() || name == "." || name == ".." ||
       name.find('/') != std::string_view::npos || name.find('\\') != std::string_view::npos) {
     return {};
@@ -218,17 +199,9 @@ std::filesystem::path FindThemeFile(const std::filesystem::path& theme_directory
 
 namespace {
 
-// Bound include recursion so a deep acyclic chain or a broad include tree cannot
-// grow the stack / open an unbounded number of files before failing.
 constexpr std::size_t kMaxThemeIncludeDepth = 16;
 constexpr std::size_t kMaxThemeIncludeCount = 128;
-// Per-file and aggregate parser budgets: the include-count cap bounds the NUMBER of
-// files but not the size of each. A single included colorscheme can still contain a
-// multi-megabyte line, millions of comment/ignored lines, or millions of unique style
-// groups that allocate+hash into the map. These bound each file's bytes/lines and the
-// total retained style groups so a large/hostile local theme cannot stall the UI
-// thread during startup restore or a `colorscheme <name>` command. (TD-2026-07-16-64.)
-constexpr std::size_t kMaxThemeFileBytes = 4u * 1024 * 1024;  // 4 MiB per file
+constexpr std::size_t kMaxThemeFileBytes = 4u * 1024 * 1024;
 constexpr std::size_t kMaxThemeFileLines = 200000;
 constexpr std::size_t kMaxThemeStyleGroups = 20000;
 
@@ -246,9 +219,6 @@ bool LoadThemeStylesRec(const std::filesystem::path& theme_directory,
 
   const std::string normalized_name = util::ToLowerAscii(theme_path.stem().string());
   if (std::find(include_stack.begin(), include_stack.end(), normalized_name) != include_stack.end()) {
-    // Already on the active include chain: skip to break the cycle. The file's
-    // styles are (being) applied by the outer frame, so this is a no-op, not a
-    // failure — a self- or mutually-including theme still loads.
     return true;
   }
   if (include_stack.size() >= kMaxThemeIncludeDepth) {
@@ -262,9 +232,6 @@ bool LoadThemeStylesRec(const std::filesystem::path& theme_directory,
     return false;
   }
 
-  // Refuse an oversized file before reading it line by line (a single huge line would
-  // otherwise materialize into `line` + `trimmed`). Non-regular / unstat'able files
-  // fall through to the open below and fail there.
   std::error_code size_ec;
   const std::uintmax_t file_bytes = std::filesystem::file_size(theme_path, size_ec);
   if (!size_ec && file_bytes > kMaxThemeFileBytes) {
@@ -308,10 +275,6 @@ bool LoadThemeStylesRec(const std::filesystem::path& theme_directory,
     std::string group;
     ThemeStyle style;
     if (ParseColorLink(trimmed, group, style)) {
-      // Cap the retained style groups: BuildThemeFromStyles consumes only a finite set
-      // of known UI/syntax groups, so a theme advertising millions of unique group
-      // names must not allocate+hash an unbounded map. Updating an existing group stays
-      // allowed; only NEW groups past the cap are dropped.
       if (styles.size() < kMaxThemeStyleGroups || styles.count(group) != 0) {
         styles[group] = style;
       }
@@ -323,7 +286,7 @@ bool LoadThemeStylesRec(const std::filesystem::path& theme_directory,
   return true;
 }
 
-}  // namespace
+}
 
 bool LoadThemeStyles(const std::filesystem::path& theme_directory,
                      std::string_view name,
@@ -334,4 +297,4 @@ bool LoadThemeStyles(const std::filesystem::path& theme_directory,
   return LoadThemeStylesRec(theme_directory, name, styles, include_stack, total_loaded, error);
 }
 
-}  // namespace microide::render
+}

@@ -32,7 +32,7 @@ void ClampTerminalPasteText(std::string& text) {
   text.resize(util::PreviousUtf8Boundary(text, kMaxTerminalPasteBytes));
 }
 
-}  // namespace
+}
 
 bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
                                                  SDL_Keymod modifiers) {
@@ -57,8 +57,6 @@ bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
     press.super = (modifiers & SDL_KMOD_GUI) != 0;
     return press;
   };
-  // A key the program reads retires the selection, as typed text already did: a
-  // selection left behind kept Ctrl+C copying it instead of interrupting.
   const auto send_key_press = [&](KeyPress::Key key, char32_t codepoint = 0) {
     operations_.clear_terminal_selection();
     follow_terminal_tail();
@@ -66,10 +64,6 @@ bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
     return handled_with_panel_redraw();
   };
 
-  // Ctrl+C with a selection copies it (VS Code); Ctrl+Shift+C is copy on every
-  // Linux terminal, so it copies too and, with nothing selected, does NOTHING --
-  // it used to fall through to the control-byte path and send ^C, so the copy
-  // reflex from gnome-terminal interrupted whatever the shell was running.
   const bool ctrl_c = (modifiers & SDL_KMOD_CTRL) && event.key == SDLK_C;
   const bool ctrl_shift_c = ctrl_c && (modifiers & SDL_KMOD_SHIFT);
   if (ctrl_c && (ctrl_shift_c || operations_.terminal_has_selection())) {
@@ -82,15 +76,6 @@ bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
     return true;
   }
 
-  // Escape is the program's even with a selection up (send_key_press clears it):
-  // it used to only clear the selection, so a word double-clicked in vim's
-  // buffer left vim in insert mode and the `:w` typed next went into the file.
-
-  // Enter in a pane whose process has exited relaunches it in place — the
-  // dropped-ssh-link case: the tab, its position and its scrollback stay, and the
-  // shell comes back under the same cwd and command. A pane that was never
-  // launched by the host (a test placeholder) has no launch record and keeps
-  // sending the key to its session.
   if ((event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER) &&
       (modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI | SDL_KMOD_SHIFT)) == 0 &&
       !terminal_tab->session.running() && !terminal_tab->launch_working_directory.empty() &&
@@ -107,17 +92,8 @@ bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
     return PasteClipboardIntoTerminal();
   }
 
-  // Every Ctrl+<printable key> is the program's: the encoder turns it into the
-  // xterm control byte where one exists (Ctrl+2..8 and Ctrl+/ are the digit and
-  // punctuation row -- NUL, ESC, FS, GS, RS, US, DEL -- and Ctrl+- is readline's
-  // undo), the key's own character where none does, as xterm does, and CSI u
-  // under the kitty protocol, where a program can tell Ctrl+0 or Ctrl+= apart.
-  // A focused terminal used to keep Ctrl+-, Ctrl+0, Ctrl+= and Ctrl+, for the
-  // workbench; it now owns every key but the reserved Ctrl+Shift chords
-  // (IsTerminalReservedChord), which never reach here.
   if (modifiers & SDL_KMOD_CTRL) {
     if (event.key == SDLK_SLASH) {
-      // Shift+/ is '?': Ctrl+? is DEL, as on a physical terminal.
       return send_key_press(KeyPress::Key::Char, (modifiers & SDL_KMOD_SHIFT) ? U'?' : U'/');
     }
     if (event.key >= 0x20 && event.key < 0x7F) {
@@ -125,7 +101,6 @@ bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
     }
   }
 
-  // Alt+printable sends ESC-prefixed text (or CSI-u under Kitty).
   if (modifiers & SDL_KMOD_ALT) {
     const char input_character = operations_.keycode_to_ascii(event.key, modifiers);
     if (input_character != '\0') {
@@ -201,13 +176,11 @@ bool TextInputCoordinator::PasteClipboardIntoTerminal() {
   if (clipboard_text.has_value() && !clipboard_text->empty()) {
     return PasteTextIntoTerminal(std::move(*clipboard_text));
   }
-  // No text: a screenshot or a copied image is pasted as a file, the way a
-  // dropped one is -- a terminal program takes an image by its path.
   if (TerminalPaneState* pane = operations_.active_terminal_pane();
       pane != nullptr && pane->session.running() && operations_.store_clipboard_image) {
     if (const std::optional<std::filesystem::path> image = operations_.store_clipboard_image();
         image.has_value()) {
-      (void)TypeFileIntoTerminal(*pane, *image);  // an upload reports its own failure
+      (void)TypeFileIntoTerminal(*pane, *image);
     }
   }
   return true;
@@ -242,9 +215,6 @@ bool TextInputCoordinator::PasteTextIntoTerminal(std::string text) {
   return true;
 }
 
-// Keyboard for the terminal find bar. Runs ahead of the terminal's own key
-// handling (see MakeKeyInputCoordinator) because the bar floats over the
-// terminal and owns the keyboard whenever it holds focus.
 bool WorkspaceShell::HandleTerminalFindKeyDown(const SDL_KeyboardEvent& event,
                                                const SDL_Keymod modifiers) {
   if (!terminal_find_service_.focused()) {
@@ -257,7 +227,6 @@ bool WorkspaceShell::HandleTerminalFindKeyDown(const SDL_KeyboardEvent& event,
     return true;
   };
 
-  // Alt+C / Alt+W mirror VSCode's find-widget toggles.
   if (alt && event.key == SDLK_C) {
     terminal_find_service_.ToggleCaseSensitive(ActiveTerminalPane());
     return handled();
@@ -269,14 +238,11 @@ bool WorkspaceShell::HandleTerminalFindKeyDown(const SDL_KeyboardEvent& event,
 
   switch (event.key) {
     case SDLK_ESCAPE:
-      // Close and hand the keyboard back to the shell underneath.
       terminal_find_service_.Close();
       return handled();
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
     case SDLK_F3:
-      // Enter steps forward, Shift+Enter back. The first search lands on the
-      // newest hit, so Shift+Enter is the natural way to walk up the history.
       terminal_find_service_.SelectRelative(ActiveTerminalPane(), shift ? -1 : 1);
       return handled();
     case SDLK_UP:
@@ -289,18 +255,12 @@ bool WorkspaceShell::HandleTerminalFindKeyDown(const SDL_KeyboardEvent& event,
       break;
   }
 
-  // Everything else is ordinary single-line editing in the query field.
   if (MakeTextInputCoordinator().HandleSingleLineKeyDown(event, modifiers)) {
     return handled();
   }
-  // Swallow the rest: an unhandled key must not fall through to the PTY, or
-  // typing in the find box would also drive the shell underneath.
   return true;
 }
 
-// Left press over the terminal find bar. Returns true when the bar consumed it;
-// a press elsewhere blurs the bar (its query field is hit-tested earlier, by
-// FindSingleLineInputHit, so it never reaches here).
 bool WorkspaceShell::HandleTerminalFindMouseDown(const float x, const float y) {
   if (!terminal_find_service_.visible() || !prepare_cached_bottom_panel_vm_.has_value() ||
       !prepare_cached_bottom_panel_vm_->find_visible) {
@@ -308,8 +268,6 @@ bool WorkspaceShell::HandleTerminalFindMouseDown(const float x, const float y) {
   }
   const FindWidgetLayout& fw = prepare_cached_bottom_panel_vm_->find.fw;
   if (!Contains(fw.widget, x, y)) {
-    // Clicking the terminal underneath keeps the bar open but hands back the
-    // keyboard, matching the in-file find widget.
     if (terminal_find_service_.focused()) {
       terminal_find_service_.SetFocused(false);
       RequestPreparedFrame();
@@ -328,7 +286,6 @@ bool WorkspaceShell::HandleTerminalFindMouseDown(const float x, const float y) {
   } else if (Contains(fw.toggle_buttons[1], x, y)) {
     terminal_find_service_.ToggleWholeWord(terminal_tab);
   }
-  // Any in-bar press focuses the bar, so the next keystroke edits the query.
   if (terminal_find_service_.visible()) {
     terminal_find_service_.SetFocused(true);
   }
@@ -366,12 +323,10 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
                   return false;
                 }
                 std::string rest(query.substr(1));
-                // The next Ctrl+P opens on files again, not on this prefix.
                 context_.current_project_state.file_finder.SetQuery("");
                 if (to_commands) {
                   OpenCommandPalette(std::move(rest));
                 } else if (to_symbol) {
-                  // VS Code's `@`: Go to Symbol in Editor, the rest of the query its filter.
                   (void)ActionCoordinator(MakeActionContext())
                       .Execute(ActionId::GoToSymbolInEditor, {std::move(rest)}, ActionSource::Shortcut);
                 } else {
@@ -456,8 +411,6 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
           },
           .upload_file_to_host_terminal =
               [this](TerminalPaneState& pane, const std::filesystem::path& local) {
-                // Outside the mirror, the host has no name for the file
-                // (TD-2026-11-02-428 item 5).
                 const ProjectWorkspaceState& state = context_.current_project_state;
                 return pane.launcher == nullptr && pane.session.is_host_terminal() &&
                        state.launcher().ResolveWorkingDirectory(local) == local &&
@@ -487,4 +440,4 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
 }
 
 
-}  // namespace microide::workspace
+}

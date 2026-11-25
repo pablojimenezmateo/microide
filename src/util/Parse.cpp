@@ -22,19 +22,6 @@ std::optional<T> ParseExact(std::string_view text) {
   return value;
 }
 
-// Real-number parsing goes through std::from_chars, NOT strto*.
-//
-// strtod/strtof read the decimal separator from LC_NUMERIC, and the process
-// locale is not ours to control: SDL's X11 toolkit and hidapi backends call
-// `setlocale(LC_ALL, "")` / `setlocale(LC_CTYPE, "")` behind our back. Under a
-// comma-decimal locale every "1.5" in persisted state, a settings file, or an
-// LSP/DAP payload would stop parsing at the '.' and be rejected. from_chars is
-// defined to be locale-independent, and is also allocation-free — the old path
-// copied every token into a null-terminated std::string just to call strto*.
-//
-// from_chars additionally gives the strictness the old path hand-rolled for
-// free: it rejects a leading space, a leading '+', and hex ("0x10" stops at the
-// 'x', leaving the parse short of the end).
 template <typename T>
 std::optional<T> ParseRealExact(std::string_view text) {
   if (text.empty()) {
@@ -46,35 +33,25 @@ std::optional<T> ParseRealExact(std::string_view text) {
   T value{};
   const auto [ptr, ec] = std::from_chars(begin, end, value, std::chars_format::general);
   if (ptr != end) {
-    return std::nullopt;  // trailing garbage, or nothing consumed
+    return std::nullopt;
   }
   if (ec == std::errc::result_out_of_range) {
-    // from_chars collapses overflow and underflow into one code and leaves
-    // `value` untouched, but the two must resolve differently — the strto*
-    // behavior this replaced accepted underflow (a legitimately tiny magnitude
-    // rounds to a subnormal or ±0) and rejected overflow. Re-parse through the
-    // wider type to tell them apart: an underflowing literal narrows to ±0 and
-    // an overflowing one narrows to ±inf, which the finiteness check below
-    // rejects. Only the out-of-range path pays this; the common case above is
-    // parsed directly into T and so stays correctly rounded (no double
-    // rounding through long double).
     long double wide{};
     const auto wide_result = std::from_chars(begin, end, wide, std::chars_format::general);
     if (wide_result.ec != std::errc{} || wide_result.ptr != end) {
-      return std::nullopt;  // out of range even for long double
+      return std::nullopt;
     }
     value = static_cast<T>(wide);
   } else if (ec != std::errc{}) {
     return std::nullopt;
   }
-  // "inf"/"nan" parse successfully but are not values any caller can use.
   if (!std::isfinite(value)) {
     return std::nullopt;
   }
   return value;
 }
 
-}  // namespace
+}
 
 std::optional<int> ParseInt(std::string_view text) {
   return ParseExact<int>(text);
@@ -100,4 +77,4 @@ int ParseIntOr(const std::optional<std::string>& text, int fallback) {
   return text.has_value() ? ParseInt(*text).value_or(fallback) : fallback;
 }
 
-}  // namespace microide::util
+}

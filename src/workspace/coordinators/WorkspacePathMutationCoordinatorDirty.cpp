@@ -15,10 +15,6 @@ std::vector<PathMutationCoordinator::DirtyPathTarget> PathMutationCoordinator::D
   const std::filesystem::path normalized_path = util::NormalizedPath(path);
   std::vector<DirtyPathTarget> targets;
   const auto& state = CurrentProjectState();
-  // Scan EVERY editor group, not just the focused one: a dirty editor/compare/merge
-  // buffer in a background split is unsaved work too, so rename/delete preflight and the
-  // external-change banner must see it. Saving routes through SaveGroupTab(group,tab).
-  // (TD-2026-07-16-59.)
   for (std::size_t g = 0; g < state.editor_groups.size(); ++g) {
     const auto& open_tabs = state.editor_groups[g].open_tabs;
     for (std::size_t i = 0; i < open_tabs.size(); ++i) {
@@ -126,7 +122,6 @@ bool PathMutationCoordinator::HasDirtyEditorTabsForPath(const std::filesystem::p
     return false;
   }
   if (blocking_label != nullptr) {
-    // Label from the FIRST dirty target's own group (targets may span splits).
     const auto& groups = CurrentProjectState().editor_groups;
     const DirtyPathTarget& first = targets.front();
     if (first.group_index < groups.size() &&
@@ -193,8 +188,6 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
         continue;
       }
 
-      // Sync the live active viewport back into its tab state before saving it. Only
-      // the focused group's active tab carries unflushed edits in the active viewport.
       if (target.group_index == state.clamped_focused_group_index() &&
           target.tab_index == group.active_tab_index) {
         editor_tabs_.SyncActiveEditorTab();
@@ -206,14 +199,6 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
         continue;
       }
 
-      // Through the tab service, not a bare viewport->Save(). Choosing "Save" in the
-      // dirty prompt is the same save as Ctrl+S and must do the same things: run save
-      // participants and format-on-save, and — the one that could lose work — refuse
-      // to overwrite a file that changed on disk, surfacing the external-change banner
-      // instead of clobbering it silently. The merge branch above already went this
-      // way; the editor branch did not.
-      // Deferred: a format-on-save formatter runs off the shell thread, and the
-      // mutation waits for it instead of the window (TD-2026-09-28-304).
       if (!editor_tabs_.SaveGroupTab(target.group_index, target.tab_index, SaveMode::Deferred)) {
         return false;
       }
@@ -235,9 +220,6 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
       util::InvokeIfSet(operations_.request_automatic_git_sidebar_refresh);
     }
     if (!deferred_tab_ids.empty()) {
-      // The user's decision is made: close both prompts and let the mutation wait
-      // for the last formatter run as a save continuation; it is replayed through
-      // ResumeDeferredPathMutation once every one of those writes has landed.
       context_.save_continuations.Add(SaveContinuation{
           .kind = SaveContinuation::Kind::PathMutation,
           .waiting_tab_ids = std::move(deferred_tab_ids),
@@ -257,8 +239,6 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
 
 void PathMutationCoordinator::ResumeDeferredPathMutation(PromptSurfaceState pending) {
   if (context_.prompts.surface_visible || context_.prompts.dirty_visible) {
-    // Another prompt owns the screen now; replaying through it would answer a
-    // question the user is in the middle of. Say so rather than guess.
     if (operations_.notify) {
       operations_.notify(NotificationService::Tone::Warning,
                          "Saved; the rename/delete was not applied because another prompt "
@@ -268,8 +248,6 @@ void PathMutationCoordinator::ResumeDeferredPathMutation(PromptSurfaceState pend
   }
   context_.prompts.surface = std::move(pending);
   context_.prompts.surface_visible = true;
-  // RequirePrompt, not Discard: a buffer the user typed into while the formatter
-  // ran is dirty again, and must be asked about rather than thrown away.
   ConfirmPromptSurface(DirtyPathResolution::RequirePrompt);
 }
 
@@ -297,20 +275,15 @@ void PathMutationCoordinator::RetargetPluginDecorationsForRename(
     const std::filesystem::path& old_path,
     const std::filesystem::path& new_path) {
   auto& state = CurrentProjectState();
-  // Never allocate the bundle just to retarget nothing: if no plugin presentation is
-  // live there are no decorations to move.
   if (state.plugin_presentation_if_present() == nullptr) {
     return;
   }
   auto& presentation = state.EnsurePluginPresentation();
   bool changed = presentation.decorations.RetargetPathPrefix(old_path, new_path);
-  // Anchored surfaces follow the rename too, mirroring the decoration retarget.
   changed = presentation.surfaces.RetargetPathPrefix(old_path, new_path) || changed;
   if (changed) {
     operations_.request_editor_surface_redraw();
   }
-  // Retarget can only shrink/relabel keys, never empty the store, so a release check is
-  // unnecessary here — but harmless and keeps the zero-footprint invariant tight.
   state.MaybeReleasePluginPresentation();
 }
 
@@ -321,29 +294,22 @@ void PathMutationCoordinator::ClearPluginDecorationsForPath(const std::filesyste
   }
   auto& presentation = state.EnsurePluginPresentation();
   bool changed = presentation.decorations.ClearPathPrefix(path);
-  // Drop anchored surfaces for the deleted path too, mirroring the decoration clear.
   changed = presentation.surfaces.ClearPathPrefix(path) || changed;
   if (changed) {
     operations_.request_editor_surface_redraw();
   }
-  // Deleting the last decorated path can drain the bundle; release it back to zero
-  // footprint (called after the redraw request so no reader holds a store pointer).
   state.MaybeReleasePluginPresentation();
 }
 
 void PathMutationCoordinator::ReconcileAfterExternalRename(
     const std::filesystem::path& old_path, const std::filesystem::path& new_path) {
-  // The rename already happened on disk (LSP resource op); mirror the state-side
-  // half of the sidebar rename flow: retarget tabs (unsaved contents preserved),
-  // path-keyed diagnostics, and plugin decorations, then drop stale blame.
-  RetargetOpenTabsForRename(old_path, new_path, /*preserve_unsaved_state=*/true);
+  RetargetOpenTabsForRename(old_path, new_path, true);
   RetargetDiagnosticsForRename(old_path, new_path);
   RetargetPluginDecorationsForRename(old_path, new_path);
   operations_.clear_editor_blame();
 }
 
 void PathMutationCoordinator::ReconcileAfterExternalDelete(const std::filesystem::path& path) {
-  // Mirror the state-side half of the sidebar delete flow.
   CloseOpenTabsForPath(path);
   ClearDiagnosticsForPath(path);
   ClearPluginDecorationsForPath(path);
@@ -373,4 +339,4 @@ void PathMutationCoordinator::RefreshProjectViewsAfterMutation(
   }
 }
 
-}  // namespace microide::workspace
+}

@@ -37,10 +37,6 @@ using namespace detail;
 
 namespace {
 
-// Paint a decoded raster surface (scaled to fit, clipped to `rect`), or a muted
-// "Rendering…" placeholder while its decode is still in flight. Split out of
-// RenderPluginSurfaceInto so the display-list and raster paths stay independently
-// readable; kept a file-local helper so it adds no member to the size-capped shell.
 void RenderRasterSurfaceInto(SDL_Renderer* renderer, const SDL_FRect& rect,
                              const editor::RasterHandle& raster, float scroll_y,
                              render::SurfaceTextureCache& cache, render::TextRenderer& text_renderer,
@@ -63,7 +59,6 @@ void RenderRasterSurfaceInto(SDL_Renderer* renderer, const SDL_FRect& rect,
   render::DrawTexture(renderer, entry->texture, nullptr, dest);
 }
 
-// The panel strip's tab colours: one definition for prep's fingerprint and paint.
 StripTabPalette PanelTabPalette(const render::Theme& theme) {
   return StripTabPalette{
       .active_fill = render::BlendColors(theme.chrome_active, theme.surface_background, 0.42f),
@@ -82,7 +77,7 @@ constexpr StripTabStyle kPanelTabStyle{
     .accent_edge = StripAccentEdge::Top,
 };
 
-}  // namespace
+}
 
 void PrepareBottomPanelHeaderFrame(PreparedFrameState& frame, const BottomPanelHeaderInputs& inputs) {
   PreparedFrameState::PanelHeaderPaint& header = frame.panel_header;
@@ -117,18 +112,9 @@ void PrepareBottomPanelHeaderFrame(PreparedFrameState& frame, const BottomPanelH
                                           .Add(theme.surface_raised)
                                           .Add(theme.border)
                                           .value();
-    // No hover while the strip slides (soak 38f44bf79ca8): the tabs are drawn at
-    // their slid rects, which overlap the resting ones the hover probe tracks.
     const bool still = !panel.tab_drag.active && !panel.tab_drag.sliding;
     const std::vector<VisibleStripTab>& tabs =
         panel.tabs != nullptr ? *panel.tabs : TabStripService::EmptyVisibleTabs();
-    // The header owns the text it paints. `tabs` is the strip service's memo,
-    // rebuilt in place by whoever next asks for the tabs once a title has
-    // changed -- and a shell sets its title on its reader thread, so that can be
-    // frame prep's own tooltip probe, after this. A view into the memo then
-    // painted bytes this frame never fingerprinted (soak d47fa58ca7f5), freed
-    // ones for a title past the small-string size. Reserved whole first: the
-    // views below are into `header.text`, which must not grow under them.
     std::size_t text_size = 0;
     for (const VisibleStripTab& tab : tabs) {
       text_size += tab.display_title.size() + tab.badge_text.size() + tab.secondary_title.size();
@@ -141,7 +127,7 @@ void PrepareBottomPanelHeaderFrame(PreparedFrameState& frame, const BottomPanelH
     };
     for (const VisibleStripTab& tab : tabs) {
       if (panel.tab_drag.active && tab.index == panel.tab_drag.source_index) {
-        continue;  // lifted; drawn as the floating ghost
+        continue;
       }
       const float dx = panel.tab_drag.sliding && tab.index < panel.tab_drag.offsets.size()
                            ? panel.tab_drag.offsets[tab.index]
@@ -170,7 +156,6 @@ void PrepareBottomPanelHeaderFrame(PreparedFrameState& frame, const BottomPanelH
                                           .fingerprint = FingerprintOf(painted, palette_key)});
     }
     header.label = tabs.empty() ? inputs.label : std::string_view{};
-    // The label, when it shows: the header's left part up to the buttons.
     units.push_back(DerivedDamage::Unit{
         .rect = render::SnapToDevicePixelsF(inputs.renderer, header.header),
         .fingerprint = PaintFingerprint().Add(header.header).Add(header.label).Add(palette_key).value()});
@@ -185,7 +170,6 @@ void PrepareBottomPanelHeaderFrame(PreparedFrameState& frame, const BottomPanelH
     header.maximized = inputs.layout->panel_maximized;
     button(header.maximize, inputs.maximize_rect, header.maximized ? 1 : 0);
     if (panel.tab_drag.active) {
-      // A copy, for the same reason: the feedback draws the lifted tab from it.
       header.drag_tabs_storage = tabs;
       header.drag_tabs = &header.drag_tabs_storage;
       header.dragging = true;
@@ -198,7 +182,6 @@ void PrepareBottomPanelHeaderFrame(PreparedFrameState& frame, const BottomPanelH
     units.push_back(DerivedDamage::Unit{
         .rect = render::SnapToDevicePixelsF(inputs.renderer, header.divider),
         .fingerprint = PaintFingerprint().Add(header.divider).Add(header.divider_active).Add(palette_key).value()});
-    // The drag ghost follows the pointer anywhere over the strip.
     units.push_back(DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(inputs.renderer, header.header),
                                         .fingerprint = PaintFingerprint()
                                                            .Add(header.dragging)
@@ -206,11 +189,6 @@ void PrepareBottomPanelHeaderFrame(PreparedFrameState& frame, const BottomPanelH
                                                            .Add(header.drag_pointer_x)
                                                            .Add(header.drag_grab_offset_x)
                                                            .value()});
-    // The body under the header, keyed on what it shows (soak a004fb48d73c): each
-    // content's own units cover only what that content draws -- the Output rows,
-    // not the empty body below them -- so a switch between Output, the terminal and
-    // a plugin's surface repaints the whole body here, whoever set the content and
-    // whatever it asked for.
     const SDL_FRect body = BottomPanelContentRect(*inputs.layout);
     units.push_back(DerivedDamage::Unit{
         .rect = render::SnapToDevicePixelsF(inputs.renderer, body),
@@ -236,9 +214,6 @@ void PaintBottomPanelHeader(SDL_Renderer* renderer, const PreparedFrameState& fr
     DrawStripTabCloseGlyph(renderer, tab.rect, tab.close_rect, tab.close_hovered,
                            tab.active ? palette.active_glyph : palette.inactive_glyph, palette.active_text);
     if (tab.activity_dot || tab.bell_mark) {
-      // Unseen output in a background terminal: a small accent square just left of
-      // the close glyph, where the eye already goes for tab state. A bell is the
-      // same place, larger and in the warning colour.
       DrawStripTabActivityMark(renderer, tab.rect, tab.close_rect, tab.bell_mark,
                                tab.bell_mark ? theme.diagnostic_warning : theme.accent);
     }
@@ -248,17 +223,15 @@ void PaintBottomPanelHeader(SDL_Renderer* renderer, const PreparedFrameState& fr
     DrawVCenteredTextOn(text_renderer, renderer, header.header, 12.0f, theme.chrome_text, theme.chrome_background,
                         header.label);
   }
-  DrawTabStripOverflowButton(text_renderer, renderer, theme, header.overflow_left.rect, /*point_right=*/false,
+  DrawTabStripOverflowButton(text_renderer, renderer, theme, header.overflow_left.rect, false,
                              header.overflow_left.hidden, header.overflow_left.hovered);
-  DrawTabStripOverflowButton(text_renderer, renderer, theme, header.overflow_right.rect, /*point_right=*/true,
+  DrawTabStripOverflowButton(text_renderer, renderer, theme, header.overflow_right.rect, true,
                              header.overflow_right.hidden, header.overflow_right.hovered);
   if (header.dragging && header.drag_tabs != nullptr) {
     DrawTabDragFeedback(text_renderer, renderer, theme, header.header, *header.drag_tabs, header.header,
                         header.drag_source, header.drag_pointer_x, header.drag_grab_offset_x, kPanelTabStyle,
                         palette);
   }
-  // New terminal, for every content kind: a click there opens one whether or not
-  // a tab exists, and the empty panel's own hint points at it.
   {
     const PreparedFrameState::PanelButtonPaint& button = header.new_terminal;
     const render::PaintElement element(renderer, button.rect, "panel-new-terminal");
@@ -266,8 +239,6 @@ void PaintBottomPanelHeader(SDL_Renderer* renderer, const PreparedFrameState& fr
                        ButtonVisualState{.enabled = true, .hovered = button.hovered, .active = false});
     DrawPlusGlyph(renderer, button.rect, button.hovered ? theme.text_primary : theme.text_secondary);
   }
-  // Maximize / restore at the header's right edge: an up chevron offers the
-  // immersive panel, a down chevron the way back (VS Code's pair).
   {
     const PreparedFrameState::PanelButtonPaint& button = header.maximize;
     const render::PaintElement element(renderer, button.rect, "panel-maximize");
@@ -286,8 +257,6 @@ void PaintBottomPanelHeader(SDL_Renderer* renderer, const PreparedFrameState& fr
       render::RenderClipStableLine(renderer, cx, cy - arm + 1.0f, cx + arm, cy + 1.0f);
     }
   }
-  // The divider last: the header's fill and its tabs start on the same row, and
-  // drawn before them the line never showed, lit or not.
   {
     const render::PaintElement element(renderer, header.divider, "panel-divider");
     FillRect(renderer, header.divider, header.divider_active ? theme.accent : theme.border);
@@ -330,8 +299,6 @@ void PrepareBottomPanelOutputFrame(PreparedFrameState& frame, const BottomPanelO
       });
       const auto* parsed = inputs.channels->ParsedEntryAt(inputs.channel_id, entry);
       if (parsed != nullptr && parsed->kind == WorkspaceOutputChannels::ParsedEntry::Kind::ContextSnippet) {
-        // Highlighted for the path the snippet resolves to: the channel memoizes
-        // both per entry, so a steady panel re-resolves nothing (TD-2026-07-17A-017).
         static const std::filesystem::path kNoRoot;
         const std::filesystem::path& resolved = inputs.channels->ResolvedReferencePath(
             inputs.channel_id, entry, inputs.project_root != nullptr ? *inputs.project_root : kNoRoot);
@@ -344,9 +311,6 @@ void PrepareBottomPanelOutputFrame(PreparedFrameState& frame, const BottomPanelO
       units.push_back(DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(inputs.renderer, painted.rect),
                                           .fingerprint = FingerprintOf(painted, row_style)});
     }
-    // The empty channel's hint, word-wrapped because the panel narrows with the
-    // sidebar and the right pane; its box runs to the body's bottom, as the lines
-    // wrap in the UI face, not at the rows' pitch.
     if (count == 0 && !inputs.empty_label.empty()) {
       body.hint = inputs.empty_label;
       body.hint_rect = MakeRect(inputs.text_x, inputs.text_y, inputs.text_width,
@@ -381,8 +345,6 @@ void PaintBottomPanelOutputBody(SDL_Renderer* renderer, const PreparedFrameState
                  text_renderer.TruncateToWidthEphemeralView(row.text, row.text_width));
       continue;
     }
-    // A context snippet: its `path:line:` prefix, then the code coloured as the
-    // file it quotes, when the whole prefix fits.
     const std::string_view visible_prefix = text_renderer.TruncateToWidthEphemeralView(row.prefix, row.text_width);
     DrawTextOn(text_renderer, renderer, row.text_x, y, theme.text_secondary, theme.surface_background,
                visible_prefix);
@@ -483,7 +445,7 @@ void PaintTerminalHint(SDL_Renderer* renderer, const PreparedFrameState::Termina
                            hint.text);
 }
 
-}  // namespace
+}
 
 void PaintTerminalNoSessionHint(SDL_Renderer* renderer, const PreparedFrameState& frame, const render::Theme& theme,
                                 const render::TextRenderer& text_renderer) {
@@ -524,19 +486,13 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   util::PerformanceTrace::Scope bottom_panel_scope("WorkspaceShell::RenderBottomPanel");
   const bool terminal_panel = panel_vm.content == PanelContentKind::Terminal;
 
-  // The header -- tabs, chevrons, label, buttons -- as prep settled it.
   PaintBottomPanelHeader(renderer, frame_state_, theme_, text_renderer_);
 
-  // Phase E0: a plugin content surface replaces the terminal/output body. The
-  // host owns scroll + clipping; the plugin only supplied data (display list or
-  // raster handle). The surface content pointer is resolved by the builder.
   if (panel_vm.content == PanelContentKind::PluginSurface) {
     const SDL_FRect body = BottomPanelContentRect(layout);
     FillRect(renderer, body, theme_.surface_background);
     RenderPluginSurfaceInto(renderer, body, panel_vm.plugin_surface,
                             panel_vm.plugin_surface_scroll_y);
-    // Pixel-unit scrollbar for an overflowing preview; the mouse coordinator
-    // computes the identical geometry for thumb grabs (TD-2026-07-16-60).
     if (panel_vm.plugin_surface != nullptr && panel_vm.plugin_surface->has_body()) {
       if (const auto geometry = MakeVerticalScrollbarGeometry(
               body, PluginSurfacePreviewContentHeight(*panel_vm.plugin_surface), body.h,
@@ -546,52 +502,34 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                       context_.interaction_state.drag_target == DragTarget::BottomPanelScrollbar);
       }
     }
-    // The plugin surface is as focusable as the terminal and the Output channel —
-    // it is in the Ctrl+Tab ring and now answers the navigation keys — but this
-    // early return used to skip the ring the other two contents draw, so a focused
-    // preview was the one surface in the shell with no visible focus.
     if (panel_vm.focus == FocusTarget::Panel) {
       DrawSurfaceFocusRing(renderer, layout.bottom_panel);
     }
     return;
   }
 
-  // Paints every pane of the tab on screen into its own slice of the panel body,
-  // then the dividers between them. The active pane carries the selection, the
-  // find highlights and the blinking caret; the others paint plainly with a
-  // steady outline caret.
   const auto render_terminal_panes = [&]() {
     TerminalTabState* tab = panel_vm.terminal_tab;
     if (tab == nullptr || tab->panes.empty()) {
-      // A Terminal panel with no live session: the builder's hint over an empty body.
       PaintTerminalNoSessionHint(renderer, frame_state_, theme_, text_renderer_);
       return;
     }
-    // Every pane was sampled once for this frame (PrepareTerminalPanesForFrame):
-    // its line count, persisted scroll, visible lines and cursor. Nothing below
-    // reads the live session or writes pane state.
     const TerminalPaneRectsLayout& rects = panel_vm.terminal_panes;
     for (std::size_t pane_index = 0; pane_index < tab->panes.size() && pane_index < rects.panes.size();
          ++pane_index) {
       if (tab->panes[pane_index] == nullptr) {
         continue;
       }
-      // The body's fill and the rows -- cells, selection, find highlights, the
-      // hovered link -- then the empty pane's hint and the caret over them, as prep
-      // settled them: a unit each.
       PaintTerminalGridPane(renderer, frame_state_, pane_index, theme_, terminal_text_renderer_,
                             terminal_row_plan_);
       PaintTerminalPaneHint(renderer, frame_state_, pane_index, theme_, text_renderer_);
       PaintTerminalGridCaret(renderer, frame_state_, pane_index, theme_, terminal_text_renderer_);
     }
-    // Each pane's scrollbar and the dividers, over every pane (prep's snapshot).
     PaintTerminalChrome(renderer, frame_state_, theme_);
   };
 
   if (terminal_panel) {
     render_terminal_panes();
-    // The find bar floats above the active pane (and above its scrollbar), the
-    // same compact card the in-file find widget uses.
     if (panel_vm.find_visible) {
       RenderFindWidget(renderer, panel_vm.find);
     }
@@ -601,17 +539,12 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     return;
   }
 
-  // The Output body -- rows, hint, scrollbar -- as prep settled it.
   PaintBottomPanelOutputBody(renderer, frame_state_, theme_, text_renderer_);
   if (panel_vm.focus == FocusTarget::Panel) {
     DrawSurfaceFocusRing(renderer, layout.bottom_panel);
   }
 }
 
-// Host-owned painter for a single plugin content surface, shared by the bottom
-// preview panel (E0) and inline insets (E1). The surface carries only data (a
-// display list or a raster handle); all drawing happens here. `scroll_y` is the
-// host-owned vertical scroll within the surface. Reads no project state.
 void WorkspaceShell::RenderPluginSurfaceInto(SDL_Renderer* renderer, const SDL_FRect& rect,
                                              const editor::SurfaceContent* content,
                                              float scroll_y) {
@@ -639,10 +572,6 @@ void WorkspaceShell::RenderPluginSurfaceInto(SDL_Renderer* renderer, const SDL_F
   }
 }
 
-// Phase E1 (gated): paint inline-surface insets into the inert row-gaps the view
-// model carries. Uses the same EditorRowYLayout mapping the text-row loop used,
-// so an inset always lands directly below its anchor row. Reads only the view
-// model + metrics, never project state.
 void WorkspaceShell::DrawEditorInsets(SDL_Renderer* renderer, const SDL_FRect& pane_rect,
                                       const editor::EditorViewMetrics& metrics,
                                       std::size_t scroll_line,
@@ -663,7 +592,6 @@ void WorkspaceShell::DrawEditorInsets(SDL_Renderer* renderer, const SDL_FRect& p
                                               ? view_model.row_gap_contents[i]
                                               : editor::RowGapContent{};
     if (gap.placement == editor::RowGapPlacement::Above) {
-      // Phase E2: above-line code-lens strip sits directly over the row's text.
       const float top = layout.RowTop(row) - gap.height;
       if (content.code_lens != nullptr && !content.code_lens->text.empty()) {
         const float text_x = pane_rect.x + metrics.gutter_width + 4.0f;
@@ -675,8 +603,6 @@ void WorkspaceShell::DrawEditorInsets(SDL_Renderer* renderer, const SDL_FRect& p
     }
     const float top = layout.RowTop(row) + metrics.line_height;
     if (content.ghost_text != nullptr) {
-      // Below-caret ghost-text rows, dimmed and aligned under the code (the first
-      // line renders inline at the caret in EditorViewRenderer).
       for (std::size_t j = 0; j < content.ghost_text->below_lines.size(); ++j) {
         editor_text_renderer_.DrawString(renderer, metrics.text_x,
                                          top + static_cast<float>(j) * metrics.line_height,
@@ -689,4 +615,4 @@ void WorkspaceShell::DrawEditorInsets(SDL_Renderer* renderer, const SDL_FRect& p
   }
 }
 
-}  // namespace microide::workspace
+}

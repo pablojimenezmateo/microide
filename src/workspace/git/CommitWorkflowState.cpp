@@ -26,21 +26,14 @@ CommitOperationClaim& CommitOperationClaim::operator=(CommitOperationClaim&& oth
 }
 
 CommitOperationClaim& CommitOperationClaim::operator=(const CommitOperationClaim&) noexcept {
-  // Assigning over a state abandons whatever it had in flight; the source's claim
-  // is not duplicated. See the note on the copy constructor.
   Cancel();
   return *this;
 }
 
 std::string CommitWorkflowBodyText(const editor::TextViewport& viewport) {
-  // The "Commit body (optional)" hint is a placeholder document, shown and never
-  // sent: read as text it went into every subject-only commit as its body.
   if (viewport.is_placeholder()) {
     return {};
   }
-  // The piece tree already stores the body '\n'-joined; taking it directly skips
-  // the Snapshot() vector-of-strings (one allocation per line) this used to
-  // materialize just to re-join it.
   std::string body;
   viewport.lines().AppendWholeText(body);
   return body;
@@ -64,4 +57,4 @@ PersistedCommitDraftState MakePersistedCommitDraft(const CommitWorkflowState& st
   };
 }
 
-}  // namespace microide::workspace
+}

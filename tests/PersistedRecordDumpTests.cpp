@@ -54,7 +54,7 @@ void TestPersistedRecordDumpReportsNotFoundError() {
   Expect(error == "not_found", "dump-state should return a stable not_found error");
 }
 
-}  // namespace
+}
 
 void RegisterPersistedRecordDumpTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PersistedRecordDump/PrintsHeaderRecordsAndDecodedSummary",
@@ -63,4 +63,4 @@ void RegisterPersistedRecordDumpTests(std::vector<TestCase>& tests) {
           TestPersistedRecordDumpReportsNotFoundError);
 }
 
-}  // namespace microide::tests
+}

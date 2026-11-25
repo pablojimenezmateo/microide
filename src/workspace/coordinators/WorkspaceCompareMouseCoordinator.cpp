@@ -24,7 +24,7 @@ namespace {
 
 constexpr float kCompareScrollbarReserve = 12.0f;
 
-}  // namespace
+}
 
 CompareMouseCoordinator::CompareMouseCoordinator(ProjectWorkspaceState& state,
                                                  InteractionState& interaction_state,
@@ -54,9 +54,6 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   const SDL_FRect divider_rect = CompareDividerHitRect(surface, surface_layout);
 
   if (Contains(divider_rect, event.button.x, event.button.y)) {
-    // Double-click restores the even split, the same contract the sidebar, right
-    // pane, editor split and bottom panel dividers already answer. Compare and
-    // merge were the two the rule missed.
     if (event.button.clicks >= 2) {
       compare_tab->divider_fraction = kWorkspaceDefaultCompareDividerFraction;
       operations_.clear_drag_state();
@@ -72,7 +69,7 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       Contains(scroll_layout.vertical_scrollbar->track, event.button.x, event.button.y)) {
     interaction_state_.drag_target = DragTarget::CompareVerticalScrollbar;
     interaction_state_.drag_scrollbar_offset = ScrollbarGrabOffset(
-        *scroll_layout.vertical_scrollbar, static_cast<float>(event.button.y), /*vertical=*/true);
+        *scroll_layout.vertical_scrollbar, static_cast<float>(event.button.y), true);
     const int target_scroll = std::clamp(
         static_cast<int>(std::lround(ScrollUnitsForPointer(
             *scroll_layout.vertical_scrollbar, static_cast<float>(event.button.y),
@@ -89,7 +86,7 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     interaction_state_.drag_target = DragTarget::CompareHorizontalScrollbar;
     interaction_state_.drag_scrollbar_offset =
         ScrollbarGrabOffset(*scroll_layout.horizontal_scrollbar,
-                            static_cast<float>(event.button.x), /*vertical=*/false);
+                            static_cast<float>(event.button.x), false);
     compare_tab->horizontal_scroll = static_cast<std::size_t>(std::max(
         0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
                                               static_cast<float>(event.button.x),
@@ -99,8 +96,6 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     return true;
   }
 
-  // The header's buttons and a review's hunk and note buttons: resolved through
-  // the same helper the hover highlight and the cursor shape use.
   if (event.button.button == SDL_BUTTON_LEFT && operations_.compare_control_at && operations_.run_compare_control) {
     if (const std::optional<CompareControlHit> hit = operations_.compare_control_at(
             surface, surface_layout, *compare_tab, static_cast<float>(event.button.x),
@@ -111,15 +106,6 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
   }
 
-  // Reject clicks in the band *above* the first row explicitly: a small negative
-  // (y - rows_y) divided by line_height truncates toward zero to 0, so the
-  // `clicked_row < 0` guard alone would misclassify a click just above row 0 as a
-  // hit on row 0.
-  // A click off the rows makes the working side inactive, and its caret,
-  // selection and inline blame are drawn only while it is active: the change is
-  // damage (frame prep repaints the rows: the active side is
-  // in their keys, CompareRowUnits), or a click below the last row left all
-  // three on screen (QA monkey, seed 18).
   const auto deactivate_right_side = [&]() {
     if (compare_tab->right_view_active) {
       compare_tab->right_view_active = false;
@@ -153,8 +139,6 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         operations_.build_compare_collapsed_context_action_rects != nullptr
             ? operations_.build_compare_collapsed_context_action_rects(block_rect, *row)
             : CollapsedContextActionRects{};
-    // Same predicate the hover highlight and the cursor shape use, so the hand
-    // cursor cannot appear over a button this click will ignore.
     if (const auto kind = CompareCollapsedContextActionAt(
             action_rects, static_cast<float>(event.button.x), static_cast<float>(event.button.y));
         kind.has_value()) {
@@ -180,9 +164,6 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     compare_tab->right_view_active = true;
     const TextGridInteractionLayout right_interaction =
         operations_.build_compare_right_interaction_layout(surface_layout, *compare_tab);
-    // The pointer's on-screen cell resolves to a document position through the wrap
-    // table: with wrap off that is the identity, with it on it subtracts the row's
-    // hanging indent and adds its segment's first visual column.
     const CompareRightPaneHit hit = CompareRightPaneHitAt(
         *compare_tab, static_cast<std::size_t>(visual_row),
         TextGridVisualColumnAtX(right_interaction, event.button.x));
@@ -196,14 +177,11 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         compare_tab->right_viewport.InsertText(*text);
         operations_.refresh_compare_tab_derived_state(*compare_tab);
         operations_.sync_compare_selection_from_viewport(*compare_tab, true);
-        operations_.note_active_editable_edit();  // asks for the frame too
+        operations_.note_active_editable_edit();
       }
       state_.surface.focus = FocusTarget::Editor;
       return true;
     }
-    // A double-click selects the word and a triple-click the line, and the drag
-    // that follows keeps that granularity -- the same gesture the editor pane
-    // has. This surface used to place a bare caret for any click count.
     selection_granularity::ApplyClick(interaction_state_, compare_tab->right_viewport,
                                       event.button.clicks);
     operations_.sync_compare_selection_from_viewport(*compare_tab, false);
@@ -298,34 +276,18 @@ bool CompareMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
       operations_.compute_compare_surface_layout(surface, *compare_tab);
   const TextGridInteractionLayout right_interaction =
       operations_.build_compare_right_interaction_layout(surface_layout, *compare_tab);
-  // A drag that leaves the right pane -- sideways into the left pane, or above /
-  // below the rows -- keeps extending the selection toward the pointer. The two
-  // refusals that used to sit here (`x < right_x`, and an unhittable row) froze
-  // it instead, which on this surface is easy to trip: the left pane is right
-  // there, half a drag away. Clamp the pointer onto the right pane's own grid
-  // and carry on; `ClampTextGridLineAtY` is the same projection the merge result
-  // pane already used.
   const float pointer_x = std::max(static_cast<float>(event.motion.x), surface_layout.right_x);
-  // A clamp alone still stops the selection at the last visible row when the
-  // pointer is held past the edge: no further motion arrives, so nothing extends
-  // it. Arming from the REAL pointer lets the idle wake keep walking the clamped
-  // edge through the document, exactly as on the editor surface.
   selection_autoscroll::Arm(interaction_state_, InteractionState::SelectionAutoscrollOwner::Text,
                             selection_autoscroll::BandFor(right_interaction),
                             static_cast<float>(event.motion.x),
                             static_cast<float>(event.motion.y));
   const std::size_t row = ClampTextGridLineAtY(right_interaction, static_cast<float>(event.motion.y));
 
-  // `row` is an ON-SCREEN row. It used to be handed straight to the model-row
-  // lookup, which is a different index space the moment the diff collapses a run
-  // or wraps a line -- so a drag resolved to the wrong document line.
   const CompareRightPaneHit hit =
       CompareRightPaneHitAt(*compare_tab, row, TextGridVisualColumnAtX(right_interaction, pointer_x));
   const std::size_t line = hit.line;
   const std::size_t visual_column = hit.visual_column;
   if (selection_granularity::DragIsGranular(interaction_state_)) {
-    // Resolve the pointer to a logical position first: ExtendToPointer works in
-    // text columns, and the grid hands out visual ones.
     compare_tab->right_viewport.MoveCursorToVisualColumn(line, visual_column, false);
     selection_granularity::ExtendToPointer(
         interaction_state_, compare_tab->right_viewport,
@@ -362,8 +324,6 @@ bool CompareMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
     compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
     operations_.sync_compare_viewport_scroll(*compare_tab);
 
-    // The hunk under the pointer shows its review buttons; the control under it
-    // highlights.
     next_hover_row = CompareHoverRowAtY(MakeCompareControlGeometry(surface, surface_layout), *compare_tab,
                                         static_cast<float>(event.motion.y));
     if (operations_.compare_control_at) {
@@ -409,7 +369,7 @@ bool CompareMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
   compare_tab->review_hover_visible_row = next_hover_row;
   const int next_hover_hunk = CompareHoveredHunk(*compare_tab);
   if (previous_hover_hunk != next_hover_hunk) {
-    operations_.request_frame();  // the hunk's buttons are in its first row's key
+    operations_.request_frame();
   }
   if (previous_hover == compare_tab->hover_state) {
     return previous_hover_hunk != next_hover_hunk;
@@ -445,7 +405,6 @@ bool CompareMouseCoordinator::HandleWheel(const SDL_Event& event,
                    scroll_layout.max_vertical_scroll);
   }
   operations_.sync_compare_viewport_scroll(compare_tab);
-  // Scrolling is not focusing — see SidebarMouseCoordinator::HandleWheel.
   return true;
 }
 
@@ -496,7 +455,7 @@ CompareMouseCoordinator& WorkspaceShell::MakeCompareMouseCoordinator() {
                 const bool expanded =
                     ExpandCompareCollapsedContext(compare_tab, presentation_row, action);
                 if (expanded) {
-                  RequestPreparedFrame();  // the expanded rows are the surface's units
+                  RequestPreparedFrame();
                 }
                 return expanded;
               },
@@ -515,4 +474,4 @@ CompareMouseCoordinator& WorkspaceShell::MakeCompareMouseCoordinator() {
   return *glue_->compare_mouse_coordinator;
 }
 
-}  // namespace microide::workspace
+}

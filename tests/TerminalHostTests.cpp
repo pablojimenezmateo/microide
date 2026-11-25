@@ -26,8 +26,6 @@ using terminal::TerminalLine;
 using terminal::TerminalSession;
 
 
-// A bell on the host reaches the client once, in the next frame — not in every
-// frame after it.
 void TestHostBellReachesTheClientOnce() {
   Mirror mirror(4, 20);
   mirror.Write("build done\x07");
@@ -40,8 +38,6 @@ void TestHostBellReachesTheClientOnce() {
   Expect(!mirror.client.ConsumeBell(), "so the client rang once");
 }
 
-// A host program's coloured, curly underline (a TUI's diagnostic) reaches the
-// client: the shape in the style, the colour under the client's own extra id.
 void TestHostUnderlineColourReachesTheClient() {
   Mirror mirror(4, 40);
   TerminalSessionTestAccess::InternLink(mirror.client, "https://unrelated.example");
@@ -65,11 +61,8 @@ void TestHostUnderlineColourReachesTheClient() {
   Expect(lines[0].cells[2].extra == 0 && lines[0].cells[7].extra == 0, "nor is anything around it");
 }
 
-// A host program's OSC 9 notification and OSC 8 link reach the client: the
-// notification once, the link under the client's own id for the same URI.
 void TestHostNotificationAndLinksReachTheClient() {
   Mirror mirror(4, 40);
-  // A link the client already knows under id 1, so the host's id 1 must be remapped.
   TerminalSessionTestAccess::InternLink(mirror.client, "https://unrelated.example");
   mirror.Write("\x1b]9;needs your input\x07");
   mirror.Write("see \x1b]8;;https://example.com/a\x1b\\docs\x1b]8;;\x1b\\ now");
@@ -167,15 +160,12 @@ void TestHostFrameRoundTripsEveryField() {
          "a cell's extra id and the extras (link, underline colour) round-trip");
   Expect(back->edit == frame.edit, "the file to edit round-trips, bytes and all");
 
-  // A version-4 peer is sent no edit: its decoder would refuse the frame.
   std::string v4_wire;
   EncodeTerminalHostFrame(v4_wire, frame, terminal::TerminalHostWireOptions{.edit = false});
   const std::optional<TerminalHostFrame> v4 = DecodeTerminalHostFrame(v4_wire);
   Expect(v4.has_value() && !v4->edit.has_value() && v4->extras[1].underline_color.has_value(),
          "a version-4 peer's frame leaves the edit out and keeps the colours");
 
-  // A version-3 peer gets the frame without the colour section, and that frame
-  // is exactly what version 3 sent: the extras list is unchanged by version 4.
   std::string v3_wire;
   EncodeTerminalHostFrame(v3_wire, frame,
                           terminal::TerminalHostWireOptions{.underline_colors = false, .edit = false});
@@ -184,7 +174,6 @@ void TestHostFrameRoundTripsEveryField() {
              v3->extras[0].uri == "https://example.com/x" && !v3->extras[1].underline_color.has_value(),
          "an older peer's frame leaves the colours out and still decodes");
 
-  // Every strict prefix is truncated input and must be refused, never half-applied.
   for (std::size_t length = 0; length < wire.size(); ++length) {
     Expect(!DecodeTerminalHostFrame(std::string_view(wire).substr(0, length)).has_value(),
            "a truncated frame is refused at " + std::to_string(length));
@@ -226,9 +215,6 @@ void TestHostFrameDecoderRefusesInconsistentFrames() {
   Expect(!DecodeTerminalHostFrame(encode(too_many_rows)).has_value(),
          "more screen lines than rows are refused");
 
-  // More promoted lines than any screen holds: the client would append one line
-  // per promoted line, so a frame moving the screen by 10^12 lines as Promote is a
-  // hang, not a scroll.
   TerminalHostFrame promotes_past_a_screen = base;
   promotes_past_a_screen.previous_top = 0;
   promotes_past_a_screen.screen_top = 1'000'000'000'000;
@@ -249,10 +235,6 @@ void TestHostFrameDecoderRefusesInconsistentFrames() {
          "a screen that grew upward carries no runs");
 }
 
-// A page or a frame's lines are counted by their sender, and an empty line is one
-// byte on the wire but a whole `TerminalLine` here: the count is held against the
-// bound the receiver already knows (the page it asked for, the rows the frame's
-// keep bits left to send) BEFORE anything is allocated for it.
 void TestHostDecodersBoundALineCountByWhatTheyExpect() {
   std::vector<TerminalLine> three(3);
   three[1].cells.resize(2);
@@ -332,14 +314,12 @@ void TestClientMirrorsTheHostAsItScrolls() {
   Expect(mirror.Sync(), "the frame after the scroll applies");
   mirror.ExpectSame("after 40 lines of output");
 
-  // Typing one character changes one row: the frame says "keep" for the others.
   mirror.Write("l");
   Expect(mirror.Sync(), "the keystroke frame applies");
   Expect(mirror.frame.scrollback.empty() && mirror.frame.screen_lines.size() == 1,
          "an echoed keystroke ships one row, not the screen");
   mirror.ExpectSame("after a keystroke");
 
-  // Nothing changed: nothing to ship.
   mirror.host.CaptureForHost(mirror.builder.capture_from(),
                              mirror.builder.capture_lines_before_screen(500), mirror.capture);
   Expect(mirror.builder.UpToDate(mirror.capture), "an unchanged terminal is up to date");
@@ -372,8 +352,6 @@ void TestClientMirrorsTheAlternateScreen() {
   mirror.ExpectSame("back on the primary screen, scrollback intact");
 }
 
-// DECSCNM reaches a client: the flag rides the frame, and a toggle with no row
-// changed still ships one.
 void TestClientMirrorsReverseVideo() {
   Mirror mirror(4, 16);
   mirror.Write("$ ");
@@ -386,8 +364,6 @@ void TestClientMirrorsReverseVideo() {
   Expect(!mirror.client.screen_reverse_video(), "the client draws it normally again");
 }
 
-// OSC 22 reaches a client: the shape rides the frame's flag bits (no protocol
-// version: an older client ignores them), and a change alone ships a frame.
 void TestClientMirrorsThePointerShape() {
   Mirror mirror(4, 16);
   mirror.Write("$ ");
@@ -432,7 +408,7 @@ void TestCreditWindowWithholdsScrollbackAsOneCountedGap() {
   for (int i = 0; i < 30; ++i) {
     mirror.Write("flood " + std::to_string(i) + "\r\n");
   }
-  Expect(mirror.Sync(/*budget=*/0), "a frame with no credit applies");
+  Expect(mirror.Sync(0), "a frame with no credit applies");
   std::uint64_t gap = 0;
   for (const auto& run : mirror.frame.scrollback) {
     Expect(run.kind != TerminalHostRun::Kind::Lines, "no scrollback line is sent without credit");
@@ -445,17 +421,11 @@ void TestCreditWindowWithholdsScrollbackAsOneCountedGap() {
     saw_rule = saw_rule || LineText(line).find("lines not transferred") != std::string::npos;
   }
   Expect(saw_rule, "the gap is drawn as one counted rule");
-  // The screen itself is never withheld.
   const std::vector<TerminalLine> host_lines = mirror.host.SnapshotLines();
   Expect(LineText(lines[lines.size() - 2]) == LineText(host_lines[host_lines.size() - 2]),
          "the visible screen arrives even with no credit");
 }
 
-// A gap rule is a promise that the host had those lines; on screen it is now a
-// request for them (TD-2026-10-08-326). Filled newest first a page at a time,
-// the rule shrinking as it goes, the lines land where the rule was -- in order,
-// once -- and every row below moves down by what came in, which is what a view
-// anchored there rebases by.
 void TestAGapRuleOnScreenFillsWithTheHostLinesItWithheld() {
   Mirror mirror(3, 20);
   mirror.host.SetMaxScrollbackLines(5000);
@@ -468,7 +438,7 @@ void TestAGapRuleOnScreenFillsWithTheHostLinesItWithheld() {
   for (int i = 0; i < kWithheld; ++i) {
     mirror.Write("flood " + std::to_string(i) + "\r\n");
   }
-  Expect(mirror.Sync(/*budget=*/0), "a frame with no credit withholds the scrolled lines");
+  Expect(mirror.Sync(0), "a frame with no credit withholds the scrolled lines");
   std::uint64_t withheld = 0;
   for (const auto& run : mirror.frame.scrollback) {
     withheld += run.kind == TerminalHostRun::Kind::Gap ? run.count : 0;
@@ -509,13 +479,10 @@ void TestAGapRuleOnScreenFillsWithTheHostLinesItWithheld() {
   Expect(added == withheld - 1, "together they insert the withheld lines in place of the one rule: " +
                                    std::to_string(added) + " for " + std::to_string(withheld));
 
-  // Nothing left to ask for: a request is not sent.
   mirror.client.RequestHostGapFill(0, mirror.client.SnapshotLines().size());
   Expect(mirror.channel->history_requests == 3, "with no rule on screen nothing is asked");
 }
 
-// A gap the host no longer holds (trimmed while the lines were withheld) is
-// asked for once: the empty answer marks it, and it is not asked for again.
 void TestAGapTheHostNoLongerHoldsIsAskedForOnce() {
   Mirror mirror(3, 20);
   mirror.channel->history_source = &mirror.host;
@@ -523,8 +490,8 @@ void TestAGapTheHostNoLongerHoldsIsAskedForOnce() {
   for (int i = 0; i < 40; ++i) {
     mirror.Write("flood " + std::to_string(i) + "\r\n");
   }
-  Expect(mirror.Sync(/*budget=*/0), "the scrolled lines are withheld");
-  mirror.host.SetMaxScrollbackLines(0);  // the host drops its history
+  Expect(mirror.Sync(0), "the scrolled lines are withheld");
+  mirror.host.SetMaxScrollbackLines(0);
   mirror.Write("more\r\n");
   Expect(mirror.Sync(), "the next frame applies");
   const std::size_t held = mirror.client.SnapshotLines().size();
@@ -534,10 +501,6 @@ void TestAGapTheHostNoLongerHoldsIsAskedForOnce() {
                                                      std::to_string(mirror.channel->history_requests));
 }
 
-// A screen that grows upward takes host lines back off the client's scrollback,
-// counted in HOST lines — and a gap rule stands for many. The rule at the tail
-// shrinks by the lines that are back on screen; it is not popped as one line
-// (which dropped real scrollback above it, or left the screen one line short).
 void TestAGrowingScreenTakesBackHostLinesFromAGapRule() {
   Mirror mirror(3, 20);
   Expect(mirror.Sync(), "sync");
@@ -546,14 +509,14 @@ void TestAGrowingScreenTakesBackHostLinesFromAGapRule() {
   for (int i = 0; i < 30; ++i) {
     mirror.Write("flood " + std::to_string(i) + "\r\n");
   }
-  Expect(mirror.Sync(/*budget=*/0), "a frame with no credit withholds the scrolled lines");
+  Expect(mirror.Sync(0), "a frame with no credit withholds the scrolled lines");
   std::uint64_t withheld = 0;
   for (const auto& run : mirror.frame.scrollback) {
     withheld += run.kind == TerminalHostRun::Kind::Gap ? run.count : 0;
   }
   Expect(withheld > 4, "many lines are withheld behind one rule");
 
-  mirror.host.Resize(7, 20);  // four more rows: four host lines come back on screen
+  mirror.host.Resize(7, 20);
   Expect(mirror.Sync(), "the taller frame applies");
   const std::vector<TerminalLine> host_lines = mirror.host.SnapshotLines();
   const std::vector<TerminalLine> lines = mirror.client.SnapshotLines();
@@ -634,8 +597,6 @@ bool UnderlinedAt(const TerminalSession& session, std::size_t column) {
   return lines[session.cursor_row()].cells[column].style.underline();
 }
 
-// A typed glyph is drawn, underlined, before any frame; the frame that confirms it
-// replaces it with exactly the host's cell — nothing left over.
 void TestPredictionIsDrawnThenConfirmed() {
   Mirror mirror(4, 20);
   mirror.client.SetPredictionMode(terminal::TerminalPredictionOverlay::Mode::Always);
@@ -647,7 +608,7 @@ void TestPredictionIsDrawnThenConfirmed() {
   Expect(UnderlinedAt(mirror.client, 2) && UnderlinedAt(mirror.client, 3), "underlined while pending");
   Expect(mirror.client.cursor_column() == 4, "the cursor moves with the prediction");
   mirror.Write("a");
-  Expect(mirror.Sync(1u << 30, /*echo_ack=*/1), "the first echo arrives");
+  Expect(mirror.Sync(1u << 30, 1), "the first echo arrives");
   Expect(CursorLineText(mirror.client) == "$ ab", "the second is still drawn after the first is confirmed");
   Expect(!UnderlinedAt(mirror.client, 2) && UnderlinedAt(mirror.client, 3),
          "the confirmed glyph is the host's, the pending one still underlined");
@@ -657,8 +618,6 @@ void TestPredictionIsDrawnThenConfirmed() {
   Expect(mirror.client.PendingPredictions() == 0, "nothing is pending");
 }
 
-// A password prompt does not echo: the glyph is gone with the frame that covers
-// it, and nothing more is drawn until a prediction is confirmed again.
 void TestContradictedPredictionIsGoneAndSuppressesTheNext() {
   Mirror mirror(4, 20);
   mirror.client.SetPredictionMode(terminal::TerminalPredictionOverlay::Mode::Always);
@@ -670,7 +629,6 @@ void TestContradictedPredictionIsGoneAndSuppressesTheNext() {
   mirror.ExpectSame("the contradicted glyph is gone within the round trip");
   Type(mirror.client, U'e');
   mirror.ExpectSame("after a contradiction nothing is drawn");
-  // The program starts echoing again (the password was accepted, a shell prompt).
   mirror.Write("\r\n$ x");
   Expect(mirror.Sync(1u << 30, 2), "a frame covering the undrawn 'e'");
   mirror.ExpectSame("still nothing drawn: 'e' was never echoed");
@@ -723,7 +681,7 @@ void TestNothingIsPredictedWhereThePositionIsUnknown() {
     Expect(CursorLineText(mirror.client) == "$ b", "predicting resumes once it has");
   }
   {
-    Mirror mirror(3, 20);  // the default: adaptive, and no round trip measured
+    Mirror mirror(3, 20);
     mirror.Write("$ ");
     Expect(mirror.Sync(), "sync");
     Type(mirror.client, U'a');
@@ -731,8 +689,6 @@ void TestNothingIsPredictedWhereThePositionIsUnknown() {
   }
 }
 
-// The host enters the alternate screen between two predicted keystrokes: the
-// confirmed frame is applied byte for byte, with no predicted cell left over.
 void TestModeChangeDuringABurstLeavesTheConfirmedScreenExact() {
   Mirror mirror(4, 20);
   mirror.client.SetPredictionMode(terminal::TerminalPredictionOverlay::Mode::Always);
@@ -748,7 +704,7 @@ void TestModeChangeDuringABurstLeavesTheConfirmedScreenExact() {
   mirror.ExpectSame("the primary screen exactly as the host has it");
 }
 
-}  // namespace
+}
 
 void RegisterTerminalHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalHost/FrameRoundTripsEveryField", TestHostFrameRoundTripsEveryField);
@@ -786,4 +742,4 @@ void RegisterTerminalHostTests(std::vector<TestCase>& tests) {
           TestModeChangeDuringABurstLeavesTheConfirmedScreenExact);
 }
 
-}  // namespace microide::tests
+}

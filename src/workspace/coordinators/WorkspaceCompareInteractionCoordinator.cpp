@@ -28,8 +28,6 @@ namespace microide::workspace {
 
 namespace {
 
-// Builds a picker row for a commit. Display strings are composed here (not in the
-// render TU) so painting only reads precomputed labels.
 GitPickerItem MakeCommitPickerItem(const project::GitCommitEntry& commit) {
   GitPickerItem item;
   item.kind = GitPickerItem::Kind::Commit;
@@ -59,7 +57,7 @@ GitPickerItem MakeBranchPickerItem(const project::GitBranchReference& branch) {
   return item;
 }
 
-}  // namespace
+}
 
 CompareInteractionCoordinator::CompareInteractionCoordinator(ProjectWorkspaceState& state,
                                                              Operations operations)
@@ -73,8 +71,6 @@ void CompareInteractionCoordinator::ApplyFileHistoryResult(
   for (const auto& commit : history.commits) {
     picker.items.push_back(MakeCommitPickerItem(commit));
   }
-  // Signal that older commits exist beyond the display cap rather than hiding the
-  // truncation silently.
   picker.title = history.truncated ? "Compare against (latest 5000)" : "Compare against";
   picker.loading = false;
   RefreshPicker();
@@ -93,8 +89,6 @@ void CompareInteractionCoordinator::ApplyRefsResult(
         continue;
       }
       GitPickerItem item = MakeBranchPickerItem(branch_ref);
-      // `git switch` takes the SHORT name for both local and remote-tracking
-      // branches; the full ref would check out a detached HEAD for the latter.
       item.ref = branch_ref.label;
       item.secondary_label = branch_ref.is_remote ? "remote branch" : "branch";
       item.search_text = ToLower(item.primary_label + " " + item.secondary_label);
@@ -131,8 +125,6 @@ bool CompareInteractionCoordinator::OpenPickerForPath(
   picker.selected_index = 0;
 
   if (!commit_spec.empty()) {
-    // Synchronous path (control channel / headless): the caller needs the bool
-    // return and there is no UI to freeze. Run the git query inline.
     picker.loading = false;
     const project::GitFileHistoryResult history =
         project::CollectGitFileHistory(state_.root, state_.launcher(), picker.path);
@@ -165,9 +157,6 @@ bool CompareInteractionCoordinator::OpenPickerForPath(
     return true;
   }
 
-  // Interactive path: open the overlay immediately in a loading state and let the
-  // shell run CollectGitFileHistory on the background executor. The result lands
-  // via ApplyFileHistoryResult on a later frame.
   picker.loading = true;
   RefreshPicker();
   util::InvokeIfSet(operations_.request_compare_file_history, picker.path);
@@ -192,8 +181,6 @@ void CompareInteractionCoordinator::OpenOutgoingBasePicker() {
   picker.matches.clear();
   picker.selected_index = 0;
 
-  // Interactive-only: the branch + recent-commit queries run on the background
-  // executor and populate via ApplyOutgoingBaseResult.
   picker.loading = true;
   RefreshPicker();
   util::InvokeIfSet(operations_.request_ref_list, true);
@@ -229,9 +216,6 @@ void CompareInteractionCoordinator::RefreshPicker() {
 
   const std::string lowered_query = ToLower(picker.query.text());
   for (const auto& item : picker.items) {
-    // item.search_text is the lowercased "primary secondary ref", precomputed once
-    // when the item was built — avoids re-lowercasing + concatenating three strings
-    // per item on every keystroke over a list that can hold thousands of commits.
     if (!lowered_query.empty() && item.search_text.find(lowered_query) == std::string::npos) {
       continue;
     }
@@ -348,10 +332,6 @@ void CompareInteractionCoordinator::JumpCompareHunk(int delta) {
     }
   }
   if (target_hunk < 0) {
-    // On a row in no change (above the first, between two, past the last): the
-    // nearest change in the direction of travel, as VS Code's next/previous
-    // change does from any line. Counting from the first change instead sent ]
-    // from above it to the second one (QA diff-hunk-keys).
     const auto model_row = static_cast<int>(CompareTabSelectedModelRow(*compare_tab));
     target_hunk = delta > 0 ? hunk_count - 1 : 0;
     if (delta > 0) {
@@ -375,16 +355,11 @@ void CompareInteractionCoordinator::JumpCompareHunk(int delta) {
       presentation_row.has_value()) {
     compare_tab->selected_row = *presentation_row;
   } else {
-    // `selected_row` is a PRESENTATION row; a hunk's `start_row` is a model row,
-    // and the two diverge the moment the diff collapses a run.
     compare_tab->selected_row = compare::ComparePresentationRowForModelRow(
         compare_tab->presentation,
         static_cast<std::size_t>(
             compare_tab->model.hunks[static_cast<std::size_t>(target_hunk)].start_row));
   }
-  // The caret follows the change the jump revealed. Without this the reader looks
-  // at hunk N and types into whatever line the caret was left on, which for a fresh
-  // tab is line 0.
   SyncCompareCaretToSelectedRow(*compare_tab);
   operations_.reveal_active_compare_selection();
   operations_.request_frame();
@@ -400,9 +375,6 @@ void CompareInteractionCoordinator::JumpCompareReviewFile(int delta) {
   if (!MoveSelectionIndex(compare_tab->review_files.size(), &next_index, delta)) {
     return;
   }
-  // Opening the next comparison rebuilds the active compare tab (and can reallocate
-  // open_tabs), so `compare_tab` may dangle afterward. Copy every value we still need
-  // — for the reveal args and the post-open carry-over — into locals up front.
   const std::vector<std::filesystem::path> review_files = compare_tab->review_files;
   const compare::CompareReviewMode review_mode = compare_tab->review_mode;
   const std::string commit_hash = compare_tab->commit_hash;
@@ -412,8 +384,6 @@ void CompareInteractionCoordinator::JumpCompareReviewFile(int delta) {
   const std::filesystem::path next_path =
       (state_.root / review_files[next_index]).lexically_normal();
   if (review_mode == compare::CompareReviewMode::Branch) {
-    // Pass the list we already hold: without it the open re-derives it with a git
-    // diff, and the assignment below then overwrites it with this same vector.
     if (!operations_.open_branch_head_comparison(next_path, commit_hash, left_label, right_ref,
                                                  right_label, &review_files)) {
       return;
@@ -442,10 +412,6 @@ void CompareInteractionCoordinator::CopyComparePath() {
 
 namespace {
 
-// Relative-to-root label for a compare path, using the non-throwing
-// std::filesystem::relative overload with a lexical fallback. The throwing
-// overload could raise filesystem_error on the UI thread (deleted file, broken
-// symlink, inaccessible mount) and terminate the app while merely copying a patch.
 std::filesystem::path RelativeToRootOrSelf(const std::filesystem::path& path,
                                            const std::filesystem::path& root) {
   if (!path.is_absolute() || root.empty()) {
@@ -459,7 +425,7 @@ std::filesystem::path RelativeToRootOrSelf(const std::filesystem::path& path,
   return relative;
 }
 
-}  // namespace
+}
 
 void CompareInteractionCoordinator::CopyCompareHunkPatch() {
   const CompareTabState* compare_tab = operations_.active_compare_tab();
@@ -471,14 +437,8 @@ void CompareInteractionCoordinator::CopyCompareHunkPatch() {
     return;
   }
   const std::filesystem::path relative = RelativeToRootOrSelf(compare_tab->path, state_.root);
-  // Route through the same real unified-diff generator the staging/discard path
-  // uses, so a copied hunk is a genuine `git apply`-able patch (correct @@ line
-  // ranges, /dev/null headers for add/delete, no-final-newline markers) rather
-  // than a display-only approximation.
   const std::optional<std::string> patch =
       project::GenerateComparePatch(compare_tab->model, relative, hunk_index);
-  // Only overwrite the clipboard when patch generation succeeded. Writing an
-  // empty string on failure would silently destroy whatever the user had copied.
   if (patch.has_value() && !patch->empty()) {
     operations_.write_clipboard_text(*patch);
   }
@@ -490,17 +450,11 @@ void CompareInteractionCoordinator::CopyCompareFilePatch() {
     return;
   }
   if (compare_tab->model.rows.empty()) {
-    // Nothing to copy; leave the user's existing clipboard intact.
     return;
   }
   const std::filesystem::path relative = RelativeToRootOrSelf(compare_tab->path, state_.root);
-  // Whole-file patch: span every model row through the real generator so the
-  // copied text is a genuine unified diff (same contract as the staging path),
-  // not the fake `@@ hunk N @@` headers the display-only exporter emitted.
   const std::optional<std::string> patch = project::GenerateComparePatchForRows(
       compare_tab->model, relative, 0, compare_tab->model.rows.size() - 1);
-  // Only overwrite the clipboard on success — do not clobber it with an empty
-  // string when patch generation fails.
   if (patch.has_value() && !patch->empty()) {
     operations_.write_clipboard_text(*patch);
   }
@@ -514,8 +468,6 @@ void CompareInteractionCoordinator::ToggleCompareIgnoreWhitespace() {
   compare_tab->build_options.ignore_whitespace = !compare_tab->build_options.ignore_whitespace;
   operations_.refresh_compare_tab_derived_state(*compare_tab);
   operations_.reveal_active_compare_selection();
-  // The rebuilt rows are the surface's units (CompareRowUnits): a frame repaints
-  // the ones whose diff changed.
   operations_.request_frame();
 }
 
@@ -535,7 +487,7 @@ void CompareInteractionCoordinator::ScrollCompareRows(int delta) {
     return;
   }
   operations_.scroll_compare_rows(*compare_tab, delta);
-  operations_.request_frame();  // the scroll is in the rows' surface key
+  operations_.request_frame();
 }
 
 void CompareInteractionCoordinator::ScrollCompareColumns(int delta) {
@@ -579,20 +531,7 @@ void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice
       compare::MergeChoiceLines(merge_tab->model.hunks[conflict.hunk_index], choice);
   const std::size_t replacement_line_count = replacement_lines.size();
   const std::size_t previous_end = conflict.end_line;
-  // BEFORE the move, not after. `max_visual_columns` is what sizes the result
-  // pane's horizontal scroll extent and decides whether its scrollbar appears at
-  // all, and it is only ever raised -- so reading the replacement lines after
-  // they have been moved into ReplaceLines read an empty vector and raised it by
-  // nothing. Accepting a side wider than anything already measured left the pane
-  // unable to scroll far enough right to see the text it had just accepted
-  // (TD-2026-09-20-299). The failure path below now raises it without the edit
-  // landing, which is within the field's existing contract: it is a monotonic
-  // upper bound that nothing recomputes downward.
   operations_.update_merge_max_visual_columns(*merge_tab, replacement_lines);
-  // False is a refusal only on a read-only result; otherwise it is the no-op of
-  // installing the lines already there -- Base over a conflict that opened
-  // showing its base -- and the choice still has to be recorded, or that
-  // conflict could never be resolved to its base.
   if (!merge_tab->result_viewport.ReplaceLines(conflict.start_line, previous_end,
                                                std::move(replacement_lines)) &&
       merge_tab->result_viewport.read_only()) {
@@ -615,9 +554,6 @@ void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice
         static_cast<long long>(merge_tab->conflicts[i].end_line) + line_delta);
   }
   merge_tab->hover_state.reset();
-  // Accepting a side rewrote this conflict's span and shifted every following one,
-  // so the cached overview-ruler markers (keyed on model_revision) are stale.
-  // Invalidate them or the scrollbar keeps pointing markers at pre-accept rows/colors.
   merge_tab->scrollbar_marker_cache_valid = false;
   merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
@@ -684,9 +620,6 @@ void CompareInteractionCoordinator::CopyMergeSideSnippet(bool incoming) {
     return;
   }
   const auto& hunk = merge_tab->model.hunks[conflict.hunk_index];
-  // Streaming form: a hunk's lines are views into the model's source buffers, and
-  // this serializes straight out of them rather than materializing owned copies
-  // first.
   const std::vector<std::string_view>& lines =
       incoming ? hunk.incoming_lines : hunk.current_lines;
   operations_.write_clipboard_text(
@@ -700,16 +633,10 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
   }
   if (!merge_tab->file_conflict.text_hunks_available) {
     merge_tab->status_message = merge_tab->file_conflict.summary;
-    // The status line is the merge header's unit, here and below: a frame repaints it.
     operations_.request_frame();
     return;
   }
 
-  // A conflict nobody picked a side for previews a default choice, with no
-  // markers in it, so the marker check below cannot see it: Mark Resolved staged
-  // that preview -- usually the base text, both sides' changes gone -- in one
-  // click (QA merge-toolbar). Say how many are left and select one; a second
-  // Mark Resolved keeps the result as shown, as for markers.
   const auto unresolved = static_cast<std::size_t>(
       std::count_if(merge_tab->conflicts.begin(), merge_tab->conflicts.end(),
                     [](const MergeTrackedConflict& conflict) { return conflict.valid && !conflict.resolved; }));
@@ -728,15 +655,7 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
 
   const bool result_should_exist = ResolvedResultShouldExist(*merge_tab);
 
-  // Delete resolution: a modify/delete-class conflict reduced to an empty result
-  // means the user accepted the deletion. Remove the working file and stage that
-  // removal instead of writing (and staging) an empty file. This is the only way
-  // such a conflict can naturally resolve to "deleted".
   if (!result_should_exist) {
-    // Transactional deletion: removing the working file is irreversible, so capture
-    // the on-disk bytes first and roll them back if validation or staging fails.
-    // Otherwise a stage failure (stale index, git error, permissions) would leave the
-    // user's in-progress merge file gone with no way to recover it.
     const std::optional<std::string> backup = util::ReadTextFile(merge_tab->output_path);
     const bool prior_dirty = merge_tab->result_viewport.dirty();
     const std::optional<std::uint64_t> prior_disk_tick = merge_tab->disk_result_tick;
@@ -751,12 +670,8 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
       merge_tab->external_result_stale = prior_external_stale;
     };
 
-    // Through the gate: it is a change to the project tree like any other, and in a
-    // remote project it is the host's file that has to go.
     (void)state_.write_gate().ApplyTreeOp({.kind = project::FileWriteGate::TreeOp::Kind::Delete,
                                            .path = merge_tab->output_path});
-    // The file is gone; the buffer is no longer the source of truth. Mark it clean
-    // so a later Save cannot resurrect the file, and drop the disk tick / stale flag.
     merge_tab->result_viewport.SetDirty(false);
     merge_tab->disk_result_tick = std::nullopt;
     merge_tab->external_result_stale = false;
@@ -798,17 +713,8 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
     operations_.request_frame();
     return;
   }
-  // The save above just rewrote output_path — TextViewport::Save always does an
-  // atomic write+rename, which bumps the mtime even when the buffer was clean. Sync
-  // disk_result_tick to that fresh value (via the same function ValidateMergeResult
-  // reads) so our own write is not misread as an external modification, which would
-  // otherwise reject every Mark Resolved and never stage the file.
   if (!merge_tab->output_path.empty()) {
     merge_tab->disk_result_tick = util::FileModificationTick(merge_tab->output_path);
-    // We have just reconciled disk_result_tick to our own write, so any prior
-    // "changed on disk" flag is stale — clearing it is required, otherwise the
-    // boolean guard in ValidateMergeResult short-circuits before the (now matching)
-    // tick comparison and rejects every Mark Resolved for the life of the tab.
     merge_tab->external_result_stale = false;
   }
 
@@ -866,4 +772,4 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
   operations_.request_frame();
 }
 
-}  // namespace microide::workspace
+}

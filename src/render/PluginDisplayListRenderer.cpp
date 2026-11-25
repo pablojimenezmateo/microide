@@ -18,10 +18,6 @@ namespace microide::render {
 namespace {
 
 SDL_Rect ToIntRect(const SDL_FRect& rect) {
-  // Clamp before every float->int cast: static_cast<int> of a value outside the
-  // int range is undefined behavior, and while ValidateDisplayList rejects
-  // non-finite coordinates it still admits huge *finite* ones (e.g. 1e300 from a
-  // plugin). A generous pixel bound keeps legitimate geometry intact.
   constexpr float kBound = 1'000'000.0f;
   const float x0 = std::floor(std::clamp(rect.x, -kBound, kBound));
   const float y0 = std::floor(std::clamp(rect.y, -kBound, kBound));
@@ -40,7 +36,7 @@ SDL_Rect IntersectRect(const SDL_Rect& a, const SDL_Rect& b) {
   return SDL_Rect{x0, y0, std::max(0, x1 - x0), std::max(0, y1 - y0)};
 }
 
-}  // namespace
+}
 
 void ReplayDisplayList(SDL_Renderer* renderer, TextRenderer& text_renderer,
                        SurfaceTextureCache& texture_cache, const PluginDisplayList& list,
@@ -52,22 +48,11 @@ void ReplayDisplayList(SDL_Renderer* renderer, TextRenderer& text_renderer,
   const float ox = params.origin_x;
   const float oy = params.origin_y;
 
-  // Save the caller's clip so we can restore it; everything we draw is bounded by
-  // the surface rect. A clip stack tracks ClipPush/ClipPop (content-local rects).
-  // Both scratch buffers are thread_local and reused across replays so a visible
-  // surface re-painted every frame allocates nothing here.
-  // SDL_GetRenderClipRect returns success/failure, NOT whether a clip was set —
-  // it fills an empty rect when clipping is disabled. Gate on SDL_RenderClipEnabled
-  // instead: otherwise a full repaint (clipping disabled on entry) would restore a
-  // 0x0 clip below, and SDL_SetRenderClipRect enables (not disables) a zero-area
-  // rect, blanking everything drawn after this surface for the rest of the frame.
   const bool had_clip = SDL_RenderClipEnabled(renderer);
   SDL_Rect previous_clip{};
   if (had_clip) {
     SDL_GetRenderClipRect(renderer, &previous_clip);
   }
-  // Bounded by the caller's clip too: on a partial repaint that is the dirty
-  // rect, and a surface replayed under it must not paint outside it.
   const SDL_Rect base_clip = NarrowToCurrentClip(renderer, ToIntRect(params.clip));
   thread_local std::vector<SDL_Rect> clip_stack;
   clip_stack.clear();
@@ -88,7 +73,6 @@ void ReplayDisplayList(SDL_Renderer* renderer, TextRenderer& text_renderer,
         break;
       case DrawOp::Polyline: {
         SetDrawColor(renderer, op.color);
-        // Translate into the reused scratch buffer; polyline point counts are capped.
         polyline_points.clear();
         polyline_points.reserve(op.data_count);
         for (std::uint32_t i = 0; i < op.data_count; ++i) {
@@ -136,4 +120,4 @@ void ReplayDisplayList(SDL_Renderer* renderer, TextRenderer& text_renderer,
   }
 }
 
-}  // namespace microide::render
+}

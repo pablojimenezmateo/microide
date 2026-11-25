@@ -41,8 +41,6 @@ bool SnippetAssist::TryTab(bool shift_tab) {
   if (tab == nullptr || viewport == nullptr) {
     return false;
   }
-  // With no active session a forward Tab tries prefix-triggered snippet expansion
-  // before the caller falls back to inserting a literal tab.
   if (!tab->snippet_session.active) {
     return !shift_tab && TryPrefixExpansion(*tab, *viewport);
   }
@@ -69,7 +67,6 @@ bool SnippetAssist::TryPrefixExpansion(TabEntry::EditorTabState& tab,
   }
   const std::string_view prefix =
       line.substr(range.start.column, range.end.column - range.start.column);
-  // Require a unique exact prefix match; ambiguity falls through to a literal tab.
   const LanguageSnippet* match = nullptr;
   for (const auto& snippet : contract->snippets) {
     if (snippet.prefix == prefix) {
@@ -159,4 +156,4 @@ bool SnippetAssist::TryDeleteForward(editor::TextViewport* viewport) {
   });
 }
 
-}  // namespace microide::workspace
+}

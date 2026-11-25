@@ -18,7 +18,7 @@ void ApplyToProject(ProjectWorkspaceState& project,
   }
 }
 
-}  // namespace
+}
 
 void ApplyKnownRasterSize(editor::SurfaceContent& content,
                           const render::SurfaceTextureCache& cache) {
@@ -45,4 +45,4 @@ bool ApplyDecodedRasterSizes(render::SurfaceTextureCache& cache, WorkspaceContex
   return true;
 }
 
-}  // namespace microide::workspace
+}

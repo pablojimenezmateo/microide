@@ -46,7 +46,6 @@ void TestLocatorFindsCompileCommandsInBuildDirs() {
 void TestLocatorFindsCompileCommandsInMarkerChild() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
-  // A non-conventional build dir name, identified by its build.ninja marker.
   WriteFile(root / "out-x64" / "build.ninja", "# ninja\n");
   WriteFile(root / "out-x64" / "compile_commands.json", "[]\n");
 
@@ -61,7 +60,6 @@ void TestLocatorReturnsNulloptWhenAbsent() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   WriteFile(root / "src" / "main.cpp", "int main() {}\n");
-  // A build dir with a marker but NO compile_commands.json must not match.
   WriteFile(root / "build" / "CMakeCache.txt", "cache\n");
 
   const auto found = DiscoverCompileCommandsDir(root);
@@ -69,8 +67,6 @@ void TestLocatorReturnsNulloptWhenAbsent() {
          "no compile_commands.json anywhere should yield nullopt");
 }
 
-// A local project with its database in a directory clangd does not search gets
-// the flag; other servers and an explicit flag are left alone.
 void TestPlanPointsLocalClangdAtANonStandardBuildDir() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -90,13 +86,10 @@ void TestPlanPointsLocalClangdAtANonStandardBuildDir() {
          "a command that names its own directory is left alone");
 }
 
-// TD-2026-10-16-344: a remote project's tree here is the mirror, which never
-// holds the host's build output -- so the host neither searches it, nor warns
-// that the database is missing, nor points clangd at a mirror path.
 void TestPlanLeavesRemoteClangdToItsOwnDiscovery() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "mirror";
-  WriteFile(root / "out" / "compile_commands.json", "[]\n");  // stale local copy
+  WriteFile(root / "out" / "compile_commands.json", "[]\n");
   ScriptedProcessLauncher launcher;
   launcher.local = false;
 
@@ -109,7 +102,7 @@ void TestPlanLeavesRemoteClangdToItsOwnDiscovery() {
          "the note names the machine clangd runs on");
 }
 
-}  // namespace
+}
 
 void RegisterCompileCommandsLocatorTests(std::vector<TestCase>& tests) {
   AddTest(tests, "CompileCommandsLocator/FindsInRoot", TestLocatorFindsCompileCommandsInRoot);
@@ -125,4 +118,4 @@ void RegisterCompileCommandsLocatorTests(std::vector<TestCase>& tests) {
           TestPlanLeavesRemoteClangdToItsOwnDiscovery);
 }
 
-}  // namespace microide::tests
+}

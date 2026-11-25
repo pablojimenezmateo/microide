@@ -9,23 +9,10 @@
 
 #include "util/Fnv1a.h"
 
-// Moved-code detection (TD-2026-11-11-443). The structural refinement matches
-// each hunk alone -- it has to, the editable compare pane rebuilds per keystroke
-// and only the changed hunk refines again -- so code moved from one hunk to
-// another was novel in both. This pass reads the finished rows the way git's
-// --color-moved does: a run of whole deleted lines in one hunk that reappears as
-// a run of whole added lines in ANOTHER hunk is a move. Lines compare with their
-// indentation trimmed (moved and re-indented is still moved), and a block must
-// carry enough text to mean something -- a lone `}` reappearing elsewhere is not
-// a move. Linear in the hunks' lines: a hash per line, a bounded candidate list.
 namespace microide::compare {
 namespace {
 
-// git's default for --color-moved: a block needs this many alphanumeric
-// characters to count.
 constexpr std::size_t kMinMovedAlnum = 20;
-// Candidates tried per deleted line: a file full of identical lines (`}` alone
-// is excluded by the threshold, but `return;` is not) must stay linear.
 constexpr std::size_t kMaxCandidates = 16;
 
 std::string_view Trimmed(std::string_view text) {
@@ -46,7 +33,7 @@ std::size_t AlnumCount(std::string_view text) {
 }
 
 struct MoveScratch {
-  std::vector<std::pair<std::uint64_t, std::uint32_t>> added;  // (hash of trimmed text, row)
+  std::vector<std::pair<std::uint64_t, std::uint32_t>> added;
 };
 
 MoveScratch& Scratch() {
@@ -62,7 +49,7 @@ bool IsAdded(const CompareRow& row) {
   return row.kind == CompareRowKind::Added && row.right_line != 0 && row.left_line == 0;
 }
 
-}  // namespace
+}
 
 void MarkMovedLines(CompareModel& model) {
   std::vector<CompareRow>& rows = model.rows;
@@ -104,7 +91,7 @@ void MarkMovedLines(CompareModel& model) {
          ++candidate, ++tried) {
       const std::uint32_t added = candidate->second;
       if (rows[added].hunk == rows[at].hunk || rows[added].right_moved) {
-        continue;  // within one hunk the structural match already decided
+        continue;
       }
       std::size_t length = 0;
       while (at + length < rows.size() && added + length < rows.size()) {
@@ -122,7 +109,6 @@ void MarkMovedLines(CompareModel& model) {
         best_added = added;
       }
     }
-    // A block ends on text, not on blank lines it happened to run through.
     while (best_length > 0 && Trimmed(rows[at + best_length - 1].left_text).empty()) {
       --best_length;
     }
@@ -142,4 +128,4 @@ void MarkMovedLines(CompareModel& model) {
   }
 }
 
-}  // namespace microide::compare
+}

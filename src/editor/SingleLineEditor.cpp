@@ -11,11 +11,6 @@ namespace microide::editor {
 
 namespace {
 
-// A single-line surface must never hold CR/LF. Rather than concatenating the
-// lines (`foo\nbar` -> `foobar`, which silently corrupts a search needle / rename
-// target), collapse each run of line breaks into a single space and drop leading/
-// trailing runs, so `foo\nbar` -> `foo bar` and a whole-line-copy's trailing '\n'
-// leaves no stray space. Returns empty when the input was only line breaks.
 std::string CollapseLineBreaksToSpaces(std::string_view input) {
   std::string out;
   out.reserve(input.size());
@@ -38,10 +33,6 @@ std::string CollapseLineBreaksToSpaces(std::string_view input) {
 
 std::size_t ClampCaret(std::string_view text, std::size_t offset) {
   offset = std::min(offset, text.size());
-  // Snap to a UTF-8 boundary: mouse hit-testing, tests, or plugin-driven surfaces
-  // can request a caret in the middle of a multibyte character, and the next
-  // insert/delete there would split the code point and corrupt the field. Walk
-  // back off any continuation byte (0b10xxxxxx) to the start of its scalar.
   while (offset > 0 && offset < text.size() &&
          (static_cast<unsigned char>(text[offset]) & 0xC0) == 0x80) {
     --offset;
@@ -49,7 +40,7 @@ std::size_t ClampCaret(std::string_view text, std::size_t offset) {
   return offset;
 }
 
-}  // namespace
+}
 
 SingleLineEditor::SingleLineEditor(std::string text) {
   SetText(std::move(text));
@@ -64,13 +55,6 @@ SingleLineSnapshot SingleLineEditor::Snapshot() const {
 }
 
 void SingleLineEditor::SetText(std::string text) {
-  // Same sanitization Insert/Append/Paste apply: a single-line field must never
-  // hold CR/LF, whichever door the text came through. This one is the door
-  // EXTERNAL text uses -- a debug adapter's variable value, a persisted commit
-  // subject, a setting's stored value, a search term seeded from a selection --
-  // so it is the one that most needs the rule, and it was the one that skipped it.
-  // A caller compensating on its own (TerminalFindService's seed truncates at the
-  // first newline) is a workaround for this, not a substitute.
   if (text.find_first_of("\r\n") != std::string::npos) {
     text = CollapseLineBreaksToSpaces(text);
   }
@@ -83,9 +67,6 @@ void SingleLineEditor::Append(std::string text) {
   if (text.empty()) {
     return;
   }
-  // Share Insert's single-line sanitization: a single-line field must never store
-  // CR/LF, even via this public helper. Collapse line-break runs to single spaces
-  // so a future caller cannot smuggle control bytes past the field's invariant.
   if (text.find_first_of("\r\n") != std::string::npos) {
     text = CollapseLineBreaksToSpaces(text);
     if (text.empty()) {
@@ -142,15 +123,6 @@ bool SingleLineEditor::Insert(std::string_view input) {
   if (input.empty()) {
     return false;
   }
-  // A single-line surface must never hold line breaks. Clipboard paste (Ctrl+V, or
-  // a paste delivered as a text-input event on some platforms — both funnel here)
-  // can carry CR/LF: a whole-line copy includes a trailing '\n', and multi-line
-  // clipboard content brings more. Inserting them raw stores control bytes that
-  // render as garbage cells and corrupt the field's parsed value (search needle,
-  // goto-line target, rename text, ...). Collapse line-break runs to single spaces
-  // (so `foo\nbar` pastes as `foo bar`, not `foobar`) before inserting; typed
-  // single characters never contain them, so normal input is unaffected. Recurse
-  // once with the sanitized, newline-free text.
   if (input.find_first_of("\r\n") != std::string_view::npos) {
     const std::string sanitized = CollapseLineBreaksToSpaces(input);
     if (sanitized.empty()) {
@@ -225,9 +197,6 @@ bool SingleLineEditor::MoveRight(bool extend_selection) {
   return true;
 }
 
-// Unlike MoveLeft/MoveRight, a word step over a selection does not collapse to
-// the selection's edge: it steps word-wise from the caret and lets the anchor
-// go, as the main editor's MoveCursorWord, VS Code and a GTK/Qt entry do.
 bool SingleLineEditor::MoveWordLeft(bool extend_selection) {
   Normalize();
   if (caret_ == 0) {
@@ -309,12 +278,6 @@ bool SingleLineEditor::MoveEnd(bool extend_selection) {
 
 bool SingleLineEditor::SelectWordAt(std::size_t byte_offset) {
   Normalize();
-  // The SAME rule the multi-line editor's double-click uses (WordSelectionRunAt):
-  // the identifier run the caret touches, or the whitespace / operator run when it
-  // touches none. This used to resolve the run with its own scan and give up
-  // entirely off identifier content, so double-clicking an indent or `->` in the
-  // command prompt or the search box selected nothing while the same double-click
-  // in the editor selected the run -- and the header claimed the two matched.
   const WordSpan span = WordSelectionRunAt(text_, std::min(byte_offset, text_.size()));
   if (span.empty()) {
     return false;
@@ -388,4 +351,4 @@ void SingleLineEditor::BeginSelectionIfNeeded(bool extend_selection) {
   ClearSelection();
 }
 
-}  // namespace microide::editor
+}

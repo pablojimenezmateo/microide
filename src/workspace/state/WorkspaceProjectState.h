@@ -73,11 +73,6 @@ enum class OverlayMode {
   CodeActions,
 };
 
-// True for the centered "quick open" modals: a titled card carrying one query
-// field, a result summary, a key hint, and a scrollable result list. They all
-// wear the same chrome — flipping between Ctrl+P, Ctrl+Shift+P and the git
-// pickers used to move the card and shuffle the header rows, which read as three
-// unrelated dialogs.
 inline bool OverlayIsQuickOpen(OverlayMode mode) {
   switch (mode) {
     case OverlayMode::FileFinder:
@@ -91,49 +86,30 @@ inline bool OverlayIsQuickOpen(OverlayMode mode) {
   }
 }
 
-// True for an overlay that owns the pointer: a click outside it only dismisses it
-// (WorkspaceChromeMouseCoordinator::HandleOverlayButtonDown), so nothing beneath
-// may take that click. Everything but the non-modal pieces of the editor -- the
-// find/replace widget (a click outside goes to the editor) and the completion list
-// (a click elsewhere closes it and still lands).
 inline bool OverlayIsModal(OverlayMode mode) {
   return mode != OverlayMode::BufferSearch && mode != OverlayMode::BufferReplace &&
          mode != OverlayMode::Completion;
 }
 
-// Vertical offset (from the overlay card top) of the query field row. Shared by
-// RenderViewModelBuilder and the click hit-test so a field can never be painted
-// somewhere the click does not land.
 inline float OverlayQueryRowOffset(OverlayMode mode) {
   return OverlayIsQuickOpen(mode) ? 52.0f : 0.0f;
 }
 
-// Vertical offset (from the overlay card top) of the result-summary row, which
-// sits between the query field and the list.
 inline float OverlaySummaryRowOffset(OverlayMode mode) {
   return OverlayIsQuickOpen(mode) ? 78.0f : 0.0f;
 }
 
-// Vertical offset (from the overlay card top) where the mode's scrollable list
-// starts. Shared by the shell's list-layout/hit-test helpers and
-// RenderViewModelBuilder so their geometry can never drift apart.
 inline float OverlayListStartOffset(OverlayMode mode) {
   switch (mode) {
     case OverlayMode::BufferReplace:
       return 106.0f;
     case OverlayMode::Completion:
-      // The caret-anchored completion popup renders header-less, so the list starts
-      // near the top.
       return 8.0f;
     case OverlayMode::CodeActions:
-      // The centered code-action menu carries a title bar (but no query field), so
-      // the list starts just below the title.
       return 40.0f;
     case OverlayMode::BufferSearch:
       return 86.0f;
     default:
-      // Quick-open header: title + optional context subtitle + query field +
-      // summary/hint line.
       return 108.0f;
   }
 }
@@ -145,10 +121,6 @@ enum class PanelContentKind {
   PluginSurface,
 };
 
-// The four structured debug surfaces shown in the right-side debug pane. Selected
-// by the pane's mode-row (a button switcher); only one is visible at a time. The
-// backing data lives on `ProjectWorkspaceState` (`debug_execution`,
-// `debug_variables`, `debug_watch`, `debug_breakpoints_panel`) and is reused as-is.
 enum class DebugPaneMode {
   CallStack,
   Variables,
@@ -164,17 +136,12 @@ enum class BufferSearchField {
 enum class ProjectSearchEditField {
   Query,
   Replace,
-  // "files to include" / "files to exclude" scope globs, shown only while the
-  // panel's "..." toggle is expanded (VS Code's affordance).
   Include,
   Exclude,
 };
 
 struct ProjectSurfaceState {
   FocusTarget focus = FocusTarget::Sidebar;
-  // The first key of a two-step chord (Ctrl+K of Ctrl+K Ctrl+O), pressed and
-  // waiting for the second; cleared by the next key, or by a surface that takes
-  // the keyboard for itself (KeybindingSpec::leader_key).
   struct PendingChord {
     SDL_Keycode key = SDLK_UNKNOWN;
     SDL_Keymod modifiers = SDL_KMOD_NONE;
@@ -182,10 +149,6 @@ struct ProjectSurfaceState {
   std::optional<PendingChord> pending_chord;
 };
 
-// Backing state for the command-line executor. The command palette is now the sole entry
-// surface (its own `query` editor drives input); this carries only the executor feedback
-// string that the control channel and command dispatch read back. No on-screen prompt, no
-// history (the palette's Up/Down navigate its result list).
 struct CommandFeedbackState {
   std::string text;
 };
@@ -193,96 +156,44 @@ struct CommandFeedbackState {
 struct BufferSearchState {
   editor::SingleLineEditor query;
   editor::SingleLineEditor replace_text;
-  // When true, `query` is a PCRE2 regex and replace expands capture groups
-  // ($1, \n, \U, ...); the incremental find-as-you-type refine cache below is
-  // bypassed (regex always full-scans). Toggled by the find widget's `.*` button
-  // / Alt+R.
   bool regex = false;
-  // The find widget's `Aa` and `ab` toggles (Alt+C / Alt+W) — the same two the
-  // terminal find bar has, in the same order. Both apply in literal AND regex
-  // mode: before they existed, literal find was always case-insensitive while
-  // regex find was smart-case, so flipping `.*` silently changed whether `Alpha`
-  // matched `alpha`. `whole_word` filters the match set on word boundaries
-  // (util::SearchMatchStandsAlone) instead of rewriting the query, so literal and
-  // regex agree on what "whole word" means.
   bool match_case = false;
   bool whole_word = false;
-  // The fourth toggle, Find in Selection (Alt+L): `scope` is the text the matches,
-  // and Replace All, are limited to -- the selection when it was turned on (the
-  // caret's line with none), shaded in the editor. A range into the buffer, so it
-  // follows edits like the match set does (BufferSearchScope::Follow); nullopt
-  // while the toggle is off.
   struct Scope {
     editor::SelectionRange range;
-    // What `range` was last brought up to date against.
     const void* document = nullptr;
     std::uint64_t content_revision = 0;
-    // `range.end` measured back from the end of the document: what an edit that
-    // stayed inside the scope (Replace All in it, typing in it) leaves unchanged,
-    // when the edit did not describe itself (a multi-range edit).
     std::size_t lines_after_end = 0;
     std::size_t columns_after_end = 0;
   };
   std::optional<Scope> scope;
-  // The selection (or caret line) the widget opened over, kept in step with edits
-  // too: the widget selects its current match as the query is typed, so by the
-  // time Alt+L is pressed the editor's selection is usually the widget's own.
   std::optional<Scope> opened_over;
   std::vector<editor::SelectionRange> matches;
-  // Bumped whenever `matches` is reassigned (see WorkspaceShell::RefreshBufferSearch) so
-  // the editor overview ruler can cheaply detect when its cached markers are stale.
   std::uint64_t matches_revision = 0;
-  // The buffer `matches` was computed over. Every consumer -- the highlight paint,
-  // the n-of-m counter, find-next, and above all REPLACE -- is a claim about the
-  // buffer as it is now, and a match set taken before an edit points at text that
-  // has moved: Replace then rewrote whichever line had inherited the old range.
-  // Deliberately not folded into `incremental` below, which is the literal
-  // find-as-you-type refine cache and is invalidated outright in regex mode.
   const void* matches_viewport = nullptr;
-  // The document as well as the viewport: a reload swaps the viewport's document
-  // and restarts its revisions, so the old revision can recur over new text (the
-  // widget kept counting 5 matches a project Replace All had just reloaded away).
   const void* matches_document = nullptr;
   std::uint64_t matches_content_revision = 0;
   std::size_t selected_index = 0;
-  // Folds the reveal path expanded to show a match, recorded as whole ranges
-  // rather than opener lines: restoring them re-collapses folds the viewport may
-  // have scrolled away from, and the fold model only resolves ranges for the
-  // window it is looking at.
   std::vector<editor::FoldRange> temporarily_expanded_folds;
   std::filesystem::path temporarily_expanded_fold_tab_path;
   bool preserve_temporarily_expanded_folds = false;
 
-  // Find-as-you-type incremental cache (see WorkspaceShell::RefreshBufferSearch).
-  // Identifies the query + buffer state that produced the current `matches`. When
-  // the next query merely extends `query` over the same unchanged buffer, the new
-  // match set is a subset and is refined from `matches` instead of rescanning the
-  // whole document. `viewport` is an opaque identity token (never dereferenced).
   struct IncrementalSearchCache {
     bool valid = false;
     const void* viewport = nullptr;
-    const void* document = nullptr;  // see matches_document
+    const void* document = nullptr;
     std::uint64_t content_revision = 0;
     std::string query;
-    // The options the cached matches were taken under. Refining a set found with
-    // different options would silently keep the old semantics.
     bool match_case = false;
     bool whole_word = false;
-    // The Find in Selection range the matches were limited to.
     std::optional<editor::SelectionRange> scope;
   };
   IncrementalSearchCache incremental;
 };
 
-// How RefreshProjectSearch treats the results already shown. `Fresh` is a new
-// query: they are cleared and the list starts at the top. `InPlace` re-runs the
-// SAME query because the files changed under it: they stay up until the run
-// finishes and are then replaced in one step, selection kept on the same match.
 enum class ProjectSearchRerun { Fresh, InPlace };
 
 struct ProjectSearchState {
-  // Typing in the results list selects by the matched line's text
-  // (workspace/TypeNavigation.h).
   TypeNavigationState type_navigation;
   editor::SingleLineEditor query;
   project::ProjectSearchOptions options;
@@ -290,82 +201,35 @@ struct ProjectSearchState {
   bool editing = false;
   ProjectSearchEditField edit_field = ProjectSearchEditField::Query;
   editor::SingleLineEditor replace_text;
-  // Scope globs mirrored into `options.include_globs` / `options.exclude_globs`
-  // when committed. Held as editors (not raw strings) so they share the same
-  // single-line editing/caret/selection behaviour as the query and replace boxes.
   editor::SingleLineEditor include_globs;
   editor::SingleLineEditor exclude_globs;
-  // Whether the include/exclude fields are shown. Collapsed by default so the
-  // result list keeps its vertical space until the user asks for scoping.
   bool scope_expanded = false;
-  // Search as you type (VS Code's search.searchOnType): an edit to the query or a
-  // scope glob arms this deadline (SDL ticks), and the shell's scheduled wake runs
-  // the search on the text being typed once it passes -- so a pause, not Enter,
-  // shows results. 0 = nothing pending.
   static constexpr std::uint64_t kSearchOnTypeDebounceMs = 300;
   std::uint64_t search_on_type_due_ms = 0;
   std::vector<project::ProjectSearchResult> results;
-  // Monotonic revision of `results`, bumped by every mutation (clear on a new run /
-  // overlay close, append+sort in ConsumeProjectSearchUpdates). The grouped sidebar
-  // line map (file-header rows interleaved with result indices) is a pure function
-  // of `results`, so caching it against this revision lets render, hit-testing, and
-  // keyboard navigation share one build instead of each walking every result,
-  // copying filesystem paths for the group boundaries, and allocating a fresh
-  // vector per frame / keystroke. See BuildProjectSearchLineMap.
   std::uint64_t results_revision = 0;
   mutable std::vector<int> cached_line_map;
   mutable std::uint64_t cached_line_map_revision = 0;
   mutable bool cached_line_map_valid = false;
-  // Query text whose search has fully completed and whose `results` are cached.
-  // Empty until a search finishes. Lets the search sidebar reuse results when
-  // the user leaves and returns to the panel instead of re-running every time.
-  // RefreshProjectSearch clears it (a new run invalidates the cache) and
-  // ConsumeProjectSearchUpdates sets it when the worker reports `finished`.
   std::string searched_query;
-  // What the run behind `results` searched -- the query and its options with the
-  // scope globs -- so the hits of an open, edited buffer are re-derived from its
-  // text under the same rule (workspace/ProjectSearchLiveHits.h). Not the
-  // candidate list: holding the index's snapshot made the next index change copy
-  // every path instead of updating in place.
   std::string run_query;
   project::ProjectSearchOptions run_options;
-  // The buffer state those hits were last re-derived against.
   const void* live_hits_document = nullptr;
   std::uint64_t live_hits_content_revision = 0;
   std::size_t selected_index = 0;
-  // Latest progress counters from ProjectSearchService — "X of Y files" UX.
-  // total_files is the candidate-set size pinned at search start; searched_files
-  // advances as the worker visits each file.
   std::size_t searched_files = 0;
   std::size_t total_files = 0;
-  // Exact total match count from a count-all run (0 when unknown — the default
-  // early-stop run cannot count past the display cap).
   std::size_t total_matches = 0;
   bool running = false;
   bool truncated = false;
-  // True when the file index the candidate set was drawn from was itself
-  // incomplete (project too large / too deep / unreadable folders): the search
-  // never saw some files, so its results are not authoritative over the whole
-  // tree. Distinct from `truncated`, which is the display match-count cap
-  // (TD-2026-07-17-008/033). Pinned from FileIndex::truncated() at search start.
   bool index_incomplete = false;
-  // A remote project's host could not be reached, so the local copy was searched:
-  // it may be behind the host, and the status says so (remote-projects.md § 6.11).
   bool searched_local_copy = false;
   std::string error;
-  // An InPlace re-run in flight: its matches collect in `staged_results` and
-  // replace `results` when it finishes. Clearing the shown list up front made it
-  // blink empty and jump to the top on every project-change batch, which under
-  // agents writing the tree is twice a second.
   bool rerun_in_place = false;
   std::vector<project::ProjectSearchResult> staged_results;
   bool staged_truncated = false;
 };
 
-// The committed editor behind one search-panel field. Single source of truth for
-// the field->editor mapping so begin/commit/cancel-edit cannot drift apart (they
-// each used to spell their own Query-or-Replace ternary, which does not scale to
-// four fields).
 inline editor::SingleLineEditor& ProjectSearchFieldEditor(ProjectSearchState& search,
                                                           ProjectSearchEditField field) {
   switch (field) {
@@ -385,87 +249,62 @@ inline const editor::SingleLineEditor& ProjectSearchFieldEditor(const ProjectSea
   return ProjectSearchFieldEditor(const_cast<ProjectSearchState&>(search), field);
 }
 
-// One selectable row in the ref/commit picker. Display strings are precomputed
-// when the list is built (in the coordinator) so the render TU only draws them.
 struct GitPickerItem {
   enum class Kind { Commit, Branch };
   Kind kind = Kind::Commit;
-  std::string ref;              // commit hash, or short branch name
-  std::string apply_label;      // user-facing label applied on selection (short_hash / branch)
-  std::string primary_label;    // left column text
-  std::string secondary_label;  // right column text (muted)
-  std::string search_text;      // lowercased "primary secondary ref", built once for filtering
-  project::GitCommitEntry commit;  // populated when kind == Commit (for open_comparison)
+  std::string ref;
+  std::string apply_label;
+  std::string primary_label;
+  std::string secondary_label;
+  std::string search_text;
+  project::GitCommitEntry commit;
 };
 
-// What selecting an item does. CompareFileHistory opens a diff of the picked
-// commit against the working tree; OutgoingBaseRef sets the sidebar's outgoing
-// comparison base to the picked branch/commit.
-// SwitchBranch reuses the same overlay/list machinery as the compare pickers; it
-// just applies the choice by checking the branch out instead of diffing against it.
 enum class ComparePickerPurpose { CompareFileHistory, OutgoingBaseRef, SwitchBranch };
 
 struct ComparePickerState {
   ComparePickerPurpose purpose = ComparePickerPurpose::CompareFileHistory;
-  std::filesystem::path path;   // file being compared (CompareFileHistory only)
-  std::string title;            // header title, e.g. "Compare against"
-  std::string context_label;    // subtitle: filename or branch context
-  std::string summary_line;     // "<matches> of <total>" precomputed in RefreshPicker
+  std::filesystem::path path;
+  std::string title;
+  std::string context_label;
+  std::string summary_line;
   editor::SingleLineEditor query;
   std::vector<GitPickerItem> items;
   std::vector<GitPickerItem> matches;
   std::size_t selected_index = 0;
-  // True while the git history/branch query for this picker runs on the
-  // background executor. The overlay opens immediately in this loading state and
-  // the item list stays empty until the async result lands.
   bool loading = false;
-  // Process-monotonic id of the in-flight async request, stamped by the shell on
-  // open and compared on completion so stale results (overlay closed, project
-  // switched, a newer picker opened) are dropped instead of populating the wrong
-  // list. Main-thread-only.
   std::uint64_t active_request_generation = 0;
 };
 
-// The quick pick: a titled list with a filter field over items one kind of
-// command acts on (VS Code's QuickPick). The kind decides what Enter does, what
-// moving the selection previews, and what Escape puts back; QuickPickService
-// builds, filters and dispatches. Display strings are precomputed when the list
-// is built so the render TU only draws them.
 enum class QuickPickKind : std::uint8_t {
-  LaunchConfig,  // start debugging with ProjectWorkspaceState.launch_configs[index]
-  ColorTheme,    // apply the colour scheme `value`, previewed as the selection moves
-  DocumentSymbol,  // reveal (`line`, `column`) in the active editor, previewed likewise
-  WorkspaceSymbol,  // open `value` (a path) at `line`, `column` = the server's character
-  LanguageMode,     // set the active buffer's language to `value` ("" detects it again)
-  RecentEditor,     // activate the focused group's tab whose stable id is `index`
-  // Run the command line `value`: the choices a command that needs an argument
-  // offers when run bare (`show-output <channel>` per channel, `tab-to-group <n>`
-  // per pane -- TD-2026-10-18-357).
+  LaunchConfig,
+  ColorTheme,
+  DocumentSymbol,
+  WorkspaceSymbol,
+  LanguageMode,
+  RecentEditor,
   RunCommand,
 };
 
 struct QuickPickItem {
-  std::size_t index = 0;        // what the kind indexes (a launch config)
-  std::string value;            // what the kind names (a colour scheme)
-  std::size_t line = 0;         // where the kind goes (a symbol), 0-based
+  std::size_t index = 0;
+  std::string value;
+  std::size_t line = 0;
   std::size_t column = 0;
-  std::string primary_label;    // left column
-  std::string secondary_label;  // muted, right column
-  std::string search_text;      // lowercased "primary secondary", built once for filtering
+  std::string primary_label;
+  std::string secondary_label;
+  std::string search_text;
 };
 
 struct QuickPickState {
   QuickPickKind kind = QuickPickKind::LaunchConfig;
   std::string title;
-  std::string noun = "items";  // the summary's "<matches> of <total> <noun>"
-  std::string summary_line;    // precomputed on refresh
+  std::string noun = "items";
+  std::string summary_line;
   editor::SingleLineEditor query;
   std::vector<QuickPickItem> items;
   std::vector<QuickPickItem> matches;
   std::size_t selected_index = 0;
-  // What Escape restores after the kind previewed a selection: the colour scheme
-  // in use when the pick opened, or the editor's view a symbol preview moved.
-  // Cleared once accepted; unset for a kind with no preview.
   std::string revert_value;
   struct View {
     std::filesystem::path path;
@@ -474,18 +313,10 @@ struct QuickPickState {
     std::size_t scroll = 0;
   };
   std::optional<View> revert_view;
-  // The items are still on their way (a language server answering): the summary
-  // says so instead of "0 of 0".
   bool loading = false;
-  // The query is the server's to answer (workspace/symbol): each change asks again
-  // and the answer replaces the items, instead of filtering them here.
   bool server_filtered = false;
 };
 
-// One extra edit a completion item carries (LSP `additionalTextEdits`), applied
-// with the insertion and positioned in the document as it was before it -- the
-// auto-import / `#include` line the item needs. Editor byte columns, converted
-// from the server's encoding when the item arrived.
 struct CompletionAdditionalEdit {
   editor::SelectionRange range;
   std::string new_text;
@@ -493,47 +324,24 @@ struct CompletionAdditionalEdit {
 
 struct CompletionSessionItem {
   std::string label;
-  // What the typed word is matched against (LSP `filterText`, a snippet's
-  // prefix). Empty means the label; see FilterText().
   std::string filter_text;
   std::string detail;
   std::string documentation;
   std::string insert_text;
   bool is_snippet = false;
-  // Per-item replacement range from an LSP textEdit (0-based, already converted to
-  // editor byte columns). When set it overrides the session's heuristic
-  // `replacement_range` so member/path completions extend the qualifier instead of
-  // overwriting it.
   std::optional<editor::SelectionRange> replacement_range;
   std::vector<CompletionAdditionalEdit> additional_edits;
 
   std::string_view FilterText() const { return filter_text.empty() ? label : filter_text; }
 };
 
-// The completion list follows the typing, as VS Code's does: the editor keeps the
-// caret, every keystroke narrows `items` locally into `visible`, and the sources
-// are asked again only when the language server said its list was incomplete.
 struct CompletionSessionState {
-  // Every candidate the sources returned for this word, in merged rank order.
   std::vector<CompletionSessionItem> items;
-  // The rows shown: indices into `items`, best match for the typed word first.
-  // `selected_index` indexes THIS, never `items`.
   std::vector<std::uint32_t> visible;
   std::size_t selected_index = 0;
-  // start = where the word being completed begins (fixed while the list is up);
-  // end = the caret, extended as the user types.
   editor::SelectionRange replacement_range{};
-  // Caret column on the anchor line when `items` were requested. A server's
-  // per-item range ends there, so typing since then shifts its end by the
-  // difference when the item is accepted.
   std::size_t request_column = 0;
-  // The language server said `isIncomplete`: the next keystroke re-asks instead of
-  // only refiltering.
   bool is_incomplete = false;
-  // Opened by typing (quick suggestions or a trigger character), not by the
-  // command: stays hidden until it has rows, and never shows "Loading…" or "No
-  // completions available" -- an empty answer to a question the user did not ask
-  // is not news.
   bool automatic = false;
   std::string source;
   std::string error;
@@ -542,44 +350,29 @@ struct CompletionSessionState {
   const CompletionSessionItem& VisibleItem(std::size_t row) const { return items[visible[row]]; }
 };
 
-// One resolved text edit from a code action's inline WorkspaceEdit. Coordinates
-// are 0-based (LSP-native). An empty `path` targets the active editable buffer.
 struct CodeActionEdit {
   std::filesystem::path path;
   editor::SelectionRange range;
   std::string new_text;
 };
 
-// One file create/rename/delete resource operation from a WorkspaceEdit's
-// `documentChanges`, resolved from URIs to filesystem paths at flatten time
-// (matching CodeActionEdit). Ops apply in vector order, BEFORE any text edit —
-// the protocol parser re-keys pre-rename text edits to their post-rename URI so
-// this ordering reproduces the wire order's file contents (TD-2026-07-17-011).
 struct WorkspaceResourceOp {
   enum class Kind : std::uint8_t { Create, Rename, Delete };
   Kind kind = Kind::Create;
-  std::filesystem::path path;      // create/delete target; rename source
-  std::filesystem::path new_path;  // rename target; empty for create/delete
-  bool overwrite = false;             // create/rename: replace an existing target
-  bool ignore_if_exists = false;      // create/rename: skip when target exists
-  bool ignore_if_not_exists = false;  // delete: skip when target is missing
-  bool recursive = false;             // delete: allow non-empty directories
+  std::filesystem::path path;
+  std::filesystem::path new_path;
+  bool overwrite = false;
+  bool ignore_if_exists = false;
+  bool ignore_if_not_exists = false;
+  bool recursive = false;
 };
 
 struct CodeActionSessionItem {
   std::string title;
   std::string command;
   std::vector<std::string> arguments;
-  // When non-empty the action is applied directly as buffer edits (no command
-  // dispatch). This is how clangd delivers quickfixes like "remove #include X".
   std::vector<CodeActionEdit> edits;
-  // File create/rename/delete ops carried by the action's inline WorkspaceEdit
-  // (e.g. rust-analyzer "extract module" creates the new file). Applied in order
-  // before `edits`. An action may carry ops without text edits.
   std::vector<WorkspaceResourceOp> resource_ops;
-  // True when this action's inline WorkspaceEdit was NOT materialized because the
-  // overlay's shared aggregate edit/byte budget was exhausted — the action is shown
-  // but its inline fix is disabled (no edits to apply). TD-2026-07-17A-057.
   bool edits_truncated = false;
 };
 
@@ -588,51 +381,32 @@ struct CodeActionSessionState {
   std::size_t selected_index = 0;
   std::string source;
   std::string error;
-  // The buffer the list was asked for, and its content revision then: a fix's
-  // edits are positions in that text, so ExecuteSelected refuses one once the
-  // buffer has moved on.
   std::filesystem::path request_path;
   std::uint64_t request_revision = 0;
 };
 
-// One selectable row in the command palette. `primary_label` is the human-facing
-// command name and `secondary_label` its key chord (may be empty). Built-in commands
-// carry an ActionId; plugin-contributed commands set is_plugin and dispatch by their
-// command token instead. Labels are precomputed when the list is built so the render
-// TU only draws them.
 struct CommandPaletteItem {
   std::string primary_label;
   std::string secondary_label;
-  std::string search_text;  // lowercased "name primary secondary", built once for filtering
-  // Lowercased command name ("git-stash-pop"). Scored separately from the label
-  // so typing a command's exact name always ranks it first, however many other
-  // rows happen to contain those letters.
+  std::string search_text;
   std::string command_name;
-  ActionId action = ActionId::CodeActions;  // meaningful only when !is_plugin
-  std::string command_token;                // plugin command name when is_plugin
+  ActionId action = ActionId::CodeActions;
+  std::string command_token;
   bool is_plugin = false;
 };
 
 struct CommandPaletteState {
   std::string title = "Commands";
-  std::string summary_line;  // "<matches> of <total>" precomputed on refresh
+  std::string summary_line;
   editor::SingleLineEditor query;
   std::vector<CommandPaletteItem> items;
-  // Indices into `items` for the rows surviving the current query. Storing indices (not
-  // full CommandPaletteItem copies) keeps palette typing from copying every matched row's
-  // strings on each keystroke (TD-2026-07-17A-032); `items` stays the owner.
   std::vector<std::size_t> matches;
   std::size_t selected_index = 0;
-  // The commands last run from the palette, most recent first (CommandPaletteRecentKey,
-  // at most kCommandPaletteRecentCap): an empty query lists them first and a query
-  // breaks ties within a rank by them, as VS Code's "recently used" group does.
   std::vector<std::string> recent;
 };
 
 inline constexpr std::size_t kCommandPaletteRecentCap = 10;
 
-// The identity a palette row is remembered by: a plugin command's token, else the
-// built-in's command name, else (a label-only action) its label.
 inline const std::string& CommandPaletteRecentKey(const CommandPaletteItem& item) {
   if (item.is_plugin) {
     return item.command_token;
@@ -641,8 +415,6 @@ inline const std::string& CommandPaletteRecentKey(const CommandPaletteItem& item
 }
 
 struct OverlayWorkflowState {
-  // The file finder opened by Compare Files… over an active file: the file to
-  // compare the one picked with, and the title saying so. Empty for Go to File.
   std::filesystem::path file_finder_compare_left;
   std::string file_finder_compare_title;
   BufferSearchState buffer_search;
@@ -660,12 +432,7 @@ struct OverlayState {
   BufferSearchField buffer_search_field = BufferSearchField::Search;
   int scroll_row = 0;
   OverlayWorkflowState workflow;
-  // Caret rect (editor coordinates) captured when a caret-anchored overlay (completion /
-  // code actions) opens, so the popup can render as a compact list next to the caret
-  // instead of a large centered modal that hides the code being completed.
   std::optional<SDL_FRect> caret_anchor;
-  // The surface that had keyboard focus when the overlay opened: where a
-  // dismissal with no target of its own (Escape) gives it back, as VS Code does.
   FocusTarget opened_from = FocusTarget::Editor;
 };
 
@@ -673,35 +440,21 @@ struct OutputPanelState {
   std::string channel_id = "plugins.log";
   std::vector<std::string> open_channel_ids;
   int scroll_row = 0;
-  // Stick to the newest line as content streams in (e.g. debug-adapter / gdb
-  // output), the same way a terminal tab follows its tail. Detaches when the
-  // user scrolls up and re-attaches when they scroll back to the bottom.
   bool follow_tail = true;
 };
 
-// Right-side debug pane (mirrors the left SidebarState). The four debug surfaces
-// share this pane via a mode-row button switcher; each keeps its own scroll so a
-// surface switch preserves position. `visible` gates the whole pane (auto-opened
-// on the first stop, toggled from the Debug menu); meaningful only when the
-// `debug.enabled` setting is ON. Width is persisted per project.
 struct DebugPaneState {
   bool visible = false;
-  float width = 288.0f;  // mirror SidebarState default
+  float width = 288.0f;
   DebugPaneMode mode = DebugPaneMode::Variables;
   int call_stack_scroll_row = 0;
   int variables_scroll_row = 0;
   int watch_scroll_row = 0;
   int breakpoints_scroll_row = 0;
-  // Keyboard selection for the Breakpoints surface. The other three modes already
-  // had one: Variables/Watch keep it on their value tree, and the Call Stack's is
-  // the focused frame. This is the only mode that needed its own.
   int breakpoints_selected_row = 0;
 };
 
 struct LspUiState {
-  // Number of interactive requests currently in flight. A single bool could not
-  // represent two overlapping requests (e.g. outline + hover), so the first to
-  // return would flicker the busy indicator off while the other was still live.
   int request_in_flight_count = 0;
   Uint64 request_started_ticks = 0;
   Uint64 request_timeout_ticks = 0;
@@ -710,31 +463,13 @@ struct LspUiState {
 struct PanelState {
   PanelContentKind content = PanelContentKind::None;
   float height = kWorkspaceDefaultBottomPanelHeight;
-  // Maximized ("immersive") panel: the layout gives the panel everything below
-  // the menu bar and project strip, and the editor column, sidebar, debug pane
-  // and status bar collapse. `height` is untouched so restoring is exact. Only
-  // meaningful while `content != None`; a hidden panel keeps the flag so it
-  // comes back maximized, as VS Code's does.
   bool maximized = false;
-  // The keyboard's surface as of the last frame that saw the panel maximized
-  // (TerminalPanelService::SyncPanelMaximizedWithFocus); nullopt when it was not.
-  // Runtime only: a restored or re-activated project starts with none, so the
-  // focus it arrives with is the baseline, never a "move" that restores.
   std::optional<FocusTarget> maximized_seen_focus;
-  // ...and whether an overlay of the editor's (find, completion) was up then: the
-  // focus stays Overlay from a quick-open to Find, and only the second restores.
   bool maximized_seen_editor_overlay = false;
-  // What the panel showed before it was hidden by the panel toggle, so showing
-  // it again brings the same content back rather than always a terminal.
   PanelContentKind restore_content = PanelContentKind::None;
-  // Horizontal scroll offset (first visible tab index) for the bottom-panel tab
-  // strip, shared by terminal and output tabs so an overflowed strip stays
-  // reachable via the chevrons or the header wheel.
   int tab_scroll_index = 0;
   CommandFeedbackState feedback;
   OutputPanelState output;
-  // Active plugin surface shown when `content == PluginSurface` (Phase E0). Keyed
-  // by owner+id into `surface_store`; scroll is host-owned and panel-local.
   std::string surface_owner;
   std::string surface_id;
   int surface_scroll_y = 0;
@@ -744,15 +479,6 @@ struct WelcomeSurfaceState {
   editor::TextViewport viewport;
 };
 
-// A non-blocking strip shown at the top of an editor pane whose file changed on
-// disk. `ExternalChange` is actionable (Reload / Overwrite / Keep) and appears
-// when the in-memory buffer has unsaved edits; `ReloadedNotice` is informational
-// and appears when a clean buffer was silently refreshed from disk.
-// `OpenFailed` stays on a tab whose off-thread read failed, with a Retry: the
-// error toast is gone a few seconds later, and the tab otherwise looks like an
-// empty file at that path. `ReadOnly` is a save refused because the file is
-// read-only (VS Code's NoPermissions): Overwrite clears the bit and saves, Save
-// As writes elsewhere, Keep leaves the edits unsaved.
 struct EditorBannerState {
   enum class Kind {
     ExternalChange,
@@ -761,26 +487,17 @@ struct EditorBannerState {
     ReadOnly,
   };
   Kind kind = Kind::ExternalChange;
-  std::filesystem::path path;  // normalized absolute path the banner pertains to
-  std::string reason;          // OpenFailed: why, as the toast said it
+  std::filesystem::path path;
+  std::string reason;
 };
 
-// The buttons a banner kind offers, in display order (static storage).
 std::span<const EditorBannerButton> EditorBannerButtonsFor(EditorBannerState::Kind kind);
 
-// Render-side resolved file-tree icons, parallel to DirectoryTree::entries().
-// Rebuilt lazily only when the tree entries change or plugin icon themes reload,
-// so the per-frame sidebar loop reads cached icons instead of re-resolving (and
-// re-lowercasing) every visible row. icons[i] aligns 1:1 with entries()[i];
-// directory rows hold nullopt. Session-scoped, never persisted.
 struct FileIconRenderCache {
   std::vector<std::optional<WorkspaceFileIconRegistry::Icon>> icons;
   std::uint64_t tree_revision = ~0ull;
   std::uint32_t icon_revision = ~0u;
 
-  // Drop the resolved-icon cache back to its pristine "never built" state. Called
-  // when file icons are disabled so the feature leaves no per-project footprint
-  // and a later re-enable rebuilds cleanly (sentinel revisions force a refresh).
   void Reset() {
     icons.clear();
     icons.shrink_to_fit();
@@ -789,29 +506,16 @@ struct FileIconRenderCache {
   }
 };
 
-// Upper bound on tabs in a single editor group. Guards the interactive /
-// control-driven open paths (the `tab` command, file/compare/merge opens) against
-// a flood that would OOM the heap and drag down every O(open_tabs) layout, dirty
-// scan, and tab-strip render pass. Set well beyond any human workflow; a hostile
-// control client issuing `tab` in a tight loop hits this instead of growing
-// without bound. Session restore is exempt (it replays trusted persisted state).
 inline constexpr std::size_t kMaxOpenTabsPerGroup = 512;
 
-// A single editor group: its own tab strip (open_tabs + active index + scroll)
-// and its own home/placeholder surface. The editor area holds 1..kMaxEditorGroups
-// of them, arranged by `ProjectWorkspaceState::editor_split`.
 struct EditorGroup {
   WelcomeSurfaceState welcome_surface;
   std::vector<TabEntry> open_tabs;
   std::size_t active_tab_index = 0;
   int tab_scroll_index = 0;
-  // The group's tabs by stable id, most recently active first (Ctrl+Tab's order).
-  // Frame prep observes the active tab (NoteActiveTabUse), so every way a tab
-  // becomes active counts without a hook per path; ids of closed tabs drop out.
   std::vector<std::uint64_t> recent_tab_ids;
 
   bool has_active_tab() const { return active_tab_index < open_tabs.size(); }
-  // Move the active tab to the front of recent_tab_ids, and forget closed tabs.
   void NoteActiveTabUse() {
     if (!has_active_tab()) {
       return;
@@ -819,7 +523,7 @@ struct EditorGroup {
     const std::uint64_t id = EnsureTabStableId(active_tab());
     if (!recent_tab_ids.empty() && recent_tab_ids.front() == id &&
         recent_tab_ids.size() <= open_tabs.size()) {
-      return;  // the settled frame: nothing moved
+      return;
     }
     std::erase(recent_tab_ids, id);
     recent_tab_ids.insert(recent_tab_ids.begin(), id);
@@ -830,8 +534,6 @@ struct EditorGroup {
   }
   TabEntry& active_tab() { return open_tabs[active_tab_index]; }
   const TabEntry& active_tab() const { return open_tabs[active_tab_index]; }
-  // The active tab's state when it is a tab of that kind with its state in place,
-  // else null (no active tab, another kind, or an editor tab still loading).
   EditorTabState* active_editor() { return ActiveState(&TabEntry::editor_state, TabEntry::Kind::Editor); }
   const EditorTabState* active_editor() const {
     return ActiveState(&TabEntry::editor_state, TabEntry::Kind::Editor);
@@ -858,10 +560,6 @@ struct EditorGroup {
   }
 };
 
-// F6 / Shift+F6 (Focus Next / Previous Part): the surface after `current` among
-// those on screen, in visual order -- sidebar (left), editor (centre), debug pane
-// (right), panel (bottom) -- wrapping at both ends. An ordered ring rather than a
-// chain of conditions, so no surface can be left out of the rotation.
 inline FocusTarget NextSurfaceInFocusRing(FocusTarget current, bool sidebar, bool debug_pane, bool panel,
                                           bool backward) {
   std::array<FocusTarget, 4> ring{};
@@ -886,8 +584,6 @@ inline FocusTarget NextSurfaceInFocusRing(FocusTarget current, bool sidebar, boo
   return ring[(at + (backward ? size - 1 : 1)) % size];
 }
 
-// The number a new untitled buffer takes: the smallest no open untitled tab of
-// any group uses, as VS Code numbers untitled editors.
 [[nodiscard]] inline std::uint32_t NextUntitledNumber(const std::vector<EditorGroup>& groups) {
   std::vector<bool> used;
   for (const EditorGroup& group : groups) {
@@ -907,8 +603,6 @@ inline FocusTarget NextSurfaceInFocusRing(FocusTarget current, bool sidebar, boo
   return next;
 }
 
-// Numbers every untitled editor tab that has no number yet (a restored session's
-// hot-exit buffers), in group and tab order, and titles it.
 inline void NumberUntitledTabs(std::vector<EditorGroup>& groups) {
   for (EditorGroup& group : groups) {
     for (TabEntry& tab : group.open_tabs) {
@@ -920,9 +614,6 @@ inline void NumberUntitledTabs(std::vector<EditorGroup>& groups) {
   }
 }
 
-// Names every editor tab showing `document`'s buffer after `path` -- a Save As
-// re-points the document, which a split's other panes share, so their tabs must
-// follow the saving one (QA monkey, commands profile, seed 27).
 inline void RenameTabsOnDocument(std::vector<EditorGroup>& groups,
                                  const editor::TextViewport& document,
                                  const std::filesystem::path& path) {
@@ -937,13 +628,6 @@ inline void RenameTabsOnDocument(std::vector<EditorGroup>& groups,
   }
 }
 
-// The live viewport that IS the file `normalized_path` in any pane, or nullptr:
-// a loaded editor tab, or a compare tab's editable working-tree side. A file is
-// one buffer however many panes show it (VS Code's model per resource), so a
-// second view copies this one and shares its DocumentState instead of reading
-// the file again -- an independent copy diverges and the two save over each
-// other. A merge result is synthesized text, never the file. `exclude` skips one
-// viewport (a compare side being rebuilt must not adopt its own old document).
 [[nodiscard]] inline const editor::TextViewport* LiveBufferViewOfPath(
     const std::vector<EditorGroup>& groups,
     const std::filesystem::path& normalized_path,
@@ -958,9 +642,6 @@ inline void RenameTabsOnDocument(std::vector<EditorGroup>& groups,
           EditorViewPathIs(*tab.editor_state, normalized_path)) {
         return &tab.editor_state->viewport;
       }
-      // A compare still loading holds an empty read-only stand-in, not the file —
-      // the same reason a `content_pending()` editor tab is skipped above. Sharing
-      // it would hand a new editor tab a document the load is about to replace.
       if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
           tab.compare->right_editable && !tab.compare->load_pending &&
           &tab.compare->right_viewport != exclude &&
@@ -972,11 +653,6 @@ inline void RenameTabsOnDocument(std::vector<EditorGroup>& groups,
   return nullptr;
 }
 
-// Whether a tab not showing `document` holds `normalized_path` as its buffer: an
-// editor tab, loaded or still pending, or a compare tab's editable side. A file is
-// one buffer, so Save As onto such a path is refused -- the file may not exist yet
-// (a new file, a dangling symlink), so the disk check alone does not catch it, and
-// a second buffer bound to it saves over the first and races it in the session.
 [[nodiscard]] inline bool AnotherBufferHoldsPath(const std::vector<EditorGroup>& groups,
                                                  const std::filesystem::path& normalized_path,
                                                  const editor::TextViewport& document) {
@@ -997,18 +673,6 @@ inline void RenameTabsOnDocument(std::vector<EditorGroup>& groups,
   return false;
 }
 
-// The live viewport of the hydrated EDITOR tab showing `normalized_path` in any
-// pane, or nullptr. Narrower than LiveBufferViewOfPath, which also answers with a
-// compare tab's editable side: the workspace-edit, rename and LSP-document paths
-// address editor buffers specifically, and resolving one of them to a compare
-// side would apply an edit to the wrong surface.
-//
-// `normalized_path` must already be lexically normal — the scan is mostly
-// mismatches, and normalizing each candidate to reject it costs ~12 allocations
-// per tab (TD-2026-08-10-174); EditorViewPathIs compares against the query
-// instead. Four byte-similar copies of this loop existed before it did (two in
-// the workspace-edit paths, one behind IsPathOpenInEditorState, one behind
-// LspService's FindOpenEditorViewport).
 [[nodiscard]] inline const editor::TextViewport* OpenEditorViewOfPath(
     const std::vector<EditorGroup>& groups, const std::filesystem::path& normalized_path) {
   for (const EditorGroup& group : groups) {
@@ -1029,10 +693,6 @@ inline void RenameTabsOnDocument(std::vector<EditorGroup>& groups,
       static_cast<const std::vector<EditorGroup>&>(groups), normalized_path));
 }
 
-// Makes a compare tab's editable side a view of the buffer the file already has
-// open elsewhere (see LiveBufferViewOfPath), keeping the side's own caret and
-// scroll. Returns true when it adopted one; the caller then refreshes the
-// derived model, which the invalidated fingerprint forces.
 inline bool AdoptLiveBufferForCompareRightSide(const std::vector<EditorGroup>& groups,
                                                CompareTabState& compare_tab,
                                                const editor::TextViewport* exclude = nullptr) {
@@ -1054,12 +714,6 @@ inline bool AdoptLiveBufferForCompareRightSide(const std::vector<EditorGroup>& g
   return true;
 }
 
-// Hands a compare tab's editable side a copy of `reopened_view` -- the document a
-// reload just read for this path -- keeping the side's own size, caret and
-// scroll, and invalidating the model fingerprint a fresh document's restarted
-// content revision would otherwise satisfy. Every reload that re-points editor
-// tabs to a reopened document re-points the compare sides with it, or the panes
-// split into one buffer per tab again.
 inline void RepointCompareRightSideToReloadedBuffer(CompareTabState& compare_tab,
                                                     const editor::TextViewport& reopened_view) {
   editor::TextViewport& right = compare_tab.right_viewport;
@@ -1071,14 +725,6 @@ inline void RepointCompareRightSideToReloadedBuffer(CompareTabState& compare_tab
   compare_tab.derived_fingerprint_valid = false;
 }
 
-// After a session restore: every editable compare side joins the buffer its file
-// has in another tab. The restore rebuilds each tab on its own -- an editor tab
-// from its unsaved snapshot, a compare from the file on disk -- and before the
-// groups exist there is nothing for AdoptLiveBufferForCompareRightSide to find,
-// so a file open dirty in an editor tab and in a diff came back as two buffers
-// (soak 72acd73823bd). An editor tab's buffer first: it is the one a snapshot
-// restored. A tab still to load (deferred, or a compare's off-thread read) joins
-// when it lands, as it always has.
 inline void RejoinRestoredCompareSides(std::vector<EditorGroup>& groups) {
   for (EditorGroup& group : groups) {
     for (TabEntry& tab : group.open_tabs) {
@@ -1100,127 +746,48 @@ inline void RejoinRestoredCompareSides(std::vector<EditorGroup>& groups) {
   }
 }
 
-// A tab addressed by (group, tab) across ALL editor groups of one project. Used
-// by the all-groups dirty enumerators and the group-aware save primitive so
-// autosave / save-on-quit flush a buffer dirtied in the non-focused split group
-// too (VSCode "Save All" semantics). Focused-group-scoped operations (close-tab /
-// close-tabs UI) keep using a bare tab index into the focused group.
 struct GroupTabRef {
   std::size_t group_index = 0;
   std::size_t tab_index = 0;
 };
 
-// Ghost text (Copilot-style inline suggestion). At most one is live at a time
-// (single owner, last writer wins). The host validates the anchor against the
-// live caret before storing and clears it synchronously on any
-// edit/caret/focus/buffer change, so it never renders stale. `lines[0]` is the
-// caret-line tail inserted at `anchor_column`; `lines[1..]` are the dimmed rows
-// shown below. Split once at publish; the renderer hands out views into `lines`,
-// never copies per frame.
-//
-// Deliberately at NAMESPACE scope rather than nested inside
-// ProjectWorkspaceState::PluginEditorPresentation. A class nested in a
-// still-incomplete enclosing class does not have its default-member-initializers
-// parsed yet, so clang evaluates `std::is_constructible_v<GhostText>` as FALSE
-// while instantiating the enclosing `std::optional<GhostText>` and caches that
-// answer — `ghost_text.emplace()` then fails to compile under clang (GCC
-// re-evaluates later and accepts it). Keeping it out here makes the type
-// complete before any optional over it is instantiated.
 struct PluginGhostText {
-  std::string owner;                   // publishing plugin id
-  std::filesystem::path path;          // normalized target buffer
-  std::size_t anchor_line = 0;         // 0-based caret line it was computed for
-  std::size_t anchor_column = 0;       // 0-based caret column (byte) = insert point
-  std::uint64_t content_revision = 0;  // viewport rev at store time (staleness)
+  std::string owner;
+  std::filesystem::path path;
+  std::size_t anchor_line = 0;
+  std::size_t anchor_column = 0;
+  std::uint64_t content_revision = 0;
   std::vector<std::string> lines;
   bool empty() const { return lines.empty(); }
 };
 
 struct ProjectWorkspaceState {
-  // The directory every file, git, search and process site works in: the path of a
-  // local project, the mirror's tree of a remote one. It never names the project.
   std::filesystem::path root;
-  // What does name it (project::ProjectId): every label, tooltip, title and prompt
-  // derives from this, never from `root`. Identity like `locality` below: set
-  // when the catalog entry is created and kept through every scoped-state reset.
   project::ProjectId id;
-  // The launcher every spawn belonging to THIS project goes through. Local today;
-  // a remote project's is transport-prefixed, and that is the whole point — § 6.5
-  // of the remote design says a session that chooses locality per call silently
-  // splits across two machines.
-  //
-  // A pointer rather than a reference so the state stays copyable and assignable
-  // (it is reset and reassigned wholesale on project switch). Never null: it
-  // defaults to the process-wide local launcher, which is what every project is
-  // until remote projects exist.
-  //
-  // LIFETIME: whatever this points at must outlive the project state. That is
-  // free for the local launcher (a function-local static) and is a real
-  // constraint for a remote one — it belongs to the host session, not to the
-  // project state, which is destroyed and rebuilt on every switch.
-  //
-  // Spawns that must NEVER follow the project — `xdg-open`, "Open Local
-  // Terminal" — keep naming `platform::LocalProcessLauncher()` explicitly and say
-  // why, rather than reading this. (TD-2026-09-22-301.)
   project::ProjectLocality locality;
   [[nodiscard]] const platform::ProcessLauncher& launcher() const { return *locality.launcher; }
-  // The write gate every write into THIS project's tree goes through — content
-  // replacement and tree operations alike, the launcher's twin for the same reason
-  // (a remote project's is the MirrorWriteGate that writes into the mirror and
-  // enqueues the push). Mutable through a const state because the gate is a
-  // service the project points at, not part of the project's value.
-  // (TD-2026-09-29-305.)
   [[nodiscard]] project::FileWriteGate& write_gate() const { return *locality.write_gate; }
   bool initialized = false;
   bool restore_persistence_on_activate = false;
-  // The project's folder was gone when the workspace was restored, and it was kept
-  // only for the unsaved buffers its session holds (RestoreWorkspaceSession): it
-  // opens with those buffers and nothing that needs the folder -- no tree, index,
-  // watcher, git or terminal -- until the folder is back. Identity like `id`: it
-  // survives the scoped-state reset of InitializeCurrentProject.
   bool root_missing = false;
   project::DirectoryTree directory_tree;
-  // Resolved icons for `directory_tree.entries()`, rebuilt lazily by the sidebar
-  // renderer. `mutable` so the const render path can refresh the cache.
   mutable FileIconRenderCache file_icon_cache;
   project::FileIndex file_index;
   project::FileFinder file_finder;
-  // A remote project's connection, for its home's status block (§ 7.3); empty for
-  // a local project. The revision moves with every change (the home's memo key).
   editor::WelcomeRemoteStatus remote_status;
   std::uint64_t remote_status_revision = 0;
-  // Files the project lists that are not on disk yet (a remote mirror's first
-  // sync): the tree shows them dimmed and quick-open finds them.
   void SetPendingPaths(project::SharedPendingPaths pending) {
     file_index.SetPendingPaths(pending);
     directory_tree.SetPendingPaths(std::move(pending));
   }
-  // Per-file EditorConfig overrides, memoized. Resolution is a const query with a
-  // cache behind it, so ApplyEditorPreferences (const, and called for every tab in
-  // every group on any settings change) does no filesystem work once warm.
   project::EditorConfigResolver editor_config;
-  // Editor groups: 1..kMaxEditorGroups, in visual order. `focused_group_index`
-  // selects which group owns keyboard focus / receives newly opened files, and
-  // `editor_split` says where each one sits — its leaves ARE these groups, in
-  // this order, so the two are only ever mutated together (TabCoordinator's group
-  // half owns both).
   std::vector<EditorGroup> editor_groups = std::vector<EditorGroup>(1);
   std::size_t focused_group_index = 0;
-  // Editors closed in this project, newest last, for Reopen Closed Editor (VS
-  // Code's Ctrl+Shift+T): the file and its whole view -- caret, selection, scroll
-  // and collapsed folds. Bounded; a path closed again replaces its older entry.
-  // Saved with the project's session, so it survives a restart.
   static constexpr std::size_t kMaxRecentlyClosedEditors = 32;
   std::vector<DeferredTabHandle> recently_closed_editors;
-  // Go Back / Go Forward across this project's editors (Alt+Left / Alt+Right).
   EditorNavigationHistory navigation_history;
   EditorSplitTree editor_split;
 
-  // Side-effect-free accessors. `editor_groups` is invariantly non-empty (the
-  // mutation sites that erase/clear a group always restore at least one), and
-  // `focused_group_index` is kept valid by those same sites; a stale index here
-  // is clamped on read rather than silently mutated, so const and non-const
-  // resolve to the same group.
   std::size_t clamped_focused_group_index() const {
     return focused_group_index < editor_groups.size() ? focused_group_index : 0;
   }
@@ -1233,29 +800,12 @@ struct ProjectWorkspaceState {
   SidebarState sidebar;
   OverlayState overlay;
   PanelState panel;
-  // The bottom panel's terminal strip: one entry per strip tab, each a group of
-  // side-by-side panes (see TerminalTabState).
   std::vector<std::unique_ptr<TerminalTabState>> terminal_tabs;
   std::size_t active_terminal_tab_index = 0;
-  // What the restored session's terminal panel looked like, waiting for project
-  // init to revive it (TerminalPanelService::OpenTerminalsForProjectInit).
   TerminalLayoutRecord terminal_layout_to_revive;
-  // A git operation of this project finished while another project was in
-  // front (GitOperationService::Callbacks::is_in_front): on its next activation
-  // the project re-reads git state, its tree and its clean buffers -- its file
-  // watcher was stopped, and a re-activated watcher's first batch is a baseline,
-  // not a change list, so a pull's rewrites would otherwise go unseen.
   bool catch_up_on_activate = false;
-  // A host terminal started (StartPendingHostPanes) since this project's session
-  // was last written: a project switched away from while its connection came up
-  // has a terminal its saved session does not name, so quit re-records its
-  // terminal layout (TD-2026-10-27-400). Cleared by a session save.
   bool host_terminals_unrecorded = false;
 
-  // Bounds-checked active terminal tab, or nullptr when there are none / the
-  // stored index is stale. Mirrors clamped_focused_group_index()'s clamp-on-read
-  // discipline so callers never index terminal_tabs by a possibly-stale index
-  // after only an emptiness check.
   TerminalTabState* active_terminal_tab() {
     return const_cast<TerminalTabState*>(std::as_const(*this).active_terminal_tab());
   }
@@ -1264,8 +814,6 @@ struct ProjectWorkspaceState {
                ? terminal_tabs[active_terminal_tab_index].get()
                : nullptr;
   }
-  // The pane the keyboard, find bar and selection act on: the active tab's
-  // active pane, or nullptr when there is no terminal at all.
   TerminalPaneState* active_terminal_pane() {
     TerminalTabState* tab = active_terminal_tab();
     return tab != nullptr ? tab->active() : nullptr;
@@ -1276,27 +824,10 @@ struct ProjectWorkspaceState {
   }
   editor::DiagnosticsStore diagnostics_store;
 
-  // Semantic occurrence highlights for the caret's symbol in one buffer, from
-  // `textDocument/documentHighlight`. While valid these REPLACE the built-in
-  // textual word scan in the render view model: the server resolved the symbol, so
-  // a same-spelled name in another scope stays unpainted and a shadowed one does
-  // not, and writes are told apart from reads.
-  //
-  // Validity is caret-shaped rather than position-exact, matching VS Code: the set
-  // survives as long as the caret is anywhere inside one of its ranges in the same
-  // unedited buffer, so arrowing through a word does not blink the highlight off
-  // between round-trips. Any content edit invalidates it (the ranges are absolute
-  // positions) — the stale set is simply ignored on read and overwritten by the
-  // next response, so nothing has to clear it.
   struct SemanticOccurrenceHighlights {
     std::filesystem::path path;
-    // The document as well as the revision: a reload restarts revisions on a new
-    // document (TextViewport::document_identity), so path + revision alone could
-    // keep a set the reloaded text no longer has.
     const void* document = nullptr;
     std::uint64_t content_revision = 0;
-    // Sorted by (line_index, start_column) so the renderer resolves a row's slice
-    // with a binary search, exactly like the textual scan's output.
     std::vector<editor::OccurrenceRange> ranges;
 
     bool empty() const { return ranges.empty(); }
@@ -1306,9 +837,6 @@ struct ProjectWorkspaceState {
       content_revision = 0;
       ranges.clear();
     }
-    // True when this set was computed for `viewport_path` at `revision` AND the
-    // caret still sits inside one of its ranges (inclusive of both edges, so a
-    // caret parked just past the last character of the symbol keeps it lit).
     bool CoversCaret(const std::filesystem::path& viewport_path, const void* viewport_document,
                      std::uint64_t revision, std::size_t caret_line, std::size_t caret_column) const {
       if (ranges.empty() || content_revision != revision || document != viewport_document ||
@@ -1326,49 +854,28 @@ struct ProjectWorkspaceState {
   };
   SemanticOccurrenceHighlights semantic_occurrences;
 
-  // Plugin/LSP-published editor presentation: decorations (inline text styles,
-  // gutter marks, inline/virtual text, code lenses) keyed by owner+path, and
-  // content surfaces (display lists / rasters) keyed by owner+surface_id. Both
-  // mirror `diagnostics_store`: a producer replaces its contribution atomically
-  // and the renderer reads the merged view. Session-scoped (never persisted).
-  //
-  // Bundled behind a lazily-allocated pointer so an unloaded session pays zero
-  // bytes and the per-frame render path gates on a single null check (mirroring
-  // the debugger's emplace-on-enable view model). `unique_ptr` — not `optional`
-  // — because the stores hand out pointers/spans valid "until the next mutation"
-  // and the bundle's address must stay stable across publish/clear cycles. Null
-  // until the first publish from any producer (Lua plugin or LSP semantic
-  // tokens); released back to null when both stores drain empty.
   struct PluginEditorPresentation {
     editor::PluginDecorationStore decorations;
     editor::PluginSurfaceStore surfaces;
-    // See PluginGhostText above; aliased here so the historical
-    // PluginEditorPresentation::GhostText spelling keeps resolving.
     using GhostText = PluginGhostText;
     std::optional<GhostText> ghost_text;
   };
   std::unique_ptr<PluginEditorPresentation> plugin_presentation;
 
-  // Reader gate: returns nullptr when nothing is published (the common case).
   const PluginEditorPresentation* plugin_presentation_if_present() const {
     return plugin_presentation.get();
   }
-  // Ghost-text reader gate: nullptr unless a suggestion is currently live.
   const PluginEditorPresentation::GhostText* ghost_text_if_present() const {
     return plugin_presentation && plugin_presentation->ghost_text
                ? &*plugin_presentation->ghost_text
                : nullptr;
   }
-  // Writer entry: lazily allocates the bundle on the first contribution.
   PluginEditorPresentation& EnsurePluginPresentation() {
     if (!plugin_presentation) {
       plugin_presentation = std::make_unique<PluginEditorPresentation>();
     }
     return *plugin_presentation;
   }
-  // Restore the zero-footprint state once both stores are empty. Call as the
-  // last statement of a clear handler (after redraw is requested, never
-  // mid-render) so no reader holds a store pointer across the reset.
   void MaybeReleasePluginPresentation() {
     if (plugin_presentation && plugin_presentation->decorations.empty() &&
         plugin_presentation->surfaces.empty() &&
@@ -1376,55 +883,18 @@ struct ProjectWorkspaceState {
       plugin_presentation.reset();
     }
   }
-  // Per-project breakpoints keyed by file path. Adapter-agnostic; the host
-  // snapshots it at launch (setBreakpoints) and reflects verification back.
-  // Mirrors `diagnostics_store`: survives session restarts, persists via the
-  // `debug` PersistedRecord. Only meaningful when `debug.enabled` is ON.
   editor::BreakpointStore breakpoint_store;
-  // Per-project function (symbol) breakpoints. Adapter-agnostic sibling to
-  // `breakpoint_store`: snapshotted at launch (setFunctionBreakpoints) with
-  // verification reflected back. Persists via the `debug` PersistedRecord. Only
-  // meaningful when `debug.enabled` is ON.
   editor::FunctionBreakpointStore function_breakpoint_store;
-  // Transient execution state for the active debug session (current stop + call
-  // stack + focused frame). Rebuilt on every `stopped`, cleared on resume/stop;
-  // never persisted. Only meaningful when `debug.enabled` is ON.
   DebugExecutionView debug_execution;
-  // Transient lazy Variables/Scopes tree for the focused frame (Phase 4). Rebuilt
-  // on each `stopped`/frame focus, cleared on resume/stop; never persisted. Only
-  // meaningful when `debug.enabled` is ON.
   DebugVariablesModel debug_variables;
-  // Transient hover-to-inspect cache (Phase 5): the in-flight / most recent
-  // `evaluate(context:"hover")` result for the focused frame. Cleared on
-  // resume/stop and on a focused-frame switch; never persisted. Only meaningful
-  // when `debug.enabled` is ON and the session is Stopped.
   DebugHoverModel debug_hover;
-  // Watch expressions (Phase 6): a persisted list of expressions + their
-  // transient evaluated value tree. The expression list survives session
-  // restarts (persisted in the `debug` PersistedRecord); the evaluated values
-  // are re-fetched on each `stopped`. Only meaningful when `debug.enabled` is ON.
   DebugWatchModel debug_watch;
-  // Breakpoints panel model (Phase 7): the persisted enabled exception-filter id
-  // set + the active session's advertised filters + a prebuilt row list (filter
-  // toggles followed by navigable line breakpoints). The enabled set persists in
-  // the `debug` PersistedRecord; advertised filters are transient. Only
-  // meaningful when `debug.enabled` is ON.
   DebugBreakpointsModel debug_breakpoints_panel;
-  // Right-side debug pane UI state (visibility, width, active surface, per-surface
-  // scroll). The pane hosts the four structured debug surfaces; its data still
-  // comes from the debug_* models above. Visibility/width/mode persist per
-  // project. Only meaningful when `debug.enabled` is ON.
   DebugPaneState debug_pane;
-  // Persisted + plugin-contributed launch/attach configurations and the
-  // currently selected index. Start Debugging targets the selected config when
-  // one exists, else falls back to the first registered adapter.
   std::vector<LaunchConfig> launch_configs;
   std::size_t selected_launch_config_index = 0;
   std::unique_ptr<LspManager> lsp_manager = std::make_unique<LspManager>();
   LspUiState lsp;
-  // Per-project debug-adapter registry + active debug session (DAP). Lazily
-  // populated by DebugService::EnsureProjectDapManager so a project that never
-  // debugs pays nothing; mirrors `lsp_manager`.
   std::unique_ptr<DapManager> dap_manager = std::make_unique<DapManager>();
   std::string active_colorscheme_name = "default";
   std::optional<SDL_Color> project_base_color;
@@ -1432,21 +902,11 @@ struct ProjectWorkspaceState {
   std::vector<std::pair<std::string, std::string>> settings;
   std::vector<SidebarViewPolicy> sidebar_policies;
   compare::BranchReviewStateService branch_review;
-  // "Select for Compare" stash: the reference side awaiting "Compare with
-  // Selected". Runtime-only (never persisted). `compare_selection_from_file`
-  // marks a file source so the compare re-reads fresh content at compare time
-  // (buffer/clipboard snapshots are used as captured).
   std::optional<CompareInput> compare_selection;
   bool compare_selection_from_file = false;
-  // At most one banner per path; rendered for the active editor tab whose file
-  // matches. Empty in the common case (no external changes pending).
   std::vector<EditorBannerState> editor_banners;
 };
 
-// The bottom panel stops showing anything. The keyboard never stays on a hidden
-// panel: it goes back to the editor, where the panel toggle sends it. Two
-// plugin-surface paths cleared the panel and left the focus behind, and every
-// key went to a panel nobody could see (soak c0c5719bdbce).
 inline void ClearBottomPanelContent(ProjectWorkspaceState& state) {
   state.panel.content = PanelContentKind::None;
   if (state.surface.focus == FocusTarget::Panel) {
@@ -1454,13 +914,7 @@ inline void ClearBottomPanelContent(ProjectWorkspaceState& state) {
   }
 }
 
-// Banner state helpers (free functions; keep WorkspaceShell thin). Defined in
-// WorkspaceShellEditorBanner.cpp.
 const EditorBannerState* ActiveEditorBannerForTab(const ProjectWorkspaceState& state);
-// The strip that banner occupies: the top of the FOCUSED group's surface, the
-// group whose content lays out below it -- not the top of the whole editor area,
-// which with splits is another group's pane. Empty with no banner (or no room).
-// Paint, hit-testing, the hover probe and the control-ui query all read this one.
 SDL_FRect ActiveEditorBannerStripRect(const ProjectWorkspaceState& state,
                                       const EditorGroupRectsLayout& group_rects);
 void SetEditorBanner(ProjectWorkspaceState& state, EditorBannerState::Kind kind,
@@ -1471,24 +925,13 @@ struct ProjectCatalogState {
   std::vector<std::unique_ptr<ProjectWorkspaceState>> entries;
   std::size_t active_index = 0;
   int tab_scroll_index = 0;
-  // The exact text the last EMPTY-selection copy or cut put on the clipboard --
-  // a whole line, newline included. A paste that finds this very text on the
-  // clipboard, with one caret and no selection, inserts it as a line above the
-  // caret's line rather than at the caret (VS Code's emptySelectionClipboard
-  // rule), so copying a line and pasting it from mid-line does not split the
-  // line it lands in. Any other copy clears it. Workspace-wide, like the
-  // clipboard it describes.
   std::string line_clipboard_text;
 };
 
-// The surface keyboard focus lands on when no overlay/prompt owns input — the
-// sidebar when it is visible, otherwise the editor. Single source of truth so
-// dismissal paths cannot drift apart.
 inline FocusTarget PrimarySurfaceFocus(const ProjectWorkspaceState& state) {
   return state.sidebar.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
 }
 
-// Whether `target` is on screen to take the keyboard.
 inline bool FocusSurfaceShown(const ProjectWorkspaceState& state, FocusTarget target) {
   switch (target) {
     case FocusTarget::Editor:
@@ -1505,31 +948,15 @@ inline bool FocusSurfaceShown(const ProjectWorkspaceState& state, FocusTarget ta
   return false;
 }
 
-// Where focus goes when a surface on top closes: back to `previous` while it is
-// still shown, else the primary surface. Handing it to the primary surface
-// unconditionally sent every Escape from the palette, completion or a picker
-// opened in the editor to the file tree whenever the tree was visible (QA
-// plugins-reload); handing it back to a surface since hidden stranded it there
-// (the QA monkey: a prompt over the finder, closed after the sidebar was hidden).
 inline FocusTarget FocusBackTo(const ProjectWorkspaceState& state, FocusTarget previous) {
   return FocusSurfaceShown(state, previous) ? previous : PrimarySurfaceFocus(state);
 }
 
-// Where focus goes when an overlay closes without a target of its own: the
-// surface it was opened from, while that is still shown.
 inline FocusTarget FocusAfterOverlay(const ProjectWorkspaceState& state) {
   return state.overlay.opened_from == FocusTarget::Overlay ? PrimarySurfaceFocus(state)
                                                            : FocusBackTo(state, state.overlay.opened_from);
 }
 
-// Whether a modal overlay is shown without the keyboard: something sent the
-// focus elsewhere while it was up (an `open` from the control channel, a tab
-// switch). ShowOverlay always gives the overlay the focus, so this is an overlay
-// the user left, and it ends as VS Code's quick input does when it loses focus.
-// Left up, it took the focus back on the next Escape and ran its selected row on
-// the Return after it -- Quit, from a palette nobody was looking at (soak
-// 7ab9a5476905). The find/replace widget, completion and code actions float over
-// the editor that keeps the keys; they are not modal.
 inline bool ModalOverlayLostFocus(const ProjectWorkspaceState& state) {
   if (!state.overlay.visible || state.surface.focus == FocusTarget::Overlay) {
     return false;
@@ -1545,11 +972,6 @@ inline bool ModalOverlayLostFocus(const ProjectWorkspaceState& state) {
   }
 }
 
-// Hide the overlay and ensure keyboard focus never strands on the now-hidden
-// surface (the root cause of several "dead input" bugs). Shell-level dismissal
-// (fold-reveal cleanup, redraw requests, cursor-kind invalidation) lives in
-// WorkspaceShell::DismissOverlay; coordinators that cannot reach the shell use
-// this minimal, focus-safe transition instead of a bare `overlay.visible = false`.
 inline void HideOverlay(ProjectWorkspaceState& state) {
   state.overlay.visible = false;
   if (state.surface.focus == FocusTarget::Overlay) {
@@ -1557,4 +979,4 @@ inline void HideOverlay(ProjectWorkspaceState& state) {
   }
 }
 
-}  // namespace microide::workspace
+}

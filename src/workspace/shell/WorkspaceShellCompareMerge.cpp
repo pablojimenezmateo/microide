@@ -58,10 +58,6 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
               [this](CompareInput left, CompareInput right) -> std::optional<TabEntry> {
                 const std::filesystem::path left_path = left.path.lexically_normal();
                 const std::filesystem::path right_path = right.path.lexically_normal();
-                // The editable viewport and syntax highlighting bind to the right
-                // (primary) side's path when it is a real file; otherwise fall back
-                // to the left path so at least one side carries language context. A
-                // clipboard/untitled side leaves this empty (untitled buffer).
                 const std::filesystem::path tab_path =
                     !right_path.empty() ? right_path : left_path;
 
@@ -72,24 +68,17 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
                 compare_tab.title = "compare: " + left.label + "  ↔  " + right.label;
                 compare_tab.plain_compare = true;
                 compare_tab.review_mode = compare::CompareReviewMode::Plain;
-                // Non-git sentinel ref so IsWorkingTreePatchTarget stays false —
-                // staging and patch export never target a plain compare.
                 compare_tab.commit_hash = left.label;
                 compare_tab.right_ref = "PLAIN";
                 compare_tab.left_label = std::move(left.label);
                 compare_tab.right_label = std::move(right.label);
                 compare_tab.left_content = compare::MakeCompareText(std::move(left.content));
                 compare_tab.persistable = false;
-                // Right pane saves back only when it is a real on-disk file.
                 compare_tab.right_editable = right.editable && !right_path.empty();
                 compare_tab.right_viewport.LoadContent(right.content, tab_path);
                 ApplyEditorPreferences(compare_tab.right_viewport);
-                // An editable real file is one buffer with any editor tab on it.
                 AdoptLiveBufferForCompareRightSide(context_.current_project_state.editor_groups,
                                                    compare_tab);
-                // plain_compare is set above, so this refresh resolves review_mode
-                // to Plain (sticky) rather than inferring a git mode from the empty
-                // refs.
                 RefreshCompareTabDerivedState(compare_tab);
                 compare_tab.selected_row = 0;
                 compare_tab.right_view_active = true;
@@ -130,17 +119,8 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
               },
           .refresh_compare_tab_derived_state =
               [this](CompareTabState& compare_tab) { RefreshCompareTabDerivedState(compare_tab); },
-          // The whole load runs on the reader's thread: the left blob's git spawn,
-          // the working file's classification and buffer build, and the diff. The
-          // result slot is written by the worker before it posts and read by the
-          // completion after, which orders the two (as the editor's async open).
           .begin_compare_tab_load =
               [this](CompareTabLoadRequest request) -> std::uint64_t {
-                // Resolved here, on the shell thread, from the path: the
-                // language contract is not the worker's to read. A file whose
-                // language only its content reveals (a shebang) is refined
-                // again by the first derived-state refresh, which reads it
-                // from the loaded buffer.
                 request.build_options.syntax = language_contract_.ResolveDiffSyntax(
                     editor::runtime_syntax::DetectFiletype(request.path));
                 auto shared_request =
@@ -159,7 +139,6 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
                               completion.status == project::FileReadService::Status::Cancelled,
                               completion.ok(), *result);
                         },
-                    // A revision-vs-revision compare has no file to read.
                     .read_path = shared_request->right_is_working_tree(),
                 });
               },
@@ -178,7 +157,6 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
                     .on_complete =
                         [this, root, path, cache](
                             project::FileReadService::Completion completion) {
-                          // A project switch since the click owns the screen now.
                           if (completion.status ==
                                   project::FileReadService::Status::Cancelled ||
                               context_.current_project_state.root != root) {
@@ -195,8 +173,6 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
               [this](std::string message) {
                 Notify(NotificationService::Tone::Error, std::move(message));
               },
-          // The re-read runs on the reader's thread too: one git spawn per side, and
-          // a cancellation that is real. Its completion finds the tab by its id.
           .begin_compare_tab_refresh =
               [this](CompareTabRefreshRequest request) -> std::uint64_t {
                 auto shared_request = std::make_shared<const CompareTabRefreshRequest>(std::move(request));
@@ -204,9 +180,6 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
                 return file_read_service_.Begin({
                     .path = shared_request->path,
                     .on_worker = [shared_request, sides](std::string&) { *sides = ReadCompareRevisionSides(*shared_request); },
-                    // The tab is in the project in front, or in one switched away
-                    // from meanwhile; there the slot is only released, so the tab
-                    // posts its read again when next shown, against that project.
                     .on_complete =
                         [this, sides](project::FileReadService::Completion completion) {
                           if (MakeDiffTabCoordinator().ApplyCompareTabRefresh(
@@ -250,7 +223,7 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
           .open_comparison =
               [this](const project::GitCommitEntry& commit) { MakeCompareMergeService().diff_tabs().OpenComparison(commit); },
           .set_outgoing_base_ref =
-              [this](const std::string& ref, const std::string& /*label*/) {
+              [this](const std::string& ref, const std::string& ) {
                 SetGitOutgoingBaseChoice(OutgoingBaseChoice{
                     .kind = OutgoingBaseChoice::Kind::SpecificRef,
                     .custom_ref = ref,
@@ -258,8 +231,6 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
               },
           .switch_to_branch =
               [this](const std::string& branch) {
-                // Dismiss the picker first: the switch runs in the background and
-                // leaving the overlay up over a changing worktree reads as a hang.
                 DismissOverlay();
                 const std::string rejection =
                     DispatchGitOperationAction(ActionId::GitSwitchBranch, {branch});
@@ -334,9 +305,6 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
                 if (merge_tab == nullptr) {
                   return false;
                 }
-                // Same preparation as any other user-initiated save: the merge result
-                // is a real file, and "Save Result" running no formatter while Ctrl+S
-                // on the same buffer ran one is a difference nobody can see coming.
                 if (!PrepareEditorViewportForSave(merge_tab->result_viewport.path(),
                                                   merge_tab->result_viewport, nullptr,
                                                   SaveMode::Blocking)
@@ -347,8 +315,6 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
               },
           .stage_merge_result_path =
               [this](const std::filesystem::path& path) {
-                // A remote project's save conflict merged here: the result goes to
-                // the host, not to git's index.
                 if (glue_->remote_host_service != nullptr &&
                     glue_->remote_host_service->ResolveMerged(path)) {
                   return true;
@@ -428,15 +394,7 @@ void WorkspaceShell::RequestComparePickerFileHistory(const std::filesystem::path
   picker.active_request_generation = generation;
 
   const std::filesystem::path root = context_.current_project_state.root;
-  // Bind the PROJECT's launcher into the fallback rather than letting the free
-  // function pick one: the provider seam's signature is (root, path), so the
-  // locality has to be captured here, where the project is in hand
-  // (TD-2026-09-22-301). The launcher outlives the task — it is a process-wide
-  // static locally, and project-owned for a remote connection.
   const platform::ProcessLauncher* launcher = &context_.current_project_state.launcher();
-  // Copy the provider (fall back to the real free function) so the worker never
-  // touches shell state. The captured closure produces raw commits; the mailbox
-  // marshals a completion back to the render thread (see ApplyComparePickerFileHistory).
   auto provider = compare_picker_file_history_provider_
                       ? compare_picker_file_history_provider_
                       : std::function<project::GitFileHistoryResult(
@@ -457,17 +415,12 @@ void WorkspaceShell::RequestComparePickerFileHistory(const std::filesystem::path
       });
 }
 
-// One ref query behind both ref pickers. The outgoing-base picker wants branches
-// plus recent commits; the switch-branch picker wants branches only, and paying for
-// 50 commit subjects it will never show is pure latency on the picker's open.
 void WorkspaceShell::RequestComparePickerRefs(const bool include_commits) {
   auto& picker = context_.current_project_state.overlay.workflow.compare_picker;
   const std::uint64_t generation = ++compare_picker_generation_;
   picker.active_request_generation = generation;
 
   const std::filesystem::path root = context_.current_project_state.root;
-  // See RequestComparePickerFileHistory: the provider seam takes (root[, limit]),
-  // so the project's launcher is bound here (TD-2026-09-22-301).
   const platform::ProcessLauncher* launcher = &context_.current_project_state.launcher();
   auto branches_provider =
       compare_picker_branches_provider_
@@ -509,7 +462,7 @@ bool WorkspaceShell::ComparePickerRequestCurrent(std::uint64_t generation) const
 void WorkspaceShell::ApplyComparePickerFileHistory(
     std::uint64_t generation, const project::GitFileHistoryResult& history) {
   if (!ComparePickerRequestCurrent(generation)) {
-    return;  // Overlay closed, project switched, or a newer picker superseded this.
+    return;
   }
   MakeCompareMergeService().interactions().ApplyFileHistoryResult(history);
 }
@@ -518,7 +471,7 @@ void WorkspaceShell::ApplyComparePickerRefs(
     std::uint64_t generation, const std::vector<project::GitBranchReference>& branches,
     const std::vector<project::GitCommitEntry>& commits) {
   if (!ComparePickerRequestCurrent(generation)) {
-    return;  // Overlay closed, project switched, or a newer picker superseded this.
+    return;
   }
   MakeCompareMergeService().interactions().ApplyRefsResult(branches, commits);
 }
@@ -593,4 +546,4 @@ void WorkspaceShell::MarkMergeResolved() {
   MakeCompareMergeService().interactions().MarkMergeResolved();
 }
 
-}  // namespace microide::workspace
+}

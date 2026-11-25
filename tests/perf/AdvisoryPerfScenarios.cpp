@@ -22,24 +22,10 @@
 namespace microide::tests::perf {
 namespace {
 
-// Steady-state RSS budget for the large-project open scenario.
-// Calibrated against an observed reference of ~180 MiB on the perf-runner-v1
-// class (SDL3 + SDL3_ttf + Lua + PCRE2 + file index for the 1k-file fixture).
-// The budget is set at 256 MiB to allow normal day-to-day variance (font atlas
-// growth, allocator slack, GLIBC arena placement) while still catching a real
-// regression of ~40% or more over reference. Tighten only after running the
-// gated scenario on perf-runner-v1 with the new floor.
 constexpr std::uint64_t kRepoOpenIdleRssBudgetBytes = 256ULL * 1024ULL * 1024ULL;
 
-// Growth this scenario's own open is allowed to add, enforced regardless of what
-// else already ran in the process. Measured at ~90 MiB in a fresh process (153 MiB
-// steady state from a ~63 MiB pre-open baseline); 160 MiB leaves the same kind of
-// headroom the absolute budget does while still catching a real regression.
 constexpr std::uint64_t kRepoOpenIdleRssGrowthBudgetBytes = 160ULL * 1024ULL * 1024ULL;
 
-// RSS at scenario entry below which the process counts as fresh, so the absolute
-// budget above is this scenario's to answer for. A full-suite run enters here well
-// past this (measured 279 MiB after 48 other scenarios).
 constexpr std::uint64_t kRepoOpenIdleFreshProcessRssBytes = 128ULL * 1024ULL * 1024ULL;
 
 struct ProcessSample {
@@ -101,22 +87,6 @@ class ScopedTempTree {
  std::filesystem::path root_;
 };
 
-// Fixture trees for the compare/merge scenarios below, built ONCE per process and
-// shared by every measured iteration.
-//
-// They used to be built inside the scenario body, so each iteration rewrote a
-// 1 MiB seed file two or three times and — for the git-backed ones — ran `git
-// init`, two `git config`s, `git add`, and `git commit`: five subprocess spawns on
-// the scenario thread, all inside the measured window. On
-// compare_scroll_large_fixture that setup was ~190 ms of the ~250 ms of
-// main-thread time the scenario reported, so the scroll burst it exists to measure
-// accounted for under a quarter of its own number, and a real regression in it
-// would have been invisible under the setup noise.
-//
-// The scenarios only ever read these trees after building them (they scroll, they
-// select, they type into an in-memory result buffer), so one build per process is
-// sound. The trees are removed when the map's destructor runs at exit — the perf
-// binary returns from main rather than quick_exit-ing, so that actually happens.
 const std::filesystem::path& EnsureSharedFixtureTree(
     const std::string& name,
     const std::function<void(const std::filesystem::path&)>& build) {
@@ -194,18 +164,6 @@ std::string BuildInterleavedVariantText(int block_count, int side) {
 
 void RunRepoOpenRssIdle(ScenarioContext& context) {
   const std::filesystem::path project = "tests/perf/fixtures/large_project";
-  // RSS is a PROCESS number, and every scenario in a run shares one process. This
-  // gate used to compare the absolute figure against the budget no matter what
-  // else had already run, so in a full-suite run it was really asserting "the sum
-  // of forty-eight unrelated scenarios' peak footprint is under 256 MiB" — it read
-  // 279 MiB there against 153 MiB for the same scenario run on its own, and which
-  // side of the line it landed on depended on the scenario order and the iteration
-  // count. That is not a repo-open memory gate.
-  //
-  // The order-independent thing this scenario controls is the footprint its own
-  // open adds, so that is what is always enforced. The absolute budget still means
-  // something in a fresh process, so it is enforced too — but only when the
-  // process is actually fresh, judged by the RSS already resident at entry.
   const ProcessSample rss_at_entry = ReadProcessSample();
   ProcessSample rss_after_open{};
   ProcessSample rss_after_idle{};
@@ -216,31 +174,14 @@ void RunRepoOpenRssIdle(ScenarioContext& context) {
     context.PumpFrames(5);
     rss_after_open = ReadProcessSample();
   });
-  // CPU across the idle window, asserted here rather than gated at the iteration
-  // level. See `gate_cpu_metrics = false` on the registration below for why the
-  // iteration number cannot do this job; this is the same replacement
-  // `idle_soak_30s` makes, and it measures the thing the scenario is named for:
-  // an editor holding a repo open and doing nothing must cost nothing.
   double idle_cpu_ms = 0.0;
   context.Measure("repo_open.idle_500ms", [&] {
-    // perf-measure-waits-on-clock: the fixed idle IS what this phase measures --
-    // what an idle editor does with 500 ms and how much resident set it keeps.
-    // The shell reports Idle, so Wait sleeps in 20 ms slices without allocating.
-    // Three runs of one unchanged binary read p50_allocations 331 / 331 / 331
-    // (TD-2026-08-10-179).
+    // perf-measure-waits-on-clock: the fixed 500 ms idle is the measurement
     const double cpu_before_idle = ProcessCpuMilliseconds();
     (void)context.Wait(std::chrono::milliseconds(500));
     idle_cpu_ms = ProcessCpuMilliseconds() - cpu_before_idle;
     rss_after_idle = ReadProcessSample();
   });
-  // 15 ms across a 500 ms idle is 3% of one core -- a spin, not a rounding error.
-  // Measured range on the reference runner is 0.55-4.48 ms over ten iterations,
-  // an 8x spread that is entirely the governor: the process sleeps in 20 ms
-  // slices, so the core walks toward the 605 MHz floor and what each sample
-  // costs depends on where it had got to. The budget therefore sits above the
-  // SLOW mode, deliberately, and must not be tightened toward the fast one --
-  // the fast mode is a property of the machine, not of the code. A regression
-  // that so much as wakes a thread at 20 Hz through the idle lands far above it.
   constexpr double kRepoOpenIdleCpuBudgetMs = 15.0;
   std::cerr << "repo_open_rss_idle idle_cpu_ms=" << idle_cpu_ms
             << " budget_ms=" << kRepoOpenIdleCpuBudgetMs << "\n";
@@ -253,8 +194,6 @@ void RunRepoOpenRssIdle(ScenarioContext& context) {
       rss_after_idle.rss_bytes > rss_at_entry.rss_bytes
           ? rss_after_idle.rss_bytes - rss_at_entry.rss_bytes
           : 0;
-  // A fresh process is under the entry threshold; anything above it means other
-  // scenarios already ran here and the absolute figure is not this scenario's.
   const bool process_is_fresh = rss_at_entry.rss_bytes <= kRepoOpenIdleFreshProcessRssBytes;
   if (rss_after_open.rss_bytes > 0 || rss_after_idle.rss_bytes > 0) {
     std::cerr << "repo_open_rss_idle: rss_at_entry=" << rss_at_entry.rss_bytes
@@ -300,12 +239,6 @@ void RunLargeFileOpenFirstPaint(ScenarioContext& context) {
   }
 }
 
-// Companion to large_file_open_first_paint, but opens an LF-only 50k-line file.
-// large_file_open_first_paint's fixture has mixed line endings and therefore
-// takes the DecodeLines normalization path; this scenario exercises the Phase 4
-// direct-load fast path (no '\r' -> bytes handed straight to the piece tree's
-// original buffer, skipping the split-into-vector<string> + rejoin round-trip).
-// It is the open-time gate for the large-file load fast path.
 void RunLargeFileOpenLfFirstPaint(ScenarioContext& context) {
   const std::filesystem::path file =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
@@ -323,12 +256,6 @@ void RunLargeFileOpenLfFirstPaint(ScenarioContext& context) {
   }
 }
 
-// Find-as-you-type over a large file. The fixture has the token "perfocc" on
-// essentially every line, so the first keystroke matches tens of thousands of
-// lines and each further keystroke narrows the set. The incremental refine path
-// (WorkspaceShell::RefreshBufferSearch) filters the prior match set instead of
-// rescanning the whole document, so total work across the typed query should stay
-// roughly flat in document size rather than O(document) per keystroke.
 void RunEditorBufferFindIncremental(ScenarioContext& context) {
   const std::filesystem::path file =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
@@ -343,8 +270,6 @@ void RunEditorBufferFindIncremental(ScenarioContext& context) {
         "editor_buffer_find_incremental: large fixture did not load as expected");
   }
 
-  // Type the query one character at a time, refreshing matches each keystroke,
-  // exactly as find-as-you-type does. "perfocc" appears on nearly every line.
   static constexpr std::string_view kQuery = "perfocc";
   context.Measure("buffer_find.find_as_you_type", [&] {
     std::string typed;
@@ -376,12 +301,6 @@ void RunMergeScrollLargeFixture(ScenarioContext& context) {
   if (!context.Open(root)) {
     throw std::runtime_error("merge_scroll_large_fixture: failed to open temp project root");
   }
-  // Close any merge tab a previous iteration left open BEFORE the measured
-  // window. The driver is reused across iterations, so without this the `merge`
-  // command re-shows the already-open tab and every iteration after the first
-  // measures a re-show -- the p50 then describes an operation this phase is not
-  // named for, and a baseline of 185 allocations for "open a large merge" is what
-  // that produced (TD-2026-08-12-190).
   context.CloseActiveTab();
   context.Measure("merge_large.open_to_first_paint", [&] {
     if (!context.ExecuteCommand("merge base.txt incoming.txt current.txt result.txt")) {
@@ -429,14 +348,6 @@ void RunCompareScrollLargeFixture(ScenarioContext& context) {
   });
 }
 
-// `compare::BuildMergeModel` is one synchronous call on the shell path that opens
-// a merge tab, and on a many-hunk merge it is tens of milliseconds — the largest
-// single scope in any merge scenario. NOTHING gated it: every merge scenario
-// shares one driver across its iterations and reuses the already-open tab, so the
-// build lands on iteration 0 and is absorbed by the warmup. This scenario calls it
-// directly, once per iteration, over the same interleaved fixture the scroll
-// scenario uses (hundreds of hunks). It is a pure function of three strings, so
-// the allocation count is exact.
 void RunMergeModelBuildInterleaved(ScenarioContext& context) {
   constexpr int kBlocks = 420;
   const std::filesystem::path root = EnsureSharedFixtureTree(
@@ -445,7 +356,6 @@ void RunMergeModelBuildInterleaved(ScenarioContext& context) {
         WriteFileTextOrThrow(dir / "incoming.cpp", BuildInterleavedVariantText(kBlocks, 0));
         WriteFileTextOrThrow(dir / "current.cpp", BuildInterleavedVariantText(kBlocks, 1));
       });
-  // Read outside the measured window: this measures the model build, not file I/O.
   const std::string base = ReadFileTextOrThrow(root / "base.cpp");
   const std::string incoming = ReadFileTextOrThrow(root / "incoming.cpp");
   const std::string current = ReadFileTextOrThrow(root / "current.cpp");
@@ -472,12 +382,6 @@ void RunMergeScrollInterleavedHunks(ScenarioContext& context) {
   if (!context.Open(root)) {
     throw std::runtime_error("merge_scroll_interleaved_hunks: failed to open temp project root");
   }
-  // Close any merge tab a previous iteration left open BEFORE the measured
-  // window. The driver is reused across iterations, so without this the `merge`
-  // command re-shows the already-open tab and every iteration after the first
-  // measures a re-show -- the p50 then describes an operation this phase is not
-  // named for, and a baseline of 185 allocations for "open a large merge" is what
-  // that produced (TD-2026-08-12-190).
   context.CloseActiveTab();
   context.Measure("merge_interleaved.open_to_first_paint", [&] {
     if (!context.ExecuteCommand("merge base.cpp incoming.cpp current.cpp result.cpp")) {
@@ -533,15 +437,6 @@ void RunCompareScrollSelectionFixture(ScenarioContext& context) {
   });
 }
 
-// Advisory micro-benchmark for the ProjectTabStripVisible() settings-lookup cache.
-// The predicate runs inside the uncached CurrentWorkspaceLayout()/ComputeLayout on
-// the per-mouse-move window-drag hit-test path (WindowDragRegionContains). With a
-// single project open, the size()>1 short-circuit fails and every recompute used to
-// re-resolve "chrome.project_tabs.hide_when_single" through the GetSettingValue
-// if-chain + settings-store lookup. This scenario hammers both the raw predicate and
-// the full uncached layout recompute in the strip-visible and strip-hidden configs so
-// a before/after run isolates the per-call lookup cost. Advisory only (not gated, not
-// run by default) -- invoke with --scenario=project_tab_strip_layout_hittest.
 void RunProjectTabStripLayoutHittest(ScenarioContext& context) {
   const std::filesystem::path project = "tests/perf/fixtures/large_project";
   if (!context.Open(project)) {
@@ -556,12 +451,10 @@ void RunProjectTabStripLayoutHittest(ScenarioContext& context) {
   auto measure_config = [&](const char* config_label, const char* hide_value) {
     context.SetSetting("chrome.project_tabs.hide_when_single", hide_value);
     context.PumpFrames(1);
-    // Warm the per-revision cache resolve so the measured loops observe steady state.
     volatile bool warm =
         workspace::WorkspaceShell::TestAccess::ProjectTabStripVisible(context.Shell());
     (void)warm;
 
-    // Raw predicate burst -- isolates exactly the cached lookup.
     {
       const AllocationSnapshot before = Allocations::Snapshot();
       const auto start = std::chrono::steady_clock::now();
@@ -582,7 +475,6 @@ void RunProjectTabStripLayoutHittest(ScenarioContext& context) {
       (void)sink;
     }
 
-    // Full uncached layout recompute burst -- the real WindowDragRegionContains path.
     {
       const AllocationSnapshot before = Allocations::Snapshot();
       const auto start = std::chrono::steady_clock::now();
@@ -605,8 +497,8 @@ void RunProjectTabStripLayoutHittest(ScenarioContext& context) {
   };
 
   context.Measure("project_tab_strip.hittest", [&] {
-    measure_config("strip_visible", "false");  // single project, not hidden -> visible
-    measure_config("strip_hidden ", "true");   // single project, hidden when single
+    measure_config("strip_visible", "false");
+    measure_config("strip_hidden ", "true");
   });
 }
 
@@ -622,24 +514,7 @@ const ScenarioRegistration g_perf_repo_open_rss_idle({Scenario{
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
-    // warmup: same reason as the two `*_first_paint` scenarios below. Iteration 0
-    // pays the project's cold open (background file-index build, initial watch
-    // batch, session write) at 3,685 allocations against a 550 steady state, and
-    // it is the only iteration that does. Without a warmup that single value
-    // governs p95, so the gate answered differently depending on the iteration
-    // count -- FAIL at 8 (+55% p95 allocations), PASS at 20, same binary.
     .warmup_iterations = 1,
-    // Replaced by the idle-window CPU budget asserted in the body -- see
-    // gate_cpu_metrics in PerfHarness.h, and idle_soak_30s, which is the same
-    // shape. 500 of this scenario's ~510 ms are a deliberate sleep, so the core
-    // walks toward the 605 MHz floor and the handful of frames on either side of
-    // the idle are rendered at whatever clock it had got back to. The iteration
-    // number moved 4.95 -> 10.6-13.2 ms with allocations flat at ~160 and wall
-    // flat at 510, on the SESSION BASE COMMIT as well as after it: nothing in the
-    // code changed, the machine did. The in-run calibration spread is 1.4-1.45x,
-    // which a p50-based normalisation cannot cancel. The application's own idle
-    // cost -- the point of the scenario -- is the 0.5-4.5 ms underneath, and it
-    // is directly assertable.
     .gate_cpu_metrics = false,
     .run = RunRepoOpenRssIdle,
 }});
@@ -648,11 +523,6 @@ const ScenarioRegistration g_perf_large_file_open_first_paint({Scenario{
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
-    // warmup: the first pass on a fresh driver also pays the project's cold
-    // open (background file-index build, initial watch batch, session write),
-    // which no later iteration repeats -- 5.6k allocations against a 1.8k
-    // steady state. Discarding it keeps p95/max describing the tail of the
-    // measured work instead of which iteration index the cold pass landed on.
     .warmup_iterations = 1,
     .run = RunLargeFileOpenFirstPaint,
 }});
@@ -661,11 +531,6 @@ const ScenarioRegistration g_perf_large_file_open_lf_first_paint({Scenario{
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
-    // warmup: the first pass on a fresh driver also pays the project's cold
-    // open (background file-index build, initial watch batch, session write),
-    // which no later iteration repeats -- 5.6k allocations against a 1.8k
-    // steady state. Discarding it keeps p95/max describing the tail of the
-    // measured work instead of which iteration index the cold pass landed on.
     .warmup_iterations = 1,
     .run = RunLargeFileOpenLfFirstPaint,
 }});
@@ -674,13 +539,6 @@ const ScenarioRegistration g_perf_editor_buffer_find_incremental({Scenario{
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
-    // warmup: opening the fixture and running the first searches settles over
-    // about five iterations (allocations 6,101 / 3,530 / 3,492-and-flat; RSS
-    // growth 19.7 MB / 4.6 / 0 / 5.5 / 8.2 / 0-and-flat) as the allocator reaches
-    // the arena size this file's peak footprint needs. Without a warmup the
-    // `p50_rss_growth_bytes` gate reads 342 KB at 8 iterations (FAIL) and 0 at 12
-    // (PASS) from the same binary -- it was tracking the iteration count, not the
-    // product.
     .warmup_iterations = 5,
     .run = RunEditorBufferFindIncremental,
 }});
@@ -689,10 +547,6 @@ const ScenarioRegistration g_perf_merge_scroll_large_fixture({Scenario{
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
-    // Bumped when the scenario started closing its merge tab between iterations,
-    // so every iteration measures an OPEN rather than a re-show. The old numbers
-    // describe a different operation and must not be differenced against these
-    // (TD-2026-08-12-190, TD-2026-08-07-167).
     .measurement_revision = 2,
     .run = RunMergeScrollLargeFixture,
 }});
@@ -701,13 +555,6 @@ const ScenarioRegistration g_perf_compare_scroll_large_fixture({Scenario{
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
-    // warmup: `compare_large.open_to_first_paint` allocates ~630 on the first
-    // iteration and ~318 on every one after it (the compare tab's first open
-    // fills caches the reopen reuses). The baseline is a p50 over 10 iterations,
-    // so it records the settled 318 -- but a SHORT run's p50 averages the two and
-    // reads 474, failing a +10% gate on an unchanged binary. Allocation gates are
-    // enforced at every iteration count precisely because they are meant to be
-    // deterministic; the scenario, not the gate, is what has to settle first.
     .warmup_iterations = 1,
     .run = RunCompareScrollLargeFixture,
 }});
@@ -723,10 +570,6 @@ const ScenarioRegistration g_perf_merge_scroll_interleaved_hunks({Scenario{
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
-    // Bumped when the scenario started closing its merge tab between iterations,
-    // so every iteration measures an OPEN rather than a re-show. The old numbers
-    // describe a different operation and must not be differenced against these
-    // (TD-2026-08-12-190, TD-2026-08-07-167).
     .measurement_revision = 2,
     .run = RunMergeScrollInterleavedHunks,
 }});
@@ -738,5 +581,5 @@ const ScenarioRegistration g_perf_compare_scroll_selection({Scenario{
     .run = RunCompareScrollSelectionFixture,
 }});
 
-}  // namespace
-}  // namespace microide::tests::perf
+}
+}

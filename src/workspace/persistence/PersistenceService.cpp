@@ -27,10 +27,6 @@ std::string GuardKey(const std::filesystem::path& path) {
   return path.lexically_normal().string();
 }
 
-// True only when the state came from the `.bak` because the primary was PRESENT
-// but unreadable/corrupt. A merely-absent primary (NotFound) is a normal
-// first-run/fresh state and must not be guarded — creating it from the backup is
-// the desired behavior.
 bool RecoveredFromCorruptPrimary(const persistence::PersistedRecordReadResult& record) {
   using persistence::PersistedRecordReaderError;
   return record.used_backup && (record.primary_error == PersistedRecordReaderError::ReadFailed ||
@@ -48,10 +44,6 @@ bool LoadStructuredRecord(const std::filesystem::path& path,
     return false;
   }
   const std::string key = GuardKey(path);
-  // A queued save for this path may not have landed yet; the file has to hold it
-  // before it is read back. Scoped because it is the one place a caller can still
-  // block on the writer -- a hot row here means something reads state back often
-  // enough to serialize against its own saves.
   {
     util::PerformanceTrace::Scope scope("persistence::LoadFlushWait");
     write_queue.Flush();
@@ -61,7 +53,6 @@ bool LoadStructuredRecord(const std::filesystem::path& path,
     return false;
   }
   if (record->used_backup) {
-    // Rare, and the one moment a restore silently goes back in time: worth a line.
     util::Log("persistence: " + path.string() + " unreadable (error " +
               std::to_string(static_cast<int>(record->primary_error)) + "), read its backup");
   }
@@ -70,32 +61,18 @@ bool LoadStructuredRecord(const std::filesystem::path& path,
               " read but did not decode");
     return false;
   }
-  // What the file holds right now. A later save of unchanged state encodes to
-  // exactly this, and the write queue can then skip the durable rewrite.
   write_queue.NoteOnDiskBody(path, record->body);
   if (RecoveredFromCorruptPrimary(*record)) {
-    // Capture the baseline by re-encoding through the SAME encoder a Save uses,
-    // so an unchanged state produces byte-identical output and is suppressed.
     std::vector<std::byte> baseline;
     if (encode_binary(*out, &baseline)) {
       baselines[key] = std::move(baseline);
     }
   } else {
-    // A clean primary read (or a benign absent-primary fallback) supersedes any
-    // stale guard left from an earlier corrupt-primary recovery.
     baselines.erase(key);
   }
   return true;
 }
 
-// Accepts the record unless the path is guarded and `body` is identical to the
-// recovery baseline (no user mutation since a corrupt-primary recovery), in which
-// case the write is suppressed and reported as success so callers treat it as
-// persisted.
-//
-// "Accepted" rather than "written": the durable write happens on the queue's
-// worker. Skipping an unchanged body now lives with the writer, which is what
-// lets a failed write leave the memo alone and be retried.
 bool WriteGuardedRecord(const std::filesystem::path& path, const std::vector<std::byte>& body,
                         std::uint32_t version, BackupRecoveryBaselines& baselines,
                         WriteQueue& write_queue) {
@@ -137,7 +114,7 @@ void RemoveLegacyPersistenceArtifactsFor(const std::filesystem::path& target_pat
   RemoveLegacyArtifactIfStructuredExists(target_path, "chat.conversations.legacy");
 }
 
-}  // namespace
+}
 
 bool PersistenceService::LoadUserConfig(const std::filesystem::path& target_path,
                                         PersistedUserConfigState* state) const {
@@ -197,17 +174,11 @@ bool PersistenceService::SaveProjectSession(const std::filesystem::path& target_
   if (target_path.empty()) {
     return false;
   }
-  // A path guarded after a corrupt-primary recovery compares the encoded bytes
-  // with its baseline before anything is written (WriteGuardedRecord): that rare
-  // case encodes here. Every other save encodes on the worker.
   if (backup_recovery_baseline_.contains(GuardKey(target_path))) {
     std::vector<std::byte> body;
     return EncodeProjectSessionRecord(state, &body) &&
            WriteGuardedRecord(target_path, body, 3u, backup_recovery_baseline_, write_queue_);
   }
-  // Shared, not captured by value: the callable is a std::function, wrapped again
-  // by the queue, and each copy of a session holding the lines of every unsaved
-  // buffer cost as much as the encode it was moved off the thread to avoid.
   auto shared = std::make_shared<const PersistedProjectSessionState>(std::move(state));
   write_queue_.QueueEncoded(
       target_path,
@@ -282,9 +253,7 @@ void PersistenceService::DeleteState(const std::filesystem::path& target_path) c
   }
   const std::string key = GuardKey(target_path);
   backup_recovery_baseline_.erase(key);
-  // Ordered behind any write already accepted for this path, and superseding any
-  // still queued, without waiting for either.
   write_queue_.QueueDelete(target_path);
 }
 
-}  // namespace microide::workspace
+}

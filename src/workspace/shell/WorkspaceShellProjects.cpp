@@ -33,32 +33,21 @@ ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
                      bool activate_restored_tab,
                      bool root_missing,
                      const project::ProjectLocality& locality) {
-                // A remote project gets its host's locality and (re)connects -- read
-                // from its id, fixed when its catalog entry was created, not sniffed
-                // from the directory here. An explicit locality always wins (the
-                // parity suite's loopback host).
                 project::ProjectLocality resolved = locality;
                 const bool remote_project =
                     id.IsRemote() && resolved.launcher == &platform::LocalProcessLauncher();
                 if (remote_project) {
-                  // A remote project is never opened as a local folder: no mirror,
-                  // no project (LocalityFor has said why).
                   const auto remote = MakeRemoteHostService().LocalityFor(id);
                   if (!remote.has_value()) {
                     return false;
                   }
                   resolved = *remote;
                 } else if (resolved.write_gate == &project::LocalFileWriteGate()) {
-                  // A local project writes a remote project's mirror through that
-                  // project's gate: the path decides, not the project in front
-                  // (soak 500d49cd7220).
                   resolved.write_gate = &MakeRemoteHostService().LocalProjectWriteGate();
                 }
                 const bool initialized = InitializeCurrentProject(
                     id, project_root, restore_persistence, log_feedback, activate_restored_tab, root_missing, resolved);
                 if (initialized && remote_project) {
-                  // Reported before this state had its root: what the sync has not
-                  // fetched yet is listed, and the connection shown, from the start.
                   RemoteHostService& hosts = MakeRemoteHostService();
                   context_.current_project_state.SetPendingPaths(
                       hosts.PendingPathsOf(context_.current_project_state.root));
@@ -109,8 +98,6 @@ ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
                 RequestAutomaticGitSidebarRefresh();
                 RefreshProjectFiles();
                 ReloadCleanOpenBuffersFromDisk();
-                // A stage, a pull or a branch switch that finished in the
-                // background changed what this project's compares show.
                 std::vector<std::filesystem::path> compared;
                 for (const EditorGroup& group : context_.current_project_state.editor_groups) {
                   for (const TabEntry& tab : group.open_tabs) {
@@ -154,8 +141,6 @@ void WorkspaceShell::ResetProjectCatalogToWelcomeState() {
   context_.project_catalog.active_index = 0;
   context_.project_catalog.tab_scroll_index = 0;
   ResetProjectScopedState(true);
-  // The documents opened with no project open are watched too (it starts for
-  // them alone: StartFileIndexWatcherForCurrentProject).
   (void)StartFileIndexWatcherForCurrentProject();
   ReloadPluginsForCurrentProject();
   RequestPreparedFrame();
@@ -185,8 +170,6 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
     }
   }
 
-  // The one place a catalog entry is created from a typed, picked or recent path:
-  // the path is named here, once (a mirror's own tree is its remote project).
   const project::ProjectId id = project::ResolveProjectId(normalized_root);
   const bool opened =
       MakeProjectCatalogService().Open(id, normalized_root, restore_persistence, log_feedback,
@@ -212,7 +195,6 @@ bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
   const bool switched = MakeProjectCatalogService().Switch(index);
   if (switched) {
     NoteLayoutInputsChanged();
-    // A background project's folder can go while another is in front.
     if (PublishProjectRootPresence(notification_service_, context_.current_project_state.root, SDL_GetTicks())) {
       RequestFullRedraw();
     }
@@ -243,22 +225,13 @@ void WorkspaceShell::RequestCloseProject(std::size_t index) {
 void WorkspaceShell::CloseProject(std::size_t index) {
   SettleTabIoBeforeTeardown(save_formatter_service_, file_read_service_);
   const std::filesystem::path closed_root = ProjectCatalogRoot(index);
-  // A remote project's running host shells stay on the host (§ 6.12): let go of
-  // them, explicitly, before the close persists the state (recording which they
-  // are) and destroys it -- a destroyed session would close its shell. With
-  // terminal.restore_sessions off nothing would reattach them: end them instead.
   if (ProjectWorkspaceState* state = context_.ProjectStateForRoot(closed_root); state != nullptr) {
     MakeTerminalPanelService().ReleaseHostTerminals(*state);
   }
   MakeProjectCatalogService().Close(index);
-  // A remote project's channel, host-side workspace and watch go with its tab; the
-  // mirror and its journal stay, and reopening reconnects.
   if (glue_->remote_host_service != nullptr) {
     glue_->remote_host_service->ProjectClosed(closed_root);
   }
-  // Closing may drop the open-project count to <= 1, which can re-hide the strip when
-  // "chrome.project_tabs.hide_when_single" is on; the coordinator only requests a redraw,
-  // so mark layout dirty here to force a recompute (Open/Switch already do this).
   NoteLayoutInputsChanged();
 }
 
@@ -266,18 +239,14 @@ bool WorkspaceShell::ProjectTabStripVisible() const {
   if (context_.project_catalog.entries.size() > 1) {
     return true;
   }
-  // Resolve the hide-when-single flag at most once per settings-store revision.
-  // This runs inside the uncached ComputeLayout on the per-mouse-move window-drag
-  // hit-test path, so avoid the string-keyed lookup + default-value allocation on
-  // every recompute (mirrors the terminal-font revision gate).
   const std::uint64_t settings_revision = settings_store_.Revision();
   if (settings_revision != project_tabs_hide_when_single_revision_) {
     project_tabs_hide_when_single_revision_ = settings_revision;
     project_tabs_hide_when_single_ =
         SettingFlagEnabled(GetSettingValue("chrome.project_tabs.hide_when_single"),
-                           /*default_value=*/true);
+                           true);
   }
   return !project_tabs_hide_when_single_;
 }
 
-}  // namespace microide::workspace
+}

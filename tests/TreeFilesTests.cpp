@@ -20,7 +20,6 @@ using util::HashContent;
 void TestTreeFilesWriteIsCompareAndSwap() {
   TemporaryDirectory temp;
   const auto root = temp.path();
-  // A create: Absent holds, parents appear, the new hash comes back.
   FileOpResult created =
       project::remote::WriteTreeFile(root, "src/new.txt", "one", Precondition::NotThere(), std::nullopt);
   Expect(created.ok() && created.current == HashContent("one"), "a create lands: " + created.error);
@@ -29,14 +28,12 @@ void TestTreeFilesWriteIsCompareAndSwap() {
              std::filesystem::perms::none,
          "a new file is writable");
 
-  // A second create of the same path is a conflict naming what is there.
   const FileOpResult again =
       project::remote::WriteTreeFile(root, "src/new.txt", "two", Precondition::NotThere(), std::nullopt);
   Expect(again.status == FileOpResult::Status::Conflict && again.current == HashContent("one"),
          "create over an existing file conflicts");
   Expect(ReadFile(root / "src/new.txt") == "one", "and writes nothing");
 
-  // An update against the right base lands; against a stale one it conflicts.
   const FileOpResult update = project::remote::WriteTreeFile(
       root, "src/new.txt", "two", Precondition::Of(HashContent("one")), std::nullopt);
   Expect(update.ok() && ReadFile(root / "src/new.txt") == "two", "an update on its base lands");
@@ -49,7 +46,6 @@ void TestTreeFilesWriteIsCompareAndSwap() {
       project::remote::WriteTreeFile(root, "src/new.txt", "three", Precondition::Anything(), std::nullopt);
   Expect(forced.ok() && ReadFile(root / "src/new.txt") == "three", "Any overwrites");
 
-  // Modes: an explicit one applies, an omitted one keeps the existing file's.
   Expect(project::remote::WriteTreeFile(root, "run.sh", "#!/bin/sh\n", Precondition::NotThere(), 0755).ok(),
          "an executable is created");
   Expect(project::remote::WriteTreeFile(root, "run.sh", "#!/bin/sh\necho\n",
@@ -61,9 +57,6 @@ void TestTreeFilesWriteIsCompareAndSwap() {
          "an update keeps the exec bit");
 }
 
-// A write the path itself refuses is `blocked` (the client parks it instead of
-// retrying at every reconnect); `replace` -- the user's Replace on Host -- puts the
-// file where a link was, and nothing else does.
 void TestTreeFilesARefusedPathIsBlockedAndReplaceTakesALinksPlace() {
   TemporaryDirectory temp;
   const auto root = temp.path() / "root";
@@ -172,11 +165,6 @@ void TestTreeFilesTreeOps() {
          "an empty directory is deleted under Any");
 }
 
-// A path under a directory that does not exist is a path with nothing at it -- the
-// answer each operation gives a missing file -- not an error: a host that moved a
-// whole directory away (an archived openspec change) left Take Remote on its files
-// failing with "cannot open changes/x: No such file or directory", so the conflict
-// could never be settled. A file in a parent position is still an error.
 void TestTreeFilesAMissingDirectoryIsNothingThere() {
   TemporaryDirectory temp;
   const auto root = temp.path();
@@ -200,8 +188,6 @@ void TestTreeFilesAMissingDirectoryIsNothingThere() {
   Expect(rename.status == Status::Conflict && !rename.current.has_value() &&
              !std::filesystem::exists(root / "here"),
          "a rename from a missing directory has nothing to move, and makes no destination");
-  // A write that names bytes to replace finds none there -- and makes nothing on
-  // the way; a create still makes its parents.
   const FileOpResult update = project::remote::WriteTreeFile(root, "gone/a.txt", "new",
                                                              Precondition::Of(HashContent("a")), std::nullopt);
   Expect(update.status == Status::Conflict && !update.current.has_value() &&
@@ -215,11 +201,8 @@ void TestTreeFilesAMissingDirectoryIsNothingThere() {
          "a file in a parent position is still an error");
 }
 
-}  // namespace
+}
 
-// The temporary a tree write makes is recognizable by name, with its writer's pid.
-// A write given a staging directory makes it there instead of beside the file (the
-// mirror: a crash mid-pull leaves nothing in tree/), and leaves nothing behind.
 void TestTreeFilesWriteTemporaries() {
   using project::remote::TreeWriteTemporaryIsAbandoned;
   using project::remote::TreeWriteTemporaryOwner;
@@ -260,4 +243,4 @@ void RegisterTreeFilesTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TreeFiles/AMissingDirectoryIsNothingThere", TestTreeFilesAMissingDirectoryIsNothingThere);
 }
 
-}  // namespace microide::tests
+}

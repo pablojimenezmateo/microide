@@ -11,15 +11,13 @@ namespace microide::editor {
 
 namespace {
 
-// Per-kind render orderings (used both to sort per-owner data at publish and to
-// k-way merge across owners). Each is a strict weak ordering keyed first by line.
 inline bool TextStyleLess(const TextStyleDecoration& a, const TextStyleDecoration& b) {
   if (a.line != b.line) return a.line < b.line;
   return a.start_column < b.start_column;
 }
 inline bool GutterMarkLess(const GutterMarkDecoration& a, const GutterMarkDecoration& b) {
   if (a.line != b.line) return a.line < b.line;
-  return a.priority > b.priority;  // highest priority first within a line
+  return a.priority > b.priority;
 }
 inline bool InlineTextLess(const InlineTextDecoration& a, const InlineTextDecoration& b) {
   if (a.line != b.line) return a.line < b.line;
@@ -29,9 +27,6 @@ inline bool CodeLensLess(const CodeLensDecoration& a, const CodeLensDecoration& 
   return a.line < b.line;
 }
 
-// Sort the four decoration vectors of `decorations` into the per-line render
-// order the slice lookups rely on. Works on both PluginDecorationData (per-owner,
-// sorted once at publish) and FileDecorations (the merged multi-owner view).
 template <typename Decorations>
 void SortDecorations(Decorations& decorations) {
   std::sort(decorations.text_styles.begin(), decorations.text_styles.end(), TextStyleLess);
@@ -40,13 +35,6 @@ void SortDecorations(Decorations& decorations) {
   std::sort(decorations.code_lenses.begin(), decorations.code_lenses.end(), CodeLensLess);
 }
 
-// Bounded k-way merge of one already-sorted per-owner vector per contributor into
-// a single sorted, capped result. Because every input is pre-sorted by `less`
-// (SortDecorations at publish), the merge emits in the same total order a full
-// concatenate+std::sort would — but reserves at most `cap` and stops after `cap`
-// elements, so both allocation and work are bounded by the retained cap rather than
-// the (potentially far larger) total contributed. `project` selects the per-kind
-// vector from each contributor. (TD-2026-07-17-090.)
 template <typename T, typename Proj, typename Less>
 std::vector<T> CappedSortedMerge(const std::vector<const PluginDecorationData*>& contributors,
                                  Proj project, std::size_t cap, Less less) {
@@ -64,8 +52,6 @@ std::vector<T> CappedSortedMerge(const std::vector<const PluginDecorationData*>&
     std::size_t owner;
     std::size_t index;
   };
-  // Min-heap on the projected element: `greater` orders the heap so the smallest
-  // element sits at the top (std::*_heap builds a max-heap under the comparator).
   const auto greater = [&](const Head& a, const Head& b) {
     return less(project(*contributors[b.owner])[b.index], project(*contributors[a.owner])[a.index]);
   };
@@ -91,7 +77,6 @@ std::vector<T> CappedSortedMerge(const std::vector<const PluginDecorationData*>&
   return out;
 }
 
-// Contiguous slice of a line-sorted vector whose elements have `.line == line`.
 template <typename T, typename LineOf>
 std::span<const T> SliceForLine(const std::vector<T>& sorted, std::uint32_t line, LineOf line_of) {
   const auto first = std::lower_bound(sorted.begin(), sorted.end(), line,
@@ -104,7 +89,7 @@ std::span<const T> SliceForLine(const std::vector<T>& sorted, std::uint32_t line
   return std::span<const T>(&*first, static_cast<std::size_t>(last - first));
 }
 
-}  // namespace
+}
 
 std::span<const TextStyleDecoration> FileDecorations::TextStylesForLine(std::uint32_t line) const {
   return SliceForLine(text_styles, line, [](const TextStyleDecoration& d) { return d.line; });
@@ -133,11 +118,6 @@ void PluginDecorationStore::RebuildPath(std::string_view path_key) {
     return;
   }
 
-  // Count the owners contributing to this path. Per-owner data is already sorted
-  // at publish time, so the common single-owner case rebuilds with one copy and
-  // no sort; only genuine multi-owner overlap pays the merge + re-sort. Counting
-  // first keeps the dominant single-owner publish path free of the contributor
-  // vector's heap allocation (the multi-owner branch materializes it lazily).
   const OwnerFileDecorations* sole = nullptr;
   std::size_t contributor_count = 0;
   for (const auto& owner_entry : by_owner_) {
@@ -150,8 +130,6 @@ void PluginDecorationStore::RebuildPath(std::string_view path_key) {
   }
 
   if (contributor_count == 0) {
-    // Heterogeneous find avoids materializing a std::string key just to erase;
-    // unordered_map has no transparent erase(key) overload before C++23.
     if (const auto it = merged_by_path_.find(path_key); it != merged_by_path_.end()) {
       merged_by_path_.erase(it);
     }
@@ -166,8 +144,6 @@ void PluginDecorationStore::RebuildPath(std::string_view path_key) {
     merged.inline_texts = sole->data.inline_texts;
     merged.code_lenses = sole->data.code_lenses;
   } else {
-    // Rare multi-owner overlap: gather the contributor pointers now. A reused
-    // thread-local scratch keeps even repeated merges allocation-free after warmup.
     thread_local std::vector<const PluginDecorationData*> contributors;
     contributors.clear();
     contributors.reserve(contributor_count);
@@ -179,14 +155,6 @@ void PluginDecorationStore::RebuildPath(std::string_view path_key) {
     }
     merged.path = sole->path;
 
-    // Per-owner input is capped (kMaxEntriesPerKind) at publish, but a pathological
-    // set of plugins targeting one file could still push the summed per-kind totals
-    // arbitrarily high. Rather than concatenate every contribution, sort the whole
-    // thing, then truncate — which does O(all-contributed) allocation + O(N log N)
-    // work before the cap ever applies — do a bounded k-way merge of the already-
-    // sorted per-owner vectors that reserves and emits at most kMaxMergedPerKind.
-    // Result is byte-for-byte identical (lowest-line decorations kept in render
-    // order); work and peak allocation are now bounded by the retained cap.
     constexpr std::size_t kMaxMergedPerKind = 200000;
     merged.text_styles = CappedSortedMerge<TextStyleDecoration>(
         contributors,
@@ -216,8 +184,6 @@ void PluginDecorationStore::RebuildPath(std::string_view path_key) {
 
   const auto existing = merged_by_path_.find(path_key);
   if (existing == merged_by_path_.end()) {
-    // New path: the key string must be owned here, but emplace skips the extra
-    // hash+lookup that operator[] would do on top of the find above.
     merged_by_path_.emplace(std::string(path_key), std::move(merged));
     return;
   }
@@ -246,10 +212,6 @@ bool PluginDecorationStore::ReplaceForOwnerFile(std::string_view owner,
     return changed;
   }
 
-  // Sort once here, at publish, so RebuildPath's common single-owner case can copy
-  // the merged view without re-sorting. It also makes the no-op check below
-  // order-insensitive: republishing the same decorations in a different order is
-  // correctly treated as no change.
   SortDecorations(data);
   OwnerFileDecorations next{.path = normalized_path, .data = std::move(data)};
   const auto existing = owner_entries.find(path_key);
@@ -276,8 +238,6 @@ bool PluginDecorationStore::RetargetPathPrefix(const std::filesystem::path& old_
                                                const std::filesystem::path& new_prefix) {
   return RetargetEntriesUnderPrefix(
       by_owner_, old_prefix, new_prefix,
-      // Decorations carry no per-item path, so the entry's own path is all there
-      // is to fix up and RetargetEntriesUnderPrefix has already done it.
       [](OwnerFileDecorations&, const std::filesystem::path&, const std::filesystem::path&) {},
       [this](const std::string& path_key) { RebuildPath(path_key); });
 }
@@ -288,10 +248,6 @@ bool PluginDecorationStore::ClearPathPrefix(const std::filesystem::path& path_pr
 }
 
 const FileDecorations* PluginDecorationStore::FindByPathKey(std::string_view path_key) const {
-  // Hot path: called per visible pane per frame with a precomputed key (see
-  // NormalizedPathKey / TextViewport::path_key). Skip the lookup entirely when
-  // no plugin has published any decorations; the heterogeneous find never
-  // allocates because the key string already lives on the document.
   if (merged_by_path_.empty()) {
     return nullptr;
   }
@@ -306,4 +262,4 @@ const FileDecorations* PluginDecorationStore::FindByPath(const std::filesystem::
   return FindByPathKey(PathKey(path));
 }
 
-}  // namespace microide::editor
+}

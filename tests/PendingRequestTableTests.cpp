@@ -30,16 +30,16 @@ void TestSweepFailsOnlyExpiredUnlessThePeerIsGone() {
   table.Add(2, [] { return 2; }, milliseconds(60'000));
   std::vector<int> failed;
   const auto now = Table::Clock::now() + milliseconds(1);
-  Expect(table.Sweep(/*only_expired=*/true, now, [&](int id, Table::Entry) { failed.push_back(id); }) == 1 &&
+  Expect(table.Sweep(true, now, [&](int id, Table::Entry) { failed.push_back(id); }) == 1 &&
              failed == std::vector<int>{1},
          "the timeout pass fails only the expired request");
-  Expect(table.Sweep(/*only_expired=*/false, now, [&](int id, Table::Entry) { failed.push_back(id); }) == 1 &&
+  Expect(table.Sweep(false, now, [&](int id, Table::Entry) { failed.push_back(id); }) == 1 &&
              failed == std::vector<int>{1, 2},
          "the peer-gone pass fails the rest");
   Expect(table.empty() && !table.Take(2).has_value(), "a swept entry cannot also be answered");
 }
 
-}  // namespace
+}
 
 void RegisterPendingRequestTableTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PendingRequestTable/EachEntryIsClaimedOnce", TestEachEntryIsClaimedOnce);
@@ -47,4 +47,4 @@ void RegisterPendingRequestTableTests(std::vector<TestCase>& tests) {
           TestSweepFailsOnlyExpiredUnlessThePeerIsGone);
 }
 
-}  // namespace microide::tests
+}

@@ -41,8 +41,6 @@ void ExpectNormalised(const TerminalPaneWeights& weights, const std::string& con
   }
 }
 
-// The body is partitioned exactly: panes and dividers tile it with no gap and no
-// overlap, whatever the weights, and the last pane absorbs the rounding.
 void ExpectTiles(const SDL_FRect& body, const TerminalPaneWeights& weights,
                  const std::string& context) {
   const TerminalPaneRectsLayout rects =
@@ -79,26 +77,22 @@ void TestTerminalPaneWeightsSplitHalvesTheSplitPane() {
   ExpectNormalised(weights, "first pane");
   Expect(weights.size() == 1 && weights[0] == 1.0f, "a lone pane owns the body");
 
-  // Split the only pane: both halves equal.
   InsertTerminalPaneWeight(weights, 1);
   ExpectNormalised(weights, "two panes");
   Expect(std::abs(weights[0] - 0.5f) < 1e-5f && std::abs(weights[1] - 0.5f) < 1e-5f,
          "splitting halves the split pane");
 
-  // Split the right pane: the LEFT one keeps its half, the right half splits.
   InsertTerminalPaneWeight(weights, 2);
   ExpectNormalised(weights, "three panes");
   Expect(std::abs(weights[0] - 0.5f) < 1e-5f, "a pane not being split keeps its share");
   Expect(std::abs(weights[1] - 0.25f) < 1e-5f && std::abs(weights[2] - 0.25f) < 1e-5f,
          "the split pane's share is halved between it and the new pane");
 
-  // Inserting at the front splits the first pane.
   InsertTerminalPaneWeight(weights, 0);
   ExpectNormalised(weights, "front insert");
   Expect(std::abs(weights[0] - 0.25f) < 1e-5f && std::abs(weights[1] - 0.25f) < 1e-5f,
          "a front insert halves the first pane");
 
-  // The cap holds.
   while (weights.size() < kMaxTerminalPanes) {
     InsertTerminalPaneWeight(weights, weights.size());
   }
@@ -160,7 +154,6 @@ void TestTerminalPaneRectsTileTheBodyForEveryWeightMix() {
       ComputeTerminalPaneRects(body, std::span<const float>(degenerate.data(), degenerate.size()));
   Expect(std::abs(even.panes[0].w - even.panes[1].w) <= 1.0f, "zero weights split evenly");
 
-  // Random weight mixes at the cap, odd body widths: still an exact tiling.
   std::uint64_t state = 0x9E3779B97F4A7C15ull;
   const auto next = [&state]() {
     state ^= state << 13;
@@ -179,7 +172,6 @@ void TestTerminalPaneRectsTileTheBodyForEveryWeightMix() {
     ExpectTiles(random_body, weights, "random step " + std::to_string(step));
   }
 
-  // Hit testing: a point in a pane finds it; a point on a divider finds nothing.
   const TerminalPaneRectsLayout rects =
       ComputeTerminalPaneRects(body, std::span<const float>(uneven.data(), uneven.size()));
   Expect(TerminalPaneIndexAt(rects, rects.panes[1].x + 1.0f, body.y + 1.0f) == 1,
@@ -191,7 +183,6 @@ void TestTerminalPaneRectsTileTheBodyForEveryWeightMix() {
          "a point outside the body belongs to no pane");
 }
 
-// Immersive mode: the panel owns everything below the menu bar and project strip.
 void TestMaximizedPanelLayoutLeavesOnlyMenuAndProjectStrip() {
   WorkspaceLayoutInputs inputs;
   inputs.window_width = 1440.0f;
@@ -238,13 +229,11 @@ void TestMaximizedPanelLayoutLeavesOnlyMenuAndProjectStrip() {
   Expect(microide::workspace::BottomPanelResizeHandleRect(regular).h > 0.0f,
          "the regular panel keeps its resize handle");
 
-  // Hidden panel: maximized is irrelevant, the layout is the regular hidden one.
   inputs.bottom_panel_visible = false;
   const WorkspaceLayout hidden = ComputeLayout(inputs);
   Expect(!hidden.panel_maximized && hidden.editor_area.h > regular.editor_area.h,
          "a hidden panel is never laid out maximized");
 
-  // With the project strip hidden the panel starts right under the menu bar.
   inputs.bottom_panel_visible = true;
   inputs.project_tab_strip_visible = false;
   const WorkspaceLayout no_strip = ComputeLayout(inputs);
@@ -252,7 +241,7 @@ void TestMaximizedPanelLayoutLeavesOnlyMenuAndProjectStrip() {
          "without a project strip the panel starts under the menu bar");
 }
 
-}  // namespace
+}
 
 void RegisterTerminalPaneLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalPaneLayout/SplitHalvesTheSplitPane",
@@ -267,4 +256,4 @@ void RegisterTerminalPaneLayoutTests(std::vector<TestCase>& tests) {
           TestMaximizedPanelLayoutLeavesOnlyMenuAndProjectStrip);
 }
 
-}  // namespace microide::tests
+}

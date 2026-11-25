@@ -1,9 +1,3 @@
-// Local/remote parity (dev-docs/design/remote-projects.md § 10.1, Groundwork G11):
-// each scenario runs against the same tree opened locally and opened through the
-// loopback non-local locality (tests/parity/LoopbackLocality.h), and what the user
-// would see must be equal. A row that cannot be equal yet is in ParityKnownGaps.h
-// with what removes it.
-
 #include <algorithm>
 #include <filesystem>
 #include <string>
@@ -45,8 +39,6 @@ std::string_view SectionName(workspace::GitSidebarEntry::Section section) {
   return "?";
 }
 
-// An editor save lands in the tree the project's processes see. A save that
-// bypassed the project's write gate would leave the host's bytes unchanged.
 Scenario SaveReachesTheTree() {
   return Scenario{
       .name = "Parity/SaveReachesTheTree",
@@ -68,8 +60,6 @@ Scenario SaveReachesTheTree() {
   };
 }
 
-// The git sidebar shows the host's working tree. The mirror has no `.git`
-// (design § 6.2), so this is where every reader of a LOCAL `.git` shows up.
 Scenario GitSidebarShowsTheWorkingTree() {
   return Scenario{
       .name = "Parity/GitSidebarShowsTheWorkingTree",
@@ -87,9 +77,6 @@ Scenario GitSidebarShowsTheWorkingTree() {
           [](WorkspaceShell& shell, const Tree& tree, Outcome& outcome) {
             WorkspaceShellTestAccess::ShowGitSidebar(shell);
             (void)SettleGitSidebarRefresh(shell);
-            // The local run is the reference, so it must be RIGHT on its own: while
-            // this row is a known gap, a broken local run would still "differ" and
-            // read as the expected gap.
             if (tree.locality == parity::Locality::kLocal) {
               Expect(WorkspaceShellTestAccess::GitSidebarEntries(shell).size() == 2,
                      "parity reference: the local git sidebar lists both changes");
@@ -105,13 +92,6 @@ Scenario GitSidebarShowsTheWorkingTree() {
   };
 }
 
-// A language server that, like any process on a real host, sees only the host's
-// files: its working directory is the host root, and a path outside it is one it
-// cannot open. It reports what it could read (a diagnostic per TODO line, from
-// the bytes ON ITS DISK) and answers definition with a host path, as a real
-// server does. Whatever it is told, it echoes back -- so an untranslated mirror
-// path reaches it as "not a host path", and an untranslated host path reaches
-// the user as a path outside the project.
 constexpr std::string_view kHostConfinedLspServer = R"py(import json, os, sys
 from urllib.parse import quote, unquote
 
@@ -185,9 +165,6 @@ while True:
         break
 )py";
 
-// The language server runs on the host, reads the host's bytes, and every path
-// it is given or gives back crosses the mirror/host boundary: diagnostics land on
-// the editor's buffer and go-to-definition opens the editor's copy of the file.
 Scenario LanguageServerSeesTheHostTree() {
   return Scenario{
       .name = "Parity/LanguageServerSeesTheHostTree",
@@ -232,7 +209,6 @@ Scenario LanguageServerSeesTheHostTree() {
   };
 }
 
-// "relative/path d|f" for every entry under `root` except `.git`, sorted.
 std::vector<std::string> ListTree(const std::filesystem::path& root) {
   std::vector<std::string> out;
   std::error_code ec;
@@ -249,8 +225,6 @@ std::vector<std::string> ListTree(const std::filesystem::path& root) {
   return out;
 }
 
-// The sidebar's create-file, create-folder and rename land in BOTH trees -- the
-// editor's and the one the project's processes see -- through the project's gate.
 Scenario FileOperationsReachTheTree() {
   return Scenario{
       .name = "Parity/FileOperationsReachTheTree",
@@ -291,8 +265,6 @@ Scenario FileOperationsReachTheTree() {
   };
 }
 
-// The contributed formatter runs where the project runs, and the formatted save
-// reaches the host's bytes.
 Scenario FormatOnSaveReachesTheTree() {
   return Scenario{
       .name = "Parity/FormatOnSaveReachesTheTree",
@@ -321,8 +293,6 @@ Scenario FormatOnSaveReachesTheTree() {
   };
 }
 
-// A plugin's tool runs in the project's tree (where `git` sees the repository
-// only the HOST has), and a plugin's write lands in the host's bytes.
 Scenario PluginToolsFollowTheProject() {
   return Scenario{
       .name = "Parity/PluginToolsFollowTheProject",
@@ -359,8 +329,6 @@ Scenario PluginToolsFollowTheProject() {
   };
 }
 
-// The terminal's shell starts in the project's tree as the HOST has it: the
-// command finds the repository only the host's copy carries.
 Scenario TerminalStartsInTheHostTree() {
   return Scenario{
       .name = "Parity/TerminalStartsInTheHostTree",
@@ -373,7 +341,6 @@ Scenario TerminalStartsInTheHostTree() {
           },
       .run =
           [](WorkspaceShell& shell, const Tree& tree, Outcome& outcome) {
-            // A plain `sh`, not the user's login shell and its profile.
             (void)WorkspaceShellTestAccess::SetSettingValueTransient(shell, "terminal.shell", "sh");
             WorkspaceShellTestAccess::OpenTerminalViaService(
                 shell, "test -d .git && echo PARITY-REPO || echo PARITY-NOREPO");
@@ -406,8 +373,6 @@ Scenario TerminalStartsInTheHostTree() {
   };
 }
 
-// One plugin for the format-on-save and plugin-tool rows: a `todo` filetype with
-// an uppercasing formatter, and a command that runs git and writes a file.
 void WriteParityToolsPlugin(const std::filesystem::path& config_home) {
   const std::filesystem::path plugin = config_home / "microide" / "plugins" / "parity-tools";
   WriteFile(plugin / "init.lua", R"lua(local ide = require("microide")
@@ -437,7 +402,7 @@ return ide.plugin({
 )lua");
 }
 
-}  // namespace
+}
 
 void RegisterParityTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Parity/SaveReachesTheTree",
@@ -445,8 +410,6 @@ void RegisterParityTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Parity/GitSidebarShowsTheWorkingTree",
           [] { parity::ExpectParity(GitSidebarShowsTheWorkingTree()); });
   AddTest(tests, "Parity/TerminalStartsInTheHostTree", [] {
-    // The suite runs terminals as placeholders that spawn nothing; this row is
-    // about where a REAL shell starts, so it turns them off for its own duration.
     struct RealTerminals {
       RealTerminals() { terminal::SetUsePlaceholderTerminalsForTesting(false); }
       ~RealTerminals() { terminal::SetUsePlaceholderTerminalsForTesting(true); }
@@ -496,7 +459,6 @@ return ide.plugin({
     parity::ExpectParity(LanguageServerSeesTheHostTree());
   });
 
-  // The transport's path translation (workspace/HostPathTranslator), unit-level.
   AddTest(tests, "HostPathTranslator/RewritesPathKeysAndNothingElse", [] {
     const parity::LoopbackProcessLauncher launcher(
         parity::LoopbackPathMap("/m/project", "/h/project"));
@@ -507,7 +469,6 @@ return ide.plugin({
 
     util::JsonObject text_document;
     text_document["uri"] = util::JsonValue(mirror_uri);
-    // A document that MENTIONS a mirror URI: the user's bytes, never rewritten.
     text_document["text"] = util::JsonValue("see " + mirror_uri);
     util::JsonObject params;
     params["textDocument"] = util::JsonValue(std::move(text_document));
@@ -519,7 +480,6 @@ return ide.plugin({
            "document text is never rewritten, even when it contains a file URI");
     Expect(message["rootPath"].AsString() == "/h/project", "a path key goes to the host");
 
-    // WorkspaceEdit.changes: the URI is an object KEY.
     util::JsonObject changes;
     changes[host_uri] = util::JsonValue(util::JsonArray{});
     util::JsonObject edit;
@@ -529,7 +489,6 @@ return ide.plugin({
     Expect(reply["changes"].HasKey(mirror_uri) && !reply["changes"].HasKey(host_uri),
            "a WorkspaceEdit's changes come back keyed by the editor's URI");
 
-    // DAP: a stack frame's source path, and a path outside the project untouched.
     util::JsonObject source;
     source["path"] = util::JsonValue("/h/project/main.c");
     util::JsonObject outside;
@@ -548,9 +507,6 @@ return ide.plugin({
     Expect(!local.active(), "a local project's translator is inactive: no walk at all");
   });
 
-  // Positive controls: the runner must be able to fail. A parity suite that cannot
-  // tell a leaked host path from a correct one, or that passes when nothing went
-  // through the loopback, is green and worthless (validation-traps.md).
   AddTest(tests, "Parity/Control/LeakedHostPathFails", [] {
     const Scenario leak{
         .name = "Parity/Control/LeakedHostPath",
@@ -573,7 +529,6 @@ return ide.plugin({
            "a spawning scenario with no loopback spawn must fail as vacuous");
   });
   AddTest(tests, "Parity/Control/ExtraRoundTripsFail", [] {
-    // Right answer, more processes: the run spawns once more when non-local.
     const Scenario chatty{
         .name = "Parity/Control/ExtraRoundTrips",
         .build = [](const std::filesystem::path& root, bool) { WriteFile(root / "a.txt", "a\n"); },
@@ -602,4 +557,4 @@ return ide.plugin({
   });
 }
 
-}  // namespace microide::tests
+}

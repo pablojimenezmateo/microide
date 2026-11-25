@@ -26,7 +26,7 @@ std::optional<int> Base64Value(unsigned char character) {
   return std::nullopt;
 }
 
-}  // namespace
+}
 
 std::optional<std::string> DecodeBase64(std::string_view text) {
   std::string compact;
@@ -93,4 +93,4 @@ bool ClipboardPayloadIsText(std::string_view text) {
   return true;
 }
 
-}  // namespace microide::terminal
+}

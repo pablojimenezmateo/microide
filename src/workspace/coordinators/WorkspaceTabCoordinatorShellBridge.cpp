@@ -34,10 +34,6 @@ namespace microide::workspace {
 
 namespace {
 
-// Above this a read takes long enough that an editor sitting empty with no
-// explanation reads as a bug rather than as work in progress. Well above the
-// threshold that sends the read off-thread at all (4 MiB, where the wait is a
-// frame or two and a toast would only flash).
 constexpr std::uintmax_t kAnnounceReadAboveBytes = 48ull * 1024 * 1024;
 
 bool FileIsBigEnoughToAnnounceTheRead(const std::filesystem::path& path) {
@@ -46,7 +42,7 @@ bool FileIsBigEnoughToAnnounceTheRead(const std::filesystem::path& path) {
   return !error && size >= kAnnounceReadAboveBytes;
 }
 
-}  // namespace
+}
 
 TabCoordinator WorkspaceShell::MakeTabCoordinator() {
   return TabCoordinator(
@@ -61,16 +57,12 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
               [this](const std::filesystem::path& path) { NotifyPluginBufferOpen(path); },
           .schedule_lsp_buffer_open =
               [this](const std::filesystem::path& path) {
-                // Record the hydration and request a frame; the actual didOpen +
-                // token/inlay work runs post-present in OnFramePresented so a large
-                // buffer's hydration never blocks the tab switch (TD-2026-07-17A-033).
                 lsp_service_.ScheduleBufferOpen(path);
                 RequestPreparedFrame();
               },
           .notify_lsp_buffer_close =
               [this](const std::filesystem::path& path) {
                 NotifyLspBufferClose(path);
-                // The last view of a file a host program waits on ($EDITOR).
                 (void)MakeRemoteHostService().FinishTerminalEdit(path);
               },
           .notify_lsp_buffer_reloaded =
@@ -138,23 +130,6 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
               },
           .begin_async_file_read =
               [this](const std::filesystem::path& path) {
-                // The whole load runs on the reader's thread: the classification
-                // (content hash, encoding sniff, line-ending scan, CRLF rewrite)
-                // AND the buffer build, which `PieceTree::RebuildFromOriginal`
-                // itself calls the dominant cost of opening a file — a newline
-                // index over every byte, plus its reservation. A `TextViewport`
-                // owns its document and touches no process-wide mutable state
-                // while being built (the perf counters it bumps are atomic, the
-                // trace channel is thread-aware, and nothing on this path consults
-                // the syntax registry), so it is constructed here and MOVED into
-                // the tab by the completion. The shared slot is written by the
-                // worker before it posts and read by the completion after the
-                // post, which is what orders the two.
-                // A file this big takes long enough that an empty editor with no
-                // explanation reads as a bug. Sticky, because it reports a state
-                // that ends when the read does — and posted only above a size
-                // where the wait is actually perceptible, so an ordinary open
-                // does not flash a toast for two frames.
                 if (FileIsBigEnoughToAnnounceTheRead(path)) {
                   Notify(NotificationService::Request{
                       .tone = NotificationService::Tone::Info,
@@ -164,16 +139,6 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
                   });
                 }
                 auto loaded = std::make_shared<editor::TextViewport>();
-                // The per-line width table (the horizontal extent) measures every
-                // line of the file: ~12 ms on the shell thread for an 800k-line log
-                // in the first frame after the bytes land. Build it here instead, at
-                // the tab size the completion will settle on — the same inputs
-                // ApplyEditorPreferences and indent detection use, resolved now on
-                // the shell thread and copied in. A tab size that differs anyway
-                // (a setting changed meanwhile) just rebuilds it there, as before;
-                // the completion's own preference-then-detection flip round-trips
-                // through the layout cache's parked table rather than
-                // re-measuring (TD-2026-09-29-317).
                 const EditorPreferenceSettings settings = ResolveEditorPreferenceSettings(
                     [this](std::string_view id) { return GetSettingValue(id); });
                 project::EditorConfigProperties editor_config;
@@ -193,7 +158,7 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
                             return;
                           }
                           if (preferences.soft_wrap) {
-                            return;  // a wrapped view never reads the width table
+                            return;
                           }
                           loaded->SetTabSize(editor_config.tab_size.value_or(preferences.tab_size));
                           loaded->SetIndentWidth(
@@ -206,9 +171,6 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
                         },
                     .on_complete =
                         [this, loaded](project::FileReadService::Completion completion) {
-                          // Dismissed here rather than in ApplyAsyncFileRead: a
-                          // completion whose tab is gone never reaches that, and a
-                          // sticky row nothing dismisses stays on screen forever.
                           if (notification_service_.DismissKey(
                                   kFileOpenInProgressNotificationKey)) {
                             RequestFullRedraw();
@@ -244,15 +206,8 @@ void WorkspaceShell::ReportSaveFormatterFailure(
   const std::string what = completion.timed_out ? "timed out" : "failed";
   util::SetError(error_message, "formatter '" + completion.formatter_id + "' " + what);
 
-  // Everything the formatter said, in a channel the user can scroll. The warning
-  // below used to be the whole of it — no exit status, no parse error, no line
-  // number — which for a formatter that fails on ONE file and not the others is
-  // the only question worth answering. The subprocess layer captured stderr all
-  // along and this path dropped it.
   static constexpr std::string_view kFormatterChannelId = "formatter";
   static constexpr std::string_view kFormatterChannelLabel = "Formatter";
-  // Bounded: a formatter that fails per line could otherwise put its whole
-  // opinion of the file in the panel, and the channel store keeps every line.
   constexpr std::size_t kMaxReportedLines = 50;
   std::string first_line;
   if (!completion.error_text.empty()) {
@@ -285,10 +240,6 @@ void WorkspaceShell::ReportSaveFormatterFailure(
     }
   }
 
-  // The file still saves (unformatted); warn so the silent formatter failure is
-  // visible rather than swallowed. The first line of stderr rides along, because
-  // a toast saying only "failed" sends the user looking for a panel they have no
-  // reason to know exists. NotificationService byte-caps the result.
   std::string message =
       "Formatter '" + completion.formatter_id + "' " + what + "; saved unformatted";
   if (!first_line.empty()) {
@@ -297,7 +248,6 @@ void WorkspaceShell::ReportSaveFormatterFailure(
   NotificationService::Request request{.tone = NotificationService::Tone::Warning,
                                        .message = std::move(message)};
   if (!completion.error_text.empty()) {
-    // The channel only exists when the formatter said something.
     request.actions.push_back(NotificationAction{
         .label = "Show Output",
         .id = ActionId::ShowOutput,
@@ -312,18 +262,11 @@ void WorkspaceShell::ApplyDeferredSaveFormat(
   if (completion.id == 0) {
     return;
   }
-  // Find the tab that posted this run. A walk rather than a map: run ids are
-  // process-monotonic so at most one tab carries this one, the tab may have moved
-  // group or index while the formatter ran, and the walk costs one pass over the
-  // open tabs once per save.
   for (std::size_t group_index = 0;
        group_index < context_.current_project_state.editor_groups.size(); ++group_index) {
     EditorGroup& group = context_.current_project_state.editor_groups[group_index];
     for (std::size_t tab_index = 0; tab_index < group.open_tabs.size(); ++tab_index) {
       TabEntry& tab = group.open_tabs[tab_index];
-      // A compare tab's editable right side and a merge tab's result save the
-      // same way as an editor (TD-2026-09-28-304): their run is armed on the
-      // surface's state.
       editor::AsyncBufferWork* work = nullptr;
       editor::TextViewport* view = nullptr;
       if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
@@ -345,8 +288,6 @@ void WorkspaceShell::ApplyDeferredSaveFormat(
       EditorTabService& editor_tabs = MakeEditorTabService();
       PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
       if (completion.cancel_save) {
-        // A participant refused the save: nothing is written, and whatever waited
-        // on this write is cancelled — the blocking path's Failed().
         Notify(NotificationService::Tone::Error,
                completion.error_text.empty()
                    ? std::string("A save participant failed; not saved")
@@ -362,26 +303,15 @@ void WorkspaceShell::ApplyDeferredSaveFormat(
       if (!completion.ok && !completion.formatter_id.empty()) {
         ReportSaveFormatterFailure(completion, nullptr);
       }
-      // Non-empty whenever a stage changed the text — also the participants'
-      // output under a formatter that then failed.
       if (!completion.formatted_text.empty()) {
         if (claim == editor::AsyncBufferWork::Claim::Current) {
           (void)view->ApplyFormattedText(completion.formatted_text);
           view->SetDirty(true);
         } else {
-          // The user typed while the transforms ran. Applying their output now
-          // would silently undo that edit, so the buffer as it stands is what gets
-          // written and their answer is dropped.
           Notify(NotificationService::Tone::Info,
                  "Buffer changed while formatting; saved unformatted");
         }
       }
-      // One re-entry with every transform suppressed, so this lands exactly one
-      // write and cannot post another run. Whatever waited on it — the tab's
-      // close, a rename/delete, a project close, a quit — runs now, or is
-      // cancelled when the write did not land: closing on a FAILED write would
-      // discard exactly the edits the user asked to keep (TD-2026-09-28-304).
-      // A compare/merge save reports its own failure as the blocking path did.
       const bool saved = SaveGroupTab(group_index, tab_index, SaveMode::SkipTransforms);
       MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces).SettleSave(tab_id, saved);
       RequestPreparedFrame();
@@ -389,7 +319,6 @@ void WorkspaceShell::ApplyDeferredSaveFormat(
       return;
     }
   }
-  // Not in the active project: see DirtyPromptCoordinator::SettleOrphanedRun.
   EditorTabService& editor_tabs = MakeEditorTabService();
   PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
   MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces).SettleOrphanedRun(completion.id);
@@ -400,10 +329,6 @@ void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion com
   if (completion.id == 0) {
     return;
   }
-  // Find the tab that posted this read. A walk, for the same reason the deferred
-  // save's completion walks: read ids are process-monotonic so at most one tab
-  // carries this one, the tab may have moved group or index while the read ran,
-  // and the walk costs one pass over the open tabs once per open.
   for (std::size_t group_index = 0;
        group_index < context_.current_project_state.editor_groups.size(); ++group_index) {
     EditorGroup& group = context_.current_project_state.editor_groups[group_index];
@@ -413,48 +338,27 @@ void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion com
         continue;
       }
       auto& editor_state = *tab.editor_state;
-      // Resolved only to CONSUME the slot (a duplicate delivery then reads
-      // NotMine). The claim itself is not the decision here: `Holds` above already
-      // matched the id, and a Loading tab is read-only, so its content revision
-      // cannot have moved — the Content check below is what decides.
       (void) editor_state.pending_load.Resolve(completion.id,
                                                editor_state.viewport.content_revision());
       if (editor_state.content != TabEntry::EditorTabState::Content::Loading) {
-        // Something already gave this tab content — a retarget, a reload, a
-        // session restore. Whatever it installed is newer than these bytes.
         return;
       }
       if (completion.status == project::FileReadService::Status::Cancelled) {
-        // The tab is on its way out, or the read was superseded. Leave the state
-        // alone: whoever cancelled owns what happens next.
         return;
       }
       const std::filesystem::path path = completion.path;
       if (!completion.ok()) {
-        // The tab stays, showing which file it was. Dropping it would make a
-        // failed open look like a click that did nothing.
         editor_state.content = TabEntry::EditorTabState::Content::Failed;
         const std::string name = path.empty() ? std::string("file") : path.filename().string();
         std::string reason = completion.status == project::FileReadService::Status::TooLarge
                                  ? "Cannot open " + name + ": file is too large"
                                  : "Could not read " + name;
         Notify(NotificationService::Tone::Error, reason);
-        // The toast is gone in seconds; the banner stays on the tab, with a Retry
-        // (TD-2026-09-29-315).
         SetEditorBanner(context_.current_project_state, EditorBannerState::Kind::OpenFailed, path,
                         std::move(reason));
         RequestPreparedFrame();
         return;
       }
-      // The loaded view replaces the empty read-only stand-in wholesale, and then
-      // gets the preferences and indent detection a synchronous open applies.
-      // (Every other tab waiting on this path is handed a copy below, so a pane
-      // that was sharing the stand-in's document does not keep pointing at it.)
-      // One file is one buffer. If another surface made the file live while this
-      // read ran — a compare tab opened, or finished its own load, on the same
-      // path — share THAT document rather than installing a second, independent
-      // copy of the same file: two buffers diverge on the first edit and save
-      // over each other. The stand-in is excluded by `content_pending()`.
       if (const editor::TextViewport* live =
               LiveBufferViewOfPath(context_.current_project_state.editor_groups, path);
           live != nullptr) {
@@ -464,8 +368,6 @@ void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion com
       }
       ApplyEditorPreferences(editor_state.viewport);
       ApplyDetectedIndentOnOpen(editor_state.viewport);
-      // View state last: preferences re-run EnsureCursorVisible, which would snap
-      // scroll back onto the caret if it ran after the restore.
       editor_state.restore.ApplyViewStateTo(editor_state.viewport);
       if (editor_state.center_cursor_on_load) {
         editor_state.center_cursor_on_load = false;
@@ -490,11 +392,6 @@ void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion com
 
 void WorkspaceShell::ShareLoadedBufferWithWaitingTabs(const std::filesystem::path& path,
                                                       const editor::TextViewport& loaded) {
-  // One file is one buffer, whoever reads it. A split made while the read was in
-  // flight, or a second open of the same path, leaves other tabs waiting on the
-  // same bytes; handing them a copy of this view shares the DocumentState rather
-  // than reading the file again, which is what the synchronous open has always
-  // done through `OpenEditorViewForPath`.
   for (EditorGroup& group : context_.current_project_state.editor_groups) {
     for (TabEntry& tab : group.open_tabs) {
       if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
@@ -505,13 +402,11 @@ void WorkspaceShell::ShareLoadedBufferWithWaitingTabs(const std::filesystem::pat
           waiting.restore.path.lexically_normal() != path) {
         continue;
       }
-      // Its own read, if it posted one, is now pointless work on a file already
-      // in memory.
       if (waiting.pending_load.armed()) {
         file_read_service_.Cancel(waiting.pending_load.id());
         waiting.pending_load.Disarm();
       }
-      waiting.viewport = loaded;  // shares the DocumentState; view state is its own
+      waiting.viewport = loaded;
       waiting.restore.ApplyViewStateTo(waiting.viewport);
       waiting.content = TabEntry::EditorTabState::Content::Ready;
       waiting.folding_model->Clear();
@@ -526,13 +421,6 @@ void WorkspaceShell::MaybeAutosaveDirtyTabs(bool on_focus_change) {
   if (!trigger) {
     return;
   }
-  // TabCoordinator::Save refuses untitled buffers and surfaces the external-change
-  // banner on a disk conflict, so autosave never pops a dialog or clobbers a file
-  // changed on disk. SaveMode::Autosave writes each buffer as it is: no formatter
-  // subprocess to stall the UI thread (most visibly during window blur / alt-tab),
-  // and no save transform rewriting the buffer under the user.
-  // Flush every dirty tab across ALL editor groups, not just the focused one, so a
-  // buffer dirtied in the non-focused split group is autosaved too (VSCode parity).
   for (const GroupTabRef& ref : MakeEditorTabService().DirtyGroupTabs()) {
     SaveGroupTab(ref.group_index, ref.tab_index, SaveMode::Autosave);
   }
@@ -544,23 +432,15 @@ Uint64 WorkspaceShell::AutosaveDelayMs() const {
 }
 
 void WorkspaceShell::MaybeArmAutosaveTimer() {
-  // Only the "after delay" mode uses the debounce; other modes leave the timer idle.
   if (GetSettingValue("editor.autosave").value_or("off") != "after_delay") {
     autosave_armed_ = false;
     autosave_last_viewport_ = nullptr;
     return;
   }
-  // Detect a real buffer mutation via the active editable viewport's content revision.
-  // A path-less (untitled) or absent buffer has nothing to autosave, so we do not arm.
   const editor::TextViewport* viewport = ActiveEditableViewport();
   if (viewport == nullptr || viewport->path().empty()) {
     return;
   }
-  // content_revision() is per-viewport, so switching tabs changes the sampled value
-  // without any edit having occurred. Re-baseline against the newly-active viewport
-  // WITHOUT resetting the debounce or disarming: a timer armed by an edit on the
-  // previous tab must survive the switch so that buffer still autosaves — the flush
-  // (MaybeAutosaveDirtyTabs) saves every dirty tab, not just the active one.
   if (viewport != autosave_last_viewport_) {
     autosave_last_viewport_ = viewport;
     autosave_last_content_revision_ = viewport->content_revision();
@@ -568,36 +448,21 @@ void WorkspaceShell::MaybeArmAutosaveTimer() {
   }
   const std::uint64_t revision = viewport->content_revision();
   if (revision == autosave_last_content_revision_) {
-    return;  // No edit since the last sample (navigation/focus only): keep the debounce.
+    return;
   }
   autosave_last_content_revision_ = revision;
   autosave_edit_epoch_ms_ = SDL_GetTicks();
-  // Arm while any saveable tab is dirty, not only the active one (and across all
-  // editor groups, so a dirty non-focused-group tab keeps the flush armed): an edit
-  // that reverts the active buffer to clean must still leave the timer armed to flush
-  // another dirty tab.
   autosave_armed_ = !MakeEditorTabService().DirtyGroupTabs().empty();
 }
 
 void WorkspaceShell::MaybeArmSessionFlushTimer() {
-  // Always-on crash-safety debounce (no editor.autosave gate), covering untitled dirty
-  // buffers too. A real buffer mutation is detected from a fingerprint of EVERY open
-  // document's (identity, content revision), not the active viewport's: that
-  // sample re-baselined on a tab switch, so an edit followed by a switch in the same
-  // input batch -- or an edit to a buffer that was never active (a command, a replace
-  // across files) -- never armed the flush, and a kill -9 after it lost the buffer
-  // (soak 4fb82d32fe19). A diff's editable side is such a document too: typing into
-  // one with no editor tab on its file armed nothing (TD-2026-11-19-453). A switch,
-  // a focus change or navigation leaves the fingerprint as it was. A walk over the
-  // open tabs, no allocation.
-  std::uint64_t fingerprint = 1469598103934665603ull;  // FNV-1a offset basis
+  std::uint64_t fingerprint = 1469598103934665603ull;
   bool any_dirty = false;
   const auto mix = [&fingerprint](std::uint64_t value) {
     fingerprint = (fingerprint ^ value) * 1099511628211ull;
   };
   for (const EditorGroup& group : context_.current_project_state.editor_groups) {
     for (const TabEntry& tab : group.open_tabs) {
-      // A merge's result too: no file's buffer, but typed text the session stages.
       const editor::TextViewport* viewport =
           tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() ? &tab.merge->result_viewport
                                                                       : LoadedBufferViewOf(tab);
@@ -610,12 +475,9 @@ void WorkspaceShell::MaybeArmSessionFlushTimer() {
     }
   }
   if (fingerprint == session_flush_content_fingerprint_) {
-    return;  // Navigation/focus only: keep any pending debounce.
+    return;
   }
   session_flush_content_fingerprint_ = fingerprint;
-  // Arm only when there is unsaved content somewhere to persist (across all groups),
-  // and never disarm one already armed: a host terminal that just got its handle
-  // (ConsumeTerminalSessionUpdates) is owed the same flush, dirty buffers or not.
   if (any_dirty) {
     session_flush_.Note(SDL_GetTicks());
   } else {
@@ -630,7 +492,7 @@ std::optional<Uint32> WorkspaceShell::NextAutosaveDelayMs() const {
   const Uint64 delay = AutosaveDelayMs();
   const Uint64 elapsed = SDL_GetTicks() - autosave_edit_epoch_ms_;
   if (elapsed >= delay) {
-    return static_cast<Uint32>(1);  // Deadline passed: wake immediately to save.
+    return static_cast<Uint32>(1);
   }
   return static_cast<Uint32>(std::max<Uint64>(1, delay - elapsed));
 }
@@ -644,23 +506,11 @@ SavePreparation WorkspaceShell::PrepareEditorViewportForSave(const std::filesyst
     return SavePreparation::Ready();
   }
 
-  // The save a deferred completion re-enters already has every transform's answer;
-  // an autosave runs none (SaveMode::Autosave).
   if (mode == SaveMode::SkipTransforms || mode == SaveMode::Autosave) {
     return SavePreparation::Ready();
   }
-  // Fast-return BEFORE serializing the whole buffer when no save transform can run:
-  // no active plugin save participants AND no enabled formatter for this filetype.
-  // The common no-plugin/no-formatter save then pays zero preparation serialization
-  // (TextViewport::Save does its own single serialize), instead of the previous
-  // two-or-three full-buffer passes. (TD-2026-07-16-16.)
   const bool has_save_participants =
       plugin_runtime_.enabled() && !save_participant_registry_.Specs().empty();
-  // Every current caller passes viewport.path(), so this is the viewport's own
-  // memo — no buffer head scan on the save path. `path` is still the target (it
-  // is what save participants receive), so if a save-as ever routes a different
-  // one, detect from the DESTINATION's name: saving a Python buffer as `.lua`
-  // should pick the lua formatter, not the source buffer's language.
   std::string destination_filetype;
   if (path != viewport.path()) {
     destination_filetype = editor::runtime_syntax::DetectFiletype(path);
@@ -668,30 +518,22 @@ SavePreparation WorkspaceShell::PrepareEditorViewportForSave(const std::filesyst
   const std::string_view filetype = path == viewport.path()
                                         ? std::string_view(viewport.language_id())
                                         : std::string_view(destination_filetype);
-  // An autosave returned above, so a background write never blocks the UI thread on
-  // an external subprocess; explicit saves format.
   const bool format_on_save = SettingFlagEnabled(GetSettingValue("editor.format_on_save"), true);
   const FormatterSpec* formatter =
       (format_on_save && !filetype.empty()) ? FindFormatter(formatter_registry_, filetype)
                                             : nullptr;
   const bool has_formatter = formatter != nullptr && !formatter->command.empty();
   if (!has_save_participants && !has_formatter) {
-    return SavePreparation::Ready();  // nothing transforms the text; skip serializing
+    return SavePreparation::Ready();
   }
 
   std::string text = viewport.SerializeText();
   const platform::ProcessLauncher& launcher = context_.current_project_state.launcher();
   if (mode == SaveMode::Deferred) {
-    // Both transforms run on SaveFormatterService's worker: the participants'
-    // wait for the plugin worker is its first stage (TD-2026-09-28-304), and only
-    // their snapshot is taken here. The completion decides, against the revision,
-    // whether the answer is still about this buffer.
     constexpr int kFormatterTimeoutMs = 5000;
     SaveFormatterService::Request request{
         .command = has_formatter ? formatter->command : std::vector<std::string>{},
         .cwd = context_.current_project_state.root,
-        // Copied when the participants take it below, moved when nothing else does
-        // (designated initializers run in order, so the participants read it after).
         .text = has_save_participants ? text : std::move(text),
         .formatter_id = has_formatter ? formatter->id : std::string(),
         .timeout_ms = kFormatterTimeoutMs,
@@ -706,16 +548,13 @@ SavePreparation WorkspaceShell::PrepareEditorViewportForSave(const std::filesyst
     return run_id != 0 ? SavePreparation::Deferred(run_id) : SavePreparation::Ready();
   }
 
-  const std::string original_text = text;  // to detect whether a transform changed it
+  const std::string original_text = text;
   if (has_save_participants &&
       !plugin_runtime_.Host().RunSaveParticipants(path, &text, error_message)) {
     return SavePreparation::Failed();
   }
 
   if (has_formatter) {
-    // A save whose caller acts on completion — the merge view's Save Result, which
-    // stages the file next — still has to have it on disk when it returns. It pays
-    // the wait off the shell thread's own stack; everything else defers (above).
     constexpr int kFormatterTimeoutMs = 5000;
     const SaveFormatterService::Completion completion = save_formatter_service_.RunBlocking(
         SaveFormatterService::Request{
@@ -735,8 +574,6 @@ SavePreparation WorkspaceShell::PrepareEditorViewportForSave(const std::filesyst
     }
   }
 
-  // Compare against the snapshot captured before transforms, not a fresh re-serialize:
-  // when no participant/formatter changed the text there is nothing to apply. (TD-16.)
   if (text == original_text) {
     return SavePreparation::Ready();
   }
@@ -796,15 +633,6 @@ std::string WorkspaceShell::TabDisplayTitle(std::size_t index) const {
 
 namespace {
 
-// The file a tab's labels should name. A compare or merge tab's own `path` is not
-// it — those carry the surface's identity, not the document's. Returned by
-// reference so the label builders do not copy a path just to read it.
-//
-// A plain comparison's is its right (editable) side's file. Its `path` falls back
-// to the left side's for syntax when the right has none, and naming the tab by it
-// labelled "README.md  ↔  Untitled" plain "README.md", like the file's own tab
-// beside it (soak ba76514b00b9). With no file on the right the tab takes the
-// comparison's name (TabLabelFallback).
 const std::filesystem::path& TabLabelPath(const TabEntry& tab) {
   if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
     return tab.compare->plain_compare ? tab.compare->right_path : tab.compare->path;
@@ -815,11 +643,6 @@ const std::filesystem::path& TabLabelPath(const TabEntry& tab) {
   return tab.path;
 }
 
-// What a tab is called when no file names it (an untitled buffer, a comparison of
-// the clipboard with one): its title, less the "compare: " / "merge: " that the
-// title carries for the control channel. The strip showed "compare: Clipboard  ↔
-// Untitled" there, where every other comparison shows a name (VS Code: "Clipboard
-// ↔ Untitled-1").
 std::string_view TabLabelFallback(const TabEntry& tab) {
   std::string_view title = tab.title;
   if (tab.kind == TabEntry::Kind::Compare || tab.kind == TabEntry::Kind::Merge) {
@@ -832,7 +655,7 @@ std::string_view TabLabelFallback(const TabEntry& tab) {
   return title;
 }
 
-}  // namespace
+}
 
 const TabEntry* WorkspaceShell::TabForLabels(std::size_t group_index, std::size_t index) const {
   const ProjectWorkspaceState& state = context_.current_project_state;
@@ -844,19 +667,12 @@ const TabEntry* WorkspaceShell::TabForLabels(std::size_t group_index, std::size_
 }
 
 std::string WorkspaceShell::TabDisplayTitle(std::size_t group_index, std::size_t index) const {
-  // The title alone, not BuildWorkspaceTabTextModel: that also resolves the
-  // tooltip's project-relative label, which the tab strip asks for through its own
-  // provider anyway -- so every tab paid for it twice (TD-2026-08-06-159).
   const TabEntry* tab = TabForLabels(group_index, index);
   if (tab == nullptr) {
     return {};
   }
   std::string title = BuildWorkspaceTabDisplayTitle(TabLabelPath(*tab), TabLabelFallback(*tab),
                                                     TabCoordinator::TabStateIsDirty(*tab));
-  // Two tabs in the group with the same file name are told apart by their
-  // parent folder, "index.ts — src" (VS Code's tab description). Without it both
-  // tabs read identically and only the tooltip knew which was which. A linear
-  // scan over the group's tabs, once per strip geometry rebuild per tab.
   const std::filesystem::path& path = TabLabelPath(*tab);
   if (path.empty() || !path.has_parent_path()) {
     return title;
@@ -871,7 +687,7 @@ std::string WorkspaceShell::TabDisplayTitle(std::size_t group_index, std::size_t
     if (!other_path.empty() && other_path != path && other_path.filename() == filename) {
       const std::string parent = path.parent_path().filename().string();
       if (!parent.empty()) {
-        title += " \xe2\x80\x94 ";  // " — "
+        title += " \xe2\x80\x94 ";
         title += parent;
       }
       break;
@@ -939,17 +755,13 @@ void WorkspaceShell::FocusEditorGroup(std::size_t group_index) {
   }
   state.focused_group_index = group_index;
   state.surface.focus = FocusTarget::Editor;
-  RequestPreparedFrame();  // (the window title follows the group: the bar's unit keys on it)
+  RequestPreparedFrame();
 }
 
 bool WorkspaceShell::CloseEditorGroup() {
   if (EditorGroupCount() < 2) {
     return false;
   }
-  // Closing a pane drops its tabs. A dirty buffer whose only view lives in this
-  // pane used to go with them, silently; it gets the same Save / Discard / Cancel
-  // as closing its tab (VS Code prompts here too). Route through the tab-close
-  // path, which prompts, and collapses the pane once its last tab closes.
   const std::size_t tab_count = context_.current_project_state.focused_group().open_tabs.size();
   for (std::size_t index = 0; index < tab_count; ++index) {
     if (MakeEditorTabService().CloseWouldDiscardEdits(index)) {
@@ -968,20 +780,12 @@ std::size_t WorkspaceShell::EditorGroupCount() const {
   return const_cast<WorkspaceShell*>(this)->MakeEditorTabService().EditorGroupCount();
 }
 
-// By value: callers pass paths that live in workspace state (a compare tab's
-// path, a tree row's), and opening a tab can reallocate or rebuild that state
-// before the path is read again -- Alt+O from a diff read its own freed path.
 bool WorkspaceShell::OpenFileInNewTab(const std::filesystem::path& path) {
-  // A host file outside a remote project (a system header a language server named)
-  // is fetched first, read-only, off the UI thread; it opens when it arrives.
   if (glue_->remote_host_service != nullptr &&
       glue_->remote_host_service->OpenWhenFetched(
           path, [this](const std::filesystem::path& fetched) { (void)OpenFileInNewTab(fetched); })) {
     return false;
   }
-  // `path` is read only up to the open: a caller may pass one that lives in state
-  // the open rebuilds (a tree row's, which revealing the file re-lays out). Taken
-  // by reference rather than copied -- a path copy is a few allocations per open.
   const bool host_copy =
       glue_->remote_host_service != nullptr && glue_->remote_host_service->IsHostFileCopy(path);
   if (!MakeEditorTabService().OpenFileInNewTab(path)) {
@@ -992,11 +796,8 @@ bool WorkspaceShell::OpenFileInNewTab(const std::filesystem::path& path) {
     return true;
   }
   if (host_copy) {
-    // A copy of a host file outside the project: not the project's to edit.
     viewport->SetReadOnly(true);
   }
-  // Record into the recent-files MRU, scoped to the active project, under the
-  // opened tab's own path: absolute and normal whatever the caller passed.
   if (const std::filesystem::path& root = context_.current_project_state.root; !root.empty()) {
     recents_service_.RecordFileOpen(viewport->path(), root);
   }
@@ -1004,13 +805,6 @@ bool WorkspaceShell::OpenFileInNewTab(const std::filesystem::path& path) {
 }
 
 bool WorkspaceShell::MoveActiveTabTo(std::size_t index) {
-  // Reordering the open_tabs vector invalidates the cached display_titles /
-  // tooltip_labels / widths in TabStripService, which only key on
-  // (tab_count, strip_width). Without this drop, the next ComputeVisibleTabs
-  // call hits a stale cache and the rendered tab labels stay in the
-  // pre-reorder positions even though the underlying tabs have moved — so
-  // the tab strip shows the wrong labels while the active editor content
-  // already reflects the new order.
   tab_strip_service_.InvalidateTabStripGeometry();
   return MakeEditorTabService().MoveActiveTo(index);
 }
@@ -1044,13 +838,9 @@ void WorkspaceShell::OpenFileAtLocation(const std::filesystem::path& path,
     }
   }
 
-  // Only move the caret once we have actually landed on the requested file. If the
-  // open failed (per-group tab cap reached, unreadable file, …) the fallback search
-  // finds no matching tab and `viewport` still points at the previously-active tab —
-  // relocating its caret would scroll/jump the wrong buffer.
   if (viewport != nullptr && util::SameAsNormalizedPath(viewport->path(), normalized_path)) {
     viewport->JumpCursorTo(line, column);
   }
 }
 
-}  // namespace microide::workspace
+}

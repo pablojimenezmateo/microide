@@ -39,8 +39,6 @@ bool FollowFindScope(BufferSearchState::Scope& scope, const editor::TextViewport
   if (scope.content_revision == viewport.content_revision()) {
     return true;
   }
-  // Through the last edit only when it is the whole step from the scope's revision;
-  // after several edits (a snippet's mirrors) it describes the last of them only.
   if (const editor::AppliedEdit* edit = viewport.AppliedEditFromRevision(scope.content_revision)) {
     scope.range.start = editor::MapPositionThroughEdit(scope.range.start, *edit);
     scope.range.end = editor::MapPositionThroughEdit(scope.range.end, *edit);
@@ -63,4 +61,4 @@ void FollowFindScopes(BufferSearchState& state, const editor::TextViewport& view
   }
 }
 
-}  // namespace microide::workspace
+}

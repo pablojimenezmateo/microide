@@ -1,7 +1,3 @@
-// LspClient::Impl lifecycle: the blocking initialize handshake (capability
-// advertisement + response parsing), graceful shutdown, and the progress-driven
-// readiness state machine. Split out of WorkspaceLspClientInternal.h — these are
-// the bulk of the former 1332-line transport header.
 #include "workspace/lsp/WorkspaceLspClientInternal.h"
 
 #include <algorithm>
@@ -34,9 +30,6 @@ void LspClient::Impl::SetProgressReadiness(const util::JsonValue& value) {
       readiness_snapshot.indexed_count = 0;
     } else {
       readiness_snapshot.state = LspClient::ReadinessSnapshot::State::Indexing;
-      // The server's own progress text is genuine extra detail (it names what is
-      // being indexed); the bare state name is not, so leave it empty when the
-      // server said nothing and let the shared vocabulary supply "Indexing…".
       readiness_snapshot.message = !message.empty() ? message : title;
       readiness_snapshot.indexed_count = std::max({ExtractIndexedCount(message),
                                                    ExtractIndexedCount(title), percentage});
@@ -60,14 +53,12 @@ JsonValue StringArray(std::initializer_list<const char*> values) {
   return JsonValue(std::move(array));
 }
 
-// The capability object nearly every feature advertises: statically registered.
 JsonObject StaticRegistration() {
   JsonObject caps;
   caps["dynamicRegistration"] = JsonValue(false);
   return caps;
 }
 
-// typeDefinition / implementation / declaration share definition's link support.
 JsonObject NavigationCapabilities() {
   JsonObject caps = StaticRegistration();
   caps["linkSupport"] = JsonValue(true);
@@ -84,8 +75,6 @@ JsonObject TextDocumentClientCapabilities() {
   completion_item_caps["documentationFormat"] = StringArray({"markdown", "plaintext"});
   JsonObject completion_caps = StaticRegistration();
   completion_caps["completionItem"] = JsonValue(std::move(completion_item_caps));
-  // The request carries `context.triggerKind`, so a re-request for an incomplete
-  // list is announced as one (TriggerForIncompleteCompletions).
   completion_caps["contextSupport"] = JsonValue(true);
 
   JsonObject hover_caps = StaticRegistration();
@@ -94,11 +83,9 @@ JsonObject TextDocumentClientCapabilities() {
   JsonObject signature_caps = StaticRegistration();
   {
     JsonObject parameter_info;
-    // We resolve `[start, end]` parameter-label offsets against the signature label.
     parameter_info["labelOffsetSupport"] = JsonValue(true);
     JsonObject signature_info;
     signature_info["parameterInformation"] = JsonValue(std::move(parameter_info));
-    // Per-signature activeParameter overrides the top-level value (LSP 3.16+).
     signature_info["activeParameterSupport"] = JsonValue(true);
     signature_info["documentationFormat"] = StringArray({"markdown", "plaintext"});
     signature_caps["signatureInformation"] = JsonValue(std::move(signature_info));
@@ -124,9 +111,6 @@ JsonObject TextDocumentClientCapabilities() {
     requests["full"] = JsonValue(true);
     semantic_tokens_caps["requests"] = JsonValue(std::move(requests));
     semantic_tokens_caps["formats"] = StringArray({"relative"});
-    // The server still picks its own legend; we map its token-type indices by
-    // name at publish time, so an empty client tokenTypes/tokenModifiers set is
-    // fine (we accept whatever legend the server reports).
     semantic_tokens_caps["tokenTypes"] = JsonValue(JsonArray{});
     semantic_tokens_caps["tokenModifiers"] = JsonValue(JsonArray{});
   }
@@ -148,10 +132,6 @@ JsonObject TextDocumentClientCapabilities() {
   text_document_caps["documentSymbol"] = JsonValue(StaticRegistration());
   text_document_caps["semanticTokens"] = JsonValue(std::move(semantic_tokens_caps));
   {
-    // Pushed diagnostics. Some servers publish only to a client that says it takes
-    // them -- typescript-language-server reported nothing at all without this, while
-    // clangd, which pushes regardless, hid the gap. versionSupport: a publish for a
-    // superseded document version is dropped by version (DispatchMessage).
     JsonObject publish_diagnostics_caps;
     publish_diagnostics_caps["versionSupport"] = JsonValue(true);
     text_document_caps["publishDiagnostics"] = JsonValue(std::move(publish_diagnostics_caps));
@@ -168,18 +148,9 @@ JsonObject WorkspaceClientCapabilities() {
   workspace_caps["configuration"] = JsonValue(true);
   workspace_caps["workspaceFolders"] = JsonValue(true);
   workspace_caps["symbol"] = JsonValue(StaticRegistration());
-  // Activating a code lens runs its command through workspace/executeCommand.
   workspace_caps["executeCommand"] = JsonValue(StaticRegistration());
-  // Server-initiated edits are applied by the host (open buffers in place, closed
-  // files silently on disk) via the bound apply-edit handler.
   workspace_caps["applyEdit"] = JsonValue(true);
   {
-    // WorkspaceEdit support: the ordered `documentChanges` shape, file
-    // create/rename/delete resource ops (validated up front, applied with
-    // rollback-safe staging), and versioned TextDocumentEdits (a stale expected
-    // version fails the whole edit). Failure handling matches VSCode: text-only
-    // edits are transactional; an edit containing resource ops aborts at the
-    // first failure (our applier additionally rolls back completed ops).
     JsonObject workspace_edit_caps;
     workspace_edit_caps["documentChanges"] = JsonValue(true);
     workspace_edit_caps["resourceOperations"] = StringArray({"create", "rename", "delete"});
@@ -188,17 +159,6 @@ JsonObject WorkspaceClientCapabilities() {
   }
   workspace_caps["didChangeConfiguration"] = JsonValue(StaticRegistration());
   {
-    // On-disk changes the editor did not make (a `git switch`, a `pull`, a
-    // generated header) reach the server only through this notification. Without
-    // it every file the user has not opened keeps its pre-change index, so
-    // go-to-definition lands on stale lines and diagnostics name deleted symbols
-    // until the file happens to be opened.
-    //
-    // dynamicRegistration is true because that is the only way a server can tell
-    // us which globs it cares about, and a branch switch in a large repository is
-    // thousands of paths — filtering by the server's own registration is what
-    // keeps the fan-out cheap. relativePatternSupport lets a server anchor a
-    // pattern to a base URI instead of spelling an absolute glob.
     JsonObject did_change_watched_files;
     did_change_watched_files["dynamicRegistration"] = JsonValue(true);
     did_change_watched_files["relativePatternSupport"] = JsonValue(true);
@@ -211,12 +171,6 @@ JsonObject ClientCapabilities() {
   JsonObject window_caps;
   window_caps["workDoneProgress"] = JsonValue(true);
 
-  // The editor measures columns in UTF-8 bytes, which is exactly LSP's UTF-8
-  // position encoding. Advertise it first (then UTF-16 as the mandatory
-  // fallback) so a conformant server emits/consumes byte offsets and positions
-  // past non-ASCII characters stay correct. Without this the server assumes the
-  // UTF-16 default and our byte offsets corrupt every position past any
-  // non-ASCII char on the incremental-sync mirror.
   JsonObject general_caps;
   general_caps["positionEncodings"] = StringArray({"utf-8", "utf-16"});
 
@@ -253,13 +207,11 @@ JsonValue InitializeParams(const std::string& root_uri, const JsonValue& initial
   return JsonValue(std::move(init_params));
 }
 
-// A `*Provider` server capability that may be a bare bool or an options object;
-// either truthy shape means the server serves the request.
 bool ProviderAdvertised(const JsonValue& provider) {
   return provider.IsObject() || provider.AsBool(false);
 }
 
-}  // namespace
+}
 
 void LspClient::Impl::ApplyServerCapabilities(const util::JsonValue& server_caps) {
   const auto& sync = server_caps["textDocumentSync"];
@@ -271,17 +223,9 @@ void LspClient::Impl::ApplyServerCapabilities(const util::JsonValue& server_caps
   }
   supports_incremental_sync.store(sync_kind == 2, std::memory_order_release);
 
-  // Completion trigger characters (TD-2026-10-07-321) and signature-help
-  // trigger characters (TD-2026-10-20-369): typing one opens the list or
-  // the parameter hints, as VS Code does.
   completion_triggers.Store(server_caps["completionProvider"]["triggerCharacters"]);
   signature_help_triggers.Store(server_caps["signatureHelpProvider"]["triggerCharacters"]);
 
-  // Capture the negotiated position encoding. utf-8 means our editor
-  // byte offsets are already exact; utf-16/utf-32 are converted per line
-  // at every position seam (lsp_encoding::*), and the per-keystroke
-  // incremental sync falls back to full-document sync for those so the
-  // pre-edit byte range never needs re-encoding.
   {
     std::string negotiated = "utf-16";
     if (server_caps.HasKey("positionEncoding") && server_caps["positionEncoding"].IsString()) {
@@ -291,20 +235,12 @@ void LspClient::Impl::ApplyServerCapabilities(const util::JsonValue& server_caps
     position_encoding = negotiated;
   }
 
-  // Capture the semantic-token legend (type names) so the host can map
-  // a response's token-type indices back to names at publish time.
   if (server_caps.HasKey("semanticTokensProvider")) {
     const auto& provider = server_caps["semanticTokensProvider"];
     if (provider.HasKey("legend") && provider["legend"].HasKey("tokenTypes")) {
       const auto& types = provider["legend"]["tokenTypes"];
       if (types.IsArray()) {
         const auto& array = types.AsArray();
-        // Cap the harvested legend like the steady-state result parsers: a
-        // buggy/hostile server can advertise a huge tokenTypes array in the
-        // initialize response, which would be duplicated into a long-lived
-        // vector (and copied by value on every SemanticTokenLegend() call) for
-        // a feature that only maps a small set of token-type indices to names.
-        // Token types past the cap are not useful for rendering. (TD-32.)
         constexpr std::size_t kMaxSemanticTokenLegendEntries = 1024;
         const std::size_t harvested = std::min(array.size(), kMaxSemanticTokenLegendEntries);
         std::vector<std::string> legend;
@@ -319,23 +255,18 @@ void LspClient::Impl::ApplyServerCapabilities(const util::JsonValue& server_caps
     }
   }
 
-  // inlayHintProvider: bare bool or an object (resolveProvider).
   if (server_caps.HasKey("inlayHintProvider")) {
     supports_inlay_hints.store(ProviderAdvertised(server_caps["inlayHintProvider"]),
                                std::memory_order_release);
   }
-  // documentHighlightProvider: bare bool or a WorkDoneProgressOptions object.
   if (server_caps.HasKey("documentHighlightProvider")) {
     supports_document_highlight.store(
         ProviderAdvertised(server_caps["documentHighlightProvider"]), std::memory_order_release);
   }
-  // callHierarchyProvider: bare bool or a (Static)RegistrationOptions object.
   if (server_caps.HasKey("callHierarchyProvider")) {
     supports_call_hierarchy.store(ProviderAdvertised(server_caps["callHierarchyProvider"]),
                                   std::memory_order_release);
   }
-  // codeLensProvider is always an object when present, and its optional
-  // `resolveProvider` decides whether range-only lenses can be filled in.
   if (server_caps.HasKey("codeLensProvider")) {
     const auto& provider = server_caps["codeLensProvider"];
     const bool provided = ProviderAdvertised(provider);
@@ -343,8 +274,6 @@ void LspClient::Impl::ApplyServerCapabilities(const util::JsonValue& server_caps
     supports_code_lens_resolve.store(provided && provider["resolveProvider"].AsBool(false),
                                      std::memory_order_release);
   }
-  // renameProvider may be a bare bool (plain rename) or an object that can
-  // carry prepareProvider (textDocument/prepareRename support).
   if (server_caps.HasKey("renameProvider")) {
     const auto& rename_provider = server_caps["renameProvider"];
     if (rename_provider.HasKey("prepareProvider")) {
@@ -375,17 +304,9 @@ void LspClient::Impl::DoInitializeBlocking() {
   TraceLifecycle("initialize-request", "sent");
 
   bool got_init = false;
-  std::string init_error;  // the server's message when it answered initialize with an error
+  std::string init_error;
   {
     util::StartupTrace::Scope wait_init_scope("LspClient::DoInitializeBlocking::WaitInitializeResponse");
-    // Bound the initialize wait by WALL-CLOCK, not an attempt count. The old
-    // `for (attempts < 60)` treated each loop turn as ~500 ms, but proc.Read returns
-    // as soon as any data is available and dispatching a buffered frame does not read
-    // at all — so a chatty server emitting a burst of notifications (window/logMessage,
-    // $/progress) before its initialize response burned dozens of turns in milliseconds
-    // and got force-killed while perfectly healthy. A steady_clock deadline spends the
-    // budget only as real time elapses; frame supply is bounded per read, so this never
-    // spins hot.
     const auto init_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
     while (std::chrono::steady_clock::now() < init_deadline) {
       if (stop_init.load(std::memory_order_acquire)) {
@@ -397,36 +318,17 @@ void LspClient::Impl::DoInitializeBlocking() {
         auto chunk = proc.Read(4096, 500);
         if (!chunk) break;
         if (!chunk->empty()) framer_.Append(*chunk);
-        if (framer_.BufferedBytes() > kMaxLspReadBufferBytes) break;  // runaway server
+        if (framer_.BufferedBytes() > kMaxLspReadBufferBytes) break;
         continue;
       }
       const auto& resp = *resp_opt;
-      // Accept the id echoed as a JSON float (e.g. 1.0) as well as an integer:
-      // some servers round-trip our integer id through a float. AsInt() truncates
-      // 1.0 -> 1. Mirrors the steady-state gate in WorkspaceLspClientDispatch.cpp;
-      // without it a float-echoing server's initialize response is never matched
-      // and startup times out (the server is then killed — no LSP for that language).
       const bool is_init_response =
           resp.HasKey("id") && !resp.HasKey("method") &&
           (resp["id"].IsInt() || resp["id"].IsDouble()) && resp["id"].AsInt() == init_id;
       if (!is_init_response) {
-        // Not the initialize response. A server may push notifications
-        // (window/logMessage, $/progress) or requests
-        // (window/workDoneProgress/create) before or around the initialize
-        // response. `framer_.Next()` has already consumed this frame's bytes, so
-        // a bare `continue` would silently drop it — losing early logs/progress
-        // and leaving a server request unanswered (a request-blocking server then
-        // hangs forever). Dispatch it instead; any reply queues in
-        // deferred_messages and flushes once `initialized` is sent. Mirrors the
-        // DAP client's pre-initialize dispatch (WorkspaceDapClientInternal.h).
         DispatchMessage(std::move(*resp_opt));
         continue;
       }
-      // The server answered, with an error: say what it said. Read as "missing",
-      // this reported "exited before initialize response" for a server that
-      // explained itself (typescript-language-server on a TypeScript with no
-      // tsserver.js), and the status tooltip -- the one place the reason shows --
-      // sent the user looking for a crash.
       if (!resp.HasKey("result") && resp.HasKey("error")) {
         const std::string message = resp["error"]["message"].AsString();
         init_error = message.empty() ? std::string("no message") : message;
@@ -462,7 +364,6 @@ void LspClient::Impl::DoInitializeBlocking() {
   bool initialized_send_failed = false;
   {
     std::lock_guard lock(send_mutex);
-    // No I/O thread is running yet, so this is the only writer — write directly.
     bool sent_initialized = false;
     {
       std::lock_guard wlock(write_mutex);
@@ -472,14 +373,10 @@ void LspClient::Impl::DoInitializeBlocking() {
     if (!sent_initialized) {
       SetLastError("failed to send initialized notification to language server");
       deferred_messages.clear();
-      // Pre-init, all queued messages live in deferred_messages (outbound is empty),
-      // so dropping them releases the whole charged byte budget. (TD-2026-07-17A-071)
       outbound_queued_bytes_ = 0;
       initialized_send_failed = true;
     } else {
       initialized.store(true, std::memory_order_release);
-      // Push configuration before any queued didOpen so servers that read
-      // settings (clangd, OmniSharp/Roslyn) see them before touching documents.
       if (settings.IsObject()) {
         JsonObject config_params;
         config_params["settings"] = settings;
@@ -497,8 +394,6 @@ void LspClient::Impl::DoInitializeBlocking() {
   }
 
   if (initialized_send_failed) {
-    // send_mutex is released above; FailPendingRequests takes the protocol mutex,
-    // so failing pending requests here avoids nesting send_mutex -> mutex.
     AbandonInitialize();
     return;
   }
@@ -509,7 +404,7 @@ void LspClient::Impl::DoInitializeBlocking() {
     util::NameCurrentThread("lsp-io");
     IoMain();
   });
-  Wake();  // flush the queued config/didOpen without waiting for the first poll
+  Wake();
 
   bool is_indexing = false;
   {
@@ -550,8 +445,6 @@ void LspClient::Impl::DoShutdown() {
   if (init_thread.joinable()) {
     init_thread.join();
   }
-  // Keep the I/O thread running through the handshake below so it can receive
-  // the shutdown response; its writes are serialized with ours via write_mutex.
   ClearDeferredMessages();
 
   using namespace util;
@@ -562,10 +455,6 @@ void LspClient::Impl::DoShutdown() {
     shutdown_request_id = next_id++;
     shutdown_id = shutdown_request_id;
   }
-  // Bounded lock acquisition: if the io_thread is stuck in a proc.Write to a
-  // wedged-but-alive server (holding write_mutex), this returns false quickly
-  // rather than blocking teardown forever, and we fall through to the force-kill
-  // below — which unblocks that write so io_thread can be joined.
   const bool sent_shutdown =
       SendMessageImmediate(MakeRequest(shutdown_id, "shutdown", JsonValue(JsonObject{})), true,
                            std::chrono::milliseconds(1000));
@@ -579,8 +468,6 @@ void LspClient::Impl::DoShutdown() {
     TraceLifecycle("shutdown-response", got_shutdown_response ? "received" : "timeout");
   }
   if (proc.IsRunning()) {
-    // Also bounded: never block teardown behind a stuck write. If it times out,
-    // CloseStdin + the force-kill below still tear the server down.
     (void)SendMessageImmediate(MakeNotification("exit", JsonValue(JsonObject{})), true,
                                std::chrono::milliseconds(1000));
     TraceLifecycle("exit-notification", "sent");
@@ -599,4 +486,4 @@ void LspClient::Impl::DoShutdown() {
   main_mailbox.PushWake();
 }
 
-}  // namespace microide::workspace
+}

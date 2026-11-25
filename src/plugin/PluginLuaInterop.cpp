@@ -24,8 +24,6 @@ bool IsValidIdentifier(std::string_view value) {
 
 void AppendProviderFailure(std::string* error_message, std::string_view kind,
                            std::string_view provider_id, std::string_view call_error) {
-  // Keep the aggregated warning bounded: a language with hundreds of broken providers
-  // must not balloon one string. Stop appending once we cross the ceiling.
   constexpr std::size_t kMaxAggregatedProviderErrorBytes = 4096;
   if (error_message == nullptr ||
       error_message->size() >= kMaxAggregatedProviderErrorBytes) {
@@ -44,43 +42,31 @@ void AppendProviderFailure(std::string* error_message, std::string_view kind,
 #if MICROIDE_HAS_LUA_PLUGINS
 namespace {
 
-// Light C function (zero upvalues => LUA_VLCF, no allocation on push). Runs the
-// metamethod-capable lookup INSIDE the pcall frame that invokes it, so a raising
-// __index unwinds to lua_pcall rather than past it. arg1 = table, arg2 = key.
 int GetFieldTrampoline(lua_State* state) {
   lua_pushvalue(state, 2);
   lua_gettable(state, 1);
   return 1;
 }
 
-}  // namespace
+}
 
 void GetFieldProtected(lua_State* state, int table_index, const char* field) {
   const int absolute_index = lua_absindex(state, table_index);
   if (lua_getmetatable(state, absolute_index) == 0) {
-    // No metatable. If the base is a table, __index cannot fire => a plain read
-    // cannot raise. Fast path: identical to lua_getfield, no pcall/closure overhead
-    // (lua_getmetatable pushes nothing when absent, so the stack is already balanced
-    // for the getfield).
     if (lua_istable(state, absolute_index)) {
       lua_getfield(state, absolute_index, field);
       return;
     }
-    // The base is a non-table with no metatable (number/boolean/nil/light userdata):
-    // indexing it would raise "attempt to index a X value" and longjmp over the
-    // caller's live C++ locals. Report the field as absent (nil) instead — callers
-    // that pass a non-table argument (e.g. `ctx.completion.add(42)`) then fail
-    // cleanly rather than corrupting the native stack.
     lua_pushnil(state);
     return;
   }
-  lua_pop(state, 1);  // discard the metatable; presence alone forces the protected path
+  lua_pop(state, 1);
   lua_pushcfunction(state, GetFieldTrampoline);
   lua_pushvalue(state, absolute_index);
   lua_pushstring(state, field);
   if (lua_pcall(state, 2, 1, 0) != LUA_OK) {
-    lua_pop(state, 1);   // discard the error object
-    lua_pushnil(state);  // a raising read is treated as an absent field
+    lua_pop(state, 1);
+    lua_pushnil(state);
   }
 }
 
@@ -90,22 +76,10 @@ std::optional<std::string> ToHostString(lua_State* state, int index) {
   if (s == nullptr) {
     return std::nullopt;
   }
-  // Reject an embedded NUL rather than truncate at it (TD-2026-07-17A-080): scalar reads
-  // back host ids/labels/paths/model names/provider results, and a truncated value could
-  // collide ids or reach a C-string OS call with only the prefix.
   if (std::memchr(s, '\0', len) != nullptr) {
     return std::nullopt;
   }
-  // Per-field byte backstop (TD-2026-07-17-018): every scalar provider result surface
-  // (completion/code-action/hover/status/sidebar/test/scm/blame/auth labels, plus the
-  // registration JSON blobs) routes through here. A single hostile or buggy field could
-  // otherwise hand the host a multi-hundred-megabyte string to copy, retain, measure, and
-  // render. Cap each scalar field on a UTF-8 boundary. The ceiling is deliberately
-  // generous so no realistic label/message/JSON blob is affected; individual display
-  // surfaces (diagnostics, hover) apply their own tighter render caps on top. Length-
-  // preserving binary payloads use the ReadStringField(..., std::string*) overload, which
-  // bypasses this path and carries its own caps.
-  constexpr std::size_t kMaxProviderFieldBytes = 4u * 1024 * 1024;  // 4 MiB / field
+  constexpr std::size_t kMaxProviderFieldBytes = 4u * 1024 * 1024;
   if (len > kMaxProviderFieldBytes) {
     return std::string(s, util::Utf8ByteBudgetPrefixLength(std::string_view(s, len),
                                                            kMaxProviderFieldBytes));
@@ -236,25 +210,10 @@ std::string ReadTriggerCharactersField(lua_State* state, int table_index, const 
 
 namespace {
 
-// The string sequence at the stack top (left there). Nullopt when an element is
-// not a string or a cap below is passed.
 std::optional<std::vector<std::string>> ReadStringArrayOnTop(lua_State* state) {
-  // Cap the drain so a plugin returning an accidentally-huge sequence cannot grow
-  // this vector without bound and hang/OOM the host. 100000 is far beyond any real
-  // string-array field. Elements are read *raw* (lua_rawgeti, not lua_geti): a
-  // sequence never legitimately resolves elements through __index, and a raising
-  // __index metamethod on lua_geti would longjmp over the live `values` vector to
-  // the enclosing pcall, skipping its destructor (the no-longjmp-over-C++-locals
-  // invariant). Raw access also sidesteps the unbounded-__index drain entirely.
   constexpr lua_Integer kMaxLuaStringArrayItems = 100000;
-  // TD-2026-07-17-078: the item-count cap does not bound the host-side bytes copied.
-  // A plugin could return a few but enormous strings (these arrays feed LSP/DAP/
-  // task/formatter argv, subprocess setup, UI labels, diagnostics) and blow past the
-  // intended plugin memory envelope, since the copied host strings live outside Lua's
-  // per-state allocator budget. Reject any single over-long item and any array whose
-  // total copied bytes exceed the aggregate cap. Both are far beyond a real argv.
-  constexpr std::size_t kMaxLuaStringArrayItemBytes = 64u * 1024;        // 64 KiB / item
-  constexpr std::size_t kMaxLuaStringArrayAggregateBytes = 8u * 1024 * 1024;  // 8 MiB total
+  constexpr std::size_t kMaxLuaStringArrayItemBytes = 64u * 1024;
+  constexpr std::size_t kMaxLuaStringArrayAggregateBytes = 8u * 1024 * 1024;
   std::vector<std::string> values;
   std::size_t aggregate_bytes = 0;
   for (lua_Integer i = 1; i <= kMaxLuaStringArrayItems; ++i) {
@@ -272,7 +231,7 @@ std::optional<std::vector<std::string>> ReadStringArrayOnTop(lua_State* state) {
     if (item_length > kMaxLuaStringArrayItemBytes ||
         item_length > kMaxLuaStringArrayAggregateBytes - aggregate_bytes) {
       lua_pop(state, 1);
-      return std::nullopt;  // reject the whole field rather than truncate silently
+      return std::nullopt;
     }
     aggregate_bytes += item_length;
     values.emplace_back(item, item_length);
@@ -281,7 +240,7 @@ std::optional<std::vector<std::string>> ReadStringArrayOnTop(lua_State* state) {
   return values;
 }
 
-}  // namespace
+}
 
 std::optional<std::vector<std::string>> ReadStringArrayField(lua_State* state,
                                                              int table_index,
@@ -303,7 +262,6 @@ std::optional<std::vector<std::vector<std::string>>> ReadStringArrayListField(
     lua_pop(state, 1);
     return std::nullopt;
   }
-  // A handful of argvs at most; the same per-element caps apply inside each.
   constexpr lua_Integer kMaxLists = 64;
   std::vector<std::vector<std::string>> lists;
   for (lua_Integer i = 1; i <= kMaxLists; ++i) {
@@ -416,4 +374,4 @@ PluginHost::SidebarItem ReadSidebarItem(lua_State* state, int table_index) {
 }
 #endif
 
-}  // namespace microide::plugin::lua_interop
+}

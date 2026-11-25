@@ -23,8 +23,6 @@ class TextInputCoordinator {
     std::function<void()> request_prompt_redraw;
     std::function<void()> request_sidebar_redraw;
     std::function<void()> request_overlay_redraw;
-    // A frame owed: the editor, compare and merge surfaces derive their damage
-    // (RequestPreparedFrame); a request names no rect.
     std::function<void()> request_frame;
     std::function<void()> request_window_redraw;
     std::function<void()> refresh_compare_picker;
@@ -33,8 +31,6 @@ class TextInputCoordinator {
     std::function<void()> refresh_buffer_search;
     std::function<void()> refresh_project_search;
     std::function<void()> reset_overlay_scroll;
-    // Quick Open's prefixes (VS Code): `>` switches to the command palette and `:`
-    // to Go to Line, each taking the rest of the query. True when it switched.
     std::function<bool(std::string_view)> switch_quick_open_mode;
     std::function<editor::SingleLineEditor*()> settings_query_editor;
     std::function<editor::SingleLineEditor*()> settings_value_editor;
@@ -61,26 +57,14 @@ class TextInputCoordinator {
     std::function<bool(std::string_view)> write_clipboard_text;
     std::function<bool(std::string_view)> write_primary_selection_text;
     std::function<std::optional<std::string>()> read_clipboard_text;
-    // The clipboard's image saved as a file for a terminal program to read
-    // (SystemClipboard::ReadPng, platform::StoreTransientFile): its path, or
-    // nullopt when the clipboard holds no image or it could not be saved (the
-    // operation says why).
     std::function<std::optional<std::filesystem::path>()> store_clipboard_image;
-    // A host terminal and a file the host has no copy of: send it there and type
-    // the path it gets (RemoteHostService::UploadDroppedFile). False when `pane`
-    // is not such a terminal or the host already names the file.
     std::function<bool(TerminalPaneState&, const std::filesystem::path&)> upload_file_to_host_terminal;
-    // TerminalPanelService::DroppedPathText.
     std::function<std::string(const TerminalPaneState&, const std::filesystem::path&)> dropped_path_text;
     std::function<void()> submit_terminal_pending_input;
     std::function<void()> erase_last_terminal_pending_input_codepoint;
     std::function<char(SDL_Keycode, SDL_Keymod)> keycode_to_ascii;
     std::function<bool(editor::TextViewport*, std::string_view)> try_editor_snippet_insert_text;
-    // Typed text reached the editor: the completion list follows it, or opens on
-    // a trigger character / the start of a word, and parameter hints open on a
-    // trigger character or follow the call (AssistService::AfterTyping).
     std::function<void(std::string_view)> assist_after_typing;
-    // Restart the active pane's exited session in place (TerminalPanelService).
     std::function<bool()> relaunch_active_terminal;
   };
 
@@ -98,19 +82,9 @@ class TextInputCoordinator {
   bool HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool PasteClipboardIntoTerminal();
   bool PasteTextIntoTerminal(std::string text);
-  // A file on this machine given to the active terminal `pane` -- dropped on it,
-  // or the clipboard's image pasted into it: its path is typed there as the
-  // pane's machine names it, after the file is sent to a host that has no copy.
   bool TypeFileIntoTerminal(TerminalPaneState& pane, const std::filesystem::path& local_path);
-  // `distribute_across_carets` is the paste rule: a multi-line payload with one
-  // line per caret goes one line to each (TextViewport::PasteText); typed and
-  // composed text always goes whole to every caret.
   bool InsertTextAtActiveSurface(std::string_view input, bool distribute_across_carets = false);
   bool HasSelectionAtActiveSingleLineSurface() const;
-  // True when a single-line text surface (file finder, buffer/project search,
-  // commit subject, pickers, ...) is the active text input. Lets Cut/Copy/SelectAll
-  // consume the shortcut even when the field has nothing to act on, instead of
-  // leaking through to the background editor viewport.
   bool HasActiveSingleLineTextSurface() const;
   std::string SelectedTextAtActiveSingleLineSurface() const;
   bool SelectAllAtActiveSingleLineSurface();
@@ -129,4 +103,4 @@ class TextInputCoordinator {
   Operations operations_;
 };
 
-}  // namespace microide::workspace
+}

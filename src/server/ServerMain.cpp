@@ -1,26 +1,3 @@
-// microide-server: the host half of a remote project (dev-docs/design/remote-projects.md
-// § 6.6). One daemon per user; subcommands:
-//
-//   start   [--on-demand] [--socket-dir D] [--idle-timeout-ms N] [--keep-grace-ms N]   daemonize and serve
-//   stop    [--socket-dir D]                                       ask it to exit
-//   status  [--socket-dir D] [--json]                              print what it serves:
-//                                                                  a table, or the raw reply
-//   attach  [--socket-dir D] [--idle-timeout-ms N]                 relay stdio to it,
-//                                                                  starting one on demand
-//   serve-stdio                                                    serve ONE connection on
-//                                                                  stdin/stdout (tests)
-//   open-url URL                                                   ask the editor attached
-//                                                                  to this terminal to open
-//                                                                  URL (also: run as the
-//                                                                  `microide-browser` link,
-//                                                                  the shells' $BROWSER)
-//   edit [+LINE] FILE                                              have that editor edit
-//                                                                  FILE, and wait for its
-//                                                                  tab to close (also: the
-//                                                                  `microide-edit` link,
-//                                                                  the shells' $EDITOR)
-//
-// Links microide_kernel only: no SDL, no shell, no fonts (CheckServerStaysFreeOf…).
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
@@ -85,8 +62,6 @@ int Usage() {
   return 2;
 }
 
-// The user is $HOME and getuid(), never NSS: a static musl build has no NSS, and the
-// server must not depend on what a directory service says about the user.
 std::filesystem::path HomeDirectory() {
   if (const char* home = std::getenv("HOME"); home != nullptr && *home == '/') {
     return home;
@@ -142,8 +117,6 @@ std::optional<Options> ParseOptions(int argc, char** argv) {
   return options;
 }
 
-// Diagnostics go to a size-capped file beside the socket: a daemon's stderr is
-// /dev/null, and an unbounded log on a user's home is its own incident.
 void InstallLogFile(const std::filesystem::path& path) {
   constexpr off_t kMaxLogBytes = 1024 * 1024;
   microide::util::SetLogSink([path](std::string_view message) {
@@ -191,14 +164,10 @@ int Start(const Options& options) {
     return 1;
   }
   if (child == 0) {
-    // Leave the starter's session and process group, then fork again so the daemon
-    // is not a session leader (it can never reacquire a controlling terminal).
     ::setsid();
     if (::fork() != 0) {
       ::_exit(0);
     }
-    // Detach stdio BEFORE anything else happens: `ssh host -- microide-server
-    // attach` must not be held open by a daemon that inherited its descriptors.
     const int null_fd = ::open("/dev/null", O_RDWR | O_CLOEXEC);
     if (null_fd >= 0) {
       ::dup2(null_fd, 0);
@@ -212,15 +181,6 @@ int Start(const Options& options) {
     }
     ::signal(SIGPIPE, SIG_IGN);
     InstallLogFile(remote::ServerLogPath(options.socket_dir));
-    // One daemon per socket directory. Two `attach`es that find no daemon answering
-    // -- two projects reaching one fresh host at once -- both start one, and
-    // ListenUnixSocket replaces whatever socket of ours is at the path, live or
-    // not: the second daemon took the path from the first, the projects were split
-    // between them, and every later connection reached only the second
-    // (TD-2026-10-28-414). The lock is held for the daemon's life (the kernel drops
-    // it at exit, so it is never stale) and taken before the socket is touched. A
-    // loser leaves when the socket answers; else the holder is on its idle way out
-    // and the lock frees within moments.
     const microide::util::UniqueFd lock(
         ::open((options.socket_dir / "server.lock").c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600));
     bool locked = false;
@@ -228,7 +188,7 @@ int Start(const Options& options) {
       locked = ::flock(lock.Get(), LOCK_EX | LOCK_NB) == 0;
       if (!locked) {
         if (Connectable(socket)) {
-          ::_exit(0);  // another daemon serves it
+          ::_exit(0);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
@@ -238,7 +198,6 @@ int Start(const Options& options) {
                                          : "cannot open the server lock: " + std::string(std::strerror(errno)));
       ::_exit(1);
     }
-    // A daemon of a release before the lock serves without it.
     if (Connectable(socket)) {
       ::_exit(0);
     }
@@ -250,9 +209,6 @@ int Start(const Options& options) {
     }
     int code = 0;
     {
-      // Scoped, so its destructor runs before _exit: that is what joins the
-      // connections' threads and ends the processes and terminal shells it owns.
-      // _exit straight out of RunListener left them running on the host for nobody.
       microide::server::RemoteServer server(microide::server::RemoteServer::Config{
           .socket_path = socket,
           .release = MICROIDE_VERSION,
@@ -266,8 +222,7 @@ int Start(const Options& options) {
     ::_exit(code);
   }
   int status = 0;
-  ::waitpid(child, &status, 0);  // the intermediate child, which exits at once
-  // Success is the socket answering — never the spawned process's exit.
+  ::waitpid(child, &status, 0);
   for (int attempt = 0; attempt < 500; ++attempt) {
     if (Connectable(socket)) {
       std::cout << "microide-server started at " << socket.string() << '\n';
@@ -280,8 +235,6 @@ int Start(const Options& options) {
   return 1;
 }
 
-// One request to the running server, synchronously; for status and stop. A zero
-// `limit` waits for as long as the server takes (term/edit: a person is typing).
 std::optional<microide::util::JsonValue> Ask(const Options& options, std::string_view method,
                                              std::string* error,
                                              microide::util::JsonValue params = microide::util::JsonValue(nullptr),
@@ -326,8 +279,6 @@ std::optional<microide::util::JsonValue> Ask(const Options& options, std::string
 int Status(const Options& options) {
   std::string error;
   if (options.json) {
-    // The plain reply, exactly what a client's server/status returns: no figures,
-    // so nothing reads /proc.
     const auto status = Ask(options, remote::method::kServerStatus, &error);
     if (!status.has_value()) {
       std::cerr << "microide-server: " << error << '\n';
@@ -337,8 +288,6 @@ int Status(const Options& options) {
     std::cout << (formatted.ok ? formatted.text : microide::util::SerializeJson(*status)) << '\n';
     return 0;
   }
-  // A CPU share is a difference between two samples: take the first, wait, and
-  // print the second, so the column is never "not reported" for want of one.
   microide::util::JsonObject params;
   params["activity"] = microide::util::JsonValue(true);
   const microide::util::JsonValue ask(std::move(params));
@@ -366,7 +315,6 @@ int Stop(const Options& options) {
   return 0;
 }
 
-// Copy stdin to the socket and the socket to stdout until either side ends.
 int Relay(int socket_fd) {
   char buffer[64 * 1024];
   bool stdin_open = true;
@@ -381,7 +329,7 @@ int Relay(int socket_fd) {
     if ((fds[0].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
       const ssize_t n = ::read(socket_fd, buffer, sizeof(buffer));
       if (n <= 0) {
-        return 0;  // the server closed: so does the relay
+        return 0;
       }
       for (ssize_t off = 0; off < n;) {
         const ssize_t w = ::write(1, buffer + off, static_cast<std::size_t>(n - off));
@@ -396,7 +344,7 @@ int Relay(int socket_fd) {
       const ssize_t n = ::read(0, buffer, sizeof(buffer));
       if (n <= 0) {
         stdin_open = false;
-        ::shutdown(socket_fd, SHUT_WR);  // the client is done talking; let replies drain
+        ::shutdown(socket_fd, SHUT_WR);
         continue;
       }
       for (ssize_t off = 0; off < n;) {
@@ -416,12 +364,11 @@ int Attach(const Options& options, const char* self) {
   const std::filesystem::path socket = remote::ServerSocketPath(options.socket_dir);
   int fd = microide::platform::ConnectUnixSocket(socket);
   if (fd < 0) {
-    // Start one on demand, through this same binary, and wait for it like `start`.
     const pid_t child = ::fork();
     if (child == 0) {
       const int null_fd = ::open("/dev/null", O_RDWR | O_CLOEXEC);
       if (null_fd >= 0) {
-        ::dup2(null_fd, 1);  // `start` prints; our stdout is the protocol
+        ::dup2(null_fd, 1);
         ::close(null_fd);
       }
       const std::string idle = std::to_string(options.idle_timeout.count());
@@ -449,7 +396,7 @@ int Attach(const Options& options, const char* self) {
 }
 
 int ServeStdio() {
-  microide::util::SetLogSink([](std::string_view) {});  // stdout is the protocol
+  microide::util::SetLogSink([](std::string_view) {});
   microide::server::RemoteServer server(microide::server::RemoteServer::Config{
       .release = MICROIDE_VERSION,
       .session_survival = remote::ReadSessionSurvival("/", UserName()),
@@ -457,14 +404,8 @@ int ServeStdio() {
   return server.ServeOne(0, 1);
 }
 
-}  // namespace
+}
 
-// The BROWSER of the server's terminals (RemoteServer::InstallBrowserForwarder):
-// hand `url` to the editor attached to the terminal this runs in, which opens it
-// on the user's machine -- what VS Code's remote terminals do, so `claude` or
-// `gh auth login` opens the page where the user is rather than failing to find a
-// display on the host. Exit 0 once an editor has it; 1 when none can take it (no
-// terminal of ours, nobody attached), so the program falls back to printing it.
 static int OpenUrl(std::string_view url) {
   const char* handle_text = std::getenv("MICROIDE_TERMINAL_HANDLE");
   const std::optional<std::int64_t> handle =
@@ -493,11 +434,7 @@ static int OpenUrl(std::string_view url) {
   return 0;
 }
 
-// The terminal's own editor, with the helper's arguments (`arguments[0]` is
-// replaced by its name): what the program would have run had the server not set
-// EDITOR. Never returns.
 [[noreturn]] static void RunTerminalEditor(char** arguments) {
-  // sensible-editor reads these, and would run this helper again.
   for (const char* variable : {"VISUAL", "EDITOR"}) {
     if (const char* value = std::getenv(variable);
         value != nullptr && std::filesystem::path(value).filename() == remote::kEditorHelperName) {
@@ -512,13 +449,6 @@ static int OpenUrl(std::string_view url) {
   ::_exit(127);
 }
 
-// The EDITOR of the server's terminals (RemoteServer::InstallTerminalForwarders):
-// hand the file to the editor attached to the terminal this runs in, wait for its
-// tab to close and leave what was saved there in the file -- `code --wait`, for a
-// commit message, a rebase list or an agent CLI's prompt. `arguments` are the
-// program's (`[+LINE] FILE`), after a slot for the editor's name. Anything this
-// cannot serve -- no editor attached, an older one, several files, a file that is
-// not UTF-8 text of at most 1 MiB -- runs the terminal's own editor instead.
 static int EditFile(char** arguments) {
   std::int64_t line = 0;
   const char* file = nullptr;
@@ -528,7 +458,6 @@ static int EditFile(char** arguments) {
     if (!options_ended && text.size() > 1 && text.front() == '+') {
       line = microide::util::ParseInt64(text.substr(1)).value_or(0);
     } else if (!options_ended && (text == "--wait" || text == "-w")) {
-      // What this does anyway.
     } else if (!options_ended && text == "--") {
       options_ended = true;
     } else if (file == nullptr && (options_ended || text.empty() || text.front() != '-')) {
@@ -584,9 +513,8 @@ static int EditFile(char** arguments) {
   }
   const microide::util::JsonValue& text = (*answer)["text"];
   if (!text.IsString() || (exists && text.AsString() == original) || (!exists && text.AsString().empty())) {
-    return 0;  // closed as it was: nothing to write, as leaving vi with :q
+    return 0;
   }
-  // In place, as an editor writes: the file keeps its inode, mode and links.
   const microide::util::UniqueFd out(::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0666));
   const std::string& bytes = text.AsString();
   std::size_t written = 0;
@@ -608,11 +536,7 @@ static int EditFile(char** arguments) {
 }
 
 int main(int argc, char** argv) {
-  // Before any descriptor exists: a closed 0/1/2 would be handed to the first pipe
-  // or socket (and the daemon's own stdio detach below assumes they are open).
   microide::util::EnsureStandardDescriptorsOpen();
-  // Before any thread: every remote terminal and job spends descriptors
-  // (platform/OpenFileLimit.h).
   microide::platform::RaiseOpenFileLimit();
   ::signal(SIGPIPE, SIG_IGN);
   if (argc >= 1 && std::filesystem::path(argv[0]).filename() == remote::kBrowserHelperName) {

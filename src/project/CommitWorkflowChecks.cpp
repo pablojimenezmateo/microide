@@ -46,16 +46,6 @@ CommitPreCheck MakeCheck(const CommitPreCheckKind kind,
   };
 }
 
-// One-pass set of the paths that are both staged and unstaged ("partially staged").
-// A prior implementation re-scanned repository_state.entries once per staged file,
-// which is O(staged_files * status_entries) on every commit-subject keystroke in a
-// large repo; this walks the entries a single time.
-//
-// porcelain v2 emits exactly one record per path, so a partially-staged file (staged
-// edit plus a further unstaged edit, `1 MM`) is a single entry that is both `staged`
-// and `worktree_dirty`. An older two-entries-per-path assumption never fired under v2.
-// Still tolerate a split representation (staged in one record, unstaged in another) by
-// aggregating per-path flags before intersecting.
 std::unordered_set<std::string> PartiallyStagedPaths(const GitRepositoryState& repository_state) {
   struct StageFlags {
     bool staged = false;
@@ -81,8 +71,6 @@ std::unordered_set<std::string> PartiallyStagedPaths(const GitRepositoryState& r
   return partial;
 }
 
-// The staged entries as path-only summaries: what the summary falls back to when
-// numstat cannot say how many lines each one changes.
 void AppendStagedEntryPaths(const GitRepositoryState& repository_state,
                             std::vector<CommitStagedFileSummary>& files) {
   for (const GitRepositoryEntry& entry : repository_state.entries) {
@@ -92,7 +80,7 @@ void AppendStagedEntryPaths(const GitRepositoryState& repository_state,
   }
 }
 
-}  // namespace
+}
 
 CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repository_state,
                                              const platform::ProcessLauncher& launcher) {
@@ -102,8 +90,6 @@ CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repositor
   }
 
   GitRepository repo(repository_state.repository_root, launcher);
-  // `-z`: NUL-delimited, unquoted. Without it a path containing a newline splits
-  // into bogus rows and a rename shows up as one mangled "old => new" path.
   const GitRepository::CommandResult numstat =
       repo.Execute({"diff", "--cached", "--numstat", "-z"}, true);
   if (!numstat.success() || numstat.output.empty()) {
@@ -112,14 +98,6 @@ CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repositor
     return summary;
   }
 
-  // Each numstat record is `<added>\t<deleted>\t<path>` in its own NUL-delimited
-  // field. For a rename/copy the path field after the second tab is EMPTY and the
-  // old and new paths follow as the next two NUL fields (git emits `... \t \0 old
-  // \0 new`); we report the new path.
-  // Bound the numstat summary: a rename consumes up to 3 NUL fields per retained file,
-  // so materialize at most 3x the entry cap (+ slack) and retain at most the cap. This
-  // stops a hostile/huge staged diff from splitting millions of records for a summary
-  // that only needs a bounded file list. (TD-2026-07-16-30.)
   constexpr std::size_t kMaxStagedSummaryFiles = kMaxGitStatusEntries;
   const std::vector<std::string_view> fields =
       util::SplitNulDelimited(numstat.output, kMaxStagedSummaryFiles * 3 + 2);
@@ -139,13 +117,9 @@ CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repositor
     const std::string_view deleted_text = field.substr(first_tab + 1, second_tab - first_tab - 1);
     std::string_view path_text = field.substr(second_tab + 1);
     if (path_text.empty() && i + 2 < fields.size()) {
-      path_text = fields[i + 2];  // rename: [i+1]=old, [i+2]=new
+      path_text = fields[i + 2];
       i += 2;
     }
-    // Parse in 64-bit and saturate into the int field. A very large (generated or
-    // hostile) numstat count exceeds INT_MAX; `ParseInt` returned nullopt for
-    // those, silently under-reporting the change as 0. Saturating keeps the
-    // summary monotonic and non-zero.
     if (added_text != "-") {
       if (const auto parsed = util::ParseInt64(added_text)) {
         file_summary.added_lines = static_cast<int>(
@@ -159,10 +133,6 @@ CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repositor
       }
     }
     file_summary.relative_path = std::string(path_text);
-    // Accumulate in 64-bit and clamp: two files each clamped to INT_MAX would overflow
-    // a plain `int` aggregate (UB / a wrapped negative "+N" in the sidebar). Both
-    // operands are already in [0, INT_MAX], so the running sum stays well within
-    // int64 across any realistic file count before the final clamp. (TD-2026-07-16-47.)
     added_total += file_summary.added_lines;
     deleted_total += file_summary.deleted_lines;
     summary.files.push_back(std::move(file_summary));
@@ -188,7 +158,7 @@ std::optional<bool> StagedDiffContainsConflictMarkers(
   GitRepository repo(repository_root, launcher);
   const GitRepository::CommandResult diff = repo.Execute({"diff", "--cached"}, true);
   if (!diff.success()) {
-    return std::nullopt;  // could not determine (e.g. locked index) — not "clean"
+    return std::nullopt;
   }
   return util::StagedDiffIntroducesConflictMarker(diff.output);
 }
@@ -210,12 +180,6 @@ std::vector<CommitPreCheck> RunCommitPreChecks(
     return checks;
   }
 
-  // Reuse the caller's summary when supplied; otherwise run the staged-diff
-  // subprocess. Hold a *reference* to the caller's summary rather than copying it:
-  // the commit workflow passes the same generation-cached summary on open, warning
-  // ack, and every subject/body keystroke, and a repo with thousands of staged
-  // paths would otherwise deep-copy the whole `files` vector on each edit. Only
-  // materialize an owned summary when this function has to build it itself.
   CommitStagedSummary owned_summary;
   const CommitStagedSummary* summary_view = precomputed_summary;
   if (summary_view == nullptr) {
@@ -233,15 +197,6 @@ std::vector<CommitPreCheck> RunCommitPreChecks(
     checks.push_back(MakeCheck(CommitPreCheckKind::EmptySubject, CommitPreCheckSeverity::Blocking,
                                "Commit subject is required"));
   } else if (util::Utf8CodepointCount(subject) > kCommitSubjectMaxLength) {
-    // Count Unicode scalar values, not bytes: a non-ASCII subject (accented or
-    // CJK text) has more bytes than visible characters, so a byte-length gate
-    // would reject a subject the user sees as well within the limit.
-    // The limit is a compile-time constant, so the message is too: spelling it out
-    // keeps the check allocation-free and sidesteps a GCC 13 -Warray-bounds false
-    // positive on the std::to_string concatenation.
-    // A Warning, not Blocking: git accepts any subject length and VS Code only
-    // decorates the input past 72, so a project whose convention allows longer
-    // subjects can acknowledge the warning and commit rather than being refused.
     static_assert(kCommitSubjectMaxLength == 72, "keep the long-subject message in sync");
     checks.push_back(MakeCheck(CommitPreCheckKind::LongSubject, CommitPreCheckSeverity::Warning,
                                "Commit subject exceeds 72 characters"));
@@ -316,4 +271,4 @@ bool CommitPreChecksAllowExecution(const std::vector<CommitPreCheck>& checks,
   return true;
 }
 
-}  // namespace microide::project
+}

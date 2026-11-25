@@ -11,7 +11,7 @@ namespace {
 
 constexpr std::uint64_t kFormatVersion = 1;
 
-}  // namespace
+}
 
 void FileVersionHistory::Record(std::string_view path, const util::ContentHash& hash, std::uint64_t replaced_at) {
   if (path.empty() || path.size() > kMaxPathBytes) {
@@ -92,4 +92,4 @@ FileVersionHistory FileVersionHistory::Decode(std::string_view bytes) {
   return history;
 }
 
-}  // namespace microide::project::remote
+}

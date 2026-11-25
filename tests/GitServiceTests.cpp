@@ -33,10 +33,6 @@ using microide::project::CollectGitRecentCommits;
 using microide::project::CollectGitWorkingTreeEntries;
 
 namespace {
-// `CollectGitWorkingTreeEntries` answers `nullopt` when git could not be asked,
-// which is exactly the case these fixtures must never silently hit: an empty tree
-// and an unanswered question used to be the same value, and a test asserting
-// "no entries" would have passed for either.
 std::vector<microide::project::GitWorkingTreeEntry> RequireWorkingTreeEntries(
     const std::filesystem::path& root) {
   std::optional<std::vector<microide::project::GitWorkingTreeEntry>> entries =
@@ -44,7 +40,7 @@ std::vector<microide::project::GitWorkingTreeEntry> RequireWorkingTreeEntries(
   Expect(entries.has_value(), "git must have answered the working-tree query");
   return std::move(*entries);
 }
-}  // namespace
+}
 using microide::project::GitDiscardAll;
 using microide::project::GitDiscardPath;
 using microide::project::GitFileStatus;
@@ -105,9 +101,6 @@ void TestGitCompareFixture() {
          "git session fixture should preserve the terminal empty row");
   Expect(compare_summary.unchanged == 19,
          "git session fixture should keep unchanged rows plus the terminal empty row");
-  // Both signatures gained a parameter: the structural match pairs each old
-  // signature with its new one (only the parameter is novel) rather than
-  // reading either as a deletion.
   Expect(compare_summary.modified == 2, "git session fixture should produce 2 modified rows");
   Expect(compare_summary.added == 6, "git session fixture should produce 6 added rows");
   Expect(compare_summary.deleted == 0, "git session fixture should produce no deleted row");
@@ -190,9 +183,6 @@ void TestGitWorkingTreeStatusAndActions() {
   Expect(ReadFile(modified_file) == ReadFile(base_dir / "README.md"),
          "discard should restore tracked file to HEAD content");
 
-  // Regression: a single-row discard whose path points at an untracked directory
-  // must NOT recursively `git clean -fd` the whole subtree (silent data loss). It
-  // refuses and leaves the directory and its contents intact.
   const auto untracked_dir = repo_path / "untracked_pkg";
   std::filesystem::create_directories(untracked_dir);
   WriteFile(untracked_dir / "keep.txt", "precious\n");
@@ -220,8 +210,6 @@ void TestGitOutgoingBranchFiles() {
 
   const auto base_ref = ResolveGitBaseReference(repo_path, platform::LocalProcessLauncher());
   Expect(base_ref.has_value(), "git base reference should resolve in a main-based repo");
-  // TD-2026-07-17A-025: the default-branch fallback keeps the FULL ref as identity
-  // (so a same-named tag cannot shadow it in `git diff`), and the short name as label.
   Expect(base_ref->ref == "refs/heads/main",
          "local repo without remotes should resolve the full refs/heads/main as the base ref");
   Expect(base_ref->label == "main", "the base label stays the short branch name");
@@ -321,7 +309,6 @@ void TestGitBranchAndRecentCommitCollection() {
            "branch collection should skip symbolic HEAD refs");
     if (branch.label == "main") {
       saw_main = true;
-      // The ref carries the full, unambiguous refname; the label is the short form.
       Expect(branch.ref == "refs/heads/main",
              "a local branch's ref is the full refs/heads/ ref, not the short label");
     }
@@ -344,10 +331,6 @@ void TestGitBranchAndRecentCommitCollection() {
   const auto capped = CollectGitRecentCommits(repo_path, platform::LocalProcessLauncher(), 1);
   Expect(capped.size() == 1, "recent commit collection should honor the limit");
 
-  // A caller-supplied limit far above the helper-level cap (kMaxRecentCommits =
-  // 1000) must be clamped before it reaches `git log -n` / the unbounded
-  // ParseLog. This repo only has two commits, so an over-cap request must still
-  // succeed and return at most the cap (here, the two available commits).
   static constexpr std::size_t kRecentCommitHelperCap = 1000;
   const auto over_cap = CollectGitRecentCommits(repo_path, platform::LocalProcessLauncher(),
                                                 1'000'000);
@@ -357,23 +340,15 @@ void TestGitBranchAndRecentCommitCollection() {
          "over-cap request should still return every available commit on HEAD");
 }
 
-// Regression guard for the removed `rev-parse --verify HEAD` pre-check in
-// CollectGitRecentCommits: on an unborn branch (git init, no commit) the direct
-// `git log HEAD` must still resolve to an empty result rather than surfacing a
-// fatal or garbage row. Locks the behavior the dropped spawn used to provide.
 void TestRecentCommitsOnUnbornBranchIsEmpty() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
-  InitializeGitRepo(repo_path);  // No commit yet: HEAD is unborn.
+  InitializeGitRepo(repo_path);
 
   const auto recent = CollectGitRecentCommits(repo_path, platform::LocalProcessLauncher(), 10);
   Expect(recent.empty(), "recent-commit collection on an unborn branch must be empty");
 }
 
-// The base reference is one `for-each-ref` plus the gh-merge-base config probe --
-// it was up to six git processes, every one a round trip for a remote project.
-// Also covers the two rules no other test reached: origin/HEAD, and the current
-// branch's upstream when there is no main/master.
 void TestGitBaseReferenceRulesInTwoProcesses() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -497,10 +472,6 @@ void TestGitBulkStageAndDiscard() {
          "git discard all should remove untracked files");
 }
 
-// Regression: git pathspec magic must not fire for user filenames. A file named
-// with a magic prefix like ":(glob)…" is staged literally because every git
-// command runs with --literal-pathspecs; without it, git would interpret the
-// prefix as magic and stage the wrong path (or nothing).
 void TestGitStageHonorsLiteralPathspecs() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -532,16 +503,12 @@ void TestGitDiscardStagedRenameRestoresSource() {
   WriteFile(old_file, "original content\nline2\n");
   CommitAll(repo_path, "base", "base");
 
-  // Stage a rename (surfaced as a single Staged entry keyed on the destination).
   Expect(RunGitCommand(repo_path, {"mv", "old.txt", "new.txt"}) == 0,
          "git mv should stage a rename");
 
   GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   Expect(repo.Discard("new.txt"), "discarding a staged rename should succeed");
 
-  // Regression: the destination-only discard previously removed `new` and orphaned
-  // `old`'s staged deletion, destroying the original content. The source must be
-  // restored and the destination removed, leaving a clean tree.
   Expect(std::filesystem::exists(old_file),
          "discarding a staged rename must restore the source file");
   Expect(ReadFile(old_file) == "original content\nline2\n",
@@ -552,11 +519,6 @@ void TestGitDiscardStagedRenameRestoresSource() {
          "discarding a staged rename must leave a clean working tree");
 }
 
-// A file staged as new and then deleted on disk ("AD") is discarded by dropping
-// it from the index. The untracked-row gate classified the path with
-// symlink_status(path, ec), and libstdc++ reports a missing path as not_found
-// WITH ec set to ENOENT: the gate read that as a stat error and refused, so the
-// row could not be discarded at all (the trap soak d3f7c53a3cd7 found in Trash).
 void TestGitDiscardStagedNewFileDeletedOnDisk() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -584,8 +546,6 @@ void TestGitUnstageStagedRenameResetsBothSides() {
   GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   Expect(repo.Unstage("new.txt"), "unstaging a staged rename should succeed");
 
-  // Unstaging must reset both sides to HEAD: nothing left staged (the source's
-  // staged deletion is no longer orphaned), and the renamed file stays in the tree.
   for (const auto& entry : RequireWorkingTreeEntries(repo_path)) {
     Expect(!entry.staged, "unstaging a rename must leave nothing staged");
   }
@@ -593,18 +553,6 @@ void TestGitUnstageStagedRenameResetsBothSides() {
          "unstage keeps the renamed file in the working tree");
 }
 
-// `Discard` refuses a directory target so a single-row discard can never recurse
-// into a subtree. It classified the node with `symlink_status` and never consulted
-// the error: `file_type::none` is not a directory, so a stat that FAILED read as
-// "not a directory" and the discard proceeded. It must fail closed instead — the
-// gate's job is to refuse a target it cannot classify (TD-2026-09-07-292a). The
-// `git clean -f` that followed carried no `-d`, so this was never data loss; it
-// was a verb that could neither act nor report.
-//
-// The stat error is induced by making the target's parent unsearchable, which is
-// why this cannot run as root: root ignores the permission bits, the stat would
-// succeed, and the assertion would be testing nothing. It asserts the probe
-// really did fail before asserting on the behaviour.
 void TestGitDiscardRefusesAnUnstattableTarget() {
   if (::geteuid() == 0) {
     std::fprintf(stderr,
@@ -627,8 +575,6 @@ void TestGitDiscardRefusesAnUnstattableTarget() {
                                std::filesystem::perm_options::replace, permission_error);
   Expect(!permission_error, "the discard fixture should be able to lock its directory");
 
-  // Confirm the stat really fails, so a passing assertion below cannot mean
-  // "the error never happened".
   std::error_code probe_error;
   (void)std::filesystem::symlink_status(locked_dir / "untracked.txt", probe_error);
   const bool induced = static_cast<bool>(probe_error);
@@ -639,8 +585,6 @@ void TestGitDiscardRefusesAnUnstattableTarget() {
     discarded = repo.Discard("locked/untracked.txt");
   }
 
-  // Restore before asserting, so a failure cannot leave an undeletable directory
-  // behind for the temp-dir teardown.
   std::error_code restore_error;
   std::filesystem::permissions(locked_dir, std::filesystem::perms::owner_all,
                                std::filesystem::perm_options::replace, restore_error);
@@ -723,8 +667,6 @@ void TestGitRepositoryHandlesQuotedAndSpacedPaths() {
 }
 
 void TestGitPorcelainParserStatusV1() {
-  // Real `git status --porcelain=v1 -z` emits the rename destination first (in
-  // the code record) and the source path in the following NUL record.
   std::string output;
   output += "R  src/renamed.cpp";
   output.push_back('\0');
@@ -739,10 +681,6 @@ void TestGitPorcelainParserStatusV1() {
   output += "?? scratch.txt";
   output.push_back('\0');
 
-  // Flat per-record classification comes from the live v1 entry parser, and the
-  // folder roll-up from the shared RecordGitStatus helper the v2 parser also
-  // uses -- which is how the map-returning ParseStatusV1 wrapper was built
-  // before it was deleted as unreachable.
   std::unordered_map<std::string, GitFileStatus> statuses;
   for (const auto& entry : GitPorcelainParser::ParseWorkingTreeEntries(output)) {
     GitPorcelainParser::RecordGitStatus(
@@ -803,9 +741,6 @@ void TestGitPorcelainParserWorkingTreeEntries() {
 }
 
 void TestGitPorcelainParserLog() {
-  // Format: <hash>\x1f<short>\x1f<author>\x1f<relative_date>\x1f<subject> (subject
-  // last, so it may contain the delimiter). US (0x1f) is the delimiter, not a tab,
-  // so a tab embedded in an author name cannot shift the fields.
   const std::string output =
       "0123456789abcdef\x1f" "0123456\x1f" "Ada\x1f" "2 days ago\x1f" "first subject\n"
       "malformed line\n"
@@ -823,9 +758,6 @@ void TestGitPorcelainParserLog() {
   Expect(commits[1].subject == "second\tsubject",
          "second parsed subject should preserve embedded tabs");
 
-  // Regression: an author name containing a literal tab must not shift the
-  // author/date/subject fields (the old tab-delimited format truncated the author
-  // and absorbed the rest into later fields).
   const std::string tab_author =
       "aaaabbbbccccdddd\x1f" "aaaabbb\x1f" "Jane\tQ\x1f" "5 minutes ago\x1f" "tabbed author\n";
   const auto tab_commits = GitPorcelainParser::ParseLog(tab_author);
@@ -836,24 +768,18 @@ void TestGitPorcelainParserLog() {
          "relative date must not absorb the author's tail");
   Expect(tab_commits[0].subject == "tabbed author", "subject must stay intact");
 
-  // The parser-level cap bounds the result so a hostile/corrupt log stream cannot
-  // materialize an unbounded vector, regardless of caller.
   std::string many;
   for (int i = 0; i < 50; ++i) {
     many += "aaaabbbbccccdddd\x1f" "aaaabbb\x1f" "Ada\x1f" "now\x1f" "s\n";
   }
-  const auto capped = GitPorcelainParser::ParseLog(many, /*max_entries=*/10);
+  const auto capped = GitPorcelainParser::ParseLog(many, 10);
   Expect(capped.size() == 10, "ParseLog must stop at the requested cap");
   const auto uncapped = GitPorcelainParser::ParseLog(many);
   Expect(uncapped.size() == 50, "the default cap is generous enough for a normal log");
 }
 
-// Git-independent regression for the `-z` name-status parser. The prior parser
-// split on whitespace, truncating paths with spaces and mis-handling renames.
 void TestGitBranchDiffNameStatusZParser() {
   using microide::project::ParseGitBranchDiffNameStatusZ;
-  // status NUL path NUL records, including a rename (status NUL old NUL new) and
-  // paths containing spaces. Built token-by-token to avoid fragile byte counts.
   std::string output;
   const auto add_token = [&](std::string_view token) {
     output.append(token.data(), token.size());
@@ -868,7 +794,6 @@ void TestGitBranchDiffNameStatusZParser() {
   add_token("added.txt");
   const auto entries = ParseGitBranchDiffNameStatusZ(output);
   Expect(entries.size() == 3, "parser should yield three entries");
-  // Sorted by path: added.txt, new name.txt, src/file one.txt
   Expect(entries[0].relative_path.generic_string() == "added.txt", "added path");
   Expect(entries[0].status == GitFileStatus::Added, "added status");
   Expect(entries[1].relative_path.generic_string() == "new name.txt",
@@ -879,11 +804,6 @@ void TestGitBranchDiffNameStatusZParser() {
   Expect(entries[2].status == GitFileStatus::Modified, "modified status");
 }
 
-// Folder-aggregated status must be single-sourced through GitStatusPriority.
-// An inline table once ranked Added == Untracked, so a folder holding both could
-// aggregate to either depending on entry order. RecordGitStatus is the canonical
-// helper; the porcelain v2 parser builds the sidebar's whole tree-status map
-// through its sibling RecordNormalizedGitStatus.
 void TestBuildGitStatusMapFolderPriorityIsSingleSourced() {
   using microide::project::GitWorkingTreeEntry;
 
@@ -897,8 +817,6 @@ void TestBuildGitStatusMapFolderPriorityIsSingleSourced() {
     return statuses;
   };
 
-  // Added (priority 2) must outrank Untracked (priority 1) for the shared folder,
-  // regardless of which entry is recorded first.
   const std::vector<GitWorkingTreeEntry> untracked_first{
       {.relative_path = "pkg/new.txt", .status = GitFileStatus::Untracked},
       {.relative_path = "pkg/staged.txt", .status = GitFileStatus::Added, .staged = true},
@@ -917,8 +835,6 @@ void TestBuildGitStatusMapFolderPriorityIsSingleSourced() {
 }
 
 void TestGitStatusCodePrecedenceIsUnified() {
-  // v1 and v2 porcelain mappers share one change-code core so they cannot drift:
-  // Deleted > Added(A|C) > Modified(M|R|T) > Clean.
   Expect(GitPorcelainParser::StatusFromChangeCodeChars("D ") == GitFileStatus::Deleted,
          "D maps to Deleted");
   Expect(GitPorcelainParser::StatusFromChangeCodeChars(" D") == GitFileStatus::Deleted,
@@ -937,22 +853,15 @@ void TestGitStatusCodePrecedenceIsUnified() {
          "Deleted takes precedence over Added");
   Expect(GitPorcelainParser::StatusFromChangeCodeChars("  ") == GitFileStatus::Clean,
          "no change code maps to Clean");
-  // The v1 full mapper classifies untracked and conflicted states before the core.
   Expect(GitPorcelainParser::StatusFromPorcelainCode("??") == GitFileStatus::Untracked,
          "?? maps to Untracked");
   Expect(GitPorcelainParser::StatusFromPorcelainCode("UU") == GitFileStatus::Conflicted,
          "UU maps to Conflicted");
-  // Diff codes deliberately differ: there C (copy) is Modified, not Added.
   Expect(GitPorcelainParser::StatusFromDiffCode('C') == GitFileStatus::Modified,
          "diff-code C maps to Modified, distinct from status C");
 }
 
-// A hostile repo can emit `git status` output with millions of records and/or a
-// single pathologically deep path. The status parser must cap the entry count
-// (bounds the downstream UI-thread sort + heap) and cap ancestor-badge depth
-// (the folder-badge walk was quadratic in path length → OOM).
 void TestGitPorcelainParserBoundsHostileStatus() {
-  // Entry-count cap: 60000 untracked records collapse to <= the 50000 cap.
   {
     std::string output;
     for (int i = 0; i < 60000; ++i) {
@@ -965,8 +874,6 @@ void TestGitPorcelainParserBoundsHostileStatus() {
     Expect(entries.size() <= 50000,
            "status parser must cap the number of entries from a hostile repo");
   }
-  // Ancestor-badge depth cap: one very deep path must not create a map key per
-  // ancestor level (previously O(depth) allocations → quadratic OOM).
   {
     std::unordered_map<std::string, GitFileStatus> statuses;
     std::string deep;
@@ -976,27 +883,12 @@ void TestGitPorcelainParserBoundsHostileStatus() {
     deep += "leaf.txt";
     GitPorcelainParser::RecordGitStatus(statuses, std::filesystem::path(deep),
                                         GitFileStatus::Modified);
-    // Leaf + at most kMaxBadgeAncestorDepth (64) ancestor keys, not ~5000.
     Expect(statuses.size() <= 66,
            "ancestor-badge propagation must be depth-capped for a deep path");
   }
 }
 
-// The folder-badge ancestor walk was rewritten to shorten a scratch string at each
-// '/' instead of allocating a fresh std::filesystem::path plus a fresh generic
-// string per level (2.4x faster on a 20k-entry status). It must produce EXACTLY the
-// same key set as the std::filesystem::path walk it replaced, including the shapes
-// where a naive rewrite diverges: a trailing slash (git's `!` ignored records report
-// `target/`), redundant `./` and `..` segments that only normalization removes, and
-// a leading slash (whose "/" ancestor is not a tree node).
-//
-// The reference walk below is spelled out HERE, in path terms, on purpose. Comparing
-// RecordGitStatus against RecordNormalizedGitStatus would prove nothing — the former
-// delegates to the latter, so the assertion would be a tautology that passes even
-// with the leading-slash and "." guards deleted (verified: it did).
 void TestGitPorcelainParserNormalizedRecordMatchesPathWalk() {
-  // The original implementation, verbatim: normalize, key off generic_string(),
-  // then walk parent_path() up to the depth cap.
   const auto reference_walk = [](const std::string& raw) {
     std::unordered_map<std::string, GitFileStatus> statuses;
     const std::filesystem::path normalized = std::filesystem::path(raw).lexically_normal();
@@ -1023,8 +915,6 @@ void TestGitPorcelainParserNormalizedRecordMatchesPathWalk() {
   };
   for (const std::string& raw : paths) {
     std::unordered_map<std::string, GitFileStatus> expected = reference_walk(raw);
-    // The one deliberate divergence: the path walk recorded a bare "/" ancestor for
-    // an absolute path. That is not a tree node and was never rendered.
     expected.erase("/");
 
     std::unordered_map<std::string, GitFileStatus> actual;
@@ -1034,8 +924,6 @@ void TestGitPorcelainParserNormalizedRecordMatchesPathWalk() {
            "the normalized folder-badge walk must record the same keys as the path walk: " +
                raw);
 
-    // And the normalized entry point (what the v2 refresh path calls, passing the
-    // identity's already-generic string) must agree with it.
     std::unordered_map<std::string, GitFileStatus> via_normalized;
     std::string scratch;
     GitPorcelainParser::RecordNormalizedGitStatus(
@@ -1045,11 +933,7 @@ void TestGitPorcelainParserNormalizedRecordMatchesPathWalk() {
            "RecordNormalizedGitStatus must match the path walk for: " + raw);
   }
 
-  // The badge really does reach every ancestor (a walk that silently recorded
-  // nothing would satisfy an equality check against an equally broken reference).
   std::unordered_map<std::string, GitFileStatus> statuses;
-  // A pre-loaded scratch: the buffer is the caller's now, and the walk must
-  // overwrite whatever is in it rather than append to it.
   std::string walk_scratch = "stale contents from a previous entry";
   GitPorcelainParser::RecordNormalizedGitStatus(statuses, "a/b/c/d.txt",
                                                 GitFileStatus::Modified, walk_scratch);
@@ -1059,9 +943,6 @@ void TestGitPorcelainParserNormalizedRecordMatchesPathWalk() {
          "every ancestor level should carry the aggregated badge");
 }
 
-// A git invocation killed for exceeding its wall-clock timeout must report
-// timed_out (not a bare non-zero exit), so callers can distinguish a spurious
-// timeout from a real failure instead of showing a generic error.
 void TestGitCommandTimeoutReportsTimedOut() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -1069,8 +950,6 @@ void TestGitCommandTimeoutReportsTimedOut() {
   InitializeGitRepo(repo_path);
   CommitAll(repo_path, "first commit", "seed repo for timeout test");
 
-  // A pre-commit hook that sleeps far past the timeout makes `git commit` block
-  // deterministically.
   const auto hook = repo_path / ".git" / "hooks" / "pre-commit";
   WriteFile(hook, "#!/bin/sh\nsleep 30\n");
   std::filesystem::permissions(hook, std::filesystem::perms::owner_all,
@@ -1081,18 +960,11 @@ void TestGitCommandTimeoutReportsTimedOut() {
 
   const auto result = microide::project::internal::ReadGitCommandOutput(
       microide::platform::LocalProcessLauncher(),
-      repo_path, {"commit", "-m", "blocked"}, /*silence_stderr=*/false, /*timeout_ms=*/300);
+      repo_path, {"commit", "-m", "blocked"}, false, 300);
   Expect(result.timed_out, "a git commit blocked by a slow hook must report timed_out");
   Expect(!result.success(), "a timed-out git command must not report success");
 }
 
-// The app decides a folder is a repository by its own `<root>/.git` marker
-// (HasGitMarker), but the git CLI it then runs searches upward: with a `.git` at
-// the root that is not a valid repository -- an empty directory, a half-deleted
-// one -- git walks on to the nearest ENCLOSING repository and every command lands
-// there. The soak monkey's scratch project sat inside the microide checkout, and
-// that walk put a commit on the checkout's main, switched its branch and pushed
-// from it. A git call for a root must act on that root's repository or fail.
 void TestGitCommandNeverReachesAnEnclosingRepository() {
   TemporaryDirectory temp_dir;
   const auto outer = temp_dir.path() / "outer";
@@ -1102,7 +974,7 @@ void TestGitCommandNeverReachesAnEnclosingRepository() {
 
   const auto inner = outer / "project";
   WriteFile(inner / "work.txt", "inner\n");
-  std::filesystem::create_directories(inner / ".git" / "qa-deleted");  // a marker, not a repo
+  std::filesystem::create_directories(inner / ".git" / "qa-deleted");
   Expect(microide::project::internal::HasGitMarker(inner),
          "precondition: the app reads the inner folder as a repository");
 
@@ -1122,25 +994,17 @@ void TestGitCommandNeverReachesAnEnclosingRepository() {
          "the enclosing repository must not gain the inner root's commit");
 }
 
-}  // namespace
+}
 
-// J1: `git show <rev>:<path>` can be killed for hitting the subprocess capture
-// ceiling, leaving a partial blob with a non-zero exit and result.truncated set.
-// The interpretation must surface that partial content WITH the truncated flag (so
-// callers can refuse to diff it as truth) while a genuine failure stays nullopt and
-// a clean read stays untruncated. Tested through the pure static helper so the
-// contract is verified without committing a 128 MiB blob to force a real kill.
 void TestGitReadFileAtRevisionSurfacesTruncation() {
   using CommandResult = GitRepository::CommandResult;
 
-  // A clean success: full content, not truncated.
   const auto clean = GitRepository::InterpretBlobResult(
       CommandResult{.exit_code = 0, .output = "full file contents\n", .truncated = false});
   Expect(clean.has_value(), "a successful git show should yield a blob");
   Expect(clean->content == "full file contents\n" && !clean->truncated,
          "a clean read is the whole file and is not flagged truncated");
 
-  // A capture-ceiling kill: non-zero exit but truncated set -> partial + flagged.
   const auto truncated = GitRepository::InterpretBlobResult(
       CommandResult{.exit_code = 137, .output = "partial prefix", .truncated = true});
   Expect(truncated.has_value(),
@@ -1150,8 +1014,6 @@ void TestGitReadFileAtRevisionSurfacesTruncation() {
   Expect(truncated->content == "partial prefix",
          "the partial prefix is preserved for a 'content truncated' state");
 
-  // A genuine failure (e.g. missing revision) is nullopt, distinct from an empty
-  // blob and from a truncation.
   const auto failure = GitRepository::InterpretBlobResult(
       CommandResult{.exit_code = 128, .output = "", .truncated = false});
   Expect(!failure.has_value(),
@@ -1174,16 +1036,12 @@ void TestGitExplicitRevisionArgsUseEndOfOptions() {
   const std::string& head_hash = recent[0].hash;
   Expect(!head_hash.empty(), "HEAD commit hash should be resolvable");
 
-  // diff-tree over an explicit commit hash now passes the revision after
-  // `--end-of-options`; the changed-file list must still parse correctly.
   const auto changed = CollectGitCommitChangedFiles(repo_path, platform::LocalProcessLauncher(),
                                                     head_hash);
   Expect(std::find(changed.begin(), changed.end(), std::filesystem::path("added.txt")) !=
              changed.end(),
          "commit changed-files should list the added path with an explicit revision");
 
-  // cat-file -e / show <rev>:<path> now also carry `--end-of-options`; existence
-  // and content reads at an explicit revision must keep working.
   GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   Expect(repo.FileExistsAtRevision("added.txt", head_hash),
          "an existing file must be detected at an explicit revision");
@@ -1194,10 +1052,6 @@ void TestGitExplicitRevisionArgsUseEndOfOptions() {
          "file content must round-trip through show at an explicit revision");
 }
 
-// A repository's first commit has no parent, and a merge commit's diff is
-// suppressed by diff-tree's default. Both used to come back as an empty
-// changed-file list, which the review verbs reported as "no changes in commit"
-// for a commit that plainly changed files.
 void TestGitCommitChangedFilesCoversRootAndMergeCommits() {
   using microide::project::CollectGitCommitChangedFiles;
 
@@ -1216,9 +1070,6 @@ void TestGitCommitChangedFilesCoversRootAndMergeCommits() {
                        std::filesystem::path("root_b.txt")) != root_changed.end(),
          "the repository's first commit must list the files it introduced");
 
-  // Branch, diverge on both sides, and merge: the merge's own changed-file list
-  // is its first-parent diff, which is what the review tab's `<ref>~1` left side
-  // compares against.
   RequireGitCommandSuccess(repo_path, {"checkout", "-q", "-b", "feature"},
                            "create the feature branch");
   WriteFile(repo_path / "feature.txt", "feature\n");
@@ -1236,7 +1087,6 @@ void TestGitCommitChangedFilesCoversRootAndMergeCommits() {
                    std::filesystem::path("feature.txt")) != merge_changed.end(),
          "a merge commit must list the files it brought in from the merged side");
 
-  // An ordinary single-parent commit is unaffected by the added flags.
   const auto feature_changed = CollectGitCommitChangedFiles(repo_path,
                                                             platform::LocalProcessLauncher(),
                                                                 "feature");
@@ -1245,9 +1095,6 @@ void TestGitCommitChangedFilesCoversRootAndMergeCommits() {
          "an ordinary commit still lists exactly the paths it touched");
 }
 
-// The `git cat-file --batch` reply framing that replaced the cat-file -e + show
-// pair: header, exact byte count, git's one-word verdicts, and a capture-ceiling
-// kill. Pure, so it pins the contract without spawning git.
 void TestGitBatchBlobResultFraming() {
   using GitRepository = microide::project::GitRepository;
   using CommandResult = GitRepository::CommandResult;
@@ -1260,14 +1107,12 @@ void TestGitBatchBlobResultFraming() {
   Expect(ok->content == "ab\ncd\n",
          "the payload is exactly the header's byte count, embedded newlines included");
 
-  // A blob whose content is empty is NOT an absent file.
   const auto empty = GitRepository::InterpretBatchBlobResult(
       CommandResult{.exit_code = 0,
                     .output = "0123456789abcdef0123456789abcdef01234567 blob 0\n\n"});
   Expect(empty.has_value() && empty->exists && empty->content.empty(),
          "an empty blob exists and has empty content");
 
-  // git's verdicts for a name it declines are one word after the name.
   for (const std::string_view verdict : {"missing", "ambiguous"}) {
     const auto declined = GitRepository::InterpretBatchBlobResult(
         CommandResult{.exit_code = 0, .output = std::string("HEAD:nope.txt ") +
@@ -1276,18 +1121,15 @@ void TestGitBatchBlobResultFraming() {
            "a declined object name is an absent file, not a git failure");
   }
 
-  // A tree (a directory named at a revision) is not a file to diff.
   const auto tree = GitRepository::InterpretBatchBlobResult(
       CommandResult{.exit_code = 0,
                     .output = "0123456789abcdef0123456789abcdef01234567 tree 42\n"});
   Expect(tree.has_value() && !tree->exists, "a tree object is not a readable file");
 
-  // A real git failure stays distinguishable from an absent file.
   const auto failure = GitRepository::InterpretBatchBlobResult(
       CommandResult{.exit_code = 128, .output = ""});
   Expect(!failure.has_value(), "a non-zero exit that was not a truncation is a failure");
 
-  // A capture-ceiling kill: fewer bytes arrived than the header promised.
   const auto clipped = GitRepository::InterpretBatchBlobResult(
       CommandResult{.exit_code = 137,
                     .output = "0123456789abcdef0123456789abcdef01234567 blob 100\npartial",
@@ -1297,8 +1139,6 @@ void TestGitBatchBlobResultFraming() {
   Expect(clipped->content == "partial", "the partial prefix is preserved");
 }
 
-// The single-spawn lookup must agree with the two-spawn pair it replaced on every
-// outcome that reaches a compare tab.
 void TestGitBlobLookupMatchesExistenceAndContent() {
   using microide::project::GitRepository;
 
@@ -1334,10 +1174,6 @@ void TestGitBlobLookupMatchesExistenceAndContent() {
   check("dir/nested.txt", true);
   check("absent.txt", false);
 
-  // A directory named at a revision resolves to a TREE. This is the one place the
-  // lookup deliberately disagrees with the pair it replaced: `cat-file -e` says the
-  // object exists, and `git show` then prints a tree listing that the compare tab
-  // rendered as if it were file content. A tree is not a file to diff.
   const auto tree_lookup = repo.LookupBlobAtRevision("dir", "HEAD");
   Expect(tree_lookup.has_value() && !tree_lookup->exists,
          "a directory at a revision must read as absent, not as a listing");
@@ -1345,8 +1181,6 @@ void TestGitBlobLookupMatchesExistenceAndContent() {
          "the old existence probe did accept a tree — this is the intended divergence");
 }
 
-// The streaming half of the batch reader: several replies packed into one buffer,
-// which is what a bulk prefetch actually parses.
 void TestGitBatchBlobStreamFraming() {
   using GitRepository = microide::project::GitRepository;
 
@@ -1372,8 +1206,6 @@ void TestGitBatchBlobStreamFraming() {
   Expect(!GitRepository::ReadNextBatchBlob(stream, offset, lookup),
          "the reader reports the end of the stream");
 
-  // A clipped payload (capture ceiling) ends the stream: the next reply's framing
-  // is gone, so nothing after it may be attributed to a request.
   const std::string clipped =
       "1111111111111111111111111111111111111111 blob 3\nabc\n"
       "2222222222222222222222222222222222222222 blob 100\nshort";
@@ -1386,8 +1218,6 @@ void TestGitBatchBlobStreamFraming() {
          "nothing is read past a clipped payload");
 }
 
-// The bulk read must answer exactly what N single reads would have, in order —
-// that equivalence is the whole safety argument for using it as a prefetch.
 void TestGitBulkBlobLookupMatchesSingleReads() {
   using microide::project::GitRepository;
   using microide::project::GitRevisionBlobCache;
@@ -1426,12 +1256,9 @@ void TestGitBulkBlobLookupMatchesSingleReads() {
     Expect(bulk[i]->exists == single->exists && bulk[i]->content == single->content,
            "a bulk answer must be identical to the single read for the same name");
   }
-  // c.txt exists only at HEAD; absent.txt at neither. Pin that the ordering is
-  // really per-request and not, say, all-present-then-all-missing.
   Expect(bulk[2]->exists && !bulk[4]->exists && !bulk[7]->exists,
          "each answer belongs to its own request");
 
-  // And through the cache the review verbs actually use.
   std::vector<std::filesystem::path> absolute;
   for (const std::filesystem::path& relative : relatives) {
     absolute.push_back(repo_path / relative);
@@ -1454,8 +1281,6 @@ void TestGitBulkBlobLookupMatchesSingleReads() {
     }
   }
 
-  // A cache that holds nothing for the pair is exactly as good as no cache: this
-  // is what keeps the prefetch advisory rather than load-bearing.
   GitRevisionBlobCache unrelated;
   unrelated.Prefetch(repo_path, platform::LocalProcessLauncher(), {"HEAD"}, {repo_path / "b.txt"});
   const auto miss = ReadGitFileAtCommit(repo_path, platform::LocalProcessLauncher(),
@@ -1465,7 +1290,6 @@ void TestGitBulkBlobLookupMatchesSingleReads() {
   Expect(miss.has_value() && miss_direct.has_value() && miss->content == miss_direct->content,
          "a cache miss falls back to the single read");
 
-  // A cache filled from another repository must not answer for this one.
   Expect(cache.Find(repo_path / "elsewhere", "HEAD", repo_path / "a.txt") == nullptr,
          "a cache built for another root reads as a miss");
 }
@@ -1518,4 +1342,4 @@ void RegisterGitServiceTests(std::vector<TestCase>& tests) {
           TestGitCommandNeverReachesAnEnclosingRepository);
 }
 
-}  // namespace microide::tests
+}

@@ -127,9 +127,6 @@ void TestWorkspaceShellSettingsOverlayCursorKind() {
   Expect(WorkspaceShellTestAccess::CursorKindAtIsDefault(shell, outside_x, outside_y),
          "settings overlay should force the default cursor over the dimmed editor backdrop");
 
-  // Probe the first real value row rather than a hand-computed offset from the
-  // card: the header/filter/section band above the rows has changed height more
-  // than once, and an offset probe silently drifts onto whatever sits there.
   const SDL_FRect first_row = WorkspaceShellTestAccess::SettingsOverlayVisibleRowRect(shell, 0);
   Expect(first_row.w > 0.0f && first_row.h > 0.0f,
          "the settings overlay should expose at least one visible value row");
@@ -157,9 +154,6 @@ void TestWorkspaceShellResizeCursorFallsBackOutsideVisibleSeams() {
 
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
 
-  // The grab (hit) region must equal the cursor-change region exactly: now that the
-  // cursor reliably refreshes, a point outside the cursor rect is outside the drag pad
-  // too — there is no longer a band where you can grab but the cursor stays an arrow.
   const SDL_FRect sidebar_visual = SidebarResizeHandleRect(layout);
   Expect(RectsEqual(SidebarResizeHitRect(layout), SidebarResizeCursorRect(layout)),
          "sidebar resize hit rect must equal the cursor rect (no over-extended grab pad)");
@@ -278,14 +272,6 @@ void TestWorkspaceShellCustomFrameResizeCursorsMatchHitTest() {
                 "left custom frame edge should use a horizontal resize cursor");
 }
 
-// The status bar's segments carry commands and answer clicks.
-//
-// This test previously asserted the opposite -- "status bar segments must not be
-// clickable" -- but that pinned a defect rather than a decision. Every segment
-// shipped with an imperative tooltip ("Go to Line", "Open Problems", "Open Source
-// Control") while `clickable` was never set anywhere and no mouse-down path ever
-// looked at the bar, so the tooltips promised actions nothing implemented. Users
-// read them as a menu and clicked nothing.
 void TestWorkspaceShellStatusBarSegmentsDispatchTheirCommands() {
   EnsureDummySdlVideoInitialized();
 
@@ -300,7 +286,6 @@ void TestWorkspaceShellStatusBarSegmentsDispatchTheirCommands() {
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::RefreshStatusBar(shell);
 
-  // An actionable segment shows the pointer cursor, like every other control.
   const auto project_rect =
       WorkspaceShellTestAccess::StatusBarSegmentRect(shell, StatusBarSegmentId::Project);
   Expect(project_rect.has_value(), "the project segment should be present at this width");
@@ -309,15 +294,11 @@ void TestWorkspaceShellStatusBarSegmentsDispatchTheirCommands() {
   Expect(WorkspaceShellTestAccess::CursorKindAtIsPointer(shell, px, py),
          "a segment that runs a command should show the pointer cursor");
 
-  // And clicking it runs that command -- here, opening Source Control, which is
-  // exactly what its tooltip has always claimed.
   Expect(SendMouseDown(shell, px, py, SDL_BUTTON_LEFT),
          "a click on an actionable status bar segment should be handled");
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Git,
          "clicking the project segment should open the Source Control view");
 
-  // A read-only segment stays read-only: no command, no pointer, and the click
-  // falls through rather than being swallowed by the bar.
   const auto encoding_rect =
       WorkspaceShellTestAccess::StatusBarSegmentRect(shell, StatusBarSegmentId::Encoding);
   if (encoding_rect.has_value()) {
@@ -389,8 +370,6 @@ void TestWorkspaceShellCursorSplitNonFocusedGroupTabUsesPointer() {
          "splitting the editor should succeed with an active tab");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2,
          "the split should create a second editor group");
-  // Splitting focuses the new (right) group, so group 0 is the non-focused one whose
-  // tabs the old focused-group-only cursor hit-test computed against the wrong strip.
   Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1,
          "the split should focus the new group");
 
@@ -407,11 +386,6 @@ void TestWorkspaceShellCursorSplitNonFocusedGroupTabUsesPointer() {
          "hovering a non-focused split-group tab should cache the pointer cursor");
 }
 
-// The command palette stores match rows as INDICES into `items` (not copied rows) to
-// avoid copying every matched row's strings on each keystroke (TD-2026-07-17A-032). This
-// pins that the index indirection resolves to the correct rows: with no query every match
-// maps 1:1 to its item, and after filtering, the surviving match still resolves to a row
-// whose label actually contains the query.
 void TestWorkspaceShellCommandPaletteMatchesIndexIntoItems() {
   EnsureDummySdlVideoInitialized();
 
@@ -425,7 +399,6 @@ void TestWorkspaceShellCommandPaletteMatchesIndexIntoItems() {
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::OpenCommandPalette(shell);
 
-  // No query: every item is a match, and matches[i] must resolve back to items[i].
   const std::size_t item_count = WorkspaceShellTestAccess::CommandPaletteItemCount(shell);
   Expect(item_count > 0, "the command palette should populate built-in command rows");
   Expect(WorkspaceShellTestAccess::CommandPaletteMatchCount(shell) == item_count,
@@ -436,9 +409,6 @@ void TestWorkspaceShellCommandPaletteMatchesIndexIntoItems() {
            "each unfiltered match index must resolve to the same-position item");
   }
 
-  // Filter by the first item's exact label: it must keep that row (querying a row's own
-  // label always matches its search text), never grow the set, and every surviving match
-  // must resolve through a valid index to a non-empty label.
   const std::string first_label = WorkspaceShellTestAccess::CommandPaletteItemLabelAt(shell, 0);
   Expect(!first_label.empty(), "the first palette item should carry a label");
   WorkspaceShellTestAccess::SetCommandPaletteQueryAndRefresh(shell, first_label);
@@ -482,9 +452,6 @@ void TestWorkspaceShellCursorRecomputesWhenCommandPaletteOpensWithoutMotion() {
   Expect(fresh_after != before,
          "command palette open should change the resolved cursor kind at the test point");
 
-  // The collapsed cursor fingerprint dropped the overlay-visible scalar, so a
-  // stationary-pointer recompute now relies solely on the overlay-open path bumping
-  // the cursor hit generation. Without motion, the cached cursor must still update.
   WorkspaceShellTestAccess::UpdateMouseCursor(shell, x, y);
   Expect(WorkspaceShellTestAccess::CachedCursorValue(shell) == fresh_after,
          "opening the command palette must recompute the stationary cursor (no stale fast path)");
@@ -503,10 +470,6 @@ void TestWorkspaceShellRenderDoesNotPollLivePointer() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, source);
 
-  // No mouse event has been delivered, so the pointer position must stay invalid
-  // across renders. The render path must never poll the live OS pointer
-  // (SDL_GetMouseState) to seed it — that would make hover highlights, and thus
-  // retained-vs-full redraw equivalence, depend on the real cursor location.
   Expect(!WorkspaceShellTestAccess::MousePositionValid(shell),
          "a freshly opened workspace should have no cached pointer position");
   WorkspaceShellTestAccess::RenderFrame(shell);
@@ -517,23 +480,6 @@ void TestWorkspaceShellRenderDoesNotPollLivePointer() {
          "repeated renders must remain free of any live pointer poll");
 }
 
-// Regression: an event-time cursor change must request a present. On Wayland the
-// cursor shape rides a hardware plane that only re-latches on a frame commit, so a
-// cursor change that dirties nothing else (hovering an item with no hover visual,
-// or an idle welcome screen with no caret blink) would sit queued and show the
-// stale shape until some unrelated repaint. While the caret blinks its periodic
-// frames hide this; when it stops, the staleness becomes visible. See
-// dev-docs/platform/wayland-stale-cursor.md.
-// The reported bug: a selection drag stopped extending the moment the pointer
-// left the editor area, and stayed stopped while the button was still down.
-// There were two independent refusals -- the shell required the pointer inside
-// `layout.editor_surface`, and the editor coordinator required it inside the
-// active pane rect -- so the selection froze at whatever cell it last crossed.
-//
-// The assertion is about the pointer being TRACKED outside, not about a specific
-// column: two different out-of-bounds positions on the same row must select
-// different text, and dragging down past the last visible row must reach a later
-// line than dragging along the first one.
 void TestWorkspaceShellEditorDragSelectionSurvivesLeavingTheEditorArea() {
   EnsureDummySdlVideoInitialized();
 
@@ -560,12 +506,10 @@ void TestWorkspaceShellEditorDragSelectionSurvivesLeavingTheEditorArea() {
   Expect(SendMouseDown(shell, start_x, first_row_y, SDL_BUTTON_LEFT),
          "pressing inside the editor should start a selection");
 
-  // Left of the editor surface entirely -- over the sidebar.
   Expect(SendMouseMotion(shell, pane.x - 300.0f, first_row_y, SDL_BUTTON_LMASK),
          "dragging left out of the editor area should still be handled");
   const std::string after_left = WorkspaceShellTestAccess::ActiveEditorSelectedText(shell);
 
-  // Right of it, past the window edge.
   Expect(SendMouseMotion(shell, pane.x + pane.w + 500.0f, first_row_y, SDL_BUTTON_LMASK),
          "dragging right out of the editor area should still be handled");
   const std::string after_right = WorkspaceShellTestAccess::ActiveEditorSelectedText(shell);
@@ -574,7 +518,6 @@ void TestWorkspaceShellEditorDragSelectionSurvivesLeavingTheEditorArea() {
   Expect(after_right.find("alpha") != std::string::npos,
          "dragging right along the first row should select that row's text");
 
-  // Below the last visible row -- over the status bar / off the window.
   Expect(SendMouseMotion(shell, pane.x + pane.w * 0.5f, pane.y + pane.h + 400.0f,
                          SDL_BUTTON_LMASK),
          "dragging below the editor area should still be handled");
@@ -587,10 +530,6 @@ void TestWorkspaceShellEditorDragSelectionSurvivesLeavingTheEditorArea() {
          "releasing after the out-of-area drag should be handled");
 }
 
-// Clamping alone pins the selection at the last visible row, so a drag can never
-// select more than a screenful. Holding the pointer past the bottom edge has to
-// keep scrolling and keep extending -- driven by the idle wake, because a
-// stationary pointer produces no further motion events.
 void TestWorkspaceShellEditorDragAutoscrollsPastTheEdge() {
   EnsureDummySdlVideoInitialized();
 
@@ -615,15 +554,12 @@ void TestWorkspaceShellEditorDragAutoscrollsPastTheEdge() {
   Expect(SendMouseDown(shell, metrics.text_x + 0.1f,
                        metrics.first_line_y + metrics.line_height * 0.5f, SDL_BUTTON_LEFT),
          "pressing inside the editor should start a selection");
-  // Hold well below the last visible row. This is one event; everything after
-  // it has to come from the wake.
   Expect(SendMouseMotion(shell, pane.x + pane.w * 0.5f, pane.y + pane.h + 200.0f,
                          SDL_BUTTON_LMASK),
          "dragging below the editor should be handled");
 
   const std::size_t scroll_after_motion =
       WorkspaceShellTestAccess::ActiveEditorViewportScrollLine(shell);
-  // Drive the idle wake a few times with the pointer held still.
   for (int tick = 0; tick < 5; ++tick) {
     const auto result = WorkspaceShellTestAccess::HandleScheduledWake(shell);
     Expect(result.handled, "an armed selection autoscroll should keep the wake busy");
@@ -637,7 +573,6 @@ void TestWorkspaceShellEditorDragAutoscrollsPastTheEdge() {
   Expect(selected.find("line 20") != std::string::npos,
          "the scrolled-into rows must be selected, not merely scrolled past");
 
-  // Releasing disarms it: no further wakes, no further scrolling.
   Expect(SendMouseUp(shell, pane.x + pane.w * 0.5f, pane.y + pane.h + 200.0f, SDL_BUTTON_LEFT),
          "releasing should be handled");
   const std::size_t scroll_at_release =
@@ -649,10 +584,6 @@ void TestWorkspaceShellEditorDragAutoscrollsPastTheEdge() {
          "a released drag must not keep autoscrolling");
 }
 
-// TD-2026-08-13-204: pressing INSIDE a selection and dragging moves the selected
-// text (VS Code's editor.dragAndDrop). The gesture is three-state on purpose —
-// the press commits to neither reading until the pointer travels, so a plain
-// click inside a selection still collapses the caret as it always has.
 void TestWorkspaceShellEditorDragSelectionMovesText() {
   EnsureDummySdlVideoInitialized();
 
@@ -675,9 +606,8 @@ void TestWorkspaceShellEditorDragSelectionMovesText() {
     return metrics.text_x + static_cast<float>(column) * char_width + 1.0f;
   };
 
-  // Select "alpha " (columns 0..6), then press inside it and drag to the end.
   viewport.MoveCursorTo(0, 0);
-  viewport.MoveCursorTo(0, 6, /*extend_selection=*/true);
+  viewport.MoveCursorTo(0, 6, true);
   Expect(SendMouseDown(shell, column_x(3), row_y, SDL_BUTTON_LEFT),
          "pressing inside the selection should be handled");
   Expect(viewport.selection_range().has_value(),
@@ -696,14 +626,11 @@ void TestWorkspaceShellEditorDragSelectionMovesText() {
   Expect(moved_selection.has_value() && moved_selection->start.column == 13,
          "the moved text stays selected where it landed");
 
-  // One undo entry, not two: the delete and the insert are one edit.
   Expect(viewport.Undo(), "the move is undoable");
   Expect(viewport.lines().LineView(0) == "alpha bravo charlie",
          "a single undo puts the text back where it was");
 }
 
-// The other half of the three-state gesture: a press inside a selection that does
-// NOT travel is still a click, and collapses the caret where it landed.
 void TestWorkspaceShellClickInsideSelectionStillCollapsesCaret() {
   EnsureDummySdlVideoInitialized();
 
@@ -725,9 +652,8 @@ void TestWorkspaceShellClickInsideSelectionStillCollapsesCaret() {
   const float press_x = metrics.text_x + 3.0f * char_width + 1.0f;
 
   viewport.MoveCursorTo(0, 0);
-  viewport.MoveCursorTo(0, 6, /*extend_selection=*/true);
+  viewport.MoveCursorTo(0, 6, true);
   Expect(SendMouseDown(shell, press_x, row_y, SDL_BUTTON_LEFT), "the press is handled");
-  // A pixel of jitter is still a click, not a drag.
   Expect(SendMouseMotion(shell, press_x + 1.0f, row_y, SDL_BUTTON_LMASK),
          "sub-threshold motion is handled");
   Expect(viewport.selection_range().has_value(),
@@ -741,10 +667,6 @@ void TestWorkspaceShellClickInsideSelectionStillCollapsesCaret() {
   Expect(viewport.cursor_column() == 3, "the caret lands where the click was");
 }
 
-// The other way a drag can end without a button-up: the window loses focus while
-// the button is down (released over another window, or the compositor takes the
-// grab). The autoscroll is the one loop here that runs with no input behind it,
-// so a velocity left armed would scroll forever.
 void TestWorkspaceShellEditorDragAutoscrollStopsOnFocusLoss() {
   EnsureDummySdlVideoInitialized();
 
@@ -785,12 +707,6 @@ void TestWorkspaceShellEditorDragAutoscrollStopsOnFocusLoss() {
          "losing focus mid-drag must end the selection gesture");
 }
 
-// A modal prompt that opens mid-drag (Ctrl+W on an unsaved file, the button still
-// down) takes the release: the button-up returned for the prompt before it ended
-// any gesture, so the selection stayed "in progress" with no button down, and the
-// autoscroll's wake replayed the held pointer -- with the button mask -- every
-// tick, scrolling the document and extending the selection to its end behind the
-// prompt and after it closed.
 void TestWorkspaceShellEditorDragEndsWhenAPromptTakesTheRelease() {
   EnsureDummySdlVideoInitialized();
 
@@ -840,10 +756,6 @@ void TestWorkspaceShellEditorDragEndsWhenAPromptTakesTheRelease() {
          "with the button up the selection must not keep growing");
 }
 
-// A double-click that then drags selects whole WORDS, and a triple-click drag
-// whole LINES. The click's own expansion used to be collapsed straight back to
-// character granularity by the first motion event, because the drag extended
-// from the caret with no memory of how the gesture started.
 void TestWorkspaceShellEditorMultiClickDragKeepsItsGranularity() {
   EnsureDummySdlVideoInitialized();
 
@@ -866,8 +778,7 @@ void TestWorkspaceShellEditorMultiClickDragKeepsItsGranularity() {
     return metrics.text_x + static_cast<float>(column) * char_width + 1.0f;
   };
 
-  // Double-click "alpha" (columns 0-4), then drag into "charlie" (column 14).
-  Expect(SendMouseDown(shell, column_x(2), row0, SDL_BUTTON_LEFT, /*clicks=*/2),
+  Expect(SendMouseDown(shell, column_x(2), row0, SDL_BUTTON_LEFT, 2),
          "a double click should be handled");
   Expect(WorkspaceShellTestAccess::ActiveEditorSelectedText(shell) == "alpha",
          "a double click should select the word under it");
@@ -878,8 +789,7 @@ void TestWorkspaceShellEditorMultiClickDragKeepsItsGranularity() {
          std::string("a double-click drag must extend by whole words, got '") + word_drag + "'");
   Expect(SendMouseUp(shell, column_x(14), row0, SDL_BUTTON_LEFT), "release should be handled");
 
-  // Triple-click line 0, then drag onto line 1: both lines, whole.
-  Expect(SendMouseDown(shell, column_x(2), row0, SDL_BUTTON_LEFT, /*clicks=*/3),
+  Expect(SendMouseDown(shell, column_x(2), row0, SDL_BUTTON_LEFT, 3),
          "a triple click should be handled");
   Expect(SendMouseMotion(shell, column_x(3), row0 + metrics.line_height, SDL_BUTTON_LMASK),
          "dragging after a triple click should be handled");
@@ -890,20 +800,12 @@ void TestWorkspaceShellEditorMultiClickDragKeepsItsGranularity() {
   Expect(SendMouseUp(shell, column_x(3), row0 + metrics.line_height, SDL_BUTTON_LEFT),
          "release should be handled");
 
-  // A plain single-click drag stays character-granular -- the granularity must
-  // not leak from the previous gesture.
-  //
-  // Collapse the line selection first. Since TD-2026-08-13-204 a press INSIDE a
-  // selection starts a drag-and-drop of it rather than a new selection, and the
-  // triple-click drag above left the whole document selected — so without this
-  // the "single-click drag" below would be a text move, and this test would be
-  // asserting granularity about a gesture that no longer happens here.
-  Expect(SendMouseDown(shell, column_x(2), row0, SDL_BUTTON_LEFT, /*clicks=*/1),
+  Expect(SendMouseDown(shell, column_x(2), row0, SDL_BUTTON_LEFT, 1),
          "a click inside the selection should be handled");
   Expect(SendMouseUp(shell, column_x(2), row0, SDL_BUTTON_LEFT),
          "releasing without moving collapses the selection to a caret");
 
-  Expect(SendMouseDown(shell, column_x(2), row0, SDL_BUTTON_LEFT, /*clicks=*/1),
+  Expect(SendMouseDown(shell, column_x(2), row0, SDL_BUTTON_LEFT, 1),
          "a single click should be handled");
   Expect(SendMouseMotion(shell, column_x(4), row0, SDL_BUTTON_LMASK),
          "dragging after a single click should be handled");
@@ -926,37 +828,23 @@ void TestWorkspaceShellCursorChangeRequestsPresent() {
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
 
-  // The left window-frame border reliably resolves to a non-default (resize)
-  // cursor with custom chrome, so moving onto it from the default cursor is a
-  // guaranteed cursor change.
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
   const float border_x = 2.0f;
   const float border_y = layout.menu_bar.y + layout.menu_bar.h + 200.0f;
 
-  // Drain any redraws queued during setup so the assertions see only cursor work.
   (void)WorkspaceShellTestAccess::ConsumePendingRedraw(shell);
 
-  // Moving onto the resize border changes the cursor (Default -> a resize cursor).
-  // That change must request a present so an idle compositor recomposites and
-  // shows it.
   WorkspaceShellTestAccess::UpdateMouseCursor(shell, border_x, border_y);
   Expect(!WorkspaceShellTestAccess::CachedCursorIsDefault(shell),
          "the left window frame border should resolve to a resize cursor");
   Expect(WorkspaceShellTestAccess::ConsumePendingRedraw(shell),
          "an event-time cursor change must request a present to re-latch the cursor plane");
 
-  // Re-resolving the same point changes nothing, so it must not request a present:
-  // the fix adds no per-motion cost once the cursor is stable.
   WorkspaceShellTestAccess::UpdateMouseCursor(shell, border_x, border_y);
   Expect(!WorkspaceShellTestAccess::ConsumePendingRedraw(shell),
          "an unchanged cursor must not request a present");
 }
 
-// Toasts were painted and never hit-tested: a click on one fell straight through
-// to whatever it covered — over the editor, that moved the caret — and there was
-// no way to get rid of a message before its four seconds were up. Both the click
-// and the cursor now resolve through the same NotificationLayout helper the
-// painter uses.
 void TestWorkspaceShellNotificationToastIsClickable() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1002,9 +890,6 @@ void TestWorkspaceShellNotificationToastIsClickable() {
 }
 
 
-// A toast's inline buttons (G7): composed in the view model, hit-tested through the
-// same view model, and a click runs the action through the action executor with its
-// arguments. Hovering keeps the toast up; the primary button sits in the corner.
 void TestWorkspaceShellNotificationActionButtonRunsItsAction() {
   using microide::workspace::ActionId;
   using microide::workspace::NotificationService;
@@ -1056,7 +941,6 @@ void TestWorkspaceShellNotificationActionButtonRunsItsAction() {
          "a transient toast is dismissed after its action runs");
 }
 
-// The same buttons from the keyboard: Focus Notifications, move, Enter.
 void TestWorkspaceShellNotificationActionsReachableByKeyboard() {
   using microide::workspace::ActionId;
   using microide::workspace::NotificationService;
@@ -1097,12 +981,6 @@ void TestWorkspaceShellNotificationActionsReachableByKeyboard() {
          "and the transient toast closed");
 }
 
-// Three long labels on a narrow window share the row instead of pushing each other
-// off the card; each keeps its full label in the view model and is truncated to
-// its share at paint time. And the steady-state build + hit-test — what every
-// frame and every pointer motion over a toast runs — touches no heap.
-// A long message wraps (VS Code's toasts do) rather than losing its end at the card
-// edge: up to three lines, views into the row's own text, the card as tall as them.
 void TestWorkspaceShellNotificationLongMessageWraps() {
   using microide::workspace::NotificationService;
   WorkspaceShell shell;
@@ -1154,7 +1032,7 @@ void TestWorkspaceShellNotificationButtonsShareANarrowRow() {
 
 #if MICROIDE_PERF_HARNESS_BUILD
   const SDL_FRect button = entry.buttons[1].rect;
-  (void)WorkspaceShellTestAccess::NotificationsVm(shell);  // warm text measurement
+  (void)WorkspaceShellTestAccess::NotificationsVm(shell);
   const microide::tests::perf::AllocationSnapshot before =
       microide::tests::perf::Allocations::Snapshot();
   for (int i = 0; i < 32; ++i) {
@@ -1168,9 +1046,6 @@ void TestWorkspaceShellNotificationButtonsShareANarrowRow() {
 #endif
 }
 
-// The control channel presses the same button: `notification-action <row> <action>`
-// resolves the row by key or index and the button by label or index, then runs
-// the action through the executor a click uses.
 void TestWorkspaceShellNotificationActionCommandRunsTheButton() {
   using microide::workspace::ActionId;
   using microide::workspace::NotificationService;
@@ -1210,12 +1085,8 @@ void TestWorkspaceShellNotificationActionCommandRunsTheButton() {
   Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).cursor_line() == 4,
          "the first button's action ran");
 }
-}  // namespace
+}
 
-// Ctrl+Left/Right and Ctrl+Backspace/Delete must reach the editor as WORD verbs.
-// They used to fall through the key coordinator's plain arrow/backspace arms with
-// the modifier ignored, so the main editor -- unlike every single-line field in
-// the same window -- moved and deleted one character at a time.
 void TestWorkspaceShellEditorCtrlArrowsAreWordGranular() {
   EnsureDummySdlVideoInitialized();
 
@@ -1253,15 +1124,11 @@ void TestWorkspaceShellEditorCtrlArrowsAreWordGranular() {
   Expect(viewport.lines().LineView(0) == "  gamma",
          "ctrl+delete should remove the whole word forward");
 
-  // And plain Left is still a character step -- the modifier is what changes it.
   viewport.MoveCursorTo(0, 3);
   Expect(SendKeyDown(shell, SDLK_LEFT, SDL_KMOD_NONE), "plain left should be handled");
   Expect(viewport.cursor_column() == 2, "plain left must remain character-granular");
 }
 
-// The line-op chords have to survive the editor key path, which has its own
-// SDLK_RETURN arm: the keybinding registry must win, or Ctrl+Enter just splits
-// the line like a plain Enter.
 void TestWorkspaceShellEditorLineOpenChordsReachTheEditor() {
   EnsureDummySdlVideoInitialized();
 
@@ -1288,7 +1155,6 @@ void TestWorkspaceShellEditorLineOpenChordsReachTheEditor() {
   Expect(viewport.lines()[1] == "    body;", "ctrl+shift+enter should push the line down");
   Expect(viewport.cursor_line() == 0, "the caret should be on the line opened above");
 
-  // And Shift+Alt+Up is bound now, not just Shift+Alt+Down.
   editor::TextViewport& copy_viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
   const std::size_t before = copy_viewport.line_count();
   Expect(SendKeyDown(shell, SDLK_UP, static_cast<SDL_Keymod>(SDL_KMOD_SHIFT | SDL_KMOD_ALT)),
@@ -1296,10 +1162,6 @@ void TestWorkspaceShellEditorLineOpenChordsReachTheEditor() {
   Expect(copy_viewport.line_count() == before + 1, "shift+alt+up should copy the line up");
 }
 
-// A multi-caret set needs a keyboard way out, and a document-wide jump must not
-// leave carets a screenful behind the one that moved. Both are VS Code
-// behaviours this editor did not have: Esc fell through to "unhandled", and
-// Ctrl+Home moved only the primary.
 void TestWorkspaceShellEditorMultiCaretCollapsesOnEscapeAndDocumentJump() {
   EnsureDummySdlVideoInitialized();
 
@@ -1322,8 +1184,6 @@ void TestWorkspaceShellEditorMultiCaretCollapsesOnEscapeAndDocumentJump() {
   Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
          "Esc with secondary carets should be handled, not fall through");
   Expect(!viewport.has_multiple_carets(), "Esc should collapse back to the primary caret");
-  // Esc removes cursors; it is not a deselect, and a second Esc has nothing to
-  // do here so it goes back to whatever else wants it.
   Expect(!SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
          "a second Esc with one caret should not be claimed by the caret collapse");
 
@@ -1337,10 +1197,6 @@ void TestWorkspaceShellEditorMultiCaretCollapsesOnEscapeAndDocumentJump() {
          "ctrl+end should still land on the last line");
 }
 
-// `type <text>` into a read-only view: the keyboard path says "Cannot edit in
-// read-only editor" from the event loop, but the verb answered success to the
-// control channel while the text never landed, so an agent driving the editor
-// could not tell. The refusal is the verb's answer now.
 void TestWorkspaceShellTypeVerbReportsAReadOnlyRefusal() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1425,4 +1281,4 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTypeVerbReportsAReadOnlyRefusal);
 }
 
-}  // namespace microide::tests
+}

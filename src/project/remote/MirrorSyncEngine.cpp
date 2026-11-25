@@ -21,11 +21,6 @@ namespace {
 
 using LocalState = MirrorStore::LocalState;
 
-// One line per decision the engine makes about a path whose state is the user's
-// (a save, a blocked save, a conflict, a file only here), with MICROIDE_TRACE_MIRROR_SYNC:
-// what it decided and the entry after. A remote finding said only "only in the
-// mirror" -- the host side absent and the mirror settled -- and nothing said
-// which push, delete or resolution put the two sides apart (soak 37ec61829b08).
 bool MirrorTraceEnabled() {
   static const bool enabled = util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_MIRROR_SYNC");
   return enabled;
@@ -56,8 +51,6 @@ void TraceMirror(std::string_view event, std::string_view path, const MirrorStor
       entry->blocked.empty() ? "-" : "\"" + entry->blocked + "\"", entry->pushed_manifest, detail));
 }
 
-// Whether the entry holds something of the user's the host may not: the paths
-// a trace line is worth its cost for.
 bool UsersState(const MirrorStore::Entry& entry) {
   return entry.push_pending || entry.conflict || entry.local_only || !entry.blocked.empty();
 }
@@ -73,24 +66,13 @@ std::string WriteOutcome(const RemoteWorkspace::WriteResult& result) {
                      result.blocked ? 1 : 0, result.manifest_id, result.error);
 }
 
-// Backfill fetches on the wire at once (§ 6.3's pull concurrency).
 constexpr std::size_t kMaxPullsInFlight = 4;
-// Per path: the pushes remembered that went out and got no answer
-// (MirrorStore::Entry::unacknowledged). One per link that dropped mid-write; saves
-// made while it was down were never sent and are not counted.
 constexpr std::size_t kMaxUnacknowledgedPushes = 8;
 
-// A pushed file's local bytes are read whole; past this, the push is refused rather
-// than holding the editor's largest buffers twice in memory.
 constexpr std::uint64_t kMaxPushBytes = 256u * 1024 * 1024;
 
-// How far apart a checkout's file changes and its HEAD move can be seen: the watch's
-// max delay (1 s) and the host's repository sampler (1 s), with room for a slow disk.
-// Also the window one mass delete is counted over, however the watch batches it.
 constexpr auto kSameCheckout = std::chrono::seconds(10);
 
-// One streamed object as the batch ApplyFetched takes: the object on success;
-// on failure nothing, and its partly written staging file removed.
 std::optional<std::vector<RemoteWorkspace::FetchedObject>> SingleFetchedBatch(
     RemoteWorkspace::FetchedObject object, const std::string& error) {
   std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects;
@@ -103,7 +85,7 @@ std::optional<std::vector<RemoteWorkspace::FetchedObject>> SingleFetchedBatch(
   return objects;
 }
 
-}  // namespace
+}
 
 MirrorSyncEngine::MirrorSyncEngine(RemoteWorkspace& workspace, MirrorStore& store,
                                    Options options, Callbacks callbacks)
@@ -129,13 +111,9 @@ MirrorSyncEngine::MirrorSyncEngine(RemoteWorkspace& workspace, MirrorStore& stor
                      },
              },
              util::SerialWorkQueue::Limits{}, "mirror-sync") {
-  // What a previous run set aside and did not get to unlink (a crash): its deletes
-  // are final, the saved state no longer lists those paths.
   queue_.Post([this]() {
     std::error_code ignored;
     std::filesystem::remove_all(SetAsideDirectory(), ignored);
-    // The index of earlier versions, as the last run left it. First on the
-    // queue: nothing has recorded a version yet.
     if (const std::optional<std::string> saved = util::ReadTextFile(store_.meta() / "history")) {
       FileVersionHistory loaded = FileVersionHistory::Decode(*saved);
       std::lock_guard lock(mutex_);
@@ -158,15 +136,13 @@ void MirrorSyncEngine::PersistNow() {
 
 MirrorSyncEngine::~MirrorSyncEngine() {
   {
-    // A fetch completing from now on finds no engine.
     std::lock_guard lock(alive_->mutex);
     alive_->engine = nullptr;
   }
   queue_.Shutdown();
-  // A deferred state save the shutdown cancelled still lands.
   PersistNow();
   std::lock_guard lock(mutex_);
-  ExpireSetAsideLocked(/*all=*/true);  // nothing can put them back any more
+  ExpireSetAsideLocked(true);
 }
 
 void MirrorSyncEngine::Changed() {
@@ -210,12 +186,6 @@ void MirrorSyncEngine::Prioritize(std::vector<std::string> paths, std::function<
         }
       }
     }
-    // A large file streams to disk now, on the bulk lane (the interactive lane is
-    // for small things: a 100 MiB transfer there would hold up terminal echo),
-    // beside the backfill rather than behind it — the backfill pulls large files
-    // last, so a tab opening one would otherwise wait for the whole tree.
-    // `done` once every pull has landed: the in-memory ones below, and each
-    // streamed one when its last byte is in.
     auto remaining = std::make_shared<std::size_t>(1);
     const auto finished = [this, remaining, done]() {
       if (--*remaining != 0) {
@@ -249,7 +219,6 @@ void MirrorSyncEngine::StreamPriorityPull(std::string path, std::function<void()
   std::error_code ignored;
   const std::filesystem::path incoming = store_.meta() / "incoming";
   std::filesystem::create_directories(incoming, ignored);
-  // Its own staging name: the backfill's large pull may be streaming meanwhile.
   const std::filesystem::path staging = incoming / ("priority-" + util::HashContent(path).Hex() + ".part");
   BeginExternalWork();
   workspace_.FetchObjectToFile(
@@ -281,7 +250,6 @@ void MirrorSyncEngine::NotifyLocalWrite(std::string path) {
   queue_.Post([this, path = std::move(path)]() {
     {
       std::lock_guard lock(mutex_);
-      // Journaled before it is attempted: a crash or a dropped link loses nothing.
       store_.entries()[path].push_pending = true;
       TraceMirror("local-write", path, &store_.entries()[path]);
       SaveLocked();
@@ -295,14 +263,11 @@ void MirrorSyncEngine::NotifyLocalWrite(std::string path) {
 void MirrorSyncEngine::NotifyLocalTreeOps(std::vector<LocalTreeOp> ops) {
   queue_.Post([this, ops = std::move(ops)]() {
     {
-      // Journaled before they are tried, like a push: a restart or a dropped link
-      // replays them, in order, before the next reconcile.
       std::lock_guard lock(mutex_);
       using Pending = MirrorStore::PendingTreeOp;
       for (const LocalTreeOp& op : ops) {
         switch (op.kind) {
           case LocalTreeOp::Kind::CreateFile: {
-            // A create is a push, journaled as one.
             store_.entries()[op.path].push_pending = true;
             break;
           }
@@ -352,7 +317,7 @@ void MirrorSyncEngine::DrainTreeOps() {
       op.new_path = front.new_path;
     }
     if (!TreeOpNow(op)) {
-      return;  // the host is out of reach: the rest wait, in order
+      return;
     }
     std::lock_guard lock(mutex_);
     store_.pending_tree_ops().pop_front();
@@ -386,8 +351,6 @@ bool MirrorSyncEngine::TreeOpNow(const LocalTreeOp& op) {
   if (op.kind == LocalTreeOp::Kind::Delete) {
     return DeleteTreeNow(op.path);
   }
-  // A rename of one file is checked against its base; a directory's (no entry of
-  // its own) against nothing — its files were each the user's to move.
   Precondition expect = Precondition::Anything();
   {
     std::lock_guard lock(mutex_);
@@ -404,7 +367,6 @@ bool MirrorSyncEngine::TreeOpNow(const LocalTreeOp& op) {
   }
   std::lock_guard lock(mutex_);
   auto& entries = store_.entries();
-  // The path itself and, for a directory, everything under it.
   const std::string prefix = op.path + "/";
   std::vector<std::string> affected;
   for (auto it = entries.lower_bound(op.path);
@@ -425,13 +387,6 @@ bool MirrorSyncEngine::TreeOpNow(const LocalTreeOp& op) {
     status_.error = result.error;
     return true;
   }
-  // Refused: the host's copy moved since our base (edited there, or gone -- deleted,
-  // or its directory moved away). The local tree already shows the rename; the
-  // next sync restores the host's version at the old path when it has one (an
-  // agent's newer bytes are never lost to a move of older ones), and the renamed
-  // file waits at its new path as a conflict the user settles: Keep Local puts it
-  // on the host there, Take Remote drops it here. Parked, not pending: replayed
-  // as a push it landed on its own, and put a folder the host had archived back.
   if (rename) {
     for (const std::string& path : affected) {
       MirrorStore::Entry moved = entries[path];
@@ -565,7 +520,6 @@ void MirrorSyncEngine::FetchHostFile(std::string host_path, std::filesystem::pat
       std::condition_variable cv;
       bool finished = false;
     } wait;
-    // Blocking on the engine's own worker (never the UI thread): one round trip.
     workspace_.ReadHostFile(host_path, [&](std::optional<std::vector<RemoteWorkspace::FetchedObject>> got,
                                            std::string why) {
       std::lock_guard lock(wait.mutex);
@@ -654,7 +608,6 @@ std::vector<MirrorSyncEngine::Conflict> MirrorSyncEngine::ConflictDetails() cons
       }
     }
   }
-  // The stats outside the lock: the worker is not held up by a view's refresh.
   for (Conflict& conflict : conflicts) {
     std::error_code ignored;
     conflict.in_mirror = std::filesystem::exists(store_.tree() / conflict.path, ignored);
@@ -684,8 +637,6 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
       return;
     }
     const bool local_exists = read.ok();
-    // A blocked save's Keep Local is Replace on Host: whatever refused it there --
-    // a link, a file it could not read -- gives way to the file.
     bool replacing = false;
     {
       std::lock_guard lock(mutex_);
@@ -720,7 +671,7 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
     TraceMirror(local_exists ? "keep-local" : "keep-local-delete", path, entry, WriteOutcome(result));
     if (result.status != Status::Ok) {
       if (result.blocked && !entry->blocked.empty()) {
-        entry->blocked = result.error;  // still refused, now for this reason
+        entry->blocked = result.error;
         RecountLocked();
         return;
       }
@@ -739,7 +690,6 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
       return;
     }
     entry->base = result.hash;
-    // As a push's: a row the host built before this write is older than it.
     entry->pushed_manifest = result.manifest_id;
     if (entry->has_remote) {
       entry->remote.hash = *result.hash;
@@ -751,7 +701,6 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
     (void)store_.CheckLocal(path, *entry);
     return;
   }
-  // TakeRemote.
   std::string error;
   std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects =
       workspace_.FetchObjectsSync({path}, Lane::Interactive, &error);
@@ -779,8 +728,6 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
                      : WriteTreeFile(store_.tree(), path, object.content, Precondition::Anything(), mode,
                                      std::nullopt, Durability::Synced, store_.staging());
   if (written.ok() && !object.missing) {
-    // Like any pulled version: a later switch back, or Changed on Host's compare of
-    // what came before the host's next change, finds the bytes here.
     objects_.Put(*object.hash, object.content);
   }
   std::vector<std::string> materialized;
@@ -824,7 +771,7 @@ void MirrorSyncEngine::ApproveHeldDeletes() {
       held_deletes_.clear();
       status_.held_deletes = 0;
     }
-    DeleteNow(deletes, /*undoable=*/false);
+    DeleteNow(deletes, false);
     {
       std::lock_guard lock(mutex_);
       RecountLocked();
@@ -847,8 +794,6 @@ void MirrorSyncEngine::RecordHostChangeLocked(const std::string& path, HostChang
     change.previous = previous;
     change.kind = kind;
   } else {
-    // Keep the version the user last had across a run of changes; an add then a
-    // delete is nothing the user ever had, a delete then an add is a modification.
     if (change.kind == HostChange::Kind::Added && kind == HostChange::Kind::Deleted) {
       host_changes_.erase(it);
       ++status_.host_changes;
@@ -990,9 +935,6 @@ void MirrorSyncEngine::RecountLocked() {
     (void)path;
     if (entry.has_remote && entry.remote.kind == ManifestEntryKind::File) {
       ++status.files;
-      // Absent and stale count the pulls still to come, which StateOf says too:
-      // no pull touches a parked conflict or a save not yet sent. Counted, a
-      // conflict read as "1 pending" until the user settled it (soak 464a40fee2bd).
       const bool pullable = !entry.conflict && !entry.push_pending;
       if (pullable && !entry.base.has_value()) {
         ++status.absent;
@@ -1000,8 +942,6 @@ void MirrorSyncEngine::RecountLocked() {
         ++status.stale;
       }
     }
-    // A conflicted push is a conflict, not also an unsent save (StateOf says the same);
-    // a blocked one is blocked, which no reconnect sends either.
     status.dirty += entry.push_pending && !entry.conflict && entry.blocked.empty() ? 1 : 0;
     status.conflicts += entry.conflict ? 1 : 0;
     status.blocked += entry.push_pending && !entry.blocked.empty() ? 1 : 0;
@@ -1016,8 +956,6 @@ void MirrorSyncEngine::ListPendingLocked() {
   if (status_.absent == 0 && listed == 0) {
     return;
   }
-  // While a sync runs this changes with every batch; the sidebar needs it twice a
-  // second, not per batch. The sync's end lists it at once.
   const auto now = std::chrono::steady_clock::now();
   if (status_.absent != 0 && status_.syncing && now - pending_listed_ < kPendingInterval) {
     return;
@@ -1028,7 +966,7 @@ void MirrorSyncEngine::ListPendingLocked() {
   for (const auto& [path, entry] : store_.entries()) {
     if (entry.has_remote && entry.remote.kind == ManifestEntryKind::File && !entry.base.has_value() &&
         !entry.conflict && !entry.push_pending) {
-      files.push_back(path);  // the store's order is bytewise: already sorted
+      files.push_back(path);
     }
   }
   const std::vector<std::string> none;
@@ -1046,16 +984,12 @@ project::SharedPendingPaths MirrorSyncEngine::PendingPaths() const {
 }
 
 void MirrorSyncEngine::SaveLocked() {
-  // The whole state is O(paths) bytes: written once per burst of engine work, by a
-  // job at the back of the queue, rather than per push. Everything a crash must not
-  // lose is in the journal, which JournalLocked writes at once.
   JournalLocked();
   if (!state_save_queued_) {
     state_save_queued_ = true;
     queue_.Post([this]() {
       std::lock_guard lock(mutex_);
       state_save_queued_ = false;
-      // More work is coming that saves again when it is done: let it.
       constexpr auto kMaxStateSaveDeferral = std::chrono::seconds(2);
       const auto now = std::chrono::steady_clock::now();
       if ((pull_pipelines_ > 0 || watch_deltas_queued_ > 0) &&
@@ -1074,17 +1008,12 @@ void MirrorSyncEngine::SaveLocked() {
 
 void MirrorSyncEngine::SaveDeferredIfIdleLocked() {
   if (state_save_deferred_ && pull_pipelines_ == 0 && watch_deltas_queued_ == 0) {
-    SaveLocked();  // the queued job saves: nothing is left to hold it
+    SaveLocked();
   }
 }
 
 void MirrorSyncEngine::SaveNowLocked() {
   std::string error;
-  // Pulled files were written without a flush each: flush the tree once, BEFORE
-  // the state that vouches for them, so a persisted state never describes bytes a
-  // crash could still lose. If the flush fails, keep the old state: after a crash
-  // the files then read as unrecorded, which the reconcile treats as a conflict
-  // to show, never as an edit to push.
   if (tree_unsynced_) {
     if (!SyncTreeFilesystem(store_.tree())) {
       status_.error = "could not flush the mirror to disk; its state is not saved yet";
@@ -1095,7 +1024,6 @@ void MirrorSyncEngine::SaveNowLocked() {
   if (!store_.Save(&error)) {
     status_.error = error;
   }
-  // The index of earlier versions: its loss costs the list, never a file.
   if (history_unsaved_ &&
       util::WriteTextFileAtomically(store_.meta() / "history", history_.Encode(), nullptr,
                                     util::WriteTarget::Replace, store_.staging())) {
@@ -1111,7 +1039,6 @@ void MirrorSyncEngine::JournalLocked() {
 }
 
 void MirrorSyncEngine::ReconcileRowLocked(ManifestRow row, Plan& plan, std::uint64_t manifest_id) {
-  // The key is the only copy of the path an entry keeps (RemoteContent drops it).
   auto [it, inserted] = store_.entries().try_emplace(std::move(row.path));
   MirrorStore::Entry& entry = it->second;
   const std::string& path = it->first;
@@ -1120,23 +1047,11 @@ void MirrorSyncEngine::ReconcileRowLocked(ManifestRow row, Plan& plan, std::uint
     TraceMirror("host-row", path, &entry,
                 std::format("before: row={} manifest={}", HashPrefix(row.hash, hash), manifest_id));
   }
-  // Built before the host acknowledged a push to this path, so older than what
-  // that push wrote: the echo of an earlier push, typically. The host sends watch
-  // deltas on the bulk lane and answers on the interactive one, and the serial
-  // queue runs a delta after the push that was waiting for its answer, so such a
-  // row arrives AFTER the acknowledgement it predates; taking it pulled the
-  // previous content back over the save, and the next push expected that and
-  // conflicted (TD-2026-10-22-385).
   if (!inserted && manifest_id != 0 && manifest_id <= entry.pushed_manifest) {
     return;
   }
-  // What the host held here before this row: a blocked save is tried again only
-  // when the host changed the path (Entry::blocked).
   const bool listed_before = !inserted && entry.has_remote;
   const MirrorStore::RemoteContent listed_as = entry.remote;
-  // The first sync is what the host held before this window saw it; after that, a
-  // row the host moved is a host change. A pushed file's echo carries the hash the
-  // push already recorded in `remote`, so it is not one.
   if (status_.synced_once && row.kind == ManifestEntryKind::File) {
     const bool had_file = !inserted && entry.has_remote &&
                           entry.remote.kind == ManifestEntryKind::File;
@@ -1162,19 +1077,14 @@ void MirrorSyncEngine::ReconcileRowLocked(ManifestRow row, Plan& plan, std::uint
   if (entry.push_pending) {
     if (!entry.blocked.empty()) {
       if (listed_before && listed_as == entry.remote) {
-        return;  // refused, and nothing at the path changed since: not again
+        return;
       }
-      entry.blocked.clear();  // the host changed it: worth one more try
+      entry.blocked.clear();
     }
-    plan.pushes.push_back(path);  // the journal: the push finds any conflict itself
+    plan.pushes.push_back(path);
     return;
   }
   if (entry.conflict) {
-    // Parked until the user chooses -- unless the host now holds exactly the
-    // mirror's bytes (the same edit made on both sides; the user's version applied
-    // on the host by hand): nothing is left to choose, and either choice would be
-    // a write of what is already there. One hash per conflicted row per manifest,
-    // and conflicts are rare.
     if (util::HashFileContent(store_.tree() / path) == std::optional(entry.remote.hash)) {
       entry.conflict = false;
       entry.renamed_from.clear();
@@ -1198,8 +1108,6 @@ void MirrorSyncEngine::ReconcileRowLocked(ManifestRow row, Plan& plan, std::uint
           .path = path, .size = entry.remote.size, .base = entry.base, .want = entry.remote.hash});
     }
   } else if (!entry.base.has_value()) {
-    // Bytes with no base: a mirror rebuilt from its tree, or a file made here that
-    // the host also has. Equal bytes are adopted; anything else is both sides moving.
     if (util::HashFileContent(store_.tree() / path) == std::optional(entry.remote.hash)) {
       entry.base = entry.remote.hash;
       store_.RecordLocal(path, entry);
@@ -1207,12 +1115,9 @@ void MirrorSyncEngine::ReconcileRowLocked(ManifestRow row, Plan& plan, std::uint
       entry.conflict = true;
     }
   } else if (util::HashFileContent(store_.tree() / path) == std::optional(entry.remote.hash)) {
-    // Both sides already hold the same bytes (a push whose acknowledgement the state
-    // file had not recorded yet, say): current, whatever the base said.
     entry.base = entry.remote.hash;
     store_.RecordLocal(path, entry);
   } else if (!host_moved) {
-    // Edited in tree/ by something other than the editor's save: still ours.
     entry.push_pending = true;
     plan.pushes.push_back(path);
   } else {
@@ -1234,22 +1139,17 @@ bool MirrorSyncEngine::ReconcileDeleteLocked(std::map<std::string, MirrorStore::
     if (!entry.blocked.empty()) {
       if (!entry.has_remote) {
         TraceMirror("host-delete", it->first, &entry, "kept: blocked and never listed");
-        return false;  // refused, never listed, still not: nothing changed there
+        return false;
       }
-      entry.blocked.clear();  // the host removed what refused it: try again
+      entry.blocked.clear();
     }
     if (entry.has_remote) {
       entry.has_remote = false;
       if (!entry.local_only && !entry.push_pending) {
-        entry.conflict = true;  // gone on the host, kept here: the user decides
+        entry.conflict = true;
       }
     }
     if (entry.push_pending) {
-      // A save the host never received, of a file it no longer lists (deleted
-      // there meanwhile) -- or a file made here while offline that it never had.
-      // Replayed like any journaled push: against its base it is refused and
-      // parks as "deleted on remote, changed locally"; with no base it lands.
-      // Left out of the plan, it stayed "unsent" forever with no row (TD-421).
       plan.pushes.push_back(it->first);
     }
     TraceMirror("host-delete", it->first, &entry, entry.push_pending ? "kept: push planned" : "kept");
@@ -1277,13 +1177,10 @@ bool MirrorSyncEngine::ReconcileDeleteLocked(std::map<std::string, MirrorStore::
 }
 
 void MirrorSyncEngine::HoldMassDeleteLocked(Plan& plan, std::size_t previously_remote) {
-  ExpireSetAsideLocked(/*all=*/false);
+  ExpireSetAsideLocked(false);
   if (InBranchEventLocked()) {
-    return;  // a branch switch the tree must follow (§ 6.3)
+    return;
   }
-  // Counted over the window, not the batch: a slow `rm -r` reaches the watch in
-  // several batches, each of which could stay under the threshold alone. The
-  // window's deletes were part of the tree the threshold is a share of.
   const std::size_t window = set_aside_.size();
   const std::size_t threshold = std::max<std::size_t>(
       options_.mass_delete_min_rows,
@@ -1293,7 +1190,6 @@ void MirrorSyncEngine::HoldMassDeleteLocked(Plan& plan, std::size_t previously_r
     held_deletes_.insert(plan.deletes.begin(), plan.deletes.end());
     held_at_ = std::chrono::steady_clock::now();
     plan.deletes.clear();
-    // Put back, and held with the rest (RestoreNow adds them to the hold).
     std::move(set_aside_.begin(), set_aside_.end(), std::back_inserter(plan.restores));
     set_aside_.clear();
   }
@@ -1312,8 +1208,6 @@ void MirrorSyncEngine::ExpireSetAsideLocked(bool all) {
 void MirrorSyncEngine::OnRepositoryMovedLocked(Plan& plan) {
   const auto now = std::chrono::steady_clock::now();
   repository_moved_at_ = now;
-  // Only a hold from this checkout: an older one has been on screen as a prompt,
-  // and stays the user's to answer.
   if (!held_deletes_.empty() && now - held_at_ <= kSameCheckout) {
     plan.deletes.insert(plan.deletes.end(), held_deletes_.begin(), held_deletes_.end());
     held_deletes_.clear();
@@ -1343,8 +1237,6 @@ void MirrorSyncEngine::SyncNow() {
       AdoptUntrackedLocalFilesLocked();
     }
   }
-  // The journal's tree operations first, in order: a rename made offline must land
-  // before the manifest is compared, or the old path reads as one to pull back.
   DrainTreeOps();
   std::string error;
   std::optional<RemoteWorkspace::Manifest> manifest = workspace_.FetchManifestSync(&error);
@@ -1361,16 +1253,9 @@ void MirrorSyncEngine::SyncNow() {
   {
     std::lock_guard lock(mutex_);
     const std::size_t previously_remote = RemoteCountLocked();
-    held_deletes_.clear();  // a full manifest re-decides every delete
-    status_.unreadable = 0;  // and retries every unreadable file
+    held_deletes_.clear();
+    status_.unreadable = 0;
     status_.first_unreadable.clear();
-    // A full manifest starts the push-echo comparison again. It was built on
-    // request, after every push this engine has had acknowledged (pushes and this
-    // sync share the serial queue), so it is newer than each of them; and it may
-    // come from another sequence altogether -- a reconnect that reached a new
-    // server tree numbers its manifests from 1 -- where an old `pushed_manifest`
-    // compares as nothing. Kept, that number skipped this manifest's row for a
-    // recently pushed path and so never re-planned the save journaled offline.
     for (auto& [path, entry] : store_.entries()) {
       (void)path;
       entry.pushed_manifest = 0;
@@ -1378,7 +1263,7 @@ void MirrorSyncEngine::SyncNow() {
     std::vector<std::string> listed;
     listed.reserve(manifest->rows.size());
     for (ManifestRow& row : manifest->rows) {
-      listed.push_back(row.path);  // sorted and unique: the server's order
+      listed.push_back(row.path);
       ReconcileRowLocked(std::move(row), plan, manifest->id);
     }
     auto& entries = store_.entries();
@@ -1406,23 +1291,13 @@ void MirrorSyncEngine::SyncNow() {
     }
     Changed();
     SweepObjects();
-    // A full sync is this engine's one big burst (the first sync streams the whole
-    // content set through it): give its freed buffers back.
     util::ReleaseFreedHeap();
   });
 }
 
 void MirrorSyncEngine::AdoptUntrackedLocalFilesLocked() {
-  // A save writes the file into tree/ and then journals it (NotifyLocalWrite); a
-  // rename moves it and then journals the move. A crash between the two left a
-  // file that no entry records, which no reconcile visits -- the host never got
-  // it and the mirror reported nothing unsent (the fault matrix's disk axis).
   util::PerformanceTrace::Scope perf_scope("MirrorSyncEngine::AdoptUntrackedLocalFiles");
   auto& entries = store_.entries();
-  // What the journal already accounts for: a journaled rename's destination (an
-  // offline directory move journals the directory, not each file under it) and
-  // the source of a journaled rename or delete. Adopting those again would
-  // replay the change twice.
   using Pending = MirrorStore::PendingTreeOp;
   const auto covered = [&](std::string_view path, bool as_source) {
     for (const Pending& op : store_.pending_tree_ops()) {
@@ -1459,8 +1334,6 @@ void MirrorSyncEngine::AdoptUntrackedLocalFilesLocked() {
   if (untracked.empty()) {
     return;
   }
-  // The entries whose file is gone from tree/ while nothing journaled its
-  // removal: where a rename's file came from.
   std::map<util::ContentHash, std::vector<std::string>> gone_by_base;
   for (auto& [path, entry] : entries) {
     if (entry.base.has_value() && !entry.push_pending && !entry.conflict && !covered(path, true) &&
@@ -1474,13 +1347,11 @@ void MirrorSyncEngine::AdoptUntrackedLocalFilesLocked() {
       continue;
     }
     if (auto from = gone_by_base.find(*hash); from != gone_by_base.end() && from->second.size() == 1) {
-      // One candidate only: two gone files with these bytes make the source a
-      // guess, and a guessed rename would delete the wrong one on the host.
       store_.pending_tree_ops().push_back(Pending{Pending::Kind::Rename, from->second.front(), relative});
       gone_by_base.erase(from);
       continue;
     }
-    entries[relative].push_pending = true;  // a new file, pushed as a journaled save is
+    entries[relative].push_pending = true;
   }
   SaveLocked();
 }
@@ -1500,8 +1371,6 @@ void MirrorSyncEngine::ApplyWatchDelta(RemoteWorkspace::WatchDelta delta) {
     ++watch_deltas_queued_;
   }
   queue_.Post([this, delta = std::move(delta)]() mutable {
-    // Counted out when the job ends, whichever way it returns: its own saves are
-    // held while later deltas wait, and the last delta lets a held one through.
     struct CountedOut {
       MirrorSyncEngine* engine;
       ~CountedOut() {
@@ -1530,21 +1399,18 @@ void MirrorSyncEngine::ApplyWatchDelta(RemoteWorkspace::WatchDelta delta) {
     }
     {
       std::lock_guard lock(mutex_);
-      // Older than what the mirror already holds (a delta that crossed a full
-      // manifest on the wire): everything in it is already known.
       if (delta.manifest_id < store_.manifest_id()) {
         return;
       }
       const std::size_t previously_remote = RemoteCountLocked();
       for (ManifestRow& row : delta.rows) {
         if (!held_deletes_.empty()) {
-          held_deletes_.erase(row.path);  // listed again: not the host's to delete any more
+          held_deletes_.erase(row.path);
         }
         ReconcileRowLocked(std::move(row), plan, delta.manifest_id);
       }
       for (const std::string& path : delta.deleted) {
         const auto it = store_.entries().find(path);
-        // A delete from before a push to the path was acknowledged is older than it.
         if (it != store_.entries().end() && delta.manifest_id > it->second.pushed_manifest) {
           ReconcileDeleteLocked(it, plan);
         }
@@ -1555,7 +1421,6 @@ void MirrorSyncEngine::ApplyWatchDelta(RemoteWorkspace::WatchDelta delta) {
       SaveLocked();
     }
     Changed();
-    // The save above ran before the pulls: once they land, record them too.
     Execute(std::move(plan), [this]() {
       std::lock_guard lock(mutex_);
       SavePulledLocked();
@@ -1570,7 +1435,7 @@ void MirrorSyncEngine::SavePulledLocked() {
 }
 
 void MirrorSyncEngine::Execute(Plan plan, std::function<void()> on_done) {
-  DeleteNow(plan.deletes, /*undoable=*/true);
+  DeleteNow(plan.deletes, true);
   RestoreNow(std::move(plan.restores));
   std::vector<std::string> changed_paths;
   for (const auto& [path, target] : plan.links) {
@@ -1584,18 +1449,12 @@ void MirrorSyncEngine::Execute(Plan plan, std::function<void()> on_done) {
   if (!changed_paths.empty() && callbacks_.materialized) {
     callbacks_.materialized(changed_paths);
   }
-  // The journal's pushes first: they are the user's saves.
   for (std::string& path : plan.pushes) {
     queue_.Post([this, path = std::move(path)]() { PushNow(path); });
   }
-  // Bytes the mirror has held before cost nothing: a branch switched back, a file
-  // an agent restored (§ 6.2).
   if (std::vector<RemoteWorkspace::FetchedObject> held = FillFromStore(plan.pulls); !held.empty()) {
     ApplyFetched(std::move(held), {}, full_sync_epoch_);
   }
-  // Pulls in batches, kMaxPullsInFlight requests on the wire at once (one round
-  // trip per batch, overlapped), each batch's disk writes a job of its own so a
-  // Prioritize() posted meanwhile runs between two of them.
   auto pipeline = std::make_shared<PullPipeline>();
   pipeline->on_drained = std::move(on_done);
   {
@@ -1622,8 +1481,6 @@ void MirrorSyncEngine::Execute(Plan plan, std::function<void()> on_done) {
   if (!batch.empty()) {
     pipeline->batches.push_back(std::move(batch));
   }
-  // Large files last, each alone: the tree is complete sooner, and at most one of
-  // them is in memory at a time.
   for (PullItem& item : large) {
     pipeline->batches.push_back({std::move(item)});
   }
@@ -1639,7 +1496,6 @@ void MirrorSyncEngine::LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline
       SaveDeferredIfIdleLocked();
     }
     if (pipeline->on_drained) {
-      // Behind every job the batches posted.
       queue_.Post(std::exchange(pipeline->on_drained, {}));
     }
     return;
@@ -1649,11 +1505,9 @@ void MirrorSyncEngine::LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline
     const std::vector<PullItem>& next = pipeline->batches.front();
     const bool large = next.size() == 1 && next.front().size > options_.large_file_bytes;
     if (large && pipeline->in_flight > 0) {
-      return;  // a large file goes alone, once the batches ahead of it are in
+      return;
     }
     if (large) {
-      // A tab that opened it may have streamed it already (Prioritize): current
-      // now, and too large for meta/objects to answer a second fetch from.
       std::lock_guard lock(mutex_);
       const MirrorStore::Entry* entry = store_.Find(next.front().path);
       if (entry == nullptr || (entry->base.has_value() && next.front().want == entry->base)) {
@@ -1672,8 +1526,6 @@ void MirrorSyncEngine::LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline
     pipeline->large_in_flight = large;
     BeginExternalWork();
     if (large) {
-      // Straight to disk as it arrives: at most a chunk of it is ever in memory,
-      // so there is no in-memory ceiling on what a mirror can hold.
       std::error_code ignored;
       const std::filesystem::path incoming = store_.meta() / "incoming";
       std::filesystem::create_directories(incoming, ignored);
@@ -1703,8 +1555,6 @@ void MirrorSyncEngine::LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline
         std::move(paths), Lane::Bulk,
         [alive = alive_, pipeline, epoch = full_sync_epoch_](
             std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects, std::string error) {
-          // The connection's I/O thread, possibly after the engine is gone: hand the
-          // disk work to the worker if there still is one.
           std::lock_guard lock(alive->mutex);
           MirrorSyncEngine* engine = alive->engine;
           if (engine == nullptr) {
@@ -1760,7 +1610,6 @@ std::vector<RemoteWorkspace::FetchedObject> MirrorSyncEngine::FillFromStore(
 }
 
 void MirrorSyncEngine::SweepObjects() {
-  // Reachable: what a path is on the host, and the base it was last in sync at.
   std::unordered_set<std::string> reachable;
   {
     std::lock_guard lock(mutex_);
@@ -1773,7 +1622,6 @@ void MirrorSyncEngine::SweepObjects() {
         reachable.insert(entry.base->Hex());
       }
     }
-    // The version before each listed host change: Changed on Host compares with it.
     for (const auto& [path, change] : host_changes_) {
       (void)path;
       if (change.previous.has_value()) {
@@ -1806,7 +1654,7 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
                                     const std::string& error, std::uint64_t issued_epoch) {
   if (!objects.has_value()) {
     if (issued_epoch != full_sync_epoch_) {
-      return;  // superseded: the full sync since re-planned what this was for
+      return;
     }
     {
       std::lock_guard lock(mutex_);
@@ -1818,7 +1666,6 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
   std::vector<std::string> written;
   std::vector<std::string> gone;
   for (RemoteWorkspace::FetchedObject& object : *objects) {
-    // A streamed object's staging copy goes whatever happens to it below.
     struct RemoveStaged {
       const std::filesystem::path& file;
       ~RemoveStaged() {
@@ -1830,17 +1677,15 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
     } remove_staged{object.staged_file};
     if (object.missing || !object.hash.has_value()) {
       if (!object.error.empty()) {
-        // One file the host cannot read is that file's problem, not the sync's.
         std::lock_guard lock(mutex_);
         if (status_.unreadable++ == 0) {
           status_.first_unreadable = object.path + ": " + object.error;
         }
       } else if (object.missing) {
-        gone.push_back(object.path);  // the host has no such file any more
+        gone.push_back(object.path);
       }
       continue;
     }
-    // Checked just above; bound once so every use below reads the same bytes' hash.
     const util::ContentHash fetched_hash = object.hash.value_or(util::ContentHash{});
     std::lock_guard path_lock(store_.PathLock(object.path));
     Precondition expect;
@@ -1850,27 +1695,21 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
       std::lock_guard lock(mutex_);
       MirrorStore::Entry* entry = store_.Find(object.path);
       if (entry == nullptr || entry->push_pending || entry->conflict) {
-        continue;  // ours moved meanwhile: never written over
+        continue;
       }
       const LocalState local = store_.CheckLocal(object.path, *entry);
       if (local == LocalState::Differs) {
         entry->conflict = true;
         continue;
       }
-      // A local file matches only a base it has (CheckLocal), so no base here is absent.
       expect = local == LocalState::Missing || !entry->base.has_value() ? Precondition::NotThere()
                                                                        : Precondition::Of(*entry->base);
       mode = entry->remote.mode != 0 ? entry->remote.mode : 0644;
-      // The host's mtime, when these bytes are the row's: never a time in the future.
       if (entry->remote.hash == fetched_hash && entry->remote.mtime_ns > 0 &&
           entry->remote.mtime_ns < WallClockNowNs()) {
         mtime_ns = entry->remote.mtime_ns;
       }
     }
-    // A delta (§ 6.2) applies to the tree's copy, which the check above just
-    // vouched for as the base it was asked against; the result must hash to what
-    // the host claimed before it is written anywhere. Either failing leaves the
-    // file as it is — the next sync asks again.
     if (object.delta_base.has_value()) {
       constexpr std::size_t kMaxDeltaResultBytes = 16u * 1024 * 1024;
       std::optional<std::string> applied;
@@ -1878,7 +1717,7 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
         std::optional<std::string> base = util::ReadTextFile(store_.tree() / object.path);
         if (base.has_value() && util::HashContent(*base) == *object.delta_base) {
           applied = object.content.empty()
-                        ? std::move(base)  // the host's copy is the one held here
+                        ? std::move(base)
                         : util::ZstdApplyDelta(*base, object.content, kMaxDeltaResultBytes);
         }
       }
@@ -1906,19 +1745,15 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
                              Durability::Deferred, store_.staging());
     }
     std::lock_guard lock(mutex_);
-    // Not flushed per file: SaveNowLocked flushes the tree before any state that
-    // records these bytes is persisted (see Durability).
     tree_unsynced_ = tree_unsynced_ || result.ok();
     MirrorStore::Entry* entry = store_.Find(object.path);
     if (entry == nullptr) {
       continue;
     }
     if (result.ok() && object.staged_file.empty()) {
-      objects_.Put(fetched_hash, object.content);  // checked above, or read back checked
+      objects_.Put(fetched_hash, object.content);
     }
     if (result.ok()) {
-      // The bytes fetched may be newer than the manifest row: they are the host's
-      // latest, and the row follows them.
       entry->base = fetched_hash;
       entry->remote.hash = fetched_hash;
       entry->remote.size = size;
@@ -1926,14 +1761,11 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
       store_.NotePulled(object.path, fetched_hash);
       written.push_back(object.path);
     } else if (result.status == FileOpResult::Status::Conflict) {
-      entry->conflict = true;  // a save landed between the check and the write
+      entry->conflict = true;
     } else {
       status_.error = result.error;
     }
   }
-  // Gone since the row that asked for it -- deleted while the backfill was on its
-  // way. A delete delta may follow, or may not (the manifest walk raced the
-  // delete): left alone, the row stayed counted "to fetch" with no later sync due.
   if (!gone.empty()) {
     ReconcileMissingPulls(gone);
   }
@@ -1941,9 +1773,6 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
     std::lock_guard lock(mutex_);
     RecountLocked();
     if (!written.empty()) {
-      // The hint, not the state: one small unflushed write per batch, no tree
-      // flush, so a crash before the deferred state save still finds these bytes
-      // recorded as the host's (MirrorStore::NotePulled).
       (void)store_.WritePulledHint();
     }
   }
@@ -1971,7 +1800,6 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
     const FileOpResult read = ReadTreeFile(store_.tree(), path, kMaxPushBytes,
                                            [&](std::string_view chunk) { content.append(chunk); });
     if (!read.ok()) {
-      // Deleted locally since: a tree operation, not a content push (§ 6.3).
       entry->push_pending = false;
       TraceMirror("push-skipped-unreadable-here", path, entry, read.error);
       if (read.status == FileOpResult::Status::Error) {
@@ -1986,8 +1814,6 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
     MirrorStore::Entry* entry = store_.Find(path);
     if (entry != nullptr) {
       using Status = RemoteWorkspace::WriteResult::Status;
-      // Which of the bytes this path sent without an answer the host now holds, if
-      // any (MirrorStore::Entry::unacknowledged).
       const bool own_unacknowledged =
           result.hash.has_value() && std::find(entry->unacknowledged.begin(), entry->unacknowledged.end(),
                                                *result.hash) != entry->unacknowledged.end();
@@ -2005,10 +1831,9 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
           entry->remote.hash = *result.hash;
           entry->remote.size = content.size();
         } else {
-          entry->local_only = true;  // until the host's content set lists it
+          entry->local_only = true;
         }
         entry->blocked.clear();
-        // Saved again while this push was on the wire: push that too.
         entry->local_known = false;
         if (store_.CheckLocal(path, *entry) != LocalState::MatchesBase) {
           entry->push_pending = true;
@@ -2016,8 +1841,6 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
         }
       } else if (result.status == Status::Conflict &&
                  result.hash == std::optional(util::HashContent(content))) {
-        // The host already holds exactly these bytes: a push replayed after its
-        // acknowledgement was lost. Done, not a conflict.
         entry->base = result.hash;
         entry->push_pending = false;
         entry->conflict = false;
@@ -2027,9 +1850,6 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
           entry->remote.hash = *result.hash;
         }
       } else if (result.status == Status::Conflict && own_unacknowledged) {
-        // An earlier push of this path landed but its answer was lost with the link,
-        // and the user saved again since: the host holds our own bytes, not a change
-        // of its own. They are the base now; push the current bytes over them.
         entry->base = result.hash;
         entry->conflict = false;
         entry->renamed_from.clear();
@@ -2042,27 +1862,18 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
         entry->blocked.clear();
         entry->conflict = true;
         if (!result.hash.has_value()) {
-          // The host's answer is that nothing is there: it deleted the file. A push
-          // replayed at reconnect gets that answer before the manifest saying so is
-          // reconciled, and the conflict read as "changed on both sides" -- a Merge
-          // row for a file with no remote side -- until it was.
           entry->has_remote = false;
         }
       } else {
         if (result.may_have_applied && entry->push_pending) {
-          // Sent and unanswered: the host may hold these bytes now.
           const util::ContentHash sent = util::HashContent(content);
-          objects_.Put(sent, content);  // the base a later merge would need
+          objects_.Put(sent, content);
           entry->unacknowledged.push_back(sent);
           if (entry->unacknowledged.size() > kMaxUnacknowledgedPushes) {
             entry->unacknowledged.erase(entry->unacknowledged.begin());
           }
         }
         if (result.blocked && !result.unreachable && entry->push_pending) {
-          // The path refuses it as it stands on the host: parked as blocked, with
-          // the host's reason, rather than an error retried at every reconnect
-          // (soak 464a40fee2bd: a save onto a dangling link, one over a file made
-          // unreadable there).
           entry->blocked = result.error.empty() ? "the host refused the write" : result.error;
         } else {
           status_.error = result.error;
@@ -2079,16 +1890,6 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
 bool MirrorSyncEngine::DeleteTreeNow(const std::string& path) {
   using TreeOp = RemoteWorkspace::TreeOp;
   using Status = RemoteWorkspace::WriteResult::Status;
-  // The host's side of a delete made here: every file at or under `path`, each
-  // under its own base, all on the wire at once (one round trip, not one per
-  // file), then the directories bottom-up. A file the host changed since its base
-  // is refused and stays there, as a conflict the user settles ("deleted locally,
-  // changed on remote" -- never a silent put-back, and never a silent loss of the
-  // host's newer bytes); one the host removed already is simply gone on both
-  // sides. A directory that still holds something afterwards (a refused file, or
-  // one the host made since) stays, and the next sync brings its contents here.
-  // Deleting the directory as one entry on the host used to fail on any that was
-  // not empty, so a folder deleted here never went from there (TD-421).
   struct Item {
     std::string path;
     Precondition expect;
@@ -2108,7 +1909,6 @@ bool MirrorSyncEngine::DeleteTreeNow(const std::string& path) {
     for (auto it = entries.lower_bound(path);
          it != entries.end() && (it->first == path || it->first.rfind(prefix, 0) == 0); ++it) {
       const MirrorStore::Entry& entry = it->second;
-      // Never fetched: the manifest's hash is the version being deleted unseen.
       const Precondition expect =
           entry.base.has_value() ? Precondition::Of(*entry.base)
           : entry.has_remote && entry.remote.kind == ManifestEntryKind::File ? Precondition::Of(entry.remote.hash)
@@ -2116,8 +1916,6 @@ bool MirrorSyncEngine::DeleteTreeNow(const std::string& path) {
       batch->items.push_back(Item{.path = it->first, .expect = expect, .result = {}});
     }
   }
-  // The batch outlives this call: a late answer (after the timeout below) lands in
-  // it, not in a frame that is gone.
   batch->outstanding = batch->items.size();
   for (std::size_t i = 0; i < batch->items.size(); ++i) {
     workspace_.ApplyTreeOp(TreeOp::Delete, batch->items[i].path, {}, batch->items[i].expect,
@@ -2131,12 +1929,12 @@ bool MirrorSyncEngine::DeleteTreeNow(const std::string& path) {
   {
     std::unique_lock lock(batch->mutex);
     if (!batch->done.wait_for(lock, std::chrono::seconds(120), [&] { return batch->outstanding == 0; })) {
-      return false;  // retried whole when the host answers again
+      return false;
     }
   }
   bool unreachable = false;
   bool kept = false;
-  std::set<std::string> directories;  // bottom-up below
+  std::set<std::string> directories;
   const bool directory = batch->items.empty() || batch->items.size() > 1 || batch->items.front().path != path;
   {
     std::lock_guard path_lock(store_.PathLock(path));
@@ -2159,9 +1957,9 @@ bool MirrorSyncEngine::DeleteTreeNow(const std::string& path) {
       }
       if (item.result.status == Status::Ok ||
           (item.result.status == Status::Conflict && !item.result.hash.has_value())) {
-        entries.erase(item.path);  // deleted now, or gone there already
+        entries.erase(item.path);
       } else if (item.result.status == Status::Conflict) {
-        entry->conflict = true;  // other bytes there: the user decides
+        entry->conflict = true;
         entry->push_pending = false;
         kept = true;
       } else {
@@ -2174,7 +1972,6 @@ bool MirrorSyncEngine::DeleteTreeNow(const std::string& path) {
   }
   if (directory) {
     directories.insert(path);
-    // Deepest first: a parent goes only once its children have.
     std::vector<std::string> ordered(directories.begin(), directories.end());
     std::sort(ordered.begin(), ordered.end(),
               [](const std::string& a, const std::string& b) { return a.size() > b.size(); });
@@ -2183,8 +1980,6 @@ bool MirrorSyncEngine::DeleteTreeNow(const std::string& path) {
       if (result.unreachable) {
         return false;
       }
-      // Conflict: the host holds more there than the mirror knew of (a refused
-      // file, one made there since); the sync shows it. Not an error.
       if (result.status == Status::Error && !kept) {
         std::lock_guard lock(mutex_);
         status_.error = result.error;
@@ -2207,7 +2002,6 @@ void MirrorSyncEngine::DeleteNow(const std::vector<std::string>& paths, bool und
     if (entry == nullptr || entry->push_pending || entry->conflict) {
       continue;
     }
-    // Under expect = base: a file edited since the diff is not deleted.
     const Precondition expect = entry->base.has_value() ? Precondition::Of(*entry->base)
                                                         : Precondition::Anything();
     FileOpResult result;
@@ -2221,8 +2015,6 @@ void MirrorSyncEngine::DeleteNow(const std::vector<std::string>& paths, bool und
       bool moved = false;
       result = SetAsideTreeEntry(store_.tree(), path, expect, aside, &moved);
       if (result.status == FileOpResult::Status::Error) {
-        // Somewhere it cannot be renamed to (another filesystem): a plain delete,
-        // which the window then cannot undo.
         result = DeleteTreeEntry(store_.tree(), path, expect);
       } else if (result.ok() && moved) {
         set_aside_.push_back(SetAside{.path = path,
@@ -2254,10 +2046,8 @@ void MirrorSyncEngine::RestoreNow(std::vector<SetAside> restores) {
   for (SetAside& item : restores) {
     std::lock_guard path_lock(store_.PathLock(item.path));
     std::lock_guard lock(mutex_);
-    // Listed again since (a row in this batch): the host has it, and so do we.
     const bool relisted = store_.Find(item.path) != nullptr;
     if (!relisted && RestoreTreeEntry(store_.tree(), item.path, item.aside).ok()) {
-      // As the host last listed it, which is what a held path is (held_deletes_).
       store_.entries().insert_or_assign(item.path, std::move(item.entry));
       held_deletes_.insert(item.path);
       restored.push_back(item.path);
@@ -2284,8 +2074,6 @@ void MirrorSyncEngine::ReconcileMissingPulls(const std::vector<std::string>& pat
     const std::size_t previously_remote = RemoteCountLocked();
     for (const std::string& path : paths) {
       const auto it = store_.entries().find(path);
-      // Still the row the pull was for: a newer row (the host made it again) or
-      // a local edit since is not this answer's to decide.
       if (it != store_.entries().end() && it->second.has_remote &&
           it->second.remote.kind == ManifestEntryKind::File && !it->second.push_pending &&
           !it->second.conflict) {
@@ -2296,8 +2084,8 @@ void MirrorSyncEngine::ReconcileMissingPulls(const std::vector<std::string>& pat
     RecountLocked();
     SaveLocked();
   }
-  DeleteNow(plan.deletes, /*undoable=*/true);
+  DeleteNow(plan.deletes, true);
   RestoreNow(std::move(plan.restores));
 }
 
-}  // namespace microide::project::remote
+}

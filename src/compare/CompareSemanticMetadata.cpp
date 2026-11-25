@@ -25,9 +25,6 @@ bool LooksBinary(std::string_view text) {
 }
 
 bool SubmodulePointerContent(std::string_view text, std::string* oid) {
-  // Format is '-' + 40 hex OID chars + '\n' = 42 bytes. A size of 41 made the
-  // 40-char body span the trailing '\n', so the '\n' back-check and the hex
-  // all_of check contradicted each other and the function never returned true.
   if (text.size() != 42 || text[0] != '-' || text.back() != '\n') {
     return false;
   }
@@ -47,14 +44,6 @@ bool LineEndingOnlyChange(std::string_view left, std::string_view right) {
   if (left == right) {
     return false;
   }
-  // Compare the two buffers as if both had been line-ending normalized, without
-  // materializing the normalized copies. This used to call NormalizeLineEndings
-  // twice, allocating two whole-file strings every time the compare surface
-  // reclassified its semantic metadata; the walk below is allocation-free and
-  // bails at the first differing byte, which for a real diff is early.
-  //
-  // The collapse rule must stay identical to util::NormalizeLineEndings: a '\r'
-  // becomes '\n' and swallows an immediately following '\n'.
   std::size_t left_index = 0;
   std::size_t right_index = 0;
   while (left_index < left.size() && right_index < right.size()) {
@@ -79,7 +68,7 @@ bool LineEndingOnlyChange(std::string_view left, std::string_view right) {
   return left_index == left.size() && right_index == right.size();
 }
 
-}  // namespace
+}
 
 CompareSemanticFileMetadata InferCompareSemanticFileMetadata(
     const CompareSemanticMetadataInput& input) {
@@ -123,4 +112,4 @@ CompareSemanticFileMetadata InferCompareSemanticFileMetadata(
   return metadata;
 }
 
-}  // namespace microide::compare
+}

@@ -1,19 +1,3 @@
-// Randomized invariant sweep over the terminal emulator.
-//
-// The hand-written session tests drive one escape sequence at a time and check
-// what it produced. This drives long pseudo-random streams -- escape sequences,
-// text, resizes and scrollback trims interleaved the way a real program's output
-// is -- and after every chunk asserts only the things that must ALWAYS hold. A
-// sequence that leaves the cursor outside the screen, a line longer than the
-// terminal is wide, or a snapshot range that disagrees with LineCount is a
-// renderer read out of bounds, and none of those need a specific escape sequence
-// to be worth catching.
-//
-// The generator is weighted toward the shapes that historically break emulators:
-// the last column (pending wrap), wide and combining characters, scroll regions
-// set right at the screen edges, resizes while the alternate screen is active,
-// and trims that race the cursor.
-
 #include "TestSupport.h"
 #include "TerminalSessionTestAccess.h"
 
@@ -44,8 +28,6 @@ struct Rng {
   bool Chance(std::size_t percent) { return Below(100) < percent; }
 };
 
-// Text fragments, chosen so the stream keeps hitting the last column with a
-// character that does not fit in one cell.
 const std::vector<std::string>& TextPool() {
   static const std::vector<std::string> pool = {
       "a",      "hello",  "x",       "  ",    "\t",     "\n",     "\r",     "\r\n",
@@ -55,9 +37,8 @@ const std::vector<std::string>& TextPool() {
   return pool;
 }
 
-// Escape sequences spanning the families the session implements.
 std::string RandomEscape(Rng& rng, std::size_t rows, std::size_t columns) {
-  const std::size_t row = 1 + rng.Below(rows + 2);        // deliberately over-range sometimes
+  const std::size_t row = 1 + rng.Below(rows + 2);
   const std::size_t column = 1 + rng.Below(columns + 2);
   const std::size_t n = rng.Below(6);
   switch (rng.Below(26)) {
@@ -78,17 +59,14 @@ std::string RandomEscape(Rng& rng, std::size_t rows, std::size_t columns) {
     case 14: return "\x1b[?1049l";
     case 15: return "\x1b[?25l";
     case 16: return "\x1b[?25h";
-    case 17: return "\x1b[?7l";   // autowrap off
-    case 18: return "\x1b[?7h";   // autowrap on
+    case 17: return "\x1b[?7l";
+    case 18: return "\x1b[?7h";
     case 19: return "\x1b[" + std::to_string(30 + rng.Below(10)) + "m";
     case 20: return "\x1b[0m";
-    case 21: return "\x1bM";      // reverse index
-    // Split literals: a hex escape is GREEDY, so "\x1bD" is the single value
-    // 0x1BD (out of range, and not ESC D at all) -- these two cases fed the
-    // sweep a malformed byte instead of the sequence they name.
-    case 22: return "\x1b" "D";   // index
-    case 23: return "\x1b" "E";   // next line
-    case 24: return "\x1bH";      // set tab stop
+    case 21: return "\x1bM";
+    case 22: return "\x1b" "D";
+    case 23: return "\x1b" "E";
+    case 24: return "\x1bH";
     default: return "\x1b[" + std::to_string(n) + "S";
   }
 }
@@ -97,11 +75,6 @@ std::string Describe(std::uint64_t seed, std::size_t step) {
   return " [seed=" + std::to_string(seed) + " step=" + std::to_string(step) + "]";
 }
 
-// `widest_ever` is the largest column count this session has ever had. A shrink
-// deliberately does NOT truncate the lines it already holds -- widening again
-// brings the text back, and the renderer clamps its own draw to the pane -- so
-// the bound on a line is the widest the terminal has ever been, not its width
-// right now. That is still a bound, and an unbounded one would be a leak.
 void ExpectStructuralInvariants(const TerminalSession& session,
                                 std::size_t widest_ever,
                                 std::uint64_t seed,
@@ -113,8 +86,6 @@ void ExpectStructuralInvariants(const TerminalSession& session,
   const std::size_t line_count = session.LineCount();
   Expect(line_count >= 1, "there is always at least one line" + Describe(seed, step));
 
-  // The cursor addresses a cell that exists. A renderer draws the caret from
-  // this pair without re-clamping.
   Expect(session.cursor_row() < line_count,
          "the cursor row must name a line that exists: row " +
              std::to_string(session.cursor_row()) + " of " + std::to_string(line_count) +
@@ -135,8 +106,6 @@ void ExpectStructuralInvariants(const TerminalSession& session,
                Describe(seed, step));
   }
 
-  // Every windowed read must be a slice of the whole-screen read: this is the
-  // accessor the renderer actually uses, once per visible row per frame.
   if (line_count > 0) {
     const std::size_t start = line_count / 2;
     const std::size_t want = 3;
@@ -149,7 +118,6 @@ void ExpectStructuralInvariants(const TerminalSession& session,
                  Describe(seed, step));
     }
   }
-  // Reading past the end is a clamp, not an out-of-bounds read.
   Expect(session.SnapshotLineRange(line_count + 5, 4).empty(),
          "a snapshot starting past the end is empty" + Describe(seed, step));
 }
@@ -193,10 +161,6 @@ void TestTerminalSurvivesRandomStreamsWithInvariantsHeld() {
   }
 }
 
-// A byte stream split at every possible boundary must produce the same screen as
-// the whole stream at once: the reader thread hands over whatever the pty gave
-// it, so an escape sequence arrives in two halves routinely. A parser that keeps
-// state in a local rather than the session shows up here and nowhere else.
 void TestChunkBoundariesDoNotChangeTheResult() {
   const std::vector<std::string> streams = {
       "\x1b[31mred\x1b[0m plain",
@@ -204,7 +168,6 @@ void TestChunkBoundariesDoNotChangeTheResult() {
       "abc\x1b[1;5rscroll\ndef\nghi\njkl",
       "wide 日本語 at the edge and a 🙂 too",
       "\x1b[?1049halt screen\x1b[?1049lback",
-      // "\x07a" would extend the escape to 0x7AF; the BEL has to end the literal.
       "\x1b]0;a title\x07" "after the osc",
       "combining é and tab\there",
       "\x1b[10Ccolumns\x1b[4Dback",
@@ -244,7 +207,6 @@ void TestChunkBoundariesDoNotChangeTheResult() {
   }
 }
 
-// Scrollback is a declared cap, so it must hold no matter how much is written.
 void TestScrollbackStaysInsideItsCap() {
   for (std::uint64_t seed = 1; seed <= 60; ++seed) {
     Rng rng(seed ^ 0x5CBull);
@@ -252,10 +214,6 @@ void TestScrollbackStaysInsideItsCap() {
     const std::size_t rows = 2 + rng.Below(8);
     const std::size_t columns = 4 + rng.Below(16);
     TerminalSessionTestAccess::Reset(session, rows, columns);
-    // SetMaxScrollbackLines clamps its argument to a 200-line floor, and the trim
-    // coalesces: it fires once the buffer is 25 % above the target, then cuts all
-    // the way back. So the true ceiling is the clamped cap plus the live screen,
-    // plus that high-watermark slack.
     const std::size_t requested = 200 + rng.Below(400);
     session.SetMaxScrollbackLines(requested);
     const std::size_t target = requested + rows;
@@ -272,7 +230,7 @@ void TestScrollbackStaysInsideItsCap() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterTerminalInvariantSweepTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalInvariantSweep/SurvivesRandomStreamsWithInvariantsHeld",
@@ -283,4 +241,4 @@ void RegisterTerminalInvariantSweepTests(std::vector<TestCase>& tests) {
           TestScrollbackStaysInsideItsCap);
 }
 
-}  // namespace microide::tests
+}

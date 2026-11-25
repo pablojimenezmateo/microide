@@ -20,8 +20,6 @@ namespace microide::workspace {
 
 constexpr float kTabDragStartDistance = 6.0f;
 
-// A left click on one of a strip's overflow chevrons scrolls the strip a tab that
-// way. True when the click hit a shown chevron (consumed even with no scroller).
 static bool ClickTabStripOverflow(const WorkspaceShell::TabStripOverflowControls& overflow,
                                   float x, float y, const std::function<bool(int)>& scroll) {
   int direction = 0;
@@ -39,9 +37,6 @@ static bool ClickTabStripOverflow(const WorkspaceShell::TabStripOverflowControls
   return true;
 }
 
-// The result of a press hit-test against a strip, in plain values. Every caller
-// then runs an operation that can rebuild the memoized visible list underneath
-// it, so nothing may survive the hit-test as a reference into that list.
 struct TabHit {
   bool hit = false;
   bool on_close = false;
@@ -105,9 +100,6 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
             operations_.scroll_project_tab_strip)) {
       return true;
     }
-    // The hit tab's POD fields are copied out before any operation runs: the
-    // visible list is borrowed from a memoized cache that switch_project /
-    // close rebuild, so reading `tab` after one of those is a use-after-free.
     if (const TabHit hit = HitStripTab(visible_project_tabs, event.button.x, event.button.y);
         hit.hit) {
       if (event.button.button == SDL_BUTTON_MIDDLE ||
@@ -135,9 +127,6 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
   }
 
-  // Editor tab strips, one per group. Resolve which group's strip the pointer hit
-  // (falls back to the global tab strip when the per-group op is unavailable) and
-  // focus that group before activating/closing/scrolling within it.
   const EditorGroupTabStrips editor_group_strips =
       ResolveEditorGroupTabStrips(layout);
   for (std::size_t s = 0; s < editor_group_strips.count; ++s) {
@@ -186,9 +175,6 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
               "TabMouseCoordinator::HandleButtonDown::ActivateEditorTab");
           operations_.activate_tab(hit.index);
         }
-        // `state_.focused_group_index`, not `hit_group_index`: the focus request
-        // above can be refused (no handler bound), and the drag has to agree with
-        // whichever group actually owns `activate_tab` / `move_active_tab_to`.
         tab_drag_state_ = TabDragState{
             .kind = TabDragKind::Editor,
             .press_x = static_cast<float>(event.button.x),
@@ -296,7 +282,6 @@ bool TabMouseCoordinator::HandleMotion(const SDL_Event& event) {
     return false;
   }
   if ((event.motion.state & SDL_BUTTON_LMASK) == 0) {
-    // Button released without a button-up event reaching us: commit what we have.
     FinishDrag();
     operations_.clear_tab_drag();
     return false;
@@ -320,11 +305,6 @@ bool TabMouseCoordinator::HandleWheel(const SDL_Event& event,
   if (vertical_ticks == 0) {
     return false;
   }
-  // Wheel and the ⟨ ⟩ overflow buttons scroll the same strip, so they answer to the
-  // same stop: keep stepping only while something is still hidden on that side.
-  // The wheel used to bypass that and clamp on the raw index instead, so it ran on
-  // to the last tab and left most of the strip empty — a state the buttons cannot
-  // produce, because they disappear the moment nothing is hidden.
   const auto step_while_hidden = [&](auto&& overflow_for_now, auto&& scroll_one) {
     const int direction = vertical_ticks > 0 ? -1 : 1;
     for (int step = 0; step < std::abs(vertical_ticks); ++step) {
@@ -362,9 +342,6 @@ bool TabMouseCoordinator::HandleWheel(const SDL_Event& event,
       if (!operations_.scroll_editor_tab_strip || !operations_.compute_tab_overflow_controls) {
         return false;
       }
-      // The scroll operation acts on the focused group, so wheeling an unfocused
-      // group's strip has to focus it first (a left-click on the strip does the
-      // same thing).
       if (group_index != state_.focused_group_index && operations_.focus_editor_group) {
         operations_.focus_editor_group(group_index);
       }
@@ -378,8 +355,6 @@ bool TabMouseCoordinator::HandleWheel(const SDL_Event& event,
     }
   }
 
-  // Bottom-panel tab strip. Gated strictly to the header band so wheeling over
-  // the terminal/output content below still scrolls the transcript.
   if (operations_.bottom_panel_visible() && operations_.scroll_bottom_panel_tab_strip &&
       operations_.compute_bottom_panel_tab_overflow_controls) {
     const SDL_FRect panel_header =
@@ -410,9 +385,6 @@ TabMouseCoordinator& WorkspaceShell::MakeTabMouseCoordinator() {
   if (glue_->tab_mouse_coordinator != nullptr) {
     return *glue_->tab_mouse_coordinator;
   }
-  // Constructed inside the hooks, not captured: see MakePanelMouseCoordinator for
-  // why a captured TerminalPanelService is a heap allocation per hook, and this
-  // coordinator is made per mouse-wheel event.
   glue_->tab_mouse_coordinator = std::make_unique<TabMouseCoordinator>(
       context_.project_catalog,
       context_.current_project_state,
@@ -483,12 +455,6 @@ TabMouseCoordinator& WorkspaceShell::MakeTabMouseCoordinator() {
           .move_tab_to_group =
               [this](std::size_t from_group, std::size_t from_index, std::size_t to_group,
                      std::size_t to_slot) {
-                // Bound inline rather than through a shell member: nothing else
-                // needs this entry point, and the shell's declaration surface is
-                // a capped architectural budget. The geometry drop is the same
-                // one MoveActiveTabTo does, and for the same reason — both
-                // strips change length, and the per-group title/width cache keys
-                // only on (tab_count, window_width).
                 tab_strip_service_.InvalidateTabStripGeometry();
                 return MakeEditorTabService().MoveTabToGroup(from_group, from_index, to_group,
                                                              to_slot);
@@ -496,9 +462,6 @@ TabMouseCoordinator& WorkspaceShell::MakeTabMouseCoordinator() {
           .move_tab_to_new_group =
               [this](std::size_t from_group, std::size_t from_index, std::size_t target_group,
                      EditorSplitOrientation orientation, bool insert_before) {
-                // Same geometry drop as the cross-group move, and for the same
-                // reason: both strips change length and the per-group title/width
-                // cache keys only on (tab_count, window_width).
                 tab_strip_service_.InvalidateTabStripGeometry();
                 return MakeEditorTabService().MoveTabToNewGroup(
                     from_group, from_index, target_group, orientation, insert_before);
@@ -557,4 +520,4 @@ bool WorkspaceShell::HandleTabMouseMotion(const SDL_Event& event, const Workspac
   return MakeTabMouseCoordinator().HandleMotion(event);
 }
 
-}  // namespace microide::workspace
+}

@@ -26,9 +26,8 @@ using microide::util::MakeCloexecPipe;
 struct AsyncSubprocess::Impl {
   std::mutex state_mutex;
   std::atomic<pid_t> pid{-1};
-  int stdin_fd = -1;   // write end — parent writes here
-  int stdout_fd = -1;  // read end  — parent reads here
-  // Set for an adopted process (Adopt): it answers instead of waitpid/kill.
+  int stdin_fd = -1;
+  int stdout_fd = -1;
   std::shared_ptr<AsyncProcessController> controller;
   std::atomic<bool> running{false};
   std::optional<int> exit_code;
@@ -52,13 +51,6 @@ struct AsyncSubprocess::Impl {
     CloseStdout();
   }
 
-  // Non-blocking reap of `expected_pid`, translating wait status into the
-  // exit_code this class reports (signals become 128 + signo, matching a shell;
-  // stopped/continued leaves it unset). Only reaps when `expected_pid` is still
-  // the live child, so a caller that sampled the pid before dropping the lock
-  // cannot reap a successor process that reused the slot.
-  //
-  // Caller must hold state_mutex. Returns true when the child was reaped.
   bool ReapIfExited(pid_t expected_pid) {
     if (expected_pid < 0 || pid.load(std::memory_order_acquire) != expected_pid) {
       return false;
@@ -112,10 +104,6 @@ bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::str
   int stdin_pipe[2] = {-1, -1};
   int stdout_pipe[2] = {-1, -1};
 
-  // Close-on-exec so a concurrently-forked UNRELATED child cannot inherit and pin
-  // these pipe ends open for its lifetime (which would keep this child's stdin from
-  // ever seeing EOF, or this process from ever seeing the child's stdout EOF). The
-  // child below re-establishes stdio via dup2 onto 0/1, clearing CLOEXEC on those.
   if (!MakeCloexecPipe(stdin_pipe)) {
     return false;
   }
@@ -125,13 +113,9 @@ bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::str
     return false;
   }
 
-  // Set stdin write-end and stdout read-end non-blocking for poll-based I/O.
   util::SetNonBlocking(stdin_pipe[1]);
   util::SetNonBlocking(stdout_pipe[0]);
 
-  // Build the argv array in the parent, before fork: the child (forked off a
-  // background thread) must call only async-signal-safe functions, so it cannot
-  // allocate the vector itself.
   std::vector<char*> raw_argv;
   raw_argv.reserve(argv.size() + 1);
   for (const std::string& arg : argv) {
@@ -172,7 +156,6 @@ bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::str
     _exit(errno == ENOENT ? 127 : 126);
   }
 
-  // Parent: close child-side ends.
   close(stdin_pipe[0]);
   close(stdout_pipe[1]);
 
@@ -219,7 +202,6 @@ bool AsyncSubprocess::IsRunning() const {
   if (!impl_->running.load(std::memory_order_acquire) || current_pid < 0) {
     return false;
   }
-  // Non-blocking reap — updates running flag as a side effect.
   impl_->ReapIfExited(current_pid);
   return impl_->running.load(std::memory_order_acquire);
 }
@@ -230,11 +212,6 @@ bool AsyncSubprocess::Write(std::string_view data) {
   }
   const char* ptr = data.data();
   std::size_t remaining = data.size();
-  // Bound the total time we will wait on a stalled-but-alive child that has
-  // stopped draining its stdin (a full pipe with POLLOUT never ready). Without
-  // this the loop spins forever, hanging the calling transport thread. The
-  // deadline resets whenever bytes are written, so a legitimately slow consumer
-  // that keeps making progress on a large payload still completes.
   constexpr auto kWriteStallTimeout = std::chrono::seconds(30);
   auto stall_deadline = std::chrono::steady_clock::now() + kWriteStallTimeout;
   while (remaining > 0) {
@@ -257,7 +234,6 @@ bool AsyncSubprocess::Write(std::string_view data) {
       return false;
     }
     if (ready == 0) {
-      // poll timed out with no progress; give up once the stall budget elapses.
       if (std::chrono::steady_clock::now() >= stall_deadline) {
         CloseStdin();
         return false;
@@ -269,12 +245,6 @@ bool AsyncSubprocess::Write(std::string_view data) {
       return false;
     }
 
-    // Perform the write syscall under state_mutex, re-reading stdin_fd, so a
-    // concurrent CloseStdin() on another thread (e.g. the reader hitting EOF
-    // during shutdown) cannot close — and let the OS reuse — the descriptor
-    // between the poll above and this write. stdin_fd is non-blocking, so a full
-    // pipe surfaces as EAGAIN below and we re-poll without holding the lock;
-    // holding it here therefore cannot stall other state_mutex users.
     ssize_t written = -1;
     {
       std::lock_guard lock(impl_->state_mutex);
@@ -295,9 +265,6 @@ bool AsyncSubprocess::Write(std::string_view data) {
     if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
       continue;
     }
-    // Route through the state_mutex-locked accessor (like the poll-error
-    // branches above): a concurrent shutdown thread may also be closing
-    // stdin_fd, and an unlocked close here races it (double-close / fd reuse).
     CloseStdin();
     return false;
   }
@@ -308,8 +275,6 @@ std::optional<std::string> AsyncSubprocess::Read(std::size_t max_bytes, int time
   if (impl_ == nullptr) {
     return std::nullopt;
   }
-  // A zero-length request must not fall through to read(fd, buf, 0), which returns 0
-  // and is indistinguishable from EOF — it would tear the child down and reap it.
   if (max_bytes == 0) {
     return std::string{};
   }
@@ -334,7 +299,7 @@ std::optional<std::string> AsyncSubprocess::Read(std::size_t max_bytes, int time
       return std::nullopt;
     }
     if (ready == 0) {
-      return std::string{};  // timeout — no data yet
+      return std::string{};
     }
 
     if ((pfd.revents & POLLIN) == 0) {
@@ -348,15 +313,11 @@ std::optional<std::string> AsyncSubprocess::Read(std::size_t max_bytes, int time
 
     std::string result;
     result.resize(max_bytes);
-    // Read under state_mutex, re-checking stdout_fd, so a concurrent Close()
-    // (e.g. Shutdown() on another thread) cannot close — and let the OS reuse —
-    // the descriptor between the poll above and this read. stdout_fd is
-    // non-blocking, so this cannot stall other state_mutex users.
     ssize_t n = -1;
     {
       std::lock_guard lock(impl_->state_mutex);
       if (impl_->stdout_fd != stdout_fd) {
-        return std::nullopt;  // closed/replaced underneath us
+        return std::nullopt;
       }
       n = read(stdout_fd, result.data(), max_bytes);
     }
@@ -399,15 +360,12 @@ void AsyncSubprocess::Finish(int grace_ms, int kill_timeout_ms) {
 }
 
 void AsyncSubprocess::Shutdown(int timeout_ms) {
-  // A moved-from instance has a null impl_ (operator= calls Shutdown before adopting the
-  // source). Guard the deref so move-assign / std::swap / std::sort over AsyncSubprocess
-  // cannot crash, matching the null-guarded accessors hardened in a prior pass.
   if (impl_ == nullptr) {
     return;
   }
   std::lock_guard lock(impl_->state_mutex);
   if (impl_->controller != nullptr) {
-    impl_->Close();  // the remote side sees stdin EOF
+    impl_->Close();
     impl_->controller->Terminate(timeout_ms);
     impl_->exit_code = impl_->controller->exit_code();
     impl_->running.store(false, std::memory_order_release);
@@ -418,10 +376,9 @@ void AsyncSubprocess::Shutdown(int timeout_ms) {
     impl_->Close();
     return;
   }
-  impl_->Close();  // close pipes first so child sees EOF
+  impl_->Close();
   kill(pid, SIGTERM);
 
-  // Poll for exit up to timeout_ms.
   const int kSliceMs = 20;
   int elapsed = 0;
   while (elapsed < timeout_ms) {
@@ -433,7 +390,6 @@ void AsyncSubprocess::Shutdown(int timeout_ms) {
     elapsed += kSliceMs;
   }
 
-  // Still alive — SIGKILL.
   pid = impl_->pid.load(std::memory_order_acquire);
   if (pid >= 0) {
     kill(pid, SIGKILL);
@@ -450,8 +406,6 @@ void AsyncSubprocess::Shutdown(int timeout_ms) {
 }
 
 int AsyncSubprocess::pid() const {
-  // Check null before locking: a moved-from object has impl_ == nullptr, so
-  // locking impl_->state_mutex first would dereference null.
   if (impl_ == nullptr) {
     return -1;
   }
@@ -489,4 +443,4 @@ int AsyncSubprocess::stdin_fd() const {
   return impl_->stdin_fd;
 }
 
-}  // namespace microide::platform
+}

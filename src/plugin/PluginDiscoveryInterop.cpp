@@ -14,7 +14,7 @@ bool ShouldSkipPluginDirectoryName(std::string_view name) {
   return name.ends_with(".bak") || name.find(".bak-") != std::string_view::npos;
 }
 
-}  // namespace
+}
 
 std::vector<std::filesystem::path> DiscoverPluginRoots() {
   const std::filesystem::path plugins_dir = ResolveUserPluginInstallRoot();
@@ -47,4 +47,4 @@ std::vector<std::filesystem::path> DiscoverPluginRoots() {
   return plugin_roots;
 }
 
-}  // namespace microide::plugin::discovery_interop
+}

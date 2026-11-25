@@ -9,10 +9,8 @@
 
 namespace microide::workspace {
 
-// The remote session's actions: its connection and server, the mirror's conflicts and
-// held saves and deletes, the host's terminals and changes, port forwards.
 ActionCoordinator::DispatchResult ActionCoordinator::ExecuteRemote(ActionId id, const std::vector<std::string>& args,
-                                                                   ActionSource /*source*/,
+                                                                   ActionSource ,
                                                                    std::string* rejection_feedback) {
   const auto reject = RejectInto(rejection_feedback);
   switch (id) {
@@ -43,12 +41,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteRemote(ActionId id, 
       if (hosts == nullptr) {
         return reject("Remote hosts are not available here");
       }
-      // A host argument, else the only host there is.
       const auto host_arg = [&]() -> std::string { return args.empty() ? hosts->SoleHost() : args[0]; };
-      // `[root]`: a row about one project's files names that project's root, and
-      // acting on it brings that project forward first -- else the view opened on
-      // whichever project was in front, which with two projects on one host was
-      // the wrong one. No argument means the active project. "" on success.
       const auto bring_remote_project_forward = [&](std::filesystem::path& root) -> std::string {
         root = args.empty() ? context_.ProjectRoot() : std::filesystem::path(args[0]);
         if (!hosts->IsRemoteProject(root)) {
@@ -62,7 +55,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteRemote(ActionId id, 
       };
       switch (id) {
         case ActionId::RemoteOpenLocalTerminal:
-          // In a local project Terminal > New is already local.
           if (!hosts->IsRemoteProject(context_.ProjectRoot())) {
             return reject("The active project is not a remote project: Terminal > New is local here");
           }
@@ -80,7 +72,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteRemote(ActionId id, 
           if (!tree.has_value()) {
             return reject("Cannot open \"" + args[0] + "\": " + error);
           }
-          // The open funnel recognizes the mirror and gives it the project's locality.
           if (!context_.OpenProject(*tree, true, true)) {
             return reject("Cannot open the mirror of \"" + args[0] + "\"");
           }
@@ -100,7 +91,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteRemote(ActionId id, 
           return DispatchResult::Handled;
         }
         case ActionId::RemoteResolveAllConflicts: {
-          // `[root] <local|remote>`: the root defaults to the active project.
           const std::string& mode = args.empty() ? std::string() : args.back();
           if (args.empty() || args.size() > 2 || (mode != "local" && mode != "remote")) {
             return reject("usage: remote-resolve-all [root] <local|remote>");
@@ -144,9 +134,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteRemote(ActionId id, 
           return DispatchResult::Handled;
         }
         case ActionId::RemoteShowStatus: {
-          // The Host view (remote-host-activity D6): the named host, else the
-          // active remote project's, else the only one; with several and none of
-          // those, the menu and palette ask which (OpenOptionalArgumentPicker).
           std::string host = args.empty() ? hosts->HostOfProject(context_.ProjectRoot()) : args[0];
           if (host.empty()) {
             host = hosts->SoleHost();
@@ -160,7 +147,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteRemote(ActionId id, 
                                         {})) {
             return reject("Cannot show the Host view");
           }
-          // The control channel's answer, which has no sidebar to look at.
           context_.SetCommandFeedback(hosts->StatusText());
           return DispatchResult::Handled;
         }
@@ -232,14 +218,11 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteRemote(ActionId id, 
             return reject(forward ? "usage: remote-forward-port <port> [host]"
                                   : "usage: remote-unforward-port <port> [host]");
           }
-          // The host: as given, else the active remote project's, else the only one.
           std::string host = args.size() > 1 ? args[1] : hosts->HostOfProject(context_.ProjectRoot());
           if (host.empty()) {
             host = hosts->SoleHost();
           }
           const auto port_number = static_cast<std::uint16_t>(*port);
-          // Several hosts and none implied: ask for it after the port, where the
-          // command line used to be refused ("Name the host").
           if (host.empty() &&
               context_.OpenHostPick(
                   forward ? "Forward Port " + std::to_string(*port) + " on"
@@ -256,9 +239,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteRemote(ActionId id, 
           return DispatchResult::Handled;
         }
         case ActionId::RemoteRemoveMirror: {
-          // A root, always: an open project's mirror goes with its close, so the
-          // bare form had only ever one answer ("close the project first"). A menu
-          // row or palette entry asks with the mirrors there are (OpenArgumentPicker).
           if (args.empty()) {
             return reject("usage: remote-remove-mirror <root> [discard]");
           }
@@ -290,8 +270,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteRemote(ActionId id, 
           return DispatchResult::Handled;
         }
         case ActionId::RemoteFileHistory: {
-          // The active file's earlier versions; `[version]` is the start of one's
-          // hash, which is what a row of the pick runs.
           const std::filesystem::path root = context_.ProjectRoot();
           const std::filesystem::path path = context_.ActiveTabPath();
           if (!hosts->IsRemoteProject(root) || path.empty()) {
@@ -336,4 +314,4 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteRemote(ActionId id, 
   }
 }
 
-}  // namespace microide::workspace
+}

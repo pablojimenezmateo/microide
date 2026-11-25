@@ -1,8 +1,5 @@
 #pragma once
 
-// A host tree served by a real `microide-server serve-stdio`, and a mirror of it
-// in a different directory: the fixture every MirrorSyncEngine test drives.
-
 #include "TestSupport.h"
 
 #include "project/remote/MirrorStore.h"
@@ -37,8 +34,6 @@ struct MirrorSession {
 
   MirrorSession() { std::filesystem::create_directories(host); }
 
-  // A new server process for the host tree: its manifest ids start again at 1.
-  // With `pid_file`, the server's pid is written there (to stop it from a test).
   std::shared_ptr<remote::RemoteServerClient> StartServer(const std::filesystem::path& pid_file = {}) {
     auto started = remote::RemoteServerClient::Create();
     std::string error;
@@ -94,4 +89,4 @@ inline bool WaitFor(const std::function<bool()>& done, std::chrono::milliseconds
   return done();
 }
 
-}  // namespace microide::tests
+}

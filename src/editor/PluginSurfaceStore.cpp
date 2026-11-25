@@ -109,8 +109,6 @@ bool PluginSurfaceStore::ReplaceForOwnerSurface(std::string_view owner,
     return false;
   }
 
-  // Honor a live host-side dismissal: if the user closed this preview, a republish
-  // requesting a preview slot must not silently reopen it. (TD-2026-07-16-62.)
   if (content.preview != SurfacePreviewSlot::None &&
       dismissed_previews_.count(std::pair(owner_key, id_key)) != 0) {
     content.preview = SurfacePreviewSlot::None;
@@ -118,12 +116,11 @@ bool PluginSurfaceStore::ReplaceForOwnerSurface(std::string_view owner,
 
   auto& surfaces = by_owner_[owner_key];
   if (!content.has_body() && content.preview == SurfacePreviewSlot::None) {
-    // An empty, non-preview surface is a removal.
     const bool changed = surfaces.erase(id_key) > 0;
     if (surfaces.empty()) {
       by_owner_.erase(owner_key);
     }
-    dismissed_previews_.erase(std::pair(owner_key, id_key));  // surface gone: drop override
+    dismissed_previews_.erase(std::pair(owner_key, id_key));
     if (changed) {
       RebuildAnchorIndex();
       ++revision_;
@@ -133,14 +130,8 @@ bool PluginSurfaceStore::ReplaceForOwnerSurface(std::string_view owner,
 
   const auto existing = surfaces.find(id_key);
   if (existing != surfaces.end() && existing->second == content) {
-    return false;  // identical republish: no-op
+    return false;
   }
-  // Cap distinct surfaces per owner. A hostile plugin publishing a fresh
-  // surface_id in a loop would otherwise grow the store without bound (each
-  // SurfaceContent holds a heap display list, outside the Lua memory cap since
-  // PublishSurface moves it host-side) AND make every publish O(all surfaces)
-  // via RebuildAnchorIndex — an O(N^2) UI-thread hang. Updates to existing ids
-  // are always allowed; only brand-new ids past the cap are refused.
   if (existing == surfaces.end() && surfaces.size() >= kMaxSurfacesPerOwner) {
     return false;
   }
@@ -175,7 +166,6 @@ bool PluginSurfaceStore::ClearOwner(std::string_view owner) {
     return false;
   }
   by_owner_.erase(owner_it);
-  // Drop all dismissal overrides for this owner (its surfaces are gone).
   std::erase_if(dismissed_previews_,
                 [&](const auto& key) { return key.first == owner; });
   RebuildAnchorIndex();
@@ -194,9 +184,6 @@ bool PluginSurfaceStore::SetPreviewSlot(std::string_view owner, std::string_view
     return false;
   }
   surface_it->second.preview = slot;
-  // Track the host-side override: dismissing (None) makes the close sticky across
-  // republish; re-opening (non-None) clears the override so the plugin can drive it
-  // again. (TD-2026-07-16-62.)
   std::pair<std::string, std::string> key{std::string(owner), std::string(surface_id)};
   if (slot == SurfacePreviewSlot::None) {
     dismissed_previews_.insert(std::move(key));
@@ -219,8 +206,6 @@ bool PluginSurfaceStore::ApplyRasterSize(std::uint64_t content_hash, int width, 
       }
     }
   }
-  // The anchor index and the preview list hold pointers to the contents, not
-  // copies, so only the revision moves.
   if (changed) {
     ++revision_;
   }
@@ -239,13 +224,12 @@ const SurfaceContent* PluginSurfaceStore::Find(std::string_view owner,
 
 const std::vector<SurfaceRef>& PluginSurfaceStore::PreviewSurfaces() const {
   if (by_owner_.empty()) {
-    // No surfaces at all: keep the cache empty and stamped so we never iterate.
     preview_cache_.clear();
     preview_cache_revision_ = revision_;
     return preview_cache_;
   }
   if (preview_cache_revision_ == revision_) {
-    return preview_cache_;  // Nothing changed since the last build.
+    return preview_cache_;
   }
   preview_cache_.clear();
   for (const auto& [owner, surfaces] : by_owner_) {
@@ -266,9 +250,6 @@ const std::vector<SurfaceRef>& PluginSurfaceStore::PreviewSurfaces() const {
 
 std::span<const AnchoredSurface> PluginSurfaceStore::AnchoredSurfacesForPathKey(
     std::string_view path_key) const {
-  // Hot path: called per frame with a precomputed key. Skip the lookup when no
-  // surfaces are anchored; the heterogeneous find never allocates because the
-  // key string already lives on the document.
   if (anchored_by_path_.empty()) {
     return {};
   }
@@ -287,4 +268,4 @@ std::span<const AnchoredSurface> PluginSurfaceStore::AnchoredSurfacesForPath(
   return AnchoredSurfacesForPathKey(PathKey(path));
 }
 
-}  // namespace microide::editor
+}

@@ -11,4 +11,4 @@ namespace microide::terminal {
 TerminalCell MakeAsciiTerminalCell(char character, const TerminalStyle& style);
 TerminalCell MakeUtf8TerminalCell(std::string_view glyph, const TerminalStyle& style);
 
-}  // namespace microide::terminal
+}

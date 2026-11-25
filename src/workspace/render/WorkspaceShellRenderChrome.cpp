@@ -29,16 +29,10 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
       .active_glyph = theme_.chrome_text_secondary,
       .inactive_glyph = theme_.text_disabled,
   };
-  // The strips' tabs are painted from the prepared frame (TabStripPaint.h): their
-  // slid rects, the tab a drag lifted out, what the pointer lights -- no hover
-  // from a pointer a drag holds still, none while the tabs slide after a release
-  // (soak 38f44bf79ca8) -- and their titles, all settled once at frame prep.
-  // Everything else it paints, as frame prep settled it (window_chrome).
   const PreparedFrameState::WindowChromePaint& chrome = frame_state_.window_chrome;
   const auto draw_strip_tabs = [&](const PreparedFrameState::TabStripPaint& strip, const StripTabStyle& style,
                                    const StripTabPalette& palette, std::string_view element_name) {
     for (const PreparedFrameState::PanelTabPaint& tab : strip.tabs) {
-      // The tab paints inside itself, its close button included (clip-discipline 1.3).
       const render::PaintElement element(renderer, tab.rect, element_name);
       DrawStripTab(text_renderer_, renderer, theme_, tab.rect, tab.title, tab.badge_text, tab.badge_color,
                    tab.show_badge, tab.active, style, palette, tab.hovered,
@@ -48,9 +42,9 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                              tab.active ? palette.active_glyph : palette.inactive_glyph,
                              tab.active ? palette.active_text : palette.inactive_text);
     }
-    DrawTabStripOverflowButton(text_renderer_, renderer, theme_, strip.overflow_left.rect, /*point_right=*/false,
+    DrawTabStripOverflowButton(text_renderer_, renderer, theme_, strip.overflow_left.rect, false,
                                strip.overflow_left.hidden, strip.overflow_left.hovered);
-    DrawTabStripOverflowButton(text_renderer_, renderer, theme_, strip.overflow_right.rect, /*point_right=*/true,
+    DrawTabStripOverflowButton(text_renderer_, renderer, theme_, strip.overflow_right.rect, true,
                                strip.overflow_right.hidden, strip.overflow_right.hovered);
   };
 
@@ -90,9 +84,6 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   }
 
   for (const PreparedFrameState::WindowChromePaint::WindowButton& button : chrome.window_buttons) {
-    // Lit by PointerOver at prep, not the layout's raw-pointer `hovered`: under a
-    // modal the window controls do not light up (QA monkey: a maximize button
-    // hovered under a prompt).
     const bool hovered = button.hovered;
     const auto id = static_cast<WindowControlButtonId>(button.id);
     SDL_Color background = hovered ? theme_.row_highlight : theme_.chrome_background;
@@ -106,7 +97,6 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     DrawWindowControlGlyph(renderer, button.rect, id, glyph, chrome.expanded);
   }
 
-  // The project strip, when it shows (prep settles nothing for a hidden one).
   if (const PreparedFrameState::TabStripPaint& strip = frame_state_.project_strip; strip.shown) {
     constexpr StripTabStyle kProjectTabStyle{
         .text_left_padding = 10.0f,
@@ -123,15 +113,6 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     }
   }
 
-  // Each editor group owns its own tab strip. For a single group this is the
-  // global tab-strip band (filled in the frame pass); a pane stacked below
-  // another synthesizes its strip inside the editor area, filled here.
-
-  // Drag-to-split feedback (VS Code's drop overlay). Painted before the strips so
-  // the floating ghost and the tab strips stay on top of it, and after the editor
-  // panes (window chrome runs later in the frame) so it tints the buffer it will
-  // replace. The rect was resolved on the motion event that produced it; nothing
-  // is recomputed per frame.
   if (chrome.tab_body_drop.has_value()) {
     const SDL_FRect& region = *chrome.tab_body_drop;
     DrawFilledRect(renderer, region,
@@ -139,10 +120,6 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     render::OutlineRect(renderer, region, theme_.accent);
   }
 
-  // VS Code's tab.unfocusedActive* colours: with a split open, EVERY pane paints
-  // its own active tab, so an identically-lit tab in each pane leaves nothing on
-  // screen saying which pane the next Ctrl+P / Ctrl+W / keystroke will act on.
-  // Dim the accent, fill and label of a pane that does not hold focus.
   const StripTabPalette unfocused_group_tab_palette{
       .active_fill = render::BlendColors(theme_.chrome_active, theme_.chrome_background, 0.55f),
       .inactive_fill = chrome_tab_palette.inactive_fill,
@@ -156,14 +133,9 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   const std::size_t focused_group_index = chrome.focused_group;
   for (std::size_t gi = 0; gi < chrome.groups.size(); ++gi) {
     const SDL_FRect group_tab_strip = chrome.groups[gi].tab_strip;
-    // A collapsed strip (the maximized panel owns the window) paints nothing: not
-    // its tabs, not the "Welcome" placeholder an empty strip otherwise shows, not
-    // its overflow chevrons. They all size off a floor and would land over the
-    // panel header.
     if (group_tab_strip.h <= 0.0f) {
       continue;
     }
-    // A single pane is always the focused one; only a split can hold a stale tab.
     const StripTabPalette& group_tab_palette =
         (chrome.groups.size() > 1 && gi != focused_group_index)
             ? unfocused_group_tab_palette
@@ -183,14 +155,8 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     };
     const PreparedFrameState::TabStripPaint& strip = frame_state_.editor_strips[gi];
     if (!strip.shown) {
-      continue;  // no project in this window
+      continue;
     }
-    // The tabs and their chevrons stay inside the group's strip: with the pane
-    // beside it squeezed to its minimum, a tab painted past the strip's end over
-    // the debug pane, and a partial frame of the strip disagreed with a full one
-    // (QaFlowRegression/EveryDividerDraggedToItsExtremesKeepsEveryFrameFresh).
-    // So does the placeholder, 220 wide whatever the strip (soak 8830ce9c51b8).
-    // The drag ghost below is not clipped: it follows the pointer across strips.
     std::optional<render::ScopedRenderClip> strip_clip;
     strip_clip.emplace(renderer, SDL_Rect{static_cast<int>(std::floor(group_tab_strip.x)),
                                           static_cast<int>(std::floor(group_tab_strip.y)),
@@ -210,8 +176,6 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     draw_strip_tabs(strip, kEditorTabStyle, group_tab_palette, "tab");
     strip_clip.reset();
     if (strip.dragging) {
-      // The ghost tracks the pointer, so it paints over the strip the pointer is
-      // over -- which in a cross-group drag is not the strip the tab came from.
       DrawTabDragFeedback(text_renderer_, renderer, theme_, group_tab_strip, strip.drag_tabs, strip.drag_tabs_strip,
                           strip.drag_source, strip.drag_pointer_x, strip.drag_grab_offset_x, kEditorTabStyle,
                           chrome_tab_palette);
@@ -220,15 +184,10 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
 
   const auto& status_items = chrome.status_items;
   for (const PreparedFrameState::WindowChromePaint::StatusItem& item : status_items) {
-    // Tone tints the item background even when not hovered (so a warning/error
-    // status reads at a glance); hover still lifts it to row_highlight.
     const SDL_Color tone_fill =
         StatusToneColor(theme_, item.tone, theme_.chrome_background);
     const bool has_tone = item.tone != StatusTone::Default;
-    // Only command-bound items are clickable, so only they earn the hover lift.
-    // A bare path/status segment must not advertise clickability it doesn't have
-    // (this also keeps the breadcrumb's hover/cursor/click regions in agreement).
-    const bool hovered = item.hovered;  // prep lights only command-bound items
+    const bool hovered = item.hovered;
     const SDL_Color text_color = hovered ? theme_.text_primary : theme_.text_muted;
     if (hovered) {
       DrawSelectableRowBackground(renderer, theme_, item.rect, theme_.chrome_background, true);
@@ -242,7 +201,6 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                                                       : theme_.chrome_background);
 
     float text_x = item.rect.x + 8.0f;
-    // Leading icon, if the contributed name resolves to a built-in shape.
     if (!item.icon.empty()) {
       if (const auto shape = editor::GutterIconRegistry::ResolveShape(item.icon)) {
         const SDL_Color icon_color = has_tone ? tone_fill : theme_.accent;
@@ -251,7 +209,6 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
         text_x += 16.0f;
       }
     }
-    // Trailing progress bar, if the item declares one.
     float text_right = item.rect.x + item.rect.w - 8.0f;
     if (item.progress >= 0.0f) {
       constexpr float kBarW = 28.0f;
@@ -272,13 +229,6 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                         item.text);
   }
 
-  // The breadcrumb is per PANE, not per window: a pane at the top of the editor
-  // area owns the band above its own column, and the label there names THAT
-  // pane's file. Painting one band for the focused pane put the wrong file over
-  // every other column — with a split open, the left column's band named whatever
-  // the right column was showing. Panes below the top row have no band of their
-  // own (`breadcrumb.w == 0`); their column's band belongs to the pane it sits
-  // over. For a single pane this is byte-identical to the old full-width band.
   for (std::size_t gi = 0; gi < chrome.groups.size(); ++gi) {
     const SDL_FRect band = chrome.groups[gi].breadcrumb;
     if (band.w <= 0.0f || band.h <= 0.0f) {
@@ -294,10 +244,6 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                         TruncateLabelView(chrome.groups[gi].breadcrumb_label, breadcrumb_text_width));
   }
 
-  // The tree drag (PathDragState): the drop preview over what the release would
-  // drop on -- a pane or the half an edge drop carves, a folder's row, the
-  // terminal -- and the dragged name riding beside the pointer. Both are Chrome
-  // units (PrepareFrameOnce), so the motion that moves them owes a frame.
   if (chrome.path_drop.has_value()) {
     DrawFilledRect(renderer, *chrome.path_drop, SDL_Color{theme_.accent.r, theme_.accent.g, theme_.accent.b, 64});
     render::OutlineRect(renderer, *chrome.path_drop, theme_.accent);
@@ -312,4 +258,4 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   }
 }
 
-}  // namespace microide::workspace
+}

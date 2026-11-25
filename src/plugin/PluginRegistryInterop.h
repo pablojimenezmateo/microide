@@ -64,10 +64,6 @@ bool RegisterStatusItem(const runtime_types::PluginInstance* plugin,
                         std::vector<PluginHost::ContributedStatusItem>* status_item_order,
                         std::string* error_message);
 
-// A status-item mutation extracted from a Lua table on the worker thread. The
-// Lua read (worker-only) is separated from the registry mutation (UI-thread-only)
-// so a ctx.status.update issued from a reactive event never touches the shared
-// status registries on the worker. Only the fields present in the table are set.
 struct StatusItemUpdate {
   std::string full_id;
   bool has_text = false;
@@ -82,24 +78,15 @@ struct StatusItemUpdate {
   float progress = -1.0f;
 };
 
-// Worker thread: read the update fields from the Lua table at index 2. Touches no
-// shared registries. Returns false when no calling plugin can be resolved.
 bool ExtractStatusItemUpdate(lua_State* state,
                              const runtime_types::PluginInstance* plugin,
                              std::string_view id,
                              StatusItemUpdate* out);
 
-// UI thread: apply a previously extracted update to the published status-item view.
-// Operates on the order vector alone (the UI renders it; the worker-owned map is not
-// touched at runtime). `index` is a caller-owned id->position cache kept alongside the
-// order vector so a plugin firing frequent ctx.status.update calls resolves the target
-// in O(1) instead of rescanning a status registry capped at kMaxPluginStatusItems; it is rebuilt
-// lazily whenever the vector's size no longer matches (register/teardown). Returns true
-// when the target item existed and was changed.
 bool ApplyStatusItemUpdate(
     const StatusItemUpdate& update,
     std::vector<PluginHost::ContributedStatusItem>* status_item_order,
     std::unordered_map<std::string, std::size_t>* index);
 #endif
 
-}  // namespace microide::plugin::registry_interop
+}

@@ -280,8 +280,6 @@ return ide.plugin({
   Expect(WorkspaceShellTestAccess::HoveredTooltipLabel(shell) == "Counter is 0",
          "hovering a contributed status item should expose its tooltip");
   {
-    // The ui query names it (and the commands query lists the plugin's command),
-    // so a driver can find and click it.
     const util::JsonValue ui = WorkspaceShellTestAccess::ControlUi(shell);
     bool named = false;
     for (const util::JsonValue& element : ui["elements"].AsArray()) {
@@ -312,9 +310,6 @@ return ide.plugin({
   Expect(redraw.full || redraw.frame || !redraw.rects.empty(),
          "status updates should request a visible redraw");
   {
-    // An item that changes width while hovered, then loses the pointer, leaves no
-    // highlight behind (QA plugins-ui: "Indexing" became "Indexed" under the
-    // pointer, and the old, wider highlight stayed after it left).
     EnsureDummySdlVideoInitialized();
     SoftwareCanvas canvas{1280, 720};
     shell.Render(canvas.renderer(), 1280, 720);
@@ -341,10 +336,6 @@ return ide.plugin({
     }
     (void)shell.ConsumePendingRenderInvalidation();
   }
-  // ...of the item itself: it lives in the breadcrumb row, and the update repainted
-  // the menu bar (QA plugins-ui: the item kept its old text and progress). A frame
-  // owed with no rect is the breadcrumb band's unit, keyed on the items: the
-  // freshness steps above are what show it repaints.
   if (updated_counter != updated_items.end() && !redraw.full && !redraw.rects.empty()) {
     const SDL_FRect item = updated_counter->rect;
     bool covered = false;
@@ -356,11 +347,6 @@ return ide.plugin({
   }
 }
 
-// A modal owns the pointer: nothing beneath it hovers. A command-bound plugin
-// status item lit under the pointer anyway, and the frame-prep hover tracking --
-// which does honour the modal -- damaged nothing for it, so a partial frame kept
-// whatever the item last showed while a full one drew it the other way (soak
-// 87eea326e748: the pointer onto "Indexing" under Rename Symbol).
 void TestWorkspaceShellPluginStatusItemDoesNotHoverUnderAModal() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -401,7 +387,6 @@ return ide.plugin({
   shell.Render(canvas.renderer(), 1280, 720);
   (void)shell.ConsumePendingRenderInvalidation();
 
-  // The pointer onto the item while a modal is up.
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
   WorkspaceShellTestAccess::RequestCloseTab(shell, 0);
   auto diff = PaintAndDiffWithFullRepaint(shell, canvas, 1280, 720, shell.ConsumePendingRenderInvalidation());
@@ -412,10 +397,6 @@ return ide.plugin({
          "nothing beneath the prompt hovers");
 }
 
-// A maximized panel collapses the editor column, its header band to no height,
-// but the plugin status items kept an 18-unit row at the band's top and a full
-// frame painted "Indexing" over the panel's header buttons, where no partial
-// frame put it (soak 1513ea75bbf9). A band with no area shows no items.
 void TestWorkspaceShellPluginStatusItemsHideUnderAMaximizedPanel() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -557,11 +538,6 @@ void TestWorkspaceShellSavePipelineRunsParticipantsBeforeFormatter() {
   }
 }
 
-// An interactive (deferred) save runs its participants off the shell thread, as
-// the first stage of the formatter's run (TD-2026-09-28-304), and runs them ONCE:
-// the save the completion re-enters skips every transform. It used to skip only
-// the formatter, so participants ran twice — before formatting, and again on its
-// output — each time waiting on the plugin worker from the shell thread.
 void TestWorkspaceShellDeferredSaveRunsParticipantsOnceOffThread() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -603,7 +579,6 @@ void TestWorkspaceShellDeferredSaveRunsParticipantsOnceOffThread() {
          "participant then formatter, each once, got: " + ReadFile(source));
   Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "and the buffer is clean");
 
-  // Participants alone defer too: the save does not wait on the plugin worker.
   WorkspaceShellTestAccess::RegisterFormatterForTesting(
       shell, std::string(WorkspaceShellTestAccess::ActiveEditor(shell).language_id()), {});
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("y");
@@ -615,8 +590,6 @@ void TestWorkspaceShellDeferredSaveRunsParticipantsOnceOffThread() {
          "the participant runs once more on this save, got: " + ReadFile(source));
 }
 
-// A participant that fails refuses the save — as the blocking path's Failed() does —
-// and now says so: nothing is written, the buffer stays dirty, and the error is shown.
 void TestWorkspaceShellDeferredSaveRefusedByAFailingParticipant() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -832,11 +805,6 @@ return ide.plugin({
          "opening a project should record plugin-contributed auth providers on the host");
 }
 
-// TD-2026-07-27-001: the virtual-document registry had a complete, tested READ
-// side and no producer at all — its only writer was the TestAccess backdoor, so a
-// plugin could ask to open a virtual document and nothing could ever create one.
-// This drives the new `ctx.virtual_documents.add` contribution end to end: a real
-// plugin registers one, and it opens with the plugin's content.
 void TestWorkspaceShellPluginContributesVirtualDocument() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -871,8 +839,6 @@ return ide.plugin({
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   Expect(WorkspaceShellTestAccess::PluginErrors(shell).empty(), DescribePluginState(shell).c_str());
 
-  // The URI is DERIVED from the plugin id, never taken from the plugin: a
-  // plugin-supplied URI could name another plugin's document.
   Expect(WorkspaceShellTestAccess::OpenVirtualDocument(shell, "virtual://vdocs/notes.md"),
          "a plugin-contributed virtual document should be openable");
   Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).lines().empty() &&
@@ -945,8 +911,6 @@ void TestWorkspaceShellVirtualDocumentsOpenAndRefresh() {
          "updating a virtual document should refresh any open tab backed by that URI");
   const auto redraw = shell.ConsumePendingRenderInvalidation();
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
-  // The editor's rows are derived units keyed on what they show, so the refreshed
-  // content owes a frame (prep damages the rows that changed).
   Expect(redraw.frame || AnyRectIntersects(redraw.rects, layout.editor_surface),
          "virtual document updates should redraw the editor surface");
 }
@@ -1027,10 +991,6 @@ return ide.plugin({
          "plugin commands should receive shell-split arguments");
 }
 
-// `plugins-reload` reports the reload it ran, not the one before it. The reload runs
-// on the plugin worker, and the summary used to be read at dispatch: a plugin
-// installed and reloaded at once announced "Loaded 0 plugins", and the next reload
-// "Loaded 1 plugin" (seen driving the editor headlessly, 2026-10-16).
 void TestWorkspaceShellPluginsReloadReportsTheReloadItRan() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1040,25 +1000,20 @@ void TestWorkspaceShellPluginsReloadReportsTheReloadItRan() {
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
   const std::filesystem::path project_root = temp_dir.path() / "project";
   WriteFile(project_root / "README.md", "reload fixture\n");
-  std::filesystem::create_directories(plugins_root);  // empty: nothing to load yet
+  std::filesystem::create_directories(plugins_root);
   ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
          "the project opens with no plugins");
 
-  // Installed after the project opened, then reloaded at once.
   WritePluginInit(
       plugins_root, "late",
       R"(local ide = require("microide")
 return ide.plugin({ id = "late", setup = function(ctx) end })
 )");
-  // The app has a plugin worker; a project opened with no plugins did not spawn it
-  // here, and the inline completion it falls back to cannot show the bug.
   WorkspaceShellTestAccess::EnsurePluginWorkerStarted(shell);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "plugins-reload"), "the reload runs");
-  // The completion lands on the UI thread through the plugin thread's mailbox:
-  // drain until the summary is this reload's.
   for (int i = 0; i < 200 && WorkspaceShellTestAccess::CommandFeedbackText(shell).find("Loaded ") ==
                                  std::string::npos; ++i) {
     WorkspaceShellTestAccess::DrainPluginThreadActions(shell);
@@ -1077,10 +1032,6 @@ return ide.plugin({ id = "late", setup = function(ctx) end })
   Expect(fresh_toast, "the toast reports this reload's count");
 }
 
-// QA plugin-errors: a plugin whose setup raised said so in the Plugin Errors
-// output channel and nowhere else unless the user had asked for the reload --
-// opening a project with a broken plugin failed in silence. It is a warning
-// naming the plugin and the reason, with a button to the channel.
 void TestWorkspaceShellAPluginThatFailsToLoadSaysSo() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1645,8 +1596,6 @@ void TestWorkspaceShellSignatureHelpPopupFromPluginProvider() {
   const std::filesystem::path source = project_root / "src" / "main.lua";
   WriteFile(source, "local function greet(name)\n  return name\nend\nprint(greet())\n");
 
-  // Custom raw-string delimiter: the signature label contains `)"`, which would
-  // otherwise close a default R"(...)" literal early.
   WritePluginInit(
       plugins_root, "sig-tools",
       R"LUA(local ide = require("microide")
@@ -1686,14 +1635,11 @@ return ide.plugin({
                                   std::string::npos,
          "signature popup documentation block should include the signature docs");
 
-  // The popup is anchored to the request position; moving the caret expires it.
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
   WorkspaceShellTestAccess::ExpireSignatureHelp(shell);
   Expect(!WorkspaceShellTestAccess::SignatureHelpPopup(shell).has_value(),
          "moving the caret should dismiss the signature popup");
 
-  // Frame prep expires it, whatever the frame paints: paint did, and only when a
-  // clip touched the editor surface.
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "signature-help"),
          "signature-help shows the popup again");
@@ -1704,10 +1650,6 @@ return ide.plugin({
          "preparing a frame dismisses a signature popup whose caret moved on");
 }
 
-// Regression: the outline must populate from the language server's documentSymbol
-// when no plugin document-symbol provider returns anything. The plugin provider is
-// consulted first; on an empty result the outline falls back to LSP and flattens
-// the adapted symbol tree into the same rows.
 void TestWorkspaceShellOutlineSidebarFromLspFallback() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1719,8 +1661,6 @@ void TestWorkspaceShellOutlineSidebarFromLspFallback() {
   const std::filesystem::path py_file = project / "main.py";
   WriteFile(py_file, "class Widget:\n    def draw(self):\n        pass\n\n\ndef main():\n    pass\n");
 
-  // Register a python language server but NO plugin document-symbol provider, so the
-  // outline's plugin query returns empty and the LSP fallback drives the rows.
   WritePluginInit(
       plugins_root, "pylsp",
       R"(local ide = require("microide")
@@ -1738,7 +1678,6 @@ return ide.plugin({
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
          "outline LSP fixture should open the project");
 
-  // Attach a stub server that answers documentSymbol from a canned tree.
   auto stub = std::make_unique<workspace::LspClient>();
   workspace::LspClient* const stub_raw = stub.get();
   stub_raw->EnableTestStubMode();
@@ -1747,23 +1686,21 @@ return ide.plugin({
         (void)uri;
         workspace::LspClient::DocumentSymbol widget;
         widget.name = "Widget";
-        widget.kind = 5;  // Class
+        widget.kind = 5;
         widget.selection_range.start = {0, 6};
         workspace::LspClient::DocumentSymbol draw;
         draw.name = "draw";
-        draw.kind = 6;  // Method
+        draw.kind = 6;
         draw.selection_range.start = {1, 8};
         workspace::LspClient::DocumentSymbol render;
         render.name = "render";
-        render.kind = 6;  // Method
+        render.kind = 6;
         render.selection_range.start = {3, 8};
-        // Out of document order on purpose, at both levels: the protocol does not
-        // promise an order and the outline sorts siblings by position (VS Code).
         widget.children.push_back(render);
         widget.children.push_back(draw);
         workspace::LspClient::DocumentSymbol main_fn;
         main_fn.name = "main";
-        main_fn.kind = 12;  // Function
+        main_fn.kind = 12;
         main_fn.selection_range.start = {5, 4};
         cb(std::vector<workspace::LspClient::DocumentSymbol>{main_fn, widget});
       });
@@ -1774,8 +1711,6 @@ return ide.plugin({
   WorkspaceShellTestAccess::OpenFile(shell, py_file);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "sidebar-show outline"),
          "sidebar-show should accept the built-in outline view");
-  // The plugin query resolves inline (empty), then the LSP documentSymbol stub
-  // dispatches on the main-thread pump.
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
 
   const auto& items = WorkspaceShellTestAccess::PluginSidebarItems(shell);
@@ -1790,15 +1725,10 @@ return ide.plugin({
          "the later method follows although the server listed it first");
   Expect(items[3].label == "main" && items[3].depth == 0,
          "LSP outline should return to depth 0 after the child subtree");
-  // 0-based LSP selection range -> 1-based outline coordinates.
   Expect(items[1].line == 2 && items[1].column == 9,
          "LSP outline row should carry 1-based line/column from the selection range");
 }
 
-// TD-2026-10-18-360: Go to Symbol in Editor (Ctrl+Shift+O, `@` in Quick Open) is a
-// quick pick of the file's symbols -- the same plugin-then-language-server query
-// the outline makes. Moving the selection previews (the caret goes to the symbol),
-// Escape puts the caret back, Enter keeps the symbol's position.
 void TestWorkspaceShellGoToSymbolInEditorPicksFromTheOutlineSymbols() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1871,10 +1801,6 @@ return ide.plugin({
          "Enter keeps the symbol's position");
 }
 
-// Regression (TD-2026-07-17A-072): a large-but-valid documentSymbol response must
-// not adapt+flatten unboundedly on the main-thread callback. The outline is capped
-// at a presentation budget (5000 nodes) with a non-navigable truncation marker,
-// instead of building 100k rows the protocol parser would still accept.
 void TestWorkspaceShellOutlineCapsLargeLspResult() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1909,13 +1835,12 @@ return ide.plugin({
   stub_raw->SetTestDocumentSymbolHandler(
       [](std::string uri, workspace::LspClient::DocumentSymbolCallback cb) {
         (void)uri;
-        // 6000 flat top-level symbols: over the 5000-node presentation budget.
         std::vector<workspace::LspClient::DocumentSymbol> symbols;
         symbols.reserve(6000);
         for (int i = 0; i < 6000; ++i) {
           workspace::LspClient::DocumentSymbol symbol;
           symbol.name = "sym" + std::to_string(i);
-          symbol.kind = 12;  // Function
+          symbol.kind = 12;
           symbol.selection_range.start = {0, 0};
           symbols.push_back(std::move(symbol));
         }
@@ -1931,7 +1856,6 @@ return ide.plugin({
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
 
   const auto& items = WorkspaceShellTestAccess::PluginSidebarItems(shell);
-  // 5000 adapted symbol rows + one truncation marker row.
   Expect(items.size() == 5001,
          "the outline is capped at the 5000-node budget plus a truncation marker");
   Expect(items.back().label == "… (outline truncated)",
@@ -1940,9 +1864,6 @@ return ide.plugin({
          "the truncation marker does not navigate anywhere");
 }
 
-// Regression: hovering resolves through the language server when no plugin hover
-// provider answers. The LSP hover `contents` (MarkupContent here) fills the same
-// hover cache the popup renders.
 void TestWorkspaceShellHoverFromLspFallback() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1991,13 +1912,6 @@ return ide.plugin({
          "LSP hover fallback should populate the hover cache from the server contents");
 }
 
-// Regression: a hover completion that lands after the cache has moved on must be
-// dropped. The completion used to prove "still my cell" by carrying a copy of the
-// cell's std::filesystem::path -- four allocations per kickoff, on a path that
-// runs every painted frame the pointer spends over text -- and now compares the
-// cache's generation stamp instead. This is the assertion that stamp has to earn:
-// stage two hovers, answer the FIRST one after the second has re-pointed the
-// cache, and require its content not to appear under the second cell.
 void TestWorkspaceShellHoverSupersededCompletionIsDropped() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2026,8 +1940,6 @@ return ide.plugin({
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
          "hover supersede fixture should open the project");
 
-  // Park every hover callback instead of answering it, so the test decides when
-  // (and in which order) a reply lands.
   std::vector<workspace::LspClient::HoverCallback> parked;
   auto stub = std::make_unique<workspace::LspClient>();
   workspace::LspClient* const stub_raw = stub.get();
@@ -2042,31 +1954,23 @@ return ide.plugin({
          "supersede fixture should attach a stub python client");
 
   WorkspaceShellTestAccess::OpenFile(shell, py_file);
-  // The stub routes each request through the main-thread mailbox, so the parking
-  // handler only runs on the drain.
   WorkspaceShellTestAccess::BeginLspHoverForTesting(shell, py_file, 1, 1);
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
   WorkspaceShellTestAccess::BeginLspHoverForTesting(shell, py_file, 2, 1);
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
   Expect(parked.size() == 2, "each hovered cell should dispatch its own hover request");
 
-  // Answer the first cell's request now that the cache describes the second.
   parked.front()(util::ParseJson(R"({"contents":{"kind":"markdown","value":"stale"}})"));
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
   Expect(WorkspaceShellTestAccess::HoverCacheContentForTesting(shell).empty(),
          "a hover reply for a superseded cell must not populate the current cell");
 
-  // The live cell still resolves from its own reply.
   parked.back()(util::ParseJson(R"({"contents":{"kind":"markdown","value":"fresh"}})"));
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
   Expect(WorkspaceShellTestAccess::HoverCacheContentForTesting(shell) == "fresh",
          "the current cell's own hover reply should still resolve it");
 }
 
-// Regression: the format-document command applies the language server's TextEdit[]
-// to the active buffer. Guards the full end-to-end path: action -> LSP request ->
-// multi-edit apply (the request bug that dropped all but the first edit would drop
-// the second edit here).
 void TestWorkspaceShellFormatDocumentAppliesLspEdits() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2098,8 +2002,6 @@ return ide.plugin({
   auto stub = std::make_unique<workspace::LspClient>();
   workspace::LspClient* const stub_raw = stub.get();
   stub_raw->EnableTestStubMode();
-  // Two edits: reformat both lines. The second edit must survive (the dropped-edits
-  // bug would leave line 2 untouched).
   stub_raw->SetTestFormattingHandler([](std::string uri, bool, workspace::LspClient::FormattingCallback cb) {
     (void)uri;
     cb(std::vector<workspace::LspClient::TextEdit>{
@@ -2121,11 +2023,6 @@ return ide.plugin({
          "formatting should also apply the trailing edit to line 2 (no dropped edits)");
 }
 
-// Formatting asked every server for spaces (`insertSpaces: true` was hard-coded),
-// so formatting a tab-indented file re-indented it with spaces; and its edits
-// were applied whatever the user typed while the server worked, against text
-// they were not computed for. The request follows the buffer's soft tabs, and a
-// result for a buffer that changed since is dropped (as VS Code does).
 void TestWorkspaceShellFormatDocumentFollowsTabsAndDropsAStaleResult() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2158,14 +2055,14 @@ return ide.plugin({
   stub_raw->SetTestFormattingHandler(
       [&](std::string, bool insert_spaces, workspace::LspClient::FormattingCallback cb) {
         asked_spaces = insert_spaces;
-        held = std::move(cb);  // answered later, as a slow server would
+        held = std::move(cb);
       });
   Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
              .InstallTestClientIntoExistingForTesting("python", std::move(stub)),
          "a stub python client");
   WorkspaceShellTestAccess::OpenFile(shell, py_file);
   auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
-  editor.SetSoftTabs(false);  // what indent detection makes of a tab-indented file
+  editor.SetSoftTabs(false);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "format-document"), "format-document runs");
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
   Expect(asked_spaces == std::optional<bool>(false), "a buffer indented with tabs asks for tabs");
@@ -2179,10 +2076,6 @@ return ide.plugin({
          "edits computed for the old text are not applied to the new: " + std::string(editor.lines()[0]));
 }
 
-// A code action's fix is edits computed for the text when the list was asked
-// for; picking it after the buffer changed (the list leaves typing to the editor)
-// applied them to text they were not computed for. The pick is refused, with a
-// reason in the list, and the buffer is left as the user made it.
 void TestWorkspaceShellCodeActionFixIsRefusedOnAChangedBuffer() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2228,15 +2121,13 @@ return ide.plugin({
   Expect(WorkspaceShellTestAccess::CodeActionSession(shell).items.size() == 1, "the fix is listed");
 
   editor.MoveCursorTo(0, 0);
-  editor.InsertText("# header\n");  // line 0 is no longer the import
+  editor.InsertText("# header\n");
   Expect(!WorkspaceShellTestAccess::ExecuteSelectedCodeAction(shell), "the stale fix is refused");
   Expect(editor.lines()[0] == "# header" && editor.lines()[1] == "import os",
          "and the buffer is as the user made it: " + std::string(editor.lines()[0]));
   Expect(!WorkspaceShellTestAccess::CodeActionSession(shell).error.empty(), "the list says why");
 }
 
-// Regression: the rename-symbol command prefills the symbol under the cursor, and
-// on confirm applies the language server's workspace edit to the open buffer.
 void TestWorkspaceShellRenameSymbolAppliesLspEdit() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2268,7 +2159,6 @@ return ide.plugin({
   auto stub = std::make_unique<workspace::LspClient>();
   workspace::LspClient* const stub_raw = stub.get();
   stub_raw->EnableTestStubMode();
-  // Rename both occurrences of `value` to the typed name.
   stub_raw->SetTestRenameHandler([](std::string uri, std::string new_name,
                                     workspace::LspClient::RenameCallback cb) {
     workspace::LspClient::WorkspaceEdit edit;
@@ -2283,7 +2173,7 @@ return ide.plugin({
          "fixture should attach a stub python client");
 
   WorkspaceShellTestAccess::OpenFile(shell, py_file);
-  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 2);  // inside "value"
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 2);
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "rename-symbol"),
          "rename-symbol command should open the prompt");
@@ -2301,8 +2191,6 @@ return ide.plugin({
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[1] == "print(count)",
          "rename should apply the edit to the second occurrence as well");
 
-  // The command form takes the name and skips the prompt (a headless driver
-  // cannot answer one).
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 2);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "rename-symbol total"),
          "rename-symbol <name> dispatches");
@@ -2313,10 +2201,6 @@ return ide.plugin({
          "the named rename applies the server's edit");
 }
 
-// A rename's edit is positions in the text it was asked for. A server that sends
-// unversioned `changes` (most do) gave the version check nothing to compare, so
-// an answer that arrived after the user typed was applied to other text. The
-// requesting buffer's content revision now guards it, as for formatting.
 void TestWorkspaceShellRenameResultForAChangedBufferIsDropped() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2372,8 +2256,6 @@ return ide.plugin({
              std::string(editor.lines()[1]));
 }
 
-// Regression: a rename that touches files which aren't open confirms first, then
-// opens every affected file, applies the edit, and saves them all to disk.
 void TestWorkspaceShellRenameSymbolOpensAndSavesClosedFiles() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2383,7 +2265,7 @@ void TestWorkspaceShellRenameSymbolOpensAndSavesClosedFiles() {
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
   const std::filesystem::path project = temp_dir.path() / "proj";
   const std::filesystem::path main_py = project / "main.py";
-  const std::filesystem::path helper_py = project / "helper.py";  // stays closed until confirm
+  const std::filesystem::path helper_py = project / "helper.py";
   WriteFile(main_py, "value = 1\n");
   WriteFile(helper_py, "print(value)\n");
 
@@ -2422,16 +2304,14 @@ return ide.plugin({
          "fixture should attach a stub python client");
 
   WorkspaceShellTestAccess::OpenFile(shell, main_py);
-  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 2);  // inside "value"
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 2);
 
-  // Type the new name and submit -> LSP rename request.
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "rename-symbol"),
          "rename-symbol should open the name prompt");
   WorkspaceShellTestAccess::SetPromptSurfaceInput(shell, "count");
   WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
 
-  // helper.py isn't open, so a confirmation appears before opening/saving.
   Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
          "a rename touching unopened files should confirm first");
   Expect(WorkspaceShellTestAccess::PromptSurfaceTitle(shell) == "Rename Across Files",
@@ -2439,23 +2319,16 @@ return ide.plugin({
   Expect(WorkspaceShellTestAccess::PromptSurfaceMessage(shell).find("not open") != std::string::npos,
          "the confirmation should state that some files are not open");
 
-  // Confirm -> apply main.py in place + save, and apply helper.py SILENTLY on disk.
   WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
 
   Expect(ReadFile(main_py) == "count = 1\n",
          "the already-open file should be renamed and saved to disk");
   Expect(ReadFile(helper_py) == "print(count)\n",
          "the previously-closed file should be renamed and saved to disk");
-  // VSCode-style silent apply: the closed file is written directly, NOT opened as
-  // a tab (no tab spam on large renames).
   Expect(WorkspaceShellTestAccess::CountOpenBufferViews(shell, helper_py) == 0,
          "a closed file touched by a rename must be written on disk without opening a tab");
 }
 
-// Regression for the LSP-primary concurrent provider merge: a language with BOTH
-// a plugin completion provider AND a language server must show the UNION of both
-// sources (LSP-first, de-duplicated) — previously the plugin result suppressed
-// the server entirely (serial plugin-first fallback).
 void TestWorkspaceShellCompletionMergesPluginAndLspSources() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2467,8 +2340,6 @@ void TestWorkspaceShellCompletionMergesPluginAndLspSources() {
   const std::filesystem::path md_file = project / "notes.md";
   WriteFile(md_file, "alpha\n\n");
 
-  // The plugin registers a markdown completion provider AND a markdown server.
-  // The provider returns one shared label ("common") plus a plugin-only label.
   WritePluginInit(
       plugins_root, "mdtools",
       R"(local ide = require("microide")
@@ -2499,7 +2370,6 @@ return ide.plugin({
   auto stub = std::make_unique<workspace::LspClient>();
   workspace::LspClient* const stub_raw = stub.get();
   stub_raw->EnableTestStubMode();
-  // The server returns an LSP-only label plus the same shared "common" label.
   stub_raw->SetTestCompletionHandler(
       [](std::string, workspace::LspClient::Position,
          workspace::LspClient::CompletionCallback cb) {
@@ -2519,14 +2389,10 @@ return ide.plugin({
          "fixture should attach a stub markdown client");
 
   WorkspaceShellTestAccess::OpenFile(shell, md_file);
-  // At the end of `alpha` the list would be filtered by that word and match
-  // nothing; an empty word shows every candidate, which is what this test is about.
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "completion"),
          "completion command should execute");
-  // The plugin source resolves inline; drain the mailbox so the concurrent LSP
-  // stub response arrives and the merge re-publishes.
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
 
   const auto& session = WorkspaceShellTestAccess::CompletionSession(shell);
@@ -2549,10 +2415,6 @@ return ide.plugin({
   Expect(has_plugin_only, "a plugin-only completion must survive the merge");
 }
 
-// Accepting a completion applies the item's additionalTextEdits -- the auto-import
-// line clangd/pyright/tsserver attach to a symbol from another file -- along with
-// the insertion, in one undo step. They are positioned in the pre-completion
-// document, so the import line above does not shift where the symbol lands.
 void TestWorkspaceShellCompletionAppliesAdditionalTextEdits() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2591,7 +2453,7 @@ return ide.plugin({
         workspace::LspClient::CompletionItem item;
         item.label = "vector";
         item.insert_text = "vector";
-        item.replace_range = workspace::LspClient::Range{{1, 4}, {1, 6}};  // "ve"
+        item.replace_range = workspace::LspClient::Range{{1, 4}, {1, 6}};
         item.additional_text_edits.push_back(
             {workspace::LspClient::Range{{0, 0}, {0, 0}}, "import vector\n"});
         items.push_back(std::move(item));
@@ -2625,11 +2487,6 @@ return ide.plugin({
          "one undo step removes both the import line and the insertion");
 }
 
-// TD-2026-09-28-304: renaming a file with unsaved edits and choosing "Save" used
-// to run its format-on-save formatter on the shell thread, freezing the window for
-// up to the formatter's timeout -- remotely, a round trip on top. The save now
-// defers like an interactive one, and the rename runs when the write lands: the
-// path must not move before the formatted bytes are on disk.
 void TestWorkspaceShellRenameOfDirtyFileWaitsForTheFormatterNotTheWindow() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2683,10 +2540,6 @@ return ide.plugin({
          "and the tab follows it");
 }
 
-// Fixture for the completion-follows-typing tests: a markdown buffer served by a
-// stub language server whose completion handler the test supplies, with the caret
-// placed and `body` run against the open shell. Skips (returns) where Lua plugins
-// or a POSIX host are unavailable, like its neighbours.
 void WithMarkdownCompletionServer(
     const std::string& content, std::size_t caret_line, std::size_t caret_column,
     std::function<void(std::string, workspace::LspClient::Position,
@@ -2745,10 +2598,6 @@ bool CompletionListUp(const WorkspaceShell& shell) {
              WorkspaceShell::OverlayMode::Completion;
 }
 
-// QA flow outline: the outline's documentSymbol request was built for "file://"
-// -- the URI argument and the callback that MOVES the path into its capture were
-// sibling arguments, and GCC evaluated the move first -- so clangd answered
-// "unresolvable URI" and the outline never showed a symbol.
 void TestWorkspaceShellOutlineAsksForTheFilesSymbols() {
   WithMarkdownCompletionServer(
       "# Title\n\n## Section\n", 0, 0,
@@ -2781,10 +2630,6 @@ void TestWorkspaceShellOutlineAsksForTheFilesSymbols() {
       });
 }
 
-// QA flow lsp-navigation: Ctrl+click places the caret and asks the language
-// server for the definition, which answers asynchronously. It returned before
-// requesting the editor's repaint, so the caret and its line highlight stayed
-// on the old line until the answer came -- or for good when it did not.
 void TestWorkspaceShellCtrlClickRepaintsTheCaretBeforeTheDefinition() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2826,10 +2671,6 @@ void TestWorkspaceShellCtrlClickRepaintsTheCaretBeforeTheDefinition() {
       });
 }
 
-// QA flow lsp-navigation: Find References (Shift+F12) wrote its results into
-// the lsp.references output channel and showed nothing, so the command looked
-// dead. It shows that channel in the bottom panel, as call hierarchy and
-// workspace symbols do.
 void TestWorkspaceShellFindReferencesShowsTheResults() {
   WithMarkdownCompletionServer(
       "alpha\nalpha\n", 0, 1,
@@ -2867,8 +2708,6 @@ void TestWorkspaceShellFindReferencesShowsTheResults() {
       });
 }
 
-// QA flow lsp-completion: a click on a row of a NARROWED completion list must
-// accept the row clicked. It accepted the selected one instead -- the first.
 void TestWorkspaceShellCompletionClickAcceptsTheClickedRow() {
   WithMarkdownCompletionServer(
       "x = \n", 0, 4,
@@ -2877,7 +2716,7 @@ void TestWorkspaceShellCompletionClickAcceptsTheClickedRow() {
         for (const char* label : {"beta", "alpha_one", "gamma", "alpha_two"}) {
           items.push_back(PlainCompletionItem(label));
         }
-        cb(workspace::LspClient::CompletionList{std::move(items), /*is_incomplete=*/false});
+        cb(workspace::LspClient::CompletionList{std::move(items), false});
       },
       [&](WorkspaceShell& shell, editor::TextViewport& editor) {
         constexpr int kWidth = 1280;
@@ -2916,18 +2755,13 @@ void TestWorkspaceShellCompletionClickAcceptsTheClickedRow() {
       });
 }
 
-// QA flow snippets-deep: the completion list floats at the caret, inline with
-// typing, so a click elsewhere in the editor closes it AND lands where it was
-// aimed. It was dismissed like a modal picker -- the click consumed, focus sent
-// to the sidebar -- so the caret stayed put and the next key typed went to the
-// file tree.
 void TestWorkspaceShellClickOutsideCompletionLandsInTheEditor() {
   WithMarkdownCompletionServer(
       "x = \nsecond line\nthird\n", 0, 4,
       [](std::string, workspace::LspClient::Position, workspace::LspClient::CompletionCallback cb) {
         std::vector<workspace::LspClient::CompletionItem> items;
         items.push_back(PlainCompletionItem("alpha"));
-        cb(workspace::LspClient::CompletionList{std::move(items), /*is_incomplete=*/false});
+        cb(workspace::LspClient::CompletionList{std::move(items), false});
       },
       [&](WorkspaceShell& shell, editor::TextViewport& editor) {
         constexpr int kWidth = 1280;
@@ -2944,7 +2778,6 @@ void TestWorkspaceShellClickOutsideCompletionLandsInTheEditor() {
         Expect(CompletionListUp(shell), "the completion list should be up");
         const util::JsonValue ui = WorkspaceShellTestAccess::ControlUi(shell);
         const auto& r = ui["surfaces"]["editorSurface"].AsArray();
-        // Well below the text: the press resolves to the last line.
         const float x = static_cast<float>(r[0].AsInt() + r[2].AsInt() / 2);
         const float y = static_cast<float>(r[1].AsInt() + r[3].AsInt() - 20);
         (void)DispatchEvents(shell, {MouseMotionEvent(x, y),
@@ -2964,8 +2797,6 @@ void TestWorkspaceShellClickOutsideCompletionLandsInTheEditor() {
       });
 }
 
-// Down then Enter in a narrowed completion list accepts the row Down moved to
-// (accepting re-filtered and reset the selection to the top).
 void TestWorkspaceShellCompletionDownEnterAcceptsTheSecondRow() {
   WithMarkdownCompletionServer(
       "x = \n", 0, 4,
@@ -2974,7 +2805,7 @@ void TestWorkspaceShellCompletionDownEnterAcceptsTheSecondRow() {
         for (const char* label : {"beta", "alpha_one", "alpha_two"}) {
           items.push_back(PlainCompletionItem(label));
         }
-        cb(workspace::LspClient::CompletionList{std::move(items), /*is_incomplete=*/false});
+        cb(workspace::LspClient::CompletionList{std::move(items), false});
       },
       [&](WorkspaceShell& shell, editor::TextViewport& editor) {
         WorkspaceShellTestAccess::SetFocusEditor(shell);
@@ -2987,9 +2818,6 @@ void TestWorkspaceShellCompletionDownEnterAcceptsTheSecondRow() {
       });
 }
 
-// QA flow lsp-completion: typing into an open completion list narrows it, and
-// the popup shrinks -- but only its new, smaller rect was repainted, so the rows
-// it no longer covered stayed on screen until something else repainted them.
 void TestWorkspaceShellCompletionPopupShrinkRepaintsWhatItLeft() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3002,7 +2830,7 @@ void TestWorkspaceShellCompletionPopupShrinkRepaintsWhatItLeft() {
                                   "gamma_two", "delta"}) {
           items.push_back(PlainCompletionItem(label));
         }
-        cb(workspace::LspClient::CompletionList{std::move(items), /*is_incomplete=*/false});
+        cb(workspace::LspClient::CompletionList{std::move(items), false});
       },
       [&](WorkspaceShell& shell, editor::TextViewport&) {
         constexpr int kWidth = 1280;
@@ -3029,12 +2857,6 @@ void TestWorkspaceShellCompletionPopupShrinkRepaintsWhatItLeft() {
       });
 }
 
-// TD-2026-10-07-320. Typing into an open completion list goes to the editor and
-// narrows the list LOCALLY: a server that called its list complete is asked once
-// for the word, however many characters follow. The assertion that can fail is the
-// request count; "the list changed" passes just as well with a request per key.
-// Before this the list swallowed every typed character (the text input surface was
-// None while it was up), so the only way to narrow it was to close it and ask again.
 void TestWorkspaceShellCompletionNarrowsLocallyWithOneRequestPerWord() {
   int requests = 0;
   WithMarkdownCompletionServer(
@@ -3046,7 +2868,7 @@ void TestWorkspaceShellCompletionNarrowsLocallyWithOneRequestPerWord() {
         items.push_back(PlainCompletionItem("alpha_one"));
         items.push_back(PlainCompletionItem("beta"));
         items.push_back(PlainCompletionItem("alpha_two"));
-        cb(workspace::LspClient::CompletionList{std::move(items), /*is_incomplete=*/false});
+        cb(workspace::LspClient::CompletionList{std::move(items), false});
       },
       [&](WorkspaceShell& shell, editor::TextViewport& editor) {
         Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "completion"),
@@ -3085,9 +2907,6 @@ void TestWorkspaceShellCompletionNarrowsLocallyWithOneRequestPerWord() {
       });
 }
 
-// An `isIncomplete` list is the server saying "ask me again as the word grows".
-// Each keystroke re-asks (as TriggerForIncompleteCompletions) until an answer is
-// complete, after which typing refilters locally again.
 void TestWorkspaceShellCompletionReRequestsOnlyWhileIncomplete() {
   int requests = 0;
   std::vector<std::uint32_t> request_columns;
@@ -3100,7 +2919,6 @@ void TestWorkspaceShellCompletionReRequestsOnlyWhileIncomplete() {
         std::vector<workspace::LspClient::CompletionItem> items;
         items.push_back(PlainCompletionItem("also"));
         items.push_back(PlainCompletionItem("alpine"));
-        // Only the first answer is incomplete.
         cb(workspace::LspClient::CompletionList{std::move(items), requests == 1});
       },
       [&](WorkspaceShell& shell, editor::TextViewport&) {
@@ -3125,10 +2943,6 @@ void TestWorkspaceShellCompletionReRequestsOnlyWhileIncomplete() {
       });
 }
 
-// A server's per-item range ends where the caret was when the list was requested.
-// Accepting after typing more must replace what was typed since, or `ve` + accept
-// `vector` leaves `vectorve`... the shape every client that keeps a list open while
-// typing has to get right. Also: a space ends the word and closes the list.
 void TestWorkspaceShellCompletionAcceptAfterTypingReplacesTheTypedWord() {
   const auto handler = [](std::string, workspace::LspClient::Position pos,
                           workspace::LspClient::CompletionCallback cb) {
@@ -3163,9 +2977,6 @@ void TestWorkspaceShellCompletionAcceptAfterTypingReplacesTheTypedWord() {
   });
 }
 
-// TD-2026-10-07-321: the list opens by itself, as VS Code's quick suggestions do --
-// on the first character of a word, ONE request for the word, hidden until it
-// has rows.
 void TestWorkspaceShellQuickSuggestionsAskOncePerWord() {
   int requests = 0;
   WithMarkdownCompletionServer(
@@ -3202,8 +3013,6 @@ void TestWorkspaceShellQuickSuggestionsAskOncePerWord() {
       });
 }
 
-// A source with nothing to offer is silent: no "No completions available" card
-// on every word typed in a comment, and no second request for the same word.
 void TestWorkspaceShellQuickSuggestionsWithNothingToOfferStayHidden() {
   int requests = 0;
   WithMarkdownCompletionServer(
@@ -3224,8 +3033,6 @@ void TestWorkspaceShellQuickSuggestionsWithNothingToOfferStayHidden() {
       });
 }
 
-// A server trigger character opens a list anchored AT the caret: `x.` + accept
-// gives `x.member`, not a replacement of `x`.
 void TestWorkspaceShellTriggerCharacterOpensCompletionAtTheCaret() {
   std::vector<workspace::LspClient::Position> positions;
   WithMarkdownCompletionServer(
@@ -3259,9 +3066,6 @@ void TestWorkspaceShellTriggerCharacterOpensCompletionAtTheCaret() {
       ".");
 }
 
-// Signature help is LSP-primary: when a server serves the language, its result is
-// shown even though a plugin provider also answers. The plugin result is used only
-// as a fallback when no server serves the buffer.
 void TestWorkspaceShellSignatureHelpPrefersLspOverPlugin() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3273,7 +3077,6 @@ void TestWorkspaceShellSignatureHelpPrefersLspOverPlugin() {
   const std::filesystem::path md_file = project / "notes.md";
   WriteFile(md_file, "alpha\n");
 
-  // The plugin registers a markdown signature-help provider AND a markdown server.
   WritePluginInit(
       plugins_root, "mdsig",
       R"lua(local ide = require("microide")
@@ -3323,8 +3126,6 @@ return ide.plugin({
 
   Expect(WorkspaceShellTestAccess::ShowSignatureHelp(shell),
          "signature help should dispatch");
-  // The plugin source resolves inline; drain so the concurrent LSP stub arrives and
-  // the LSP-primary choice publishes the popup.
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
 
   const auto popup = WorkspaceShellTestAccess::SignatureHelpPopup(shell);
@@ -3333,10 +3134,6 @@ return ide.plugin({
          "the language server's signature must win over the plugin's for a served language");
 }
 
-// TD-2026-10-20-369: parameter hints open as a call is typed. The server's
-// signatureHelpProvider.triggerCharacters open them; while they are up every
-// keystroke re-asks, so the active parameter follows `,`, and the server's empty
-// answer once `)` ends the call closes them.
 void TestWorkspaceShellSignatureHelpFollowsTheCallBeingTyped() {
   WithMarkdownCompletionServer(
       "\n", 0, 0,
@@ -3350,8 +3147,6 @@ void TestWorkspaceShellSignatureHelpFollowsTheCallBeingTyped() {
         }
         client->SetSignatureHelpTriggerCharactersForTesting("(,)");
         int requests = 0;
-        // Answers like a server: inside `f(` the parameter is the count of commas
-        // before the caret; after the closing `)` there is no call.
         client->SetTestSignatureHelpHandler(
             [&requests, &editor](std::string, workspace::LspClient::Position pos,
                                  workspace::LspClient::SignatureHelpCallback cb) {
@@ -3374,7 +3169,7 @@ void TestWorkspaceShellSignatureHelpFollowsTheCallBeingTyped() {
         const auto type = [&](std::string_view text) {
           Expect(WorkspaceShellTestAccess::HandleTextInput(shell, text), "type");
           WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
-          WorkspaceShellTestAccess::ExpireSignatureHelp(shell);  // the frame's expiry check
+          WorkspaceShellTestAccess::ExpireSignatureHelp(shell);
         };
         type("f");
         Expect(requests == 0 && !WorkspaceShellTestAccess::SignatureHelpPopup(shell).has_value(),
@@ -3407,9 +3202,6 @@ void TestWorkspaceShellSignatureHelpFollowsTheCallBeingTyped() {
       });
 }
 
-// QA flow lsp-signature-help: a re-ask whose answer is empty clears the popup
-// through ShowSignatureHelpPopup(""), which dropped it without a repaint -- the
-// keystroke repainted its own line and the card stayed on screen below it.
 void TestWorkspaceShellSignatureHelpClosingRepaintsWhereItWas() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3425,7 +3217,6 @@ void TestWorkspaceShellSignatureHelpClosingRepaintsWhereItWas() {
           return;
         }
         client->SetSignatureHelpTriggerCharactersForTesting("(");
-        // A signature while the caret follows `(`; nothing once anything else is typed.
         client->SetTestSignatureHelpHandler(
             [&editor](std::string, workspace::LspClient::Position pos,
                       workspace::LspClient::SignatureHelpCallback cb) {
@@ -3451,7 +3242,6 @@ void TestWorkspaceShellSignatureHelpClosingRepaintsWhereItWas() {
         pin_caret();
         shell.Render(canvas.renderer(), kWidth, kHeight);
         (void)shell.ConsumePendingRenderInvalidation();
-        // The keystroke paints its frame; the server's answer arrives in a later one.
         const auto type = [&](const char* text) {
           const auto typed = PaintAndDiffWithFullRepaint(
               shell, canvas, kWidth, kHeight, DispatchEvents(shell, {TextInputEvent(text)}),
@@ -3475,10 +3265,6 @@ void TestWorkspaceShellSignatureHelpClosingRepaintsWhereItWas() {
       });
 }
 
-// QA monkey (tooling, seed 7): the signature-help card hides while a menu holds the
-// pointer, and paint laid it out from live state. A menu opening and closing over
-// it never touched the card's rect, so the card came back in a full repaint while
-// the partial frame -- the menu's clips -- left the editor without it.
 void TestWorkspaceShellSignatureHelpComesBackWhenAMenuClosesOverIt() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3529,9 +3315,6 @@ void TestWorkspaceShellSignatureHelpComesBackWhenAMenuClosesOverIt() {
         frame({TextInputEvent("(")}, "opening the hints");
         Expect(WorkspaceShellTestAccess::SignatureHelpPopup(shell).has_value(),
                "the trigger character opens the hints");
-        // The tree's context menu, opened by a right-click on a row: the card goes
-        // while the menu holds the pointer, and the frame repaints the menu's
-        // region, not the card's.
         const std::optional<SDL_FRect> row = WorkspaceShellTestAccess::TreeSidebarRowRect(shell, 0);
         Expect(row.has_value(), "the tree shows a row to right-click");
         if (!row.has_value()) {
@@ -3545,8 +3328,6 @@ void TestWorkspaceShellSignatureHelpComesBackWhenAMenuClosesOverIt() {
         right_up.button.button = SDL_BUTTON_RIGHT;
         frame({MouseMotionEvent(rx, ry), right_down, right_up}, "a menu opening over the hints");
         Expect(WorkspaceShellTestAccess::AnyMenuPopupOpen(shell), "the tree's context menu is open");
-        // A press outside an open menu only closes it (the caret stays, so the
-        // hints do too): the monkey's drag that began in the editor.
         const SDL_FRect editor = WorkspaceShellTestAccess::CurrentLayout(shell).editor_surface;
         const float ex = editor.x + editor.w - 24.0f;
         const float ey = editor.y + editor.h - 24.0f;
@@ -3559,11 +3340,6 @@ void TestWorkspaceShellSignatureHelpComesBackWhenAMenuClosesOverIt() {
       });
 }
 
-// QA flow lsp-signature-help: typing a closer steps over the auto-inserted one --
-// no edit -- yet still reported "the last change", and the LSP sync re-sent the
-// viewport's last_applied_edit, which was the PREVIOUS keystroke's. The server then
-// held `f(xx)` for a buffer of `f(x)`, and every later position was off by one
-// (clangd put a typed `,` inside a string literal and the hints never advanced).
 void TestWorkspaceShellSteppingOverACloserSendsTheServerNothing() {
   WithMarkdownCompletionServer(
       "\n", 0, 0,
@@ -3590,8 +3366,6 @@ void TestWorkspaceShellSteppingOverACloserSendsTheServerNothing() {
         Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "y"), "type after the call");
         Expect(client->TrackedDocumentVersion(uri) == std::optional<int>(*before + 1),
                "the next real edit is sent once");
-        // What the sync keeps per document goes with it, or it grows by one entry
-        // for every file synced in a session.
         Expect(WorkspaceShellTestAccess::LspSyncedDocumentCount(shell) == 1, "one document synced");
         WorkspaceShellTestAccess::CloseTab(shell, 0);
         Expect(WorkspaceShellTestAccess::LspSyncedDocumentCount(shell) == 0,
@@ -3599,9 +3373,6 @@ void TestWorkspaceShellSteppingOverACloserSendsTheServerNothing() {
       });
 }
 
-// A plugin signature-help provider opens on its trigger characters (`(` and `,` by
-// default) with no language server; it is asked by position alone, so `)` closes
-// its hints. A plugin completion provider's `trigger_characters` open the list.
 void TestWorkspaceShellPluginProvidersOpenOnTheirTriggerCharacters() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3673,10 +3444,6 @@ return ide.plugin({
   Expect(CompletionListUp(shell), "the completion provider's trigger character opens the list");
 }
 
-// Inlay hints flow LSP -> mid-line virtual text: opening a served document
-// requests textDocument/inlayHint and publishes each result as an "lsp:inlay"
-// InlineText decoration anchored at the hint's byte column (padding baked into
-// the label), which the editor renders mid-line via the InlayRowDisplacement path.
 void TestWorkspaceShellInlayHintsPublishMidLineDecorations() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3720,8 +3487,6 @@ return ide.plugin({
          "fixture should attach a stub markdown client");
 
   WorkspaceShellTestAccess::OpenFile(shell, md_file);
-  // Opening the document on the server (via the hover kickoff) fires the inlay
-  // request as a side effect; the helper drains the async response.
   (void)WorkspaceShellTestAccess::ResolveLspHoverForTesting(shell, md_file, 1, 1);
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
 
@@ -3742,11 +3507,6 @@ return ide.plugin({
   }
 }
 
-// Code lenses flow LSP -> line-level annotations: opening a served document
-// requests textDocument/codeLens, fills in title-less lenses through
-// codeLens/resolve (the only way rust-analyzer and typescript-language-server
-// deliver theirs), publishes them as "lsp:codelens" decorations, and routes a
-// click back to the server as workspace/executeCommand with the original arguments.
 void TestWorkspaceShellCodeLensesResolveAndActivate() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3776,7 +3536,6 @@ return ide.plugin({
 
   auto stub = std::make_unique<workspace::LspClient>();
   stub->EnableTestStubMode();
-  // Line 0 arrives complete; line 1 arrives title-less and must be resolved.
   stub->SetTestCodeLensHandler([](std::string, workspace::LspClient::CodeLensCallback cb) {
     workspace::LspClient::CodeLens resolved;
     resolved.range = {{0, 0}, {0, 13}};
@@ -3797,8 +3556,6 @@ return ide.plugin({
       [&resolve_saw](util::JsonValue unresolved, workspace::LspClient::ResolveCodeLensCallback cb) {
         resolve_saw = unresolved;
         workspace::LspClient::CodeLens filled;
-        // A server is free to echo a default range here; the host must keep the
-        // range from the original lens rather than collapsing the lens onto line 0.
         filled.title = "Run test";
         filled.command = "md.runTest";
         cb(std::move(filled));
@@ -3850,22 +3607,11 @@ return ide.plugin({
   Expect(executed_arguments.size() == 1 && executed_arguments[0].AsInt(0) == 7,
          "the lens's original arguments are forwarded verbatim");
 
-  // A handle that no longer names a published lens must be inert, not a crash or a
-  // stray command: a click can land after the buffer republished.
   executed_command.clear();
   WorkspaceShellTestAccess::ActivateCodeLens(shell, line0[0].payload + 4242);
   Expect(executed_command.empty(), "an unknown payload handle runs nothing");
 }
 
-// Turning the LSP master switch off must drop EVERY server-owned overlay. It used
-// to clear only diagnostics and semantic tokens, so inlay hints stayed painted
-// after the subsystem was switched off and its servers were retired — output from
-// a server that is no longer running, with no way to get rid of it.
-// A server that registers after its file opened still starts for it. A fresh
-// project's plugins load off the UI thread, and a file opened before they land
-// (an agent's `project-open` then `open`, a quick Ctrl+P) found no server; the
-// reload engaged nothing when it did land, so the status read "Starting…" with no
-// process ever started (QA lsp-csharp, lsp-typescript).
 void TestWorkspaceShellServerRegisteredAfterOpenStartsForTheActiveFile() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3886,7 +3632,6 @@ void TestWorkspaceShellServerRegisteredAfterOpenStartsForTheActiveFile() {
   Expect(!WorkspaceShellTestAccess::LspManagerForTesting(shell).HasServer("markdown"),
          "no server is registered yet");
 
-  // The plugin's contribution lands now, as a reload that finished after the open.
   WritePluginInit(
       plugins_root, "mdlsp",
       R"(local ide = require("microide")
@@ -3907,10 +3652,6 @@ return ide.plugin({
          "and starts it for the markdown file already active, as opening it would have");
 }
 
-// QA plugins-reload on the Wayland lane: Reload Plugins put a plugin's status
-// item back at its setup text ("qa-api 5" became "qa-api") and the breadcrumb row
-// it is drawn in kept the old text -- the frame repainted the editor surface.
-// Frame prep now repaints the row whenever the items differ from what it painted.
 void TestWorkspaceShellAReloadedStatusItemRepaintsTheBreadcrumb() {
 #if !MICROIDE_HAS_LUA_PLUGINS || !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3950,21 +3691,14 @@ return ide.plugin({
 
   WritePluginInit(plugins_root, "stat", plugin("stat"));
   Expect(WorkspaceShellTestAccess::ReloadPluginsIfPluginAssetsChanged(shell, true), "the edited plugin reloads");
-  // A frame for something else entirely: the editor surface, as the QA run's.
   workspace::RenderInvalidation editor_only;
   editor_only.rects.push_back(WorkspaceShellTestAccess::CurrentLayout(shell).editor_surface);
-  // The reload's own damage dropped: what is left is a status change with none of
-  // its own, as when a reloaded plugin's setup re-adds the item later.
   (void)shell.ConsumePendingRenderInvalidation();
   const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, editor_only);
   Expect(diff.identical(), "a frame after the reload paints the breadcrumb's new status text; " +
                                DescribePixelDiff(diff));
 }
 
-// QA plugins-reload: once a buffer had an unsaved edit no hover card appeared at
-// all -- the plugin hover path returned early on a dirty viewport, and the
-// language server is only asked as that path's fallback. With no plugin hover
-// provider, the server (which has every edit) must answer.
 void TestWorkspaceShellHoverInAnUnsavedBufferAsksTheServer() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4028,10 +3762,6 @@ return ide.plugin({
          "an unsaved buffer still gets the language server's hover: '" + hover_text() + "'");
 }
 
-// TD-2026-10-22-383: under a squiggle the hover card is the problem AND what the
-// symbol is, as in VS Code. A diagnostic used to hide the symbol's hover outright,
-// so csharp-ls's load-time "System.Object is not defined" (published before the
-// project loads, never retracted) hid every signature in the file.
 void TestWorkspaceShellHoverOnASquiggleShowsTheSymbolToo() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4105,9 +3835,6 @@ return ide.plugin({
   Expect(text.find("System.Object") < text.find("int value"), "the problem comes first");
 }
 
-// TD-2026-10-21-374: a plugin hover provider in a buffer with unsaved edits is
-// asked like in any other, and reads the live text through its buffer table --
-// the host used to skip plugins there, since they could only read the disk.
 void TestWorkspaceShellPluginHoverReadsTheUnsavedText() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4167,9 +3894,6 @@ return ide.plugin({
          "the plugin's hover reads the unsaved line, got: '" + hover_text() + "'");
 }
 
-// Show Hover (Ctrl+K Ctrl+I) is the hover card by keyboard: for the symbol at the
-// caret, with the pointer anywhere (or never in the window); Escape puts it away,
-// and so does moving the caret. The card was pointer-only (TD-2026-10-18-362).
 void TestWorkspaceShellShowHoverAtTheCaret() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4210,8 +3934,6 @@ return ide.plugin({
   WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
   SoftwareCanvas canvas{1280, 720};
   const auto frame = [&] {
-    // The app loop: a language server's answer is drained on its wake event, then
-    // the frame re-resolves the card.
     WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
     shell.Render(canvas.renderer(), 1280, 720);
     (void)shell.ConsumePendingRenderInvalidation();
@@ -4226,7 +3948,7 @@ return ide.plugin({
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "show-hover"), "show-hover should run");
   for (int i = 0; i < 5 && hover_text().empty(); ++i) {
-    frame();  // a language server's answer lands and re-resolves at the caret
+    frame();
   }
   Expect(hover_text().find("int value") != std::string::npos,
          "the card shows the hover for the caret's symbol: '" + hover_text() + "'");
@@ -4245,11 +3967,6 @@ return ide.plugin({
   Expect(hover_text().empty(), "moving the caret puts the card away");
 }
 
-// A hover is asked again when the pointer comes back to a symbol: the card cached
-// one answer per cell for as long as the editor ran, so a hover taken before the
-// server had loaded the project ("import twice", where the signature belongs) or
-// before another file changed the symbol stayed that answer forever (QA
-// lsp-typescript, under a loaded suite).
 void TestWorkspaceShellHoverAsksAgainWhenThePointerReturns() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4312,8 +4029,6 @@ return ide.plugin({
   const util::JsonValue& pane = ui["editors"][std::size_t{0}];
   const float x = static_cast<float>(pane["textX"].AsDouble() + 1.5 * pane["charWidth"].AsDouble());
   const float on_value = static_cast<float>(pane["firstLineY"].AsDouble() + 0.5 * pane["lineHeight"].AsDouble());
-  // The gutter beside the line: on no symbol, and clear of the card and the bridge
-  // to it (where a card is kept while the pointer travels toward it).
   const float gutter_x = static_cast<float>(pane["gutterX"].AsDouble() + 2.0);
   const auto rest_at = [&](float y, float at_x) {
     (void)DispatchEvents(shell, {MouseMotionEvent(at_x, y)});
@@ -4330,9 +4045,6 @@ return ide.plugin({
   rest_at(on_value, x);
   Expect(hover_text() == "answer 2", "back on the symbol, the server is asked again: '" + hover_text() + "'");
 
-  // No answer is not an answer for good: a server still loading its project
-  // (csharp-ls through MSBuild) says nothing, and that cell stayed silent for the
-  // session unless another symbol was hovered in between (QA lsp-csharp).
   rest_at(on_value, gutter_x);
   answers_are_empty = true;
   rest_at(on_value, x);
@@ -4417,10 +4129,6 @@ return ide.plugin({
          "master off must drop the semantic-token overlay");
 }
 
-// A code-lens response the buffer has moved past must be dropped WHOLE. Retiring
-// the URI's executable payloads before the generation guard runs would strip the
-// handles off the lenses a superseded response then fails to replace, leaving the
-// ones still painted on screen inert — they would look clickable and do nothing.
 void TestWorkspaceShellSupersededCodeLensResponseKeepsLiveLensesClickable() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4448,8 +4156,6 @@ return ide.plugin({
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
          "stale-lens fixture should open the project");
 
-  // Park each request's callback instead of answering it, so the test controls the
-  // order the two responses land in.
   std::vector<workspace::LspClient::CodeLensCallback> parked;
   auto stub = std::make_unique<workspace::LspClient>();
   stub->EnableTestStubMode();
@@ -4470,12 +4176,8 @@ return ide.plugin({
 
   WorkspaceShellTestAccess::OpenFile(shell, md_file);
   (void)WorkspaceShellTestAccess::ResolveLspHoverForTesting(shell, md_file, 1, 1);
-  // A second pull (what a save or an undo-to-clean does) while the first is still
-  // parked leaves two responses in flight.
   Expect(WorkspaceShellTestAccess::RequestCodeLensesForActiveBuffer(shell),
          "a second code-lens pull should be issuable");
-  // Stub responses are marshalled through the main-thread mailbox, so the handler
-  // that parks them only runs on a drain.
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
   Expect(parked.size() >= 2, "two code-lens requests should be outstanding");
   if (parked.size() < 2) {
@@ -4489,7 +4191,6 @@ return ide.plugin({
     lens.command = std::move(command);
     return lens;
   };
-  // Answer the NEWER request first; it becomes what is on screen.
   parked.back()(std::vector<workspace::LspClient::CodeLens>{make_lens("current", "md.current")});
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
   const auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
@@ -4504,7 +4205,6 @@ return ide.plugin({
   const std::uint64_t live_payload = decorations->code_lenses[0].payload;
   Expect(live_payload != 0, "the published lens carries an executable payload");
 
-  // Now the stale response lands. It must change nothing at all.
   parked.front()(std::vector<workspace::LspClient::CodeLens>{make_lens("stale", "md.stale")});
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
   const auto* after =
@@ -4520,10 +4220,6 @@ return ide.plugin({
          "the painted lens must still be clickable after a superseded response arrived");
 }
 
-// `call-hierarchy` chains prepareCallHierarchy -> callHierarchy/{incoming,outgoing}
-// Calls and renders navigable entries. Incoming calls list the CALL SITES inside
-// each caller (that is what the user wants to look at); outgoing calls navigate to
-// each callee's own name.
 void TestWorkspaceShellCallHierarchyRendersBothDirections() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4582,7 +4278,6 @@ return ide.plugin({
         call.item.range = {{1, 0}, {1, 26}};
         call.item.selection_range = {{1, 3}, {1, 9}};
         if (incoming) {
-          // Two call sites inside the caller, on lines 2 and 3 (1-based).
           call.call_ranges.push_back({{1, 14}, {1, 20}});
           call.call_ranges.push_back({{2, 13}, {2, 19}});
         }
@@ -4596,8 +4291,6 @@ return ide.plugin({
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 4);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "call-hierarchy"),
          "call-hierarchy should execute");
-  // Two chained round-trips: the second is issued from inside the first response,
-  // so it lands in the mailbox after that drain pass.
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
 
@@ -4616,7 +4309,6 @@ return ide.plugin({
   Expect(has("notes.md:2:15") && has("notes.md:3:14"),
          "incoming calls navigate to the CALL SITES inside the caller, not its declaration");
 
-  // Outgoing walks the other direction and navigates to each callee's own name.
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 4);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "call-hierarchy outgoing"),
          "call-hierarchy outgoing should execute");
@@ -4636,13 +4328,10 @@ return ide.plugin({
                  outgoing->end(),
          "the previous direction's heading must be gone");
 
-  // A bad direction argument is rejected rather than silently treated as incoming.
   Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "call-hierarchy sideways"),
          "an unknown direction argument is rejected");
 }
 
-// prepareRename refines the just-opened Rename Symbol prompt: it prefills the
-// server's placeholder, and rejects positions the server reports as not renameable.
 void TestWorkspaceShellPrepareRenameRefinesPrompt() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4674,7 +4363,6 @@ return ide.plugin({
   auto stub = std::make_unique<workspace::LspClient>();
   workspace::LspClient* const stub_raw = stub.get();
   stub_raw->EnableTestStubMode();
-  // First: the server suggests a placeholder distinct from the heuristic seed.
   stub_raw->SetTestPrepareRenameHandler(
       [](std::string, workspace::LspClient::Position,
          workspace::LspClient::PrepareRenameCallback cb) {
@@ -4692,16 +4380,13 @@ return ide.plugin({
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "rename-symbol"),
          "rename-symbol should open the prompt");
-  // The prompt opens immediately seeded with the heuristic "alpha".
   Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell), "rename prompt should be visible");
   Expect(WorkspaceShellTestAccess::PromptSurfaceInput(shell) == "alpha",
          "the prompt opens with the heuristic identifier seed");
-  // Draining delivers the prepareRename response, which refines the seed.
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
   Expect(WorkspaceShellTestAccess::PromptSurfaceInput(shell) == "server_placeholder",
          "prepareRename must prefill the server's placeholder over the heuristic seed");
 
-  // Now: the server reports the position is not renameable → the prompt is closed.
   stub_raw->SetTestPrepareRenameHandler(
       [](std::string, workspace::LspClient::Position,
          workspace::LspClient::PrepareRenameCallback cb) {
@@ -4717,9 +4402,6 @@ return ide.plugin({
          "a non-renameable position must dismiss the rename prompt");
 }
 
-// Regression for server-initiated workspace/applyEdit: a WorkspaceEdit pushed by
-// the language server must apply to open buffers in place AND write closed files
-// silently on disk (no tab), matching the client-initiated rename behavior.
 void TestWorkspaceShellServerApplyEditEditsOpenAndClosedFiles() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4729,7 +4411,7 @@ void TestWorkspaceShellServerApplyEditEditsOpenAndClosedFiles() {
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
   const std::filesystem::path project = temp_dir.path() / "proj";
   const std::filesystem::path open_md = project / "open.md";
-  const std::filesystem::path closed_md = project / "closed.md";  // never opened
+  const std::filesystem::path closed_md = project / "closed.md";
   WriteFile(open_md, "aaa\n");
   WriteFile(closed_md, "aaa\n");
 
@@ -4758,14 +4440,11 @@ return ide.plugin({
          "fixture should attach a stub markdown client");
 
   WorkspaceShellTestAccess::OpenFile(shell, open_md);
-  // Trigger any assist so LspClientForViewport binds the apply-edit handler on the
-  // client (mirrors the once-per-client diagnostics binding).
   WorkspaceShellTestAccess::ExecuteCommandLine(shell, "completion");
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
   Expect(stub_raw->HasApplyEditHandler(),
          "resolving the client for a viewport should bind the apply-edit handler");
 
-  // The server pushes an edit replacing "aaa" -> "bbb" in BOTH files.
   const std::string edit_json = std::string("{\"edit\":{\"changes\":{\"") +
                                 workspace::FileUriForPath(open_md) +
                                 "\":[{\"range\":{\"start\":{\"line\":0,\"character\":0},"
@@ -4778,8 +4457,6 @@ return ide.plugin({
   stub_raw->SimulateServerRequestForTesting("workspace/applyEdit", std::move(*params),
                                             util::JsonValue(static_cast<std::int64_t>(1)));
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
-  // The closed-file disk edits now run off the shell thread (TD-2026-07-17-011);
-  // wait for the background write before asserting the on-disk result.
   WorkspaceShellTestAccess::DrainProjectBackgroundExecutor(shell);
 
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "bbb",
@@ -4790,9 +4467,6 @@ return ide.plugin({
          "the server-pushed edit must not open a tab for the closed file");
 }
 
-// Regression: a server-pushed WorkspaceEdit whose range names a line beyond the
-// closed file's EOF must be rejected, not silently clamped onto the last line —
-// the file on disk stays untouched.
 void TestWorkspaceShellServerApplyEditRejectsOutOfRangeClosedFileEdit() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4802,7 +4476,7 @@ void TestWorkspaceShellServerApplyEditRejectsOutOfRangeClosedFileEdit() {
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
   const std::filesystem::path project = temp_dir.path() / "proj";
   const std::filesystem::path open_md = project / "open.md";
-  const std::filesystem::path closed_md = project / "closed.md";  // one line, never opened
+  const std::filesystem::path closed_md = project / "closed.md";
   WriteFile(open_md, "aaa\n");
   WriteFile(closed_md, "aaa\n");
 
@@ -4835,7 +4509,6 @@ return ide.plugin({
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
   Expect(stub_raw->HasApplyEditHandler(), "the apply-edit handler should be bound");
 
-  // The server pushes an edit targeting line 999 of the one-line closed file.
   const std::string edit_json = std::string("{\"edit\":{\"changes\":{\"") +
                                 workspace::FileUriForPath(closed_md) +
                                 "\":[{\"range\":{\"start\":{\"line\":999,\"character\":0},"
@@ -4851,9 +4524,6 @@ return ide.plugin({
          "an out-of-range (beyond-EOF) edit must not be clamped onto the last line and written");
 }
 
-// Shared fixture for the server-initiated WorkspaceEdit resource-op tests
-// (TD-2026-07-17-011): a project with one OPEN buffer, a markdown stub client
-// with the apply-edit handler bound, returned ready for SimulateServerRequest.
 struct ServerApplyEditFixture {
   TemporaryDirectory temp_dir;
   std::filesystem::path project;
@@ -4907,9 +4577,6 @@ return ide.plugin({
   }
 };
 
-// A server-pushed WorkspaceEdit with documentChanges resource ops: create a file
-// (then fill it via a TextDocumentEdit), rename the OPEN file (tab retargets in
-// place), and delete a closed file — all in one ordered batch (TD-2026-07-17-011).
 void TestWorkspaceShellServerApplyEditAppliesResourceOps() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4941,7 +4608,6 @@ void TestWorkspaceShellServerApplyEditAppliesResourceOps() {
   Expect(WorkspaceShellTestAccess::CountOpenBufferViews(*fx.shell, fx.open_md) == 0,
          "no tab should remain on the pre-rename path");
   Expect(!std::filesystem::exists(zombie_md), "the deleted file should be gone");
-  // The staged delete backup must be disposed once the batch lands.
   bool staging_residue = false;
   for (const auto& entry : std::filesystem::directory_iterator(fx.project)) {
     if (entry.path().filename().string().find(".microide-lsp-staged-") != std::string::npos) {
@@ -4951,8 +4617,6 @@ void TestWorkspaceShellServerApplyEditAppliesResourceOps() {
   Expect(!staging_residue, "no staging residue should remain after a successful batch");
 }
 
-// Validate-first atomicity: one bad op (rename of a missing source) fails the
-// WHOLE batch before anything mutates — the create listed before it must not run.
 void TestWorkspaceShellServerApplyEditResourceOpBatchIsAtomic() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4972,7 +4636,6 @@ void TestWorkspaceShellServerApplyEditResourceOpBatchIsAtomic() {
   Expect(!std::filesystem::exists(created_md),
          "a failed batch must not leave the earlier create applied");
 
-  // A delete escaping the project root also fails the batch up front.
   const std::string escape_json =
       std::string("{\"edit\":{\"documentChanges\":[") + "{\"kind\":\"delete\",\"uri\":\"" +
       workspace::FileUriForPath(fx.temp_dir.path() / "outside.txt") + "\"}]}}";
@@ -4982,15 +4645,12 @@ void TestWorkspaceShellServerApplyEditResourceOpBatchIsAtomic() {
          "a resource op outside the project root must not apply");
 }
 
-// Version-aware edits: a TextDocumentEdit pinned to a stale document version is
-// rejected wholesale; the matching version applies (TD-2026-07-17-011).
 void TestWorkspaceShellServerApplyEditHonorsDocumentVersions() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
   ServerApplyEditFixture fx;
   Expect(fx.SetUp(), "version fixture should come up with the handler bound");
-  // The open buffer was didOpen'd at version 1 by the completion request above.
   const auto edit_with_version = [&](int version) {
     return std::string("{\"edit\":{\"documentChanges\":[") + "{\"textDocument\":{\"uri\":\"" +
            workspace::FileUriForPath(fx.open_md) + "\",\"version\":" + std::to_string(version) +
@@ -5062,7 +4722,6 @@ return ide.plugin({
   Expect(items[2].label == "main" && items[2].depth == 0,
          "outline should return to depth 0 after a child subtree");
 
-  // Confirming a row navigates the editor caret to the symbol (1-based -> 0-based).
   WorkspaceShellTestAccess::SetPluginSidebarSelectedIndex(shell, 1);
   Expect(WorkspaceShellTestAccess::OpenSelectedPluginSidebarItem(shell),
          "confirming an outline row should navigate the editor");
@@ -5170,8 +4829,6 @@ return ide.plugin({
          "sidebar mode menu fixture should open the project");
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
-  // A plugin-contributed view spills into the mode-row overflow ("⋯") button, which opens the
-  // existing sidebar-mode menu.
   const SDL_FRect overflow_rect = WorkspaceShellTestAccess::SidebarModeOverflowRect(shell);
   Expect(overflow_rect.w > 0.0f,
          "a loaded plugin sidebar should produce a mode-row overflow button");
@@ -5187,9 +4844,6 @@ return ide.plugin({
          "sidebar mode menu should list loaded plugin sidebars by label");
   Expect(std::find(labels.begin(), labels.end(), "Chat") == labels.end(),
          "the sidebar mode menu should omit the chat view, which no longer exists");
-  // Problems / Tests / Outline are builtin views with no tab of their own, so the
-  // overflow menu is the only place they can be reached. They were excluded here
-  // back when they were retired surfaces and stayed excluded after being reshipped.
   Expect(std::find(labels.begin(), labels.end(), "Problems") != labels.end(),
          "the sidebar mode menu should list the tabless Problems view");
   Expect(std::find(labels.begin(), labels.end(), "Tests") != labels.end(),
@@ -5282,13 +4936,6 @@ return ide.plugin({
          "restored diagnostics should match the project that originally published them");
 }
 
-// With two editor groups split side-by-side, hit-test paths (hover/cursor/
-// right-click) must resolve the viewport of the pane under the cursor, not the
-// globally-focused group's viewport. The bug: these loops read
-// ActiveEditorViewport() for every pane, so hovering the unfocused group hit-tested
-// the focused group's content. This pins the per-pane resolution (ViewportForPane)
-// and the user-visible symptom: a diagnostic in the *unfocused* group still shows
-// its hover popup.
 void TestWorkspaceShellSplitGroupHoverResolvesPaneViewport() {
   using microide::workspace::EditorSplitOrientation;
   TemporaryDirectory temp_dir;
@@ -5303,8 +4950,6 @@ void TestWorkspaceShellSplitGroupHoverResolvesPaneViewport() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, file_a);
 
-  // Split right (clones a.md into a new, focused group), then open b.md in that
-  // focused group. Result: group 0 (inactive) shows a.md, group 1 (focused) b.md.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
          "split-right should succeed when an editor tab is active");
   WorkspaceShellTestAccess::OpenFile(shell, file_b);
@@ -5320,7 +4965,6 @@ void TestWorkspaceShellSplitGroupHoverResolvesPaneViewport() {
          "the inactive pane must resolve its own group's viewport (a.md), not the focused one");
   Expect(pane_paths[1] == key_b, "the focused pane resolves the focused group's viewport (b.md)");
 
-  // Publish a diagnostic on a.md, which lives in the *inactive* group.
   Expect(WorkspaceShellTestAccess::PublishDiagnostics(
              shell, "diagnostics", file_a,
              {microide::editor::Diagnostic{
@@ -5334,8 +4978,6 @@ void TestWorkspaceShellSplitGroupHoverResolvesPaneViewport() {
              }}),
          "diagnostic should publish on the inactive group's file");
 
-  // Hover the diagnostic inside the inactive pane. Pre-fix this hit-tested the
-  // focused group's b.md (no diagnostic) and produced no popup.
   const auto metrics = WorkspaceShellTestAccess::InactiveEditorPaneMetrics(shell);
   const float hover_x = metrics.text_x + WorkspaceShellTestAccess::TextCharWidth(shell) * 2.0f;
   const float hover_y = metrics.first_line_y + metrics.line_height - 1.5f;
@@ -5347,10 +4989,6 @@ void TestWorkspaceShellSplitGroupHoverResolvesPaneViewport() {
          "hovering the unfocused group's diagnostic should surface its message");
 }
 
-// A hover card opens ABOVE the hovered line when there is room (VS Code's
-// editor.hover.above) and below it otherwise. Below, it covered the lines under
-// the pointer, and a press on the card is the card's: the next click two lines
-// down placed no caret (QA flow lsp-navigation).
 void TestWorkspaceShellHoverCardOpensAboveTheLine() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path project_root = temp_dir.path() / "project";
@@ -5600,10 +5238,6 @@ void TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnSave() {
              *WorkspaceShellTestAccess::ActiveEditorDiagnosticHoverMessage(shell) ==
                  "Unexpected broken token (no-broken)",
          "repo ESLint diagnostics should surface through the host editor hover path");
-
-  // Problems sidebar was retired with the AI/chat capability cleanup; the
-  // eslint.show-problems command therefore no longer resolves a sidebar view.
-  // Diagnostic publishing remains covered by the broken_diagnostics check above.
 
   WriteFile(unopened, "broken();\n");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "eslint.run-opened"),
@@ -5890,9 +5524,6 @@ void TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic() {
          "opening a problem should return focus to the editor");
 }
 
-// The Problems list answered the right button by selecting the row and then
-// doing nothing — no menu, no feedback. It now opens the same path-scoped row
-// menu the search results and tests lists use.
 void TestWorkspaceShellProblemsSidebarRightClickOpensRowMenu() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path project_root = temp_dir.path() / "project";
@@ -6037,10 +5668,6 @@ return ide.plugin({
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_a, false, false),
          "async switch fixture should open the first project");
-  // run_async now runs on the plugin worker and invokes its callback synchronously
-  // there, so the project-open hook's subprocess has already completed and logged
-  // by the time the (blocking round-trip) project open returns. There is no longer
-  // any pending async callback to cancel on a project switch.
   const std::vector<std::string>& messages_a = WorkspaceShellTestAccess::PluginMessages(shell);
   Expect(std::any_of(messages_a.begin(), messages_a.end(),
                      [](const std::string& entry) {
@@ -6232,9 +5859,6 @@ void TestWorkspaceShellProjectReactivationKeepsLanguageServerWarm() {
   WriteFile(project_a / "README.md", "alpha\n");
   WriteFile(project_b / "README.md", "beta\n");
 
-  // A plugin that contributes a language server for a synthetic language id. The
-  // command is never spawned: the server is registered lazily (eager_start=false)
-  // and the test injects a warm stub client instead of starting the process.
   WritePluginInit(
       plugins_root, "warmlsp",
       R"(local ide = require("microide")
@@ -6259,8 +5883,6 @@ return ide.plugin({
   Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell).HasServer("warmlang"),
          "the plugin's language server should be registered on first activation");
 
-  // Attach a warm stub client to the already-registered entry without disturbing
-  // its registration params, then capture its identity.
   auto warm_client = std::make_unique<workspace::LspClient>();
   workspace::LspClient* const warm_raw = warm_client.get();
   Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
@@ -6273,9 +5895,6 @@ return ide.plugin({
   Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false),
          "warm-LSP fixture should switch back to the first project");
 
-  // Regression: before the fix, reactivation rebuilt the LSP registry against the
-  // torn-down host and BeginShutdownServersNotIn({}) erased this entry, surfacing
-  // "No LSP server".
   Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell).HasServer("warmlang"),
          "switching back must keep the project's language server registered");
   Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell).FindStartedServer("warmlang") ==
@@ -6283,11 +5902,6 @@ return ide.plugin({
          "switching back must retain the SAME warm client instance (no restart/re-index)");
 }
 
-// Regression: opening/viewing a file must engage the language server (start a
-// lazy server + send textDocument/didOpen) without requiring an edit or an
-// explicit LSP action. Before the fix the LSP only woke on the first edit or on
-// go-to-definition, so opening a file left the status stuck at "LSP: Starting..."
-// and painted no diagnostics/semantic colors until the user interacted.
 void TestWorkspaceShellOpensDocumentInLspOnFileOpen() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -6322,8 +5936,6 @@ return ide.plugin({
   Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell).HasServer("python"),
          "the plugin's python language server should be registered");
 
-  // Attach a warm stub (test-installed, so EnsureStarted returns it without
-  // spawning a real process) to observe didOpen without a live server.
   auto stub = std::make_unique<workspace::LspClient>();
   workspace::LspClient* const stub_raw = stub.get();
   Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
@@ -6334,7 +5946,6 @@ return ide.plugin({
   Expect(!stub_raw->HasOpenDocument(uri),
          "precondition: the document is not open in the LSP before it is opened");
 
-  // Open the file for viewing only — no edit, no go-to-definition.
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, py_file),
          "fixture should open the .py file");
 
@@ -6343,15 +5954,6 @@ return ide.plugin({
          "not only on the first edit or go-to-definition)");
 }
 
-// Regression: a file that was already open when the session is restored must have
-// its LSP document opened (textDocument/didOpen) so diagnostics/semantic tokens
-// paint without the user interacting. The bug: session restore activated the tab
-// BEFORE the cpp-lsp-style plugin registered its language server, so the
-// activation's NotifyLspBufferOpen found no client and skipped didOpen, and the
-// post-plugin-reload buffer replay passed open_lsp_documents=false. The server
-// started only to render the status bar and the document was never opened, leaving
-// the restored file with no markers until a click. The fix flips the restore
-// reload to open_lsp_documents=true so open buffers are engaged after servers exist.
 void TestWorkspaceShellRestoreEngagesLspForOpenDocument() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -6364,9 +5966,6 @@ void TestWorkspaceShellRestoreEngagesLspForOpenDocument() {
   const std::filesystem::path py_file = project / "main.py";
   WriteFile(py_file, "print('hi')\n");
 
-  // A minimal real LSP server: replies to initialize and exits cleanly on
-  // shutdown/exit so the client counts as running (didOpen is sent) and teardown
-  // is fast. It need not produce diagnostics — HasOpenDocument tracks didOpen.
   const std::filesystem::path server_py = temp_dir.path() / "server.py";
   WriteFile(server_py, std::string(R"py(import json
 import sys
@@ -6422,12 +6021,8 @@ while True:
       "})\n");
 
   ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
-  // Session state persists under XDG_STATE_HOME; pin it so both shells below share
-  // one session file instead of touching the real user state directory.
   ScopedEnvVar scoped_state_home("XDG_STATE_HOME", state_home.string());
 
-  // Phase 1: open the project and the file, then persist the session with the file
-  // open (this is the "a file was open when you last closed microide" setup).
   {
     WorkspaceShell shell;
     Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
@@ -6437,10 +6032,8 @@ while True:
     WorkspaceShellTestAccess::SaveSessionState(shell);
   }
 
-  // Phase 2: a fresh shell restores that session — the real startup path. The fix
-  // must engage the language server for the restored active document.
   WorkspaceShell restored;
-  Expect(WorkspaceShellTestAccess::OpenProjectTab(restored, project, /*restore=*/true, false),
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(restored, project, true, false),
          "phase 2 should restore the project session");
 
   const std::string uri = workspace::FileUriForPath(py_file);
@@ -6455,10 +6048,6 @@ while True:
          "open_lsp_documents was false on the restore reload)");
 }
 
-// SEAM 2 — host-owned plugin buffer edits (ctx.editor.apply_edits).
-// Loads a plugin exposing commands that drive apply_edits/set_cursor/set_selection
-// against the active buffer, then asserts the host applied them with correct
-// grouped-undo, caret, and rejection behaviour.
 void RunEditPluginSetup(WorkspaceShell& shell,
                         const std::filesystem::path& plugins_root,
                         const std::filesystem::path& project_root,
@@ -6590,9 +6179,6 @@ void TestWorkspaceShellPluginApplyEditsSingleEditUndo() {
   Expect(editor.lines()[0] == "hello", "one undo should revert the plugin edit");
 }
 
-// Two inserts at one position: VS Code applies same-position inserts in array
-// order. The plugin applier sorted on the start alone with std::sort, whose
-// small-range insertion sort is stable, so "A" then "B" at (1,1) produced "BA".
 void TestWorkspaceShellPluginApplyEditsSamePositionInsertsKeepArrayOrder() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -6616,7 +6202,6 @@ void TestWorkspaceShellPluginApplyEditsSamePositionInsertsKeepArrayOrder() {
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell,
                                                        "editops.replace_then_insert_same_start"),
          "apply_edits command should dispatch");
-  // The buffer read "ABhello" here, so the replace covers "ABhel".
   Expect(editor.lines()[0] == ">HELLOlo",
          "a replace listed before an insert at its start should apply first, got: " +
              std::string(editor.lines()[0]));
@@ -6676,8 +6261,6 @@ void TestWorkspaceShellPluginApplyEditsSetsSelection() {
          "set_selection should map 1-based input to the 0-based range [0,0)-(0,2)");
 }
 
-// TD-2026-07-17A-087: plugin cursor/selection requests that omit a column must fail
-// closed rather than being accepted and silently clamped to column 0.
 void TestWorkspaceShellPluginCursorSelectionRequireColumns() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -6692,8 +6275,6 @@ void TestWorkspaceShellPluginCursorSelectionRequireColumns() {
   WorkspaceShell shell;
   RunEditPluginSetup(shell, plugins_root, project_root, source, "hello\nworld\n");
 
-  // Plugin log messages are prefixed with the plugin id ("editops: ..."), so match the
-  // suffix.
   const auto last_message_is_rejected = [&]() {
     const auto& messages = WorkspaceShellTestAccess::PluginMessages(shell);
     if (messages.empty()) return false;
@@ -6738,10 +6319,6 @@ void TestWorkspaceShellPluginApplyEditsRejectsUnopenedPath() {
   Expect(editor.lines()[0] == "hello", "a rejected edit must not touch the active buffer");
 }
 
-// Regression: non-finite plugin edit coordinates (`math.huge`) must not be cast
-// from double to size_t — that is undefined behavior. The interop layer maps them
-// to an invalid (0) index so the command completes without a crash or wild edit.
-// (Also exercised under UBSAN, which flags the bad cast directly.)
 void TestWorkspaceShellPluginApplyEditsRejectsNonFiniteCoords() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -6760,8 +6337,6 @@ void TestWorkspaceShellPluginApplyEditsRejectsNonFiniteCoords() {
   WorkspaceShellTestAccess::ClearPluginMessages(shell);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "editops.infinite_coords"),
          "infinite-coordinate command should dispatch without crashing");
-  // The malformed edit is dropped (no valid 1-based coordinate), so the apply
-  // resolves to no edits and reports rejection — the buffer is untouched.
   const auto& messages = WorkspaceShellTestAccess::PluginMessages(shell);
   Expect(!messages.empty() && messages.back() == "editops: rejected",
          "math.huge coordinates must reject the edit, not apply it at a clamped position");
@@ -6794,9 +6369,6 @@ void TestWorkspaceShellPluginApplyEditsRejectsTooManyEdits() {
          "an over-cap apply must leave the buffer completely untouched");
 }
 
-// Seeds an "lsp:semantic" recolor overlay for `path` (as an async clangd
-// semantic-tokens response would), so a test can assert whether a subsequent edit
-// clears it.
 void SeedLspSemanticOverlay(WorkspaceShell& shell, const std::filesystem::path& path) {
   auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
   microide::editor::PluginDecorationData data;
@@ -6820,13 +6392,6 @@ bool HasLspSemanticOverlay(WorkspaceShell& shell, const std::filesystem::path& p
   return decorations != nullptr && !decorations->text_styles.empty();
 }
 
-// Regression: LSP semantic tokens are an absolute-positioned recolor overlay that
-// paints over the lexical highlighter. It is only render-visible while the buffer
-// is clean, so a stale overlay left behind by an edit becomes visible the moment
-// the buffer returns to a clean state — the reported "quick-fix -> undo -> save"
-// corruption. Every content edit (typing AND undo) must drop the overlay so it can
-// never paint misaligned colors; a fresh request repopulates it on the next clean
-// transition (save / undo onto the saved point).
 void TestWorkspaceShellLspSemanticOverlayClearedOnEditAndUndo() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path project_root = temp_dir.path() / "project";
@@ -6843,15 +6408,11 @@ void TestWorkspaceShellLspSemanticOverlayClearedOnEditAndUndo() {
   Expect(HasLspSemanticOverlay(shell, source),
          "seeded lsp:semantic overlay should be present before editing");
 
-  // A plain edit shifts buffer geometry -> the overlay is stale and must be dropped.
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "x"),
          "typing into an editable buffer should be handled");
   Expect(!HasLspSemanticOverlay(shell, source),
          "a content edit should clear the stale lsp:semantic overlay");
 
-  // Re-seed to model a late/stale response landing while dirty (render-suppressed),
-  // then undo — the exact reported repro. Undo returns the buffer to a clean,
-  // render-visible state, so it too must clear the stale overlay.
   SeedLspSemanticOverlay(shell, source);
   Expect(HasLspSemanticOverlay(shell, source),
          "re-seeded overlay should be present before undo");
@@ -6862,10 +6423,6 @@ void TestWorkspaceShellLspSemanticOverlayClearedOnEditAndUndo() {
          "undo must clear the stale lsp:semantic overlay (the reported corruption)");
 }
 
-// Regression: LSP inlay hints publish as absolute-positioned mid-line virtual
-// text. Unlike the semantic overlay they render in EVERY buffer state, so an edit
-// that shifts the geometry MUST drop them (they are re-requested on the next clean
-// transition); otherwise a stale hint paints mid-line at a pre-edit column.
 void TestWorkspaceShellLspInlayOverlayClearedOnEdit() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path project_root = temp_dir.path() / "project";
@@ -6883,7 +6440,7 @@ void TestWorkspaceShellLspInlayOverlayClearedOnEdit() {
     microide::editor::PluginDecorationData data;
     microide::editor::InlineTextDecoration hint;
     hint.line = 1;
-    hint.anchor_column = 2;  // mid-line, not the end-of-line sentinel
+    hint.anchor_column = 2;
     hint.text = " : int";
     data.inline_texts.push_back(hint);
     state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile("lsp:inlay", source,
@@ -6904,12 +6461,6 @@ void TestWorkspaceShellLspInlayOverlayClearedOnEdit() {
   Expect(!has_inlay(), "a content edit must clear the stale lsp:inlay overlay");
 }
 
-// TD-2026-09-20-302. The LSP half of a keystroke runs on EVERY key in every file,
-// served or not. With no language server and no diagnostics it has nothing to do,
-// and it used to allocate ~3 times per key doing it: the file's URI (a fresh string)
-// built twice to bump inlay-hint and code-lens generations that no request had ever
-// created, and the diagnostic shift's 48-byte lambda converted to a std::function
-// before the store said it had nothing for this file.
 void TestWorkspaceShellLspKeystrokeSyncAllocatesNothingWithoutAServer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path project_root = temp_dir.path() / "project";
@@ -6925,7 +6476,7 @@ void TestWorkspaceShellLspKeystrokeSyncAllocatesNothingWithoutAServer() {
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "an edit, so there is a last change");
 
 #if MICROIDE_PERF_HARNESS_BUILD
-  WorkspaceShellTestAccess::SyncLspForActiveEditableLastChange(shell);  // warm
+  WorkspaceShellTestAccess::SyncLspForActiveEditableLastChange(shell);
   const microide::tests::perf::AllocationSnapshot before =
       microide::tests::perf::Allocations::Snapshot();
   for (int i = 0; i < 16; ++i) {
@@ -6939,11 +6490,6 @@ void TestWorkspaceShellLspKeystrokeSyncAllocatesNothingWithoutAServer() {
 #endif
 }
 
-// The applied-edit diagnostic shift must run even when no language server serves
-// the buffer. Phase-1.4 moved ShiftLspDiagnosticsForAppliedEdit ahead of the
-// client early-out in SyncLspForActiveEditableLastChange, so stored "lsp"
-// diagnostics stay on their text while the buffer is dirty regardless of server
-// state; before that change a serverless edit stranded them on the pre-edit line.
 void TestWorkspaceShellLspDiagnosticsShiftOnEditWithoutServer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path project_root = temp_dir.path() / "project";
@@ -6956,8 +6502,6 @@ void TestWorkspaceShellLspDiagnosticsShiftOnEditWithoutServer() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, source);
 
-  // Seed an "lsp" diagnostic on the second line ("  return 0;"). This bare project
-  // has no contributed language server, so nothing will republish it.
   Expect(WorkspaceShellTestAccess::PublishDiagnostics(
              shell, "lsp", source,
              {microide::editor::Diagnostic{
@@ -6977,8 +6521,6 @@ void TestWorkspaceShellLspDiagnosticsShiftOnEditWithoutServer() {
            "the seeded diagnostic should start on line 1 before editing");
   }
 
-  // Insert a newline at the very top: every stored position at/after (0,0) shifts
-  // down one line. With no server, the pre-1.4 sync returned before shifting.
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "pressing Enter at the top of the buffer should insert a line");
@@ -6990,9 +6532,6 @@ void TestWorkspaceShellLspDiagnosticsShiftOnEditWithoutServer() {
          "the diagnostic must shift down a line even with no language server running");
 }
 
-// Opens a bare project + editable file (no plugin needed) with ghost text enabled,
-// caret parked at the end of the first line. Ghost-text state-machine tests drive
-// the host's publish/accept/dismiss/invalidate entry points directly via TestAccess.
 void OpenGhostTextFixture(WorkspaceShell& shell, const std::filesystem::path& project_root,
                           const std::filesystem::path& source, std::string_view content) {
   WriteFile(source, std::string(content));
@@ -7053,8 +6592,8 @@ void TestWorkspaceShellGhostTextStaleAnchorRejected() {
   OpenGhostTextFixture(shell, project_root, source, "hello\n");
 
   plugin::PluginHost::GhostTextRequest request = GhostRequest("late");
-  request.anchor_line = 1;     // 1-based line 1 => 0-based 0
-  request.anchor_column = 1;   // 1-based col 1 => 0-based 0, but caret is at column 5
+  request.anchor_line = 1;
+  request.anchor_column = 1;
   WorkspaceShellTestAccess::PublishGhostText(shell, "copilot", request);
   Expect(WorkspaceShellTestAccess::GhostText(shell) == nullptr,
          "a suggestion whose anchor no longer matches the caret should be dropped as stale");
@@ -7200,31 +6739,22 @@ void TestWorkspaceShellPluginApplyEditsClampsOutOfBounds() {
          "out-of-bounds edit command should dispatch");
 
   auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
-  // The line/column clamp to the last line's end, so the insert lands at EOL of
-  // the final content line ("hi") rather than crashing or growing the buffer.
   Expect(editor.lines()[0] == "hi!" || editor.lines().back() == "!" ||
              editor.lines().back() == "hi!",
          "an out-of-bounds edit should clamp to a valid position, not crash");
 }
 
-// SEAM 1 — reactive editor events. Unit-tests for the deterministic debounce /
-// coalescing tracker (time injected), then an end-to-end plugin dispatch test.
 void TestPluginEditorEventTrackerCoalescesChanges() {
   using microide::workspace::PluginEditorEventTracker;
   PluginEditorEventTracker tracker;
   tracker.SetInterest({.buffer_change = true});
   const std::filesystem::path path = "a.txt";
-  // First sample baselines silently.
-  tracker.Sample(path, 1, 1, 1, false, 0, 0, 0, 0, /*now=*/100, /*debounce=*/150);
+  tracker.Sample(path, 1, 1, 1, false, 0, 0, 0, 0, 100, 150);
   Expect(!tracker.NextDelayMs(100).has_value(), "baseline sample should arm nothing");
-  // A burst of edits coalesces into one armed change with a trailing deadline.
   tracker.Sample(path, 2, 3, 1, false, 0, 0, 0, 0, 110, 150);
   tracker.Sample(path, 3, 7, 1, false, 0, 0, 0, 0, 140, 150);
   Expect(tracker.NextDelayMs(140).has_value(), "an edit should arm a debounce delay");
-  // Before the deadline nothing is due.
   Expect(!tracker.TakeDue(200).any(), "no event before the trailing deadline");
-  // After the deadline (last edit at 140 + 150) exactly one change fires, with the
-  // unioned caret-line range across the burst.
   const auto due = tracker.TakeDue(300);
   Expect(due.change && !due.cursor && !due.selection, "a settled burst yields one change");
   Expect(due.change_start_line == 3 && due.change_end_line == 7,
@@ -7234,7 +6764,7 @@ void TestPluginEditorEventTrackerCoalescesChanges() {
 
 void TestPluginEditorEventTrackerZeroCostWhenUnsubscribed() {
   using microide::workspace::PluginEditorEventTracker;
-  PluginEditorEventTracker tracker;  // no interest set
+  PluginEditorEventTracker tracker;
   tracker.Sample("a.txt", 1, 1, 1, true, 1, 1, 1, 5, 100, 150);
   tracker.Sample("a.txt", 2, 2, 2, true, 1, 1, 1, 9, 110, 150);
   Expect(!tracker.NextDelayMs(110).has_value(),
@@ -7247,8 +6777,6 @@ void TestPluginEditorEventTrackerBufferSwitchDoesNotEmit() {
   PluginEditorEventTracker tracker;
   tracker.SetInterest({.buffer_change = true, .cursor_move = true});
   tracker.Sample("a.txt", 5, 4, 2, false, 0, 0, 0, 0, 100, 150);
-  // Switching to a different buffer re-baselines silently even though revision and
-  // caret differ — no spurious change/cursor event.
   tracker.Sample("b.txt", 9, 1, 1, false, 0, 0, 0, 0, 110, 150);
   Expect(!tracker.NextDelayMs(110).has_value(), "switching buffers must not arm an event");
   Expect(!tracker.TakeDue(1000).any(), "switching buffers must not emit");
@@ -7306,14 +6834,12 @@ return ide.plugin({
   WorkspaceShellTestAccess::OpenFile(shell, source);
   Expect(WorkspaceShellTestAccess::PluginErrors(shell).empty(), DescribePluginState(shell).c_str());
 
-  // Baseline sample, then mutate, then sample again to arm the debounced change.
   WorkspaceShellTestAccess::SamplePluginEditorEvents(shell);
   WorkspaceShellTestAccess::ClearPluginMessages(shell);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "reactor.poke"),
          "reactor.poke should dispatch and edit the buffer");
   WorkspaceShellTestAccess::SamplePluginEditorEvents(shell);
 
-  // Let the trailing debounce window elapse, then drive the scheduled-wake dispatch.
   std::this_thread::sleep_for(std::chrono::milliseconds(180));
   bool dispatched = false;
   for (int attempt = 0; attempt < 5 && !dispatched; ++attempt) {
@@ -7328,7 +6854,6 @@ return ide.plugin({
          "the plugin should receive on_buffer_change after the debounce window");
 }
 
-// SEAM 3 — a plugin-contributed snippet expands from its prefix on Tab.
 void TestWorkspaceShellPluginSnippetTabTriggerExpands() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -7370,12 +6895,6 @@ return ide.plugin({
   Expect(editor.lines()[0] == "forr", "one undo should restore the typed prefix");
 }
 
-// QA (snippets flow): a C++ buffer reports the runtime filetype "c++", which the
-// contract table stores as "cpp". A plugin contributing for "c++" -- the id the
-// editor itself reports, and the one cpp-lsp uses -- used to land in a "c++" entry
-// that no lookup ever reached, so Insert Snippet said "No snippets for this
-// language" (and brackets/comments/indents contributed under that id were dropped
-// the same way).
 void TestWorkspaceShellPluginSnippetForCxxLanguageIdReachesCppBuffers() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -7416,18 +6935,14 @@ return ide.plugin({
          "a snippet contributed for language_id c++ should expand in a .cpp buffer");
 }
 
-}  // namespace
+}
 
-// Data-integrity (A5/C6): a multi-file LSP WorkspaceEdit applies to each OPEN buffer as
-// its own grouped-undo step; each buffer's dirty/save/undo baseline is fully independent,
-// and a target that is not open is left untouched on disk (v1 keeps undo coherent by
-// never editing files it cannot undo). Saving+undoing one buffer must not disturb another.
 void TestWorkspaceShellMultiBufferWorkspaceEditIndependentBaselines() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path a_path = root / "a.txt";
   const std::filesystem::path b_path = root / "b.txt";
-  const std::filesystem::path c_path = root / "c.txt";  // referenced but NOT opened
+  const std::filesystem::path c_path = root / "c.txt";
   WriteFile(a_path, "aaa\n");
   WriteFile(b_path, "bbb\n");
   WriteFile(c_path, "ccc\n");
@@ -7436,8 +6951,8 @@ void TestWorkspaceShellMultiBufferWorkspaceEditIndependentBaselines() {
   WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "fixture should open the project");
-  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, a_path);      // tab 0 = a
-  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, b_path),  // tab 1 = b
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, a_path);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, b_path),
          "opening the second file should succeed");
 
   const auto range = [](std::size_t line, std::size_t col) {
@@ -7446,12 +6961,11 @@ void TestWorkspaceShellMultiBufferWorkspaceEditIndependentBaselines() {
   const std::vector<microide::workspace::CodeActionEdit> edits = {
       {a_path, range(0, 0), "X"},
       {b_path, range(0, 0), "Y"},
-      {c_path, range(0, 0), "Z"},  // not open -> must be dropped, disk untouched
+      {c_path, range(0, 0), "Z"},
   };
   Expect(WorkspaceShellTestAccess::ApplyLspWorkspaceEdit(shell, edits),
          "a multi-buffer workspace edit should apply to the open buffers");
 
-  // Both open buffers were edited and are dirty; the unopened file is untouched on disk.
   Expect(ReadFile(c_path) == "ccc\n",
          "an edit targeting a file that is not open must not touch it on disk");
 
@@ -7462,7 +6976,6 @@ void TestWorkspaceShellMultiBufferWorkspaceEditIndependentBaselines() {
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "Ybbb", "buffer B got its edit");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "buffer B is dirty");
 
-  // Save A, then undo A past the save. B must be entirely unaffected.
   Expect(WorkspaceShellTestAccess::SaveTab(shell, 0), "saving buffer A should succeed");
   WorkspaceShellTestAccess::ActivateTab(shell, 0);
   Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "A is clean right after its save");
@@ -7480,16 +6993,10 @@ void TestWorkspaceShellMultiBufferWorkspaceEditIndependentBaselines() {
   Expect(ReadFile(b_path) == "bbb\n", "buffer B was never written to disk");
 }
 
-// TD-2026-07-17A-016: an open-buffer LSP WorkspaceEdit must NOT materialize a
-// whole-document TextBuffer::Snapshot() — not the pre-edit baseline, not the
-// post-edit re-sync. The sync now carries only a compact line-count/affected-span
-// delta and streams the full didChange straight from the live buffer, so a single
-// rename in a large open file no longer copies every line twice.
 void TestWorkspaceShellWorkspaceEditDoesNotSnapshotBuffers() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path src = root / "big.txt";
-  // A buffer large enough that a stray whole-document snapshot would be obvious.
   std::string content;
   for (int i = 0; i < 500; ++i) {
     content += "line ";
@@ -7508,8 +7015,6 @@ void TestWorkspaceShellWorkspaceEditDoesNotSnapshotBuffers() {
     return editor::SelectionRange{editor::TextPosition{l0, c0}, editor::TextPosition{l1, c1}};
   };
 
-  // Same-line-count rename: replace "token" on line 200. before/after line counts
-  // match, so the diagnostic-shift early-outs and only a streamed didChange runs.
   microide::editor::TextBuffer::reset_snapshot_build_count();
   const std::vector<microide::workspace::CodeActionEdit> same_line_edits = {
       {src, range(200, 9, 200, 14), "TOKEN"},
@@ -7521,9 +7026,6 @@ void TestWorkspaceShellWorkspaceEditDoesNotSnapshotBuffers() {
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[200] == "line 200 TOKEN",
          "the same-line rename should land on line 200");
 
-  // Line-count-changing edit: insert two new lines at the top. This exercises the
-  // delta path (before != after line count -> diagnostic shift by net delta) which
-  // must still avoid a whole-document snapshot.
   microide::editor::TextBuffer::reset_snapshot_build_count();
   const std::vector<microide::workspace::CodeActionEdit> insert_edits = {
       {src, range(0, 0, 0, 0), "inserted a\ninserted b\n"},
@@ -7538,9 +7040,6 @@ void TestWorkspaceShellWorkspaceEditDoesNotSnapshotBuffers() {
          "the earlier rename should have shifted down by two lines after the insert");
 }
 
-// Regression: a WorkspaceEdit with two overlapping ranges for one buffer must be
-// rejected wholesale, not applied highest-first (which double-edits the shared
-// bytes order-dependently). The buffer is left untouched.
 void TestWorkspaceShellWorkspaceEditRejectsOverlappingEdits() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -7556,7 +7055,6 @@ void TestWorkspaceShellWorkspaceEditRejectsOverlappingEdits() {
   const auto range = [](std::size_t l0, std::size_t c0, std::size_t l1, std::size_t c1) {
     return editor::SelectionRange{editor::TextPosition{l0, c0}, editor::TextPosition{l1, c1}};
   };
-  // Ranges [0,0)-[0,5) and [0,3)-[0,8) intersect on columns 3..5.
   const std::vector<microide::workspace::CodeActionEdit> edits = {
       {a_path, range(0, 0, 0, 5), "AAAAA"},
       {a_path, range(0, 3, 0, 8), "BBBBB"},
@@ -7569,9 +7067,6 @@ void TestWorkspaceShellWorkspaceEditRejectsOverlappingEdits() {
          "overlapping edits must be rejected, leaving the buffer unchanged");
 }
 
-// TD-2026-07-16-45: an open-buffer LSP WorkspaceEdit whose range names a line beyond
-// EOF must be REJECTED (whole group dropped), not silently clamped onto the last real
-// line and mutated — matching the closed-file applier. The buffer stays untouched.
 void TestWorkspaceShellWorkspaceEditRejectsBeyondEofOpenBufferEdit() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -7587,8 +7082,6 @@ void TestWorkspaceShellWorkspaceEditRejectsBeyondEofOpenBufferEdit() {
   const auto range = [](std::size_t l0, std::size_t c0, std::size_t l1, std::size_t c1) {
     return editor::SelectionRange{editor::TextPosition{l0, c0}, editor::TextPosition{l1, c1}};
   };
-  // Line 999 of a one-line buffer: a stale/hostile server target. The old forgiving
-  // clamp would have edited the last real line; the strict policy rejects the group.
   bool any_rejected = false;
   const std::vector<microide::workspace::CodeActionEdit> edits = {
       {a_path, range(999, 0, 999, 3), "XXX"},
@@ -7602,10 +7095,6 @@ void TestWorkspaceShellWorkspaceEditRejectsBeyondEofOpenBufferEdit() {
          "a beyond-EOF edit must not be clamped onto the last line and mutate it");
 }
 
-// Regression: an LSP WorkspaceEdit (code action / rename / Format Document / plugin
-// edit) that mutates a buffer must mark the fold model dirty. Without it, a same-line-
-// count edit that moves a fold boundary leaves EnsureActiveFoldingModelFresh early-
-// returning STALE fold ranges (a phantom fold marker that hides the wrong line range).
 void TestWorkspaceShellWorkspaceEditRefreshesFolds() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -7638,13 +7127,9 @@ void TestWorkspaceShellWorkspaceEditRefreshesFolds() {
     return 0;
   };
 
-  // Structure A: the inner brace block opens at line 1 and closes at line 3.
   Expect(inner_closer_for_opener(1) == 3,
          "before the edit, the inner fold opens at line 1 and closes at line 3");
 
-  // Replace lines 1..4 reordered so the inner block slides down one line — SAME line
-  // count. This is the same-line-count edit class (a formatter re-indent, a re-nesting
-  // code action) that the fold-model dirty fix guards.
   const auto range = [](std::size_t l0, std::size_t c0, std::size_t l1, std::size_t c1) {
     return editor::SelectionRange{editor::TextPosition{l0, c0}, editor::TextPosition{l1, c1}};
   };
@@ -7654,18 +7139,12 @@ void TestWorkspaceShellWorkspaceEditRefreshesFolds() {
   Expect(WorkspaceShellTestAccess::ApplyLspWorkspaceEdit(shell, edits),
          "the workspace edit should apply to the open buffer");
 
-  // Structure B: the inner block now opens at line 2 and closes at line 4. Without the
-  // MarkDirty fix, EnsureActiveFoldingModelFresh early-returns the stale structure A.
   Expect(inner_closer_for_opener(2) == 4,
          "after the same-line-count edit, the fold model must reflect the moved inner block");
   Expect(inner_closer_for_opener(1) == 0,
          "the stale inner fold at line 1 must be gone after the edit");
 }
 
-// Regression: a live editor-preference change must reach EVERY editor group, not just
-// the focused one. ApplyEditorPreferencesToAllTabs only walked the focused group, so a
-// split's non-focused pane kept the stale per-viewport config (tab_size, soft_wrap, …)
-// until reopened.
 void TestWorkspaceShellEditorPreferencesReachAllSplitGroups() {
   using microide::workspace::EditorSplitOrientation;
   TemporaryDirectory temp_dir;
@@ -7681,7 +7160,6 @@ void TestWorkspaceShellEditorPreferencesReachAllSplitGroups() {
          "split-right should succeed with an editor tab active");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "two groups should be open");
 
-  // Change the tab size while the split (group 1) holds focus.
   Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.tab_size", "8"),
          "setting editor.tab_size should succeed");
 
@@ -7691,9 +7169,6 @@ void TestWorkspaceShellEditorPreferencesReachAllSplitGroups() {
          "the NON-focused split group's viewport must also pick up the new tab size");
 }
 
-// Ctrl+click goes to the definition of the symbol under the pointer (VS Code): the
-// caret moves to the click first, so the provider is asked about the clicked
-// position, not wherever the caret was. Ctrl+click used to be a plain click.
 void TestWorkspaceShellCtrlClickGoesToDefinition() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -7740,7 +7215,6 @@ return ide.plugin({
   const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
   const float char_width = WorkspaceShellTestAccess::TextCharWidth(shell);
   const float y = metrics.first_line_y + metrics.line_height * 0.5f;
-  // Column 12 (0-based) is inside "helper".
   const float x = metrics.text_x + char_width * 12.0f;
 
   Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, WorkspaceShell::ActionId::GoToDefinition),
@@ -7762,8 +7236,6 @@ return ide.plugin({
          "the caret lands on the definition (provider line/column are 1-based)");
 }
 
-// The Go menu greyed out "Go to Definition (LSP: No LSP server)" for a language a
-// plugin provider serves with no language server, although the command worked.
 void TestWorkspaceShellGoMenuOffersPluginDefinitionWithoutLsp() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -7806,7 +7278,6 @@ return ide.plugin({
       [](const std::string& label) { return label.starts_with("Go to Definition ("); });
   Expect(plain_definition && !suffixed_definition,
          "Go to Definition is offered without an LSP suffix when a plugin serves it");
-  // The server-only siblings keep explaining why they are inert.
   Expect(std::any_of(labels.begin(), labels.end(),
                      [](const std::string& label) {
                        return label.starts_with("Go to Type Definition (LSP: ");
@@ -8086,4 +7557,4 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGoMenuOffersPluginDefinitionWithoutLsp);
 }
 
-}  // namespace microide::tests
+}

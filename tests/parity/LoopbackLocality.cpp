@@ -33,8 +33,6 @@ std::filesystem::path LoopbackProcessLauncher::ResolveWorkingDirectory(
   if (cwd.empty()) {
     return cwd;
   }
-  // A directory outside the project is left as it is: it is not the mirror's, and
-  // a real remote launcher would refuse it rather than guess.
   return map_.ToHost(cwd).value_or(std::move(cwd));
 }
 
@@ -85,7 +83,7 @@ std::string JoinArgv(const std::vector<std::string>& argv) {
   }
   return line;
 }
-}  // namespace
+}
 
 std::vector<std::string> RecordingLocalLauncher::ResolveArgv(std::vector<std::string> argv) const {
   std::lock_guard lock(mutex_);
@@ -136,14 +134,12 @@ project::FileWriteGate::TreeResult LoopbackWriteGate::ApplyTreeOps(std::span<con
     TreeOp host_op = op;
     const auto host_path = map_.ToHost(op.path);
     if (!host_path.has_value()) {
-      continue;  // not the project's tree
+      continue;
     }
     host_op.path = *host_path;
     if (!op.new_path.empty()) {
       host_op.new_path = map_.ToHost(op.new_path).value_or(op.new_path);
     }
-    // The host has no desktop trash the user can open; what the user sees is that
-    // the path is gone, which is a recursive delete.
     if (host_op.kind == TreeOp::Kind::Trash) {
       host_op.kind = TreeOp::Kind::Delete;
       host_op.recursive = true;
@@ -178,4 +174,4 @@ std::unique_ptr<project::remote::RemoteProcessLauncher> ConnectServerLocality(
                                                       .description = "server"});
 }
 
-}  // namespace microide::tests::parity
+}

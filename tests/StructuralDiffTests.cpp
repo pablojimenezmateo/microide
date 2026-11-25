@@ -14,8 +14,6 @@
 #include "compare/StructuralDiff.h"
 #include "util/StringUtil.h"
 
-// The structural (difftastic-style) diff: lexing into a syntax forest, the
-// structural match, and what the compare model shows from it.
 namespace microide::tests {
 namespace {
 
@@ -60,7 +58,6 @@ CompareModel Build(const std::string& left, const std::string& right,
   return BuildCompareModel(left, right, options);
 }
 
-// Lines of `text` as views into it (terminators excluded), like the builder's.
 std::vector<std::string_view> Lines(const std::string& text) {
   std::vector<std::string_view> lines;
   std::size_t start = 0;
@@ -89,7 +86,6 @@ std::vector<std::string> Tokens(const std::string& text,
   return out;
 }
 
-// The novel text of one side of a row, spans joined by '|'.
 std::string Novel(std::string_view text, const std::vector<compare::CompareTextSpan>& spans) {
   std::string out;
   for (const auto& span : spans) {
@@ -181,8 +177,6 @@ void TestContentIdsIgnoreLayout() {
   }
 }
 
-// The headline behaviour: wrapping code in a new block highlights only the new
-// block's head and closing brace; the re-indented body is a layout change.
 void TestWrappingInABlockMarksOnlyTheNewDelimiters() {
   const auto model = Build(
       "void f() {\n"
@@ -241,11 +235,6 @@ void TestEditedCommentMarksOnlyChangedWords() {
          "an edited comment should be diffed word by word");
 }
 
-// Every byte >= 0x80 used to be a word byte, so an em dash fused with the word
-// after it: deleting the space in "scheduler — the" changed the token "—" + "the"
-// into "—the", and the whitespace-only edit marked "— the" novel (soak
-// 96055d2c8eec). A non-ASCII symbol is a token of its own; non-ASCII letters
-// stay inside their word.
 void TestANonAsciiSymbolIsNotPartOfAWord() {
   const auto tokens = Tokens("scheduler \xE2\x80\x94the caf\xC3\xA9 \xE2\x80\x9Cq\xE2\x80\x9D");
   const std::vector<std::string> expected = {"scheduler", "\xE2\x80\x94", "the", "caf\xC3\xA9",
@@ -261,11 +250,6 @@ void TestANonAsciiSymbolIsNotPartOfAWord() {
   }
 }
 
-// Soak 96055d2c8eec (again, at d91efe213; world, editing and plugins profiles): a
-// tab typed into a line of 80 emoji marked the WHOLE line novel on both sides,
-// though only whitespace changed. An emoji counted as an identifier character, so
-// the line was one "word" and the tab split it in two. An emoji is a symbol: each
-// is a token of its own, and the tab between two of them changes no token.
 void TestATabTypedIntoARunOfSymbolsMarksNoTokenNovel() {
   std::string smiles;
   for (int i = 0; i < 80; ++i) {
@@ -290,8 +274,6 @@ void TestReindentedCommentIsLayoutOnly() {
 }
 
 void TestFlatFallbackMatchesEqualTokensInOrder() {
-  // Two lists a side with nothing equal at the top: the comparison cannot be
-  // split, so it reaches the graph search -- which a one-vertex budget stops.
   const std::string a = "(a b) (c d)";
   const std::string b = "(a x) (y d)";
   const std::vector<std::string_view> a_lines = Lines(a);
@@ -305,7 +287,6 @@ void TestFlatFallbackMatchesEqualTokensInOrder() {
   compare::StructuralDiffStats stats;
   compare::MatchSyntaxTrees(left, right, 1, match, &stats);
   Expect(stats.fell_back, "a one-vertex budget must fall back");
-  // Tokens: ( a b ) ( c d )  vs  ( a x ) ( y d ).
   for (const std::uint32_t index : {0u, 1u, 3u, 4u, 6u, 7u}) {
     Expect(match.lhs_partner[index] == index, "the flat diff should match the shared tokens");
   }
@@ -313,7 +294,6 @@ void TestFlatFallbackMatchesEqualTokensInOrder() {
          "the flat diff should leave the replaced tokens novel");
 }
 
-// A gap of bare atoms is matched without a graph, and the answer is the LCS.
 void TestAtomOnlyGapNeedsNoSearch() {
   const std::string a = "a b c d e";
   const std::string b = "a x c y e";
@@ -333,9 +313,6 @@ void TestAtomOnlyGapNeedsNoSearch() {
          "an atom-only gap should match its longest common subsequence");
 }
 
-// Over random token soups: every match is symmetric, in order on both sides,
-// and pairs equal texts (or two literals, for a replaced string/comment); and
-// every hunk's rows cover each of its lines exactly once, in order.
 void TestStructuralMatchInvariantsOnRandomInput() {
   std::mt19937 random(20261111);
   const std::vector<std::string> atoms = {"a", "b", "c", "f", "1", ",", ";", "+", "(", ")",
@@ -394,11 +371,6 @@ void TestStructuralMatchInvariantsOnRandomInput() {
   }
 }
 
-// TD-2026-11-11-442: slider correction. Each of these has two placements of the
-// novel tokens at the same cost; the reader expects one of them. The first three
-// the search's tie-break already gets right -- the pass must keep them; the two
-// after it the tie-break got wrong (found by probing random insertions with the
-// pass on and off): novelty straddling a line break it does not need to.
 void TestAppendedListItemIsTheNovelOne() {
   const auto model = Build("call(a, b);\n", "call(a, b, b);\n");
   const CompareRow& row = model.rows.front();
@@ -431,9 +403,6 @@ void TestNewBlockInsideABlockIsTheInnerPair() {
 }
 
 void TestNewStatementBeforeAnEqualOneSlidesToWholeLines() {
-  // Inserting `y = 1;` before an equal `y = 1;`: the novel run can be the first
-  // or the second statement; whole lines read better than a run that starts
-  // mid-line, and the later one wins a tie.
   const auto model = Build("f();\ny = 1;\ng();\n", "f();\ny = 1;\ny = 1;\ng();\n");
   int novel_rows = 0;
   for (const auto& row : model.rows) {
@@ -447,9 +416,6 @@ void TestNewStatementBeforeAnEqualOneSlidesToWholeLines() {
 }
 
 void TestNovelRunDoesNotStraddleALineBreakItNeedNot() {
-  // `)b();` inserted before an equal `)`: the search split it as `b();` at the
-  // end of line 1 plus the `)` that starts line 2. Sliding over the equal `)`
-  // keeps it on one line, which is what was typed.
   const auto model = Build("  )d, )[a]  if (x) {\n)\n", "  )d, )b();\n)[a]  if (x) {\n)\n");
   int novel_rows = 0;
   for (const auto& row : model.rows) {
@@ -464,8 +430,6 @@ void TestNovelRunDoesNotStraddleALineBreakItNeedNot() {
 }
 
 void TestNovelCallSlidesOntoItsOwnLine() {
-  // `f(a)}` inserted before an equal `f(a)`: novel `}` on line 1 and `f(a)` on
-  // line 2 becomes `f(a)}`, the tail of line 1.
   const auto model = Build(")d, f(a)f(a))\n", ")d, f(a)}\nf(a)f(a))\n");
   const CompareRow* first = FindRight(model, ")d, f(a)}");
   const CompareRow* second = FindRight(model, "f(a)f(a))");
@@ -474,7 +438,6 @@ void TestNovelCallSlidesOntoItsOwnLine() {
   Expect(second != nullptr && second->right_changed_spans.empty(), "and line 2 is unchanged");
 }
 
-// TD-2026-11-11-441: raw strings, here-documents, and the state a region starts in.
 std::shared_ptr<const DiffSyntax> WithRaw(const std::shared_ptr<const DiffSyntax>& base, std::uint8_t raw) {
   auto syntax = std::make_shared<DiffSyntax>(*base);
   syntax->raw_strings = raw;
@@ -540,9 +503,6 @@ void TestScanStateCarriesMultiLineTokens() {
          "a here-document marker on the last line: its body starts the next region");
 }
 
-// The mechanism the refinement relies on: a region lexed from the state the
-// scan reports for the text above it yields the tokens a lex of the whole text
-// yields from that line on (the remainder of a token crossing into it first).
 void TestRegionLexedFromScannedStateAgreesWithAWholeLex() {
   std::mt19937 random(20261113);
   const std::vector<std::string> pieces = {
@@ -573,7 +533,7 @@ void TestRegionLexedFromScannedStateAgreesWithAWholeLex() {
     for (std::size_t split = 1; split < lines.size(); ++split) {
       const auto below = std::span<const std::string_view>(lines).subspan(split);
       const compare::DiffLexState entry = compare::ScanDiffLexState(lines, split, syntax, {});
-      DiffContentInterner region_interner;  // entries point into their tree
+      DiffContentInterner region_interner;
       DiffSyntaxTree region;
       compare::BuildDiffSyntaxTree(below, syntax, region_interner, region, entry);
       std::vector<std::string> expected;
@@ -606,7 +566,6 @@ void TestRegionLexedFromScannedStateAgreesWithAWholeLex() {
 }
 
 void TestEntryStateIsPartOfTheRefinementKey() {
-  // The same hunk text, once inside a comment and once not: two refinements.
   CompareBuildOptions options;
   options.syntax = CSyntax();
   CompareModel model;
@@ -621,7 +580,6 @@ void TestEntryStateIsPartOfTheRefinementKey() {
   Expect(same_state.cached_hunks == 1, "the same text in the same state is");
 }
 
-// TD-2026-11-11-443: code moved from one hunk to another.
 std::string MiddleLines() {
   std::string text;
   for (int line = 0; line < 12; ++line) {
@@ -668,12 +626,10 @@ void TestReindentedMoveIsStillAMove() {
 }
 
 void TestTrivialOrEditedLinesAreNotMoves() {
-  // A lone brace reappearing elsewhere carries too little text to be a move.
   const auto braces = Build("}\n" + MiddleLines(), MiddleLines() + "}\n");
   for (const auto& row : braces.rows) {
     Expect(!row.left_moved && !row.right_moved, "a lone brace is not moved code");
   }
-  // Edited on the way: not the same lines.
   std::string edited = kHelper;
   edited.replace(edited.find("beta"), 4, "delta");
   const auto changed = Build(kHelper + MiddleLines(), MiddleLines() + edited);
@@ -685,8 +641,6 @@ void TestTrivialOrEditedLinesAreNotMoves() {
                          std::to_string(moved) + ")");
 }
 
-// The hunk rule, on rows built by hand: the same deleted and added run is a move
-// across hunks and not within one (there the structural match already paired them).
 void TestMovesAreBetweenHunksOnly() {
   const auto run = [](int deleted_hunk, int added_hunk) {
     CompareModel model;
@@ -717,8 +671,6 @@ void TestMovesAreBetweenHunksOnly() {
   Expect(!run(0, 0), "the same run inside one hunk is not");
 }
 
-// An in-place rebuild refines only the hunks that changed, and its rows are the
-// ones a fresh build produces.
 void TestRebuildRefinesOnlyChangedHunks() {
   std::string left;
   std::string right;
@@ -752,7 +704,6 @@ void TestRebuildRefinesOnlyChangedHunks() {
            "a cached rebuild must match a fresh build row for row");
   }
 
-  // The next keystroke-like rebuild: five hunks unchanged, one edited.
   edited.replace(edited.find("value_3 = f(a, d);"), 18, "value_3 = f(a, e);");
   const auto profile = compare::BuildCompareModelInto(model, left, edited, options);
   Expect(profile.cached_hunks == 5, "a rebuild should reuse the five unchanged hunks");
@@ -760,8 +711,6 @@ void TestRebuildRefinesOnlyChangedHunks() {
          "a rebuild should refine only the edited hunk");
 }
 
-// The cache answers only for the same text read with the same rules, and keeps
-// only what the last build used.
 void TestCacheIsKeyedOnTextAndSyntax() {
   const std::string a = "x = f(a, b);";
   const std::string b = "x = f(a, c);";
@@ -802,11 +751,6 @@ void TestRefinementCanBeTurnedOff() {
          "an unrefined build should carry no spans");
 }
 
-// Soak 1b3aae58e0b7 / 5226857eacc9 / 5fb20806dcf1 (the structural oracle, on diffs
-// the monkey opened over lines of emoji): novel spans that ended inside a
-// character -- the view highlights half a code point, and every byte column
-// after it that a caret or a selection reads from the span is off. Every span a
-// refinement reports starts and ends on a UTF-8 boundary, whatever the text.
 void TestNovelSpansNeverSplitACharacter() {
   const std::string units[] = {"a", "x", " ", "(", ")", "\"", "//", "\xF0\x9F\x98\x80", "\xE4\xB8\xAD",
                                "e\xCC\x81", "\xC3\xA9", std::string("\x80", 1), "\xFF", "\t", "foo", "1"};
@@ -820,8 +764,6 @@ void TestNovelSpansNeverSplitACharacter() {
   };
   const auto on_boundary = [](std::string_view text, std::size_t at) {
     return at == 0 || at >= text.size() || (static_cast<unsigned char>(text[at]) & 0xC0u) != 0x80u ||
-           // A stray continuation byte is a unit of its own (the editor's tiling):
-           // a span may begin or end at one only where no lead byte claims it.
            util::Utf8SequenceLength(text, [&] {
              std::size_t lead = at;
              while (lead > 0 && at - lead < 3 && (static_cast<unsigned char>(text[lead]) & 0xC0u) == 0x80u) {
@@ -859,7 +801,7 @@ void TestNovelSpansNeverSplitACharacter() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterStructuralDiffTests(std::vector<TestCase>& tests) {
   AddTest(tests, "StructuralDiff/NovelSpansNeverSplitACharacter", TestNovelSpansNeverSplitACharacter);
@@ -914,4 +856,4 @@ void RegisterStructuralDiffTests(std::vector<TestCase>& tests) {
   AddTest(tests, "StructuralDiff/MovesAreBetweenHunksOnly", TestMovesAreBetweenHunksOnly);
 }
 
-}  // namespace microide::tests
+}

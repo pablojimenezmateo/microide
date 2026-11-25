@@ -22,7 +22,6 @@ bool IsBlank(std::string_view text) {
   return text.find_first_not_of(" \t\r\n") == std::string_view::npos;
 }
 
-// "src/calc.cpp, lines 19-20" -- where a comment prompt's note goes.
 std::string DescribeCommentPlace(const std::filesystem::path& repository_root, const std::filesystem::path& path,
                                  const std::optional<compare::BranchReviewHunkIdentity>& hunk) {
   std::string place = compare::NormalizeReviewPath(repository_root, path).generic_string();
@@ -45,24 +44,18 @@ std::string DescribeCommentPlace(const std::filesystem::path& repository_root, c
   return place;
 }
 
-// Where a note named as a ReviewNote row names it is kept, and what is there.
 struct NotePlace {
-  // The identity a note written here is stored under; none for the file's.
   std::optional<compare::BranchReviewHunkIdentity> identity;
-  // The identity the note shown here is stored under now, when that differs (its
-  // change moved, or was edited since): writing here replaces it.
   std::optional<compare::BranchReviewHunkIdentity> replaced;
   std::string text;
 };
 
-// Nullopt when `note` names nothing the tab shows.
 std::optional<NotePlace> ResolveNotePlace(const compare::BranchReviewStateService& review,
                                           const CompareTabState& compare_tab, int note) {
   if (note == compare::kCompareFileNoteHunk) {
     return NotePlace{.identity = std::nullopt, .replaced = std::nullopt, .text = compare_tab.review_file_note};
   }
   if (compare::IsCompareDetachedNoteHunk(note)) {
-    // A detached note keeps the identity it has: there is no hunk to move it to.
     const std::size_t index = compare::CompareDetachedNoteIndex(note);
     if (index >= compare_tab.review_detached_notes.size()) {
       return std::nullopt;
@@ -90,8 +83,6 @@ std::optional<NotePlace> ResolveNotePlace(const compare::BranchReviewStateServic
   return place;
 }
 
-// Every way a note is written ends here: the note `replaced` names goes, and
-// blank text deletes the one at `hunk` instead of writing it.
 void WriteNote(compare::BranchReviewStateService& review, const compare::BranchReviewTargetIdentity& target,
                const std::filesystem::path& path, const std::optional<compare::BranchReviewHunkIdentity>& hunk,
                const std::optional<compare::BranchReviewHunkIdentity>& replaced, std::string_view text) {
@@ -107,7 +98,7 @@ void WriteNote(compare::BranchReviewStateService& review, const compare::BranchR
   }
 }
 
-}  // namespace
+}
 
 CompareReviewService::CompareReviewService(ProjectWorkspaceState& state, const PromptState& prompts,
                                            Operations operations)
@@ -149,9 +140,6 @@ void CompareReviewService::SetFileReviewed(CompareTabState& compare_tab, bool re
   if (!CompareTabTakesReviewMarks(compare_tab)) {
     return;
   }
-  // Every hunk follows the file (BranchReviewStateService::SetFileReviewed): a
-  // hunk marked on its own, or changed since, would otherwise keep the file from
-  // reading reviewed, or keep it reviewed after "Unmark File".
   state_.branch_review.SetFileReviewed(compare_tab.branch_target, compare_tab.path, compare_tab.model, reviewed);
   MarksChanged();
 }
@@ -247,7 +235,6 @@ void CompareReviewService::EditSelectedNote(const std::string& note_text) {
   if (compare_tab == nullptr) {
     return;
   }
-  // The selected hunk's note, or the file's off any change.
   const std::optional<NotePlace> place =
       ResolveNotePlace(state_.branch_review, *compare_tab,
                        std::max(compare::kCompareFileNoteHunk, CompareTabSelectedHunkIndex(*compare_tab)));
@@ -314,7 +301,6 @@ CompareReviewService& WorkspaceShell::MakeCompareReviewService() {
           .persist =
               [this]() {
                 MakePersistenceCoordinator().SaveConfigState();
-                // A remote project's marks follow the user to their other machine.
                 if (context_.current_project_state.id.IsRemote()) {
                   MakeRemoteHostService().ReviewChanged(context_.current_project_state.root);
                 }
@@ -330,4 +316,4 @@ CompareReviewService& WorkspaceShell::MakeCompareReviewService() {
   return *glue_->compare_review_service;
 }
 
-}  // namespace microide::workspace
+}

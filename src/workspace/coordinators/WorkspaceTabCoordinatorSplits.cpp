@@ -19,10 +19,6 @@ bool TabCoordinator::RestoreEditorTab(TabEntry::EditorTabState& editor_state) {
   if (!editor_state.content_pending()) {
     return true;
   }
-  // A read is already in flight, or has already failed. Either way this tab is
-  // not hydrated here: forcing a synchronous read now is exactly the shell-thread
-  // stall the off-thread open exists to avoid, and retrying a failure on every
-  // activation would stall once per click.
   if (editor_state.content == TabEntry::EditorTabState::Content::Loading) {
     return true;
   }
@@ -57,12 +53,6 @@ bool TabCoordinator::LoadRestoreView(const DeferredTabHandle& restore, editor::T
     }
   }
   util::PerformanceTrace::Scope open_scope("TabCoordinator::RestoreEditorTab::OpenFile");
-  // A restored session can hold the same file in two panes; the second one to
-  // load shares the first's buffer rather than reading the file again.
-  // Preferences / indent detection (applied in there for a fresh read)
-  // internally re-run EnsureCursorVisible, so they come BEFORE the view-state
-  // restore — otherwise they snap scroll back onto the caret (the "reopen
-  // lands on line 1 after scrolling" bug).
   if (!OpenEditorViewForPath(restore.path, view)) {
     return false;
   }
@@ -112,10 +102,6 @@ bool TabCoordinator::LoadEditorTabForActivation(TabEntry& tab) {
     return true;
   }
   if (tab.editor_state.has_value()) {
-    // A deferred tab gets its preferences applied inside RestoreEditorTab, after
-    // which view state (scroll) is authoritative. Re-applying preferences here
-    // would run EnsureCursorVisible again and snap scroll back onto the caret, so
-    // only refresh preferences for tabs that were already loaded.
     const bool was_deferred = tab.editor_state->content_pending();
     if (!EnsureEditorTabLoaded(tab)) {
       return false;
@@ -125,31 +111,15 @@ bool TabCoordinator::LoadEditorTabForActivation(TabEntry& tab) {
     }
     return true;
   }
-  // Not materialized yet: a session tab that only ever carried its handle, or a
-  // bare tab entry naming its path. Both become a Deferred editor state and load
-  // through RestoreEditorTab, the one hydration path — which decides on- or
-  // off-thread, and shares a buffer another pane already has live (one file is
-  // one buffer). This branch used to repeat that logic with a plain OpenFile, so
-  // a restored background tab of a file open elsewhere got a second, independent
-  // buffer (TD-2026-09-29-314).
   DeferredTabHandle handle = tab.deferred_handle.has_value() ? std::move(*tab.deferred_handle)
                                                              : DeferredTabHandle{.path = tab.path};
   handle.path = handle.path.lexically_normal();
   if (handle.path.empty()) {
     return false;
   }
-  // The view is built first and the editor state made from it once: one
-  // TextViewport, as the removed copy built, rather than a placeholder state
-  // that RestoreEditorTab would then fill.
   editor::TextViewport view;
   std::uint64_t read_id = 0;
   if (!LoadRestoreView(handle, view, read_id)) {
-    // Not readable now (deleted, unreadable): the tab fails as an off-thread
-    // read's does -- an empty read-only stand-in bound to its path, Failed, with
-    // the OpenFailed banner's Retry. Left with no editor state, every lookup of
-    // "the active editor" fell back to the group's welcome surface, whose view
-    // holds the startup file: a reopened crlf.txt tab painted and reported
-    // README.md's buffer (soak 3f4a5a06d599, 993fa989aee6).
     const std::filesystem::path path = handle.path;
     editor::TextViewport stand_in;
     stand_in.LoadContent("", path);
@@ -183,12 +153,6 @@ std::optional<std::size_t> TabCoordinator::FindIndexBySpecifier(std::string_view
     return std::nullopt;
   }
 
-  // A signed offset selects relative to the active tab and wraps, so `tabswitch +1`
-  // is "next tab" (what Ctrl+PageDown is bound to) and `-1` is "previous". `tabmove`
-  // has taken the same +N/-N form all along; tabswitch only accepted an absolute
-  // slot or a title, so the two sibling commands read the same argument differently.
-  // Move clamps at the ends because sliding a tab past the edge is meaningless;
-  // switching wraps, as it does in VS Code.
   const std::size_t tab_count = state_.focused_group().open_tabs.size();
   if ((specifier.front() == '+' || specifier.front() == '-') && specifier.size() > 1) {
     const bool forward = specifier.front() == '+';
@@ -279,15 +243,7 @@ bool TabCoordinator::ReopenActive() {
     return false;
   }
 
-  // Re-reading the file is a reload of the DOCUMENT, and a file open in several
-  // panes (or as a compare's editable side) is one document: this used to swap a
-  // fresh viewport into the active tab alone, which left every other view on the
-  // old buffer -- the panes then diverged and saved over each other. The shared
-  // reload re-points every clean view, keeps each one's caret and scroll, clears
-  // their folds and re-syncs the language server once; when the file on disk
-  // still matches what the views loaded it is a no-op, which is what reverting an
-  // unchanged file should be.
-  ReloadEditorTabsForPath(reopen_path, /*clean_only=*/true);
+  ReloadEditorTabsForPath(reopen_path, true);
 
   SyncActiveEditorTabMetadata();
   state_.surface.focus = FocusTarget::Editor;
@@ -296,4 +252,4 @@ bool TabCoordinator::ReopenActive() {
   return true;
 }
 
-}  // namespace microide::workspace
+}

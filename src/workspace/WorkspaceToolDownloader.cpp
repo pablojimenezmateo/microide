@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
-#include <future>
 
 #include "platform/AppDirectories.h"
 #include "util/DurableFile.h"
@@ -15,19 +14,11 @@ namespace microide::workspace {
 
 namespace {
 
-// Non-throwing existence probe. Tool-source and cache paths are influenced by plugin
-// manifests, settings, and user cache state; permission changes, unmounted network
-// paths, overlong names, or symlink loops make the throwing exists() overload raise
-// std::filesystem_error straight out of the download/query path. Fail closed instead.
 bool PathExistsNoThrow(const std::filesystem::path& path) {
   std::error_code error;
   return std::filesystem::exists(path, error) && !error;
 }
 
-// A tool_id becomes a single path component under the cache dir (`cache_dir_ /
-// tool_id`). Reject anything that could escape that directory — path separators,
-// "."/"..", or a NUL — so a tool_id from an untrusted source (e.g. a plugin
-// manifest) can never drive an arbitrary-path read/write/remove via traversal.
 bool IsSafeToolId(std::string_view tool_id) {
   if (tool_id.empty() || tool_id == "." || tool_id == "..") {
     return false;
@@ -40,17 +31,9 @@ bool IsSafeToolId(std::string_view tool_id) {
 std::optional<std::filesystem::path> ResolveToolSourcePath(const std::string& url) {
   static constexpr std::string_view kFileScheme = "file://";
   if (url.starts_with(kFileScheme)) {
-    // Reuse the shared strict file-URI parser rather than a private lax decode
-    // (TD-2026-07-17A-109): PathFromFileUri does strict percent-decoding (a malformed
-    // %-escape rejects the whole URI), rejects a decoded NUL (which would truncate a
-    // C-string filesystem call) and rejects non-local authorities — none of which the
-    // old util::PercentDecode path did before hashing and copying the local source.
     return PathFromFileUri(url);
   }
 
-  // No networking, by design: any remote scheme (`http://`, `https://`, `ftp://`,
-  // …) is rejected outright rather than treated as a filesystem path. Only a
-  // local `file://` URI (handled above) or a bare local path is a valid source.
   if (url.find("://") != std::string::npos) {
     return std::nullopt;
   }
@@ -62,8 +45,6 @@ std::optional<std::filesystem::path> ResolveToolSourcePath(const std::string& ur
   return std::nullopt;
 }
 
-// Lowercase a hex digest so expected/computed comparisons are case-insensitive
-// (`ComputeSha256Blocking` already returns lowercase; manifests may be uppercase).
 std::string LowercaseDigest(std::string digest) {
   for (char& c : digest) {
     c = util::ToLowerAsciiChar(static_cast<char>(c));
@@ -72,20 +53,12 @@ std::string LowercaseDigest(std::string digest) {
 }
 
 std::optional<std::string> ComputeSha256Blocking(const std::filesystem::path& path) {
-  // TD-2026-07-17-060: hash in-process instead of shelling out to sha256sum /
-  // shasum / certutil. The old subprocess chain occupied the downloader's serial
-  // lane, had no cancellation token, and could hang the tool install/update flow if
-  // a platform hash tool was missing or wedged. util::Sha256FileHex reads the file
-  // in bounded chunks, rejects non-regular paths, and returns a lowercase hex digest.
   return util::Sha256FileHex(path);
 }
 
-}  // namespace
+}
 
 ToolDownloader::ToolDownloader() {
-  // With no resolvable user cache directory the cache stays empty and every
-  // operation refuses. The fallback this replaced was a literal `~` path, which is
-  // RELATIVE: it cached under the working directory, and ClearCache removed that.
   if (const std::filesystem::path app_cache =
           platform::ResolveAppDirectory(platform::UserDirectoryKind::Cache, "microide");
       !app_cache.empty()) {
@@ -104,40 +77,21 @@ std::optional<std::filesystem::path> ToolDownloader::Download(const std::string&
     return std::nullopt;
   }
 
-  // Compare digests case-insensitively: `ComputeSha256Blocking` returns lowercase,
-  // but the expected digest may be uppercase (manifests accept either case), so
-  // normalize once here to cover every comparison below.
   std::string expected_sha256 = expected_sha256_in;
   for (char& c : expected_sha256) {
     c = util::ToLowerAsciiChar(static_cast<char>(c));
   }
 
   std::filesystem::path cached_path = cache_dir_ / tool_id;
-  auto compute_sha256_async =
-      [this](const std::filesystem::path& path) -> std::optional<std::string> {
-    auto promise = std::make_shared<std::promise<std::optional<std::string>>>();
-    std::future<std::optional<std::string>> future = promise->get_future();
-    background_executor_.Post([promise, path]() {
-      promise->set_value(ComputeSha256Blocking(path));
-    });
-    return future.get();
-  };
-
   if (PathExistsNoThrow(cached_path)) {
     if (!expected_sha256.empty()) {
-      if (const auto cached_sha = compute_sha256_async(cached_path);
+      if (const auto cached_sha = ComputeSha256Blocking(cached_path);
           cached_sha.has_value() && *cached_sha == expected_sha256) {
         return cached_path;
       }
       std::error_code remove_error;
       std::filesystem::remove(cached_path, remove_error);
     }
-    // An empty expected hash gives NO integrity guarantee, so a cached copy is not
-    // returned blindly — it could be stale or tampered. Fall through: the only way to
-    // proceed is to re-copy from an explicitly-trusted local source (resolved below).
-    // If no local source resolves (e.g. a remote URL, which is unsupported — there is
-    // no networking), ResolveToolSourcePath fails and the request is rejected rather
-    // than served unverified. (See bug inventory J22.)
   }
 
   const auto source_path = ResolveToolSourcePath(url);
@@ -151,17 +105,6 @@ std::optional<std::filesystem::path> ToolDownloader::Download(const std::string&
     return std::nullopt;
   }
 
-  // Copy to a temp sibling, verify the hash there, then atomically rename into
-  // place. Writing the final path directly and verifying afterwards left a
-  // partial/unverified executable at cached_path on a crash or failed hash — one
-  // a concurrent GetCachedTool/IsCached would observe and hand to a launcher.
-  //
-  // The temp name must be unique per call: a fixed `cached_path + ".partial"` lets
-  // two concurrent downloads of the same tool_id remove, overwrite, hash, or rename
-  // each other's partial file — A could hash B's bytes against A's expected digest
-  // (spurious mismatch), or one could rename the other's still-unverified bytes into
-  // place. A per-process/per-call suffix keeps each writer's staging file private up
-  // to its own verified rename, degrading concurrent callers to last-writer-wins.
   const std::filesystem::path temp_path = util::UniqueTemporaryPath(cached_path);
   error.clear();
   std::filesystem::remove(temp_path, error);
@@ -173,7 +116,7 @@ std::optional<std::filesystem::path> ToolDownloader::Download(const std::string&
   }
 
   if (!expected_sha256.empty()) {
-    const auto digest = compute_sha256_async(temp_path);
+    const auto digest = ComputeSha256Blocking(temp_path);
     if (!digest.has_value() || *digest != expected_sha256) {
       std::error_code remove_error;
       std::filesystem::remove(temp_path, remove_error);
@@ -210,9 +153,6 @@ std::optional<std::filesystem::path> ToolDownloader::GetCachedTool(
     return std::nullopt;
   }
   if (!expected_sha256.empty()) {
-    // Verify before handing the path to a launcher so a stale or tampered cache
-    // entry is never executed. A one-shot synchronous hash at lookup time is
-    // acceptable; the digest is compared case-insensitively.
     const auto digest = ComputeSha256Blocking(cached);
     if (!digest.has_value() || *digest != LowercaseDigest(expected_sha256)) {
       return std::nullopt;
@@ -229,4 +169,4 @@ void ToolDownloader::ClearCache() {
   std::filesystem::remove_all(cache_dir_, ec);
 }
 
-}  // namespace microide::workspace
+}

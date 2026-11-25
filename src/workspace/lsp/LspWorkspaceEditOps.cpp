@@ -23,7 +23,7 @@ WorkspaceResourceOp::Kind ToHostKind(ProtocolOp::Kind kind) {
   return WorkspaceResourceOp::Kind::Create;
 }
 
-}  // namespace
+}
 
 std::optional<std::vector<WorkspaceResourceOp>> FlattenResourceOps(
     const std::vector<ProtocolOp>& ops) {
@@ -64,4 +64,4 @@ bool VersionsCurrent(const LspClient& client, const LspClient::WorkspaceEdit& ed
   return true;
 }
 
-}  // namespace microide::workspace::lsp_workspace_edit
+}

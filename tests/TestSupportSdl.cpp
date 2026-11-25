@@ -28,4 +28,4 @@ ScopedSdlModState::~ScopedSdlModState() {
   SDL_SetModState(previous_mods_);
 }
 
-}  // namespace microide::tests
+}

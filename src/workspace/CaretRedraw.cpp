@@ -13,15 +13,9 @@ namespace microide::workspace {
 namespace {
 
 constexpr Uint64 kCaretBlinkIntervalDefaultMs = 530;
-// After this many ms with no caret-blink-resetting input (typing, navigation,
-// focus changes, etc.) the caret freezes in its visible phase and we stop
-// scheduling blink-only wake-ups. This cuts the idle wake/partial-redraw
-// rate to ~0 during long inactivity, matching the dominant terminal
-// convention and many editors' "stop-blink" timeout. The next input event
-// resets `caret_blink_epoch_ms_` via `ResetCaretBlink()` and resumes blink.
 constexpr Uint64 kCaretBlinkIdleStopMs = 8000;
 
-}  // namespace
+}
 
 bool WorkspaceShell::CaretBlinkEnabled() const {
   return SettingFlagEnabled(GetSettingValue("editor.caret_blink.enabled"), true);
@@ -34,7 +28,6 @@ Uint64 WorkspaceShell::CaretBlinkIntervalMs() const {
 }
 
 std::optional<Uint32> WorkspaceShell::NextCaretBlinkDelayMs() const {
-  // A disabled blink shows a solid caret and schedules no blink-only wake-ups.
   if (!ShouldBlinkCaret() || !CaretBlinkEnabled()) {
     return std::nullopt;
   }
@@ -79,11 +72,6 @@ bool WorkspaceShell::CaretBlinkAnimating() const {
 }
 
 bool WorkspaceShell::ShouldBlinkCaret() const {
-  // Every menu surface, the compact layout's overflow popup included: the popup
-  // takes the text input away (CurrentTextInputSurface is None under it), so
-  // the editor paints no caret while it is up -- and a caret still counted as
-  // visible here was never damaged back in when the popup closed (a 1x18 stale
-  // column, found by the QA menu-keyboard flow on CI's slower runner).
   if (context_.prompts.dirty_visible || MenuSurfaceCapturingMouse()) {
     return false;
   }
@@ -108,14 +96,7 @@ bool WorkspaceShell::ShouldBlinkCaret() const {
       return true;
     case TextInputSurface::SettingsQuery:
     case TextInputSurface::SettingsValueEdit:
-      // The Settings overlay renders its own static (non-blinking) caret; it does
-      // not participate in the shared caret-blink machinery. And nothing under it
-      // blinks either: these cases fell through to the focus checks below, so with
-      // the panel focused the terminal caret blinked under the modal while the
-      // blink damage named the Settings field (found by the QA monkey).
     case TextInputSurface::DebugVariableEdit:
-      // The Variables value field likewise renders its own static caret in the
-      // bottom-panel TU, so it stays out of the blink machinery (no idle wake-ups).
       return false;
     case TextInputSurface::None:
     case TextInputSurface::Editor:
@@ -139,7 +120,6 @@ bool WorkspaceShell::CaretVisibleNow() const {
   if (!ShouldBlinkCaret()) {
     return false;
   }
-  // Blink disabled: a focused caret is always solid.
   if (!CaretBlinkEnabled()) {
     return true;
   }
@@ -163,8 +143,6 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCaretDirtyRect() const {
 
   if (const auto surface = CurrentTextInputSurface();
       surface == TextInputSurface::CommitSubject || surface == TextInputSurface::CommitBody) {
-    // The commit fields are rendered by the sidebar panel, which caches the focused field's
-    // caret rect each frame; reuse it so blink-only wake-ups repaint a tight region.
     const SDL_FRect caret = context_.current_project_state.sidebar.git.commit_workflow.caret_rect;
     return (caret.w > 0.0f && caret.h > 0.0f)
                ? std::optional<SDL_FRect>(MakeRect(caret.x, caret.y, std::max(1.0f, caret.w),
@@ -176,7 +154,6 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCaretDirtyRect() const {
       surface != TextInputSurface::None && surface != TextInputSurface::Editor &&
       surface != TextInputSurface::Terminal) {
     const auto visual = BuildActiveTextInputVisual(*layout, std::nullopt);
-    // From the device pixel the caret is painted on (RenderActiveTextInputCaret).
     return visual.has_value()
                ? std::optional<SDL_FRect>(
                      MakeRect(render::SnapToDevicePixel(visual->cursor_x, presentation_scale_x_),
@@ -186,10 +163,6 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCaretDirtyRect() const {
   }
 
   if (context_.current_project_state.surface.focus == FocusTarget::Editor) {
-    // An editor's, a compare's or a merge's caret is its rows': each row holding a
-    // caret keys on whether this frame draws it (EditorRowUnits, CompareRowUnits),
-    // so a blink names no rect -- its wake asks for a frame and prep damages those
-    // rows. This used to name the whole pane, and every blink repainted it.
     return std::nullopt;
   }
   if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
@@ -226,9 +199,6 @@ std::optional<SDL_FRect> WorkspaceShell::ActiveTerminalCaretRect(
   if (terminal_tab == nullptr) {
     return std::nullopt;
   }
-  // The caret as the last prepared frame sampled and painted it
-  // (PrepareTerminalPanesForFrame), not the live session: the blink repaints what
-  // is on screen, and output that moved the caret since repaints its own rows.
   return TerminalCaretRectIn(ComputeBottomPanelLogLayout(layout, terminal_tab->frame_line_count),
                              terminal_tab->frame_cursor);
 }
@@ -247,8 +217,6 @@ std::optional<SDL_FRect> WorkspaceShell::TerminalCaretRectIn(
   if (cursor_x > panel_layout.content_rect.x + panel_layout.content_rect.w - char_width) {
     return std::nullopt;
   }
-  // On a wide glyph's lead cell the caret covers both cells, as far as the pane has
-  // room (TerminalCursorSnapshot::wide).
   const float caret_width =
       cursor.wide ? std::min(2.0f * char_width, panel_layout.content_rect.x + panel_layout.content_rect.w - cursor_x)
                   : char_width;
@@ -260,4 +228,4 @@ std::optional<SDL_FRect> WorkspaceShell::TerminalCaretRectIn(
   return MakeRect(cursor_x, cursor_y - 1.0f, caret_width, panel_layout.line_height);
 }
 
-}  // namespace microide::workspace
+}

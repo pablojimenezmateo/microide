@@ -1,21 +1,3 @@
-// Soft wrap is a VIEW setting: it must not change what an edit does to the text.
-//
-// The compare and merge surfaces, the editor pane and the git commit body all
-// share one document and one action layer but fork the plumbing around it, and
-// wrap is the first feature that makes the three row spaces (model rows,
-// presentation rows, on-screen rows) distinct. Every place that reaches for a
-// visual row where it meant a logical line is a bug that only appears with wrap
-// ON -- and no fixture test catches it, because the fixture picks one setting.
-//
-// So: run the same edits, from the same caret sets, on two viewports that differ
-// ONLY in soft wrap, and require the resulting bytes and the resulting caret set
-// to be identical. Deliberately excluded are the verbs that are ABOUT the view --
-// vertical motion, Home/End, page -- which legitimately answer differently under
-// wrap and have their own walk in EditorWrapNavigationPropertyTests. Horizontal
-// and word motion ARE in the list: they step through text positions, so they owe
-// the same answer either way, and they are the verbs a wrap-aware rewrite is
-// most likely to make view-dependent by accident.
-
 #include "TestSupport.h"
 
 #include <random>
@@ -98,10 +80,6 @@ enum class Edit {
   kPaste,
   kSelectWord,
   kSelectLine,
-  // Horizontal and word motion are LOGICAL verbs: they step through text
-  // positions, so unlike vertical motion and Home/End they owe the same answer
-  // with wrap on. They are in this list precisely because they are the ones a
-  // wrap-aware rewrite is most likely to make view-dependent by accident.
   kLeft,
   kRight,
   kShiftLeft,
@@ -159,14 +137,14 @@ void ApplyEdit(TextViewport& viewport, Edit edit, char typed) {
     case Edit::kDeleteForward: viewport.DeleteForward(); break;
     case Edit::kMoveLineUp: microide::editor::MoveLineUp(viewport); break;
     case Edit::kMoveLineDown: microide::editor::MoveLineDown(viewport); break;
-    case Edit::kCopyLinesDown: microide::editor::CopyLines(viewport, /*downward=*/true); break;
-    case Edit::kCopyLinesUp: microide::editor::CopyLines(viewport, /*downward=*/false); break;
+    case Edit::kCopyLinesDown: microide::editor::CopyLines(viewport, true); break;
+    case Edit::kCopyLinesUp: microide::editor::CopyLines(viewport, false); break;
     case Edit::kDeleteLine: microide::editor::DeleteLine(viewport); break;
     case Edit::kIndent: microide::editor::IndentSelection(viewport); break;
     case Edit::kOutdent: microide::editor::OutdentSelection(viewport); break;
     case Edit::kInsertLineBelow: microide::editor::InsertLineBelow(viewport); break;
     case Edit::kInsertLineAbove: microide::editor::InsertLineAbove(viewport); break;
-    case Edit::kSortAscending: microide::editor::SortLines(viewport, /*ascending=*/true); break;
+    case Edit::kSortAscending: microide::editor::SortLines(viewport, true); break;
     case Edit::kToggleLineComment: microide::editor::ToggleLineComment(viewport, "//"); break;
     case Edit::kToggleBlockComment:
       microide::editor::ToggleBlockComment(viewport, "/*", "*/");
@@ -175,15 +153,13 @@ void ApplyEdit(TextViewport& viewport, Edit edit, char typed) {
     case Edit::kTab: viewport.InsertTab(); break;
     case Edit::kDeleteWordLeft: viewport.DeleteWord(-1); break;
     case Edit::kDeleteWordRight: viewport.DeleteWord(1); break;
-    // Two lines, so both the one-line-per-caret distribute path and the
-    // insert-the-whole-thing path are reachable depending on the caret count.
     case Edit::kPaste: viewport.PasteText("pasted\nlines\n"); break;
     case Edit::kSelectWord: viewport.SelectWordAtCursor(); break;
     case Edit::kSelectLine: viewport.SelectLineAtCursor(); break;
     case Edit::kLeft: viewport.MoveCursorHorizontal(-1); break;
     case Edit::kRight: viewport.MoveCursorHorizontal(1); break;
-    case Edit::kShiftLeft: viewport.MoveCursorHorizontal(-1, /*extend_selection=*/true); break;
-    case Edit::kShiftRight: viewport.MoveCursorHorizontal(1, /*extend_selection=*/true); break;
+    case Edit::kShiftLeft: viewport.MoveCursorHorizontal(-1, true); break;
+    case Edit::kShiftRight: viewport.MoveCursorHorizontal(1, true); break;
     case Edit::kWordLeft: viewport.MoveCursorWord(-1); break;
     case Edit::kWordRight: viewport.MoveCursorWord(1); break;
     case Edit::kUndo: viewport.Undo(); break;
@@ -192,20 +168,16 @@ void ApplyEdit(TextViewport& viewport, Edit edit, char typed) {
   }
 }
 
-// Two viewports over the same content, differing only in soft wrap. The wrapped
-// one is given a narrow viewport so the fixtures below genuinely occupy several
-// visual rows; the plain one is wide enough that nothing wraps even if the flag
-// were ignored.
 struct WrapPair {
   TextViewport plain;
   TextViewport wrapped;
 
   void Load(const std::string& content) {
     plain.LoadContent(content, "/tmp/wrap-invariance-plain.cpp");
-    plain.SetViewportSize(40, /*visible_columns=*/400);
+    plain.SetViewportSize(40, 400);
     plain.SetSoftWrap(false);
     wrapped.LoadContent(content, "/tmp/wrap-invariance-wrapped.cpp");
-    wrapped.SetViewportSize(6, /*visible_columns=*/9);
+    wrapped.SetViewportSize(6, 9);
     wrapped.SetSoftWrap(true);
   }
 
@@ -216,8 +188,6 @@ struct WrapPair {
 };
 
 void TestWrapDoesNotChangeWhatAnEditDoes() {
-  // Content whose wrapped-row count differs sharply from its line count, with the
-  // indentation, comment markers and sortable ordering the shaping verbs need.
   const std::vector<std::string> documents = {
       "alpha bravo charlie delta\n  indented line that is long enough to wrap\nzz\n// commented\n",
       "\tint total = 0;\n\tfor (int value : values) {\n\t\ttotal += value;\n\t}\n",
@@ -228,14 +198,8 @@ void TestWrapDoesNotChangeWhatAnEditDoes() {
   std::mt19937 rng(20260914);
   auto pick = [&](std::size_t n) { return std::uniform_int_distribution<std::size_t>(0, n - 1)(rng); };
 
-  // The loop bound, named once. The vacuity guard below used to repeat the
-  // literal, so cranking the iteration count to shake out a fresh seed broke the
-  // GUARD rather than the property -- a check that only holds at one loop size
-  // is a check nobody can turn up.
   constexpr int kIterationsPerDocument = 300;
   std::size_t divergence_opportunities = 0;
-  // Per-verb: how often it was run, and how often it moved the text or the caret
-  // set. A verb that never did either proved nothing about wrap.
   std::vector<int> ran(static_cast<std::size_t>(Edit::kCount), 0);
   std::vector<int> changed(static_cast<std::size_t>(Edit::kCount), 0);
   for (const std::string& content : documents) {
@@ -251,8 +215,6 @@ void TestWrapDoesNotChangeWhatAnEditDoes() {
              "the plain viewport must not wrap");
       ++divergence_opportunities;
 
-      // The same caret set on both, placed by TEXT position so nothing about the
-      // placement itself can depend on the view.
       const std::size_t lines = pair.plain.line_count();
       auto random_position = [&]() {
         const std::size_t line = pick(lines);
@@ -263,7 +225,7 @@ void TestWrapDoesNotChangeWhatAnEditDoes() {
       if (pick(2) == 0) {
         const TextPosition head = random_position();
         pair.Both([&](TextViewport& v) {
-          v.MoveCursorTo(head.line, head.column, /*extend_selection=*/true);
+          v.MoveCursorTo(head.line, head.column, true);
         });
       }
       const std::size_t secondaries = pick(3);
@@ -283,9 +245,6 @@ void TestWrapDoesNotChangeWhatAnEditDoes() {
       const int steps = 1 + static_cast<int>(pick(4));
       Edit previous = Edit::kCount;
       for (int step = 0; step < steps; ++step) {
-        // Redo is only ever live straight after an undo, and a uniform draw over
-        // this many verbs lands that pair a handful of times in the whole sweep.
-        // Bias it, or the redo path is in the list without being tested.
         const Edit edit = (previous == Edit::kUndo && pick(3) == 0)
                               ? Edit::kRedo
                               : static_cast<Edit>(pick(static_cast<std::size_t>(Edit::kCount)));
@@ -330,11 +289,11 @@ void TestWrapDoesNotChangeWhatAnEditDoes() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterEditorWrapInvarianceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorWrapInvariance/WrapDoesNotChangeWhatAnEditDoes",
           TestWrapDoesNotChangeWhatAnEditDoes);
 }
 
-}  // namespace microide::tests
+}

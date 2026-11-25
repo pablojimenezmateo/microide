@@ -13,10 +13,6 @@ using workspace::InteractionState;
 using workspace::WheelTicks;
 
 void TestSubTickDeltasEmitNoScrollUntilThresholdCrossed() {
-  // Smooth-scroll trackpad: each event reports y ~ 0.3. Three events should
-  // accumulate to exactly one whole-line tick. The legacy integer_y path
-  // dropped each of these to zero and emitted no scroll at all until a
-  // discrete tick eventually landed.
   InteractionState state;
   WheelTicks ticks = AccumulateWheelEvent(state, 0.3f, 0.0f, false);
   Expect(ticks.vertical == 0,
@@ -41,11 +37,8 @@ void TestDiscreteWheelClickEmitsOneTickImmediately() {
 }
 
 void TestDirectionReversalDropsOppositeResidue() {
-  // The user scrolled down enough to leave +0.7 of residue, then reverses.
-  // We should not require the reverse to "burn through" the residue before
-  // emitting a scroll-up tick.
   InteractionState state;
-  AccumulateWheelEvent(state, 0.7f, 0.0f, false);  // +0.7 accumulated, no tick
+  AccumulateWheelEvent(state, 0.7f, 0.0f, false);
   Expect(state.wheel_accumulator_y > 0.0f,
          "down-scroll residue is positive after initial event");
   const WheelTicks ticks = AccumulateWheelEvent(state, -1.0f, 0.0f, false);
@@ -55,8 +48,6 @@ void TestDirectionReversalDropsOppositeResidue() {
 }
 
 void TestFlippedDirectionInvertsSign() {
-  // SDL_MOUSEWHEEL_FLIPPED means the OS has already inverted natural-scrolling.
-  // We must apply that flip exactly once.
   InteractionState state;
   const WheelTicks normal = AccumulateWheelEvent(state, 1.0f, 0.0f, false);
   Expect(normal.vertical == 1, "non-flipped y=1 emits +1 tick");
@@ -79,8 +70,6 @@ void TestHorizontalAxisAccumulatesIndependently() {
 }
 
 void TestNonFiniteDeltasAreIgnored() {
-  // A stray NaN or infinity in the SDL event should not poison the
-  // accumulator (the rest of the session would silently break otherwise).
   InteractionState state;
   state.wheel_accumulator_y = 0.5f;
   AccumulateWheelEvent(state, std::numeric_limits<float>::quiet_NaN(), 0.0f, false);
@@ -92,9 +81,6 @@ void TestNonFiniteDeltasAreIgnored() {
 }
 
 void TestLargeDeltasEmitMultipleTicks() {
-  // A high-resolution device that reports a large delta in one event
-  // (e.g. y=3.5) should emit floor(3.5) = 3 ticks plus carry the 0.5
-  // residue forward.
   InteractionState state;
   const WheelTicks ticks = AccumulateWheelEvent(state, 3.5f, 0.0f, false);
   Expect(ticks.vertical == 3,
@@ -103,7 +89,7 @@ void TestLargeDeltasEmitMultipleTicks() {
          "fractional 0.5 must remain as residue for the next event");
 }
 
-}  // namespace
+}
 
 void RegisterWheelAccumulatorTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WheelAccumulator/SubTickDeltasEmitNoScrollUntilThreshold",
@@ -122,4 +108,4 @@ void RegisterWheelAccumulatorTests(std::vector<TestCase>& tests) {
           TestLargeDeltasEmitMultipleTicks);
 }
 
-}  // namespace microide::tests
+}

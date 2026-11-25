@@ -127,7 +127,7 @@ SDL_Color ResolveUiBackground(const ThemeStyleMap& styles,
   return SamePolarity(*candidate, reference) ? *candidate : fallback;
 }
 
-}  // namespace
+}
 
 Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
   Theme theme = MakeDefaultTheme();
@@ -199,10 +199,6 @@ Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
       theme.surface_background, 4.5f);
   theme.editor_background = default_background;
   theme.gutter_background = line_number_background;
-  // Opaque, like every other surface: menus and overlays repaint on their own
-  // (a hover moves, a caret blinks) without what lies beneath them, which is
-  // exact only over an opaque fill. At 0xf6 each such repaint blended the popup
-  // over its own retained pixels; the QA redraw verifier reported it.
   theme.overlay_background = theme.surface_raised;
   theme.overlay_backdrop =
       WithAlpha(Darken(default_background, IsLight(default_background) ? 0.28f : 0.36f), 0x94);
@@ -251,8 +247,6 @@ Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
   theme.diff_added = ResolveForeground(styles, "diff-added", theme.diff_added);
   theme.diff_modified = ResolveForeground(styles, "diff-modified", theme.diff_modified);
   theme.diff_deleted = ResolveForeground(styles, "diff-deleted", theme.diff_deleted);
-  // No scheme names it yet: its constant colour reads apart from added and
-  // removed and was chosen for its background.
   theme.diff_moved = ResolveForeground(styles, "diff-moved", theme.syntax_constant);
   theme.diagnostic_error = ResolveForeground(styles, "diagnostic-error", theme.diagnostic_error);
   theme.diagnostic_warning =
@@ -400,11 +394,6 @@ namespace {
 
 constexpr std::string_view kThemeFileExtension = ".microide";
 
-// Appends the stem of every `*.microide` regular file in `directory`. Written
-// against the directory iterator rather than `platform::ListDirectory` because
-// that helper normalizes a path and stats every entry, then sorts them — for a
-// list of stems that is a dozen allocations per entry to reject entries that do
-// not even carry the extension.
 void AppendThemeNamesFromDirectory(const std::filesystem::path& directory,
                                    std::vector<std::string>& names) {
   std::error_code error;
@@ -428,8 +417,6 @@ void AppendThemeNamesFromDirectory(const std::filesystem::path& directory,
   }
 }
 
-// Wider than any filesystem timestamp granularity the editor runs on (ext4's
-// coarse clock is a jiffy; FAT stamps in 2 s).
 constexpr std::chrono::seconds kRacyStampWindow{2};
 
 void SortAndDedupe(std::vector<std::string>& names) {
@@ -437,11 +424,10 @@ void SortAndDedupe(std::vector<std::string>& names) {
   names.erase(std::unique(names.begin(), names.end()), names.end());
 }
 
-}  // namespace
+}
 
 std::vector<std::string> ListAvailableThemeNames(const std::filesystem::path& theme_directory) {
   const std::filesystem::path resolved_directory = ResolveThemeDirectory(theme_directory);
-  // The built-in themes are always selectable, even without bundled assets.
   std::vector<std::string> names = {"default", "light"};
   if (!resolved_directory.empty()) {
     AppendThemeNamesFromDirectory(resolved_directory, names);
@@ -468,16 +454,9 @@ const std::vector<std::string>& ThemeNameCatalog::Names(
   names_.emplace_back("light");
   valid_ = false;
   if (!resolved_directory_.empty()) {
-    // Sampled BEFORE the walk: a change that lands during it then leaves the
-    // recorded stamp older than the directory's, so the next call rescans.
     error.clear();
     const std::filesystem::file_time_type mtime =
         std::filesystem::last_write_time(resolved_directory_, error);
-    // A stamp within the filesystem's timestamp granularity of "now" is racy
-    // (git's "racily clean" rule): the kernel stamps mtimes from a coarse
-    // clock, so a theme added or removed in the same tick as this sample leaves
-    // the directory's mtime unchanged and a memo would hide it forever. Such a
-    // stamp is not trusted; the next call rescans until the directory settles.
     if (!error && std::filesystem::file_time_type::clock::now() - mtime > kRacyStampWindow) {
       resolved_mtime_ = mtime;
       valid_ = true;
@@ -532,4 +511,4 @@ bool LoadThemeByName(std::string_view name,
   return true;
 }
 
-}  // namespace microide::render
+}

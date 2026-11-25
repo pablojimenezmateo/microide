@@ -44,8 +44,6 @@ void PluginEditorEventTracker::Sample(const std::filesystem::path& path,
     last_selection_end_column_ = selection_end_column;
   };
 
-  // First sample, or the active buffer's identity changed: re-baseline silently
-  // so switching tabs never fakes a change/cursor/selection event.
   if (!has_baseline_ || path_ != path) {
     adopt_baseline();
     return;
@@ -54,7 +52,6 @@ void PluginEditorEventTracker::Sample(const std::filesystem::path& path,
   const std::uint64_t deadline = now_ms + debounce_ms;
 
   if (interest_.buffer_change && content_revision != last_revision_) {
-    // Union the caret line across the burst as a changed-line hint.
     if (!change_dirty_) {
       change_start_line_ = cursor_line;
       change_end_line_ = cursor_line;
@@ -139,4 +136,4 @@ PluginEditorEventTracker::DueEvents PluginEditorEventTracker::TakeDue(std::uint6
   return due;
 }
 
-}  // namespace microide::workspace
+}

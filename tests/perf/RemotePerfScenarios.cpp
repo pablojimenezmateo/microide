@@ -1,26 +1,3 @@
-// Remote latency scenarios (phase 2a task 9.1, TD-2026-10-08-325): a real
-// microide-server reached through a delaying link (tests/support/DelayRelay.h:
-// 60 ms round trip, 100 Mbit/s), measuring the budgets
-// dev-docs/design/remote-projects.md sets for host terminals:
-//
-//   remote_first_prompt            connect, open a host shell, first prompt drawn
-//   remote_echo_under_bulk         confirmed echo <= 1 RTT + 5 ms + the one bulk
-//                                  chunk on the wire, while a 50 MiB object
-//                                  streams on the bulk lane
-//   remote_contradicted_prediction a prediction the host contradicts is gone within
-//                                  1 RTT + the 50 ms echo fallback
-//   remote_reattach_three          a new connection carries three host terminals
-//                                  over (RemoteConnection::Replace) in <= 2 RTT
-//   remote_dead_link               a link that dies without a FIN is declared dead
-//                                  by the heartbeat in <= 6 s (+1 ping interval)
-//   remote_stalled_server_input    with the server stalled, a keystroke and the
-//                                  snapshot a frame paints never block (< 16 ms)
-//
-// All are opt-in (`--scenarios=remote_...`) and advisory: their timings are a
-// property of the link the relay simulates, and the budgets are asserted in the
-// body rather than against a baseline (there is no perf-runner-v1 baseline for
-// them yet). Every Measure body here WAITS on purpose -- the latency is the
-// measurement -- and says so with the perf-measure-waits-on-clock exemption.
 #include "perf/PerfHarness.h"
 
 #include "platform/Subprocess.h"
@@ -58,13 +35,11 @@ using Clock = std::chrono::steady_clock;
 using terminal::TerminalSession;
 
 constexpr std::chrono::milliseconds kRtt{60};
-constexpr std::uint64_t kLinkBytesPerSecond = 12'500'000;  // 100 Mbit/s
+constexpr std::uint64_t kLinkBytesPerSecond = 12'500'000;
 constexpr std::uint64_t kBulkBytes = 50ull * 1024 * 1024;
 
 double Ms(Clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); }
 
-// Polls `done` until it holds or `timeout` passes; the harness's own WaitFor*
-// helpers pump a shell, and these scenarios have none.
 bool Poll(const std::function<bool()>& done, std::chrono::milliseconds timeout) {
   const auto deadline = Clock::now() + timeout;
   while (!done()) {
@@ -76,16 +51,8 @@ bool Poll(const std::function<bool()>& done, std::chrono::milliseconds timeout) 
   return true;
 }
 
-// One server for the scenario's process (each scenario runs in its own), with a
-// host root holding the bulk object. Stopped and removed at exit.
-// One per scenario run, on the scenario's stack: the scenario runs in a forked
-// child that leaves with _exit (ScenarioProcessIsolation), so a static's
-// destructor never ran there, and every run left its daemon alive and its tree
-// under /tmp (35 daemons, 2 GB of tmpfs in one day of A/B runs;
-// tests/perf/check_remote_scenario_teardown.py).
 class HostServer {
  public:
-  // The one the running scenario holds.
   static HostServer& Get() { return *current_; }
   HostServer(const HostServer&) = delete;
   HostServer& operator=(const HostServer&) = delete;
@@ -116,7 +83,6 @@ class HostServer {
     socket_dir_ = base_ / "s";
     root_ = base_ / "root";
     std::filesystem::create_directories(root_);
-    // Incompressible, so the transport cannot shrink the transfer it is gated on.
     std::ofstream out(root_ / "bulk.bin", std::ios::binary);
     std::mt19937_64 random(42);
     std::vector<std::uint64_t> block(1 << 16);
@@ -141,7 +107,6 @@ class HostServer {
   bool ok_ = false;
 };
 
-// A client reached through a fresh relay.
 struct Link {
   std::unique_ptr<DelayRelay> relay;
   std::shared_ptr<remote::RemoteServerClient> client;
@@ -183,7 +148,6 @@ std::string CursorLineText(const TerminalSession& session) {
   return text;
 }
 
-// A host shell whose prompt is known ("ready> "), with prediction always on.
 struct HostTerminal {
   std::shared_ptr<remote::RemoteConnection> connection;
   std::unique_ptr<remote::RemoteProcessLauncher> launcher;
@@ -198,7 +162,7 @@ struct HostTerminal {
     if (!session.Start(*launcher, HostServer::Get().root(), {}, "sh")) {
       throw std::runtime_error("remote perf: the host terminal did not start");
     }
-    session.SendBytes("PS1='rea''dy> '\n");  // split: the echoed line cannot match
+    session.SendBytes("PS1='rea''dy> '\n");
     if (!Poll([&] { return CursorLineText(session) == "ready>"; }, std::chrono::seconds(10))) {
       throw std::runtime_error("remote perf: no prompt: " + CursorLineText(session));
     }
@@ -211,10 +175,6 @@ struct HostTerminal {
     press.codepoint = c;
     (void)session.SendKeyPress(press);
   }
-  // Type a character and wait until the host has answered it: no prediction left
-  // pending AND the cursor line reads `expected` (a keystroke that was not
-  // predicted -- prediction is withheld right after a control key -- is settled
-  // only by the echo itself). Returns ms.
   double TypeAndConfirm(char32_t c, const std::string& expected) {
     const auto start = Clock::now();
     Type(c);
@@ -225,8 +185,6 @@ struct HostTerminal {
     }
     return Ms(Clock::now() - start);
   }
-  // ^U, and wait for the host to have cleared the line (so the next sample starts
-  // from a known state rather than racing the erase).
   void ClearLine() {
     session.SendBytes("\x15");
     Poll([&] { return CursorLineText(session) == "ready>"; }, std::chrono::seconds(10));
@@ -260,8 +218,7 @@ void RunRemoteFirstPrompt(ScenarioContext& context) {
     return;
   }
   const double ms = context.Measure("remote.first_prompt", [&] {
-    // perf-measure-waits-on-clock: the connect-to-prompt latency over the
-    // simulated link IS the measurement (advisory; no baseline).
+    // perf-measure-waits-on-clock: connect-to-prompt latency over the simulated link is the measurement
     Link link = Connect();
     HostTerminal terminal(std::make_shared<remote::RemoteConnection>(link.client));
   });
@@ -278,8 +235,6 @@ void RunRemoteEchoUnderBulk(ScenarioContext& context) {
   HostTerminal terminal(connection);
   remote::RemoteWorkspace workspace(connection);
   const std::filesystem::path staging = HostServer::Get().root().parent_path() / "staging.bin";
-  // The same keystroke with the link idle: what the bulk transfer adds is the
-  // difference, and the budget is the RTT either way.
   std::vector<double> idle;
   {
     std::string line = "ready> ";
@@ -291,15 +246,14 @@ void RunRemoteEchoUnderBulk(ScenarioContext& context) {
   }
   std::vector<double> echoes;
   context.Measure("remote.echo_under_bulk", [&] {
-    // perf-measure-waits-on-clock: each sample is a keystroke-to-confirmed-echo
-    // latency taken while the bulk lane is busy; the waits are the samples.
+    // perf-measure-waits-on-clock: each wait is one keystroke-to-echo sample under a busy bulk lane
     std::atomic_bool fetched{false};
     const auto fetch_started = Clock::now();
     workspace.FetchObjectToFile("bulk.bin", staging, remote::Lane::Bulk,
                                 [&](remote::RemoteWorkspace::FetchedObject, std::string) {
                                   fetched = true;
                                 });
-    std::this_thread::sleep_for(kRtt * 2);  // let the transfer fill the link
+    std::this_thread::sleep_for(kRtt * 2);
     std::string line = "ready> ";
     int typed = 0;
     while (!fetched && typed < 40) {
@@ -325,14 +279,7 @@ void RunRemoteEchoUnderBulk(ScenarioContext& context) {
     std::fprintf(stderr, "\n");
   }
   Require(echoes.size() >= 8, "remote_echo_under_bulk: too few samples taken during the transfer");
-  // The budget's terms, as the design states them: one round trip, the 5 ms of
-  // queue the bulk window allows, and the ONE bulk chunk already on the wire that
-  // a keystroke may wait behind (64 KiB at the link's rate). The tail may add one
-  // terminal frame interval (frames are coalesced to one per 16 ms).
   const double chunk_ms = 1000.0 * static_cast<double>(64 * 1024) / static_cast<double>(kLinkBytesPerSecond);
-  // Plus 2 ms for this harness's own polling and the relay's thread wake-ups: the
-  // design point lands ON the budget (measured 2026-10-13: p50 70.8 ms against
-  // 70.2 ms, p95 71.1 ms, at 94 Mbit/s), so a zero-tolerance gate is a coin flip.
   constexpr double kMeasurementToleranceMs = 2.0;
   const double budget = Ms(kRtt) + 5.0 + chunk_ms + kMeasurementToleranceMs;
   const double p50 = Percentile(echoes, 0.5);
@@ -354,17 +301,16 @@ void RunRemoteContradictedPrediction(ScenarioContext& context) {
   }
   Link link = Connect();
   HostTerminal terminal(std::make_shared<remote::RemoteConnection>(link.client));
-  terminal.session.SendBytes("stty -echo\n");  // the host will not echo what is typed
+  terminal.session.SendBytes("stty -echo\n");
   std::this_thread::sleep_for(kRtt * 3);
   std::vector<double> gone;
   context.Measure("remote.contradicted_prediction", [&] {
-    // perf-measure-waits-on-clock: the time a contradicted prediction stays on
-    // screen is the measurement.
-    gone.push_back(terminal.TypeAndConfirm(U'z', "ready>"));  // never echoed
+    // perf-measure-waits-on-clock: how long a contradicted prediction stays on screen is the measurement
+    gone.push_back(terminal.TypeAndConfirm(U'z', "ready>"));
   });
   terminal.ClearLine();
   const double worst = *std::max_element(gone.begin(), gone.end());
-  const double budget = Ms(kRtt) + 50.0 + 16.0;  // the host's echo fallback, one frame
+  const double budget = Ms(kRtt) + 50.0 + 16.0;
   std::fprintf(stderr, "[perf][remote_contradicted_prediction] worst=%.1fms budget=%.1fms\n", worst,
                budget);
   Require(Percentile(gone, 0.5) <= budget,
@@ -384,8 +330,7 @@ void RunRemoteReattachThree(ScenarioContext& context) {
   }
   std::vector<double> samples;
   context.Measure("remote.reattach_three", [&] {
-    // perf-measure-waits-on-clock: from the new link's hello to all three
-    // terminals mirrored again is the measurement.
+    // perf-measure-waits-on-clock: hello to all three terminals mirrored again is the measurement
     link.client->peer().Fail("perf: link dropped");
     Poll([&] {
       return std::all_of(terminals.begin(), terminals.end(),
@@ -415,8 +360,7 @@ void RunRemoteDeadLink(ScenarioContext& context) {
   }
   std::vector<double> samples;
   context.Measure("remote.dead_link", [&] {
-    // perf-measure-waits-on-clock: how long a silent link takes to be declared
-    // dead is the measurement (the heartbeat's 3 x 2 s).
+    // perf-measure-waits-on-clock: time for a silent link to be declared dead is the measurement
     Link link = Connect();
     const auto start = Clock::now();
     link.relay->Blackhole();
@@ -442,7 +386,7 @@ void RunRemoteStalledServerInput(ScenarioContext& context) {
     for (int i = 0; i < 50; ++i) {
       const auto start = Clock::now();
       terminal.Type(U'k');
-      (void)terminal.session.SnapshotLines();  // what a frame paints
+      (void)terminal.session.SnapshotLines();
       worst = std::max(worst, Ms(Clock::now() - start));
     }
     link.relay->SetServerStalled(false);
@@ -495,6 +439,6 @@ const ScenarioRegistration g_remote_stalled_server_input({Scenario{
     .run = RunRemoteStalledServerInput,
 }});
 
-}  // namespace
-}  // namespace microide::tests::perf
+}
+}
 

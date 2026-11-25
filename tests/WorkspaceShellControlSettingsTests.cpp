@@ -18,9 +18,6 @@ using microide::workspace::SettingType;
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
-// Scope the app config/state homes so persistence is test-local on every
-// platform (XDG on Linux, *APPDATA on Windows).
-
 bool RootsContain(const std::vector<std::filesystem::path>& roots,
                   const std::filesystem::path& target) {
   const std::filesystem::path normalized = target.lexically_normal();
@@ -29,8 +26,6 @@ bool RootsContain(const std::vector<std::filesystem::path>& roots,
   });
 }
 
-// The `set-setting` command flips a value through the chokepoint; an unknown id
-// is rejected.
 void TestSetSettingCommandFlipsAndRejects() {
   TemporaryDirectory temp;
   ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
@@ -49,10 +44,6 @@ void TestSetSettingCommandFlipsAndRejects() {
          "set-setting with no arguments should reject");
 }
 
-// A built-in write must STORE the parsed + range-clamped value, not the raw input,
-// so the stored/displayed/persisted value matches the value the editor applies.
-// Previously `set-setting editor.font_size 999` stored "999" while the editor
-// rendered at the clamped 32, so the overlay showed 999 and its stepper wrapped.
 void TestSetSettingStoresClampedBuiltinValue() {
   TemporaryDirectory temp;
   ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
@@ -76,10 +67,6 @@ void TestSetSettingStoresClampedBuiltinValue() {
          "the stored value must be clamped to the spec min, not the raw 1");
 }
 
-// The Settings stepper saturates at the range's ends. It wrapped (16 -> 1 on the
-// tab size), so a tap too many on "+" handed the user the smallest value;
-// found by the QA `settings-controls` flow holding "+" past the maximum. The
-// enum control keeps cycling: a segmented control has no bounds.
 void TestSettingsStepperStopsAtTheBounds() {
   TemporaryDirectory temp;
   ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
@@ -90,32 +77,29 @@ void TestSettingsStepperStopsAtTheBounds() {
   const SettingSpec* tab = FindBuiltinSettingSpec("editor.tab_size");
   Expect(tab != nullptr && tab->type == SettingType::Int, "tab_size must be an int spec");
   WorkspaceShellTestAccess::SetSettingValue(shell, "editor.tab_size", std::to_string(tab->max_int));
-  WorkspaceShellTestAccess::StepSetting(shell, "editor.tab_size", /*forward=*/true);
+  WorkspaceShellTestAccess::StepSetting(shell, "editor.tab_size", true);
   Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "editor.tab_size") == std::to_string(tab->max_int),
          "stepping up from the maximum stays at the maximum");
   WorkspaceShellTestAccess::SetSettingValue(shell, "editor.tab_size", std::to_string(tab->min_int));
-  WorkspaceShellTestAccess::StepSetting(shell, "editor.tab_size", /*forward=*/false);
+  WorkspaceShellTestAccess::StepSetting(shell, "editor.tab_size", false);
   Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "editor.tab_size") == std::to_string(tab->min_int),
          "stepping down from the minimum stays at the minimum");
 
   const SettingSpec* scale = FindBuiltinSettingSpec("ui.scale");
   Expect(scale != nullptr && scale->type == SettingType::Float, "ui.scale must be a float spec");
   WorkspaceShellTestAccess::SetSettingValue(shell, "ui.scale", microide::workspace::SerializeSettingValue(scale->max_float));
-  WorkspaceShellTestAccess::StepSetting(shell, "ui.scale", /*forward=*/true);
+  WorkspaceShellTestAccess::StepSetting(shell, "ui.scale", true);
   Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "ui.scale") == microide::workspace::SerializeSettingValue(scale->max_float),
          "stepping the UI scale up from its maximum stays there");
 
   const SettingSpec* autosave = FindBuiltinSettingSpec("editor.autosave");
   Expect(autosave != nullptr && autosave->type == SettingType::Enum, "autosave must be an enum spec");
   WorkspaceShellTestAccess::SetSettingValue(shell, "editor.autosave", std::string(autosave->enum_values.back().value));
-  WorkspaceShellTestAccess::StepSetting(shell, "editor.autosave", /*forward=*/true);
+  WorkspaceShellTestAccess::StepSetting(shell, "editor.autosave", true);
   Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "editor.autosave") == std::string(autosave->enum_values.front().value),
          "an enum keeps cycling past its last option");
 }
 
-// A transient (`--set` / spec) override applies live but is stripped before the
-// user config is serialized, so it never clobbers the saved config; a persisting
-// write of a sibling setting survives the round-trip.
 void TestTransientSettingNotPersisted() {
   TemporaryDirectory temp;
   ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
@@ -135,7 +119,6 @@ void TestTransientSettingNotPersisted() {
   Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "debug.enabled") == "true",
          "transient value should be visible live");
 
-  // Simulate a shutdown save while the transient key is still live, then reload.
   WorkspaceShellTestAccess::SaveUserConfig(shell);
   WorkspaceShellTestAccess::RestoreUserConfig(shell);
 
@@ -145,7 +128,6 @@ void TestTransientSettingNotPersisted() {
          "transient setting must not persist to the saved config");
 }
 
-// `--set` overrides applied at startup land transiently.
 void TestStartupOverridesAreTransient() {
   TemporaryDirectory temp;
   ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
@@ -163,8 +145,6 @@ void TestStartupOverridesAreTransient() {
          "startup override should be transient");
 }
 
-// An explicit project wins over a saved workspace session; a bare launch still
-// restores the saved session.
 void TestExplicitProjectWinsOverRestore() {
   TemporaryDirectory temp;
   const std::filesystem::path project_a = temp.path() / "projA";
@@ -177,8 +157,6 @@ void TestExplicitProjectWinsOverRestore() {
   ScopedEnvVar scoped_home("HOME", home.string());
   ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
 
-  // Open project A and persist it as the saved session (Shutdown runs the full
-  // persistence path the restore reads back).
   {
     WorkspaceShell shell;
     Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_a, false, false),
@@ -186,9 +164,6 @@ void TestExplicitProjectWinsOverRestore() {
     shell.Shutdown();
   }
 
-  // Control: a bare launch (no explicit project) restores the saved session
-  // (project A). Checked before opening project B, since opening a project
-  // rewrites the saved session.
   {
     WorkspaceShell shell;
     shell.Initialize({});
@@ -196,7 +171,6 @@ void TestExplicitProjectWinsOverRestore() {
     Expect(RootsContain(roots, project_a), "bare launch should restore the saved session");
   }
 
-  // The new behavior: a launch naming project B must open B, not restore A.
   {
     WorkspaceShell shell;
     microide::workspace::WorkspaceStartupOptions options;
@@ -210,52 +184,29 @@ void TestExplicitProjectWinsOverRestore() {
   }
 }
 
-// Regression: headless `--control` force-starts the channel independent of the
-// `control.enabled` setting. A live settings change — e.g. a cold-start spec's
-// `set-setting debug.enabled true` — runs ApplyLiveSettings -> MaybeStartControlChannel,
-// which must NOT tear the force-started socket down. Before the fix, this stranded
-// the headless driver: the advertised socket vanished mid-run.
 void TestForceStartedControlChannelSurvivesSettingChange() {
   TemporaryDirectory temp;
   ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
-  // Isolate the runtime dir so the socket path is test-local.
   std::filesystem::create_directories(temp.path() / "run");
   ScopedEnvVar xdg_runtime("XDG_RUNTIME_DIR", (temp.path() / "run").string());
 
   WorkspaceShell shell;
   microide::workspace::WorkspaceStartupOptions options;
-  options.control_stdout = true;  // mirror `--control`
+  options.control_stdout = true;
   shell.SetStartupOptions(std::move(options));
   shell.Initialize({});
   shell.ForceStartControlChannel();
   Expect(WorkspaceShellTestAccess::IsControlChannelRunning(shell),
          "--control force-starts the control channel socket");
 
-  // control.enabled is OFF (only the --control flag is set). A live setting change
-  // must leave the force-started channel running.
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "set-setting debug.enabled true"),
          "the live setting change applies");
   Expect(WorkspaceShellTestAccess::IsControlChannelRunning(shell),
          "the force-started control channel survives a live settings change");
 }
 
-}  // namespace
+}
 
-// Opening a project applies `project.files_exclude` and
-// `project.follow_out_of_root_symlinks` itself. `ApplyLiveSettings` then compares
-// the resolved settings against the last-applied memos to decide whether a live
-// EDIT happened — and those memos started empty, so for any user who has either
-// setting set, the FIRST prepared frame read the RESTORED CONFIGURATION as an
-// edit: a whole-tree index rescan, a directory-tree refresh, and a full re-arm of
-// the native watcher (a second tree walk plus one inotify_add_watch per
-// directory), on every launch. Measured on this repo before the fix, with the
-// setting present in the user config: two `watch::NativeSetupWalk` calls
-// totalling 214 ms and a 49 ms project scan, none of which changed anything.
-//
-// A config file is read back raw, so a hand-edited "no" reached every reader as
-// "no" and each reader's own parse decided what it meant (the Settings checkbox
-// and Toggle Debugger disagreed with the menus). Loaded values are now stored as
-// the setter would store them; what does not parse is kept as written.
 void TestRestoredSettingsAreCanonicalized() {
   TemporaryDirectory temp;
   ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
@@ -281,10 +232,6 @@ void TestRestoredSettingsAreCanonicalized() {
   Expect(value("someplugin.flag") == "no", "a setting no built-in spec names is kept as written");
 }
 
-// The setting has to arrive the way a launch delivers it — persisted, then
-// restored by a fresh shell's Initialize. Writing it through SetSettingValue on
-// a live shell cannot exhibit this: that path ends in ApplyLiveSettings, which
-// seeds the memo before the project is even open.
 void TestRestoredExcludeGlobsDoNotRescanOnFirstLiveSettingsPass() {
   TemporaryDirectory temp;
   ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
@@ -313,7 +260,6 @@ void TestRestoredExcludeGlobsDoNotRescanOnFirstLiveSettingsPass() {
   Expect(util::ReadPerformanceCounter(util::PerfCounterId::FileIndexWatcherStarts) == 0,
          "the first live-settings pass must not re-arm the file index watcher");
 
-  // Not vacuous: an actual edit still does both.
   Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "project.files_exclude",
                                                             "vendor/\nout/"),
          "the exclude-glob setting should accept an edited value");
@@ -323,10 +269,6 @@ void TestRestoredExcludeGlobsDoNotRescanOnFirstLiveSettingsPass() {
          "an actual exclude-glob edit should still re-arm the watcher");
 }
 
-// A control-channel reply attributed feedback to the command by diffing the panel
-// feedback text against a pre-dispatch snapshot, so a rejection repeating the
-// previous message (`project-next` twice with one project open) read as a stale
-// line and came back as a bare "command failed".
 void TestControlCommandRepeatsTheSameRejectionMessage() {
   TemporaryDirectory temp;
   ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
@@ -344,7 +286,6 @@ void TestControlCommandRepeatsTheSameRejectionMessage() {
          "a rejection repeating the previous message must not read as 'command failed': " +
              second.error);
 
-  // A success after a rejection must not inherit the rejection's message.
   const auto ok = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "set-setting control.enabled true");
   Expect(ok.ok && ok.feedback.empty(), "a silent success reports no feedback: " + ok.feedback);
 }
@@ -372,4 +313,4 @@ void RegisterWorkspaceShellControlSettingsTests(std::vector<TestCase>& tests) {
           TestRestoredExcludeGlobsDoNotRescanOnFirstLiveSettingsPass);
 }
 
-}  // namespace microide::tests
+}

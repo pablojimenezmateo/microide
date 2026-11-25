@@ -26,8 +26,6 @@ compare::ComparePresentationOptions PresentationOptionsFromTab(const CompareTabS
   };
 }
 
-// Rebuild the rows after the notes they show changed, keeping the selection on
-// the line it was on: a note row inserted above it would otherwise move it.
 void RebuildPresentationForNotes(CompareTabState& compare_tab) {
   const bool on_model_row = [&] {
     const compare::ComparePresentationRow* row = CompareTabPresentationRowAt(compare_tab, compare_tab.selected_row);
@@ -70,9 +68,6 @@ std::string CompareReviewHeaderStagingLabel(compare::WorkingTreeStagingView view
   return "combined";
 }
 
-// Identity of the git entry the semantic classifier reads (rename source and
-// target). It is the one classifier input the compare tab's content fingerprint
-// does not cover, so the memo below has to notice when it moves.
 std::size_t GitEntrySignature(const std::optional<project::GitRepositoryEntry>& entry) {
   if (!entry.has_value()) {
     return 0;
@@ -90,17 +85,10 @@ std::size_t GitEntrySignature(const std::optional<project::GitRepositoryEntry>& 
   return signature;
 }
 
-}  // namespace
+}
 
 void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
                                    const CompareTabReviewRefreshInput& input) {
-  // The semantic classification reads both whole buffers — it serializes the right
-  // viewport and scans both files for NUL bytes, a submodule pointer, and a
-  // line-ending-only difference. That is the single most expensive thing this
-  // refresh does, and the refresh fires from ~10 event sites (every keystroke,
-  // mouse move, focus change, plugin refresh), almost all of which leave the
-  // compared content untouched. Gate it on the caller's content-changed signal plus
-  // the git entry, which is the only other input it reads.
   const std::size_t git_entry_signature = GitEntrySignature(input.git_entry);
   const bool semantic_inputs_changed = input.content_changed ||
                                        !compare_tab.semantic_inputs_valid ||
@@ -109,18 +97,12 @@ void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
   compare_tab.semantic_inputs_valid = true;
   compare_tab.semantic_git_entry_signature = git_entry_signature;
 
-  // A plain (non-git) compare has no refs to infer from. The mode is sticky —
-  // fixed at build time — so this refresh (fired from ~10 sites) must not
-  // re-infer it back to a git mode and re-enable staging/branch review. Keep the
-  // cheap semantic-file inference (binary/text) below; it is source-agnostic.
   if (compare_tab.plain_compare) {
     compare_tab.review_mode = compare::CompareReviewMode::Plain;
     compare_tab.staging_view = compare::WorkingTreeStagingView::Combined;
     if (!semantic_inputs_changed) {
       return;
     }
-    // The serialized right buffer has to outlive the input: its content fields are
-    // views now, so binding the temporary directly would dangle by the next line.
     const std::string plain_right_content = compare_tab.right_viewport.SerializeDocumentText();
     compare::CompareSemanticMetadataInput plain_semantic_input{
         .path = compare_tab.path,
@@ -138,9 +120,6 @@ void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
   compare_tab.staging_view =
       compare::InferWorkingTreeStagingView(compare_tab.commit_hash, compare_tab.right_ref);
   if (CompareTabTakesReviewMarks(compare_tab)) {
-    // A working-tree review's head is the working tree itself ("WORKTREE"): its
-    // marks are per hunk content, so an edit that changes a hunk shows it as
-    // changed since reviewed, as a new commit does on a branch.
     compare_tab.branch_target = compare::MakeBranchReviewTargetIdentity(
         input.repository_root, compare_tab.commit_hash, compare_tab.right_ref,
         input.merge_base_commit, input.snapshot_generation);
@@ -148,7 +127,6 @@ void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
   if (!semantic_inputs_changed) {
     return;
   }
-  // Same lifetime rule as the plain branch above: the input holds views.
   const std::string right_content = compare_tab.right_viewport.SerializeDocumentText();
   compare::CompareSemanticMetadataInput semantic_input{
       .path = compare_tab.path,
@@ -186,13 +164,6 @@ void ApplyBranchReviewPresentationMarkers(
     }
     return;
   }
-  // This runs from the compare tab's derived-state refresh, which fires from ~10
-  // event sites — every mouse move over the tab included — and it walks every
-  // presentation row. Its inputs are exactly three: the row list (which only
-  // RefreshCompareTabPresentation rebuilds, bumping presentation_revision), the
-  // review state (whose every mutation bumps revision()), and the branch target
-  // the rows were resolved against. If none moved, the rows already hold the
-  // answer.
   const std::uint64_t review_revision = review_service.revision();
   if (compare_tab.review_markers_valid &&
       compare_tab.review_markers_built_presentation_revision ==
@@ -206,11 +177,6 @@ void ApplyBranchReviewPresentationMarkers(
   compare_tab.review_markers_built_review_revision = review_revision;
   compare_tab.review_markers_built_target = compare_tab.branch_target;
 
-  // Every hunk's marker and note flag in one pass over the review state. Asking
-  // per hunk (memoized per hunk index, which is what this used to do) still walked
-  // the target's reviewed-hunk list once per hunk and fell back to a FileStatus
-  // that walked it again against every model hunk — and copied the query's target
-  // identity and path each time.
   const compare::BranchReviewStateQueryInput query{
       .target = compare_tab.branch_target,
       .path = compare_tab.path,
@@ -221,10 +187,6 @@ void ApplyBranchReviewPresentationMarkers(
   compare_tab.review_file_note =
       review_service.NoteText(query, compare::BranchReviewNoteScope::File).value_or(std::string());
 
-  // The count the header shows, and the notes the rows show. A note that moved
-  // (added, edited, deleted, outdated, or its hunk renumbered by an edit) rebuilds
-  // the rows, which carry the notes; the marker pass below then runs on the new
-  // rows. 0 is "no notes": what a tab that never had one starts at.
   std::size_t reviewed = 0;
   std::uint64_t fingerprint = 0;
   const auto mix_note = [&fingerprint](std::uint64_t place, std::string_view text) {
@@ -255,17 +217,10 @@ void ApplyBranchReviewPresentationMarkers(
   for (compare::ComparePresentationRow& row : compare_tab.presentation.rows) {
     row.review_marker_label.clear();
     row.has_review_note = false;
-    // Resolve the hunk from the underlying model row. `ComparePresentationRow::
-    // hunk_index` is never populated by the builder (it stays -1), so gating on it
-    // made this branch dead code — review markers/notes never rendered on any row.
-    // The model row carries the real hunk id (matching the navigation path in
-    // CompareTabPresentationRowForHunk).
     if (row.kind == compare::ComparePresentationRowKind::Model &&
         row.model_row_index < compare_tab.model.rows.size()) {
       const int hunk = compare_tab.model.rows[row.model_row_index].hunk;
       if (hunk >= 0 && static_cast<std::size_t>(hunk) < markers.size()) {
-        // Assign into the row's existing capacity — the label is one of two short
-        // literals, so after the first pass no row reallocates.
         const std::string_view label = compare::BranchReviewMarkerLabel(markers[hunk].status);
         row.review_marker_label.assign(label.begin(), label.end());
         row.has_review_note = markers[hunk].has_note;
@@ -278,17 +233,10 @@ void ApplyBranchReviewPresentationMarkers(
 
 void RefreshCompareTabPresentation(CompareTabState& compare_tab) {
   util::PerformanceTrace::Scope trace_scope("workspace::RefreshCompareTabPresentation");
-  // In place: the tab's presentation IS the previous build, so its row slab,
-  // summary strings and collapsed-run state are all recycled rather than freed
-  // and re-allocated on every keystroke (TD-2026-08-17-261).
   compare::BuildComparePresentationModelInto(
       compare_tab.presentation, compare_tab.model, compare_tab.semantic_file,
       PresentationOptionsFromTab(compare_tab));
   ++compare_tab.presentation_revision;
-  // Record what this build consumed, so the derived-state refresh can tell whether
-  // a later event moved any of it. Collapse-state edits call straight in here, and
-  // they are exactly the case the (model, options, semantic) triple cannot see —
-  // revalidating here keeps them correct without a fourth revision counter.
   compare_tab.presentation_valid = true;
   compare_tab.presentation_built_model_revision = compare_tab.model_revision;
   compare_tab.presentation_built_show_whitespace = compare_tab.show_whitespace;
@@ -315,8 +263,6 @@ void NormalizeCompareSelectionToModelRow(CompareTabState& compare_tab) {
 
 void RefreshCompareReviewHeader(CompareTabState& compare_tab) {
   const bool plain = compare_tab.review_mode == compare::CompareReviewMode::Plain;
-  // A plain compare has no git mode/staging metadata — lead with the two side
-  // labels ("left ↔ right") so the header names what is actually being diffed.
   std::string summary = plain
                             ? compare_tab.left_label + "  ↔  " + compare_tab.right_label
                             : CompareReviewHeaderModeLabel(compare_tab.review_mode);
@@ -326,9 +272,7 @@ void RefreshCompareReviewHeader(CompareTabState& compare_tab) {
   }
   summary += "  ·  ";
   AppendUnsigned(summary, compare_tab.model.hunks.size());
-  // "changes", as the diff's buttons and menus call them.
   summary += compare_tab.model.hunks.size() == 1 ? " change" : " changes";
-  // A review's progress: how many of those the reader has marked.
   if (CompareTabTakesReviewMarks(compare_tab) && !compare_tab.model.hunks.empty()) {
     summary += ", ";
     AppendUnsigned(summary, compare_tab.review_reviewed_hunk_count);
@@ -353,8 +297,6 @@ void RefreshCompareReviewHeader(CompareTabState& compare_tab) {
   if (compare_tab.semantic_file.line_ending_only) {
     summary += "  ·  line endings";
   }
-  // Plain compares already lead with both side labels; the git path suffix is
-  // redundant (and often empty for buffer/clipboard sides).
   if (!plain) {
     const std::string file_label = compare_tab.path.filename().string();
     if (!file_label.empty()) {
@@ -380,9 +322,6 @@ std::size_t CompareTabSelectedModelRow(const CompareTabState& compare_tab) {
 }
 
 const compare::CompareRow& CompareTabSelectedModelRowRef(const CompareTabState& compare_tab) {
-  // Defensive empty-guard: `rows.size() - 1` underflows to SIZE_MAX on an empty
-  // model, so indexing would be UB. Callers currently guard, but return a stable
-  // empty row rather than trust that forever.
   static const compare::CompareRow kEmptyRow{};
   if (compare_tab.model.rows.empty()) {
     return kEmptyRow;
@@ -396,9 +335,6 @@ int CompareTabSelectedHunkIndex(const CompareTabState& compare_tab) {
     return -1;
   }
   const std::size_t model_row = CompareTabSelectedModelRow(compare_tab);
-  // Clamp like the sibling CompareTabSelectedModelRowRef: a selected_row derived
-  // from a stale presentation (before RefreshCompareTabPresentation re-runs) can
-  // exceed model.rows, and this must never index out of bounds.
   return compare_tab.model.rows[std::min(model_row, compare_tab.model.rows.size() - 1)].hunk;
 }
 
@@ -413,8 +349,6 @@ const compare::ComparePresentationRow* CompareTabPresentationRowAt(
 
 namespace {
 
-// What the wrap table needs to know about presentation row `unit`: the two panes'
-// text, or "this row is a full-width summary that never wraps".
 DiffWrapLayout::UnitText CompareWrapUnitText(const CompareTabState& compare_tab,
                                             std::size_t unit) {
   DiffWrapLayout::UnitText text;
@@ -422,8 +356,6 @@ DiffWrapLayout::UnitText CompareWrapUnitText(const CompareTabState& compare_tab,
   if (!compare_tab.presentation.rows.empty()) {
     const compare::ComparePresentationRow* row = CompareTabPresentationRowAt(compare_tab, unit);
     if (row == nullptr || row->kind != compare::ComparePresentationRowKind::Model) {
-      // Metadata / hunk-header / collapsed-context rows span the whole surface and
-      // are truncated, not wrapped — one row each, exactly as with wrap off.
       text.single_row = true;
       text.has_left = true;
       return text;
@@ -442,15 +374,12 @@ DiffWrapLayout::UnitText CompareWrapUnitText(const CompareTabState& compare_tab,
   return text;
 }
 
-}  // namespace
+}
 
 void EnsureCompareWrapLayout(const CompareTabState& compare_tab,
                              bool soft_wrap,
                              std::size_t left_columns,
                              std::size_t right_columns) {
-  // Both revisions in the key: the presentation is rebuilt whenever the model
-  // changes today, but a table that silently kept a deleted row's text is the kind
-  // of bug that only shows up under a later refactor.
   const std::uint64_t content_key =
       compare_tab.presentation_revision * 0x9E3779B97F4A7C15ull ^ compare_tab.model_revision;
   compare_tab.wrap_layout.Ensure(
@@ -505,10 +434,6 @@ std::size_t CompareFirstChangePresentationRow(const CompareTabState& compare_tab
   if (compare_tab.model.hunks.empty()) {
     return 0;
   }
-  // Prefer the hunk-indexed lookup for the same reason JumpCompareHunk does: a
-  // collapsed run maps several model rows onto one placeholder, and the hunk's own
-  // presentation row is the one the reader sees. Fall back to the model-row mapping
-  // when the hunk has no presentation row of its own.
   const compare::CompareHunk& first = compare_tab.model.hunks.front();
   if (const auto presentation_row = CompareTabPresentationRowForHunk(compare_tab, first.index);
       presentation_row.has_value()) {
@@ -525,7 +450,7 @@ void SyncCompareCaretToSelectedRow(CompareTabState& compare_tab) {
   const std::size_t right_line =
       CompareTabRightLineForModelRow(compare_tab, CompareTabSelectedModelRow(compare_tab));
   if (compare_tab.right_viewport.cursor_line() == right_line) {
-    return;  // Already agreed; MoveCursorTo would drop the column for nothing.
+    return;
   }
   compare_tab.right_viewport.MoveCursorTo(right_line, 0, false);
 }
@@ -542,7 +467,7 @@ CompareRightCaretPlacement CompareRightCaretPlacementFor(const CompareTabState& 
     };
   }
   const std::size_t visual_row =
-      compare_tab.wrap_layout.RowForUnitColumn(presentation_row, visual_column, /*right_side=*/true);
+      compare_tab.wrap_layout.RowForUnitColumn(presentation_row, visual_column, true);
   const DiffWrapRow row = compare_tab.wrap_layout.RowAt(visual_row);
   const std::size_t offset = visual_column > row.right_start ? visual_column - row.right_start : 0;
   return CompareRightCaretPlacement{
@@ -568,12 +493,10 @@ CompareRightPaneHit CompareRightPaneHitAt(const CompareTabState& compare_tab,
   if (!compare_tab.wrap_layout.active()) {
     return hit;
   }
-  // Clicking a padding row (this side has no segment here) resolves to the unit's
-  // last row that does, which is where the caret can actually land.
   DiffWrapRow row = compare_tab.wrap_layout.RowAt(visual_row);
   if (!row.right_present) {
     row = compare_tab.wrap_layout.RowAt(compare_tab.wrap_layout.RowForUnitColumn(
-        presentation_row, std::numeric_limits<std::size_t>::max(), /*right_side=*/true));
+        presentation_row, std::numeric_limits<std::size_t>::max(), true));
   }
   const std::size_t within =
       screen_column > row.right_indent ? screen_column - row.right_indent : 0;
@@ -589,9 +512,6 @@ CompareRightLineAnchor CompareRightLineBlameAnchor(const CompareTabState& compar
       compare_tab.model.rows[model_row].right_line != static_cast<int>(right_line + 1)) {
     return CompareRightLineAnchor{};
   }
-  // The end of the line is past every segment's start, so the caret placement
-  // resolves to the last row carrying right-pane text -- which is where an inline
-  // annotation belongs.
   const CompareRightCaretPlacement placement =
       CompareRightCaretPlacementFor(compare_tab, right_line, line_visual_columns);
   return CompareRightLineAnchor{
@@ -709,8 +629,6 @@ bool ExpandCompareCollapsedContext(CompareTabState& compare_tab,
   if (!changed) {
     return false;
   }
-  // Anchor the viewport top in PRESENTATION space across the rebuild: `scroll_row`
-  // indexes on-screen rows, and expanding a run inserts presentation rows above it.
   const std::size_t previous_top_presentation_row =
       CompareVisualRowToPresentationRow(compare_tab, static_cast<std::size_t>(
                                                          std::max(0, previous_scroll_row)));
@@ -788,4 +706,4 @@ std::optional<CompareHoverKind> CompareCollapsedContextActionAt(
   return std::nullopt;
 }
 
-}  // namespace microide::workspace
+}

@@ -40,13 +40,10 @@ DebugPaneService MakeService(ProjectWorkspaceState& state) {
 void TestDebugPaneRegistry() {
   const auto specs = BuiltinDebugPaneSurfaceSpecs();
   Expect(specs.size() == 4, "the debug pane has four built-in surfaces");
-  // Display order is Variables / Breakpoints / Watch / Call Stack — Variables
-  // first since it's the most-used surface while stepping.
   Expect(specs[0].mode == DebugPaneMode::Variables, "Variables is the first tab");
   Expect(specs[1].mode == DebugPaneMode::Breakpoints, "Breakpoints is the second tab");
   Expect(specs[2].mode == DebugPaneMode::Watch, "Watch is the third tab");
   Expect(specs[3].mode == DebugPaneMode::CallStack, "Call Stack is the last tab");
-  // The default pane surface matches the first tab so the pane opens on Variables.
   Expect(ProjectWorkspaceState{}.debug_pane.mode == DebugPaneMode::Variables,
          "the pane defaults to the Variables surface");
   const auto* watch = FindDebugPaneSurface("watch");
@@ -87,7 +84,6 @@ void TestDebugPaneServiceOpenOnStop() {
   Expect(state.debug_pane.visible && state.debug_pane.mode == DebugPaneMode::Variables,
          "the first stop opens the pane on the Variables inspector");
 
-  // The user switches to Call Stack, then a later stop must not yank them back.
   service.ShowMode(DebugPaneMode::CallStack);
   service.OpenOnStop();
   Expect(state.debug_pane.mode == DebugPaneMode::CallStack,
@@ -102,61 +98,50 @@ void TestDebugPaneServiceClose() {
   Expect(!state.debug_pane.visible, "Close hides the pane (session teardown)");
 }
 
-// Row-geometry mapper used by the render, click, and cursor paths. A click at the
-// vertical center of rendered row K must resolve to absolute row K so the three
-// paths never disagree.
 void TestDebugPaneRowAtPointMapsCenters() {
   const SDL_FRect content = MakeRect(0.0f, 30.0f, 200.0f, 320.0f);
-  const float text_y = 38.0f;  // content.y + 8px top inset
+  const float text_y = 38.0f;
   const float line_height = 16.0f;
   const int visible_rows = 20;
   const std::size_t line_count = 10;
   for (int k = 0; k < static_cast<int>(line_count); ++k) {
     const float y = text_y + static_cast<float>(k) * line_height + line_height * 0.5f;
     const DebugPaneRowHit hit =
-        DebugPaneRowAtPoint(content, text_y, line_height, visible_rows, /*scroll=*/0, line_count,
-                            /*x=*/100.0f, y);
+        DebugPaneRowAtPoint(content, text_y, line_height, visible_rows, 0, line_count,
+                            100.0f, y);
     Expect(hit.in_content, "row center is inside the content rect");
     Expect(hit.row_index == k, "row center maps to its own absolute row");
   }
 }
 
-// Regression for the 8px top dead-zone: a click in the inset between content_rect.y
-// and text_y must fold into the first visible row rather than rejecting.
 void TestDebugPaneRowAtPointTopBandIsRowZero() {
   const SDL_FRect content = MakeRect(0.0f, 30.0f, 200.0f, 320.0f);
   const DebugPaneRowHit hit =
-      DebugPaneRowAtPoint(content, /*text_y=*/38.0f, /*line_height=*/16.0f, /*visible_rows=*/20,
-                          /*scroll=*/0, /*line_count=*/10, /*x=*/100.0f, /*y=*/31.0f);
+      DebugPaneRowAtPoint(content, 38.0f, 16.0f, 20,
+                          0, 10, 100.0f, 31.0f);
   Expect(hit.in_content && hit.row_index == 0, "the top inset hits row 0, not nothing");
 }
 
-// A click below the last populated row stays "in content" but resolves to no row;
-// a click outside the content rect is neither.
 void TestDebugPaneRowAtPointMisses() {
   const SDL_FRect content = MakeRect(0.0f, 30.0f, 200.0f, 320.0f);
   const DebugPaneRowHit below =
-      DebugPaneRowAtPoint(content, /*text_y=*/38.0f, /*line_height=*/16.0f, /*visible_rows=*/20,
-                          /*scroll=*/0, /*line_count=*/3, /*x=*/100.0f, /*y=*/200.0f);
+      DebugPaneRowAtPoint(content, 38.0f, 16.0f, 20,
+                          0, 3, 100.0f, 200.0f);
   Expect(below.in_content && below.row_index == -1, "below the last row: in content, no row");
   const DebugPaneRowHit outside =
-      DebugPaneRowAtPoint(content, /*text_y=*/38.0f, /*line_height=*/16.0f, /*visible_rows=*/20,
-                          /*scroll=*/0, /*line_count=*/10, /*x=*/100.0f, /*y=*/10.0f);
+      DebugPaneRowAtPoint(content, 38.0f, 16.0f, 20,
+                          0, 10, 100.0f, 10.0f);
   Expect(!outside.in_content && outside.row_index == -1, "above the content: no hit at all");
 }
 
-// Scroll offset is applied: the first visible band maps to the scrolled-to row.
 void TestDebugPaneRowAtPointHonorsScroll() {
   const SDL_FRect content = MakeRect(0.0f, 30.0f, 200.0f, 320.0f);
   const DebugPaneRowHit hit =
-      DebugPaneRowAtPoint(content, /*text_y=*/38.0f, /*line_height=*/16.0f, /*visible_rows=*/20,
-                          /*scroll=*/3, /*line_count=*/20, /*x=*/100.0f, /*y=*/46.0f);
+      DebugPaneRowAtPoint(content, 38.0f, 16.0f, 20,
+                          3, 20, 100.0f, 46.0f);
   Expect(hit.row_index == 3, "first visible band maps to the scrolled-to absolute row");
 }
 
-// End-to-end coordinator check: clicking a call-stack frame row navigates to its
-// source. Exercises the same DebugPaneRowAtPoint mapping plus the Contains gates and
-// x/y plumbing in HandleButtonDown.
 void TestDebugPaneClickFrameNavigates() {
   ProjectWorkspaceState state;
   state.debug_pane.visible = true;
@@ -197,7 +182,7 @@ void TestDebugPaneClickFrameNavigates() {
   event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
   event.button.button = SDL_BUTTON_LEFT;
   event.button.x = 100.0f;
-  event.button.y = 46.0f;  // center of frame row 0
+  event.button.y = 46.0f;
   event.button.clicks = 1;
 
   Expect(coordinator.HandleButtonDown(event, layout), "the click is consumed by the pane");
@@ -205,10 +190,6 @@ void TestDebugPaneClickFrameNavigates() {
   Expect(focused_frame == 7, "clicking the frame row focuses that DAP frame");
 }
 
-// The pane painted a vertical scrollbar from day one but never hit-tested it, so
-// the bar was decorative and a grab landed on whatever row was underneath (in
-// Breakpoints mode that navigated the editor away). Every other scrollable
-// surface in the shell drags; this one must too.
 void TestDebugPaneScrollbarDrags() {
   ProjectWorkspaceState state;
   state.debug_pane.visible = true;
@@ -234,7 +215,7 @@ void TestDebugPaneScrollbarDrags() {
   int scroll_row = 0;
   auto rebuild = [&]() {
     panel_layout.scroll = microide::workspace::ComputeScrollSurfaceLayout(content, row_count,
-                                                                         /*visible_rows=*/20,
+                                                                         20,
                                                                          scroll_row);
   };
   rebuild();
@@ -288,10 +269,6 @@ void TestDebugPaneScrollbarDrags() {
          "grabbing the pane scrollbar focuses the pane");
 }
 
-// The debug pane was the last interactive list surface in the shell that ignored
-// the right button entirely. Its Variables/Watch rows now open a shared row menu,
-// and a Breakpoints row reuses the editor gutter's breakpoint menu — and neither
-// may double as an activation, which is what the left button is for.
 void TestDebugPaneRightClickOpensRowMenus() {
   ProjectWorkspaceState state;
   state.debug_pane.visible = true;
@@ -348,7 +325,6 @@ void TestDebugPaneRightClickOpensRowMenus() {
     return coordinator.HandleButtonDown(event, layout);
   };
 
-  // Find the row band of the line breakpoint (the panel also emits headers).
   const auto& rows = state.debug_breakpoints_panel.Rows();
   std::size_t breakpoint_row = rows.size();
   for (std::size_t i = 0; i < rows.size(); ++i) {
@@ -368,8 +344,6 @@ void TestDebugPaneRightClickOpensRowMenus() {
   Expect(state.surface.focus == microide::workspace::FocusTarget::DebugPane,
          "a right-click in the pane should focus the pane");
 
-  // A value-surface row opens the shared row menu and selects the row under the
-  // pointer first (Watch is used here because its rows are seedable standalone).
   state.debug_pane.mode = DebugPaneMode::Watch;
   state.debug_watch.AddExpression("counter");
   state.debug_watch.AddExpression("total");
@@ -382,10 +356,6 @@ void TestDebugPaneRightClickOpensRowMenus() {
          "the row under the pointer should be selected before the menu opens");
 }
 
-// Row geometry must stay correct at scale: a 5000-row tree scrolled deep still
-// maps each rendered band's center to the right absolute row, and a band past the
-// last populated row resolves to "in content, no row". Guards the geometry the
-// debug_pane_hittest_geometry perf scenario measures.
 void TestDebugPaneRowAtPointLargeScrolledList() {
   const SDL_FRect content = MakeRect(0.0f, 30.0f, 240.0f, 800.0f);
   const float text_y = 38.0f;
@@ -396,13 +366,12 @@ void TestDebugPaneRowAtPointLargeScrolledList() {
     for (int band = 0; band < visible_rows; ++band) {
       const float y = text_y + static_cast<float>(band) * line_height + line_height * 0.5f;
       const DebugPaneRowHit hit = DebugPaneRowAtPoint(content, text_y, line_height, visible_rows,
-                                                      scroll, line_count, /*x=*/100.0f, y);
+                                                      scroll, line_count, 100.0f, y);
       const std::size_t absolute = static_cast<std::size_t>(scroll) + static_cast<std::size_t>(band);
       if (absolute < line_count) {
         Expect(hit.in_content && hit.row_index == static_cast<int>(absolute),
                "a visible band maps to its absolute row at any scroll depth");
       } else {
-        // Scrolled so far that this band is past the last row: in content, no row.
         Expect(hit.in_content && hit.row_index == -1,
                "a band beyond the last populated row resolves to no row");
       }
@@ -410,30 +379,27 @@ void TestDebugPaneRowAtPointLargeScrolledList() {
   }
 }
 
-// Gutter markers must stay within the reserved marker strip and never overlap the
-// line-number digits, which begin at gutter_x + kGutterLineNumberInset. (Regression
-// for the breakpoint dot / execution arrow drawing over the line numbers.)
 void TestGutterMarkersClearLineNumbers() {
   using microide::editor::BreakpointGutterMarkerRect;
   using microide::editor::ExecutionLineGutterMarkerRect;
   for (const float gutter_x : {0.0f, 40.0f, 123.5f}) {
     for (const float line_height : {12.0f, 16.0f, 24.0f, 40.0f}) {
       const float digits_left = gutter_x + microide::editor::kGutterLineNumberInset;
-      const SDL_FRect bp = BreakpointGutterMarkerRect(gutter_x, /*y=*/100.0f, /*gutter_width=*/56.0f,
+      const SDL_FRect bp = BreakpointGutterMarkerRect(gutter_x, 100.0f, 56.0f,
                                                       line_height);
       Expect(bp.x >= gutter_x + microide::editor::kGutterMarkerInset - 0.01f,
              "breakpoint dot starts within the marker strip");
       Expect(bp.x + bp.w <= digits_left + 0.01f,
              "breakpoint dot ends before the line-number digits");
-      const SDL_FRect exec = ExecutionLineGutterMarkerRect(gutter_x, /*y=*/100.0f,
-                                                           /*gutter_width=*/56.0f, line_height);
+      const SDL_FRect exec = ExecutionLineGutterMarkerRect(gutter_x, 100.0f,
+                                                           56.0f, line_height);
       Expect(exec.x + exec.w <= digits_left + 0.01f,
              "execution arrow ends before the line-number digits");
     }
   }
 }
 
-}  // namespace
+}
 
 void RegisterDebugPaneTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugPane/Registry", TestDebugPaneRegistry);
@@ -451,4 +417,4 @@ void RegisterDebugPaneTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugPane/GutterMarkersClearLineNumbers", TestGutterMarkersClearLineNumbers);
 }
 
-}  // namespace microide::tests
+}

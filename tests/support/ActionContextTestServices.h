@@ -1,10 +1,5 @@
 #pragma once
 
-// Every service WorkspaceActionContext::Services names, built over empty state,
-// for a test that drives the action context without a WorkspaceShell. Each one
-// has default (empty) Operations, so an action that reaches a service the test
-// did not mean to exercise is a quiet no-op, not a crash.
-
 #include <string>
 #include <vector>
 
@@ -93,4 +88,4 @@ struct ActionContextTestServices {
   workspace::SystemClipboard clipboard;
 };
 
-}  // namespace microide::tests
+}

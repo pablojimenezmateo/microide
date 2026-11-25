@@ -40,7 +40,7 @@ std::optional<std::size_t> BottomPanelLineIndexAtPoint(
                                  panel_layout.scroll.vertical_scroll, y, line_count);
 }
 
-}  // namespace
+}
 
 PanelMouseCoordinator::PanelMouseCoordinator(ProjectWorkspaceState& state,
                                              InteractionState& interaction_state,
@@ -56,8 +56,6 @@ bool PanelMouseCoordinator::HandleResizeButtonDown(const SDL_Event& event,
                 event.button.y)) {
     return false;
   }
-  // Double-click restores the default height — the same gesture the other three
-  // resize dividers answer (see WorkspaceShell::HandleMouseButtonDown).
   if (event.button.clicks >= 2) {
     if (const auto window_rect = operations_.current_window_rect(); window_rect.has_value()) {
       state_.panel.height = operations_.clamp_bottom_panel_height(
@@ -72,12 +70,6 @@ bool PanelMouseCoordinator::HandleResizeButtonDown(const SDL_Event& event,
 
 bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
                                              const WorkspaceLayout& layout) {
-  // Terminal panes first: a press on a divider starts (or, double-clicked,
-  // resets) its drag, and a press in a pane other than the active one activates
-  // it BEFORE anything below reads "the active pane" — so the scrollbar grab and
-  // the selection anchor that follow land in the pane the user pressed. Every
-  // button activates (VS Code's): a middle-click pastes into, and a right-click's
-  // menu acts on, the pane under the pointer.
   if (operations_.bottom_panel_visible() && state_.panel.content == PanelContentKind::Terminal &&
       Contains(operations_.bottom_panel_content_rect(layout), event.button.x, event.button.y)) {
     const float x = static_cast<float>(event.button.x);
@@ -107,7 +99,7 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       interaction_state_.drag_target = DragTarget::BottomPanelScrollbar;
       interaction_state_.drag_scrollbar_offset =
           ScrollbarGrabOffset(*panel_layout.scroll.vertical_scrollbar,
-                              static_cast<float>(event.button.y), /*vertical=*/true);
+                              static_cast<float>(event.button.y), true);
       operations_.set_bottom_panel_scroll_row(
           std::clamp(static_cast<int>(std::lround(
                          ScrollUnitsForPointer(*panel_layout.scroll.vertical_scrollbar,
@@ -120,7 +112,6 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
   }
 
-  // Plugin surface preview scrollbar: grab the pixel-unit thumb (TD-2026-07-16-60).
   if (event.button.button == SDL_BUTTON_LEFT && operations_.bottom_panel_visible() &&
       state_.panel.content == PanelContentKind::PluginSurface) {
     if (const editor::SurfaceContent* content = operations_.active_plugin_surface();
@@ -132,7 +123,7 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
           geometry.has_value() && Contains(geometry->track, event.button.x, event.button.y)) {
         interaction_state_.drag_target = DragTarget::BottomPanelScrollbar;
         interaction_state_.drag_scrollbar_offset =
-            ScrollbarGrabOffset(*geometry, static_cast<float>(event.button.y), /*vertical=*/true);
+            ScrollbarGrabOffset(*geometry, static_cast<float>(event.button.y), true);
         state_.panel.surface_scroll_y = std::clamp(
             static_cast<int>(std::lround(
                 ScrollUnitsForPointer(*geometry, static_cast<float>(event.button.y),
@@ -197,10 +188,6 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
                                                                static_cast<float>(event.button.y));
           link.has_value()) {
         const std::string* url = &link->target;
-        // A `file://` link -- a printed file URL, or a `path:line:col` reference
-        // the hit-test resolved to an existing file -- opens in the editor at its
-        // `#L<line>:<col>` fragment (VS Code's terminal links); everything else
-        // goes to the external opener.
         if (url->starts_with("file://")) {
           std::string_view rest(*url);
           rest.remove_prefix(7);
@@ -247,10 +234,6 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
               operations_.terminal_selection_position_for_point(event.button.x, event.button.y,
                                                                 terminal_lines, first_row);
           position.has_value()) {
-        // Double-click selects the word under the pointer and triple-click the whole
-        // row, exactly as they do in the editor surface one pane over (and as every
-        // terminal emulator does). Multi-click still arms the drag, which then
-        // extends by whole words or rows and always keeps the one clicked.
         const terminal::TerminalLine* line =
             position->row >= first_row && position->row - first_row < terminal_lines.size()
                 ? &terminal_lines[position->row - first_row]
@@ -262,10 +245,6 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
                          ? TerminalWordBoundsAt(*line, position->row, position->column)
                          : TerminalLineBoundsAt(*line, position->row);
         }
-        // Shift+click extends the selection there is, by the unit it was made in,
-        // from what it started on (xterm, VS Code, the editor). Not while a program
-        // owns the mouse: there Shift is what selects at all, and a second
-        // Shift+drag starts a new selection rather than stretching the last one.
         if (shift && event.button.clicks == 1 && terminal_tab->selection_anchor.has_value() &&
             line != nullptr && !terminal_tab->session.WantsMouseCapture()) {
           const TerminalSelectionEnds ends = ExtendTerminalSelection(
@@ -296,9 +275,6 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   }
 
   if (state_.panel.content == PanelContentKind::Output) {
-    // Clicking the channel body focuses the panel, exactly as clicking a terminal
-    // or a plugin surface does. Output was the one content kind a click could not
-    // focus, so its (now real) keyboard was unreachable by mouse.
     const auto* output_entries = operations_.output_channel_entries();
     if (output_entries != nullptr && !output_entries->empty()) {
       const auto panel_layout =
@@ -317,10 +293,6 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
             operations_.open_file(path.lexically_normal());
             if (editor::TextViewport* viewport = operations_.active_editor_viewport();
                 viewport != nullptr && viewport->line_count() > 0) {
-              // `path:line:col` names a 1-based CHARACTER column (what the
-              // reference and diagnostic emitters print, and what VS Code's
-              // link handler reads); convert through the target line so a
-              // multibyte character before it does not land the caret short.
               const std::size_t line =
                   std::min(parsed->line > 0 ? parsed->line - 1 : 0, viewport->line_count() - 1);
               const std::size_t byte_column =
@@ -338,9 +310,6 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
   }
 
-  // Plugin surface preview: a left click inside a published hit region dispatches
-  // its command through the validated command runner — the same path code-lens
-  // clicks use, no bespoke callback registry (TD-2026-07-16-61).
   if (state_.panel.content == PanelContentKind::PluginSurface) {
     state_.surface.focus = FocusTarget::Panel;
     if (const editor::SurfaceContent* content = operations_.active_plugin_surface();
@@ -396,8 +365,6 @@ bool PanelMouseCoordinator::HandleDrag(const SDL_Event& event,
     if (!operations_.terminal_pane_rects || !operations_.resize_terminal_pane_divider) {
       return false;
     }
-    // Re-derive the divider's pair span for this frame's rects, so the pointer
-    // converts straight into that pair's share and no other pane moves.
     const std::size_t boundary = interaction_state_.drag_terminal_pane_boundary;
     for (const TerminalPaneDividerRect& divider : operations_.terminal_pane_rects(layout).dividers) {
       if (divider.boundary != boundary || divider.pair_extent <= 0.0f) {
@@ -425,7 +392,6 @@ bool PanelMouseCoordinator::HandleDrag(const SDL_Event& event,
     return false;
   }
 
-  // Plugin surface preview scrollbar drag tracks in pixel units (TD-2026-07-16-60).
   if (state_.panel.content == PanelContentKind::PluginSurface) {
     const editor::SurfaceContent* content = operations_.active_plugin_surface();
     if (content == nullptr || !content->has_body()) {
@@ -504,11 +470,6 @@ bool PanelMouseCoordinator::HandleMotion(const SDL_Event& event) {
       const std::size_t line_count = terminal_tab->session.LineCount();
       const auto panel_layout = operations_.compute_bottom_panel_log_layout(layout, line_count);
 
-      // The terminal is the fourth text surface to drag a selection, and until
-      // now the only one that refused the moment the pointer left its panel:
-      // both the clamp and the autoscroll stopped at the editor/compare/merge
-      // surfaces (TD-2026-08-13-205). Arm from the RAW pointer, then resolve the
-      // hit from the clamped one, exactly as the editor pane does.
       const selection_autoscroll::Band band{
           .rect = panel_layout.content_rect,
           .first_line_y = panel_layout.text_y,
@@ -524,9 +485,6 @@ bool PanelMouseCoordinator::HandleMotion(const SDL_Event& event) {
 
       const std::size_t first_row =
           static_cast<std::size_t>(std::max(0, panel_layout.scroll.vertical_scroll));
-      // Mouse motion over the terminal fires this per event during a selection
-      // drag, so the snapshot goes into a reused scratch rather than allocating a
-      // vector per visible row on every pixel of movement.
       thread_local std::vector<terminal::TerminalLine> motion_lines;
       terminal_tab->session.SnapshotLineRangeInto(
           first_row, static_cast<std::size_t>(std::max(0, panel_layout.scroll.visible_rows)),
@@ -548,9 +506,6 @@ bool PanelMouseCoordinator::HandleMotion(const SDL_Event& event) {
     }
   }
 
-  // The link under the pointer is underlined while it is (VS Code's terminal), in
-  // whichever pane of the tab it is -- not only the active one. Only over the
-  // terminal's body: the hit-test reads the pane's lines.
   if (TerminalTabState* tab = state_.active_terminal_tab();
       tab != nullptr && ActivePanelTerminalPane() != nullptr) {
     std::optional<TerminalLinkHit> link;
@@ -573,7 +528,7 @@ bool PanelMouseCoordinator::HandleMotion(const SDL_Event& event) {
       }
     }
     if (changed) {
-      return true;  // the bottom panel repaints
+      return true;
     }
   }
 
@@ -597,7 +552,6 @@ bool PanelMouseCoordinator::HandleWheel(const SDL_Event& event,
                                                 viewport_position->column,
                                                 render::ToKeyModifiers(interaction_state_.key_modifiers));
         }
-        // Scrolling is not focusing — see SidebarMouseCoordinator::HandleWheel.
         return true;
       }
     }
@@ -608,10 +562,6 @@ bool PanelMouseCoordinator::HandleWheel(const SDL_Event& event,
     return false;
   }
 
-  // The wheel scrolls the pane under the pointer, active or not: reading an
-  // agent's output in one pane while typing in another is the point of a split.
-  // An inactive pane has the same row count as the active one (one panel
-  // height), so the active pane's layout supplies the visible-row figure.
   if (operations_.terminal_pane_at) {
     TerminalPaneState* pane = operations_.terminal_pane_at(
         layout, static_cast<float>(event.wheel.mouse_x), static_cast<float>(event.wheel.mouse_y));
@@ -632,13 +582,10 @@ bool PanelMouseCoordinator::HandleWheel(const SDL_Event& event,
   }
 
   ScrollPanelRows(layout, -vertical_ticks * kWheelScrollRows);
-  // Scrolling is not focusing — see SidebarMouseCoordinator::HandleWheel.
   return true;
 }
 
 void PanelMouseCoordinator::ScrollPanelRows(const WorkspaceLayout& layout, int row_delta) {
-  // Plugin surface preview: pixel-scroll the content one text row per unit,
-  // clamped to the padded content height (TD-2026-07-16-60).
   if (state_.panel.content == PanelContentKind::PluginSurface) {
     const editor::SurfaceContent* content = operations_.active_plugin_surface();
     if (content == nullptr || !content->has_body()) {
@@ -662,8 +609,6 @@ void PanelMouseCoordinator::ScrollPanelRows(const WorkspaceLayout& layout, int r
 }
 
 int PanelMouseCoordinator::ScrollSpanRows(const WorkspaceLayout& layout) {
-  // Only sizes the Home/End jump: every scroll path above clamps, so any value at
-  // or beyond the real extent lands on the end.
   if (state_.panel.content == PanelContentKind::PluginSurface) {
     const editor::SurfaceContent* content = operations_.active_plugin_surface();
     if (content == nullptr || !content->has_body()) {
@@ -685,11 +630,6 @@ float PanelMouseCoordinator::PanelPixelsPerScrollRow(const WorkspaceLayout& layo
 }
 
 bool PanelMouseCoordinator::ProgramOwnsPointer(const TerminalPaneState& pane) const {
-  // While the program asked for the mouse it gets presses and moves -- except
-  // under Shift, which every Linux terminal reserves for selecting text past such
-  // a program (Claude Code's fullscreen mode says "hold Shift to select"), and
-  // for the rest of a selection drag started that way, so letting go of Shift
-  // mid-drag does not hand the program a release it never saw pressed.
   return pane.session.WantsMouseCapture() && !pane.mouse_selecting &&
          (interaction_state_.key_modifiers & SDL_KMOD_SHIFT) == 0;
 }
@@ -726,12 +666,6 @@ PanelMouseCoordinator& WorkspaceShell::MakePanelMouseCoordinator() {
   if (glue_->panel_mouse_coordinator != nullptr) {
     return *glue_->panel_mouse_coordinator;
   }
-  // The terminal-panel hooks below construct the service INSIDE the lambda rather
-  // than capturing one. TerminalPanelService is nine std::functions -- 288 bytes --
-  // so capturing it by value overflows std::function's small-object buffer and
-  // heap-allocates a copy PER HOOK, seven times here, every time this coordinator
-  // is made. It is made per mouse event. Constructing it inside costs nothing:
-  // every one of its own hooks is a bare `this` capture and fits inline.
   glue_->panel_mouse_coordinator = std::make_unique<PanelMouseCoordinator>(
       context_.current_project_state, context_.interaction_state,
       PanelMouseCoordinator::Operations{
@@ -823,4 +757,4 @@ PanelMouseCoordinator& WorkspaceShell::MakePanelMouseCoordinator() {
   return *glue_->panel_mouse_coordinator;
 }
 
-}  // namespace microide::workspace
+}

@@ -5,15 +5,9 @@
 namespace microide::editor {
 namespace {
 
-// Gap before the first segment and between consecutive segments, in cell widths.
-// Matches the inline-blame spacing convention so plugin EOL text sits the same
-// distance past code as the built-in git-blame overlay.
 constexpr float kEolGapColumns = 8.0f;
 constexpr float kEolInterSegmentGapColumns = 2.0f;
 
-// Append one segment for `text` at the running x cursor, advancing it past the
-// drawn width plus an inter-segment gap. Returns false (and appends nothing) when
-// the segment would overflow `right_limit`, signaling the caller to stop.
 bool AppendSegment(const render::TextRenderer& text_renderer,
                    EolDecorationSegment::Kind kind,
                    std::uint32_t index,
@@ -25,7 +19,7 @@ bool AppendSegment(const render::TextRenderer& text_renderer,
                    float* x_cursor,
                    std::vector<EolDecorationSegment>& out) {
   if (text.empty()) {
-    return true;  // skip empty text without consuming horizontal budget
+    return true;
   }
   const float width = text_renderer.MeasureWidth(text);
   if (width <= 0.0f) {
@@ -43,7 +37,7 @@ bool AppendSegment(const render::TextRenderer& text_renderer,
   return true;
 }
 
-}  // namespace
+}
 
 void BuildEolDecorationSegments(const render::TextRenderer& text_renderer,
                                 std::span<const InlineTextDecoration> inline_texts,
@@ -70,7 +64,7 @@ void BuildEolDecorationSegments(const render::TextRenderer& text_renderer,
   }
   for (std::size_t i = 0; i < inline_texts.size(); ++i) {
     if (inline_texts[i].anchor_column != kInlineTextEndOfLine) {
-      continue;  // mid-line virtual text deferred (Phase B v1 is EOL-only)
+      continue;
     }
     if (!AppendSegment(text_renderer, EolDecorationSegment::Kind::InlineText,
                        static_cast<std::uint32_t>(i), inline_texts[i].text, y, line_height,
@@ -80,4 +74,4 @@ void BuildEolDecorationSegments(const render::TextRenderer& text_renderer,
   }
 }
 
-}  // namespace microide::editor
+}

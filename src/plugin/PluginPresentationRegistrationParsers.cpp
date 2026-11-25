@@ -16,9 +16,6 @@ namespace {
 
 using lua_interop::ReadOptionalStringField;
 
-// Hard caps so a malformed/hostile manifest cannot make the host allocate
-// unboundedly. Themes rarely exceed a few dozen groups; icon themes a few
-// hundred rules.
 constexpr std::size_t kMaxThemeStyles = 512;
 constexpr std::size_t kMaxIconRules = 1024;
 
@@ -34,7 +31,6 @@ std::optional<std::string> ReadHostNamespacedId(lua_State* state,
   return std::string(plugin_id) + "." + *id_opt;
 }
 
-// Parse a `"fg"` or `"fg,bg"` colour string into a contributed style.
 void ApplyColorString(std::string_view value, PluginHost::ContributedThemeStyle* style) {
   const std::size_t comma = value.find(',');
   const std::string_view fg = comma == std::string_view::npos ? value : value.substr(0, comma);
@@ -44,8 +40,6 @@ void ApplyColorString(std::string_view value, PluginHost::ContributedThemeStyle*
   }
 }
 
-// Parse a `{fg=, bg=, reverse=}` style table. The table is expected at stack
-// top (-1).
 void ApplyColorTable(lua_State* state, PluginHost::ContributedThemeStyle* style) {
   if (auto fg = ReadOptionalStringField(state, -1, "fg")) {
     style->foreground = render::ParseThemeColor(*fg);
@@ -62,7 +56,7 @@ void ApplyColorTable(lua_State* state, PluginHost::ContributedThemeStyle* style)
   lua_pop(state, 1);
 }
 
-}  // namespace
+}
 
 bool RegisterTheme(lua_State* state,
                    std::string_view plugin_id,
@@ -71,9 +65,6 @@ bool RegisterTheme(lua_State* state,
   if (themes == nullptr) {
     return false;
   }
-  // Non-raising type check: luaL_checktype would longjmp over the caller's live
-  // std::string error_message (RegisterTableContribution), violating the
-  // "no longjmp over live C++ locals" invariant.
   if (lua_type(state, 1) != LUA_TTABLE) {
     return util::Fail(error_message, "theme registration expects a table argument");
   }
@@ -86,7 +77,6 @@ bool RegisterTheme(lua_State* state,
   theme.plugin_id = std::string(plugin_id);
   theme.label = ReadOptionalStringField(state, 1, "label").value_or(theme.id);
 
-  // Accept either `colors` or `styles` for the group map.
   lua_interop::GetFieldProtected(state, 1, "colors");
   if (!lua_istable(state, -1)) {
     lua_pop(state, 1);
@@ -96,12 +86,6 @@ bool RegisterTheme(lua_State* state,
     const int colors_index = lua_gettop(state);
     lua_pushnil(state);
     while (lua_next(state, colors_index) != 0) {
-      // key at -2, value at -1.
-      // TD-2026-07-17-079: stop draining the table once the retained-style cap is
-      // reached. A hostile/accidental theme with a huge or sparse `colors`/`styles`
-      // map would otherwise spend O(table) setup CPU even though only kMaxThemeStyles
-      // entries are ever kept. Pop the pending value AND key to rebalance the stack
-      // before breaking (the post-loop lua_pop expects only the table remaining).
       if (theme.styles.size() >= kMaxThemeStyles) {
         lua_pop(state, 2);
         break;
@@ -119,10 +103,10 @@ bool RegisterTheme(lua_State* state,
           theme.styles.push_back(std::move(style));
         }
       }
-      lua_pop(state, 1);  // pop value, keep key for next iteration
+      lua_pop(state, 1);
     }
   }
-  lua_pop(state, 1);  // pop colors/styles table (or the non-table value)
+  lua_pop(state, 1);
 
   if (theme.styles.empty()) {
     return util::Fail(error_message, "theme '" + theme.id + "' declares no colours");
@@ -145,7 +129,6 @@ bool RegisterFileIconTheme(lua_State* state,
   if (themes == nullptr) {
     return false;
   }
-  // Non-raising type check: see RegisterTheme for the longjmp-over-locals rationale.
   if (lua_type(state, 1) != LUA_TTABLE) {
     return util::Fail(error_message, "file icon theme registration expects a table argument");
   }
@@ -158,7 +141,6 @@ bool RegisterFileIconTheme(lua_State* state,
   theme.plugin_id = std::string(plugin_id);
   theme.label = ReadOptionalStringField(state, 1, "label").value_or(theme.id);
 
-  // Accept either `rules` or `icons` for the rule array.
   lua_interop::GetFieldProtected(state, 1, "rules");
   if (!lua_istable(state, -1)) {
     lua_pop(state, 1);
@@ -166,9 +148,6 @@ bool RegisterFileIconTheme(lua_State* state,
   }
   if (lua_istable(state, -1)) {
     const int rules_index = lua_gettop(state);
-    // Clamp iterations, not just accepted rules: entries that are non-tables or
-    // fail the matcher/icon gate never grow theme.rules, so a sparse-border table
-    // with a huge lua_rawlen would otherwise defeat the size()<kMaxIconRules guard.
     const std::size_t count =
         std::min<std::size_t>(static_cast<std::size_t>(lua_rawlen(state, rules_index)), kMaxIconRules);
     for (std::size_t i = 1; i <= count && theme.rules.size() < kMaxIconRules; ++i) {
@@ -200,7 +179,7 @@ bool RegisterFileIconTheme(lua_State* state,
       lua_pop(state, 1);
     }
   }
-  lua_pop(state, 1);  // pop rules/icons table (or the non-table value)
+  lua_pop(state, 1);
 
   if (theme.rules.empty()) {
     return util::Fail(error_message, "file icon theme '" + theme.id + "' declares no rules");
@@ -216,6 +195,6 @@ bool RegisterFileIconTheme(lua_State* state,
   return true;
 }
 
-}  // namespace microide::plugin::presentation_interop
+}
 
 #endif

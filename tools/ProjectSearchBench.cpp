@@ -103,7 +103,7 @@ BenchRun RunBench(const std::filesystem::path& root,
   return run;
 }
 
-}  // namespace
+}
 
 int main(int argc, char** argv) {
   if (argc < 3) {
@@ -168,11 +168,6 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // Collect the candidate file list once (outside the timed region) and reuse it
-  // across runs, mirroring how the shell hands the engine a maintained snapshot.
-  // The engine takes generic path TEXT (TD-2026-08-17-259), which is also what the
-  // index stores; CollectProjectFiles still yields paths, so convert once here —
-  // outside the timed region, like the collection itself.
   auto indexed_paths = std::make_shared<std::vector<std::string>>();
   {
     const std::vector<std::filesystem::path> collected = microide::project::CollectProjectFiles(

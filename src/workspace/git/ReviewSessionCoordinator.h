@@ -15,27 +15,15 @@
 
 namespace microide::workspace {
 
-// Drives the batch review verbs (review-conflicts / review-branch / review-commit):
-// enumerate the relevant git files, switch to Source Control, and reconcile the
-// open diff/merge tabs against that target set (dedup + clean stale, never closing
-// dirty tabs). Host-owned rendering and tab lifecycle stay behind the injected
-// callbacks; this coordinator owns no shell access.
 class ReviewSessionCoordinator {
  public:
   struct Operations {
     std::function<void()> show_git_sidebar;
     std::function<void(std::vector<std::size_t>)> request_close_tabs;
     std::function<bool(std::size_t)> tab_is_dirty;
-    // Make the focused group's tab at `index` the active one.
     std::function<void(std::size_t)> activate_tab;
-    // Run `gather` off the shell thread, then `apply` on it -- dropped if the
-    // project changed meanwhile (TD-2026-10-07-323). A review's git work (the file
-    // list, then a blob prefetch for every file it opens) is one or two spawns
-    // locally and as many round trips for a remote project, and it ran on the
-    // shell thread before the first tab appeared. Unset: both run inline.
     std::function<void(std::function<void()> gather, std::function<void()> apply)>
         run_off_shell_thread;
-    // Report an outcome that lands after the command returned.
     std::function<void(ReviewOpenOutcome)> report_outcome;
   };
 
@@ -43,24 +31,12 @@ class ReviewSessionCoordinator {
                            CompareMergeService compare_merge,
                            Operations operations);
 
-  // A batch review verb opens one compare/merge tab (with a full diff/model build)
-  // per newly-actionable file. The git collection helpers only cap at
-  // kMaxGitCollectionEntries (50,000) as a defensive parse ceiling, which is far too
-  // large to treat as a UI workload — opening thousands of tabs synchronously would
-  // stall the shell. Cap the number of tabs a single review session opens and report
-  // the remainder as truncated. TD-2026-07-17A-041.
   static constexpr std::size_t kMaxReviewSessionOpenTabs = 200;
 
   ReviewOpenOutcome OpenConflictReview();
   ReviewOpenOutcome OpenBranchReview(const std::string& ref);
   ReviewOpenOutcome OpenCommitReview(const std::string& ref);
-  // review-checkpoint: a compare tab (checkpoint vs working tree) per file that
-  // differs between the marked checkpoint and the working tree as it is now --
-  // whatever was committed, amended or left untracked in between
-  // (project::SnapshotGitWorkingTree).
   ReviewOpenOutcome OpenCheckpointReview();
-  // review-checkpoint-mark: record the working tree as it is now as the
-  // checkpoint the next review-checkpoint compares against.
   ReviewOpenOutcome MarkCheckpoint();
 
  private:
@@ -71,9 +47,6 @@ class ReviewSessionCoordinator {
       const std::function<bool(const std::filesystem::path&)>& open_one,
       std::string_view empty_message);
 
-  // `gather` does the git work and touches nothing shell-owned; `apply` runs on
-  // the shell thread through a coordinator rebuilt from this one's handles (this
-  // one is a per-use value, long gone by then) and returns the outcome.
   ReviewOpenOutcome Dispatch(std::function<void()> gather,
                              std::function<ReviewOpenOutcome(ReviewSessionCoordinator&)> apply);
 
@@ -82,4 +55,4 @@ class ReviewSessionCoordinator {
   Operations operations_;
 };
 
-}  // namespace microide::workspace
+}

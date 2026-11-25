@@ -59,14 +59,10 @@ void TestRuntimePathsResolveInstalledShareLayout() {
          "runtime asset lookup should fall back when an explicit asset root is missing");
 }
 
-// TD-2026-07-17-040: the control-socket runtime dir must be created private and a
-// pre-existing untrusted directory must be refused, so the /tmp fallback cannot be
-// hijacked to redirect state or plant forged descriptors.
 void TestEnsureSecurePrivateDirectory() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path base = temp_dir.path();
 
-  // Fresh directory: created owner-only (0700).
   const std::filesystem::path fresh = base / "run" / "microide";
   Expect(platform::EnsureSecurePrivateDirectory(fresh),
          "a fresh runtime directory should be created and accepted");
@@ -76,11 +72,9 @@ void TestEnsureSecurePrivateDirectory() {
              std::filesystem::perms::none,
          "the created directory must be owner-only (no group/other bits)");
 
-  // Idempotent on an already-secure directory.
   Expect(platform::EnsureSecurePrivateDirectory(fresh),
          "re-securing an already-private directory should succeed");
 
-  // A symlink squatting the path must be refused (it could redirect state).
   const std::filesystem::path link_target = base / "elsewhere";
   std::filesystem::create_directories(link_target);
   const std::filesystem::path link_path = base / "linked";
@@ -88,7 +82,6 @@ void TestEnsureSecurePrivateDirectory() {
   Expect(!platform::EnsureSecurePrivateDirectory(link_path),
          "a symlink at the runtime path must be refused");
 
-  // A world/group-accessible directory we own is tightened to owner-only, not refused.
   const std::filesystem::path loose = base / "loose";
   std::filesystem::create_directories(loose);
   std::filesystem::permissions(loose, std::filesystem::perms::all);
@@ -99,16 +92,12 @@ void TestEnsureSecurePrivateDirectory() {
              std::filesystem::perms::none,
          "the loose directory must be tightened to owner-only");
 
-  // A regular file squatting the directory name must be refused.
   const std::filesystem::path file_path = base / "afile";
   WriteFile(file_path, "not a dir");
   Expect(!platform::EnsureSecurePrivateDirectory(file_path),
          "a non-directory at the runtime path must be refused");
 }
 
-// The server for a host's architecture: the package's lib/microide/server first,
-// then beside the executable, then -- only for this machine's architecture -- the
-// build tree's plain microide-server. Nothing for an architecture not shipped.
 void TestBundledServerBinaryIsChosenByArchitecture() {
   TemporaryDirectory temp;
   const std::filesystem::path usr = temp.path() / "usr";
@@ -128,9 +117,6 @@ void TestBundledServerBinaryIsChosenByArchitecture() {
          "and nothing serves an architecture that is not shipped");
 }
 
-// TD-2026-10-22-384: in the default "C" locale SDL's X11 title setter could not
-// convert a title with an em dash and left the window's _NET_WM_NAME at
-// "microide". From a bare POSIX environment the app still takes a UTF-8 LC_CTYPE.
 void TestCharacterLocaleIsUtf8EvenFromAPosixEnvironment() {
   ScopedEnvVar lc_all("LC_ALL", "C");
   ScopedEnvVar lang("LANG", "C");
@@ -140,8 +126,6 @@ void TestCharacterLocaleIsUtf8EvenFromAPosixEnvironment() {
   Expect(codeset == "UTF-8", "LC_CTYPE " + locale + " should be UTF-8, its codeset is " + codeset);
 }
 
-// "Climbs out" is a question about the first component, not the first two bytes:
-// `..cache` is a folder name (TD-2026-10-29-423).
 void TestRelativeClimbOutIsAboutTheFirstComponent() {
   using microide::util::RelativePathClimbsOut;
   using microide::util::RelativeTextClimbsOut;
@@ -156,11 +140,6 @@ void TestRelativeClimbOutIsAboutTheFirstComponent() {
          "a child named ..q does not");
 }
 
-// The three lexical containment helpers answer one question and must agree on it,
-// including where a path or root is spelled with a trailing separator: `/a/b` is
-// within (equal to) its root spelled `/a/b/`. They disagreed -- the root itself
-// was "outside" a slash-terminated spelling of itself, and `/a/b/` was within
-// `/a/b` for one helper and not for the other two.
 void TestPathContainmentHelpersAgreeOnTrailingSeparators() {
   struct Case {
     const char* candidate;
@@ -186,8 +165,6 @@ void TestPathContainmentHelpersAgreeOnTrailingSeparators() {
   }
 }
 
-// A path another machine named (the roaming session and review): relative and
-// normal by construction, bounded, never absolute, never climbing out.
 void TestPortableRelativePathIsRelativeNormalAndBounded() {
   using microide::util::IsPortableRelativePath;
   for (const char* good : {"a", "src/main.cpp", "..cache/x", "a/.b", "...", "x/y/z"}) {
@@ -200,7 +177,7 @@ void TestPortableRelativePathIsRelativeNormalAndBounded() {
   Expect(IsPortableRelativePath("abcd", 4) && !IsPortableRelativePath("abcde", 4), "the byte cap is inclusive");
 }
 
-}  // namespace
+}
 
 void RegisterRuntimePathsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PathMatch/RelativeClimbOutIsAboutTheFirstComponent",
@@ -221,4 +198,4 @@ void RegisterRuntimePathsTests(std::vector<TestCase>& tests) {
           TestCharacterLocaleIsUtf8EvenFromAPosixEnvironment);
 }
 
-}  // namespace microide::tests
+}

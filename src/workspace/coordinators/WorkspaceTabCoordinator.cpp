@@ -24,14 +24,12 @@ namespace microide::workspace {
 
 namespace {
 
-// The editor's own save transforms for a save of this mode: an autosave writes the
-// buffer as it is (SaveMode::Autosave).
 editor::TextViewport::SaveTransforms SaveTransformsFor(SaveMode mode) {
   return mode == SaveMode::Autosave ? editor::TextViewport::SaveTransforms::Skip
                                     : editor::TextViewport::SaveTransforms::Apply;
 }
 
-}  // namespace
+}
 
 namespace {
 
@@ -42,7 +40,7 @@ std::string EditorTabLabel(const editor::TextViewport& viewport, std::uint32_t u
   return TabTitleForPath(viewport.path(), untitled_number);
 }
 
-}  // namespace
+}
 
 TabCoordinator::TabCoordinator(ProjectCatalogState& project_catalog,
                                ProjectWorkspaceState& current_project_state,
@@ -93,13 +91,8 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
     }
     merge_tab.persisted_output_baseline =
         merge_tab.result_viewport.SerializeDocumentText(merge_tab.result_line_ending);
-    // Our own atomic write+rename bumps the mtime; sync disk_result_tick to it and
-    // clear any prior external-stale flag so the async file-change event does not
-    // misread this save as an external modification. Without this, saving the merge
-    // result would permanently lock out "Mark Resolved" for the tab.
     merge_tab.disk_result_tick = util::FileModificationTick(merge_tab.result_viewport.path());
     merge_tab.external_result_stale = false;
-    // Nothing else repaints the result pane's inline blame (QA merge-toolbar).
     AfterFileSaved(merge_tab.result_viewport.path().lexically_normal());
     return true;
   }
@@ -114,34 +107,22 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
   }
 
   if (editor_state->content_pending()) {
-    // The buffer is not the file yet — it is the empty stand-in a tab shows while
-    // its bytes are read. There is nothing of the user's to write, and writing it
-    // would truncate the file that is still being read. Reported as done, not as
-    // a failure, so Ctrl+S on a loading tab is a no-op rather than an error toast.
     return true;
   }
   editor::TextViewport* candidate = &editor_state->viewport;
   if (candidate->path().empty()) {
-    // Untitled buffers cannot be saved through this path; refuse if dirty.
     return !candidate->dirty();
   }
   const std::filesystem::path normalized_path = candidate->path().lexically_normal();
-  // A clean buffer has nothing to write -- unless it has never been on disk (a
-  // path opened before it existed, or just named by Save As): then the save is
-  // what creates the file, empty or not.
   if (!candidate->dirty() && candidate->HasDiskSignature()) {
     operations_.notify_plugin_buffer_save(normalized_path);
     return true;
   }
-  // Refuse to overwrite a file that changed on disk since we loaded/last saved
-  // it. Surface the external-change banner instead so the user can choose to
-  // Reload, Overwrite, or Keep. Checked before formatters run so we don't
-  // mutate the buffer for a save we're about to abort.
   if (candidate->SaveWouldOverwriteUnseenDisk()) {
     util::InvokeIfSet(operations_.request_external_change_banner, normalized_path);
     return false;
   }
-  if (!RefuseIfReadOnly(normalized_path, /*banner_shows=*/true)) {
+  if (!RefuseIfReadOnly(normalized_path, true)) {
     return false;
   }
   if (operations_.prepare_editor_view_for_save) {
@@ -151,17 +132,10 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
       return false;
     }
     if (prepared.deferred()) {
-      // Nothing is written yet, and that is the point: the shell thread is free
-      // while the formatter runs. Record the run so its completion can find this
-      // tab, and the revision so it can tell whether its answer is still about
-      // this buffer.
       editor_state->pending_format_save.Arm(prepared.deferred_run_id,
                                             candidate->content_revision());
       return true;
     }
-    // The conflict check above ran BEFORE the participants and the formatter, and
-    // a formatter can take seconds: a file written meanwhile must not be
-    // overwritten by the save it raced. One stat.
     if (!RefuseIfChangedOnDisk(*candidate, normalized_path)) {
       return false;
     }
@@ -173,9 +147,6 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
     }
     return false;
   }
-  // The tab's dirty marker is gone. The deferred completion repaints the strip;
-  // a save that wrote at once must too, or a save no keystroke made (the command
-  // line, a menu path that damages nothing else) leaves "*name" on screen.
   operations_.request_frame();
   AfterFileSaved(normalized_path);
   return true;
@@ -192,8 +163,6 @@ TabCoordinator::PaneSave TabCoordinator::WritePaneViewport(
     const SavePreparation prepared =
         operations_.prepare_editor_view_for_save(viewport.path(), viewport, nullptr, mode);
     if (prepared.deferred()) {
-      // The formatter runs off the shell thread; ApplyDeferredSaveFormat finds this
-      // tab by its run id.
       pending_format_save.Arm(prepared.deferred_run_id, viewport.content_revision());
       return PaneSave::Deferred;
     }
@@ -202,7 +171,7 @@ TabCoordinator::PaneSave TabCoordinator::WritePaneViewport(
     }
   }
   if (!RefuseIfChangedOnDisk(viewport, normalized_path) ||
-      !RefuseIfReadOnly(normalized_path, /*banner_shows=*/false)) {
+      !RefuseIfReadOnly(normalized_path, false)) {
     return PaneSave::Refused;
   }
   if (std::error_code why; !viewport.Save(state_.write_gate(), &why, SaveTransformsFor(mode))) {
@@ -255,14 +224,6 @@ void TabCoordinator::Activate(std::size_t index) {
 
   if (state_.focused_group().active_tab_index == index) {
     auto& active_tab = state_.focused_group().open_tabs[index];
-    // Re-activating the already-active tab normally needs no load, but a tab whose
-    // content is not here yet must still be hydrated or its pane renders empty.
-    // BOTH un-hydrated forms qualify: no `editor_state` with a deferred handle,
-    // and an `editor_state` whose `content` is not Ready — a split clone of a tab
-    // that was still loading is the second, and checking only the first left it
-    // empty and read-only for the life of the pane. Guarded on the un-hydrated
-    // state so the common re-click stays a no-op and never re-snaps scroll onto
-    // the caret.
     if (active_tab.kind == TabEntry::Kind::Editor &&
         (active_tab.editor_state.has_value() ? active_tab.editor_state->content_pending()
                                              : active_tab.deferred_handle.has_value())) {
@@ -281,11 +242,6 @@ void TabCoordinator::Activate(std::size_t index) {
 
   state_.focused_group().active_tab_index = index;
   auto& tab = state_.focused_group().open_tabs[index];
-  // Editor loading is best-effort: if the file disappeared while the IDE was
-  // closed, we still want the tab strip + project tree to reflect this tab as
-  // the active one (otherwise the activation looks like a no-op to the user).
-  // LoadEditorTabForActivation returns false on failure but the post-activation
-  // sync below still runs.
   (void)LoadEditorTabForActivation(tab);
   SyncActiveEditorTabMetadata();
   const editor::TextViewport* active_vp =
@@ -307,14 +263,6 @@ void TabCoordinator::Activate(std::size_t index) {
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
   operations_.reset_caret_blink();
-  // Engage the language server for the now-active editor document. This covers the
-  // session-restore case (a file already open at startup, activated without ever
-  // going through OpenFileInNewTab) and plain tab switches — without it, a
-  // restored file's LSP stayed at "Starting..." with no diagnostics/semantic
-  // colors until an edit or go-to-definition. SCHEDULED, not run inline: the
-  // hydration (didOpen + semantic tokens + inlay hints, which serializes the whole
-  // buffer) runs after the tab-switch frame is presented, so switching to a large
-  // file never blocks the tab becoming visible. Idempotent, so switches are cheap.
   if (tab.kind == TabEntry::Kind::Editor && !active_vp_path.empty() &&
       operations_.schedule_lsp_buffer_open) {
     operations_.schedule_lsp_buffer_open(active_vp_path);
@@ -350,9 +298,6 @@ void TabCoordinator::SyncActiveEditorTab() {
 }
 
 bool TabCoordinator::ActivateCurrentTabAfterStateLoad() {
-  // Eagerly hydrate the active editor tab of every non-focused group so a restored
-  // split shows content in both panes, not just the focused one. The focused group
-  // is hydrated below via Activate().
   for (std::size_t gi = 0; gi < state_.editor_groups.size(); ++gi) {
     if (gi == state_.focused_group_index) {
       continue;
@@ -363,9 +308,6 @@ bool TabCoordinator::ActivateCurrentTabAfterStateLoad() {
     }
     TabEntry& tab = group.active_tab();
     if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
-      // Skip the preference re-apply for a freshly-hydrated tab: RestoreEditorTab
-      // already applied current preferences, and re-running them here would fire
-      // EnsureCursorVisible and clobber the restored scroll.
       const bool was_deferred = tab.editor_state->content_pending();
       if (EnsureEditorTabLoaded(tab) && !was_deferred) {
         operations_.apply_editor_preferences(tab.editor_state->viewport);
@@ -379,13 +321,6 @@ bool TabCoordinator::ActivateCurrentTabAfterStateLoad() {
 
   const std::size_t active_index = std::min(state_.focused_group().active_tab_index, state_.focused_group().open_tabs.size() - 1);
   state_.focused_group().active_tab_index = state_.focused_group().open_tabs.size();
-  // Hydrating the restored tab is not the user choosing the editor: the keyboard
-  // stays where the loaded state put it (the session restore's editor default,
-  // a revived maximized panel, or the surface a re-activated project was left
-  // on). `Activate` takes focus because a click or a key does; here that moved
-  // the keyboard into an editor collapsed under a maximized panel, and the next
-  // frame's SyncPanelMaximizedWithFocus restored the panel the user had left
-  // maximized -- on every session restore and every project switch back.
   const FocusTarget loaded_focus = state_.surface.focus;
   Activate(active_index);
   state_.surface.focus = loaded_focus;
@@ -404,8 +339,6 @@ void TabCoordinator::SyncActiveEditorTabMetadata() {
 
   std::filesystem::path active_path;
   if (tab.editor_state.has_value() && tab.editor_state->content_pending()) {
-    // Not loaded (yet, or ever: a file deleted between restore and activation):
-    // its identity is the restore target, not the empty stand-in's.
     active_path = operations_.editor_view_path(*tab.editor_state);
     if (!active_path.empty()) {
       tab.path = active_path;
@@ -417,21 +350,12 @@ void TabCoordinator::SyncActiveEditorTabMetadata() {
     tab.path = active_path;
     tab.title = EditorTabLabel(viewport, tab.untitled_number);
   } else if (tab.deferred_handle.has_value() || !tab.path.empty()) {
-    // No live viewport, but the tab has a real identity: a deferred tab whose
-    // file failed to open (e.g. deleted out from under the IDE between restore
-    // and first activation). Do NOT fall through to the group's welcome surface
-    // -- its empty path would clobber the tab's filename/title, stranding the
-    // tab as "Welcome"/"" in the strip and breaking the OpenFileInNewTab dedup
-    // (keyed on tab.path). Keep the restored identity; recover it from the
-    // deferred handle if the path was somehow lost.
     if (tab.path.empty() && tab.deferred_handle.has_value()) {
       tab.path = tab.deferred_handle->path.lexically_normal();
       tab.title = TabTitleForPath(tab.path, tab.untitled_number);
     }
     active_path = tab.path.lexically_normal();
   } else {
-    // Truly empty editor tab (no state, no handle, no path): mirror the group
-    // welcome surface, as before.
     const editor::TextViewport& viewport = state_.focused_group().welcome_surface.viewport;
     active_path = viewport.path().lexically_normal();
     tab.path = active_path;
@@ -451,7 +375,7 @@ bool TabCoordinator::OpenUntitled() {
     return false;
   }
   if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
-    return false;  // Refuse a `tab`-command flood; see kMaxOpenTabsPerGroup.
+    return false;
   }
 
   editor::TextViewport untitled_view;
@@ -486,7 +410,7 @@ bool TabCoordinator::OpenEditorViewForPath(const std::filesystem::path& path,
   const std::filesystem::path normalized_path = path.lexically_normal();
   if (const editor::TextViewport* live = FindOpenEditorViewOfPath(normalized_path);
       live != nullptr) {
-    view = *live;  // shares the DocumentState; caret/scroll are the view's own
+    view = *live;
     return true;
   }
   if (!view.OpenFile(normalized_path)) {
@@ -501,8 +425,6 @@ bool TabCoordinator::ShouldOpenOffThread(const std::filesystem::path& normalized
   if (!operations_.begin_async_file_read) {
     return false;
   }
-  // A file already open somewhere shares that buffer instead of being read, so
-  // its size is irrelevant.
   if (FindOpenEditorViewOfPath(normalized_path) != nullptr) {
     return false;
   }
@@ -517,10 +439,6 @@ std::uint64_t TabCoordinator::BeginOffThreadOpen(const std::filesystem::path& no
   if (read_id == 0) {
     return 0;
   }
-  // An empty buffer bound to the real path, so the tab strip, the breadcrumb and
-  // the status bar all name the file that is arriving. Read-only until it does:
-  // a keystroke landing here would otherwise become a buffer that shadows the
-  // file and can be saved over it.
   view.LoadContent("", normalized_path);
   view.SetReadOnly(true);
   operations_.apply_editor_preferences(view);
@@ -560,10 +478,6 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
     return true;
   }
 
-  // Enforce the per-group ceiling before touching disk: an already-open file
-  // reuses its tab via the dedup above, so a brand-new open past the cap is
-  // refused here — before the file read + indent detection below — so a flood of
-  // distinct paths cannot pay that I/O only to be rejected.
   if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
     return false;
   }
@@ -600,9 +514,6 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
   operations_.reset_caret_blink();
-  // The plugin-visible open is the moment the buffer exists. For an off-thread
-  // read that is the completion, not now, or a plugin reads an empty document
-  // and caches it as the file.
   if (read_id == 0) {
     operations_.notify_plugin_buffer_open(normalized_path);
   }
@@ -637,8 +548,6 @@ bool TabCoordinator::ReopenEditor(DeferredTabHandle view) {
       .compare = std::nullopt,
       .merge = std::nullopt,
   });
-  // A read that fails here keeps the tab naming its file, as a restored
-  // session's does, so the next activation tries again.
   Activate(group.open_tabs.size() - 1);
   return true;
 }
@@ -668,7 +577,7 @@ bool TabCoordinator::OpenNewBufferInNewTab(const std::filesystem::path& path) {
   editor::TextViewport opened_view;
   if (const editor::TextViewport* live = FindOpenEditorViewOfPath(normalized_path);
       live != nullptr) {
-    opened_view = *live;  // the not-yet-saved buffer another group already holds
+    opened_view = *live;
   } else {
     opened_view.LoadContent("", normalized_path);
     operations_.apply_editor_preferences(opened_view);
@@ -720,7 +629,7 @@ bool TabCoordinator::OpenVirtualDocumentInNewTab(const std::filesystem::path& vi
   operations_.apply_detected_indent_on_open(viewport);
 
   if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
-    return false;  // At the per-group ceiling; see kMaxOpenTabsPerGroup.
+    return false;
   }
   state_.focused_group().open_tabs.push_back(TabEntry{
       .kind = TabEntry::Kind::Editor,
@@ -744,8 +653,6 @@ void TabCoordinator::ReloadVirtualDocumentTabs(const std::filesystem::path& virt
     return;
   }
 
-  // Walk EVERY editor group, not just the focused one: a virtual document open in
-  // both split panes must refresh both copies, matching ReloadEditorTabsForPath.
   bool reloaded_any = false;
   for (std::size_t gi = 0; gi < state_.editor_groups.size(); ++gi) {
     EditorGroup& group = state_.editor_groups[gi];
@@ -817,9 +724,6 @@ bool TabCoordinator::RefuseIfChangedOnDisk(const editor::TextViewport& viewport,
 
 bool TabCoordinator::RefuseIfReadOnly(const std::filesystem::path& normalized_path,
                                       bool banner_shows) {
-  // The atomic save would rename a temporary file over a read-only one -- which
-  // needs only the directory's permission -- and leave a read-only file the
-  // editor had just changed (TD-2026-10-22-380).
   if (!state_.write_gate().IsReadOnly(normalized_path)) {
     return true;
   }
@@ -832,9 +736,6 @@ bool TabCoordinator::RefuseIfReadOnly(const std::filesystem::path& normalized_pa
 
 TabCoordinator::SaveForCloseResult TabCoordinator::SaveForClose(std::size_t index) {
   const std::size_t group_index = state_.clamped_focused_group_index();
-  // Deferred, not Blocking: the whole point is that the shell thread is free
-  // while the formatter runs. What the close path cannot do is close BEFORE the
-  // write lands, so a deferred tab is handed back for a save continuation.
   if (!SaveGroupTab(group_index, index, SaveMode::Deferred)) {
     return {};
   }
@@ -843,15 +744,13 @@ TabCoordinator::SaveForCloseResult TabCoordinator::SaveForClose(std::size_t inde
       group.open_tabs[index].editor_state->pending_format_save.armed()) {
     return {.saved = true, .deferred_tab_id = EnsureTabStableId(group.open_tabs[index])};
   }
-  // Nothing was deferred — no formatter, or a clean buffer — so the file is
-  // already written and the close is the same immediate one it always was.
   Close(index);
   return {.saved = true};
 }
 
 void TabCoordinator::RememberClosedEditor(const TabEntry& tab) {
   if (tab.kind != TabEntry::Kind::Editor || tab.path.empty() || !tab.path.is_absolute()) {
-    return;  // an untitled buffer has nothing to reopen
+    return;
   }
   std::optional<DeferredTabHandle> view = EditorTabViewState(tab);
   DeferredTabHandle entry = view.has_value() ? std::move(*view) : DeferredTabHandle{};
@@ -872,17 +771,15 @@ void TabCoordinator::ObserveNavigationLocation() {
   const TabEntry& tab = group.active_tab();
   if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
       !tab.path.is_absolute()) {
-    return;  // compare/merge/virtual/untitled tabs are not places to go back to
+    return;
   }
   const EditorTabState& editor = *tab.editor_state;
-  // A tab still loading shows where its caret will land, as Reopen Closed Editor does.
   state_.navigation_history.Observe(
       tab.path, editor.content_pending() ? editor.restore.cursor_line : editor.viewport.cursor_line(),
       editor.content_pending() ? editor.restore.cursor_column : editor.viewport.cursor_column());
 }
 
 std::optional<EditorNavigationHistory::Location> TabCoordinator::StepNavigation(int direction) {
-  // The frame that would have observed the latest caret move may not have run yet.
   ObserveNavigationLocation();
   return state_.navigation_history.Step(direction, [](const std::filesystem::path& path) {
     std::error_code error;
@@ -896,11 +793,6 @@ void TabCoordinator::Close(std::size_t index) {
   }
   const TabEntry& closing_tab = state_.focused_group().open_tabs[index];
 
-  // No SyncActiveEditorTab() here: closing a non-active tab does not change the
-  // active tab, and every persistence/deactivation path re-syncs the active tab
-  // (SaveSessionState and StoreCurrentProjectState both call it), so capturing its
-  // viewport now would be redundant work — costly in bulk closes via the tree
-  // traversals in SyncActiveEditorTabMetadata.
   MaybeNotifyLspClose(closing_tab);
   CancelPendingAsyncRead(closing_tab);
   RememberClosedEditor(closing_tab);
@@ -910,8 +802,6 @@ void TabCoordinator::Close(std::size_t index) {
   util::InvokeIfSet(operations_.tab_closed, closed_id);
 
   if (state_.focused_group().open_tabs.empty()) {
-    // Closing the last tab of a split group collapses that group; the surviving
-    // group takes the full editor area.
     if (state_.editor_groups.size() >= 2) {
       CollapseFocusedGroup();
       operations_.ensure_active_tab_visible();
@@ -934,14 +824,8 @@ void TabCoordinator::Close(std::size_t index) {
     state_.focused_group().active_tab_index = std::min(index, state_.focused_group().open_tabs.size() - 1);
     auto& tab = state_.focused_group().active_tab();
     if (tab.kind == TabEntry::Kind::Editor) {
-      // Promote the neighbor through the same loader Activate uses so a deferred
-      // (session-restored, never-activated) tab restores its cursor/scroll/
-      // selection instead of opening fresh at (0,0).
       (void)LoadEditorTabForActivation(tab);
     } else if (tab.kind == TabEntry::Kind::Compare) {
-      // Promoting a compare/merge tab on close must scroll its active selection
-      // into view, exactly as Activate() does — otherwise the revealed tab's
-      // selected hunk can sit off-screen until the next interaction.
       operations_.reveal_active_compare_selection();
     } else if (tab.kind == TabEntry::Kind::Merge) {
       operations_.reveal_active_merge_selection();
@@ -968,4 +852,4 @@ bool TabCoordinator::MoveActiveTo(std::size_t index) {
   return true;
 }
 
-}  // namespace microide::workspace
+}

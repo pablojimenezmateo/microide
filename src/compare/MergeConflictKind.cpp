@@ -11,23 +11,13 @@ bool ContentHasNulByte(std::string_view content) {
   return content.find('\0') != std::string_view::npos;
 }
 
-// Strips all carriage returns (CRLF/CR -> LF); shared with the rest of the text
-// layer via util::NormalizeLineEndings.
 using util::NormalizeLineEndings;
 
 MergeFileConflictKind KindFromGitConflict(project::GitConflictKind git_kind,
                                           const project::GitRepositoryEntry* entry) {
-  // A conflicted gitlink outranks every content kind: there is no text to
-  // three-way merge, so reporting it as both-modified would offer hunks for a
-  // file that is really a commit pointer.
   if (entry != nullptr && entry->submodule && entry->conflicted) {
     return MergeFileConflictKind::Submodule;
   }
-  // A D/F conflict next: the path is a directory on disk, so there is no file to
-  // three-way merge and the existence choice is between a file and a tree. This
-  // is checked AFTER the submodule case on purpose — a submodule checkout is also
-  // a directory, and reporting it as file/directory would lose the more specific
-  // (and more actionable) submodule message.
   if (entry != nullptr && entry->conflicted && entry->path_is_directory) {
     return MergeFileConflictKind::FileDirectory;
   }
@@ -76,8 +66,6 @@ bool TextHunksAvailable(MergeFileConflictKind kind) {
   switch (kind) {
     case MergeFileConflictKind::Binary:
     case MergeFileConflictKind::Submodule:
-    // A D/F conflict has a directory on one side: there is no text to three-way
-    // merge, so offering hunks would present an empty diff with live actions.
     case MergeFileConflictKind::FileDirectory:
     case MergeFileConflictKind::BothDeleted:
       return false;
@@ -113,8 +101,6 @@ std::string BuildSummary(MergeFileConflictKind kind) {
     case MergeFileConflictKind::Submodule:
       return "Submodule conflict; resolve in the submodule checkout.";
     case MergeFileConflictKind::LineEndingHeavy:
-      // "or whitespace" was never true: the detector normalizes line endings and
-      // nothing else, so a whitespace-only conflict does not reach this kind.
       return "Sides differ only by line endings.";
     case MergeFileConflictKind::Unknown:
       return "Unclassified merge conflict.";
@@ -122,7 +108,7 @@ std::string BuildSummary(MergeFileConflictKind kind) {
   return "Unclassified merge conflict.";
 }
 
-}  // namespace
+}
 
 bool MergeContentLooksBinary(std::string_view content) {
   return ContentHasNulByte(content);
@@ -138,13 +124,6 @@ bool MergeContentIsLineEndingHeavy(std::string_view base,
     return incoming != normalized_incoming || current != normalized_current ||
            base != normalized_base;
   }
-  // "Mainly line endings" has to mean BOTH sides. This used to return true when
-  // just one side's change normalized away, which labelled a conflict whose other
-  // side rewrote real content as "sides differ mainly by line endings" — and that
-  // is the label a user reads before deciding it is safe to take one side whole
-  // (2026-07-10 pass). One side being ending-only and the other not is an ordinary
-  // BothModified conflict; git conflicts because the ending rewrite touched the
-  // same lines, but the content disagreement is genuine.
   const bool incoming_only_endings =
       normalized_incoming == normalized_base && incoming != normalized_incoming;
   const bool current_only_endings =
@@ -152,8 +131,6 @@ bool MergeContentIsLineEndingHeavy(std::string_view base,
   if (incoming_only_endings && current_only_endings) {
     return true;
   }
-  // Neither side matches base after normalizing, but the two sides agree on
-  // content and disagree only on endings: still purely an ending conflict.
   return normalized_incoming == normalized_current &&
          (incoming != normalized_incoming || current != normalized_current);
 }
@@ -175,7 +152,6 @@ MergeFileConflictMetadata ClassifyMergeFileConflict(
     } else if (input.base_exists && !input.incoming_exists && !input.current_exists) {
       kind = MergeFileConflictKind::BothDeleted;
     } else if (!input.base_exists && !input.incoming_exists && input.current_exists) {
-      // No base: a side that has the file added it — this is not a delete.
       kind = MergeFileConflictKind::AddedByUs;
     } else if (!input.base_exists && input.incoming_exists && !input.current_exists) {
       kind = MergeFileConflictKind::AddedByThem;
@@ -184,10 +160,6 @@ MergeFileConflictMetadata ClassifyMergeFileConflict(
     }
   }
 
-  // Only downgrade content-diff conflicts to Binary. Existence-choice kinds
-  // (deleted-by-us/them, both-deleted, rename-delete) must keep their kind so the
-  // resolver still offers the keep-vs-delete choice the user needs; overwriting
-  // them with Binary would suppress that choice and disable resolution.
   if (!RequiresExistenceChoice(kind) &&
       (MergeContentLooksBinary(input.base_content) ||
        MergeContentLooksBinary(input.incoming_content) ||
@@ -207,4 +179,4 @@ MergeFileConflictMetadata ClassifyMergeFileConflict(
   };
 }
 
-}  // namespace microide::compare
+}

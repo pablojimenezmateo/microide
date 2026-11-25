@@ -27,19 +27,6 @@ namespace microide::terminal {
 
 namespace {
 
-// A shrink can strand the cursor above the visible window. The primary buffer's
-// viewport is the LAST `rows` lines of the deque and the cursor is an absolute
-// index into it, so shrinking `rows` moves the viewport down past a cursor sitting
-// higher up — and nothing brings it back, because the shell keeps writing to rows
-// that are now permanently off-screen. The reachable case is a `clear`
-// (ESC[H ESC[2J ESC[3J) issued before the panel's real geometry is known: it leaves
-// exactly one pre-layout screen of lines with the cursor on the first, and the
-// resize that follows parks the viewport on the blank tail.
-//
-// xterm and VTE drop the unused blank remainder of the old screen on a shrink, so
-// do that — and only that. Lines below the cursor that still hold text are kept
-// (they are real output), and nothing is dropped unless the cursor is genuinely
-// stranded, so an ordinary shrink over scrollback is untouched.
 void DropBlankTailStrandingCursor(std::deque<TerminalLine>& lines,
                                   std::size_t rows,
                                   std::size_t cursor_row) {
@@ -55,24 +42,19 @@ void DropBlankTailStrandingCursor(std::deque<TerminalLine>& lines,
     }
     return true;
   };
-  // `cursor_row + rows < lines.size()` is exactly "the cursor is above the visible
-  // top" (which is lines.size() - rows).
   while (lines.size() > rows && cursor_row + rows < lines.size() &&
          line_is_blank(lines.back())) {
     lines.pop_back();
   }
 }
 
-// Process-wide flag backing UsePlaceholderTerminalsForTesting(). Set once by the
-// test harness before any terminal is created and never mutated concurrently, so
-// a plain bool is sufficient.
 bool g_use_placeholder_terminals_for_testing = false;
 
 using platform::DefaultShellPath;
 using platform::RequestTerminalChildShutdown;
 using platform::ShellProgramName;
 
-}  // namespace
+}
 
 void SetUsePlaceholderTerminalsForTesting(bool enabled) {
   g_use_placeholder_terminals_for_testing = enabled;
@@ -99,9 +81,6 @@ bool TerminalSession::Start(const platform::ProcessLauncher& launcher,
                             std::string_view command,
                             std::string_view shell,
                             HostIdentity attach) {
-  // `shell` is a command line, not a program path — that is what the setting has
-  // always said it was. Splitting here (rather than in the backend) keeps the
-  // backend's request argv-shaped and the quoting rules in one place.
   return StartArgv(launcher, working_directory, command,
                    launcher.ResolveArgv(util::SplitCommandLine(shell)), std::move(attach));
 }
@@ -127,10 +106,6 @@ bool TerminalSession::StartArgv(const platform::ProcessLauncher& launcher,
 
   std::shared_ptr<platform::TerminalBackend> backend = platform::CreateTerminalBackend();
   platform::TerminalBackend* backend_ptr = backend.get();
-  // Publish the backend BEFORE starting it. The backend's on_output callback can fire
-  // synchronously during Start() (a shell that immediately answers a DSR/DA query), and
-  // FlushPendingReply()->SendBytes() needs to find backend_ to write the reply — if we
-  // assigned it only after Start(), that early reply would be silently dropped.
   {
     std::scoped_lock lock(mutex_);
     backend_ = backend;
@@ -150,9 +125,6 @@ bool TerminalSession::StartArgv(const platform::ProcessLauncher& launcher,
             if (observer) {
               observer();
             }
-            // Flush query replies (DSR/DA/etc.) generated during parsing after
-            // releasing mutex_, so the blocking PTY write() never runs under the
-            // lock on this reader thread.
             FlushPendingReply();
             if (wake) {
               PushWakeEvent();
@@ -213,9 +185,6 @@ bool TerminalSession::StartPlaceholderForTesting(const std::filesystem::path& wo
     ReseedForStartLocked(working_directory, command.empty()
                                                 ? ShellProgramName(DefaultShellPath())
                                                 : std::string(command));
-    // The two differences from the real Start(): there is no backend to publish,
-    // and the captured-output buffer that stands in for one starts empty. It
-    // reports running like a real shell would; a test ends it with SetRunning.
     backend_.reset();
     test_sent_bytes_.clear();
     running_ = true;
@@ -269,18 +238,12 @@ void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
   const std::size_t clamped_columns = std::max<std::size_t>(1, columns);
 
   if (const std::shared_ptr<TerminalHostChannel> host = HostChannel()) {
-    // The host owns the grid; the next frame carries the size it settled on.
     host->Resize(clamped_rows, clamped_columns);
     return;
   }
   {
     std::scoped_lock lock(mutex_);
     const std::size_t old_rows = rows_;
-    // A scroll region that spanned the full pre-resize screen must follow the new
-    // height. ClampScrollRegionLocked only *shrinks* the bottom margin, so after a
-    // grow a default full-window region would otherwise stay frozen at the old
-    // height and confine all scrolling to the top of the enlarged screen (xterm/VTE
-    // reset margins to the full window on resize).
     const bool region_spanned_full_screen =
         scroll_region_top_ == 0 && old_rows > 0 && scroll_region_bottom_ == old_rows - 1;
     rows_ = clamped_rows;
@@ -289,11 +252,6 @@ void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
       scroll_region_top_ = 0;
       scroll_region_bottom_ = rows_ - 1;
     }
-    // Mirror the re-expansion onto the SAVED primary/alternate regions too. The
-    // active screen's live fields above are authoritative, but RestoreSavedScreen
-    // loads the inactive screen's saved region verbatim — so a full-window region
-    // saved before a grow-resize would otherwise restore frozen at the old height
-    // (ClampScrollRegionLocked only shrinks, never grows).
     if (old_rows > 0 && rows_ > 0) {
       if (primary_screen_.scroll_region_top == 0 &&
           primary_screen_.scroll_region_bottom == old_rows - 1) {
@@ -305,7 +263,7 @@ void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
       }
     }
     if (rows_ > 0) {
-      saved_cursor_row_ = std::min(saved_cursor_row_, rows_ - 1);  // screen-relative on both
+      saved_cursor_row_ = std::min(saved_cursor_row_, rows_ - 1);
       primary_screen_.saved_cursor_row = std::min(primary_screen_.saved_cursor_row, rows_ - 1);
     }
     if (use_alternate_screen_ && rows_ > 0) {
@@ -346,7 +304,7 @@ void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
   std::shared_ptr<platform::TerminalBackend> backend;
   {
     std::scoped_lock lock(mutex_);
-    backend = backend_;  // copy keeps it alive across the unlocked Resize()
+    backend = backend_;
   }
   if (backend != nullptr) {
     backend->Resize(clamped_rows, clamped_columns);
@@ -369,7 +327,7 @@ void TerminalSession::SendBytes(std::string_view bytes) {
   std::shared_ptr<platform::TerminalBackend> backend;
   {
     std::scoped_lock lock(mutex_);
-    backend = backend_;  // copy keeps it alive across the unlocked Write()
+    backend = backend_;
   }
   if (!backend) {
     if (UsePlaceholderTerminalsForTesting()) {
@@ -443,16 +401,6 @@ TerminalSession::SearchScan TerminalSession::FindMatches(const TerminalSearchQue
   return scan;
 }
 
-// Reuses the destination rows' `cells` buffers rather than destroying and
-// rebuilding them. Returns the number of rows copied.
-//
-// Every by-value snapshot entry point below funnels through this. `clear()` +
-// `assign()` — which is what they all used to do — destroys each TerminalLine and
-// frees its cells vector, then copy-constructs a fresh one, so a caller that
-// re-snapshots the same visible range on every mouse wheel tick or every frame
-// paid one allocation AND one free per visible row each time. The row count is a
-// panel height; it barely moves, so reusing the buffers makes the steady state
-// allocation-free.
 std::size_t TerminalSession::CopyLineRangeIntoLocked(std::size_t start_row,
                                                      std::size_t max_lines,
                                                      std::vector<TerminalLine>& out) const {
@@ -466,8 +414,6 @@ std::size_t TerminalSession::CopyLineRangeIntoLocked(std::size_t start_row,
   for (std::size_t i = 0; i < count; ++i) {
     const TerminalLine& source = lines_[start_row + i];
     TerminalLine& destination = out[i];
-    // `assign` on the existing vector reuses its capacity; TerminalCell is
-    // trivially copyable, so this is a memcpy plus a size update.
     destination.cells.assign(source.cells.begin(), source.cells.end());
     destination.wrapped_from_previous = source.wrapped_from_previous;
   }
@@ -618,7 +564,7 @@ void TerminalSession::SetDefaultColors(util::Rgba8 foreground, util::Rgba8 backg
   {
     std::scoped_lock lock(mutex_);
     if (default_foreground_ == foreground && default_background_ == background) {
-      return;  // the per-frame call: nothing changed
+      return;
     }
     const bool was_dark = util::IsDarkColor(default_background_);
     default_foreground_ = foreground;
@@ -682,16 +628,6 @@ void TerminalSession::AdvanceSnapshotGenerationLocked() {
 }
 
 bool TerminalSession::ConsumeWakeDecisionLocked() {
-  // Under synchronized output (DEC 2026) the application brackets a full frame
-  // between `?2026h` and `?2026l`; repainting mid-frame both tears and burns
-  // CPU. Suppress the redraw wake while the frame is open, with a safety cap so
-  // an application that never closes the frame cannot freeze the display.
-  //
-  // A frame that CLOSED during this output is shown even when the next one has
-  // already opened: the read boundary falls anywhere, and a read holding the end of
-  // frame N and the start of N+1 used to be suppressed whole -- N appeared only
-  // with the next output, so a TUI that redraws per keystroke (Claude Code, Ink)
-  // showed its input, and its cursor, one keystroke behind.
   constexpr int kMaxSuppressedWakes = 8;
   const bool frame_completed = sync_frame_completed_;
   sync_frame_completed_ = false;
@@ -720,15 +656,10 @@ void TerminalSession::PushWakeEvent() const {
     return;
   }
 
-  // TD-2026-07-17-087: route through util::PushWake so a rejected push latches
-  // the process-wide owed-wake bit (consumed by the idle-wait poll). Otherwise a
-  // dropped final PTY-output or process-exit-marker wake leaves parsed terminal
-  // state undrawn until unrelated input wakes the loop. Clear the local coalescing
-  // flag on failure so a later producer retries.
   if (!util::PushWake(channel)) {
     std::scoped_lock lock(mutex_);
     wake_event_pending_ = false;
   }
 }
 
-}  // namespace microide::terminal
+}

@@ -12,15 +12,6 @@ namespace {
 using microide::project::GlobMatches;
 using microide::project::GlobSet;
 
-// The matcher itself moved out of IgnoreMatcher.cpp's anonymous namespace so both
-// ignore rules and search scope filters share one definition of "what a glob
-// means". Lock in the FNM_PATHNAME semantics directly, independent of the
-// gitignore parsing layered on top in IgnoreMatcherTests.
-// git's wildmatch lets a leading `**/` stand for zero directories even when
-// there is nothing left to match, so `**/*` matches the empty string. That is
-// the remainder a rule like `a**/*` leaves against the directory `a` once the
-// literal prefix is stripped, and git ignores `a` by it. Found against
-// `git check-ignore`.
 void TestGlobDoubleStarSlashMatchesTheEmptyRemainder() {
   Expect(GlobMatches("**/*", ""), "`**/*` matches an empty remainder");
   Expect(GlobMatches("**/", ""), "`**/` matches an empty remainder");
@@ -51,8 +42,6 @@ void TestGlobMatchesPathnameSemantics() {
   Expect(!GlobMatches("a\\*b", "axb"), "an escaped '*' must not behave as a wildcard");
 }
 
-// VSCode's search box: a '/'-free entry floats to any depth, a '/'-bearing entry
-// is anchored to the workspace root.
 void TestGlobSetFloatsBareNamesAndAnchorsPaths() {
   const GlobSet includes = GlobSet::Parse("*.cpp");
   Expect(!includes.empty(), "a non-empty entry should produce patterns");
@@ -69,8 +58,6 @@ void TestGlobSetFloatsBareNamesAndAnchorsPaths() {
   Expect(GlobSet::Parse("  ,  ,").empty(), "whitespace-only entries should be dropped");
 }
 
-// A wildcard-free entry names a file OR a directory subtree, so selecting a folder
-// and typing its path scopes the search to everything beneath it.
 void TestGlobSetTreatsWildcardFreeEntriesAsSubtrees() {
   const GlobSet folder = GlobSet::Parse("src/util");
   Expect(folder.Matches("src/util"), "the exact path should match");
@@ -86,8 +73,6 @@ void TestGlobSetTreatsWildcardFreeEntriesAsSubtrees() {
   Expect(!bare.Matches("src/testsuite/Foo.cpp"), "a bare name must match a whole segment");
 }
 
-// Brace alternation is expanded at parse time (the underlying matcher has no brace
-// support), and a comma inside braces is alternation rather than an entry split.
 void TestGlobSetExpandsBracesAndSplitsTopLevelCommas() {
   const GlobSet braces = GlobSet::Parse("*.{cpp,h}");
   Expect(braces.Matches("src/main.cpp"), "the first alternative should match");
@@ -106,8 +91,6 @@ void TestGlobSetExpandsBracesAndSplitsTopLevelCommas() {
   Expect(!multi.Matches("src/main.h"), "an entry outside both patterns should not match");
 }
 
-// Leading "./" and "/" and a trailing "/" are cosmetic in VSCode's boxes; an
-// unbalanced brace stays literal instead of dropping the whole entry.
 void TestGlobSetNormalizesEntryDecoration() {
   Expect(GlobSet::Parse("./src/*.cpp").Matches("src/main.cpp"),
          "a leading './' should be stripped");
@@ -122,26 +105,19 @@ void TestGlobSetNormalizesEntryDecoration() {
   Expect(unbalanced.Matches("weird{name"), "an unbalanced '{' should stay a literal character");
 }
 
-// Brace alternation is multiplicative, so a pathological pasted entry must be
-// bounded rather than expanded into an unbounded pattern list.
 void TestGlobSetBoundsBraceExpansion() {
   std::string pattern;
   for (int index = 0; index < 12; ++index) {
     pattern += "{a,b}";
-  }  // 2^12 = 4096 combinations if unbounded
+  }
   const GlobSet bounded = GlobSet::Parse(pattern);
   Expect(bounded.size() <= 256, "brace expansion should be capped");
   Expect(!bounded.empty(), "a capped expansion should still yield usable patterns");
 }
 
-// The two '**' conventions the matcher has to serve. gitignore/VSCode only let
-// '**' cross '/' when it forms a whole path segment; EditorConfig defines it as
-// "any string of characters" wherever it appears. Getting this wrong is silent —
-// the EditorConfig section simply never matches — so pin both directions.
 void TestGlobMatchesDoubleStarConventions() {
   using microide::project::GlobDoubleStar;
 
-  // Segment-anchored (the default): a non-segment '**' degrades to a single '*'.
   Expect(!GlobMatches("lib/**.c", "lib/deep/x.c"),
          "a non-segment '**' must not cross '/' under the gitignore rule");
   Expect(GlobMatches("lib/**.c", "lib/x.c"),
@@ -149,7 +125,6 @@ void TestGlobMatchesDoubleStarConventions() {
   Expect(GlobMatches("lib/**/*.c", "lib/deep/x.c"),
          "a segment-anchored '**' crosses '/' under the gitignore rule");
 
-  // EditorConfig: every '**' crosses.
   Expect(GlobMatches("lib/**.c", "lib/deep/x.c", GlobDoubleStar::Always),
          "EditorConfig's '**' crosses '/' wherever it appears");
   Expect(GlobMatches("lib/**.c", "lib/x.c", GlobDoubleStar::Always),
@@ -157,15 +132,10 @@ void TestGlobMatchesDoubleStarConventions() {
   Expect(!GlobMatches("lib/**.c", "other/deep/x.c", GlobDoubleStar::Always),
          "a crossing '**' must still respect the anchored prefix");
 
-  // A single '*' is unaffected by the convention.
   Expect(!GlobMatches("*.c", "src/x.c", GlobDoubleStar::Always),
          "a single '*' must not cross '/' under either convention");
 }
 
-// A segment-anchored '**' stands for WHOLE directories. The matcher's "**/"
-// restart used to step one byte at a time, so the wildcard could end inside a
-// segment: "a/**/b" matched "a/ab", "**/build" matched "prebuild", and the
-// floating scope entry "tests" ("**/tests/**") caught "mytests/x".
 void TestGlobMatchesDoubleStarConsumesWholeSegments() {
   Expect(!GlobMatches("a/**/b", "a/ab"), "'a/**/b' must not match 'a/ab'");
   Expect(!GlobMatches("a/**/b", "a/xb"), "'a/**/b' must not match 'a/xb'");
@@ -179,15 +149,10 @@ void TestGlobMatchesDoubleStarConsumesWholeSegments() {
   Expect(GlobMatches("logs/**", "logs/a/b.txt"), "a trailing '**' still takes the subtree");
   Expect(!GlobMatches("logs/**", "logs"), "'logs/**' does not name the directory itself");
   Expect(GlobMatches("**", "a/b/c"), "a lone '**' matches everything");
-  // A later single '*' must not smuggle the '**' restart back to a byte step:
-  // this is the '**/' -> '*' -> literal shape the search scope uses.
   Expect(!GlobMatches("**/*/b", "ab"), "'**/*/b' needs a real segment before b");
   Expect(GlobMatches("**/*/b", "x/a/b"), "'**/*/b' matches with a directory in between");
   Expect(GlobMatches("**/x*/b", "q/xa/b"), "'**/x*/b' resumes on a segment boundary");
   Expect(!GlobMatches("**/x*/b", "q/axa/b"), "'**/x*/b' must not start x mid-segment");
-  // EditorConfig's convention: a '**' that does not fold a '/' is any string of
-  // characters, but its "**/" (what a slash-free section header becomes) is
-  // still whole directories — "[x.py]" must not apply to "ax.py".
   using microide::project::GlobDoubleStar;
   Expect(GlobMatches("a/**b", "a/x/yb", GlobDoubleStar::Always),
          "EditorConfig's unfolded '**' still ends anywhere");
@@ -205,13 +170,6 @@ void TestGlobMatchesDoubleStarConsumesWholeSegments() {
   Expect(!scope.Matches("src/mytests"), "'tests' must not match a 'mytests' leaf");
 }
 
-// Exhaustive differential check against a plain recursive matcher over a tiny
-// alphabet: every pattern up to 5 bytes of {a, b, /, *, ?} against every
-// root-relative path up to 5 bytes of {a, b, /}. The greedy single-restart
-// matcher is the fast path; the recursion is the definition. Patterns ending in
-// '/', texts ending in '/' and the empty text are excluded: every caller strips a
-// trailing separator before matching and a root-relative path names something,
-// so none of them is a real input.
 void TestGlobMatchesAgreesWithRecursiveReference() {
   struct Reference {
     static bool Match(std::string_view p, std::string_view t, bool segment_start) {
@@ -292,9 +250,6 @@ void TestGlobMatchesAgreesWithRecursiveReference() {
   Expect(mismatches == 0, "GlobMatches must agree with the recursive reference everywhere");
 }
 
-// A language server's watcher glob reaches ExpandGlobBraces unbounded; each group
-// is a level of recursion that copies the pattern, so 300,000 `{a}` groups were a
-// stack overflow (and quadratic copying before it).
 void TestExpandGlobBracesBoundsPatternLength() {
   std::string deep;
   for (int index = 0; index < 300000; ++index) {
@@ -311,7 +266,7 @@ void TestExpandGlobBracesBoundsPatternLength() {
   Expect(out.size() == 2, "a pattern at the cap still expands");
 }
 
-}  // namespace
+}
 
 void RegisterGlobMatchTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GlobMatch/DoubleStarSlashMatchesTheEmptyRemainder",
@@ -334,4 +289,4 @@ void RegisterGlobMatchTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GlobSet/BoundsBraceExpansion", TestGlobSetBoundsBraceExpansion);
 }
 
-}  // namespace microide::tests
+}

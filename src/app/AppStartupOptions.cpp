@@ -11,7 +11,7 @@ bool IsFlag(std::string_view arg) {
   return arg.starts_with("--");
 }
 
-}  // namespace
+}
 
 AppStartupParseResult ParseAppStartupOptions(int argc, char** argv) {
   AppStartupParseResult result;
@@ -49,9 +49,6 @@ AppStartupParseResult ParseAppStartupOptions(int argc, char** argv) {
       continue;
     }
     if (arg == "--dap-log") {
-      // Bare form: default sink. A custom path uses the attached `--dap-log=<path>`
-      // form below so a following positional project path is never swallowed
-      // (`microide --dap-log /repo` opens /repo, it does not log to it).
       result.options.dap_log_path = std::filesystem::path("/tmp/microide-dap.log");
       continue;
     }
@@ -108,8 +105,6 @@ AppStartupParseResult ParseAppStartupOptions(int argc, char** argv) {
       return result;
     }
     if (positional.has_value()) {
-      // A second positional path is almost always a command-line mistake; opening
-      // only the last one silently would hide it. Reject with usage guidance.
       std::cerr << "unexpected extra project path: " << arg
                 << " (only one project path may be given)\n";
       result.exit_code = 2;
@@ -122,4 +117,4 @@ AppStartupParseResult ParseAppStartupOptions(int argc, char** argv) {
   return result;
 }
 
-}  // namespace microide::app
+}

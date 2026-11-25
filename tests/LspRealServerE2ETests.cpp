@@ -1,14 +1,3 @@
-// End-to-end LSP coverage against a REAL language server (clangd), complementing
-// the in-tree Python fake-server protocol tests. This closes the gap flagged in
-// dev-docs/project/active-work.md: all prior end-to-end coverage drove a fake
-// server, so production-server quirks (real capability/encoding negotiation,
-// indexing progress, diagnostics for genuine compiler errors, hover/definition/
-// completion/rename payloads) were never exercised.
-//
-// The suite is OPT-IN by availability: if no clangd binary is on PATH (or named by
-// $MICROIDE_TEST_LSP_CLANGD) the test logs a skip and passes, so CI stays green on
-// machines without a language server installed. Set MICROIDE_TEST_LSP_CLANGD to a
-// clangd path to force a specific binary.
 #include "TestSupport.h"
 #include "parity/LoopbackLocality.h"
 #include "project/remote/RemoteProcessLauncher.h"
@@ -31,8 +20,6 @@ namespace {
 using microide::workspace::LspClient;
 using microide::workspace::LspResult;
 
-// Locate a clangd binary: an explicit $MICROIDE_TEST_LSP_CLANGD override first,
-// then a PATH scan. Empty string means "not available -> skip".
 std::string LocateClangd() {
   if (const char* override_path = std::getenv("MICROIDE_TEST_LSP_CLANGD");
       override_path != nullptr && override_path[0] != '\0') {
@@ -67,7 +54,6 @@ std::string LocateClangd() {
   return {};
 }
 
-// Drain main-thread callbacks until `ready` returns true or the deadline passes.
 template <typename Predicate>
 bool PumpUntil(LspClient& client, Predicate&& ready, int timeout_ms) {
   return WaitUntil([&ready]() { return ready(); }, std::chrono::milliseconds(timeout_ms),
@@ -87,8 +73,6 @@ void TestLspRealServerClangdDrivesFullFeatureSet() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path();
   const std::filesystem::path source = root / "sample.cpp";
-  // A deliberate syntax error (missing ';') guarantees clangd publishes at least
-  // one diagnostic even without a compile_commands.json.
   WriteFile(source,
             "int add(int a, int b) { return a + b }\n"
             "int main() { return add(1, 2); }\n");
@@ -101,7 +85,6 @@ void TestLspRealServerClangdDrivesFullFeatureSet() {
                    root.string());
   Expect(started, "clangd should start");
 
-  // 1. Initialize handshake + capability/encoding negotiation.
   const bool initialized = PumpUntil(
       client, [&] { return client.IsInitialized(); }, 15000);
   Expect(initialized, "clangd should complete the initialize handshake");
@@ -109,7 +92,6 @@ void TestLspRealServerClangdDrivesFullFeatureSet() {
   Expect(encoding == "utf-8" || encoding == "utf-16",
          "clangd should negotiate a supported position encoding (utf-8 preferred)");
 
-  // 2. didOpen -> publishDiagnostics for the genuine compiler error.
   bool got_diagnostics = false;
   client.SetDiagnosticsCallback(
       [&](std::string diag_uri, std::vector<LspClient::Diagnostic> diags) {
@@ -121,13 +103,8 @@ void TestLspRealServerClangdDrivesFullFeatureSet() {
   Expect(PumpUntil(client, [&] { return got_diagnostics; }, 15000),
          "clangd should publish diagnostics for the deliberate syntax error");
 
-  // The `add` call sits at columns 20-22 of line 1 (0-based):
-  //   "int main() { return add(1, 2); }"
-  //    0123456789...          ^add starts at 20
-  constexpr LspClient::Position kAddCall{1, 21};  // inside `add`
+  constexpr LspClient::Position kAddCall{1, 21};
 
-  // 3. Hover over the `add` call. Content varies by clangd version, so assert the
-  //    callback fired with a hover payload, not its exact text.
   bool hover_done = false;
   bool hover_present = false;
   client.RequestHoverAsync(uri, kAddCall, [&](LspResult<util::JsonValue> hover) {
@@ -138,7 +115,6 @@ void TestLspRealServerClangdDrivesFullFeatureSet() {
          "clangd hover request should deliver a response");
   Expect(hover_present, "hovering the `add` call should return hover contents");
 
-  // 4. Go-to-definition on the same `add` call -> the definition on line 0.
   bool definition_done = false;
   std::size_t definition_count = 0;
   client.RequestGoToDefinitionAsync(uri, kAddCall,
@@ -150,8 +126,6 @@ void TestLspRealServerClangdDrivesFullFeatureSet() {
          "clangd definition request should deliver a response");
   Expect(definition_count >= 1, "go-to-definition on `add` should resolve to its declaration");
 
-  // 5. Completion inside the `add` identifier — assert the request round-trips with
-  //    items (clangd offers `add` among the candidates).
   bool completion_done = false;
   std::size_t completion_count = 0;
   client.RequestCompletionAsync(uri, LspClient::Position{1, 22},
@@ -163,8 +137,6 @@ void TestLspRealServerClangdDrivesFullFeatureSet() {
          "clangd completion request should deliver a response");
   Expect(completion_count >= 1, "completion inside main() should return at least one candidate");
 
-  // 6. Rename `add` -> `sum`: the WorkspaceEdit must touch this file (declaration +
-  //    call site), proving cross-reference rename works against a real server.
   bool rename_done = false;
   std::size_t rename_edit_count = 0;
   client.RequestRenameAsync(uri, LspClient::Position{0, 4}, "sum",
@@ -188,13 +160,10 @@ void TestLspRealServerClangdDrivesFullFeatureSet() {
 struct ClangdDefinitionResult {
   bool initialized = false;
   bool definition_answered = false;
-  std::string definition_path;          // empty when there was no location
-  bool include_not_found = false;       // a diagnostic said the header is missing
+  std::string definition_path;
+  bool include_not_found = false;
 };
 
-// didOpen main.cpp, then go-to-definition on the call to a function declared in a
-// header that exists only where clangd runs. `root`, `main` are what the EDITOR
-// would send; translation, if any, is the transport's.
 ClangdDefinitionResult RunClangdDefinition(const std::string& clangd,
                                            const platform::ProcessLauncher& launcher,
                                            const std::filesystem::path& root,
@@ -240,13 +209,6 @@ ClangdDefinitionResult RunClangdDefinition(const std::string& clangd,
   return result;
 }
 
-// A language server runs on the host and reads the HOST's files. A header
-// generated into a gitignored build directory exists only there -- the mirror
-// never holds ignored files (dev-docs/design/remote-projects.md § 6.2). With the
-// transport translating paths, clangd works in the host tree, finds the header,
-// and go-to-definition comes back as the mirror's path for it. Without it, clangd
-// is told about the mirror's file, the include is not found, and there is no
-// definition. The skip is decided by a local reference run against the host tree.
 void TestLspRealServerClangdSeesHostOnlyFilesThroughALoopbackHost() {
   const std::string clangd = LocateClangd();
   if (clangd.empty()) {
@@ -270,8 +232,6 @@ void TestLspRealServerClangdSeesHostOnlyFilesThroughALoopbackHost() {
     return;
   }
 
-  // Both non-local localities: the in-process loopback, and the real server
-  // over a pipe (Phase 2a 6.4).
   const tests::parity::LoopbackPathMap map(mirror, host);
   const tests::parity::LoopbackProcessLauncher loopback(map);
   std::string error;
@@ -296,7 +256,7 @@ void TestLspRealServerClangdSeesHostOnlyFilesThroughALoopbackHost() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterLspRealServerE2ETests(std::vector<TestCase>& tests) {
   AddTest(tests, "LspRealServer/ClangdSeesHostOnlyFilesThroughALoopbackHost",
@@ -305,4 +265,4 @@ void RegisterLspRealServerE2ETests(std::vector<TestCase>& tests) {
           TestLspRealServerClangdDrivesFullFeatureSet);
 }
 
-}  // namespace microide::tests
+}

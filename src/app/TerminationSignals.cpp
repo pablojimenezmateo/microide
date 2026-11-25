@@ -15,28 +15,25 @@ namespace {
 
 constexpr std::array<int, 3> kSignals = {SIGTERM, SIGINT, SIGHUP};
 
-// The self-pipe, read by the watcher: [0] read end, [1] write end. Written only by
-// the handler (write(2) is async-signal-safe) and by the destructor's wake.
 std::atomic<int> g_write_fd{-1};
 
 void OnTerminationSignal(int signo) {
-  const int saved_errno = errno;  // a handler must not change the interrupted code's errno
+  const int saved_errno = errno;
   const int fd = g_write_fd.load(std::memory_order_relaxed);
   if (fd >= 0) {
     const unsigned char byte = static_cast<unsigned char>(signo);
-    (void)!::write(fd, &byte, 1);  // a full pipe drops it: one is already pending
+    (void)!::write(fd, &byte, 1);
   }
   errno = saved_errno;
 }
 
-}  // namespace
+}
 
 TerminationSignalWatcher::TerminationSignalWatcher(std::uint32_t event_type) {
   int fds[2] = {-1, -1};
   if (event_type == 0 || ::pipe2(fds, O_CLOEXEC) != 0) {
     return;
   }
-  // The write end non-blocking: a handler must never block, even on a full pipe.
   (void)::fcntl(fds[1], F_SETFL, O_NONBLOCK);
   g_write_fd.store(fds[1], std::memory_order_relaxed);
   const int read_fd = fds[0];
@@ -49,7 +46,7 @@ TerminationSignalWatcher::TerminationSignalWatcher(std::uint32_t event_type) {
         continue;
       }
       if (got <= 0 || byte == 0) {
-        break;  // closed, or the destructor's wake
+        break;
       }
       SDL_Event event{};
       event.type = event_type;
@@ -87,4 +84,4 @@ TerminationSignalWatcher::~TerminationSignalWatcher() {
   }
 }
 
-}  // namespace microide::app
+}

@@ -16,8 +16,6 @@
 namespace microide::util {
 namespace {
 
-// The official BLAKE3 C implementation (third_party/blake3), held in the opaque
-// storage the header declares so blake3.h stays out of every TU that names a hash.
 static_assert(sizeof(blake3_hasher) <= sizeof(ContentHasher), "grow ContentHasher::state_");
 static_assert(alignof(blake3_hasher) <= 8, "raise ContentHasher::state_'s alignment");
 
@@ -28,7 +26,7 @@ const blake3_hasher* State(const unsigned char* storage) {
   return std::launder(reinterpret_cast<const blake3_hasher*>(storage));
 }
 
-}  // namespace
+}
 
 std::optional<ContentHash> ContentHash::FromRaw(std::string_view raw) {
   if (raw.size() != kBytes) {
@@ -116,7 +114,6 @@ std::optional<ContentHash> HashFileDescriptor(int fd, std::uint64_t* size_out,
 
 std::optional<ContentHash> HashFileContent(const std::filesystem::path& path,
                                            std::uint64_t* size_out) {
-  // O_NONBLOCK so opening a FIFO cannot hang; the fstat below then refuses it.
   const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK);
   if (fd < 0) {
     return std::nullopt;
@@ -130,4 +127,4 @@ std::optional<ContentHash> HashFileContent(const std::filesystem::path& path,
   return hash;
 }
 
-}  // namespace microide::util
+}

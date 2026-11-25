@@ -15,7 +15,6 @@ struct RowRef {
   std::size_t row = 0;
 };
 
-// The shared fold (EditorRowUnits.h), under the names this file uses.
 std::uint64_t Mix(std::uint64_t hash, std::uint64_t value) { return MixRowKey(hash, value); }
 std::uint64_t MixBytes(std::uint64_t hash, const char* data, std::size_t size) {
   return MixRowKeyBytes(hash, data, size);
@@ -27,15 +26,10 @@ std::uint64_t MixText(std::uint64_t hash, std::string_view text) {
   return MixBytes(Mix(hash, text.size()), text.data(), text.size());
 }
 
-}  // namespace
+}
 
-// What plugins and language servers decorate a line with: its text styles
-// (semantic tokens), inline texts (inlay hints), gutter mark and code lenses. A
-// republish rewrites them in place under the same FileDecorations, so the line
-// keys on them, not the pane on the store's address.
 std::uint64_t LineDecorationKey(std::uint64_t key, const editor::FileDecorations& decorations, std::size_t line) {
   const auto at = static_cast<std::uint32_t>(line);
-  // A style is three words, packed: the most numerous decoration, a dozen a line.
   key = Mix(key, 0x5701);
   for (const editor::TextStyleDecoration& style : decorations.TextStylesForLine(at)) {
     key = Mix(key, static_cast<std::uint64_t>(style.start_column) << 32 | style.end_column);
@@ -57,15 +51,8 @@ std::uint64_t LineDecorationKey(std::uint64_t key, const editor::FileDecorations
 
 namespace {
 
-// What a line shows whichever of its rows draws it: its bytes (a line too long to
-// hash every frame folds its length and the document's content revision), its
-// syntax tokens, and its decorations. A line whose tokens are not current is
-// tokenized here, which the row's repaint would do anyway.
 std::uint64_t LineContentKey(const editor::TextViewport& viewport, const editor::FileDecorations* decorations,
                              std::size_t line) {
-  // The length first: a line past the cap folds its length and the revision, and
-  // viewing it would copy it out of the piece tree whole -- once a keystroke on a
-  // wrapped 100 KB line, every frame (editor_soft_wrap_long_line_typing).
   const std::size_t length = viewport.lines().LineLength(line);
   std::uint64_t key = util::kFnv1aOffsetBasis;
   if (length <= kEditorRowKeyMaxHashedBytes) {
@@ -79,7 +66,6 @@ std::uint64_t LineContentKey(const editor::TextViewport& viewport, const editor:
   return decorations != nullptr ? LineDecorationKey(key, *decorations, line) : key;
 }
 
-// Folds `value` into every row showing `line`. `rows` is sorted by line.
 template <typename Fold>
 void ForRowsOfLine(std::span<const RowRef> rows, std::size_t line, Fold&& fold) {
   auto it = std::lower_bound(rows.begin(), rows.end(), line,
@@ -89,8 +75,6 @@ void ForRowsOfLine(std::span<const RowRef> rows, std::size_t line, Fold&& fold) 
   }
 }
 
-// Folds a range's part on each line it covers into that line's rows: the
-// columns it starts and ends at on the line (an open end runs to the line's end).
 template <typename Fold>
 void ForRangeLines(std::span<const RowRef> rows, const editor::SelectionRange& range, Fold&& fold) {
   if (rows.empty()) {
@@ -109,7 +93,7 @@ void ForRangeLines(std::span<const RowRef> rows, const editor::SelectionRange& r
   }
 }
 
-}  // namespace
+}
 
 void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uint64_t>& row_keys,
                           std::vector<DerivedDamage::Unit>& units) {
@@ -122,18 +106,14 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
   thread_local std::vector<RowRef> rows;
   rows.clear();
 
-  // Each row's own place and bytes, exactly the rows the renderer walks.
   const std::size_t scroll = viewport.scroll_line();
   const std::size_t visual_count = viewport.visual_line_count();
   const std::size_t line_count = viewport.line_count();
-  // An edit that left its carried syntax state alone leaves the lines below it
-  // highlighting as before: settled, their tokens are current, and the rows
-  // below the edit keep their keys.
   viewport.SettleHighlightAfterLastEdit();
   std::uint64_t line_key = 0;
   std::size_t line_key_line = 0;
   bool line_key_valid = false;
-  std::size_t fold_mark = 0;  // into inputs.fold_marks, sorted by visual row
+  std::size_t fold_mark = 0;
   for (std::size_t row = 0; row < metrics.visible_rows; ++row) {
     const std::size_t visual = scroll + row;
     if (visual >= visual_count) {
@@ -147,21 +127,12 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
     key = Mix(key, meta.visual_start);
     key = Mix(key, meta.visual_end);
     key = Mix(key, meta.indent);
-    // The line's bytes and syntax colours, hashed once for all the rows a wrapped
-    // line spans (they follow one another): a 15 KiB line wrapped over the pane
-    // was hashed whole once per row, 1.5 ms of every prepared frame.
     if (!line_key_valid || meta.line_index != line_key_line) {
       line_key = LineContentKey(viewport, inputs.decorations, meta.line_index);
       line_key_line = meta.line_index;
       line_key_valid = true;
     }
     key = Mix(key, line_key);
-    // Line numbers right-align to the widest one: a row's gutter text moves when
-    // the document gains a digit, which the gutter width (in the pane key) tracks.
-    // Its fold mark, as the view model paint draws holds it -- not the folding
-    // model now: the model can resolve its ranges between the view model's build
-    // and this key, and a key a frame ahead of what was painted kept the old mark
-    // when the next frame's model caught up with no key moving (soak 8e206b603320).
     while (fold_mark < inputs.fold_marks.size() && inputs.fold_marks[fold_mark].visual_row_index < visual) {
       ++fold_mark;
     }
@@ -176,12 +147,9 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
     row_keys[row] = Mix(Mix(Mix(row_keys[row], tag), a), b);
   };
 
-  // The carets and selections on each row.
   ForRowsOfLine(by_line, viewport.cursor_line(),
                 [&](std::size_t row) { fold_into(row, 0xCA, viewport.cursor_column(), 0); });
   if (inputs.caret_drawn) {
-    // The caret itself, on the one row that draws it: a wrapped line's caret is on
-    // the caret's visual row, the rest of the line's rows keep their keys.
     if (viewport.soft_wrap()) {
       const std::size_t visual = viewport.cursor_visual_row();
       if (visual >= scroll && visual - scroll < row_keys.size()) {
@@ -204,7 +172,6 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
                     [&](std::size_t row, std::uint64_t from, std::uint64_t to) { fold_into(row, 0x5F, from, to); });
     }
   }
-  // Marks laid over the text.
   for (const editor::PublishedDiagnostic& diagnostic : inputs.diagnostics) {
     ForRangeLines(by_line, diagnostic.range, [&](std::size_t row, std::uint64_t from, std::uint64_t to) {
       fold_into(row, 0xD0 + static_cast<std::uint64_t>(diagnostic.severity), from, to);
@@ -232,10 +199,6 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
     }
   }
 
-  // The units: the pane's head above everything else, a row band each, the sticky
-  // band above them, and the empty stretch below the document's last row. The head
-  // is the few pixels between the pane's top and its first row, which the gutter's
-  // separator crosses: a widened gutter moved it there too (qa doc-comment-enter).
   const float pane_bottom = inputs.pane_rect.y + inputs.pane_rect.h;
   const float band_height = metrics.first_line_y - metrics.sticky_band_top_y;
   const bool sticky_band = metrics.sticky_scroll_rows > 0 && band_height > 0.0f;
@@ -246,11 +209,6 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
                      Mix(inputs.pane_key, 0x4EAD)});
   }
   if (sticky_band) {
-    // The band draws each of its lines as a row: the line's text and colours, the
-    // caret's highlight when the caret is on that line (scrolled out of sight
-    // below the band), its diagnostics and its fold mark. None of them is a
-    // visible row's, so none was in any key: Go to Line from a block's opener to
-    // a row in view left the band lit.
     std::uint64_t band = Mix(inputs.pane_key, 0x57);
     std::size_t first_sticky = ~std::size_t{0};
     std::size_t last_sticky = 0;
@@ -266,8 +224,6 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
         band = Mix(band, inputs.folds->IsCollapsedAtOpener(line) ? 3u : 2u);
       }
     }
-    // The file's diagnostics, one pass: nearly all miss the band's few lines on
-    // the two comparisons.
     for (const editor::PublishedDiagnostic& diagnostic : inputs.diagnostics) {
       if (diagnostic.range.end.line < first_sticky || diagnostic.range.start.line > last_sticky) {
         continue;
@@ -298,11 +254,6 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
     units.push_back({SDL_FRect{inputs.pane_rect.x, top, inputs.pane_rect.w, std::max(0.0f, height)}, row_keys[row]});
   }
   const float tail_top = metrics.first_line_y + static_cast<float>(row_keys.size()) * metrics.line_height;
-  // The empty stretch below the last row. What a surface draws on a line past the
-  // document's end is drawn here: a merge result's conflict that resolves to no
-  // lines at the very end sits as an empty box under the last line, and selecting
-  // it lights a box no row holds (344 stale px). Those extra keys fold into the
-  // tail while the document's last row is in view.
   std::uint64_t tail = Mix(inputs.pane_key, 0x7A11);
   if (scroll + row_keys.size() >= visual_count) {
     const std::size_t past_last = rows.empty() ? 0 : rows.back().line + 1;
@@ -316,4 +267,4 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
                    tail});
 }
 
-}  // namespace microide::workspace
+}

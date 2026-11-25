@@ -18,40 +18,21 @@ void DebugService::FocusFrame(int frame_id) {
   if (session == nullptr) {
     return;
   }
-  // Hover values are frame-scoped: a frame switch must not serve a value (or let a
-  // still-in-flight request resolve) keyed to the previously focused frame.
   util::DebugTrace::Note("locals", "focus-frame request-scopes frame",
                          static_cast<long long>(frame_id));
   CurrentProjectState().debug_hover.Clear();
   CurrentProjectState().debug_variables.BeginFrame(frame_id);
-  // A new frame context: in-flight scopes/variables/setVariable for the prior frame
-  // (whose variablesReference values the adapter may now recycle) must not apply.
   const std::uint64_t generation = frame_generation_.bump();
   session->RequestScopes(frame_id, [this, generation](std::vector<dap_protocol::DapScope> scopes) {
     if (!frame_generation_.is_current(generation)) {
-      return;  // a newer frame focus / stop / clear superseded this request
+      return;
     }
     DebugVariablesModel& model = CurrentProjectState().debug_variables;
-    // ApplyScopes re-expands the scopes the user had open before this stop and
-    // returns the bounded fetches needed to repopulate them; issue each (children
-    // that arrive cascade further) so a step does not collapse the tree.
     for (const DebugValueTree::ChildFetch& fetch : model.ApplyScopes(scopes)) {
       FetchVariablesPage(fetch.reference, fetch.start, fetch.count);
     }
-    // Scopes are installed collapsed; their variables are fetched lazily when the
-    // user expands a row (ToggleVariableRow). We deliberately do NOT auto-expand
-    // on every stop: a stop frequently lands where in-scope locals are not yet
-    // constructed (function entry, `stopAtBeginningOfMainSubprogram`, any line
-    // before a declaration), and formatting that uninitialized memory can make a
-    // single-threaded adapter spin for an unbounded time (gdb's STL
-    // pretty-printers loop on garbage container pointers). Because the adapter
-    // serializes requests, that spin would block the *next* execution-control
-    // request (continue/step/pause) — i.e. stepping would silently stop working.
-    // Lazy expansion keeps the stop cheap and execution control responsive.
     util::InvokeIfSet(operations_.request_debug_pane_redraw);
   });
-  // Re-evaluate watch expressions in the (now focused) frame's scope. Runs on
-  // every stop (top frame) and on a call-stack frame switch.
   EvaluateWatches(frame_id);
 }
 
@@ -76,15 +57,9 @@ void DebugService::FetchTreeChildrenPage(Model ProjectWorkspaceState::*model_mem
   }
   DebugSession* session = CurrentDapManager().ActiveSession();
   if (session == nullptr) {
-    // No live session to service the fetch: clear the loading state so the row
-    // does not spin forever.
     (CurrentProjectState().*model_member).MarkChildrenError(reference);
     return;
   }
-  // Bind this fetch to the current generation. A page that returns after a frame
-  // switch / stop / clear (or, for watch, a re-evaluation pass) is dropped — the
-  // adapter recycles variablesReference values, so applying it could attach
-  // children to an unrelated node.
   const std::uint64_t token = generation.current();
   session->RequestVariables(
       reference, start, count,
@@ -94,8 +69,6 @@ void DebugService::FetchTreeChildrenPage(Model ProjectWorkspaceState::*model_mem
           return;
         }
         if (ok) {
-          // Applying a page can cascade: it may re-expand descendants the user
-          // had open, whose own pages must be fetched in turn.
           for (const DebugValueTree::ChildFetch& fetch :
                (CurrentProjectState().*model_member).ApplyVariables(reference, variables, start)) {
             FetchTreeChildrenPage(model_member, generation, fetch.reference, fetch.start,
@@ -135,10 +108,8 @@ bool DebugService::EvaluateRepl(const std::string& expression) {
   }
   const int session_id = manager.ActiveSessionId();
   const std::string label = manager.SessionLabel(session_id);
-  // Echo the typed expression, then surface the console so the result is visible.
   AppendConsoleLine(session_id, label, "> " + expression);
   util::InvokeIfSet(operations_.show_debug_console, session_id, label);
-  // Frame 0 when running (no stopped frame); the adapter evaluates in global scope.
   session->RequestEvaluate(
       expression, FocusedFrameId(), "repl",
       [this, session_id, label](bool ok, dap_protocol::DapEvaluateResult result) {
@@ -152,10 +123,6 @@ bool DebugService::EvaluateRepl(const std::string& expression) {
           line += "  : " + result.type;
         }
         AppendConsoleLine(session_id, label, line);
-        // Structured result: expand one level of children inline as indented
-        // `name: value` lines so a dict/object prints its fields (Phase 10). Deep
-        // lazy expansion would need a tree surface; the console is text, so a single
-        // eager level covers the common "print this object" case.
         if (result.variables_reference > 0) {
           if (DebugSession* child_session = CurrentDapManager().SessionById(session_id);
               child_session != nullptr) {
@@ -181,33 +148,17 @@ bool DebugService::EvaluateRepl(const std::string& expression) {
 
 int DebugService::FocusedFrameId() const {
   const DebugStackFrameView* frame = CurrentProjectState().debug_execution.FocusedFrame();
-  // -1 (not 0) when no frame is focused: frame id 0 is gdb's valid top frame, so a
-  // 0 here would wrongly request evaluation in a real frame. -1 means "no frame"
-  // and MakeEvaluateArguments omits frameId (global-scope evaluate while running).
   return frame != nullptr ? frame->id : -1;
 }
 
 void DebugService::EvaluateWatches(int frame_id) {
   DebugWatchModel& watch = CurrentProjectState().debug_watch;
-  // Rebuild one placeholder root per expression so rows stay stable/ordered while
-  // the (async) results stream in by index — but only when the tree still holds
-  // values from a prior pass. A model mutation (add/edit/remove/restore) already
-  // rebuilt the placeholder tree, so rebuilding again here would be a redundant
-  // full row-tree teardown on every watch edit.
   if (watch.NeedsPlaceholderRebuild()) {
     watch.BeginEvaluation();
   }
-  // Each pass clears + rebuilds expression_root_ids_; a result from a prior pass
-  // (the user added/removed/edited a watch, or stepped) would otherwise land on a
-  // reshuffled index and stamp a value onto the wrong expression. Bind every
-  // evaluate to this pass's generation and drop late ones.
   const std::uint64_t generation = watch_generation_.bump();
   DebugSession* session = CurrentDapManager().ActiveSession();
   if (session != nullptr) {
-    // Iterate the stored expressions by const reference: RequestEvaluate copies the
-    // expression it needs, and nothing in this loop (or the async callbacks, which
-    // only fold values via ApplyEvaluate) mutates the expression list, so the old
-    // whole-vector copy per evaluation pass was pure overhead.
     const std::vector<std::string>& expressions = watch.Expressions();
     for (std::size_t i = 0; i < expressions.size(); ++i) {
       session->RequestEvaluate(
@@ -255,8 +206,6 @@ void DebugService::ToggleWatchRow(std::size_t row) {
   util::InvokeIfSet(operations_.request_debug_pane_redraw);
 }
 
-// The Variables and Watch panes edit a value the same way: through the adapter's
-// setVariable on the row's container, each against its own generation.
 DebugValueTreePane& DebugService::EditablePane(EditableTree tree) {
   ProjectWorkspaceState& state = CurrentProjectState();
   return tree == EditableTree::Variables ? static_cast<DebugValueTreePane&>(state.debug_variables)
@@ -269,8 +218,6 @@ util::Generation& DebugService::EditableGeneration(EditableTree tree) {
 
 void DebugService::BeginTreeEdit(EditableTree tree, std::size_t row) {
   DebugSession* session = CurrentDapManager().ActiveSession();
-  // Gate edit entry on the adapter capability so an unsupported adapter never
-  // shows an edit field that cannot commit.
   if (session == nullptr || !session->Client().Capabilities().supports_set_variable) {
     return;
   }
@@ -290,22 +237,15 @@ void DebugService::CommitTreeEdit(EditableTree tree) {
     session->SetVariable(
         target->container_reference, target->name, value,
         [this, tree, node_id, generation](bool ok, dap_protocol::DapSetVariableResult result) {
-          // Drop a response that lands after a frame switch / stop: node ids are
-          // globally monotonic so a stale id can no longer alias a live node, but
-          // guarding here also avoids a pointless rebuild of a superseded tree.
           if (!EditableGeneration(tree).is_current(generation)) {
             return;
           }
-          // Authoritative: apply only the adapter's returned (possibly normalized)
-          // value, never the raw typed text. The pane is looked up again: the
-          // project may have changed while the request was out.
           if (ok) {
             EditablePane(tree).ApplySetVariable(node_id, result);
           }
           util::InvokeIfSet(operations_.request_debug_pane_redraw);
         });
   }
-  // Leave edit mode immediately; the row's value updates when the response lands.
   pane.CancelEdit();
   util::InvokeIfSet(operations_.request_debug_pane_redraw);
 }
@@ -321,9 +261,6 @@ void DebugService::EvaluateHover(int frame_id, const std::string& expression) {
     return;
   }
   DebugHoverModel& hover = CurrentProjectState().debug_hover;
-  // Dedup: the per-frame hover trigger re-asks every mouse-move; only the first
-  // ask for a given (frame, expression) issues a request. Pending/Resolved/Failed
-  // for the same key are all served (or suppressed) without re-issuing.
   if (hover.Classify(frame_id, expression) != DebugHoverModel::Lookup::Miss) {
     util::DebugTrace::Note("hover", "evaluate suppressed (not a miss) expr", expression,
                            static_cast<long long>(frame_id));
@@ -343,9 +280,6 @@ void DebugService::EvaluateHover(int frame_id, const std::string& expression) {
           util::DebugTrace::Note("hover", "evaluate FAILED");
           model.Fail(generation);
         }
-        // Queue a hover refresh first so the redraw re-resolves the now-cached
-        // value into an active popup (mirrors ClearDiagnosticsForPath). Without
-        // this the value sits in the cache and the tooltip never appears.
         util::InvokeIfSet(operations_.queue_editor_hover_refresh);
         util::InvokeIfSet(operations_.request_editor_redraw);
       });
@@ -357,4 +291,4 @@ bool DebugService::SupportsStepBack() const {
   return session != nullptr && session->Client().Capabilities().supports_step_back;
 }
 
-}  // namespace microide::workspace
+}

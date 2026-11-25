@@ -14,14 +14,14 @@ namespace microide::workspace {
 
 namespace {
 
-}  // namespace
+}
 
 WorkspaceShell::VisibleMenuBarItems WorkspaceShell::ComputeVisibleMenuBarItems(
     const SDL_FRect& menu_bar) const {
   util::AddPerformanceCounter(util::PerfCounterId::WorkspaceMenuBarLayouts);
   VisibleMenuBarItems items;
   if (layout_mode_service_.CurrentMode() == LayoutMode::Compact) {
-    return items;  // hamburger only — every top-level menu reaches the popup
+    return items;
   }
   float x = menu_bar.x + 8.0f;
   const float y = menu_bar.y + 3.0f;
@@ -32,25 +32,11 @@ WorkspaceShell::VisibleMenuBarItems WorkspaceShell::ComputeVisibleMenuBarItems(
                                     ? menu_bar.x + menu_bar.w - 8.0f
                                     : window_buttons.front().rect.x - 8.0f;
 
-  // First pass: measure widths and determine whether all items fit.
-  //
-  // MenuSpec::label is a `string_view` over static storage, so the measured width
-  // is stable for the lifetime of the process (until the font reloads), and
-  // MenuSpecs() is a static table whose order never changes. That makes the spec's
-  // POSITION a valid cache key and a free one — this was an
-  // `unordered_map<const char*, float>` (round-4 Finding 6), which is eight hash
-  // lookups per call and ~80 per pointer-motion event across the three chains that
-  // reach this function. The label pointer is still compared, so a table that did
-  // change cannot be served a stale width; it just re-measures.
   struct SpecWidth {
     const char* label = nullptr;
     float raw_width = 0.0f;
   };
   static thread_local std::array<SpecWidth, kMaxMenuBarItems> spec_label_width_cache{};
-  // Drop the cache when glyph metrics change (a runtime font size/family or scale
-  // change) — a cached MeasureWidth is only valid for the metrics it was taken at, so
-  // without this the menu bar keeps laying out labels at the OLD font width (clipping,
-  // wrong overflow threshold) until restart.
   static thread_local std::size_t spec_label_cache_generation = 0;
   if (text_renderer_.MetricsGeneration() != spec_label_cache_generation) {
     spec_label_width_cache = {};
@@ -66,9 +52,6 @@ WorkspaceShell::VisibleMenuBarItems WorkspaceShell::ComputeVisibleMenuBarItems(
       continue;
     }
     const char* key = spec.label.data();
-    // The static_assert in WorkspaceMenuRegistry.cpp bounds the table by the cap.
-    // The guard is here anyway because that assert is in another TU: a table that
-    // outgrew it must re-measure, not read past the array.
     float raw_width;
     if (index < spec_label_width_cache.size()) {
       SpecWidth& slot = spec_label_width_cache[index];
@@ -85,9 +68,6 @@ WorkspaceShell::VisibleMenuBarItems WorkspaceShell::ComputeVisibleMenuBarItems(
     measured.emplace_back(spec.id, width);
     total_x += width + 4.0f;
   }
-  // total_x adds a trailing 4px gap after every item, but real placement puts only
-  // (n-1) gaps *between* n items — the last item's right edge is 4px less. Drop that
-  // over-counted gap so a menu bar that exactly fits doesn't spuriously overflow.
   const float content_right = measured.empty() ? total_x : total_x - 4.0f;
   any_overflow = content_right > available_right;
   const float max_x = any_overflow ? available_right - chevron_reserve : available_right;
@@ -185,11 +165,6 @@ std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(
     return std::nullopt;
   }
 
-  // Popup width is expensive (one width-cache query per label + accelerator on every
-  // item) and is recomputed many times per frame: render, redraw planner, mouse
-  // hit-test, cursor manager, and the submenu / overflow paths all call this. Cache
-  // the per-span result keyed by the items pointer + size + LSP readiness state, since
-  // only LSP-driven labels (GoToDefinition, FindReferences) depend on LSP state.
   struct PopupWidthCacheEntry {
     const MenuItemSpec* items_data = nullptr;
     std::size_t items_size = 0;
@@ -200,8 +175,6 @@ std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(
   };
   static thread_local std::array<PopupWidthCacheEntry, 6> popup_width_cache;
   static thread_local std::size_t popup_width_cache_next = 0;
-  // Drop cached popup widths/heights when glyph metrics change; a cached MeasureWidth
-  // is only valid for the metrics it was taken at (see the menu-bar cache above).
   static thread_local std::size_t popup_cache_generation = 0;
   if (text_renderer_.MetricsGeneration() != popup_cache_generation) {
     popup_width_cache = {};
@@ -231,9 +204,7 @@ std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(
         total_height += kWorkspaceMenuPopupSeparatorHeight;
         continue;
       }
-      // A row's dimmed reason is measured whether it shows now or not: the popup
-      // keeps one width as hosts come and go, and this cache stays keyed right.
-      float label_width = text_renderer_.MeasureWidth(MenuItemLabel(item, /*with_reason=*/false));
+      float label_width = text_renderer_.MeasureWidth(MenuItemLabel(item, false));
       if (const std::string_view reason = ActionAvailability::PossibleDisabledReason(item.action);
           !reason.empty()) {
         label_width += text_renderer_.MeasureWidth(" ()") + text_renderer_.MeasureWidth(reason);
@@ -258,10 +229,8 @@ std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(
   const float below = bounds.y + bounds.h - 4.0f - y;
   const float above = anchor_rect.y + 1.0f - (bounds.y + 4.0f);
   if (height > below && height <= above) {
-    y = anchor_rect.y - height + 1.0f;  // flip above the anchor
+    y = anchor_rect.y - height + 1.0f;
   } else if (height > below) {
-    // Fits neither way: drop down into what is left and break into columns
-    // (see ForEachPopupRow), wider rather than off the bottom of the window.
     height = std::max(kWorkspaceMenuPopupItemHeight + kPopupInset * 2.0f, below);
     const std::size_t columns = PopupColumnsAtHeight(items, height);
     width = (raw_width - kPopupInset * 2.0f) * static_cast<float>(columns) +
@@ -306,8 +275,6 @@ void WorkspaceShell::ComputeVisiblePopupMenuItemsInto(
     std::vector<VisiblePopupMenuItem>& out) const {
   out.clear();
   out.reserve(items.size());
-  // One availability for the whole popup: it reads the same shell state for every
-  // row, and constructing it per row was 26 std::functions per visible row per frame.
   const ActionAvailability& availability = MakeActionAvailability();
   ForEachPopupRow(items, popup_rect, [&](std::size_t i, const SDL_FRect& rect) {
     const MenuItemSpec& item = items[i];
@@ -342,22 +309,16 @@ std::vector<WorkspaceShell::VisiblePopupMenuItem> WorkspaceShell::ComputeVisible
 }
 
 std::string_view WorkspaceShell::MenuItemLabel(const MenuItemSpec& item, bool with_reason) const {
-  // The breakpoint gutter menu's enable/disable item flips its verb based on the
-  // breakpoint's current state, captured into the menu when it opened.
   if (item.action == ActionId::DebugBreakpointToggleEnabled) {
     return context_.menu_state.tree_context_menu.breakpoint_enabled ? "Disable Breakpoint"
                                                                     : "Enable Breakpoint";
   }
-  // The git entry menu's stage/unstage item flips its verb based on whether the
-  // selected entry is currently staged.
   if (item.action == ActionId::GitStageToggleEntry) {
     const auto& git = context_.current_project_state.sidebar.git;
     const bool staged = git.selected_index < git.entries.size() &&
                         git.entries[git.selected_index].staged;
     return staged ? "Unstage" : "Stage";
   }
-  // The review-comment exports say how many comments they carry -- the whole
-  // review's, or under the git sidebar row the menu was opened on.
   if ((item.action == ActionId::CopyBranchReviewNotes || item.action == ActionId::TerminalInsertBranchReviewNotes) &&
       !item.label.empty()) {
     const std::size_t count = ReviewCommentCount(context_.current_project_state, ActiveCompareTab(),
@@ -377,11 +338,6 @@ std::string_view WorkspaceShell::MenuItemLabel(const MenuItemSpec& item, bool wi
   const ActionId effective_action =
       command_action != nullptr ? command_action->id : item.action;
 
-  // Every label the shell can paint is either a static literal (a MenuItemSpec's own
-  // label, an ActionSpec's title, a command name) or the one composed LSP-readiness
-  // form. Only that last case needs storage, so one reused buffer serves it: menu rows
-  // are laid out and painted one at a time, each label consumed before the next is
-  // resolved. See the header's "ephemeral view" contract.
   const auto lsp_label = [&](std::string_view ready_label) -> std::string_view {
     if (PluginServesLspMenuAction(effective_action)) {
       return ready_label;
@@ -392,8 +348,6 @@ std::string_view WorkspaceShell::MenuItemLabel(const MenuItemSpec& item, bool wi
         MenuLspReadiness(), composed);
   };
 
-  // A dimmed row that says why (the Remote menu's), in the same buffer: the LSP
-  // rows carry no such reason, so the two never compose.
   const auto reasoned = [&](std::string_view label) -> std::string_view {
     const std::string_view reason =
         with_reason ? MakeActionAvailability().DisabledReason(effective_action) : std::string_view();
@@ -452,9 +406,6 @@ std::string_view WorkspaceShell::MenuItemAccelerator(const MenuItemSpec& item) c
   return {};
 }
 
-// Go to Definition / Find References are the two LSP-driven menu actions a plugin
-// provider can answer with no language server at all. For those the readiness gate
-// (and its "(LSP: No LSP server)" suffix) would grey out a working action.
 bool WorkspaceShell::PluginServesLspMenuAction(ActionId id) const {
   switch (id) {
     case ActionId::GoToDefinition:
@@ -482,9 +433,6 @@ bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item,
       command_action != nullptr ? command_action->id : item.action;
 
   if (!item.command_name.empty() && command_action == nullptr) {
-    // O(log n), allocation-free: HasCommand binary-searches the sorted published
-    // command-name view. The prior linear std::find materialized a std::string from
-    // the command_name view for every plugin-contributed item (TD-2026-07-17A-011).
     return plugin_runtime_.Host().HasCommand(item.command_name);
   }
 
@@ -601,4 +549,4 @@ std::optional<SDL_FRect> WorkspaceShell::ComputeTreeContextMenuRect() const {
                               *window_rect);
 }
 
-}  // namespace microide::workspace
+}

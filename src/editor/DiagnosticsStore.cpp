@@ -44,10 +44,8 @@ DiagnosticSeverity ParseDiagnosticSeverity(std::string_view token) {
 std::span<const PublishedDiagnostic> FilterDiagnosticsAtLeastSeverity(
     std::span<const PublishedDiagnostic> in, DiagnosticSeverity min_severity,
     std::vector<PublishedDiagnostic>& scratch) {
-  // DiagnosticSeverity orders most-severe first (Error=0 .. Hint=3), so "at least
-  // min_severity" keeps entries whose value is <= min_severity's value.
   if (min_severity == DiagnosticSeverity::Hint) {
-    return in;  // show everything: no filtering, no copy
+    return in;
   }
   scratch.clear();
   for (const PublishedDiagnostic& diagnostic : in) {
@@ -64,8 +62,6 @@ std::vector<PublishedDiagnostic> SelectContextDiagnostics(
   if (truncated != nullptr) {
     *truncated = false;
   }
-  // Order two positions, then a range's start/end, without depending on TextViewport
-  // (keeps this a pure store-level helper).
   const auto before = [](const TextPosition& a, const TextPosition& b) {
     return a.line < b.line || (a.line == b.line && a.column < b.column);
   };
@@ -77,7 +73,6 @@ std::vector<PublishedDiagnostic> SelectContextDiagnostics(
   std::vector<PublishedDiagnostic> result;
   for (const PublishedDiagnostic& diagnostic : in) {
     const SelectionRange have = normalize(diagnostic.range);
-    // Overlap unless one range ends strictly before the other begins.
     if (before(have.end, w.start) || before(w.end, have.start)) {
       continue;
     }
@@ -125,7 +120,7 @@ std::vector<PublishedDiagnostic> CollectPublishedDiagnostics(std::string_view ow
   return published;
 }
 
-}  // namespace
+}
 
 std::string DiagnosticsStore::PathKey(const std::filesystem::path& path) {
   return NormalizedPathKey(path);
@@ -138,7 +133,6 @@ void DiagnosticsStore::SortDiagnostics(std::vector<PublishedDiagnostic>* diagnos
   std::sort(diagnostics->begin(), diagnostics->end(),
             [](const PublishedDiagnostic& lhs, const PublishedDiagnostic& rhs) {
               if (lhs.path != rhs.path) {
-                // native() avoids the two per-comparison string allocations.
                 return lhs.path.native() < rhs.path.native();
               }
               if (lhs.range.start.line != rhs.range.start.line) {
@@ -215,9 +209,6 @@ void DiagnosticsStore::RebuildPath(std::string_view path_key) {
     }
     merged.diagnostics.insert(merged.diagnostics.end(), it->second.diagnostics.begin(),
                               it->second.diagnostics.end());
-    // A file is truncated if any owner's list for it was capped; the merged
-    // original_count sums what every owner published so the dropped remainder
-    // can be reported.
     merged.truncated = merged.truncated || it->second.truncated;
     merged.original_count += it->second.original_count;
   }
@@ -236,14 +227,7 @@ void DiagnosticsStore::RebuildPath(std::string_view path_key) {
   }
 
   SortDiagnostics(&merged.diagnostics);
-  // Badge counts reflect the true merged total (pre-truncation) so the summary stays
-  // accurate even when the render-scanned list is capped below.
   merged.summary = SummarizeDiagnostics(merged.diagnostics);
-  // TD-2026-07-17A-064: each owner is capped (kMaxDiagnosticsPerOwnerFile) but the
-  // merged multi-owner view had no aggregate cap, so several LSP/plugin owners could
-  // multiply the per-visible-row diagnostic scan/underline cost for one file. Cap the
-  // merged list AFTER sorting so the highest-severity (then earliest-position)
-  // diagnostics survive, and flag the aggregate drop as truncation too.
   constexpr std::size_t kMaxMergedDiagnosticsPerFile = 20000;
   if (merged.diagnostics.size() > kMaxMergedDiagnosticsPerFile) {
     merged.diagnostics.resize(kMaxMergedDiagnosticsPerFile);
@@ -255,15 +239,12 @@ void DiagnosticsStore::RebuildPath(std::string_view path_key) {
     if (merged.truncated) {
       ++truncated_file_count_;
     }
-    // New path (find above returned end): emplace constructs the entry in place,
-    // skipping the default-construct + move-assign of the heavy FileDiagnostics
-    // value that operator[] would do (mirrors PluginDecorationStore::RebuildPath).
     revision_.Bump();
     merged.changed_at = revision_.value();
     merged_by_path_.emplace(std::string(path_key), std::move(merged));
     return;
   }
-  merged.changed_at = existing->second.changed_at;  // compare the lists, not the stamps
+  merged.changed_at = existing->second.changed_at;
   if (existing->second == merged) {
     return;
   }
@@ -289,13 +270,6 @@ bool DiagnosticsStore::ReplaceForOwnerFile(std::string_view owner,
     return false;
   }
 
-  // A hostile/buggy language server can publish an unbounded number of
-  // diagnostics for one file. The per-file list is scanned linearly per visible
-  // row per frame (HighestDiagnosticSeverityForLine / AppendDiagnosticUnderlines),
-  // so an uncapped list turns every redraw into an O(rows * N) UI-thread freeze
-  // (and a large steady footprint). Cap the stored count: a file with more
-  // diagnostics than this is already unreadable, and the marker/underline render
-  // stays bounded regardless of what a server sends.
   constexpr std::size_t kMaxDiagnosticsPerOwnerFile = 10000;
   const std::size_t original_count = diagnostics.size();
   bool truncated = false;
@@ -332,7 +306,7 @@ bool DiagnosticsStore::ReplaceForOwnerFile(std::string_view owner,
     if (existing->second == next) {
       return false;
     }
-    existing->second = std::move(next);  // reuse the find's slot, no re-hash
+    existing->second = std::move(next);
   } else {
     owner_entries.emplace(path_key, std::move(next));
   }
@@ -343,11 +317,6 @@ bool DiagnosticsStore::ReplaceForOwnerFile(std::string_view owner,
 bool DiagnosticsStore::TransformOwnerFile(
     std::string_view owner, const std::filesystem::path& path,
     const std::function<SelectionRange(SelectionRange)>& transform) {
-  // This runs per keystroke (the edit path reshifts stored ranges), and `PathKey`
-  // is a `lexically_normal()` plus a `generic_string()` — about a dozen
-  // allocations. With no diagnostics stored for this owner there is nothing to
-  // transform, so the key is computed only once past that point
-  // (TD-2026-08-06-159).
   if (!transform || owner.empty() || path.empty() || diagnostics_by_owner_.empty()) {
     return false;
   }
@@ -367,9 +336,6 @@ bool DiagnosticsStore::TransformOwnerFile(
   for (PublishedDiagnostic& diagnostic : file_it->second.diagnostics) {
     diagnostic.range = transform(diagnostic.range);
   }
-  // Severity counts are unaffected by a position shift, so the per-owner summary
-  // stays valid; only order can change. Re-sort, then rebuild the merged view
-  // (which recomputes the merged summary and bumps the store revision on change).
   SortDiagnostics(&file_it->second.diagnostics);
   RebuildPath(path_key);
   return true;
@@ -391,7 +357,6 @@ bool DiagnosticsStore::RetargetPathPrefix(const std::filesystem::path& old_prefi
       diagnostics_by_owner_, old_prefix, new_prefix,
       [](FileDiagnostics& moved, const std::filesystem::path& from,
          const std::filesystem::path& to) {
-        // Each diagnostic carries its own copy of the path.
         for (auto& diagnostic : moved.diagnostics) {
           diagnostic.path = util::ReplacePathPrefix(diagnostic.path, from, to);
         }
@@ -428,9 +393,6 @@ std::uint64_t DiagnosticsStore::PathRevisionByKey(std::string_view path_key) con
 
 const std::vector<PublishedDiagnostic>* DiagnosticsStore::FindByPathKey(
     std::string_view path_key) const {
-  // Hot path: called per visible pane per frame with a precomputed key. Skip
-  // the lookup when no diagnostics have been published; the heterogeneous find
-  // never allocates because the key string already lives on the document.
   if (merged_by_path_.empty()) {
     return nullptr;
   }
@@ -486,4 +448,4 @@ std::vector<PublishedDiagnostic> DiagnosticsStore::SnapshotForOwner(std::string_
   return diagnostics;
 }
 
-}  // namespace microide::editor
+}

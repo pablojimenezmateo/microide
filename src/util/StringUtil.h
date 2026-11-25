@@ -12,14 +12,8 @@
 
 namespace microide::util {
 
-// UTF-8 encoding of U+FFFD REPLACEMENT CHARACTER, emitted for malformed input.
 inline constexpr std::string_view kUtf8ReplacementChar = "\xEF\xBF\xBD";
 
-// UTF-8 encoding of U+FEFF, the byte order mark some Windows tools write at the
-// start of a text file. The editor strips it on load and writes it back on save
-// (see TextViewport::has_utf8_bom); everything that reads a file's bytes for
-// line/column purposes must skip it the same way or its line-0 columns disagree
-// with the buffer's.
 inline constexpr std::string_view kUtf8Bom = "\xEF\xBB\xBF";
 
 [[nodiscard]] inline bool HasUtf8Bom(std::string_view text) {
@@ -41,47 +35,15 @@ struct DecodedText {
 std::size_t Utf8SequenceLength(unsigned char lead_byte);
 std::size_t Utf8SequenceLength(std::string_view text, std::size_t offset);
 
-// Offset of the first byte in `text` that is either non-ASCII (>= 0x80) or equal
-// to `also_match`; `text.size()` when there is no such byte.
-//
-// This is the "how far can I treat this as boring ASCII?" primitive that whole-
-// buffer and whole-line scans keep needing with a different second byte: `'\t'`
-// for visual-width layout (a tab is the only ASCII byte that is not one cell),
-// `'\0'` for encoding detection (a NUL is the only ASCII byte that means binary).
-// It reads eight bytes per iteration, so the answer for a plain-ASCII span costs
-// a fraction of a byte-at-a-time loop.
 std::size_t FirstNonAsciiOrByte(std::string_view text, char also_match);
 
-// True when every byte of `text` is ASCII (< 0x80). Same eight-bytes-at-a-time
-// scan as above with no second byte to look for.
-//
-// The syntax highlighter asks this once per line: on an all-ASCII line, a
-// byte-oriented regex and a PCRE2_UTF|PCRE2_UCP one are provably identical
-// (UTF and UCP only change behaviour at code points >= 0x80), and the byte-mode
-// one is roughly twice as fast.
 [[nodiscard]] bool IsAllAscii(std::string_view text);
 
-// Length of the run of bytes equal to `byte` at the start of `text`;
-// `text.size()` when every byte matches.
-//
-// The leading-indent scan is the motivating caller: measuring a line's indent
-// means counting its leading spaces, and doing that one byte at a time costs
-// real time on deeply nested code. Reads eight bytes per iteration.
 std::size_t LeadingByteRun(std::string_view text, char byte);
-// Decode the first UTF-8 codepoint of `glyph`. Returns U+FFFD on malformed or
-// empty input. Intended for already-grouped single-glyph slices.
 char32_t DecodeUtf8Codepoint(std::string_view glyph);
-// Append the UTF-8 encoding of `codepoint` to `out`. Codepoints above U+10FFFF
-// are encoded as written (callers are expected to pass valid scalar values).
 void AppendUtf8(std::string& out, char32_t codepoint);
 
-// Append `value` in decimal without materializing an intermediate string.
-// `std::to_string(n)` is a heap allocation for a number, and the shapes that
-// need this are all per-row or per-frame ones assembling into a reused buffer.
-// Three byte-identical private copies of this had grown in `workspace/`; keep
-// it here so a fourth does not.
 inline void AppendUnsigned(std::string& out, std::size_t value) {
-  // Longest std::size_t is 20 digits.
   char buffer[24];
   char* const end = buffer + sizeof(buffer);
   char* cursor = end;
@@ -92,26 +54,6 @@ inline void AppendUnsigned(std::string& out, std::size_t value) {
   out.append(cursor, static_cast<std::size_t>(end - cursor));
 }
 
-// Locale-independent ASCII character classification.
-//
-// These replace `<cctype>` (`std::isspace`, `std::isalnum`, `std::tolower`, …)
-// at every byte-scanning call site in the tree. Three reasons:
-//
-//  1. Correctness. `<cctype>` is locale-SENSITIVE for bytes >= 0x80, so a
-//     UTF-8 continuation byte could classify as alphanumeric under a non-C
-//     locale and flip word-motion / token / identifier boundaries at runtime.
-//     SDL and the platform layer both call `setlocale`, so the process locale
-//     is not ours to assume.
-//  2. Defined behavior. `std::tolower(char)` is UB when `char` is signed and
-//     the value is negative (i.e. any non-ASCII byte) unless cast to
-//     `unsigned char` first — a cast several call sites were missing.
-//  3. Speed. glibc implements these as a `__ctype_b_loc()` TLS load plus a
-//     table indirection *per call*; these are 2-3 compare-and-branch ops that
-//     inline and vectorize inside the per-byte loops that dominate the diff
-//     tokenizer, word motion, and command parsing.
-//
-// `IsAsciiSpace` reproduces the "C" locale `isspace` set exactly: space plus
-// 0x09..0x0D (\t \n \v \f \r).
 [[nodiscard]] inline constexpr bool IsAsciiSpace(unsigned char c) {
   return c == ' ' || (c >= 0x09 && c <= 0x0D);
 }
@@ -140,8 +82,6 @@ inline void AppendUnsigned(std::string& out, std::size_t value) {
   return IsAsciiLower(static_cast<unsigned char>(c)) ? static_cast<char>(c - ('a' - 'A')) : c;
 }
 
-// `text` equals `lowercase_token` ignoring ASCII case; the token must already
-// be lowercase. Allocation-free.
 [[nodiscard]] inline bool EqualsAsciiCaseInsensitive(std::string_view text,
                                                      std::string_view lowercase_token) {
   if (text.size() != lowercase_token.size()) {
@@ -155,17 +95,9 @@ inline void AppendUnsigned(std::string& out, std::size_t value) {
   return true;
 }
 
-// The single definition of a "falsey" configuration token, shared by env-var
-// tracing switches and bool-typed settings. Four sites each carried their own
-// list and they had drifted: the settings path was case SENSITIVE and did not
-// recognize "no", so `editor.wrap = FALSE` and `= no` both read as ENABLED —
-// the opposite of what the user wrote.
-//
-// Allocation-free (the previous ToLowerAscii-based copies allocated a string per
-// call), so it stays usable from the per-frame setting checks.
 [[nodiscard]] inline bool IsFalseyToken(std::string_view text) {
   if (text.size() > 5) {
-    return false;  // no falsey token is longer than "false"
+    return false;
   }
   return EqualsAsciiCaseInsensitive(text, "0") ||
          EqualsAsciiCaseInsensitive(text, "false") ||
@@ -173,9 +105,6 @@ inline void AppendUnsigned(std::string& out, std::size_t value) {
          EqualsAsciiCaseInsensitive(text, "off");
 }
 
-// The matching "explicitly truthy" set. Note this is NOT `!IsFalseyToken`: a
-// value like a file path is neither, and callers that accept an arbitrary
-// payload (e.g. MICROIDE_DAP_LOG=/tmp/x.log) need to tell the two apart.
 [[nodiscard]] inline bool IsTruthyToken(std::string_view text) {
   if (text.size() > 4) {
     return false;
@@ -185,9 +114,6 @@ inline void AppendUnsigned(std::string& out, std::size_t value) {
          EqualsAsciiCaseInsensitive(text, "yes") ||
          EqualsAsciiCaseInsensitive(text, "on");
 }
-// A token that must be one or the other: true / false for the two sets above,
-// nullopt for anything else (a command argument or a typed setting value that is
-// not a boolean).
 [[nodiscard]] inline std::optional<bool> ParseBoolToken(std::string_view text) {
   if (IsTruthyToken(text)) {
     return true;
@@ -197,19 +123,7 @@ inline void AppendUnsigned(std::string& out, std::size_t value) {
   }
   return std::nullopt;
 }
-// Terminal display column width of a codepoint: 0 for zero-width / combining
-// marks, 2 for East Asian wide / fullwidth / emoji-presentation codepoints, and
-// 1 otherwise. Matches the layout assumptions of common `wcwidth`/unicode-width
-// implementations so grid alignment agrees with TUI applications.
 int CodepointDisplayWidth(char32_t codepoint);
-// Cells one code point occupies on a fixed-pitch text grid -- the editor's rows,
-// the terminal's screen, a chrome label: 2 for an East Asian wide / fullwidth /
-// emoji-presentation code point, 0 for a combining mark or a format character,
-// 1 for everything else, control characters included (the editor shows a stray
-// C0 byte as a one-cell glyph rather than letting it vanish). Built on the same
-// tables as CodepointDisplayWidth; nothing below U+0300 (ASCII, Latin-1, Latin
-// Extended) needs the lookup, and U+FFFD -- what a malformed sequence decodes
-// to -- is one cell so a bad byte still has somewhere to be.
 [[nodiscard]] inline std::size_t GridCellWidth(char32_t codepoint) {
   if (codepoint < 0x300 || codepoint == 0xFFFD) {
     return 1;
@@ -217,140 +131,46 @@ int CodepointDisplayWidth(char32_t codepoint);
   const int width = CodepointDisplayWidth(codepoint);
   return width <= 0 ? 0 : static_cast<std::size_t>(width);
 }
-// Cells a UTF-8 string occupies on that grid: GridCellWidth summed per code
-// point, with a tab counting one (a caller laying out tab stops expands them
-// itself) and a malformed byte one.
 std::size_t GridCellCount(std::string_view text);
 bool IsUtf8ContinuationByte(unsigned char byte);
 std::size_t PreviousUtf8Boundary(std::string_view text, std::size_t offset);
 std::size_t NextUtf8Boundary(std::string_view text, std::size_t offset);
-// Longest UTF-8-code-point-aligned prefix of `text` that fits within `max_bytes`:
-// the cut backs off any trailing continuation byte so a multi-byte sequence is never
-// chopped mid-character. Returns `text.size()` when the whole string already fits.
-// This is the shared primitive under every "truncate this string to a byte budget"
-// call site (notifications, terminal selection/input, clipboard export, control
-// channel, LSP hover/label harvest, plugin provider fields).
 std::size_t Utf8ByteBudgetPrefixLength(std::string_view text, std::size_t max_bytes);
-// In-place counterpart: resize `text` down to `Utf8ByteBudgetPrefixLength(text,
-// max_bytes)`. Returns true when it actually truncated (i.e. the input exceeded the
-// budget), so callers can flag/annotate the truncation.
 bool TruncateUtf8ToByteBudget(std::string& text, std::size_t max_bytes);
 bool RemoveLastUtf8Codepoint(std::string* text);
 std::size_t Utf8ByteOffsetForCodepointCount(std::string_view text, std::size_t codepoint_count);
 std::size_t Utf8CodepointCount(std::string_view text);
 bool IsValidUtf8(std::string_view content);
-// Replaces each byte that is not part of a valid UTF-8 sequence with
-// `replacement` (an ASCII byte), in place: the length and every byte column stay
-// as they were, and the bytes it replaces are exactly the ones the editor's
-// column math (Utf8SequenceLength) counts as one-byte codepoints, so a column
-// means the same code-unit offset before and after. Returns whether it replaced
-// anything. For text sent where JSON must be valid UTF-8 (an LSP document).
 bool ReplaceInvalidUtf8Bytes(std::string& text, char replacement = '?');
-// Replaces each byte that is not part of a valid UTF-8 sequence with U+FFFD, in
-// place -- the length changes, unlike ReplaceInvalidUtf8Bytes. For text handed
-// to an API that refuses invalid UTF-8 whole (SDL_SetWindowTitle) and shown as
-// the app's own text renderer shows a bad byte. Returns whether it replaced anything.
 bool ReplaceInvalidUtf8WithReplacementCharacter(std::string& text);
 std::string NormalizeLineEndings(std::string_view text);
 void TrimTrailingLineEndings(std::string* text);
-// Trim leading and trailing ASCII whitespace (`std::isspace` semantics on the
-// unsigned char value: space, tab, CR, LF, VT, FF). The view form is the one to
-// reach for on a line already split out of a buffer; three TUs had grown their own
-// copy of it before it existed here.
 std::string_view TrimAsciiWhitespaceView(std::string_view text);
 std::string TrimAsciiWhitespace(std::string_view text);
-// Lowercase the ASCII A-Z range, leaving every other byte untouched. Safe for
-// UTF-8 input because the multi-byte sequences never include 'A'..'Z'.
 std::string ToLowerAscii(std::string_view text);
-// Lowercase `text` (ASCII A-Z) into `out`, reusing `out`'s existing capacity so
-// hot per-line loops avoid allocating a fresh string each call.
 void ToLowerAsciiInto(std::string_view text, std::string& out);
-// True if `text` contains any ASCII uppercase letter. Used by smart-case search
-// to decide whether a query should match case-sensitively.
 bool QueryHasUppercaseAscii(std::string_view text);
 
-// Simple 1:1 Unicode case fold for a single scalar. Covers ASCII, Latin-1
-// Supplement, Latin Extended-A, Greek, and Cyrillic uppercase letters; every
-// other scalar is returned unchanged. Turkish dotted/dotless I is intentionally
-// left unfolded (locale-sensitive). Not a full Unicode case-folding table — a
-// deterministic best-effort for case-insensitive matching of common scripts.
 char32_t SimpleFoldCodepoint(char32_t cp);
-// Case-fold `text` into `out` using SimpleFoldCodepoint per scalar. The ASCII
-// range takes a no-decode fast path. Malformed byte sequences are copied
-// verbatim so a caller mapping matches back to the source keeps byte alignment.
-// Reuses `out`'s capacity for hot per-line loops.
 void Utf8CaseFoldInto(std::string_view text, std::string& out);
-// Utf8CaseFoldInto without the clear: appends the fold of `text` to whatever
-// `out` already holds. For callers packing many folded strings back to back into
-// one buffer (the file finder's candidate blob), which is one allocation for the
-// whole set instead of one per string.
 void Utf8CaseFoldAppend(std::string_view text, std::string& out);
 std::string Utf8CaseFold(std::string_view text);
-// True if `text` has any scalar whose simple fold differs from itself (i.e. an
-// uppercase letter in a covered script). The Unicode-aware analogue of
-// QueryHasUppercaseAscii for smart-case search.
 bool Utf8QueryHasCaseVariation(std::string_view text);
-// True if `cp` is identifier content: ASCII `[A-Za-z0-9_]` plus a permissive
-// superset of non-ASCII letters (excludes common punctuation/symbol ranges).
-// Used by word motion and identifier-range extraction so multi-byte identifiers
-// are not split mid-scalar.
 bool Utf8IsIdentifierCodepoint(char32_t cp);
-// Byte offset of the codepoint containing byte `index` of `text` (a continuation
-// byte snaps back to its lead byte; `index >= size` is returned unchanged).
 std::size_t Utf8CodepointStartAt(std::string_view text, std::size_t index);
-// Whether the codepoint starting at byte `start` is identifier content
-// (Utf8IsIdentifierCodepoint); `*length` receives its byte length (0 past the
-// end). Callers walking identifier runs by BYTE used to stop at the first
-// byte >= 0x80, splitting `größe` / `変数` into fragments.
 bool Utf8IdentifierCodepointAt(std::string_view text, std::size_t start, std::size_t* length);
-// Start of the identifier run that ends just before byte `end` (`end` itself
-// when the preceding codepoint is not identifier content).
 std::size_t Utf8IdentifierRunStart(std::string_view text, std::size_t end);
-// End (exclusive) of the identifier run that starts at byte `start` (`start`
-// itself when that codepoint is not identifier content).
 std::size_t Utf8IdentifierRunEnd(std::string_view text, std::size_t start);
-// Word constituent for the whole-word search toggle: ASCII alphanumerics, `_`,
-// and every non-ASCII byte (so a hit inside a multi-byte word is not reported as
-// standing alone). Byte-oriented on purpose — decoding the boundary codepoint
-// buys nothing for the callers, which only ask "is this a word character".
 bool IsSearchWordByte(char c);
-// True when the span [start, end) of `text` is bounded by non-word bytes on both
-// sides — the whole-word predicate shared by the terminal find bar and the
-// in-file find widget so their `ab` toggles mean the same thing.
 bool SearchMatchStandsAlone(std::string_view text, std::size_t start, std::size_t end);
-// True when `haystack` contains `needle` as a case-insensitive (ASCII) substring.
-// An empty needle matches. Allocation-free.
 bool ContainsCaseInsensitiveAscii(std::string_view haystack, std::string_view needle);
-// True if `text` is non-empty and every byte is an ASCII digit ('0'..'9').
 bool IsAllAsciiDigits(std::string_view text);
-// Split `text` on runs of ASCII whitespace, returning views into `text`.
-// Leading/trailing whitespace produces no empty tokens. The returned views are
-// valid only for the lifetime of `text`.
 std::vector<std::string_view> SplitAsciiWhitespace(std::string_view text);
-// Split `text` on `delimiter` into records, returning views into `text` and
-// stopping after `max_records`. Empty records (adjacent delimiters) are kept; a
-// single terminating delimiter yields no trailing empty record.
 std::vector<std::string_view> SplitOnByte(std::string_view text, char delimiter,
                                           std::size_t max_records = static_cast<std::size_t>(-1));
-// Split `text` on NUL bytes into records, returning views into `text`. Empty
-// records (adjacent NULs) ARE preserved so positional `-z` git output stays
-// aligned; a single terminating NUL yields no trailing empty record. Views are
-// valid only for the lifetime of `text`.
 std::vector<std::string_view> SplitNulDelimited(std::string_view text);
-// Bounded variant: stop after collecting at most `max_records` records. Git parsers
-// that cap the entries they RETAIN still paid an O(record count) materialization when
-// they split the whole (byte-bounded but possibly millions-of-tiny-records) command
-// output first. Passing `retained_cap + lookahead` here bounds the transient token
-// vector so hostile NUL-heavy output cannot amplify memory before the entry cap.
 std::vector<std::string_view> SplitNulDelimited(std::string_view text, std::size_t max_records);
-// Replace each run of ASCII whitespace with a single space. Leading whitespace
-// is dropped; trailing whitespace, if any, is also dropped.
 std::string CollapseAsciiWhitespace(std::string_view text);
-// Like CollapseAsciiWhitespace, but also maps the source byte range
-// [match_start, match_end) into the collapsed output, writing the mapped range to
-// *out_match_start / *out_match_length (clamped to the collapsed text). Lets a
-// search preview highlight the matched span. Degrades gracefully if a boundary
-// falls inside collapsed whitespace.
 std::string CollapseAsciiWhitespaceTrackingMatch(std::string_view text,
                                                  std::size_t match_start,
                                                  std::size_t match_end,
@@ -362,40 +182,17 @@ std::string_view LineEndingSeparator(LineEnding line_ending);
 std::string LineEndingLabel(LineEnding line_ending);
 LineEnding ParseLineEndingLabel(std::string_view text);
 std::vector<std::string> SplitLines(std::string_view content);
-// Shape of `content` under the same splitting SplitLines/SplitLineViews use
-// ('\n', '\r\n', and a lone '\r' are each one break), without materializing a
-// single line. `count` is at least 1, matching those. For a caller that only
-// needs "how many lines" and "how long is the last one" — deriving that from
-// SplitLines costs a vector plus one string per line, and on a minified line
-// the NormalizeLineEndings copy that usually precedes it is the whole line.
 struct LineShape {
   std::size_t count = 1;
   std::size_t last_line_size = 0;
 };
 LineShape MeasureLines(std::string_view content);
-// Like SplitLines but returns views into `content` instead of owning copies.
-// The returned views are valid only for the lifetime of `content`; callers that
-// outlive the source buffer must copy. Used by allocation-sensitive diff paths.
 std::vector<std::string_view> SplitLineViews(std::string_view content);
-// Into-form, reusing `lines`' capacity. The diff builder splits both sides of a
-// compare on every keystroke in an editable pane, and a fresh vector per side
-// per rebuild is the single largest allocator on that path — the line count
-// barely moves between rebuilds (TD-2026-08-17-261).
 void SplitLineViewsInto(std::string_view content, std::vector<std::string_view>& lines);
-// Bounded variant of SplitLineViews: stop after `max_lines` lines so a parser with a
-// retained-entry cap does not first materialize a line view for every line of a huge
-// ref/branch listing. Unlike the unbounded form it does NOT synthesize a single empty
-// line for empty input (callers here iterate and cap, and an empty listing is empty).
 std::vector<std::string_view> SplitLineViews(std::string_view content, std::size_t max_lines);
 std::string JoinLines(std::span<const std::string> lines, std::string_view separator);
 std::string SerializeLines(std::span<const std::string> lines, LineEnding line_ending);
 
-// TD-2026-07-17-095: streaming line serializer that works over ANY lines-like source
-// exposing `size()` and `operator[]` returning something string_view-convertible —
-// in particular `editor::LineSpan` over a `TextBuffer` (zero-copy via LineView). Use
-// this instead of `SerializeLines(buffer.Snapshot(), ...)` so an LSP didOpen /
-// full-sync fallback never materializes a whole-document vector-of-strings before
-// building the payload. Kept in `util` (no editor dependency) via the template.
 template <typename LinesLike>
 std::string SerializeLinesStreaming(const LinesLike& lines, LineEnding line_ending) {
   const std::string_view separator = LineEndingSeparator(line_ending);
@@ -403,8 +200,6 @@ std::string SerializeLinesStreaming(const LinesLike& lines, LineEnding line_endi
   if (count == 0) {
     return {};
   }
-  // Exact reserve with saturating adds (mirrors JoinLines) so the final string is
-  // built in a single allocation without an intermediate vector.
   std::size_t total = 0;
   for (std::size_t i = 0; i < count; ++i) {
     total = SaturatingAdd(total, std::string_view(lines[i]).size());
@@ -425,13 +220,6 @@ std::string SerializeLinesStreaming(const LinesLike& lines, LineEnding line_endi
   return out;
 }
 
-// Case-insensitive natural ("human") comparison: ASCII letters compare
-// case-folded and embedded digit runs compare by numeric value, so "item2"
-// precedes "item10" and "Zebra" sorts with the z's. Equal magnitudes tie-break
-// toward fewer leading zeros; otherwise equal strings return 0, so callers that
-// need a total order add a byte-wise tiebreak. Shared by the JSON formatter's
-// key order and the file tree's sibling order (the explorer rule VS Code and
-// every file manager apply). Returns <0, 0 or >0.
 int NaturalCompareIgnoreCase(std::string_view a, std::string_view b);
 
-}  // namespace microide::util
+}

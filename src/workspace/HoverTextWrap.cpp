@@ -6,7 +6,6 @@ namespace microide::workspace {
 
 namespace {
 
-// One line of the text with its whitespace runs collapsed and its ends trimmed.
 std::string CollapseSpaces(std::string_view line) {
   std::string out;
   out.reserve(line.size());
@@ -43,7 +42,7 @@ std::vector<std::string_view> Words(std::string_view line) {
   return words;
 }
 
-}  // namespace
+}
 
 std::vector<std::string> WrapHoverText(std::string_view text, float max_width,
                                        std::size_t max_lines, const HoverTextMeasure& measure) {
@@ -51,8 +50,6 @@ std::vector<std::string> WrapHoverText(std::string_view text, float max_width,
   if (max_lines == 0 || max_width <= 0.0f) {
     return lines;
   }
-  // The text's own lines, spaces collapsed, blank runs folded to one blank, no
-  // blank at either end.
   std::vector<std::string> paragraphs;
   std::size_t start = 0;
   while (start <= text.size()) {
@@ -71,7 +68,6 @@ std::vector<std::string> WrapHoverText(std::string_view text, float max_width,
     paragraphs.pop_back();
   }
 
-  // Wrap each paragraph by words; a single word wider than the card is truncated.
   std::vector<std::string> wrapped;
   for (const std::string& paragraph : paragraphs) {
     if (paragraph.empty()) {
@@ -107,8 +103,6 @@ std::vector<std::string> WrapHoverText(std::string_view text, float max_width,
   if (wrapped.size() <= max_lines) {
     return wrapped;
   }
-  // Over the cap: keep the first max_lines - 1, and let the last line carry the
-  // rest, run together and truncated.
   lines.assign(std::make_move_iterator(wrapped.begin()),
                std::make_move_iterator(wrapped.begin() + static_cast<std::ptrdiff_t>(max_lines - 1)));
   std::string rest;
@@ -125,4 +119,4 @@ std::vector<std::string> WrapHoverText(std::string_view text, float max_width,
   return lines;
 }
 
-}  // namespace microide::workspace
+}

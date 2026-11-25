@@ -21,7 +21,6 @@ bool EnsurePrivateDirectory(const std::filesystem::path& directory, std::string*
   std::error_code ec;
   std::filesystem::create_directories(directory, ec);
   struct stat info {};
-  // Ours and a real directory: a link planted there must not redirect a write.
   if (::lstat(directory.c_str(), &info) != 0 || !S_ISDIR(info.st_mode) || info.st_uid != ::geteuid()) {
     *error = "the directory " + directory.string() + " is not usable";
     return false;
@@ -68,4 +67,4 @@ std::optional<std::filesystem::path> StoreTransientFile(const std::filesystem::p
   return path;
 }
 
-}  // namespace microide::platform
+}

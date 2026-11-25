@@ -17,7 +17,7 @@ std::size_t CountFileLines(const std::filesystem::path& path) {
   return CountCodeLinesInFile(path);
 }
 
-}  // namespace
+}
 
 RuleResult CheckTerminalSessionTuSize(const std::filesystem::path& repo_root) {
   RuleResult result;
@@ -102,13 +102,6 @@ RuleResult CheckTerminalSessionNoExtractedImpl(const std::filesystem::path& repo
   result.hard_fail = true;
   const std::filesystem::path path = repo_root / "src/terminal/TerminalSession.cpp";
   const std::string text = ReadRuleTarget(result, path);
-  // These patterns anchor a definition to the start of a LINE, so they need
-  // std::regex::multiline. Without it `^` matches only at offset 0 of the whole
-  // file — which for a .cpp is always `#include`, so three of these five
-  // sub-checks could never fire and the other two only fired for one specific
-  // return-type spelling. kLineAnchored is the single place that flag is set,
-  // and ArchitectureRuleFixtures.cpp pins that each pattern still matches the
-  // implementation shape it is meant to keep out.
   constexpr auto kLineAnchored = std::regex::ECMAScript | std::regex::multiline;
   AppendCodeMaskRegexViolations(
       result, path, text,
@@ -136,28 +129,6 @@ RuleResult CheckTerminalSessionHeaderSize(const std::filesystem::path& repo_root
   RuleResult result;
   result.label = "TerminalSession.h header size";
   result.hard_fail = true;
-  // 301: +1 for util/Revision.h, the snapshot generation's shared counter type
-  // (it replaced a hand-rolled skip-zero increment in the .cpp).
-  // 305: +4 for state, not helpers -- IRM's flag and REP's last glyph (both in
-  // the xterm-256color terminfo entry TERM names); <array> for the latter. Their
-  // shared insert helper lives in TerminalSessionEscapeInternal.h instead.
-  // 307: +2, the G0/G1 charsets and DECSC's copy of them (DEC Special Graphics,
-  // ncurses's box drawing); the type and its glyph table live in
-  // TerminalScreenState.h.
-  // 309: +2, DECSCNM's flag and its accessor (the dead cursor_visible() went to
-  // make room for the latter), and the mode reset RIS shares with a restart (see
-  // the Locked-helper cap's 45).
-  // 311: +2, API not helpers -- StartArgv's `environment` (the remote server's
-  // shells get their BROWSER forwarder through it) and ConsumeHostRequests (a
-  // host program's URL to open on the client). The pending URL itself lives in
-  // TerminalHostMode, not here.
-  // 314: +3, state not helpers -- the pen's extended attributes
-  // (TD-2026-11-05-432): its OSC 8 URI and SGR 58 underline colour (one id
-  // interns both, replacing the link id) and DECSC's copy of the colour. The
-  // table, its interning and the snapshot's colour walk live in
-  // TerminalCellExtraTable.
-  // 335: +21, the escape parser's handlers by name (see the Locked-helper cap's 66):
-  // declarations that replaced two 400-line bodies, not new state or API.
   constexpr std::size_t kCap = 335;
   const std::filesystem::path path = repo_root / "src/terminal/TerminalSession.h";
   const std::size_t lines = CountFileLines(path);
@@ -177,46 +148,6 @@ RuleResult CheckTerminalSessionPrivateMethodCount(const std::filesystem::path& r
   RuleResult result;
   result.label = "TerminalSession.h private method count";
   result.hard_fail = true;
-  // 41: +1 for HasCustomScrollRegionLocked, the named predicate that gates
-  // primary-buffer DECSTBM scroll-region behavior (used by AdvanceCursorRowLocked,
-  // Reverse Index, and SU/SD) so the common full-screen path stays untouched.
-  // 42: +1 for ResetEmulationStateLocked. This cap exists to stop the header
-  // accreting helpers, so a helper that *removes* code earns its slot — that one
-  // collapsed three inline ~35-line copies of the session reset (Start,
-  // StartPlaceholderForTesting, Stop) that a comment asked readers to keep in
-  // lockstep by hand, a net loss of ~90 lines from the .cpp.
-  // 43: +1 for ReseedForStartLocked, on the same "earns its slot" terms. The
-  // emulation-state reset was factored out but the rest of the start reseed was
-  // not, so Start() and StartPlaceholderForTesting() still carried the same
-  // label/geometry/bookkeeping block — including a duplicated comment explaining
-  // why the geometry has to precede the reset. Folding it also let
-  // TerminalSessionTestAccess::Reset drop its hand-kept ~35-field restatement of
-  // the same state, which had already drifted (it never cleared
-  // pending_clipboard_text_).
-  // 44: +1 for CopyLineRangeIntoLocked, again on the "earns its slot" terms. Every
-  // range-snapshot entry point (SnapshotLineRange, SnapshotLineRangeCached,
-  // SnapshotLineRangeIfChanged, the new SnapshotLineRangeInto) had its own copy
-  // loop, and three of them used clear()+assign() — which destroys each
-  // TerminalLine's cells vector and rebuilds it, so a per-frame or per-wheel-tick
-  // re-snapshot allocated and freed one vector per visible row every time. One
-  // buffer-reusing body now backs all of them.
-  // 45: +1 for ResetTerminalModesLocked, on the same terms: RIS (`ESC c`, the
-  // first thing `reset` sends) was dropped, and needs the very mode reset a
-  // restart does. That list had already drifted as an inline block -- a restart
-  // kept DECSC's saved rendition and a DEC 2031 subscription from the last
-  // child -- so one list now serves both. RIS itself stays inline at its one
-  // dispatch site rather than taking a slot.
-  // 46: +1 for ExecuteC0Locked, on the same terms. The ground state and the
-  // mid-CSI path each carried their own C0 switch, and the mid-CSI copy had
-  // drifted: it lost the backspace's pending-wrap clamp and SO/SI. One copy now
-  // serves both (TerminalSession/MidCsiC0MatchesGroundState).
-  // 66: +20, on the same "earns its slot" terms, for the escape parser itself.
-  // HandleEscapeSequenceLocked (469 lines) and AppendOutputLocked (397) were the
-  // two largest functions in the terminal: one inline body per CSI final and per
-  // escape state. Each state now has its Consume*ByteLocked, the OSC and
-  // DCS/SOS/PM/APC string states share one (they were near-copies), and the
-  // longer CSI bodies (DECSTR, IL/DL, DCH, ECH, SU, DECSTBM, REP, DECSCUSR) and
-  // ESC's RIS and RI are named. No new state.
   constexpr std::size_t kCap = 66;
   const std::filesystem::path path = repo_root / "src/terminal/TerminalSession.h";
   const std::string text = ReadRuleTarget(result, path);
@@ -253,18 +184,6 @@ RuleResult CheckTerminalInternalHeadersStayInTerminalDir(const std::filesystem::
     if (!RequireRuleTarget(result, root)) {
       continue;
     }
-    // Through the shared scanner, not a raw recursive_directory_iterator: one of
-    // these roots is `tests`, and 15,211 of the 15,442 source-extension files
-    // under it are generated perf fixtures that no rule can match. The ctest
-    // fixture-setup tests rewrite those trees while the shards run, so an
-    // increment onto an entry another process just unlinked throws — and did,
-    // taking the whole architecture shard down with "cannot increment recursive
-    // directory iterator: No such file or directory" (TD-2026-08-17-260).
-    //
-    // The reason is the race, not the file count: skipping the 15,211 reads is
-    // not measurably faster (0.25 s either way, three runs each), because they
-    // are small and warm in the page cache. Wasted work that costs nothing is
-    // still not a reason to keep a throwing walk over a tree someone else writes.
     static constexpr std::array<std::string_view, 3> kExtensions = {".cpp", ".h", ".inc"};
     for (const std::filesystem::path& path : SourceFilesUnder(root, kExtensions)) {
       const std::string relative = path.lexically_relative(repo_root).generic_string();
@@ -294,9 +213,6 @@ RuleResult CheckTerminalSessionSplitTranslationUnits(const std::filesystem::path
   result.hard_fail = true;
   const std::array<std::string_view, 9> allowed = {
       "TerminalSessionOutput.cpp",
-      // Escape handling is split by sequence family: CSI dispatch, SGR styling,
-      // OSC, and DEC private/keyboard modes (was the monolithic
-      // TerminalSessionEscape.cpp).
       "TerminalSessionCsi.cpp",
       "TerminalSessionSgr.cpp",
       "TerminalSessionOsc.cpp",
@@ -304,8 +220,6 @@ RuleResult CheckTerminalSessionSplitTranslationUnits(const std::filesystem::path
       "TerminalSessionInput.cpp",
       "TerminalSessionScreen.cpp",
       "TerminalSessionInputEncoding.cpp",
-      // Host mode (dev-docs/design/remote-projects.md § 6.5): the client's mirror
-      // of a host terminal and the host's capture for it.
       "TerminalSessionHost.cpp",
   };
   for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/terminal")) {
@@ -395,24 +309,6 @@ RuleResult CheckWorkspaceArchitectureRulesDispatcherSize(
   return result;
 }
 
-// Every descriptor the editor opens must be close-on-exec, set ATOMICALLY at
-// creation. The editor spawns a lot of children — terminal shells, LSP servers,
-// DAP adapters, git, plugin-launched tools — and any descriptor without the flag
-// is inherited by all of them. For the control socket in particular that is a
-// containment hole, not just a leak: the control channel is the interface that
-// drives the editor headlessly, so a child would hold a live handle to it.
-//
-// A separate fcntl(F_SETFD) after the fact is NOT equivalent: another thread can
-// fork/exec in the window between the two calls. This rule therefore requires
-// the flag on the creating call itself.
-//
-// Matches are code-masked (BuildCodeMask) so occurrences inside string literals
-// and comments — a syntax-highlight rule table naming `open(`, a settings/man-page
-// string naming `socket(` — are not mistaken for call sites. The flag is searched
-// for across the whole call expression, so a wrapped multi-line call still passes.
-//
-// Anchored on a required-presence count so the rule cannot go vacuous if these
-// files move or are renamed.
 RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "descriptor creation must request close-on-exec atomically";
@@ -423,16 +319,7 @@ RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& rep
     std::string_view flag;
     std::string_view advice;
   };
-  // NOTE ON THE `open` PATTERN: it must be `open(at)?`, NOT `openat?`. The `?`
-  // binds to the single preceding character, so `openat?` matches `opena` /
-  // `openat` and NEVER plain `open(` — which silently made this rule blind to the
-  // exact call form it exists to police (it passed with two real unflagged
-  // `open()` sites in the tree). The fixture below is the positive control.
   const std::array<Form, 10> forms = {
-      // openpty/forkpty cannot request close-on-exec at all (no flags argument),
-      // so every occurrence is a violation, like plain accept(): the terminal
-      // backend used to follow openpty with two fcntl(F_SETFD) calls, and a fork
-      // on another thread in that window inherited both PTY ends anyway.
       Form{"posix_openpt", "O_CLOEXEC", "pass O_CLOEXEC in posix_openpt()'s flags"},
       Form{"openpty", "O_CLOEXEC",
            "use posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC) and open(slave, O_CLOEXEC); "
@@ -442,9 +329,6 @@ RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& rep
       Form{"socket", "SOCK_CLOEXEC", "pass SOCK_CLOEXEC in socket()'s type argument"},
       Form{"accept4", "SOCK_CLOEXEC",
            "pass SOCK_CLOEXEC to accept4() (and never plain accept())"},
-      // Plain accept() cannot request close-on-exec at all, so every occurrence is
-      // a violation: the flag string it is searched for can never appear in the
-      // call, which is the point — the advice is "use accept4".
       Form{"accept", "SOCK_CLOEXEC",
            "use accept4() with SOCK_CLOEXEC; plain accept() cannot set close-on-exec atomically"},
       Form{"openat", "O_CLOEXEC", "pass O_CLOEXEC in openat()'s flags"},
@@ -452,14 +336,6 @@ RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& rep
       Form{"pipe2", "O_CLOEXEC", "pass O_CLOEXEC to pipe2()"},
       Form{"inotify_init1", "IN_CLOEXEC", "pass IN_CLOEXEC to inotify_init1()"},
   };
-  // ONE pass over each file, not one per form. Six separate `std::sregex_iterator`
-  // walks of every .cpp/.h/.inc in src cost 5.3 s natively, and an architecture
-  // rule at that scale is one busy machine away from the runner's 300 s per-test
-  // watchdog under TSAN — which is exactly how
-  // ArchitectureInvariants/Workspace/CheckCoordinatorOperationsAreCalled took the
-  // lane red (TD-2026-08-10-171's shape, again). The alternation is ordered
-  // longest-first so `accept4` and `openat` win over their prefixes, which is what
-  // the old `accept4`-before-`accept` form ordering and the `open(at)?` group did.
   const std::regex creation_pattern(
       R"((^|[^\w:])(::)?(posix_openpt|openpty|forkpty|socket|accept4|accept|openat|open|pipe2|inotify_init1)\s*\()");
 
@@ -481,8 +357,6 @@ RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& rep
       {
         for (std::sregex_iterator it(text.begin(), text.end(), creation_pattern), last;
              it != last; ++it) {
-          // The open paren is the final character of the pattern; require it to be
-          // real code so string/comment occurrences are skipped.
           const std::size_t open_paren =
               static_cast<std::size_t>(it->position() + it->length()) - 1;
           if (open_paren >= is_code.size() || !is_code[open_paren]) {
@@ -493,12 +367,10 @@ RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& rep
             return candidate.name == matched_name;
           });
           if (form_it == forms.end()) {
-            continue;  // unreachable: the alternation only produces known names
+            continue;
           }
           const Form& form = *form_it;
           ++scanned_creation_sites;
-          // Scan the balanced argument list, so a call wrapped across lines is
-          // still judged on its whole flag expression.
           std::size_t depth = 0;
           std::size_t close_paren = open_paren;
           for (std::size_t i = open_paren; i < text.size(); ++i) {
@@ -528,9 +400,6 @@ RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& rep
     }
   }
 
-  // Loud-missing-target guard: if the scan finds no creation sites at all, the
-  // rule has been hollowed out (files moved, spellings changed) and would pass
-  // vacuously forever.
   if (scanned_creation_sites == 0) {
     result.violations.push_back(Violation{
         .path = repo_root / "src/platform",
@@ -542,31 +411,6 @@ RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& rep
   return result;
 }
 
-// Every bool-typed setting the code READS must be declared in
-// WorkspaceSettingsRegistry. An unregistered key is not a compile error and not a
-// runtime error — it simply reads as its default forever, so the feature it gates
-// is invisible in the Settings overlay, absent from the docs, and reachable only
-// by hand-editing a config file with a key name found in a source comment. Two
-// shipped plugin-rendering toggles (plugins.inline_surfaces, plugins.code_lens_above)
-// were in exactly that state.
-//
-// Scans the balanced argument list of each Setting* read helper for its first
-// dotted string literal, code-masked so comments and unrelated literals are not
-// mistaken for call sites.
-// A bool setting's fallback default, where a caller spells one out, must match
-// what the registry declares.
-//
-// GetSettingValue resolves an unset key to its registered default, so today the
-// caller-supplied default only decides what happens when the getter itself is
-// absent or unresolvable. That makes a disagreement latent rather than live —
-// and latent is exactly why it goes unnoticed. Two were found this way:
-// `chrome.project_tabs.hide_when_single` and `editor.inlay_hints.enabled` are
-// both registered on-by-default, and both had a read that would have fallen back
-// to off. `editor.inlay_hints.enabled` disagreed with *itself* — the same file
-// read it twice, once with an explicit true and once with the implicit false.
-//
-// Reading with no explicit default means false, which is why an omitted default
-// on an on-by-default setting is reported.
 RuleResult CheckSettingDefaultsMatchRegistry(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "bool setting reads use the registry's default";
@@ -585,8 +429,6 @@ RuleResult CheckSettingDefaultsMatchRegistry(const std::filesystem::path& repo_r
     return result;
   }
 
-  // Registered Bool settings and their declared defaults. A SettingSpec with no
-  // explicit `.default_bool` defaults to false.
   std::map<std::string, bool> bool_defaults;
   {
     const std::regex spec_pattern(R"RX(\.id\s*=\s*"([a-z][a-z0-9_.]*)")RX");
@@ -594,7 +436,6 @@ RuleResult CheckSettingDefaultsMatchRegistry(const std::filesystem::path& repo_r
          it != last; ++it) {
       const std::string key = (*it)[1].str();
       const std::size_t start = static_cast<std::size_t>(it->position());
-      // The spec body runs until the next `.id =` (or the end).
       std::size_t end = registry_text.find(".id =", start + 1);
       if (end == std::string::npos) {
         end = registry_text.size();
@@ -653,15 +494,14 @@ RuleResult CheckSettingDefaultsMatchRegistry(const std::filesystem::path& repo_r
       const std::string call = text.substr(open_paren, close_paren - open_paren + 1);
       std::smatch key_match;
       if (!std::regex_search(call, key_match, literal_pattern)) {
-        continue;  // reads a value held in a variable
+        continue;
       }
       const std::string key = key_match[1].str();
       const auto declared = bool_defaults.find(key);
       if (declared == bool_defaults.end()) {
-        continue;  // not a registered bool setting; a sibling rule covers registration
+        continue;
       }
       ++scanned_reads;
-      // The call's trailing argument, if any, is the caller's fallback default.
       const bool caller_default = call.find("true", key_match.position(0) + key.size()) !=
                                   std::string::npos;
       if (caller_default == declared->second) {
@@ -706,7 +546,6 @@ RuleResult CheckSettingsReadAreRegistered(const std::filesystem::path& repo_root
     });
     return result;
   }
-  // Declared ids: `.id = "..."` entries.
   std::vector<std::string> declared;
   const std::regex declared_pattern(R"RX(\.id\s*=\s*"([a-z][a-z0-9_.]*)")RX");
   for (std::sregex_iterator it(registry_text.begin(), registry_text.end(), declared_pattern), last;
@@ -736,7 +575,7 @@ RuleResult CheckSettingsReadAreRegistered(const std::filesystem::path& repo_root
       continue;
     }
     if (entry.path().filename() == "WorkspaceSettingsRegistry.cpp") {
-      continue;  // the declarations themselves
+      continue;
     }
     const std::string text = ReadText(entry.path());
     const std::vector<bool> is_code = BuildCodeMask(text);
@@ -760,11 +599,11 @@ RuleResult CheckSettingsReadAreRegistered(const std::filesystem::path& repo_root
       const std::string call = text.substr(open_paren, close_paren - open_paren + 1);
       std::smatch key_match;
       if (!std::regex_search(call, key_match, literal_pattern)) {
-        continue;  // reads a value held in a variable; nothing to check
+        continue;
       }
       const std::string key = key_match[1].str();
       if (key.find('.') == std::string::npos) {
-        continue;  // not a dotted setting id
+        continue;
       }
       ++scanned_reads;
       if (std::find(declared.begin(), declared.end(), key) != declared.end()) {
@@ -791,20 +630,6 @@ RuleResult CheckSettingsReadAreRegistered(const std::filesystem::path& repo_root
   return result;
 }
 
-// A text grid's ROW TOTAL must live in the same space as the scroll position it is
-// paired with. `TextViewport::scroll_line()` is a VISUAL row -- ClampScrollState
-// bounds it against `visual_line_count()` -- and both
-// ComputeScrollSurfaceLayout and ComputeTextGridInteractionLayout clamp the scroll
-// they are handed against the total. Passing `line_count()` therefore describes
-// the surface in one space and positions it in another, and the two differ
-// exactly when soft wrap or a collapsed fold is in play.
-//
-// That mistake shipped at five call sites at once (2026-09-14): the editor's
-// vertical scrollbar reported zero travel for a wrapped file so no bar appeared
-// at all, selection autoscroll stopped at visual row (line_count - 1), hover
-// hit-testing resolved against a clamped scroll, and two hand-copied merge
-// layouts disagreed with the shared one. None of it is reachable without wrap, so
-// a suite that mostly runs unwrapped never saw any of it.
 RuleResult CheckGridRowTotalsAreVisualRows(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "text-grid row totals must be visual rows, not logical line counts";
@@ -821,7 +646,6 @@ RuleResult CheckGridRowTotalsAreVisualRows(const std::filesystem::path& repo_roo
     if (extension != ".cpp" && extension != ".h" && extension != ".inc") {
       continue;
     }
-    // The definitions themselves name the parameter, not a caller's expression.
     if (entry.path().filename() == "WorkspaceLayout.cpp" ||
         entry.path().filename() == "WorkspaceLayout.h") {
       continue;
@@ -846,12 +670,6 @@ RuleResult CheckGridRowTotalsAreVisualRows(const std::filesystem::path& repo_roo
         }
       }
       ++scanned_calls;
-      // Scanned through the CODE MASK, not over the raw substring: an argument
-      // list can span a comment, and a comment explaining the rule is exactly the
-      // text that contains the words the rule looks for. The first version of this
-      // check searched the raw call text, found `visual_line_count()` inside such
-      // a comment, and passed over the very regression it was written for -- which
-      // is why it is probed by injection rather than trusted for being green.
       bool bare_line_count = false;
       for (std::size_t i = open_paren; i + 12 <= close_paren + 1; ++i) {
         if (i >= is_code.size() || !is_code[i]) {
@@ -860,8 +678,6 @@ RuleResult CheckGridRowTotalsAreVisualRows(const std::filesystem::path& repo_roo
         if (text.compare(i, 12, "line_count()") != 0) {
           continue;
         }
-        // `visual_line_count()` ends in the same twelve characters; only a bare
-        // one is the mistake.
         if (i >= 7 && text.compare(i - 7, 7, "visual_") == 0) {
           continue;
         }
@@ -923,19 +739,6 @@ std::vector<RuleResult> RunTerminalArchitectureRules(const std::filesystem::path
   return results;
 }
 
-// The mirror of CheckSettingsReadAreRegistered. That rule stops a setting being
-// READ without being declared (invisible, unreachable). This one stops the
-// opposite and equally user-visible failure: a setting DECLARED but read by
-// nothing, which the Settings overlay renders with a label and a description, and
-// persists when changed, while doing absolutely nothing.
-//
-// Two shipped that way — "Hover Delay (ms)" and "Scrollbar Size" — and neither
-// had any consumer at all. A user could set them, see them stick across restarts,
-// and never observe an effect.
-//
-// A setting whose value is reached through a computed key rather than a literal
-// would false-positive here; none exist today, and the fix for one would be to
-// name the id in a comment at the read site rather than to weaken the rule.
 RuleResult CheckRegisteredSettingsAreRead(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "declared settings must be read by something";
@@ -944,7 +747,6 @@ RuleResult CheckRegisteredSettingsAreRead(const std::filesystem::path& repo_root
   const std::filesystem::path registry = repo_root / "src/workspace/registries/WorkspaceSettingsRegistry.cpp";
   const std::string registry_text = ReadRuleTarget(result, registry);
   const std::vector<bool> registry_is_code = BuildCodeMask(registry_text);
-  // Custom delimiter: the pattern itself contains `)"`.
   const std::regex id_pattern(R"re(\.id\s*=\s*"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+)")re");
   std::vector<std::string> declared;
   for (std::sregex_iterator it(registry_text.begin(), registry_text.end(), id_pattern), last;
@@ -966,9 +768,6 @@ RuleResult CheckRegisteredSettingsAreRead(const std::filesystem::path& repo_root
     return result;
   }
 
-  // Any mention of the quoted id anywhere in src/ outside the registry counts as
-  // a consumer; the read helpers are varied (SettingFlagEnabled, SettingIntValue,
-  // direct SettingsStore lookups) and this rule is about reachability, not shape.
   std::string other_sources;
   for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src")) {
     if (!entry.is_regular_file()) {
@@ -1001,4 +800,4 @@ RuleResult CheckRegisteredSettingsAreRead(const std::filesystem::path& repo_root
   return result;
 }
 
-}  // namespace microide::tests::architecture
+}

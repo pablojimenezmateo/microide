@@ -25,7 +25,6 @@ void AppendCodeMaskRegexViolations(RuleResult& result,
                                    const std::string& text,
                                    const std::regex& pattern,
                                    std::string_view message) {
-  // Built on the first match: most files have none, and the mask is a full pass.
   std::vector<bool> is_code;
   for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {
     if (is_code.empty()) {
@@ -52,7 +51,6 @@ void AppendCodeMaskRegexViolations(RuleResult& result,
 }
 
 bool CodeMaskedPatternAppears(const std::string& text, const std::regex& pattern) {
-  // Built on the first match: most files have none, and the mask is a full pass.
   std::vector<bool> is_code;
   for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {
     if (is_code.empty()) {
@@ -79,7 +77,6 @@ void AppendTrailingCodeRegexViolations(RuleResult& result,
                                        const std::string& text,
                                        const std::regex& pattern,
                                        std::string_view message) {
-  // Built on the first match: most files have none, and the mask is a full pass.
   std::vector<bool> is_code;
   for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {
     if (is_code.empty()) {
@@ -161,4 +158,4 @@ void ReportRule(const RuleResult& result) {
   }
 }
 
-}  // namespace microide::tests::architecture
+}

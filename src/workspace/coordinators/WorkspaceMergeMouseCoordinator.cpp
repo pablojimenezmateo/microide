@@ -22,18 +22,10 @@ namespace microide::workspace {
 
 namespace {
 
-}  // namespace
+}
 
 namespace {
 
-// Place the result pane's caret from an ON-SCREEN (row, column) hit.
-//
-// `ClampTextGridLineAtY` hands back a row of the surface, and with `editor.wrap`
-// on that is a wrapped visual row, not a document line -- so the plain
-// MoveCursorToVisualColumn form would treat row 7 of a wrapped buffer as line 7.
-// MoveCursorToVisualHit is the viewport's own wrap-aware resolver and is what the
-// editor surface already uses; it is exactly right when wrap is off too, so this
-// is one call either way.
 void MoveMergeResultCursorToHit(editor::TextViewport& viewport,
                                 std::size_t visual_row,
                                 std::size_t visual_column,
@@ -42,7 +34,7 @@ void MoveMergeResultCursorToHit(editor::TextViewport& viewport,
                                  extend_selection);
 }
 
-}  // namespace
+}
 
 MergeMouseCoordinator::MergeMouseCoordinator(ProjectWorkspaceState& state,
                                              InteractionState& interaction_state,
@@ -75,9 +67,6 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   const auto interaction =
       operations_.build_merge_interaction_layout(surface, surface_layout, *merge_tab);
   const auto divider_rects = MergeDividerHitRects(surface, surface_layout);
-  // Double-click restores the equal thirds, the same contract the sidebar, right
-  // pane, editor split and bottom panel dividers already answer. Either divider
-  // resets both, so one double-click recovers the layout instead of two.
   const bool reset_click = event.button.clicks >= 2;
   const bool on_left = Contains(divider_rects[0], event.button.x, event.button.y);
   const bool on_right = Contains(divider_rects[1], event.button.x, event.button.y);
@@ -194,7 +183,7 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       Contains(scroll_layout.vertical_scrollbar->track, event.button.x, event.button.y)) {
     interaction_state_.drag_target = DragTarget::CompareVerticalScrollbar;
     interaction_state_.drag_scrollbar_offset = ScrollbarGrabOffset(
-        *scroll_layout.vertical_scrollbar, static_cast<float>(event.button.y), /*vertical=*/true);
+        *scroll_layout.vertical_scrollbar, static_cast<float>(event.button.y), true);
     merge_tab->scroll_row = std::clamp(
         static_cast<int>(std::lround(ScrollUnitsForPointer(
             *scroll_layout.vertical_scrollbar, static_cast<float>(event.button.y),
@@ -211,7 +200,7 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     interaction_state_.drag_target = DragTarget::CompareHorizontalScrollbar;
     interaction_state_.drag_scrollbar_offset =
         ScrollbarGrabOffset(*scroll_layout.horizontal_scrollbar,
-                            static_cast<float>(event.button.x), /*vertical=*/false);
+                            static_cast<float>(event.button.x), false);
     merge_tab->horizontal_scroll = static_cast<std::size_t>(std::max(
         0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
                                               static_cast<float>(event.button.x),
@@ -241,12 +230,10 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
           text.has_value()) {
         merge_tab->result_viewport.InsertText(*text);
         operations_.update_merge_tracking_after_viewport_edit(*merge_tab);
-        operations_.note_active_editable_edit();  // asks for the frame too
+        operations_.note_active_editable_edit();
       }
       return true;
     }
-    // Double-click selects the word, triple-click the line, and the drag that
-    // follows keeps that granularity -- as on the editor and compare surfaces.
     selection_granularity::ApplyClick(interaction_state_, merge_tab->result_viewport,
                                       event.button.clicks);
     operations_.request_frame();
@@ -254,9 +241,6 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     return true;
   }
 
-  // A small negative (y - rows_y) truncates toward zero to 0, so `clicked_row < 0`
-  // alone would misclassify a click in the band just above row 0 as a hit on row 0.
-  // Reject the above-first-row band explicitly before the division.
   const float row_offset_px = static_cast<float>(event.button.y) - surface_layout.rows_y;
   if (row_offset_px < 0.0f) {
     return false;
@@ -322,10 +306,6 @@ bool MergeMouseCoordinator::HandleDrag(const SDL_Event& event,
           surface_layout.divider_width * 0.5f;
       const float raw_fraction =
           (static_cast<float>(event.motion.x) - divider_center_x) / content_width;
-      // Ordered explicitly: at degenerate pane widths the live right fraction
-      // minus the minimum can land a float ulp below the minimum itself, and
-      // std::clamp with an inverted range is UB (same shape as the layout's
-      // fraction clamps in WorkspaceShellMerge.cpp).
       const float left_hi =
           std::max(surface_layout.min_divider_fraction,
                    current_right_fraction - surface_layout.min_divider_fraction);
@@ -410,8 +390,6 @@ bool MergeMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
         static_cast<float>(event.motion.y));
   }
 
-  // The toolbar buttons' hover is the shell's HoveredInteractiveRect probe, which
-  // compares the pointer's old and new positions rather than remembering one.
   merge_tab->hover_state = next_hover;
   if (previous_hover == merge_tab->hover_state) {
     return false;
@@ -439,17 +417,10 @@ bool MergeMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
       operations_.compute_merge_surface_layout(surface, *merge_tab);
   const auto interaction =
       operations_.build_merge_interaction_layout(surface, surface_layout, *merge_tab);
-  // Same as the editor and compare surfaces: a drag that leaves the result pane
-  // keeps extending toward the pointer rather than freezing where it crossed the
-  // edge. The row was already clamped through ClampTextGridLineAtY; only the
-  // Contains gate in front of it made that clamp unreachable from outside.
   const SDL_FRect& result_rect = interaction.result.rect;
   const float pointer_x = std::clamp(static_cast<float>(event.motion.x), result_rect.x,
                                      result_rect.x + std::max(0.0f, result_rect.w - 1.0f));
 
-  // See the compare surface: the clamp keeps the selection pointed at the edge
-  // cell, the autoscroll is what walks that edge through the document while the
-  // pointer sits still outside the pane.
   selection_autoscroll::Arm(interaction_state_, InteractionState::SelectionAutoscrollOwner::Text,
                             selection_autoscroll::BandFor(interaction.result.text),
                             static_cast<float>(event.motion.x),
@@ -502,7 +473,6 @@ bool MergeMouseCoordinator::HandleWheel(const SDL_Event& event,
     merge_tab.result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, merge_tab.scroll_row)));
     merge_tab.scroll_row = static_cast<int>(merge_tab.result_viewport.scroll_line());
   }
-  // Scrolling is not focusing — see SidebarMouseCoordinator::HandleWheel.
   return true;
 }
 
@@ -591,4 +561,4 @@ MergeMouseCoordinator& WorkspaceShell::MakeMergeMouseCoordinator() {
   return *glue_->merge_mouse_coordinator;
 }
 
-}  // namespace microide::workspace
+}

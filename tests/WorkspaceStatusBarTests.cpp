@@ -31,8 +31,6 @@ void SetSegment(StatusBarService& service,
                 StatusBarSegmentId id,
                 std::string text,
                 bool clickable = false) {
-  // `clickable` is derived from the command now, so the fixture supplies one when
-  // the caller wants an actionable segment.
   service.SetSegment(id, StatusBarSegmentValue{
                              .text = std::move(text),
                              .tooltip = {},
@@ -41,9 +39,6 @@ void SetSegment(StatusBarService& service,
                          });
 }
 
-// SetSegment says whether a painted aspect changed, so a publisher outside the
-// frame (the remote service, on sync ticks) asks for a frame only then. What that
-// frame repaints is derived from the strip as painted (derived damage).
 void TestStatusBarSetSegmentReportsPaintedChanges() {
   StatusBarService service;
   const auto value = [](std::string text, std::string tooltip) {
@@ -97,19 +92,10 @@ void TestStatusBarNoOpsWhenNotReserved() {
          "hidden status bar view model should not carry stale segments");
 }
 
-// A fixed-advance stand-in for the text renderer: geometry only needs widths.
 struct FixedAdvanceMeasure {
   float MeasureWidth(std::string_view text) const { return 8.0f * static_cast<float>(text.size()); }
 };
 
-// The segment geometry never lays two segments over each other. Left segments
-// packed from the left and right ones from the right with no collision check, so
-// a status bar narrower than its content (a zoomed-in window) drew "main",
-// "[dirty]" and "Ln 1, Col 1" on top of each other -- unreadable, and the
-// renderer then painted a hover box on every clickable segment under the pointer
-// while the motion path damaged only the first, leaving a stale box behind
-// (soak 49a23ffecdf7). The right cluster keeps priority, as in compact mode; left
-// segments fill what room remains, in order.
 void TestStatusBarSegmentsNeverOverlapOnANarrowBar() {
   microide::workspace::StatusBarViewModel vm;
   vm.visible = true;
@@ -153,7 +139,6 @@ void TestStatusBarSegmentsNeverOverlapOnANarrowBar() {
   Expect(!has(StatusBarSegmentId::Language),
          "a left segment with no room left is dropped, not drawn under the right cluster");
 
-  // A bar wide enough for everything keeps everything.
   vm.rect.w = 1000.0f;
   visited.clear();
   microide::workspace::ForEachStatusBarSegmentRect(
@@ -208,10 +193,6 @@ void TestStatusBarCompactDropOrder() {
 }
 
 void TestStatusBarPropagatesSemanticTone() {
-  // The render path colors diagnostic segments from `tone`, not from the
-  // display text, so the builder must carry tone through verbatim. This guards
-  // against regressing to text-scanning (e.g. `text.find("0")`), which
-  // mis-classifies counts like "10 errors, 0 warnings".
   WorkspaceContext context;
   StatusBarService service;
   service.SetSegment(StatusBarSegmentId::Problems,
@@ -235,12 +216,9 @@ void TestStatusBarPropagatesSemanticTone() {
 }
 
 void TestStatusBarLspToneFromTypedSeverityNotLabelText() {
-  // Regression: the Lsp segment tone must come from the operation's typed
-  // severity, never from substring-scanning the label. A server whose label
-  // literally contains "Ready" but is in a failed state must render Error.
   WorkspaceContext context;
   StatusBarService service;
-  editor::TextViewport viewport;  // non-null active viewport gates the Lsp segment
+  editor::TextViewport viewport;
 
   microide::workspace::StatusBarModelService model;
   microide::workspace::StatusBarModelService::Operations ops;
@@ -249,7 +227,7 @@ void TestStatusBarLspToneFromTypedSeverityNotLabelText() {
   };
   ops.active_lsp_status_strings = [](bool, std::string& text, std::string& tooltip,
                                      StatusTone& tone) {
-    text = "LSP: clangd Not Ready";  // contains "Ready" as a substring
+    text = "LSP: clangd Not Ready";
     tooltip = "language server failed to start";
     tone = StatusTone::Error;
   };
@@ -263,13 +241,6 @@ void TestStatusBarLspToneFromTypedSeverityNotLabelText() {
          "tone must follow the typed severity (Error), not a 'Ready' substring match");
 }
 
-// The status-bar model is refreshed once per PAINTED FRAME, and on a steady frame
-// every segment says exactly what it said last frame. It used to rebuild each one
-// anyway: a fresh `StatusBarSegmentValue` (one allocation per non-SSO field), then
-// a move-assign into the slot that also freed the slot's identically sized
-// buffers. Six allocations a frame, forever, for text that had not changed
-// (TD-2026-08-14-229). Publishing through views and assigning INTO the slot makes
-// a settled frame allocation-free, and this is the assertion that says so.
 void TestStatusBarSteadyRefreshDoesNotAllocate() {
   WorkspaceContext context;
   StatusBarService service;
@@ -280,8 +251,6 @@ void TestStatusBarSteadyRefreshDoesNotAllocate() {
   ops.git_availability = [](const std::filesystem::path&) {
     return microide::project::GitAvailability::NotARepository;
   };
-  // Long enough to be past std::string's small-string buffer, which is the whole
-  // point: an SSO-sized label would pass this test on the old code too.
   ops.active_lsp_status_strings = [](bool, std::string& text, std::string& tooltip,
                                      StatusTone& tone) {
     text = "LSP: clangd indexing the workspace";
@@ -289,8 +258,6 @@ void TestStatusBarSteadyRefreshDoesNotAllocate() {
     tone = StatusTone::Info;
   };
 
-  // Two warm-up refreshes: the first fills every memo and every slot buffer, the
-  // second proves the memos hold. Only the third is measured.
   model.Refresh(service, ops, context.current_project_state, &viewport);
   model.Refresh(service, ops, context.current_project_state, &viewport);
 #if MICROIDE_PERF_HARNESS_BUILD
@@ -312,11 +279,6 @@ void TestStatusBarSteadyRefreshDoesNotAllocate() {
 }
 
 void TestStatusBarRepoAvailabilityReflectsInSessionGitInit() {
-  // The repo-availability probe must not be cached by project_root alone: an
-  // in-session `git init` (or `.git` removal) must be reflected, not stay stale
-  // until the project root changes. It is keyed on the repository marker
-  // generation, which ApplyProjectChangeBatch bumps for every repository change
-  // — and `.git` appearing is now one (GitRepositoryMetadataTracker).
   WorkspaceContext context;
   context.current_project_state.root = "/tmp/statusbar-git-init-probe";
   StatusBarService service;
@@ -337,14 +299,10 @@ void TestStatusBarRepoAvailabilityReflectsInSessionGitInit() {
          "a non-repo project must show no-scm");
   Expect(probes == 1, "the first refresh probes");
 
-  // The status bar rebuilds every frame. With nothing claiming the repository
-  // changed, the probe must not run again — it is a filesystem stat.
   model.Refresh(service, ops, context.current_project_state, nullptr);
   model.Refresh(service, ops, context.current_project_state, nullptr);
   Expect(probes == 1, "an unchanged repository must not be re-probed per frame");
 
-  // Simulate `git init`: the marker generation moves, and the same project root
-  // now reports a valid repo.
   repo_valid = true;
   ++context.current_project_state.sidebar.git.repository_marker_generation;
   model.Refresh(service, ops, context.current_project_state, nullptr);
@@ -352,7 +310,6 @@ void TestStatusBarRepoAvailabilityReflectsInSessionGitInit() {
   Expect(service.Segment(StatusBarSegmentId::Project).text.find("[clean]") != std::string::npos,
          "an in-session git init must be reflected without a stale project_root cache");
 
-  // And the reverse transition, which is the same event.
   repo_valid = false;
   ++context.current_project_state.sidebar.git.repository_marker_generation;
   model.Refresh(service, ops, context.current_project_state, nullptr);
@@ -360,16 +317,6 @@ void TestStatusBarRepoAvailabilityReflectsInSessionGitInit() {
          "removing .git in-session must be reflected too");
 }
 
-// A git checkout with no `git status` snapshot yet labelled itself
-// "no-scm [clean]" -- a contradiction, since only source control can know a tree
-// is clean. That is the state for the first seconds after opening a project, and
-// it persists indefinitely if the user never opens the Source Control view. The
-// branch now comes from `<gitdir>/HEAD` (one file read, no subprocess) until a
-// The third answer. A source that has not answered yet must not be rendered as
-// "this directory has no source control" — that is a claim, and it is the one a
-// remote project would make about a real repository for as long as the first
-// git/metadata round trip takes. The LOCAL source never returns Unknown, so this
-// drives it through the hook, which is exactly how the remote one will arrive.
 void TestStatusBarRendersUnknownGitAvailabilityAsUnknown() {
   WorkspaceContext context;
   context.current_project_state.root = "/tmp/statusbar-git-unknown";
@@ -390,7 +337,6 @@ void TestStatusBarRendersUnknownGitAvailabilityAsUnknown() {
   Expect(segment.text.find("no-scm") == std::string::npos,
          "and must not claim no-scm anywhere in the label");
 
-  // The two settled answers still read as they did.
   microide::workspace::StatusBarModelService not_a_repo_model;
   StatusBarService not_a_repo_service;
   ops.git_availability = [](const std::filesystem::path&) {
@@ -401,7 +347,6 @@ void TestStatusBarRendersUnknownGitAvailabilityAsUnknown() {
          "a settled 'not a repository' still says so");
 }
 
-// real snapshot supersedes it.
 void TestStatusBarNamesBranchFromHeadBeforeFirstGitSnapshot() {
   WorkspaceContext context;
   context.current_project_state.root = "/tmp/statusbar-head-branch";
@@ -424,14 +369,10 @@ void TestStatusBarNamesBranchFromHeadBeforeFirstGitSnapshot() {
          "a repo with no snapshot yet should name its branch, not report no-scm");
   Expect(head_reads == 1, "the HEAD read should happen once");
 
-  // The status bar rebuilds every frame; HEAD must not be re-read each time.
   model.Refresh(service, ops, context.current_project_state, nullptr);
   model.Refresh(service, ops, context.current_project_state, nullptr);
   Expect(head_reads == 1, "the HEAD branch must be cached per project root, not re-read per frame");
 
-  // A `git checkout` in the terminal is a repository change (the marker
-  // generation moves) but not necessarily a snapshot: the automatic refresh is
-  // throttled and skipped while one is in flight. The fallback must re-read HEAD.
   ++context.current_project_state.sidebar.git.repository_marker_generation;
   ops.read_head_branch = [&](const std::filesystem::path&) -> std::optional<std::string> {
     ++head_reads;
@@ -444,7 +385,6 @@ void TestStatusBarNamesBranchFromHeadBeforeFirstGitSnapshot() {
   model.Refresh(service, ops, context.current_project_state, nullptr);
   Expect(head_reads == 2, "the re-read is cached until the next repository change");
 
-  // A detached HEAD has no branch name, but it is still a repository.
   WorkspaceContext detached;
   detached.current_project_state.root = "/tmp/statusbar-head-detached";
   StatusBarService detached_service;
@@ -454,7 +394,6 @@ void TestStatusBarNamesBranchFromHeadBeforeFirstGitSnapshot() {
   Expect(detached_service.Segment(StatusBarSegmentId::Project).text == "detached [clean]",
          "a detached HEAD is not 'no source control'");
 
-  // No repository at all still reads no-scm.
   WorkspaceContext bare;
   bare.current_project_state.root = "/tmp/statusbar-head-none";
   StatusBarService bare_service;
@@ -475,7 +414,7 @@ void TestStatusBarProblemsTextAgreesInNumber() {
   Expect(workspace::ProblemsSegmentText(0, 3) == "0 errors, 3 warnings", "plural");
 }
 
-}  // namespace
+}
 
 void RegisterWorkspaceStatusBarTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceStatusBar/ProblemsTextAgreesInNumber", TestStatusBarProblemsTextAgreesInNumber);
@@ -503,4 +442,4 @@ void RegisterWorkspaceStatusBarTests(std::vector<TestCase>& tests) {
           TestStatusBarPropagatesSemanticTone);
 }
 
-}  // namespace microide::tests
+}

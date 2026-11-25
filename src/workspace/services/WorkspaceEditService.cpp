@@ -60,9 +60,6 @@ bool WorkspaceEditService::ApplyBatch(editor::TextViewport& viewport, const Edit
     viewport.BeginUndoGroup();
   }
   for (const std::size_t index : apply_order) {
-    // One edit at a time: each ReplaceRange's applied-edit record is exact, so a
-    // breakpoint below slides through every one of them -- in a buffer that is
-    // not in front too, which the active editor's redraw-path follow never sees.
     if (viewport.ReplaceRange(batch[index].first, batch[index].second, record_undo) && follow) {
       follow(viewport);
     }
@@ -91,19 +88,12 @@ bool WorkspaceEditService::ApplyPluginEdit(const plugin::PluginHost::WorkspaceEd
     return false;
   }
 
-  // Staleness guard for edits deferred from the plugin worker: the coordinates
-  // were computed against `guard_path` at `captured_content_revision`. If the
-  // resolved buffer is a different file (the user switched tabs) or has advanced
-  // (the user typed) during the async hop, the edit is stale — drop it rather than
-  // apply now-invalid coordinates over newer input.
   if (request.has_staleness_guard &&
       (!util::SameAsNormalizedPath(viewport->path(), request.guard_path) ||
        viewport->content_revision() != request.captured_content_revision)) {
     return false;
   }
 
-  // 1-based plugin coordinates → clamped 0-based document positions, evaluated
-  // live so caret clamping sees post-edit line lengths.
   const auto clamp_position = [&](std::size_t one_based_line,
                                   std::size_t one_based_column) -> editor::TextPosition {
     const std::size_t line_count = viewport->line_count();
@@ -124,7 +114,7 @@ bool WorkspaceEditService::ApplyPluginEdit(const plugin::PluginHost::WorkspaceEd
         edit.end_line >= 1 ? clamp_position(edit.end_line, edit.end_column) : start;
     batch.emplace_back(editor::SelectionRange{start, end}, edit.text);
   }
-  if (!ApplyBatch(*viewport, batch, /*record_undo=*/true, operations_.follow_applied_edit)) {
+  if (!ApplyBatch(*viewport, batch, true, operations_.follow_applied_edit)) {
     return false;
   }
 
@@ -133,25 +123,25 @@ bool WorkspaceEditService::ApplyPluginEdit(const plugin::PluginHost::WorkspaceEd
         clamp_position(request.selection_start_line, request.selection_start_column);
     const editor::TextPosition end =
         clamp_position(request.selection_end_line, request.selection_end_column);
-    viewport->JumpCursorTo(start.line, start.column, /*extend_selection=*/false);
-    viewport->MoveCursorTo(end.line, end.column, /*extend_selection=*/true);
+    viewport->JumpCursorTo(start.line, start.column, false);
+    viewport->MoveCursorTo(end.line, end.column, true);
   } else if (request.has_cursor) {
     const editor::TextPosition cursor = clamp_position(request.cursor_line, request.cursor_column);
-    viewport->JumpCursorTo(cursor.line, cursor.column, /*extend_selection=*/false);
+    viewport->JumpCursorTo(cursor.line, cursor.column, false);
   }
 
   operations_.reset_caret_blink();
-  operations_.note_active_editable_edit();  // owes the frame
+  operations_.note_active_editable_edit();
   return true;
 }
 
 bool WorkspaceEditService::ApplyLspEdit(const std::vector<CodeActionEdit>& edits,
                                         bool* out_any_rejected) {
-  return ApplyOpenBufferEdits(edits, /*lsp_columns=*/true, out_any_rejected);
+  return ApplyOpenBufferEdits(edits, true, out_any_rejected);
 }
 
 bool WorkspaceEditService::ApplyBufferEdits(const std::vector<CodeActionEdit>& edits) {
-  return ApplyOpenBufferEdits(edits, /*lsp_columns=*/false, nullptr);
+  return ApplyOpenBufferEdits(edits, false, nullptr);
 }
 
 bool WorkspaceEditService::ApplyOpenBufferEdits(const std::vector<CodeActionEdit>& edits,
@@ -165,16 +155,9 @@ bool WorkspaceEditService::ApplyOpenBufferEdits(const std::vector<CodeActionEdit
     return false;
   }
 
-  // Group edits by the buffer they resolve to. A large rename / code action
-  // repeatedly targets the same handful of files, so the (normalized) path ->
-  // viewport resolution is memoized and `bucket_index` maps a viewport to its slot,
-  // keeping grouping O(1) per edit instead of O(edits * touched_files).
   struct Bucket {
     editor::TextViewport* viewport = nullptr;
     EditBatch edits;
-    // The compact delta the LSP re-sync and the redraw need, instead of
-    // snapshotting every whole buffer before and after (TD-2026-07-17A-016):
-    // pre-edit line count plus the affected line span (before-coords).
     std::size_t before_line_count = 0;
     std::size_t first_changed_line = 0;
     std::size_t last_changed_line = 0;
@@ -203,22 +186,10 @@ bool WorkspaceEditService::ApplyOpenBufferEdits(const std::vector<CodeActionEdit
   bool applied_any = false;
   for (Bucket& bucket : buckets) {
     editor::TextViewport& viewport = *bucket.viewport;
-    // Resolve the server's position encoding for this buffer so the edit's LSP
-    // `character` offsets (utf-16 code units by spec default) map to the right
-    // UTF-8 byte column — mis-mapping on a non-ASCII line splits a multibyte
-    // sequence and corrupts the buffer.
     std::string language_id;
     LspClient* client = lsp_->LspClientForViewport(viewport, &language_id);
     const lsp_encoding::PositionEncoding encoding =
         client != nullptr ? LspEncodingForClient(*client) : lsp_encoding::PositionEncoding::Utf8;
-    // Convert 0-based LSP coordinates to editor byte columns. A line beyond EOF is a
-    // stale/confused/hostile server target: unlike the old forgiving clamp (which
-    // silently rewrote it onto the LAST real line and mutated it — visible data loss
-    // in dirty state, undo, diagnostics, folds), the whole buffer's edit group is
-    // REJECTED, matching the closed-file applier's range policy. The sole allowed
-    // beyond-EOF position is the end-of-document sentinel {line == line_count,
-    // character == 0} (an append at EOF). LspCharacterToByteColumn still soft-clamps
-    // the column within a valid line.
     const std::size_t line_count = viewport.line_count();
     bool group_ok = true;
     const auto map_position = [&](editor::TextPosition pos) -> editor::TextPosition {
@@ -227,7 +198,7 @@ bool WorkspaceEditService::ApplyOpenBufferEdits(const std::vector<CodeActionEdit
         return editor::TextPosition{0, 0};
       }
       if (pos.line == line_count && pos.column == 0) {
-        return pos;  // the end-of-document append sentinel
+        return pos;
       }
       if (pos.line >= line_count) {
         group_ok = false;
@@ -244,17 +215,11 @@ bool WorkspaceEditService::ApplyOpenBufferEdits(const std::vector<CodeActionEdit
     for (auto& [range, text] : bucket.edits) {
       range.start = map_position(range.start);
       range.end = map_position(range.end);
-      // Every edit changes its target line, so the lowest start line is the first
-      // differing line, and the highest end line bounds the redraw range for a
-      // same-line-count edit.
       const editor::SelectionRange normalized = editor::TextViewport::NormalizeRange(range);
       first_changed = std::min(first_changed, normalized.start.line);
       last_changed = std::max(last_changed, normalized.end.line);
     }
-    // A beyond-EOF target or an overlapping group invalidates this buffer's whole
-    // group; record the rejection so a server-initiated applyEdit reports partial
-    // failure.
-    if (!group_ok || !ApplyBatch(viewport, bucket.edits, /*record_undo=*/true, operations_.follow_applied_edit)) {
+    if (!group_ok || !ApplyBatch(viewport, bucket.edits, true, operations_.follow_applied_edit)) {
       mark_rejected();
       continue;
     }
@@ -268,16 +233,6 @@ bool WorkspaceEditService::ApplyOpenBufferEdits(const std::vector<CodeActionEdit
   }
 
   operations_.reset_caret_blink();
-  // Full-document re-sync of EVERY edited buffer (the incremental last-change path
-  // only carries the last of N edits, which would desync the server): a
-  // WorkspaceEdit can touch several open buffers (header + source rename,
-  // multi-file fixit), and each one's server mirror and stored diagnostics must be
-  // reconciled, not just the active tab's. Every edited buffer's fold model is
-  // recomputed too: its content_revision fingerprint alone does not force a
-  // rescan once a file is fully resolved (see the Undo/Redo guard in
-  // WorkspaceActionContext), so a same-line-count edit — a Format-Document
-  // re-indent, a bracket-renesting code action / rename — would otherwise leave
-  // phantom fold markers that hide arbitrary line ranges.
   const editor::TextViewport* active_viewport = operations_.active_editable_viewport();
   bool active_synced = false;
   for (const Bucket& bucket : buckets) {
@@ -291,17 +246,12 @@ bool WorkspaceEditService::ApplyOpenBufferEdits(const std::vector<CodeActionEdit
     if (bucket.viewport != active_viewport) {
       continue;
     }
-    // A frame: the pane's rows derive what the edit changed.
     operations_.request_frame();
     active_synced = true;
   }
   if (!active_synced) {
-    // The edit did not touch the active buffer; still refresh its last-change
-    // derived state so the caret/redraw bookkeeping stays consistent.
     operations_.note_active_editable_edit();
   }
-  // Repaint the tab strip so the dirty indicator appears immediately: the edit
-  // just flipped the buffer to dirty.
   operations_.request_frame();
   return true;
 }
@@ -312,8 +262,6 @@ void WorkspaceEditService::ApplyRename(const std::string& new_name,
   if (edits.empty() && resource_ops.empty()) {
     return;
   }
-  // Distinct affected files (an empty path targets the active buffer, always open),
-  // deduped through a hash set so a large legal rename stays O(edits).
   std::vector<std::filesystem::path> affected;
   std::unordered_set<std::string> affected_seen;
   std::size_t closed_count = 0;
@@ -332,17 +280,10 @@ void WorkspaceEditService::ApplyRename(const std::string& new_name,
   }
 
   if (closed_count == 0 && resource_ops.empty()) {
-    // Everything is already open: apply in place, leaving the buffers dirty like any
-    // other edit (the user saves as usual).
     ApplyLspEdit(edits);
     return;
   }
 
-  // Some files are not open, or the rename carries file operations (e.g. a
-  // rust-analyzer module rename renames the file itself). Confirm before applying —
-  // writing files the user hasn't opened and mutating paths are outward,
-  // hard-to-undo actions. The closed files are applied SILENTLY on disk
-  // (VSCode-style); no tabs are opened for them.
   std::string detail = "Renaming to '" + new_name + "' changes " +
                        std::to_string(affected.size()) + (affected.size() == 1 ? " file" : " files") +
                        " (" + std::to_string(closed_count) + " not open)";
@@ -362,17 +303,11 @@ void WorkspaceEditService::CommitPendingRename() {
   const PendingRename pending = std::move(*pending_rename_);
   pending_rename_.reset();
 
-  // Resource ops run FIRST (the text edits are keyed by the post-rename paths;
-  // open tabs are retargeted by the reconcile hooks as each op lands). A failed
-  // op batch rolls itself back and aborts the rename — applying the text edits
-  // against paths the ops never produced would corrupt the workspace.
   if (!pending.resource_ops.empty() && !ApplyResourceOps(pending.resource_ops).ok) {
     operations_.notify_error("Rename aborted: file operations failed (rolled back)");
     return;
   }
 
-  // Open files keep their edits applied in place (ApplyLspEdit resolves only
-  // already-open buffers; closed files are skipped there), then are saved.
   ApplyLspEdit(pending.edits);
 
   std::unordered_set<std::string> affected;
@@ -404,7 +339,6 @@ void WorkspaceEditService::CommitPendingRename() {
     }
   }
 
-  // Apply the remaining edits to the CLOSED files directly on disk — no tab spam.
   const DiskEditResult disk = ApplyToClosedFiles(pending.edits);
   saved += disk.files_written;
 
@@ -424,16 +358,14 @@ bool WorkspaceEditService::IsOpen(const std::filesystem::path& normalized) const
 std::vector<ClosedFileEditBucket> WorkspaceEditService::PrepareClosedFileBuckets(
     const std::vector<CodeActionEdit>& edits) const {
   std::vector<ClosedFileEditBucket> buckets;
-  // Map normalized path -> slot so grouping is O(1) per edit (O(edits * files)
-  // otherwise for a large multi-file rename).
   std::unordered_map<std::string, std::size_t> bucket_index;
   for (const CodeActionEdit& edit : edits) {
     if (edit.path.empty()) {
-      continue;  // empty path targets the (always-open) active buffer
+      continue;
     }
     std::filesystem::path normalized = edit.path.lexically_normal();
     if (IsOpen(normalized)) {
-      continue;  // edited in place by the open-buffer applier; keep undo coherent
+      continue;
     }
     const auto [slot, inserted] = bucket_index.emplace(normalized.generic_string(), buckets.size());
     if (inserted) {
@@ -441,11 +373,6 @@ std::vector<ClosedFileEditBucket> WorkspaceEditService::PrepareClosedFileBuckets
     }
     buckets[slot->second].edits.emplace_back(edit.range, edit.new_text);
   }
-  // Resolve each file's server position encoding HERE, on the main thread: the
-  // background applier must not touch the shared runtime syntax registry
-  // (lock-free-main-reader invariant) or the LSP manager. Path-only filetype
-  // detection: an extensionless file defaults to UTF-8 unless a server matches
-  // the path. FindStartedServer never spawns a server.
   for (ClosedFileEditBucket& bucket : buckets) {
     const std::string language_id = editor::runtime_syntax::DetectFiletype(bucket.path);
     const LspClient* client = lsp_->CurrentLspManager().FindStartedServer(language_id);
@@ -462,18 +389,11 @@ WorkspaceEditService::DiskEditResult WorkspaceEditService::RunClosedFileEdits(
     if (bucket.edits.empty()) {
       continue;
     }
-    // A scratch viewport private to this call (safe on a background thread), never
-    // registered as a tab.
     editor::TextViewport scratch;
     if (!scratch.OpenFile(bucket.path)) {
       result.any_failed = true;
       continue;
     }
-    // Map 0-based LSP coordinates to editor byte columns. A line beyond EOF is a
-    // hard reject (a buggy/hostile server must not silently mutate the last line
-    // instead of the line it named), except the LSP end-of-document sentinel
-    // `{line == line_count, character == 0}`, which maps to the end of the last
-    // line. A `character` past the line end stays a soft clamp.
     const std::size_t line_count = scratch.line_count();
     bool in_range = line_count > 0;
     const auto map_position = [&](editor::TextPosition pos) -> editor::TextPosition {
@@ -497,9 +417,7 @@ WorkspaceEditService::DiskEditResult WorkspaceEditService::RunClosedFileEdits(
       range.start = map_position(range.start);
       range.end = map_position(range.end);
     }
-    // Reject the whole file's group rather than apply a partial, position-corrupted
-    // set; the file on disk stays untouched. No undo: scratch is discarded.
-    if (!in_range || !ApplyBatch(scratch, file_edits, /*record_undo=*/false) ||
+    if (!in_range || !ApplyBatch(scratch, file_edits, false) ||
         !scratch.Save(gate)) {
       result.any_failed = true;
       continue;
@@ -529,8 +447,6 @@ bool WorkspaceEditService::ApplyFull(const std::vector<CodeActionEdit>& edits,
   if (edits.empty()) {
     return any_applied;
   }
-  // Synchronous closed-file apply (code-action scale: a handful of files, often
-  // just the one the ops created); the server-initiated bulk path stays async.
   const bool open_applied = ApplyLspEdit(edits);
   const DiskEditResult disk = ApplyToClosedFiles(edits);
   return any_applied || open_applied || disk.files_written > 0;
@@ -547,12 +463,6 @@ WorkspaceEditService::ResourceOpsResult WorkspaceEditService::ApplyResourceOps(
   ProjectWorkspaceState& state = context_->current_project_state;
   const fs::path project_root = state.root;
 
-  // --- Validate every op against a simulated existence overlay BEFORE mutating
-  // anything: the overlay tracks per-path existence as the earlier ops would
-  // leave it, so a create-then-rename batch validates the rename against the
-  // yet-to-be-created file. Catching every logical failure here is what makes
-  // the batch effectively atomic — the apply phase below can only fail on raw
-  // I/O errors, which the write gate's journal covers.
   std::unordered_map<std::string, bool> overlay;
   const auto target_exists = [&](const fs::path& p) {
     const auto it = overlay.find(p.generic_string());
@@ -571,25 +481,16 @@ WorkspaceEditService::ResourceOpsResult WorkspaceEditService::ApplyResourceOps(
     result.error = std::move(message);
     return result;
   };
-  std::vector<char> skip(ops.size(), 0);  // ignore-option ops that resolve to no-ops
+  std::vector<char> skip(ops.size(), 0);
   for (std::size_t i = 0; i < ops.size(); ++i) {
     const WorkspaceResourceOp& op = ops[i];
     const fs::path target = op.path.lexically_normal();
-    // A server may only touch files inside the active project root (mirrors the
-    // text-edit containment check; a compromised server must not create/rename/
-    // delete arbitrary user files). One bad op fails the whole batch — skipping
-    // it would desync every subsequent edit keyed to the op's outcome.
-    // Resolving containment, not lexical: a symlink INSIDE the root pointing out
-    // of it is spelled entirely within the root, and creating through a symlinked
-    // parent (`link/new.txt`) lands wherever the link points. The repository being
-    // edited is where such a link comes from, so this is not a check the server has
-    // to defeat — it only has to name a path the checkout already provides.
     if (target.empty() || !util::PathEqualsOrWithinResolvingSymlinks(target, project_root)) {
       return fail("resource op target escapes the project root");
     }
     switch (op.kind) {
       case Kind::Create:
-        if (target_exists(target) && !op.overwrite) {  // LSP: overwrite wins over ignoreIfExists
+        if (target_exists(target) && !op.overwrite) {
           if (op.ignore_if_exists) {
             skip[i] = 1;
             break;
@@ -636,20 +537,13 @@ WorkspaceEditService::ResourceOpsResult WorkspaceEditService::ApplyResourceOps(
     }
   }
 
-  // --- Apply: one all-or-nothing batch through the project's write gate, which
-  // journals each op's inverse and unwinds the lot on the first failure (deleted
-  // and overwritten paths are staged aside until the batch lands; TD-2026-09-29-305).
   using TreeOp = project::FileWriteGate::TreeOp;
   std::vector<TreeOp> tree_ops;
   tree_ops.reserve(ops.size());
-  // Reconcile actions are recorded in APPLY ORDER, not grouped by kind: a batch
-  // like [delete B, rename A->B] must close B's tabs before A's tabs are
-  // retargeted onto B, or the retargeted tab (and its unsaved contents) is closed
-  // by the reconcile of an op that ran earlier.
   struct AppliedReconcile {
     bool is_rename = false;
-    fs::path from;  // rename source / delete target
-    fs::path to;    // rename destination; empty for delete
+    fs::path from;
+    fs::path to;
   };
   std::vector<AppliedReconcile> applied_reconciles;
   fs::path last_mutated;
@@ -668,19 +562,19 @@ WorkspaceEditService::ResourceOpsResult WorkspaceEditService::ApplyResourceOps(
         const fs::path dest = op.new_path.lexically_normal();
         tree_ops.push_back(
             {.kind = TreeOp::Kind::Rename, .path = target, .new_path = dest, .overwrite = op.overwrite});
-        applied_reconciles.push_back({/*is_rename=*/true, target, dest});
+        applied_reconciles.push_back({true, target, dest});
         last_mutated = dest;
         break;
       }
       case Kind::Delete:
         tree_ops.push_back({.kind = TreeOp::Kind::Delete, .path = target, .recursive = op.recursive});
-        applied_reconciles.push_back({/*is_rename=*/false, target, {}});
+        applied_reconciles.push_back({false, target, {}});
         last_mutated = target.parent_path();
         break;
     }
   }
   if (tree_ops.empty()) {
-    return result;  // every op was an ignore-option no-op
+    return result;
   }
   project::FileWriteGate::TreeResult applied = state.write_gate().ApplyTreeOps(tree_ops);
   if (!applied.ok) {
@@ -688,9 +582,6 @@ WorkspaceEditService::ResourceOpsResult WorkspaceEditService::ApplyResourceOps(
   }
   result.any_applied = true;
 
-  // --- The batch landed: reconcile shell state per op, hand the staged
-  // directories off the shell thread (the gate already unlinked staged files), and
-  // refresh the project views once.
   for (const AppliedReconcile& action : applied_reconciles) {
     if (action.is_rename) {
       util::InvokeIfSet(operations_.reconcile_tabs_after_resource_rename, action.from, action.to);
@@ -708,17 +599,9 @@ WorkspaceEditService::ResourceOpsResult WorkspaceEditService::ApplyResourceOps(
 }
 
 bool WorkspaceEditService::ApplyServerEdit(const LspClient& client, LspClient::WorkspaceEdit edit) {
-  // Version gate FIRST (before anything mutates): a versioned TextDocumentEdit
-  // whose expected version differs from the tracked open document is stale — the
-  // server computed it against text the user has since changed. LSP requires the
-  // client to fail the whole request on a mismatch.
   if (!lsp_workspace_edit::VersionsCurrent(client, edit)) {
     return false;
   }
-  // Resource ops (create/rename/delete) run before any text edit; the parser
-  // re-keyed pre-rename text edits to their post-rename URI to match. One
-  // undecodable target URI fails the whole edit — partially applying an edit
-  // whose op list cannot be fully honored would leave the workspace inconsistent.
   bool any_resource_applied = false;
   if (!edit.resource_ops.empty()) {
     const std::optional<std::vector<WorkspaceResourceOp>> ops =
@@ -739,12 +622,6 @@ bool WorkspaceEditService::ApplyServerEdit(const LspClient& client, LspClient::W
     if (!path.has_value()) {
       continue;
     }
-    // A server-initiated edit may only target files inside the active project
-    // root (or a buffer already open in this project): a buggy or compromised
-    // server must not write any file the user account can reach. Resolving
-    // containment, because the disk applier reuses the editor's atomic save, which
-    // follows a symlink and overwrites its TARGET — a lexical check would let a
-    // link in the checkout leave the project.
     const std::filesystem::path normalized = path->lexically_normal();
     if (!util::PathEqualsOrWithinResolvingSymlinks(normalized, project_root) && !IsOpen(normalized)) {
       continue;
@@ -754,34 +631,23 @@ bool WorkspaceEditService::ApplyServerEdit(const LspClient& client, LspClient::W
     }
   }
   if (flat.empty()) {
-    // A resource-op-only edit (e.g. a bare file rename) is a legitimate success.
     return any_resource_applied;
   }
-  // Open buffers edit in place; closed files are written on disk. Passing the full
-  // set to both is safe: each applier skips the other's paths.
   bool open_rejected = false;
   const bool open_applied = ApplyLspEdit(flat, &open_rejected);
-  // A server rename can push edits to thousands of CLOSED files: the buckets and
-  // their encodings are prepared here, the load/edit/save runs off the shell thread
-  // (TD-2026-07-17-011 / TD-2026-07-16-18). A write failure self-heals (atomic
-  // writes leave the file intact and a later request re-syncs), so unlike the
-  // open-buffer path the response does not wait on the disk result.
   std::vector<ClosedFileEditBucket> buckets = PrepareClosedFileBuckets(flat);
   const bool had_closed_edits = !buckets.empty();
   if (had_closed_edits) {
     if (operations_.run_closed_file_edits_async) {
       operations_.run_closed_file_edits_async(std::move(buckets));
     } else {
-      RunClosedFileEdits(buckets, context_->current_project_state.write_gate());  // headless
+      RunClosedFileEdits(buckets, context_->current_project_state.write_gate());
     }
   }
-  // `applied: false` only when an OPEN-buffer group the user can see was rejected
-  // (beyond-EOF / overlap); the closed-file writes were accepted for background
-  // application, as VS Code does.
   if (open_rejected) {
     return false;
   }
   return open_applied || had_closed_edits || any_resource_applied;
 }
 
-}  // namespace microide::workspace
+}

@@ -9,16 +9,6 @@
 #include <string_view>
 #include <vector>
 
-// Fuzz the structural diff end to end: the lexer (raw strings, here-documents,
-// multi-line comments and strings), the lexical-state scan that seeds each hunk,
-// the structural match with its slider pass, and the model build over them.
-//
-// Input: byte 0 picks the language rules, byte 1 the line the scan stops at;
-// the rest is the left text, a NUL, then the right text.
-//
-// Checked: no crash or UB (ASan); the model's rows cover every line of each
-// side once, in order; and a region lexed from the scanned state yields the
-// tokens a lex of the whole text yields from that line on.
 namespace {
 
 using microide::compare::DiffContentInterner;
@@ -63,7 +53,7 @@ bool Kinds(DiffTokenKind a, DiffTokenKind b) {
   return cls(a) == cls(b);
 }
 
-}  // namespace
+}
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
   if (data == nullptr || size < 2 || size > 16 * 1024) {
@@ -75,7 +65,6 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   const std::string left(body.substr(0, nul));
   const std::string right(nul == std::string_view::npos ? std::string_view{} : body.substr(nul + 1));
 
-  // The model: rows cover each side's lines once, in order.
   microide::compare::CompareBuildOptions options;
   options.syntax = syntax;
   const microide::compare::CompareModel model =
@@ -91,7 +80,6 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     }
   }
 
-  // The scan agrees with a whole lex from the line it stops at.
   const std::vector<std::string_view> lines = Lines(left);
   if (lines.size() < 2) {
     return 0;

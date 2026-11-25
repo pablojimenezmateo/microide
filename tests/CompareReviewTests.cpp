@@ -40,8 +40,6 @@ using microide::workspace::PatchApplyService;
 using microide::workspace::ExpandCompareCollapsedContext;
 using microide::workspace::RefreshCompareReviewHeader;
 
-// The session restore reads review modes and staging views back through these
-// parsers, so every label must parse to the value that wrote it.
 static void TestCompareReviewLabelsRoundTrip() {
   for (const CompareReviewMode mode :
        {CompareReviewMode::WorkingTree, CompareReviewMode::Commit, CompareReviewMode::Branch,
@@ -66,15 +64,6 @@ static void TestCompareReviewLabelsRoundTrip() {
 
 void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
   AddTest(tests, "CompareReview/LabelsRoundTrip", TestCompareReviewLabelsRoundTrip);
-  // Branch review could be marked but never unmarked. MarkFileUnreviewed and
-  // MarkHunkUnreviewed were fully implemented and unit-tested, but no ActionId, no
-  // command spec, and no dispatch case ever reached them — so the only way to undo
-  // an accidental "reviewed" was clear-branch-review-state, which discards the
-  // ENTIRE branch's review (every file, every hunk, every note).
-  //
-  // This drives the real dispatch path (ActionCoordinator::Execute) rather than
-  // calling the service directly, because the service half was never the broken
-  // half: the missing piece was the wiring from a user-invocable command down to it.
   tests.push_back(
       {"CompareReview/UnmarkCommandsReachTheReviewService",
        [] {
@@ -99,7 +88,6 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
          operations.unmark_branch_file_reviewed = [&]() { ++unmarked_file; };
          operations.mark_branch_hunk_reviewed = [&]() { ++marked_hunk; };
          operations.unmark_branch_hunk_reviewed = [&]() { ++unmarked_hunk; };
-         // The marks apply to a diff opened from the Outgoing list only.
          microide::workspace::CompareTabState branch_tab;
          branch_tab.review_mode = microide::compare::CompareReviewMode::Branch;
          microide::workspace::CompareTabState* active_tab = nullptr;
@@ -139,9 +127,6 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                 "each hunk-review command must reach its own operation exactly once");
        }});
 
-  // The service semantics the commands above depend on: unmarking must actually
-  // clear the reviewed status rather than no-op, and must leave OTHER files alone
-  // (the distinction from clear-branch-review-state).
   tests.push_back(
       {"CompareReview/UnmarkClearsOnlyTheTargetedFile",
        [] {
@@ -176,11 +161,6 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                 "unmarking one file must not clear another file's review state");
        }});
 
-  // Regression: branch-review markers/notes must actually render on the compare
-  // rows. The marker-application loop gated on ComparePresentationRow::hunk_index,
-  // which the presentation builder never populates (stays -1), so the whole
-  // "reviewed"/note-indicator half of branch review was dead code. Markers must
-  // resolve the hunk from the underlying model row instead.
   tests.push_back(
       {"CompareReview/BranchMarkersRenderFromModelRowHunk",
        [] {
@@ -227,10 +207,6 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                 "a reviewed hunk must place a review marker on its model rows");
        }});
 
-  // The marker pass skips when none of its three inputs moved, because it runs
-  // from the derived-state refresh that fires on every mouse move. Each of those
-  // inputs must actually invalidate it — a stale skip shows a hunk as reviewed
-  // after it was unreviewed, which is worse than the cost the skip saves.
   tests.push_back(
       {"CompareReview/BranchMarkerCacheInvalidatesOnEveryInput",
        [] {
@@ -274,8 +250,6 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
          ApplyBranchReviewPresentationMarkers(compare_tab, service);
          Expect(marked_rows() == 0, "no review state means no markers");
 
-         // Input 1: the review state. A mutation bumps revision(), so the next
-         // pass must re-resolve even though the rows and target did not move.
          service.MarkHunkReviewed(compare_tab.branch_target,
                                   ComputeBranchReviewHunkIdentity(compare_tab.model, 0, path));
          ApplyBranchReviewPresentationMarkers(compare_tab, service);
@@ -292,8 +266,6 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
          ApplyBranchReviewPresentationMarkers(compare_tab, service);
          Expect(noted_rows() > 0, "adding a hunk note must re-resolve the markers");
 
-         // Input 2: the row list. A presentation rebuild clears every row's marker,
-         // so a pass that skipped after it would drop the markers entirely.
          service.MarkHunkReviewed(compare_tab.branch_target,
                                   ComputeBranchReviewHunkIdentity(compare_tab.model, 0, path));
          ApplyBranchReviewPresentationMarkers(compare_tab, service);
@@ -304,14 +276,12 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
          Expect(marked_rows() == reviewed_rows,
                 "a presentation rebuild must invalidate the marker cache");
 
-         // Input 3: the branch target. A different target has its own review state.
          compare_tab.branch_target =
              MakeBranchReviewTargetIdentity("/repo", "other-base", "HEAD", "other-base", 3);
          ApplyBranchReviewPresentationMarkers(compare_tab, service);
          Expect(marked_rows() == 0,
                 "switching the branch target must invalidate the marker cache");
 
-         // And the skip itself has to happen, or the guard is not being tested.
          compare_tab.branch_target =
              MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 3);
          ApplyBranchReviewPresentationMarkers(compare_tab, service);
@@ -369,9 +339,6 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
 
   tests.push_back({"CompareReview/SemanticSubmodulePointerMetadata",
                    [] {
-                     // Regression: the pointer classifier required size 41, which is
-                     // impossible ('-' + 40 hex + '\n' is 42), so submodule changes
-                     // were never detected.
                      const std::string left = "-" + std::string(40, 'a') + "\n";
                      const std::string right = "-" + std::string(40, 'b') + "\n";
                      const auto metadata = InferCompareSemanticFileMetadata(CompareSemanticMetadataInput{
@@ -408,12 +375,6 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
   tests.push_back(
       {"CompareReview/SemanticLineEndingOnlyMetadata",
        [] {
-         // The classifier used to answer this by allocating two whole-file
-         // NormalizeLineEndings copies and comparing them; it now walks both
-         // buffers collapsing line endings as it goes, allocating nothing. The
-         // collapse rule has to stay identical to util::NormalizeLineEndings
-         // ('\r' becomes '\n' and swallows a following '\n'), and this had no
-         // coverage at all before the rewrite.
          const auto classify = [](std::string_view left, std::string_view right) {
            return InferCompareSemanticFileMetadata(CompareSemanticMetadataInput{
                       .path = "f.txt",
@@ -440,13 +401,9 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
          Expect(!classify("a\r\nb\r\n", "a\nb"),
                 "a missing trailing newline is not a line-ending-only change");
          Expect(!classify("", "a\n"), "content appearing is not a line-ending-only change");
-         // A '\r' at the very end has no following byte to swallow, which is the
-         // boundary the walk has to get right.
          Expect(classify("a\r", "a\n"), "a trailing lone CR normalizes to a trailing LF");
        }});
 
-  // A review's comments show in the diff: a hunk's right after its last row
-  // (before the unchanged run that follows), the file's at the top.
   tests.push_back({"CompareReview/PresentationReviewNoteRows",
                    [] {
                      std::string left;
@@ -500,8 +457,6 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                             "rename metadata should add a metadata row");
                    }});
 
-  // TD-2026-11-11-443: the overview lane marks a moved run as moved, in its own
-  // run, so it is drawn in the moved colour rather than as removed or added.
   tests.push_back({"CompareReview/OverviewRunsSeparateMovedLines",
                    [] {
                      std::string middle;
@@ -541,11 +496,6 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                             "ignore-whitespace diff should treat trailing whitespace as equal");
                    }});
 
-  // The three tests below used to assert on `review_header.action_hint_line`,
-  // a string no surface ever painted (TD-2026-09-19-296). The product rule they
-  // encode — which mutation verbs each review mode and staging lens offers — is
-  // real, so they now ask the thing that actually decides it: the gate every
-  // stage/unstage/discard entry point runs before building a patch.
   const auto working_tree_tab = [](WorkingTreeStagingView staging_view) {
     CompareTabState compare_tab;
     compare_tab.review_mode = CompareReviewMode::WorkingTree;
@@ -940,7 +890,6 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                          }),
                          ComparePresentationOptions{}, ComparePresentationCollapseState{});
 
-                     // Locate the middle collapsed run and a model row hidden inside it.
                      std::optional<std::size_t> collapsed_row;
                      std::size_t hidden_model_row = 0;
                      for (std::size_t i = 0; i < presentation.rows.size(); ++i) {
@@ -948,7 +897,6 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                        if (row.kind == ComparePresentationRowKind::CollapsedContext &&
                            row.collapsed_run_length > 2) {
                          collapsed_row = i;
-                         // A row squarely inside the hidden interior.
                          hidden_model_row =
                              row.collapsed_run_start_model_row + row.collapsed_run_length / 2;
                          break;
@@ -957,8 +905,6 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                      Expect(collapsed_row.has_value(),
                             "fixture should expose a middle collapsed run");
 
-                     // A hidden model row must resolve to the collapse placeholder, never a
-                     // raw (out-of-range) model index in presentation space.
                      const std::size_t resolved =
                          ComparePresentationRowForModelRow(presentation, hidden_model_row);
                      Expect(resolved == *collapsed_row,
@@ -966,8 +912,6 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                      Expect(resolved < presentation.rows.size(),
                             "resolved presentation row must be in range");
 
-                     // A visible model row must resolve to its exact presentation row and
-                     // round-trip back to the same model row.
                      std::optional<std::size_t> visible_presentation_row;
                      for (std::size_t i = 0; i < presentation.rows.size(); ++i) {
                        if (presentation.rows[i].kind == ComparePresentationRowKind::Model) {
@@ -985,4 +929,4 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                    }});
 }
 
-}  // namespace microide::tests
+}

@@ -30,9 +30,6 @@ remote::HelloRequest TestHello() {
   return remote::HelloRequest{.release = "test", .root = ""};
 }
 
-// A launcher over a real `microide-server serve-stdio`, with an editor-side tree
-// (`local`) that is a DIFFERENT directory from the host tree, so an unmapped path
-// shows up as the wrong answer rather than passing by accident.
 struct Session {
   TemporaryDirectory temp;
   std::filesystem::path local = temp.path() / "mirror";
@@ -52,12 +49,6 @@ struct Session {
   }
 };
 
-// Run maps the working directory onto the host tree, passes argv and stdin through
-// untouched, and reports exit status like the local layer.
-// Paths re-root component by component, whichever root is spelled with a trailing
-// separator: the empty component that leaves after normalizing was skipped while
-// the path's own iterator moved on, so `/repo/src/main.cpp` under a root of
-// `/repo/` came back as the mirror's `main.cpp` -- a different file, silently.
 void TestPathMapReRootsUnderARootWithATrailingSeparator() {
   for (const char* host_root : {"/home/me/repo", "/home/me/repo/"}) {
     for (const char* local_root : {"/mirror/tree", "/mirror/tree/"}) {
@@ -97,8 +88,6 @@ void TestRunMapsCwdAndReportsLikeALocalRun() {
   Expect(session.launcher->spawn_count() == 6, "one host process per Run");
 }
 
-// A long-lived process adopted through StartAsync behaves like a local
-// AsyncSubprocess: write, read, close stdin, exit — and Shutdown terminates it.
 void TestStartAsyncAdoptsAHostProcess() {
   Session session;
   platform::AsyncSubprocess echo;
@@ -124,8 +113,6 @@ void TestStartAsyncAdoptsAHostProcess() {
              " exit=" + std::to_string(sleeper.exit_code().value_or(-999)));
 }
 
-// Git metadata comes from the host (the mirror has no .git) and is cached: asking
-// twice is one round trip, and a probe never costs a host process.
 void TestGitMetadataComesFromTheHost() {
   Session session;
   std::filesystem::create_directories(session.host / ".git");
@@ -140,11 +127,6 @@ void TestGitMetadataComesFromTheHost() {
   Expect(session.launcher->spawn_count() == 0, "no host process was started to find out");
 }
 
-// The git sidebar's status is PUSHED (remote-projects.md § 6.5): the host runs
-// `git status` after every change to the worktree or the repository and the
-// client builds the sidebar from it without a host process. A git command the
-// client runs that may change the repository makes any earlier push stale until
-// one computed after it arrives — the sidebar never shows a stage as undone.
 void TestGitStatusIsPushedAndNeverStaleAfterAMutation() {
   TemporaryDirectory temp;
   const std::filesystem::path local = temp.path() / "mirror";
@@ -194,7 +176,6 @@ void TestGitStatusIsPushedAndNeverStaleAfterAMutation() {
   Expect(WaitUntil([&] { return status_has("1 M. N..."); }, std::chrono::seconds(10)),
          "and the push computed after it arrives");
 
-  // A commit made on the host by something else (an agent in a host terminal).
   RequireGitCommandSuccess(host, {"commit", "-q", "-m", "on the host"}, "host-side commit");
   Expect(WaitUntil([&] {
            const auto current = launcher.CurrentStatus(local);
@@ -203,19 +184,9 @@ void TestGitStatusIsPushedAndNeverStaleAfterAMutation() {
          },
                    std::chrono::seconds(10)),
          "the host's own commit is noticed and pushed");
-  // At least the first push and the host commit's: nothing but a push can bring
-  // the latter. The add's staged status may come from the add's own answer and
-  // its push be coalesced with the next on a slow runner (CI ASan counted 2 on
-  // 2026-10-21) -- the content checks above are what each step is held to.
   Expect(pushes.load() >= 2, "the host's changes arrive as pushes (" + std::to_string(pushes.load()) + ")");
 }
 
-// A process's exit is sent when it happens. The server found exits by polling
-// every 50 ms, and a process's pipes reach EOF a moment before it can be reaped:
-// on a real host (worky, 2026-10-15) every remote process -- each git the sidebar
-// runs -- waited out the poll, 50 ms after its output, a round trip on that link.
-// The exit now wakes the loop (a pidfd). Deterministic here: the child closes its
-// output, then exits 20 ms later, so polling cannot see the exit before 50 ms.
 void TestHostProcessExitIsSentWhenItHappens() {
   TemporaryDirectory temp;
   const std::filesystem::path local = temp.path() / "mirror";
@@ -230,7 +201,6 @@ void TestHostProcessExitIsSentWhenItHappens() {
          "connects: " + error);
   const remote::RemoteProcessLauncher launcher(client, remote::RemotePathMap(local, host),
                                                {.host_paths_readable_locally = true});
-  // The median of 9 runs of `script`, in ms.
   const auto median_ms = [&](const char* script) {
     std::vector<double> ms;
     for (int i = 0; i < 9; ++i) {
@@ -242,13 +212,6 @@ void TestHostProcessExitIsSentWhenItHappens() {
     std::sort(ms.begin(), ms.end());
     return ms[ms.size() / 2];
   };
-  // Measured against a control of the same shape, so the spawns and round trip --
-  // whatever they cost on a loaded machine -- cancel out: woken by the exit, the
-  // 20 ms sleep adds ~20 ms; polled, the exit waited for the 50 ms tick and adds
-  // at least 50. (An absolute "< 40 ms" crossed under six parallel lanes, 40.76.)
-  // The control runs `sleep 0`, not nothing: the measured script forks and execs
-  // /bin/sleep, and with eight lanes running that second process start alone took
-  // the difference to 40.99 ms when the control skipped it.
   const double control = median_ms("exec >&- 2>&-; sleep 0; exit 3");
   const double slept = median_ms("exec >&- 2>&-; sleep 0.02; exit 3");
   if (!IsSanitizerBuild()) {
@@ -257,13 +220,6 @@ void TestHostProcessExitIsSentWhenItHappens() {
   }
 }
 
-// A read-only git the client runs on the host (the sidebar's own `git diff
-// <base>...HEAD`, a blame, a log) changes nothing, so its exit must not make the
-// host compute and push a status. It did: every push refreshed the sidebar, the
-// refresh ran its outgoing diff, and that diff's exit caused the next push -- a
-// git status and a git diff ~2.5 times a second on an idle host, measured on a
-// real one (worky, 2026-10-15), with the workspace queue too busy to publish a
-// file change for 11 s.
 void TestReadOnlyGitDoesNotTriggerAStatusPush() {
   TemporaryDirectory temp;
   const std::filesystem::path local = temp.path() / "mirror";
@@ -291,11 +247,9 @@ void TestReadOnlyGitDoesNotTriggerAStatusPush() {
          "git status is subscribed: " + error);
   Expect(WaitUntil([&] { return launcher.CurrentStatus(local).has_value(); }, std::chrono::seconds(10)),
          "the first push arrives");
-  // A second push for the subscribe itself may still be in flight.
   std::this_thread::sleep_for(std::chrono::milliseconds(300));
   const int settled = pushes.load();
 
-  // What the sidebar does on every push: read the status, then run its own diff.
   for (int round = 0; round < 6; ++round) {
     for (const std::vector<std::string>& argv :
          {std::vector<std::string>{"git", "diff", "--name-status", "-z", "HEAD"},
@@ -305,13 +259,11 @@ void TestReadOnlyGitDoesNotTriggerAStatusPush() {
              "read-only git ran on the host");
     }
   }
-  // Longer than the host's 1 s repository sampler, so a push it caused would land.
   (void)WaitUntil([&] { return pushes.load() != settled; }, std::chrono::milliseconds(1500));
   Expect(pushes.load() == settled,
          "read-only git caused no status push: " + std::to_string(pushes.load() - settled));
   Expect(client->last_git_generation() == 0, "and no exit carried a git generation");
 
-  // A mutation still does: its exit advances the generation and a push follows.
   Expect(launcher.Run({"git", "add", "a.txt"}, platform::SubprocessOptions{.cwd = local}).success(),
          "git add ran on the host");
   Expect(client->last_git_generation() > 0, "the mutation's exit carried a generation");
@@ -319,10 +271,6 @@ void TestReadOnlyGitDoesNotTriggerAStatusPush() {
          "and its status was pushed");
 }
 
-// Project search in a remote project runs ON THE HOST (remote-projects.md § 6.11):
-// over the host's real bytes — a mirror behind it would answer wrong without
-// saying so — and only over the content set, never build/ or .git. With no host
-// to ask, the local copy is searched and the update says so.
 void TestProjectSearchRunsOnTheHostOverTheContentSet() {
   TemporaryDirectory temp;
   const std::filesystem::path local = temp.path() / "mirror";
@@ -333,7 +281,6 @@ void TestProjectSearchRunsOnTheHostOverTheContentSet() {
   WriteFile(host / "build/out.txt", "needle in an ignored file\n");
   CommitAll(host, "init", "remote search");
   WriteFile(host / "src/b.txt", "a fresh needle the mirror has not pulled\n");
-  // The mirror is behind: a needle the host no longer has, and no b.txt.
   WriteFile(local / "src/a.txt", "old needle, old needle\n");
 
   auto client = remote::RemoteServerClient::Create();
@@ -375,8 +322,6 @@ void TestProjectSearchRunsOnTheHostOverTheContentSet() {
          "offline, the local copy is searched — and labelled as such");
 }
 
-// Over a real ssh link, when one is configured: MICROIDE_TEST_SSH_HOST names a host
-// with microide-server at MICROIDE_TEST_SSH_SERVER (default ~/microide-test/microide-server).
 void TestOverARealSshLink() {
   const char* host = std::getenv("MICROIDE_TEST_SSH_HOST");
   if (host == nullptr || *host == '\0') {
@@ -405,9 +350,6 @@ void TestOverARealSshLink() {
   cat.Shutdown(1000);
 }
 
-// A repository created on the host after connecting (`git init` in a host
-// terminal) is seen: the push says what the root is, and it replaces the answer
-// the launcher asked for and held.
 void TestGitRepositoryCreatedOnTheHostIsSeen() {
   TemporaryDirectory temp;
   const std::filesystem::path local = temp.path() / "mirror";
@@ -431,9 +373,6 @@ void TestGitRepositoryCreatedOnTheHostIsSeen() {
          "the host's git init is noticed");
 }
 
-// A command running when the link drops returns at once with the link's failure,
-// timeout or not: it used to sit out its whole timeout (60 s for git), holding the
-// worker that ran it.
 void TestRunReturnsWhenTheLinkDrops() {
   TemporaryDirectory temp;
   auto client = remote::RemoteServerClient::Create();
@@ -458,7 +397,7 @@ void TestRunReturnsWhenTheLinkDrops() {
          "and says why: " + result.stderr_text);
 }
 
-}  // namespace
+}
 
 void RegisterRemoteLauncherTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteLauncher/PathMapReRootsUnderARootWithATrailingSeparator",
@@ -480,4 +419,4 @@ void RegisterRemoteLauncherTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteLauncher/OverARealSshLink", TestOverARealSshLink);
 }
 
-}  // namespace microide::tests
+}

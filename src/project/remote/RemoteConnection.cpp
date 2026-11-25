@@ -16,7 +16,6 @@ void RemoteConnection::Replace(std::shared_ptr<RemoteServerClient> client) {
       }
     }
   }
-  // Outside the lock: a reattach may block on a reply (a process's proc/attach).
   for (const auto& item : live) {
     item->Reattach(client);
   }
@@ -28,4 +27,4 @@ void RemoteConnection::Track(const std::shared_ptr<Reattachable>& item) {
   items_.push_back(item);
 }
 
-}  // namespace microide::project::remote
+}

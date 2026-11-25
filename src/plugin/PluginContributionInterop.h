@@ -20,8 +20,6 @@ bool RegisterFormatter(lua_State* state,
                        std::vector<PluginHost::ContributedFormatter>* formatters,
                        std::string* error_message);
 
-// Virtual documents carry no runtime callback, so this takes no runtimes vector —
-// the only contribution kind that does not (TD-2026-07-27-001).
 bool RegisterVirtualDocument(lua_State* state,
                              std::string_view plugin_id,
                              std::vector<PluginHost::ContributedVirtualDocument>* documents,
@@ -51,13 +49,6 @@ bool RegisterLanguageQuery(lua_State* state,
                            std::vector<runtime_types::LanguageQueryRuntime>* runtimes,
                            std::string* error_message);
 
-// The five id-deduplicated contribution kinds (task / language server / debug
-// adapter / launch config / tool) take a per-kind `id_index` alongside their
-// storage vector. Duplicate detection and the insert are both O(1) against this
-// set instead of an O(n) linear scan of the vector, so registering N unique ids
-// is O(N) rather than O(N^2) (a plugin can loop `add` up to the per-kind
-// contribution cap). The set MUST mirror the vector's non-empty ids: the caller
-// owns both and rebuilds the set on teardown/pop. See TD-2026-07-17-077.
 bool RegisterTask(lua_State* state,
                   std::string_view plugin_id,
                   std::vector<PluginHost::ContributedTask>* tasks,
@@ -131,4 +122,4 @@ bool RegisterSnippet(lua_State* state,
                      std::string* error_message);
 #endif
 
-}  // namespace microide::plugin::contribution_interop
+}

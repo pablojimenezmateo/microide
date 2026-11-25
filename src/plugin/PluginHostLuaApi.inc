@@ -17,11 +17,6 @@
     return static_cast<Impl*>(lua_touserdata(state, lua_upvalueindex(1)));
   }
 
-  // Long-lived empty fallbacks for the null-host case. Returning a reference (not
-  // a value) lets the `host ? host->member : Fallback()` ternaries bind directly
-  // without materializing a temporary in the wrapper frame. That matters because
-  // the delegating interop call can raise a Lua error (a C longjmp), which would
-  // skip the destructor of any wrapper-frame temporary. See src/plugin/LuaError.h.
   static const std::filesystem::path& EmptyProjectRoot() {
     static const std::filesystem::path kEmpty;
     return kEmpty;
@@ -34,9 +29,6 @@
     static const std::filesystem::path kEmpty;
     return kEmpty;
   }
-  // Capability set used when no calling plugin can be resolved (null host/plugin). Denying
-  // everything is the safe posture: a real plugin always carries its own declared capabilities,
-  // which default to project-scoped fs and no process/network.
   static const PluginCapabilities& DenyAllCaps() {
     static const PluginCapabilities kDeny{
         .fs_read = FsAccess::kNone,
@@ -48,9 +40,6 @@
     return kDeny;
   }
 
-  // Builds the non-owning filesystem/process scope for the calling plugin. The result holds
-  // only references (to host/plugin members or the static fallbacks above), so it is safe to
-  // hand to a delegated interop call that may raise a Lua error (a C longjmp).
   static PluginFsContext MakeFsContext(Impl* host, const PluginInstance* plugin) {
     return PluginFsContext{
         host != nullptr ? host->current_project_root : EmptyProjectRoot(),
@@ -61,9 +50,6 @@
     };
   }
 
-  // Resolves the kernel-confinement descriptor for a process-spawning contribution from the
-  // calling plugin's project root, data dir, and network capability. Mirrors the live
-  // process.run sandbox so contributed servers/formatters are confined the same way.
   static platform::SubprocessSandbox MakeContributionSandbox(const std::filesystem::path& project_root,
                                                              const PluginInstance* plugin) {
     platform::SubprocessSandbox sandbox;
@@ -77,9 +63,6 @@
       sandbox.read_roots.push_back(plugin->data_dir);
       sandbox.write_roots.push_back(plugin->data_dir);
     }
-    // A contributed server or formatter is usually installed per user
-    // (~/.dotnet/tools/csharp-ls, nvm's typescript-language-server): it must be able
-    // to exec itself and read its runtime.
     const char* path_env = std::getenv("PATH");
     const char* home = std::getenv("HOME");
     platform::AllowUserToolchains(sandbox, path_env != nullptr ? path_env : "",
@@ -87,10 +70,6 @@
     return sandbox;
   }
 
-  // Allowlist gate for a contributed argv (formatter / language server / task). Mirrors the
-  // live process.run allowlist: an empty allowlist permits anything; otherwise command[0] must
-  // match an entry by exact string or basename. An empty command is left to the registration
-  // parser to reject and is not treated as an allowlist violation here.
   static bool CommandAllowed(const PluginCapabilities& caps,
                              const std::vector<std::string>& command) {
     if (caps.process_allowlist.empty() || command.empty()) {
@@ -105,9 +84,6 @@
     return false;
   }
 
-  // Surfaces a denied/failed process call on the plugin's output channel. Fully destructs its
-  // std::string before returning so the caller may immediately lua_error (longjmp) with nothing
-  // live on the stack.
   static void RecordProcessPendingError(Impl* host,
                                         const PluginInstance* plugin,
                                         lua_State* state) {
@@ -119,11 +95,6 @@
                         std::string(message != nullptr ? message : "process error"));
   }
 
-  // Registration verbs only make sense during plugin setup, where the worker holds
-  // exclusive host access (direct). A registration attempt from a reactive event
-  // (detached on the worker) would mutate shared registries the UI thread reads, so
-  // it is refused rather than raced. Returns true when the call must be rejected,
-  // leaving the error message on the Lua stack for the caller to raise.
   static bool RejectRuntimeRegistration(lua_State* state, Impl* host) {
     if (host == nullptr || g_exec.allow_registration) {
       return false;
@@ -192,8 +163,6 @@
     return it == plugins.end() ? nullptr : &(*it);
   }
 
-  // FindPluginByState and PushBufferContext as the callables the interop helpers
-  // take, instead of a forwarding lambda at every call.
   auto PluginLookup() const {
     return [this](lua_State* state) { return FindPluginByState(state); };
   }
@@ -358,8 +327,6 @@
                   error_message)) {
             return false;
           }
-          // Setup-time registration into the worker-owned registry; the bump to the
-          // UI-visible revision happens when the reload publishes the snapshot.
           return registry_interop::RegisterStatusItem(
               plugin, std::move(registration.contributed), &host->status_items,
               &host->status_item_order, error_message);
@@ -373,19 +340,12 @@
     if (host == nullptr) {
       return 0;
     }
-    // Read the update off the Lua table here (worker), then defer the apply + redraw
-    // so a status.update from a reactive event never races the UI thread's reads. The
-    // closure mutates the published status view directly: ApplyHostMutation runs it
-    // inline under exclusive access (setup / round-trip, UI parked) or marshals it to
-    // the UI thread (detached event) -- published_ is UI-thread-owned in both cases.
     registry_interop::StatusItemUpdate update;
     if (!registry_interop::ExtractStatusItemUpdate(state, host->FindPluginByState(state), id,
                                                    &update)) {
       return 0;
     }
     if (g_exec.in_reload) {
-      // Update issued from a setup / project-open handler: mutate the live order so the
-      // reload's publish carries it (a publish to published_ here would be overwritten).
       registry_interop::ApplyStatusItemUpdate(update, &host->status_item_order,
                                               &host->status_item_index);
       return 0;
@@ -527,8 +487,6 @@
           }
           if (!host->tasks.empty() &&
               !CommandAllowed(plugin->capabilities, host->tasks.back().command)) {
-            // RegisterTask already recorded the id in task_ids; drop it back out so
-            // the index stays a faithful mirror of the surviving vector.
             host->task_ids.erase(host->tasks.back().id);
             host->tasks.pop_back();
             *error_message = "task program not in capabilities.process.allow";
@@ -601,8 +559,6 @@
         state, "debug launch-config registration requires an active plugin state",
         "failed to parse debug launch-config registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          // A launch config only describes how to invoke an adapter; it spawns
-          // nothing itself, so it shares the debug-adapter capability gate.
           if (!plugin->capabilities.process_exec) {
             *error_message = "debug launch config requires capabilities.process.exec";
             return false;
@@ -643,23 +599,14 @@
                 state, plugin->id, &host->scm_providers, &host->scm_provider_runtimes,
                 error_message);
           }
-          // Shorthand form: register_scm_provider("id", "label"). Validate via a
-          // non-raising check and route failures through error_message: raising
-          // (luaL_checkstring) here would longjmp over the live C++ locals in this
-          // frame and RegisterTableContribution's error_message.
           if (!lua_isstring(state, 1) || !lua_isstring(state, 2)) {
             *error_message = "register_scm_provider(id, label) requires string arguments";
             return false;
           }
-          // Apply the shared per-kind contribution cap the table form enforces: the
-          // shorthand path previously pushed directly into host->scm_providers, so a
-          // plugin could loop it to grow the host vector past the memory backstop.
           if (microide::plugin::ContributionLimitReached(&host->scm_providers,
                                                              error_message)) {
             return false;
           }
-          // NUL-reject the id so a truncated "a\0b" cannot collide with another provider
-          // id (TD-2026-07-17A-080).
           std::optional<std::string> id = lua_interop::ToHostString(state, 1);
           std::optional<std::string> label = lua_interop::ToHostString(state, 2);
           if (!id || !label) {
@@ -696,20 +643,14 @@
                 state, plugin->id, &host->auth_providers, &host->auth_provider_runtimes,
                 error_message);
           }
-          // Shorthand form: register_auth_provider("id", "label"). See the scm
-          // provider path above: validate without raising so a bad argument cannot
-          // longjmp over the live C++ locals in this frame.
           if (!lua_isstring(state, 1) || !lua_isstring(state, 2)) {
             *error_message = "register_auth_provider(id, label) requires string arguments";
             return false;
           }
-          // Same shared per-kind cap the table form enforces; the shorthand path
-          // previously bypassed it and could grow host->auth_providers unbounded.
           if (microide::plugin::ContributionLimitReached(&host->auth_providers,
                                                              error_message)) {
             return false;
           }
-          // NUL-reject the id (TD-2026-07-17A-080); see the scm shorthand above.
           std::optional<std::string> id = lua_interop::ToHostString(state, 1);
           std::optional<std::string> label = lua_interop::ToHostString(state, 2);
           if (!id || !label) {
@@ -785,10 +726,6 @@
         host != nullptr ? host->callbacks : EmptyCallbacks());
   }
 
-  // Returns the calling plugin's writable scratch directory (created on demand), or nil when no
-  // plugin can be resolved. Plugins that declare data-scope fs access use this for report files
-  // and caches instead of writing to /tmp, which the sandbox denies. Building the path string and
-  // creating the directory happen before anything that could raise, so no longjmp crosses them.
   static int LuaWorkspaceDataDir(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
@@ -803,9 +740,6 @@
     return 1;
   }
 
-  // Filesystem helpers resolve the calling plugin so MakeFsContext can carry its capabilities
-  // and data dir. On a refused access the interop pushes the falsy result and sets `denied`,
-  // letting us surface a diagnostic on the plugin's output channel without raising.
   static int LuaFilesReadText(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
@@ -842,9 +776,6 @@
     return rc;
   }
 
-  // The process / diagnostics delegates return lua_error_util::kPendingError instead
-  // of raising, having already pushed the message; we record the denial diagnostic and
-  // raise here, where the wrapper frame holds no non-trivial locals to leak across the longjmp.
   static int LuaProcessRun(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
@@ -879,9 +810,6 @@
   static int LuaDiagnosticsClear(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
-    // Validate the optional path argument with non-raising checks BEFORE any
-    // non-trivial C++ local exists. luaL_checkstring can longjmp on bad input
-    // (e.g. clear({})), which would skip the ~std::optional/~path destructors.
     const bool has_path_arg = lua_gettop(state) >= 1 && !lua_isnil(state, 1);
     if (has_path_arg && lua_type(state, 1) != LUA_TSTRING) {
       lua_error_util::PushMessage(state, "diagnostics.clear requires a path string or nil");
@@ -914,9 +842,6 @@
   static int LuaDecorationsClear(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
-    // Validate the optional path argument with non-raising checks BEFORE any
-    // non-trivial C++ local exists. luaL_checkstring can longjmp on bad input
-    // (e.g. clear({})), which would skip the ~std::optional/~path destructors.
     const bool has_path_arg = lua_gettop(state) >= 1 && !lua_isnil(state, 1);
     if (has_path_arg && lua_type(state, 1) != LUA_TSTRING) {
       lua_error_util::PushMessage(state, "decorations.clear requires a path string or nil");
@@ -960,8 +885,6 @@
         state, host != nullptr ? host->callbacks : EmptyCallbacks());
   }
 
-  // ctx.editor.* helpers never raise (they push (false, message) on failure), so
-  // they need no kPendingError handling — the interop already pushed every result.
   static int LuaEditorApplyEdits(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
@@ -1176,7 +1099,6 @@
         PluginLookup(), result, error_message);
   }
 
-  // Every hover provider for `path`, in registration order, until one answers.
   bool QueryHoverChain(const std::filesystem::path& path, std::size_t line, std::size_t column,
                        PluginHost::HoverResult* result, std::string* error_message) {
     return hover_query_interop::QueryHover(
@@ -1203,11 +1125,6 @@
     state_teardown_interop::DestroyPluginState(plugin);
   }
 
-  // `plugin` is passed explicitly rather than resolved via FindPluginByState: during
-  // setup-failure cleanup the failing plugin is not yet in `plugins` (and active_plugin
-  // was reset), so FindPluginByState would return nullptr and the teardown would skip
-  // every plugin_id-keyed container and runtime-provider vector — leaving them pointing
-  // at the lua_State we are about to destroy (use-after-free on the next query).
   void UnregisterContributionsForState(lua_State* state, const PluginInstance* plugin) {
     state_teardown_interop::UnregisterContributionsForState(
         state, plugin,
@@ -1252,20 +1169,9 @@
             .themes = &themes,
             .file_icon_themes = &file_icon_themes,
         });
-    // The teardown remove_if above dropped one plugin's entries from the five
-    // id-deduplicated vectors; re-sync their O(1) duplicate-id indexes from the
-    // survivors so a later reload/registration sees exactly the live ids (see
-    // TD-2026-07-17-077).
     RebuildContributionIdIndexes();
-    // Teardown runs on the worker during reload; the publish at the end of the reload
-    // copies the (now-empty or rebuilt) status_item_order into published_ and bumps
-    // the UI-visible status_view_revision, so no separate invalidation is needed here.
   }
 
-  // Rebuild the five contribution id indexes from their storage vectors. Cheap
-  // (these kinds hold a handful of entries in practice) and the simplest way to
-  // keep the indexes exact after a per-plugin remove_if teardown that does not
-  // report which ids it removed. Empty ids are excluded, matching registration.
   void RebuildContributionIdIndexes() {
     const auto rebuild = [](std::unordered_set<std::string>* index, const auto& items) {
       index->clear();
@@ -1380,9 +1286,6 @@
         [this](PluginInstance* plugin, std::string* setup_error) {
           return CallSetup(plugin, setup_error);
         },
-        // Setup-failure cleanup: pass the live plugin directly so plugin_id-keyed
-        // contributions and runtime-provider vectors are torn down before its
-        // lua_State is destroyed (FindPluginByState can't see it yet).
         [this](const PluginInstance& plugin) {
           UnregisterContributionsForState(plugin.state, &plugin);
         },

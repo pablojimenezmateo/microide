@@ -23,31 +23,15 @@ struct IndexUpdateBatch {
   enum class Kind { CreatedOrModified, Deleted };
   struct Change {
     Kind kind;
-    IndexFileEntry entry;  // relative_path always set; mtime/size only for CreatedOrModified
-    // Deleted only: relative_path is a directory and every indexed file beneath it
-    // should be removed. Set when a watched/nested directory is deleted or moved out,
-    // since the OS sends no per-file deletion for its contents.
+    IndexFileEntry entry;
     bool recursive = false;
   };
   std::vector<Change> changes;
-  bool is_initial = false;  // true for first full-scan batch on Watch()
-  bool truncated = false;   // true when the walk hit the entry budget and stopped early
-  // True when the tree's SHAPE changed in a way `changes` cannot describe: a
-  // directory created, deleted, renamed or moved, a non-regular entry (a symlink
-  // to a directory, a fifo) appearing, or a resync after dropped events.
-  //
-  // The index tracks regular files only, so `mkdir empty/` produces no change at
-  // all — and the sidebar tree, the finder's directory grouping and project
-  // search still have to see it. This bit is what a coarse "something under the
-  // root moved" consumer subscribes to; before it existed the workspace ran a
-  // SECOND full tree walk and a second inotify instance over the same
-  // directories purely to derive it (TD-2026-08-15-252).
+  bool is_initial = false;
+  bool truncated = false;
   bool tree_structure_changed = false;
 };
 
-// Threading contract: The callback registered via SetCallback() fires on the watcher's
-// background thread. The consumer must synchronize access to any shared state it reads
-// or writes inside the callback.
 class FileIndexWatcher {
  public:
   using Callback = std::function<void(IndexUpdateBatch)>;
@@ -58,60 +42,29 @@ class FileIndexWatcher {
   FileIndexWatcher(const FileIndexWatcher&) = delete;
   FileIndexWatcher& operator=(const FileIndexWatcher&) = delete;
 
-  // Must be called before Watch(). Replaces any previously set callback.
   void SetCallback(Callback callback);
 
-  // User/project-configured ignore globs (gitignore syntax, root-anchored) folded
-  // into the traversal filter alongside the built-in defaults. Call before Watch().
   void SetExcludeGlobs(std::vector<std::string> globs);
 
-  // Override the per-walk entry budget for the initial scan (mainly a test seam to
-  // trip truncation cheaply). Kept files past this count are dropped and the batch
-  // is flagged truncated. Call before Watch(). Defaults to kTreeTraversalEntryBudget.
   void SetEntryBudget(std::size_t max_entries);
 
-  // Test seams for the backend-independent contract suite (TD-2026-07-17-036):
-  // force the poll fallback even where native events are available, and shorten
-  // the poll interval (default 750ms) so poll-backend contract runs stay fast.
-  // Call before Watch().
   void SetForcePollForTesting(bool force_poll);
   void SetPollIntervalForTesting(std::chrono::milliseconds interval);
 
-  // Start watching root_path recursively. Immediately emits an initial IndexUpdateBatch
-  // (is_initial=true) with all files found in the tree. Returns true on success.
-  // Subsequent changes emit incremental batches. Falls back to poll mode on failure.
   bool Watch(const std::filesystem::path& root_path);
 
-  // Stop watching and join the background thread. Safe to call multiple times.
   void Unwatch();
 
-  // Returns false if using poll-fallback mode (native events unavailable).
   bool IsNative() const;
 
-  // The project's open documents, watched wherever they are. The tracked tree's
-  // watch above does not reach them all: it prunes `.git`, ignored and excluded
-  // directories, does not follow a symlink back into the tree, and stops at the
-  // root -- and a clean buffer of a file in any of those places kept its old text
-  // through a change on disk. `callback` fires on that watcher's own thread with
-  // the paths that changed; the set itself is OpenFileWatcher::SetFiles. Ends with
-  // Unwatch().
   OpenFileWatcher& WatchOpenFiles(OpenFileWatcher::Callback callback);
   OpenFileWatcher* open_files() { return open_files_.get(); }
 
-  // Test seam: drive the dispatch wrapper directly, as a background worker would,
-  // so the initial-vs-incremental ordering guard can be exercised deterministically
-  // without racing two real threads.
   void DispatchBatchForTesting(IndexUpdateBatch batch);
 
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
-  // Ordering guard shared by the (concurrent) initial-scan and native-event workers.
-  // The initial-scan and native workers both drive the callback; a non-initial
-  // (incremental) batch that arrives before the trailing is_initial batch — which
-  // FileIndex::ApplyBatch applies as a wholesale replace — would be lost. SetCallback
-  // wraps the client callback to buffer incrementals until the initial batch lands,
-  // then replays them in order; Watch resets it (workers are joined by Unwatch first).
   struct DispatchState;
   std::shared_ptr<DispatchState> dispatch_state_;
   std::unique_ptr<OpenFileWatcher> open_files_;
@@ -125,6 +78,6 @@ using FileIndexSnapshot =
 std::vector<IndexUpdateBatch::Change> BuildPollSnapshotDiff(const FileIndexSnapshot& previous,
                                                             const FileIndexSnapshot& current);
 
-}  // namespace detail
+}
 
-}  // namespace microide::platform
+}

@@ -1,15 +1,5 @@
 #pragma once
 
-// Retained-scene redraw for pixel tests.
-//
-// The app loop does not repaint the window per event: it repaints only the rects
-// an event's invalidation names, over the previous frame's pixels. A handler that
-// forgets a rect therefore leaves stale pixels on screen, and nothing fails --
-// unless a test paints the same way and compares the result with a full repaint
-// of the same state. That is what this is for. Its pieces (the clip inflation,
-// the pixel diff) lived as private copies in three test files; the diff is now
-// the app's own (render/PixelDiff), shared with the QA redraw verifier.
-
 #include "render/PaintElement.h"
 #include <SDL3/SDL.h>
 
@@ -32,8 +22,6 @@
 
 namespace microide::tests {
 
-// The clip the app loop sets for one damage rect: the rect grown by the
-// renderer's partial-redraw padding (glyph overhang), clamped to the canvas.
 inline SDL_Rect InflateClipRect(const SDL_FRect& rect,
                                 render::TextClipPadding padding,
                                 int width,
@@ -50,9 +38,6 @@ inline SDL_Rect InflateClipRect(const SDL_FRect& rect,
   };
 }
 
-// The same comparison the app's QA redraw verifier runs (render/PixelDiff). It is
-// bytewise, so two surfaces of different formats (a TTF render against an RGBA32
-// canvas) are compared after converting the right one to the left one's format.
 inline render::PixelDiffResult DiffSurfaces(SDL_Surface* lhs, SDL_Surface* rhs) {
   Expect(lhs != nullptr && rhs != nullptr, "pixel comparisons should receive readable surfaces");
   Expect(SDL_BYTESPERPIXEL(lhs->format) == 4 && !SDL_MUSTLOCK(lhs),
@@ -83,13 +68,6 @@ inline std::size_t CountPixelDifferences(const SoftwareCanvas& lhs, const Softwa
   return CountPixelDifferences(lhs.surface(), rhs.surface());
 }
 
-// Paint exactly what `redraw` asks for onto `canvas`, as the app loop does
-// (Application::RenderFrame): a full frame for `full`, otherwise one pass per
-// rect under its clip WITH that clip as the dirty hint -- the hint is what lets
-// RenderClip skip whole surfaces, and skipping the wrong one is a class of stale
-// pixel only a hinted pass can show -- plus whatever preparing the frame asked
-// for, and NOTHING when it asks for nothing: an empty invalidation is a frame the
-// app does not draw.
 inline void PaintInvalidation(workspace::WorkspaceShell& shell,
                               SoftwareCanvas& canvas,
                               int width,
@@ -100,16 +78,11 @@ inline void PaintInvalidation(workspace::WorkspaceShell& shell,
     shell.Render(canvas.renderer(), width, height);
     return;
   }
-  // A frame owed with no damage named (RenderInvalidation::frame) paints what
-  // preparing it damages, as Application::Render does; with nothing named and no
-  // frame owed, nothing is drawn.
   if (redraw.rects.empty() && !redraw.frame) {
     return;
   }
   const workspace::WorkspaceShell::FrameToken token =
       shell.PrepareFrameOnce(canvas.renderer(), width, height);
-  // Damage requested while preparing the frame is painted in it, as
-  // Application::Render does.
   const workspace::RenderInvalidation prepared = shell.ConsumePendingRenderInvalidation();
   if (prepared.full) {
     shell.RenderClip(token, canvas.renderer(), width, height);
@@ -117,15 +90,11 @@ inline void PaintInvalidation(workspace::WorkspaceShell& shell,
   }
   std::vector<SDL_FRect> rects(redraw.rects.begin(), redraw.rects.end());
   rects.insert(rects.end(), prepared.rects.begin(), prepared.rects.end());
-  // MQA_TEST_DUMP: the damage preparing the frame derived, beside the rects the
-  // test's ExpectFresh prints for the request -- which unit repainted what.
   if (std::getenv("MQA_TEST_DUMP") != nullptr) {
     for (const SDL_FRect& r : prepared.rects) {
       std::fprintf(stderr, "derived: rect %.0f,%.0f %.0fx%.0f\n", r.x, r.y, r.w, r.h);
     }
   }
-  // `painted_rects` collects what was repainted, derived damage included: a test
-  // asking "did this pane repaint" gets the answer the frame gave, not the request.
   if (painted_rects != nullptr) {
     painted_rects->insert(painted_rects->end(), rects.begin(), rects.end());
   }
@@ -144,10 +113,6 @@ inline void PaintInvalidation(workspace::WorkspaceShell& shell,
          "a retained redraw should clear its clip rect");
 }
 
-// What the app repaints for `redraw`: its own rects plus the damage preparing the
-// frame derives (the derived surfaces name none: RenderInvalidation::frame). The
-// shell must have painted a frame before, so the derived units have one to
-// compare with.
 inline workspace::RenderInvalidation FrameDamage(workspace::WorkspaceShell& shell,
                                                  SoftwareCanvas& canvas,
                                                  int width,
@@ -159,9 +124,6 @@ inline workspace::RenderInvalidation FrameDamage(workspace::WorkspaceShell& shel
   return all;
 }
 
-// The app loop's handling of a run of events: each event's own redraw folded with
-// whatever the shell queued while handling it. A test that keeps only `handled`
-// paints nothing, which is how a click-path test once passed vacuously.
 inline workspace::RenderInvalidation DispatchEvents(workspace::WorkspaceShell& shell,
                                                    std::initializer_list<SDL_Event> events) {
   workspace::RenderInvalidation redraw;
@@ -172,11 +134,6 @@ inline workspace::RenderInvalidation DispatchEvents(workspace::WorkspaceShell& s
   return redraw;
 }
 
-// Paint `redraw` over the retained canvas as the app would, then repaint the same
-// state in full ON THE SAME CANVAS (glyph textures are per renderer, so a fresh
-// canvas differs wherever there is text) and diff the two. The canvas is left
-// holding the full repaint, so steps chain. `before_paint` runs before each paint
-// -- tests pin the caret blink there so both paints agree on it.
 inline render::PixelDiffResult PaintAndDiffWithFullRepaint(
     workspace::WorkspaceShell& shell,
     SoftwareCanvas& canvas,
@@ -184,9 +141,6 @@ inline render::PixelDiffResult PaintAndDiffWithFullRepaint(
     int height,
     const workspace::RenderInvalidation& redraw,
     const std::function<void()>& before_paint = {}) {
-  // Every draw is checked against its element's rect while the two paints run
-  // (clip-discipline D5): a draw outside its element fails the test by name,
-  // whether or not it produced a stale pixel this time.
   const bool was_recording = render::PaintOverrunRecordingEnabled();
   render::SetPaintOverrunRecording(true);
   (void)render::TakePaintOverruns();
@@ -212,8 +166,6 @@ inline render::PixelDiffResult PaintAndDiffWithFullRepaint(
                       std::to_string(overrun.draw_rect.w) + "x" + std::to_string(overrun.draw_rect.h));
   }
   const render::PixelDiffResult diff = DiffSurfaces(retained, canvas.surface());
-  // MICROIDE_TEST_DUMP_DIFF=<dir>: the two images of a differing pair, for reading
-  // a failure by eye (the QA harness keeps the same pair per stale frame).
   if (const char* dump = std::getenv("MICROIDE_TEST_DUMP_DIFF"); dump != nullptr && diff.count != 0) {
     static int dump_index = 0;
     const std::string base = std::string(dump) + "/diff-" + std::to_string(dump_index++);
@@ -230,4 +182,4 @@ inline std::string DescribePixelDiff(const render::PixelDiffResult& diff) {
          std::to_string(diff.box_height);
 }
 
-}  // namespace microide::tests
+}

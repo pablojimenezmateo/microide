@@ -11,9 +11,6 @@
 namespace microide::tests::architecture {
 namespace {
 
-// Offset of the `:` that makes `head` (the text between a `for`'s parentheses) a
-// range-for, or npos. Top level only: `::`, a `?:` inside a call, and the `;` of
-// a classic for are not it.
 std::size_t RangeForColon(std::string_view head) {
   int depth = 0;
   for (std::size_t i = 0; i < head.size(); ++i) {
@@ -35,10 +32,6 @@ std::size_t RangeForColon(std::string_view head) {
   return std::string_view::npos;
 }
 
-// Whether, at `next`, the range goes on into the temporary: a subscript, or one
-// of util::JsonValue's accessors, which return references into the value
-// (`BuildCommands().AsArray()` walked a destroyed array: the control `surface`
-// query, 2026-11-08).
 bool ReachesIntoTheResult(std::string_view range, std::size_t next) {
   if (next >= range.size()) {
     return false;
@@ -54,10 +47,6 @@ bool ReachesIntoTheResult(std::string_view range, std::size_t next) {
   return false;
 }
 
-// Whether `range` reaches into the result of a call: a `)` followed by `[` or a
-// JSON accessor, whose matching `(` follows a name or a template's `>` --
-// `F(x)[k]`, `F<T>()[0]`, `F().AsArray()`. A parenthesized expression
-// (`(*json)["rows"]`) is not a call.
 bool SubscriptsACallResult(std::string_view range) {
   for (std::size_t close = 0; close < range.size(); ++close) {
     if (range[close] != ')') {
@@ -94,19 +83,8 @@ bool SubscriptsACallResult(std::string_view range) {
   return false;
 }
 
-}  // namespace
+}
 
-// The one shape of TD-2026-10-27-404 a scan can tell apart. The hazard in general
-// is a member FUNCTION or `operator[]` returning a reference into a temporary
-// returned by value; a regex cannot tell that from a call on a cached reference
-// (`MakeEditorTabService().DirtyGroupTabs()` is fine) or a data member of the
-// temporary (`: ComputeEditorGroupRects(layout).groups` extends the whole object,
-// and is fine). A subscript of a call's result is the shape that slipped through
-// -- a JSON lookup, `ControlUi(shell)["elements"].AsArray()`, passed every plain
-// run and failed only under ASan -- and a call returning a reference it could
-// subscript safely is rare enough that binding it to a named local first is the
-// right spelling anyway. GCC's -Wdangling-reference did not fire on it, and the
-// compilers CI builds with predate C++23's fix (P2718R0: GCC 15, Clang 19).
 RuleResult CheckRangeForDoesNotSubscriptATemporary(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "a range-for must not iterate a subscript of a call's temporary result";
@@ -125,8 +103,6 @@ RuleResult CheckRangeForDoesNotSubscriptATemporary(const std::filesystem::path& 
       }
       const std::string text = ReadText(entry.path());
       const std::vector<bool> is_code = BuildCodeMask(text);
-      // The loop header with everything that is not code blanked, so a paren or
-      // colon in a string literal or comment counts for nothing.
       std::string code = text;
       for (std::size_t i = 0; i < code.size() && i < is_code.size(); ++i) {
         if (!is_code[i] && code[i] != '\n') {
@@ -192,7 +168,6 @@ void RunRangeForTemporaryRuleFixtures() {
          "the range-for rule must flag a subscript of a call's result, a template call's, one "
          "wrapped across lines, and a JSON accessor on a call's result");
 
-  // Positive control: the safe spellings next to it.
   WriteFile(root / "tests/Bad.cpp",
             "void A(){ const auto ui = TestAccess::ControlUi(shell); for (const auto& e : ui[\"elements\"].AsArray()) {} }\n"
             "void B(){ for (auto& g : ComputeEditorGroupRects(layout).groups) {} }\n"
@@ -209,7 +184,6 @@ void RunRangeForTemporaryRuleFixtures() {
          "parenthesized subscript, an accessor on a named value, a classic for, and string or "
          "comment text");
 
-  // Loud-missing-target guard: no range-for at all is a hollowed-out rule.
   WriteFile(root / "tests/Bad.cpp", "int H(){ return 0; }\n");
   Expect(!CheckRangeForDoesNotSubscriptATemporary(root).violations.empty(),
          "the range-for rule must fail loudly when it finds no range-for to scan");
@@ -219,8 +193,6 @@ RuleResult CheckRelativeClimbOutTestsTheFirstComponent(const std::filesystem::pa
   RuleResult result;
   result.label = "a relative path climbs out by its first component, not by a \"..\" text prefix";
   result.hard_fail = true;
-  // The literal is not code (BuildCodeMask), so the match is anchored on the call's
-  // `.` -- which is -- and a mention in a comment or a string is not a call.
   const std::regex prefix_test(R"re(\.(?:starts_with\(\s*"\.\."\s*\)|rfind\(\s*"\.\."\s*,\s*0\s*\)))re");
   const std::filesystem::path helper = repo_root / "src/util/PathMatch.h";
   if (!RequireRuleTarget(result, helper)) {
@@ -277,8 +249,6 @@ void RunRelativeClimbOutRuleFixtures() {
   Expect(CheckRelativeClimbOutTestsTheFirstComponent(root).violations.size() == 3,
          "the climb-out rule must flag starts_with(\"..\") and rfind(\"..\", 0)");
 
-  // Positive control: the helpers, a "../" prefix (a separator makes it a component
-  // test), an unanchored rfind, and the text in a comment or a string.
   WriteFile(root / "src/Bad.cpp",
             "bool A(const path& r){ return util::RelativePathClimbsOut(r); }\n"
             "bool B(std::string_view t){ return t == \"..\" || t.starts_with(\"../\"); }\n"
@@ -289,7 +259,6 @@ void RunRelativeClimbOutRuleFixtures() {
          "the climb-out rule must accept the helpers, a \"../\" prefix, an unanchored rfind, and "
          "comment or string text");
 
-  // Loud-missing-target guard: the helper the message names must exist.
   WriteFile(root / "src/util/PathMatch.h", "// nothing here\n");
   Expect(!CheckRelativeClimbOutTestsTheFirstComponent(root).violations.empty(),
          "the climb-out rule must fail loudly when util::RelativePathClimbsOut is gone");
@@ -312,7 +281,6 @@ RuleResult CheckWaitFailureMessagesAreLazy(const std::filesystem::path& repo_roo
     }
     const std::string text = ReadText(entry.path());
     const std::vector<bool> is_code = BuildCodeMask(text);
-    // Literals and comments blanked: their parens and commas count for nothing.
     std::string code = text;
     for (std::size_t i = 0; i < code.size() && i < is_code.size(); ++i) {
       if (!is_code[i] && code[i] != '\n') {
@@ -342,7 +310,7 @@ RuleResult CheckWaitFailureMessagesAreLazy(const std::filesystem::path& repo_roo
       const std::string_view message(code.data() + last_comma + 1, close - last_comma - 1);
       const std::size_t first = message.find_first_not_of(" \t\r\n");
       if (first == std::string_view::npos || message[first] == '[') {
-        continue;  // a lambda: built only when the wait failed
+        continue;
       }
       if (message.find('(') != std::string_view::npos && message.find('+') != std::string_view::npos) {
         result.violations.push_back(Violation{
@@ -369,15 +337,12 @@ void RunWaitFailureMessageRuleFixtures() {
   TemporaryDirectory fixture;
   const std::filesystem::path& root = fixture.path();
   std::filesystem::create_directories(root / "tests");
-  // Negative control: a described state built eagerly, in either wait.
   WriteFile(root / "tests/Bad.cpp",
             "void T(){ Expect(PumpUntil(shell, [&] { return f(a, b); }), \"panes:\" + Summary(shell));\n"
             "  Expect(WaitUntil([&]{ return g(); }, std::chrono::seconds(1)),\n"
             "         \"screen: \" + ScreenText(s)); }\n");
   Expect(CheckWaitFailureMessagesAreLazy(root).violations.size() == 2,
          "the lazy-message rule must flag an eager described-state message on each wait");
-  // Positive control: a lambda message, a plain literal, a literal with a comma in
-  // it, and a plain Expect that waits for nothing.
   WriteFile(root / "tests/Bad.cpp",
             "void T(){ Expect(PumpUntil(shell, done), [&] { return \"panes:\" + Summary(shell); });\n"
             "  Expect(WaitUntil(done, std::chrono::seconds(1)), \"it lands, then (f) + g\");\n"
@@ -387,10 +352,9 @@ void RunWaitFailureMessageRuleFixtures() {
     Expect(clean.violations.empty() && clean.missing_targets.empty(),
            "the lazy-message rule must accept lambdas, literals and non-wait Expects");
   }
-  // Loud when it finds no wait at all.
   WriteFile(root / "tests/Bad.cpp", "int x = 0;\n");
   Expect(!CheckWaitFailureMessagesAreLazy(root).violations.empty(),
          "the lazy-message rule must fail loudly when it scans no wait");
 }
 
-}  // namespace microide::tests::architecture
+}

@@ -22,11 +22,6 @@ bool ReadHoverResultTable(lua_State* state,
   result->title.clear();
   result->content.clear();
 
-  // A plugin hover popup measures and lays out the full title/content, so an oversized
-  // string would stall layout (TD-2026-07-17-018). Cap each on a UTF-8 boundary at the
-  // same ceiling the LSP hover path uses. Reading via ToHostString (not a raw
-  // lua_tostring) also keeps NUL handling consistent with every other scalar field: an
-  // embedded NUL rejects the value rather than silently truncating at the first NUL.
   constexpr std::size_t kMaxHoverBytes = 32u * 1024;
 
   lua_interop::GetFieldProtected(state, absolute_index, "title");
@@ -108,7 +103,7 @@ void PushSidebarItemTable(lua_State* state,
   }
 }
 
-}  // namespace
+}
 
 bool SnapshotSidebarProvider(
     const runtime_types::SidebarProvider& provider,
@@ -142,8 +137,6 @@ bool SnapshotSidebarProvider(
     return false;
   }
 
-  // Clamp against a sparse-border table making lua_rawlen overstate the length
-  // (and a genuinely absurd item count): bound both the reserve and the loop.
   constexpr lua_Integer kMaxSidebarItems = 100000;
   const lua_Integer count =
       std::min<lua_Integer>(static_cast<lua_Integer>(lua_rawlen(provider.state, -1)),
@@ -226,8 +219,6 @@ bool ToggleSidebarProviderItem(
     const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
     std::string* error_message) {
   if (provider.toggle_ref == LUA_NOREF || provider.state == nullptr) {
-    // No toggle callback declared: the caller treats this as a no-op so flat
-    // sidebars are unaffected.
     util::ClearError(error_message);
     return false;
   }
@@ -292,6 +283,6 @@ bool QueryHoverProvider(
   return ok;
 }
 
-}  // namespace microide::plugin::sidebar_hover_interop
+}
 
 #endif

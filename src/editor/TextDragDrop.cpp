@@ -14,17 +14,11 @@ bool PositionWithin(const SelectionRange& range, const TextPosition& position) {
 TextPosition AdjustDropForRemovedRange(const SelectionRange& source, const TextPosition& drop) {
   const SelectionRange range = TextViewport::NormalizeRange(source);
   if (PositionBefore(drop, range.start)) {
-    // Removing the source moves nothing that precedes it. (A drop INSIDE the
-    // source is the caller's to refuse — Apply does, as a no-op.)
     return drop;
   }
   if (drop.line > range.end.line) {
-    // Whole lines vanished above it; the column is untouched.
     return TextPosition{drop.line - (range.end.line - range.start.line), drop.column};
   }
-  // On the source's last line, past its end: that line's tail is spliced onto the
-  // source's first line, so the drop lands at the join plus its offset into the
-  // tail.
   return TextPosition{range.start.line, range.start.column + (drop.column - range.end.column)};
 }
 
@@ -46,17 +40,13 @@ std::optional<SelectionRange> Apply(TextViewport& viewport,
                                     bool copy) {
   const SelectionRange range = TextViewport::NormalizeRange(source);
   if (PositionWithin(range, drop)) {
-    return std::nullopt;  // dropped onto itself
+    return std::nullopt;
   }
-  // Read from the RANGE, not from the live selection: the drop gesture is the
-  // one edit here whose source is captured at press time and applied at release.
   const std::string text = viewport.TextInRange(range);
   if (text.empty()) {
     return std::nullopt;
   }
 
-  // One undo entry covering both halves. Without the group, Ctrl+Z after a move
-  // undoes the insert and leaves the text deleted from where it came from.
   viewport.BeginUndoGroup();
   TextPosition target = drop;
   if (!copy) {
@@ -69,4 +59,4 @@ std::optional<SelectionRange> Apply(TextViewport& viewport,
   return SelectionRange{target, PositionAfterInsertedText(target, text)};
 }
 
-}  // namespace microide::editor::text_drag_drop
+}

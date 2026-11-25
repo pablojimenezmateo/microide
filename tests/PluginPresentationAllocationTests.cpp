@@ -32,13 +32,9 @@ using microide::workspace::StatusItemCache;
 using microide::workspace::StatusItemView;
 using microide::workspace::WorkspaceFileIconRegistry;
 
-// --- Change 1: file icons resolve once per tree mutation, allocation-free per frame ---
-
 void TestFileIconRegistryWarmResolveIsAllocationFree() {
-  WorkspaceFileIconRegistry registry;  // No plugin themes: builtin extensions only.
+  WorkspaceFileIconRegistry registry;
 
-  // Builtins still resolve with zero plugins loaded, and lookups are
-  // case-insensitive (the filename is lower-cased into the reused scratch).
   Expect(registry.Resolve("main.cpp").has_value(), "builtin cpp icon should resolve");
   Expect(registry.Resolve("MAIN.CPP").has_value(), "icon resolution should be case-insensitive");
   Expect(!registry.Resolve("README").has_value(), "extensionless names resolve to no icon");
@@ -46,9 +42,6 @@ void TestFileIconRegistryWarmResolveIsAllocationFree() {
   Expect(!registry.Resolve("notes.zzz").has_value(), "unknown extension resolves to no icon");
 
 #if MICROIDE_PERF_HARNESS_BUILD
-  // The first call above warmed the scratch buffer; steady-state Resolve must not
-  // touch the heap, so the once-per-mutation cache rebuild stays allocation-bounded
-  // and the per-frame render path (which only indexes the cache) pays nothing.
   const microide::tests::perf::AllocationSnapshot before =
       microide::tests::perf::Allocations::Snapshot();
   for (int i = 0; i < 64; ++i) {
@@ -87,9 +80,6 @@ void TestDirectoryTreeEntriesRevisionAdvancesOnRebuild() {
   Expect(tree.entries_revision() != after_root, "Refresh must advance entries_revision");
 }
 
-// Exercises the exact lazy-rebuild contract the sidebar render path relies on:
-// the resolved-icon cache is rebuilt only when the tree entries or the icon-theme
-// revision change, so stable frames perform no resolution at all.
 void TestFileIconCacheRebuildsOnlyOnRevisionChange() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -109,7 +99,7 @@ void TestFileIconCacheRebuildsOnlyOnRevisionChange() {
     const std::uint64_t tree_rev = tree.entries_revision();
     const std::uint32_t icon_rev = registry.revision();
     if (cached_tree_rev == tree_rev && cached_icon_rev == icon_rev) {
-      return;  // Stable frame: reuse the cache, resolve nothing.
+      return;
     }
     const auto& entries = tree.entries();
     icons.assign(entries.size(), std::nullopt);
@@ -133,12 +123,10 @@ void TestFileIconCacheRebuildsOnlyOnRevisionChange() {
   refresh_cache();
   Expect(rebuilds == 2, "a tree mutation must trigger exactly one cache rebuild");
 
-  registry.Clear();  // Simulate a plugin icon-theme reload.
+  registry.Clear();
   refresh_cache();
   Expect(rebuilds == 3, "an icon-theme revision change must trigger a cache rebuild");
 }
-
-// --- Change 2: preview surfaces are revision-cached, free when empty ---
 
 void TestPreviewSurfacesEmptyStoreIsAllocationFree() {
   PluginSurfaceStore store;
@@ -160,10 +148,6 @@ void TestPreviewSurfacesEmptyStoreIsAllocationFree() {
 #endif
 }
 
-// Per-pane-per-frame lookups must not allocate when no plugin has published
-// decorations/surfaces. Both stores short-circuit ahead of the PathKey() string
-// normalization when their merged maps are empty, so a stable frame with a
-// plugin loaded (but contributing only status items/themes) pays nothing here.
 void TestEmptyStorePathLookupsAreAllocationFree() {
   microide::editor::PluginDecorationStore decorations;
   PluginSurfaceStore surfaces;
@@ -185,10 +169,6 @@ void TestEmptyStorePathLookupsAreAllocationFree() {
 #endif
 }
 
-// Even when decorations ARE published, the render path looks them up via a
-// precomputed key (TextViewport::path_key, the same NormalizedPathKey the store
-// keys on). That key-based lookup must not re-allocate per frame: the stores'
-// maps use heterogeneous hashing, so find(string_view) touches no heap.
 void TestPopulatedStoreKeyLookupIsAllocationFree() {
   using microide::editor::NormalizedPathKey;
   using microide::editor::PluginDecorationData;
@@ -201,7 +181,6 @@ void TestPopulatedStoreKeyLookupIsAllocationFree() {
   Expect(decorations.ReplaceForOwnerFile("lsp", path, std::move(data)),
          "publishing decorations should change the store");
 
-  // The document caches this exact key once; the render loop reuses it.
   const std::string cached_key = NormalizedPathKey(path);
   Expect(decorations.FindByPathKey(cached_key) != nullptr,
          "key lookup should find the published decorations");
@@ -228,7 +207,6 @@ void TestPreviewSurfacesCacheInvalidatesOnRevisionChange() {
   Expect(store.PreviewSurfaces().size() == 1, "a preview-requesting surface is listed");
 
 #if MICROIDE_PERF_HARNESS_BUILD
-  // A repeat call at the same revision is a pure cache hit: no allocation.
   const microide::tests::perf::AllocationSnapshot before =
       microide::tests::perf::Allocations::Snapshot();
   (void)store.PreviewSurfaces();
@@ -240,15 +218,13 @@ void TestPreviewSurfacesCacheInvalidatesOnRevisionChange() {
   SurfaceContent second;
   second.preview = SurfacePreviewSlot::Bottom;
   second.intrinsic_height = 1.0f;
-  store.ReplaceForOwnerSurface("owner", "b", second);  // Mutation bumps revision_.
+  store.ReplaceForOwnerSurface("owner", "b", second);
   Expect(store.PreviewSurfaces().size() == 2, "a new preview surface invalidates the cache");
 
   Expect(store.SetPreviewSlot("owner", "a", SurfacePreviewSlot::None),
          "withdrawing a preview reports a change");
   Expect(store.PreviewSurfaces().size() == 1, "withdrawn surfaces drop out after invalidation");
 }
-
-// --- Change 3: status items resolve to nothing, free, with no plugins ---
 
 void TestStatusItemsEmptyHostIsAllocationFree() {
   plugin::PluginHost host;
@@ -267,10 +243,6 @@ void TestStatusItemsEmptyHostIsAllocationFree() {
 #endif
 }
 
-// The cache-aware resolve rebuilds the sorted view only when the host's
-// StatusItemsRevision() changes. ComputeVisibleStatusItems runs per frame from the
-// render, hit-test, and hover paths, so a stable revision must reuse one build with
-// no re-copy or re-sort. With no contributions the revision never moves.
 void TestStatusItemCacheReturnsStableReferenceWhenUnchanged() {
   plugin::PluginHost host;
   StatusItemCache cache;
@@ -292,10 +264,6 @@ void TestStatusItemCacheReturnsStableReferenceWhenUnchanged() {
 #endif
 }
 
-// NotifyLspBufferClose clears semantic-token decorations published under the
-// "lsp:semantic" owner for the closed file. This guards the per-file clear +
-// release contract the shell relies on so open/close churn cannot accumulate
-// stale decorations or pin the presentation bundle.
 void TestLspSemanticDecorationsClearPerFileAndRelease() {
   using microide::workspace::ProjectWorkspaceState;
   ProjectWorkspaceState state;
@@ -311,7 +279,6 @@ void TestLspSemanticDecorationsClearPerFileAndRelease() {
                                                                           b),
          "publishing semantic decorations for b.cpp changes the merged view");
 
-  // Closing a.cpp drops only its decorations; b.cpp survives and the bundle stays.
   Expect(state.plugin_presentation->decorations.ClearOwnerFile("lsp:semantic", "a.cpp"),
          "closing a.cpp clears its semantic decorations");
   state.MaybeReleasePluginPresentation();
@@ -322,7 +289,6 @@ void TestLspSemanticDecorationsClearPerFileAndRelease() {
   Expect(state.plugin_presentation->decorations.FindByPath("b.cpp") != nullptr,
          "b.cpp decorations are untouched by closing a.cpp");
 
-  // Closing b.cpp drains the store and releases the bundle to its zero-cost state.
   Expect(state.plugin_presentation->decorations.ClearOwnerFile("lsp:semantic", "b.cpp"),
          "closing b.cpp clears its semantic decorations");
   state.MaybeReleasePluginPresentation();
@@ -330,12 +296,6 @@ void TestLspSemanticDecorationsClearPerFileAndRelease() {
          "draining the last semantic decorations releases the bundle back to null");
 }
 
-// --- Change 4: the plugin presentation bundle is lazily allocated ---
-
-// The decoration/surface stores live behind a unique_ptr that stays null until a
-// producer (Lua plugin or LSP) publishes, and drops back to null once both stores
-// drain. This is the single render-path gate that makes an unloaded session pay
-// zero bytes and zero per-frame branching beyond one null check.
 void TestPluginPresentationIsLazilyAllocatedAndReleased() {
   using microide::workspace::ProjectWorkspaceState;
 
@@ -343,17 +303,13 @@ void TestPluginPresentationIsLazilyAllocatedAndReleased() {
   Expect(state.plugin_presentation_if_present() == nullptr,
          "a fresh project has no plugin presentation allocated");
 
-  // First publish allocates the bundle.
   Expect(state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile(
              "owner", "file.cpp", microide::editor::PluginDecorationData{}) == false,
          "publishing empty decoration data is a no-op merge");
-  // Empty data merges to nothing, so the store reports empty and a release request
-  // collapses the bundle straight back to null.
   state.MaybeReleasePluginPresentation();
   Expect(state.plugin_presentation_if_present() == nullptr,
          "an empty publish must not keep the bundle alive");
 
-  // A real contribution keeps the bundle present.
   microide::editor::PluginDecorationData data;
   data.gutter_marks.push_back(microide::editor::GutterMarkDecoration{.line = 0});
   Expect(state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile("owner", "file.cpp",
@@ -363,7 +319,6 @@ void TestPluginPresentationIsLazilyAllocatedAndReleased() {
   Expect(state.plugin_presentation_if_present() != nullptr,
          "a live contribution keeps the bundle allocated");
 
-  // Clearing the only contribution releases the bundle again (zero footprint).
   Expect(state.plugin_presentation->decorations.ClearOwner("owner"),
          "clearing the sole owner changes the merged view");
   state.MaybeReleasePluginPresentation();
@@ -371,12 +326,6 @@ void TestPluginPresentationIsLazilyAllocatedAndReleased() {
          "draining the last contribution releases the bundle back to null");
 }
 
-// --- Change 5: file icons are opt-in; the gate leaves zero footprint when off ---
-
-// The sidebar gate keys off `has_entries()` (plus the `sidebar.file_icons`
-// setting). Built-in extension icons live in Resolve()'s fallback, NOT the
-// contribution maps, so they must never register as entries — otherwise the
-// sidebar would draw icons even with the feature off and no plugin loaded.
 void TestFileIconRegistryHasNoEntriesWithoutPlugins() {
   WorkspaceFileIconRegistry registry;
   Expect(!registry.has_entries(),
@@ -389,13 +338,10 @@ void TestFileIconRegistryHasNoEntriesWithoutPlugins() {
          "resolving a built-in icon must not populate the contribution maps");
 }
 
-// Disabling file icons resets the render cache to its pristine "never built" state
-// so the feature keeps zero per-project footprint, and a steady disabled frame
-// (which only touches an already-empty cache) allocates nothing.
 void TestFileIconCacheGateLeavesNoFootprintWhenDisabled() {
   using microide::workspace::FileIconRenderCache;
   FileIconRenderCache cache;
-  cache.icons.assign(8, std::nullopt);  // Simulate a prior opt-in that filled the cache.
+  cache.icons.assign(8, std::nullopt);
   cache.tree_revision = 3;
   cache.icon_revision = 1;
   cache.Reset();
@@ -407,7 +353,7 @@ void TestFileIconCacheGateLeavesNoFootprintWhenDisabled() {
   const microide::tests::perf::AllocationSnapshot before =
       microide::tests::perf::Allocations::Snapshot();
   for (int i = 0; i < 64; ++i) {
-    if (!cache.icons.empty()) {  // Mirrors the sidebar's disabled-path guard.
+    if (!cache.icons.empty()) {
       cache.Reset();
     }
   }
@@ -418,12 +364,8 @@ void TestFileIconCacheGateLeavesNoFootprintWhenDisabled() {
 #endif
 }
 
-}  // namespace
+}
 
-// TD-2026-07-17-079: a theme with far more style keys than the 512-entry cap must
-// register at most the cap and stop draining the table early. This asserts the
-// retained-style cap holds for a large `styles` map (the early break keeps setup
-// CPU bounded; the cap is the observable contract).
 void TestThemeStyleMapRespectsCap() {
 #if MICROIDE_HAS_LUA_PLUGINS
   std::string create_error;
@@ -431,8 +373,6 @@ void TestThemeStyleMapRespectsCap() {
   Expect(runtime != nullptr, "lua runtime should create");
   lua_State* state = runtime->state();
 
-  // Build { id = "big", styles = { g0 = "#101010", g1 = ..., ... } } with 2000
-  // distinct valid style entries — well past the 512 cap.
   lua_newtable(state);
   lua_pushstring(state, "big");
   lua_setfield(state, -2, "id");
@@ -448,7 +388,7 @@ void TestThemeStyleMapRespectsCap() {
   std::string error_message;
   const bool ok = microide::plugin::presentation_interop::RegisterTheme(
       state, "test.plugin", &themes, &error_message);
-  lua_pop(state, 1);  // pop the argument table
+  lua_pop(state, 1);
 
   Expect(ok, "a valid (if oversized) theme table should register: " + error_message);
   Expect(themes.size() == 1, "exactly one theme should be contributed");
@@ -489,4 +429,4 @@ void RegisterPluginPresentationAllocationTests(std::vector<TestCase>& tests) {
           TestFileIconCacheGateLeavesNoFootprintWhenDisabled);
 }
 
-}  // namespace microide::tests
+}

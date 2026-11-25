@@ -52,7 +52,7 @@ std::string PathToUtf8String(const std::filesystem::path& path) {
 }
 
 
-}  // namespace
+}
 
 std::uint32_t ComputeCrc32c(std::span<const std::byte> data) {
   std::uint32_t crc = 0xFFFFFFFFu;
@@ -248,10 +248,6 @@ bool PrimitiveReader::ReadF32(float* value) {
     return false;
   }
   std::memcpy(value, &encoded, sizeof(encoded));
-  // A forged file can encode NaN/Inf here. Consumers guard with std::clamp, but
-  // std::clamp(NaN, lo, hi) returns NaN, which then flows into layout arithmetic
-  // and static_cast<int>(NaN) (undefined behavior). Neutralize it at the source:
-  // 0 is brought into range by every downstream clamp/default.
   if (!std::isfinite(*value)) {
     *value = 0.0f;
   }
@@ -278,11 +274,9 @@ bool PrimitiveReader::ReadString(std::string* value) {
     return false;
   }
   std::uint32_t size = 0;
-  // offset_ <= input_.size() invariant → subtract to avoid a 32-bit size_t wrap.
   if (!ReadU32(&size) || size > input_.size() - offset_) {
     return false;
   }
-  // Bounds checked above (offset_ + size <= input_.size()); copy the run in one shot.
   value->assign(reinterpret_cast<const char*>(input_.data()) + offset_, size);
   offset_ += size;
   return true;
@@ -338,4 +332,4 @@ bool ReadTaggedRecord(std::span<const std::byte> input,
   return true;
 }
 
-}  // namespace microide::persistence
+}

@@ -27,14 +27,6 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   static std::unique_ptr<SdlTtfTextBackend> Create(SDL_Renderer* renderer);
   ~SdlTtfTextBackend() override;
 
-  // Non-copyable, stated rather than inherited. It already was -- the
-  // `std::unique_ptr<AsciiGlyphAtlas>` member deletes the implicit copy -- but
-  // that is incidental: a copy would double-free the SDL_Texture and TTF_Font
-  // handles, and turning that member into a shared_ptr is an ordinary refactor
-  // that would silently make this copyable again. The siblings in this directory
-  // (AsciiGlyphAtlas, StringTextureCache, SurfaceTextureCache, ScopedRenderClip,
-  // SceneTexturePresenter) all say it outright, and TextRendererTests
-  // static_asserts it. Renderers share one instance through TextBackendPool.
   SdlTtfTextBackend& operator=(const SdlTtfTextBackend&) = delete;
 
   const char* Name() const override { return "sdl3_ttf"; }
@@ -43,23 +35,13 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   bool SetFontFamily(std::string_view family) override;
   bool SetFontStyle(FontStyle style) override;
   std::vector<std::string> AvailableFontFamilies() const override;
-  // The file holding `style`'s face of the family whose regular face is
-  // `regular` (empty when the family has none: the backend then synthesizes it).
-  // Sibling files first (`X-Regular.ttf` -> `X-Bold.ttf`, `DejaVuSansMono.ttf` ->
-  // `DejaVuSansMono-Oblique.ttf`), then fontconfig. Cached per (file, style).
   static std::filesystem::path StyledFaceFile(const std::filesystem::path& regular, FontStyle style);
-  // Test seam: derive the picker's display family name from a font file stem the
-  // way the no-fontconfig fallback does (strips weight/style tails, splits words).
   static std::string FontDisplayNameFromStemForTesting(std::string_view stem);
-  // The face EnsureCodepointCovered would add for `codepoint` (empty: none, or no
-  // fontconfig). For tests, which must know whether the machine can draw it.
   static std::filesystem::path FaceCoveringCodepointForTesting(char32_t codepoint);
   float CharWidth() const override { return char_width_; }
   float LineHeight() const override { return line_height_; }
   TextClipPadding ClipPadding() const override { return clip_padding_; }
   float MeasureWidth(std::string_view text) const override;
-  // Monospaced: a run of printable ASCII measures as `size * char_width_`, which
-  // is exactly the condition MeasureWidth's own fast path tests.
   std::optional<float> MeasureWidthIfCheap(std::string_view text) const override {
     if (font_ == nullptr || !CanUseFastAscii(text)) {
       return std::nullopt;
@@ -72,38 +54,18 @@ class SdlTtfTextBackend final : public TextRendererBackend {
                   float y,
                   SDL_Color color,
                   std::string_view text) override;
-  // Batches an entire row's runs into a single SDL_RenderGeometry call on the
-  // GPU atlas path (per-vertex colour, so a multi-colour line is one submit);
-  // falls back to the base per-run DrawString loop otherwise.
   void DrawRuns(SDL_Renderer* renderer, StringTextureCache& cache, const TextRun* runs,
                 std::size_t count) override;
-  // Ephemeral runs never enter the string-texture cache. On the GPU renderer they
-  // take the same batched-geometry path as DrawRuns; on the software renderer,
-  // where SDL_RenderGeometry regresses, they are drawn one glyph at a time
-  // straight from the atlas texture (colour-modulated coverage, so the pixels are
-  // the composite path's pixels without building or uploading a composite).
   void DrawEphemeralRuns(SDL_Renderer* renderer, StringTextureCache& cache, const TextRun* runs,
                          std::size_t count) override;
-  // DrawStringOn is intentionally not overridden: this backend does not paint a
-  // glyph background, so the base-class default (which ignores `background` and
-  // forwards to DrawString) is exactly the desired behaviour.
 
  private:
   SdlTtfTextBackend() = default;
 
   bool Initialize(SDL_Renderer* renderer);
-  // Re-applies `font_point_size_` to the primary + fallback fonts at the current
-  // presentation scale, then clears the glyph atlases and refreshes metrics. Shared by the
-  // presentation-scale and font-size entry points.
   void ApplyFontSizeAtCurrentScale();
-  // The DPI pair TTF_SetFontSizeDPI is driven with, derived from the current
-  // presentation scale. A lazily-opened fallback has to be sized with the same
-  // pair the primary already got, so this is shared rather than recomputed.
   int CurrentHorizontalDpi() const;
   int CurrentVerticalDpi() const;
-  // Everything RefreshMetrics needs from the font itself, in device pixels and
-  // before any presentation-scale division — so the cache below keys on exactly
-  // what the numbers depend on.
   struct PixelMetrics {
     int font_height = 0;
     int max_left_padding = 0;
@@ -115,7 +77,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
     float point_size = 0.0f;
     int hdpi = 0;
     int vdpi = 0;
-    int synthetic_style = 0;  // a synthetic bold widens glyphs
+    int synthetic_style = 0;
 
     bool operator<(const MetricsKey& other) const {
       return std::tie(font_path, point_size, hdpi, vdpi, synthetic_style) <
@@ -125,160 +87,66 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   static PixelMetrics MeasurePixelMetrics(TTF_Font* font, const MetricsKey& key);
   void RefreshMetrics();
   void ClearGlyphAtlases();
-  // Open `path` as the primary font, applying hinting/kerning; on success closes
-  // the previous primary font and adopts the new one. Returns false (leaving the
-  // current font untouched) when the path fails to open. Shared by Initialize and
-  // SetFontFamily so both go through the same setup.
   bool OpenPrimaryFont(const std::filesystem::path& path);
-  // Resolve a font family name to a concrete file. Empty family -> LocateFontFile.
-  // Uses fontconfig when available (compile-time gated), else a cached scan of the
-  // standard font directories. Returns an empty path when nothing matches.
   static std::filesystem::path ResolveFamilyToFile(std::string_view family);
   static std::filesystem::path LocateFontFile();
-  // Standard font directories searched for family resolution and enumeration
-  // (user font dirs first, then the system trees). Shared by ResolveFamilyToFile
-  // and AvailableFontFamilies so the scan-root list lives in one place.
   static std::vector<std::filesystem::path> FontSearchRoots();
-  // Opens the face `font_style_` of the family at `regular_font_path_`: its own
-  // file, or the regular one with SDL_ttf's synthetic style. Returns whether the
-  // glyphs changed.
   bool OpenFaceForStyle();
   static std::vector<std::filesystem::path> LocateFallbackFontFiles(
       const std::filesystem::path& primary_font);
   void CloseFonts();
-  // Clear and free just the fallback fonts (unregistering them from the primary
-  // first). Called before reloading fallbacks on a family switch so the previous
-  // set is freed rather than leaked, and by CloseFonts during teardown.
   void CloseFallbackFonts();
   void LoadFallbackFonts();
-  // A code point no face of the chain has: fontconfig's nearest monochrome face
-  // that does joins the chain (once per code point).
   void EnsureCodepointCovered(char32_t codepoint) const;
-  // Open the broad-Unicode / symbol fallbacks the first time a caller actually
-  // asks the primary font about a non-ASCII subject.
-  //
-  // The set is up to five whole TTFs (Noto Sans, Noto Sans Symbols 1+2, DejaVu
-  // Sans, FreeSans) and opening them was ~60% of this backend's initialization,
-  // paid on the frame the user is waiting for. Nothing they carry can affect an
-  // ASCII subject: a fallback is only consulted for a code point the primary has
-  // no glyph for, and the primary is a programming font with full ASCII coverage
-  // (it is also the atlas the ASCII fast paths rasterize from directly, without
-  // going through TTF shaping at all). So the load moves to the first shaped
-  // non-ASCII string — MeasureWidth and the texture-cache miss below — which in a
-  // session that never renders one never happens.
-  //
-  // `const` + mutable state because MeasureWidth is const and is one of those
-  // two entry points.
   void EnsureFallbackFontsLoaded() const;
   bool CanUseFastAscii(std::string_view text) const;
   void EnsureAsciiAtlas();
-  // Build the non-ASCII coverage atlas on the first cluster that needs it, at
-  // the current cell width and font height. Like EnsureAsciiAtlas, a session
-  // that never renders a non-ASCII string never allocates it.
   void EnsureClusterAtlas();
-  // A cleared width x height surface in `texture_format_` for one composite, over
-  // `composite_scratch_` when it fits there. The caller destroys it once uploaded.
   SDL_Surface* AcquireCompositeSurface(int width, int height);
   SDL_Surface* BuildAsciiCompositeSurface(std::string_view text, SDL_Color color);
-  // The composite for everything BuildAsciiCompositeSurface does not take: each
-  // glyph cluster rendered on its own cell span (util::GridCellWidth cells), so
-  // the pixels agree with the cell arithmetic every caller positions by.
   SDL_Surface* BuildGridCompositeSurface(std::string_view text, SDL_Color color);
-  // The composite for (text, color) from the caller's cache, built and inserted on a miss.
   const StringTextureCache::Entry* ResolveEntry(StringTextureCache& cache, std::string_view text,
                                                 SDL_Color color);
-  // Upload the ASCII coverage atlas once, as one texture. Renderer-agnostic: the
-  // texture is what both atlas draw paths sample, the batched SDL_RenderGeometry
-  // one (GPU) and the per-glyph SDL_RenderTexture one (software). Returns false
-  // when the atlas is unusable (atlas opt-out, upload failed) and the caller must
-  // fall back to the composite/whole-string path.
   bool EnsureAtlasTexture();
-  // Append `text`'s ASCII glyph quads (positioned from x,y, tinted to `color`) to
-  // the geometry scratch buffers, reproducing the composite path's device-pixel
-  // positions. Returns false without appending the offending glyph if a glyph is
-  // outside the atlas (caller falls back to the composite path for that run).
-  // Width in device pixels of the composite surface BuildAsciiCompositeSurface
-  // would build for a run of `char_count` ASCII cells -- the right edge both atlas
-  // paths clip glyph overhang against, so all three paths draw the same pixels.
   int AsciiRunSurfaceWidthPx(std::size_t char_count) const;
   bool AppendAsciiRunGeometry(float x, float y, SDL_Color color, std::string_view text);
-  // Draw `text`'s ASCII glyphs one SDL_RenderTexture at a time from the atlas
-  // texture, at the same device-pixel positions AppendAsciiRunGeometry and the
-  // composite surface use. Returns false without drawing the offending glyph if a
-  // glyph is outside the atlas (caller falls back to the composite path for that
-  // run). This is the software-renderer counterpart of the geometry path: N small
-  // blits, but no surface build, no texture upload, and no cache eviction.
   bool DrawAsciiRunFromAtlas(float x, float y, SDL_Color color, std::string_view text);
 
   SDL_Renderer* renderer_ = nullptr;
   TTF_Font* font_ = nullptr;
   mutable std::vector<TTF_Font*> fallback_fonts_;
-  // False until EnsureFallbackFontsLoaded has run for the current primary font.
-  // Reset by a primary-font change (SetFontFamily) so the next non-ASCII subject
-  // re-resolves fallbacks against the new primary.
   mutable bool fallback_fonts_loaded_ = false;
-  // Code points EnsureCodepointCovered has answered for the current chain: one bit
-  // per Unicode scalar (139 KB, allocated on the first non-ASCII cell). A set
-  // capped at 4096 entries stopped remembering past that, and every later glyph no
-  // face has asked fontconfig again (~0.4 ms) on each raster of its row.
   mutable std::vector<std::uint64_t> checked_codepoints_;
   std::filesystem::path font_path_;
-  // The family's regular face, which `font_path_` is unless a style opened
-  // another file; and the face asked for, with the TTF style synthesizing it
-  // when the family has no file for it (TTF_STYLE_NORMAL otherwise).
   std::filesystem::path regular_font_path_;
   FontStyle font_style_ = FontStyle::Regular;
   int synthetic_style_ = 0;
-  // The requested editor font family (empty = platform default). Retained so a
-  // later size / presentation-scale change re-resolves the same family.
   std::string requested_font_family_;
   float char_width_ = 8.0f;
   float line_height_ = 14.0f;
   TextClipPadding clip_padding_{};
-  // Project-configurable glyph point size (the `editor.font_size` setting). The
-  // default matches the setting/registry default; runtime changes route through
-  // SetFontPointSize. Applied at the current presentation scale via TTF DPI.
   float font_point_size_ = kDefaultFontPointSize;
   float presentation_scale_x_ = 1.0f;
   float presentation_scale_y_ = 1.0f;
   bool ttf_initialized_ = false;
 
-  // The pixel format the renderer stores textures in, resolved at init. Glyph
-  // composites (and the coverage atlas they are blitted from) are built in this
-  // format so uploading one is a copy rather than a whole-bitmap channel
-  // conversion. See Initialize.
   SDL_PixelFormat texture_format_ = SDL_PIXELFORMAT_RGBA32;
 
-  // Colour-independent coverage atlas for ASCII composites. Built lazily on the
-  // first ASCII miss and rebuilt (via ClearGlyphAtlases) when the font size changes.
   std::unique_ptr<AsciiGlyphAtlas> ascii_atlas_;
 
-  // Colour-independent coverage atlas for the non-ASCII clusters of a grid
-  // composite, so a repeated code point is rasterized once per font rather
-  // than once per occurrence (TD-2026-09-06-289a). Reset by ClearGlyphAtlases
-  // alongside ascii_atlas_, since coverage is only reusable at one size.
   std::unique_ptr<GlyphClusterAtlas> cluster_atlas_;
 
-  // Atlas draw-path state. `is_gpu_renderer_` is captured at init from the SDL
-  // renderer driver and selects between the two atlas paths (batched geometry vs
-  // per-glyph blits); `glyph_atlas_enabled_` is the MICROIDE_RENDER_GLYPH_ATLAS
-  // switch, on unless it is set to "0". The texture is the ascii_atlas_ surface
-  // uploaded once; it is destroyed alongside ascii_atlas_ in ClearGlyphAtlases
-  // (font-size change). The geometry scratch buffers are reused across runs to
-  // avoid per-run allocation.
   bool is_gpu_renderer_ = false;
   bool glyph_atlas_enabled_ = false;
   SDL_Texture* atlas_texture_ = nullptr;
   int atlas_texture_width_ = 0;
   int atlas_texture_height_ = 0;
-  // Pixels of the composite being built (see AcquireCompositeSurface); grows to
-  // the widest composite up to kMaxCompositeScratchBytes and is then reused.
   static constexpr std::size_t kMaxCompositeScratchBytes = 4u * 1024 * 1024;
   std::vector<std::uint32_t> composite_scratch_;
   std::vector<SDL_Vertex> geom_vertices_;
   std::vector<int> geom_indices_;
 };
 
-}  // namespace microide::render
+}
 
-#endif  // MICROIDE_HAS_SDL3_TTF
+#endif

@@ -10,10 +10,9 @@
 namespace microide::project::remote {
 namespace {
 
-// Bounds on what one peer may hold the other to.
 constexpr std::size_t kMaxPendingIncoming = 4096;
 
-}  // namespace
+}
 
 RemotePeer::~RemotePeer() {
   Stop();
@@ -51,8 +50,6 @@ bool RemotePeer::Start(int read_fd, int write_fd, Options options) {
   }
   RemoteFrameTransport::Options transport_options = options.transport;
   if (send_pings_) {
-    // The first ping a quarter interval in (an early round-trip estimate); after
-    // that each tick lands on the heartbeat's own next deadline (HandleTick).
     transport_options.tick_interval =
         std::chrono::milliseconds(std::max<std::int64_t>(options.heartbeat.interval_ms / 4, 1));
   }
@@ -60,7 +57,7 @@ bool RemotePeer::Start(int read_fd, int write_fd, Options options) {
                           RemoteFrameTransport::Callbacks{
                               .on_frame = [this](Frame frame) { HandleFrame(std::move(frame)); },
                               .on_closed = [this](std::string_view reason) {
-                                HandleClosed(reason, /*report=*/true);
+                                HandleClosed(reason, true);
                               },
                               .on_tick = [this]() { return HandleTick(); },
                           },
@@ -69,10 +66,7 @@ bool RemotePeer::Start(int read_fd, int write_fd, Options options) {
 
 void RemotePeer::Stop() {
   transport_.Stop();
-  // A request still pending when the connection goes away gets its one answer.
-  // The closed hook is not run: Stop is the owner's own decision, usually made
-  // while it is being torn down.
-  HandleClosed("connection closed", /*report=*/false);
+  HandleClosed("connection closed", false);
 }
 
 bool RemotePeer::SendControl(FrameType type, Lane lane, std::uint64_t id,
@@ -88,7 +82,7 @@ std::uint64_t RemotePeer::Request(std::string_view method, const util::JsonValue
 std::uint64_t RemotePeer::Request(std::string_view method, const util::JsonValue& params,
                                   Lane lane, ResponseHandler handler,
                                   const std::function<void(std::uint64_t id)>& before_send) {
-  return SendRequest(method, params, lane, std::move(handler), before_send, /*heartbeat=*/false);
+  return SendRequest(method, params, lane, std::move(handler), before_send, false);
 }
 
 std::size_t RemotePeer::pending_request_count() const {
@@ -121,9 +115,6 @@ std::uint64_t RemotePeer::SendRequest(std::string_view method, const util::JsonV
   if (!SendControl(FrameType::Request, lane, id, util::JsonValue(std::move(body)))) {
     std::lock_guard lock(mutex_);
     if (pending_.erase(id) == 0) {
-      // The close took it between the registration and this send, and answered
-      // it ("connection closed"): its handler has the outcome. 0 would tell the
-      // caller to complete it too -- one request, two completions.
       return id;
     }
     return 0;
@@ -131,7 +122,7 @@ std::uint64_t RemotePeer::SendRequest(std::string_view method, const util::JsonV
   {
     std::lock_guard lock(mutex_);
     if (const auto it = pending_.find(id); it != pending_.end()) {
-      it->second.sent = true;  // not when its answer already took it
+      it->second.sent = true;
     }
   }
   return id;
@@ -207,7 +198,6 @@ void RemotePeer::HandleFrame(Frame frame) {
     }
     return;
   }
-  // Everything below is a JSON control body from an untrusted peer (§ 6.9).
   std::optional<util::JsonValue> body = util::ParseJson(frame.payload);
   const bool well_formed = body.has_value() && body->IsObject();
   switch (frame.type) {
@@ -229,7 +219,6 @@ void RemotePeer::HandleFrame(Frame frame) {
       {
         std::lock_guard lock(mutex_);
         if (incoming_in_flight_.size() >= kMaxPendingIncoming) {
-          // A peer that never waits for answers cannot pin unbounded state here.
           ReplyError(frame.id, kErrorProtocol, "too many requests in flight");
           return;
         }
@@ -243,7 +232,7 @@ void RemotePeer::HandleFrame(Frame frame) {
     }
     case FrameType::Notification: {
       if (!well_formed || !(*body)["method"].IsString()) {
-        return;  // nobody to answer; drop it
+        return;
       }
       const std::string& name = (*body)["method"].AsString();
       if (name == method::kOpCancel) {
@@ -279,7 +268,7 @@ void RemotePeer::HandleFrame(Frame frame) {
         std::lock_guard lock(mutex_);
         const auto pending = pending_.find(frame.id);
         if (pending == pending_.end()) {
-          return;  // an answer to nothing we asked (or already answered)
+          return;
         }
         handler = std::move(pending->second.handler);
         pending_.erase(pending);
@@ -355,8 +344,8 @@ std::chrono::milliseconds RemotePeer::HandleTick() {
         std::lock_guard lock(mutex_);
         heartbeat_.OnPong(sent, now);
       },
-      {}, /*heartbeat=*/true);
+      {}, true);
   return next;
 }
 
-}  // namespace microide::project::remote
+}

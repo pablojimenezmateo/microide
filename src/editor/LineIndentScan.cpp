@@ -10,20 +10,14 @@ namespace microide::editor {
 
 bool AdvanceLeadingIndentOverChunk(std::string_view chunk, std::size_t tab_size,
                                    std::size_t& visual) {
-  // Count the leading spaces a word at a time. Each space used to contribute one
-  // loop iteration and one branch; on deeply nested code that was the whole cost
-  // of the scan (the 50k-line fixture averages 131 leading whitespace bytes per
-  // line).
   const std::size_t spaces = util::LeadingByteRun(chunk, ' ');
   visual += spaces;
   if (spaces == chunk.size()) {
-    return false;  // whitespace all the way to the end of the chunk
+    return false;
   }
   if (chunk[spaces] != '\t') {
-    return true;  // ordinary space indent, which is almost every line
+    return true;
   }
-  // A tab appears: fall back to the exact per-character rule from that point,
-  // since a tab advances to the next stop rather than by one column.
   for (std::size_t i = spaces; i < chunk.size(); ++i) {
     const char c = chunk[i];
     if (c != ' ' && c != '\t') {
@@ -58,4 +52,4 @@ std::size_t MeasureLeadingIndent(LineSpan lines, std::size_t index, std::size_t 
   }
 }
 
-}  // namespace microide::editor
+}

@@ -11,32 +11,16 @@
 
 namespace microide::tests {
 
-// Partial-redraw assertions. These were six near-identical private copies across
-// the shell test files; they live here so a redraw test in one file cannot mean
-// something different from the same-named test in another.
-
 inline bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
   return lhs.x < rhs.x + rhs.w && lhs.x + lhs.w > rhs.x && lhs.y < rhs.y + rhs.h &&
          lhs.y + lhs.h > rhs.y;
 }
 
-// "Some dirty rect touches this surface." Correct for a large surface that is
-// only PARTLY repainted (an edited line inside the editor pane). Do NOT use it to
-// assert that a specific small control repainted -- see AnyRectCovers.
 inline bool AnyRectIntersects(std::span<const SDL_FRect> rects, const SDL_FRect& target) {
   return std::any_of(rects.begin(), rects.end(),
                      [&](const SDL_FRect& rect) { return RectsIntersect(rect, target); });
 }
 
-// "Some dirty rect fully contains this control", which is what "the control
-// repainted" actually means. Use this for every hover / button / row / tooltip
-// invalidation assertion.
-//
-// AnyRectIntersects is close to free on those: a mouse-motion event used to emit a
-// 1x1 dirty rect at the pointer (a cursor present, now the `present` bit) -- which
-// was, by construction, inside the very control the test asked about -- and
-// neighbouring chrome rects overlap generously. Three assertions written that way
-// were found passing with the code under test compiled out.
 inline bool AnyRectCovers(std::span<const SDL_FRect> rects, const SDL_FRect& target) {
   return std::any_of(rects.begin(), rects.end(), [&](const SDL_FRect& rect) {
     return rect.x <= target.x && rect.y <= target.y &&
@@ -52,9 +36,6 @@ inline float MaxRectHeight(std::span<const SDL_FRect> rects) {
   return max_height;
 }
 
-// The tallest damage INSIDE `pane`: each rect clipped to it first. Damage from
-// elsewhere in the same event -- a background index or git refresh landing on the
-// sidebar, as tall as the window -- says nothing about what the editor repaints.
 inline float InPaneDamageHeight(std::span<const SDL_FRect> rects, const SDL_FRect& pane) {
   float tallest = 0.0f;
   for (const SDL_FRect& rect : rects) {
@@ -69,8 +50,6 @@ inline float InPaneDamageHeight(std::span<const SDL_FRect> rects, const SDL_FRec
   return tallest;
 }
 
-// Event constructors for tests that dispatch a run of events and fold their
-// redraws (support/RetainedRedraw.h DispatchEvents).
 inline SDL_Event KeyDownEvent(SDL_Keycode key, SDL_Keymod modifiers = SDL_KMOD_NONE) {
   SDL_Event event{};
   event.type = SDL_EVENT_KEY_DOWN;
@@ -87,7 +66,6 @@ inline SDL_Event KeyUpEvent(SDL_Keycode key, SDL_Keymod modifiers = SDL_KMOD_NON
   return event;
 }
 
-// Typed text, as SDL delivers it after a key press. `text` must outlive dispatch.
 inline SDL_Event TextInputEvent(const char* text) {
   SDL_Event event{};
   event.type = SDL_EVENT_TEXT_INPUT;
@@ -103,7 +81,6 @@ inline SDL_Event MouseMotionEvent(float x, float y) {
   return event;
 }
 
-// One wheel notch per unit of `dy` (positive scrolls up), at the pointer (x, y).
 inline SDL_Event MouseWheelEvent(float x, float y, float dy) {
   SDL_Event event{};
   event.type = SDL_EVENT_MOUSE_WHEEL;
@@ -124,10 +101,6 @@ inline SDL_Event MouseButtonEvent(Uint32 type, float x, float y) {
   return event;
 }
 
-// Holds `modifiers` the way a user does: their key-downs go through the shell now
-// and their key-ups when this ends. A pointer handler reads the held modifiers
-// from what the key events said, in queue order -- never SDL's live state, which
-// this leaves alone -- so faking them with SDL_SetModState no longer reaches it.
 class ScopedHeldModifiers {
  public:
   ScopedHeldModifiers(workspace::WorkspaceShell& shell, SDL_Keymod modifiers)
@@ -244,4 +217,4 @@ inline bool SendWindowResized(workspace::WorkspaceShell& shell, int width, int h
   return shell.HandleEvent(event).handled;
 }
 
-}  // namespace microide::tests
+}

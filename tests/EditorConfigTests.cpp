@@ -46,8 +46,6 @@ max_line_length = 80
 }
 
 void TestParserIgnoresJunkWithoutFailing() {
-  // The EditorConfig spec asks readers to ignore what they do not understand
-  // rather than reject the file.
   const auto file = ParseEditorConfig(R"(# a comment
 ; another comment
 not_a_section_line
@@ -98,7 +96,6 @@ indent_size = 4
 [*.py]
 indent_size = 2
 )");
-  // A nearer .editorconfig overrides the outer one for files beneath it.
   WriteFile(root / "vendor" / ".editorconfig", R"([*]
 indent_style = tab
 indent_size = 8
@@ -128,11 +125,6 @@ indent_size = 8
   Expect(resolver.FoundAnyConfig(), "the resolver should report that it found configs");
 }
 
-// Checked against the reference `editorconfig` library over random trees: two
-// spec rules were missing. `indent_style = tab` with no indent_size means the
-// size follows tab_width (the spec's implicit `indent_size = tab`), and
-// `max_line_length = off` in a later section must override an earlier limit
-// instead of being dropped at parse time.
 void TestResolverDerivesTabIndentSizeAndHonoursMaxLineLengthOff() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "proj";
@@ -167,8 +159,6 @@ void TestResolverStopsAtRootTrueAndProjectRoot() {
   const std::filesystem::path root = outside / "proj";
   std::filesystem::create_directories(root / "src");
 
-  // A .editorconfig ABOVE the project root must never be consulted: opening a
-  // repo should not let an unrelated parent directory reconfigure it.
   WriteFile(outside / ".editorconfig", R"([*]
 indent_style = tab
 indent_size = 7
@@ -180,7 +170,6 @@ indent_size = 7
   Expect(!resolver.Resolve(root / "src" / "a.c").any(),
          "a .editorconfig outside the project root must not apply");
 
-  // With root = true partway down, the walk stops there.
   WriteFile(root / ".editorconfig", R"([*]
 indent_size = 4
 )");
@@ -196,9 +185,6 @@ indent_style = space
          "root = true must stop the walk before the parent's indent_size");
 }
 
-// `unset` in a later section removes what an earlier one set, so the editor's
-// own setting rules again. It used to be ignored, leaving the inherited value
-// standing (found by the QA `editorconfig` flow).
 void TestResolverUnsetRemovesAnInheritedValue() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "proj";
@@ -252,7 +238,6 @@ indent_size = 7
   EditorConfigResolver resolver;
   resolver.SetProjectRoot(root);
 
-  // A pattern with no '/' matches at any depth.
   Expect(resolver.Resolve(root / "deep" / "nested" / "a.ts").indent_width.value_or(0) == 2,
          "brace alternation must match at any depth");
   Expect(resolver.Resolve(root / "a.js").indent_width.value_or(0) == 2,
@@ -260,31 +245,22 @@ indent_size = 7
   Expect(!resolver.Resolve(root / "a.rb").indent_width.has_value(),
          "an unlisted extension must not match");
 
-  // A leading '/' anchors to the .editorconfig's own directory.
   Expect(resolver.Resolve(root / "toplevel.c").indent_width.value_or(0) == 9,
          "a leading-slash pattern must match at the config's directory");
   Expect(!resolver.Resolve(root / "deep" / "toplevel.c").indent_width.has_value(),
          "a leading-slash pattern must not match deeper");
 
-  // A slash-free header names a basename in any directory, not a suffix of one:
-  // "**/exact.py" used to restart its '**' one byte at a time and so applied
-  // to "inexact.py".
   Expect(resolver.Resolve(root / "deep" / "exact.py").indent_width.value_or(0) == 7,
          "a slash-free header matches its basename at any depth");
   Expect(!resolver.Resolve(root / "deep" / "inexact.py").indent_width.has_value(),
          "a slash-free header must not match a longer basename ending in it");
 
-  // A pattern containing '/' is anchored too.
   Expect(resolver.Resolve(root / "lib" / "deep" / "x.c").indent_width.value_or(0) == 5,
          "an anchored '**' pattern must match beneath its directory");
   Expect(!resolver.Resolve(root / "other" / "x.c").indent_width.has_value(),
          "an anchored pattern must not match a sibling directory");
 }
 
-// EditorConfig's brace rules are not the search box's: `{n..m}` is an integer
-// range, and a group with no ',' that is not a range is literal text. Both were
-// read through the shared `{a,b}` expansion, which matched `{1..3}` only against
-// the text "1..3" and `{a}` against "a" (TD-2026-10-29-425 item 5).
 void TestResolverHandlesBraceRangesAndLiterals() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "proj";
@@ -341,9 +317,6 @@ indent_size = 7
   Expect(width("empty3.txt") == 0, "a range written high..low matches nothing");
 }
 
-// Each brace group a header expands is one level of recursion, and neither the
-// header's length nor its group count was bounded: a 256 KiB `[{a,{a,{a,...` line
-// recursed once per group.
 void TestParseBoundsSectionHeaders() {
   std::string many_groups = "[";
   for (int index = 0; index < 100; ++index) {
@@ -361,8 +334,6 @@ void TestParseBoundsSectionHeaders() {
   const auto file = ParseEditorConfig(nested);
   Expect(file.sections.size() == 1, "an over-long header is skipped, later ones kept");
 
-  // Every path ends in an empty range, so no path fills the pattern cap: only the
-  // step budget stops 2^60 expansions.
   std::string never_emits = "[";
   for (int index = 0; index < 60; ++index) {
     never_emits += "{a,b}";
@@ -431,7 +402,6 @@ void TestResolverMemoizesAndInvalidates() {
   Expect(resolver.CachedPathCountForTesting() == after_first,
          "a repeat resolve must hit the memo rather than add an entry");
 
-  // A changed .editorconfig must be picked up after invalidation.
   WriteFile(root / ".editorconfig", "root = true\n\n[*]\nindent_size = 6\n");
   Expect(resolver.Resolve(root / "a" / "b" / "x.c").indent_width.value_or(0) == 4,
          "without invalidation the memoized value stands");
@@ -452,7 +422,6 @@ void TestResolverIsFreeWithoutAnyConfig() {
          "a project with no .editorconfig resolves to no opinion");
   Expect(!resolver.FoundAnyConfig(),
          "FoundAnyConfig must stay false so callers can skip re-applying preferences");
-  // The negative result is memoized too, so the second lookup does no filesystem work.
   Expect(resolver.CachedPathCountForTesting() == 1, "the empty result is memoized");
 }
 
@@ -461,8 +430,6 @@ void TestResolverBoundsSectionCount() {
   for (std::size_t index = 0; index < microide::project::kMaxEditorConfigSections + 50; ++index) {
     text += "[*.x" + std::to_string(index) + "]\nindent_size = 2\n";
   }
-  // The sections past the cap carry a property the kept ones do not; it must
-  // not land on the last kept section.
   text += "[*.overflow]\ntab_width = 9\n";
   const auto file = ParseEditorConfig(text);
   Expect(file.sections.size() <= microide::project::kMaxEditorConfigSections,
@@ -471,8 +438,6 @@ void TestResolverBoundsSectionCount() {
          "a dropped section's properties do not leak into the last kept section");
 }
 
-// `[]` (and a header the cap dropped) opens a section that matches nothing; the
-// properties under it belong to it and must not be folded into the previous one.
 void TestParserDoesNotLeakAnEmptySectionsPropertiesIntoThePrevious() {
   const auto file = ParseEditorConfig("[*.py]\nindent_size = 4\n[]\nindent_size = 8\n[*.js]\nindent_size = 2\n");
   Expect(file.sections.size() == 2, "the empty header is not a section");
@@ -481,7 +446,7 @@ void TestParserDoesNotLeakAnEmptySectionsPropertiesIntoThePrevious() {
   Expect(file.sections[1].properties.indent_width == 2, "the following section is unaffected");
 }
 
-}  // namespace
+}
 
 void RegisterEditorConfigTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorConfig/ParsesCommonProperties", TestParsesCommonProperties);
@@ -512,4 +477,4 @@ void RegisterEditorConfigTests(std::vector<TestCase>& tests) {
           TestParserDoesNotLeakAnEmptySectionsPropertiesIntoThePrevious);
 }
 
-}  // namespace microide::tests
+}

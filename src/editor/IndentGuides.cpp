@@ -26,7 +26,7 @@ std::size_t ActiveGuideColumnFromLeading(std::size_t caret_leading_visual_indent
   return active_column;
 }
 
-}  // namespace
+}
 
 std::size_t LeadingVisualIndent(std::string_view line, std::size_t tab_size) {
   std::size_t visual = 0;
@@ -50,7 +50,6 @@ void ComputeIndentGuides(LineSpan lines,
   out->clear();
   if (indent_width == 0) return;
 
-  // Compute the caret's "active" guide column: the immediate parent block.
   std::size_t active_column = SIZE_MAX;
   if (caret_line != SIZE_MAX) {
     if (folding_model != nullptr &&
@@ -70,31 +69,6 @@ void ComputeIndentGuides(LineSpan lines,
     }
   }
 
-  // Measure each visible row's indent once, then sweep COLUMN BY COLUMN emitting
-  // contiguous vertical runs directly.
-  //
-  // This used to emit one entry per (row, guide column) into a scratch vector and
-  // then std::sort it by (column, active, start_row) so the coalescing sweep could
-  // merge neighbours. The entry count is rows x indent levels, which on deeply
-  // indented content is thousands per frame -- the sort measured 15.6 ms of the
-  // 17.0 ms this whole step cost across a 372-frame scroll (51 us per compute),
-  // making it the single largest thing in the editor's render path. Walking one
-  // column at a time produces the runs already grouped and already in row order,
-  // so there is nothing to sort: O(rows x levels) with no comparisons.
-  //
-  // The emitted SET is unchanged. The order differs only in that a column whose
-  // rows include the active guide now yields its runs in row order rather than
-  // all-inactive-then-active; runs are disjoint in (column, row) so nothing
-  // downstream depends on that.
-  //
-  // The sweep walks one column per indent step up to the deepest row, so a line
-  // with a pathological leading-whitespace run (hundreds of thousands of spaces —
-  // generated or minified files) made it walk tens of thousands of columns, and
-  // emit a run per column, on every frame. No window shows guides that deep, so
-  // the guide depth is clamped to a generous fixed column. Only the guides are
-  // clamped: LeadingVisualIndent itself still reports the true indent to its
-  // other callers. (Ported from the 2026-07-14 audit-backlog pass, which never
-  // reached main.)
   constexpr std::size_t kMaxGuideVisualColumn = 512;
   thread_local std::vector<std::size_t> leading_scratch;
   leading_scratch.assign(visible_rows.size(), 0);
@@ -139,4 +113,4 @@ void ComputeIndentGuides(LineSpan lines,
   }
 }
 
-}  // namespace microide::editor
+}

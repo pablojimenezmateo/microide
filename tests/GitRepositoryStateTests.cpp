@@ -57,30 +57,17 @@ void TestPorcelainV2WorkingTreeFixture() {
          "tree status map should include modified file");
 }
 
-// The tree-status map is SHARED, not owned by value. Building the sidebar refresh
-// snapshot used to deep-copy it -- a node and a key string per changed path, ~2,018
-// allocations on a 1,000-file refresh -- for a map nothing else on the published
-// state ever read (TD-2026-08-14-228). This fails the moment the member goes back
-// to a by-value container, which is the only way that copy can return.
 void TestPorcelainV2TreeStatusesAreSharedNotCopied() {
   const std::string output = ReadBinaryFixture("git/porcelain-v2/working-tree.bin");
   const auto state = GitPorcelainV2Parser::Parse(output, "/repo", 1, 0);
   Expect(state.tree_git_statuses != nullptr && !state.tree_git_statuses->empty(),
          "the parser should publish a non-empty tree-status map");
-  // The refresh publishes the state by value and hands the same map to the sidebar
-  // snapshot; both must land on the same allocation.
   const microide::project::GitRepositoryState published = state;
   Expect(published.tree_git_statuses.get() == state.tree_git_statuses.get(),
          "copying a repository state must share the tree-status map, not duplicate it");
 }
 
-// A tracked file whose name begins with a space must keep that space: the parser
-// previously trimmed leading spaces after the fixed token fields, so " leading.cpp"
-// was reported as "leading.cpp" and stage/diff/discard would target the wrong path.
 void TestPorcelainV2PathWithLeadingSpace() {
-  // "1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>"; the path here is " leading.cpp",
-  // so there are two spaces after "def": the field delimiter plus the path's own
-  // leading space.
   std::string output = "1 .M. N... 100644 100644 100644 abc def  leading.cpp";
   output.push_back('\0');
   const auto state = GitPorcelainV2Parser::Parse(output, "/repo", 1, 0);
@@ -94,12 +81,8 @@ void TestPorcelainV2PathWithLeadingSpace() {
          "a path beginning with a space must be preserved verbatim, not trimmed");
 }
 
-// An UNTRACKED ('?') record's body is the whole path, which may legally begin with a
-// space. The parser used to compute a leading XY field (and drop the record when it
-// was empty) for every kind — so a "? \0 leading.txt" untracked entry with a
-// leading-space name was silently discarded (no tree badge, never surfaced).
 void TestPorcelainV2UntrackedPathWithLeadingSpace() {
-  std::string output = "?  leading.txt";  // '?' + delimiter space + path " leading.txt"
+  std::string output = "?  leading.txt";
   output.push_back('\0');
   const auto state = GitPorcelainV2Parser::Parse(output, "/repo", 1, 0);
   bool saw_untracked_leading_space = false;
@@ -135,8 +118,6 @@ void TestPorcelainV2RenamePair() {
   Expect(state.entries.front().old_path.has_value(), "rename fixture should include old path");
   Expect(state.entries.front().old_path->relative_path == "old.txt",
          "rename fixture old path mismatch");
-  // Regression: the rename SOURCE no longer exists at its old path, so the tree
-  // status map badges it Deleted rather than inheriting the destination's status.
   Expect(state.tree_git_statuses->count("old.txt") == 1 &&
              state.tree_git_statuses->at("old.txt") == GitFileStatus::Deleted,
          "rename source should be badged Deleted in the tree status map");
@@ -160,18 +141,13 @@ void TestPorcelainV2RenamePathWithSpaces() {
 }
 
 void TestPorcelainV2RenameSourceStartingWithStatusSigil() {
-  // Regression: the rename origPath is the next NUL field and must be consumed
-  // unconditionally. A source filename whose first byte collides with a record
-  // sigil ('#', '1', '2', 'u', '?', '!') was previously rejected by a first-byte
-  // heuristic, dropping old_path and re-parsing the source as a bogus record.
-  // Two renames whose sources start with '2' and 'u' exercise both.
   std::string output = "2 R. N... 100644 100644 100644 abc def R100 renamed_a.txt";
   output.push_back('\0');
-  output.append("2data.txt");  // source begins with '2'
+  output.append("2data.txt");
   output.push_back('\0');
   output.append("2 R. N... 100644 100644 100644 abc def R100 renamed_b.txt");
   output.push_back('\0');
-  output.append("user.txt");  // source begins with 'u'
+  output.append("user.txt");
   output.push_back('\0');
 
   const auto state = GitPorcelainV2Parser::Parse(output, "/repo", 5, 0);
@@ -193,7 +169,6 @@ void TestPorcelainV2RenameSourceStartingWithStatusSigil() {
   }
   Expect(saw_a, "rename source '2data.txt' should be preserved as old_path");
   Expect(saw_b, "rename source 'user.txt' should be preserved as old_path");
-  // The old paths must also carry a tree git status badge.
   Expect(state.tree_git_statuses->count("2data.txt") == 1,
          "rename source should receive a tree git status");
   Expect(state.tree_git_statuses->count("user.txt") == 1,
@@ -201,7 +176,6 @@ void TestPorcelainV2RenameSourceStartingWithStatusSigil() {
 }
 
 void TestPorcelainV2ConflictClassification() {
-  // Match real `git status --porcelain=v2 -z` unmerged output (modes + object ids).
   std::string output =
       "u UU N... 100644 100644 100644 100644 "
       "89b24ecec50c07aef0d6640a2a9f6dc354a33125 "
@@ -221,29 +195,18 @@ void TestPorcelainV2ConflictClassification() {
 }
 
 void TestPorcelainV2ShortRecordDoesNotThrow() {
-  // A truncated/adversarial `git status --porcelain=v2 -z` stream — e.g. a repo
-  // with millions of entries whose final record is clipped to a single byte by
-  // the 128 MiB capture cap — must not throw std::out_of_range from substr(2)
-  // (which would propagate off the background worker and abort the process).
-  std::string output = "1";  // one-byte record, no trailing NUL
+  std::string output = "1";
   const auto state = GitPorcelainV2Parser::Parse(output, "/repo", 1, 0);
   Expect(state.entries.empty(), "one-byte record should be skipped, not parsed");
 
-  // A valid entry followed by a one-byte trailing record: the good entry parses,
-  // the short record is skipped without throwing.
   std::string mixed = "1 M. N... 100644 100644 100644 abc def README.md";
   mixed.push_back('\0');
-  mixed.append("2");  // clipped trailing record
+  mixed.append("2");
   const auto mixed_state = GitPorcelainV2Parser::Parse(mixed, "/repo", 1, 0);
   Expect(mixed_state.entries.size() == 1,
          "valid entry should parse while the short trailing record is skipped");
 }
 
-// porcelain-v2 `# branch.ab` reports ahead/behind as `+<ahead> -<behind>`.
-// ParseAheadBehind must (a) accept genuine git output including its space field
-// separator, and (b) reject a field carrying a trailing non-numeric suffix
-// instead of silently truncating it (e.g. "+12x-3" previously parsed ahead=12,
-// "+12-3x" parsed behind=3 because only from_chars' error code was checked).
 void TestPorcelainV2AheadBehindParsing() {
   const auto parse_ab = [](std::string_view token) {
     std::string output = "# branch.ab ";
@@ -253,21 +216,15 @@ void TestPorcelainV2AheadBehindParsing() {
     return std::pair<int, int>{state.branch.ahead, state.branch.behind};
   };
 
-  // No-space form parses both counts.
   Expect(parse_ab("+12-3") == (std::pair<int, int>{12, 3}),
          "\"+12-3\" should parse ahead=12 behind=3");
-  // Real git emits a space field separator; it must still parse (regression guard
-  // against the full-consume check over-rejecting authentic output).
   Expect(parse_ab("+2 -0") == (std::pair<int, int>{2, 0}),
          "genuine git \"+2 -0\" must parse ahead=2 behind=0");
 
-  // A trailing garbage suffix on either field is rejected outright, leaving the
-  // default 0/0 rather than a truncated count.
   Expect(parse_ab("+12x-3") == (std::pair<int, int>{0, 0}),
          "\"+12x-3\" must be rejected, not truncated to ahead=12");
   Expect(parse_ab("+12-3x") == (std::pair<int, int>{0, 0}),
          "\"+12-3x\" must be rejected, not truncated to behind=3");
-  // Non-numeric fields are rejected too.
   Expect(parse_ab("+x-3") == (std::pair<int, int>{0, 0}),
          "\"+x-3\" (non-numeric ahead) must be rejected");
   Expect(parse_ab("+12-x") == (std::pair<int, int>{0, 0}),
@@ -284,23 +241,7 @@ void TestRefreshFailureClassification() {
          "index lock stderr should classify as repo locked");
 }
 
-// `<gitdir>/MERGE_HEAD` is read directly (no `git` subprocess) so the merge
-// resolver can label the incoming pane from the shell thread without risking a
-// 60 s git stall. Covers the plain `.git` directory, the linked-worktree
-// `.git`-file indirection, octopus merges (first id wins), and the rejection of
-// anything that is not a plain object id.
-// The `<sub>` field was parsed past and discarded, so a conflicted submodule was
-// indistinguishable from an ordinary content conflict downstream. The token index
-// is pinned against real `git status --porcelain=v2` output, which reports a
-// gitlink as `SC..` in that position.
-//
-// Deliberately NOT covered here: a per-stage MODE comparison. It looks like the
-// way to spot an executable-bit conflict, but git has no such conflict — a 644 vs
-// 755 divergence auto-resolves, and a genuine "distinct types" conflict (file vs
-// symlink) is reported as TWO records that each carry a zero stage, so no
-// ours-vs-theirs mode pair ever differs. See TD-2026-07-26-004.
 void TestPorcelainV2CapturesSubmoduleField() {
-  // "u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>"
   const auto parse_one = [](std::string record) {
     record.push_back('\0');
     return GitPorcelainV2Parser::Parse(record, "/repo", 1, 0);
@@ -317,25 +258,12 @@ void TestPorcelainV2CapturesSubmoduleField() {
   Expect(!ordinary.entries.front().submodule,
          "an `N`-prefixed <sub> field is not a submodule");
 
-  // The ordinary (non-unmerged) record shape carries <sub> at the same index —
-  // this is the exact shape real git emits for a dirty submodule.
   const auto ordinary_submodule =
       parse_one("1 .M SC.. 160000 160000 160000 aaa bbb vendor/dep");
   Expect(ordinary_submodule.entries.front().submodule,
          "a `1` record's <sub> field is read from the same position");
 }
 
-// Two independent implementations of "where is this repository's git directory?"
-// existed — internal::ResolveGitDirectory and a private ResolveGitDir inside the
-// change tracker — and they disagreed: one normalized the `gitdir:` target and one
-// returned an absolute one verbatim, so `/a/b/../.git` and `/a/.git` could name the
-// same repository and compare unequal. There is one now, and this pins its answer for
-// each of the three layouts plus the case the copies differed on.
-// The one reader the three `.git` metadata readers now share. It exists because
-// each of the three had a hole the others did not: two read the WHOLE file to
-// look at its first line, and the third read only the first line but had no size
-// cap. Both holes are asserted here, so a future "simplification" back to either
-// shape fails rather than passing quietly.
 void TestReadFirstLineOfGitFile() {
   namespace gitutil = microide::project::internal;
   TemporaryDirectory temp_dir;
@@ -362,9 +290,6 @@ void TestReadFirstLineOfGitFile() {
   Expect(!gitutil::ReadFirstLineOfGitFile(base).has_value(),
          "a directory is not a metadata file");
 
-  // The bound the getline version did not have: one unterminated line must not
-  // pull the whole file into memory. Read is capped, and the cap is what is
-  // returned.
   WriteFile(base / "huge", std::string(gitutil::kMaxGitMetadataLineBytes * 4, 'a'));
   const std::optional<std::string> capped = gitutil::ReadFirstLineOfGitFile(base / "huge");
   Expect(capped.has_value() && capped->size() == gitutil::kMaxGitMetadataLineBytes,
@@ -379,13 +304,11 @@ void TestResolveGitDirectoryLayouts() {
   Expect(!gitutil::ResolveGitDirectory(base / "not-a-repo").has_value(),
          "a directory with no .git marker has no git directory");
 
-  // Ordinary checkout: `.git` is a directory.
   const std::filesystem::path plain = base / "plain";
   std::filesystem::create_directories(plain / ".git");
   Expect(gitutil::ResolveGitDirectory(plain) == plain / ".git",
          "an ordinary checkout resolves to <root>/.git");
 
-  // Linked worktree / submodule: `.git` is a FILE holding `gitdir: <path>`.
   const std::filesystem::path linked = base / "linked";
   std::filesystem::create_directories(linked);
   std::filesystem::create_directories(base / "store" / "wt");
@@ -393,13 +316,10 @@ void TestResolveGitDirectoryLayouts() {
   Expect(gitutil::ResolveGitDirectory(linked) == (base / "store" / "wt").lexically_normal(),
          "a relative gitdir: target resolves against the worktree root");
 
-  // The divergence: an ABSOLUTE gitdir target with a `..` in it. One copy returned it
-  // verbatim, so the two answers for one repository were not the same path.
   WriteFile(linked / ".git", "gitdir: " + (base / "store" / "wt" / ".." / "wt").string() + "\n");
   Expect(gitutil::ResolveGitDirectory(linked) == (base / "store" / "wt").lexically_normal(),
          "an absolute gitdir: target is normalized too, not returned verbatim");
 
-  // A `.git` file that is not a gitdir pointer is not a repository.
   WriteFile(linked / ".git", "something else\n");
   Expect(!gitutil::ResolveGitDirectory(linked).has_value(),
          "a .git file without a gitdir: prefix names no git directory");
@@ -418,12 +338,10 @@ void TestReadPendingMergeHeadId() {
   WriteFile(root / ".git/MERGE_HEAD", oid + "\n");
   Expect(gitutil::ReadPendingMergeHeadId(root, project::LocalGitMetadataSource()) == oid, "a plain MERGE_HEAD id is read verbatim");
 
-  // Octopus merge: one id per line, first wins (matches `git rev-parse MERGE_HEAD`).
   const std::string second = "89abcdef0123456789abcdef0123456789abcdef";
   WriteFile(root / ".git/MERGE_HEAD", oid + "\n" + second + "\n");
   Expect(gitutil::ReadPendingMergeHeadId(root, project::LocalGitMetadataSource()) == oid, "an octopus merge reports the first id");
 
-  // CRLF and trailing blanks must not leak into the label.
   WriteFile(root / ".git/MERGE_HEAD", oid + "  \r\n");
   Expect(gitutil::ReadPendingMergeHeadId(root, project::LocalGitMetadataSource()) == oid, "trailing whitespace/CR is trimmed");
 
@@ -433,7 +351,6 @@ void TestReadPendingMergeHeadId() {
            "a MERGE_HEAD that is not a plain object id is rejected");
   }
 
-  // Linked worktree: `.git` is a FILE pointing at the real git directory.
   const std::filesystem::path worktree = temp_dir.path() / "wt";
   const std::filesystem::path linked_gitdir = temp_dir.path() / "gitdir";
   std::filesystem::create_directories(worktree);
@@ -445,7 +362,6 @@ void TestReadPendingMergeHeadId() {
   Expect(gitutil::ResolveGitDirectory(worktree) == linked_gitdir,
          "ResolveGitDirectory follows the gitdir: pointer");
 
-  // A relative gitdir: pointer resolves against the worktree root.
   const std::filesystem::path relative_worktree = temp_dir.path() / "rel";
   std::filesystem::create_directories(relative_worktree / "store");
   WriteFile(relative_worktree / ".git", "gitdir: store\n");
@@ -458,9 +374,6 @@ void TestReadPendingMergeHeadId() {
          "a `.git` file without a gitdir: pointer yields no git directory");
 }
 
-// `operation_state` is derived from git's own in-flight markers. It was a
-// declared-but-never-written field, so the merge resolver could never report a
-// rebase/cherry-pick incoming side.
 void TestDetectGitOperationState() {
   using microide::project::DetectGitOperationState;
   using microide::project::GitOperationStateKind;
@@ -473,9 +386,6 @@ void TestDetectGitOperationState() {
   Expect(DetectGitOperationState(temp_dir.path() / "missing", project::LocalGitMetadataSource()) == GitOperationStateKind::None,
          "a path with no git directory reports no in-flight operation");
 
-  // Real git leaves AUTO_MERGE and MERGE_MSG behind during a rebase, revert AND
-  // cherry-pick. Plant them up front: they must never be mistaken for a merge,
-  // which is why MERGE_HEAD (and not those) is the merge marker.
   WriteFile(root / ".git/AUTO_MERGE", "0123456789abcdef0123456789abcdef01234567\n");
   WriteFile(root / ".git/MERGE_MSG", "Merge branch 'side'\n");
   Expect(DetectGitOperationState(root, project::LocalGitMetadataSource()) == GitOperationStateKind::None,
@@ -497,14 +407,13 @@ void TestDetectGitOperationState() {
   Expect(DetectGitOperationState(root, project::LocalGitMetadataSource()) == GitOperationStateKind::Merge,
          "MERGE_HEAD outranks every other marker, matching git's own precedence");
 
-  // `rebase-apply` (the am-based rebase layout) counts too.
   const std::filesystem::path apply_root = temp_dir.path() / "apply";
   std::filesystem::create_directories(apply_root / ".git/rebase-apply");
   Expect(DetectGitOperationState(apply_root, project::LocalGitMetadataSource()) == GitOperationStateKind::Rebase,
          "rebase-apply also reports a rebase");
 }
 
-}  // namespace
+}
 
 void RegisterGitRepositoryStateTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GitRepositoryState/PorcelainV2WorkingTreeFixture",
@@ -536,4 +445,4 @@ void RegisterGitRepositoryStateTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GitRepositoryState/DetectGitOperationState", TestDetectGitOperationState);
 }
 
-}  // namespace microide::tests
+}

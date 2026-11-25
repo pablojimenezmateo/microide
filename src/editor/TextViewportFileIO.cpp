@@ -1,8 +1,3 @@
-// File I/O, save normalization, and encoding/line-ending labels for
-// TextViewport. Split out of TextViewport.cpp to keep that translation unit
-// focused on editing/layout/undo. These methods are still members of the
-// `TextViewport` class — see editor/TextViewport.h for the declarations.
-
 #include "editor/TextViewport.h"
 
 #include "project/FileWriteGate.h"
@@ -31,19 +26,11 @@ struct LineEndingMetadata {
 };
 
 LineEndingMetadata AnalyzeLineEndings(std::string_view content) {
-  // An LF-only file -- every file this editor writes, and the overwhelming
-  // majority it opens -- is fully described by "there is no CR anywhere": no CR
-  // means no CRLF and no CR ending, so the style is LF, nothing is mixed, and
-  // the LF count cannot change any of that. Answer it with one `memchr` over the
-  // buffer instead of a byte-at-a-time classification loop, which is what this
-  // ran for every byte of every file opened.
   const std::size_t first_cr = content.find('\r');
   if (first_cr == std::string_view::npos) {
     return LineEndingMetadata{};
   }
 
-  // There is at least one CR: the counts genuinely matter now, but everything
-  // before the first one is LF-or-payload, so start the classification there.
   std::size_t crlf = 0;
   std::size_t lf = std::count(content.begin(), content.begin() + first_cr, '\n');
   std::size_t cr = 0;
@@ -80,10 +67,6 @@ std::string CanonicalizeLineEndingsToLf(std::string_view content,
   if (!metadata.has_cr) {
     return std::string(content);
   }
-  // Copy the runs between carriage returns wholesale rather than one
-  // `push_back` per byte: the CRs are the only thing this transform touches, and
-  // on the files that reach here (a CRLF checkout is every byte of the file) the
-  // per-byte loop was the whole cost.
   std::string normalized;
   normalized.reserve(content.size());
   std::size_t i = 0;
@@ -111,11 +94,6 @@ std::string CanonicalizeLineEndingsToLf(std::string&& content,
   return CanonicalizeLineEndingsToLf(std::string_view(content), metadata);
 }
 
-// Split on '\n' only, preserving every other byte -- including a stray '\r' or a NUL --
-// verbatim inside the line. Used for opaque/binary ("Bytes"-encoded) content where a CR is
-// payload, not a line terminator: the split is exactly reversible by joining the lines back
-// with '\n', so an unedited open->save round-trips the bytes. (SplitLines/DecodeLines cannot
-// be used here: they treat CR as a line ending and would drop it.)
 std::vector<std::string> SplitOnLineFeedOnly(std::string_view content) {
   std::vector<std::string> lines;
   std::size_t start = 0;
@@ -129,15 +107,8 @@ std::vector<std::string> SplitOnLineFeedOnly(std::string_view content) {
   return lines;
 }
 
-}  // namespace
+}
 
-// Drop a leading UTF-8 byte order mark from text content, returning whether one
-// was there. Opaque/binary content keeps every byte. The stripped text is what the
-// buffer holds; `has_utf8_bom` remembers to write it back.
-//
-// Detection runs on the stripped text: the three BOM bytes are valid UTF-8, so
-// an otherwise all-ASCII file would classify as UTF8 rather than ASCII, and the
-// ASCII tier is the fast path every per-edit encoding upgrade starts from.
 bool TextViewport::StripUtf8Bom(std::string& content, TextEncoding& encoding) {
   if (encoding == TextEncoding::Bytes || !util::HasUtf8Bom(content)) {
     return false;
@@ -168,9 +139,6 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
 
 TextViewport::ClassifiedContent TextViewport::ClassifyContent(std::string bytes) {
   ClassifiedContent classified;
-  // Captured before the BOM strip and the LF canonicalization below: a re-read
-  // produces these bytes, so this is what a later conflict check compares
-  // against, and this is the one moment they exist.
   classified.raw_content_hash = util::QuickContentHash(bytes);
   classified.raw_size = bytes.size();
 
@@ -184,8 +152,6 @@ TextViewport::ClassifiedContent TextViewport::ClassifyContent(std::string bytes)
   classified.line_ending = metadata.line_ending;
   classified.mixed_line_endings = metadata.mixed_line_endings;
   if (classified.encoding == TextEncoding::Bytes) {
-    // Opaque/binary content: a 0x0D or 0x0A is data, not a line ending, so the
-    // bytes travel untouched and the split happens at install time.
     classified.text = std::move(bytes);
     classified.line_ending = LineEnding::LF;
     classified.mixed_line_endings = false;
@@ -193,9 +159,6 @@ TextViewport::ClassifiedContent TextViewport::ClassifyContent(std::string bytes)
   }
   {
     util::PerformanceTrace::Scope scope("TextViewport::ClassifyContent::CanonicalizeLineEndings");
-    // Directly to the editor's canonical LF buffer. The old CRLF/CR path decoded
-    // into vector<string> and PieceTree immediately joined it back into a string,
-    // so a dense CRLF file could force one allocation per line on open.
     classified.text = CanonicalizeLineEndingsToLf(std::move(bytes), metadata);
   }
   return classified;
@@ -205,12 +168,9 @@ bool TextViewport::AdoptClassifiedContent(const std::filesystem::path& path,
                                           ClassifiedContent content) {
   EnsureDocument();
   if (content.encoding == TextEncoding::Bytes) {
-    // Split on '\n' only (keeping CR bytes in the line) and label the ending LF so
-    // Save joins with a single '\n' -- the only transform is the reversible split,
-    // so the bytes survive.
     ResetState(SplitOnLineFeedOnly(content.text), path, LineEnding::LF,
-               /*mixed_line_endings=*/false, content.encoding, /*placeholder=*/false,
-               /*dirty=*/false);
+               false, content.encoding, false,
+               false);
     RecordOpenedContentHash(content.raw_content_hash, content.raw_size);
     return true;
   }
@@ -224,18 +184,6 @@ bool TextViewport::AdoptClassifiedContent(const std::filesystem::path& path,
   return true;
 }
 
-// ResetState records the signature from a bare stat, which cannot know the bytes.
-// OpenFile does know them, so it attaches their hash to the signature ResetState
-// just recorded.
-//
-// That stat comes AFTER the read. A file still being written when it was read --
-// another program streaming it out -- is longer by then, and a baseline taking the
-// stat's size and mtime vouched for the whole file while holding a prefix: past the
-// racy window every later check matched it, the watcher's events read as this
-// buffer's own echo, and the buffer stayed a prefix for good, clean (soak
-// adbdbecb317b: 1,449,984 of 1,620,018 bytes, 49 sightings). Such a baseline records
-// the size that was read, and as racy, so no stat can vouch for it: the next check
-// finds the file changed and reloads it.
 void TextViewport::RecordOpenedContentHash(std::size_t raw_content_hash, std::size_t raw_size) {
   if (!document_->disk_signature.exists || document_->disk_signature.error) {
     return;
@@ -257,8 +205,6 @@ void TextViewport::TraceBufferIo(std::string_view event) const {
   util::Sha256 sha;
   sha.Update(bytes);
   const util::FileSignature& disk = document_->disk_signature;
-  // The sha256 prefix is the data oracle's: its message names the buffer and
-  // disk hashes the same way, so a line here can be matched against it.
   util::Log(std::format(
       "microide buffer-io: {} path={} doc={} rev={} dirty={} bytes={} sha={} "
       "disk_exists={} disk_size={} disk_mtime={} disk_racy={}",
@@ -272,26 +218,11 @@ bool TextViewport::Save(project::FileWriteGate& gate, std::error_code* error, Sa
   if (document_->path.empty()) {
     return false;
   }
-  // A read-only view has nothing of the user's to write, and writing an
-  // asynchronously-loading tab's empty buffer would truncate the file it is
-  // still reading.
   if (read_only_) {
     return false;
   }
 
-  // Save-time normalization: apply trim and final-newline transforms to a
-  // local copy of the lines buffer. We write the normalized text but keep the
-  // in-memory buffer untouched unless the toggles change the content; this
-  // keeps subsequent edits idempotent and avoids the noise of a re-layout
-  // immediately after save.
-  // Opaque/binary content is round-tripped verbatim: skip whitespace/newline normalization
-  // and force an LF join (mirroring the '\n'-only split on open) so a stray CR or NUL is
-  // never rewritten. Applying trim or an ending override to binary bytes would corrupt them.
   const bool opaque = document_->encoding == TextEncoding::Bytes;
-  // Only materialize a whole-document vector when a save-time transform is actually
-  // enabled. A clean save with transforms off (or an opaque/binary buffer) skips the
-  // O(line count) ToVector pass entirely and serializes straight from the snapshot —
-  // the transform check is cheap and the common case is no transform. (TD-2026-07-16-12.)
   const bool wants_transform = transforms == SaveTransforms::Apply && !opaque &&
                                (save_trim_trailing_whitespace_ || save_ensure_final_newline_);
   std::vector<std::string> normalized;
@@ -306,31 +237,14 @@ bool TextViewport::Save(project::FileWriteGate& gate, std::error_code* error, Sa
     }
   }
 
-  // "auto" keeps the file's detected ending; an explicit lf/crlf override wins. Opaque
-  // content ignores the override and keeps the document's ending: LF for a file
-  // opened as bytes (split on '\n' only, so its CRs are in the lines), the file's
-  // own for a text file an edit made opaque -- forcing LF there rewrote every
-  // CRLF in it (soak 88696b6b00ac).
   const LineEnding effective_ending =
       opaque ? document_->line_ending : save_line_ending_override_.value_or(document_->line_ending);
-  // The changed path already holds a materialized `normalized` vector. The common
-  // clean-save path streams straight from the live TextBuffer (zero-copy via LineView)
-  // instead of materializing a whole-document vector with Snapshot() before the join
-  // (TD-2026-07-17A-013).
   std::string text =
       changed ? util::SerializeLines(normalized, effective_ending)
               : util::SerializeLinesStreaming(LineSpan(document_->lines), effective_ending);
   if (document_->utf8_bom) {
-    // The mark was stripped on open so the buffer's line 0 starts at the text;
-    // the file keeps it. Only a text open strips one, so a buffer that is opaque
-    // now became so by an edit, and its mark is still the file's (soak
-    // 88696b6b00ac: an autosave after a paste of non-UTF-8 bytes dropped it).
     text.insert(0, util::kUtf8Bom);
   }
-  // A buffer whose baseline found no file there (a Save As's new name, a new
-  // file's first save) creates, never replaces: a file that appeared at the path
-  // since -- between Save As's existence check and this write, or while a new file
-  // was being typed -- is someone else's, and replacing it lost it silently.
   const util::WriteTarget target =
       document_->disk_signature.exists ? util::WriteTarget::Replace : util::WriteTarget::CreateNew;
   const project::FileWriteGate::Result written = gate.WriteText(
@@ -342,48 +256,26 @@ bool TextViewport::Save(project::FileWriteGate& gate, std::error_code* error, Sa
     return false;
   }
 
-  // Commit the (possibly overridden) ending only after the write succeeds, so a
-  // failed save leaves the in-memory ending — and the status-bar label — matching
-  // what is still on disk rather than the ending we tried and failed to write.
   document_->line_ending = effective_ending;
 
   if (changed) {
-    // Mirror the normalization into the live buffer so the user sees the
-    // same content they just saved. Routed through ReplaceLines so undo can
-    // unwind the change.
-    //
-    // ReplaceLines over the whole document snaps the caret/selection/scroll to
-    // (0,0)/top. VS Code preserves the caret across format-on-save, so capture the
-    // pre-normalization view and restore it afterwards, then clamp every caret and
-    // anchor back into the (possibly trimmed) content.
     const ViewState pre_normalize_view = CaptureViewState();
-    ReplaceLines(0, document_->lines.size(), std::move(normalized), /*record_undo=*/true);
+    ReplaceLines(0, document_->lines.size(), std::move(normalized), true);
     RestoreViewState(pre_normalize_view);
     ClampCaretSetToDocument();
-    // Clamping can land a secondary caret on the primary or on another
-    // secondary (a trimmed line held two of them); colliding carets merge, as
-    // VS Code merges cursors that meet.
     PruneCoincidentSecondaryCarets();
     ClampScrollState();
   }
 
   document_->mixed_line_endings = false;
   document_->dirty = false;
-  // Re-baseline undo/redo dirty flags to this saved position so undoing past the
-  // save marks the buffer dirty (its content then differs from what we just wrote).
   document_->undo_history.MarkSaved();
-  // Record the just-written file's identity so (a) a save-time conflict check
-  // sees a matching signature next time and (b) the watcher's echo of our own
-  // write is recognized and suppressed instead of forcing a redundant reload.
-  // The gate captured it as part of the write, so this is no longer a second stat
-  // of a path we just touched.
   document_->disk_signature = written.signature;
   TraceBufferIo("write");
   return true;
 }
 
 TextViewport::DiskConflict TextViewport::DetectDiskConflict() const {
-  // No baseline (untitled/new buffer, or never sampled): never block a save.
   if (!document_->disk_signature.exists || document_->path.empty()) {
     return DiskConflict::None;
   }
@@ -399,22 +291,9 @@ TextViewport::DiskConflict TextViewport::DetectDiskConflict() const {
 
 bool TextViewport::DiskContentUnchanged(const util::FileSignature& current) const {
   if (current.SameContentAs(document_->disk_signature)) {
-    return true;  // one stat answered it
+    return true;
   }
-  // The stat differs. That is not the same as "the content changed": a `touch`, a
-  // `git checkout` that restored byte-identical content, and an external formatter
-  // that produced no change all move the mtime and leave the file exactly as it
-  // was. Treating one of those as an external change refuses the save and raises a
-  // banner the user cannot act on — and rewriting a file with the same bytes is
-  // precisely what an agent editing alongside you does.
-  //
-  // Confirm before believing it, and only when confirming is cheap: the recorded
-  // signature must carry the content hash (it does for any file this viewport read
-  // or wrote), the SIZE must match (a different size is a real change, no read
-  // needed), and the file must be small enough that reading it is not itself the
-  // stall this check sits inside.
   if (!CouldConfirmDiskContent(current)) {
-    // No content hash to confirm a racy match with: the stat is all there is.
     return current.SameStatAs(document_->disk_signature);
   }
   util::AddPerformanceCounter(util::PerfCounterId::ExternalChangeConfirmInlineReads);
@@ -432,18 +311,9 @@ bool TextViewport::CouldConfirmDiskContent(const util::FileSignature& current) c
 
 bool TextViewport::ConfirmDiskContentUnchanged(const util::FileSignature& current,
                                                std::uint64_t disk_content_hash) const {
-  // The residual risk is a 64-bit collision between two files of the SAME size, at
-  // which point a real external edit would be overwritten silently. That is 2^-64
-  // per check, and it replaces a heuristic that was wrong roughly whenever anyone
-  // touched the file — so it strictly reduces the chance of acting on a wrong
-  // answer. Keeping the last-synced bytes instead would make it exact at the cost
-  // of a second copy of every open file, which is not a trade for 2^-64.
   if (disk_content_hash != document_->disk_signature.content_hash) {
     return false;
   }
-  // Re-baseline to the new stat so the next call takes the one-stat fast path
-  // instead of re-reading a file already confirmed unchanged — once that stat is
-  // old enough to vouch for the bytes.
   document_->disk_signature.mtime_ticks = current.mtime_ticks;
   document_->disk_signature.racy = current.racy;
   return true;
@@ -482,10 +352,6 @@ void TextViewport::AdoptDiskBaselineOf(const TextViewport& other) {
     document_->disk_signature = other.document_->disk_signature;
   }
   document_->dirty = false;
-  // The file now holds this position's text, so this position is the one clean
-  // point -- the same re-baseline a save does. Without it the history kept the
-  // LOAD as the clean point: undoing back to the loaded text read clean while
-  // the file held the edit, and nothing would ever save it back.
   document_->undo_history.MarkSaved();
   TraceBufferIo("adopt-baseline");
 }
@@ -508,20 +374,13 @@ bool TextViewport::RevertToDiskContent(const TextViewport& disk) {
     return false;
   }
   if (!HoldsSameFileContentAs(disk)) {
-    // The file's lines as they are, as one undoable line edit. Not as a
-    // '\n'-joined text through ReplaceRange: inserted text breaks a line at a
-    // lone '\r' as well, and an opaque document's lines keep their CR bytes, so
-    // a reverted binary file held a line break where the file holds byte 13 --
-    // marked clean (soak fea34952ad53).
     const TextBuffer& source = disk.lines();
     const TextPosition caret{cursor_line_, cursor_column_};
     ClearSecondaryCarets();
     if (!ReplaceLines(0, document_->lines.size(), source.SliceLinesBlob(0, source.size()),
-                      /*record_undo=*/true)) {
+                      true)) {
       return false;
     }
-    // The caret stays where it was as far as the reverted text allows, rather
-    // than at the end of a whole-document replacement.
     const std::size_t line = std::min(caret.line, document_->lines.size() - 1);
     MoveCursorTo(line, std::min(caret.column, document_->lines.LineLength(line)));
   }
@@ -535,15 +394,10 @@ void TextViewport::LoadContent(std::string_view content,
   EnsureDocument();
   TextEncoding encoding = DetectEncoding(content);
   if (encoding == TextEncoding::Bytes) {
-    // Same opaque-bytes handling as OpenFile: preserve CR bytes and force an LF ending so a
-    // restored binary buffer saves back byte-for-byte.
     ResetState(SplitOnLineFeedOnly(content), path, line_ending.value_or(LineEnding::LF),
-               /*mixed_line_endings=*/false, encoding, /*placeholder=*/false, /*dirty=*/false);
+               false, encoding, false, false);
     return;
   }
-  // Same BOM rule as OpenFile, on the view rather than an owned string: the
-  // compare pane's right side and a merge result load through here, and both
-  // serialize back through SerializeDocumentText, which puts the mark back.
   const bool utf8_bom = util::HasUtf8Bom(content);
   if (utf8_bom) {
     content.remove_prefix(util::kUtf8Bom.size());
@@ -562,8 +416,6 @@ bool TextViewport::ApplyFormattedText(std::string_view text) {
   if (read_only_) {
     return false;
   }
-  // The same normalization LoadContent applies — a comparison against bytes the
-  // buffer never holds would see every line as changed.
   const bool utf8_bom = util::HasUtf8Bom(text);
   if (utf8_bom != document_->utf8_bom || DetectEncoding(text) == TextEncoding::Bytes) {
     ReloadPreservingViewState(text);
@@ -599,8 +451,6 @@ bool TextViewport::ApplyFormattedText(std::string_view text) {
          buffer.LineView(old_count - 1 - suffix) == lines[new_count - 1 - suffix]) {
     ++suffix;
   }
-  // A pure deletion: ReplaceLines cannot install zero lines (an empty
-  // replacement is one blank line), so take one kept line into the window.
   if (prefix + suffix == new_count) {
     if (prefix > 0) {
       --prefix;
@@ -616,7 +466,6 @@ bool TextViewport::ApplyFormattedText(std::string_view text) {
   const std::size_t scroll_line_before = scroll_line();
   const std::size_t horizontal_scroll_before = horizontal_scroll();
   const std::optional<SelectionRange> selection_before = selection_range();
-  // One ReplaceLines is one undo entry: Undo takes the formatting back in one step.
   const bool changed = ReplaceLines(prefix, old_count - suffix, std::move(middle));
   ApplyRestoredViewState(cursor_line_before, cursor_column_before, scroll_line_before,
                          horizontal_scroll_before, selection_before);
@@ -636,10 +485,8 @@ std::string TextViewport::SerializeDocumentText(std::optional<LineEnding> line_e
 void TextViewport::LoadLines(std::vector<std::string> lines, const std::filesystem::path& path,
                             LineEnding line_ending) {
   EnsureDocument();
-  // ResetState moves `lines` into the piece tree (no join/re-split). The encoding is
-  // recomputed from the loaded buffer afterwards, mirroring LoadContent's detection.
-  ResetState(std::move(lines), path, line_ending, /*mixed_line_endings=*/false,
-             TextEncoding::ASCII, /*placeholder=*/false, /*dirty=*/true);
+  ResetState(std::move(lines), path, line_ending, false,
+             TextEncoding::ASCII, false, true);
   RefreshEncoding();
 }
 
@@ -677,11 +524,6 @@ std::string TextViewport::LineEndingLabel() const {
 std::string TextViewport::EncodingLabel() const {
   switch (document_->encoding) {
     case TextEncoding::ASCII:
-      // ASCII is UTF-8, and the file is written as UTF-8 either way, so reporting
-      // "ASCII" told the user nothing they could act on and made the status bar
-      // appear to change the file's encoding the moment they typed an accent.
-      // VSCode says UTF-8 for both; the enum keeps the two apart only because
-      // ascii_only is the detection fast path that skips the UTF-8 validation.
     case TextEncoding::UTF8:
       return document_->utf8_bom ? "UTF-8 with BOM" : "UTF-8";
     case TextEncoding::Bytes:
@@ -699,7 +541,7 @@ void TextViewport::UpgradeEncodingForInsertedLines(
     const std::vector<std::string>& inserted_lines) {
   util::AddPerformanceCounter(util::PerfCounterId::EditorRefreshEncodingCalls);
   if (document_->encoding == TextEncoding::Bytes) {
-    return;  // already the worst classification; an insert cannot raise it further.
+    return;
   }
   UpgradeEncodingFromDelta(DetectEncoding(LineSpan(inserted_lines)));
 }
@@ -709,7 +551,6 @@ void TextViewport::UpgradeEncodingForInsertedLines(const LineBlob& inserted_line
   if (document_->encoding == TextEncoding::Bytes) {
     return;
   }
-  // One classification pass over the blob's own bytes; no vector to build first.
   TextEncoding delta = TextEncoding::ASCII;
   for (const std::string_view line : inserted_lines) {
     const TextEncoding line_encoding = DetectEncoding(line);
@@ -732,7 +573,7 @@ void TextViewport::UpgradeEncodingFromDelta(TextEncoding delta) {
 void TextViewport::UpgradeEncodingForInsertedText(std::string_view text) {
   util::AddPerformanceCounter(util::PerfCounterId::EditorRefreshEncodingCalls);
   if (text.empty() || document_->encoding == TextEncoding::Bytes) {
-    return;  // already the worst classification; an insert cannot raise it further.
+    return;
   }
   const TextEncoding delta = DetectEncoding(text);
   if (static_cast<int>(delta) > static_cast<int>(document_->encoding)) {
@@ -741,9 +582,6 @@ void TextViewport::UpgradeEncodingForInsertedText(std::string_view text) {
 }
 
 TextViewport::TextEncoding TextViewport::DetectEncoding(std::string_view content) {
-  // One scan answers both questions the common case asks -- "is there a NUL?"
-  // and "is there any non-ASCII byte?" -- instead of walking the whole buffer
-  // twice. An all-ASCII file (most source files) is now decided in a single pass.
   const std::size_t interesting = util::FirstNonAsciiOrByte(content, '\0');
   if (interesting == content.size()) {
     return TextEncoding::ASCII;
@@ -751,8 +589,6 @@ TextViewport::TextEncoding TextViewport::DetectEncoding(std::string_view content
   if (content[interesting] == '\0') {
     return TextEncoding::Bytes;
   }
-  // Non-ASCII: a NUL may still lurk past this point, and IsValidUtf8 would
-  // happily accept one, so the NUL check still has to cover the remainder.
   if (content.find('\0', interesting) != std::string_view::npos) {
     return TextEncoding::Bytes;
   }
@@ -782,4 +618,4 @@ TextViewport::TextEncoding TextViewport::DetectEncoding(LineSpan lines) {
   return ascii_only ? TextEncoding::ASCII : TextEncoding::UTF8;
 }
 
-}  // namespace microide::editor
+}

@@ -7,9 +7,6 @@
 namespace microide::plugin::path_interop {
 namespace {
 
-// True when `normalized` is `root` itself notwithstanding, strictly inside `root`. Uses the
-// same parent-prefix test the buffer-table builder relies on: lexically_relative yields a
-// path beginning with ".." exactly when the target escapes the root.
 bool WithinRoot(const std::filesystem::path& normalized, const std::filesystem::path& root) {
   if (root.empty()) {
     return false;
@@ -22,15 +19,6 @@ bool WithinRoot(const std::filesystem::path& normalized, const std::filesystem::
            *relative.begin() == std::filesystem::path(".."));
 }
 
-// weakly_canonical(root) is a realpath syscall run for every allowed root on every
-// sandboxed plugin filesystem call. It was previously memoized per root in a
-// thread_local cache, but that cache was keyed only by the lexical root path and
-// never invalidated: if an allowed root is a symlink and its target is replaced
-// mid-session, containment kept comparing against the stale canonical target
-// (denying the new root or, worse, still trusting the old physical directory).
-// For a security check that is unacceptable, and a plugin fs call already performs
-// real file I/O, so one fresh realpath per allowed root is negligible. Resolve
-// live every time. `ok` is false when canonicalization failed.
 struct CanonicalRoot {
   std::filesystem::path path;
   bool ok = false;
@@ -42,7 +30,7 @@ CanonicalRoot CanonicalRootResolved(const std::filesystem::path& root) {
   return CanonicalRoot{.path = std::move(canonical), .ok = !error};
 }
 
-}  // namespace
+}
 
 std::string Basename(const std::filesystem::path& path) {
   return path.filename().empty() ? path.lexically_normal().string() : path.filename().string();
@@ -67,7 +55,6 @@ std::optional<std::filesystem::path> ContainPath(
   }
   const std::filesystem::path normalized = requested.lexically_normal();
 
-  // Tier 1: lexical containment. Rejects every `..` escape without touching the filesystem.
   bool lexical_ok = false;
   for (const std::filesystem::path& root : allowed_roots) {
     if (WithinRoot(normalized, root.lexically_normal())) {
@@ -79,38 +66,15 @@ std::optional<std::filesystem::path> ContainPath(
     return std::nullopt;
   }
 
-  // Tier 2: symlink containment. std::filesystem::weakly_canonical resolves symlinks
-  // in the EXISTING prefix of the path and appends any non-existent leaf lexically,
-  // so it must run even for a MISSING target: creating `link/new.txt`, where the
-  // existing parent `link` is a symlink pointing outside the project, would otherwise
-  // pass the lexical test (no `..`) and then be written beside the followed symlink
-  // target — a containment escape. Canonicalizing the deepest existing parent closes
-  // that hole.
   std::error_code canon_error;
   std::filesystem::path canonical = std::filesystem::weakly_canonical(normalized, canon_error);
   if (canon_error) {
-    // Retry once: a truly transient error (e.g. a momentary EAGAIN) should not
-    // deny a legitimate plugin path. But if canonicalization still fails we must
-    // FAIL CLOSED — returning the lexical path here would downgrade the symlink
-    // containment check to lexical-only, letting a symlinked prefix whose
-    // canonicalization errors (permission error, symlink loop) escape the root.
     canon_error.clear();
     canonical = std::filesystem::weakly_canonical(normalized, canon_error);
     if (canon_error) {
       return std::nullopt;
     }
   }
-  // Tier 3: a DANGLING symlink leaf. weakly_canonical resolves symlinks only in
-  // the path's EXISTING prefix, and a dangling link does not exist as far as
-  // exists() is concerned -- it follows the link and finds nothing. So a leaf
-  // that is itself a link to a missing file outside the root was appended
-  // verbatim, landed inside the root, and passed as contained. Writing to it
-  // follows the link and creates the file on the far side: the same escape tier
-  // 2 closes for a symlinked PARENT, with the link one component further down.
-  //
-  // Only a dangling leaf reaches this loop; a live symlink was already resolved
-  // above, so the common case pays one lstat. The hop budget bounds a chain of
-  // dangling links, and exhausting it fails closed.
   constexpr int kMaxDanglingSymlinkHops = 16;
   std::filesystem::path resolved = canonical;
   bool hops_exhausted = true;
@@ -123,11 +87,11 @@ std::optional<std::filesystem::path> ContainPath(
       break;
     }
     if (hop == kMaxDanglingSymlinkHops) {
-      break;  // a chain this long is a loop or an attack; fail closed below.
+      break;
     }
     std::filesystem::path target = std::filesystem::read_symlink(resolved, link_error);
     if (link_error) {
-      return std::nullopt;  // cannot tell where it points: fail closed.
+      return std::nullopt;
     }
     if (target.is_relative()) {
       target = resolved.parent_path() / target;
@@ -135,7 +99,7 @@ std::optional<std::filesystem::path> ContainPath(
     std::error_code hop_error;
     resolved = std::filesystem::weakly_canonical(target, hop_error);
     if (hop_error) {
-      return std::nullopt;  // fail closed, as tier 2 does.
+      return std::nullopt;
     }
   }
   if (hops_exhausted) {
@@ -147,8 +111,6 @@ std::optional<std::filesystem::path> ContainPath(
     if (!canonical_root.ok) {
       continue;
     }
-    // Containment is decided on where the path actually LANDS (`resolved`); the
-    // path handed back is the one the caller named, which opens the same file.
     if (WithinRoot(resolved, canonical_root.path)) {
       return canonical;
     }
@@ -156,4 +118,4 @@ std::optional<std::filesystem::path> ContainPath(
   return std::nullopt;
 }
 
-}  // namespace microide::plugin::path_interop
+}

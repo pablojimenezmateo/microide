@@ -15,7 +15,6 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::RenameSymbol, "rename-symbol", "rename-symbol [new-name]", "Rename Symbol", "F2"},
       ActionSpec{ActionId::OpenCommandPalette, "command-palette", "command-palette",
                  "Command Palette…", "Ctrl+Shift+P"},
-      // No default chord, as in VS Code (notifications.focusToasts is unbound).
       ActionSpec{ActionId::FocusNotifications, "focus-notifications", "focus-notifications",
                  "Focus Notifications", ""},
       ActionSpec{ActionId::NotificationAction, "notification-action",
@@ -80,9 +79,6 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Color Theme…", "Ctrl+K Ctrl+T"},
       ActionSpec{ActionId::ToggleColorTheme, "toggle-theme", "toggle-theme",
                  "Toggle Light/Dark Theme", ""},
-      // No default chord: VS Code binds this to F11, but F11 is already
-      // `debug-step-in` here and this keybinding model has no when-clause to
-      // scope one chord to an active debug session. Menu + command only.
       ActionSpec{ActionId::ToggleFullscreen, "toggle-fullscreen", "toggle-fullscreen",
                  "Toggle Full Screen", ""},
       ActionSpec{ActionId::Completion, "completion", "completion", "Completions",
@@ -118,8 +114,6 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::CreateDirectory, "", "", "New Folder…", ""},
       ActionSpec{ActionId::CreateFile, "", "", "New File…", ""},
       ActionSpec{ActionId::DeletePath, "", "", "Delete…", ""},
-      // The tree's clipboard (Ctrl+X / Ctrl+C / Ctrl+V are the tree's own keys, as
-      // F2 and Delete are, so the menu shows no accelerator for them either).
       ActionSpec{ActionId::TreeCut, "", "", "Cut", ""},
       ActionSpec{ActionId::TreeCopy, "", "", "Copy", ""},
       ActionSpec{ActionId::TreePaste, "", "", "Paste", ""},
@@ -397,9 +391,6 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Split Editor Right", ""},
       ActionSpec{ActionId::SplitEditorDown, "split-down", "split-down [path]",
                  "Split Editor Down", ""},
-      // Cycles through the editor panes in layout order (VS Code's "Focus Next
-      // Group"); the command name predates the n-way editor area and is kept so
-      // existing keybindings and scripts still resolve.
       ActionSpec{ActionId::FocusOtherGroup, "focus-other-group", "focus-other-group",
                  "Focus Next Editor Group", ""},
       ActionSpec{ActionId::FocusEditorGroup, "focus-group", "focus-group <n>",
@@ -427,13 +418,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::CloseTabsToRight, "", "", "Close Tabs to the Right", ""},
       ActionSpec{ActionId::CloseTabsToLeft, "", "", "Close Tabs to the Left", ""},
       ActionSpec{ActionId::CopyLastTerminalCommand, "", "", "Copy Last Command and Output", ""},
-      // These clipboard/history/select verbs carry a command name so they are
-      // reachable over the command line and the control channel (headless /
-      // LLM-driven control), not just via their keyboard accelerators.
       ActionSpec{ActionId::CopySelection, "copy", "copy", "Copy", "Ctrl+C"},
       ActionSpec{ActionId::CopySelectionWithContext, "", "", "Copy with Context", ""},
-      // The caret's place, or the selection's lines, as `path:line` -- what an
-      // agent in a terminal is told to look at, in place of pasting the text.
       ActionSpec{ActionId::CopyReference, "copy-reference", "copy-reference", "Copy Reference", ""},
       ActionSpec{ActionId::TerminalInsertReference, "term-insert-reference", "term-insert-reference",
                  "Terminal: Insert Reference", "Ctrl+Alt+K"},
@@ -490,8 +476,6 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Add Cursor Below", "Ctrl+Alt+Down"},
       ActionSpec{ActionId::AddCursorsToLineEnds, "add-cursors-to-line-ends",
                  "add-cursors-to-line-ends", "Add Cursors to Line Ends", "Shift+Alt+I"},
-      // Keyboard column (box) selection: bound to Ctrl+Shift+Alt+arrows, and runnable
-      // by name and from the palette like VS Code's Column Select commands.
       ActionSpec{ActionId::ColumnSelectUp, "column-select-up", "column-select-up",
                  "Column Select Up", "Ctrl+Shift+Alt+Up"},
       ActionSpec{ActionId::ColumnSelectDown, "column-select-down", "column-select-down",
@@ -603,4 +587,4 @@ std::vector<std::string> WorkspaceDocumentedCommandUsages() {
   return usages;
 }
 
-}  // namespace microide::workspace
+}

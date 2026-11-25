@@ -34,11 +34,6 @@ TrashOperationResult Success(const std::filesystem::path& path) {
   };
 }
 
-// The freedesktop trash spec requires the `Path` value to be stored as a URI:
-// percent-encoded per RFC 2396, with '/' left unescaped. Encoding it also makes
-// the single-line `Path=...` field robust against filenames containing newlines
-// (legal on Linux), which would otherwise inject arbitrary lines into the
-// .trashinfo file and corrupt DeletionDate or spoof fields.
 [[maybe_unused]] std::string PercentEncodeTrashPath(const std::string& path) {
   static constexpr char kHex[] = "0123456789ABCDEF";
   std::string out;
@@ -94,25 +89,19 @@ TrashOperationResult MovePathToTrashLinux(const std::filesystem::path& source) {
   const std::string extension = base_path.extension().string();
   const std::string fallback_stem = stem.empty() ? base_name : stem;
 
-  // Reserve the `.trashinfo` name atomically with O_EXCL BEFORE writing metadata
-  // or moving the file. Per the freedesktop trash spec the .trashinfo file is the
-  // reservation: creating it exclusively is the atomic gate that makes two
-  // concurrent trashers of same-named files pick distinct slots. The prior
-  // exists()-check + truncating ofstream was a TOCTOU that let both racers land on
-  // the same name and silently overwrite each other's file and metadata.
   for (int attempt = 1; attempt < 10000; ++attempt) {
     const std::string candidate_name =
         (attempt == 1) ? base_name
                        : (fallback_stem + " " + std::to_string(attempt) + extension);
     std::error_code exists_error;
     if (std::filesystem::exists(trash_files / candidate_name, exists_error)) {
-      continue;  // A leftover file occupies the slot (best-effort); try the next.
+      continue;
     }
     const std::filesystem::path candidate_info = trash_info / (candidate_name + ".trashinfo");
     const int fd = ::open(candidate_info.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     if (fd < 0) {
       if (errno == EEXIST) {
-        continue;  // Name reserved by a concurrent trasher — the atomic gate fired.
+        continue;
       }
       return Failure("Failed to write trash metadata");
     }
@@ -141,42 +130,24 @@ TrashOperationResult MovePathToTrashLinux(const std::filesystem::path& source) {
       return Failure("Failed to write trash metadata");
     }
 
-    // Final content move must be NO-OVERWRITE: the reservation only gated the
-    // `.trashinfo` slot, so a file can still appear at Trash/files/<name> between the
-    // exists() check above and here (TOCTOU). An overwrite rename would clobber it.
-    // If the slot is now taken, drop our reserved metadata and try the next suffix
-    // instead of overwriting or failing the whole delete. (TD-2026-07-16-49.)
     const std::filesystem::path trashed_path = trash_files / candidate_name;
     if (MovePathNoOverwrite(source, trashed_path)) {
       return Success(trashed_path);
     }
-    // Classify the slot the way MovePathNoOverwrite just did — by the NODE, not by
-    // what it points at. `exists()` follows a symlink, so a dangling link occupying
-    // the slot made the two disagree: the move refused ("destination present") while
-    // this read "absent", so the retry was skipped and the delete failed outright
-    // instead of taking the next suffix. Any stat error also counts as occupied,
-    // which is the same fail-closed rule the move uses. An absent slot is read off
-    // the TYPE alone: libstdc++ reports a missing path as not_found AND sets the
-    // error to ENOENT, so testing the error too read every free slot as taken. A
-    // move that failed for any reason then retried at the next suffix, copying the
-    // whole folder again up to 10000 times on the UI thread (soak d3f7c53a3cd7). A
-    // real stat error reports file_type::none, which still counts as taken.
     std::error_code dest_status_error;
     const std::filesystem::file_status dest_status =
         std::filesystem::symlink_status(trashed_path, dest_status_error);
     if (dest_status.type() != std::filesystem::file_type::not_found) {
       std::filesystem::remove(candidate_info, error);
-      continue;  // Slot taken during the window — reserve the next one.
+      continue;
     }
-    // The move failed for another reason (source gone, permission, cross-device copy
-    // failure with rollback): clean up the reserved metadata and report failure.
     std::filesystem::remove(candidate_info, error);
     return Failure("Failed to move the path to trash");
   }
   return Failure("Failed to reserve a trash slot");
 }
 
-}  // namespace
+}
 
 TrashOperationResult MovePathToTrash(const std::filesystem::path& path) {
   const std::filesystem::path normalized_path = NormalizeAbsolutePath(path);
@@ -184,12 +155,6 @@ TrashOperationResult MovePathToTrash(const std::filesystem::path& path) {
     return Failure("No path was provided");
   }
 
-  // Validate against the directory entry itself, not the symlink target.
-  // std::filesystem::exists follows symlinks, so a *dangling* symlink (target
-  // gone) would report non-existent and could never be trashed — even though the
-  // link node is a real, removable entry that a normal file manager would trash.
-  // symlink_status inspects the link node directly, so a broken symlink is
-  // accepted while a genuinely absent path still reports not_found.
   std::error_code error;
   const std::filesystem::file_status link_status =
       std::filesystem::symlink_status(normalized_path, error);
@@ -201,4 +166,4 @@ TrashOperationResult MovePathToTrash(const std::filesystem::path& path) {
   return MovePathToTrashLinux(normalized_path);
 }
 
-}  // namespace microide::platform
+}

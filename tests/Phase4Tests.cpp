@@ -31,11 +31,11 @@ void TestVirtualDocumentRegistryUpdatesAndCallbacks() {
          "virtual document registry should invoke the change callback with the updated URI");
 }
 
-}  // namespace
+}
 
 void RegisterPhase4Tests(std::vector<TestCase>& tests) {
   tests.emplace_back("Phase4.VirtualDocumentRegistryUpdatesAndCallbacks",
                      &TestVirtualDocumentRegistryUpdatesAndCallbacks);
 }
 
-}  // namespace microide::tests
+}

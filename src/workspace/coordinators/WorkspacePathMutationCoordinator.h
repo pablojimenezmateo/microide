@@ -19,7 +19,6 @@ class PathMutationCoordinator {
   struct Operations {
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<void()> clear_editor_blame;
-    // Post a transient notification toast (used to surface file-op failures).
     std::function<void(NotificationService::Tone, std::string)> notify;
     std::function<bool()> discard_all_git_sidebar_entries;
     std::function<bool(std::size_t, const std::filesystem::path&)> discard_git_sidebar_entry;
@@ -32,8 +31,6 @@ class PathMutationCoordinator {
     std::function<void()> refresh_problems_sidebar;
     std::function<void()> queue_editor_hover_refresh;
     std::function<void()> request_editor_surface_redraw;
-    // A rename or move retitles the tabs and breadcrumbs of every pane showing the
-    // file (not only the focused one), the tree and the status bar.
     std::function<void()> request_window_redraw;
     std::function<void(editor::TextViewport&)> apply_editor_preferences;
     std::function<void(editor::TextViewport&)> apply_detected_indent_on_open;
@@ -57,23 +54,9 @@ class PathMutationCoordinator {
                                  std::string* blocking_label) const;
   void CloseOpenTabsForPath(const std::filesystem::path& path);
   void ConfirmPromptSurface(DirtyPathResolution resolution);
-  // The tree's Paste: `source` moved (`cut`) or copied into `directory`, under its
-  // own name. A move is a rename, with a rename's follow-up -- open tabs retargeted
-  // keeping their unsaved text, diagnostics and decorations moved with the file.
-  // A copy whose name is taken there becomes "name copy.ext", "name copy 2.ext"…
-  // (VS Code); a move onto a taken name, or a folder into itself, is refused.
-  // Empty on success, else why not (also notified).
   std::string PastePath(const std::filesystem::path& source, bool cut, const std::filesystem::path& directory);
-  // Replay a confirmed rename/delete once every write it waited on has landed
-  // (a SaveContinuation of kind PathMutation; a failed write cancels it before
-  // this is reached).
   void ResumeDeferredPathMutation(PromptSurfaceState pending);
 
-  // Reconcile shell state after an EXTERNAL path mutation (an LSP WorkspaceEdit
-  // resource op) already happened on disk: no prompts, no file operations — pure
-  // state retarget. Rename preserves unsaved buffer contents at the new path;
-  // delete closes the path's tabs and clears its diagnostics/decorations. The
-  // caller runs RefreshViewsAfterExternalMutation once after the batch.
   void ReconcileAfterExternalRename(const std::filesystem::path& old_path,
                                     const std::filesystem::path& new_path);
   void ReconcileAfterExternalDelete(const std::filesystem::path& path);
@@ -92,25 +75,20 @@ class PathMutationCoordinator {
     std::size_t tab_index = 0;
   };
 
-  // Outcome of retargeting a single compare/merge tab against a path rename.
   enum class SpecialTabRetargetOutcome {
-    Unaffected,  // Not a compare/merge tab, or its paths don't touch the rename.
-    Retargeted,  // Rebuilt/redirected in place at the new path.
-    MustClose,   // Its content no longer resolves at the new path; close the tab.
+    Unaffected,
+    Retargeted,
+    MustClose,
   };
 
   std::vector<DirtyPathTarget> DirtyPathTargetsForPath(const std::filesystem::path& path) const;
   std::vector<std::size_t> DirtyTabIndicesForPath(const std::filesystem::path& path) const;
   std::vector<std::size_t> AffectedCompareTabIndices(const std::filesystem::path& path) const;
   std::vector<std::size_t> AffectedMergeTabIndices(const std::filesystem::path& path) const;
-  // Pure path predicates shared by the focused-group scan and the all-groups close/retarget
-  // passes so compare/merge tabs match identically wherever they live.
   static bool CompareTabAffectedByPath(const TabEntry& tab,
                                        const std::filesystem::path& normalized_path);
   static bool MergeTabAffectedByPath(const TabEntry& tab,
                                      const std::filesystem::path& normalized_path);
-  // Retarget one compare/merge tab in place (or report it must be closed) for a rename.
-  // Group-agnostic so it runs against the focused group and every background split alike.
   SpecialTabRetargetOutcome RetargetSpecialTabForRename(TabEntry& tab,
                                                         const std::filesystem::path& old_path,
                                                         const std::filesystem::path& new_path,
@@ -122,15 +100,10 @@ class PathMutationCoordinator {
   void RetargetDiagnosticsForRename(const std::filesystem::path& old_path,
                                     const std::filesystem::path& new_path);
   void ClearDiagnosticsForPath(const std::filesystem::path& path);
-  // Plugin/LSP decorations are keyed by path just like diagnostics, so they must be
-  // retargeted on rename and cleared on delete too — otherwise the renamed buffer loses
-  // its decorations until the producer republishes, and the stale entries leak (the
-  // plugin-presentation bundle can never drain empty and release).
   void RetargetPluginDecorationsForRename(const std::filesystem::path& old_path,
                                           const std::filesystem::path& new_path);
   void ClearPluginDecorationsForPath(const std::filesystem::path& path);
   void RefreshProjectViewsAfterMutation(const std::filesystem::path& preferred_tree_path);
-  // Everything a rename or a move updates once the file has moved on disk.
   void FollowRename(const std::filesystem::path& old_path,
                     const std::filesystem::path& new_path,
                     bool preserve_unsaved_state);
@@ -140,10 +113,6 @@ class PathMutationCoordinator {
 
   ProjectWorkspaceState& CurrentProjectState();
   const ProjectWorkspaceState& CurrentProjectState() const;
-  // The sidebar takes the keyboard after a confirmed tree or git operation --
-  // when it is still shown. The sidebar can be hidden under the prompt, and
-  // giving a hidden surface the keyboard left every key going nowhere (QA monkey,
-  // seed 11).
   void FocusSidebarIfShown();
 
   WorkspaceContext& context_;
@@ -152,4 +121,4 @@ class PathMutationCoordinator {
   Operations operations_;
 };
 
-}  // namespace microide::workspace
+}

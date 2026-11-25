@@ -7,22 +7,11 @@
 
 #include "editor/LineEditSpan.h"
 
-// LineEditSpan is the primitive the incremental fold caches resync against, so
-// what matters is not any particular field value but the invariant the consumers
-// rely on: after any batch of splices, the reported window is the ONLY place the
-// stale cache and the live document may differ. These tests assert that directly
-// by keeping a reference "cache" alongside a mutated "document" and checking the
-// common prefix and common suffix the span claims.
-
 namespace microide::tests {
 namespace {
 
 using microide::editor::LineEditSpan;
 
-// Checks the two properties every consumer depends on:
-//   document[0, begin)              == cache[0, begin)
-//   document[current_end, doc_end)  == cache[cached_end, cache_end)
-// and that the two suffixes are the same length (what lets a consumer splice).
 void ExpectSpanDescribesDifference(const LineEditSpan& span,
                                    const std::vector<std::string>& cache,
                                    const std::vector<std::string>& document,
@@ -51,8 +40,6 @@ void ExpectSpanDescribesDifference(const LineEditSpan& span,
   }
 }
 
-// Applies the same splice to a plain vector so the test has ground truth that
-// does not share any code with the accumulator under test.
 void ApplySplice(std::vector<std::string>& lines, std::size_t start, std::size_t removed,
                  const std::vector<std::string>& inserted) {
   lines.erase(lines.begin() + static_cast<std::ptrdiff_t>(start),
@@ -89,7 +76,6 @@ void TestLineCountChangingSpliceShiftsTheSuffix() {
   std::vector<std::string> document = cache;
   LineEditSpan span;
 
-  // Split line 5 into three.
   ApplySplice(document, 5, 1, {"a", "b", "c"});
   span.NoteSplice(5, 1, 3);
 
@@ -98,14 +84,11 @@ void TestLineCountChangingSpliceShiftsTheSuffix() {
   ExpectSpanDescribesDifference(span, cache, document, "expanding splice");
 }
 
-// The case the accumulator exists for: several edits land between two refreshes.
 void TestBatchedSplicesKeepTheInvariant() {
   const std::vector<std::string> cache = MakeDocument(20, "L");
   std::vector<std::string> document = cache;
   LineEditSpan span;
 
-  // A later edit, then an earlier one, then one that reaches past the window into
-  // what was still common suffix -- the three merge cases NoteSplice distinguishes.
   ApplySplice(document, 12, 2, {"x", "y", "z"});
   span.NoteSplice(12, 2, 3);
   ApplySplice(document, 3, 1, {"p"});
@@ -124,8 +107,6 @@ void TestSpliceEntirelyBeforeTheWindowStillTracksTheShift() {
 
   ApplySplice(document, 8, 1, {"tail"});
   span.NoteSplice(8, 1, 1);
-  // Insert two lines well above the existing window; the window's document-side
-  // end has to shift with them or the claimed suffix desynchronizes.
   ApplySplice(document, 2, 0, {"n1", "n2"});
   span.NoteSplice(2, 0, 2);
 
@@ -143,7 +124,6 @@ void TestSuffixReplacedSwallowsLaterSplices() {
   Expect(span.ResolvedCachedEnd(cache.size()) == cache.size(),
          "an unbounded cache end resolves to the whole cache");
 
-  // Any further splice can only widen the window leftward.
   ApplySplice(document, 1, 1, {"q"});
   span.NoteSplice(1, 1, 1);
   Expect(span.begin() == 1u, "a later, earlier splice should still lower the window start");
@@ -161,9 +141,6 @@ void TestClearedSpanReportsNoChange() {
   Expect(span.empty(), "Clear() should return the span to the no-edits state");
 }
 
-// Randomized cross-check. A deterministic LCG drives a few thousand splice
-// batches through both the accumulator and a plain vector; any merge case the
-// hand-written tests above missed shows up as a broken prefix/suffix claim.
 void TestRandomizedSpliceBatchesKeepTheInvariant() {
   std::uint64_t state = 0x9E3779B97F4A7C15ULL;
   const auto next = [&state](std::uint64_t bound) -> std::size_t {
@@ -195,7 +172,7 @@ void TestRandomizedSpliceBatchesKeepTheInvariant() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterLineEditSpanTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LineEditSpan/SingleInPlaceSpliceIsExact", TestSingleInPlaceSpliceIsExact);
@@ -212,4 +189,4 @@ void RegisterLineEditSpanTests(std::vector<TestCase>& tests) {
           TestRandomizedSpliceBatchesKeepTheInvariant);
 }
 
-}  // namespace microide::tests
+}

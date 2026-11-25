@@ -1,13 +1,3 @@
-// Floating, icon-only debug control bar (Continue/Pause, Step Over/In/Out,
-// Restart, Stop). Modeled on the in-editor find widget: a small card that floats
-// over the top-right of the editor area while a debug session is active, with
-// hover tooltips and no backdrop. These are WorkspaceShell methods defined here
-// (the same pattern as DebugPaneRender.cpp / DebugPaneLayout.cpp): the file is
-// deliberately NOT named WorkspaceShell*.cpp — that keeps it off the
-// WorkspaceShell companion-count cap and out of the render-surface lint glob (so
-// it may read state for the hit-test alongside the render). The render builds
-// only static label strings and short-lived tooltip text, off any hot path.
-
 #include "workspace/MergeToolbarMetrics.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
@@ -26,7 +16,6 @@ struct DebugToolbarButtonSpec {
   std::string_view tooltip;
 };
 
-// Tooltip labels (with the default keybinding) keyed by DebugToolbarButton.
 constexpr std::array<DebugToolbarButtonSpec,
                      static_cast<std::size_t>(DebugToolbarButton::Count)>
     kButtonSpecs = {{
@@ -44,22 +33,19 @@ constexpr std::size_t Index(DebugToolbarButton button) {
   return static_cast<std::size_t>(button);
 }
 
-// Step controls (forward and reverse) only act while paused; Continue/Pause/
-// Restart/Stop are live whenever a session is active.
 constexpr bool IsStepButton(DebugToolbarButton button) {
   return button == DebugToolbarButton::StepOver || button == DebugToolbarButton::StepInto ||
          button == DebugToolbarButton::StepOut || button == DebugToolbarButton::ReverseContinue ||
          button == DebugToolbarButton::StepBack;
 }
 
-}  // namespace
+}
 
 std::string_view DebugToolbarButtonTooltip(DebugToolbarButton button, bool session_stopped) {
   if (button == DebugToolbarButton::ContinuePause && !session_stopped) {
     return "Pause";
   }
   if (!session_stopped && IsStepButton(button)) {
-    // Step controls are disabled while running: explain rather than stay silent.
     return "Pause to step";
   }
   return kButtonSpecs[Index(button)].tooltip;
@@ -70,9 +56,6 @@ bool WorkspaceShell::DebugToolbarVisible() const {
 }
 
 std::optional<float> WorkspaceShell::DebugToolbarAvoidBelowY(const WorkspaceLayout& layout) const {
-  // What sits at the top of the editor area that the toolbar must not cover: the
-  // find widget, and an editor banner -- whose Reload / Keep / dismiss the bar
-  // used to sit on (the QA monkey's overlap oracle).
   std::optional<float> below;
   const OverlayState& overlay = context_.current_project_state.overlay;
   if (overlay.visible &&
@@ -86,8 +69,6 @@ std::optional<float> WorkspaceShell::DebugToolbarAvoidBelowY(const WorkspaceLayo
       banner.h > 0.0f) {
     below = std::max(below.value_or(banner.y + banner.h), banner.y + banner.h);
   }
-  // A merge keeps its own toolbar (Previous, Next, Open Result, Save) in the same
-  // top-right corner: the bar sat on Open Result (soak 3cea0cf87f72).
   if (const MergeTabState* merge_tab = ActiveTabIsMerge() ? ActiveMergeTab() : nullptr; merge_tab != nullptr) {
     const MergeSurfaceLayout merge = ComputeMergeSurfaceLayout(ActiveTabSurface(layout), *merge_tab);
     const float toolbar_bottom = merge.secondary_button_y + kMergeToolbarButtonHeight;
@@ -96,7 +77,6 @@ std::optional<float> WorkspaceShell::DebugToolbarAvoidBelowY(const WorkspaceLayo
   return below;
 }
 
-// The toolbar as frame prep laid it out (PreparedFrameState::debug_toolbar).
 void WorkspaceShell::RenderDebugToolbar(SDL_Renderer* renderer) const {
   const PreparedFrameState::DebugToolbarPaint& toolbar = frame_state_.debug_toolbar;
   const DebugToolbarLayout& tb = toolbar.layout;
@@ -105,20 +85,13 @@ void WorkspaceShell::RenderDebugToolbar(SDL_Renderer* renderer) const {
     return;
   }
 
-  // Floating card only — the editor stays visible/usable underneath.
   render::DrawCardFrame(renderer, theme_, tb.widget, render::CardStyle::Overlay);
-
-  // Hover as prep resolved it with PointerOver, not the raw pointer: under a modal
-  // nothing outside it hovers, and the toolbar lit a button through the Add Watch
-  // prompt in full frames only (QA dbg-stepping on the CI ASan lane).
 
   const auto button_enabled = [&](DebugToolbarButton button) {
     return IsStepButton(button) ? session_stopped : true;
   };
 
   std::optional<std::size_t> hovered_index;
-  // A disabled button gets no highlight but still shows a tooltip, so the user can
-  // learn *why* it is inert (e.g. step controls need the program paused first).
   std::optional<std::size_t> tooltip_index;
   for (std::size_t i = 0; i < tb.button_count; ++i) {
     const DebugToolbarButton button = tb.kinds[i];
@@ -144,8 +117,6 @@ void WorkspaceShell::RenderDebugToolbar(SDL_Renderer* renderer) const {
     FillRect(renderer, rect, colors.fill);
     OutlineRect(renderer, rect, colors.border);
 
-    // The play/stop glyphs get a green/red accent when live so the primary
-    // controls read at a glance; everything else uses the resolved text color.
     SDL_Color glyph = colors.text;
     switch (button) {
       case DebugToolbarButton::ContinuePause:
@@ -187,13 +158,6 @@ void WorkspaceShell::RenderDebugToolbar(SDL_Renderer* renderer) const {
     }
   }
 
-  // The tooltip is NOT drawn here. It used to be, and that was the bug: the hover
-  // invalidation on mouse motion repaints the toolbar card, while this tooltip is
-  // anchored BELOW the card, outside that rect. Moving between buttons therefore
-  // left the tooltip region untouched, so a tooltip appeared only when some
-  // unrelated repaint happened to cover it -- "tooltips don't launch reliably".
-  // It now goes through WorkspaceShell::HoveredTooltip like every other chrome
-  // tooltip, which invalidates the outgoing and incoming cards by their own rects.
   (void)tooltip_index;
 }
 
@@ -262,9 +226,7 @@ bool WorkspaceShell::HandleDebugToolbarButtonDown(const SDL_Event& event,
     return true;
   }
 
-  // Click landed on the bar's padding/background: swallow it so it doesn't fall
-  // through to the editor (e.g. moving the caret behind the toolbar).
   return true;
 }
 
-}  // namespace microide::workspace
+}

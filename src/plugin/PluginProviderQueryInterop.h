@@ -121,4 +121,4 @@ bool RunSaveParticipants(
     std::string* error_message);
 #endif
 
-}  // namespace microide::plugin::provider_query_interop
+}

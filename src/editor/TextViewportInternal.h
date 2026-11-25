@@ -1,10 +1,5 @@
 #pragma once
 
-// Internal helpers shared between the TextViewport.cpp translation units
-// (TextViewport.cpp and TextViewportLanguageBehavior.cpp). Not part of the
-// public editor API. The `detail` namespace and the .h naming both signal
-// "do not include this from anywhere outside src/editor/TextViewport*.cpp".
-
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -20,18 +15,8 @@
 
 namespace microide::editor::detail {
 
-// Highlight checkpoint spacing. One SyntaxState is snapshotted every
-// `kHighlightCheckpointInterval` lines so resuming highlighting after a jump
-// is O(checkpoint-interval) rather than O(line-index). Shared between
-// TextViewport.cpp (InvalidateDerivedCaches checkpoint-bookkeeping) and
-// TextViewportHighlightCache.cpp (the cache itself).
 inline constexpr std::size_t kHighlightCheckpointInterval = 128;
 
-// Function objects rather than functions, because both are handed to std::sort:
-// a function decays to a pointer there and the sort calls through it, which the
-// LTO build left as 0.7M out-of-line calls across the gated scenarios. An
-// object's call operator is part of its type, so the comparator inlines
-// (TD-2026-10-13-338). Called like functions everywhere else.
 inline constexpr struct PositionLessFn {
   bool operator()(const TextPosition& lhs, const TextPosition& rhs) const {
     if (lhs.line != rhs.line) {
@@ -41,9 +26,6 @@ inline constexpr struct PositionLessFn {
   }
 } PositionLess{};
 
-// Order secondary carets by their caret position. Shared by the
-// AddSecondaryCaret / AddSecondaryCaretWithRange / DedupeSecondaryCaretsAgainstPrimary
-// sort sites so they cannot drift apart.
 inline constexpr struct SecondaryCaretPositionLessFn {
   bool operator()(const TextViewportUndoHistory::SecondaryCaret& lhs,
                   const TextViewportUndoHistory::SecondaryCaret& rhs) const {
@@ -51,14 +33,6 @@ inline constexpr struct SecondaryCaretPositionLessFn {
   }
 } SecondaryCaretPositionLess{};
 
-// Put the secondary carets back in caret order, skipping the sort when they are
-// already in it -- which is the overwhelmingly common case, because every motion
-// verb advances every caret by the same rule and so preserves their order. This
-// runs at the tail of EVERY caret-set mutation, and a held column-select gesture
-// or a box over a long file carries thousands of carets, so an unconditional
-// std::sort over already-sorted input was O(n log n) of pure overhead per
-// keystroke. `MergeOverlappingCaretRanges` already guarded its own sort this
-// way; this is the same idiom for the three sites that did not.
 inline void SortSecondaryCaretsIfNeeded(
     std::vector<TextViewportUndoHistory::SecondaryCaret>& carets) {
   if (!std::is_sorted(carets.begin(), carets.end(), SecondaryCaretPositionLess)) {
@@ -113,23 +87,12 @@ inline std::string TextBetweenLines(LineSpan lines, const SelectionRange& n) {
   return out;
 }
 
-// Newline / trailing-column counts of a replacement string. Computed once per
-// edit so the per-caret remap below is a branch-only update instead of
-// re-scanning the replacement for every previously-placed caret (the multi-caret
-// fan-out remaps O(k) prior carets per applied edit, so the rescan was
-// O(k^2 * |replacement|)).
 struct ReplacementShape {
   std::size_t inserted_newlines = 0;
   std::size_t last_segment_cols = 0;
 };
 
 inline ReplacementShape ComputeReplacementShape(std::string_view replacement) {
-  // Must mirror util::NormalizeLineEndings, which every edit path (e.g.
-  // BuildRangeHistoryEntry) applies to the replacement before splitting it into
-  // lines: a lone '\r' and a '\r\n' each become a single newline. Counting only
-  // literal '\n' would undercount line breaks for pasted lone-CR / reversed
-  // content, desyncing the multi-caret remap so higher carets land on the wrong
-  // line.
   ReplacementShape shape;
   for (std::size_t i = 0; i < replacement.size(); ++i) {
     const char ch = replacement[i];
@@ -140,7 +103,7 @@ inline ReplacementShape ComputeReplacementShape(std::string_view replacement) {
       ++shape.inserted_newlines;
       shape.last_segment_cols = 0;
       if (i + 1 < replacement.size() && replacement[i + 1] == '\n') {
-        ++i;  // consume the paired '\n' so "\r\n" counts as one newline
+        ++i;
       }
     } else {
       ++shape.last_segment_cols;
@@ -149,18 +112,10 @@ inline ReplacementShape ComputeReplacementShape(std::string_view replacement) {
   return shape;
 }
 
-// Maps a caret position forward across one applied edit that replaced the
-// (normalized) range [removed_start, removed_end) with a replacement whose
-// newline/column shape is `shape`. The multi-caret pipelines walk carets
-// high-to-low, so a caret recorded earlier always sits at or after a later
-// (lower) edit; remapping keeps positions correct when several carets share a
-// line (without it, the higher carets are left stale by the byte/line counts
-// inserted below them).
 inline TextPosition RemapPositionAfterReplace(TextPosition position,
                                               TextPosition removed_start,
                                               TextPosition removed_end,
                                               const ReplacementShape& shape) {
-  // Positions strictly before the end of the removed range are unaffected.
   if (PositionLess(position, removed_end)) {
     return position;
   }
@@ -183,32 +138,14 @@ inline TextPosition RemapPositionAfterReplace(TextPosition position,
   return result;
 }
 
-// One site produced by a multi-caret reverse-apply walk: the caret's own
-// post-edit `landed` position (in the coordinate space *before* any lower /
-// earlier-caret edit is folded in — exactly what the walk records right after
-// applying this caret's edit and before remapping), plus that edit's removed
-// range + replacement shape. `has_edit` is false for carets that produced no
-// buffer edit (no-op backspace at doc start, auto-close skip, invalid range);
-// they still get remapped by lower edits but shift nothing themselves.
 struct MultiCaretRemapSite {
   TextPosition landed{};
-  std::optional<TextPosition> anchor;  // companion position (selection anchor), remapped too
+  std::optional<TextPosition> anchor;
   bool has_edit = false;
   SelectionRange removed{};
   ReplacementShape shape{};
 };
 
-// Fold every lower-index site's edit into each site's `landed` (and `anchor`),
-// reproducing the reverse-apply walk's incremental "remap every already-produced
-// result after each applied edit" exactly, but without its O(sites^2) inner loop
-// in the common case. Sites are in ascending caret order; edits are disjoint and
-// sorted (the caller rejects overlaps first).
-//
-// When every edit removed a single-line range and no site carries an anchor, the
-// net effect of all lower edits on a caret is a pure additive line delta plus a
-// same-line column delta, computed in one forward pass (O(sites)). Multi-line
-// removed ranges or anchors fall back to the exact O(sites^2) remap. Both paths
-// yield identical results to the original per-edit remap.
 inline void ResolveMultiCaretRemapSites(std::vector<MultiCaretRemapSite>& sites) {
   bool fast_eligible = true;
   for (const MultiCaretRemapSite& site : sites) {
@@ -220,9 +157,6 @@ inline void ResolveMultiCaretRemapSites(std::vector<MultiCaretRemapSite>& sites)
   }
 
   if (!fast_eligible) {
-    // Exact fallback: site i is remapped by edits i-1, i-2, ..., 0 in that order
-    // (matching the reverse walk, which applies higher carets first and remaps
-    // each lower edit into the already-recorded higher results).
     for (std::size_t i = 0; i < sites.size(); ++i) {
       for (std::size_t k = i; k-- > 0;) {
         if (!sites[k].has_edit) {
@@ -240,13 +174,6 @@ inline void ResolveMultiCaretRemapSites(std::vector<MultiCaretRemapSite>& sites)
     return;
   }
 
-  // Fast path — single-line removed ranges only, so every edit's line delta is
-  // non-negative and a caret's line never decreases across the fold. `acc_line`
-  // accumulates every lower edit's line delta (both remap branches add it);
-  // `acc_col` accumulates the same-original-line column shift, resetting to 0 at
-  // each new original line and rebasing when an edit inserts newlines (its prefix
-  // moves to a fresh tail line, so earlier same-line column growth no longer
-  // applies to carets past it).
   std::ptrdiff_t acc_line = 0;
   std::ptrdiff_t acc_col = 0;
   std::size_t prev_orig_line = std::numeric_limits<std::size_t>::max();
@@ -260,9 +187,6 @@ inline void ResolveMultiCaretRemapSites(std::vector<MultiCaretRemapSite>& sites)
     const std::size_t final_line =
         static_cast<std::size_t>(static_cast<std::ptrdiff_t>(site.landed.line) + acc_line);
     std::size_t final_col = site.landed.column;
-    // Apply the same-line column shift only when this caret still sits on its
-    // original line — a caret whose own edit inserted newlines landed on a fresh
-    // tail line that lower same-line edits do not touch.
     if (site.landed.line == orig_line) {
       final_col = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(final_col) + acc_col);
     }
@@ -281,34 +205,15 @@ inline void ResolveMultiCaretRemapSites(std::vector<MultiCaretRemapSite>& sites)
   }
 }
 
-// Collects the disjoint before/after images of a multi-caret edit while it is
-// applied high-to-low, so the recorded undo entry is the SET of edited ranges
-// instead of one range spanning the outermost carets (TD-2026-08-06-157).
-//
-// Eight carets 8,400 lines apart used to capture 8,401 lines for the before image
-// and 8,401 for the after, and retain both, on every keystroke — the cost of one
-// keystroke was the DISTANCE between the carets, not their number.
-//
-// Every capture happens at the moment its footprint is untouched: the walk is
-// highest-first, so when a footprint opens, everything above it is already edited
-// (and is above, so its indices do not move) and everything below is still
-// original. That is what makes `before_start` the true pre-edit index.
 class DisjointEditCapture {
  public:
   explicit DisjointEditCapture(const TextBuffer& buffer) : buffer_(&buffer) {}
 
-  // The lines a site's edit touches, first and last inclusive.
   struct LineRange {
     std::size_t first = 0;
     std::size_t last = 0;
   };
 
-  // Groups the sites' line ranges -- one entry per site in ascending order,
-  // nullopt for a site that edits nothing -- into footprints: maximal runs of
-  // ranges that overlap or touch. Two carets on the same line share one, which is
-  // what keeps each footprint's capture window untouched until it opens. Then,
-  // walking the sites highest-first, call EnterSite(i) just before applying site
-  // i's edit and LeaveSite(i) just after.
   void PlanFootprints(std::span<const std::optional<LineRange>> site_spans) {
     footprints_.clear();
     opens_at_.assign(site_spans.size(), kNoFootprint);
@@ -335,7 +240,6 @@ class DisjointEditCapture {
     }
   }
 
-  // Opens the footprint whose highest site is `site`, if any.
   void EnterSite(std::size_t site) {
     if (site < opens_at_.size() && opens_at_[site] != kNoFootprint) {
       const Footprint& footprint = footprints_[opens_at_[site]];
@@ -343,7 +247,6 @@ class DisjointEditCapture {
     }
   }
 
-  // Closes the footprint whose lowest site is `site`, if any.
   void LeaveSite(std::size_t site) {
     if (site < closes_at_.size() && closes_at_[site] != kNoFootprint) {
       EndFootprint();
@@ -352,9 +255,6 @@ class DisjointEditCapture {
 
   bool empty() const { return parts_.empty(); }
 
-  // Parts were pushed highest-first; this reverses them into the ascending order
-  // the entry stores, trims each one's identical head/tail, and drops any that
-  // turned out to be a no-op.
   TextViewportUndoHistory::Entry Build(
       const TextViewportUndoHistory::ViewState& before_state,
       const TextViewportUndoHistory::ViewState& after_state) {
@@ -369,7 +269,7 @@ class DisjointEditCapture {
           TextViewportUndoHistory::BuildEntryForDocumentChange(
               std::move(part.before_lines), before_state, std::move(part.after_lines), after_state);
       if (trimmed.before_lines.empty() && trimmed.after_lines.empty()) {
-        continue;  // this footprint's edits cancelled out
+        continue;
       }
       const std::size_t before_start = part.before_start + trimmed.start_line;
       const std::ptrdiff_t part_delta = static_cast<std::ptrdiff_t>(trimmed.after_lines.size()) -
@@ -394,7 +294,6 @@ class DisjointEditCapture {
   }
 
  private:
-  // Call immediately BEFORE applying the highest edit of a footprint.
   void BeginFootprint(std::size_t start, std::size_t end_exclusive) {
     open_start_ = std::min(start, buffer_->size());
     open_before_size_ = std::clamp(end_exclusive, open_start_, buffer_->size()) - open_start_;
@@ -403,7 +302,6 @@ class DisjointEditCapture {
     open_ = true;
   }
 
-  // Call immediately AFTER applying the lowest edit of the footprint.
   void EndFootprint() {
     if (!open_) {
       return;
@@ -446,4 +344,4 @@ class DisjointEditCapture {
   bool open_ = false;
 };
 
-}  // namespace microide::editor::detail
+}

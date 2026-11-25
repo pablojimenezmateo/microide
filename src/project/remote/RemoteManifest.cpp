@@ -14,7 +14,6 @@ using util::PutBytes;
 using util::PutVarint;
 
 constexpr std::size_t kMaxComponentBytes = 255;
-// The most rows (or deleted paths) a decode reserves before any has decoded.
 constexpr std::uint64_t kMaxReservedRows = 1u << 16;
 
 std::uint64_t ZigZag(std::int64_t value) {
@@ -25,10 +24,9 @@ std::int64_t UnZigZag(std::uint64_t value) {
   return static_cast<std::int64_t>(value >> 1) ^ -static_cast<std::int64_t>(value & 1);
 }
 
-}  // namespace
+}
 
 std::int64_t WallClockNowNs() {
-  // File timestamps are wall-clock time, so this is the clock to compare them with.
   return std::chrono::duration_cast<std::chrono::nanoseconds>(
              std::chrono::system_clock::now().time_since_epoch())
       .count();
@@ -80,7 +78,7 @@ void EncodeRows(std::size_t count, const RowAt& row_at, std::string& out) {
   }
 }
 
-}  // namespace
+}
 
 void EncodeManifestRows(const ManifestRow* rows, std::size_t count, std::string& out) {
   EncodeRows(count, [rows](std::size_t i) -> const ManifestRow& { return rows[i]; }, out);
@@ -90,15 +88,9 @@ bool DecodeManifestRows(std::string_view bytes, std::vector<ManifestRow>& rows) 
   const std::size_t original = rows.size();
   ByteReader in(bytes);
   const std::uint64_t count = in.Varint();
-  // Each row costs at least five bytes, so a count the payload cannot hold is a
-  // forgery and must not size a reservation.
   if (in.failed() || count > in.remaining() / 5 + 1) {
     return false;
   }
-  // Reserved up to a chunk's worth only: rows are appended as they decode, so a
-  // genuine count past this costs a few regrowths, while a forged one -- five
-  // bytes on the wire per 128-byte row reserved -- costs nothing it cannot back
-  // with rows that actually decode.
   rows.reserve(original + static_cast<std::size_t>(std::min<std::uint64_t>(count, kMaxReservedRows)));
   const auto fail = [&]() {
     rows.resize(original);
@@ -186,7 +178,6 @@ bool DecodeWatchDelta(std::string_view bytes, std::vector<std::string>& deleted,
     return false;
   }
   std::vector<std::string> paths;
-  // As for the rows: the count is the peer's, a path is a whole std::string here.
   paths.reserve(static_cast<std::size_t>(std::min<std::uint64_t>(count, kMaxReservedRows)));
   for (std::uint64_t i = 0; i < count; ++i) {
     std::string path(in.Bytes(kMaxManifestPathBytes));
@@ -204,4 +195,4 @@ bool DecodeWatchDelta(std::string_view bytes, std::vector<std::string>& deleted,
   return true;
 }
 
-}  // namespace microide::project::remote
+}

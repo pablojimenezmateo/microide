@@ -7,9 +7,6 @@
 
 namespace microide::workspace {
 
-// The mouse pointer the window shows (WorkspaceShell::CursorKindForPosition), one
-// per desktop cursor-theme shape it uses. Its own header so the shell's member
-// list names it in one line, and a terminal program's OSC 22 shape maps onto it.
 enum class CursorKind {
   Default,
   Text,
@@ -34,7 +31,6 @@ enum class CursorKind {
 };
 inline constexpr std::size_t kCursorKindCount = static_cast<std::size_t>(CursorKind::NeswResize) + 1;
 
-// Its CSS name: what the control channel's `ui` query reports.
 constexpr std::string_view CursorKindName(CursorKind kind) {
   switch (kind) {
     case CursorKind::Default: return "default";
@@ -61,7 +57,6 @@ constexpr std::string_view CursorKindName(CursorKind kind) {
   return "default";
 }
 
-// A terminal program's pointer (TerminalSession::PointerShapeAt) as the window's.
 constexpr CursorKind CursorKindFor(terminal::TerminalPointerShape shape) {
   using S = terminal::TerminalPointerShape;
   switch (shape) {
@@ -90,4 +85,4 @@ constexpr CursorKind CursorKindFor(terminal::TerminalPointerShape shape) {
   return CursorKind::Default;
 }
 
-}  // namespace microide::workspace
+}

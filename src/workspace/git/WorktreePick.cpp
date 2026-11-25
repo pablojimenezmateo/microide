@@ -14,7 +14,6 @@ std::vector<QuickPickItem> BuildWorktreePickItems(std::span<const project::GitWo
                                                   std::string_view current_root,
                                                   std::string_view open_command,
                                                   std::string_view target_prefix) {
-  // Without a trailing separator, as git writes its paths.
   std::filesystem::path current = std::filesystem::path(current_root).lexically_normal();
   if (!current.has_filename()) {
     current = current.parent_path();
@@ -35,8 +34,6 @@ std::vector<QuickPickItem> BuildWorktreePickItems(std::span<const project::GitWo
     item.secondary_label =
         !worktree.branch.empty() ? worktree.branch : "detached " + worktree.head.substr(0, 7);
     if (worktree.state.has_value()) {
-      // What is waiting in it, before where it is: the reason to open one tree
-      // rather than another.
       if (worktree.state->changed > 0) {
         AppendHintSegment(item.secondary_label, std::to_string(worktree.state->changed) + " changed");
       }
@@ -60,4 +57,4 @@ std::vector<QuickPickItem> BuildWorktreePickItems(std::span<const project::GitWo
   return items;
 }
 
-}  // namespace microide::workspace
+}

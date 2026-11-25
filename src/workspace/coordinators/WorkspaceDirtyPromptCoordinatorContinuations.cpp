@@ -1,7 +1,3 @@
-// Save continuations: what runs once deferred (format-on-save) writes land — a
-// tab's close, a rename/delete, a project close, a quit. See SaveContinuationState.h
-// for why they are data and keyed by stable tab ids; this TU is the one place that
-// runs or cancels them (TD-2026-09-28-304).
 #include "util/Log.h"
 #include "workspace/coordinators/WorkspaceDirtyPromptCoordinator.h"
 
@@ -14,7 +10,6 @@
 namespace microide::workspace {
 namespace {
 
-// Where a tab with this stable id sits in the active project, if anywhere.
 struct TabLocation {
   std::size_t group_index = 0;
   std::size_t tab_index = 0;
@@ -41,7 +36,7 @@ bool HasWaitRow(SaveContinuation::Kind kind) {
   return kind == SaveContinuation::Kind::Quit || kind == SaveContinuation::Kind::CloseProject;
 }
 
-}  // namespace
+}
 
 bool DirtyPromptCoordinator::SaveThenClose(std::size_t index) {
   const TabCoordinator::SaveForCloseResult result = editor_tabs_.SaveForClose(index);
@@ -93,8 +88,6 @@ void DirtyPromptCoordinator::SettleOrphanedRun(std::uint64_t run_id) {
       }
     }
   }
-  // Gone entirely. Any wait on a tab that no longer has a run in flight anywhere
-  // can never be settled by a completion, so settle it as failed now.
   const auto in_flight = [this](std::uint64_t id) {
     const auto holds = [id](const ProjectWorkspaceState& state) {
       for (const EditorGroup& group : state.editor_groups) {
@@ -135,10 +128,6 @@ bool DirtyPromptCoordinator::CancelSaveContinuation(std::uint64_t id) {
   if (!removed.has_value()) {
     return false;
   }
-  // Abandon the writes still formatting: disarmed, their completions find no tab
-  // and are dropped, so the buffers stay open and dirty — the user said Cancel,
-  // and a save that lands after Cancel is a save they did not ask for any more.
-  // Anything else waiting on those tabs (a tab close) is cancelled with them.
   if (removed->project_root == context_.current_project_state.root) {
     for (const std::uint64_t tab_id : removed->waiting_tab_ids) {
       if (const std::optional<TabLocation> where =
@@ -169,8 +158,6 @@ bool DirtyPromptCoordinator::CancelSaveContinuation(std::uint64_t id) {
 }
 
 void DirtyPromptCoordinator::RunContinuation(SaveContinuation continuation) {
-  // Never against another project: the tabs it waited on may share ids with
-  // nothing here, and "close the project" must not close whichever is active.
   if (continuation.project_root != context_.current_project_state.root) {
     CancelContinuation(continuation, "the project was switched while it saved");
     return;
@@ -189,8 +176,6 @@ void DirtyPromptCoordinator::RunContinuation(SaveContinuation continuation) {
       return;
     case SaveContinuation::Kind::CloseProject: {
       util::InvokeIfSet(operations_.dismiss_notification, kCloseProjectWaitKey);
-      // A buffer edited while its formatter ran is dirty again: the close goes back
-      // to asking rather than discarding it.
       if (!editor_tabs_.DirtyGroupTabs().empty()) {
         CancelContinuation(continuation, "a file was edited while it saved");
         return;
@@ -220,8 +205,6 @@ void DirtyPromptCoordinator::CancelContinuation(const SaveContinuation& continua
   };
   switch (continuation.kind) {
     case SaveContinuation::Kind::CloseTab:
-      // The failed save has said why; the tab staying open with its contents is
-      // the whole of the answer.
       return;
     case SaveContinuation::Kind::PathMutation:
       warn("The rename/delete was not applied: " + std::string(reason));
@@ -244,7 +227,6 @@ void DirtyPromptCoordinator::CancelContinuation(const SaveContinuation& continua
 
 std::optional<std::vector<std::uint64_t>> DirtyPromptCoordinator::DeferSaveDirtyGroupTabs() {
   std::vector<std::uint64_t> deferred;
-  // Indices stay valid across the loop: a save, deferred or not, closes nothing.
   for (const GroupTabRef& ref : editor_tabs_.DirtyGroupTabs()) {
     if (!editor_tabs_.SaveGroupTab(ref.group_index, ref.tab_index, SaveMode::Deferred)) {
       return std::nullopt;
@@ -259,14 +241,11 @@ std::optional<std::vector<std::uint64_t>> DirtyPromptCoordinator::DeferSaveDirty
 }
 
 void DirtyPromptCoordinator::ContinueQuit(SaveContinuation step) {
-  // One project at a time, staying on it until its writes land: a completion is
-  // applied to the ACTIVE project's tabs, so switching on before they land would
-  // strand them (they would be reported as interrupted, and the quit cancelled).
   while (!step.remaining_roots.empty()) {
     const std::filesystem::path root = std::move(step.remaining_roots.front());
     step.remaining_roots.erase(step.remaining_roots.begin());
     if (root != context_.current_project_state.root && !SwitchProjectByRoot(root)) {
-      continue;  // the project went away while the quit waited
+      continue;
     }
     std::optional<std::vector<std::uint64_t>> waiting = DeferSaveDirtyGroupTabs();
     if (!waiting.has_value()) {
@@ -326,4 +305,4 @@ void DirtyPromptCoordinator::ReturnTo(const std::filesystem::path& root) {
   }
 }
 
-}  // namespace microide::workspace
+}

@@ -34,20 +34,14 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   key_damage_mark_ = operations_.damage_generation();
   dispatch_probe_.last = nullptr;
   if (operations_.set_swallow_next_text_input) {
-    operations_.set_swallow_next_text_input(false);  // a new press: the last arm is spent
+    operations_.set_swallow_next_text_input(false);
   }
 
-  // The modifiers the event carries, never SDL_GetModState(): SDL updates the live
-  // state as it PUMPS, so a press handled behind its input reads the next chord's
-  // modifiers -- End ran as Ctrl+End under a following Ctrl+Alt+Down (QA
-  // multi-caret-pairs, on CI). An event with no modifiers had none.
   const SDL_Keymod modifiers = event.mod;
   const TextInputSurface surface_before = operations_.current_text_input_surface
                                               ? operations_.current_text_input_surface()
                                               : TextInputSurface::None;
   const bool handled = DispatchKeyDown(event, modifiers);
-  // Only a key that produces text has a TEXT_INPUT behind it: a chord with Ctrl,
-  // Alt or Super does not, and arming for one would eat a later IME commit.
   const bool printable = (modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
                          operations_.keycode_to_ascii &&
                          operations_.keycode_to_ascii(event.key, modifiers) != '\0';
@@ -61,9 +55,6 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
 
 bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers) {
 
-  // A chord's leader is a workbench prefix, not an editor one (see
-  // HandleKeyChord): only a surface that takes the keyboard for itself -- a
-  // prompt, a menu, an overlay, a focused terminal -- drops a half-typed chord.
   const bool clears_pending_chord =
       prompts_.dirty_visible || menu_state_.tree_context_menu.open ||
       menu_state_.menu_bar_open || prompts_.surface_visible || state_.overlay.visible ||
@@ -75,25 +66,12 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
   if (prompts_.dirty_visible) {
     const bool handled = HandleDirtyPromptKeyDown(event, modifiers);
     if (handled && prompts_.dirty_visible) {
-      // A key the prompt took changed it (its selection) or confirmed it; a confirm
-      // that leaves it up -- a save that defers the close -- queued damage of its
-      // own, the saved tab's pane, which is not where the prompt is drawn (soak
-      // e93ce81f04ac: Discard kept its selected fill beside that pane). So the
-      // prompt is repainted whatever else the key damaged.
       operations_.request_prompt_redraw();
     } else if (handled) {
       EnsureRedraw([this]() { operations_.request_prompt_redraw(); });
     }
     return handled;
   }
-  // The three menu surfaces dispatch identically: hand the key to the surface
-  // that is up, owe a frame when it took it, and answer with what it decided.
-  // A frame, not the chrome's rect: a key that stays in the menu moves its
-  // active row, and each row is a derived unit keyed on that (MenuPopupPaint.h),
-  // so frame prep repaints the row left and the row taken -- and nothing for a
-  // key the menu swallowed. What a key changes outside the rows (another menu
-  // opened, this one closed: the bar's open item, which no unit keys) is
-  // requested where it happens, by MenuCoordinator.
   const auto menu_surface_key = [&](bool handled) {
     if (handled) {
       EnsureRedraw([this]() { operations_.request_frame(); });
@@ -109,9 +87,6 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
   if (menu_state_.overflow_popup_open) {
     return menu_surface_key(HandleMenuOverflowPopupKeyDown(event, modifiers));
   }
-  // Settings / Help is a modal overlay: while it is visible it owns all keyboard
-  // input so keystrokes cannot leak into (and edit) the surface underneath.
-  // Every key is consumed regardless so nothing reaches the editor below.
   if (operations_.settings_overlay_visible()) {
     return HandleSettingsOverlayKeyDown(event, modifiers);
   }
@@ -126,16 +101,10 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
     return handled;
   }
 
-  // The notification stack, once focused (Focus Notifications), owns the keys it
-  // understands. After the prompt surface, so a palette opened over a focused
-  // toast still takes its typing.
   if (HandleNotificationFocusKeyDown(event, modifiers)) {
     return true;
   }
 
-  // The Variables surface owns its keys while the debug pane holds focus so tree
-  // navigation + inline edit are not stolen by global shortcuts. Unhandled keys
-  // fall through (the handler returns false) so global bindings like F5 still work.
   if (state_.surface.focus == FocusTarget::DebugPane &&
       state_.debug_pane.mode == DebugPaneMode::Variables) {
     if (HandleDebugVariablesKeyDown(event, modifiers)) {
@@ -144,8 +113,6 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
     }
   }
 
-  // The Watch surface likewise owns its keys while focused (tree nav + inline edit,
-  // plus add/edit/remove of watch expressions).
   if (state_.surface.focus == FocusTarget::DebugPane &&
       state_.debug_pane.mode == DebugPaneMode::Watch) {
     if (HandleDebugWatchKeyDown(event, modifiers)) {
@@ -154,9 +121,6 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
     }
   }
 
-  // Call Stack and Breakpoints were clickable but had no keyboard at all, in a
-  // pane the shell treats as a first-class focus target (focus ring, Ctrl+Tab, its
-  // own scrollbar, row context menus).
   if (state_.surface.focus == FocusTarget::DebugPane &&
       state_.debug_pane.mode == DebugPaneMode::CallStack) {
     if (HandleDebugCallStackKeyDown(event)) {
@@ -181,10 +145,6 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
     EnsureRedraw([this]() { operations_.request_window_redraw(); });
     return true;
   }
-  // A key the focused debug pane did not take (its surfaces ran above) is no
-  // one's: it used to fall through to the editor's handler below and move the
-  // caret, or edit the text, of an editor that did not have focus -- Ctrl+Left
-  // there moved it a word, out from under the status bar (soak 5a2cb8ba7f6b).
   if (state_.surface.focus == FocusTarget::DebugPane && state_.debug_pane.visible) {
     return false;
   }
@@ -205,20 +165,11 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
   if (state_.surface.focus == FocusTarget::Panel &&
       state_.panel.content == PanelContentKind::Terminal &&
       operations_.active_terminal_pane() != nullptr) {
-    // Shift+PageUp/PageDown page through the transcript, as in VS Code and every
-    // Linux terminal; they used to reach the shell as shifted PageUp/PageDown,
-    // which left the terminal with no keyboard scrollback at all. Same pan the
-    // Output panel's PageUp/PageDown perform, so the two contents agree.
-    // Not on the alternate screen, which has no scrollback to page: there the
-    // keys are the full-screen program's (less, vim, a TUI's own history), as in
-    // xterm. They used to be eaten for a pan that moved nothing.
     if ((modifiers & SDL_KMOD_SHIFT) != 0 &&
         (modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
         (event.key == SDLK_PAGEUP || event.key == SDLK_PAGEDOWN) &&
         !operations_.active_terminal_pane()->session.using_alternate_screen() &&
         operations_.scroll_bottom_panel_rows && operations_.bottom_panel_visible_rows) {
-      // One page is the panel's visible rows less one, so a line of context
-      // carries over between pages.
       const int page = std::max(1, operations_.bottom_panel_visible_rows() - 1);
       operations_.scroll_bottom_panel_rows(event.key == SDLK_PAGEUP ? -page : page);
       EnsureRedraw([this]() { operations_.request_bottom_panel_content_redraw(); });
@@ -273,9 +224,6 @@ bool KeyInputCoordinator::HandleDebugVariablesKeyDown(const SDL_KeyboardEvent& e
         util::InvokeIfSet(operations_.cancel_debug_variable_edit);
         return true;
       default:
-        // Field navigation/editing (arrows, home/end, backspace, …). Consume the
-        // key regardless so no global binding fires mid-edit; text insertion
-        // arrives separately via SDL_TEXTINPUT.
         operations_.text_input_handle_single_line_key_down(event, modifiers);
         return true;
     }
@@ -284,8 +232,6 @@ bool KeyInputCoordinator::HandleDebugVariablesKeyDown(const SDL_KeyboardEvent& e
   const std::vector<DebugVariableRowView>& rows = model.Rows();
   const std::size_t selected = model.SelectedRow();
   const DebugVariableRowView* row = selected < rows.size() ? &rows[selected] : nullptr;
-  // Same resolver the sidebar modes and the Settings panes use. Left/Right collapse
-  // and expand here, so only the vertical keys go through it.
   if (const auto delta = ListNavigationKeyDelta(event.key, rows.size()); delta.has_value()) {
     model.MoveSelection(*delta);
     operations_.reveal_debug_pane_selection();
@@ -309,7 +255,6 @@ bool KeyInputCoordinator::HandleDebugVariablesKeyDown(const SDL_KeyboardEvent& e
     case SDLK_KP_ENTER:
       if (row != nullptr) {
         if (row->has_children || row->is_show_more) {
-          // "show more…" rows page in the next batch via ToggleRow.
           util::InvokeIfSet(operations_.toggle_debug_variable_row, selected);
         } else if (row->editable && operations_.begin_debug_variable_edit) {
           operations_.begin_debug_variable_edit(selected);
@@ -327,10 +272,6 @@ bool KeyInputCoordinator::HandleDebugCallStackKeyDown(const SDL_KeyboardEvent& e
   if (row_count == 0 || !operations_.focus_debug_call_stack_row) {
     return false;
   }
-  // The panel's selection IS the focused session/thread/frame, which the render
-  // already highlights, so moving it is the same act as clicking the row — the
-  // reason arrow keys navigate the editor here as they do in VS Code. Enter
-  // re-activates, which is how you get back to the frame after scrolling away.
   const auto delta = ListNavigationKeyDelta(event.key, row_count);
   const bool is_enter = event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER;
   if (!delta.has_value() && !is_enter) {
@@ -345,13 +286,6 @@ bool KeyInputCoordinator::HandleDebugCallStackKeyDown(const SDL_KeyboardEvent& e
 }
 
 bool KeyInputCoordinator::HandleBottomPanelKeyDown(const SDL_KeyboardEvent& event) {
-  // The panel is one of the four surfaces in the Ctrl+Tab ring and its Output and
-  // plugin-surface contents are freely scrollable, but neither answered a key: the
-  // arrows fell through to the editor behind the panel and scrolled *that*. Only
-  // the terminal content, handled above, ever had a keyboard.
-  //
-  // There is no selection to move here, so the navigation keys pan the view — the
-  // detached-scroll contract the overlay lists already use.
   if (!operations_.scroll_bottom_panel_rows || !operations_.bottom_panel_scroll_span_rows) {
     return false;
   }
@@ -381,7 +315,6 @@ bool KeyInputCoordinator::HandleDebugBreakpointsKeyDown(const SDL_KeyboardEvent&
     operations_.reveal_debug_pane_selection();
     return true;
   }
-  // Delete removes the selected breakpoint, as in VS Code's Breakpoints view.
   if (event.key == SDLK_DELETE || event.key == SDLK_BACKSPACE) {
     const DebugBreakpointRowView& row =
         state_.debug_breakpoints_panel.Rows()[static_cast<std::size_t>(selected)];
@@ -395,8 +328,6 @@ bool KeyInputCoordinator::HandleDebugBreakpointsKeyDown(const SDL_KeyboardEvent&
     }
     return true;
   }
-  // Enter is the single click (navigate to the source line), Space the double
-  // click (toggle enabled) — the two gestures the mouse already distinguishes.
   const bool is_enter = event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER;
   if ((is_enter || event.key == SDLK_SPACE) && operations_.activate_debug_breakpoint_row) {
     operations_.activate_debug_breakpoint_row(static_cast<std::size_t>(selected),
@@ -427,9 +358,6 @@ bool KeyInputCoordinator::HandleDebugWatchKeyDown(const SDL_KeyboardEvent& event
   const std::vector<DebugVariableRowView>& rows = model.Rows();
   const std::size_t selected = model.SelectedRow();
   const DebugVariableRowView* row = selected < rows.size() ? &rows[selected] : nullptr;
-  // Written as a statement rather than a `row != nullptr ? ... : std::nullopt`
-  // ternary: GCC inlines ExpressionIndexForRow's search loop into the ternary and
-  // then reports a -Wmaybe-uninitialized false positive on the optional's payload.
   std::optional<std::size_t> expr_index;
   if (row != nullptr) {
     expr_index = model.ExpressionIndexForRow(selected);
@@ -463,7 +391,6 @@ bool KeyInputCoordinator::HandleDebugWatchKeyDown(const SDL_KeyboardEvent& event
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
       if (expr_index.has_value()) {
-        // Enter on an expression root edits its expression string.
         util::InvokeIfSet(operations_.edit_debug_watch_expression, *expr_index);
       } else if (row != nullptr) {
         if (row->has_children) {
@@ -482,22 +409,12 @@ bool KeyInputCoordinator::HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent
                                                          SDL_Keymod modifiers) {
   switch (event.key) {
     case SDLK_TAB:
-      // Ctrl+Tab / Ctrl+Shift+Tab step through the focused group's editors in
-      // most-recently-used order, as in VS Code (releasing Ctrl opens the one
-      // selected); moving the keyboard between surfaces is F6 / Shift+F6.
       if ((modifiers & SDL_KMOD_CTRL) != 0 && operations_.step_recent_editors) {
         return operations_.step_recent_editors((modifiers & SDL_KMOD_SHIFT) != 0);
       }
       break;
     case SDLK_ESCAPE:
-      // Settings / Help Escape is handled by the modal trap in HandleKeyDown before
-      // this navigation path runs, so it no longer needs a branch here.
       if (state_.overlay.visible) {
-        // The find/replace widget is non-modal and owns its own Esc semantics
-        // (close + return focus to the editor it floats over, preserving any folds
-        // the search auto-revealed). Let it fall through to its mode handler — when
-        // the editor (not the widget) holds focus, the editor's Esc handler closes
-        // it instead.
         if (state_.overlay.mode == OverlayMode::BufferSearch ||
             state_.overlay.mode == OverlayMode::BufferReplace) {
           break;
@@ -505,12 +422,6 @@ bool KeyInputCoordinator::HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent
         operations_.dismiss_overlay(false);
         return true;
       }
-      // "Escape closes a temporary sidebar" used to live BOTH here (Search only)
-      // and inside HandleSidebarKeyDown (Search/Problems/Tests/Plugin). Because
-      // this path runs first, the Search copy also shadowed the search field's own
-      // Escape — typing a query and pressing Escape tore the whole panel down
-      // instead of cancelling the edit. The rule now lives once, in
-      // HandleSidebarKeyDown, which runs after the sub-editors have had their say.
       break;
     default:
       break;
@@ -565,8 +476,6 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
               },
           .text_input_handle_terminal_key_down =
               [this](const SDL_KeyboardEvent& event, SDL_Keymod modifiers) {
-                // The find bar floats over the terminal: while focused it takes the
-                // keys first, so typing a query never reaches the PTY.
                 if (HandleTerminalFindKeyDown(event, modifiers)) {
                   return true;
                 }
@@ -655,8 +564,6 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
                   case SettingsPane::Categories:
                     return settings_overlay_service_.Categories().size();
                   case SettingsPane::Values:
-                    // In Help/About the "value pane" is the help row list, which is
-                    // what VisibleRowCount reports in that mode.
                     return settings_overlay_service_.Mode() == SettingsOverlayMode::Settings
                                ? settings_overlay_service_.RowCountInSelectedCategory()
                                : settings_overlay_service_.VisibleRowCount();
@@ -677,8 +584,6 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
               [this]() {
                 if (const SettingsOverlayRow* row = settings_overlay_service_.SelectedSettingRow();
                     row != nullptr) {
-                  // Enter/Space on a String row opens the inline editor; every
-                  // other control toggles / cycles in place.
                   if (row->control_kind == SettingsControlKind::TextEdit) {
                     BeginSettingValueEdit(row->id);
                   } else {
@@ -724,14 +629,14 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
                   return true;
                 }
                 if (context_.current_project_state.overlay.visible) {
-                  return false;  // another overlay keeps the keys
+                  return false;
                 }
                 EditorGroup& group = context_.current_project_state.focused_group();
                 if (group.open_tabs.empty()) {
                   return false;
                 }
                 for (TabEntry& tab : group.open_tabs) {
-                  (void)EnsureTabStableId(tab);  // a row names its tab by id
+                  (void)EnsureTabStableId(tab);
                 }
                 quick_pick_service_.Open(QuickPickService::RecentEditors(group, context_.current_project_state.root, back));
                 return true;
@@ -791,8 +696,6 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
               [this](CommitWorkflowFocusField field) {
                 auto& workflow = context_.current_project_state.sidebar.git.commit_workflow;
                 workflow.focus_field = field;
-                // Field switch is the coarse refresh point: re-run pre-checks and persist
-                // the draft now rather than on every keystroke.
                 InitializeCommitWorkflowService();
                 commit_workflow_service_.OnDraftEdited(workflow);
                 ResetCaretBlink();
@@ -895,4 +798,4 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
   return *glue_->key_input_coordinator;
 }
 
-}  // namespace microide::workspace
+}

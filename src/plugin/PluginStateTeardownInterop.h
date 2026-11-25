@@ -18,8 +18,6 @@ void ClearPluginDiagnostics(
 
 void DestroyPluginState(runtime_types::PluginInstance* plugin);
 
-// Every contribution list the host keeps, for a teardown that drops one plugin's
-// (or one Lua state's) entries from all of them. All are required.
 struct ContributionLists {
   std::unordered_map<std::string, runtime_types::PluginCommand>* commands = nullptr;
   std::vector<std::string>* command_names = nullptr;
@@ -66,4 +64,4 @@ void UnregisterContributionsForState(lua_State* state, const runtime_types::Plug
                                      const ContributionLists& lists);
 #endif
 
-}  // namespace microide::plugin::state_teardown_interop
+}

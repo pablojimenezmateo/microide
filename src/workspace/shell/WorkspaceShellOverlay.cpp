@@ -19,23 +19,16 @@
 namespace microide::workspace {
 
 namespace {
-// How many recent files to surface at the top of an empty file finder.
 constexpr std::size_t kFileFinderRecentLimit = 8;
-}  // namespace
+}
 
 void WorkspaceShell::ShowOverlay(OverlayMode mode) {
   RequestPreparedFrame();
   InvalidateCursorKindFingerprint();
-  // An opening overlay (completion, code actions, pickers) supersedes the
-  // caret-anchored signature popup; drop it so the two never stack.
   active_signature_help_.reset();
-  // An overlay replacing another (the palette's `>`/`:` prefixes, a picker opened
-  // from the palette) keeps the surface the first one was opened from.
   if (context_.current_project_state.surface.focus != FocusTarget::Overlay) {
     context_.current_project_state.overlay.opened_from = context_.current_project_state.surface.focus;
   }
-  // A quick pick another overlay replaces is cancelled: its preview (a theme)
-  // goes back, as Escape would have done.
   if (context_.current_project_state.overlay.visible &&
       context_.current_project_state.overlay.mode == OverlayMode::QuickPick && mode != OverlayMode::QuickPick) {
     quick_pick_service_.Cancel();
@@ -43,9 +36,6 @@ void WorkspaceShell::ShowOverlay(OverlayMode mode) {
   context_.current_project_state.overlay.visible = true;
   context_.current_project_state.overlay.mode = mode;
   if (mode == OverlayMode::Completion) {
-    // Anchor the completion popup to the caret so it appears next to the code being
-    // completed instead of as a centered modal that hides it. (Code actions use the
-    // canonical centered menu — a short, deliberate list, not inline-with-typing.)
     if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
       context_.current_project_state.overlay.caret_anchor = ActiveEditorCaretRect(*layout);
     } else {
@@ -55,19 +45,12 @@ void WorkspaceShell::ShowOverlay(OverlayMode mode) {
     context_.current_project_state.overlay.caret_anchor.reset();
   }
   if (mode == OverlayMode::FileFinder) {
-    // Seed the finder with the active project's recent files so an empty query leads
-    // with them. Convert the stored absolute paths to project-relative form lexically
-    // (no filesystem access) to match the index's path strings.
     const std::filesystem::path& root = context_.current_project_state.root;
     std::vector<std::filesystem::path> recent_relative;
     if (!root.empty()) {
       for (const std::filesystem::path& absolute :
            recents_service_.RecentFilesFor(root, kFileFinderRecentLimit)) {
         std::filesystem::path relative = absolute.lexically_relative(root);
-        // Reject only paths that escape the project root — lexically_relative yields a
-        // leading ".." COMPONENT for those. Testing the first byte for '.' also dropped
-        // legitimate in-root dot-directory files (.github/workflows/ci.yml, .vscode/...,
-        // .env), which the index happily surfaces, so they never appeared in recents.
         if (!relative.empty() && *relative.begin() != "..") {
           recent_relative.push_back(std::move(relative));
         }
@@ -83,12 +66,9 @@ void WorkspaceShell::ShowOverlay(OverlayMode mode) {
 void WorkspaceShell::DismissOverlay(bool focus_editor) {
   RequestPreparedFrame();
   InvalidateCursorKindFingerprint();
-  // Escape or a click outside: what the pick previewed goes back. After Enter
-  // there is nothing to restore (Accept ends the preview).
   if (context_.current_project_state.overlay.mode == OverlayMode::QuickPick) {
     quick_pick_service_.Cancel();
   }
-  // A cancelled Compare Files… pick leaves no purpose behind for the next Ctrl+P.
   context_.current_project_state.overlay.workflow.file_finder_compare_left.clear();
   context_.current_project_state.overlay.workflow.file_finder_compare_title.clear();
   const bool preserve_buffer_search_expansions =
@@ -105,7 +85,6 @@ void WorkspaceShell::DismissOverlay(bool focus_editor) {
 }
 
 std::string WorkspaceShell::SingleLineEditorSelectionSeed() const {
-  // VSCode-style: a non-empty single-line editor selection seeds the find query.
   const editor::TextViewport* viewport = ActiveEditorViewport();
   if (viewport == nullptr) {
     return {};
@@ -123,17 +102,10 @@ std::string WorkspaceShell::SingleLineEditorSelectionSeed() const {
 
 void WorkspaceShell::OpenBufferSearchSurface(OverlayMode mode) {
   auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
-  // Re-invoking find while the widget already floats keeps the existing query and
-  // simply re-focuses + selects it (so the next keystroke replaces it). Otherwise
-  // seed from the editor selection when there is one, else reuse the last term.
   const bool already_open = context_.current_project_state.overlay.visible &&
                             (context_.current_project_state.overlay.mode == OverlayMode::BufferSearch ||
                              context_.current_project_state.overlay.mode == OverlayMode::BufferReplace);
   std::string seed = SingleLineEditorSelectionSeed();
-  // The widget selects its current match, so with the widget up that selection is
-  // the widget's own answer, not something the user chose: Ctrl+H from the find
-  // field re-seeding from it turned a regex query into the literal text of its
-  // first match (QA find-options). A selection the user made elsewhere still seeds.
   if (already_open && !buffer_search.matches.empty() &&
       buffer_search.selected_index < buffer_search.matches.size()) {
     if (const editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
@@ -148,17 +120,11 @@ void WorkspaceShell::OpenBufferSearchSurface(OverlayMode mode) {
   }
   if (!already_open) {
     ResetBufferSearchFoldRevealState(false);
-    // Find in Selection is about the selection the widget was opened over; a
-    // fresh open starts unscoped, as in VS Code (`autoFindInSelection: never`),
-    // and remembers that selection for Alt+L.
     buffer_search.scope.reset();
     buffer_search.opened_over.reset();
     if (const editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
       buffer_search.opened_over = FindScopeAt(*viewport);
     }
-    // VS Code's `seedSearchStringFromSelection: always`: with nothing selected the
-    // word under the caret seeds the query. Only on opening -- with the widget up,
-    // the caret sits on a match, and its word is not what the user typed.
     if (const editor::TextViewport* viewport = ActiveEditorViewport();
         seed.empty() && viewport != nullptr && !viewport->selection_range().has_value()) {
       if (const auto word = viewport->WordRangeAt({viewport->cursor_line(), viewport->cursor_column()});
@@ -188,7 +154,6 @@ void WorkspaceShell::ResetOverlayScroll() {
 }
 
 float WorkspaceShell::OverlayListStartOffset() const {
-  // Per-mode constant shared with RenderViewModelBuilder (WorkspaceProjectState.h).
   return workspace::OverlayListStartOffset(context_.current_project_state.overlay.mode);
 }
 
@@ -316,13 +281,9 @@ bool WorkspaceShell::ActivateOverlaySelection() {
   switch (context_.current_project_state.overlay.mode) {
     case OverlayMode::CommitPicker:
       MakeCompareMergeService().interactions().OpenSelectedCommit();
-      // Dismiss the picker so it does not stay painted on top of the comparison it
-      // just opened (matches the FileFinder / BufferSearch activation paths below).
       DismissOverlay(true);
       return true;
     case OverlayMode::QuickPick: {
-      // A row's command can open the next overlay (a folder browsed into opens its
-      // own pick): that one stays up; only the accepted pick is dismissed.
       const std::uint64_t opened = quick_pick_service_.open_count();
       quick_pick_service_.Accept();
       if (context_.current_project_state.overlay.visible &&
@@ -333,8 +294,6 @@ bool WorkspaceShell::ActivateOverlaySelection() {
       return true;
     }
     case OverlayMode::CommandPalette:
-      // ConfirmCommandPaletteSelection dismisses before dispatching (the action may
-      // open its own overlay), so do not dismiss again here.
       ConfirmCommandPaletteSelection();
       return true;
     case OverlayMode::BufferSearch:
@@ -370,8 +329,6 @@ bool WorkspaceShell::ActivateOverlaySelection() {
     default:
       if (const auto selected = context_.current_project_state.file_finder.SelectedPath(); selected.has_value()) {
         const std::filesystem::path path = context_.current_project_state.root / *selected;
-        // Compare Files… over an active file: the pick is the file to compare it
-        // with (TD-2026-10-18-357).
         OverlayWorkflowState& workflow = context_.current_project_state.overlay.workflow;
         if (!workflow.file_finder_compare_left.empty()) {
           const std::filesystem::path left = std::exchange(workflow.file_finder_compare_left, {});
@@ -382,7 +339,6 @@ bool WorkspaceShell::ActivateOverlaySelection() {
         }
         if (const auto target = context_.current_project_state.file_finder.line_target();
             target.has_value()) {
-          // `main.cpp:12[:4]`: `reveal` opens it there, also when the read lands later.
           DismissOverlay(true);
           (void)ExecuteCommandName("reveal",
                                    {path.string(), std::to_string(target->line) +
@@ -403,9 +359,6 @@ void WorkspaceShell::OpenCommandPalette(std::string seed) {
   palette.query.SetText(seed);
   palette.items.clear();
 
-  // Built-in commands: every action that carries a human label. The label and key
-  // chord come straight from the command registry (the same source the menus use),
-  // so the palette can never drift from the real bindings.
   const std::span<const ActionSpec> specs = WorkspaceCommandSpecs();
   palette.items.reserve(specs.size());
   for (const ActionSpec& spec : specs) {
@@ -425,7 +378,6 @@ void WorkspaceShell::OpenCommandPalette(std::string seed) {
     });
   }
 
-  // Plugin-contributed commands, dispatched by their command token.
   for (const std::string& name : plugin_runtime_.Host().CommandNames()) {
     if (name.empty()) {
       continue;
@@ -446,8 +398,6 @@ void WorkspaceShell::OpenCommandPalette(std::string seed) {
 }
 
 namespace {
-// The palette's query without VS Code's `>` command prefix: typing `>` first (a
-// habit from Ctrl+P, where it switches to commands) must not filter every row out.
 std::string_view PaletteQueryText(const CommandPaletteState& palette) {
   std::string_view text = palette.query.text();
   if (text.starts_with('>')) {
@@ -458,21 +408,15 @@ std::string_view PaletteQueryText(const CommandPaletteState& palette) {
   }
   return text;
 }
-}  // namespace
+}
 
 void WorkspaceShell::RefreshCommandPalette() {
   CommandPaletteState& palette = context_.current_project_state.overlay.workflow.command_palette;
   palette.matches.clear();
   palette.selected_index = 0;
   const std::string query = util::ToLowerAscii(PaletteQueryText(palette));
-  // Every whitespace-separated word of the query has to appear somewhere in the
-  // row, in any order (VS Code's command palette matches words, not one contiguous
-  // substring), so `line move` and `move line` both find "Move Line Down".
   const std::vector<std::string_view> query_words = util::SplitAsciiWhitespace(query);
   for (std::size_t i = 0; i < palette.items.size(); ++i) {
-    // item.search_text is the lowercased "primary secondary", precomputed when the
-    // palette was populated — avoids re-lowercasing + concatenating per item on every
-    // keystroke. Store the matching index, not a copy of the row.
     const std::string& text = palette.items[i].search_text;
     bool every_word_found = true;
     for (const std::string_view word : query_words) {
@@ -486,14 +430,6 @@ void WorkspaceShell::RefreshCommandPalette() {
     }
     palette.matches.push_back(i);
   }
-  // Rank the survivors: an exact command name beats a name prefix, which beats a
-  // prefix of the row's text, which beats a match buried anywhere in it. Without
-  // this the winner is whichever command the registry happens to list first, so
-  // typing `open` selected "Open Merge Conflicts for Review" and `search`
-  // selected "Search Workspace Symbols…" — each ahead of the command that
-  // actually carries the name. stable_sort keeps registry order within a rank.
-  // Recently run commands first: on their own with an empty query, and as the
-  // tie-break within a rank with one (VS Code's "recently used").
   const auto recency = [&palette](std::size_t index) {
     const std::string& key = CommandPaletteRecentKey(palette.items[index]);
     const auto found = std::find(palette.recent.begin(), palette.recent.end(), key);
@@ -515,7 +451,6 @@ void WorkspaceShell::RefreshCommandPalette() {
       if (item.search_text.rfind(query, 0) == 0) {
         return 2;
       }
-      // The whole query as one run beats the same words scattered over the row.
       return item.search_text.find(query) != std::string::npos ? 3 : 4;
     };
     std::stable_sort(palette.matches.begin(), palette.matches.end(), [&](std::size_t lhs, std::size_t rhs) {
@@ -531,11 +466,6 @@ void WorkspaceShell::RefreshCommandPalette() {
 }
 
 bool WorkspaceShell::CommandPaletteQueryIsCommandLine() const {
-  // The palette query doubles as a command line so commands can take arguments
-  // (e.g. "colorscheme dark"). Run it as a command line when it carries arguments OR when
-  // no fuzzy row matched it (a bare verb that still matches a row just picks that row, but
-  // typed-out input with arguments or no match goes to the shared command executor — which
-  // also surfaces "Unknown command: …" for genuine typos).
   const CommandPaletteState& palette =
       context_.current_project_state.overlay.workflow.command_palette;
   const ParsedCommandLine parsed = ParseCommandLine(PaletteQueryText(palette));
@@ -547,21 +477,6 @@ bool WorkspaceShell::CommandPaletteQueryIsCommandLine() const {
 
 void WorkspaceShell::ConfirmCommandPaletteSelection() {
   CommandPaletteState& palette = context_.current_project_state.overlay.workflow.command_palette;
-  // Prefer the highlighted row when the query matched one. A multi-word command
-  // *label* (e.g. "open file" → "Open File", "find references" → "Find References")
-  // must run the selected action; previously any query containing a space was routed
-  // to the command-line executor, which silently ran an unrelated verb with the
-  // trailing words as arguments (or died with "Unknown command"). The command-line
-  // path (verb + args, e.g. "colorscheme dark") is the fallback for a query that
-  // matched no row, since RefreshCommandPalette matches the *whole* query as a
-  // substring of the label.
-  // A verb that names a command exactly, followed by arguments (`goto 2`,
-  // `colorscheme dark`), is a command line whatever rows the words happen to
-  // match: since the palette matches query words in any order, `goto 2` also
-  // lights up "Go to Line…", and running that row would swallow the argument.
-  // ...unless the query is how the highlighted row's label starts: "compare with
-  // clipboard" picks Compare with Clipboard, not `compare` given two arguments
-  // (which failed on a path named "with"), and "open file" picks Open File….
   bool verb_with_arguments = false;
   {
     const ParsedCommandLine parsed = ParseCommandLine(PaletteQueryText(palette));
@@ -582,9 +497,6 @@ void WorkspaceShell::ConfirmCommandPaletteSelection() {
   }
   if (!verb_with_arguments && !palette.matches.empty() &&
       palette.selected_index < palette.matches.size()) {
-    // Copy the selected item before dismissing: the dispatched action may itself open
-    // another overlay (e.g. Find File, Settings), so the palette must be gone first and
-    // we must not hold a reference into state that the action could mutate.
     const CommandPaletteItem selected = palette.items[palette.matches[palette.selected_index]];
     {
       const std::string key = CommandPaletteRecentKey(selected);
@@ -603,9 +515,7 @@ void WorkspaceShell::ConfirmCommandPaletteSelection() {
     return;
   }
 
-  // No row matched: run the typed line (verb + args) through the shared executor.
   if (CommandPaletteQueryIsCommandLine()) {
-    // Copy the query before dismissing — the dispatch may reopen overlays / mutate state.
     const std::string command_line(PaletteQueryText(palette));
     DismissOverlay(true);
     const bool ok = MakeCommandLineCoordinator().ExecuteCommandLine(command_line);
@@ -622,4 +532,4 @@ void WorkspaceShell::CompleteCommandPaletteQuery() {
   RefreshCommandPalette();
 }
 
-}  // namespace microide::workspace
+}

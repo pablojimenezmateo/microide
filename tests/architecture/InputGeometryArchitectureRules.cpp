@@ -11,8 +11,6 @@
 namespace microide::tests::architecture {
 namespace {
 
-// The fourth argument of the call whose `(` is at `open`, or "" when it cannot
-// be read (fewer arguments, unbalanced text).
 std::string FourthArgument(std::string_view code, std::size_t open) {
   int depth = 0;
   std::size_t argument = 0;
@@ -42,7 +40,7 @@ std::string Trimmed(std::string text) {
   return first == std::string::npos ? std::string() : text.substr(first, last - first + 1);
 }
 
-}  // namespace
+}
 
 RuleResult CheckEditorMetricsNameTheirStickyBand(const std::filesystem::path& repo_root) {
   RuleResult result;
@@ -59,7 +57,6 @@ RuleResult CheckEditorMetricsNameTheirStickyBand(const std::filesystem::path& re
     if (!entry.is_regular_file() || (extension != ".cpp" && extension != ".h" && extension != ".inc")) {
       continue;
     }
-    // The TestAccess seams size panes for tests on purpose, band or not.
     if (entry.path().parent_path().filename() == "testaccess") {
       continue;
     }
@@ -75,7 +72,7 @@ RuleResult CheckEditorMetricsNameTheirStickyBand(const std::filesystem::path& re
       const std::size_t open = static_cast<std::size_t>(it->position() + it->length()) - 1;
       const std::string band = Trimmed(FourthArgument(code, open));
       if (band.empty()) {
-        continue;  // the declaration, or a call this scan cannot read
+        continue;
       }
       ++calls;
       if (band != "0") {
@@ -118,7 +115,6 @@ void RunEditorMetricsStickyBandRuleFixtures() {
             "const char* kDoc = \"ComputeMetrics(r, v, rect, 0, n)\";\n");
   Expect(CheckEditorMetricsNameTheirStickyBand(root).violations.empty(),
          "the sticky-band rule must accept the band passed, kNoStickyBand, a variable, and string text");
-  // Loud-missing-target guard.
   WriteFile(root / "src/workspace/Bad.cpp", "int H(){ return 0; }\n");
   Expect(!CheckEditorMetricsNameTheirStickyBand(root).missing_targets.empty(),
          "the sticky-band rule must fail loudly when it finds no ComputeMetrics call");
@@ -132,7 +128,6 @@ RuleResult CheckTabSurfacesLayOutInTheFocusedPane(const std::filesystem::path& r
   if (!RequireRuleTarget(result, dir)) {
     return result;
   }
-  // The layout entry points whose first argument is the surface they lay out in.
   const std::regex call(
       R"(\b(Compute(Compare|Merge)(Surface|Scroll)Layout|Build(Compare|Merge)TextInputVisual|)"
       R"(Build(Merge|MergeResult)InteractionLayout|ComputeMergeToolbarLayout|ComputeMergeResultViewportRect|)"
@@ -181,7 +176,6 @@ void RunTabSurfacesRuleFixtures() {
   TemporaryDirectory fixture;
   const std::filesystem::path& root = fixture.path();
   std::filesystem::create_directories(root / "src" / "workspace");
-  // Negative control: the column, by value and through a pointer, one line or two.
   WriteFile(root / "src/workspace/Bad.cpp",
             "void A(){ auto s = ComputeCompareSurfaceLayout(layout.editor_surface, tab); }\n"
             "void B(){ auto s = ComputeMergeScrollLayout(\n    layout_state->editor_surface, s, tab); }\n"
@@ -189,7 +183,6 @@ void RunTabSurfacesRuleFixtures() {
             "void D(){ auto f = ComputeBufferFindWidgetLayout(CurrentLayout(shell).editor_surface, r); }\n");
   Expect(CheckTabSurfacesLayOutInTheFocusedPane(root).violations.size() == 4,
          "the tab-surface rule must flag a compare, merge or toolbar laid out in the column");
-  // Positive control: the pane, a parameter named editor_surface, a comment, a string.
   WriteFile(root / "src/workspace/Bad.cpp",
             "void A(){ auto s = ComputeCompareSurfaceLayout(ActiveTabSurface(layout), tab); }\n"
             "void B(const SDL_FRect& editor_surface){ auto s = ComputeMergeSurfaceLayout(editor_surface, t); }\n"
@@ -197,10 +190,9 @@ void RunTabSurfacesRuleFixtures() {
             "const char* k = \"ComputeDebugToolbarLayout(layout.editor_surface\";\n");
   Expect(CheckTabSurfacesLayOutInTheFocusedPane(root).violations.empty(),
          "the tab-surface rule must pass the pane, a surface parameter, comments and strings");
-  // Loud on a missing target.
   WriteFile(root / "src/workspace/Bad.cpp", "void A(){}\n");
   Expect(!CheckTabSurfacesLayOutInTheFocusedPane(root).missing_targets.empty(),
          "the tab-surface rule must fail loudly when it finds nothing to scan");
 }
 
-}  // namespace microide::tests::architecture
+}

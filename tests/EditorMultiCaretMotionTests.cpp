@@ -1,31 +1,3 @@
-// Multi-caret MOTION, checked as invariants over the whole caret set.
-//
-// The edit side already has a reference model
-// (`TextViewportMultiCaretReferenceTests.cpp`); motion did not. Motion is where
-// a caret set gets malformed without anything visibly breaking until the NEXT
-// keystroke: the multi-caret edit appliers assume the set arrives normalised
-// (sorted, deduped, non-overlapping selections), so a motion that leaves two
-// cursors overlapping makes the following edit silently do nothing, and a
-// motion that leaves a column mid-codepoint corrupts UTF-8 on the following
-// insert.
-//
-// So rather than pin expected coordinates -- which go stale whenever the wrap
-// width or the word rule changes -- this asserts the properties every motion
-// owes the set, for every motion verb, over documents built from the shapes the
-// column arithmetic can get wrong (tabs, multi-byte and wide glyphs, empty
-// lines, a line long enough to wrap several times):
-//
-//   frozen      motion never changes the document text
-//   in bounds   every caret and anchor is a real position on a codepoint
-//               boundary
-//   normalised  cursors are sorted, none is duplicated, and no two selections
-//               overlap (they may touch when both are non-collapsed)
-//   collapsing  a plain (non-Shift) motion leaves no selection anywhere
-//   anchored    a Shift motion moves no anchor: the set of anchors after it is
-//               a subset of the set before (cursors may merge away, never
-//               re-anchor)
-//   monotone    the cursor count never grows
-
 #include "TestSupport.h"
 
 #include <algorithm>
@@ -69,7 +41,6 @@ std::string Show(const TextPosition& p) {
   return "(" + std::to_string(p.line) + "," + std::to_string(p.column) + ")";
 }
 
-// One cursor: its caret plus the range it covers, normalised so start <= end.
 struct Cursor {
   TextPosition caret;
   std::optional<TextPosition> anchor;
@@ -126,8 +97,6 @@ std::string DocumentText(const TextViewport& viewport) {
   return out;
 }
 
-// A position is legal when its line exists, its column is within that line, and
-// it sits on a codepoint boundary: the clamp is the identity there.
 bool PositionIsLegal(const TextViewport& viewport, const TextPosition& p) {
   if (p.line >= viewport.line_count()) return false;
   const std::string_view text = viewport.lines().LineView(p.line);
@@ -169,10 +138,6 @@ const char* MotionName(Motion motion) {
   return "?";
 }
 
-// The line-shaping verbs. They are not motions -- they rewrite lines, and some
-// of them deliberately KEEP a selection -- so the sweep judges only the
-// structural half of the contract after one: that the caret set they leave is
-// still one the next motion or edit can run over.
 enum class Shaping {
   kMoveLineUp,
   kMoveLineDown,
@@ -249,8 +214,6 @@ void Apply(TextViewport& viewport, Motion motion, bool extend) {
   }
 }
 
-// Every invariant the caret set owes after one motion. `context` names the step.
-// What the sweep actually exercised, so a green run cannot be vacuous.
 struct Coverage {
   int multi_cursor_steps = 0;
   int selection_steps = 0;
@@ -259,16 +222,6 @@ struct Coverage {
   int foreign_edit_steps = 0;
 };
 
-// A motion owes every rule below. An edit consumes selections but rewrites the
-// text. A shaping verb rewrites lines and may deliberately keep a selection, so
-// it owes only the structural half.
-// Undo and Redo restore a whole caret set from the history, so they owe the
-// structural half too -- and they can legitimately GROW the set back.
-// kForeign: another viewport on the SAME DocumentState -- a split pane, the
-// compare pane over a file an editor tab also has open -- edited the buffer, and
-// then this viewport was used. It owes only the structural half: the carets it
-// held named lines that edit may have removed, so they are reconciled rather
-// than preserved, and the count and the anchors legitimately move.
 enum class StepKind { kMotion, kExtendingMotion, kEdit, kShaping, kHistory, kForeign };
 
 void CheckWellFormed(const TextViewport& viewport,
@@ -292,8 +245,6 @@ void CheckWellFormed(const TextViewport& viewport,
     ++coverage.selection_steps;
   }
 
-  // The secondary set is kept sorted by position: the edit appliers walk it
-  // highest-first and every group-indexed cache reads that order.
   const auto secondaries = viewport.secondary_caret_ranges();
   for (std::size_t i = 1; i < secondaries.size(); ++i) {
     Expect(Less(secondaries[i - 1].position, secondaries[i].position) ||
@@ -303,10 +254,6 @@ void CheckWellFormed(const TextViewport& viewport,
   const std::string set = " set " + Describe(after) + " (was " + Describe(before) + ")";
 
   Expect(!after.empty(), context + ": the caret set went empty");
-  // Only undo/redo may grow the set, by restoring one the history captured.
-  // Shaping verbs and a foreign edit were exempt here too until the exemption
-  // was audited -- and an exemption written from "this verb probably could" is a
-  // place to check, not a place to skip. Neither needs it.
   if (kind != StepKind::kHistory) {
     Expect(after.size() <= before.size(), context + ": the step GREW the caret set," + set);
   }
@@ -319,7 +266,6 @@ void CheckWellFormed(const TextViewport& viewport,
              context + ": anchor " + Show(*c.anchor) + " is out of bounds or mid-codepoint," + set);
     }
     if (collapses) {
-      // A plain motion collapses every selection, and an edit consumes them.
       Expect(c.collapsed, context + ": a plain motion or an edit left a selection behind," + set);
     }
   }
@@ -329,8 +275,6 @@ void CheckWellFormed(const TextViewport& viewport,
     const Cursor& cur = after[i];
     Expect(!(cur.caret == prev.caret && cur.anchor == prev.anchor),
            context + ": two identical cursors survived," + set);
-    // Normalised: ranges may touch only when neither is collapsed. Any deeper
-    // overlap is the shape the multi-caret edit appliers refuse to run over.
     const bool touching_is_allowed = !prev.collapsed && !cur.collapsed;
     const bool overlaps = touching_is_allowed ? Less(cur.range.start, prev.range.end)
                                               : !Less(prev.range.end, cur.range.start);
@@ -338,12 +282,6 @@ void CheckWellFormed(const TextViewport& viewport,
   }
 
   if (extend && after.size() == before.size()) {
-    // A Shift motion re-anchors nothing. Two cursors can only swap order by
-    // overlapping, and overlapping cursors merge -- so an unchanged cursor count
-    // means the sorted sets correspond one to one, and cursor i's anchor after
-    // must be its anchor before, or the caret it just anchored at if it was
-    // collapsed. (When a merge DID happen the union's far end is the other
-    // cursor's post-motion caret, which is VS Code's rule and not a re-anchor.)
     for (std::size_t i = 0; i < after.size(); ++i) {
       if (!after[i].anchor.has_value()) continue;
       const TextPosition expected =
@@ -355,7 +293,6 @@ void CheckWellFormed(const TextViewport& viewport,
   }
 }
 
-// Documents built from the shapes the column arithmetic gets wrong.
 const std::vector<std::string>& MotionDocuments() {
   static const std::vector<std::string> documents = {
       "alpha beta gamma\ndelta\n\nepsilon zeta\n",
@@ -394,12 +331,9 @@ void RunMotionSweep(bool soft_wrap) {
       viewport.MoveCursorTo(primary.line, primary.column);
       if (pick(2) == 0) {
         const TextPosition to = random_position();
-        viewport.MoveCursorTo(to.line, to.column, /*extend_selection=*/true);
+        viewport.MoveCursorTo(to.line, to.column, true);
       }
       if (pick(4) == 0) {
-        // A box selection: the caret set a column drag produces, which is the
-        // one real users build largest and the one whose per-line clamping the
-        // motion verbs then have to survive.
         viewport.SetBoxSelection(random_position(), random_position());
       } else {
         for (std::size_t s = 0, n = pick(4); s < n; ++s) {
@@ -412,9 +346,6 @@ void RunMotionSweep(bool soft_wrap) {
         }
       }
 
-      // A second viewport on the SAME document, as a split pane or an editable
-      // compare side is. Its edits go through no part of `viewport`, so the
-      // caret set `viewport` holds can name lines the document no longer has.
       TextViewport sibling = viewport;
       sibling.SetViewportSize(4, 24);
 
@@ -422,10 +353,6 @@ void RunMotionSweep(bool soft_wrap) {
       for (int step = 0; step < 12; ++step) {
         const std::vector<Cursor> before = Cursors(viewport);
         const std::string text_before = DocumentText(viewport);
-        // Two steps in eight are an EDIT and one is a line-SHAPING verb, so the
-        // sweep also judges the caret set a rewrite leaves behind -- the edits
-        // themselves have their own reference model, but nothing checked that
-        // the set they produce is still one the next keystroke can run over.
         const std::size_t roll = pick(8);
         std::string context = soft_wrap ? "wrapped " : "unwrapped ";
         StepKind kind = StepKind::kMotion;
@@ -438,24 +365,20 @@ void RunMotionSweep(bool soft_wrap) {
           context += "backspace";
           viewport.Backspace();
         } else if (roll == 7) {
-          // The sibling edits, and then this viewport is used. Both halves in one
-          // step: the reconciliation is lazy, so the invariants below describe
-          // the state after the first use, which is the only state any caller
-          // can observe.
           kind = StepKind::kForeign;
           context += "foreign-edit";
           const std::size_t line = pick(sibling.line_count());
           sibling.MoveCursorTo(line, 0);
           if (pick(2) == 0 && sibling.line_count() > 1) {
             sibling.MoveCursorTo(std::min(line + 2, sibling.line_count() - 1), 0,
-                                 /*extend_selection=*/true);
+                                 true);
             sibling.Backspace();
           } else {
             sibling.InsertText("foreign\nedit\n");
           }
           const Motion motion = kAllMotions[pick(std::size(kAllMotions))];
           context += std::string(" then ") + MotionName(motion);
-          Apply(viewport, motion, /*extend=*/false);
+          Apply(viewport, motion, false);
         } else if (roll == 2) {
           kind = StepKind::kHistory;
           if (pick(2) == 0) {
@@ -483,8 +406,6 @@ void RunMotionSweep(bool soft_wrap) {
       }
     }
   }
-  // A green sweep is only evidence if it actually built multi-cursor sets, gave
-  // them selections, and made some of them merge.
   const std::string tail = std::string(soft_wrap ? " (wrapped)" : " (unwrapped)") +
                            ": multi=" + std::to_string(coverage.multi_cursor_steps) +
                            " sel=" + std::to_string(coverage.selection_steps) +
@@ -499,15 +420,6 @@ void RunMotionSweep(bool soft_wrap) {
          "the sweep barely ran an edit from the sibling viewport" + tail);
 }
 
-// Same sweep, with a collapsed fold in the way, asserting the one rule the flat
-// sweeps cannot state: no caret -- primary OR secondary -- may land on a line
-// the fold hides, because a caret there is invisible and its next edit rewrites
-// text the user cannot see.
-//
-// EVERY motion owes this, not just the vertical ones. Vertical motion walks
-// visual rows and so was fold-aware from the start; horizontal and word motion
-// stepped to `line + 1` and landed straight inside a collapsed body, which is
-// what this sweep found once it stopped exempting them.
 void TestMultiCaretMotionAcrossACollapsedFold() {
   static constexpr std::string_view kSource =
       "head\n"
@@ -582,8 +494,6 @@ void TestMultiCaretMotionAcrossACollapsedFold() {
                       extend ? StepKind::kExtendingMotion : StepKind::kMotion, coverage, context);
       for (const Cursor& c : Cursors(viewport)) {
         ++hidden_line_checks;
-        // A step that walked a caret over the hidden block: the only kind that
-        // can prove the fold-aware row walk was exercised at all.
         for (const Cursor& b : before) {
           if ((b.caret.line <= 1 && c.caret.line >= 7) ||
               (b.caret.line >= 7 && c.caret.line <= 1)) {
@@ -605,14 +515,6 @@ void TestMultiCaretMotionAcrossACollapsedFold() {
                                   std::to_string(fold_crossings));
 }
 
-// A box selection plus one Shift+Down is ONE cursor, not N.
-//
-// Each cursor's selection grows down into the row its neighbour occupies, every
-// pair overlaps, and the normalise tail merges the lot -- which is VS Code's
-// CursorCollection.normalize and not a bug, but it is the single most dramatic
-// thing a keystroke does to a caret set and nothing said so. Pinned here because
-// the obvious "fix" for it -- letting overlapping cursors coexist -- is exactly
-// what the multi-caret edit appliers refuse to run over.
 void TestExtendingVerticalMotionMergesABoxSelection() {
   TextViewport viewport;
   viewport.SetViewportSize(40, 200);
@@ -626,7 +528,7 @@ void TestExtendingVerticalMotionMergesABoxSelection() {
          "the box should place one cursor per spanned line, got " +
              std::to_string(Cursors(viewport).size()));
 
-  viewport.MoveCursorVertical(1, /*extend_selection=*/true);
+  viewport.MoveCursorVertical(1, true);
   const std::vector<Cursor> after = Cursors(viewport);
   Expect(after.size() == 1, "one Shift+Down over the box should leave one cursor, got " +
                                 std::to_string(after.size()) + ": " + Describe(after));
@@ -635,9 +537,6 @@ void TestExtendingVerticalMotionMergesABoxSelection() {
          "the merged cursor should span the union of what the box covered, got " +
              Describe(after));
 
-  // A PLAIN Down does not: with no selections to overlap, the cursors stay one
-  // per line. This is the half that makes the merge above about the selections
-  // rather than about vertical motion.
   viewport.SetBoxSelection(TextPosition{2, 4}, TextPosition{33, 12});
   viewport.MoveCursorVertical(1);
   Expect(Cursors(viewport).size() == 32,
@@ -645,20 +544,6 @@ void TestExtendingVerticalMotionMergesABoxSelection() {
              std::to_string(Cursors(viewport).size()));
 }
 
-// Typing BRACKETS and QUOTES at a random caret set.
-//
-// The flat sweeps type letters on purpose, so that auto-close, surround and
-// skip-over stay out of the reference model's way -- which means the whole
-// pair path ran only against hand-written fixtures. It is not a path to leave
-// unswept: `TryMultiCaretPairInsert` walks a slot/footprint plan and then writes
-// back through a SNAPSHOT of `secondary_carets_`, indexing into it by slot, and
-// that is where a caret-set mutation added mid-walk showed up as a null write
-// under ASAN. A selection at a caret turns the same keystroke into a surround; a
-// caret already before a close turns it into a skip-over.
-//
-// No reference model here, deliberately: what the pairs DO is fixture-tested in
-// EditorEssentials. What is unchecked is that the caret set survives them, which
-// is the structural half the other sweeps assert.
 void TestMultiCaretPairInsertKeepsTheSetWellFormed() {
   auto contract = std::make_shared<editor::LanguageContractView>();
   contract->auto_close_pairs = {{"(", ")"}, {"[", "]"}, {"{", "}"}, {"\"", "\""}, {"'", "'"}};
@@ -702,7 +587,7 @@ void TestMultiCaretPairInsertKeepsTheSetWellFormed() {
         viewport.MoveCursorTo(primary.line, primary.column);
         if (pick(2) == 0) {
           const TextPosition to = random_position();
-          viewport.MoveCursorTo(to.line, to.column, /*extend_selection=*/true);
+          viewport.MoveCursorTo(to.line, to.column, true);
         }
         for (std::size_t s = 0, n = 1 + pick(3); s < n; ++s) {
           const TextPosition a = random_position();
@@ -727,15 +612,7 @@ void TestMultiCaretPairInsertKeepsTheSetWellFormed() {
                                       "type '" + std::string(1, ch) + "' step " +
                                       std::to_string(step);
           viewport.InsertCharacter(ch);
-          // kShaping, not kEdit: a pair insert over a selection is a SURROUND,
-          // and surround deliberately keeps the inner selection so the text can
-          // be wrapped again (EditorEssentials/Surround/SingleLineSelection says
-          // so, and VS Code's SurroundSelectionCommand does the same). Asserting
-          // "an edit collapses every selection" here would have been asserting my
-          // own guess -- it failed on the first run, which is how I found out.
           CheckWellFormed(viewport, before, text_before, StepKind::kShaping, coverage, context);
-          // What DOES hold either way: auto-close never invents a selection, so a
-          // set that arrived fully collapsed leaves fully collapsed.
           if (!had_selection) {
             for (const Cursor& c : Cursors(viewport)) {
               Expect(c.collapsed,
@@ -755,11 +632,11 @@ void TestMultiCaretPairInsertKeepsTheSetWellFormed() {
              std::to_string(surround_steps));
 }
 
-void TestMultiCaretMotionKeepsTheSetWellFormed() { RunMotionSweep(/*soft_wrap=*/false); }
+void TestMultiCaretMotionKeepsTheSetWellFormed() { RunMotionSweep(false); }
 
-void TestMultiCaretMotionKeepsTheSetWellFormedWhenWrapped() { RunMotionSweep(/*soft_wrap=*/true); }
+void TestMultiCaretMotionKeepsTheSetWellFormedWhenWrapped() { RunMotionSweep(true); }
 
-}  // namespace
+}
 
 void RegisterEditorMultiCaretMotionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorMultiCaretMotion/PairInsertKeepsTheSetWellFormed",
@@ -774,4 +651,4 @@ void RegisterEditorMultiCaretMotionTests(std::vector<TestCase>& tests) {
           TestMultiCaretMotionAcrossACollapsedFold);
 }
 
-}  // namespace microide::tests
+}

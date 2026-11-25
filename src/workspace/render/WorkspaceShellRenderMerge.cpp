@@ -56,17 +56,13 @@ SDL_Color MergeMarkerColor(const render::Theme& theme,
   }
 }
 
-}  // namespace
+}
 
-// Rebuilds the cached overview markers for `merge_tab` when the model or the lane
-// geometry changed. One marker per conflict, pre-mapped to `inner_lane`.
 void EnsureMergeOverviewMarkers(const render::Theme& theme,
                                 const SDL_FRect& inner_lane,
                                 std::size_t total_rows,
                                 std::uint64_t theme_token,
                                 MergeTabState& merge_tab) {
-  // The lane is scaled against on-screen rows, so the row count is part of the
-  // key: a divider drag that re-wraps must not keep stale marker positions.
   if (merge_tab.scrollbar_marker_cache_valid &&
       merge_tab.scrollbar_marker_cache_revision == merge_tab.model_revision &&
       merge_tab.scrollbar_marker_cache_rows == total_rows &&
@@ -109,10 +105,6 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildMergeTextInp
 
   const MergeSurfaceLayout surface_layout =
       ComputeMergeSurfaceLayout(editor_surface, *merge_tab);
-  // The shared builder rather than the third copy of it. This one passed
-  // `line_count()` as the grid's row total against a scroll that is a visual row,
-  // so on a wrapped result pane it placed the IME/caret rect by a scroll position
-  // the layout had clamped back down.
   const MergeResultInteractionLayout interaction =
       BuildMergeResultInteractionLayout(editor_surface, surface_layout, *merge_tab);
   const float cursor_x =
@@ -146,7 +138,6 @@ void WorkspaceShell::RenderMergeScrollbars(SDL_Renderer* renderer,
       ComputeMergeSurfaceLayout(editor_surface, *merge_tab);
   const auto scroll_layout =
       ComputeMergeScrollLayout(editor_surface, surface_layout, *merge_tab);
-  // The scroll this lays out against was settled at frame prep: paint changes no state.
 
   if (scroll_layout.vertical_scrollbar.has_value()) {
     const std::size_t line_count = MergeTotalVisualRowCount(*merge_tab);
@@ -184,8 +175,6 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
 
   DrawFilledRect(renderer, rect, theme_.editor_background);
 
-  // The panes' shared scroll was synced and clamped, and the result viewport
-  // sized, at frame prep: paint changes no state.
   const MergeSurfaceLayout surface = ComputeMergeSurfaceLayout(rect, *merge_tab);
   const float bottom_reserved =
       surface.show_horizontal ? kWorkspaceDiffScrollbarReserve : 0.0f;
@@ -193,24 +182,16 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
       surface.show_vertical ? kWorkspaceDiffScrollbarReserve : 0.0f;
   const float content_width = std::max(0.0f, rect.w - right_reserved);
   const float content_height = std::max(0.0f, rect.h - bottom_reserved);
-  // Syntax tokens were produced in frame prep (PopulateMergeSyntaxTokensForWindow).
-  // Sizes the result viewport as prep did (unchanged): every column reads the row
-  // prep settled (soak 4c6d45903600).
   const MergeInteractionLayout interaction = BuildMergeInteractionLayout(rect, surface, *merge_tab);
   const std::size_t selected_hunk =
       merge_tab->conflicts.empty() ? 0 : std::min(merge_tab->selected_hunk, merge_tab->conflicts.size() - 1);
 
-  // Route merge buttons through the shared button primitive so they read identically to
-  // every other button in the shell. `primary` (the actionable/emphasized flag) maps to
-  // the enabled state — which de-emphasizes prev/next/unresolved into the shared disabled
-  // tone when there are no conflicts — and `selected` maps to the active state for the
-  // base toggle and the currently-previewed conflict choice.
   const auto draw_button = [&](const SDL_FRect& button_rect,
                                std::string_view label,
                                bool selected,
                                bool primary = false) {
     if (button_rect.w <= 0.0f || button_rect.h <= 0.0f) {
-      return;  // not laid out: no room in a narrow pane
+      return;
     }
     const std::string_view display = TruncateLabelView(label, button_rect.w - 18.0f);
     detail::DrawButtonCentered(editor_text_renderer_, renderer, theme_, button_rect, display,
@@ -222,8 +203,6 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                    .active = selected,
                                });
   };
-  // Geometry and hit testing run on the conflicts projected into on-screen row
-  // space; the model-facing list beside it keeps the choices and hunk indices.
   const std::span<const MergeTrackedConflict> visual_conflicts = MergeVisualConflicts(*merge_tab);
   const auto conflict_at_source_row =
       [&](std::size_t visual_row, bool incoming) -> std::optional<std::size_t> {
@@ -262,8 +241,6 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   }();
 
   {
-  // Toolbar + status + optional base band: fixed-cost chrome, separate from the
-  // per-row work below so a regression in either is attributable.
   util::PerformanceTrace::Scope chrome_scope("WorkspaceShell::RenderMergeSurface::Chrome");
   const MergeToolbarLayout toolbar = ComputeMergeToolbarLayout(rect, surface);
   draw_button(toolbar.prev_rect, "Prev", false, !merge_tab->conflicts.empty());
@@ -271,10 +248,6 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   draw_button(toolbar.save_rect, "Save", false, true);
   draw_button(toolbar.open_rect, "Open Result", false, true);
 
-  // The rects the mouse coordinator hit-tests, not a second derivation of them:
-  // this TU used to rebuild all three from its own copies of the toolbar metrics,
-  // so a change to either copy would have drawn the buttons somewhere the clicks
-  // do not land.
   const SDL_FRect mark_resolved_rect =
       ComputeMergeSecondaryToolbarButtonRect(rect, surface, "Mark Resolved")
           .value_or(SDL_FRect{});
@@ -287,8 +260,6 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   const std::string_view status_text = merge_tab->status_message.empty()
                                            ? resolver_status.progress_label
                                            : std::string_view(merge_tab->status_message);
-  // The status runs up to the leftmost second-row button that is laid out (a
-  // narrow pane drops the leading ones), or to the row's right inset.
   float status_right = rect.x + rect.w - kMergeToolbarEdgeInset + kMergeToolbarButtonGap;
   for (const SDL_FRect& button : {mark_resolved_rect, toggle_base_rect, unresolved_rect}) {
     if (button.w > 0.0f) {
@@ -304,7 +275,6 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   draw_button(toggle_base_rect, "Toggle Base", merge_tab->base_pane_visible, true);
   draw_button(mark_resolved_rect, "Mark Resolved", false, true);
 
-  // The layout reserves the base band between the toolbar and the pane headers.
   const float base_y = surface.secondary_button_y + kMergeToolbarButtonHeight + kMergeHeaderRowGap;
   const float base_band_height = surface.header_y - base_y;
   if (base_band_height > 0.5f) {
@@ -342,18 +312,10 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                             theme_.text_secondary,
                             TruncateLabelView(merge_tab->current_label, surface.right_width - 8.0f));
 
-  // The merge surface paints THREE panes: the result pane goes through
-  // EditorViewRenderer (already scoped), while the incoming and current side
-  // panes are painted by this loop. Without a scope of its own the loop sat in
-  // RenderMergeSurface's self time, which is 63 us per frame and was the largest
-  // unattributed per-frame cost in the suite.
   {
   util::PerformanceTrace::Scope side_rows_scope("WorkspaceShell::RenderMergeSurface::SideRows");
   const bool wrapped = merge_tab->wrap_layout.active();
   const float char_width_px = editor_text_renderer_.CharWidth();
-  // One side pane's row: incoming on the left, current on the right. They differ
-  // only in geometry, source lines, token window, scratch row and the tint of a
-  // valid conflict.
   struct MergeSideRow {
     const std::vector<std::string_view>* lines = nullptr;
     const MergeTrackedConflict* conflict = nullptr;
@@ -456,18 +418,12 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   }
   }
 
-  // The blame overlay (the focused merge's), diagnostics and settings were
-  // resolved at frame prep (DiffSurfacePaint).
   const std::optional<editor::EditorBlameOverlay>& merge_blame_overlay = paint.blame;
   const bool bracket_match_highlight_enabled = paint.bracket_match;
   const bool indent_guides_enabled = paint.indent_guides;
   const bool render_whitespace_enabled = paint.render_whitespace;
   const bool line_numbers_enabled = paint.line_numbers;
   {
-  // The result pane paints inside itself, as an editor pane does: the editor view
-  // lays out at least 8 columns, so in a column narrower than that (a large font,
-  // word wrap) its lines ran on into the Local column -- painted in a full frame
-  // and left standing by a partial one of the result alone (soak e97cacbc359f).
   const render::ScopedRenderClip result_clip(renderer, interaction.result.rect);
   editor_view_renderer_.Render(renderer, editor_text_renderer_, theme_, merge_tab->result_viewport,
                                interaction.result.rect,
@@ -477,9 +433,9 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                nullptr,
                                bracket_match_highlight_enabled,
                                indent_guides_enabled, render_whitespace_enabled,
-                               /*folding_model=*/nullptr,
-                               /*welcome_view=*/nullptr,
-                               /*plugin_decorations=*/nullptr,
+                               nullptr,
+                               nullptr,
+                               nullptr,
                                line_numbers_enabled);
   }
 
@@ -500,13 +456,8 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
 
   if (preview_choice.has_value() && preview_choice->first < visual_conflicts.size()) {
     const auto& conflict = visual_conflicts[preview_choice->first];
-    // The band is placed in on-screen rows; the gutter still labels DOCUMENT
-    // lines, so it counts from the conflict's real start line.
     const std::size_t preview_first_line =
         merge_tab->conflicts[preview_choice->first].start_line;
-    // Choice lines are cached on the tab (keyed by conflict/choice/revision) so
-    // hovering no longer reallocates them every frame; the copy lives outside this
-    // lint-constrained render TU.
     const std::span<const std::string> preview_lines =
         EnsureMergePreviewLines(*merge_tab, preview_choice->first, preview_choice->second);
     if (!preview_lines.empty()) {
@@ -522,11 +473,6 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                        render::BlendColors(theme_.editor_background, theme_.diff_modified, 0.18f));
         for (std::size_t line = 0; line < preview_lines.size(); ++line) {
           std::array<char, 20> line_number_buf;
-          // Content row `conflict.start_line + line` maps to screen Y relative to
-          // the first visible line. Rows scrolled above the viewport are skipped
-          // rather than clamped to the top, which would desync the preview text
-          // from its (correctly clipped) preview_rect when the conflict starts
-          // above scroll_line.
           const std::size_t content_line = conflict.start_line + line;
           if (content_line < interaction.result.lines.scroll_line) {
             continue;
@@ -535,10 +481,6 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
               interaction.result.lines.first_line_y +
               static_cast<float>(content_line - interaction.result.lines.scroll_line) *
                   interaction.result.lines.line_height;
-          // Symmetric with the above-viewport skip: a "Both" preview yields more lines
-          // than fit when the conflict starts near the pane bottom, so stop before
-          // drawing text past the result pane into the scrollbar reserve / bottom chrome.
-          // Lines are visited in ascending y, so break rather than continue.
           if (y >= interaction.result.rect.y + interaction.result.rect.h) {
             break;
           }
@@ -546,9 +488,6 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                       theme_.editor_background,
                                       FormatLineNumber(preview_first_line + line + 1,
                                                        line_number_buf));
-          // Render through the canonical tab-aware decorated-row path (the same one
-          // the result viewport underneath uses) instead of a codepoint slice, so
-          // the preview text stays column-aligned with tab-expanded result rows.
           const std::string& preview_text = preview_lines[line];
           const editor::LayoutLine preview_layout = editor::TextLayout::BuildVisibleLine(
               preview_text, merge_tab->horizontal_scroll,
@@ -628,4 +567,4 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   }
 }
 
-}  // namespace microide::workspace
+}

@@ -8,8 +8,6 @@ namespace microide::workspace::project_search_panel {
 namespace {
 
 constexpr float kButtonGap = 4.0f;
-// Width shares of the toggle row. The scope "..." button takes whatever the three
-// labelled buttons leave, so the row always fills the sidebar exactly.
 constexpr float kModeShare = 0.24f;
 constexpr float kCaseShare = 0.30f;
 constexpr float kHiddenShare = 0.28f;
@@ -18,13 +16,6 @@ constexpr SDL_FRect kEmpty{0.0f, 0.0f, 0.0f, 0.0f};
 
 SDL_FRect MakeRect(float x, float y, float w, float h) { return SDL_FRect{x, y, w, h}; }
 
-// A row that does not end inside the sidebar is not laid out. Beside a bottom
-// panel in a short window the replace row started a unit above the panel and
-// reached into it: the paint lit Replace All with the pointer anywhere in its
-// rect, the hover probe -- which stops at the sidebar's edge -- did not, and the
-// pointer leaving it repainted nothing (soak 250931ec505a; 640x480 at ui.scale
-// 3). An empty rect is what every consumer reads as "absent", as for the
-// collapsed scope fields.
 bool RowFits(const SDL_FRect& sidebar_rect, float top, float height) {
   return top + height <= sidebar_rect.h;
 }
@@ -41,7 +32,7 @@ float ButtonRowWidth(const SDL_FRect& sidebar_rect) {
   return std::max(0.0f, sidebar_rect.w - kInset * 2.0f - kButtonGap * 3.0f);
 }
 
-}  // namespace
+}
 
 SDL_FRect QueryRect(const SDL_FRect& sidebar_rect) { return FieldRect(sidebar_rect, kQueryTop); }
 
@@ -111,4 +102,4 @@ SDL_FRect ScopeButtonRect(const SDL_FRect& sidebar_rect) {
                   std::max(0.0f, available - used), kButtonHeight);
 }
 
-}  // namespace microide::workspace::project_search_panel
+}

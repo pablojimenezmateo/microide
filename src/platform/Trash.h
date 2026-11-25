@@ -13,4 +13,4 @@ struct TrashOperationResult {
 
 TrashOperationResult MovePathToTrash(const std::filesystem::path& path);
 
-}  // namespace microide::platform
+}

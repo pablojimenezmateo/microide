@@ -9,7 +9,6 @@
 #include "workspace/SettingFlags.h"
 #include "workspace/lsp/LspFeatureFlags.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
-// Completes the types the shell holds by unique_ptr, for ~WorkspaceShell.
 #include "workspace/coordinators/WorkspaceKeyInputCoordinator.h"
 #include "workspace/coordinators/WorkspaceChromeMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceEditorMouseCoordinator.h"
@@ -45,7 +44,7 @@ std::size_t MenuSlotIndex(WorkspaceShell::MenuId id) {
   return static_cast<std::size_t>(id);
 }
 
-}  // namespace
+}
 
 void WorkspaceShell::InvalidateEditorBlamePath(const std::filesystem::path& path) {
   if (context_.current_project_state.root.empty() || path.empty()) {
@@ -53,13 +52,6 @@ void WorkspaceShell::InvalidateEditorBlamePath(const std::filesystem::path& path
   }
   const std::filesystem::path normalized = path.lexically_normal();
   git_blame_service_.InvalidatePath(context_.current_project_state.root, normalized);
-  // The inline blame on screen is about to change (it drops until the re-fetch
-  // lands): the tree's Refresh invalidated it and nothing repainted the editor
-  // (found by the QA monkey). Any editable surface draws it -- a diff's working
-  // side, a merge's result pane -- and Save on a merge left its annotation on the
-  // result pane (QA merge-mouse).
-  // Compared, not normalized: opening any file passes through here, and building
-  // the viewport's normal path cost an allocation per component per open.
   if (const editor::TextViewport* viewport = ActiveEditableViewport();
       viewport != nullptr && util::SameAsNormalizedPath(viewport->path(), normalized)) {
     RequestPreparedFrame();
@@ -80,38 +72,11 @@ void WorkspaceShell::SetStartupOptions(WorkspaceStartupOptions options) {
   }
 }
 
-// The CONSTRUCTOR is not here. It lives in `WorkspaceShellPlugins.cpp`, which is
-// the only shell TU that already includes every coordinator header -- and a
-// constructor that builds `unique_ptr` members needs their complete types. It is
-// ~470 lines of wiring, so it cannot move next to this destructor either: this
-// file is within a handful of code lines of its 600-line cap, and the
-// `WorkspaceShell*.cpp` companion count is at its ratchet-only cap of 47, so a
-// TU of its own is not available. This comment is the fix for
-// TD-2026-09-13-293b: nothing is broken, it was simply somewhere nobody would
-// search from the half of the pair they had in hand.
 WorkspaceShell::~WorkspaceShell() {
-  // Drain project background work before member teardown to avoid races on
-  // git sidebar refresh state during shell destruction. Shut the interactive
-  // picker lane down here too so an in-flight compare/ref query finishes posting
-  // into compare_picker_mailbox_ while every member it touches is still alive.
   project_background_executor_.Shutdown();
   interactive_background_executor_.Shutdown();
-  // Drain the plugin raster-decode lane too (TD-2026-07-17-044). Decode tasks only
-  // touch the cache's shared sink, so this is belt-and-suspenders, but shutting it
-  // down here keeps teardown ordering explicit alongside the other lanes.
   media_background_executor_.Shutdown();
-  // Shut down the plugin runtime while every shell member it still calls back
-  // into (e.g. the pending redraw invalidation) is alive. Reverse-order member
-  // destruction would otherwise tear down `pending_render_invalidation_`
-  // before `plugin_runtime_`, and plugin teardown invokes
-  // RequestPreparedFrame via the shell callbacks.
   plugin_runtime_.Shutdown();
-  // Land every accepted state write before the process goes away. Saves are
-  // applied on a background worker now, so "the setting was saved" and "the
-  // bytes are on disk" are no longer the same instant; this is where they are
-  // reconciled. The queue's own destructor also flushes, but doing it here keeps
-  // it ordered with the rest of teardown rather than buried in member
-  // destruction order.
   persistence_service_.FlushPendingWrites();
 }
 
@@ -168,12 +133,6 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
     sidebar_mode_menu_items_.reserve(views.size());
     sidebar_mode_menu_entries_.reserve(views.size());
 
-    // Every registered view is listed, primary tabs included: the items are
-    // checkable, so the menu doubles as the "which view am I in" readout for the
-    // views that have no tab of their own. Problems/Tests/Outline used to be
-    // skipped here (and in SidebarModeRow) from when they were retired surfaces --
-    // they were re-shipped without being re-listed, leaving three views with no UI
-    // path at all.
     for (const SidebarViewInfo& view : views) {
       sidebar_mode_menu_entries_.push_back(
           SidebarModeMenuEntry{.label = std::string(view.label), .id = std::string(view.id)});
@@ -240,12 +199,6 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
 
   const auto contributed = ContributedMenuItems(id, plugin_runtime_.Host());
 
-  // Hide (not merely grey) an LSP-driven menu item when its feature toggle or the
-  // master switch is off, or when no server/plugin provider is configured for the
-  // active file. A provider that exists but is only starting stays visible and is
-  // greyed by IsMenuItemEnabled's readiness check. Filtering here — the single
-  // assembly point every render/hit-test/geometry consumer routes through — keeps
-  // item indices consistent everywhere.
   const auto is_lsp_hidden = [this](const MenuItemSpec& item) {
     if (item.separator) {
       return false;
@@ -255,13 +208,13 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
     const ActionId action = command_action != nullptr ? command_action->id : item.action;
     const std::string_view feature_id = LspMenuActionFeatureId(action);
     if (feature_id.empty()) {
-      return false;  // not an LSP-driven menu action
+      return false;
     }
     const auto get_setting = [this](std::string_view id) { return GetSettingValue(id); };
     if (!LspFeatureEnabled(get_setting, feature_id)) {
-      return true;  // master switch or this feature is off
+      return true;
     }
-    switch (action) {  // feature on: hide when nothing is configured to serve it
+    switch (action) {
       case ActionId::GoToDefinition:
       case ActionId::GoToTypeDefinition:
       case ActionId::GoToImplementation:
@@ -275,7 +228,6 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
         return !lsp_service_.HasActiveCompletionProvider();
       case ActionId::RenameSymbol:
       case ActionId::FormatDocument:
-        // Server-only features (no plugin provider kind exists for them).
         return !lsp_service_.HasActiveLanguageServer();
       default:
         return false;
@@ -289,8 +241,6 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
   entries.reserve(contributed.size());
   items.reserve(menu->items.size() + contributed.size() * 2);
 
-  // Push while collapsing leading/consecutive separators, so removing a hidden LSP
-  // group never leaves a doubled or leading divider.
   const auto push_item = [&items](const MenuItemSpec& item) {
     if (item.separator && (items.empty() || items.back().separator)) {
       return;
@@ -298,10 +248,6 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
     items.push_back(item);
   };
 
-  // One pass: each item's visibility is decided once (two setting reads for an
-  // LSP item), and the assembled copy is dropped for the static list when nothing
-  // was hidden. The list is assembled several times per pointer move over an open
-  // menu (TD-2026-10-25-391).
   bool any_hidden = false;
   for (const MenuItemSpec& item : menu->items) {
     if (is_lsp_hidden(item)) {
@@ -348,7 +294,6 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
     });
   }
 
-  // Drop a trailing separator left dangling when the hidden items were last.
   if (!items.empty() && items.back().separator) {
     items.pop_back();
   }
@@ -391,8 +336,6 @@ bool WorkspaceShell::ExecuteCommandName(std::string_view command_name,
     return ActionCoordinator(MakeActionContext()).Execute(action->id, args, source);
   }
   util::ClearError(error_message);
-  // "Handled" is resolved synchronously from the registry; the handler itself runs
-  // on the plugin worker and its outcome surfaces as a toast on the drain.
   std::string command(command_name);
   if (!plugin_runtime_.Host().HasCommand(command)) {
     return false;
@@ -443,15 +386,10 @@ std::optional<std::string> WorkspaceShell::GetSettingValue(std::string_view id) 
     return SerializeSettingValue(context_.current_project_state.active_colorscheme_name);
   }
 
-  // Layered overrides (project wins over the user-level default), resolved in
-  // O(1) via the store's index rather than two linear scans — read 10+/frame.
   if (const std::string* resolved = settings_store_.Resolve(id); resolved != nullptr) {
     return *resolved;
   }
 
-  // Unset: return the default. Built-ins (the vast majority, and every per-frame
-  // read) resolve through the cheap static spec table; only fall back to the
-  // allocating AllSettingInfos scan for plugin-contributed settings.
   if (const SettingSpec* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
     return SerializeSettingValue(DefaultSettingValue(*spec));
   }
@@ -518,19 +456,13 @@ std::vector<WorkspaceShell::VisibleStatusItem> WorkspaceShell::ComputeVisibleSta
   const std::vector<StatusItemView>& items =
       ResolveStatusItems(plugin_runtime_.Host(), status_item_cache_);
   if (items.empty()) {
-    return visible;  // No plugin status items: skip all layout/measurement work.
+    return visible;
   }
-  // A band with no area (the editor column collapsed under a maximized panel)
-  // shows none: the items kept an 18-unit row at its top, and a full frame
-  // painted them over the panel's header (soak 1513ea75bbf9).
   if (breadcrumb.w <= 0.0f || breadcrumb.h <= 0.0f) {
     return visible;
   }
   visible.reserve(items.size());
 
-  // Item width = text + padding, plus a fixed slot for a leading icon and/or a
-  // trailing progress bar when present. Kept in sync with the render layout in
-  // WorkspaceShellRenderChrome.cpp.
   const auto item_width = [&](const StatusItemView& item) {
     float width = text_renderer_.MeasureWidth(item.text) + kItemPadding * 2.0f;
     if (!item.icon.empty() && editor::GutterIconRegistry::ResolveShape(item.icon)) {
@@ -550,16 +482,12 @@ std::vector<WorkspaceShell::VisibleStatusItem> WorkspaceShell::ComputeVisibleSta
     const float width = item_width(item);
     const float next_x = right_x - width;
     if (next_x < breadcrumb.x + kInset) {
-      // Out of room: stop, hiding every lower-priority item (VSCode semantics —
-      // no gap-filling with narrower items). Also bounds the per-paint scan by
-      // the bar width instead of the item count (TD-2026-07-17-019).
       break;
     }
     visible.push_back(VisibleStatusItem{
         .item = item,
         .rect = MakeRect(next_x, breadcrumb.y + 3.0f, width,
                          std::max(18.0f, breadcrumb.h - 6.0f)),
-        // As painted: a modal or a card over the pointer owns it (PointerOver).
         .hovered = PointerOver(MakeRect(next_x, breadcrumb.y + 3.0f, width,
                                         std::max(18.0f, breadcrumb.h - 6.0f))),
     });
@@ -580,7 +508,6 @@ std::vector<WorkspaceShell::VisibleStatusItem> WorkspaceShell::ComputeVisibleSta
         .item = item,
         .rect = MakeRect(left_x, breadcrumb.y + 3.0f, width,
                          std::max(18.0f, breadcrumb.h - 6.0f)),
-        // As painted: a modal or a card over the pointer owns it (PointerOver).
         .hovered = PointerOver(MakeRect(left_x, breadcrumb.y + 3.0f, width,
                                         std::max(18.0f, breadcrumb.h - 6.0f))),
     });
@@ -613,4 +540,4 @@ WorkspaceShell::TreeContextTargetKind WorkspaceShell::SelectedTreeTargetKind() c
                                       : TreeContextTargetKind::Directory;
 }
 
-}  // namespace microide::workspace
+}

@@ -10,21 +10,11 @@
 
 namespace microide::workspace {
 
-// One resolved hover tooltip: the (already truncated) text to draw and the card
-// rect it goes in. The shell resolves at most one of these per frame through
-// WorkspaceShell::HoveredTooltip, which owns the provider order and the
-// placement rule, so render, cursor feedback and redraw invalidation all agree
-// on what is showing and where.
 struct HoverTooltip {
   std::string text;
   SDL_FRect rect{};
 };
 
-// The shell's one tooltip placement rule: horizontally centered on the control
-// the tooltip describes, below it when the card fits, flipped above it when it
-// does not (the status bar sits on the window's bottom edge), and clamped inside
-// `bounds` either way. Anchoring to the control rather than to the pointer is
-// what keeps a tooltip still while the pointer moves within one button.
 inline SDL_FRect PlaceTooltipCard(const SDL_FRect& anchor,
                                   float width,
                                   float height,
@@ -46,4 +36,4 @@ inline SDL_FRect PlaceTooltipCard(const SDL_FRect& anchor,
   return SDL_FRect{std::floor(x), std::floor(y), width, height};
 }
 
-}  // namespace microide::workspace
+}

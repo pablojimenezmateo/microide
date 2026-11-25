@@ -36,19 +36,14 @@
 
 namespace microide::workspace {
 
-// A clickable control on a compare surface (CompareControlAt resolves the one
-// under the pointer for the click, the hover highlight and the cursor alike).
 enum class CompareHoverKind {
   CollapsedContextPreviousAction,
   CollapsedContextAllAction,
   CollapsedContextNextAction,
-  // A hunk's review buttons, on its first row (CompareHunkReviewRects).
   HunkToggleReviewed,
   HunkComment,
-  // A review note row's buttons (CompareNoteActionRects).
   NoteEdit,
   NoteDelete,
-  // The header's buttons (CompareHeaderButtonRects).
   HeaderPreviousChange,
   HeaderNextChange,
   HeaderToggleFileReviewed,
@@ -59,7 +54,6 @@ struct CompareHoverState {
   std::size_t presentation_row = 0;
   std::size_t collapsed_run_start_model_row = 0;
   std::size_t collapsed_run_length = 0;
-  // The hunk a hunk or note control acts on (-1: the file's note, or none).
   int hunk = -1;
   bool operator==(const CompareHoverState&) const = default;
 };
@@ -89,33 +83,9 @@ struct CompareVisibleLayoutCacheKeyHash {
   }
 };
 
-// Visible-row layouts for the two diff panes, and the index that finds them.
-//
-// Both halves are STEADY-STATE ALLOCATION-FREE on purpose, because both used to
-// be rebuilt from nothing on every keystroke: a keystroke in the editable pane
-// bumps `model_revision`, and the invalidation that follows dropped the whole
-// window (TD-2026-08-17-261).
-//
-//  - `layouts` is a SLAB, not a live list. Only `[0, live_count)` is addressed
-//    by the index; everything past that is retained storage whose three heap
-//    buffers the next build refills in place through
-//    `TextLayout::BuildVisibleLineInto`. Freeing them cost three allocations per
-//    visible row per keystroke — the top three sites of the phase.
-//  - `table` is an open-addressed index into the slab holding `slot + 1`, 0 for
-//    empty, sized so the load factor never exceeds 1/2 (so linear probing always
-//    terminates). It replaced a `std::unordered_map`, which cost one NODE
-//    allocation per cached row per frame: `clear()` frees every node and the
-//    next frame's inserts allocate them straight back. Resetting this refills
-//    4 KB with zero and allocates nothing.
-//  - `keys[i]` describes `layouts[i]`, so a probe can confirm a hit.
-//
-// Reset it with `ResetCompareVisibleLayoutCache` in
-// `workspace/render/CompareVisibleLayoutCache.h`; nothing should clear these
-// vectors.
 struct CompareVisibleLayoutCache {
-  // Bounded by the table's half-load rule below; see kCompareVisibleLayoutTableSize.
   static constexpr std::size_t kLimit = 512;
-  static constexpr std::size_t kTableSize = 1024;  // power of two, >= 2 * kLimit
+  static constexpr std::size_t kTableSize = 1024;
 
   std::uint64_t model_revision = 0;
   std::size_t live_count = 0;
@@ -124,18 +94,12 @@ struct CompareVisibleLayoutCache {
   std::vector<std::uint32_t> table;
 };
 
-// A compare's ref-named sides as git answered for them, read OFF the shell thread
-// for a rebuild (see CompareTabState::pending_refresh). A side left nullopt was not
-// read: the tab already holds it (a full object id), or it is the working file.
 struct CompareRevisionSides {
   std::optional<project::GitFileContentAtCommit> left;
   std::optional<project::GitFileContentAtCommit> right;
 };
 
 struct CompareTabState {
-  // A save of the editable right side whose formatter is running off the shell
-  // thread (as an editor tab's, TD-2026-09-28-304): the completion finds this tab
-  // by the run id and drops the answer if the buffer moved on meanwhile.
   editor::AsyncBufferWork pending_format_save;
   std::filesystem::path path;
   std::filesystem::path left_path;
@@ -145,11 +109,6 @@ struct CompareTabState {
   std::string right_ref;
   std::string left_label;
   std::string right_label;
-  // The read-only left side, shared with `model.left_source` rather than copied
-  // into it. The left buffer never changes for the tab's life, and a rebuild runs
-  // on every keystroke in the editable right pane, so an owned std::string here
-  // meant memcpy'ing the whole left file per keystroke — and holding two resident
-  // copies of it (TD-2026-08-14-232). Never null; empty text is a shared singleton.
   compare::CompareTextBuffer left_content = compare::EmptyCompareText();
   compare::CompareReviewMode review_mode = compare::CompareReviewMode::WorkingTree;
   compare::WorkingTreeStagingView staging_view = compare::WorkingTreeStagingView::Combined;
@@ -157,29 +116,15 @@ struct CompareTabState {
   compare::CompareSemanticFileMetadata semantic_file;
   compare::ComparePresentationModel presentation;
   CompareReviewHeaderState review_header;
-  // What the last marker pass resolved (ApplyBranchReviewPresentationMarkers),
-  // kept on the tab so the buffers survive across passes: every hunk's review
-  // marker and note (indexed by hunk), the file's own note, the file's hunk notes
-  // whose change is gone, and how many hunks are marked reviewed. The diff's
-  // review controls read these (CompareHunkReviewStatus, CompareHunkHasNote) and
-  // the presentation's ReviewNote rows are built from them.
   std::vector<compare::BranchReviewHunkMarker> review_hunk_markers;
   std::string review_file_note;
   std::vector<compare::BranchReviewNote> review_detached_notes;
   std::size_t review_reviewed_hunk_count = 0;
-  // Of everything the ReviewNote rows show; a pass that moves it rebuilds the rows.
   std::uint64_t review_notes_fingerprint = 0;
-  // What the rows' review markers were last composed from. The marker pass is
-  // O(presentation rows) and runs from the derived-state refresh, which fires on
-  // every mouse move; these let it skip the events that moved none of its inputs.
   compare::BranchReviewTargetIdentity review_markers_built_target;
   std::uint64_t review_markers_built_presentation_revision = 0;
   std::uint64_t review_markers_built_review_revision = 0;
   bool review_markers_valid = false;
-  // The on-screen row under the pointer (-1: none, and always on a diff that
-  // takes no review marks). The hunk there (CompareHoveredHunk) shows its review
-  // buttons, as the one holding the selection does; kept as a row, not a hunk, so
-  // rows scrolled under a still pointer move the buttons with them.
   int review_hover_visible_row = -1;
   std::uint64_t presentation_revision = 0;
   compare::CompareBuildOptions build_options;
@@ -189,50 +134,12 @@ struct CompareTabState {
   std::size_t review_file_index = 0;
   compare::CompareModel model;
   editor::TextViewport right_viewport;
-  // Soft-wrap row table for the two panes. Inactive (and empty) unless
-  // `editor.wrap` is on, in which case a presentation row occupies
-  // max(left segments, right segments) on-screen rows and the shorter side is
-  // padded with blank rows so the panes stay aligned (TD-2026-08-13-200).
-  // `scroll_row` is an index into THIS table; `selected_row` stays a
-  // presentation-row index, so a selected wrapped line highlights whole.
   DiffWrapLayout wrap_layout;
-  // Syntax tokens for the two diff panes, indexed by MODEL row. See
-  // SurfaceTokenWindow: these used to be a `vector<vector<SyntaxTokenKind>>`
-  // holding one heap buffer per row of the diff, filled by a monotone frontier
-  // and never released — 86 % of `diff.next_hunk_burst`'s allocations.
-  //
-  // The alias flag that used to sit beside them is gone with it. It existed
-  // because an unchanged row whose two sides are byte-identical highlights to the
-  // same token run, which the old cache stored twice, once per pane, for every
-  // such row in the FILE (TD-2026-08-06-159). What the window bounds is exactly
-  // that: only the rows on screen hold tokens at all, so the second copy costs a
-  // pooled buffer and one tokenize of a line already in cache, and the flag array
-  // plus its two read sites cost more than they save.
-  //
-  // Each window is addressed by its own pane's LINES (line - 1), not by model row:
-  // a pane's syntax state at a line follows from its own text above it, which a
-  // rebuild of the diff does not move. So a keystroke in the working side leaves
-  // the left window alone and restarts the right one at the edited line
-  // (SurfaceTokenWindow::ResetFrom), where both restarted at row 0. The rows are
-  // reached through `left_line_rows` / `right_line_rows`; CompareRowLeftTokens and
-  // CompareRowRightOwnTokens are the row-side accessors.
   SurfaceTokenWindow left_token_window;
   SurfaceTokenWindow right_token_window;
-  // The model row of each side's line (line - 1 -> row), rebuilt with the model
-  // (MarkCompareModelBuilt); their capacity is kept across rebuilds.
   std::vector<std::uint32_t> left_line_rows;
   std::vector<std::uint32_t> right_line_rows;
-  // The windows do not describe the model's text: set by every replacement of the
-  // model, cleared by whoever re-points them -- the keystroke's rebuild, which
-  // knows the first changed line, or else frame prep, which resets them whole.
   bool token_windows_stale = true;
-  // Bracket-match memo for the editable pane, keyed exactly as the editor
-  // renderer's is: (content revision, caret line, caret column). FindBracketMatch
-  // is O(file), and the compare surface paints through its own row loop with no
-  // access to the editor renderer's cache — so without this, turning the
-  // highlight on would have traded a per-frame O(file) scan for it
-  // (TD-2026-08-13-206). One entry, which is the natural cardinality: a tab has
-  // one caret.
   std::uint64_t bracket_match_content_revision = 0;
   std::size_t bracket_match_caret_line = 0;
   std::size_t bracket_match_caret_column = 0;
@@ -242,61 +149,20 @@ struct CompareTabState {
   CompareVisibleLayoutCache visible_layouts;
   bool syntax_highlighting_enabled = true;
   std::uint64_t model_revision = 0;
-  // Cheap change-detection signals the model + syntax + tokenization were last built
-  // from. The editable right pane is the one refreshes touch repeatedly (every keystroke,
-  // mouse, focus, plugin, external-change event fires RefreshCompareTabDerivedState from
-  // ~10 sites, most leaving content untouched), so its change is detected by the viewport's
-  // monotonic `content_revision` + line ending — no whole-buffer serialize on the no-op
-  // path. The read-only left side is an IMMUTABLE shared buffer, so its identity is its
-  // content: a new left side is always a new buffer. It used to be hashed instead, which
-  // is allocation-free but O(file) — on every refresh, and the refresh fires on every
-  // mouse move, so a 200 MB left side cost a full pass over 200 MB per pointer motion.
-  // The fingerprint HOLDS the buffer rather than its address: a raw address could be
-  // freed and reused by a later buffer and then compare equal to it.
   std::uint64_t derived_right_content_revision = 0;
   util::LineEnding derived_right_line_ending = util::LineEnding::LF;
   compare::CompareTextBuffer derived_left_content;
-  // Cached line count of the read-only left content, so compare gutter sizing does not
-  // rescan left_content for '\n' on every render/hit-test/scroll/cursor layout request
-  // (TD-2026-07-17A-094). Recomputed only when the derived fingerprint rebuilds.
   std::size_t derived_left_line_count = 0;
   bool derived_ignore_whitespace = false;
-  // The lexical rules the model was refined with. Shared per language by the
-  // language contract, so pointer identity says whether they changed.
   std::shared_ptr<const compare::DiffSyntax> derived_syntax;
   bool derived_fingerprint_valid = false;
-  // Semantic classification (binary / submodule / line-ending-only) and the
-  // presentation model derive from the same two content buffers the fingerprint
-  // above guards, so they are gated on it too. Recomputing them per refresh cost a
-  // whole-buffer serialize of the right pane plus several full scans of both files
-  // on every keystroke, mouse, focus, and plugin event — the exact work the
-  // fingerprint exists to skip. `semantic_inputs_valid` additionally covers the git
-  // entry the classifier reads (rename/mode), which the model fingerprint does not.
   bool semantic_inputs_valid = false;
   std::size_t semantic_git_entry_signature = 0;
-  // Guards the presentation rebuild. Bumped whenever anything the builder consumes
-  // that is NOT the model changes: the semantic metadata and the whitespace option.
-  // Collapse-state mutations refresh the presentation directly through
-  // RefreshCompareTabPresentation, which revalidates this.
   bool presentation_valid = false;
   std::uint64_t presentation_built_model_revision = 0;
   bool presentation_built_show_whitespace = false;
-  // A tab created before its content (TD-2026-09-29-312): a large working-tree
-  // compare opens as an empty, read-only stand-in and loads off the shell thread.
-  // `load_pending` means "this tab still owes a load"; the frame that SHOWS it
-  // posts the load and arms `pending_load`. Lazy on purpose, as VS Code's diff
-  // editor is: a review that opens thirty large files reads the one on screen,
-  // and a load cancelled by a project switch simply runs again the next time the
-  // tab is shown, because cancelling disarms the slot and leaves this set.
   bool load_pending = false;
   editor::AsyncBufferWork pending_load;
-  // A loaded tab whose ref-named sides must be read again: its file changed, or
-  // a stage, a commit or a checkout moved what a ref names. The re-read runs off
-  // the shell thread (a blocking `git cat-file` per open diff of the file, per
-  // change, held the window for seconds: soak a509a3f35fe0), and the diff on
-  // screen stays, editable, until it lands. `refresh_owed` stays set until a read
-  // posted after the latest change has landed; a cancelled one (a project closed
-  // or switched under it) is posted again by the next frame that shows the tab.
   bool refresh_owed = false;
   editor::AsyncBufferWork pending_refresh;
   std::optional<CompareHoverState> hover_state;
@@ -306,50 +172,19 @@ struct CompareTabState {
   std::size_t max_visual_columns = 0;
   bool scrollbar_marker_cache_valid = false;
   std::uint64_t scrollbar_marker_cache_revision = 0;
-  // On-screen row count the cached markers were scaled against. Soft wrap makes
-  // that a different number from the presentation-row count and moves it on every
-  // re-wrap (a divider drag, a window resize), so it is part of the key.
   std::size_t scrollbar_marker_cache_rows = 0;
   std::uint64_t scrollbar_marker_cache_theme_token = 0;
   SDL_FRect scrollbar_marker_cache_track{};
   std::vector<overview::Marker> scrollbar_marker_cache;
-  // Working buffers for the marker rebuild above, retained because the cache key
-  // includes `presentation_revision` — so a keystroke in the editable pane
-  // invalidates it and the rebuild ran with three fresh vectors per keystroke
-  // (TD-2026-08-17-261). Meaningful only inside EnsureCompareOverviewMarkers.
   std::vector<CompareScrollbarRun> scrollbar_run_scratch;
   std::vector<overview::MarkerInput> scrollbar_marker_input_scratch;
   float divider_fraction = kWorkspaceDefaultCompareDividerFraction;
   bool right_editable = false;
   bool right_view_active = false;
   bool persistable = true;
-  // Sticky flag marking a non-git ("plain") comparison — two arbitrary sides
-  // (file/buffer/clipboard) with no repository backing. When set, the derived-
-  // state refresh forces review_mode to Plain instead of re-inferring it from
-  // git refs, keeping staging/branch-review off. See ApplyCompareTabReviewMetadata.
   bool plain_compare = false;
 };
 
-// True when this model row's right-pane tokens ARE its left-pane tokens: both
-// sides present, byte-identical, and resuming from the same syntax state, which
-// makes the two panes produce the same token run.
-//
-// A diff is mostly unchanged rows, so this is most of them. The right window
-// declines to tokenize such a row and the render site reads the left window's
-// buffer, which saves both the second tokenize and the second buffer.
-//
-// ONE definition, called from the tokenizer and from the render site, because
-// the two must agree exactly: if the render reads left's buffer for a row the
-// tokenizer did fill on the right, or vice versa, the pane paints unstyled.
-//
-// A row the right pane's walk has not reached yet reads the left window too. Its
-// state there is not known, and it has no tokens of its own to draw: when a
-// frame's walk time ran out before the right pane's walk reached it, every such
-// row dropped its colours for a frame (soak 185e45a464f9). The left pane's
-// tokens stand in until the right walk has the row; if its state there then
-// differs, the tokenizer fills the row (it asks only about rows its frontier has
-// passed) and the row repaints from its own. A row the LEFT walk has not reached
-// has no tokens to lend, and is not aliased.
 inline bool CompareRowRightTokensAliasLeft(const CompareTabState& tab, std::size_t row) {
   if (row >= tab.model.rows.size()) {
     return false;
@@ -368,9 +203,6 @@ inline bool CompareRowRightTokensAliasLeft(const CompareTabState& tab, std::size
          tab.left_token_window.StateBefore(left) == tab.right_token_window.StateBefore(right);
 }
 
-// A row's tokens in each pane's own window (none for a side the row lacks). The
-// working side DRAWS the left pane's for a row CompareRowRightTokensAliasLeft
-// names, and its own otherwise.
 inline const std::vector<editor::SyntaxTokenKind>& CompareRowLeftTokens(const CompareTabState& tab,
                                                                         const compare::CompareRow& row) {
   static const std::vector<editor::SyntaxTokenKind> kNone;
@@ -383,7 +215,6 @@ inline const std::vector<editor::SyntaxTokenKind>& CompareRowRightOwnTokens(cons
 }
 
 struct MergeTabState {
-  // The result buffer's deferred-formatter save; see CompareTabState.
   editor::AsyncBufferWork pending_format_save;
   std::filesystem::path base_path;
   std::filesystem::path incoming_path;
@@ -404,37 +235,19 @@ struct MergeTabState {
   bool external_result_stale = false;
   bool allow_conflict_marker_override = false;
   bool marker_override_prompt_pending = false;
-  // Mark Resolved was refused once for conflicts nobody picked a side for; the
-  // next Mark Resolved keeps the result as shown. Any change to a conflict's
-  // choice withdraws it.
   bool unresolved_override_prompt_pending = false;
   std::string status_message;
   editor::TextViewport::LineEnding result_line_ending = editor::TextViewport::LineEnding::LF;
   compare::MergeModel model;
-  // Syntax tokens for the two read-only source panes. See SurfaceTokenWindow:
-  // these used to be a `vector<vector<SyntaxTokenKind>>` holding one heap buffer
-  // per LINE OF THE FILE, filled by a monotone frontier and never released.
   SurfaceTokenWindow incoming_token_window;
   SurfaceTokenWindow current_token_window;
   editor::TextViewport result_viewport;
-  // Soft-wrap row table for the two read-only source panes (incoming = left,
-  // current = right). Inactive unless `editor.wrap` is on. The result pane wraps
-  // through its own viewport; the three panes share `scroll_row`, which is a
-  // visual-row index in every mode.
   DiffWrapLayout wrap_layout;
   std::optional<std::string> persisted_output_baseline;
   std::vector<MergeTrackedConflict> conflicts;
-  // `conflicts` with every line field projected into on-screen row space (see
-  // workspace/MergeWrapRows.h). Derived cache, warmed from const geometry paths;
-  // unused (and empty) while wrap is off, where the conflicts already ARE rows.
   mutable std::vector<MergeTrackedConflict> visual_conflicts;
   mutable std::uint64_t visual_conflicts_key = 0;
   mutable bool visual_conflicts_valid = false;
-  // Whether the result holds a complete set of conflict markers, which
-  // ComputeMergeResultState asks while the result is clean and unresolved. The
-  // scan reads the whole buffer, and the merge header asks on every prepared
-  // frame (its key, then its paint): memoized on the result's document and its
-  // content revision, so a frame that did not edit the result scans nothing.
   mutable const void* marker_scan_document = nullptr;
   mutable std::uint64_t marker_scan_revision = 0;
   mutable bool marker_scan_valid = false;
@@ -447,79 +260,39 @@ struct MergeTabState {
   std::uint64_t model_revision = 0;
   bool scrollbar_marker_cache_valid = false;
   std::uint64_t scrollbar_marker_cache_revision = 0;
-  // See the compare tab's field of the same name.
   std::size_t scrollbar_marker_cache_rows = 0;
   std::uint64_t scrollbar_marker_cache_theme_token = 0;
   SDL_FRect scrollbar_marker_cache_track{};
   std::vector<overview::Marker> scrollbar_marker_cache;
-  // See the compare tab's field of the same name: the marker rebuild's working
-  // buffer, retained so an invalidation does not re-allocate it.
   std::vector<overview::MarkerInput> scrollbar_marker_input_scratch;
-  // Cache for the hover-preview overlay's choice lines (MergeChoiceLines), keyed
-  // by (conflict, choice, model revision). Rebuilt only on a key change so hover
-  // does not reallocate the incoming/current line vectors every frame.
   std::vector<std::string> preview_lines_cache;
   bool preview_lines_cache_valid = false;
   std::size_t preview_lines_cache_conflict = 0;
   compare::MergeChoice preview_lines_cache_choice = compare::MergeChoice::Base;
   std::uint64_t preview_lines_cache_revision = 0;
-  // Reused buffer for the toolbar's "Conflict 2/7 | remaining 5 | dirty" line,
-  // which the merge surface rebuilds on every painted frame. See
-  // `BuildMergeResolverStatus` — the status it returns views this.
   std::string resolver_progress_buffer;
   float left_divider_fraction = kWorkspaceDefaultMergeLeftDividerFraction;
   float right_divider_fraction = kWorkspaceDefaultMergeRightDividerFraction;
   bool persistable = true;
 };
 
-// What to read and where to put the view once it is read: a tab that exists
-// before its content does, a tab of a saved session, a recently closed editor.
-// One value for "where this editor's view was", so each of those restores the
-// same things (TD-2026-10-24-390).
 struct DeferredTabHandle {
   std::filesystem::path path;
   std::size_t cursor_line = 0;
   std::size_t cursor_column = 0;
-  std::size_t scroll_line = 0;  // a visual row, counted with the folds below collapsed
+  std::size_t scroll_line = 0;
   std::size_t horizontal_scroll = 0;
   std::optional<editor::SelectionRange> selection;
-  // The opener lines of the collapsed folds, ascending. Re-collapsed by the fold
-  // refresh once the content is here (CollapseRestoredFolds); an opener the file
-  // no longer folds at is dropped.
   std::vector<std::size_t> collapsed_fold_openers;
 
-  // Last, after preferences and indent detection: those re-run
-  // EnsureCursorVisible, which would snap scroll back onto the caret.
   void ApplyViewStateTo(editor::TextViewport& view) const {
     view.ApplyRestoredViewState(cursor_line, cursor_column, scroll_line, horizontal_scroll,
                                 selection);
   }
 };
 
-// Namespace scope, NOT nested in `TabEntry`, and it must stay that way: a class
-// with a default member initializer that is nested inside the class holding an
-// `std::optional` of it is not `is_constructible` at the point the optional is
-// declared (the NSDMI is parsed only at the closing brace of the *enclosing*
-// class). GCC re-evaluates the trait later; clang caches the `false` for the
-// whole translation unit, so `optional<...>::emplace()` then fails to compile
-// under clang and only under clang. TD-2026-08-14-214. `TabEntry` keeps the
-// `TabEntry::EditorTabState` spelling as an alias below.
 struct EditorTabState {
-  // A tab owns exactly one editor viewport. Side-by-side / stacked layouts are
-  // modelled as editor *groups* above the tab level (see `EditorGroup`), not as
-  // a split tree inside a tab.
   editor::TextViewport viewport;
-  // Where this tab's content is. A tab can exist before its content does — a
-  // session-restored tab that has never been activated, and a file large enough
-  // that reading it on the shell thread would drop frames — and every guard in
-  // the tree asks the same question of it: is the viewport the file yet?
-  //
-  // `Deferred` is the lazily-hydrated tab: nothing has been read, and the
-  // `restored_*` fields below carry the on-disk path plus the caret and scroll
-  // to place once it is. `Loading` is the same tab with a read already in
-  // flight (`pending_load` names it). `Failed` is a read that finished and
-  // could not produce a buffer; the tab stays, so the user sees which file it
-  // was rather than a tab that silently vanished.
   enum class Content : std::uint8_t {
     Ready,
     Deferred,
@@ -527,58 +300,20 @@ struct EditorTabState {
     Failed,
   };
   Content content = Content::Ready;
-  // The one question almost every call site actually asks: is the viewport NOT
-  // the file? Every non-Ready state answers yes, so a new state cannot be
-  // forgotten at a site that only knew about deferred restore.
   [[nodiscard]] bool content_pending() const { return content != Content::Ready; }
 
-  // Deferred-restore metadata: while `content_pending()` the viewport is empty
-  // and these fields carry the real on-disk path + caret/scroll so the tab can
-  // be hydrated lazily (session restore / background open).
-  // The same handle a never-materialized session tab carries
-  // (`TabEntry::deferred_handle`), so the two forms of "not loaded yet" hold one
-  // description of what to read and where to put the caret (TD-2026-09-29-314).
   DeferredTabHandle restore;
-  // `reveal` targeted this tab while its content was still loading: centre the
-  // restored caret line once the load lands (the placeholder had no real size).
   bool center_cursor_on_load = false;
 
-  // Format-on-save runs off the shell thread, so a save can be in flight for this
-  // tab with nothing written yet. Armed while that is true, with the
-  // SaveFormatterService run id, so the completion finds its tab by matching it
-  // and drops the formatter's output if the buffer moved on under it —
-  // reformatting a buffer the user has since typed into would undo their edit.
   editor::AsyncBufferWork pending_format_save;
-  // Armed while `content == Loading`: the off-thread read filling this tab. The
-  // completion finds its tab by matching this id, so a tab closed mid-read
-  // simply has no match and the bytes are dropped.
   editor::AsyncBufferWork pending_load;
-  // What waits on this tab's deferred save — its close, a rename/delete of its
-  // path, a project close, a quit — is a SaveContinuation keyed by `stable_id`
-  // (WorkspaceContext::save_continuations), not a flag here.
-  // Per-tab fold-region model. Lazily computed by the renderer / fold action
-  // path through `EnsureFoldingModelFresh(...)`. Cleared automatically on tab
-  // close; rekeyed implicitly through its `(layout_revision, tab_size,
-  // language_id)` fingerprint when the buffer or language changes.
   std::unique_ptr<editor::FoldingModel> folding_model =
       std::make_unique<editor::FoldingModel>();
-  // The caret set the last prepared frame saw, so the frame can tell a caret
-  // that MOVED into a collapsed fold (reveal it, as VS Code's revealCursor
-  // does) from a fold that collapsed around a caret standing still (leave it).
   std::optional<editor::TextPosition> fold_reveal_last_caret;
   std::size_t fold_reveal_last_secondary_count = 0;
   editor::SnippetSessionState snippet_session;
 };
 
-// Namespace scope for the same reason as `EditorTabState` above: it has no NSDMI
-// today, but a nested type reachable through an `optional` member of its own
-// enclosing class is the landmine, not the initializer.
-// Whether a clean reload must re-establish for itself that the file actually
-// changed. The guard is not free — settling a moved mtime on an unchanged file
-// costs a read — and a caller that has already settled it would otherwise pay for
-// the same answer twice. Namespace scope because the shell, the service and the
-// coordinator all name it and the shell sees none of the other two as complete
-// types.
 enum class EditorReloadEchoGuard { Check, AlreadyResolved };
 
 struct TabEntry {
@@ -594,16 +329,7 @@ struct TabEntry {
   Kind kind = Kind::Editor;
   std::filesystem::path path;
   std::string title;
-  // An untitled buffer's number, "Untitled-<n>" (VS Code's naming, so two new
-  // buffers are told apart in the strip, a prompt and Quick Open); 0 for a file.
   std::uint32_t untitled_number = 0;
-  // Stable per-tab identity, assigned lazily (EnsureTabStableId, process-unique)
-  // the first time a tab is referenced by a modal dirty prompt or waited on by a
-  // save continuation.
-  // 0 = unassigned. Lets a dirty prompt survive a tab close/reorder while it is up:
-  // the prompt stores ids, not indices, and resolves them back to current indices at
-  // confirm time — so it never saves/closes the wrong tab (TD-2026-07-17-024). Purely
-  // in-memory (a modal prompt never survives a session save), so it is not persisted.
   std::uint64_t stable_id = 0;
   std::optional<EditorTabState> editor_state;
   std::optional<DeferredTabHandle> deferred_handle;
@@ -611,10 +337,6 @@ struct TabEntry {
   std::optional<MergeTabState> merge;
 };
 
-// Where an editor tab's view is now: as the live viewport and fold model have it,
-// or -- for a tab whose content has not landed -- as it will be placed. What a
-// session saves, a closed editor remembers and a split starts from. Null for a
-// tab that is not an editor or has no file and no content.
 inline std::optional<DeferredTabHandle> EditorTabViewState(const TabEntry& tab) {
   if (tab.kind != TabEntry::Kind::Editor) {
     return std::nullopt;
@@ -635,7 +357,6 @@ inline std::optional<DeferredTabHandle> EditorTabViewState(const TabEntry& tab) 
       .horizontal_scroll = view.horizontal_scroll(),
       .selection = view.selection_range(),
   };
-  // Folds still waiting for the first refresh since the load are the tab's folds.
   if (!editor.restore.collapsed_fold_openers.empty()) {
     handle.collapsed_fold_openers = editor.restore.collapsed_fold_openers;
   } else if (editor.folding_model != nullptr) {
@@ -646,24 +367,15 @@ inline std::optional<DeferredTabHandle> EditorTabViewState(const TabEntry& tab) 
   return handle;
 }
 
-// An untitled buffer's title: "Untitled-<n>", or "Untitled" before it has one.
 inline std::string UntitledTitle(std::uint32_t untitled_number) {
   return untitled_number == 0 ? std::string("Untitled")
                               : "Untitled-" + std::to_string(untitled_number);
 }
 
-// The title of a tab that shows `path`: its file name, or the tab's own untitled
-// title. Every site that re-derives a title from a path goes through this, so a
-// rename, a restore or an activation cannot turn "Untitled-2" back into a
-// generic name the other untitled tabs share.
 inline std::string TabTitleForPath(const std::filesystem::path& path, std::uint32_t untitled_number) {
   return path.empty() ? UntitledTitle(untitled_number) : path.filename().string();
 }
 
-// Give `tab` its stable id if it has none, and return it. Process-unique rather
-// than per project: save continuations (WorkspaceContext::save_continuations) are
-// shell-wide — a quit spans projects — so an id must name one tab across all of
-// them. Shell thread only.
 inline std::uint64_t EnsureTabStableId(TabEntry& tab) {
   static std::uint64_t next_stable_id = 1;
   if (tab.stable_id == 0) {
@@ -672,24 +384,13 @@ inline std::uint64_t EnsureTabStableId(TabEntry& tab) {
   return tab.stable_id;
 }
 
-// Whether a compare's left side is content nothing can change and the tab already
-// holds: named by a full object id. Re-reading it spawned a blocking git per side,
-// per tab, on every change to the file (soak eee6ac0a5e0b, 32325094bfef).
 [[nodiscard]] inline bool CompareLeftSideIsHeld(const CompareTabState& compare_tab) {
   return project::IsFullGitObjectId(compare_tab.commit_hash) && compare_tab.left_content &&
          compare_tab.build_options.left_exists.has_value();
 }
 
-// The trait clang caches as `false` when the optional's element type is nested in
-// the class holding the optional (TD-2026-08-14-214). Asserting it here — after
-// `TabEntry` is complete — makes the landmine a compile error in the header that
-// owns the shape, rather than an error at whichever call site next reaches for
-// `emplace()`.
 static_assert(std::is_default_constructible_v<TabEntry::EditorTabState>);
 
-// Whether closing this tab would discard edits: an editable compare's right side,
-// a merge's result, or an editor buffer. The one definition the tab coordinator's
-// close prompt and the control channel's `editor` query both read.
 inline bool TabEntryIsDirty(const TabEntry& tab) {
   if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
     return tab.compare->right_editable && tab.compare->right_viewport.dirty();
@@ -704,16 +405,6 @@ inline bool TabEntryIsDirty(const TabEntry& tab) {
 }
 static_assert(std::is_default_constructible_v<TabEntry::DeferredTabHandle>);
 
-// The file buffer a tab holds, once it is loaded: an editor tab's viewport, or a
-// compare tab's editable side -- both ARE the file, and share one document when
-// both are open on it. nullptr for a tab still to load (a stand-in is not the
-// file) and for one that holds no file's buffer: a read-only compare, a merge,
-// whose result is its own synthesized text.
-//
-// The one definition of "an open document" for whatever must reach every one of
-// them. The crash-safety flush, its session records and the `documents` query
-// each walked the EDITOR tabs alone, so text typed into a diff with no editor tab
-// on its file was never staged, and a crash lost it (TD-2026-11-19-453).
 [[nodiscard]] inline const editor::TextViewport* LoadedBufferViewOf(const TabEntry& tab) {
   if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
       !tab.editor_state->content_pending()) {
@@ -726,10 +417,6 @@ static_assert(std::is_default_constructible_v<TabEntry::DeferredTabHandle>);
   return nullptr;
 }
 
-// A link in a terminal pane: what it opens and where it sits, from
-// (`row`, `begin_column`) to (`end_row`, `end_column`) exclusive, rows absolute.
-// A link the terminal soft-wrapped spans several rows (`end_row` > `row`); every
-// row but the last is underlined to its end. From the pointer's hit-test.
 struct TerminalLinkSpan {
   std::size_t row = 0;
   std::size_t begin_column = 0;
@@ -738,32 +425,19 @@ struct TerminalLinkSpan {
   friend bool operator==(const TerminalLinkSpan&, const TerminalLinkSpan&) = default;
 };
 struct TerminalLinkHit {
-  std::string target;  // a URL, or a file:// link with an #L<line>:<col> fragment
+  std::string target;
   TerminalLinkSpan span;
-  std::size_t pane = 0;  // which pane of the active tab the link is in
+  std::size_t pane = 0;
 };
 
 struct TerminalPaneState {
   terminal::TerminalSession session;
-  // The link under the pointer, underlined while it is (VS Code's terminal).
   std::optional<TerminalLinkSpan> hovered_link;
   terminal::TerminalLineRangeSnapshot visible_lines_snapshot;
-  // A content key per line of the snapshot (KeyTerminalGridRows), computed when
-  // the snapshot is taken: the grid's rows are derived units and key on these, so
-  // a frame hashes cells only when the session's generation moved.
   std::vector<std::uint64_t> visible_row_keys;
-  // What this pane paints this frame, sampled once in frame prep (with the lines
-  // above): the session is written by its PTY reader thread, and paint reading it
-  // live let one frame's renders disagree about the caret and the line count.
   terminal::TerminalCursorSnapshot frame_cursor{};
   std::size_t frame_line_count = 0;
-  // DECSCNM as of this frame: paint swaps every cell's colours and the pane's fill.
   bool frame_reverse_video = false;
-  // The selection this frame paints (normalized, after the row-space rebase), and
-  // whether at full strength (the panel has focus) or as the kept-but-not-live
-  // wash. Paint used to ask the shell per cell. Each row's derived unit folds its
-  // slice of it, so no path that changes the selection -- a key, a pane switch, a
-  // program entering the alternate screen -- needs its own damage request.
   std::optional<TerminalSelectionBounds> frame_selection;
   bool frame_selection_live = false;
   std::size_t visible_lines_first_row = 0;
@@ -774,80 +448,32 @@ struct TerminalPaneState {
   bool mouse_selecting = false;
   std::optional<TerminalSelectionPoint> selection_anchor;
   std::optional<TerminalSelectionPoint> selection_head;
-  // What the selection extends by and what it started on -- the cell pressed, or
-  // the word or row a double or triple click took -- for its drag and for a later
-  // Shift+click (ExtendTerminalSelection). Meaningful while a selection exists.
   TerminalSelectionUnit selection_unit = TerminalSelectionUnit::Cell;
   TerminalSelectionBounds selection_origin{};
-  // Host-side capture of bytes typed/pasted since the last Enter, used ONLY to strip
-  // the prompt prefix from the copy-last-command transcript (never sent to the PTY).
-  // Bounded by kMaxPendingInputBytes: repeated pastes/programmatic input before a
-  // newline must not grow this without limit. Once the budget is hit, further bytes
-  // are dropped and `pending_input_truncated` is set so submit skips the (now
-  // unreliable) prefix match instead of using a partial capture. TD-2026-07-17A-068.
-  static constexpr std::size_t kMaxPendingInputBytes = 1u * 1024 * 1024;  // 1 MiB
+  static constexpr std::size_t kMaxPendingInputBytes = 1u * 1024 * 1024;
   std::string pending_input;
   bool pending_input_truncated = false;
   std::string last_command_invocation;
   std::string last_command_prompt_prefix;
   std::size_t last_command_start_row = 0;
   bool has_last_command = false;
-  // Last-observed value of session.ScrollbackTrimTotal(); the delta rebases the
-  // absolute-row mirrors below (scroll_row, selection, last_command_start_row) when
-  // scrollback is trimmed, so they track the same content instead of jumping.
   std::uint64_t observed_scrollback_trim_total = 0;
-  // Last-observed session.RowShiftSequence(): rows a host terminal's gap fill
-  // inserted mid-buffer move the mirrors below that gap down by what was inserted.
   std::uint64_t observed_row_shift_sequence = 0;
-  // Last-observed session.using_alternate_screen(). The alternate screen is a
-  // different buffer with its own row numbers, so a switch either way drops the
-  // selection: kept, it highlighted (and Ctrl+C copied, instead of interrupting)
-  // whatever vim or less drew over the rows it named.
   bool observed_alternate_screen = false;
-  // How this pane was launched, kept so an exited session (a dropped ssh link,
-  // a shell that was killed) can be relaunched in place with the same cwd and
-  // command rather than opened as a fresh tab that loses its position.
   std::filesystem::path launch_working_directory;
   std::string launch_command;
-  // Where it runs when that is not the project's launcher: the ssh authentication
-  // tab, or a local terminal in a remote project (Remote: Open Local Terminal).
-  // Shared, so the pane keeps it alive and a relaunch or a split stays where it
-  // ran. Null = the project's.
   std::shared_ptr<const platform::ProcessLauncher> launcher;
-  // Prepended to the tab title ("ssh · ", "local · "), so a terminal that does not
-  // run where the project's do is never mistaken for one that does.
   std::string label_prefix;
-  // A pending host pane started when its connection came up, and the connect's
-  // summary row has not counted how (reattached, or fresh and why) yet.
   bool reattach_unreported = false;
-  // The host terminal handle the drain last saw this pane hold (0: none). A change
-  // -- a fresh open answered, a reattach that fell back to a new shell -- is a
-  // terminal the saved session does not name yet (ConsumeTerminalSessionUpdates).
   std::uint64_t seen_host_handle = 0;
 };
 
-// One tab of the bottom panel's terminal strip: one to `kMaxTerminalPanes`
-// sessions laid out side by side (VS Code's terminal group). The strip shows the
-// tab; the keyboard, the find bar, the selection and the scroll verbs all act on
-// its ACTIVE pane, and every other pane only paints. `panes` and `weights` are
-// parallel and edited together through the methods below so a pane can never be
-// left without a share of the body (the same discipline `EditorSplitTree` keeps
-// with `editor_groups`).
 struct TerminalTabState {
   std::vector<std::unique_ptr<TerminalPaneState>> panes;
   TerminalPaneWeights weights;
   std::size_t active_pane = 0;
-  // Output arrived while this tab was not the one on screen. Drawn as a dot on
-  // the strip tab and cleared the first frame the tab is shown, so an agent that
-  // finishes in a background tab is visible without switching to it.
   bool has_unseen_output = false;
-  // The program rang the bell (BEL) while this tab was not on screen: a build
-  // finishing, a prompt wanting input. A stronger mark than unseen output,
-  // cleared the same way (VS Code marks the terminal tab with a bell).
   bool has_unseen_bell = false;
-  // Bumped by every structural edit and divider move; the per-frame grid resize
-  // keys on it instead of re-reading each pane's rows and columns under the
-  // session mutex.
   std::uint64_t layout_revision = 0;
 
   TerminalPaneState* active() {
@@ -859,9 +485,6 @@ struct TerminalTabState {
   std::size_t pane_count() const { return panes.size(); }
   bool full() const { return panes.size() >= kMaxTerminalPanes; }
 
-  // Insert `pane` at `index` (clamped), halving the share of the pane it was
-  // split from, and make it the active pane. Returns false (pane untouched) when
-  // the tab is full.
   bool InsertPane(std::size_t index, std::unique_ptr<TerminalPaneState> pane) {
     if (full() || pane == nullptr) {
       return false;
@@ -874,10 +497,6 @@ struct TerminalTabState {
     return true;
   }
 
-  // Drop pane `index`, giving its share to its left neighbour. The active pane
-  // follows the survivor on the left (or the new first pane). Returns the
-  // removed pane so a caller can finish its shutdown; null when `index` is out
-  // of range.
   std::unique_ptr<TerminalPaneState> RemovePane(std::size_t index) {
     if (index >= panes.size()) {
       return nullptr;
@@ -903,8 +522,6 @@ struct TerminalTabState {
   }
   bool ResetDivider(std::size_t boundary) { return ResizeDivider(boundary, 0.5f); }
 
-  // The panes carved out of the panel body, and the active pane's slice of it
-  // (the whole body for a single pane).
   TerminalPaneRectsLayout PaneRects(const SDL_FRect& body) const {
     return ComputeTerminalPaneRects(body, std::span<const float>(weights.data(), weights.size()));
   }
@@ -917,7 +534,6 @@ struct TerminalTabState {
   }
 };
 
-// A tab around one pane: the shape every terminal starts in.
 inline std::unique_ptr<TerminalTabState> MakeTerminalTab(std::unique_ptr<TerminalPaneState> pane) {
   auto tab = std::make_unique<TerminalTabState>();
   tab->InsertPane(0, std::move(pane));
@@ -927,41 +543,20 @@ inline std::unique_ptr<TerminalTabState> MakeTerminalTab(std::unique_ptr<Termina
 struct EditorPreferences {
   std::size_t tab_size = 4;
   std::size_t indent_width = 4;
-  // Spaces by default, as VS Code's `editor.insertSpaces` (TD-2026-10-16-354);
-  // a file's own indentation still wins when it has one.
   bool soft_tabs = true;
   bool soft_wrap = false;
-  // Editor glyph point size for this project (the `editor.font_size` setting).
-  // Applied to the shared text renderer when the project's preferences are
-  // applied; clamped to the setting range (8..32) on load/set.
   int font_size = 13;
 };
 
-// The path an editor tab's view is showing, without materializing it.
-//
-// A deferred-restore tab has not opened its viewport yet, so its identity lives
-// in `restore.path`; every other tab's is the viewport's own. Both are stored
-// normalized, which is why this can hand back a reference: the callers that need
-// a normalized `std::filesystem::path` value used to build one per tab per scan,
-// and a path copy is roughly as expensive as `lexically_normal()` (a fresh
-// pathname string plus a component list with a path per component).
 [[nodiscard]] inline const std::filesystem::path& EditorViewPathRef(
     const TabEntry::EditorTabState& editor_state) {
   return editor_state.content_pending() ? editor_state.restore.path
                                         : editor_state.viewport.path();
 }
 
-// Whether an editor tab's view is showing `normalized_path`, which the caller
-// must already have in lexically-normal form.
-//
-// This used to carry its own byte-identical copy of `util::SameAsNormalizedPath`'s
-// two guards (TD-2026-08-06-159), written before that helper existed. The reason
-// they matter lives with the helper now: a scan over open tabs is mostly
-// mismatches, and normalizing each candidate to reject it is ~12 allocations
-// spent to learn nothing.
 [[nodiscard]] inline bool EditorViewPathIs(const TabEntry::EditorTabState& editor_state,
                                            const std::filesystem::path& normalized_path) {
   return util::SameAsNormalizedPath(EditorViewPathRef(editor_state), normalized_path);
 }
 
-}  // namespace microide::workspace
+}

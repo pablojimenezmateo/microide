@@ -11,9 +11,6 @@ namespace microide::compare {
 
 struct CompareSemanticMetadataInput {
   std::filesystem::path path;
-  // Views, not owned strings. The compare refresh path passes whole-file buffers
-  // here; taking them by value copied both files on every call, and the classifier
-  // only ever reads them.
   std::string_view left_content;
   std::string_view right_content;
   std::optional<project::GitRepositoryEntry> git_entry;
@@ -25,4 +22,4 @@ struct CompareSemanticMetadataInput {
 CompareSemanticFileMetadata InferCompareSemanticFileMetadata(
     const CompareSemanticMetadataInput& input);
 
-}  // namespace microide::compare
+}

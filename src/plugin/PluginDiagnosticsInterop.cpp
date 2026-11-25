@@ -18,17 +18,10 @@ namespace {
 
 using path_interop::ResolveRuntimePath;
 
-// Host maximum for a 1-based plugin diagnostic coordinate. A line/column above this is
-// not a real editor position; storing it would let overview-ruler int narrowing wrap
-// (implementation-defined) and Problems-sidebar activation navigate to a clamped EOF.
-// Matches the language-provider/decoration coordinate ceiling. (TD-2026-07-16-69.)
 constexpr lua_Integer kMaxDiagnosticCoordinate =
     static_cast<lua_Integer>(std::numeric_limits<std::uint32_t>::max());
 
 bool ParseDiagnosticSeverity(std::string_view raw_value, editor::DiagnosticSeverity* severity) {
-  // The editor's table, not a second copy of it: this chain and
-  // editor::ParseDiagnosticSeverity were two spellings of one mapping, and the
-  // editor's was the case-sensitive one reading a user setting.
   return editor::TryParseDiagnosticSeverity(raw_value, severity);
 }
 
@@ -47,11 +40,6 @@ bool ReadDiagnosticTable(lua_State* state,
   if (!message.has_value()) {
     return util::Fail(error_message, "diagnostic message must be a string");
   }
-  // Render cap (TD-2026-07-17-018): a diagnostic message is shown in the Problems list,
-  // inline, and in the hover popup, all of which measure/lay out the full string. Cap it
-  // on a UTF-8 boundary (matches the LSP hover ceiling) so one oversized message cannot
-  // stall text layout — the shared ToHostString backstop only bounds the pathological
-  // multi-MiB case; 32 KiB keeps the interactive surfaces responsive.
   constexpr std::size_t kMaxDiagnosticMessageBytes = 32u * 1024;
   util::TruncateUtf8ToByteBudget(*message, kMaxDiagnosticMessageBytes);
   diagnostic->message = std::move(*message);
@@ -73,8 +61,6 @@ bool ReadDiagnosticTable(lua_State* state,
 
   const lua_Integer end_line =
       lua_interop::ReadOptionalIntegerField(state, absolute_index, "end_line").value_or(line);
-  // Default end_column to column+1, but a plugin-supplied column == INT64_MAX would
-  // make that a signed-overflow UB before the positivity check below runs, so saturate.
   const lua_Integer end_column =
       lua_interop::ReadOptionalIntegerField(state, absolute_index, "end_column")
           .value_or(column < std::numeric_limits<lua_Integer>::max() ? column + 1 : column);
@@ -118,7 +104,7 @@ bool ReadDiagnosticTable(lua_State* state,
   return true;
 }
 
-}  // namespace
+}
 
 bool PublishDiagnostics(lua_State* state,
                         std::string_view plugin_id,
@@ -138,8 +124,6 @@ bool PublishDiagnostics(lua_State* state,
   }
 
   const int absolute_index = lua_absindex(state, diagnostics_index);
-  // Clamp against a sparse-border table making lua_rawlen overstate the length;
-  // matches the DiagnosticsStore per-file cap so nothing beyond it survives anyway.
   constexpr lua_Integer kMaxPluginDiagnostics = 10000;
   const lua_Integer count =
       std::min<lua_Integer>(static_cast<lua_Integer>(lua_rawlen(state, absolute_index)),
@@ -186,6 +170,6 @@ bool ClearDiagnostics(std::string_view plugin_id,
   return true;
 }
 
-}  // namespace microide::plugin::diagnostics_interop
+}
 
 #endif

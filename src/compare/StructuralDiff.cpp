@@ -24,11 +24,8 @@ using detail::IsPunctuationAtom;
 using detail::MarkSubtreesUnchanged;
 using detail::SiblingScope;
 
-// The largest sibling-LCS table (cells) the matcher fills to split a run.
 constexpr std::size_t kMaxSiblingLcsCells = 1u << 16;
 
-// One sub-problem of a comparison: a run of siblings on each side, each run
-// given by its first node and the sibling it stops before.
 struct Problem {
   SiblingScope lhs_scope;
   SiblingScope rhs_scope;
@@ -39,8 +36,6 @@ struct Problem {
 struct MatcherScratch {
   std::vector<std::uint32_t> lhs_run;
   std::vector<std::uint32_t> rhs_run;
-  // Matcher: the work list and the patience-anchoring tables (indexed by
-  // content id, reset lazily by stamp).
   std::vector<Problem> problems;
   std::vector<std::uint32_t> id_stamp;
   std::vector<std::uint32_t> id_lhs_count;
@@ -69,13 +64,6 @@ void CollectRun(const DiffSyntaxTree& tree, std::uint32_t first, std::uint32_t e
   }
 }
 
-// Flat LCS over the token texts of [lhs_begin, lhs_end) and [rhs_begin, rhs_end).
-//
-// Most calls are small gaps, many per hunk, so a range that fits
-// kMaxSiblingLcsCells takes an in-place DP over retained scratch (matched
-// bytes maximized, so a word outweighs a separator); only a larger range goes
-// to the line differ, whose bounded anchored fallback it needs but whose
-// per-call hashing and allocation a small gap does not.
 void MatchTokenRangeFlat(const DiffSyntaxTree& lhs, std::uint32_t lhs_begin, std::uint32_t lhs_end,
                          const DiffSyntaxTree& rhs, std::uint32_t rhs_begin, std::uint32_t rhs_end,
                          StructuralMatch& match) {
@@ -147,22 +135,6 @@ void MatchTokenRangeFlat(const DiffSyntaxTree& lhs, std::uint32_t lhs_begin, std
   }
 }
 
-// Splits comparisons into the smallest searches that give the same answer, the
-// way difftastic does before its own graph search:
-//
-//  - equal leading and trailing siblings match outright (no cheaper path can
-//    leave an equal pair unmatched at the ends);
-//  - when one list is all that is left on each side and the two have the same
-//    delimiters, entering both is the cheapest move there is, so the
-//    delimiters match and the comparison continues inside -- an edit deep in a
-//    large block never builds a graph over the block;
-//  - siblings that occur exactly once on each side with equal content anchor
-//    the comparison (patience diff over subtrees), and only the gaps between
-//    anchors are searched.
-//
-// What is left goes to the graph search; a search that exceeds the budget falls
-// back to the flat token diff for its run only. An explicit work list, not
-// recursion: nesting depth is input-controlled.
 class Matcher {
  public:
   Matcher(const DiffSyntaxTree& lhs, const DiffSyntaxTree& rhs, std::size_t budget,
@@ -215,7 +187,7 @@ class Matcher {
       MarkSubtreesUnchanged(lhs_, lhs_run[lhs_end], rhs_, rhs_run[rhs_end], match_);
     }
     if (begin == lhs_end || begin == rhs_end) {
-      return;  // one side is all novel; nothing to search
+      return;
     }
 
     const std::uint32_t lhs_first = lhs_run[begin];
@@ -252,10 +224,6 @@ class Matcher {
     const std::uint32_t rhs_token_begin = rhs_.nodes[rhs_first].token_begin;
     const std::uint32_t rhs_token_end = rhs_.nodes[rhs_run[rhs_end - 1]].token_end;
 
-    // A gap of bare atoms has no nesting for the graph to reason about: with no
-    // list on either side, and no literal on both sides to pair as replaced,
-    // the cheapest path is exactly a longest common subsequence of the atoms,
-    // which the flat diff finds without a graph.
     if (IsFlat(lhs_, lhs_run, begin, lhs_end, rhs_, rhs_run, begin, rhs_end)) {
       MatchTokenRangeFlat(lhs_, lhs_token_begin, lhs_token_end, rhs_, rhs_token_begin,
                           rhs_token_end, match_);
@@ -306,8 +274,6 @@ class Matcher {
     return !(lhs_literal && rhs_literal);
   }
 
-  // Patience anchoring over the runs' [begin, end) slices. Returns true (and
-  // queues the gaps) when at least one anchor was found.
   bool SplitAtUniqueAnchors(std::size_t lhs_begin, std::size_t lhs_end, std::size_t rhs_begin,
                             std::size_t rhs_end, SiblingScope lhs_scope, SiblingScope rhs_scope) {
     const std::vector<std::uint32_t>& lhs_run = s_.lhs_run;
@@ -331,8 +297,6 @@ class Matcher {
       touch(id);
       ++s_.id_rhs_count[id];
     }
-    // Candidates in RHS order, carrying their LHS position; a lone separator
-    // is too weak to anchor on.
     s_.candidates.clear();
     for (std::size_t index = rhs_begin; index < rhs_end; ++index) {
       const std::uint32_t node = rhs_run[index];
@@ -345,7 +309,6 @@ class Matcher {
     if (s_.candidates.empty()) {
       return false;
     }
-    // Longest chain increasing in LHS position (patience sorting).
     std::vector<std::uint32_t>& tails = s_.lis_tails;
     std::vector<std::uint32_t>& previous = s_.lis_previous;
     tails.clear();
@@ -373,12 +336,6 @@ class Matcher {
     return true;
   }
 
-  // The equal subtrees a weighted longest common subsequence over the two
-  // sibling runs keeps, weighted by their token counts (a lone separator weighs
-  // nothing, so it never anchors). This is difftastic's split_unchanged: when
-  // nothing is unique, equal subtrees still cut the comparison into gaps the
-  // search can afford. Bounded by kMaxSiblingLcsCells; larger runs are left to
-  // the flat diff by the caller's product check anyway.
   bool SplitAtCommonSubtrees(std::size_t lhs_begin, std::size_t lhs_end, std::size_t rhs_begin,
                              std::size_t rhs_end, SiblingScope lhs_scope, SiblingScope rhs_scope) {
     const std::vector<std::uint32_t>& lhs_run = s_.lhs_run;
@@ -434,8 +391,6 @@ class Matcher {
     return true;
   }
 
-  // Marks every anchor in `s_.anchors` (pairs of run indices, increasing on
-  // both sides) unchanged and queues the gaps before, between and after them.
   void QueueGapsAroundAnchors(std::size_t lhs_begin, std::size_t lhs_end, std::size_t rhs_begin,
                               std::size_t rhs_end, SiblingScope lhs_scope,
                               SiblingScope rhs_scope) {
@@ -475,7 +430,7 @@ class Matcher {
   std::uint32_t stamp_ = 0;
 };
 
-}  // namespace
+}
 
 void MatchSyntaxTrees(const DiffSyntaxTree& lhs,
                       const DiffSyntaxTree& rhs,
@@ -487,4 +442,4 @@ void MatchSyntaxTrees(const DiffSyntaxTree& lhs,
   FixStructuralSliders(lhs, rhs, match);
 }
 
-}  // namespace microide::compare
+}

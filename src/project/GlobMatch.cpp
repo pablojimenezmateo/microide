@@ -9,19 +9,6 @@ namespace microide::project {
 
 namespace {
 
-// Advance a cross-slash '**' restart by one step. `consumed_end` is the text
-// index just past what the wildcard has swallowed so far; on success it moves to
-// the next legal restart and the caller resumes the pattern there.
-//
-// A "**/" (`folded_slash`) stands for WHOLE directories only — git's "a/**/b"
-// matches "a/b", "a/x/b", "a/x/y/b" and nothing else, and EditorConfig's
-// "[x.py]" (spelled "**/x.py") means x.py in any directory, not "ax.py" — so the
-// only restarts are just past a '/'. Stepping one byte at a time let the folded
-// wildcard end inside a segment: "a/**/b" matched "a/ab", "**/build" matched
-// "prebuild", and every floating scope entry ("tests" → "**/tests/**") caught
-// "mytests/x". A '**' that did not fold a slash exists only under EditorConfig's
-// convention ("lib/**.c"), where it is "any string of characters" and keeps the
-// byte step.
 bool ExtendSegmentDoubleStar(std::string_view text, std::size_t& consumed_end,
                              bool folded_slash) {
   if (!folded_slash) {
@@ -39,7 +26,7 @@ bool ExtendSegmentDoubleStar(std::string_view text, std::size_t& consumed_end,
   return true;
 }
 
-}  // namespace
+}
 
 bool GlobMatches(std::string_view pattern, std::string_view text,
                  GlobDoubleStar double_star) {
@@ -50,15 +37,9 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
   std::size_t ti = 0;
   std::size_t star_pi = std::string_view::npos;
   std::size_t star_ti = 0;
-  bool star_cross_slash = false;  // the pending '*' backtrack may consume '/'
-  // A cross-slash '**' restart kept separately from `star_pi` so that a later
-  // non-crossing '*' in the same pattern (e.g. the '*' in '**/*.txt') does not
-  // clobber the only way to consume the intervening '/' separators. Without this
-  // fallback, '**/' degrades to matching at the top level only.
+  bool star_cross_slash = false;
   std::size_t dstar_pi = std::string_view::npos;
   std::size_t dstar_ti = 0;
-  // Whether the pending '**' and the remembered one swallowed the '/' after them
-  // (and so may only restart on a segment boundary; see ExtendSegmentDoubleStar).
   bool star_folded_slash = false;
   bool dstar_folded_slash = false;
 
@@ -66,8 +47,6 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
     if (pi < plen) {
       const char pc = pattern[pi];
       if (pc == '*') {
-        // Consume the whole run of '*'. A run of two or more that forms a complete
-        // path segment ('**') matches across '/'; anything else behaves as '*'.
         const std::size_t star_start = pi;
         std::size_t star_count = 0;
         while (pi < plen && pattern[pi] == '*') {
@@ -79,14 +58,10 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
         const bool segment_doublestar =
             star_count >= 2 && (double_star_always_crosses || (before_ok && after_ok));
         if (segment_doublestar && pi == plen) {
-          // A trailing '**' ("logs/**") swallows whatever is left, whole
-          // segments or not; there is nothing after it to resume.
           return true;
         }
         const bool folded_slash = segment_doublestar && pi < plen && pattern[pi] == '/';
         if (folded_slash) {
-          // '**/' can match zero directories: fold the following '/' into the
-          // wildcard so the pattern can resume with nothing consumed from text.
           ++pi;
         }
         star_pi = pi;
@@ -94,8 +69,6 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
         star_cross_slash = segment_doublestar;
         star_folded_slash = folded_slash;
         if (segment_doublestar) {
-          // Remember this cross-slash '**' restart independently so a later
-          // non-crossing '*' cannot clobber our only way back across a '/'.
           dstar_pi = pi;
           dstar_ti = ti;
           dstar_folded_slash = folded_slash;
@@ -104,7 +77,6 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
       }
       if (pc == '?') {
         if (text[ti] == '/') {
-          // fall through to backtrack
         } else {
           ++pi;
           ++ti;
@@ -113,7 +85,6 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
       } else if (pc == '[') {
         const char tc = text[ti];
         if (tc == '/') {
-          // fall through to backtrack
         } else {
           std::size_t scan = pi + 1;
           bool negate = false;
@@ -152,11 +123,6 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
               continue;
             }
           } else if (tc == '[') {
-            // POSIX fnmatch / gitignore(5): a '[' with no closing ']' is not a
-            // character class but an ordinary literal '['. Match it as such so a
-            // pattern like "weird[name" ignores the file literally named
-            // "weird[name" instead of failing to match. (A closed-but-unmatched
-            // class still falls through to backtrack above.)
             ++pi;
             ++ti;
             continue;
@@ -189,12 +155,6 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
         continue;
       }
     }
-    // The most-recent '*' is exhausted or blocked by a '/'. Fall back to the
-    // most-recent cross-slash '**', which is allowed to consume the '/' — this is
-    // what lets '**/<wildcard>' patterns descend through directory boundaries. The
-    // stale '*' backtrack (which sits AFTER '**' in the pattern) is invalidated so a
-    // later literal mismatch cannot wrongly jump forward into it while we are
-    // re-extending the '**'; it is freshly re-armed when the '*' is reached again.
     if (dstar_pi != std::string_view::npos &&
         ExtendSegmentDoubleStar(text, dstar_ti, dstar_folded_slash)) {
       pi = dstar_pi;
@@ -204,12 +164,6 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
     }
     return false;
   }
-  // Text exhausted: the rest of the pattern must be able to match nothing. A
-  // run of '*' can; so can a segment-anchored "**/" (zero directories) -- git's
-  // wildmatch accepts `**/*` against an empty remainder, which is what a rule
-  // like `a**/*` leaves once its literal prefix is stripped off the path `a`, so
-  // that rule ignores the directory `a` itself. A plain '*' followed by '/'
-  // cannot skip the separator (`a*/` does not match `a`).
   while (pi < plen && pattern[pi] == '*') {
     const std::size_t star_start = pi;
     while (pi < plen && pattern[pi] == '*') {
@@ -226,15 +180,13 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
 
 namespace {
 
-// Longest single pattern we keep. Scope globs are short by nature; anything longer
-// is paste noise that would only slow the per-file match loop.
 constexpr std::size_t kMaxPatternBytes = 1024;
 
 bool HasWildcard(std::string_view text) {
   for (std::size_t index = 0; index < text.size(); ++index) {
     const char c = text[index];
     if (c == '\\') {
-      ++index;  // the escaped character is literal, wildcard or not
+      ++index;
       continue;
     }
     if (c == '*' || c == '?' || c == '[') {
@@ -244,11 +196,9 @@ bool HasWildcard(std::string_view text) {
   return false;
 }
 
-}  // namespace
+}
 
 void ExpandGlobBraces(std::string pattern, std::vector<std::string>& out) {
-  // Alternatives are never longer than the pattern they came from, so checking
-  // every level checks the first.
   if (out.size() >= kMaxExpandedGlobPatterns || pattern.size() > kMaxBraceExpansionPatternBytes) {
     return;
   }
@@ -269,7 +219,6 @@ void ExpandGlobBraces(std::string pattern, std::vector<std::string>& out) {
     return;
   }
 
-  // Locate the matching '}' and the top-level ',' split points inside it.
   std::size_t depth = 0;
   std::size_t close = std::string::npos;
   std::vector<std::size_t> commas;
@@ -292,8 +241,6 @@ void ExpandGlobBraces(std::string pattern, std::vector<std::string>& out) {
     }
   }
   if (close == std::string::npos) {
-    // Unbalanced '{' — treat the rest as literal text rather than dropping the
-    // pattern (mirrors how an unterminated '[' stays a literal bracket).
     out.push_back(std::move(pattern));
     return;
   }
@@ -316,8 +263,6 @@ void ExpandGlobBraces(std::string pattern, std::vector<std::string>& out) {
 
 namespace {
 
-// Turn one user-typed entry into the zero, one, or two patterns it means. A
-// wildcard-free entry names a file OR a subtree, so it yields both "p" and "p/**".
 void AppendNormalized(std::string_view entry, std::vector<std::string>& out) {
   entry = util::TrimAsciiWhitespaceView(entry);
   while (entry.starts_with("./")) {
@@ -333,15 +278,9 @@ void AppendNormalized(std::string_view entry, std::vector<std::string>& out) {
     return;
   }
 
-  // Decide "is this a plain path?" from what the user actually typed — the "**/"
-  // prefix added below is ours, and testing it would make every bare name look
-  // wildcarded and lose its subtree expansion.
   const bool subtree = !HasWildcard(entry);
 
   std::string base(entry);
-  // A '/'-free entry floats to any depth, exactly as VSCode's search box treats
-  // "*.ts" as "**/*.ts". An entry that already spells its own "**/" prefix is left
-  // alone so it is not doubled.
   if (base.find('/') == std::string::npos && !base.starts_with("**")) {
     base.insert(0, "**/");
   }
@@ -349,19 +288,14 @@ void AppendNormalized(std::string_view entry, std::vector<std::string>& out) {
     ExpandGlobBraces(base, out);
   }
   if (subtree && out.size() < kMaxExpandedGlobPatterns) {
-    // "src/util" also means everything under src/util, matching how selecting a
-    // folder in VSCode's explorer fills the include box with that folder path.
     ExpandGlobBraces(base + "/**", out);
   }
 }
 
-}  // namespace
+}
 
 GlobSet GlobSet::Parse(std::string_view comma_separated) {
   GlobSet set;
-  // Split on top-level ',' only: a comma inside '{...}' is alternation, not an
-  // entry separator, so "*.{ts,js}" stays one entry (VSCode parses it the same
-  // way). Escapes are honored so "a\\,b" is a literal comma.
   std::size_t start = 0;
   std::size_t depth = 0;
   for (std::size_t index = 0; index <= comma_separated.size(); ++index) {
@@ -397,4 +331,4 @@ bool GlobSet::Matches(std::string_view normalized_relative_path) const {
   return false;
 }
 
-}  // namespace microide::project
+}

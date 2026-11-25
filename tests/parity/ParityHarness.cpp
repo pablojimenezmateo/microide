@@ -36,8 +36,6 @@ void ReplaceAll(std::string& text, std::string_view from, std::string_view to) {
 
 std::vector<std::string> Normalize(std::vector<std::string> lines,
                                    const std::filesystem::path& opened_root) {
-  // Longest spelling first, so a trailing-separator form does not leave a stray
-  // separator behind.
   const std::string root = opened_root.lexically_normal().string();
   for (std::string& line : lines) {
     ReplaceAll(line, root, "<root>");
@@ -73,9 +71,6 @@ const KnownGap* FindKnownGap(std::string_view scenario, std::string_view localit
   return nullptr;
 }
 
-// The mirror locality's stack. The gate flushes the engine after every write, so a
-// scenario that reads the host's bytes right after a save sees them: the engine's
-// asynchrony is the mirror tests' subject, not parity's.
 struct MirrorLocality {
   std::shared_ptr<project::remote::RemoteServerClient> client =
       project::remote::RemoteServerClient::Create();
@@ -144,7 +139,7 @@ struct MirrorLocality {
   }
 };
 
-}  // namespace
+}
 
 std::string_view LocalityName(Locality locality) {
   switch (locality) {
@@ -181,7 +176,7 @@ RunResult RunUnder(const Scenario& scenario, Locality locality) {
   if (locality == Locality::kMirror) {
     tree.host_root = temp_dir.path() / "host" / "project";
     std::filesystem::create_directories(tree.host_root);
-    scenario.build(tree.host_root, /*is_mirror=*/false);
+    scenario.build(tree.host_root, false);
     mirror = std::make_unique<MirrorLocality>();
     std::string error;
     Expect(mirror->Open(temp_dir.path() / "mirror", tree.host_root, &error),
@@ -193,21 +188,15 @@ RunResult RunUnder(const Scenario& scenario, Locality locality) {
     tree.root = temp_dir.path() / "project";
     tree.host_root = tree.root;
     std::filesystem::create_directories(tree.root);
-    scenario.build(tree.root, /*is_mirror=*/false);
+    scenario.build(tree.root, false);
   } else {
-    // Same final component on both sides, so a leaked host path differs from the
-    // mirror's only by its parent -- the realistic case, and the one a lazy
-    // basename comparison would miss.
     tree.host_root = temp_dir.path() / "host" / "project";
     tree.root = temp_dir.path() / "mirror" / "project";
     std::filesystem::create_directories(tree.host_root);
     std::filesystem::create_directories(tree.root);
-    scenario.build(tree.host_root, /*is_mirror=*/false);
-    scenario.build(tree.root, /*is_mirror=*/true);
+    scenario.build(tree.host_root, false);
+    scenario.build(tree.root, true);
     const LoopbackPathMap map(tree.root, tree.host_root);
-    // Writes are replicated by the loopback gate under both: the mirror's sync
-    // engine is Phase 2b. What the server locality changes is where every process
-    // runs — through the real protocol, on the real daemon.
     gate = std::make_unique<LoopbackWriteGate>(map);
     write_gate = gate.get();
     if (locality == Locality::kLoopback) {
@@ -223,11 +212,7 @@ RunResult RunUnder(const Scenario& scenario, Locality locality) {
 
   Outcome outcome;
   {
-    // Declared after the launcher and gate, so it is destroyed before them: the
-    // project state points at both until the shell is gone.
     WorkspaceShell shell;
-    // The locality is fixed AT the open (project::ProjectLocality): the open is
-    // what registers language servers, loads plugins and starts git.
     const bool opened =
         launcher == nullptr
             ? WorkspaceShellTestAccess::OpenProjectTabWithLocality(
@@ -318,4 +303,4 @@ void ExpectParity(const Scenario& scenario) {
   }
 }
 
-}  // namespace microide::tests::parity
+}

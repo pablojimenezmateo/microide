@@ -21,12 +21,6 @@ using microide::platform::IndexUpdateBatch;
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
-// The search view's results list types to navigate, as VS Code's does: a letter
-// selects the next result whose line starts with what was typed. Its letters used
-// to be commands (`r` reran, `c` flipped the exact count, `i`/`x`/`=`/`/` opened
-// fields, `j`/`k` moved), so a query typed into the list by mistake ran them
-// (TD-2026-10-16-350). They are commands now; Toggle Search Details shows the
-// include/exclude fields.
 void TestWorkspaceShellSearchResultsTypeToNavigate() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -43,7 +37,6 @@ void TestWorkspaceShellSearchResultsTypeToNavigate() {
   Expect(!WorkspaceShellTestAccess::ProjectSearchEditing(shell), "the list, not a field, has the keys");
   WorkspaceShellTestAccess::SetProjectSearchSelectedIndex(shell, 0);
 
-  // Typed with a pause between, so each starts a fresh prefix.
   std::uint64_t now_ns = 10'000'000'000;
   const auto type = [&](SDL_Keycode key) {
     SDL_Event event = KeyDownEvent(key, SDL_KMOD_NONE);
@@ -51,7 +44,6 @@ void TestWorkspaceShellSearchResultsTypeToNavigate() {
     now_ns += 2'000'000'000;
     return shell.HandleEvent(event).handled;
   };
-  // "c" reaches the line that starts with "charlie" (leading spaces ignored).
   Expect(type(SDLK_C), "a letter in the results list is handled");
   Expect(WorkspaceShellTestAccess::ProjectSearchSelectedIndex(shell) == 2,
          "typing c selects the result whose line starts with charlie");
@@ -163,12 +155,6 @@ void TestWorkspaceShellProjectSearchCaseModeCycleReruns() {
 void TestWorkspaceShellProjectSearchRerunClearsTruncation() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
-  // Each file individually holds MORE than kMaxProjectSearchResults (200) matches, so
-  // a single worker scanning one file sequentially is guaranteed to attempt a match
-  // past the cap and flag truncation. A near-boundary fixture (e.g. 250 total across
-  // 10 files) is racy: parallel early-stop can cancel stragglers before any worker
-  // attempts the (cap+1)-th match, leaving `truncated` unset. 250 lines/file removes
-  // that race deterministically.
   std::string repeated_lines;
   for (int line = 0; line < 250; ++line) {
     repeated_lines += "alpha\n";
@@ -201,10 +187,6 @@ void TestWorkspaceShellProjectSearchRerunClearsTruncation() {
          "rerunning project search should publish only the new query results");
 }
 
-// TD-2026-07-17-008/033: when the file index the candidate set is drawn from was
-// itself truncated (project too large), project search pins index_incomplete at
-// kickoff so the UI can flag that results are not authoritative over the whole
-// tree. A later search over a complete index clears it.
 void TestWorkspaceShellProjectSearchSurfacesIncompleteIndex() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -214,8 +196,6 @@ void TestWorkspaceShellProjectSearchSurfacesIncompleteIndex() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
 
-  // Force the backing index into the "truncated" state (as a huge-tree initial
-  // scan would), listing the on-disk files so the search still finds matches.
   IndexUpdateBatch batch;
   batch.is_initial = true;
   batch.truncated = true;
@@ -234,7 +214,6 @@ void TestWorkspaceShellProjectSearchSurfacesIncompleteIndex() {
   Expect(!WorkspaceShellTestAccess::ProjectSearchResults(shell).empty(),
          "a truncated index still yields the matches it does contain");
 
-  // A rescan of this small tree completes; the next search must clear the flag.
   WorkspaceShellTestAccess::ForceFileIndexRefreshAndDrain(shell);
   WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
   WaitForProjectSearch(shell);
@@ -242,10 +221,6 @@ void TestWorkspaceShellProjectSearchSurfacesIncompleteIndex() {
          "searching over a complete index clears the incomplete flag");
 }
 
-// TD-2026-07-17A-084/026: the grouped project-search line map is cached on
-// ProjectSearchState keyed by a results revision, so render/hit-test/navigation
-// share one build. A rerun that replaces the results must bump the revision and
-// rebuild the map instead of serving the stale grouping.
 void TestWorkspaceShellProjectSearchLineMapCacheInvalidatesOnRerun() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -258,7 +233,6 @@ void TestWorkspaceShellProjectSearchLineMapCacheInvalidatesOnRerun() {
   WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
   WaitForProjectSearch(shell);
 
-  // 3 matches across 2 files => 2 file-header rows + 3 result rows = 5 lines.
   Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 3,
          "alpha search finds three matches");
   const auto map_before = WorkspaceShellTestAccess::ProjectSearchLineMap(shell);
@@ -272,8 +246,6 @@ void TestWorkspaceShellProjectSearchLineMapCacheInvalidatesOnRerun() {
   Expect(WorkspaceShellTestAccess::ProjectSearchResultsRevision(shell) != revision_before,
          "rerunning the search bumps the results revision");
   const auto map_after = WorkspaceShellTestAccess::ProjectSearchLineMap(shell);
-  // 1 match in 1 file => 1 header + 1 result = 2 lines. A stale cache would still
-  // report the 5-line alpha grouping.
   Expect(map_after.size() == 2, "line map rebuilds for the new result set, not served stale");
 }
 
@@ -296,8 +268,6 @@ void TestWorkspaceShellProjectSearchStreamsWhileRunning() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
 
-  // Stop as soon as results appear (the wake-driven update we assert on) or the
-  // search finishes without any; `saw_results_while_running` records which.
   WaitUntil(
       [&shell]() {
         return WorkspaceShellTestAccess::ProjectSearchResults(shell).size() > 0 ||
@@ -334,8 +304,6 @@ void TestWorkspaceShellProjectSearchSidebarClickOpensResult() {
          "clicking a project search result should be handled");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == source.lexically_normal(),
          "clicking a project search result should open the matched file");
-  // Opening a result also seeds the in-file find surface with the search term so the
-  // user can keep moving between matches in the file they just opened.
   Expect(WorkspaceShellTestAccess::OverlayVisible(shell) &&
              WorkspaceShellTestAccess::ActiveOverlayMode(shell) ==
                  WorkspaceShell::OverlayMode::BufferSearch,
@@ -382,9 +350,6 @@ void TestWorkspaceShellProjectSearchReusesCachedResultsOnReturn() {
   Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 1,
          "initial search should find the single match");
 
-  // Switch the sidebar to another panel, then return to search. The completed
-  // results must be reused: the search must not re-run (which previously cleared
-  // results and restarted the worker every time the panel was reopened).
   WorkspaceShellTestAccess::ShowProblemsSidebar(shell);
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) != WorkspaceShell::SidebarMode::Search,
          "switching away should leave the search panel");
@@ -424,8 +389,6 @@ void TestWorkspaceShellBufferSearchIsNonModal() {
              WorkspaceShellTestAccess::BufferSearchSurfaceFocused(shell),
          "the freshly opened find widget should hold focus");
 
-  // Click in the editor, far from the top-right widget: the widget must stay open
-  // (non-modal) while focus moves to the editor underneath it.
   const SDL_FRect editor_area = WorkspaceShellTestAccess::EditorAreaRect(shell);
   Expect(SendMouseDown(shell, editor_area.x + 24.0f, editor_area.y + editor_area.h - 24.0f,
                        SDL_BUTTON_LEFT),
@@ -437,7 +400,6 @@ void TestWorkspaceShellBufferSearchIsNonModal() {
   Expect(WorkspaceShellTestAccess::TextInputSurfaceIsEditor(shell),
          "with the editor focused the text-input surface belongs to the editor, not the query");
 
-  // Typing now edits the document, not the find query.
   const std::string query_before = WorkspaceShellTestAccess::BufferSearchQuery(shell);
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "Z"),
          "typing should be accepted by the focused editor");
@@ -445,11 +407,6 @@ void TestWorkspaceShellBufferSearchIsNonModal() {
          "typing while the editor is focused must not change the find query");
 }
 
-// Regression: Cut/SelectAll shortcuts in a focused single-line surface (find
-// widget, file finder, commit subject, ...) must be consumed by that surface
-// even when it has nothing to act on -- they must NOT fall through to the
-// background editor. The worst case was Ctrl+X with no selection deleting a line
-// from the editor document behind the widget.
 void TestWorkspaceShellCutInSingleLineSurfaceDoesNotEditEditor() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -466,13 +423,10 @@ void TestWorkspaceShellCutInSingleLineSurfaceDoesNotEditEditor() {
   Expect(WorkspaceShellTestAccess::BufferSearchSurfaceFocused(shell),
          "the freshly opened find query field should hold focus");
 
-  // Ctrl+A on the empty query must not Select-All the editor or steal focus to it.
   SendKeyDown(shell, SDLK_A, SDL_KMOD_CTRL);
   Expect(WorkspaceShellTestAccess::BufferSearchSurfaceFocused(shell),
          "Ctrl+A in a focused single-line field must not move focus to the editor");
 
-  // Type a query (no selection), then Ctrl+X. This must not delete a line from
-  // the editor behind the widget (regression: it ran viewport->DeleteCurrentLine()).
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "alpha"),
          "the find widget should accept a query");
   SendKeyDown(shell, SDLK_X, SDL_KMOD_CTRL);
@@ -509,11 +463,9 @@ void TestWorkspaceShellBufferSearchEnterCyclesMatches() {
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "Enter should advance again");
   Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 2,
          "Enter should move to the third match");
-  // Next on the last match wraps to the first.
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "Enter on the last match should wrap");
   Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 0,
          "Enter past the last match should wrap to the first");
-  // Previous on the first match wraps to the last.
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_SHIFT),
          "Shift+Enter on the first match should wrap");
   Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 2,
@@ -535,7 +487,6 @@ void TestWorkspaceShellBufferSearchReopenKeepsQueryAndRefocuses() {
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "beta"),
          "the find widget should accept a query");
 
-  // Move focus to the editor (widget stays open), then re-press Ctrl+F.
   const SDL_FRect editor_area = WorkspaceShellTestAccess::EditorAreaRect(shell);
   Expect(SendMouseDown(shell, editor_area.x + 24.0f, editor_area.y + editor_area.h - 24.0f,
                        SDL_BUTTON_LEFT),
@@ -561,7 +512,6 @@ void TestWorkspaceShellBufferSearchSeedsFromSelection() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, source);
 
-  // Select the first word, then open find: the selection should seed the query.
   auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
   editor.MoveCursorTo(0, 0);
   editor.SelectWordAtCursor();
@@ -573,8 +523,6 @@ void TestWorkspaceShellBufferSearchSeedsFromSelection() {
          "the seeded query should immediately find both occurrences");
 }
 
-// Find searches from the cursor (VS Code): the current match is the first one at
-// or after the caret, wrapping to the top, not the first in the document.
 void TestWorkspaceShellBufferSearchStartsFromTheCaret() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -595,20 +543,18 @@ void TestWorkspaceShellBufferSearchStartsFromTheCaret() {
   Expect(editor.cursor_line() == 1, "the caret stays on its line");
 
   Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Escape closes the widget");
-  editor.MoveCursorTo(1, 2);  // inside the second occurrence: the next one is current
+  editor.MoveCursorTo(1, 2);
   Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F reopens the find widget");
   Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 2,
          "a match that starts before the caret is not current; the next one is");
 
   Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Escape closes the widget");
-  editor.MoveCursorTo(2, 3);  // past every match start: wrap to the top
+  editor.MoveCursorTo(2, 3);
   Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F reopens the find widget");
   Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 0,
          "with no match at or after the caret the search wraps to the first");
 }
 
-// Replace moves on to the NEXT occurrence (the caret sits after the replacement),
-// not back to the first match in the document.
 void TestWorkspaceShellBufferReplaceMovesToTheNextMatch() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -625,7 +571,7 @@ void TestWorkspaceShellBufferReplaceMovesToTheNextMatch() {
   Expect(SendKeyDown(shell, SDLK_H, SDL_KMOD_CTRL), "Ctrl+H should open the replace widget");
   WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "a");
   Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 4, "four matches");
-  WorkspaceShellTestAccess::SetBufferSearchSelectedIndex(shell, 2);  // the third match is current
+  WorkspaceShellTestAccess::SetBufferSearchSelectedIndex(shell, 2);
 
   WorkspaceShellTestAccess::SetBufferReplaceText(shell, "b");
   WorkspaceShellTestAccess::ReplaceCurrentBufferSearchMatch(shell);
@@ -641,11 +587,6 @@ void TestWorkspaceShellBufferReplaceMovesToTheNextMatch() {
          "past the last match the selection wraps to the first");
 }
 
-// A replacement that reproduces the match -- a case-insensitive `foo` replaced
-// with `Foo`, over a match that already reads `Foo` -- is a no-op edit, and
-// ReplaceRange reports it as false. Replace returned there, so the current match
-// never moved: every further Replace hit the same `Foo` and the occurrences
-// after it were unreachable from the button.
 void TestWorkspaceShellBufferReplaceStepsPastAMatchItWouldNotChange() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -679,8 +620,6 @@ void TestWorkspaceShellBufferReplaceStepsPastAMatchItWouldNotChange() {
          "four presses reach the last occurrence: " + std::string(editor.lines()[0]));
 }
 
-// In the replace widget, Enter in the find field steps to the next match (as in
-// the find-only widget and VS Code); only Enter in the replace field replaces.
 void TestWorkspaceShellBufferReplaceEnterInFindFieldStepsMatches() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -712,7 +651,7 @@ void TestWorkspaceShellBufferReplaceEnterInFindFieldStepsMatches() {
                                           std::string(editor.lines()[0]));
 }
 
-}  // namespace
+}
 
 void TestWorkspaceShellProjectSearchSidebarScrollPastSelection() {
   EnsureDummySdlVideoInitialized();
@@ -737,7 +676,6 @@ void TestWorkspaceShellProjectSearchSidebarScrollPastSelection() {
 
   WorkspaceShellTestAccess::SetFocusSidebar(shell);
 
-  // End navigates to the last result and scrolls it into view.
   Expect(SendKeyDown(shell, SDLK_END, SDL_KMOD_NONE),
          "End should be handled by the focused search sidebar");
   Expect(WorkspaceShellTestAccess::ProjectSearchSelectedIndex(shell) == result_count - 1,
@@ -745,14 +683,11 @@ void TestWorkspaceShellProjectSearchSidebarScrollPastSelection() {
   Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) > 0,
          "navigating to the last result should reveal it (scroll follows the selection)");
 
-  // The user can now scroll back up past the (still-selected) last row, and a
-  // non-navigation event must not force the selection back into view.
   WorkspaceShellTestAccess::SetSidebarScrollRow(shell, 0);
   WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell);
   Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) == 0,
          "scrolling away from the selected entry should be preserved");
 
-  // Home navigates back to the first result and reveals it at the top.
   Expect(SendKeyDown(shell, SDLK_HOME, SDL_KMOD_NONE),
          "Home should be handled by the focused search sidebar");
   Expect(WorkspaceShellTestAccess::ProjectSearchSelectedIndex(shell) == 0,
@@ -763,8 +698,6 @@ void TestWorkspaceShellProjectSearchSidebarScrollPastSelection() {
 
 namespace {
 
-// Reconstruct the active editor's document text (lines joined with '\n') for
-// assertions.
 std::string ActiveEditorDocText(WorkspaceShell& shell) {
   auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
   std::string out;
@@ -777,10 +710,8 @@ std::string ActiveEditorDocText(WorkspaceShell& shell) {
   return out;
 }
 
-}  // namespace
+}
 
-// In-file regex replace-all expands capture groups across every match and applies
-// as ONE undo group, so a single undo restores the original buffer.
 void TestWorkspaceShellBufferRegexReplaceAll() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -808,7 +739,6 @@ void TestWorkspaceShellBufferRegexReplaceAll() {
          "one undo should restore the whole regex replace-all as a single group");
 }
 
-// In-file regex "Replace" (current match) expands only the selected occurrence.
 void TestWorkspaceShellBufferRegexReplaceCurrent() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -832,9 +762,6 @@ void TestWorkspaceShellBufferRegexReplaceCurrent() {
          "replace-current should expand only the selected match");
 }
 
-// In-file regex matches across line breaks: `\n` finds the newlines, a multi-line
-// pattern spans two lines, and replacing `\n` joins the lines (the reported bug —
-// per-line search could never match `\n`).
 void TestWorkspaceShellBufferRegexMultilineNewline() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -847,17 +774,14 @@ void TestWorkspaceShellBufferRegexMultilineNewline() {
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::SetBufferSearchRegexAndRefresh(shell, true);
 
-  // `\n` matches the two line breaks between the three lines.
   WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "\\n");
   Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 2,
          "regex `\\n` should find the two newlines (per-line search found none)");
 
-  // A pattern that spans a line break matches across lines (digit, newline, word).
   WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "\\d\\n\\w");
   Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 2,
          "a multi-line regex should match across line breaks");
 
-  // Replacing `\n` joins the lines into one.
   WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "\\n");
   WorkspaceShellTestAccess::SetBufferReplaceText(shell, " | ");
   WorkspaceShellTestAccess::ReplaceAllBufferSearchMatches(shell);
@@ -865,8 +789,6 @@ void TestWorkspaceShellBufferRegexMultilineNewline() {
          "replacing `\\n` should join the lines");
 }
 
-// Alt+R toggles regex mode in the find widget and recomputes matches; an invalid
-// pattern yields no matches (0/0) without crashing.
 void TestWorkspaceShellBufferRegexToggleViaAltR() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -890,23 +812,12 @@ void TestWorkspaceShellBufferRegexToggleViaAltR() {
   Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 3,
          "after enabling regex, '\\d' should match every digit");
 
-  // An invalid pattern must not crash and yields no matches.
   WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "[unterminated");
   Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 0,
          "an invalid regex should produce zero matches without crashing");
 }
 
 
-// The set of single-line text fields was hand-written at four sites — the key
-// handler's Ctrl+A/C/X routing, its Ctrl+V routing, and the SelectAll and Paste
-// availability rules — and the lists had diverged: the key handler counted the
-// commit subject and the terminal find bar, the availability rules did not.
-//
-// The divergence is masked today, because both availability rules short-circuit
-// on `active_viewport != nullptr` long before they consult the surface. This pins
-// the shared predicate itself, which is the thing that can rot: every field the
-// key handler routes chords for has to be in it, and the multi-line surfaces have
-// to stay out.
 void TestWorkspaceShellSingleLineTextSurfacePredicateCoversEveryField() {
   using microide::workspace::IsSingleLineTextInputSurface;
   using Surface = microide::workspace::TextInputSurface;
@@ -927,8 +838,6 @@ void TestWorkspaceShellSingleLineTextSurfacePredicateCoversEveryField() {
            "every single-line field must be covered by the shared predicate");
   }
 
-  // Multi-line surfaces and "no surface" must stay out: they have their own
-  // selection and paste handling.
   const Surface not_single_line[] = {Surface::None, Surface::Editor, Surface::CommitBody,
                                      Surface::Terminal};
   for (const Surface surface : not_single_line) {
@@ -936,16 +845,11 @@ void TestWorkspaceShellSingleLineTextSurfacePredicateCoversEveryField() {
            "multi-line surfaces must not be treated as single-line fields");
   }
 
-  // The two the old lists disagreed about, called out so a revert is obvious.
   Expect(IsSingleLineTextInputSurface(Surface::CommitSubject) &&
              IsSingleLineTextInputSurface(Surface::TerminalFind),
          "the commit subject and the terminal find bar are single-line fields");
 }
 
-// The in-file find widget gained the `Aa` and `ab` toggles the terminal find bar
-// already had. Aa applies in literal AND regex mode: regex used to be smart-case
-// while literal was always insensitive, so flipping `.*` silently changed whether
-// `Alpha` matched `alpha`.
 void TestWorkspaceShellBufferFindMatchCaseAppliesToBothModes() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -967,7 +871,6 @@ void TestWorkspaceShellBufferFindMatchCaseAppliesToBothModes() {
   Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 1,
          "with Aa on, a literal query matches only the exact casing");
 
-  // Regex mode reads the same toggle rather than deciding case for itself.
   WorkspaceShellTestAccess::SetBufferSearchRegexAndRefresh(shell, true);
   Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 1,
          "regex should honour the Aa toggle, not its own smart-case rule");
@@ -998,17 +901,11 @@ void TestWorkspaceShellBufferFindWholeWordFiltersMatches() {
   Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 2,
          "with ab on, only the standalone 'cat' occurrences match");
 
-  // Typing further would normally take the find-as-you-type refine fast path.
-  // Under whole word that path is unsound (a longer query's standalone hits are
-  // NOT a subset of a shorter prefix's), so it must cold-scan and still be right.
   WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "cat_x");
   Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 1,
          "extending the query under whole word must not inherit the prefix filter");
 }
 
-// Replace-all has to change exactly the matches the widget highlighted. Under Aa
-// or ab the whole-buffer fallback scan means something different from the match
-// set, so the two must not be allowed to disagree.
 void TestWorkspaceShellBufferFindReplaceAllHonoursOptions() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -1035,10 +932,6 @@ void TestWorkspaceShellBufferFindReplaceAllHonoursOptions() {
          "replace-all should change only what the options matched");
 }
 
-// Find in Selection (Alt+L, VS Code's fourth toggle): the matches, the n-of-m and
-// Replace All are limited to the selection the toggle was turned on over, and
-// that scope follows edits -- a Replace All inside it changes its end, a line
-// typed above it moves it down.
 void TestWorkspaceShellBufferFindInSelectionScopesMatchesAndReplace() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -1051,24 +944,20 @@ void TestWorkspaceShellBufferFindInSelectionScopesMatchesAndReplace() {
   WorkspaceShellTestAccess::OpenFile(shell, source);
   editor::TextViewport& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
   viewport.JumpCursorTo(1, 0);
-  viewport.JumpCursorTo(2, 5, /*extend_selection=*/true);  // lines 1-2
+  viewport.JumpCursorTo(2, 5, true);
 
   Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F should open the find widget");
   WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "cat");
   Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 5, "unscoped, all five cats match");
-  // Typing the query selected its current match; Alt+L still scopes to the
-  // selection the widget opened over, not to the widget's own selection.
   Expect(SendKeyDown(shell, SDLK_L, SDL_KMOD_ALT), "Alt+L should toggle Find in Selection");
   Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 3,
          "in the selection, only the three cats of lines 1-2 match");
 
-  // Typing onto the query takes the refine fast path; the scope must hold there.
   WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "cat ");
   Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 3,
          "a refined query keeps to the scope");
   WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "cat");
 
-  // A line typed above the scope moves it down with its text.
   viewport.JumpCursorTo(0, 0);
   viewport.InsertText("new\n");
   WorkspaceShellTestAccess::RefreshBufferSearchIfStale(shell);
@@ -1079,29 +968,22 @@ void TestWorkspaceShellBufferFindInSelectionScopesMatchesAndReplace() {
   WorkspaceShellTestAccess::ReplaceAllBufferSearchMatches(shell);
   Expect(ActiveEditorDocText(shell) == "new\ncat 0\ndog dog dog dog 1\ndog dog 2\ncat 3\n",
          "Replace All in the selection changes only the cats inside it: " + ActiveEditorDocText(shell));
-  // The replacement grew the scope's text; its end moved with it, so a second
-  // pass over the same scope finds every dog it wrote.
   WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "dog");
   Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 6,
          "the scope's end follows a Replace All inside it");
 
-  // Off again: the whole file.
   Expect(SendKeyDown(shell, SDLK_L, SDL_KMOD_ALT), "Alt+L should toggle Find in Selection off");
   WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "cat");
   Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 2,
          "with the toggle off the cats outside the old scope match again");
 }
 
-// The Find in Selection scope is carried through each edit the way diagnostics
-// are: an edit before it moves it, one inside it moves its end, one across its
-// start pulls the start onto the inserted text, and an edit that does not
-// describe itself (multi-range) keeps the end where the document's tail says.
 void TestBufferFindScopeFollowsEdits() {
   using microide::workspace::BufferSearchState;
   editor::TextViewport viewport;
   viewport.LoadContent("zero\none two\nthree\nfour\n", "/tmp/find-scope-fixture.txt");
   viewport.JumpCursorTo(1, 4);
-  viewport.JumpCursorTo(2, 5, /*extend_selection=*/true);  // "two\nthree"
+  viewport.JumpCursorTo(2, 5, true);
   BufferSearchState::Scope scope = microide::workspace::FindScopeAt(viewport);
   const auto expect_range = [&](std::size_t sl, std::size_t sc, std::size_t el, std::size_t ec,
                                 const char* what) {
@@ -1126,7 +1008,6 @@ void TestBufferFindScopeFollowsEdits() {
   Expect(microide::workspace::FollowFindScope(scope, viewport), "a second follow at the same revision");
   expect_range(2, 1, 3, 1, "following twice for one edit does not shift twice");
 
-  // A multi-range edit inside the scope (Replace All) leaves no single edit.
   const std::optional<std::size_t> replaced =
       viewport.ReplaceAllRanges({{{2, 1}, {2, 2}}, {{3, 0}, {3, 1}}}, "long");
   Expect(replaced == std::optional<std::size_t>{2}, "two ranges replaced");
@@ -1135,11 +1016,6 @@ void TestBufferFindScopeFollowsEdits() {
   Expect(microide::workspace::FollowFindScope(scope, viewport), "same document");
   expect_range(2, 1, 3, 4, "the end follows the document's tail through a multi-range edit");
 
-  // Two edits before one follow (a snippet's mirrors, a plugin's edits applied one
-  // by one): the last edit alone is not the step from the scope's revision, and
-  // mapping through it moved the end by only the second insertion
-  // (TD-2026-11-03-431). Here both insert two lines above, so the scope moves down
-  // four; mapped through the last edit alone it moved two.
   Expect(viewport.ReplaceRange({{0, 0}, {0, 0}}, "a\nb\n"), "an insertion above");
   Expect(viewport.ReplaceRange({{0, 0}, {0, 0}}, "c\nd\n"), "and another, before the follow");
   Expect(microide::workspace::FollowFindScope(scope, viewport), "same document");
@@ -1151,10 +1027,6 @@ void TestBufferFindScopeFollowsEdits() {
   Expect(!microide::workspace::FollowFindScope(scope, other), "another document drops the scope");
 }
 
-// A finished project search's results follow an open file as it is edited, as VS
-// Code's do (TD-2026-10-24-387): a line typed above a hit moves its row, a match
-// typed in adds one, and a search run over a dirty buffer reports its text, not
-// what is saved on disk.
 void TestWorkspaceShellProjectSearchHitsFollowEdits() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -1191,8 +1063,6 @@ void TestWorkspaceShellProjectSearchHitsFollowEdits() {
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "alpha"), "typing should be handled");
   Expect(lines_of("notes.txt") == std::vector<std::size_t>{0, 1, 2}, "a match typed in adds a hit");
 
-  // A file with no hits gains one: it joins the results in the candidates' order
-  // (after notes.txt and other.txt).
   WorkspaceShellTestAccess::OpenFile(shell, root / "zeta.txt");
   WorkspaceShellTestAccess::SetFocusEditor(shell);
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
@@ -1201,15 +1071,12 @@ void TestWorkspaceShellProjectSearchHitsFollowEdits() {
   Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).back().relative_path_string == "zeta.txt",
          "and it sits where the search orders it, after the files before it");
 
-  // A fresh search over the dirty buffer reports the buffer, not the disk.
   WorkspaceShellTestAccess::ShowSearchSidebar(shell, "beta", false);
   WaitForProjectSearch(shell);
   Expect(lines_of("notes.txt") == std::vector<std::size_t>{2},
          "the dirty buffer is searched as it stands (beta is on line 3 there, line 2 on disk)");
 }
 
-// The regex Replace All in a scope expands each match against the whole buffer
-// (capture groups work) and touches nothing outside the scope.
 void TestWorkspaceShellBufferFindInSelectionRegexReplace() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -1226,7 +1093,7 @@ void TestWorkspaceShellBufferFindInSelectionRegexReplace() {
   WorkspaceShellTestAccess::SetBufferSearchRegexAndRefresh(shell, true);
   WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "a(\\d)");
   viewport.JumpCursorTo(0, 3);
-  viewport.JumpCursorTo(1, 2, /*extend_selection=*/true);  // "a2\na3"
+  viewport.JumpCursorTo(1, 2, true);
   WorkspaceShellTestAccess::ToggleBufferSearchOption(shell, microide::workspace::BufferFindToggle::InSelection);
   Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 2, "a2 and a3 are in the selection");
   WorkspaceShellTestAccess::SetBufferReplaceText(shell, "<$1>");
@@ -1234,7 +1101,6 @@ void TestWorkspaceShellBufferFindInSelectionRegexReplace() {
   Expect(ActiveEditorDocText(shell) == "a1 <2>\n<3> a4\na5\n",
          "a regex Replace All in the selection expands groups inside it only: " + ActiveEditorDocText(shell));
 
-  // With no selection the scope is the caret's line; a fresh open is unscoped.
   Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Escape should close the find widget");
   viewport.JumpCursorTo(2, 0);
   Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F should reopen the find widget");
@@ -1247,8 +1113,6 @@ void TestWorkspaceShellBufferFindInSelectionRegexReplace() {
          "with no selection the scope is the caret's line (a5)");
 }
 
-// The scope section is collapsed by default (the result list keeps its space) and
-// the "..." button expands it, exactly as VS Code's search view does.
 void TestWorkspaceShellProjectSearchScopeToggleRevealsGlobFields() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -1288,7 +1152,6 @@ void TestWorkspaceShellProjectSearchScopeToggleRevealsGlobFields() {
              microide::workspace::ProjectSearchEditField::Include,
          "clicking the include field should focus the include field");
 
-  // Tab walks query -> replace -> include -> exclude and wraps.
   Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE), "Tab should be handled while editing");
   Expect(WorkspaceShellTestAccess::ProjectSearchEditFieldValue(shell) ==
              microide::workspace::ProjectSearchEditField::Exclude,
@@ -1303,8 +1166,6 @@ void TestWorkspaceShellProjectSearchScopeToggleRevealsGlobFields() {
          "Shift+Tab should walk backwards");
 }
 
-// The globs the panel holds must reach the worker: the same query returns a
-// different result set once a scope is set, and clearing it restores the full set.
 void TestWorkspaceShellProjectSearchScopeGlobsRerunAndRestrictResults() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -1343,9 +1204,6 @@ void TestWorkspaceShellProjectSearchScopeGlobsRerunAndRestrictResults() {
          "clearing the scope should restore the full result set");
 }
 
-// Replace-all falls back to the whole indexed catalog when the cached results are
-// not authoritative. That fallback must still honor the scope, or replace-all would
-// rewrite exactly the files the user excluded.
 void TestWorkspaceShellProjectSearchReplaceAllHonorsScopeGlobs() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -1373,10 +1231,6 @@ void TestWorkspaceShellProjectSearchReplaceAllHonorsScopeGlobs() {
          "replace-all must not rewrite a file the scope excluded");
 }
 
-// Ctrl+Shift+F on a visible sidebar switches it to the search view for good:
-// opening a result keeps the results on screen (VS Code). It used to be a
-// "temporary" peek that restored the tree on the first open, so the result list
-// was gone after one hit. Over a hidden sidebar it is still a peek (Escape closes).
 void TestWorkspaceShellSearchViewStaysAfterOpeningAResult() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -1386,7 +1240,7 @@ void TestWorkspaceShellSearchViewStaysAfterOpeningAResult() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::ShowTreeSidebar(shell);
-  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", /*temporary=*/true);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", true);
   WaitForProjectSearch(shell);
   WorkspaceShellTestAccess::SetFocusSidebar(shell);
   (void)shell.HandleEvent(KeyDownEvent(SDLK_RETURN));
@@ -1395,8 +1249,6 @@ void TestWorkspaceShellSearchViewStaysAfterOpeningAResult() {
 
 }
 
-// The search view searches as you type, after a short pause (VS Code's
-// search.searchOnType): typing a query and waiting showed nothing until Enter.
 void TestWorkspaceShellProjectSearchSearchesOnType() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -1407,7 +1259,7 @@ void TestWorkspaceShellProjectSearchSearchesOnType() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::ShowSearchSidebar(shell, "", false);
   WorkspaceShellTestAccess::SetFocusSidebar(shell);
-  (void)shell.HandleEvent(KeyDownEvent(SDLK_SLASH));  // edit the query field
+  (void)shell.HandleEvent(KeyDownEvent(SDLK_SLASH));
   (void)shell.HandleEvent(TextInputEvent("beta"));
   Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).empty(),
          "nothing should run while the typing has not paused");
@@ -1429,11 +1281,6 @@ void TestWorkspaceShellProjectSearchSearchesOnType() {
   Expect(still_editing, "and the query field stays open for more typing");
 }
 
-// Replace All rewrites files the user has not opened, and an empty replacement
-// deletes every match, so it confirms first with the counts (VS Code's "Replace
-// N occurrences across M files"). Shift+R in the results list used to run it on
-// the spot, and is now just typing. Ctrl+Alt+Enter in the replace field and the
-// button beside it ask.
 void TestWorkspaceShellProjectSearchReplaceAllConfirmsFirst() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -1483,11 +1330,6 @@ void TestWorkspaceShellProjectSearchReplaceAllConfirmsFirst() {
   Expect(replaced, "confirming should replace every match");
 }
 
-// TD-2026-07-30-001: the search panel's three option toggles were reachable only
-// from the mouse. Alt+R / Alt+C / Alt+H are VSCode's search-box chords; they must
-// work from the results list AND from inside the query field, and a toggle
-// pressed mid-typing must re-run against the text on screen rather than the last
-// committed query (that is what the flush-without-committing step buys).
 void TestWorkspaceShellProjectSearchAltChordsToggleOptions() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -1525,9 +1367,6 @@ void TestWorkspaceShellProjectSearchAltChordsToggleOptions() {
   Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 2,
          "including hidden files should rerun and surface the dotfile match");
 
-  // Now from inside the query field: type a new query, then chord without
-  // committing. The rerun must see the typed text, and the caret must stay in
-  // the field rather than being kicked back to the results list.
   Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL | SDL_KMOD_SHIFT), "Ctrl+Shift+F should focus the query field");
   Expect(WorkspaceShellTestAccess::ProjectSearchEditing(shell),
          "Ctrl+Shift+F should begin editing the query");
@@ -1551,10 +1390,6 @@ void TestWorkspaceShellProjectSearchAltChordsToggleOptions() {
          "the rerun should match the just-typed query, not the previous one");
 }
 
-// Escape must peel one layer at a time. "Close a temporary sidebar on Escape"
-// used to be duplicated in the surface-navigation fallback (Search only, and it
-// ran first) and in the per-mode sidebar handler, so Escape while typing a query
-// tore the whole panel down and the search field's own Escape was dead code.
 void TestWorkspaceShellSearchSidebarEscapeCancelsEditBeforeClosing() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -1563,10 +1398,8 @@ void TestWorkspaceShellSearchSidebarEscapeCancelsEditBeforeClosing() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
-  // A peek: the search panel opens over a HIDDEN sidebar (on a visible one,
-  // Ctrl+Shift+F switches the view for good, as VS Code does).
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "sidebar-hide"), "sidebar-hide should run");
-  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "", /*temporary=*/true);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "", true);
   Expect(WorkspaceShellTestAccess::SidebarVisible(shell), "the search sidebar should be open");
   Expect(WorkspaceShellTestAccess::ProjectSearchEditing(shell),
          "an empty query should open straight into the field editor");
@@ -1582,9 +1415,6 @@ void TestWorkspaceShellSearchSidebarEscapeCancelsEditBeforeClosing() {
          "the second Escape should dismiss the temporary search panel");
 }
 
-// The file tree and the git sidebar have had row context menus from the start;
-// the search results list swallowed the right button entirely, so the path of a
-// hit could only be copied by opening the file and using the tab menu.
 void TestWorkspaceShellSearchResultRightClickOpensRowMenu() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -1609,7 +1439,6 @@ void TestWorkspaceShellSearchResultRightClickOpensRowMenu() {
   Expect(WorkspaceShellTestAccess::TreeContextMenuPath(shell).lexically_normal() ==
              source.lexically_normal(),
          "the menu should target the hit's file, not the tree selection");
-  // Right-click must not also open the file — that is the left button's job.
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() != source.lexically_normal(),
          "right-clicking a hit should not open it");
 
@@ -1619,8 +1448,6 @@ void TestWorkspaceShellSearchResultRightClickOpensRowMenu() {
              std::find(labels.begin(), labels.end(), "Reveal in File Tree") != labels.end(),
          "the row menu should offer the path-scoped items");
 
-  // Reveal must act on the row the menu named. Before this it read the active tab
-  // path, so it either did nothing or revealed an unrelated file.
   Expect(WorkspaceShellTestAccess::ExecuteContextMenuAction(
              shell, WorkspaceShell::ActionId::RevealInFileTree),
          "Reveal in File Tree should run from the row menu");
@@ -1628,10 +1455,6 @@ void TestWorkspaceShellSearchResultRightClickOpensRowMenu() {
          "Reveal should select the hit's file in the tree");
 }
 
-// The context menu was the last list in the shell that answered Up/Down and
-// nothing else. Home/End cannot go through ListNavigationKeyDelta here — that
-// resolver expresses them as a ±count delta, which lands on the ends only for a
-// mover that clamps, and this one wraps.
 void TestWorkspaceShellContextMenuAnswersHomeAndEnd() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1661,21 +1484,12 @@ void TestWorkspaceShellContextMenuAnswersHomeAndEnd() {
   Expect(WorkspaceShellTestAccess::TreeContextMenuActiveItemIndex(shell) == 0,
          "Home should activate the first item in the menu");
 
-  // Down from the first item still walks one step, so Home/End did not replace
-  // the existing contract.
   Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE), "Down should be consumed by the menu");
   Expect(WorkspaceShellTestAccess::TreeContextMenuActiveItemIndex(shell) > 0,
          "Down should still advance one item from the top");
 }
 
 
-// F3 / Shift+F3 step through the current find term from the editor, whether the
-// widget is open or closed (VS Code nextMatchFindAction); with no term yet F3
-// opens the widget. Neither key did anything before.
-// The find widget selects its current match (VS Code's find), so with the widget
-// up the editor's selection is the widget's own answer. Ctrl+H from the find field
-// re-seeded the query from it, turning a regex query into the literal text of its
-// match (QA find-options: `id=(\d+)` became `id=12`, and `$1` replaced nothing).
 void TestWorkspaceShellCtrlHInTheOpenWidgetKeepsTheQuery() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1713,8 +1527,6 @@ void TestWorkspaceShellF3StepsMatchesWithTheWidgetClosed() {
   Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Esc closes the widget");
   Expect(!WorkspaceShellTestAccess::OverlayVisible(shell), "the widget is closed");
 
-  // Revealing a match selects it, as VS Code's find does: the selection starts on
-  // the match. Match 0 is at 0:0, so F3 steps to the next one.
   const auto caret_at = [&](std::size_t line, std::size_t column) {
     const auto selection = viewport.selection_range();
     return selection.has_value() ? selection->start.line == line && selection->start.column == column &&
@@ -1733,8 +1545,6 @@ void TestWorkspaceShellF3StepsMatchesWithTheWidgetClosed() {
          "two more F3 presses are handled");
   Expect(caret_at(0, 0), "F3 wraps from the last match to the first");
 
-  // A caret parked between matches: F3 goes to the first match after it, not past it,
-  // and Shift+F3 to the one before it.
   viewport.MoveCursorTo(1, 5);
   Expect(SendKeyDown(shell, SDLK_F3, SDL_KMOD_NONE), "F3 from between matches is handled");
   Expect(caret_at(2, 0), "F3 from mid-line 1 jumps to the match on line 2, not line 0");
@@ -1743,11 +1553,6 @@ void TestWorkspaceShellF3StepsMatchesWithTheWidgetClosed() {
   Expect(caret_at(1, 0), "Shift+F3 from mid-line 1 jumps back to the match on line 1");
 }
 
-// The find widget's match set is a list of LINE:COLUMN ranges into the buffer, so
-// an edit under an open widget leaves every one of them describing text that has
-// moved. Replace then rewrote whichever line had inherited the old coordinates
-// and left the real match alone -- silent data loss, in the one verb whose whole
-// job is to change text the user pointed at.
 void TestWorkspaceShellFindMatchesFollowAnEditUnderTheWidget() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1772,8 +1577,6 @@ void TestWorkspaceShellFindMatchesFollowAnEditUnderTheWidget() {
          "one match for `target`");
   WorkspaceShellTestAccess::SetBufferReplaceText(shell, "REPLACED");
 
-  // An edit that does NOT go through the widget: everything below moves down one
-  // line, so the stored match now points at `bravo`.
   viewport.MoveCursorTo(0, 0);
   viewport.InsertText("inserted\n");
   Expect(std::string(viewport.lines().LineView(3)) == "target",
@@ -1787,10 +1590,6 @@ void TestWorkspaceShellFindMatchesFollowAnEditUnderTheWidget() {
              joined());
 }
 
-// The other half: an edit that DOES announce itself keeps the match set current,
-// so the highlights and the n-of-m counter describe the buffer on screen rather
-// than the one it was two keystrokes ago. Checked through the shell's own edit
-// path (a typed character), not by calling the refresh.
 void TestWorkspaceShellFindMatchCountFollowsAnAnnouncedEdit() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1801,9 +1600,6 @@ void TestWorkspaceShellFindMatchCountFollowsAnAnnouncedEdit() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, file);
 
-  // Through the real verb, because the refresh-on-edit is gated on the widget
-  // being open -- which is also exactly what gates the highlight paint and the
-  // n-of-m counter, so a match set nobody can see is not worth a scan.
   Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL),
          "Ctrl+F opens the find widget");
   Expect(WorkspaceShellTestAccess::ActiveOverlayMode(shell) ==
@@ -1813,8 +1609,6 @@ void TestWorkspaceShellFindMatchCountFollowsAnAnnouncedEdit() {
   Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 2,
          "two matches to start with");
 
-  // Duplicate line 0 through the action layer: a third `target` appears, and the
-  // widget must say so without anyone re-typing the query.
   auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
   viewport.MoveCursorTo(0, 0);
   Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::DuplicateLine, {}),
@@ -1823,18 +1617,11 @@ void TestWorkspaceShellFindMatchCountFollowsAnAnnouncedEdit() {
          "the widget should count the new occurrence, got " +
              std::to_string(WorkspaceShellTestAccess::BufferSearchMatchCount(shell)));
 
-  // And it must not have yanked the caret onto a match on the way: the edit's own
-  // caret is where the user left it.
   Expect(viewport.cursor_line() == 1,
          "duplicate-line leaves the caret on the copy, not on a search hit; got line " +
              std::to_string(viewport.cursor_line()));
 }
 
-// Workbench shortcuts work from wherever focus is, as in VS Code. Find in files,
-// close/next tab and the rest were registered for the EDITOR context, so with the
-// tree focused Ctrl+Shift+F did nothing -- and the query the user then typed went
-// to the tree as single-key commands. A focused terminal still keeps Ctrl+W for
-// its shell.
 void TestWorkspaceShellWorkbenchShortcutsWorkFromTheTree() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1869,14 +1656,12 @@ void TestWorkspaceShellWorkbenchShortcutsWorkFromTheTree() {
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Search,
          "Ctrl+Shift+F from the tree opens Search");
 
-  // Ctrl+K Ctrl+<arrow> (focus the editor pane that way) is a workbench chord too.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
              shell, microide::workspace::EditorSplitOrientation::Vertical),
          "the fixture splits the editor");
   if (WorkspaceShellTestAccess::FocusedGroupIndex(shell) != 0) {
     WorkspaceShellTestAccess::FocusOtherEditorGroup(shell);
   }
-  // Toward the second pane, whichever way the split laid it out.
   const auto panes = WorkspaceShellTestAccess::EditorGroupRectsFor(
       shell, WorkspaceShellTestAccess::CurrentLayout(shell));
   Expect(panes.groups.size() == 2, "the split has two panes");
@@ -1888,7 +1673,6 @@ void TestWorkspaceShellWorkbenchShortcutsWorkFromTheTree() {
   Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1,
          "Ctrl+K Ctrl+<arrow> from the tree focuses the pane that way");
 
-  // A focused terminal owns Ctrl+W (the shell's delete-word).
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
   WorkspaceShellTestAccess::SetFocusPanel(shell);
   const std::size_t before_terminal = WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell);
@@ -1991,4 +1775,4 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellBufferReplaceEnterInFindFieldStepsMatches);
 }
 
-}  // namespace microide::tests
+}

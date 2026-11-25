@@ -6,14 +6,10 @@ namespace microide::workspace {
 
 namespace {
 
-// Time constant of the ease. Smaller = snappier. ~45ms reaches ~95% of the way
-// in roughly 135ms, matching Chrome's brisk-but-smooth tab slide.
 constexpr float kSlideTauMs = 45.0f;
-// Below this many pixels a tab is considered "arrived" and snaps to its target,
-// so the animation terminates cleanly instead of asymptotically creeping.
 constexpr float kSlideSnapPx = 0.5f;
 
-}  // namespace
+}
 
 std::vector<float> ComputeSlideTargetXs(std::span<const SlideTab> tabs,
                                         std::size_t source_index,
@@ -32,7 +28,6 @@ std::vector<float> ComputeSlideTargetXs(std::span<const SlideTab> tabs,
   for (std::size_t i = 0; i < tabs.size(); ++i) {
     const SlideTab& tab = tabs[i];
     if (tab.index == source_index) {
-      // The dragged tab is lifted out of the flow; it renders as the ghost.
       targets[i] = tab.x;
       continue;
     }
@@ -70,8 +65,6 @@ bool AdvanceSlideOffsets(std::vector<float>& current,
   for (std::size_t i = 0; i < current.size(); ++i) {
     const float delta = target[i] - current[i];
     if (std::fabs(delta) <= kSlideSnapPx) {
-      // The snap moves the tab too (up to kSlideSnapPx, which rounds to a
-      // different device pixel): it is a change the strip must be repainted for.
       changed = changed || current[i] != target[i];
       current[i] = target[i];
       continue;
@@ -82,4 +75,4 @@ bool AdvanceSlideOffsets(std::vector<float>& current,
   return changed;
 }
 
-}  // namespace microide::workspace
+}

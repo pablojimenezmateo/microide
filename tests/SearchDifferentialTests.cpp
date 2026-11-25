@@ -1,21 +1,3 @@
-// Differential tests over the four implementations of "where does this query
-// match".
-//
-// The in-file find widget answers that question four different ways, each one a
-// speed optimisation of the one before it:
-//
-//   1. FindLiteralSearchMatches(lines, ...)   -- over a document snapshot
-//   2. FindLiteralSearchMatches(buffer, ...)  -- zero-copy over the piece tree
-//   3. RefineLiteralSearchMatches(...)        -- per-keystroke incremental scan
-//   4. FindRegexSearchMatches(...)            -- PCRE2, over the joined buffer
-//
-// (3)'s header states it equals (2) "by construction"; (4) with an escaped
-// literal pattern must find the same spans as (1). All four are exercised on
-// every keystroke of a find session, so a divergence desynchronises the match
-// count, next/previous navigation and replace-all against what is highlighted.
-// The existing suite pins them on fixed queries; this asserts the agreement over
-// a generated corpus, with whole-word and case-sensitivity toggled.
-
 #include "TestSupport.h"
 
 #include <cstdint>
@@ -50,8 +32,6 @@ struct Rng {
   std::size_t Below(std::size_t bound) { return bound == 0 ? 0 : Next() % bound; }
 };
 
-// Deliberately full of self-overlapping runs, case variation, word boundaries
-// and multi-byte characters -- the four things that separate these scanners.
 const std::vector<std::string>& LinePool() {
   static const std::vector<std::string> pool = {
       "aaaa",
@@ -95,8 +75,6 @@ std::string Describe(std::uint64_t seed, std::string_view query, const BufferSea
          " whole_word=" + (o.whole_word ? "1" : "0") + " scope=" + scope + "]";
 }
 
-// No scope, and a Find in Selection scope drawn from the document: any start and
-// end inside it, start first, so ends fall mid-word and mid-run.
 std::vector<std::optional<SelectionRange>> Scopes(Rng& rng, const std::vector<std::string>& lines) {
   const auto position = [&]() {
     const std::size_t line = rng.Below(lines.size());
@@ -130,9 +108,6 @@ bool Same(const std::vector<SelectionRange>& a, const std::vector<SelectionRange
   return true;
 }
 
-// Escape a literal so PCRE2 reads it as the same bytes. \Q..\E would do, but
-// escaping each metacharacter keeps the pattern free of any quoting subtlety of
-// its own.
 std::string EscapeForRegex(std::string_view literal) {
   static constexpr std::string_view kMeta = R"(\^$.[]|()?*+{}-#&~)";
   std::string out;
@@ -153,7 +128,6 @@ std::vector<std::string> BuildDocument(Rng& rng) {
   return lines;
 }
 
-// (1) vs (2): the snapshot scanner and the zero-copy buffer scanner.
 void TestSnapshotAndBufferScannersAgree() {
   std::size_t total_matches = 0;
   for (std::uint64_t seed = 1; seed <= 500; ++seed) {
@@ -184,8 +158,6 @@ void TestSnapshotAndBufferScannersAgree() {
          "the corpus must actually produce matches, saw " + std::to_string(total_matches));
 }
 
-// (2) vs (3): the per-keystroke incremental refine against a fresh full scan, at
-// every prefix length of every query.
 void TestIncrementalRefineEqualsAFreshScan() {
   for (std::uint64_t seed = 1; seed <= 500; ++seed) {
     Rng rng(seed ^ 0x8EF19Eull);
@@ -194,14 +166,10 @@ void TestIncrementalRefineEqualsAFreshScan() {
     for (const std::string& query : QueryPool()) {
       for (const bool whole_word : {false, true}) {
        for (const auto& scope : Scopes(rng, lines)) {
-        // Refine is the case-insensitive find-as-you-type path; it is only valid
-        // where the shorter query is a case-insensitive prefix of the longer.
         BufferSearchOptions options{.case_sensitive = false, .whole_word = whole_word, .scope = scope};
         std::vector<SelectionRange> previous;
         bool have_previous = false;
         for (std::size_t length = 1; length <= query.size(); ++length) {
-          // Step one whole UTF-8 character at a time; a partial sequence is not a
-          // query a keystroke can produce.
           if (length < query.size() &&
               (static_cast<unsigned char>(query[length]) & 0xC0) == 0x80) {
             continue;
@@ -224,10 +192,6 @@ void TestIncrementalRefineEqualsAFreshScan() {
   }
 }
 
-// (1) vs (4): an escaped literal pattern must find exactly the literal spans.
-// This is the cross-check the compile-option comment in RegexUtil.h is about --
-// the regex path once folded ASCII only, so the same query matched
-// case-insensitively as a literal and case-sensitively as a regex.
 void TestRegexOfAnEscapedLiteralFindsTheLiteralSpans() {
   std::size_t compared = 0;
   for (std::uint64_t seed = 1; seed <= 400; ++seed) {
@@ -255,9 +219,6 @@ void TestRegexOfAnEscapedLiteralFindsTheLiteralSpans() {
   Expect(compared > 1000, "every pattern in the pool should have compiled");
 }
 
-// Whatever the scanner, a match set must be sorted, non-empty, non-overlapping
-// and inside the buffer. Overlapping spans desynchronise next/previous and make
-// replace-all double-edit.
 void TestMatchSetsAreOrderedNonOverlappingAndInBounds() {
   for (std::uint64_t seed = 1; seed <= 500; ++seed) {
     Rng rng(seed ^ 0x08DE8ull);
@@ -300,7 +261,7 @@ void TestMatchSetsAreOrderedNonOverlappingAndInBounds() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterSearchDifferentialTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SearchDifferential/SnapshotAndBufferScannersAgree",
@@ -313,4 +274,4 @@ void RegisterSearchDifferentialTests(std::vector<TestCase>& tests) {
           TestMatchSetsAreOrderedNonOverlappingAndInBounds);
 }
 
-}  // namespace microide::tests
+}

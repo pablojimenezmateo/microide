@@ -14,9 +14,6 @@ class EditorMouseCoordinator {
     std::function<WorkspaceShell::EditorPaneLayouts(const WorkspaceLayout&)>
         compute_editor_pane_layouts;
     std::function<editor::TextViewport*()> active_editor_viewport;
-    // Resolves the viewport backing a specific split pane (by group), without
-    // changing which group is focused. Used so a wheel scroll targets the pane
-    // under the pointer rather than only the focused pane.
     std::function<editor::TextViewport*(const WorkspaceShell::EditorPaneLayout&)>
         viewport_for_pane;
     std::function<ScrollSurfaceLayout(const SDL_FRect&,
@@ -26,25 +23,15 @@ class EditorMouseCoordinator {
     std::function<std::optional<std::string>()> read_primary_selection_text;
     std::function<void()> reset_caret_blink;
     std::function<void()> note_active_editable_edit;
-    // A frame owed: the editor, compare and merge surfaces derive their damage
-    // (RequestPreparedFrame); a request names no rect.
     std::function<void()> request_frame;
     std::function<void()> request_tab_strip_redraw;
     std::function<void()> clear_drag_state;
     std::function<std::optional<std::string>(std::string_view id)> get_setting_value;
     std::function<editor::FoldingModel*()> ensure_active_folding_model_fresh;
-    // Dispatches a non-blocking external-change banner action (Reload/Overwrite/Keep).
     std::function<void(EditorBannerAction, const std::filesystem::path&)> editor_banner_action;
-    // Notifies that a breakpoint was toggled on `path` (live re-send to an
-    // active debug session). Only invoked when `debug.enabled` is ON.
     std::function<void(const std::filesystem::path&)> on_breakpoint_toggled;
-    // Opens the breakpoint-gutter context menu for `path:line` (Phase 6).
-    // Only invoked on a gutter right-click when `debug.enabled` is ON.
     std::function<void(const std::filesystem::path&, std::size_t, const SDL_FRect&)>
         open_breakpoint_context_menu;
-    // Ctrl+click navigates to the definition of the symbol under the (already
-    // moved) caret, as in VS Code. The shell gates it on the action's
-    // availability so a click in a buffer with no provider stays a plain click.
     std::function<void()> go_to_definition;
   };
 
@@ -54,17 +41,9 @@ class EditorMouseCoordinator {
                          Operations operations);
 
   bool HandleButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
-  // Right-click on the breakpoint gutter → open the breakpoint context menu
-  // (Phase 6). Returns true only when it opened the menu; has no other side
-  // effects, so the caller can fall through to the editor context menu when it
-  // declines. Gated on `debug.enabled`.
   bool HandleGutterContextMenu(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleDrag(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleSelectionMotion(const SDL_Event& event, const WorkspaceLayout& layout);
-  // Resolve an in-flight selection drag-and-drop at button-up. Moves the captured
-  // source to the drop point (copies it when `copy`), or — when the pointer never
-  // passed the threshold — performs the plain click the press deferred. Returns
-  // true when it owned the release (TD-2026-08-13-204).
   bool FinishTextDrag(bool copy);
   bool HandleWheel(const SDL_Event& event,
                    const WorkspaceLayout& layout,
@@ -78,4 +57,4 @@ class EditorMouseCoordinator {
   Operations operations_;
 };
 
-}  // namespace microide::workspace
+}

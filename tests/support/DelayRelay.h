@@ -1,13 +1,5 @@
 #pragma once
 
-// A delaying link for remote tests and perf scenarios: it splices an upstream
-// descriptor (a connection to microide-server) to a fresh socketpair whose other
-// end the client takes, and holds every chunk for half the round trip in each
-// direction, so the client sees `rtt` between a request and its answer. It can
-// stall the server's direction (a server that stops answering mid-stream) or
-// blackhole both (a link that dies without a FIN, which only the heartbeat can
-// detect). Header-only and free of the test harness so the perf binary can use it.
-
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -27,10 +19,6 @@ namespace microide::tests {
 
 class DelayRelay {
  public:
-  // Takes ownership of `upstream_fd`. `rtt` is split evenly between directions.
-  // `bytes_per_second` (0 = unlimited) paces each direction like a link's
-  // serialization delay, so a bulk transfer queues behind itself the way it does
-  // on a real link and an interactive byte has to get through that queue.
   DelayRelay(int upstream_fd, std::chrono::milliseconds rtt, std::uint64_t bytes_per_second = 0)
       : upstream_fd_(upstream_fd), one_way_(rtt / 2), bytes_per_second_(bytes_per_second) {
     int pair[2] = {-1, -1};
@@ -49,7 +37,6 @@ class DelayRelay {
 
   ~DelayRelay() {
     stop_ = true;
-    // Unblock a writer stuck on a full socket before joining it.
     for (int fd : {upstream_fd_, relay_fd_}) {
       if (fd >= 0) {
         ::shutdown(fd, SHUT_RDWR);
@@ -79,19 +66,16 @@ class DelayRelay {
   DelayRelay& operator=(const DelayRelay&) = delete;
 
   bool ok() const { return client_fd_ >= 0 && relay_fd_ >= 0; }
-  // The client's end; the caller owns it from here (ConnectFds takes it).
   int TakeClientFd() {
     const int fd = client_fd_;
     client_fd_ = -1;
     return fd;
   }
-  // Hold the server's bytes (a stalled server); released when cleared.
   void SetServerStalled(bool stalled) {
     stall_to_client_ = stalled;
     std::lock_guard lock(to_client_.mutex);
     to_client_.wake.notify_all();
   }
-  // Drop everything in both directions from now on, with no FIN: a dead link.
   void Blackhole() { blackhole_ = true; }
 
  private:
@@ -116,9 +100,6 @@ class DelayRelay {
   }
 
   void Read(Direction& d) {
-    // Small reads: each is paced as one unit, so a large read would act like a
-    // 64 KiB packet and hold an interactive byte that shared it behind the whole
-    // thing. Real links serialize per ~1.5 KiB packet; 4 KiB is close enough.
     char buffer[4 * 1024];
     while (!stop_) {
       pollfd pfd{d.from, POLLIN, 0};
@@ -131,7 +112,7 @@ class DelayRelay {
         if (n < 0 && (errno == EINTR || errno == EAGAIN)) {
           continue;
         }
-        ::shutdown(d.to, SHUT_WR);  // pass the end of stream on
+        ::shutdown(d.to, SHUT_WR);
         return;
       }
       if (blackhole_) {
@@ -146,7 +127,7 @@ class DelayRelay {
 
   void Write(Direction& d) {
     std::unique_lock lock(d.mutex);
-    auto link_free = std::chrono::steady_clock::now();  // when the "wire" is idle again
+    auto link_free = std::chrono::steady_clock::now();
     while (!stop_) {
       const bool stalled = d.stall != nullptr && d.stall->load();
       if (d.queue.empty() || stalled) {
@@ -161,16 +142,6 @@ class DelayRelay {
       Chunk chunk = std::move(d.queue.front());
       d.queue.pop_front();
       if (bytes_per_second_ != 0) {
-        // A virtual clock: this chunk left at `due` (not when the thread woke),
-        // so ordinary timer oversleep does not eat into the modelled bandwidth.
-        // It may lag real time by up to kCatchUp, which it then sends back to
-        // back -- a short burst, as a real link's queue drains after a hiccup.
-        // More would be a burst no link produces, which an ack-measured bandwidth
-        // would believe. Capped at ONE chunk (~0.3 ms at 12.5 MB/s), a writer at
-        // nice 19 on a box at load 11 lost 0.3-0.8 s of wire per 1.5 s transfer
-        // to scheduler latency, and the link ran at 61-74 % of its rate
-        // (RemoteFrameTransport/BulkWindowSettlesAtTheBandwidthDelayProduct, 12
-        // of 80 runs).
         const auto transmit = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
             std::chrono::duration<double>(static_cast<double>(chunk.bytes.size()) /
                                           static_cast<double>(bytes_per_second_)));
@@ -209,5 +180,5 @@ class DelayRelay {
   Direction to_client_;
 };
 
-}  // namespace microide::tests
+}
 

@@ -7,95 +7,37 @@ namespace microide::workspace {
 enum class ActionId {
   CodeActions,
   FormatDocument,
-  // Reindent the active (or a named) buffer as JSON, in memory. Unlike
-  // FormatDocument this is self-contained (no language server) and works on
-  // untitled buffers.
   FormatJson,
   RenameSymbol,
   OpenCommandPalette,
-  // Move keyboard focus onto the notification stack (VS Code's "Focus Notification
-  // Toast"): arrows move between rows and buttons, Enter runs a button, Delete
-  // dismisses a row, Escape gives focus back.
   FocusNotifications,
-  // Run one inline button of a notification row, as a click would:
-  // `notification-action <row-key|row-index> <action-label|action-index>`.
-  // The control channel's way to press Reconnect / Show Output.
   NotificationAction,
-  // Press one button of the banner on the active editor tab, as a click would:
-  // `banner-action <Compare|Reload|Overwrite|Keep|Retry>`. The headless route to
-  // the changed-on-disk choice a refused `save` points at.
   BannerAction,
-  // Open an Output channel's tab in the bottom panel and select it, following the
-  // tail (VS Code's "Output: Show Output Channel"): `show-output <channel-id>`.
-  // The "Show Output" button on a formatter failure is this.
   ShowOutput,
-  // Remote hosts (dev-docs/design/remote-projects.md § 6.6, § 7). In a remote
-  // project, a terminal on THIS machine (Terminal > New runs on the host there).
   RemoteOpenLocalTerminal,
-  // Open a host directory as a remote project: `remote-open [user@]host[:port]:/path`
-  // (no argument: prompt for one). The editor opens the project's local mirror.
   RemoteOpenFolder,
-  // `remote-resolve <mirror-path> <local|remote|compare|merge>`: settle a file both the
-  // host and the mirror changed — the buttons on its conflict row.
   RemoteResolveConflict,
-  // `remote-resolve-all [root] <local|remote>`: every conflict of the remote project
-  // at `root` (the active one when omitted) -- Keep All Local / Take All Remote on
-  // the counted conflict row (§ 7.7).
   RemoteResolveAllConflicts,
-  // `remote-blocked <path|root> <retry|replace>`: a save the host refused for the
-  // path itself (§ 6.3, blocked) -- send it again, or overwrite whatever refused
-  // it there (Replace on Host). A project root acts on every blocked save in it.
-  // The buttons on the blocked-save rows.
   RemoteBlockedSave,
-  // `remote-conflicts [root]`: the Conflicts view (§ 7.9b) -- the files both sides
-  // changed, each tickable, with Keep Local / Take Remote / Merge for the ticked
-  // ones. The counted row's Manage…; the Remote menu's Show Conflicts.
   RemoteShowConflicts,
-  // `remote-show-log [host]`: the host server's log in an output channel.
   RemoteShowLog,
   RemoteShowStatus,
-  RemoteStopServer,   // `remote-stop-server [host]`; the sole host when omitted
-  // `remote-attach-terminals <host> <handle>...`: host terminals nobody is attached
-  // to, each in a new tab of the active project (the connect row's Attach);
-  // `remote-close-terminals <host> <handle>...` ends them (its Close).
+  RemoteStopServer,
   RemoteAttachHostTerminals,
   RemoteCloseHostTerminals,
-  // `remote-end-process <host> <handle>`: the Host view's End on a process row --
-  // proc/end, whoever spawned it (remote-host-activity).
   RemoteEndHostProcess,
-  // `remote-remove-mirror <root> [discard]`: delete a closed remote project's mirror
-  // (tree, objects, journal, state) and forget it in the recents; `discard` lets
-  // saves the host never received go with it.
   RemoteRemoveMirror,
-  RemoteDisconnect,   // `remote-disconnect [host]`; every host when omitted
-  RemoteReconnect,    // `remote-reconnect [host]`: the Reconnect button
-  // `remote-copy-command <host> <ssh|install|linger>`: the Copy buttons on a failure row.
+  RemoteDisconnect,
+  RemoteReconnect,
   RemoteCopyCommand,
-  // Changed on Host (§ 7.9) for the active remote project: `remote-changes` shows the
-  // view (the Show button of the "N files changed on host" row), `remote-clear-changes`
-  // empties it.
   RemoteShowHostChanges,
   RemoteClearHostChanges,
-  // A pick of the active file's earlier versions in the mirror; one opens a compare.
   RemoteFileHistory,
-  // Open the files another machine left open in this remote project (the offer a
-  // connect raises), beside what is open here.
   RemoteOpenOfferedSession,
-  // `remote-apply-deletes [root]`: apply a mass delete the sync held (§ 6.3) -- the
-  // Apply button of its "would delete N files" row. The root defaults to the
-  // active project.
   RemoteApplyHeldDeletes,
-  // `remote-forward-port <port> [host]` / `remote-unforward-port <port> [host]`:
-  // the host's localhost:<port> on this machine, through the ssh master (VS Code's
-  // Forward a Port). The host defaults to the active remote project's, else the
-  // only host.
   RemoteForwardPort,
   RemoteUnforwardPort,
-  // `open-url <http(s)-url>`: the desktop's browser (a forwarded port's button).
   OpenUrl,
-  // The Cancel button of a quit / close-project that is waiting for formatter
-  // saves: `cancel-save-wait <id>` (the id rides on the button). The quit or close
-  // is abandoned and the buffers still formatting stay open and dirty.
   CancelSaveWait,
   Colorscheme,
   ToggleColorTheme,
@@ -103,35 +45,21 @@ enum class ActionId {
   Completion,
   Compare,
   CompareHead,
-  // Non-git ("plain") comparisons of arbitrary sides — files (even outside the
-  // project), open buffers, and the clipboard. CompareFiles diffs two paths;
-  // SelectForCompare stashes the current target (tree file or active buffer);
-  // CompareWithSelected diffs the current target against the stash;
-  // CompareWithClipboard diffs the current target against clipboard text.
   CompareFiles,
   SelectForCompare,
   CompareWithSelected,
   CompareWithClipboard,
   Merge,
-  // Batch review verbs (control channel / command line). Each switches to the
-  // Source Control view and bulk-opens diff/merge tabs, deduping against open
-  // tabs and closing stale (clean) review tabs from a prior run. Gated on an
-  // active git project.
-  ReviewConflicts,  // a merge tab per conflicted working-tree file
-  ReviewBranch,     // a compare tab (worktree vs <ref>) per differing file
-  ReviewCommit,     // a compare tab (<ref>~1 vs <ref>) per file changed by <ref>, default HEAD
-  ReviewCheckpoint,      // a compare tab (checkpoint vs worktree) per file changed since the checkpoint
-  ReviewCheckpointMark,  // record the working tree as it is now as that checkpoint
+  ReviewConflicts,
+  ReviewBranch,
+  ReviewCommit,
+  ReviewCheckpoint,
+  ReviewCheckpointMark,
   CopyAbsolutePath,
   CopyRelativePath,
   CreateDirectory,
   CreateFile,
   DeletePath,
-  // The file tree's Cut / Copy / Paste (its context menu, and Ctrl+X / Ctrl+C /
-  // Ctrl+V while the tree has the keyboard): Paste moves a cut entry -- through
-  // Rename's own follow-up, so open tabs keep their unsaved text at the new path --
-  // or copies a copied one, as "name copy.ext" when the name is taken (VS Code).
-  // Context-menu and tree-key only; not registered as commands.
   TreeCut,
   TreeCopy,
   TreePaste,
@@ -145,8 +73,6 @@ enum class ActionId {
   GoToDefinition,
   GoToSymbolInEditor,
   LanguageMode,
-  // Alt+F8 / Shift+Alt+F8: jump to the next / previous diagnostic in the active
-  // file, wrapping (VS Code editor.action.marker.next / .prev).
   GoToNextDiagnostic,
   GoToNextProblemInFiles,
   GoToPreviousProblemInFiles,
@@ -157,13 +83,8 @@ enum class ActionId {
   SignatureHelp,
   Goto,
   GitRefresh,
-  // Git write operations. Each dispatches through GitOperationService onto the
-  // project background executor; none of them run on the shell thread.
   GitSwitchBranch,
-  // A pick of the repository's working trees; choosing one opens it as a project.
   GitWorktrees,
-  // `git-commits`: a pick of the branch's recent commits, each opening its
-  // review (`review-commit <hash>`).
   GitCommits,
   GitCreateBranch,
   GitFetch,
@@ -173,25 +94,15 @@ enum class ActionId {
   GitSync,
   GitStash,
   GitStashPop,
-  // Opens the commit message editor (the git view's Commit button; it was the
-  // bare `c` on the git list).
   GitCommit,
-  // VS Code's Stage / Unstage / Revert Selected Ranges, in a diff: the selected
-  // lines when there is a selection, else the change at the caret.
   GitStageSelectedRanges,
   GitUnstageSelectedRanges,
   GitRevertSelectedRanges,
-  // Opens (or re-focuses) the terminal panel's find-in-scrollback bar.
   TerminalFind,
-  // Git sidebar entry context-menu actions (right-click on a changed-file row).
-  // Context-menu only; act on the selected git entry. Not registered as commands.
   GitOpenChanges,
   GitOpenFileEntry,
   GitStageToggleEntry,
   GitDiscardEntry,
-  // Keep one side of a conflicted file whole and stage it (VS Code's Accept
-  // Current / Accept Remote): the selected conflict row, the active merge tab's
-  // file, or a path argument.
   GitAcceptCurrent,
   GitAcceptIncoming,
   IndentWidth,
@@ -202,9 +113,6 @@ enum class ActionId {
   OpenHelpAbout,
   OpenKeyboardShortcuts,
   OpenSettings,
-  // Deterministic setting write (control channel / headless). `set-setting <id>
-  // <value>` routes through the SetSettingValue chokepoint; unknown id / invalid
-  // value rejects. Always available (not gated).
   SetSetting,
   ProjectClose,
   ProjectCopyAbsolutePath,
@@ -212,18 +120,10 @@ enum class ActionId {
   ProjectOpen,
   ProjectPrev,
   ProjectSearch,
-  // VS Code's Replace in Files (Ctrl+Shift+H): the search view, the keyboard in its
-  // replace field.
   ProjectReplace,
-  // The search view's own commands, which were bare letters on its results list
-  // (r, c, i/x) and now are commands (TD-2026-10-16-350): rerun the query, flip
-  // the exact match count, show or hide the include/exclude fields.
   ProjectSearchRefresh,
   ProjectSearchToggleCountAll,
   ProjectSearchToggleDetails,
-  // The chrome VS Code makes interactive (TD-2026-10-18-361): a folder's entries
-  // as a pick (a breadcrumb segment's click, Ctrl+Shift+.), the line-ending pick
-  // (the status bar's LF/CRLF), the indentation pick (its Spaces/Tabs segment).
   BrowseFolder,
   LineEnding,
   Indentation,
@@ -255,23 +155,15 @@ enum class ActionId {
   TabSwitch,
   Term,
   TermClose,
-  // `reveal <path> <line[:col]>`: open + caret + centre the line, one atomic verb
-  // for an agent that wants to show the user a place in a file.
   Reveal,
-  // `tab-to-group <group> [slot]`: move the focused pane's active tab into editor
-  // group `group` (0-based, layout order) at `slot` (default: the end).
   TabToGroup,
-  // Terminal panes and the panel's visibility/maximized state (TerminalPanelService).
   TerminalSplit,
   TerminalFocusPaneLeft,
   TerminalFocusPaneRight,
   TerminalNext,
   TerminalPrev,
-  // `term-next-alert`: the next terminal tab that rang or notified unseen (an
-  // agent waiting for input), in this project or another, brought forward.
   TerminalNextAlert,
   TerminalRelaunch,
-  // Select the active pane's whole transcript (Ctrl+Shift+A, the context menu).
   TerminalSelectAll,
   TerminalToggle,
   PanelToggle,
@@ -286,9 +178,6 @@ enum class ActionId {
   SplitEditorRight,
   SplitEditorDown,
   FocusOtherGroup,
-  // Directional pane focus/move across the editor grid (VS Code's
-  // focusLeftGroup / moveActiveEditorGroupLeft family). `FocusOtherGroup`
-  // cycles; these go where you point.
   FocusEditorGroupLeft,
   FocusEditorGroupRight,
   FocusEditorGroupUp,
@@ -315,37 +204,23 @@ enum class ActionId {
   Redo,
   ReplaceInBuffer,
   InsertSnippet,
-  // Insert literal text at the caret (replacing any selection). Reachable over
-  // the command line / control channel as `type <text>`; the primary way an
-  // external/headless caller enters characters into the active editor.
   InsertText,
   PressKey,
-  // `pointer <verb> <x> <y> ...`: a mouse move, press, release, click or wheel
-  // at a point in layout units (what `ui` reports), through the same path.
   Pointer,
-  // Ctrl+K Ctrl+I: the hover card for the symbol at the caret, by keyboard.
   ShowHover,
   SelectAll,
   Undo,
-  // Editor essentials: structural & shape actions
   JumpToMatchingBracket,
   ToggleLineComment,
   ToggleBlockComment,
   MoveLineUp,
   MoveLineDown,
-  // Keyboard column (box) selection. Registry-driven rather than a hardcoded chord
-  // in the key coordinator, so the gesture shows up in the keyboard-shortcuts
-  // overlay and can be rebound like every other editor shortcut.
   ColumnSelectUp,
   ColumnSelectDown,
   ColumnSelectLeft,
   ColumnSelectRight,
-  // VS Code's copyLinesDownAction / copyLinesUpAction. DuplicateLine keeps its
-  // name for the down form because that is the command id already in the wild.
   DuplicateLine,
   CopyLineUp,
-  // insertLineAfter / insertLineBefore: open a line below/above the caret's line
-  // and go there, wherever in the line the caret was.
   InsertLineBelow,
   InsertLineAbove,
   DeleteLine,
@@ -358,20 +233,14 @@ enum class ActionId {
   SortLinesDescending,
   AddCursorAtNextMatch,
   AddCursorAtAllMatches,
-  // VS Code's insertCursorAbove / insertCursorBelow (Ctrl+Alt+Up/Down) and
-  // insertCursorAtEndOfEachLineSelected (Shift+Alt+I). The first two step VISUAL
-  // rows, so they follow wrapped text the way every other vertical motion here
-  // does.
   AddCursorAbove,
   AddCursorBelow,
   AddCursorsToLineEnds,
-  // Editor essentials: code folding controls
   Fold,
   Unfold,
   FoldAll,
   UnfoldAll,
   ToggleFoldAtCursor,
-  // Editor essentials: capability toggles (each must be checkable + command + setting)
   ToggleEditorFolding,
   ToggleEditorStickyScroll,
   ToggleEditorIndentGuides,
@@ -396,14 +265,8 @@ enum class ActionId {
   UnmarkBranchHunkReviewed,
   ClearBranchReviewState,
   EditBranchReviewNote,
-  // `copy-review-comments` / `term-insert-review-comments`: every note of the active
-  // review as `path:line: note` lines -- copied, or typed into the running
-  // terminal for the agent there to act on.
   CopyBranchReviewNotes,
   TerminalInsertBranchReviewNotes,
-  // The active diff's own verbs. Implemented from the start on CompareMergeService
-  // but reachable from no key, menu or command until the commands-run QA sweep
-  // looked for them.
   CompareToggleIgnoreWhitespace,
   CompareToggleShowWhitespace,
   CompareCopyHunkPatch,
@@ -411,68 +274,33 @@ enum class ActionId {
   CompareCopyPath,
   CompareNextReviewFile,
   ComparePreviousReviewFile,
-  // The diff's next / previous change (Alt+] / Alt+[, the header's buttons).
   CompareNextChange,
   ComparePreviousChange,
-  // The merge editor's: the selected conflict's incoming / current side to the
-  // clipboard (the side panes are read-only views with no selection of their own).
   MergeCopyIncoming,
   MergeCopyCurrent,
-  // The selected conflict's result back to what the merge opened with (its
-  // initial auto pick, or unresolved).
   MergeResetConflict,
-  // Debugger (DAP). Gated on the `debug.enabled` master toggle.
-  // Master enable/disable toggle for the whole debugger feature. NOT gated on
-  // `debug.enabled` — it flips that very setting, so it is always available.
   DebugToggleEnabled,
   StartDebugging,
   StopDebugging,
-  // Execution control (Phase 3). Gated on `debug.enabled` + an active session;
-  // continue/step additionally require the session to be Stopped, pause Running.
   DebugContinue,
-  // F5, as in VS Code: start a session when none is running, continue a stopped
-  // one. Continue alone is inert with no session, and F8 (Start) is not where a
-  // VS Code hand goes.
   DebugStartOrContinue,
   DebugStepOver,
   DebugStepIn,
   DebugStepOut,
   DebugPause,
   DebugRestart,
-  // Reverse execution. Gated on `debug.enabled` + an active+Stopped session AND
-  // the adapter advertising `supportsStepBack` (so they only appear for recording
-  // adapters, e.g. gdb under `record` / rr).
   DebugReverseContinue,
   DebugStepBack,
-  // Multi-session switcher (Phase 8). No arg cycles to the next session; an
-  // optional 1-based index selects a specific session. Gated on `debug.enabled`
-  // + more than one live session.
   DebugSwitchSession,
-  // Stop every live debug session (Phase 10). Gated on `debug.enabled` + at least
-  // one active session.
   DebugStopAllSessions,
-  // Debug-console REPL (Phase 9). Opens a single-line prompt that evaluates an
-  // expression in the active session and appends the result to the console.
-  // Gated on `debug.enabled` + an active session.
   DebugConsoleRepl,
-  // Launch-config picker (Phase 9). Opens a fuzzy picker over the project's
-  // launch configs; choosing one persists the selection and starts a session.
-  // Gated on `debug.enabled`.
   PickLaunchConfig,
-  // Breakpoint modifiers (Phase 6). Context-menu only: they read the breakpoint
-  // gutter menu's path + line, so palette/keybinding invocation is a no-op.
   DebugBreakpointEditCondition,
   DebugBreakpointEditHitCondition,
   DebugBreakpointEditLogMessage,
   DebugBreakpointClearCondition,
   DebugBreakpointToggleEnabled,
   DebugBreakpointRemove,
-  // Headless breakpoint control (control channel + cold-start spec). Unlike the
-  // context-menu modifiers above, these take an explicit `<file> <line>` (1-based
-  // line) so an external caller can place/edit breakpoints anywhere. Gated on
-  // `debug.enabled`; work with or without a live session.
-  // F9: toggle a line breakpoint on the caret's line of the active file (the
-  // gutter click's keyboard twin; VS Code editor.debug.action.toggleBreakpoint).
   BreakpointToggle,
   BreakpointSet,
   BreakpointRemove,
@@ -482,31 +310,19 @@ enum class ActionId {
   BreakpointHitCondition,
   BreakpointLogMessage,
   BreakpointClear,
-  // Function (symbol) breakpoints + per-filter exception conditions (control channel
-  // + command line + UI prompt). Gated on `debug.enabled`.
   BreakpointFunctionAdd,
   BreakpointFunctionRemove,
   BreakpointFunctionToggle,
   BreakpointFunctionCondition,
   BreakpointExceptionCondition,
-  // Start a debug session for a named launch config (control channel + spec).
-  // No arg starts the selected/default config. Gated on `debug.enabled`.
   DebugLaunch,
-  // Ad-hoc launch by program path: synthesizes a transient launch config from a
-  // binary path so a session can start with no pre-defined config. Gated on
-  // `debug.enabled`. `debug-run [--type <adapter>] <program> [args...]`.
   DebugRun,
-  // Right-side debug pane (toggle + surface switching). Gated on `debug.enabled`.
   DebugPaneToggle,
   DebugPaneShowCallStack,
   DebugPaneShowVariables,
   DebugPaneShowWatch,
   DebugPaneShowBreakpoints,
-  // Surface the active debug session's console output in the bottom panel. Gated
-  // on `debug.enabled`; a no-op when no session is active.
   DebugShowOutput,
-  // Debug pane row context menu (Variables / Watch). Both act on the selected row
-  // of whichever value surface is showing.
   DebugCopyValue,
   DebugAddToWatch,
 };
@@ -518,7 +334,6 @@ enum class ActionSource {
   ContextMenu,
 };
 
-// What asking for a native Open Folder / Open File dialog did.
 enum class ProjectOpenPickerResult {
   Launched,
   AlreadyOpen,
@@ -534,10 +349,6 @@ struct ActionSpec {
   bool checkable = false;
 };
 
-// Returns the WorkspaceSettingsRegistry key backing a ToggleEditor* action, or
-// nullptr if the action is not a settings-backed editor-essentials capability
-// toggle. Used by both the executor (to flip the setting) and the menu
-// rendering path (to derive the checked state).
 inline const char* EditorEssentialsCapabilitySettingKey(ActionId id) {
   switch (id) {
     case ActionId::ToggleEditorFolding: return "editor.fold.enabled";
@@ -564,11 +375,6 @@ inline const char* EditorEssentialsCapabilitySettingKey(ActionId id) {
   }
 }
 
-// The setting that gates a shaping edit -- the comment toggles, the line
-// operations, the sorts -- or nullptr for an action no shaping setting gates.
-// The availability check and the edit executor both read it, so a shaping action
-// is gated in both places or neither. Each key is the one its ToggleEditor*
-// action flips (EditorEssentialsCapabilitySettingKey).
 inline const char* ShapingActionGateSettingKey(ActionId id) {
   switch (id) {
     case ActionId::ToggleLineComment:
@@ -593,4 +399,4 @@ inline const char* ShapingActionGateSettingKey(ActionId id) {
   }
 }
 
-}  // namespace microide::workspace
+}

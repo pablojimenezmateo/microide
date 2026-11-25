@@ -43,8 +43,6 @@ void TestHostTargetsAreValidatedBeforeAnythingRuns() {
   }
 }
 
-// The fake host: the ssh shim, a home directory, and the server it starts there,
-// stopped when the test ends.
 struct FakeHost : FakeSshHost {
   RemoteHostSession::Config Config(bool needs_auth = false) const {
     RemoteHostSession::Config config;
@@ -104,10 +102,6 @@ bool WaitForText(const terminal::TerminalSession& session, std::string_view need
                    std::chrono::seconds(15), std::chrono::milliseconds(5));
 }
 
-// A host with no microide-server anywhere: the session brings up the master,
-// finds nothing to attach to, installs the client's own server over the same
-// connection (0700 under ~/.local/share/microide/server), and reaches Ready with
-// no action from the user. A terminal opened over it is a shell on that host.
 void TestFirstConnectInstallsTheServerAndReachesReady() {
   FakeHost host;
   StateLog log;
@@ -133,14 +127,6 @@ void TestFirstConnectInstallsTheServerAndReachesReady() {
   Expect(WaitForState(session, State::Disconnected), "it disconnects");
 }
 
-// The client runs inside a microide host terminal of some OTHER server (a user
-// working in a remote project, or an agent started from one), so its environment
-// names that server: MICROIDE_SERVER_SOCKET_DIR, MICROIDE_TERMINAL_HANDLE and a
-// BROWSER that is its helper. sshd starts a session with an environment of its
-// own, so none of that reaches a host. The fake host passed it through, and every
-// fixture host's `attach` obeyed the socket-dir override: the tests' terminals
-// opened in the user's real server, 61 of them, until its terminal cap refused
-// the next one and ten remote-terminal tests failed.
 void TestTheClientsOwnServerVariablesDoNotReachTheHost() {
   FakeHost host;
   const std::filesystem::path decoy = host.dir.scratch() / "decoy";
@@ -169,12 +155,6 @@ void TestTheClientsOwnServerVariablesDoNotReachTheHost() {
   Expect(WaitForState(session, State::Disconnected), "it disconnects");
 }
 
-// A session that starts somewhere other than $HOME (sshd starts it in the passwd
-// home; sshd's SetEnv, a login script or a container can point $HOME elsewhere).
-// The install wrote relative to the working directory and the launch chain looked
-// under $HOME, so the server landed where it is never looked for and every connect
-// failed after the install (found standing up tools/qa/local-sshd.sh, whose
-// sessions get a HOME of their own).
 void TestTheServerInstallsUnderHomeWhereverTheSessionStarts() {
   FakeHost host;
   host.login_dir = host.dir.scratch() / "login";
@@ -190,16 +170,13 @@ void TestTheServerInstallsUnderHomeWhereverTheSessionStarts() {
   Expect(WaitForState(session, State::Disconnected), "it disconnects");
 }
 
-// A compatible but OLDER server keeps serving (and keeps its terminals), and this
-// release's binary is installed beside it for the next start; a restart picks it
-// up. A server that is not older -- equal, newer, or unorderable -- is left alone.
 void TestAnOlderServerGetsTheNewBinaryBesideIt() {
   FakeHost host;
   const std::filesystem::path installed = host.home / ".local/share/microide/server/microide-server";
   {
     StateLog log;
     RemoteHostSession::Config config = host.Config();
-    config.release = "0.0.1";  // an editor older than the server: no downgrade
+    config.release = "0.0.1";
     RemoteHostSession session(config, log.Listener());
     session.Connect();
     Expect(WaitForState(session, State::Ready), "ready: " + log.Error());
@@ -207,11 +184,11 @@ void TestAnOlderServerGetsTheNewBinaryBesideIt() {
     session.Disconnect();
     Expect(WaitForState(session, State::Disconnected), "disconnects");
   }
-  std::filesystem::remove(installed);  // so a reinstall below is observable
+  std::filesystem::remove(installed);
   {
     StateLog log;
     RemoteHostSession::Config config = host.Config();
-    config.release = "999.0.0";  // an editor newer than the running server
+    config.release = "999.0.0";
     RemoteHostSession session(config, log.Listener());
     session.Connect();
     Expect(WaitForState(session, State::Ready), "ready: " + log.Error());
@@ -223,10 +200,6 @@ void TestAnOlderServerGetsTheNewBinaryBesideIt() {
   }
 }
 
-// Install picks the binary for the HOST's architecture (`uname -m` over the same
-// connection): the package ships one static server per architecture
-// (tools/build-server.sh). A host whose architecture this build has no server for
-// fails with a reason naming it, rather than installing one that cannot run there.
 void TestInstallPicksTheBinaryForTheHostsArchitecture() {
   {
     FakeHost host;
@@ -268,13 +241,10 @@ void TestInstallPicksTheBinaryForTheHostsArchitecture() {
          "uname -m output is normalized to the package's names");
 }
 
-// A key with a passphrase: the batch master fails, the session reports NeedsAuth,
-// and once the user has answered in a terminal (here: the interactive master
-// command, run as the terminal would) it carries on by itself.
 void TestNeedsAuthWaitsForTheInteractiveMaster() {
   FakeHost host;
   StateLog log;
-  RemoteHostSession session(host.Config(/*needs_auth=*/true), log.Listener());
+  RemoteHostSession session(host.Config(true), log.Listener());
   session.Connect();
   Expect(WaitForState(session, State::NeedsAuth), "the session asks for authentication");
   const std::vector<std::string> interactive = session.InteractiveMasterArgv();
@@ -285,9 +255,6 @@ void TestNeedsAuthWaitsForTheInteractiveMaster() {
   Expect(WaitForState(session, State::Ready), "and the session reaches Ready: " + log.Error());
 }
 
-// The link dies: the session reconnects by itself, and a host terminal that was
-// open resumes warm over the new connection — its output kept, nothing repeated,
-// input working again.
 void TestLinkDeathReconnectsAndTerminalsResume() {
   FakeHost host;
   StateLog log;
@@ -315,10 +282,6 @@ void TestLinkDeathReconnectsAndTerminalsResume() {
   terminal.Stop();
 }
 
-// Port forwarding rides the ControlMaster: a forward is `ssh -O forward -L`
-// against it, asking again for a forwarded port answers the same address, a new
-// master (the old one died with the link) gets every forward back, and a cancel
-// takes it off the master and out of the list.
 void TestPortForwardsRideTheMasterAndSurviveANewOne() {
   FakeHost host;
   StateLog log;
@@ -337,7 +300,6 @@ void TestPortForwardsRideTheMasterAndSurviveANewOne() {
   Expect(session.ForwardPort(39217, &error) == forward && ReadFile(held) == spec + "\n",
          "asking again answers the same address and adds no second listener");
 
-  // The master dies with the link: the new one is given the forward again.
   std::filesystem::remove(session.control_path());
   session.connection()->client()->peer().Fail("simulated link death");
   Expect(WaitUntil([&] { return log.Saw(State::Reconnecting); }, std::chrono::seconds(10)),
@@ -345,8 +307,6 @@ void TestPortForwardsRideTheMasterAndSurviveANewOne() {
   Expect(WaitForState(session, State::Ready), "ready again: " + log.Error());
   Expect(ReadFile(held) == spec + "\n", "the new master forwards it too: '" + ReadFile(held) + "'");
 
-  // A disconnect takes the listener down (the master outlives it); a reconnect
-  // brings it back.
   session.Disconnect();
   Expect(WaitForState(session, State::Disconnected), "disconnected");
   Expect(ReadFile(held).empty(), "no listener while disconnected: '" + ReadFile(held) + "'");
@@ -359,10 +319,6 @@ void TestPortForwardsRideTheMasterAndSurviveANewOne() {
   Expect(!session.CancelForward(39217, &error), "a port that is not forwarded is refused");
 }
 
-// Two sessions to one host (a project's and a host terminal's) share its
-// ControlMaster, so they share its forwards: either one answers for a port the
-// other forwarded, and a disconnect of one leaves the ports up for the other — the
-// last one to go takes them down.
 void TestPortForwardsAreTheHosts() {
   FakeHost host;
   StateLog log_a;
@@ -393,8 +349,6 @@ void TestPortForwardsAreTheHosts() {
   Expect(a.forwards().size() == 1, "and the list is kept for the next connection");
 }
 
-// The hosts "Connect to Host…" offers: every concrete alias of every `Host` line,
-// through `Include` (relative to ~/.ssh, globbed), never a pattern.
 void TestSshConfigHostsFollowsIncludesAndSkipsPatterns() {
   TemporaryDirectory temp;
   const std::filesystem::path ssh = temp.path() / ".ssh";
@@ -422,10 +376,6 @@ void TestSshConfigHostsFollowsIncludesAndSkipsPatterns() {
   Expect(remote::SshConfigHosts(ssh / "missing", ssh).empty(), "no config, no hosts");
 }
 
-// A language server or debug adapter on the host is a KEPT process: the link
-// dying does not end it, input written during the outage is held and delivered
-// after the reconnect, and its output keeps flowing — then a Disconnect ends it
-// rather than leaving it running on the host for nobody.
 void TestHostProcessSurvivesAReconnectAndEndsOnDisconnect() {
   FakeHost host;
   StateLog log;
@@ -459,9 +409,6 @@ void TestHostProcessSurvivesAReconnectAndEndsOnDisconnect() {
          "a Disconnect ends it");
 }
 
-// A server command that exits at once (a broken install, a wrong
-// remote.server_command) fails the attempt promptly, with a reason the user can
-// act on — not a hang, and not an empty error row.
 void TestABrokenServerCommandFailsFastWithAReason() {
   FakeHost host;
   StateLog log;
@@ -480,10 +427,6 @@ void TestABrokenServerCommandFailsFastWithAReason() {
          "the error names the setting to fix: " + log.Error());
 }
 
-// `remote.server_socket_dir` reaches the host server as --socket-dir (a home on
-// a filesystem without AF_UNIX support needs it), and `remote.backfill_inflight_
-// bytes` travels in the hello: the server applies it, echoes it, and the client
-// pins the same bound — one bulk window in both directions.
 void TestSocketDirAndBackfillBoundReachTheServer() {
   FakeHost host;
   StateLog log;
@@ -509,7 +452,6 @@ void TestSocketDirAndBackfillBoundReachTheServer() {
   (void)platform::RunSubprocess({MICROIDE_SERVER_BINARY, "stop", "--socket-dir", socket_dir.string()},
                                 platform::SubprocessOptions{.timeout_ms = 10000});
 
-  // A directory a login shell could read as syntax never reaches the host.
   StateLog bad_log;
   config.server_socket_dir = "/tmp/x; rm -rf ~";
   RemoteHostSession refused(config, bad_log.Listener());
@@ -520,10 +462,6 @@ void TestSocketDirAndBackfillBoundReachTheServer() {
          "naming the setting: " + bad_log.Error());
 }
 
-// Two projects (or windows) reaching one fresh host at once each run the install
-// script. With one shared staging name, one `mv` renamed the other's file away and
-// that install failed -- the project stayed disconnected. Every concurrent install
-// succeeds now, the binary is whole, and no staging file is left behind.
 void TestConcurrentInstallsOnOneHostAllSucceed() {
   TemporaryDirectory home;
   const std::string binary(64 * 1024, 'b');
@@ -562,7 +500,7 @@ void TestConcurrentInstallsOnOneHostAllSucceed() {
   Expect(entries == 1, "no staging file is left behind: " + std::to_string(entries) + " entries");
 }
 
-}  // namespace
+}
 
 void RegisterRemoteHostSessionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostSession/ConcurrentInstallsOnOneHostAllSucceed",
@@ -596,4 +534,4 @@ void RegisterRemoteHostSessionTests(std::vector<TestCase>& tests) {
           TestABrokenServerCommandFailsFastWithAReason);
 }
 
-}  // namespace microide::tests
+}

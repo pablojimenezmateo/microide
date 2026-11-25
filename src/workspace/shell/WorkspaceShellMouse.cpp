@@ -30,8 +30,6 @@ namespace microide::workspace {
 
 bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleMouseButtonDown");
-  // Reassigned past each step that queues damage of its own before a handler
-  // runs, so a handler's fallback answers only to what that handler requested.
   DamageMark mark = MarkDamage();
   if (event.button.button != SDL_BUTTON_LEFT && event.button.button != SDL_BUTTON_MIDDLE &&
       event.button.button != SDL_BUTTON_RIGHT) {
@@ -44,8 +42,6 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
   const WorkspaceLayout layout = *layout_state;
 
-  // (A menu that holds the pointer hides the tooltip and the editor's hover card:
-  // both resolve to nothing under it, and their Chrome units repaint where they were.)
   if (MenuSurfaceCapturingMouse()) {
     UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y), false);
     mark = MarkDamage();
@@ -57,15 +53,6 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
-  // Toasts float above every surface, and until now they were painted and never
-  // hit-tested: a click on one fell straight through to whatever it was covering
-  // (over the editor, that moved the caret). They also auto-expire after four
-  // seconds with no way to get rid of one sooner. A click now dismisses the toast
-  // it lands on and stops there, which is what the card's own bounds imply.
-  //
-  // A click on one of the row's buttons runs that action instead, through the same
-  // executor a menu item uses; the service dismisses a transient row after its
-  // action unless the action keeps it open.
   if (event.button.button == SDL_BUTTON_LEFT && !notification_service_.Empty()) {
     const NotificationsViewModel toasts = RenderViewModelBuilder(context_).BuildNotifications(
         notification_service_, layout.status_bar, text_renderer_);
@@ -100,8 +87,6 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       }
     } else if (visible_hover_popup->kind == EditorHoverTarget::Kind::Diagnostic &&
                primary_action_hit && visible_hover_popup->diagnostic.has_value()) {
-      // Open the code-action menu targeted at the diagnostic's range so the fix
-      // list reflects this diagnostic (there may be several actions).
       const editor::SelectionRange range = visible_hover_popup->diagnostic->range;
       active_editor_hover_target_.reset();
       assist_service_.code_actions().ShowOverlay(nullptr, &range);
@@ -109,7 +94,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       return true;
     }
     context_.current_project_state.surface.focus = FocusTarget::Editor;
-    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });  // a derived surface
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
   UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
@@ -129,7 +114,6 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   return MouseDownOnEditorArea(event, layout, mark);
 }
 
-// The prompts and a single-line field own a press first; past them, no selection or text drag survives one.
 std::optional<bool> WorkspaceShell::MouseDownOnModals(const SDL_Event& event, const WorkspaceLayout& layout,
                                                       DamageMark mark, const std::optional<SDL_FRect>& window_rect) {
   if (context_.prompts.dirty_visible) {
@@ -139,8 +123,6 @@ std::optional<bool> WorkspaceShell::MouseDownOnModals(const SDL_Event& event, co
       if (Contains(buttons[i], event.button.x, event.button.y)) {
         context_.prompts.dirty.selected_action = static_cast<int>(i);
         ConfirmDirtyPrompt();
-        // As the key path: a confirm that leaves the prompt up damaged the saved
-        // tab's pane, not the prompt it re-selected (soak e93ce81f04ac).
         if (context_.prompts.dirty_visible) {
           RequestPreparedFrame();
         } else {
@@ -213,7 +195,6 @@ std::optional<bool> WorkspaceShell::MouseDownOnModals(const SDL_Event& event, co
   return std::nullopt;
 }
 
-// The Settings card, the status bar, the menu bar and window chrome, and the breadcrumb band.
 std::optional<bool> WorkspaceShell::MouseDownOnChrome(const SDL_Event& event, const WorkspaceLayout& layout,
                                                       DamageMark mark) {
   if (HandleSettingsOverlayButtonDown(event, layout)) {
@@ -221,17 +202,6 @@ std::optional<bool> WorkspaceShell::MouseDownOnChrome(const SDL_Event& event, co
     return true;
   }
 
-  // Status bar segments -- after the modals above, which own the pointer: run
-  // ahead of them, a click on "Ln 1, Col 1" under Settings or the unsaved-changes
-  // prompt opened Go to Line behind the modal (QA flow wb-help).
-  //
-  // The bar advertised actions it could not perform: every
-  // segment carried an imperative tooltip ("Go to Line", "Open Problems", "Open
-  // Source Control"), and `clickable` existed to drive a pointer cursor and a
-  // hover highlight -- but no mouse-down path ever looked at the status bar, and
-  // no segment ever set the flag. Reported from use as "I can see menus but I
-  // cannot click them". The command now travels on the segment, so the affordance
-  // and the action come from one field.
   if (event.button.button == SDL_BUTTON_LEFT &&
       Contains(layout.status_bar, static_cast<float>(event.button.x),
                static_cast<float>(event.button.y))) {
@@ -248,8 +218,6 @@ std::optional<bool> WorkspaceShell::MouseDownOnChrome(const SDL_Event& event, co
             hit_rect = rect;
           }
         });
-    // A segment that opens a menu anchors it at itself: the popup flips above the
-    // bar, there being no room below (the remote segment's Remote menu).
     if (hit != nullptr && hit->menu != MenuId::None) {
       MakeMenuCoordinator().OpenAnchoredMenu(hit->menu, hit_rect);
       EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
@@ -271,8 +239,6 @@ std::optional<bool> WorkspaceShell::MouseDownOnChrome(const SDL_Event& event, co
 
 
   if (MakeChromeMouseCoordinator().HandleButtonDown(event, layout)) {
-    // A menu this opened hides the tooltip and the hover card under it: their
-    // Chrome units repaint where they were in the frame.
     EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     if (MenuSurfaceCapturingMouse()) {
       UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y), false);
@@ -280,7 +246,6 @@ std::optional<bool> WorkspaceShell::MouseDownOnChrome(const SDL_Event& event, co
     return true;
   }
 
-  // A plugin breadcrumb status item with a bound command dispatches it on click.
   if (event.button.button == SDL_BUTTON_LEFT && !MenuSurfaceCapturingMouse()) {
     for (const VisibleStatusItem& status_item : ComputeVisibleStatusItems(layout.breadcrumb)) {
       if (!status_item.item.command.empty() &&
@@ -293,8 +258,6 @@ std::optional<bool> WorkspaceShell::MouseDownOnChrome(const SDL_Event& event, co
     }
   }
 
-  // A breadcrumb segment opens its folder's entries as a pick, as VS Code's do
-  // (TD-2026-10-18-361): a folder segment that folder, the file segment its own.
   if (event.button.button == SDL_BUTTON_LEFT && !MenuSurfaceCapturingMouse()) {
     const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
     for (std::size_t gi = 0; gi < group_rects.groups.size() && gi < context_.current_project_state.editor_groups.size();
@@ -309,7 +272,7 @@ std::optional<bool> WorkspaceShell::MouseDownOnChrome(const SDL_Event& event, co
           band, ComputeVisibleStatusItems(layout.breadcrumb),
           [](const VisibleStatusItem& item) { return item.item.alignment == StatusAlignment::Left; });
       std::string_view label = BreadcrumbLabel(gi);
-      label = label.substr(0, label.find("  |  "));  // a diff's "path  |  left -> right"
+      label = label.substr(0, label.find("  |  "));
       const std::optional<std::string> folder =
           BreadcrumbFolderAt(label, text_x, static_cast<float>(event.button.x),
                              [this](std::string_view prefix) { return text_renderer_.MeasureWidth(prefix); });
@@ -325,10 +288,6 @@ std::optional<bool> WorkspaceShell::MouseDownOnChrome(const SDL_Event& event, co
   }
 
   if (event.button.button == SDL_BUTTON_LEFT) {
-    // A plugin code-lens click dispatches its bound command. Checked before the
-    // blame overlay (both anchor at end-of-line) so the actionable lens wins.
-    // With `plugins.code_lens_above` the lens renders as an inset strip above its
-    // line, so its click geometry comes from the gap layout instead of the EOL one.
     const bool code_lens_above = SettingFlagEnabled(GetSettingValue("plugins.code_lens_above"));
     const auto lens = code_lens_above ? AboveLensAtPosition(static_cast<float>(event.button.x),
                                                             static_cast<float>(event.button.y))
@@ -336,9 +295,6 @@ std::optional<bool> WorkspaceShell::MouseDownOnChrome(const SDL_Event& event, co
                                                            static_cast<float>(event.button.y));
     if (lens.has_value()) {
       context_.current_project_state.surface.focus = FocusTarget::Editor;
-      // A non-zero payload belongs to the publisher (an LSP lens carries a server
-      // command plus JSON arguments, which no command name can express); anything
-      // else dispatches through the host command registry as before.
       if (lens->payload != 0) {
         lsp_service_.ActivateCodeLens(lens->payload);
       } else {
@@ -351,20 +307,15 @@ std::optional<bool> WorkspaceShell::MouseDownOnChrome(const SDL_Event& event, co
     if (editor_blame_overlay_service_.LineAtPosition(static_cast<float>(event.button.x),
                                                      static_cast<float>(event.button.y)) != nullptr) {
       context_.current_project_state.surface.focus = FocusTarget::Editor;
-      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });  // a derived surface
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
   }
   return std::nullopt;
 }
 
-// The resize dividers, then the debug pane, the sidebar and the bottom panel.
 std::optional<bool> WorkspaceShell::MouseDownOnDividersAndPanels(const SDL_Event& event, const WorkspaceLayout& layout,
                                                                  DamageMark mark) {
-  // Every resize divider answers a double-click by restoring its default size, the
-  // way a window-manager sash does (and VS Code). One rule for all four dividers:
-  // sidebar, right pane, editor split, bottom panel (the last lives in
-  // PanelMouseCoordinator::HandleResizeButtonDown with the rest of its geometry).
   const bool divider_reset_click = event.button.clicks >= 2;
 
   if (event.button.button == SDL_BUTTON_LEFT && context_.current_project_state.sidebar.visible &&
@@ -385,8 +336,6 @@ std::optional<bool> WorkspaceShell::MouseDownOnDividersAndPanels(const SDL_Event
       Contains(RightPaneResizeHitRect(layout), event.button.x, event.button.y)) {
     if (divider_reset_click) {
       const float window_width = CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 0.0f;
-      // The sidebar as laid out: the stored width is a preference the window
-      // may not have room for.
       const float resolved_sidebar_width = context_.current_project_state.sidebar.visible
                                                ? layout.sidebar.w
                                                : 0.0f;
@@ -401,13 +350,9 @@ std::optional<bool> WorkspaceShell::MouseDownOnDividersAndPanels(const SDL_Event
     return true;
   }
 
-  // Editor-group split divider: grab it to resize the two panes it separates.
   if (event.button.button == SDL_BUTTON_LEFT) {
     for (const EditorSplitDividerRect& divider :
          ComputeEditorGroupRectsForState(layout).dividers) {
-      // Grab region == cursor region: the resize cursor is shown over divider.rect
-      // exactly (see CursorKindForPosition), so the drag starts in the same span and
-      // does not extend past where the cursor changes.
       if (Contains(divider.rect, event.button.x, event.button.y)) {
         if (divider_reset_click) {
           context_.current_project_state.editor_split.ResetDivider(divider.node,
@@ -432,9 +377,6 @@ std::optional<bool> WorkspaceShell::MouseDownOnDividersAndPanels(const SDL_Event
 
   if (const float height_before = context_.current_project_state.panel.height;
       MakePanelMouseCoordinator().HandleResizeButtonDown(event, layout)) {
-    // A double-click resets the height: the editor column grows or shrinks with
-    // it, so it is a layout change, not a panel repaint -- the region between the
-    // old and the new panel top kept the old panel header (QA monkey, seed 5).
     if (context_.current_project_state.panel.height != height_before) {
       RequestBottomPanelLayoutChangeRedraw(layout);
       return true;
@@ -463,12 +405,8 @@ std::optional<bool> WorkspaceShell::MouseDownOnDividersAndPanels(const SDL_Event
   return std::nullopt;
 }
 
-// A right-click that opens a context menu: the breakpoint gutter's or the editor's.
 std::optional<bool> WorkspaceShell::MouseDownOpensContextMenu(const SDL_Event& event, const WorkspaceLayout& layout,
                                                               DamageMark mark) {
-  // Breakpoint gutter right-click opens the breakpoint context menu (Phase 6),
-  // taking precedence over the editor context menu. Declines (returns false)
-  // for any non-gutter right-click, so the editor context menu still works.
   if (event.button.button == SDL_BUTTON_RIGHT && ActiveTabIsEditor() &&
       Contains(layout.editor_surface, event.button.x, event.button.y)) {
     SyncActiveEditorTab();
@@ -501,9 +439,6 @@ std::optional<bool> WorkspaceShell::MouseDownOpensContextMenu(const SDL_Event& e
         return false;
       }
 
-      // Right-clicking a split group focuses it first (like left-click) so the
-      // context menu and the retargeted caret act on the clicked group, not the
-      // previously-focused one.
       auto& project_state = context_.current_project_state;
       if (pane_it->group_index != project_state.focused_group_index &&
           pane_it->group_index < project_state.editor_groups.size()) {
@@ -516,24 +451,15 @@ std::optional<bool> WorkspaceShell::MouseDownOpensContextMenu(const SDL_Event& e
         return false;
       }
 
-      // On the grid the last frame painted, sticky band included: without it a
-      // right-click under pinned headers moved the caret the band's height below
-      // the line clicked.
       const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
           editor_text_renderer_, *viewport, pane_it->rect, viewport->sticky_band_rows(),
           LineNumbersEnabled());
       viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
 
-      // The same pointer-to-caret mapping as the left click (screen-relative
-      // column, inlay-hint and inset gaps undone).
       const auto [visual_row, hit_column, hit] = ResolveEditorPointerHit(
           context_.current_project_state, *viewport, metrics, editor_text_renderer_,
           event.button.x, event.button.y,
           [this](std::string_view id) { return GetSettingValue(id); });
-      // A right-click inside a selection keeps it (and every other caret's), so
-      // the menu's Cut and Copy act on what was selected; collapsing it here made
-      // Cut take the whole line instead (empty-selection cut). Outside, the caret
-      // moves to the pointer as before.
       if (viewport->AnySelectionContains(hit)) {
         return false;
       }
@@ -554,16 +480,12 @@ std::optional<bool> WorkspaceShell::MouseDownOpensContextMenu(const SDL_Event& e
   return std::nullopt;
 }
 
-// The editor area: a pane's focus, a compare or merge in front, the debug toolbar, the home surface, the editor.
 bool WorkspaceShell::MouseDownOnEditorArea(const SDL_Event& event, const WorkspaceLayout& layout, DamageMark mark) {
   if (!Contains(layout.editor_surface, event.button.x, event.button.y) ||
       (event.button.button != SDL_BUTTON_LEFT && event.button.button != SDL_BUTTON_MIDDLE)) {
     return false;
   }
 
-  // A click into another pane whose tab in front is a diff or a merge focuses that
-  // pane first, as a click into an editor pane does (the editor coordinator does
-  // that for its own); the diff then takes the click against its own surface.
   if (EditorGroupCount() > 1) {
     const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
     const auto& groups = context_.current_project_state.editor_groups;
@@ -585,7 +507,7 @@ bool WorkspaceShell::MouseDownOnEditorArea(const SDL_Event& event, const Workspa
   if (ActiveTabIsCompare() && in_view_surface) {
     const bool handled = MakeCompareMouseCoordinator().HandleButtonDown(event, view_surface);
     if (handled) {
-      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });  // a derived surface
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     }
     return handled;
   }
@@ -593,22 +515,16 @@ bool WorkspaceShell::MouseDownOnEditorArea(const SDL_Event& event, const Workspa
   if (ActiveTabIsMerge() && in_view_surface) {
     const bool handled = MakeMergeMouseCoordinator().HandleButtonDown(event, view_surface);
     if (handled) {
-      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });  // a derived surface
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     }
     return handled;
   }
 
-  // Floating debug control bar sits over the top-right of the editor; intercept
-  // its clicks before the editor coordinator turns them into text selection.
   if (HandleDebugToolbarButtonDown(event, layout)) {
     EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
-  // Welcome home surface: a placeholder editor shows clickable recent projects/files plus
-  // primary-action buttons (open folder, or new/open/find when a project is open).
-  // Intercept those clicks before the editor coordinator turns them into a text-selection
-  // drag on the empty buffer.
   if (event.button.button == SDL_BUTTON_LEFT) {
     const editor::WelcomeViewModel* welcome_model = nullptr;
     const editor::WelcomeLayout* welcome_layout = nullptr;
@@ -625,11 +541,8 @@ bool WorkspaceShell::MouseDownOnEditorArea(const SDL_Event& event, const Workspa
         switch (region.kind) {
           case editor::WelcomeHitRegion::Kind::RecentProject:
             if (region.recent_index < welcome_model->recent_projects.size()) {
-              // Copied, not referenced: opening changes the project root, which
-              // is part of the memo key `welcome_model` points into.
               const editor::WelcomeRecent recent = welcome_model->recent_projects[region.recent_index];
               if (!recent.remote_folder.empty()) {
-                // By its host and folder, so a mirror deleted since is made again.
                 ActionCoordinator(MakeActionContext())
                     .Execute(ActionId::RemoteOpenFolder, {recent.remote_folder}, ActionSource::Menu);
               } else {
@@ -645,8 +558,6 @@ bool WorkspaceShell::MouseDownOnEditorArea(const SDL_Event& event, const Workspa
             break;
           case editor::WelcomeHitRegion::Kind::RecentFile:
             if (region.recent_index < welcome_model->recent_files.size()) {
-              // Copied for the same reason as RecentProject above: opening a file
-              // records it in the MRU, bumping the revision the memo is keyed on.
               const std::filesystem::path file =
                   welcome_model->recent_files[region.recent_index].path;
               OpenFile(file);
@@ -675,19 +586,13 @@ bool WorkspaceShell::MouseDownOnEditorArea(const SDL_Event& event, const Workspa
   util::PerformanceTrace::Scope editor_scope("WorkspaceShell::HandleMouseButtonDown::Editor");
   const bool handled = MakeEditorMouseCoordinator().HandleButtonDown(event, layout);
   if (handled) {
-    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });  // a derived surface
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
   }
   return handled;
 }
 
 namespace {
 
-// The welcome surface's laid-out hit regions, memoized on everything they can
-// vary with. `ProbeWelcomeSurface` runs from `CursorKindForPosition`, i.e. once
-// per mouse-motion event, and the surface is static between MRU changes and
-// resizes -- so without this every pixel of pointer travel over the empty-editor
-// home screen rebuilt the whole layout to answer "pointer or I-beam?".
-// BuildWelcomeView carries the matching memo for the model itself.
 thread_local struct WelcomeProbeLayoutCache {
   bool valid = false;
   std::uint64_t recents_instance = 0;
@@ -699,7 +604,7 @@ thread_local struct WelcomeProbeLayoutCache {
   editor::WelcomeLayout layout;
 } g_welcome_probe_layout_cache;
 
-}  // namespace
+}
 
 bool WorkspaceShell::ProbeWelcomeSurface(const editor::WelcomeViewModel** model_out,
                                          const editor::WelcomeLayout** layout_out) const {
@@ -714,13 +619,7 @@ bool WorkspaceShell::ProbeWelcomeSurface(const editor::WelcomeViewModel** model_
   if (!layout.has_value()) {
     return false;
   }
-  // Borrowed from a builder-owned memo; valid until the next BuildWelcomeView on
-  // this thread. Callers that act on a row (opening a project or a file) must
-  // copy the path out first -- acting on it changes the root the memo is keyed
-  // on, which rebuilds the model the reference points into.
   const editor::WelcomeViewModel& model = RenderViewModelBuilder(context_).BuildWelcomeView(recents_service_);
-  // The focused pane, as paint lays the welcome page out in it: in a split, the
-  // column's rect put every hit region somewhere the page is not drawn.
   SDL_FRect surface = layout->editor_surface;
   for (const EditorPaneLayout& pane : ComputeEditorPaneLayouts(*layout)) {
     if (pane.active) {
@@ -761,9 +660,6 @@ void WorkspaceShell::AbandonPointerGestures() {
     terminal->mouse_selecting = false;
   }
   (void)MakeSidebarMouseCoordinator().CancelPathDrag();
-  // A tab drag is a drag too: left lifted, its ghost stayed pinned to a pointer
-  // that was no longer sending us anything, and its auto-scroll kept the
-  // animation tick awake.
   (void)MakeTabMouseCoordinator().CancelDrag();
 }
 
@@ -773,11 +669,6 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   const DamageMark mark = MarkDamage();
 
   if (context_.prompts.dirty_visible || context_.prompts.surface_visible) {
-    // The prompt owns the pointer, but this release still ends whatever the press
-    // began -- a prompt that opened mid-drag (Ctrl+W on an unsaved file, the button
-    // still down) left the drag in flight with no button down, and the selection
-    // autoscroll kept replaying it, extending the selection to the end of the file
-    // behind the prompt. Abandoned rather than finished: nothing drops under a modal.
     if (event.button.button == SDL_BUTTON_LEFT) {
       AbandonPointerGestures();
     }
@@ -785,8 +676,6 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
     return true;
   }
 
-  // The tree drag's release: the drop, or the click a press on a row deferred
-  // (the row opens). Ctrl copies what a folder drop would move, as in VS Code.
   if (event.button.button == SDL_BUTTON_LEFT && context_.interaction_state.path_drag.armed) {
     (void)MakeSidebarMouseCoordinator().FinishPathDrag((context_.interaction_state.key_modifiers & SDL_KMOD_CTRL) != 0);
     EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
@@ -810,11 +699,6 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   if (event.button.button != SDL_BUTTON_LEFT) {
     return false;
   }
-  // All three Settings-overlay scrollbars release the same way. The picker bar
-  // used to be missing here and fell through to the generic drag-release below,
-  // which repaints the whole window — the two named bars got the targeted overlay
-  // repaint. ClearDragState (rather than assigning drag_target) also drops the
-  // grab offset, which is what every other scrollbar release does.
   if (context_.interaction_state.drag_target == DragTarget::SettingsScrollbar ||
       context_.interaction_state.drag_target == DragTarget::SettingsCategoryScrollbar ||
       context_.interaction_state.drag_target == DragTarget::SettingsPickerScrollbar) {
@@ -841,10 +725,6 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
     return true;
   }
   const bool was_selecting = context_.interaction_state.mouse_selecting;
-  // A selection drag-and-drop resolves here, BEFORE mouse_selecting is cleared:
-  // the release is where a press inside a selection finally becomes either a
-  // move or the click it deferred (TD-2026-08-13-204). Ctrl at release copies
-  // instead of moving, as in VS Code.
   const bool finished_text_drag = MakeEditorMouseCoordinator().FinishTextDrag(
       (context_.interaction_state.key_modifiers & SDL_KMOD_CTRL) != 0);
   context_.interaction_state.mouse_selecting = false;
@@ -852,7 +732,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   selection_autoscroll::Disarm(context_.interaction_state);
   if (was_selecting) {
     SyncPrimarySelectionWithActiveEditor();
-    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });  // a derived surface
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
   }
   return was_selecting || finished_text_drag;
 }
@@ -869,7 +749,6 @@ std::optional<editor::CodeLensDecoration> WorkspaceShell::AboveLensAtPosition(fl
   }
   const WorkspaceLayout layout = *layout_state;
 
-  // No plugin/LSP contribution: no above-line code lenses can exist.
   const auto* pres = context_.current_project_state.plugin_presentation_if_present();
   if (pres == nullptr) {
     return std::nullopt;
@@ -879,7 +758,6 @@ std::optional<editor::CodeLensDecoration> WorkspaceShell::AboveLensAtPosition(fl
     if (viewport.is_placeholder() || viewport.path().empty() || viewport.dirty()) {
       return std::nullopt;
     }
-    // The painted grid, sticky band included (a lens under pinned headers).
     const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
         editor_text_renderer_, viewport, rect, viewport.sticky_band_rows(), LineNumbersEnabled());
     const editor::InsetGapOptions options{.inline_surfaces = inline_surfaces,
@@ -912,4 +790,4 @@ std::optional<editor::CodeLensDecoration> WorkspaceShell::AboveLensAtPosition(fl
   return std::nullopt;
 }
 
-}  // namespace microide::workspace
+}

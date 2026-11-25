@@ -10,8 +10,6 @@ namespace microide::workspace {
 
 namespace {
 
-// Whether a project's saved session holds work that exists nowhere else: a dirty
-// buffer's snapshot. A project whose folder is gone is kept for that alone.
 bool SessionHoldsUnsavedWork(const PersistenceService& persistence, const std::filesystem::path& root) {
   PersistedProjectSessionState session;
   if (!persistence.LoadProjectSession(ProjectStateDirectory(root) / "session", &session)) {
@@ -23,7 +21,7 @@ bool SessionHoldsUnsavedWork(const PersistenceService& persistence, const std::f
   });
 }
 
-}  // namespace
+}
 
 std::filesystem::path PersistenceCoordinator::WorkspaceSessionStatePath() const {
   const std::filesystem::path state_root =
@@ -48,8 +46,6 @@ bool PersistenceCoordinator::RestoreWorkspaceSession() {
   context_.project_catalog.tab_scroll_index = 0;
   util::InvokeIfSet(operations_.restore_host_view_collapsed, persisted_session.host_view_collapsed);
 
-  // The identity records when the file has them; a file written before them names
-  // its projects by path alone, and each is named here as a typed path would be.
   const bool from_ids = !persisted_session.projects.empty();
   const std::size_t project_count =
       from_ids ? persisted_session.projects.size() : persisted_session.project_roots.size();
@@ -58,14 +54,8 @@ bool PersistenceCoordinator::RestoreWorkspaceSession() {
     return true;
   }
 
-  // `active_project_index` indexes the ORIGINAL list. Roots that no longer exist on
-  // disk are culled below, which shifts every surviving entry's index down — so the
-  // saved active index must be remapped, not just clamped, or a missing project
-  // positioned before the active one activates the wrong project.
   std::size_t restored_active_index = 0;
   for (std::size_t original_index = 0; original_index < project_count; ++original_index) {
-    // The catalog entry is created here, so its id is fixed here: a remote project
-    // is remote (and labelled as one) before it is ever activated.
     project::ProjectId id;
     std::filesystem::path normalized_root;
     if (!from_ids) {
@@ -84,10 +74,6 @@ bool PersistenceCoordinator::RestoreWorkspaceSession() {
     bool root_missing = false;
     if (normalized_root.empty() || !std::filesystem::exists(normalized_root, error) || error ||
         !std::filesystem::is_directory(normalized_root, error)) {
-      // A local project whose folder is gone (a branch switch deleted it, a drive
-      // is not mounted) is culled -- unless its session holds unsaved buffers,
-      // which exist nowhere else: culling it lost them with no way back (soak
-      // 5508be921fb2). It is kept, marked missing, and opens with them.
       if (normalized_root.empty() || id.IsRemote() ||
           !SessionHoldsUnsavedWork(*operations_.persistence_service, normalized_root)) {
         continue;
@@ -102,10 +88,6 @@ bool PersistenceCoordinator::RestoreWorkspaceSession() {
     if (operations_.persistence_service != nullptr) {
       HydrateProjectBaseColorFromConfig(*project_state, *operations_.persistence_service);
     }
-    // Track the surviving entry that best matches the saved active index: the one
-    // with the greatest original index at or before it. If the active root itself
-    // survived, this is its exact entry; if it was culled, we fall back to the
-    // nearest surviving predecessor (or the first entry when none precede it).
     if (original_index <= persisted_session.active_project_index) {
       restored_active_index = context_.project_catalog.entries.size();
     }
@@ -135,10 +117,6 @@ void PersistenceCoordinator::SaveWorkspaceSession() const {
   PersistedWorkspaceSessionState persisted_session;
   persisted_session.projects.reserve(context_.project_catalog.entries.size());
   persisted_session.project_roots.reserve(context_.project_catalog.entries.size());
-  // Emit active_project_index in the SAME (filtered) index space as project_roots:
-  // empty-root entries are skipped below, so an entries-space index would diverge if
-  // one ever preceded the active project. Record the filtered slot of the surviving
-  // entry at or before the active entry (mirrors RestoreWorkspaceSession's remap).
   const std::size_t active_entry =
       context_.project_catalog.entries.empty()
           ? 0
@@ -155,9 +133,6 @@ void PersistenceCoordinator::SaveWorkspaceSession() const {
     if (i <= active_entry) {
       active_filtered_index = persisted_session.project_roots.size();
     }
-    // Both lists, parallel: the identity, and its root for an older build.
-    // An entry with a root and no id is a plain folder (ProjectWorkspaceState's
-    // default): written as one, so the two lists never differ in length.
     const project::ProjectId& id = context_.ProjectCatalogId(i);
     persisted_session.projects.push_back(
         id.empty() ? project::ProjectId::ForLocal(project_root.lexically_normal()) : id);
@@ -170,4 +145,4 @@ void PersistenceCoordinator::SaveWorkspaceSession() const {
   operations_.persistence_service->SaveWorkspaceSession(session_path, persisted_session);
 }
 
-}  // namespace microide::workspace
+}

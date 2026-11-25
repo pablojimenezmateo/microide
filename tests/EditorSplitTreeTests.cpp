@@ -42,8 +42,6 @@ void TestEditorSplitTreeRandomEditsKeepItWellFormed() {
         Expect(fresh == EditorSplitTree::kNoLeaf, "a full grid refuses a split: " + context);
         Expect(tree.Flatten() == record_before, "and is left untouched: " + context);
       } else {
-        // The new pane sits directly before or after the one that was split, so
-        // the caller's parallel group vector inserts at exactly that index.
         Expect(fresh == (before ? leaf : leaf + 1),
                "the new pane's ordinal is next to the split pane: " + context);
       }
@@ -68,13 +66,12 @@ void TestEditorSplitTreeRandomEditsKeepItWellFormed() {
         Expect(tree.leaf_count() == count, "a move keeps the pane count: " + context);
       }
     } else {
-      // Drag a divider on some branch.
       for (std::uint8_t node = 0; node < tree.node_count(); ++node) {
         if (tree.node(node).leaf()) {
           continue;
         }
         const std::size_t boundary = next(tree.node(node).children.size() - 1);
-        const float share = static_cast<float>(next(1000)) / 500.0f - 0.5f;  // [-0.5, 1.5)
+        const float share = static_cast<float>(next(1000)) / 500.0f - 0.5f;
         Expect(tree.ResizeDivider(node, boundary, share), "a live divider resizes: " + context);
         break;
       }
@@ -83,9 +80,6 @@ void TestEditorSplitTreeRandomEditsKeepItWellFormed() {
   }
 }
 
-// The two reject paths of Load: a malformed record leaves a single leaf behind
-// (so a corrupt session can never produce a layout with no pane for a group),
-// and a well-formed one is taken as-is.
 void TestEditorSplitTreeLoadRejectsMalformedRecords() {
   using Record = microide::workspace::EditorSplitTreeRecord;
   using Entry = microide::workspace::EditorSplitNodeRecord;
@@ -127,7 +121,7 @@ void TestEditorSplitTreeLoadRejectsMalformedRecords() {
   Expect(std::abs(tree.node(0).weights[0] - 0.5f) < 1e-5f, "weights are normalised on load");
 }
 
-}  // namespace
+}
 
 void RegisterEditorSplitTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorSplitTree/RandomEditsKeepItWellFormed",
@@ -136,4 +130,4 @@ void RegisterEditorSplitTreeTests(std::vector<TestCase>& tests) {
           TestEditorSplitTreeLoadRejectsMalformedRecords);
 }
 
-}  // namespace microide::tests
+}

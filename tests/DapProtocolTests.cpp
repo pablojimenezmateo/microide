@@ -20,32 +20,10 @@ using microide::util::SerializeJson;
 namespace util = microide::util;
 namespace codec = microide::workspace::dap_protocol;
 
-// Property: framing is independent of how the stream is CHOPPED, and a bad frame
-// resyncs rather than desyncs.
-//
-// This codec is fed by a socket read loop, so the byte boundaries it sees are
-// whatever the kernel handed over — a header split across two reads, a body
-// split mid-way, several whole messages in one chunk. The existing tests append
-// well-formed inputs in convenient pieces. The property that actually protects
-// the two clients is stronger and is the reason the codec is a value type at all:
-// for ANY chunking of the same byte stream, `Next()` must yield exactly the same
-// sequence of messages.
-//
-// The second property is the one the comments in the header care about: a frame
-// the codec refuses (oversized, malformed header) must leave the stream aligned
-// so the NEXT well-formed message is still delivered. A desync there tears down a
-// live language server or debug adapter.
-
 std::string FramedMessage(const std::string& body) {
   return "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
 }
 
-// Drains exactly the way the shared transport does. `Next()` returning nullopt is
-// OVERLOADED: it means either "no complete frame yet" or "a frame was consumed
-// that could not be surfaced" (oversized, malformed header, non-JSON body). Only
-// the buffered-byte count separates them, so a loop that stops at the first
-// nullopt stalls behind a bad frame instead of resyncing past it — which is the
-// behaviour these tests are here to pin.
 std::vector<std::string> DrainFramer(microide::workspace::JsonRpcMessageFramer& framer) {
   std::vector<std::string> out;
   while (true) {
@@ -68,9 +46,6 @@ void TestFramingIsIndependentOfChunkBoundaries() {
   };
 
   for (int iteration = 0; iteration < 200; ++iteration) {
-    // A stream of a few messages, with bodies whose length spans the header's
-    // digit boundaries and whose content includes the bytes that look like
-    // framing (CR, LF, "Content-Length:") so a length-ignoring scan would break.
     std::vector<std::string> bodies;
     std::string stream;
     const std::size_t message_count = 1 + next() % 4;
@@ -88,14 +63,12 @@ void TestFramingIsIndependentOfChunkBoundaries() {
       stream += FramedMessage(body);
     }
 
-    // Reference: the whole stream in one chunk.
     microide::workspace::JsonRpcMessageFramer whole;
     whole.Append(stream);
     const std::vector<std::string> expected = DrainFramer(whole);
     Expect(expected.size() == bodies.size(),
            "one chunk must yield exactly the messages that were written");
 
-    // Same bytes, arbitrary chunking — including one byte at a time.
     for (int trial = 0; trial < 4; ++trial) {
       microide::workspace::JsonRpcMessageFramer chopped;
       std::vector<std::string> got;
@@ -115,11 +88,6 @@ void TestFramingIsIndependentOfChunkBoundaries() {
   }
 }
 
-// A lone UTF-16 surrogate escape is decoded as U+FFFD, not a parse failure. A
-// failed parse drops the whole JSON-RPC message, so a Node-based language server
-// (whose JSON.stringify escapes a lone surrogate as `\udXXX`) that put one in a
-// hover or a single completion item lost the entire response. The decoded text
-// stays valid UTF-8, and a real pair still decodes to its code point.
 void TestFramerKeepsAMessageWithALoneSurrogate() {
   microide::workspace::JsonRpcMessageFramer framer;
   framer.Append(FramedMessage(R"({"id":7,"result":"a\ud800b\udc00c\ud83d\ude00\ud83d\u0041"})"));
@@ -136,7 +104,6 @@ void TestFramerKeepsAMessageWithALoneSurrogate() {
 void TestFramerResyncsAfterABadFrame() {
   const std::string good = FramedMessage(R"({"jsonrpc":"2.0","id":1})");
 
-  // An oversized frame is skipped whole; the message after it must still arrive.
   {
     microide::workspace::JsonRpcMessageFramer framer;
     framer.max_message_bytes = 64;
@@ -147,7 +114,6 @@ void TestFramerResyncsAfterABadFrame() {
     Expect(got.size() == 1, "an oversized frame must be skipped, not desync the stream");
   }
 
-  // Garbage header lines are skipped for resync.
   {
     microide::workspace::JsonRpcMessageFramer framer;
     framer.Append("not a header\r\nalso not a header\r\n");
@@ -156,7 +122,6 @@ void TestFramerResyncsAfterABadFrame() {
     Expect(got.size() == 1, "header garbage must be skipped, not desync the stream");
   }
 
-  // A Content-Length that is not a number must not be believed.
   {
     microide::workspace::JsonRpcMessageFramer framer;
     framer.Append("Content-Length: not-a-number\r\n\r\n");
@@ -165,7 +130,6 @@ void TestFramerResyncsAfterABadFrame() {
     Expect(got.size() == 1, "a non-numeric Content-Length must not desync the stream");
   }
 
-  // A body that is not JSON is dropped, and the next frame still arrives.
   {
     microide::workspace::JsonRpcMessageFramer framer;
     framer.Append(FramedMessage("{not json"));
@@ -188,7 +152,6 @@ void TestDapProtocolEncodesRequestEnvelope() {
   Expect(request["command"].AsString() == "setBreakpoints", "request command set");
   Expect(request["arguments"]["source"]["path"].AsString() == "a.c", "arguments forwarded verbatim");
 
-  // Null arguments are omitted entirely.
   const JsonValue no_args = codec::MakeRequest(8, "threads", JsonValue(nullptr));
   Expect(!no_args.HasKey("arguments"), "null arguments omitted");
 }
@@ -237,7 +200,6 @@ void TestDapProtocolParsesCapabilities() {
   Expect(caps.supports_log_points, "logpoints capability");
   Expect(caps.supports_restart_request, "restart-request capability (Phase 7)");
   Expect(caps.supports_step_back, "step-back capability (reverse execution)");
-  // Exception filters parse with ids/labels/defaults (Phase 7).
   Expect(caps.exception_filters.size() == 2, "both advertised exception filters parse");
   Expect(caps.exception_filters[0].filter == "raised" &&
              caps.exception_filters[0].label == "Raised Exceptions" &&
@@ -245,15 +207,10 @@ void TestDapProtocolParsesCapabilities() {
          "first filter id/label/default parse");
   Expect(caps.exception_filters[1].default_enabled && caps.exception_filters[1].supports_condition,
          "second filter's default + supportsCondition parse");
-  // Absent flags default to false.
   Expect(!caps.supports_function_breakpoints, "absent capability defaults to false");
 }
 
 void TestDapProtocolMergesPartialCapabilities() {
-  // The DAP `capabilities` event carries a *partial* Capabilities object. A merge
-  // must flip only the stated fields and preserve everything initialize advertised —
-  // re-running ParseCapabilities would reset the absent flags to false. This is the
-  // gdb-under-rr/record case: it turns supportsStepBack on after initialize.
   codec::DapCapabilities caps = codec::ParseCapabilities(
       Json(R"({"supportsConfigurationDoneRequest":true,"supportsSetVariable":true,
           "exceptionBreakpointFilters":[{"filter":"raised","label":"Raised"}]})"));
@@ -267,10 +224,8 @@ void TestDapProtocolMergesPartialCapabilities() {
   Expect(caps.exception_filters.size() == 1,
          "partial merge preserves exception filters it does not restate");
 
-  // An explicit false in the body turns a flag back off.
   codec::MergeCapabilities(caps, Json(R"({"supportsStepBack":false})"));
   Expect(!caps.supports_step_back, "explicit false in the body turns step-back off");
-  // Restating the filter array replaces it wholesale.
   codec::MergeCapabilities(
       caps, Json(R"({"exceptionBreakpointFilters":[{"filter":"a","label":"A"},
           {"filter":"b","label":"B"}]})"));
@@ -287,9 +242,6 @@ void TestDapProtocolParsesStoppedEvent() {
   Expect(stopped.hit_breakpoint_ids.size() == 2 && stopped.hit_breakpoint_ids[1] == 5,
          "hit breakpoint ids parsed");
 
-  // J9: threadId is optional on `stopped`. When the adapter omits it (e.g. an
-  // all-threads-stopped halt) the id must be UNSET, never defaulted to 0 — the
-  // session resolves a real thread rather than requesting threadId:0.
   const codec::DapStoppedEvent no_thread =
       codec::ParseStoppedEvent(Json(R"({"reason":"pause","allThreadsStopped":true})"));
   Expect(!no_thread.thread_id.has_value(),
@@ -297,8 +249,6 @@ void TestDapProtocolParsesStoppedEvent() {
   Expect(no_thread.all_threads_stopped, "allThreadsStopped still parses without a threadId");
 }
 
-// E4: a `continued` event distinguishes a full resume (allThreadsContinued=true)
-// from a single-thread continue, and keeps threadId optional (unset, not 0).
 void TestDapProtocolParsesContinuedEvent() {
   const codec::DapContinuedEvent full = codec::ParseContinuedEvent(
       Json(R"({"threadId":3,"allThreadsContinued":true})"));
@@ -310,7 +260,6 @@ void TestDapProtocolParsesContinuedEvent() {
   Expect(partial.thread_id.has_value() && *partial.thread_id == 2, "partial continued thread id");
   Expect(!partial.all_threads_continued, "allThreadsContinued=false is a single-thread continue");
 
-  // Missing allThreadsContinued is treated as NOT-all (conservative).
   const codec::DapContinuedEvent bare = codec::ParseContinuedEvent(Json(R"({"threadId":5})"));
   Expect(bare.thread_id.has_value() && *bare.thread_id == 5, "bare continued thread id");
   Expect(!bare.all_threads_continued, "absent allThreadsContinued defaults to single-thread");
@@ -320,26 +269,20 @@ void TestDapProtocolParsesContinuedEvent() {
          "continued from a null body → unset thread, not-all");
 }
 
-// J26: protocol numeric fields narrow to `int` deterministically. An out-of-int-
-// range id/position must clamp to the nearest int bound, never wrap to an
-// unrelated small/negative value.
 void TestDapProtocolClampsOutOfRangeInts() {
   constexpr std::int64_t kIntMax = 2147483647;
   constexpr std::int64_t kIntMin = -2147483647 - 1;
 
-  // INT_MAX + 1 and INT64_MAX both clamp to INT_MAX (stay large + positive).
   const codec::DapStackFrame over = codec::ParseStackFrame(
       Json(R"({"id":2147483648,"line":9223372036854775807,"column":1})"));
   Expect(over.id == static_cast<int>(kIntMax),
          "a frame id of INT_MAX+1 clamps to INT_MAX (no wrap to negative)");
   Expect(over.line == static_cast<int>(kIntMax), "a line of INT64_MAX clamps to INT_MAX");
 
-  // A huge NEGATIVE id clamps to INT_MIN (stays negative, does not wrap positive).
   const codec::DapStackFrame under =
       codec::ParseStackFrame(Json(R"({"id":-9223372036854775808,"line":1,"column":1})"));
   Expect(under.id == static_cast<int>(kIntMin), "a huge negative id clamps to INT_MIN");
 
-  // An in-range value round-trips unchanged.
   const codec::DapThread thread = codec::ParseThread(Json(R"({"id":123456,"name":"t"})"));
   Expect(thread.id == 123456, "an in-range id is preserved");
 }
@@ -349,7 +292,6 @@ void TestDapProtocolParsesOutputEvent() {
       codec::ParseOutputEvent(Json(R"({"category":"stderr","output":"oops\n"})"));
   Expect(output.category == "stderr", "output category");
   Expect(output.output == "oops\n", "output text");
-  // Missing category defaults to console.
   const codec::DapOutputEvent fallback = codec::ParseOutputEvent(Json(R"({"output":"hi"})"));
   Expect(fallback.category == "console", "missing category defaults to console");
 }
@@ -402,7 +344,6 @@ void TestDapProtocolEncodesVariablesRequests() {
   const JsonValue scopes = codec::MakeScopesArguments(11);
   Expect(scopes["frameId"].AsInt() == 11, "scopes arguments carry the frame id");
 
-  // start/count are omitted when zero (whole-set fetch), present otherwise.
   const JsonValue whole = codec::MakeVariablesArguments(42, 0, 0);
   Expect(whole["variablesReference"].AsInt() == 42, "variables arguments carry the reference");
   Expect(!whole.HasKey("start") && !whole.HasKey("count"), "zero paging fields are omitted");
@@ -420,9 +361,6 @@ void TestDapProtocolEncodesVariablesRequests() {
   Expect(result.value == "99" && result.type == "int" && result.variables_reference == 0,
          "setVariable result parsed");
 
-  // evaluate (hover-to-inspect): expression + context always present. frameId is
-  // sent for any id >= 0 (gdb's top frame is id 0, so frame 0 must be evaluated in
-  // that frame, not global scope) and omitted only for the -1 "no frame" sentinel.
   const JsonValue eval = codec::MakeEvaluateArguments("count", 7, "hover");
   Expect(eval["expression"].AsString() == "count" && eval["frameId"].AsInt() == 7 &&
              eval["context"].AsString() == "hover",
@@ -432,13 +370,11 @@ void TestDapProtocolEncodesVariablesRequests() {
          "evaluate sends frameId for frame 0 (gdb top frame is id 0)");
   const JsonValue eval_no_frame = codec::MakeEvaluateArguments("count", -1, "repl");
   Expect(!eval_no_frame.HasKey("frameId"), "evaluate omits frameId for the -1 no-frame sentinel");
-  // Watch expressions reuse the same encoder with context "watch" (Phase 6).
   const JsonValue watch = codec::MakeEvaluateArguments("arr[i]", 7, "watch");
   Expect(watch["expression"].AsString() == "arr[i]" && watch["frameId"].AsInt() == 7 &&
              watch["context"].AsString() == "watch",
          "watch evaluate carries expression, frameId, and the watch context");
 
-  // setExceptionBreakpoints (Phase 7): a `filters` array of the enabled ids.
   const JsonValue exc = codec::MakeSetExceptionBreakpointsArguments({"raised", "uncaught"});
   Expect(exc.HasKey("filters") && exc["filters"].IsArray() &&
              exc["filters"].AsArray().size() == 2,
@@ -469,7 +405,6 @@ void TestDapProtocolEncodesFunctionBreakpoints() {
              second["hitCondition"].AsString() == ">3",
          "a conditioned function breakpoint carries condition + hitCondition");
 
-  // The response body reuses ParseBreakpoints; gdb reports `reason` not `message`.
   const codec::DapBreakpoint pending =
       codec::ParseBreakpoint(Json(R"({"id":4,"verified":false,"reason":"pending"})"));
   Expect(pending.id == 4 && !pending.verified && pending.message == "pending",
@@ -477,7 +412,6 @@ void TestDapProtocolEncodesFunctionBreakpoints() {
 }
 
 void TestDapProtocolEncodesExceptionFilterOptions() {
-  // Conditioned filters go in filterOptions; unconditioned ones stay in filters.
   const JsonValue args = codec::MakeSetExceptionBreakpointsArguments(
       {"uncaught"}, {{"throw", "x == 2"}, {"catch", ""}});
   Expect(args["filters"].AsArray().size() == 1 &&
@@ -491,8 +425,6 @@ void TestDapProtocolEncodesExceptionFilterOptions() {
   const JsonValue& opt_empty = args["filterOptions"].AsArray()[1];
   Expect(opt_empty["filterId"].AsString() == "catch" && !opt_empty.HasKey("condition"),
          "an empty condition is omitted from the filter option");
-  // The capabilities parser reads supportsExceptionFilterOptions + per-filter
-  // supportsCondition (both gdb 17.2 advertises).
   const codec::DapCapabilities caps = codec::ParseCapabilities(Json(
       R"({"supportsExceptionFilterOptions":true,"exceptionBreakpointFilters":[{"filter":"throw","label":"Throw","supportsCondition":true}]})"));
   Expect(caps.supports_exception_filter_options, "supportsExceptionFilterOptions parses");
@@ -500,21 +432,13 @@ void TestDapProtocolEncodesExceptionFilterOptions() {
          "a filter's supportsCondition parses");
 }
 
-// Malformed / truncated / wrong-typed wire input must never crash the decoders:
-// a real adapter (or a corrupt stream) can send anything. The decoders are
-// defensive by contract (missing keys → defaults, wrong-typed arrays → empty),
-// and this pins that contract so a future "optimization" cannot reintroduce an
-// unchecked AsArray()/AsString() that segfaults on a hostile payload.
 void TestDapProtocolDecodeRobustness() {
-  // Missing payload arrays decode to empty, not a crash.
   Expect(codec::ParseVariables(Json("{}")).empty(), "variables: missing array → empty");
   Expect(codec::ParseScopes(Json("{}")).empty(), "scopes: missing array → empty");
   Expect(codec::ParseStackFrames(Json("{}")).empty(), "stackFrames: missing array → empty");
   Expect(codec::ParseThreads(Json("{}")).empty(), "threads: missing array → empty");
   Expect(codec::ParseBreakpoints(Json("{}")).empty(), "breakpoints: missing array → empty");
 
-  // Wrong-typed payload fields (array key holding a scalar, or items of the wrong
-  // shape) degrade to empty / default rather than throwing.
   Expect(codec::ParseVariables(Json(R"({"variables":42})")).empty(),
          "variables: non-array → empty");
   Expect(codec::ParseStackFrames(Json(R"({"stackFrames":"nope"})")).empty(),
@@ -522,16 +446,12 @@ void TestDapProtocolDecodeRobustness() {
   Expect(codec::ParseThreads(Json(R"({"threads":{}})")).empty(),
          "threads: object-not-array → empty");
 
-  // Items with wrong-typed scalar fields fall back to defaults (no throw): a
-  // variablesReference sent as a string, a name sent as a number.
   const auto vars = codec::ParseVariables(
       Json(R"({"variables":[{"name":7,"value":null,"variablesReference":"x"},{}]})"));
   Expect(vars.size() == 2, "two malformed variable items still parse positionally");
   Expect(vars[0].variables_reference == 0, "string variablesReference → 0 fallback");
   Expect(vars[0].name.empty() && vars[1].name.empty(), "non-string / missing name → empty");
 
-  // Response / event envelopes parsed from non-object roots (a bare array, a
-  // string, null) must not crash and must report failure / empty fields.
   const codec::DapResponse arr_response = codec::ParseResponse(Json("[1,2,3]"));
   Expect(!arr_response.success && arr_response.command.empty(),
          "response parsed from a bare array → failure, empty command");
@@ -542,8 +462,6 @@ void TestDapProtocolDecodeRobustness() {
   Expect(!str_caps.supports_configuration_done_request && str_caps.exception_filters.empty(),
          "capabilities from a string → all-false, no filters");
 
-  // A deeply nested / oversized value (200-level array) decodes without
-  // recursion blowups in the parser path that touches it.
   std::string deep = "{\"variables\":[";
   for (int i = 0; i < 200; ++i) {
     if (i != 0) deep += ',';
@@ -553,10 +471,6 @@ void TestDapProtocolDecodeRobustness() {
   Expect(codec::ParseVariables(Json(deep)).size() == 200, "200-item variables body decodes fully");
 }
 
-// A hostile/buggy adapter can ignore the `levels` request cap and return an
-// enormous stackFrames array; each frame is materialized into a filesystem::path
-// + display strings on the main thread. ParseStackFrames must cap the count so a
-// giant array can't stall the UI thread or spike the heap.
 void TestDapProtocolStackFramesAreCapped() {
   std::string body = "{\"stackFrames\":[";
   constexpr int kFrames = 50000;
@@ -571,9 +485,6 @@ void TestDapProtocolStackFramesAreCapped() {
 }
 
 void TestDapProtocolListsAreCapped() {
-  // A hostile/buggy adapter can pack millions of tiny objects into a sub-64 MiB
-  // frame; each list parser must clamp like ParseStackFrames rather than
-  // materialize the array 1:1 on the main thread.
   constexpr int kEntries = 50000;
   const auto build = [](std::string_view key, std::string_view entry) {
     std::string body = "{\"";
@@ -611,17 +522,8 @@ void TestDapProtocolListsAreCapped() {
   Expect(stopped.hit_breakpoint_ids.size() <= 10000, "hit breakpoint ids must be capped");
 }
 
-}  // namespace
+}
 
-// The DAP client used to carry its OWN copy of the Content-Length framing codec,
-// and that copy required a byte-exact `Content-Length: ` prefix. An adapter that
-// wrote `content-length:` or omitted the space had its header line dropped as
-// garbage, after which the parser tried to resync by reading the JSON body as
-// headers — desyncing the stream and tearing the session down. The LSP copy had
-// already been hardened for exactly this; the DAP copy never got the fix.
-//
-// Both now share one framer. This pins the tolerance on the DAP side (with the
-// DAP frame ceiling) so the two cannot drift apart again.
 void TestDapHitConditionForAnIgnoreCountAdapter() {
   Expect(codec::AdapterHitCondition("3", false) == "3", "an ordinary adapter gets the count as typed");
   Expect(codec::AdapterHitCondition("3", true) == "2", "gdb stops on the third hit with ignore count 2");
@@ -640,25 +542,20 @@ void TestDapFramingToleratesHeaderCasingAndSpacing() {
     Expect(msg.has_value() && (*msg)["event"].AsString() == "initialized",
            "DAP header variant should frame the message: " + header);
   };
-  expect_frames("Content-Length: ");    // the only spelling the old DAP copy took
-  expect_frames("content-length: ");    // lowercase name
-  expect_frames("CONTENT-LENGTH: ");    // uppercase name
-  expect_frames("Content-Length:");     // no space after the colon
-  expect_frames("Content-Length:   ");  // extra spaces
-  expect_frames("Content-Length \t: ");  // whitespace before the colon
+  expect_frames("Content-Length: ");
+  expect_frames("content-length: ");
+  expect_frames("CONTENT-LENGTH: ");
+  expect_frames("Content-Length:");
+  expect_frames("Content-Length:   ");
+  expect_frames("Content-Length \t: ");
 }
 
-// A frame past the ceiling must be skipped WHOLE (headers + body) so the parser
-// resyncs on the next frame rather than reading body bytes as headers. Pinned on
-// the DAP side because the ceiling is now a per-client field rather than a
-// hard-coded constant — a wrong or unset one silently swallows every message.
 void TestDapFramingOversizedFrameSkipsAndResyncs() {
   microide::workspace::JsonRpcMessageFramer framer{.max_message_bytes = 64};
   const std::string big_body(200, 'x');
   const std::string good_body = R"({"type":"event","event":"terminated"})";
   framer.Append("Content-Length: " + std::to_string(big_body.size()) + "\r\n\r\n" + big_body +
                 "Content-Length: " + std::to_string(good_body.size()) + "\r\n\r\n" + good_body);
-  // Drain until the framer yields the message behind the oversized frame.
   std::optional<JsonValue> seen;
   for (int i = 0; i < 8 && !seen.has_value(); ++i) {
     seen = framer.Next();
@@ -700,4 +597,4 @@ void RegisterDapProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "JsonRpcFraming/KeepsAMessageWithALoneSurrogate", TestFramerKeepsAMessageWithALoneSurrogate);
 }
 
-}  // namespace microide::tests
+}

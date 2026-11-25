@@ -9,11 +9,8 @@
 
 namespace microide::editor {
 
-SDL_FRect BreakpointGutterMarkerRect(float gutter_x, float y, float /*gutter_width*/,
+SDL_FRect BreakpointGutterMarkerRect(float gutter_x, float y, float ,
                                      float line_height) {
-  // Diameter scales with line height but stays within the reserved marker strip;
-  // the dot sits a few px in from the gutter's left edge, left of the line numbers
-  // (which begin at kGutterLineNumberInset), and centers vertically on the row.
   const float diameter = std::clamp(line_height * 0.55f, 6.0f, kGutterMarkerMaxExtent);
   const float x = gutter_x + kGutterMarkerInset;
   const float top = y + std::max(0.0f, (line_height - diameter) * 0.5f);
@@ -31,8 +28,6 @@ void DrawBreakpointGutterMarker(SDL_Renderer* renderer, const render::Theme& the
   const float cx = bounds.x + radius;
   const float cy = bounds.y + radius;
 
-  // Conditional / hit-count breakpoints keep the disc but swap to a distinct tint
-  // (dimmed when not yet verified). Logpoints switch to a diamond outline below.
   SDL_Color color = verified ? theme.breakpoint : theme.breakpoint_unverified;
   if (kind == BreakpointGutterKind::Conditional) {
     color = theme.breakpoint_conditional;
@@ -42,12 +37,6 @@ void DrawBreakpointGutterMarker(SDL_Renderer* renderer, const render::Theme& the
   }
   render::SetDrawColor(renderer, color);
 
-  // Fill the shape as horizontal spans (one rect per scanline). The marker is tiny
-  // (≤12px), so this is a handful of fills coalesced by SDL's batcher. A disc uses
-  // a circular half-width; a logpoint diamond uses a linear one (peaks at center).
-  // A disabled breakpoint draws only the outline ring: subtract an inner shape of
-  // radius `radius - thickness`, leaving two edge rects per scanline (a single
-  // solid rect at the top/bottom caps where the inner shape has no extent).
   const bool diamond = kind == BreakpointGutterKind::Logpoint;
   const float thickness = enabled ? 0.0f : std::clamp(radius * 0.45f, 1.0f, 2.5f);
   const float inner_radius = radius - thickness;
@@ -81,4 +70,4 @@ void DrawBreakpointGutterMarker(SDL_Renderer* renderer, const render::Theme& the
   }
 }
 
-}  // namespace microide::editor
+}

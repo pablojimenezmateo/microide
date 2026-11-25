@@ -13,11 +13,11 @@
 
 namespace microide::compare {
 struct DiffSyntax;
-}  // namespace microide::compare
+}
 
 namespace microide::plugin {
 class PluginHost;
-}  // namespace microide::plugin
+}
 
 namespace microide::workspace {
 
@@ -32,10 +32,6 @@ struct LanguageSnippet {
   std::string body;
 };
 
-// Per-language metadata that drives bracket matching, auto-close, surround,
-// smart indent, comment toggling, snippet expansion, and the regex outline
-// fallback. Hosts merge defaults + plugin contributions + user overrides into
-// the resolved table; consumers read through `LanguageContractView`.
 struct LanguageContract {
   std::string language_id;
   std::vector<LanguageBracketPair> bracket_pairs;
@@ -43,100 +39,43 @@ struct LanguageContract {
   std::vector<LanguageBracketPair> surround_pairs;
   std::string line_comment;
   LanguageBracketPair block_comment;
-  // Patterns evaluated against the trimmed previous line; if any matches, the
-  // newline path appends one indent unit. Patterns are literal substrings the
-  // line ends with (e.g. "{", "(", "[", ":").
   std::vector<std::string> indent_after_open_patterns;
-  // Single characters that, if typed when the current line is indent-only and
-  // the leading indent exceeds zero, cause the leading indent to drop one unit
-  // before the character is inserted.
   std::vector<std::string> dedent_on_close_chars;
-  // True if pair operations should be inhibited inside string literals.
   bool inhibit_pairs_in_strings = true;
-  // True if pair operations should be inhibited inside comments.
   bool inhibit_pairs_in_comments = true;
-  // Optional regex outline patterns used when no LSP is available; each entry
-  // is a regex matched against a single line; the captured group 1 is the
-  // symbol name. Empty when not provided.
   std::vector<std::string> outline_regex_patterns;
   std::vector<LanguageSnippet> snippets;
 };
 
-// Non-owning view of a resolved contract; pointers are stable across the
-// caller's frame because `WorkspaceLanguageContract::ResolveView` returns a
-// view into the registry's owned storage.
 struct LanguageContractView {
   std::string_view language_id;
-  // Null when the contract has no entry; consumers SHALL fall back to "no
-  // pairs / no smart indent" behavior in that case.
   const LanguageContract* contract = nullptr;
 };
 
-// Host-owned service that builds a per-language `LanguageContract` table by
-// merging built-in defaults, plugin contributions, and user/project overrides.
-// Stable views are issued through `ResolveView`; the table is rebuilt on
-// `Refresh`, which bumps the revision counter so consumers can detect change.
 class WorkspaceLanguageContract {
  public:
   WorkspaceLanguageContract();
   ~WorkspaceLanguageContract();
 
-  // Optional setting getter consumed during Refresh; returns the configured
-  // string for `editor.brackets.user_pairs`, `editor.brackets.user_disabled`,
-  // `editor.comments.user_line`, `editor.indents.user_open_patterns`, and
-  // `editor.snippets.user_disabled`. Pass an empty function (or a no-op) when
-  // no overrides are wired (tests / pre-shell construction).
   using SettingGetter = std::function<std::optional<std::string>(std::string_view)>;
 
-  // Recomputes the resolved table; safe to call on plugin reload, language id
-  // change, or settings change.
   void Refresh(const plugin::PluginHost& plugin_host);
   void Refresh(const plugin::PluginHost& plugin_host, const SettingGetter& get_setting);
 
-  // Strict accessor; returns nullptr when no contract exists. Use this when
-  // the caller wants to short-circuit on "no language".
   const LanguageContract* Find(std::string_view language_id) const;
 
-  // Always returns a view; `view.contract` is null when no entry exists.
   LanguageContractView ResolveView(std::string_view language_id) const;
 
-  // The editor-facing projection of a contract: the pairs/patterns/comment
-  // tokens the `TextViewport` needs, plus the three global behavior toggles.
-  //
-  // Shared and memoized, because the caller is `ApplyEditorPreferences` walking
-  // every open tab: 40 `.cpp` tabs used to each build — and each *own* — a
-  // byte-identical view, copying four vectors and three strings per tab on every
-  // settings change, project activation, and session restore
-  // (TD-2026-08-03-110). The cache is keyed by language id and dropped whole
-  // when the contract table (`revision()`) or any of the three toggles changes,
-  // so a stale view is not representable.
-  //
-  // Never null. Callers push the result straight into
-  // `TextViewport::SetLanguageContractView`.
   std::shared_ptr<const editor::LanguageContractView> ResolveEditorView(
       std::string_view language_id,
       bool auto_close_enabled,
       bool surround_enabled,
       bool smart_indent_enabled) const;
 
-  // The lexical rules the structural diff reads a file of this language with:
-  // the contract's comment tokens and bracket pairs. Shared and memoized per
-  // language id, dropped whole when `revision()` changes — so a compare tab can
-  // tell "the rules changed" by pointer identity. A language with no contract
-  // gets `compare::GenericDiffSyntax()`, one with no brackets the generic
-  // brackets. Never null.
   std::shared_ptr<const compare::DiffSyntax> ResolveDiffSyntax(std::string_view language_id) const;
 
-  // Every setting the editor-facing views depend on -- the five overrides
-  // Refresh layers on, and the three toggles ResolveEditorView bakes in --
-  // joined into one key. A settings change that leaves it equal cannot change
-  // any view; one that changes it must Refresh and re-resolve every tab. Keying
-  // only on the toggles once left a live edit of an override waiting for the
-  // next plugin reload (QA `language-overrides`).
   static std::string SettingsFingerprint(const SettingGetter& get_setting);
 
-  // Monotonically increasing on every successful Refresh; consumers cache
-  // their derived state keyed on this counter.
   std::size_t revision() const { return revision_; }
 
  private:
@@ -145,4 +84,4 @@ class WorkspaceLanguageContract {
   std::size_t revision_ = 0;
 };
 
-}  // namespace microide::workspace
+}

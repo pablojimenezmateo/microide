@@ -19,7 +19,6 @@ MenuCoordinator::MenuCoordinator(MenuSurfaceState& menu_state, Operations operat
 
 namespace {
 
-// The first item `enabled` accepts, or -1.
 template <typename Items, typename Enabled>
 int FirstEnabledIndex(const Items& items, const Enabled& enabled) {
   for (std::size_t i = 0; i < items.size(); ++i) {
@@ -30,9 +29,6 @@ int FirstEnabledIndex(const Items& items, const Enabled& enabled) {
   return -1;
 }
 
-// The next item `delta` steps from `current_index` that `enabled` accepts,
-// wrapping; with no current item, Down starts at the top and Up at the bottom.
-// `current_index` when nothing else is enabled, -1 for an empty list.
 template <typename Items, typename Enabled>
 int NextEnabledIndex(const Items& items, int current_index, int delta, const Enabled& enabled) {
   if (items.empty() || delta == 0) {
@@ -49,7 +45,7 @@ int NextEnabledIndex(const Items& items, int current_index, int delta, const Ena
   return current_index;
 }
 
-}  // namespace
+}
 
 int MenuCoordinator::FirstEnabledMenuItemIndex(MenuId id) const {
   return FirstEnabledIndex(operations_.menu_items(id), operations_.is_menu_item_enabled);
@@ -60,15 +56,6 @@ int MenuCoordinator::NextEnabledMenuItemIndex(MenuId id, int current_index, int 
                           operations_.is_menu_item_enabled);
 }
 
-// What a menu that opens, switches or closes changes on screen is derived: its
-// popups' cards and rows (MenuPopupPaint) and the bar's items (the chrome units)
-// are keyed on the state this coordinator writes, so it owes a frame and names no
-// rect -- it named the chrome's: the bar and every open popup, and the button an
-// anchored menu hangs from. Of those buttons, the two that draw differently
-// while their menu is open key it (the sidebar's view overflow and the git
-// view's outgoing-base button: SidebarModeRowInputs::overflow_menu_open,
-// GitPanelInputs::outgoing_base_menu_open); the rest draw nothing from it -- a
-// status segment, and the context menus, which hang from the pointer.
 void MenuCoordinator::OweMenuFrame() { operations_.request_frame(); }
 
 void MenuCoordinator::OpenMenuBarMenu(MenuId id) { OpenMenu(id, std::nullopt); }
@@ -111,8 +98,6 @@ bool MenuCoordinator::OpenMenuOverflowItem(std::size_t index) {
 }
 
 void MenuCoordinator::CloseMenuOverflowPopup() {
-  // The popup's card and rows are derived units: closed, the frame this owes
-  // repaints where it was.
   if (menu_state_.overflow_popup_open) {
     operations_.request_frame();
   }
@@ -171,8 +156,6 @@ bool MenuCoordinator::ExecuteMenuItem(MenuId menu_id, std::size_t item_index) {
   menu_state_.last_run_menu_id = menu_id;
   menu_state_.last_run_item_index = item_index;
   ++menu_state_.rows_run;
-  // tools/qa clicks every row of every menu to check each click reaches its row;
-  // running them would quit, close the project and open native pickers.
   static const bool qa_dry_run = util::PerformanceTrace::FlagEnabled("MICROIDE_QA_MENU_DRY_RUN");
   if (qa_dry_run) {
     CloseMenuBar();
@@ -197,11 +180,6 @@ bool MenuCoordinator::ExecuteMenuItem(MenuId menu_id, std::size_t item_index) {
   return operations_.execute_action(item.action, args, ActionSource::Menu);
 }
 
-// Left/Right walk the menu BAR, as in VS Code. It used to walk every menu spec,
-// so Right from Help opened a context menu at the bar, and Right in the sidebar's
-// views menu (anchored on its button) switched to the git base menu with the
-// button still painted pressed (found by the QA monkey). A menu that opened
-// anchored on a button or a click has no neighbours: the arrows do nothing there.
 bool MenuCoordinator::SwitchMenuBarMenu(int delta) {
   if (menu_state_.active_menu_id == MenuId::None || delta == 0 ||
       menu_state_.active_menu_anchor_rect.has_value() ||
@@ -250,8 +228,6 @@ void MenuCoordinator::OpenTreeContextMenu(TreeContextTargetKind target,
 }
 
 void MenuCoordinator::CloseTreeContextMenu() {
-  // Every action not run from a context menu closes it first, so the common case
-  // is "none is open": that repaints nothing.
   if (!menu_state_.tree_context_menu.open) {
     return;
   }
@@ -323,8 +299,6 @@ MenuCoordinator& WorkspaceShell::MakeMenuCoordinator() {
                 if (!popup_rect.has_value()) {
                   return std::nullopt;
                 }
-                // Geometry only: the value-returning form builds a row vector
-                // and probes enablement for every row to answer about one.
                 return PopupRowRectByIndex(MenuItems(id), *popup_rect, item_index);
               },
           .execute_custom_menu_item =
@@ -345,4 +319,4 @@ MenuCoordinator& WorkspaceShell::MakeMenuCoordinator() {
   return *glue_->menu_coordinator;
 }
 
-}  // namespace microide::workspace
+}

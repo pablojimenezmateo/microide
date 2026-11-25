@@ -30,16 +30,12 @@ using project::remote::IsSafeRelativePath;
 using project::remote::ManifestEntryKind;
 using project::remote::ManifestRow;
 
-// A closed-on-every-path descriptor.
 using util::UniqueFd;
 
 std::int64_t Nanoseconds(const struct timespec& time) {
   return static_cast<std::int64_t>(time.tv_sec) * 1'000'000'000 + time.tv_nsec;
 }
 
-// A symlink whose target, resolved lexically from the link's own directory, stays
-// under the root: recreated as a link on the client. Absolute targets never are —
-// the client's root is a different path.
 bool LinkStaysInRoot(std::string_view link_path, std::string_view target) {
   if (target.empty() || target.front() == '/') {
     return false;
@@ -51,10 +47,6 @@ bool LinkStaysInRoot(std::string_view link_path, std::string_view target) {
   return !text.empty() && text != ".." && text.rfind("../", 0) != 0 && text.front() != '/';
 }
 
-// The root-relative path an ABSOLUTE link target names when it is inside the
-// root (lexically: a link through another link is not followed here), else
-// nothing. Such a link is shipped as the file it names (LinkStaysInRoot is
-// false for every absolute target), and that file's changes are the link's.
 std::optional<std::string> InRootPathNamedAbsolutely(const std::filesystem::path& root,
                                                      std::string_view target) {
   if (target.empty() || target.front() != '/') {
@@ -69,9 +61,6 @@ std::optional<std::string> InRootPathNamedAbsolutely(const std::filesystem::path
   return text;
 }
 
-// `path` (root-relative) with every directory link on the way resolved, as the
-// root-relative path the watch reports it under; nothing when that is outside
-// the root. The final component is kept as named: it may be a link itself.
 std::optional<std::string> RealInRootPath(const std::filesystem::path& root, const std::string& path) {
   std::error_code error;
   const std::filesystem::path real_root = std::filesystem::weakly_canonical(root, error);
@@ -90,7 +79,6 @@ std::optional<std::string> RealInRootPath(const std::filesystem::path& root, con
   return text;
 }
 
-// The kernel's own limit on a chain of links (ELOOP).
 constexpr int kMaxLinkHops = 40;
 
 struct HashedFile {
@@ -99,9 +87,6 @@ struct HashedFile {
   struct stat after {};
 };
 
-// Hash one file through `root_fd`, and report the stat it was read under. A file
-// that changes while it is read (its stat moves) is read again, twice at most;
-// after that the last read stands and the caller does not cache it.
 std::optional<HashedFile> HashAt(int root_fd, const std::string& path, bool follow, bool* stable) {
   for (int attempt = 0; attempt < 3; ++attempt) {
     const UniqueFd fd(::openat(root_fd, path.c_str(),
@@ -133,7 +118,7 @@ std::optional<HashedFile> HashAt(int root_fd, const std::string& path, bool foll
   return std::nullopt;
 }
 
-}  // namespace
+}
 
 WorkspaceTree::WorkspaceTree(std::filesystem::path root, Options options)
     : root_(std::move(root)), options_(std::move(options)) {
@@ -145,9 +130,6 @@ WorkspaceTree::~WorkspaceTree() {
   SaveCacheLocked();
 }
 
-// The cache file: the root it belongs to, then per entry the path, the stat key and
-// the hash. A file for another root (a hash collision on the name) or in any other
-// shape is ignored — the cache only ever saves work, never decides an answer.
 void WorkspaceTree::LoadCache() {
   if (options_.cache_path.empty()) {
     return;
@@ -213,14 +195,8 @@ void WorkspaceTree::SaveCacheLocked() {
 namespace {
 constexpr int kMaxSubmoduleDepth = 4;
 constexpr std::size_t kLsFilesPerCall = 512;
-}  // namespace
+}
 
-// Lists one repository's content set (`pathspecs` empty: all of it, else exactly
-// those paths) into `out`, each prefixed with `prefix` (the repository's place under
-// the root). A gitlink whose checkout exists is listed AND descended: its files are
-// the submodule repository's own tracked + unignored set, so a submodule is a
-// mirrored subtree rather than an empty directory. An untracked nested repository
-// ("dir/") is listed, not descended.
 bool WorkspaceTree::ListGitRepository(const std::filesystem::path& dir,
                                       const std::vector<std::string>& pathspecs, int depth,
                                       std::vector<std::string>& out, std::string* error,
@@ -260,8 +236,6 @@ bool WorkspaceTree::ListGitRepository(const std::filesystem::path& dir,
       }
       std::string full = prefix.empty() ? std::string(path) : prefix + "/" + std::string(path);
       if (pathspecs.empty() && !nested_untracked && depth < kMaxSubmoduleDepth) {
-        // A gitlink is listed by its bare name; only a checked-out one (its own .git)
-        // is descended, or git would answer for the enclosing repository instead.
         std::error_code ec;
         const std::filesystem::path checkout = dir / std::string(path);
         if (std::filesystem::is_directory(std::filesystem::symlink_status(checkout, ec)) &&
@@ -276,7 +250,7 @@ bool WorkspaceTree::ListGitRepository(const std::filesystem::path& dir,
       }
       out.push_back(std::move(full));
       if (pathspecs.empty() && out.size() > options_.max_files * 3 + 1024) {
-        return true;  // unmerged entries repeat a path; past this the set is over anyway
+        return true;
       }
     }
   }
@@ -303,9 +277,6 @@ std::optional<std::vector<std::string>> WorkspaceTree::ContentSet(bool* git, std
   project::ProjectTraversalFilter filter(root_);
   const platform::WalkStatus status =
       platform::WalkDirectoryTree(root_, platform::WalkOptions{}, [&](const platform::WalkEntry& entry) {
-        // A link is shipped as what it is, never as its target's tree: classify by
-        // the entry itself (symlink_status), so a link to a directory is a file
-        // here and is not descended.
         const bool directory = entry.type == platform::PathType::Directory && !entry.is_symlink;
         const platform::PathType type =
             directory ? platform::PathType::Directory : platform::PathType::RegularFile;
@@ -313,10 +284,8 @@ std::optional<std::vector<std::string>> WorkspaceTree::ContentSet(bool* git, std
           return platform::WalkAction::Prune;
         }
         if (directory) {
-          return platform::WalkAction::Continue;  // a file set: directories are implied
+          return platform::WalkAction::Continue;
         }
-        // Lexically, from the text: the walk spells every entry as the root plus
-        // its relative part.
         paths.push_back(std::filesystem::path(entry.path).lexically_relative(root_).generic_string());
         return paths.size() > options_.max_files ? platform::WalkAction::Stop
                                                  : platform::WalkAction::Continue;
@@ -331,9 +300,6 @@ std::optional<std::vector<std::string>> WorkspaceTree::ContentSet(bool* git, std
 std::optional<std::vector<ManifestRow>> WorkspaceTree::RowsFor(
     std::vector<std::string> paths, int root_fd, const std::function<bool()>& cancelled,
     std::string* error, std::unordered_map<std::string, CacheEntry>& out_cache) {
-  // A tree write's temporary is never content (TreeFiles.h): one in progress is not
-  // listed, and one a crash abandoned -- a server SIGKILLed between writing it and
-  // renaming it into place -- is removed rather than pulled into every mirror.
   std::erase_if(paths, [&](const std::string& path) {
     const std::string_view name = std::string_view(path).substr(path.rfind('/') + 1);
     if (!project::remote::TreeWriteTemporaryOwner(name).has_value()) {
@@ -344,8 +310,6 @@ std::optional<std::vector<ManifestRow>> WorkspaceTree::RowsFor(
     }
     return true;
   });
-  // Pass 1: lstat every member. Rows that need a hash are queued with whether the
-  // read must follow a link (an out-of-root link is shipped as the file it names).
   struct PendingHash {
     std::size_t row = 0;
     bool follow = false;
@@ -378,16 +342,16 @@ std::optional<std::vector<ManifestRow>> WorkspaceTree::RowsFor(
       return std::nullopt;
     }
     if (!IsSafeRelativePath(path)) {
-      continue;  // a name the wire cannot carry safely (a backslash, say)
+      continue;
     }
     struct stat info {};
     if (::fstatat(root_fd, path.c_str(), &info, AT_SYMLINK_NOFOLLOW) != 0) {
-      continue;  // tracked but deleted in the worktree: not on the host, not in the set
+      continue;
     }
     ManifestRow row;
     row.path = std::move(path);
     if (S_ISREG(info.st_mode)) {
-      queue_file(row, info, /*follow=*/false);
+      queue_file(row, info, false);
     } else if (S_ISLNK(info.st_mode)) {
       char target[4096];
       const ssize_t length = ::readlinkat(root_fd, row.path.c_str(), target, sizeof(target));
@@ -396,11 +360,6 @@ std::optional<std::vector<ManifestRow>> WorkspaceTree::RowsFor(
       }
       const std::string_view target_view(target, static_cast<std::size_t>(length));
       if (const std::optional<std::string> named = InRootPathNamedAbsolutely(root_, target_view)) {
-        // Shipped as the file at the END of its chain, so a change at any in-root
-        // hop is the link's: the file it names may be another link (soak
-        // 5fdc4f6dac88: `link1 -> /root/qa-weird/link-to-crlf.txt -> crlf.txt`;
-        // crlf.txt changed, the link in the middle did not, and the mirror kept
-        // the old text).
         std::optional<std::string> hop = RealInRootPath(root_, *named);
         for (int hops = 0; hop.has_value() && hops < kMaxLinkHops; ++hops) {
           std::vector<std::string>& followers = link_followers_[*hop];
@@ -410,7 +369,7 @@ std::optional<std::vector<ManifestRow>> WorkspaceTree::RowsFor(
           char next[4096];
           const ssize_t next_length = ::readlinkat(root_fd, hop->c_str(), next, sizeof(next));
           if (next_length <= 0 || static_cast<std::size_t>(next_length) >= sizeof(next)) {
-            break;  // a file (or gone): the chain ends here
+            break;
           }
           const std::string_view next_view(next, static_cast<std::size_t>(next_length));
           std::optional<std::string> following;
@@ -430,25 +389,23 @@ std::optional<std::vector<ManifestRow>> WorkspaceTree::RowsFor(
         row.mode = static_cast<std::uint32_t>(info.st_mode & 07777);
         row.mtime_ns = Nanoseconds(info.st_mtim);
       } else {
-        // Out of the root: the client gets the file it names (§ 6.2), or nothing.
         struct stat followed {};
         if (::fstatat(root_fd, row.path.c_str(), &followed, 0) != 0 ||
             !S_ISREG(followed.st_mode)) {
           continue;
         }
-        queue_file(row, followed, /*follow=*/true);
+        queue_file(row, followed, true);
       }
     } else if (S_ISDIR(info.st_mode)) {
       row.kind = ManifestEntryKind::Submodule;
       row.mode = static_cast<std::uint32_t>(info.st_mode & 07777);
       row.mtime_ns = Nanoseconds(info.st_mtim);
     } else {
-      continue;  // a FIFO, socket or device is not content
+      continue;
     }
     rows.push_back(std::move(row));
   }
 
-  // Pass 2: hash the misses, on several threads when there are enough of them.
   std::vector<std::optional<HashedFile>> hashed(pending.size());
   std::vector<char> stable(pending.size(), 0);
   std::atomic<std::size_t> next{0};
@@ -491,15 +448,13 @@ std::optional<std::vector<ManifestRow>> WorkspaceTree::RowsFor(
   for (std::size_t i = 0; i < pending.size(); ++i) {
     ManifestRow& row = rows[pending[i].row];
     if (!hashed[i].has_value()) {
-      drop[pending[i].row] = 1;  // vanished or became unreadable between the passes
+      drop[pending[i].row] = 1;
       continue;
     }
     row.hash = hashed[i]->hash;
     row.size = hashed[i]->size;
     row.mtime_ns = Nanoseconds(hashed[i]->after.st_mtim);
     const CacheKey key = key_of(hashed[i]->after);
-    // A racily clean key cannot tell this content from a same-size rewrite in the
-    // same timestamp tick: hash the file again next time instead.
     const bool racy = now_ns - key.mtime_ns < options_.racy_window_ns ||
                       now_ns - key.ctime_ns < options_.racy_window_ns;
     if (stable[i] != 0 && !racy) {
@@ -507,8 +462,6 @@ std::optional<std::vector<ManifestRow>> WorkspaceTree::RowsFor(
     }
   }
   if (std::find(drop.begin(), drop.end(), 1) != drop.end()) {
-    // Never `rows[i] = std::move(rows[i])`: a self-move leaves a std::string member
-    // unspecified (libstdc++ empties it), and an empty path is a malformed row.
     std::size_t out = 0;
     for (std::size_t i = 0; i < rows.size(); ++i) {
       if (drop[i] == 0) {
@@ -539,7 +492,7 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::BuildManifestLocked(
   if (!paths.has_value()) {
     return std::nullopt;
   }
-  link_followers_.clear();  // the listing below records every link again
+  link_followers_.clear();
   std::sort(paths->begin(), paths->end());
   paths->erase(std::unique(paths->begin(), paths->end()), paths->end());
   if (paths->size() > options_.max_files) {
@@ -551,7 +504,6 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::BuildManifestLocked(
     *error = "cannot open " + root_.string() + ": " + std::string(std::strerror(errno));
     return std::nullopt;
   }
-  // A fresh cache: entries for paths that left the set go with it.
   std::unordered_map<std::string, CacheEntry> next_cache;
   next_cache.reserve(paths->size());
   std::optional<std::vector<ManifestRow>> rows =
@@ -561,8 +513,6 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::BuildManifestLocked(
   }
   cache_ = std::move(next_cache);
   cache_dirty_ = true;
-  // After a full build, not per watch batch: a full build is when the whole tree was
-  // just paid for, and a batch's handful of entries is not worth a rewrite.
   SaveCacheLocked();
   manifest.rows = std::make_shared<const std::vector<ManifestRow>>(std::move(*rows));
   manifest.id = next_manifest_id_++;
@@ -570,8 +520,6 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::BuildManifestLocked(
   last_git_ = manifest.git;
   PublishCountsLocked();
   built_ = true;
-  // Which members the watch's own filter keeps it from seeing: one filter decision
-  // per directory (memoized; an ancestor's pruning covers its subtree).
   unwatched_members_.clear();
   {
     project::ProjectTraversalFilter filter(root_);
@@ -645,8 +593,6 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::UpdateManifest(
     return std::nullopt;
   }
   std::vector<std::string> touched = changes.touched;
-  // A file some link is shipped as changed (or appeared, for a link that was
-  // dangling): the link's row is that file's content, so it is touched too.
   for (std::size_t i = 0, n = touched.size(); i < n; ++i) {
     if (const auto followers = link_followers_.find(touched[i]); followers != link_followers_.end()) {
       touched.insert(touched.end(), followers->second.begin(), followers->second.end());
@@ -661,8 +607,6 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::UpdateManifest(
                                      });
     return it != last_rows_->end() && it->path == path;
   };
-  // Paths whose row is recomputed: the members touched, and the new paths the
-  // content-set rules admit. A touched path that is gone simply loses its row.
   std::vector<std::string> recompute;
   std::vector<std::string> candidates;
   for (const std::string& path : touched) {
@@ -693,8 +637,6 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::UpdateManifest(
   if (!fresh.has_value()) {
     return std::nullopt;
   }
-  // Merge: the previous rows minus everything touched or under a deleted
-  // directory, plus the fresh rows; both sides sorted.
   const auto under_deleted_directory = [&](const std::string& path) {
     for (const std::string& directory : changes.deleted_directories) {
       if (path.size() > directory.size() && path.compare(0, directory.size(), directory) == 0 &&
@@ -704,9 +646,6 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::UpdateManifest(
     }
     return false;
   };
-  // The previous rows are shared with the connections that were sent them, so the
-  // unchanged ones are copied into the new vector -- once. (They used to be moved
-  // out of the tree's own copy and the whole result copied back: twice.)
   std::vector<ManifestRow> rows;
   rows.reserve(last_rows_->size() + fresh->size());
   std::size_t f = 0;
@@ -730,7 +669,7 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::UpdateManifest(
   }
   if (rows.size() > options_.max_files) {
     *error = OverLimitMessage();
-    built_ = false;  // the next batch decides from scratch
+    built_ = false;
     return std::nullopt;
   }
   Manifest manifest;
@@ -753,7 +692,6 @@ std::optional<std::vector<std::string>> WorkspaceTree::AdmitCandidates(
   if (!last_git_) {
     project::ProjectTraversalFilter filter(root_);
     for (const std::string& path : candidates) {
-      // The walk's rules: every ancestor directory and the file itself.
       bool included = true;
       std::filesystem::path partial;
       const std::filesystem::path relative(path);
@@ -769,9 +707,7 @@ std::optional<std::vector<std::string>> WorkspaceTree::AdmitCandidates(
     }
     return admitted;
   }
-  // git decides, for exactly these paths: tracked, or untracked and not ignored. A
-  // path inside a submodule is asked of that submodule's own repository.
-  std::map<std::string, std::vector<std::string>> by_owner;  // "" = the top repository
+  std::map<std::string, std::vector<std::string>> by_owner;
   for (const std::string& path : candidates) {
     std::string_view owner;
     for (const std::string& sub : submodule_roots_) {
@@ -798,4 +734,4 @@ std::optional<std::vector<std::string>> WorkspaceTree::AdmitCandidates(
   return admitted;
 }
 
-}  // namespace microide::server
+}

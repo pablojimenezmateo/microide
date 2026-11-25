@@ -28,12 +28,6 @@ using namespace detail;
 
 namespace {
 
-// Hover title/content come from an external language server or plugin and are
-// otherwise unbounded. The popup only ever shows a handful of lines, but the
-// layout path measures/normalizes/word-splits the WHOLE string on the UI thread,
-// several times per frame while the popup is considered. Truncate at ingestion so
-// a server returning megabytes of hover text cannot stall the shell. Trimmed back
-// to a UTF-8 boundary so a multibyte codepoint is never split.
 constexpr std::size_t kMaxHoverTextBytes = 8192;
 
 void TruncateHoverText(std::string& text) {
@@ -50,12 +44,9 @@ constexpr float kEditorHoverPopupHoverMargin = 4.0f;
 constexpr float kEditorHoverPopupLineGap = 2.0f;
 constexpr float kEditorHoverPopupSectionGap = 8.0f;
 constexpr std::size_t kEditorHoverPopupMaxSummaryLines = 4;
-// Line caps count the text's own lines now (HoverTextWrap keeps them), not one
-// run-on paragraph wrapped, so they leave room for a structured hover.
 constexpr std::size_t kEditorHoverPopupMaxDiagnosticLines = 10;
 constexpr float kEditorHoverPopupPrimaryActionHitPaddingX = 12.0f;
 constexpr float kEditorHoverPopupPrimaryActionHitPaddingY = 6.0f;
-// Shortcut shown next to the diagnostic "Quick Fix" button (matches ActionId::CodeActions).
 constexpr std::string_view kQuickFixShortcutHint = "Ctrl+.";
 
 SDL_FRect HoverPopupHoverZoneRect(const SDL_FRect& anchor_rect, const SDL_FRect& popup_rect) {
@@ -84,11 +75,6 @@ SDL_FRect PositionHoverPopup(const SDL_FRect& anchor_rect,
   if (x + card_width > editor_surface.x + editor_surface.w - 8.0f) {
     x = editor_surface.x + editor_surface.w - card_width - 8.0f;
   }
-  // Above the hovered text when it fits (VS Code's editor.hover.above), below it
-  // otherwise. Opening below covered the lines under the pointer -- the ones a
-  // person clicks next -- and a press on the card is the card's, so the click
-  // that should have placed the caret two lines down did nothing (QA flow
-  // lsp-navigation).
   float y = anchor_rect.y - card_height - kEditorHoverPopupGap;
   if (y < editor_surface.y + 8.0f) {
     y = anchor_rect.y + anchor_rect.h + kEditorHoverPopupGap;
@@ -101,7 +87,7 @@ SDL_FRect PositionHoverPopup(const SDL_FRect& anchor_rect,
   return MakeRect(x, y, card_width, card_height);
 }
 
-}  // namespace
+}
 
 std::optional<EditorHoverPopupLayout> WorkspaceShell::ActiveEditorHoverPopupLayout()
     const {
@@ -128,9 +114,6 @@ std::optional<EditorHoverPopupLayout> WorkspaceShell::ActiveEditorHoverPopupLayo
   if (active_editor_hover_target_->kind == EditorHoverTarget::Kind::Blame) {
     const editor::EditorBlameLine* blame_line =
         editor_blame_overlay_service_.VisibleLine(active_editor_hover_target_->blame_line_index);
-    // The card stays only while its annotation is where the pointer found it: an
-    // overlay rebuilt during paint with the line moved (a scroll, an edit above)
-    // must not paint a card frame prep laid out -- and damaged -- nowhere.
     if (blame_line == nullptr || !blame_line->interactive ||
         !RectsEqual(blame_line->rect, active_editor_hover_target_->anchor_rect)) {
       return std::nullopt;
@@ -206,7 +189,6 @@ std::optional<EditorHoverPopupLayout> WorkspaceShell::ActiveEditorHoverPopupLayo
     if (debug_value.value.empty() && debug_value.type.empty()) {
       return std::nullopt;
     }
-    // The value is the primary content; the type (when present) is the muted title.
     return EditorHoverPopupLayout{
         .kind = EditorHoverTarget::Kind::DebugValue,
         .anchor_rect = active_editor_hover_target_->anchor_rect,
@@ -226,16 +208,12 @@ std::optional<EditorHoverPopupLayout> WorkspaceShell::ActiveEditorHoverPopupLayo
     return std::nullopt;
   }
   const editor::PublishedDiagnostic& diagnostic = *active_editor_hover_target_->diagnostic;
-  // Language-server diagnostics may carry code actions (e.g. clangd's "remove
-  // unused #include"). Offer a "Quick Fix" affordance that opens the code-action
-  // menu at the diagnostic's range; plugin/other diagnostics have no such path.
   const bool offer_quick_fix = diagnostic.owner == "lsp";
   const float button_height = line_height + 8.0f;
   const float quick_fix_width =
       offer_quick_fix ? std::max(96.0f, text_renderer_.MeasureWidth("Quick Fix") + 18.0f) : 0.0f;
   const float quick_fix_hint_width =
       offer_quick_fix ? text_renderer_.MeasureWidth(kQuickFixShortcutHint) : 0.0f;
-  // Button on the left, the muted shortcut hint to its right, share the button row.
   const float button_row_width =
       offer_quick_fix ? quick_fix_width + kEditorHoverPopupGap + quick_fix_hint_width : 0.0f;
   const std::string_view severity = DiagnosticSeverityLabel(diagnostic.severity);
@@ -243,7 +221,6 @@ std::optional<EditorHoverPopupLayout> WorkspaceShell::ActiveEditorHoverPopupLayo
   const float max_text_width = max_card_width - kEditorHoverPopupPadding * 2.0f;
   const float message_width =
       std::min(max_text_width, text_renderer_.MeasureWidth(diagnostic.message));
-  // The symbol's own hover, when it answered, is the card's second section.
   const std::optional<plugin::PluginHost::HoverResult>& symbol =
       active_editor_hover_target_->plugin_hover;
   const float symbol_width =
@@ -331,21 +308,6 @@ bool WorkspaceShell::EditorHoverPopupPrimaryActionHovered(float x, float y) cons
 std::vector<std::string> WorkspaceShell::WrapEditorHoverPopupText(std::string_view text,
                                                                   float max_width,
                                                                   std::size_t max_lines) const {
-  // Wrapping is pure in (text, width, line cap, font metrics) but expensive: a
-  // normalize copy, an istringstream tokenize into a vector<string>, then a
-  // MeasureWidth per candidate line. The layout path calls it several times per
-  // frame (title, content, blame summary, diagnostic message) for as long as the
-  // card is on screen — i.e. for as long as the user is reading it. A card shows a
-  // handful of distinct strings, so a small memo turns every frame after the first
-  // into a lookup. Metrics generation is part of the key: a font-size or UI-scale
-  // change re-wraps at the new width.
-  //
-  // The memo is per-thread, not per-shell, and the key does not name the shell.
-  // That is safe because a process runs one WorkspaceShell; the several shells a
-  // test process builds all measure through a backend-less TextRenderer (a fixed
-  // advance per byte), so a cross-instance hit returns exactly what that instance
-  // would have computed. Give the key a renderer identity before letting two
-  // shells with different fonts coexist.
   struct WrapMemoEntry {
     std::string text;
     float max_width = 0.0f;
@@ -362,9 +324,6 @@ std::vector<std::string> WorkspaceShell::WrapEditorHoverPopupText(std::string_vi
     return lines;
   }
 
-  // Keyed on the caller's text, captured BEFORE the byte clamp below reassigns
-  // `text` — otherwise a stored key would be the clamped prefix and never match
-  // the lookup that produced it.
   const std::string_view key_text = text;
   const std::size_t metrics_generation = text_renderer_.MetricsGeneration();
   for (const WrapMemoEntry& entry : memo) {
@@ -386,18 +345,10 @@ std::vector<std::string> WorkspaceShell::WrapEditorHoverPopupText(std::string_vi
     return slot.lines;
   };
 
-  // Bound the input before any full-length pass (the normalize copy, MeasureWidth,
-  // and the word tokenize below). Every hover string funnels through here — plugin
-  // title/content, a diagnostic message, a DAP evaluate value, blame, signature —
-  // and a language server / debug adapter can make any of them megabytes. The
-  // popup only ever renders a few wrapped lines, so a UTF-8-boundary-clamped prefix
-  // is sufficient and keeps this off the per-frame O(n) attacker-length path.
   if (text.size() > kMaxHoverTextBytes) {
     text = text.substr(0, util::PreviousUtf8Boundary(text, kMaxHoverTextBytes));
   }
 
-  // The wrap itself (paragraphs kept, words wrapped, the last line carrying the
-  // rest) lives in HoverTextWrap; this keeps the memo and the byte clamp.
   return remember(WrapHoverText(
       text, max_width, max_lines,
       HoverTextMeasure{
@@ -512,8 +463,6 @@ void WorkspaceShell::LayOutEditorHoverCard(const EditorHoverPopupLayout& popup, 
     } else {
       text_y += text_renderer_.LineHeight();
     }
-    // What the symbol under the squiggle is, below the problem and a rule (VS
-    // Code's card). The rule sits in the middle of the section gap.
     if (popup.plugin_hover.has_value()) {
       card.Fill(MakeRect(popup.rect.x + 1.0f, std::floor(text_y + kEditorHoverPopupSectionGap * 0.5f),
                          popup.rect.w - 2.0f, 1.0f),
@@ -547,8 +496,6 @@ void WorkspaceShell::UpdateEditorHover(float x, float y) {
     editor_hover_refresh_pending_ = false;
     return;
   }
-  // Show Hover pinned the card to the caret: resolve there instead of at the
-  // pointer, until the caret moves, the pointer moves, or the caret scrolls away.
   if (InteractionState::CaretHover& pin = context_.interaction_state.caret_hover; pin.active) {
     const editor::TextViewport* viewport = ActiveEditableViewport();
     const bool pointer_moved = last_mouse_position_valid_ &&
@@ -561,8 +508,6 @@ void WorkspaceShell::UpdateEditorHover(float x, float y) {
           if (!pane.active) {
             continue;
           }
-          // The same grid the pointer path resolves a point against, so the
-          // caret's point maps back to the caret's position exactly.
           const TextGridInteractionLayout grid =
               BuildEditorInteractionGrid(editor_text_renderer_, *viewport, pane.rect, LineNumbersEnabled());
           const std::size_t row = viewport->VisualRowForLine(pin.line);
@@ -585,40 +530,23 @@ void WorkspaceShell::UpdateEditorHover(float x, float y) {
     }
   }
   const std::optional<EditorHoverTarget> previous_target = active_editor_hover_target_;
-  // The (const) resolver records a debug-value cache miss here; clear it first so a
-  // stale request from a previous position is not re-issued.
   pending_hover_eval_.valid = false;
   auto target = [&]() -> std::optional<EditorHoverTarget> {
     util::PerformanceTrace::Scope scope("WorkspaceShell::UpdateEditorHover::TargetAtPosition");
     return EditorHoverTargetAtPosition(x, y);
   }();
-  // Cache miss for a debug-value hover: kick off the async evaluate. Its completion
-  // requests an editor redraw, re-running this resolution into a cache hit.
   if (pending_hover_eval_.valid) {
     debug_service_.EvaluateHover(pending_hover_eval_.frame_id, pending_hover_eval_.expression);
     pending_hover_eval_.valid = false;
   }
-  // Cache miss for a plugin hover: dispatch the worker query. Its completion stores
-  // the result and re-drives this resolution into a cache hit (popup), all without
-  // blocking the UI on the plugin's hover provider.
   if (plugin_hover_cache_.state == PluginHoverCache::State::Kickoff) {
     KickOffPluginHover(plugin_hover_cache_.path, plugin_hover_cache_.line,
                        plugin_hover_cache_.column);
-    // When no worker is wired (the query ran inline), the cache already holds the
-    // result; re-resolve so the popup appears this frame instead of the next one.
     if (plugin_hover_cache_.state != PluginHoverCache::State::Pending) {
       target = EditorHoverTargetAtPosition(x, y);
     }
   }
   if (target.has_value()) {
-    // Sticky hover for the diagnostic "Quick Fix" card: when it is showing and the
-    // pointer is over it (or the bridge zone), keep it rather than letting a target
-    // underneath the card (a squiggle on the line beneath the popup) steal focus
-    // while the user reaches for the button. Scoped to Diagnostic popups so the
-    // blame popup's own hover/redraw behavior is unaffected; the gap between anchor
-    // and card is already handled by the retention check below (target null there).
-    // The same squiggle's card gaining its symbol section (the hover answered) is
-    // that card updating, not another target taking over.
     const bool same_card = previous_target.has_value() &&
                            previous_target->kind == target->kind &&
                            previous_target->diagnostic == target->diagnostic &&
@@ -648,10 +576,6 @@ void WorkspaceShell::UpdateEditorHover(float x, float y) {
 
   if (previous_target.has_value()) {
     ++editor_hover_target_generation_;
-    // The pointer left the card: the answer it showed was the server's at that
-    // moment, so coming back asks again (VS Code asks on every rest). Kept for
-    // good, a hover taken before the server had loaded the project, or before
-    // another file changed the symbol, stayed that answer for the session.
     if (plugin_hover_cache_.state == PluginHoverCache::State::Resolved ||
         plugin_hover_cache_.state == PluginHoverCache::State::Failed) {
       plugin_hover_cache_.state = PluginHoverCache::State::Empty;
@@ -663,44 +587,24 @@ void WorkspaceShell::UpdateEditorHover(float x, float y) {
 
 void WorkspaceShell::KickOffPluginHover(const std::filesystem::path& path, std::size_t line,
                                         std::size_t column) {
-  // Mark the cell in flight so the const resolver does not re-kick while we wait.
   plugin_hover_cache_.state = PluginHoverCache::State::Pending;
-  // Capture the cell's generation stamp rather than a copy of its path: the
-  // callback only needs to answer "is this still the cell I was dispatched for",
-  // and an integer answers it without the four allocations a
-  // `std::filesystem::path` copy costs — on a hot path that runs on every painted
-  // frame the pointer spends over text. It also keeps the closure at 16 bytes,
-  // inside std::function's inline buffer, so constructing it allocates nothing
-  // either — including on the fast-reject path where no provider is registered
-  // and the callback is invoked and dropped immediately.
-  // A provider reads the live buffer through its buffer table (buffer:text()), so
-  // a buffer with unsaved edits is asked like any other (TD-2026-10-21-374).
   const std::uint64_t generation = plugin_hover_cache_.generation;
   plugin_runtime_.Host().QueryHoverAsync(
       path, line, column,
       [this, generation](bool ok, plugin::PluginHost::HoverResult result) {
-        // Apply only if we are still waiting on this exact cell (not superseded by
-        // a newer hover position).
         if (plugin_hover_cache_.state != PluginHoverCache::State::Pending ||
             plugin_hover_cache_.generation != generation) {
           return;
         }
         if (ok) {
-          // Bound the untrusted server/plugin text before it reaches the
-          // per-frame measure/normalize/word-split path (see kMaxHoverTextBytes).
           TruncateHoverText(result.title);
           TruncateHoverText(result.content);
           plugin_hover_cache_.state = PluginHoverCache::State::Resolved;
           plugin_hover_cache_.result = std::move(result);
-          // Re-resolve at the current mouse position on the next frame -> cache hit.
           QueueEditorHoverRefresh();
           RequestPreparedFrame();
           return;
         }
-        // No plugin hover for this cell: fall back to the language server. The cell
-        // stays Pending until the LSP result lands (KickOffLspHover finalizes it).
-        // The generation check above established that the cache still describes the
-        // cell this query was dispatched for, so its own fields are that cell.
         KickOffLspHover(plugin_hover_cache_.path, plugin_hover_cache_.line,
                         plugin_hover_cache_.column);
       });
@@ -731,15 +635,10 @@ void WorkspaceShell::KickOffLspHover(const std::filesystem::path& path, std::siz
     return;
   }
   EnsureLspDocumentOpen(*viewport, *client, language_id);
-  // Cache coordinates are 1-based (query_line/query_column); the LSP position is
-  // 0-based with a byte-column -> server-encoding conversion.
   const std::size_t line0 = line > 0 ? line - 1 : 0;
   const std::size_t byte_column = column > 0 ? column - 1 : 0;
   const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
   BeginTrackedLspRequest();
-  // Same generation stamp as the plugin kickoff, for the same reason: the only
-  // question the completion asks is whether the cache still describes the cell it
-  // was dispatched for, and a path copy is four allocations to answer it.
   const std::uint64_t generation = plugin_hover_cache_.generation;
   client->RequestHoverAsync(
       FileUriForPath(path), ByteColumnToLspPosition(*viewport, line0, byte_column, encoding),
@@ -784,7 +683,6 @@ std::optional<WorkspaceShell::EditorBlamePopupLayout> WorkspaceShell::ActiveEdit
 void WorkspaceShell::ShowSignatureHelpPopup(std::string signature, std::string documentation) {
   const editor::TextViewport* viewport = ActiveEditableViewport();
   if (viewport == nullptr || viewport->path().empty() || signature.empty()) {
-    // Clearing a popup on screen is a repaint of the pixels it covered.
     if (active_signature_help_.has_value()) {
       active_signature_help_.reset();
       RequestPreparedFrame();
@@ -805,9 +703,6 @@ void WorkspaceShell::MaybeExpireSignatureHelp() {
   if (!active_signature_help_.has_value()) {
     return;
   }
-  // The popup is anchored to the caret of the buffer it was requested for; once
-  // the caret moves, the buffer changes, or no editable viewport is focused, the
-  // signature no longer describes what is being typed, so drop it.
   const editor::TextViewport* viewport = ActiveEditableViewport();
   const bool still_valid = viewport != nullptr &&
                            viewport->path() == active_signature_help_->path &&
@@ -825,8 +720,6 @@ void WorkspaceShell::LayOutSignatureHelpCard(const SignatureHelpPopup& popup, co
   const float text_x = rect.x + kEditorHoverPopupPadding;
   const float text_width = std::max(0.0f, rect.w - kEditorHoverPopupPadding * 2.0f);
   float text_y = rect.y + kEditorHoverPopupPadding;
-  // The signature itself is the primary line; the parameter/doc block is the
-  // muted supporting text below it (inverse of the hover card's title/content).
   const auto signature_lines =
       WrapEditorHoverPopupText(popup.signature, text_width, kEditorHoverPopupMaxPluginTitleLines);
   const auto doc_lines = popup.documentation.empty()
@@ -840,4 +733,4 @@ void WorkspaceShell::LayOutSignatureHelpCard(const SignatureHelpPopup& popup, co
   card.Lines(text_renderer_, text_x, &text_y, theme_.text_secondary, doc_lines, kEditorHoverPopupLineGap);
 }
 
-}  // namespace microide::workspace
+}

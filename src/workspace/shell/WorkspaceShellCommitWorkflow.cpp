@@ -45,8 +45,6 @@ void WorkspaceShell::InitializeCommitWorkflowService() {
             draft.subject.SetText({});
             draft.body.LoadContent({});
             draft.loaded_persisted_draft.reset();
-            // The config file is the front project's: a background project's
-            // cleared draft is written with its state when it is next saved.
             if (&draft == &context_.current_project_state.sidebar.git.commit_workflow) {
               MakePersistenceCoordinator().SaveConfigState();
             }
@@ -112,25 +110,18 @@ void WorkspaceShell::CloseCommitWorkflow() {
 
 namespace {
 
-// Where the commit panel starts: the render path's `summary_y + 4` -- below the
-// header's second action row (+10) and the summary block GitSidebarSummaryHeight
-// measures with the render's own constants.
 float CommitWorkflowTop(const SDL_FRect& sidebar_rect, float summary_height) {
   const SDL_FRect branch_row = git_sidebar_header::ActionRowRect(sidebar_rect, 1);
   return branch_row.y + branch_row.h + 10.0f + summary_height + 4.0f;
 }
 
-}  // namespace
+}
 
 float WorkspaceShell::GitSidebarCommitWorkflowHeight(const SDL_FRect& sidebar_rect) const {
   const auto& workflow = context_.current_project_state.sidebar.git.commit_workflow;
   if (!workflow.open) {
     return 0.0f;
   }
-  // Reserve exactly what the sidebar render path draws (subject/body fields, pre-check and
-  // status lines, confirm button), with the body rows it fits into this sidebar. Field
-  // heights track the live line height, and the check count varies, so this is computed
-  // rather than a fixed constant. The field_x/field_w args don't affect total_height.
   const float line_height = text_renderer_.LineHeight();
   const bool has_status = !workflow.status_message.empty();
   const int rows = FitCommitWorkflowBodyRows(CommitWorkflowTop(sidebar_rect, GitSidebarSummaryHeight()),
@@ -142,12 +133,6 @@ float WorkspaceShell::GitSidebarCommitWorkflowHeight(const SDL_FRect& sidebar_re
 }
 
 void WorkspaceShell::PrepareCommitBodyViewportForFrame(const SDL_FRect& sidebar_rect) {
-  // Frame-prep half of the commit-draft body field (TD-2026-07-17-083 residual):
-  // size the body viewport to the field and keep the caret row visible BEFORE
-  // paint, so RenderCommitBodyField is a pure draw. The field width is
-  // sidebar-width-derived (see ComputeCommitWorkflowLayout: body_field.w ==
-  // field_w == sidebar width minus the shared inset), so no panel origin is
-  // needed here.
   auto& workflow = context_.current_project_state.sidebar.git.commit_workflow;
   if (!workflow.open) {
     return;
@@ -181,9 +166,6 @@ void WorkspaceShell::InitializeGitOperationService() {
   git_operation_service_.SetCallbacks(GitOperationService::Callbacks{
       .project_launcher = [this]() { return &context_.current_project_state.launcher(); },
       .request_git_refresh = [this]() { RequestAutomaticGitSidebarRefresh(); },
-      // A branch switch, pull, or stash pop rewrites files under open editors. Clean
-      // buffers are re-read from disk; dirty ones are left alone (the reload helper
-      // skips them) so unsaved work is never silently replaced.
       .reload_open_buffers =
           [this]() {
             RefreshProjectFiles();
@@ -215,23 +197,16 @@ std::string WorkspaceShell::DispatchGitOperationAction(const ActionId id,
   if (root.empty()) {
     return "No active project";
   }
-  // One git write at a time: a second request would race the index lock, and the
-  // toast that eventually arrives could not be attributed to either request.
   if (git_operation_service_.busy()) {
     return "A git operation is already running";
   }
 
-  // The branch HEAD is on, taken from the git sidebar snapshot. Empty on a detached
-  // or unborn HEAD, or before the first refresh.
   const std::string& current_branch = context_.current_project_state.sidebar.git.branch_label;
 
   bool dispatched = false;
   switch (id) {
     case ActionId::GitSwitchBranch:
       if (args.empty() || args[0].empty()) {
-        // No argument means "let me choose": open the filterable branch picker
-        // rather than rejecting, which is how the command is reached from the menu
-        // and the palette. Typing the name stays available for scripted use.
         MakeCompareMergeService().interactions().OpenBranchSwitchPicker();
         return {};
       }
@@ -263,8 +238,6 @@ std::string WorkspaceShell::DispatchGitOperationAction(const ActionId id,
       dispatched = git_operation_service_.Sync(root);
       break;
     case ActionId::GitStash:
-      // Untracked files are included: a stash that leaves new files behind does not
-      // give the clean tree the user asked for, which is the usual reason to stash.
       dispatched = git_operation_service_.Stash(root, args.empty() ? std::string{} : args[0], true);
       break;
     case ActionId::GitStashPop:
@@ -272,8 +245,6 @@ std::string WorkspaceShell::DispatchGitOperationAction(const ActionId id,
       break;
     case ActionId::GitAcceptCurrent:
     case ActionId::GitAcceptIncoming: {
-      // The target: the path argument (absolute, or relative to the project), else
-      // the active merge tab's file.
       std::filesystem::path target;
       if (!args.empty() && !args[0].empty()) {
         target = std::filesystem::path(args[0]);
@@ -287,9 +258,6 @@ std::string WorkspaceShell::DispatchGitOperationAction(const ActionId id,
       if (target.empty()) {
         return "No conflicted file to resolve: select one, or name it";
       }
-      // The repository the file is conflicted in: a git sidebar row knows it (a
-      // nested repository's rows are relative to that repository); otherwise the
-      // project's.
       std::filesystem::path repository_root = root;
       std::string relative = target.lexically_relative(root).generic_string();
       const std::string target_text = target.generic_string();
@@ -308,10 +276,7 @@ std::string WorkspaceShell::DispatchGitOperationAction(const ActionId id,
           repository_root, std::move(relative),
           id == ActionId::GitAcceptCurrent ? project::GitConflictSide::Current
                                            : project::GitConflictSide::Incoming,
-          // A merge tab on the file shows a conflict that no longer exists.
-          // One at a time: closing a group's last tab can remove the group.
           [this, target]() {
-            // Bounded: a close the service declines must not spin.
             bool closed = true;
             for (std::size_t guard = 0; closed && guard < 64; ++guard) {
               closed = false;
@@ -337,4 +302,4 @@ std::string WorkspaceShell::DispatchGitOperationAction(const ActionId id,
   return dispatched ? std::string{} : std::string("Git operation could not be started");
 }
 
-}  // namespace microide::workspace
+}

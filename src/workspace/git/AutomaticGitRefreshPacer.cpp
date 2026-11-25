@@ -8,14 +8,12 @@ namespace microide::workspace {
 
 namespace {
 
-// One-shot: the channel rides in `userdata`, so the timer touches nothing that
-// can be destroyed before it fires (a wake after shutdown is a no-op).
-Uint32 SDLCALL PushWakeOnce(void* userdata, SDL_TimerID /*timer*/, Uint32 /*interval*/) {
+Uint32 SDLCALL PushWakeOnce(void* userdata, SDL_TimerID , Uint32 ) {
   (void)util::PushWake(static_cast<util::WakeChannel>(reinterpret_cast<std::uintptr_t>(userdata)));
   return 0;
 }
 
-}  // namespace
+}
 
 bool AutomaticGitRefreshPacer::Request(const std::uint64_t now_ms, const bool refresh_running) {
   if (!refresh_running && now_ms >= next_allowed_ms_) {
@@ -24,8 +22,6 @@ bool AutomaticGitRefreshPacer::Request(const std::uint64_t now_ms, const bool re
     return true;
   }
   pending_ = true;
-  // While one runs, its consumed snapshot resumes this; inside the interval only
-  // the clock does, so ask for a wake at its end (once per deadline).
   if (!refresh_running && wake_armed_for_ms_ != next_allowed_ms_) {
     wake_armed_for_ms_ = next_allowed_ms_;
     if (wake_channel_ != 0) {
@@ -45,9 +41,9 @@ bool AutomaticGitRefreshPacer::Resume(const std::uint64_t now_ms, const bool ref
     wake_armed_for_ms_ = 0;
   }
   if (!refresh_running && now_ms >= next_allowed_ms_) {
-    return true;  // the caller's Request() issues it
+    return true;
   }
-  return Request(now_ms, refresh_running);  // still kept: re-arms the wake if needed
+  return Request(now_ms, refresh_running);
 }
 
-}  // namespace microide::workspace
+}

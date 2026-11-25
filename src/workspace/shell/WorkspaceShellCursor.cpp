@@ -30,8 +30,6 @@ namespace {
 
 constexpr float kWindowFrameHitThickness = 6.0f;
 
-// A strip's overflow chip ("<3", "5>") under the point: it lights on hover like a
-// tab, so the hover probe must name it (QA monkey, qa-asan seed 3).
 std::optional<SDL_FRect> OverflowChipAt(const TabStripOverflowControls& overflow, float x,
                                         float y) {
   if (overflow.hidden_left > 0 && Contains(overflow.left_button, x, y)) {
@@ -71,7 +69,7 @@ SDL_HitTestResult ResizeHitTestResult(bool left, bool right, bool top, bool bott
   return SDL_HITTEST_NORMAL;
 }
 
-}  // namespace
+}
 
 SDL_HitTestResult WorkspaceShell::WindowHitTest(float x, float y) const {
   if (!CurrentWindowChromeState().custom_enabled) {
@@ -155,12 +153,6 @@ WorkspaceShell::WindowAction WorkspaceShell::ConsumeWindowAction() {
 }
 
 WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float y) const {
-  // A divider drag holds its resize cursor for the whole gesture, wherever the
-  // pointer travels — dragging necessarily moves off the divider, so resolving the
-  // cursor from the position under it would drop the shape mid-drag. This used to
-  // cover only the sidebar and bottom panel, so the other five resize drags
-  // (right pane, editor split, compare, and both merge dividers) flickered back to
-  // an arrow the moment the pointer left the thin divider band.
   if (const DragTarget target = context_.interaction_state.drag_target; IsDividerDrag(target)) {
     return target == DragTarget::BottomPanelDivider ? CursorKind::NsResize : CursorKind::EwResize;
   }
@@ -237,12 +229,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   return CursorKindOverEditorArea(x, y, layout);
 }
 
-// Toasts, the Settings card, the open menus and the menu bar: what floats above the surfaces.
 std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverModalsAndMenus(
     float x, float y, const WorkspaceLayout& layout) const {
-  // Toasts float above every surface and a click dismisses one, so the pointer has
-  // to say so — probed ahead of the modal surfaces for the same reason it is
-  // probed first on the click path.
   if (!notification_service_.Empty() &&
       NotificationHitAt(RenderViewModelBuilder(context_).BuildNotifications(
                             notification_service_, layout.status_bar, text_renderer_),
@@ -261,12 +249,6 @@ std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverModalsAn
     if (vm.mode != SettingsOverlayMode::Settings) {
       return CursorKind::Default;
     }
-    // The font-picker dropdown floats over the value rows, so it is probed first —
-    // the same order the click handler uses. Without this its rows fell through to
-    // whatever row happened to be underneath, which is how a click-through
-    // mismatch hides: the pointer looked right over a family but came from the
-    // wrong surface, and over the pinned "Choose file…" footer it could be an
-    // arrow instead.
     if (vm.value_picker.visible) {
       for (const SettingsPickerItemViewModel& item : vm.value_picker.items) {
         if (Contains(item.rect, x, y)) {
@@ -293,12 +275,6 @@ std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverModalsAn
     return CursorKind::Default;
   }
 
-  // Hit-test the popup using geometry only. The full ComputeVisiblePopupMenuItems
-  // path here was calling IsMenuItemEnabled/IsMenuItemChecked for every row, and
-  // CursorKindForPosition runs on every mouse motion — that cost roughly half of
-  // the per-motion handler budget while a menu was open. Only the row under the
-  // pointer is asked whether it is enabled: a dimmed row takes no click, so it
-  // shows the arrow (it showed the hand).
   const auto row_cursor = [this](std::span<const MenuItemSpec> items,
                                  const PopupRowGeometry& hit) {
     return hit.separator || !IsMenuItemEnabled(items[hit.index]) ? CursorKind::Default
@@ -370,14 +346,10 @@ std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverModalsAn
   return std::nullopt;
 }
 
-// The overlay card, the resize edges, the status bar, the breadcrumb band and the tab strips.
 std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverChrome(float x, float y,
                                                                                const WorkspaceLayout& layout) const {
   if (context_.current_project_state.overlay.visible) {
     const OverlayMode overlay_mode = context_.current_project_state.overlay.mode;
-    // The find / replace widget is non-modal: it only governs the cursor while the
-    // pointer is over its small rect. Off the widget we fall through to the normal
-    // editor cursor logic so the live editor underneath behaves as usual.
     if (overlay_mode == OverlayMode::BufferSearch || overlay_mode == OverlayMode::BufferReplace) {
       const FindWidgetLayout fw =
           ComputeBufferFindWidgetLayout(ActiveTabSurface(layout), overlay_mode == OverlayMode::BufferReplace);
@@ -388,7 +360,6 @@ std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverChrome(f
       if (Contains(fw.widget, x, y)) {
         return CursorKind::Pointer;
       }
-      // Off the widget: continue to the editor / chrome cursor logic below.
     } else {
       const SDL_FRect overlay = ComputeOverlayRect(layout.overlay_anchor);
       if (!Contains(overlay, x, y)) {
@@ -407,7 +378,6 @@ std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverChrome(f
       if (overlay_mode == OverlayMode::CommitPicker ||
           overlay_mode == OverlayMode::QuickPick ||
           overlay_mode == OverlayMode::CommandPalette) {
-        // Matches the picker query field y (overlay.y + 52) in WorkspaceShellRenderOverlay.cpp.
         return y >= overlay.y + 48.0f && y < overlay.y + 68.0f ? CursorKind::Text
                                                                 : CursorKind::Default;
       }
@@ -437,10 +407,6 @@ std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverChrome(f
                                                                  : CursorKind::Default;
   }
 
-  // Breadcrumb band: a plugin status item with a bound command is clickable (see
-  // the click handler in WorkspaceShellMouse.cpp). Match it exactly — only
-  // command-bound items get the pointer; bare path text and command-less items
-  // keep the arrow.
   if (layout.breadcrumb.w > 0.0f && layout.breadcrumb.h > 0.0f &&
       Contains(layout.breadcrumb, x, y)) {
     for (const VisibleStatusItem& status_item : ComputeVisibleStatusItems(layout.breadcrumb)) {
@@ -470,12 +436,6 @@ std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverChrome(f
     return CursorKind::Default;
   }
 
-  // Editor tab strips are per-group. A split lays out one strip per group, either
-  // side by side (within the top tab band) or stacked (the second strip is
-  // synthesized inside the editor surface). Probe every group's own strip rect with
-  // its *ForGroup tab geometry, mirroring the renderer (WorkspaceShellRenderChrome)
-  // and the click handler (WorkspaceTabMouseCoordinator), so tabs in a non-focused
-  // group resolve correctly and no phantom tab geometry appears over an empty strip.
   {
     const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
     const std::vector<EditorGroup>& editor_groups = context_.current_project_state.editor_groups;
@@ -512,7 +472,6 @@ std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverChrome(f
   return std::nullopt;
 }
 
-// The sidebar: its views' rows, buttons, fields and scrollbars.
 std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverSidebar(float x, float y,
                                                                                 const WorkspaceLayout& layout) const {
   if (context_.current_project_state.sidebar.visible && Contains(layout.sidebar, x, y)) {
@@ -569,17 +528,10 @@ std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverSidebar(
           button_rect.has_value() && Contains(*button_rect, x, y)) {
         return CursorKind::Pointer;
       }
-      // Top-level Commit button (shown before the commit draft opens). It takes a
-      // click only with something staged (CanOpenGitCommitButton, what the click
-      // path asks); dimmed, it is not a button, so it shows the arrow.
       if (CanOpenGitCommitButton() &&
           Contains(git_sidebar_header::CommitButtonRect(layout.sidebar), x, y)) {
         return CursorKind::Pointer;
       }
-      // Commit workflow (open after the user begins a commit): the subject/body are
-      // text inputs and the confirm button is clickable. The renderer caches these
-      // rects each frame; mirror the click handlers (WorkspaceShellSingleLineInputMouse
-      // / WorkspaceSidebarMouseCoordinator) so the cursor matches what is actionable.
       if (const auto& workflow = context_.current_project_state.sidebar.git.commit_workflow;
           workflow.open) {
         if ((workflow.subject_field_rect.w > 0.0f && Contains(workflow.subject_field_rect, x, y)) ||
@@ -590,7 +542,6 @@ std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverSidebar(
           return CursorKind::Pointer;
         }
       }
-      // The rows the user sees: the list as the last frame laid it out.
       const PaintedGitSidebarList painted = PaintedGitSidebarListOf(frame_state_);
       const auto& lines = painted.lines != nullptr ? *painted.lines : BuildGitSidebarLines();
       const auto list_layout =
@@ -606,8 +557,6 @@ std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverSidebar(
       if (line.kind != GitSidebarLine::Kind::Entry || line.entry_index < 0) {
         return CursorKind::Default;
       }
-      // Whole entry row is clickable (select + open diff; right-click for the
-      // action menu), so any hit over the row shows the pointer cursor.
       return CursorKind::Pointer;
     }
     if (sidebar_mode == SidebarMode::Problems) {
@@ -648,12 +597,10 @@ std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverSidebar(
   return std::nullopt;
 }
 
-// The debug pane and the bottom panel.
 std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverPanels(float x, float y,
                                                                                const WorkspaceLayout& layout) const {
   if (context_.current_project_state.debug_pane.visible && layout.right_pane.w > 0.0f &&
       Contains(layout.right_pane, x, y)) {
-    // Mode-row tab buttons are always clickable.
     const DebugPaneModeRowLayout mode_row = DebugPaneModeRow(layout.right_pane);
     for (int i = 0; i < mode_row.tab_count; ++i) {
       if (Contains(mode_row.tabs[static_cast<std::size_t>(i)].rect, x, y)) {
@@ -698,7 +645,6 @@ std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverPanels(f
           return CursorKind::Pointer;
         }
       }
-      // The overflow chips light up and page the strip; they showed the arrow.
       if (OverflowChipAt(tab_strip_service_.ComputeBottomPanelTabOverflowControls(
                              context_.current_project_state, panel_header,
                              layout_mode_service_.CurrentMode(), visible_panel_tabs,
@@ -709,8 +655,6 @@ std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverPanels(f
       }
       return CursorKind::Default;
     }
-    // The terminal's find bar floats over the pane: its buttons are buttons and
-    // its query a text field, not the transcript's I-beam under them.
     if (terminal_find_service_.visible() && prepare_cached_bottom_panel_vm_.has_value() &&
         prepare_cached_bottom_panel_vm_->find_visible) {
       const FindWidgetLayout& fw = prepare_cached_bottom_panel_vm_->find.fw;
@@ -727,7 +671,6 @@ std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverPanels(f
         return CursorKind::Default;
       }
     }
-    // Plugin surface preview: pointer over a published hit region (TD-2026-07-16-61).
     if (context_.current_project_state.panel.content == PanelContentKind::PluginSurface) {
       const auto& panel_state = context_.current_project_state.panel;
       const auto* pres = context_.current_project_state.plugin_presentation_if_present();
@@ -782,13 +725,6 @@ std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverPanels(f
           }
         }
       }
-      // The program's own pointer when it named one (OSC 22: kitty, foot, Ghostty,
-      // xterm). Else a program that asked for the mouse (DECSET 1000-1003) gets the
-      // clicks, so the I-beam would promise a selection a click does not make: the
-      // arrow, as in xterm.js, VTE and kitty -- and the hand over a control the
-      // program lit under the resting pointer, the only sign of a button it gives
-      // (Claude Code's "Jump to bottom", a collapsed tool group). Shift hands the
-      // pointer back to selection (and to links), as in every Linux terminal.
       const TerminalPaneState* pane = ActiveTerminalPane();
       if ((context_.interaction_state.key_modifiers & SDL_KMOD_SHIFT) == 0) {
         if (const auto cell = TerminalViewportPositionForPoint(static_cast<int>(x), static_cast<int>(y));
@@ -810,8 +746,6 @@ std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverPanels(f
   return std::nullopt;
 }
 
-// The editor area: the hover card, the debug toolbar, a compare or merge in front, the
-// home surface, the split dividers and the focused pane's scrollbars, blame and gutter.
 WorkspaceShell::CursorKind WorkspaceShell::CursorKindOverEditorArea(float x, float y,
                                                                     const WorkspaceLayout& layout) const {
   if (const auto popup = ActiveEditorHoverPopupLayout(); popup.has_value()) {
@@ -824,8 +758,6 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindOverEditorArea(float x, flo
     }
   }
 
-  // Floating debug toolbar (continue / step / stop) renders over the top of the
-  // editor and must claim the cursor before the editor surface does.
   if (DebugToolbarVisible()) {
     const DebugToolbarLayout toolbar = ComputeDebugToolbarLayout(
         ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout), debug_service_.SupportsStepBack());
@@ -835,7 +767,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindOverEditorArea(float x, flo
           return CursorKind::Pointer;
         }
       }
-      return CursorKind::Default;  // card padding between buttons
+      return CursorKind::Default;
     }
   }
 
@@ -852,11 +784,6 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindOverEditorArea(float x, flo
     return CursorKindOverMerge(x, y, view_surface);
   }
 
-  // Welcome home surface: with no project open there are no editor panes, so the
-  // pane-based hit-testing below returns early without ever probing the welcome regions.
-  // Probe here (after compare/merge, which return inside their own branches; mirroring the
-  // click handler in WorkspaceShellMouse.cpp) so the pointer shows over clickable recents /
-  // the open-folder row, and the I-beam elsewhere on the surface.
   {
     const editor::WelcomeViewModel* welcome_model = nullptr;
     const editor::WelcomeLayout* welcome_layout = nullptr;
@@ -886,13 +813,9 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindOverEditorArea(float x, flo
 
   const editor::TextViewport* viewport = ViewportForPane(*pane_it);
   if (viewport == nullptr || viewport->is_placeholder()) {
-    // Welcome surface is hit-tested above (before the pane logic), so any placeholder
-    // pane here just shows the text caret.
     return CursorKind::Text;
   }
 
-  // With the band the frame recorded: whether the pane has a scrollbar depends on
-  // its visible rows, which the pinned band takes (the frame's own layout).
   const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
       editor_text_renderer_, *viewport, pane_it->rect, viewport->sticky_band_rows(), LineNumbersEnabled());
   const auto scroll_layout = ComputeEditorScrollLayout(pane_it->rect, *viewport, metrics);
@@ -908,19 +831,10 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindOverEditorArea(float x, flo
       blame_line != nullptr) {
     return blame_line->interactive ? CursorKind::Pointer : CursorKind::Default;
   }
-  // Gutter region: line-number column shows the default arrow; the fold
-  // marker hit zone (rightmost ~18px of the gutter, matching the
-  // EditorMouseCoordinator hit-test) shows the pointer when over a fold
-  // opener so it reads as a clickable affordance. Use the active editor
-  // viewport (not the welcome_surface snapshot used above) because only the
-  // active viewport has the FoldingModel attached, so its visual-row layout
-  // matches what's painted.
   if (x < metrics.text_x) {
     const float gutter_right = pane_it->rect.x + metrics.gutter_width;
     const float fold_hit_left = gutter_right - 18.0f;
     if (x >= fold_hit_left && x < gutter_right && y >= metrics.first_line_y) {
-      // `viewport` is already this pane's group viewport, which carries the
-      // FoldingModel whose visual-row layout matches what's painted in the pane.
       const std::size_t visual_row =
           viewport->scroll_line() +
           static_cast<std::size_t>((y - metrics.first_line_y) / metrics.line_height);
@@ -960,8 +874,6 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindOverCompare(float x, float 
   if (Contains(divider_rect, x, y)) {
     return CursorKind::EwResize;
   }
-  // Resolved through the same helpers the click and the hover highlight use,
-  // so the hand cursor cannot appear over a button the click will ignore.
   if (CompareControlAt(editor_text_renderer_, MakeCompareControlGeometry(view_surface, surface_layout), *compare_tab, x,
                        y)
           .has_value()) {
@@ -1004,12 +916,6 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindOverMerge(float x, float y,
   if (scroll_layout.horizontal_scrollbar.has_value() && Contains(scroll_layout.horizontal_scrollbar->track, x, y)) {
     return CursorKind::Default;
   }
-  // BuildMergeResultInteractionLayout, not a third hand-written copy of it. The
-  // two copies that grew here and in the render TU both passed `line_count()`
-  // as the grid's row total where the canonical builder passes
-  // `VisualRowCount()` -- and the scroll they pair it with is a visual row, so
-  // the layout clamped it back down and every hit test past
-  // (line_count - visible_rows) named the wrong row on a wrapped result pane.
   const MergeInteractionLayout interaction = {
       .content_bottom = scroll_layout.content_rect.y + scroll_layout.content_rect.h,
       .result = BuildMergeResultInteractionLayout(view_surface, surface_layout, *merge_tab),
@@ -1039,8 +945,6 @@ void WorkspaceShell::SdlCursorDeleter::operator()(SDL_Cursor* cursor) const {
 }
 
 SDL_Cursor* WorkspaceShell::CursorHandle(CursorKind kind) {
-  // Default has no owned handle: SDL owns the default cursor, and handing it to
-  // SDL_DestroyCursor would be a double free.
   if (kind == CursorKind::Default) {
     return SDL_GetDefaultCursor();
   }
@@ -1082,11 +986,7 @@ void WorkspaceShell::ClearMouseHoverState() {
   editor_hover_refresh_pending_ = false;
   cursor_kind_fingerprint_.valid = false;
   ++editor_hover_target_generation_;
-  // A toast held up by the pointer would otherwise stay up forever once the
-  // pointer leaves the window without crossing the toast's edge.
   notification_service_.SetHovered(std::nullopt, std::nullopt, SDL_GetTicks());
-  // Likewise a diff's hovered control and hovered change (its review buttons):
-  // they are its rows' keys, so a frame repaints them without.
   if (CompareTabState* compare = ActiveCompareTab();
       compare != nullptr && (compare->hover_state.has_value() || compare->review_hover_visible_row >= 0)) {
     compare->hover_state.reset();
@@ -1107,11 +1007,6 @@ void WorkspaceShell::ClearMouseHoverState() {
   cursor_kind_ = CursorKind::Default;
 }
 
-// Paint-time hover. A rect lights up when the pointer is over it AND it is not
-// covered there by a floating surface: with the pointer over an open menu, a
-// sidebar row beneath the menu used to paint its hover background through every
-// part of it the menu did not cover (found by the QA redraw verifier: the row's
-// left edge showed hover beside the popup on full frames only).
 bool WorkspaceShell::PointerOver(const SDL_FRect& rect) const {
   if (!last_mouse_position_valid_ || !Contains(rect, last_mouse_x_, last_mouse_y_)) {
     return false;
@@ -1126,16 +1021,12 @@ bool WorkspaceShell::PointerOver(const SDL_FRect& rect) const {
 
 namespace {
 
-// A hover step's answer when the pointer is over its surface and nothing there
-// is hovered: stop asking the steps after it.
 constexpr std::optional<SDL_FRect> kNothingHovered{};
 
-}  // namespace
+}
 
 std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceLayout& layout,
                                                                float x, float y) const {
-  // Each step answers for its surface (an empty answer: not over it, ask the next),
-  // in the order the surfaces stack.
   if (const auto hovered = HoverOverOverlayAndWidgets(layout, x, y)) {
     return *hovered;
   }
@@ -1148,18 +1039,8 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
   return HoverOverPanels(layout, x, y);
 }
 
-// The overlay card and the floating widgets over the editor.
 std::optional<std::optional<SDL_FRect>> WorkspaceShell::HoverOverOverlayAndWidgets(const WorkspaceLayout& layout,
                                                                                    float x, float y) const {
-  // (An open menu's rows are not probed here: each is a derived unit keyed on
-  // whether it is lit -- MenuPopupPaint.h -- so the row the pointer leaves repaints
-  // whatever took the pointer.)
-  //
-  // Overlay list rows (command palette / pickers / completion / code actions),
-  // FIRST: the card floats over everything below, and inside it nothing beneath
-  // is hovered. Probed after the chrome, a pointer onto a palette row that lay
-  // over a lower pane's tab strip took that hidden tab as the hover, and the row
-  // it lit was never damaged (QA monkey, seed 39 at 600 steps).
   if (context_.current_project_state.overlay.visible) {
     const OverlayMode overlay_mode = context_.current_project_state.overlay.mode;
     if (overlay_mode != OverlayMode::BufferSearch && overlay_mode != OverlayMode::BufferReplace) {
@@ -1175,13 +1056,6 @@ std::optional<std::optional<SDL_FRect>> WorkspaceShell::HoverOverOverlayAndWidge
     }
   }
 
-  // The floating widgets -- the find widget over the editor, the terminal's find
-  // widget and the debug toolbar -- lift each button under the pointer
-  // (PointerOver), and they float over the editor banner and the panel tabs. They
-  // were the last buttons missing here, so a hover that changed with no motion
-  // was never repainted: a click that closed a menu over a find toggle drew the
-  // toggle hovered on full frames only (QA monkey, seed 605). Over a card, the
-  // button under the pointer or nothing: nothing beneath it hovers.
   {
     std::optional<std::optional<SDL_FRect>> floating;
     const auto probe = [&](const SDL_FRect& card, std::span<const SDL_FRect> buttons) {
@@ -1233,34 +1107,25 @@ std::optional<std::optional<SDL_FRect>> WorkspaceShell::HoverOverOverlayAndWidge
   return std::nullopt;
 }
 
-// The menu bar, breadcrumb band, tab strips, editor banner and merge toolbar.
 std::optional<std::optional<SDL_FRect>> WorkspaceShell::HoverOverChrome(const WorkspaceLayout& layout, float x,
                                                                         float y) const {
-  // Menu bar: top-level items lift on hover (the dropdown-open case is handled by the
-  // chrome coordinator's menu-motion path, so this only matters when no menu is open).
   if (layout.menu_bar.w > 0.0f && Contains(layout.menu_bar, x, y)) {
     for (const VisibleMenuBarItem& item : ComputeVisibleMenuBarItems(layout.menu_bar)) {
       if (Contains(item.rect, x, y)) {
         return item.rect;
       }
     }
-    // The window controls light up on hover too.
     for (const VisibleWindowControlButton& button : ComputeVisibleWindowControlButtons(layout.menu_bar)) {
       if (Contains(button.rect, x, y)) {
         return button.rect;
       }
     }
-    // And the compact layout's overflow chevron, which paints its fill from the
-    // pointer. Its own damage rode the chrome coordinator's motion path alone, so
-    // a move off it that another surface consumed (the terminal under a panel
-    // drag) left it lit (QA monkey, qa lane seed 1).
     if (const auto chevron = MenuOverflowChevronRect(layout.menu_bar); chevron.has_value() && Contains(*chevron, x, y)) {
       return *chevron;
     }
     return kNothingHovered;
   }
 
-  // Plugin status items, in the breadcrumb row: they lift on hover.
   if (layout.breadcrumb.w > 0.0f && Contains(layout.breadcrumb, x, y)) {
     for (const VisibleStatusItem& item : ComputeVisibleStatusItems(layout.breadcrumb)) {
       if (Contains(item.rect, x, y)) {
@@ -1269,7 +1134,6 @@ std::optional<std::optional<SDL_FRect>> WorkspaceShell::HoverOverChrome(const Wo
     }
   }
 
-  // Project tab strip.
   if (layout.project_tab_strip.w > 0.0f && Contains(layout.project_tab_strip, x, y)) {
     const auto& project_tabs = tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
     for (const VisibleStripTab& tab : project_tabs) {
@@ -1282,7 +1146,6 @@ std::optional<std::optional<SDL_FRect>> WorkspaceShell::HoverOverChrome(const Wo
         x, y);
   }
 
-  // Per-group editor tab strips.
   {
     const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
     for (std::size_t gi = 0; gi < group_rects.groups.size(); ++gi) {
@@ -1301,9 +1164,6 @@ std::optional<std::optional<SDL_FRect>> WorkspaceShell::HoverOverChrome(const Wo
     }
   }
 
-  // The editor banner's buttons and its close "x": the paint lights them under
-  // the pointer, so without them here a hover onto one damaged nothing and the
-  // next unrelated partial frame left it unlit (QA monkey, qa-asan seed 4).
   if (const EditorBannerState* banner = ActiveEditorBannerForTab(context_.current_project_state);
       banner != nullptr) {
     const SDL_FRect strip = ActiveEditorBannerStripRect(context_.current_project_state,
@@ -1323,13 +1183,6 @@ std::optional<std::optional<SDL_FRect>> WorkspaceShell::HoverOverChrome(const Wo
     }
   }
 
-  // The merge editor's toolbar buttons light up under the pointer. Their hover
-  // was the merge coordinator's to remember, from its own motion: a pointer that
-  // reached Toggle Base while a menu took the motion was never recorded, the click
-  // that closed the menu drew it hovered, and the move off it repainted nothing
-  // (soak 439b6a49e946).
-  // Every pane that shows a merge paints its toolbar, focused or not, in the
-  // pane's own surface (as RenderActiveWorkspaceSurface lays them out).
   {
     const ProjectWorkspaceState& state = context_.current_project_state;
     const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
@@ -1360,10 +1213,8 @@ std::optional<std::optional<SDL_FRect>> WorkspaceShell::HoverOverChrome(const Wo
   return std::nullopt;
 }
 
-// The sidebar's view tabs, header buttons and rows.
 std::optional<std::optional<SDL_FRect>> WorkspaceShell::HoverOverSidebar(const WorkspaceLayout& layout, float x,
                                                                          float y) const {
-  // Sidebar: the view tabs and each view's header buttons, then its list rows.
   if (context_.current_project_state.sidebar.visible && Contains(layout.sidebar, x, y)) {
     if (!MenuSurfaceCapturingMouse()) {
       const auto first_containing = [x, y](std::initializer_list<std::optional<SDL_FRect>> rects)
@@ -1395,7 +1246,6 @@ std::optional<std::optional<SDL_FRect>> WorkspaceShell::HoverOverSidebar(const W
                                      project_search_panel::ReplaceAllButtonRect(sidebar)});
           break;
         case SidebarMode::Git: {
-          // A disabled button paints no hover, so it is not one.
           const auto& workflow = context_.current_project_state.sidebar.git.commit_workflow;
           const auto if_enabled = [](bool enabled, SDL_FRect rect) {
             return enabled ? std::optional<SDL_FRect>(rect) : std::nullopt;
@@ -1406,8 +1256,6 @@ std::optional<std::optional<SDL_FRect>> WorkspaceShell::HoverOverSidebar(const W
                           git_sidebar_header::DiscardAllButtonRect(sidebar)),
                git_sidebar_header::BranchButtonRect(sidebar), git_sidebar_header::SyncButtonRect(sidebar),
                git_sidebar_header::RefreshButtonRect(sidebar),
-               // The header's Commit button, or the open draft's confirm button
-               // (its rect is the one the draft's render cached).
                if_enabled(CanOpenGitCommitButton(), git_sidebar_header::CommitButtonRect(sidebar)),
                if_enabled(workflow.open, workflow.commit_button_rect),
                GitSidebarOutgoingBaseButtonRect(sidebar)});
@@ -1460,10 +1308,6 @@ std::optional<std::optional<SDL_FRect>> WorkspaceShell::HoverOverSidebar(const W
         return row_band(ComputeTreeSidebarListLayout(layout.sidebar, entries.size()),
                         entries.size());
       }
-      // Problems and Tests paint their rows lit under the pointer like every list
-      // here (the secondary-row surface in WorkspaceShellRenderSidebar), and fell
-      // to the default: the row entered and the row left were never repainted (the
-      // monkey's tooling profile, with clangd's diagnostics in Problems).
       case SidebarMode::Problems: {
         const std::size_t count = context_.current_project_state.sidebar.problems.entries.size();
         return row_band(ComputeProblemsSidebarListLayout(layout.sidebar, count), count);
@@ -1472,8 +1316,6 @@ std::optional<std::optional<SDL_FRect>> WorkspaceShell::HoverOverSidebar(const W
         const std::size_t count = context_.current_project_state.sidebar.tests.entries.size();
         return row_band(ComputeTestsSidebarListLayout(layout.sidebar, count), count);
       }
-      // No default: a sidebar view added later is a -Wswitch warning here, not a
-      // list whose hover nothing repaints.
       case SidebarMode::None:
         break;
     }
@@ -1483,9 +1325,7 @@ std::optional<std::optional<SDL_FRect>> WorkspaceShell::HoverOverSidebar(const W
   return std::nullopt;
 }
 
-// The bottom panel and the debug pane: the last surfaces asked.
 std::optional<SDL_FRect> WorkspaceShell::HoverOverPanels(const WorkspaceLayout& layout, float x, float y) const {
-  // Bottom-panel header tabs.
   if (BottomPanelVisible() && Contains(layout.bottom_panel, x, y)) {
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
@@ -1507,7 +1347,6 @@ std::optional<SDL_FRect> WorkspaceShell::HoverOverPanels(const WorkspaceLayout& 
               x, y)) {
         return chip;
       }
-      // The header's buttons (new terminal, maximize/restore) light up too.
       const LayoutMode mode = layout_mode_service_.CurrentMode();
       for (const SDL_FRect& button :
            {tab_strip_service_.BottomPanelTerminalNewTabRect(mode, panel_header),
@@ -1520,8 +1359,6 @@ std::optional<SDL_FRect> WorkspaceShell::HoverOverPanels(const WorkspaceLayout& 
     return std::nullopt;
   }
 
-  // Debug pane rows: quantize the pointer to a fixed-height row band so the band
-  // changes as the pointer crosses rows (the render lifts each row on hover).
   if (context_.current_project_state.debug_pane.visible && layout.right_pane.w > 0.0f &&
       Contains(layout.right_pane, x, y)) {
     const DebugPaneModeRowLayout modes = DebugPaneModeRow(layout.right_pane);
@@ -1558,10 +1395,6 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
   last_mouse_x_ = x;
   last_mouse_y_ = y;
   last_mouse_position_valid_ = true;
-  // Frame prep resolved the editor hover already, at its one place in the frame
-  // (PrepareSidebarSurfaces), before the card's unit was keyed; resolving it again
-  // here, after every unit is committed, would paint a card the frame's damage
-  // never covered.
   if (!during_frame_prepare) {
     if (update_editor_hover && (mouse_moved || editor_hover_refresh_pending_ || workspace_layout_recomputed)) {
       util::PerformanceTrace::Scope scope("WorkspaceShell::UpdateMouseCursor::UpdateEditorHover");
@@ -1572,13 +1405,6 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
     }
   }
 
-  // Fast-path: skip the hit-test entirely when neither the pointer position nor any
-  // cursor-relevant state changed since the last call. Correctness rests on a single
-  // invariant: every redraw that can change a cursor surface bumps one of the two
-  // generations (see CursorKindFingerprint in WorkspaceShellMembers.inc for why this
-  // subsumes the old hand-maintained scalar allowlist). A still pointer on an idle
-  // caret-blink frame (no generation bump) short-circuits here; anything that redrew
-  // a surface re-runs CursorKindForPosition.
   const CursorKindFingerprint next_fp{
       .x = x,
       .y = y,
@@ -1614,11 +1440,6 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
   }
 
   if (force) {
-    // SDL_SetCursor no-ops when the cursor handle is unchanged, but SDL's Wayland
-    // hit-test path can change the *displayed* cursor (Wayland_ShowCursor) without
-    // updating SDL's current-cursor handle. Setting our (unchanged) handle would
-    // then no-op and leave the stale cursor on screen. Nudge through a different
-    // cursor first so the platform is guaranteed to re-show ours.
     SDL_Cursor* nudge =
         cursor == SDL_GetDefaultCursor() ? CursorHandle(CursorKind::Text) : SDL_GetDefaultCursor();
     if (nudge != nullptr && nudge != cursor) {
@@ -1627,14 +1448,6 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
   }
   (void)SDL_SetCursor(cursor);
 
-  // A cursor shape only becomes visible once the compositor recomposites: on
-  // Wayland the shape rides a hardware cursor plane that is re-latched on a frame
-  // commit, not on the bare wl_pointer.set_cursor request. At event time nothing
-  // else may have dirtied the scene (hovering an item with no hover visual, or an
-  // idle welcome screen with no caret blink), so request a minimal present here —
-  // otherwise the new shape sits queued and the stale one stays on screen until
-  // some unrelated repaint. The render-path call already presents this frame, so it
-  // skips this. See dev-docs/platform/wayland-stale-cursor.md.
   if (!during_frame_prepare) {
     RequestCursorPresent();
   }
@@ -1679,4 +1492,4 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredStatusBarSegmentRect(
   return hovered;
 }
 
-}  // namespace microide::workspace
+}

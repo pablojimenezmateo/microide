@@ -19,7 +19,6 @@ namespace {
 
 using microide::editor::PieceTree;
 
-// Naive line-vector oracle: the behavior PieceTree must reproduce exactly.
 struct VectorModel {
   std::vector<std::string> lines;
 
@@ -36,7 +35,6 @@ struct VectorModel {
   }
 };
 
-// Deterministic xorshift PRNG so failures reproduce from the seed.
 struct Rng {
   std::uint64_t state;
   explicit Rng(std::uint64_t seed) : state(seed ? seed : 0x1234567u) {}
@@ -58,14 +56,12 @@ void ExpectEquivalent(const PieceTree& tree, const VectorModel& model, std::stri
     Expect(tree.LineLength(i) == model.lines[i].size(),
            std::string("piece tree line length mismatch at ").append(where).c_str());
   }
-  // Full materialization must also agree.
   const std::vector<std::string> vectorized = tree.ToVector();
   Expect(vectorized == model.lines,
          std::string("piece tree ToVector mismatch at ").append(where).c_str());
 }
 
 std::string MakeLine(Rng& rng) {
-  // Lines never contain '\n'. Mix lengths to exercise spanning materialization.
   const std::size_t len = rng.Below(12);
   std::string line;
   line.reserve(len);
@@ -99,7 +95,6 @@ void TestPieceTreeBasicSemantics() {
   tree.PushBackLine("end");
   Expect(tree.LineView(tree.LineCount() - 1) == "end", "push back appends");
 
-  // One empty line is distinct from an empty document.
   tree.Reset({""});
   Expect(tree.LineCount() == 1 && tree.LineView(0).empty(), "single empty line");
   tree.Reset({});
@@ -107,8 +102,6 @@ void TestPieceTreeBasicSemantics() {
 }
 
 void TestPieceTreeMidLineEdits() {
-  // Mid-line character edits route through ReplaceLineRange(line,1,{new}) and
-  // must keep neighbours untouched -- the core editor edit path.
   PieceTree tree({"one", "two", "three", "four"});
   std::string mid(tree.LineView(2));
   mid.insert(2, "XYZ");
@@ -124,7 +117,6 @@ void TestPieceTreeRandomizedEquivalence() {
     PieceTree tree;
     VectorModel model;
 
-    // Seed with an initial document.
     std::vector<std::string> initial;
     const std::size_t initial_lines = rng.Below(40);
     for (std::size_t i = 0; i < initial_lines; ++i) initial.push_back(MakeLine(rng));
@@ -147,15 +139,6 @@ void TestPieceTreeRandomizedEquivalence() {
   }
 }
 
-// LineView keeps ascending-walk state — which node the last resolved newline sat
-// in, its byte base, and its position in that buffer's newline array — so a
-// sequential reader pays no tree descent per line. TestPieceTreeRandomizedEquivalence
-// walks lines in order, which is the path that state is built for; the risk this
-// adds is the OTHER order, where the state describes a piece unrelated to the line
-// being asked for and must be declined rather than trusted.
-//
-// Fuzz random access orders over a fragmented tree, interleaved with edits, against
-// the naive model.
 void TestPieceTreeRandomAccessOrderMatchesModel() {
   const std::uint64_t seeds[] = {5u, 23u, 0xBEEFu, 0x1234u};
   for (std::uint64_t seed : seeds) {
@@ -169,8 +152,6 @@ void TestPieceTreeRandomAccessOrderMatchesModel() {
     model.Reset(initial);
 
     for (int step = 0; step < 120; ++step) {
-      // Fragment further: each edit spawns add-buffer pieces, so the walk state's
-      // "still inside the same piece" test starts failing in interesting places.
       const std::size_t n = model.lines.size();
       const std::size_t start = rng.Below(n + 1);
       const std::size_t removed = rng.Below((n - std::min(start, n)) + 1);
@@ -183,14 +164,9 @@ void TestPieceTreeRandomAccessOrderMatchesModel() {
       if (count == 0) {
         continue;
       }
-      // Random order, including repeats and backwards runs.
       std::string window_scratch;
       for (int probe = 0; probe < 40; ++probe) {
         const std::size_t line = rng.Below(count);
-        // Probe the bounded read FIRST: it takes the same ascending-walk shortcut
-        // as LineView, so it must decline stale state in the same adversarial
-        // orders — and asking it before LineView means it cannot be riding a
-        // cache LineView just warmed.
         const std::string& expected_line = model.lines[line];
         const std::size_t start = rng.Below(expected_line.size() + 2);
         const std::size_t len = rng.Below(expected_line.size() + 2);
@@ -204,7 +180,6 @@ void TestPieceTreeRandomAccessOrderMatchesModel() {
         Expect(tree.LineLength(line) == expected_line.size(),
                "random-order LineLength must match the model");
       }
-      // A descending sweep, which is the exact inverse of what the state expects.
       for (std::size_t line = count; line-- > 0;) {
         Expect(tree.LineView(line) == model.lines[line],
                "descending LineView must match the model");
@@ -213,11 +188,6 @@ void TestPieceTreeRandomAccessOrderMatchesModel() {
   }
 }
 
-// A blob sink holds its lines in one byte buffer, and `reserve(count)` only sizes
-// the offset table. Left to itself the buffer takes std::string's doubling curve,
-// so a 120 KB extract was ~13 allocations and copied the accumulated bytes at each
-// one -- twice the bytes produced, on the undo path of every line-shaped edit
-// (TD-2026-08-14-227). The extent is known from two line-start lookups.
 void TestPieceTreeExtractIntoBlobSizesItsByteBuffer() {
   std::vector<std::string> lines;
   lines.reserve(2000);
@@ -225,8 +195,6 @@ void TestPieceTreeExtractIntoBlobSizesItsByteBuffer() {
     lines.push_back(std::string(60, static_cast<char>('a' + (i % 26))));
   }
   PieceTree tree(lines);
-  // Warm the tree's own walk stack and line-start caches with an identical
-  // extract, so the measured window is the second blob's buffers and nothing else.
   editor::LineBlob warmup;
   tree.AppendLines(0, lines.size(), warmup);
   editor::LineBlob blob;
@@ -236,9 +204,6 @@ void TestPieceTreeExtractIntoBlobSizesItsByteBuffer() {
   tree.AppendLines(0, lines.size(), blob);
 #if MICROIDE_PERF_HARNESS_BUILD
   const perf::AllocationDelta delta = perf::Allocations::DeltaSince(before);
-  // Two buffers, each reserved once. The bound is deliberately just above that
-  // rather than at the doubling count it replaces: at 4 this fails on the old
-  // code (~13 for the byte buffer alone) and passes on the new.
   Expect(delta.allocations <= 4,
          "extracting into a blob should reserve its byte buffer, not grow into it");
 #endif
@@ -247,15 +212,8 @@ void TestPieceTreeExtractIntoBlobSizesItsByteBuffer() {
          "blob extract should reproduce the buffer's lines");
 }
 
-// The other half of a blob's cost: a SMALL one. A multi-caret line op builds a
-// blob per caret per keystroke covering a handful of lines, and the offset table
-// for two or three lines was still a heap allocation of eight or twelve bytes --
-// 52 % of `move_line_down.multi_caret_burst` (TD-2026-08-15-244). With inline
-// offset slots a small blob's table costs nothing, and short lines ride the
-// string's own small buffer, so the whole blob is allocation-free.
 void TestPieceTreeSmallBlobIsAllocationFree() {
   PieceTree tree({"one", "two", "three", "four", "five"});
-  // Warm: the tree's line-start cache and walk stack allocate on first use.
   editor::LineBlob warmup;
   tree.AppendLines(0, 3, warmup);
 #if MICROIDE_PERF_HARNESS_BUILD
@@ -273,8 +231,6 @@ void TestPieceTreeSmallBlobIsAllocationFree() {
   Expect(blob.size() == 3 && blob[0] == "two" && blob[2] == "four",
          "the inline-capacity blob must still hold the right lines");
 
-  // And it must spill correctly rather than truncate: past the inline slots the
-  // offsets move to the heap and every line stays readable.
   editor::LineBlob spilled;
   for (int i = 0; i < 40; ++i) {
     spilled.push_back(std::string(1, static_cast<char>('a' + (i % 26))));
@@ -292,12 +248,6 @@ void TestPieceTreeSliceLines() {
   Expect(tree.SliceLines(4, 99).size() == 1, "slice clamps to end");
 }
 
-// SliceLines / ToVector share one single-pass in-order extractor (ExtractLineRange)
-// that splits piece bytes on '\n' with an early stop for partial ranges and a
-// post-walk push for the final unterminated line. Fuzz every (begin, end) slice of
-// a heavily-fragmented multi-piece tree against the naive oracle so the early-stop
-// boundary, the final-line push, and slices that straddle piece boundaries all stay
-// exact.
 void TestPieceTreeSliceLinesEquivalence() {
   const std::uint64_t seeds[] = {3u, 19u, 0xABCDu, 0xFEEDu};
   for (std::uint64_t seed : seeds) {
@@ -310,7 +260,6 @@ void TestPieceTreeSliceLinesEquivalence() {
     tree.Reset(initial);
     model.Reset(initial);
 
-    // Fragment the tree with many small edits (each spawns add-buffer pieces).
     for (int step = 0; step < 120; ++step) {
       const std::size_t n = model.lines.size();
       const std::size_t start = rng.Below(n + 1);
@@ -336,21 +285,17 @@ void TestPieceTreeSliceLinesEquivalence() {
   }
 }
 
-// ResetFromText (the Phase 4 large-file load fast path) must be exactly
-// equivalent to splitting the same canonical '\n'-joined bytes into lines and
-// feeding them through Reset -- it just skips the intermediate vector.
 void TestPieceTreeResetFromTextMatchesReset() {
   const std::vector<std::string> cases = {
-      "",                       // empty file -> single empty line
-      "solo",                   // no trailing newline, one line
-      "a\nb\nc",                // multiple lines, no trailing newline
-      "a\nb\nc\n",              // trailing newline -> final empty line
-      "\n",                     // single newline -> two empty lines
-      "\n\n\n",                 // only newlines
-      std::string("a\0b\nc", 5) // embedded NUL is in-line content
+      "",
+      "solo",
+      "a\nb\nc",
+      "a\nb\nc\n",
+      "\n",
+      "\n\n\n",
+      std::string("a\0b\nc", 5)
   };
   for (const std::string& text : cases) {
-    // Split exactly the way the canonical model joins: on '\n' only.
     std::vector<std::string> lines;
     std::size_t start = 0;
     for (std::size_t i = 0; i <= text.size(); ++i) {
@@ -377,14 +322,8 @@ void TestPieceTreeResetFromTextMatchesReset() {
   }
 }
 
-// Regression: the append-only add_ buffer indexes bytes with 32-bit offsets, so
-// it must be compactable before add_.size() can cross 4 GiB and wrap. Compaction
-// is representation-only — it materializes the live document into the original
-// buffer and empties add_, preserving content and line count. (The overflow
-// itself is impractical to allocate, so exercise the compaction path directly.)
 void TestPieceTreeAddBufferCompaction() {
   PieceTree tree({"alpha", "beta", "gamma"});
-  // Each mutator routes new text through InsertText -> AppendToAdd, growing add_.
   tree.SetLine(0, "alpha-edited");
   tree.InsertLine(1, "inserted");
   tree.ReplaceLineRange(2, 1, {"beta-1", "beta-2"});
@@ -402,7 +341,6 @@ void TestPieceTreeAddBufferCompaction() {
   Expect(tree.LineCount() == before_lines, "compaction must preserve the line count");
   Expect(tree.ByteSize() == before_bytes, "compaction must preserve the byte size");
 
-  // Edits after compaction must still apply correctly (add_ re-grows from zero).
   tree.SetLine(0, "post-compact");
   Expect(tree.AddBufferSizeForTesting() > 0, "post-compaction edits should re-grow add_");
   std::vector<std::string> expected = before;
@@ -410,16 +348,6 @@ void TestPieceTreeAddBufferCompaction() {
   Expect(tree.ToVector() == expected, "edits after compaction must apply correctly");
 }
 
-// Regression (TD-2026-08-04-130): `add_` is append-only, so repeated large edits
-// accumulated dead history forever — a session doing sustained multi-line editing
-// grew resident memory with no upper bound and no way to get it back short of
-// restarting. The 4 GiB overflow guard is a correctness backstop that in practice
-// never fires. Compaction is now also driven by memory pressure, so the dead
-// history stays proportional to the LIVE document.
-//
-// The shape that made this hard to see: `add_` doubling itself is one allocation
-// and one free, so allocation counts stay balanced while the bytes climb.
-// Assert on the buffer size, which is the thing that actually grows.
 void TestPieceTreeAddBufferStaysBoundedUnderRepeatedLargeEdits() {
   std::vector<std::string> lines;
   lines.reserve(2000);
@@ -428,8 +356,6 @@ void TestPieceTreeAddBufferStaysBoundedUnderRepeatedLargeEdits() {
   }
   PieceTree tree(lines);
 
-  // Rewrite a 1,000-line window over and over, exactly what toggle-line-comment on
-  // a large selection does. Each pass appends ~the window's bytes to add_.
   std::vector<std::string> replacement(lines.begin(), lines.begin() + 1000);
   const auto run_passes = [&](int count, int base_pass) {
     std::size_t peak = 0;
@@ -441,22 +367,11 @@ void TestPieceTreeAddBufferStaysBoundedUnderRepeatedLargeEdits() {
     return peak;
   };
 
-  // Boundedness is asserted against the buffer's OWN earlier peak rather than
-  // against the trigger's constants, so the test cannot drift out of agreement
-  // with them: if the dead history is bounded, running four times as long cannot
-  // raise the high-water mark. Without the memory-pressure trigger the second
-  // window's peak is ~4x the first, because add_ only ever grows.
   const std::size_t early_peak = run_passes(200, 0);
   const std::size_t late_peak = run_passes(800, 200);
-  // A small slack, because the replacement text is not byte-identical across passes
-  // (the pass number is in it), so the exact byte at which the threshold is crossed
-  // moves by a few bytes. Measured: 4,216,850 against 4,216,860. Unbounded growth
-  // would put the second window's peak at ~4x the first.
   Expect(late_peak <= early_peak + 64 * 1024,
          "repeated large edits must not raise the add buffer's high-water mark");
 
-  // And the content is still exactly right: compaction is representation-only, and
-  // it now happens in the middle of an edit rather than only from a test seam.
   const std::vector<std::string> materialized = tree.ToVector();
   Expect(materialized.size() == lines.size(),
          "compaction during an edit must preserve the line count");
@@ -466,114 +381,62 @@ void TestPieceTreeAddBufferStaysBoundedUnderRepeatedLargeEdits() {
          "compaction during an edit must leave the untouched lines alone");
 }
 
-// Regression (TD-2026-08-14-233): the add side is CHUNKED, so appending never
-// copies edit history that is already stored.
-//
-// The old single `std::string add_` took std::string's doubling curve, which put
-// a memcpy of the whole dead history inside a keystroke — up to ~4 MiB, since the
-// memory-pressure compaction lets the history reach that before reclaiming it.
-// It also made a scenario's retention series geometric, which is what left
-// `editor_smart_indent_typing`'s `p50_net_heap_bytes` gate reading a doubling
-// step rather than what the scenario retains.
-//
-// Asserted here as the property that matters and that the old shape could not
-// have: the number of distinct backing allocations grows with the BYTES typed
-// divided by the chunk cap, not with the number of appends, and every byte
-// already written keeps its address.
 void TestPieceTreeAddChunksNeverMoveStoredHistory() {
   PieceTree tree({"seed"});
-  // 4,000 small appends. Under doubling this is ~12 reallocations, each copying
-  // everything appended so far; under chunking it is one allocation per chunk and
-  // zero bytes copied.
   const std::string payload(64, 'x');
   std::vector<const char*> observed;
   observed.reserve(4000);
   for (int i = 0; i < 4000; ++i) {
     tree.PushBackLine(payload);
-    // The most recently appended text is the last line; its view points straight
-    // into the chunk that holds it (a fresh push is contiguous by construction).
     observed.push_back(tree.LineView(tree.LineCount() - 1).data());
   }
   Expect(tree.LineCount() == 4001, "every append landed");
 
-  // Every early view must still read its own bytes. Under doubling the buffer
-  // these point into would have been freed and copied elsewhere ~12 times, so
-  // this loop is exactly the use-after-free the chunking removes.
   for (const char* view : observed) {
     Expect(std::string_view(view, payload.size()) == payload,
            "text already in a chunk keeps its address and its bytes");
   }
 
-  // ~260 KB of history in <= 64 KiB chunks: a handful of allocations, not 4,000,
-  // and not one per doubling either. Bounded on both sides so neither
-  // "one chunk per append" nor "one chunk ever" passes.
   const std::size_t chunks = tree.AddChunkCountForTesting();
   Expect(chunks >= 4 && chunks <= 16,
          "chunk count tracks bytes typed / chunk cap, not the append count");
 }
 
-// A single insert larger than the chunk cap must still land in ONE chunk: a piece
-// is a [offset, len) slice of one buffer, so a value split across two chunks would
-// be unrepresentable. This is the paste / formatter-rewrite shape.
 void TestPieceTreeAddChunkHoldsAnOversizedInsertContiguously() {
   PieceTree tree({"seed"});
-  const std::string huge(200u * 1024u, 'q');  // > kMaxAddChunkBytes (64 KiB)
+  const std::string huge(200u * 1024u, 'q');
   tree.PushBackLine(huge);
   Expect(tree.LineCount() == 2, "the oversized insert is one line");
   const std::string_view view = tree.LineView(1);
   Expect(view.size() == huge.size() && view == huge,
          "an insert larger than the chunk cap reads back intact");
-  // Zero-copy is the point: a contiguous piece is viewable without materializing.
   Expect(tree.LineOwnedIfMaterialized(1) == nullptr,
          "an oversized insert stays one contiguous piece (no spanning-line copy)");
-  // And a normal-sized append after it still works.
   tree.PushBackLine("after");
   Expect(tree.LineView(2) == "after", "a small append after an oversized chunk lands correctly");
   Expect(tree.LineView(1) == huge, "the oversized chunk is untouched by later appends");
 }
 
-// Regression: a spanning line (content crossing a piece boundary, the shape
-// mid-line character editing produces) is materialized into a per-index cache
-// slot. A second LineView() for the SAME index must return the already-cached
-// slot unchanged -- re-running clear()+CopyRange could reallocate the slot's
-// buffer and dangle a view returned by the earlier call. Assert the two views
-// share the same backing pointer (proving no reallocation) and equal content.
 void TestPieceTreeSpanningLineViewStableAcrossReReads() {
   PieceTree tree({"abcdef", "second"});
-  // Byte-level mid-line insert at column 3 of line 0: "abc" | "XYZ" | "def",
-  // so LineView(0) spans three pieces and takes the non-contiguous slow path.
   tree.InsertTextForTesting(3, "XYZ");
   const std::string_view first = tree.LineView(0);
   Expect(first == "abcXYZdef", "spanning line materializes correctly");
-  // Re-read the same index. With the fix this returns the same slot; without it
-  // the slot is cleared+rebuilt and `first` would dangle.
   const std::string_view second = tree.LineView(0);
   Expect(second == "abcXYZdef", "same-index re-read yields identical content");
   Expect(first.data() == second.data(),
          "same-index re-read must not reallocate the cache slot (first view stays valid)");
   Expect(first == "abcXYZdef", "the first view is still valid after the second read");
-  // The untouched neighbour line is unaffected.
   Expect(tree.LineView(1) == "second", "neighbour line intact");
 }
 
-// TD-2026-08-05-133: `LineWindow` is the bounded read. Two things must hold and
-// they need separate checks, because one is about the answer and the other is
-// about the work: the window must equal the same slice of the whole line at every
-// (line, start, length) including the degenerate ones, AND reading a window of a
-// line that spans pieces must not materialize the line. A walk and a lookup
-// return the same answer, so only the counter can tell them apart.
 void TestPieceTreeLineWindowMatchesSubstring() {
-  // Line 0 is deliberately made to span three pieces; line 1 stays contiguous; a
-  // multi-byte line exercises the "window splits a code point" case (LineWindow
-  // is byte-scoped by contract, so it must return the raw bytes, not round).
   PieceTree tree({"abcdefghij", "second line", "caf\xc3\xa9 na\xc3\xafve"});
-  tree.InsertTextForTesting(4, "WXYZ");  // "abcd" | "WXYZ" | "efghij"
+  tree.InsertTextForTesting(4, "WXYZ");
 
   std::string scratch;
   for (std::size_t line = 0; line < tree.LineCount(); ++line) {
     const std::string whole(tree.LineView(line));
-    // Past the end, exactly at the end, empty, single byte, whole line, and
-    // beyond the end in length -- every clamping corner in one sweep.
     for (std::size_t start = 0; start <= whole.size() + 2; ++start) {
       for (std::size_t len = 0; len <= whole.size() + 2; ++len) {
         const std::string_view window = tree.LineWindow(line, start, len, scratch);
@@ -587,53 +450,31 @@ void TestPieceTreeLineWindowMatchesSubstring() {
 
 void TestPieceTreeLineWindowDoesNotMaterializeTheLine() {
   PieceTree tree({std::string(4096, 'a'), "tail"});
-  // Split line 0 into three pieces, exactly as an in-line edit does. From here on
-  // LineView(0) can only be served by copying the line.
   tree.InsertTextForTesting(2000, "MID");
 
   util::ResetPerformanceCounters();
   std::string scratch;
-  // Windows on both sides of the splice and one straddling it (the straddling one
-  // must copy the WINDOW -- 8 bytes -- not the line).
   Expect(tree.LineWindow(0, 0, 16, scratch) == std::string(16, 'a'), "prefix window reads");
   Expect(tree.LineWindow(0, 1996, 8, scratch) == "aaaaMIDa", "straddling window reads");
-  // 2000 'a' + "MID" + 2096 'a' = 4099 bytes, so a 64-byte window at 4090 clamps to 9.
   Expect(tree.LineWindow(0, 4090, 64, scratch) == std::string(9, 'a'), "suffix window clamps");
   Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializations) == 0,
          "a bounded window must never materialize the whole line");
   Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializedBytes) == 0,
          "a bounded window must not copy line-sized byte counts");
 
-  // Reachability control: the same line read whole DOES materialize, so the
-  // assertion above is measuring something that can happen rather than a path
-  // that never runs.
   (void)tree.LineView(0);
   Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializations) == 1,
          "reading the whole spanning line still materializes it (control)");
   util::ResetPerformanceCounters();
 }
 
-// TD-2026-08-05-133: the caret-local pair heuristics answer from five bytes now
-// instead of the whole line. The oracle has to be the OLD derivation -- clamp
-// against the whole line, index it -- computed here in the test. A same-content
-// contiguous-vs-spanning differential would be blind: both sides run the new
-// windowed code, so a window that is one byte short is wrong identically on both.
 void TestCaretNeighborhoodMatchesWholeLineReading() {
-  // Multi-byte code points on both sides of every interesting column, a tab, and
-  // an ASCII run long enough that the window's start clamp is exercised.
   const std::vector<std::string> lines = {
       "caf\xc3\xa9()na\xc3\xafve[]\xe2\x82\xac{}xyzzy\tend",
       "",
       "a",
-      "\xf0\x9f\x98\x80!",     // a four-byte code point at column 0
-      // ...and one mid-line, which is what forces the window
+      "\xf0\x9f\x98\x80!",
       "ab\xf0\x9f\x98\x80" "cd",  // NOLINT(bugprone-suspicious-missing-comma)
-      // to reach FOUR bytes back rather than three: the caret on its last
-      // continuation byte clamps three columns down, and `prev` sits one before
-      // that.
-      // Malformed bytes (soak 5a2cb8ba7f6b): a continuation byte no lead claims is
-      // a unit of its own, and a lead covers the caret only when its continuation
-      // bytes past the caret are really there -- which the window must read.
       std::string("x\x7f\x80\x81\x82\x83y\xe2\x82\xacz\xe2\x82!\xf0\x9f\x98\x80\x80", 19),
   };
   std::string content;
@@ -643,11 +484,6 @@ void TestCaretNeighborhoodMatchesWholeLineReading() {
   }
   microide::editor::TextBuffer buffer;
   buffer.ResetFromText(content);
-  // Fragment every line WITHOUT changing it: insert a byte mid-line and delete it
-  // again. The tree never re-merges pieces, so the window can straddle a seam at
-  // the offsets the loop below asks about. A zero-length splice is a no-op and
-  // would leave every line contiguous -- a fixture that names a path it does not
-  // take.
   for (std::size_t line = 0; line < buffer.size(); ++line) {
     const std::size_t length = buffer.LineLength(line);
     if (length >= 2) {
@@ -689,15 +525,10 @@ void TestCaretNeighborhoodMatchesWholeLineReading() {
   }
 }
 
-// TD-2026-08-05-133: `TextBuffer::operator[]` must hand out a `const std::string&`,
-// and for a line that spans pieces the tree has already made exactly that string
-// to serve `LineView`. Copying it again doubled the cost of every compatibility
-// read on an edited line. Pin the aliasing by identity, and pin that a contiguous
-// line is still copied (it has no owned form to alias).
 void TestTextBufferOperatorIndexAliasesTheTreesMaterializedLine() {
   microide::editor::TextBuffer buffer;
   buffer.ResetFromText("abcdefghij\nplain second line\n");
-  buffer.ReplaceTextRange(0, 4, 0, 4, "WXYZ");  // splits line 0 into three pieces
+  buffer.ReplaceTextRange(0, 4, 0, 4, "WXYZ");
 
   const std::string_view view = buffer.LineView(0);
   const std::string& ref = buffer[0];
@@ -707,38 +538,29 @@ void TestTextBufferOperatorIndexAliasesTheTreesMaterializedLine() {
   Expect(buffer.materialized_line_count() == 0,
          "aliasing must not add an entry to the compatibility line cache");
 
-  // A contiguous line has no owned copy to alias, so it still goes through the
-  // cache -- which is what makes the assertion above a real distinction.
   const std::string& contiguous = buffer[1];
   Expect(contiguous == "plain second line", "the untouched line reads correctly");
   Expect(contiguous.data() != buffer.LineView(1).data(),
          "a contiguous line is served from the compatibility cache, not the tree");
   Expect(buffer.materialized_line_count() == 1, "the contiguous read materialized one line");
 
-  // The reference contract is unchanged: both caches die at the next mutation.
   buffer.ReplaceTextRange(1, 0, 1, 0, "x");
   Expect(buffer.materialized_line_count() == 0, "a mutation clears the compatibility cache");
   Expect(buffer[0] == "abcdWXYZefghij", "content survives the mutation on the other line");
 }
 
-// TD-2026-07-16-35: a mutation that would push the live document past the byte ceiling
-// must be refused as a no-op (leaving content + line count intact) rather than wrap the
-// uint32 subtree_length and corrupt the tree. Exercised via a lowered test ceiling.
 void TestPieceTreeLiveDocumentByteCeiling() {
   PieceTree tree({"hello", "world"});
   const std::vector<std::string> before = tree.ToVector();
   const std::size_t before_bytes = tree.ByteSize();
   const std::size_t before_lines = tree.LineCount();
 
-  // Lower the ceiling to just below the current size + a small insert.
   tree.SetMaxLiveDocumentBytesForTesting(static_cast<std::uint32_t>(before_bytes + 2));
 
-  // A small insert that fits under the ceiling still applies.
-  tree.PushBackLine("x");  // +2 bytes ("\n" + "x")
+  tree.PushBackLine("x");
   Expect(!tree.LastMutationRejectedForByteCeiling(), "an in-budget mutation applies");
   Expect(tree.LineCount() == before_lines + 1, "the in-budget mutation grew the document");
 
-  // Now any further growth exceeds the ceiling and must be refused as a no-op.
   const std::vector<std::string> at_cap = tree.ToVector();
   const std::size_t at_cap_bytes = tree.ByteSize();
   tree.PushBackLine("this would overflow the lowered ceiling");
@@ -747,17 +569,11 @@ void TestPieceTreeLiveDocumentByteCeiling() {
   Expect(tree.ToVector() == at_cap, "a rejected mutation leaves content unchanged");
   Expect(tree.ByteSize() == at_cap_bytes, "a rejected mutation leaves byte size unchanged");
 
-  // A delete (shrinking) is always allowed even at the ceiling.
   tree.EraseLine(0);
   Expect(!tree.LastMutationRejectedForByteCeiling(), "a shrinking mutation is never refused");
   Expect(tree.LineCount() == at_cap.size() - 1, "the delete applied");
 }
 
-// AppendWholeText must be byte-identical to the '\n'-join of every line — that
-// is the contract the in-file find/replace surface relies on, and it replaced a
-// hand-rolled per-line join. Exercised on a tree that has been mid-line edited
-// so lines genuinely span pieces (the case where the per-line path also had to
-// materialize into the line cache).
 void TestPieceTreeAppendWholeTextMatchesLineJoin() {
   const auto join = [](const PieceTree& tree) {
     std::string joined;
@@ -781,7 +597,6 @@ void TestPieceTreeAppendWholeTextMatchesLineJoin() {
   Expect(out == join(tree), "fresh document: whole text matches the line join");
   Expect(out.size() == tree.ByteSize(), "whole text length equals ByteSize()");
 
-  // Force lines to span multiple pieces.
   tree.InsertTextForTesting(2, "XYZ");
   tree.InsertTextForTesting(15, "-mid-");
   tree.InsertLine(1, "inserted");
@@ -790,18 +605,11 @@ void TestPieceTreeAppendWholeTextMatchesLineJoin() {
   Expect(out == join(tree), "after mid-line edits: whole text still matches the line join");
   Expect(out.size() == tree.ByteSize(), "whole text length still equals ByteSize()");
 
-  // Appends rather than assigns: an existing prefix must survive.
   std::string prefixed = "PREFIX:";
   tree.AppendWholeText(prefixed);
   Expect(prefixed == "PREFIX:" + out, "AppendWholeText appends, it does not overwrite");
 }
 
-// ReplaceTextRange is the column-scoped splice the in-line edit path uses instead
-// of rebuilding a whole line through ReplaceLineRange. It has to be EXACTLY
-// equivalent to the line-shaped form for every span, including the multi-line and
-// line-count-changing cases, or an edit silently corrupts the document.
-//
-// Oracle: apply the same span to a plain '\n'-joined string and re-split it.
 void TestPieceTreeReplaceTextRangeMatchesLineForm() {
   const auto splice = [](std::vector<std::string> lines, std::size_t sl, std::size_t sc,
                          std::size_t el, std::size_t ec, std::string_view text) {
@@ -841,19 +649,19 @@ void TestPieceTreeReplaceTextRangeMatchesLineForm() {
     std::string text;
   };
   const std::vector<Case> cases = {
-      {{"alpha", "bravo", "charlie"}, 1, 2, 1, 2, "X"},           // pure in-line insert
-      {{"alpha", "bravo", "charlie"}, 1, 2, 1, 4, ""},            // pure in-line delete
-      {{"alpha", "bravo", "charlie"}, 1, 2, 1, 4, "ZZZZ"},        // in-line replace
-      {{"alpha", "bravo", "charlie"}, 0, 5, 1, 0, ""},            // join two lines
-      {{"alpha", "bravo", "charlie"}, 1, 3, 1, 3, "\n"},          // split a line
-      {{"alpha", "bravo", "charlie"}, 0, 1, 2, 3, "mid"},         // multi-line collapse
-      {{"alpha", "bravo", "charlie"}, 0, 0, 2, 7, ""},            // delete everything
-      {{"alpha", "bravo", "charlie"}, 2, 7, 2, 7, "\ntail"},      // append a line at EOF
-      {{"alpha"}, 0, 0, 0, 0, "a\nb\nc"},                          // insert several lines
-      {{""}, 0, 0, 0, 0, "seed"},                                  // empty document seed
-      {{"alpha", "bravo"}, 1, 99, 1, 99, "!"},                     // column clamps to EOL
-      {{"alpha", "bravo"}, 9, 0, 9, 0, "!"},                       // line clamps to last
-      {{"alpha", "bravo"}, 1, 4, 1, 1, "swapped"},                 // end before start
+      {{"alpha", "bravo", "charlie"}, 1, 2, 1, 2, "X"},
+      {{"alpha", "bravo", "charlie"}, 1, 2, 1, 4, ""},
+      {{"alpha", "bravo", "charlie"}, 1, 2, 1, 4, "ZZZZ"},
+      {{"alpha", "bravo", "charlie"}, 0, 5, 1, 0, ""},
+      {{"alpha", "bravo", "charlie"}, 1, 3, 1, 3, "\n"},
+      {{"alpha", "bravo", "charlie"}, 0, 1, 2, 3, "mid"},
+      {{"alpha", "bravo", "charlie"}, 0, 0, 2, 7, ""},
+      {{"alpha", "bravo", "charlie"}, 2, 7, 2, 7, "\ntail"},
+      {{"alpha"}, 0, 0, 0, 0, "a\nb\nc"},
+      {{""}, 0, 0, 0, 0, "seed"},
+      {{"alpha", "bravo"}, 1, 99, 1, 99, "!"},
+      {{"alpha", "bravo"}, 9, 0, 9, 0, "!"},
+      {{"alpha", "bravo"}, 1, 4, 1, 1, "swapped"},
   };
 
   for (const Case& c : cases) {
@@ -871,9 +679,6 @@ void TestPieceTreeReplaceTextRangeMatchesLineForm() {
   }
 }
 
-// Randomized: the two mutation primitives must agree with the naive model over
-// long interleaved runs, including on a tree fragmented into many pieces (which
-// is what makes the byte-offset resolution interesting).
 void TestPieceTreeReplaceTextRangeRandomizedEquivalence() {
   const std::uint64_t seeds[] = {11u, 97u, 0xFACEu, 0x5EEDu};
   for (std::uint64_t seed : seeds) {
@@ -894,7 +699,6 @@ void TestPieceTreeReplaceTextRangeRandomizedEquivalence() {
         continue;
       }
       if ((rng.Next() & 3u) == 0u) {
-        // Occasional line-shaped edit, so both primitives share one document.
         const std::size_t start = rng.Below(n + 1);
         const std::size_t removed = rng.Below((n - std::min(start, n)) + 1);
         std::vector<std::string> inserted;
@@ -915,7 +719,6 @@ void TestPieceTreeReplaceTextRangeRandomizedEquivalence() {
                                            : static_cast<char>('a' + static_cast<char>(rng.Below(26))));
       }
 
-      // Oracle: splice the model's own joined bytes.
       std::string joined;
       for (std::size_t i = 0; i < model.lines.size(); ++i) {
         if (i != 0) joined.push_back('\n');
@@ -928,7 +731,6 @@ void TestPieceTreeReplaceTextRangeRandomizedEquivalence() {
       const std::size_t from = start_base + start_column;
       const std::size_t to = std::max(from, end_base + end_column);
 
-      // AppendTextRange must hand back exactly the bytes being replaced.
       std::string extracted = "KEEP:";
       tree.AppendTextRange(start_line, start_column, end_line, end_column, extracted);
       Expect(extracted == "KEEP:" + joined.substr(from, to - from),
@@ -951,10 +753,6 @@ void TestPieceTreeReplaceTextRangeRandomizedEquivalence() {
   }
 }
 
-// The byte ceiling is a correctness backstop (subtree_length is uint32), so the
-// column-scoped primitive must enforce it too — refusing the whole splice as a
-// no-op rather than wrapping. A ceiling check that only lived on ReplaceLineRange
-// would leave the hot edit path unguarded.
 void TestPieceTreeReplaceTextRangeHonorsByteCeiling() {
   PieceTree tree({"hello", "world"});
   const std::vector<std::string> before = tree.ToVector();
@@ -965,81 +763,60 @@ void TestPieceTreeReplaceTextRangeHonorsByteCeiling() {
          "a column-scoped splice past the byte ceiling must be rejected");
   Expect(tree.ToVector() == before, "a rejected column-scoped splice changes nothing");
 
-  // Shrinking is always allowed, and a same-size replace stays exactly at the cap.
   tree.ReplaceTextRange(0, 0, 0, 5, "HI");
   Expect(!tree.LastMutationRejectedForByteCeiling(), "a shrinking splice is never refused");
   Expect(tree.LineView(0) == "HI", "the shrinking splice applied");
 }
 
-}  // namespace
+}
 
-// LineView/LineLength memoize the byte offset of the last line start they
-// resolved, so an ascending walk costs one tree descent per line instead of two.
-// The hazard that buys is a stale memo surviving a mutation: reads after an edit
-// would then resolve line starts against the OLD document layout.
-//
-// Priming matters, and is subtle: LineView(i) asks for start(i) then start(i+1),
-// so it leaves the memo holding i + 1. A test that mutates and then reads from
-// line 0 upward never consults a stale entry (index 0 misses, and every later
-// index is re-primed on the way). Each case below therefore primes a specific
-// index, mutates in a way that MOVES that index's start byte, and reads exactly
-// that index first. Verified to fail if BumpRevision stops clearing the memo.
 void TestPieceTreeLineStartMemoInvalidation() {
   const std::vector<std::string> base = {"alpha", "bravo", "charlie", "delta", "echo"};
 
-  // 1. Insertion before the memoized index shifts its start byte.
   {
     PieceTree tree(base);
-    (void)tree.LineView(1);            // memo now holds index 2
-    tree.InsertLine(0, "prefix-line");  // every start shifts right
+    (void)tree.LineView(1);
+    tree.InsertLine(0, "prefix-line");
     Expect(tree.LineView(2) == "bravo",
            "an insert before the memoized line must invalidate its cached start");
   }
 
-  // 2. Deletion before the memoized index shifts it the other way.
   {
     PieceTree tree(base);
-    (void)tree.LineView(2);  // memo now holds index 3
+    (void)tree.LineView(2);
     tree.EraseLine(0);
     Expect(tree.LineView(3) == "echo",
            "an erase before the memoized line must invalidate its cached start");
   }
 
-  // 3. An in-place edit that CHANGES LENGTH moves every following start.
   {
     PieceTree tree(base);
-    (void)tree.LineView(1);  // memo now holds index 2
+    (void)tree.LineView(1);
     tree.SetLine(0, "a-much-longer-first-line");
     Expect(tree.LineView(2) == "charlie",
            "a length-changing edit must invalidate the cached start after it");
   }
 
-  // 4. LineLength primes and reads the same memo as LineView.
   {
     PieceTree tree(base);
-    (void)tree.LineLength(1);  // memo now holds index 2
+    (void)tree.LineLength(1);
     tree.InsertLine(0, "prefix-line");
     Expect(tree.LineLength(2) == 5, "LineLength must not read a stale cached start");
   }
 
-  // 5. Reset / ResetFromText rebuild through RebuildFromOriginal rather than the
-  //    normal mutation path — the path that used to clear the spanning-line cache
-  //    inline instead of via BumpRevision.
   {
     PieceTree tree(base);
-    (void)tree.LineView(1);  // memo now holds index 2
+    (void)tree.LineView(1);
     tree.Reset({"x", "much longer second line here", "z"});
     Expect(tree.LineView(2) == "z", "Reset must invalidate the line-start memo");
   }
   {
     PieceTree tree(base);
-    (void)tree.LineView(1);  // memo now holds index 2
+    (void)tree.LineView(1);
     tree.ResetFromText("one\ntwo-is-much-longer\nthree");
     Expect(tree.LineView(2) == "three", "ResetFromText must invalidate the line-start memo");
   }
 
-  // 6. Out-of-order reads must be correct too: the memo holds a single entry, so
-  //    a jumping walk misses it constantly and must fall back to a real descent.
   {
     PieceTree tree(base);
     for (const std::size_t index : {std::size_t{4}, std::size_t{0}, std::size_t{3},
@@ -1052,13 +829,6 @@ void TestPieceTreeLineStartMemoInvalidation() {
   }
 }
 
-// `LineBlob::prepend` used to be `replace_range(0, 0, other)` — a whole new byte
-// buffer and a whole new offset table per call. It is now an in-place front
-// insert, which is the same answer computed differently, so this checks it
-// against the general splice it replaced over a randomized corpus. The two must
-// agree on the line COUNT, every line's bytes, and the resulting byte buffer
-// — the offsets are absolute, so a shift that is off by one produces lines that
-// read as garbage rather than as a different count.
 void TestLineBlobPrependMatchesTheGeneralSplice() {
   std::mt19937 rng(20260920u);
   std::uniform_int_distribution<int> line_count(0, 12);
@@ -1103,9 +873,6 @@ void TestLineBlobPrependMatchesTheGeneralSplice() {
            "prepend must keep every line of both sides");
   }
 
-  // The shape the undo group's merge actually produces: one line prepended at a
-  // time, a thousand times, which is what made the old form quadratic. Checked
-  // against the straightforward model so the fast path cannot drift.
   editor::LineBlob grown;
   std::vector<std::string> model;
   for (int i = 0; i < 1000; ++i) {
@@ -1118,22 +885,12 @@ void TestLineBlobPrependMatchesTheGeneralSplice() {
   Expect(lines_of(grown) == model,
          "a thousand one-line prepends must build the same blob as a front-inserting model");
 
-  // Self-prepend doubles the blob. The general splice made this work by accident
-  // (it built into a fresh buffer and read the old one); doing it in place would
-  // read offsets the same call has already shifted, so the in-place form takes a
-  // copy. Nothing in the tree does this — the test is what keeps the guard from
-  // being deleted as dead.
   editor::LineBlob self = editor::LineBlob::Of({"a", "bb", "ccc"});
   self.prepend(self);
   Expect(lines_of(self) == std::vector<std::string>({"a", "bb", "ccc", "a", "bb", "ccc"}),
          "prepending a blob to itself must double it, not read shifted offsets");
 }
 
-// The crash-safety flush hands unsaved buffers to the persistence worker as
-// snapshots that share the piece tree's buffers (TD-2026-11-02-429 item 3). A
-// snapshot must read as the document did when it was taken, whatever happens to
-// the tree afterwards: typing into the chunk it shares, a compaction that drops
-// that chunk, a reset, and a copy of the tree typing into a chunk it shares too.
 void TestPieceTreeSnapshotReadsAsTheDocumentDidWhenTaken() {
   std::mt19937 rng(20261106);
   PieceTree tree(std::vector<std::string>{"alpha", "beta", "", "gamma"});
@@ -1156,7 +913,7 @@ void TestPieceTreeSnapshotReadsAsTheDocumentDidWhenTaken() {
       tree.CompactAddBufferForTesting();
     }
   }
-  PieceTree copy = tree;  // shares the chunks
+  PieceTree copy = tree;
   copy.InsertLine(0, "from the copy");
   tree.InsertLine(0, "from the tree");
   Expect(copy.LineView(0) == "from the copy" && tree.LineView(0) == "from the tree",
@@ -1179,8 +936,6 @@ void TestPieceTreeSnapshotReadsAsTheDocumentDidWhenTaken() {
          "a trailing newline is a last empty line, and the text round-trips");
 }
 
-// The worker reads a snapshot while the shell thread goes on typing into the
-// chunk it shares: different bytes, so no race (the TSan lane holds this).
 void TestPieceTreeSnapshotIsReadableWhileTheTreeIsEdited() {
   PieceTree tree(std::vector<std::string>{"start"});
   for (int i = 0; i < 50; ++i) {
@@ -1205,12 +960,6 @@ void TestPieceTreeSnapshotIsReadableWhileTheTreeIsEdited() {
   Expect(same.load(), "the snapshot read the same text on every pass");
 }
 
-// One piece cut at every line -- a file loaded whole, then edited at a caret per
-// line, the last line first as a multi-caret edit applies them -- left the tree a
-// chain as long as the piece count: Split gave each cut-off tail its parent's
-// priority, and Merge stacks equal priorities into one spine. Every lookup became
-// linear, so one Backspace at 16,000 carets took 15 s and the app stopped
-// answering for minutes (soak c28cd895c095). Deletes, inserts, either order.
 void TestPieceTreeStaysShallowUnderAnEditAtEveryLine() {
   constexpr std::size_t kLines = 4000;
   std::string text;
@@ -1298,4 +1047,4 @@ void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
           TestLineBlobPrependMatchesTheGeneralSplice);
 }
 
-}  // namespace microide::tests
+}

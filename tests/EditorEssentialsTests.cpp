@@ -41,7 +41,7 @@ using microide::editor::TextViewport;
 void TestBracketScannerForwardMatch() {
   TextViewport viewport;
   viewport.LoadContent("if (a) {\n  return 1;\n}\n", "/tmp/sample.cpp");
-  viewport.MoveCursorTo(0, 7);  // caret right after '{' opener (line 0, col 7 = '{')
+  viewport.MoveCursorTo(0, 7);
   auto match = microide::editor::FindBracketMatch(viewport, viewport.cursor_line(),
                                                   viewport.cursor_column());
   Expect(match.has_value(), "expected a bracket match for '{' on line 0");
@@ -54,7 +54,7 @@ void TestBracketScannerForwardMatch() {
 void TestBracketScannerBackwardMatch() {
   TextViewport viewport;
   viewport.LoadContent("{\n  x;\n}\n", "/tmp/sample.cpp");
-  viewport.MoveCursorTo(2, 1);  // caret right after '}'
+  viewport.MoveCursorTo(2, 1);
   auto match = microide::editor::FindBracketMatch(viewport, 2, 0);
   Expect(match.has_value(), "expected a backward match for '}'");
   Expect(match->open_line == 0 && match->open_column == 0,
@@ -75,7 +75,7 @@ void TestBracketScannerSkipsStringClosers() {
       "  const char* s = \"}\";\n"
       "}\n",
       "/tmp/bracket-skip-str.cpp");
-  viewport.MoveCursorTo(0, 9);  // on '{' after "void f() "
+  viewport.MoveCursorTo(0, 9);
   auto match = microide::editor::FindBracketMatch(viewport, viewport.cursor_line(),
                                                   viewport.cursor_column());
   Expect(match.has_value(), "expected match past string literal closer");
@@ -102,26 +102,19 @@ void TestBracketScannerSkipsCommentBraces() {
 void TestBracketScannerNoMatchWhenAnchorInsideString() {
   TextViewport viewport;
   viewport.LoadContent("auto s = \"{\";\n", "/tmp/bracket-in-str.cpp");
-  viewport.MoveCursorTo(0, 10);  // on '{' inside string literal
+  viewport.MoveCursorTo(0, 10);
   auto match = microide::editor::FindBracketMatch(viewport, 0, 10);
   Expect(!match.has_value(), "bracket inside string should not participate in matching");
 }
 
-// Exercises the windowed scan (base > 0): with a caret several lines down and a
-// small per-side window, FindBracketMatch materializes only [caret-max, caret+max]
-// and indexes it through WindowLines. The returned pair must still be in absolute
-// coordinates.
 void TestBracketScannerWindowedDeepCaret() {
   TextViewport viewport;
   viewport.LoadContent("a\nb\nc\nd\n{\n  x;\n}\ne\n", "/tmp/bracket-window.cpp");
-  // Opener at line 4 col 0, closer at line 6 col 0. Caret just past the opener,
-  // a per-side window of 3 -> window base is line 1 (absolute), not 0.
   auto forward = microide::editor::FindBracketMatch(viewport, 4, 1, 3);
   Expect(forward.has_value(), "windowed forward scan should find the pair");
   Expect(forward->open_line == 4 && forward->open_column == 0, "absolute opener at line 4 col 0");
   Expect(forward->close_line == 6 && forward->close_column == 0, "absolute closer at line 6 col 0");
 
-  // Backward from the closer, window base line 3 (absolute).
   auto backward = microide::editor::FindBracketMatch(viewport, 6, 1, 3);
   Expect(backward.has_value(), "windowed backward scan should find the pair");
   Expect(backward->open_line == 4 && backward->open_column == 0,
@@ -130,14 +123,6 @@ void TestBracketScannerWindowedDeepCaret() {
          "backward absolute closer at line 6 col 0");
 }
 
-// Suppression is a per-LINE question. The matchers walk a line byte by byte, and
-// each byte used to re-resolve that line's token vector through
-// `TextViewport::HighlightedLineTokens` — so a scan cost one highlight-cache probe
-// per BYTE. On a file with no line breaks in it that is one probe per byte of the
-// document, per caret move: 12.6 million of them on the 2 MiB perf fixture.
-//
-// Pinned through the viewport's own highlight-query counter, because the answer is
-// identical either way and only the counter can tell the two apart.
 void TestBracketScannerProbesTokensOncePerLineNotPerByte() {
   constexpr std::size_t kLineBytes = 64u * 1024u;
   std::string line = "(";
@@ -146,8 +131,6 @@ void TestBracketScannerProbesTokensOncePerLineNotPerByte() {
   TextViewport viewport;
   viewport.LoadContent(line + "\n", "/tmp/bracket-long-line.cpp");
 
-  // Warm the highlight cache for the line so the count below is probes, not the
-  // one-time highlight behind the first probe.
   (void)viewport.HighlightedLineTokens(0);
   viewport.ResetCacheStats();
 
@@ -157,22 +140,12 @@ void TestBracketScannerProbesTokensOncePerLineNotPerByte() {
          "the matched columns must be the line's own brackets");
 
   const std::size_t probes = viewport.CacheStats().highlight_queries;
-  // One line was scanned, so a handful of probes is right and anything
-  // proportional to the line's bytes is the regression.
   Expect(probes <= 8,
          "a bracket scan must probe the token cache per line, not per byte (probed " +
              std::to_string(probes) + " times over " + std::to_string(kLineBytes) + " bytes)");
 }
 
-// `max_lines_each_side` bounds the scan in lines, which bounds work only if lines
-// are bounded. `kMaxBracketMatchScanBytes` is the bound in the unit that actually
-// costs; past it the match is reported not-found, exactly as an unbalanced bracket
-// inside the line window already is.
 void TestBracketScannerStopsAtTheScanByteCap() {
-  // The byte budget spans the whole scan window, and since TD-2026-08-05-133 a
-  // caret line past the tokenization cap is refused outright -- so the budget can
-  // only be reached across MANY lines now, and a single over-long line no longer
-  // exercises it. Building this from one line would pass for the other reason.
   const auto document_of = [](std::size_t body_lines) {
     std::string text = "(\n";
     for (std::size_t i = 0; i < body_lines; ++i) {
@@ -191,22 +164,12 @@ void TestBracketScannerStopsAtTheScanByteCap() {
   Expect(!microide::editor::FindBracketMatch(viewport, over_budget_lines + 1, 1).has_value(),
          "a backward scan past the byte cap reports no match");
 
-  // Half the budget still matches, so the cap bounds work rather than breaking
-  // bracket matching on merely-large windows.
   TextViewport under_viewport;
   under_viewport.LoadContent(document_of(over_budget_lines / 4), "/tmp/bracket-under-cap.cpp");
   Expect(microide::editor::FindBracketMatch(under_viewport, 0, 1).has_value(),
          "a scan comfortably inside the byte cap still matches");
 }
 
-// TD-2026-08-05-133: a caret line past `runtime_syntax::kMaxHighlightLineBytes`
-// matches no bracket at all. That is the argument FoldingModel::kMaxBracketScanLineBytes
-// already makes about the same bracket on the same line -- past the tokenization
-// cap the line has no tokens, so a brace inside a string literal is
-// indistinguishable from a real one and the pair would be arbitrary rather than
-// approximate. It is also what keeps the scan from reading the line: on a
-// piece-tree source the window build takes a LineView per line, which copies any
-// line that spans pieces.
 void TestBracketScannerRefusesALineTooLongToTokenize() {
   const std::size_t cap = microide::editor::runtime_syntax::kMaxHighlightLineBytes;
   const auto line_of = [](std::size_t filler) {
@@ -215,8 +178,6 @@ void TestBracketScannerRefusesALineTooLongToTokenize() {
     return line;
   };
 
-  // Adjacent pair at column 0 -- the cheapest possible match, so a refusal here is
-  // the cap and nothing else.
   TextViewport under;
   under.LoadContent(line_of(cap - 8) + "\n", "/tmp/bracket-under-line-cap.cpp");
   Expect(microide::editor::FindBracketMatch(under, 0, 1).has_value(),
@@ -227,8 +188,6 @@ void TestBracketScannerRefusesALineTooLongToTokenize() {
   Expect(!microide::editor::FindBracketMatch(over, 0, 1).has_value(),
          "one byte past the cap the line contributes no bracket match");
 
-  // The work claim: refusing must not read the line. Split it first, so reading it
-  // whole could only be served by a copy.
   TextViewport spanning;
   spanning.LoadContent(line_of(2 * cap) + "\n", "/tmp/bracket-spanning.cpp");
   spanning.InsertText("Z");
@@ -245,15 +204,6 @@ void TestBracketScannerRefusesALineTooLongToTokenize() {
   util::ResetPerformanceCounters();
 }
 
-// A line operation over an N-line selection is ONE splice, not N.
-//
-// `ApplyEntryToBuffer` used to write a same-count replacement line by line, which
-// was the cheap form when the document was a `std::vector<std::string>`. Against
-// the piece tree every `SetLine` is a full `ReplaceLineRange` -- its own joined
-// replacement string, delete+insert, revision bump and line-cache wipe -- so a
-// 1,000-line Toggle Comment cost 1,000 of them (TD-2026-08-06-159). Pinned with
-// the document-edit counter because the buffer contents are identical either way:
-// only the cost tells the two apart.
 void TestShapingLineOpAppliesOneDocumentSplice() {
   constexpr std::size_t kLines = 200;
   std::string content;
@@ -276,8 +226,6 @@ void TestShapingLineOpAppliesOneDocumentSplice() {
   Expect(viewport.lines().LineView(0) == "    // int value_0 = 0;",
          "the comment marker goes in at the common indent");
 
-  // The uncomment branch is the one that was rebuilt to a single exact-sized
-  // buffer; round-tripping proves it still strips exactly what it inserted.
   util::ResetPerformanceCounters();
   viewport.MoveCursorTo(0, 0, false);
   viewport.MoveCursorTo(kLines - 1, viewport.lines().LineView(kLines - 1).size(), true);
@@ -306,15 +254,11 @@ void TestShapingMoveLineDown() {
          "first two lines should swap on MoveLineDown");
 }
 
-// Regression: a whole-line selection ends at column 0 of the line AFTER the block,
-// so ResolveLineRange excludes that trailing line and its end.line is range_last+1.
-// MoveLineDown must carry the selection with the moved block instead of dropping it
-// to the single-caret fallback.
 void TestShapingMoveLineDownKeepsWholeLineSelection() {
   TextViewport viewport;
   viewport.LoadContent("a\nb\nc\nd", "/tmp/moveline-sel.txt");
   viewport.MoveCursorTo(0, 0);
-  viewport.MoveCursorTo(2, 0, /*extend_selection=*/true);  // whole-line selection of a,b
+  viewport.MoveCursorTo(2, 0, true);
   Expect(microide::editor::MoveLineDown(viewport), "MoveLineDown on the a,b block should succeed");
   Expect(viewport.lines()[0] == "c" && viewport.lines()[1] == "a" && viewport.lines()[2] == "b" &&
              viewport.lines()[3] == "d",
@@ -326,13 +270,6 @@ void TestShapingMoveLineDownKeepsWholeLineSelection() {
          "the selection follows the moved block (now lines 1..2, exclusive end at line 3)");
 }
 
-// A whole-line selection names its exclusive end as column 0 of the line AFTER
-// the block. Move the block against the BOTTOM of the buffer and there is no such
-// line: the restore clamped the row to the last line and kept column 0, which
-// RangeForCaret reads as "the selection stops one line short", so the next line
-// op moved one line less than the last one did. Select all in a file ending with a
-// newline, then Alt+Down / Alt+Up, and the buffer came back with a stray blank line
-// and its last line stranded. Found by the editor-invariants sweep (`tools/qa/run.py invariants`).
 void TestShapingMoveLineDownThenUpRestoresABufferEndingInANewline() {
   TextViewport viewport;
   viewport.LoadContent("a\nb\nc\n", "/tmp/moveline-roundtrip.txt");
@@ -352,12 +289,6 @@ void TestShapingMoveLineDownThenUpRestoresABufferEndingInANewline() {
          "Alt+Down then Alt+Up over a whole-buffer selection must restore the buffer");
 }
 
-// Delete Line with a selection deletes every line the selection TOUCHES, the way
-// VS Code's Ctrl+Shift+K does and the way every other line op in ShapingActions
-// already reads a selection (through ResolveLineRanges). DeleteLine was the one
-// verb that still deleted `cursor_line_` alone, so Ctrl+A then Delete Line removed
-// the single phantom line after the final newline and left the whole buffer
-// standing. Found by the editor-invariants sweep (`tools/qa/run.py invariants`) against the shipped binary.
 void TestShapingDeleteLineRemovesEverySelectedLine() {
   TextViewport viewport;
   viewport.LoadContent("delta\nalpha\ncharlie\n", "/tmp/deleteline-selectall.txt");
@@ -373,13 +304,11 @@ void TestShapingDeleteLineRemovesEverySelectedLine() {
          "undo must restore every deleted line, trailing newline included");
 }
 
-// The interior case: a selection that touches only some lines deletes only those,
-// and the lines below move up.
 void TestShapingDeleteLineRemovesOnlyTheTouchedLines() {
   TextViewport viewport;
   viewport.LoadContent("one\ntwo\nthree\nfour\n", "/tmp/deleteline-partial.txt");
   viewport.MoveCursorTo(1, 1);
-  viewport.MoveCursorTo(2, 2, /*extend_selection=*/true);  // reaches into lines 1 and 2
+  viewport.MoveCursorTo(2, 2, true);
   Expect(microide::editor::DeleteLine(viewport),
          "Delete Line over a two-line selection must report an edit");
   Expect(viewport.lines().size() == 3 && viewport.lines()[0] == "one" &&
@@ -389,14 +318,11 @@ void TestShapingDeleteLineRemovesOnlyTheTouchedLines() {
          "the selection named lines that no longer exist and must not survive");
 }
 
-// A selection ending at column 0 has not reached into that line, which is what
-// makes a whole-line drag of N lines delete N and not N+1 (the RangeForCaret rule
-// every other line op already honours).
 void TestShapingDeleteLineExcludesALineTheSelectionOnlyTouchesAtColumnZero() {
   TextViewport viewport;
   viewport.LoadContent("one\ntwo\nthree\nfour\n", "/tmp/deleteline-boundary.txt");
   viewport.MoveCursorTo(0, 0);
-  viewport.MoveCursorTo(2, 0, /*extend_selection=*/true);  // whole-line drag of lines 0..1
+  viewport.MoveCursorTo(2, 0, true);
   Expect(microide::editor::DeleteLine(viewport),
          "Delete Line over a whole-line drag must report an edit");
   Expect(viewport.lines().size() == 3 && viewport.lines()[0] == "three" &&
@@ -404,15 +330,11 @@ void TestShapingDeleteLineExcludesALineTheSelectionOnlyTouchesAtColumnZero() {
          "a drag ending at column 0 of line 2 deletes lines 0 and 1 only");
 }
 
-// A ranged primary plus a bare secondary: the primary contributes BOTH its
-// selected lines, the secondary contributes its own, and the two disjoint blocks
-// go in one undo step. The multi-caret path this replaces contributed one line per
-// caret, so it dropped the primary selection's first line on the floor.
 void TestShapingDeleteLineRemovesEveryRangedCaretsLines() {
   TextViewport viewport;
   viewport.LoadContent("a\nb\nc\nd\ne\n", "/tmp/deleteline-multicaret.txt");
   viewport.MoveCursorTo(0, 0);
-  viewport.MoveCursorTo(1, 1, /*extend_selection=*/true);  // selection over lines 0..1
+  viewport.MoveCursorTo(1, 1, true);
   viewport.SetSecondaryCarets({microide::editor::TextPosition{3, 1}});
   Expect(microide::editor::DeleteLine(viewport),
          "Delete Line with a ranged primary and a secondary must report an edit");
@@ -426,10 +348,6 @@ void TestShapingDeleteLineRemovesEveryRangedCaretsLines() {
          "undo restores both deleted blocks");
 }
 
-// TD-2026-08-07-160: the fidelity claim. `ResolveLineRanges` used to widen to
-// min..max over every caret, so a shaping op rewrote every line BETWEEN the
-// carets — Ctrl+/ with carets on lines 10 and 100 commented all 91. VSCode
-// comments two.
 void TestShapingMultiCaretOpsDoNotTouchLinesBetweenCarets() {
   using microide::editor::SelectionRange;
   using microide::editor::TextPosition;
@@ -452,8 +370,6 @@ void TestShapingMultiCaretOpsDoNotTouchLinesBetweenCarets() {
   }
 
   {
-    // Adjacent carets merge into ONE region, so the op is not applied to a line
-    // twice and the two lines are one edit rather than two abutting ones.
     TextViewport viewport;
     viewport.LoadContent("a\nb\nc\nd", "/tmp/shaping-adjacent.cpp");
     viewport.MoveCursorTo(1, 0);
@@ -465,8 +381,6 @@ void TestShapingMultiCaretOpsDoNotTouchLinesBetweenCarets() {
   }
 
   {
-    // Two carets on the SAME line collapse to one region — an op applied twice to
-    // one line would double-comment it.
     TextViewport viewport;
     viewport.LoadContent("aaaa\nbbbb", "/tmp/shaping-same-line.cpp");
     viewport.MoveCursorTo(0, 0);
@@ -476,8 +390,6 @@ void TestShapingMultiCaretOpsDoNotTouchLinesBetweenCarets() {
   }
 
   {
-    // Each region decides for itself whether it is commenting or uncommenting,
-    // and at what column — one LineCommentCommand per selection, as VSCode does.
     TextViewport viewport;
     viewport.LoadContent("// x\ngap\n    y", "/tmp/shaping-per-region.cpp");
     viewport.MoveCursorTo(0, 0);
@@ -491,7 +403,6 @@ void TestShapingMultiCaretOpsDoNotTouchLinesBetweenCarets() {
   }
 
   {
-    // Outdent: only the caret regions lose indentation.
     TextViewport viewport;
     viewport.LoadContent("    a\n    b\n    c", "/tmp/shaping-gap-outdent.txt");
     viewport.SetSoftTabs(true);
@@ -510,14 +421,12 @@ void TestShapingMultiCaretOpsDoNotTouchLinesBetweenCarets() {
   }
 
   {
-    // Sort: two ranged selections sort independently instead of being merged into
-    // one span whose sort would interleave them.
     TextViewport viewport;
     viewport.LoadContent("b\na\nKEEP\nz\ny", "/tmp/shaping-gap-sort.txt");
     viewport.MoveCursorTo(0, 0);
-    viewport.MoveCursorTo(1, 1, /*extend_selection=*/true);
+    viewport.MoveCursorTo(1, 1, true);
     viewport.AddSecondaryCaretWithRange(SelectionRange{TextPosition{3, 0}, TextPosition{4, 1}});
-    Expect(microide::editor::SortLines(viewport, /*ascending=*/true), "SortLines should succeed");
+    Expect(microide::editor::SortLines(viewport, true), "SortLines should succeed");
     Expect(viewport.lines()[0] == "a" && viewport.lines()[1] == "b",
            "the first selection sorts within itself");
     Expect(viewport.lines()[2] == "KEEP", "the line between the selections stays put");
@@ -526,9 +435,6 @@ void TestShapingMultiCaretOpsDoNotTouchLinesBetweenCarets() {
   }
 }
 
-// A move region pinned against the edge of the buffer no-ops on its own; the
-// other regions still move. VSCode gives each selection its own MoveLinesCommand
-// and a pinned one returns without an edit.
 void TestShapingMoveLineSkipsOnlyThePinnedRegion() {
   TextViewport viewport;
   viewport.LoadContent("a\nb\nc\nd", "/tmp/shaping-pinned.txt");
@@ -549,16 +455,11 @@ void TestShapingMoveLineSkipsOnlyThePinnedRegion() {
          "with nothing left that can move, the op is a no-op");
 }
 
-// TD-2026-07-17A-120: shaping actions must not drop a ranged secondary caret's
-// selection anchor, and line-range resolution must cover lines spanned only by
-// such an anchor.
 void TestShapingPreservesRangedSecondaryCaretAnchors() {
   using microide::editor::SelectionRange;
   using microide::editor::TextPosition;
 
   {
-    // A ranged secondary caret (anchor on a different line than its cursor) must
-    // keep its anchor across a line move, not collapse to a bare caret.
     TextViewport viewport;
     viewport.LoadContent("aaa\nbbb\nccc\nddd", "/tmp/shaping-anchor-move.txt");
     viewport.MoveCursorTo(0, 1);
@@ -575,10 +476,6 @@ void TestShapingPreservesRangedSecondaryCaretAnchors() {
   }
 
   {
-    // ResolveLineRange must include a line spanned only by a secondary caret's
-    // anchor. Primary caret has no selection on line 3; a ranged secondary caret
-    // spans lines 0..1 (anchor on line 0, cursor on line 1). Indent must reach
-    // line 0 — with the old positions-only resolution it was missed.
     TextViewport viewport;
     viewport.LoadContent("aa\nbb\ncc\ndd", "/tmp/shaping-anchor-indent.txt");
     viewport.SetSoftTabs(true);
@@ -595,9 +492,6 @@ void TestShapingPreservesRangedSecondaryCaretAnchors() {
   }
 }
 
-// TD-2026-08-07-160: two carets are two regions, not one span between them. Each
-// caret's line moves past its own neighbour — which is what VSCode does, one
-// MoveLinesCommand per selection — and the whole thing is still ONE undo step.
 void TestShapingMoveLineDownMultiCaretSingleUndoStep() {
   TextViewport viewport;
   viewport.LoadContent("a\nb\nc\nd", "/tmp/sample.txt");
@@ -642,8 +536,6 @@ void TestShapingMoveLineDownRedoPreservesMultiCaret() {
   viewport.MoveCursorTo(0, 2);
   viewport.AddSecondaryCaret(2, 2);
   Expect(microide::editor::MoveLineDown(viewport), "MoveLineDown should succeed");
-  // Each caret line swaps with the one below it; both carets follow (+1 line,
-  // same column).
   Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 2,
          "primary caret should follow the moved block and keep its column");
   Expect(viewport.secondary_carets().size() == 1 &&
@@ -718,16 +610,12 @@ void TestShapingDuplicateLine() {
          "first two lines should both be 'hello'");
 }
 
-// Copy-lines is line-granular in both directions (VS Code copyLinesUp/Down): a
-// PARTIAL selection duplicates the lines it touches, not the selected text. The
-// two directions produce identical text and differ only in which copy the caret
-// lands on.
 void TestShapingCopyLinesDirections() {
   TextViewport viewport;
   viewport.LoadContent("one\ntwo\nthree\n", "/tmp/sample.txt");
 
   viewport.MoveCursorTo(1, 1);
-  Expect(microide::editor::CopyLines(viewport, /*downward=*/true), "copy down should change");
+  Expect(microide::editor::CopyLines(viewport, true), "copy down should change");
   Expect(viewport.lines()[1] == "two" && viewport.lines()[2] == "two",
          "copy down should leave two adjacent copies");
   Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 1,
@@ -736,27 +624,22 @@ void TestShapingCopyLinesDirections() {
   TextViewport up;
   up.LoadContent("one\ntwo\nthree\n", "/tmp/sample.txt");
   up.MoveCursorTo(1, 1);
-  Expect(microide::editor::CopyLines(up, /*downward=*/false), "copy up should change");
+  Expect(microide::editor::CopyLines(up, false), "copy up should change");
   Expect(up.lines()[1] == "two" && up.lines()[2] == "two",
          "copy up should produce the same two copies");
   Expect(up.cursor_line() == 1 && up.cursor_column() == 1,
          "copy up should leave the caret on the UPPER copy");
 
-  // A selection of three characters inside one line still copies the WHOLE line.
   TextViewport partial;
   partial.LoadContent("hello world\n", "/tmp/sample.txt");
   partial.MoveCursorTo(0, 1);
-  partial.MoveCursorTo(0, 4, /*extend_selection=*/true);
-  Expect(microide::editor::CopyLines(partial, /*downward=*/true), "partial copy should change");
+  partial.MoveCursorTo(0, 4, true);
+  Expect(microide::editor::CopyLines(partial, true), "partial copy should change");
   Expect(partial.lines().size() >= 2 && partial.lines()[0] == "hello world" &&
              partial.lines()[1] == "hello world",
          "a partial selection copies its whole line, not the selected fragment");
 }
 
-// With several carets, Ctrl+Enter / Ctrl+Shift+Enter open a line next to EACH
-// caret's line (VS Code's lineInsertAfter/Before). Only the primary used to be
-// moved to its line end first, so the multi-caret Enter split every secondary
-// caret's line where it stood.
 void TestShapingInsertLineBelowAndAboveAtEveryCaret() {
   const auto joined = [](const TextViewport& v) {
     std::string out;
@@ -785,7 +668,7 @@ void TestShapingInsertLineBelowAndAboveAtEveryCaret() {
     viewport.LoadContent("alpha\n  beta\ngamma", "/tmp/sample.txt");
     viewport.MoveCursorTo(1, 3);
     viewport.AddSecondaryCaret(0, 2);
-    viewport.AddSecondaryCaret(0, 4);  // two carets on one line share one new line
+    viewport.AddSecondaryCaret(0, 4);
     Expect(microide::editor::InsertLineAbove(viewport), "insert-above should change");
     Expect(joined(viewport) == "\nalpha\n  \n  beta\ngamma",
            "a line opens above each caret's line with its indent: " + joined(viewport));
@@ -797,15 +680,12 @@ void TestShapingInsertLineBelowAndAboveAtEveryCaret() {
   }
 }
 
-// Ctrl+Enter / Ctrl+Shift+Enter open a line regardless of where in the line the
-// caret sits -- that is the whole point of them over pressing Enter.
 void TestShapingInsertLineBelowAndAbove() {
   TextViewport viewport;
   viewport.LoadContent("    body;\nnext;\n", "/tmp/sample.cpp");
   viewport.SetIndentWidth(2);
   viewport.SetSoftTabs(true);
 
-  // Caret in the MIDDLE of the line: the line must not be split.
   viewport.MoveCursorTo(0, 6);
   Expect(microide::editor::InsertLineBelow(viewport), "insert-below should change");
   Expect(viewport.lines()[0] == "    body;", "the source line stays intact");
@@ -823,9 +703,6 @@ void TestShapingInsertLineBelowAndAbove() {
   Expect(above.lines()[0] == "    ", "the new line takes the pushed-down line's indent");
 }
 
-// Backspace in leading whitespace with soft tabs deletes back to the previous
-// indent stop (VS Code's useTabStops), one space elsewhere, and one unit under
-// hard tabs.
 void TestBackspaceInLeadingWhitespaceReachesThePreviousIndentStop() {
   TextViewport viewport;
   viewport.LoadContent("        x\n  a b\n", "/tmp/sample.txt");
@@ -891,7 +768,6 @@ void TestShapingIndentSelection() {
   viewport.SetIndentWidth(2);
   viewport.SetSoftTabs(true);
   viewport.MoveCursorTo(0, 0);
-  // Build a 2-line selection by setting selection through anchor + cursor
   viewport.MoveCursorTo(0, 0, false);
   viewport.MoveCursorTo(1, 1, true);
   Expect(microide::editor::IndentSelection(viewport),
@@ -902,17 +778,13 @@ void TestShapingIndentSelection() {
          "second line should now start with two-space indent");
 }
 
-// QA monkey (qa-asan seed 4): Tab over a selection keeps the selection's ends,
-// columns shifted by the indent, in its direction (VS Code). It used to reselect
-// whole lines first..last, and for a selection ending at a line's start -- whose
-// line the indent leaves out -- that moved the caret up a line on every Tab.
 void TestShapingIndentSelectionKeepsTheSelectionsEnds() {
   TextViewport viewport;
   viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/sample.txt");
   viewport.SetIndentWidth(2);
   viewport.SetSoftTabs(true);
   viewport.MoveCursorTo(0, 3);
-  viewport.MoveCursorTo(2, 0, /*extend_selection=*/true);
+  viewport.MoveCursorTo(2, 0, true);
   for (int press = 1; press <= 2; ++press) {
     Expect(microide::editor::IndentSelection(viewport), "IndentSelection changes the buffer");
     const auto selection = viewport.selection_range();
@@ -925,13 +797,12 @@ void TestShapingIndentSelectionKeepsTheSelectionsEnds() {
            "the anchor moves with the text it was in");
   }
   Expect(viewport.lines()[2] == "gamma", "the line the selection ends at the start of is not indented");
-  // Reversed: the caret at the top stays at the top.
   TextViewport reversed;
   reversed.LoadContent("alpha\nbeta\n", "/tmp/sample.txt");
   reversed.SetIndentWidth(2);
   reversed.SetSoftTabs(true);
   reversed.MoveCursorTo(1, 4);
-  reversed.MoveCursorTo(0, 1, /*extend_selection=*/true);
+  reversed.MoveCursorTo(0, 1, true);
   Expect(microide::editor::IndentSelection(reversed), "IndentSelection changes the reversed buffer");
   Expect(reversed.cursor_line() == 0 && reversed.cursor_column() == 3,
          "a caret at the selection's start stays there, shifted");
@@ -945,7 +816,6 @@ void TestShapingToggleLineComment() {
          "first toggle should comment a non-blank line");
   Expect(viewport.lines()[0].rfind("// ", 0) == 0,
          "line should start with the // marker after toggle");
-  // Toggle again to uncomment.
   viewport.MoveCursorTo(0, 0);
   Expect(microide::editor::ToggleLineComment(viewport, "//"),
          "second toggle should uncomment");
@@ -953,10 +823,6 @@ void TestShapingToggleLineComment() {
          "second toggle should restore the original text");
 }
 
-// Found by driving the real binary: toggling a selection's line comments
-// collapsed the selection (ReplaceLines snaps the caret), so the second toggle
-// uncommented one line only. VS Code keeps the selection and shifts the caret by
-// the marker it inserted.
 void TestShapingToggleLineCommentKeepsSelectionAndShiftsCaret() {
   TextViewport viewport;
   viewport.LoadContent("a\n// b\n", "/tmp/sample.c");
@@ -972,7 +838,7 @@ void TestShapingToggleLineCommentKeepsSelectionAndShiftsCaret() {
          "every line loses one marker (got <" + viewport.lines()[0] + "|" + viewport.lines()[1] + ">)");
 
   viewport.LoadContent("  x = 1\n", "/tmp/sample.c");
-  viewport.MoveCursorTo(0, 5);  // after "x = "
+  viewport.MoveCursorTo(0, 5);
   Expect(microide::editor::ToggleLineComment(viewport, "//") && viewport.lines()[0] == "  // x = 1",
          "a caret line is commented at its indent");
   Expect(viewport.cursor_column() == 8, "the caret moves with the text it sat in");
@@ -989,7 +855,6 @@ void TestShapingToggleBlockCommentRoundTrips() {
          "first toggle should wrap the line in a block comment");
   Expect(viewport.lines()[0] == "/* alpha */",
          "line should be wrapped exactly once, padded as VS Code writes it");
-  // Toggling again must STRIP, not nest to `/* /*alpha*/ */`.
   viewport.MoveCursorTo(0, 0);
   Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/"),
          "second toggle should strip the block comment");
@@ -1000,7 +865,6 @@ void TestShapingToggleBlockCommentRoundTrips() {
 void TestShapingToggleBlockCommentSelectionStripsWithWhitespace() {
   TextViewport viewport;
   viewport.LoadContent("  /* boxed */  \n", "/tmp/sample.cpp");
-  // Select the whole line's text (including surrounding whitespace).
   viewport.MoveCursorTo(0, 0, false);
   viewport.MoveCursorTo(0, viewport.lines()[0].size(), true);
   Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/"),
@@ -1009,21 +873,11 @@ void TestShapingToggleBlockCommentSelectionStripsWithWhitespace() {
          "strip should keep the whitespace around the markers and drop their padding");
 }
 
-// Found by driving the real binary: a selection toggle collapsed the selection
-// after wrapping, so the second toggle inserted an empty `/**/` at the caret
-// instead of unwrapping. VS Code keeps the wrapped text selected and the next
-// toggle finds the markers just outside the selection.
 void TestShapingToggleBlockCommentSelectionIsAToggle() {
   TextViewport viewport;
   viewport.LoadContent("int x;\nint y;\n", "/tmp/sample.c");
   viewport.SelectAll();
   Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/"), "the wrap applies");
-  // SelectAll ends at column 0 of the phantom line after the final newline, which
-  // is the same shape a whole-line drag produces -- and every line op normalizes
-  // it away (RangeForCaret: "a whole-line drag selects N lines rather than N+1").
-  // The close marker therefore hugs the last line with CONTENT rather than sitting
-  // alone on the empty line below it, which is both what VS Code does and what
-  // stops the drag case from swallowing the line underneath the selection.
   Expect(viewport.lines().Snapshot() == std::vector<std::string>{"/* int x;", "int y; */", ""},
          "the selection is wrapped once, padded (got <" + viewport.lines()[0] + "|" +
              viewport.lines()[viewport.line_count() - 1] + ">)");
@@ -1038,7 +892,6 @@ void TestShapingToggleBlockCommentSelectionIsAToggle() {
   Expect(after.has_value() && after->start == TextPosition{0, 0} && after->end == TextPosition{1, 6},
          "the unwrapped text stays selected");
 
-  // A single-line selection: wrap, unwrap, and a selection over the markers.
   viewport.LoadContent("a + b\n", "/tmp/sample.c");
   viewport.MoveCursorTo(0, 2, false);
   viewport.MoveCursorTo(0, 3, true);
@@ -1061,23 +914,20 @@ void TestShapingSortLinesAscending() {
   viewport.LoadContent("c\nb\na\n", "/tmp/sample.txt");
   viewport.MoveCursorTo(0, 0, false);
   viewport.MoveCursorTo(2, 1, true);
-  Expect(microide::editor::SortLines(viewport, /*ascending=*/true),
+  Expect(microide::editor::SortLines(viewport, true),
          "SortLines on a multi-line range should change buffer");
   Expect(viewport.lines()[0] == "a" && viewport.lines()[1] == "b" &&
              viewport.lines()[2] == "c",
          "sort ascending should reorder lines");
-  // The selection survives (VS Code), so a second sort -- descending -- acts on
-  // the same lines instead of the caret line alone.
   Expect(viewport.has_selection() && viewport.selection_range()->start.line == 0 &&
              viewport.selection_range()->end.line >= 2,
          "the sorted lines stay selected");
-  Expect(microide::editor::SortLines(viewport, /*ascending=*/false) && viewport.lines()[0] == "c" &&
+  Expect(microide::editor::SortLines(viewport, false) && viewport.lines()[0] == "c" &&
              viewport.lines()[2] == "a",
          "sorting again the other way reorders the same selection");
 }
 
 void TestTextViewportSaveAppliesNormalization() {
-  // Setup: write a file with trailing whitespace and no final newline.
   TemporaryDirectory tmp;
   std::filesystem::path path = tmp.path() / "sample.txt";
   WriteFile(path, "foo  \nbar\t\nbaz");
@@ -1092,9 +942,6 @@ void TestTextViewportSaveAppliesNormalization() {
 }
 
 void TestTextViewportSaveNormalizationPreservesCaret() {
-  // Regression: a normalizing save mirrored the trimmed content via a whole-document
-  // ReplaceLines, snapping the caret/selection/scroll to (0,0). VS Code preserves the
-  // caret across format-on-save; the caret must stay where the user left it.
   {
     TemporaryDirectory tmp;
     std::filesystem::path path = tmp.path() / "caret.txt";
@@ -1103,20 +950,19 @@ void TestTextViewportSaveNormalizationPreservesCaret() {
     Expect(viewport.OpenFile(path), "OpenFile should succeed");
     viewport.SetSaveTrimTrailingWhitespace(true);
     viewport.SetSaveEnsureFinalNewline(true);
-    viewport.MoveCursorTo(3, 4);  // inside "delta", a line unaffected by trimming
+    viewport.MoveCursorTo(3, 4);
     Expect(viewport.Save(microide::project::LocalFileWriteGate()), "Save should succeed");
     Expect(viewport.cursor_line() == 3 && viewport.cursor_column() == 4,
            "the caret must be preserved across a normalizing save, not reset to (0,0)");
   }
   {
-    // A caret sitting in now-trimmed trailing whitespace is clamped to the new end.
     TemporaryDirectory tmp;
     std::filesystem::path path = tmp.path() / "caret-trim.txt";
     WriteFile(path, "alpha\nbeta  \ngamma");
     TextViewport viewport;
     Expect(viewport.OpenFile(path), "OpenFile should succeed");
     viewport.SetSaveTrimTrailingWhitespace(true);
-    viewport.MoveCursorTo(1, 6);  // end of "beta  " (col 6, inside the trailing spaces)
+    viewport.MoveCursorTo(1, 6);
     Expect(viewport.Save(microide::project::LocalFileWriteGate()), "Save should succeed");
     Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 4,
            "a caret in trimmed trailing whitespace clamps to the shortened line end");
@@ -1134,17 +980,14 @@ void TestTextViewportDetectsDiskConflict() {
   Expect(viewport.DetectDiskConflict() == DiskConflict::None,
          "a freshly opened file should report no conflict");
 
-  // External rewrite changes size, so mtime+size diverges from the load record.
   WriteFile(path, "one\ntwo\nthree\n");
   Expect(viewport.DetectDiskConflict() == DiskConflict::Changed,
          "an external rewrite should be detected as a disk conflict");
 
-  // Saving recaptures the signature, clearing the conflict.
   Expect(viewport.Save(microide::project::LocalFileWriteGate()), "Save should succeed");
   Expect(viewport.DetectDiskConflict() == DiskConflict::None,
          "saving should re-baseline the on-disk signature");
 
-  // Deleting the file is a Vanished conflict.
   std::filesystem::remove(path);
   Expect(viewport.DetectDiskConflict() == DiskConflict::Vanished,
          "a deleted file should be detected as vanished");
@@ -1173,14 +1016,12 @@ void TestSaveNormalizationEnsureFinalNewline() {
   Expect(lines.size() == 2 && lines[1].empty(),
          "buffer should end with one empty trailing line");
 
-  // Multiple trailing newlines collapse to one.
   lines = {"foo", "", "", ""};
   Expect(microide::editor::EnsureSingleFinalNewline(lines),
          "multiple trailing newlines should be collapsed");
   Expect(lines.size() == 2 && lines[0] == "foo" && lines[1].empty(),
          "trailing newlines should reduce to a single one");
 
-  // Already correct: no change.
   lines = {"foo", ""};
   Expect(!microide::editor::EnsureSingleFinalNewline(lines),
          "already-normalized buffer should be a no-op");
@@ -1213,15 +1054,10 @@ void TestIndentDetectTabsMajority() {
   Expect(detected.non_blank_lines_inspected == 3, "tab-majority sample uses three non-blank lines");
 }
 
-// Regression: a leading whitespace run that has spaces before a tab (`"  \tcode"`,
-// a common Makefile/Python mixed style) is tab-indented in effect. Detection must
-// classify it by the presence of a tab, not by the first byte only — otherwise a
-// tab-indented file whose lines start with alignment spaces is misdetected as
-// space-indented.
 void TestIndentDetectMixedLeadingTabsCountAsTabs() {
   std::vector<std::string> lines = {
       "def f():",
-      "  \tfoo",   // spaces then a tab
+      "  \tfoo",
       "  \tbar",
       "\tbaz",
   };
@@ -1231,20 +1067,14 @@ void TestIndentDetectMixedLeadingTabsCountAsTabs() {
          "leading whitespace containing a tab must count as tab indentation, not spaces");
 }
 
-// The detector used to count only indentation increases, so a 2-space file whose
-// wrapped calls continue at +4 (clang-format's default) was read as 4-space: 141
-// of this repository's own 1068 C++ files came back as 4-space, `Theme.cpp` with
-// twice as many +4 continuations as +2 block steps among them. VS Code counts the
-// step in both directions and lets 2 win over 4 when 2-steps are at least half
-// as common, which is what a 2-space file with continuations looks like.
 void TestIndentDetectTwoSpaceFileWithFourSpaceContinuations() {
   std::vector<std::string> lines;
   for (int i = 0; i < 10; ++i) {
     lines.push_back("void f() {");
     lines.push_back("  call(alpha,");
-    lines.push_back("      beta);");  // aligned under `alpha`: no evidence
+    lines.push_back("      beta);");
     lines.push_back("  other_call(");
-    lines.push_back("      gamma, delta);");  // +4 continuation
+    lines.push_back("      gamma, delta);");
     lines.push_back("  if (x) {");
     lines.push_back("    y();");
     lines.push_back("  }");
@@ -1254,17 +1084,13 @@ void TestIndentDetectTwoSpaceFileWithFourSpaceContinuations() {
   Expect(detected.soft_tabs == true, "the file is space-indented");
   Expect(detected.indent_width == 2, "continuation lines must not turn a 2-space file into 4");
 
-  // A genuine 4-space file with dedents still reads as 4.
   std::vector<std::string> four = {"a", "    b", "        c", "    d", "a", "    e"};
   Expect(microide::editor::DetectIndent(four).indent_width == 4, "a 4-space file reads as 4");
-  // Dedents are evidence too: a file that opens mid-block and only ever dedents.
   std::vector<std::string> dedent_only = {"      a", "    b", "  c", "d"};
   Expect(microide::editor::DetectIndent(dedent_only).indent_width == 2,
          "a step is a step in either direction");
 }
 
-// Tabs and spaces tie (or nothing is indented): the style is unknown and stays
-// whatever the preferences chose, while a space step can still be reported.
 void TestIndentDetectTieLeavesStyleUndetermined() {
   std::vector<std::string> tie = {"a", "\tb", "a", "  c"};
   auto detected = microide::editor::DetectIndent(tie);
@@ -1279,7 +1105,7 @@ void TestIndentDetectMaxInspectBoundsNonBlankCount() {
   for (int i = 0; i < 400; ++i) {
     lines.push_back(std::string("  line ") + std::to_string(i));
   }
-  auto detected = microide::editor::DetectIndent(lines, /*max_inspect_lines=*/40);
+  auto detected = microide::editor::DetectIndent(lines, 40);
   Expect(detected.non_blank_lines_inspected == 40,
          "detection should stop after the non-blank line budget");
 }
@@ -1345,9 +1171,6 @@ void TestLanguageContractDefaults() {
   Expect(!cpp->bracket_pairs.empty(),
          "cpp bracket pairs should be populated");
 
-  // Markdown is prose: parens/brackets routinely span lines, so bracket-based
-  // folding would emit bogus fold markers on ordinary paragraphs. The contract
-  // intentionally ships no fold-driving bracket pairs, but still auto-closes.
   const auto* md = registry.Find("markdown");
   Expect(md != nullptr, "markdown contract should exist by default");
   Expect(md->bracket_pairs.empty(),
@@ -1373,10 +1196,6 @@ void TestLanguageContractMissingLanguage() {
 }
 
 void TestLanguageContractAliasesCppFiletypeName() {
-  // RuntimeSyntaxRegistry::DetectFiletype returns "c++" for .cpp / .hpp /
-  // .cxx files; the language-contract defaults are keyed under "cpp".
-  // Without the alias, auto-close / surround / smart-indent silently
-  // no-op on every C++ buffer.
   microide::workspace::WorkspaceLanguageContract registry;
   const auto* cpp_contract = registry.Find("c++");
   Expect(cpp_contract != nullptr,
@@ -1393,22 +1212,19 @@ void TestIndentGuidesEmitsRunsAtNestedDepths() {
   using microide::editor::IndentGuideRun;
 
   std::vector<std::string> lines = {
-      "",                  // 0
-      "if (x) {",          // 1
-      "    a();",          // 2 — depth 1
-      "    if (y) {",      // 3 — depth 1
-      "        b();",      // 4 — depth 2
-      "    }",             // 5 — depth 1
-      "}",                 // 6
+      "",
+      "if (x) {",
+      "    a();",
+      "    if (y) {",
+      "        b();",
+      "    }",
+      "}",
   };
   std::vector<std::size_t> visible_rows{0, 1, 2, 3, 4, 5, 6};
   std::vector<IndentGuideRun> runs;
-  ComputeIndentGuides(lines, visible_rows, /*tab_size=*/4, /*indent_width=*/4,
-                      /*caret_line=*/SIZE_MAX, /*caret_leading=*/0, &runs);
+  ComputeIndentGuides(lines, visible_rows, 4, 4,
+                      SIZE_MAX, 0, &runs);
 
-  // 2026-05-15 perf deep-dive round 2 Finding 14: guides are now stored as
-  // multi-row runs `[start_row, end_row]` to coalesce the per-row segments
-  // the renderer used to walk. A guide "covers" a row when start_row<=row<=end_row.
   const auto covers = [&](std::size_t column, std::size_t row) {
     return std::any_of(runs.begin(), runs.end(), [&](const IndentGuideRun& r) {
       return r.column == column && r.start_row <= row && row <= r.end_row;
@@ -1420,8 +1236,6 @@ void TestIndentGuidesEmitsRunsAtNestedDepths() {
   Expect(!covers(4, 6), "closing brace at column 0 should not be covered by a column-4 guide");
   Expect(!covers(8, 2), "depth-1 line should not be covered by a column-8 guide");
 
-  // Coalescing: the column-4 guide should span the contiguous run rows 2..5 as
-  // a single segment instead of four per-row entries.
   const auto col4_run = std::find_if(runs.begin(), runs.end(), [](const IndentGuideRun& r) {
     return r.column == 4 && r.start_row == 2;
   });
@@ -1430,29 +1244,10 @@ void TestIndentGuidesEmitsRunsAtNestedDepths() {
          "column-4 guide should coalesce rows 2..5 into one run (depth-1 contiguous block)");
 }
 
-// ComputeIndentGuides emits vertical runs by sweeping one guide column at a time.
-// It used to emit one entry per (row, column) and std::sort the lot so a
-// coalescing pass could merge neighbours -- thousands of entries per frame on
-// deeply indented content, and 92% of the step's cost.
-//
-// The runs are a compressed encoding of a coverage set, so check the encoding
-// against the set: every (column, row) a naive per-row computation would mark
-// must be covered by exactly one run, and no run may cover anything else. Uses
-// tabs, mixed depths, blank lines, dedents and an out-of-range row, since those
-// are where a sweep and a sort can disagree.
-// TD-2026-08-13-206 filed compare indent guides as blocked on the row->line
-// mapping: a diff's visible rows are not contiguous line indices, because the
-// blank padding rows of an added/deleted hunk have no line at all. They do not
-// have to be — the compare renderer hands the visible window over as its OWN
-// document, one view per visible row, empty for a padding row. This pins the
-// property that makes that legal: an empty row measures no indent, so it breaks
-// the run rather than continuing it through the filler.
 void TestIndentGuidesBreakAcrossABlankDiffFillerRow() {
   using microide::editor::ComputeIndentGuides;
   using microide::editor::IndentGuideRun;
 
-  // Visible window of a diff pane: two indented rows, a blank filler row where
-  // the other side had an inserted line, then two more indented rows.
   const std::vector<std::string_view> window = {
       "        deep one", "        deep two", "", "        deep three", "        deep four",
   };
@@ -1462,8 +1257,8 @@ void TestIndentGuidesBreakAcrossABlankDiffFillerRow() {
   }
 
   std::vector<IndentGuideRun> runs;
-  ComputeIndentGuides(microide::editor::LineSpan(window), rows, /*tab_size=*/4,
-                      /*indent_width=*/4, /*caret_line=*/SIZE_MAX, 0, &runs);
+  ComputeIndentGuides(microide::editor::LineSpan(window), rows, 4,
+                      4, SIZE_MAX, 0, &runs);
 
   Expect(!runs.empty(), "an indented window emits guides");
   for (const IndentGuideRun& run : runs) {
@@ -1486,22 +1281,21 @@ void TestIndentGuidesRunsMatchNaiveCoverage() {
   using microide::editor::LeadingVisualIndent;
 
   const std::vector<std::string> lines = {
-      "top();",              // 0: no indent
-      "    a();",            // 1: depth 1
-      "        b();",        // 2: depth 2
-      "",                    // 3: blank
-      "            c();",    // 4: depth 3
-      "        d();",        // 5: back to depth 2
-      "\te();",              // 6: a tab, which is a full stop
-      "\t\tf();",            // 7: two tabs
-      "   odd();",           // 8: indent that is not a multiple of the width
-      "}",                   // 9
+      "top();",
+      "    a();",
+      "        b();",
+      "",
+      "            c();",
+      "        d();",
+      "\te();",
+      "\t\tf();",
+      "   odd();",
+      "}",
   };
   constexpr std::size_t kTabSize = 4;
   constexpr std::size_t kIndentWidth = 4;
 
   for (std::size_t caret_line : {std::size_t{2}, std::size_t{7}, SIZE_MAX}) {
-    // Include a row index past the end of the buffer: it must contribute nothing.
     std::vector<std::size_t> visible_rows;
     for (std::size_t i = 0; i < lines.size(); ++i) {
       visible_rows.push_back(i);
@@ -1514,9 +1308,7 @@ void TestIndentGuidesRunsMatchNaiveCoverage() {
     ComputeIndentGuides(lines, visible_rows, kTabSize, kIndentWidth, caret_line, caret_lead,
                         &runs);
 
-    // Naive coverage: a guide sits at every multiple of the indent width up to
-    // and including the row's leading visual indent.
-    std::set<std::pair<std::size_t, std::size_t>> expected;  // (column, row)
+    std::set<std::pair<std::size_t, std::size_t>> expected;
     for (std::size_t row = 0; row < visible_rows.size(); ++row) {
       const std::size_t line_index = visible_rows[row];
       if (line_index >= lines.size()) {
@@ -1547,16 +1339,16 @@ void TestIndentGuidesMarksActiveAtParentColumn() {
   using microide::editor::IndentGuideRun;
 
   std::vector<std::string> lines = {
-      "if (x) {",          // 0
-      "    if (y) {",      // 1
-      "        b();",      // 2 — caret here, depth 2 → parent at column 4
-      "    }",             // 3
-      "}",                 // 4
+      "if (x) {",
+      "    if (y) {",
+      "        b();",
+      "    }",
+      "}",
   };
   std::vector<std::size_t> visible_rows{0, 1, 2, 3, 4};
   std::vector<IndentGuideRun> runs;
-  ComputeIndentGuides(lines, visible_rows, /*tab_size=*/4, /*indent_width=*/4,
-                      /*caret_line=*/2, /*caret_leading=*/8, &runs);
+  ComputeIndentGuides(lines, visible_rows, 4, 4,
+                      2, 8, &runs);
 
   const auto active_for = [&](std::size_t column, std::size_t row) {
     const auto it = std::find_if(runs.begin(), runs.end(), [&](const IndentGuideRun& r) {
@@ -1576,10 +1368,10 @@ void TestIndentGuidesFoldModelEmphasisOnInnerCloser() {
   using microide::editor::IndentGuideRun;
 
   std::vector<std::string> lines = {
-      "if (x) {",        // 0
-      "    if (y) {",    // 1 — four leading spaces
-      "        b();",    // 2
-      "    }",           // 3 — caret on inner closer, same leading as inner opener
+      "if (x) {",
+      "    if (y) {",
+      "        b();",
+      "    }",
       "}",
   };
   FoldingModel::ComputeOptions options;
@@ -1645,19 +1437,10 @@ void TestRenderViewModelBuilderWhitespaceGlyphRunsToggle() {
   Expect(saw_dot && saw_tab, "visible whitespace should surface both dots and tab rules");
 }
 
-// TD-2026-08-14-210: after the walk was shared, TWO implementations of
-// render-whitespace remain — the walk (editor fallback + both compare panes) and
-// the view model's precomputed glyph-run table, which is the editor's fast path.
-// `dev-docs/project/validation-traps.md` names the trap they form: a parity test
-// only holds on fixtures small enough to hide the difference. So this compares
-// them on the cases where they could actually diverge — a tab that expands across
-// cells, a multi-byte glyph before whitespace, and a window that starts mid-line.
 void TestWhitespaceGlyphRunsAgreeWithTheSharedWalk() {
   microide::workspace::WorkspaceContext ctx;
   microide::workspace::RenderViewModelBuilder builder(ctx);
   microide::editor::TextViewport viewport;
-  // "é" before a space (byte offset != visual column), a tab at a column that
-  // expands across several cells, and trailing spaces.
   const std::string line = "a\xc3\xa9 b\tc  d";
   viewport.LoadContent(line + "\n", "/tmp/ws-parity.txt");
   viewport.SetTabSize(4);
@@ -1672,7 +1455,6 @@ void TestWhitespaceGlyphRunsAgreeWithTheSharedWalk() {
   constexpr float kLineHeight = 16.0f;
   const SDL_Color color{1, 2, 3, 255};
 
-  // What the run table would paint, in the same order the row loop emits it.
   std::vector<microide::editor::DecoratedTextFill> from_runs;
   for (const auto& glyph : vm.whitespace_glyph_runs) {
     microide::editor::PushWhitespaceMarker(
@@ -1682,8 +1464,8 @@ void TestWhitespaceGlyphRunsAgreeWithTheSharedWalk() {
   }
 
   std::vector<microide::editor::DecoratedTextFill> from_walk;
-  microide::editor::AppendWhitespaceMarkers(from_walk, line, /*tab_size=*/4,
-                                            /*row_visual_start=*/0, /*row_visual_end=*/80, kTextX,
+  microide::editor::AppendWhitespaceMarkers(from_walk, line, 4,
+                                            0, 80, kTextX,
                                             kCharWidth, kY, kLineHeight, color);
 
   Expect(!from_walk.empty(), "the fixture actually contains whitespace to mark");
@@ -1731,11 +1513,6 @@ void TestLanguageContractAppliesUserOverrides() {
   Expect(added_pattern, "user_open_patterns override should add custom indent suffixes");
 }
 
-// A Refresh with no plugin contribution and no user override reproduces the
-// defaults exactly, so it must neither rebuild the table (~5,000 allocations)
-// nor bump the revision — a bump drops the shared editor-view cache and
-// re-applies preferences to every open tab. Every project switch runs this path
-// (TD-2026-08-06-159).
 void TestLanguageContractSkipsNoOpRefresh() {
   microide::workspace::WorkspaceLanguageContract registry;
   microide::plugin::PluginHost host;
@@ -1750,7 +1527,6 @@ void TestLanguageContractSkipsNoOpRefresh() {
   Expect(registry.Find("cpp") == cpp_before,
          "a no-op refresh should leave the existing contract storage in place");
 
-  // A user override still takes effect on the very next refresh...
   const auto getter = [](std::string_view id) -> std::optional<std::string> {
     if (id == "editor.comments.user_line") return std::string(";;");
     return std::nullopt;
@@ -1762,7 +1538,6 @@ void TestLanguageContractSkipsNoOpRefresh() {
   Expect(cpp_overridden != nullptr && cpp_overridden->line_comment == ";;",
          "the override should be applied after the skip-eligible refresh");
 
-  // ...and dropping it must rebuild rather than leave the override standing.
   const std::size_t overridden_revision = registry.revision();
   registry.Refresh(host);
   Expect(registry.revision() > overridden_revision,
@@ -1816,9 +1591,6 @@ void TestAutoCloseSkipOverClose() {
          "caret should be after the close character");
 }
 
-// A quote typed right after a word character is an apostrophe or the end of
-// a word, not the start of a string: VS Code does not auto-close it there.
-// Every other position still pairs, and brackets are unaffected.
 void TestAutoCloseQuoteNotAfterWordCharacter() {
   TextViewport viewport;
   viewport.LoadContent("\n", "/tmp/sample.cpp");
@@ -1832,8 +1604,6 @@ void TestAutoCloseQuoteNotAfterWordCharacter() {
          "a quote after a word character is not auto-closed, got: " +
              std::string(viewport.lines()[0]));
 
-  // (The apostrophe above opens a C++ char literal for the highlighter, so the
-  // rest of that line is a string scope; a fresh buffer checks the other cases.)
   TextViewport spaced;
   spaced.LoadContent("x \n", "/tmp/sample.cpp");
   spaced.SetLanguageContractView(view);
@@ -1850,7 +1620,6 @@ void TestAutoCloseQuoteNotAfterWordCharacter() {
          "a bracket after a word character still pairs (the rule is quotes only), got: " +
              std::string(bracket.lines()[0]));
 
-  // Non-ASCII letters are word characters too.
   TextViewport accented;
   accented.LoadContent("caf\xC3\xA9\n", "/tmp/sample.cpp");
   accented.SetLanguageContractView(view);
@@ -1860,7 +1629,6 @@ void TestAutoCloseQuoteNotAfterWordCharacter() {
          "a quote after a non-ASCII letter is not auto-closed, got: " +
              std::string(accented.lines()[0]));
 
-  // The multi-caret path applies the same rule per caret.
   TextViewport multi;
   multi.LoadContent("don\nwe\n", "/tmp/sample.cpp");
   multi.SetLanguageContractView(view);
@@ -1872,9 +1640,6 @@ void TestAutoCloseQuoteNotAfterWordCharacter() {
              std::string(multi.lines()[0]) + " / " + std::string(multi.lines()[1]));
 }
 
-// Backspace between an auto-closed pair removes both characters (VS Code's
-// autoClosingDelete); anywhere else it removes one, and it never fires with a
-// selection or without a contract.
 void TestAutoCloseBackspaceRemovesThePair() {
   TextViewport viewport;
   viewport.LoadContent("\n", "/tmp/sample.cpp");
@@ -1892,13 +1657,13 @@ void TestAutoCloseBackspaceRemovesThePair() {
                                           std::string(viewport.lines()[0]));
 
   viewport.InsertText("()");
-  viewport.MoveCursorTo(0, 3);  // after the ')'
+  viewport.MoveCursorTo(0, 3);
   viewport.Backspace();
   Expect(viewport.lines()[0] == "a(b",
          "Backspace after a closer removes one byte, got: " + std::string(viewport.lines()[0]));
 
   viewport.MoveCursorTo(0, 1);
-  viewport.MoveCursorTo(0, 2, /*extend_selection=*/true);
+  viewport.MoveCursorTo(0, 2, true);
   viewport.Backspace();
   Expect(viewport.lines()[0] == "ab",
          "Backspace over a selection deletes the selection only, got: " +
@@ -1952,7 +1717,7 @@ void TestSurroundSelection() {
   viewport.LoadContent("hello\n", "/tmp/sample.cpp");
   viewport.SetLanguageContractView(MakeCStyleContractView());
   viewport.MoveCursorTo(0, 0);
-  viewport.MoveCursorTo(0, 5, /*extend_selection=*/true);
+  viewport.MoveCursorTo(0, 5, true);
   viewport.InsertCharacter('"');
   Expect(viewport.lines()[0] == "\"hello\"",
          "surround should wrap the selection with the matching pair");
@@ -1967,7 +1732,7 @@ void TestSurroundMultiLineSelection() {
   viewport.LoadContent("aa\nbb\ncc\n", "/tmp/multi-line-surround.cpp");
   viewport.SetLanguageContractView(MakeCStyleContractView());
   viewport.MoveCursorTo(0, 0);
-  viewport.MoveCursorTo(1, 2, /*extend_selection=*/true);
+  viewport.MoveCursorTo(1, 2, true);
   viewport.InsertCharacter('(');
   Expect(viewport.lines()[0] == "(aa",
          "multi-line surround should insert the opener on the first selected line");
@@ -1984,7 +1749,7 @@ void TestMultiCaretSurroundMultiLineSelections() {
   viewport.LoadContent("aa\nbb\ncc\ndd\n", "/tmp/multi-caret-multi-line-surround.cpp");
   viewport.SetLanguageContractView(MakeCStyleContractView());
   viewport.MoveCursorTo(0, 0);
-  viewport.MoveCursorTo(1, 2, /*extend_selection=*/true);
+  viewport.MoveCursorTo(1, 2, true);
   viewport.AddSecondaryCaretWithRange(
       microide::editor::SelectionRange{{2, 0}, {3, 2}});
   viewport.InsertCharacter('(');
@@ -2002,11 +1767,6 @@ void TestMultiCaretSurroundMultiLineSelections() {
          "undo should restore every multi-line surround atomically");
 }
 
-// The multi-caret aggregate undo entry spans first..last affected caret line, so
-// with far-apart carets it captures the whole gap between them. That capture moved
-// from a per-line `lines[i]` walk to one SliceLines call, and the slices now move
-// into the entry instead of being copied into it — the untouched interior lines
-// must survive the edit, the undo and the redo unchanged.
 void TestMultiCaretSurroundAcrossADistantGap() {
   std::string content;
   for (int i = 0; i < 400; ++i) {
@@ -2016,7 +1776,7 @@ void TestMultiCaretSurroundAcrossADistantGap() {
   viewport.LoadContent(content, "/tmp/multi-caret-distant-surround.cpp");
   viewport.SetLanguageContractView(MakeCStyleContractView());
   viewport.MoveCursorTo(10, 0);
-  viewport.MoveCursorTo(10, 6, /*extend_selection=*/true);
+  viewport.MoveCursorTo(10, 6, true);
   viewport.AddSecondaryCaretWithRange(microide::editor::SelectionRange{{390, 0}, {390, 7}});
   viewport.InsertCharacter('(');
 
@@ -2044,18 +1804,13 @@ void TestMultiCaretSurroundAcrossADistantGap() {
   Expect(interior_intact(), "redo must not disturb the lines between the carets");
 }
 
-// TD-2026-07-17A-021: surround wraps by touching only the boundary lines (no
-// whole-selection materialization). Verify the inner selection endpoints and a
-// single atomic undo for a multi-line selection that ends mid-line.
 void TestSurroundBoundaryWrapInnerSelectionAndUndo() {
   {
-    // Multi-line selection ending mid-line: opener on the first line, closer at
-    // the mid-line end column, middle untouched, inner selection preserved.
     TextViewport viewport;
     viewport.LoadContent("aaaa\nbbbb\ncccc\n", "/tmp/surround-boundary.cpp");
     viewport.SetLanguageContractView(MakeCStyleContractView());
     viewport.MoveCursorTo(0, 1);
-    viewport.MoveCursorTo(2, 2, /*extend_selection=*/true);
+    viewport.MoveCursorTo(2, 2, true);
     viewport.InsertCharacter('(');
     Expect(viewport.lines()[0] == "a(aaa", "opener inserted at the selection start column");
     Expect(viewport.lines()[1] == "bbbb", "an interior line stays untouched");
@@ -2072,13 +1827,11 @@ void TestSurroundBoundaryWrapInnerSelectionAndUndo() {
            "redo reapplies the boundary wrap");
   }
   {
-    // Single-line selection: both delimiters land on the same line and the caret
-    // ends past the inner text.
     TextViewport viewport;
     viewport.LoadContent("xhellox\n", "/tmp/surround-single.cpp");
     viewport.SetLanguageContractView(MakeCStyleContractView());
     viewport.MoveCursorTo(0, 1);
-    viewport.MoveCursorTo(0, 6, /*extend_selection=*/true);
+    viewport.MoveCursorTo(0, 6, true);
     viewport.InsertCharacter('"');
     Expect(viewport.lines()[0] == "x\"hello\"x",
            "single-line surround wraps only the selected span");
@@ -2095,7 +1848,7 @@ void TestSurroundDisabledFallsBackToLiteralInsert() {
   viewport.SetLanguageContractView(std::move(view));
   viewport.LoadContent("hello\n", "/tmp/sample.cpp");
   viewport.MoveCursorTo(0, 0);
-  viewport.MoveCursorTo(0, 5, /*extend_selection=*/true);
+  viewport.MoveCursorTo(0, 5, true);
   viewport.InsertCharacter('"');
   Expect(viewport.lines()[0] == "\"",
          "with surround disabled, typing quote over selection should do literal replacement");
@@ -2105,7 +1858,7 @@ void TestAutoCloseInhibitedInsideString() {
   TextViewport viewport;
   viewport.LoadContent("\"abc\"\n", "/tmp/sample.cpp");
   viewport.SetLanguageContractView(MakeCStyleContractView());
-  viewport.MoveCursorTo(0, 2);  // inside string literal
+  viewport.MoveCursorTo(0, 2);
   viewport.InsertCharacter('"');
   Expect(viewport.lines()[0] == "\"a\"bc\"",
          "auto-close should be inhibited inside string scopes");
@@ -2159,10 +1912,8 @@ void TestSmartIndentAfterOpenBrace() {
   viewport.SetLanguageContractView(MakeCStyleContractView());
   viewport.SetSoftTabs(true);
   viewport.SetIndentWidth(2);
-  viewport.MoveCursorTo(0, 8);  // end of line right after '{'
+  viewport.MoveCursorTo(0, 8);
   viewport.InsertNewline();
-  // Split-braces should NOT trigger here because there is no closer at caret;
-  // smart-indent path inserts a single newline plus indent.
   Expect(viewport.lines().size() >= 2,
          "newline must produce a new line below");
   Expect(viewport.lines()[1] == "  ",
@@ -2190,7 +1941,7 @@ void TestSplitBracesInsertsThreeLines() {
   viewport.SetLanguageContractView(MakeCStyleContractView());
   viewport.SetSoftTabs(true);
   viewport.SetIndentWidth(2);
-  viewport.MoveCursorTo(0, 7);  // between '{' and '}'
+  viewport.MoveCursorTo(0, 7);
   viewport.InsertNewline();
   Expect(viewport.lines().size() == 3,
          "split-braces should produce three lines");
@@ -2208,8 +1959,6 @@ void TestDedentOnCloseBrace() {
   viewport.SetSoftTabs(true);
   viewport.SetIndentWidth(2);
   viewport.MoveCursorTo(1, 4);
-  // Type '}' on an indent-only line; dedent-on-close should drop one indent
-  // unit BEFORE the auto-close path runs.
   viewport.InsertCharacter('}');
   Expect(viewport.lines()[1] == "  }" || viewport.lines()[1] == "  }}",
          "dedent-on-close should reduce indent before inserting the close");
@@ -2238,7 +1987,6 @@ void TestDedentOnCloseSkippedOnNonIndentOnlyLine() {
   viewport.SetLanguageContractView(MakeCStyleContractView());
   viewport.SetSoftTabs(true);
   viewport.SetIndentWidth(2);
-  // Position caret at the end of "    foo()" (line index 1).
   viewport.MoveCursorTo(1, viewport.lines()[1].size());
   viewport.InsertCharacter('}');
   Expect(viewport.lines()[1].rfind("    foo()", 0) == 0,
@@ -2262,12 +2010,12 @@ void TestFoldingRefreshComputesBracketRanges() {
   auto tab = MakeFoldingTab();
   auto& viewport = tab.viewport;
   viewport.LoadContent("void f() {\n  body;\n}\n", "/tmp/sample.cpp");
-  viewport.SetViewportSize(/*visible_lines=*/12, /*visible_columns=*/80);
+  viewport.SetViewportSize(12, 80);
   const auto contract = MakeCStyleFoldContract();
   microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract,
-                                               /*tab_size=*/4,
-                                               /*fold_enabled=*/true,
-                                               /*visible_rows=*/viewport.visible_lines());
+                                               4,
+                                               true,
+                                               viewport.visible_lines());
   Expect(!tab.folding_model->resolved_ranges().empty(),
          "fold model should have at least one range after refresh");
   Expect(tab.folding_model->resolved_ranges().front().opener_line == 0,
@@ -2280,14 +2028,11 @@ void TestFoldingRefreshFingerprintReusedAcrossCalls() {
   auto tab = MakeFoldingTab();
   auto& viewport = tab.viewport;
   viewport.LoadContent("void f() {\n  body;\n}\n", "/tmp/sample.cpp");
-  viewport.SetViewportSize(/*visible_lines=*/12, /*visible_columns=*/80);
+  viewport.SetViewportSize(12, 80);
   const auto contract = MakeCStyleFoldContract();
   microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4, true,
                                                viewport.visible_lines());
   const auto& fp_first = tab.folding_model->fingerprint();
-  // A subsequent call with the same fingerprint must not change the stored
-  // fingerprint or the ranges; the model exposes IsFresh as the canonical
-  // freshness check, so we verify that.
   Expect(tab.folding_model->IsFresh(fp_first),
          "model must report itself fresh after a successful compute");
   microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4, true,
@@ -2300,7 +2045,7 @@ void TestFoldingRefreshDisabledExpandsAndClears() {
   auto tab = MakeFoldingTab();
   auto& viewport = tab.viewport;
   viewport.LoadContent("void f() {\n  body;\n}\nvoid g() {\n  body;\n}\n", "/tmp/sample.cpp");
-  viewport.SetViewportSize(/*visible_lines=*/12, /*visible_columns=*/80);
+  viewport.SetViewportSize(12, 80);
   const auto contract = MakeCStyleFoldContract();
   microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4, true,
                                                viewport.visible_lines());
@@ -2310,8 +2055,8 @@ void TestFoldingRefreshDisabledExpandsAndClears() {
   Expect(tab.folding_model->IsCollapsedAtOpener(0),
          "fold at line 0 should be collapsed before disable");
   microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4,
-                                               /*fold_enabled=*/false,
-                                               /*visible_rows=*/viewport.visible_lines());
+                                               false,
+                                               viewport.visible_lines());
   Expect(tab.folding_model->resolved_ranges().empty(),
          "disabling fold must clear stored ranges");
   Expect(!tab.folding_model->has_any_collapsed_fold(),
@@ -2322,7 +2067,7 @@ void TestFoldingRefreshLanguageChangeRebuilds() {
   auto tab = MakeFoldingTab();
   auto& viewport = tab.viewport;
   viewport.LoadContent("void f() {\n  body;\n}\n", "/tmp/sample.cpp");
-  viewport.SetViewportSize(/*visible_lines=*/12, /*visible_columns=*/80);
+  viewport.SetViewportSize(12, 80);
   const auto cpp = MakeCStyleFoldContract();
   microide::workspace::EnsureFoldingModelFresh(tab, viewport, &cpp, 4, true,
                                                viewport.visible_lines());
@@ -2337,19 +2082,9 @@ void TestFoldingRefreshLanguageChangeRebuilds() {
          "post-refresh fingerprint must reflect the new language id");
 }
 
-// TD-2026-08-05-133: three places asked "how wide is this line's leading
-// whitespace" by materializing the whole line -- the fold indent source, the
-// indent guides, and the caret's active-guide column. They share one chunked scan
-// now. Two claims, and only the first is about the answer:
-//   * the LineSpan form equals the whole-line form on every shape, including
-//     indents that cross the 256-byte chunk boundary with tabs on both sides, and
-//   * asking a piece-tree line that spans pieces reads none of it past the indent.
 void TestIndentGuidesDepthIsBoundedOnPathologicalIndent() {
   using microide::editor::ComputeIndentGuides;
   using microide::editor::IndentGuideRun;
-  // A generated file can open a line with hundreds of thousands of spaces. The
-  // guide sweep walks one column per indent step, so without a bound this line
-  // alone cost ~100k column iterations and ~100k runs per frame.
   std::vector<std::string> lines = {
       "a",
       std::string(400000, ' ') + "x",
@@ -2357,8 +2092,8 @@ void TestIndentGuidesDepthIsBoundedOnPathologicalIndent() {
   };
   std::vector<std::size_t> visible_rows{0, 1, 2};
   std::vector<IndentGuideRun> runs;
-  ComputeIndentGuides(lines, visible_rows, /*tab_size=*/4, /*indent_width=*/4,
-                      /*caret_line=*/SIZE_MAX, /*caret_leading=*/0, &runs);
+  ComputeIndentGuides(lines, visible_rows, 4, 4,
+                      SIZE_MAX, 0, &runs);
   Expect(!runs.empty(), "a deeply indented line still draws guides");
   std::size_t deepest = 0;
   for (const IndentGuideRun& run : runs) {
@@ -2372,8 +2107,7 @@ void TestIndentGuidesDepthIsBoundedOnPathologicalIndent() {
 
 void TestLeadingIndentScanIsBoundedAndMatchesTheWholeLineForm() {
   using microide::editor::LeadingVisualIndent;
-  constexpr std::size_t kTabSize = 3;  // does not divide the chunk, so the
-                                       // carried column across a boundary matters
+  constexpr std::size_t kTabSize = 3;
 
   std::vector<std::string> shapes = {
       "", " ", "\t", "code", "  code", "\t\tcode", " \t \tcode", "   ",
@@ -2384,11 +2118,6 @@ void TestLeadingIndentScanIsBoundedAndMatchesTheWholeLineForm() {
   for (const std::string& shape : shapes) {
     microide::editor::TextBuffer buffer;
     buffer.ResetFromText(shape + "\n");
-    // Fragment the line without changing it: insert a byte mid-line and delete it
-    // again. The tree never re-merges pieces, so the line now spans them and
-    // reading it whole can only be served by a copy. A zero-length splice would
-    // not do -- it is a no-op and leaves the line contiguous, which is how a
-    // "fragmented" fixture quietly stops testing the path it names.
     if (shape.size() >= 2) {
       const std::size_t mid = shape.size() / 2;
       buffer.ReplaceTextRange(0, mid, 0, mid, "Z");
@@ -2400,11 +2129,10 @@ void TestLeadingIndentScanIsBoundedAndMatchesTheWholeLineForm() {
                std::to_string(shape.size()) + " bytes)");
   }
 
-  // The work claim, on a line long enough that reading it would show up.
   microide::editor::TextBuffer wide;
   wide.ResetFromText(std::string(8, ' ') + std::string(512 * 1024, 'x') + "\n");
-  wide.ReplaceTextRange(0, 100000, 0, 100000, "Z");  // split it into pieces...
-  wide.ReplaceTextRange(0, 100000, 0, 100001, "");   // ...and leave them split
+  wide.ReplaceTextRange(0, 100000, 0, 100000, "Z");
+  wide.ReplaceTextRange(0, 100000, 0, 100001, "");
   util::ResetPerformanceCounters();
   Expect(LeadingVisualIndent(microide::editor::LineSpan(wide), 0, kTabSize) == 8,
          "the indent of a long line is still measured correctly");
@@ -2412,21 +2140,15 @@ void TestLeadingIndentScanIsBoundedAndMatchesTheWholeLineForm() {
       util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializedBytes);
   Expect(copied == 0, "measuring an indent must not read the line (copied " +
                           std::to_string(copied) + " bytes)");
-  // Reachability control: the same line read whole does copy it.
   (void)wide.LineView(0);
   Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializedBytes) > 512 * 1024,
          "reading the spanning line whole still copies it (control)");
   util::ResetPerformanceCounters();
 }
 
-}  // namespace
+}
 
 
-// A plain stack over the text is the definition of bracket matching (no
-// syntax viewport, so strings and comments are not exempt): for every bracket
-// in random bracket soup the scanner must return the stack's partner, and the
-// partner's partner must be the original. Random multi-line soup with all
-// three bracket kinds nested and mismatched, with long and empty lines.
 void TestBracketScannerAgreesWithStackReference() {
   using microide::editor::FindBracketMatchInLines;
   std::uint64_t state = 0xA5A5A5A55A5A5A5Aull;
@@ -2470,7 +2192,7 @@ void TestBracketScannerAgreesWithStackReference() {
             pairs.push_back({stack.back().first, {l, c}});
             stack.pop_back();
           } else {
-            stack.clear();  // a mismatched closer abandons the openers it could not close
+            stack.clear();
           }
         }
       }
@@ -2482,15 +2204,12 @@ void TestBracketScannerAgreesWithStackReference() {
       }
       return std::nullopt;
     };
-    // The scanner tries the bracket AT the caret first and the one before it
-    // second, so the bracket it used is read back from the pair it returns.
     for (std::size_t l = 0; l < lines.size(); ++l) {
       for (std::size_t c = 0; c <= lines[l].size(); ++c) {
         const auto got = FindBracketMatchInLines(lines, l, c, 2000, nullptr);
         const std::string label = "round " + std::to_string(round) + " text=[" + text +
                                   "] caret " + std::to_string(l) + ":" + std::to_string(c);
         if (!got.has_value()) {
-          // Nothing found: neither candidate may have a reference partner.
           for (const std::size_t cand : {c, c > 0 ? c - 1 : c}) {
             if (cand < lines[l].size()) {
               Expect(!expected_partner(l, cand).has_value(),
@@ -2521,8 +2240,6 @@ void TestBracketScannerAgreesWithStackReference() {
                   std::to_string(want->line) + ":" + std::to_string(want->column) + ")")
                      .c_str());
         }
-        // Symmetric: the partner's own match (the bracket AT the partner is
-        // tried first) is this pair.
         const auto back = FindBracketMatchInLines(lines, partner_line, partner_col, 2000, nullptr);
         Expect(back.has_value() && back->open_line == got->open_line &&
                    back->open_column == got->open_column && back->close_line == got->close_line &&
@@ -2732,4 +2449,4 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestFoldingRefreshLanguageChangeRebuilds);
 }
 
-}  // namespace microide::tests
+}

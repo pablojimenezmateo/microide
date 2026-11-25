@@ -35,27 +35,12 @@ namespace microide::workspace {
 
 namespace {
 
-// Changed rows carry a faint full-row wash plus a saturated left-edge stripe. The wash
-// alone (previously 0.12) read almost flush with unchanged rows on the dark theme; the
-// stripe gives a scannable, full-saturation marker like the sidebar selection strip.
-//
-// The structural diff decides what is emphasised (difftastic's model): a side is
-// washed only when its line carries NOVEL tokens, and the novel tokens themselves
-// get a stronger fill, so the eye lands on what changed rather than on the lines
-// around it. A line that changed only in layout (indentation, wrapping) keeps a
-// muted stripe and no wash: git still sees it changed, but nothing in it is new.
-// The left side reads as removed and the right as added, whatever the row kind.
-// Text stays neutral throughout (low-contrast decoration rule, diff-merge spec).
 constexpr float kDiffRowTint = 0.17f;
 constexpr float kDiffRowTintSelected = 0.26f;
 constexpr float kDiffTokenTint = 0.42f;
 constexpr float kDiffEdgeStripeWidth = 3.0f;
-// Line numbers are inset past the edge stripe so the saturated change marker never
-// sits underneath the gutter digits. Stripe width plus a small breathing gap.
 constexpr float kDiffGutterNumberInset = kDiffEdgeStripeWidth + 3.0f;
 
-// One side's change decoration: its row wash, its edge stripe and the fill
-// behind its novel tokens.
 struct DiffSideStyle {
   SDL_Color background{};
   bool stripe = false;
@@ -69,8 +54,6 @@ DiffSideStyle StyleDiffSide(const render::Theme& theme, compare::CompareSideChan
   DiffSideStyle style{.background = base};
   switch (change) {
     case compare::CompareSideChange::Moved:
-      // The same lines are in another hunk: tinted as moved, not as added or
-      // removed (TD-2026-11-11-443).
       side_color = theme.diff_moved;
       [[fallthrough]];
     case compare::CompareSideChange::Novel:
@@ -104,18 +87,9 @@ SDL_Color CompareMarkerColor(const render::Theme& theme, compare::CompareRowKind
   }
 }
 
-// Indent guides for both panes of the visible window (TD-2026-08-13-206). The entry
-// filed this as blocked on the row->line mapping, because a diff's visible rows are
-// not contiguous line indices -- the blank padding rows of an added/deleted hunk
-// have no line at all. They do not need to be: the visible window is handed to
-// ComputeIndentGuides as its OWN little document (one string_view per visible row,
-// empty for a padding row), which is exactly what the editor does with its visible
-// rows, and an empty row measures zero leading indent and therefore breaks the run
-// -- which is the right rendering for filler.
 void ComputeCompareIndentGuides(const CompareTabState* compare_tab, const CompareSurfaceLayout& surface,
                                 std::vector<editor::IndentGuideRun>& compare_guide_left_runs_,
                                 std::vector<editor::IndentGuideRun>& compare_guide_right_runs_) {
-  // Reused across frames: render scratch for one surface.
   thread_local std::vector<std::string_view> compare_guide_left_texts_;
   thread_local std::vector<std::string_view> compare_guide_right_texts_;
   thread_local std::vector<std::size_t> compare_guide_row_indices_;
@@ -142,7 +116,6 @@ void ComputeCompareIndentGuides(const CompareTabState* compare_tab, const Compar
                                              ? std::string_view(model_row->right_text)
                                              : std::string_view{});
   }
-  // Row i of the little document IS visible row i.
   compare_guide_row_indices_.resize(compare_guide_left_texts_.size());
   for (std::size_t i = 0; i < compare_guide_row_indices_.size(); ++i) {
     compare_guide_row_indices_[i] = i;
@@ -152,16 +125,12 @@ void ComputeCompareIndentGuides(const CompareTabState* compare_tab, const Compar
       compare_tab->right_viewport.indent_width() == 0 ? 1 : compare_tab->right_viewport.indent_width();
   editor::ComputeIndentGuides(editor::LineSpan(compare_guide_left_texts_), compare_guide_row_indices_, tab_size,
                               indent_width,
-                              /*caret_line=*/SIZE_MAX, 0, &compare_guide_left_runs_);
+                              SIZE_MAX, 0, &compare_guide_left_runs_);
   editor::ComputeIndentGuides(editor::LineSpan(compare_guide_right_texts_), compare_guide_row_indices_, tab_size,
                               indent_width,
-                              /*caret_line=*/SIZE_MAX, 0, &compare_guide_right_runs_);
+                              SIZE_MAX, 0, &compare_guide_right_runs_);
 }
 
-// What every control of the surface is drawn with: the filled, bordered, labelled
-// box (collapsed-context, header and review buttons; a hunk's review badge), a
-// button emphasised while hovered (or `emphasized`: its row is selected, or it names
-// a state that is on), and whether the pointer is on a given control.
 struct CompareControlPainter {
   SDL_Renderer* renderer = nullptr;
   const render::Theme& theme;
@@ -188,9 +157,6 @@ struct CompareControlPainter {
   }
 };
 
-// A row that is no model row: a review note (its block, caption and Edit /
-// Delete) or a collapsed run of unchanged lines (its block, Show buttons and
-// summary), else a summary line.
 void PaintCompareSummaryRow(const CompareControlPainter& control_painter, render::TextRenderer& ui_text,
                             const SDL_FRect& rect, const CompareSurfaceLayout& surface,
                             const CompareControlGeometry& control_geometry, float content_width,
@@ -207,8 +173,6 @@ void PaintCompareSummaryRow(const CompareControlPainter& control_painter, render
   const std::string& summary = presentation_row->display_summary_text;
   float summary_width = content_width - 16.0f;
   if (presentation_row->kind == compare::ComparePresentationRowKind::ReviewNote) {
-    // A review comment: a block under its hunk with an accent edge, the
-    // comment itself, and its Edit / Delete buttons.
     const CompareNoteActionRects note = BuildCompareNoteActionRects(text, control_geometry, row);
     const SDL_Color block_fill = render::BlendColors(theme.editor_background, theme.accent, 0.16f);
     render::FillRect(renderer, note.block, block_fill);
@@ -269,9 +233,6 @@ void PaintCompareSummaryRow(const CompareControlPainter& control_painter, render
   }
 }
 
-// The header line: the summary, then (right-aligned) Mark File Reviewed on a review
-// and Previous / Next Change; the shortcut hint between when it fits. `ui_text`
-// truncates the summary as every chrome label is (TruncateLabelView).
 void PaintCompareHeader(const CompareControlPainter& control_painter, render::TextRenderer& ui_text,
                         const SDL_FRect& rect, const CompareSurfaceLayout& surface,
                         const CompareControlGeometry& control_geometry) {
@@ -310,17 +271,12 @@ void PaintCompareHeader(const CompareControlPainter& control_painter, render::Te
   }
 }
 
-}  // namespace
+}
 
-// Rebuilds the cached overview markers for `compare_tab` when the presentation or the
-// lane geometry changed. Markers are pre-mapped to `inner_lane` so the render path is a
-// plain draw.
 void EnsureCompareOverviewMarkers(const render::Theme& theme,
                                   const SDL_FRect& inner_lane,
                                   std::uint64_t theme_token,
                                   CompareTabState& compare_tab) {
-  // The wrapped row count is part of what the markers are scaled against, so it is
-  // part of the key: a divider drag that re-wraps must not keep stale marker rows.
   const std::size_t marker_rows = CompareTabVisualRowCount(compare_tab);
   if (compare_tab.scrollbar_marker_cache_valid &&
       compare_tab.scrollbar_marker_cache_revision == compare_tab.presentation_revision &&
@@ -337,9 +293,6 @@ void EnsureCompareOverviewMarkers(const render::Theme& theme,
   inputs.clear();
   inputs.reserve(runs.size());
   for (const CompareScrollbarRun& run : runs) {
-    // Runs are presentation rows; the lane is scaled to on-screen rows, which soft
-    // wrap makes a different (larger) space. Project both ends through the wrap
-    // table so a marker keeps pointing at its hunk.
     inputs.push_back(overview::MarkerInput{
         .start_row = static_cast<int>(ComparePresentationRowToVisualRow(
             compare_tab, static_cast<std::size_t>(std::max(0, run.start_row)))),
@@ -359,8 +312,6 @@ void EnsureCompareOverviewMarkers(const render::Theme& theme,
   compare_tab.scrollbar_marker_cache_valid = true;
 }
 
-// What every row of one RenderCompareSurface paints from: its sides'
-// PaintCompareLeftSide / PaintCompareRightSide read this and their own row.
 struct WorkspaceShell::CompareRowsPass {
   SDL_Renderer* renderer = nullptr;
   CompareTabState* compare_tab = nullptr;
@@ -384,7 +335,6 @@ struct WorkspaceShell::CompareRowsPass {
   editor::WhitespaceWalkCursor* left_whitespace_cursor = nullptr;
   editor::WhitespaceWalkCursor* right_whitespace_cursor = nullptr;
 
-  // The carets whose POSITION sits on `line`, as a sub-range of the sorted set.
   std::span<const editor::TextViewportUndoHistory::SecondaryCaret> RightSecondariesOnLine(std::size_t line) const {
     if (right_secondaries_span_lines) {
       return right_secondaries;
@@ -395,17 +345,10 @@ struct WorkspaceShell::CompareRowsPass {
     const auto upper = std::upper_bound(lower, right_secondaries.end(), line, [](std::size_t value, const auto& caret) {
       return value < caret.position.line;
     });
-    // Pointer arithmetic on the span's data, NOT `&*lower`: the row's line is past
-    // every caret on most rows, so `lower` is usually end() and dereferencing it
-    // to take its address is undefined -- UBSan reports it as a reference bound to
-    // a null SecondaryCaret, which is exactly how this shipped for one commit.
     return right_secondaries.subspan(static_cast<std::size_t>(lower - right_secondaries.begin()),
                                      static_cast<std::size_t>(upper - lower));
   }
 
-  // Append the guides covering visible `row` into `fills`, clipped to the row's
-  // column window. Same geometry as the editor pane's: a 1px column at the
-  // guide's visual column, skipped when it is scrolled out of the row's window.
   void AppendGuides(std::vector<editor::DecoratedTextFill>& fills, const std::vector<editor::IndentGuideRun>& runs,
                     std::size_t visible_row, std::size_t row_start, std::size_t row_end, float text_x, float y,
                     SDL_Color color) const {
@@ -425,7 +368,6 @@ struct WorkspaceShell::CompareRowsPass {
   }
 };
 
-// One side of one row: where it is, and what that side's colours and column window are.
 struct WorkspaceShell::CompareSidePaint {
   int row = 0;
   float y = 0.0f;
@@ -459,12 +401,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
 
   DrawFilledRect(renderer, rect, theme_.editor_background);
 
-  // The scroll was clamped to this layout at frame prep (paint changes no state).
   const CompareSurfaceLayout surface = ComputeCompareSurfaceLayout(rect, *compare_tab);
   const std::size_t visible_start_row = static_cast<std::size_t>(std::max(0, compare_tab->scroll_row));
-  // The visible window's syntax tokens were produced in frame prep
-  // (PopulateCompareSyntaxTokensForWindow): paint only reads them, so every paint
-  // of a frame -- a partial one and the redraw verifier's full one -- agrees.
   {
     util::PerformanceTrace::Scope layouts_scope(
         "WorkspaceShell::RenderCompareSurface::VisibleLayouts");
@@ -477,13 +415,6 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       BuildCompareRightInteractionLayout(surface, *compare_tab);
   const std::optional<editor::SelectionRange> right_selection =
       compare_tab->right_view_active ? compare_tab->right_viewport.selection_range() : std::nullopt;
-  // Secondary carets, sorted by position. A box gesture caps at 10,000 of them, so
-  // the per-row loops below must not scan the whole set: they binary-search the
-  // run whose position is on the row's line. That is exact for every secondary a
-  // gesture can produce -- Ctrl+D, box select and Alt+drag all make single-line
-  // ranges -- and the one shape it would miss, a selection spanning lines (only
-  // reachable through AddSecondaryCaretWithRange), is detected here once per frame
-  // and falls back to the full scan.
   const std::span<const editor::TextViewportUndoHistory::SecondaryCaret> right_secondaries =
       compare_tab->right_view_active
           ? compare_tab->right_viewport.secondary_caret_range_view()
@@ -493,13 +424,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
         return caret.selection_anchor.has_value() &&
                caret.selection_anchor->line != caret.position.line;
       });
-  // The carets whose POSITION sits on `line`, as a sub-range of the sorted set.
-  // Built at frame prep (the focused diff's, from the blame service), with the
-  // surface's other paint inputs (DiffSurfacePaint).
   const DiffSurfacePaint& paint = *project_inputs.paint;
   const std::optional<editor::EditorBlameOverlay>& blame_overlay = paint.blame;
-  // The working side's diagnostics and decorations, as prep resolved them (none
-  // while its buffer is dirty) and as its rows' units folded them.
   const std::span<const editor::PublishedDiagnostic> right_diagnostics = paint.diagnostics;
   const editor::FileDecorations* const right_plugin_decorations = paint.decorations;
   const float bottom_reserved =
@@ -512,9 +438,6 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   std::size_t blame_index = 0;
 
   DrawFilledRect(renderer, MakeRect(rect.x, surface.rows_y - 6.0f, content_width, 1.0f), theme_.border);
-  // The panes' dividers start under the summary line: that line runs the whole
-  // width (its text, the shortcut hint, the header's buttons), and a divider
-  // through it cut whatever sat at the middle in two.
   const float divider_top = std::max(rect.y, surface.header_y - 1.0f);
   const float divider_height = std::max(0.0f, content_height - (divider_top - rect.y));
   DrawFilledRect(renderer, MakeRect(surface.center_x, divider_top, 1.0f, divider_height), theme_.border);
@@ -532,27 +455,14 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                             TruncateLabelView(compare_tab->right_label, surface.right_width - 8.0f));
 
   {
-  // The compare surface paints two side panes here; the row loop was the whole of
-  // RenderCompareSurface's 74 us-per-frame self time and had no scope of its own,
-  // exactly as the merge surface's did.
   util::PerformanceTrace::Scope side_rows_scope("WorkspaceShell::RenderCompareSurface::SideRows");
   const bool wrapped = compare_tab->wrap_layout.active();
   const float char_width_px = editor_text_renderer_.CharWidth();
-  // Read once per frame, not per row: the lookup is string-keyed.
   const bool render_whitespace_enabled = paint.render_whitespace;
   const bool indent_guides_enabled = paint.indent_guides;
 
-  // Bracket-match highlight for the editable pane. FindBracketMatch is O(file),
-  // which is why the editor renderer caches it per frame; the compare surface
-  // paints through its own loop and had no such cache, so this memoizes on the
-  // same key the editor uses — (content revision, caret line, caret column) —
-  // held on the tab, one entry per caret (TD-2026-08-13-206).
-  // Frame prep asked first (CompareRowUnits keys the rows on it); this hits the memo.
   const std::optional<editor::BracketMatchPair> bracket_match_pair = CompareBracketMatch(*compare_tab, paint.bracket_match);
 
-  // Indent guides for both panes (ComputeCompareIndentGuides). Reused across
-  // frames, and TU-local rather than shell members: this is render scratch for one
-  // surface, and the shell's declaration budget is a hard invariant.
   thread_local std::vector<editor::IndentGuideRun> compare_guide_left_runs_;
   thread_local std::vector<editor::IndentGuideRun> compare_guide_right_runs_;
   compare_guide_left_runs_.clear();
@@ -561,9 +471,6 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
     ComputeCompareIndentGuides(compare_tab, surface, compare_guide_left_runs_, compare_guide_right_runs_);
   }
 
-  // One cursor per pane so a wrapped row's whitespace walk resumes where the
-  // previous row of the same model row stopped, instead of re-deriving its start
-  // from the line's own start on every row (TD-2026-08-14-218).
   editor::WhitespaceWalkCursor left_whitespace_cursor;
   editor::WhitespaceWalkCursor right_whitespace_cursor;
   const CompareRowsPass rows{
@@ -606,8 +513,6 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
     }
 
     const float y = surface.rows_y + static_cast<float>(row) * surface.line_height;
-    // The whole wrapped block of the selected row highlights, not just its first
-    // segment -- selection is a presentation-row concept.
     const bool selected = presentation_index == compare_tab->selected_row;
     if (presentation_row->kind != compare::ComparePresentationRowKind::Model) {
       PaintCompareSummaryRow(control_painter, text_renderer_, rect, surface, control_geometry, content_width,
@@ -706,16 +611,10 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
     if (wrap_row.first) {
       draw_text(divider_x, surface.divider_width, marker_color, std::string_view(&marker, 1));
     }
-    // A review's hunk controls at the right edge of the working side, on the
-    // hunk's first row -- or the view's top row inside a longer hunk
-    // (CompareHunkControlsOnRow): its badge while marked ("Reviewed"), and Mark
-    // Reviewed / Unmark and Comment while it is hovered or holds the selection.
     {
       if (const int hunk = CompareHunkControlsOnRow(*compare_tab, wrap_row, row); hunk >= 0) {
         const CompareHunkReviewRects controls =
             BuildCompareHunkReviewRects(editor_text_renderer_, control_geometry, *compare_tab, hunk, row);
-        // The strip sits over the end of a long line: back it with the row's own
-        // fill so no text shows between or around its boxes.
         for (const std::optional<SDL_FRect>& leftmost : {controls.badge, controls.toggle, controls.comment}) {
           if (leftmost.has_value()) {
             const float right_end = surface.right_x + surface.gutter_width + surface.right_width;
@@ -726,8 +625,6 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
           }
         }
         if (controls.badge.has_value()) {
-          // A state, not a control: a borderless tinted pill, where every button
-          // of the surface is a bordered box.
           const compare::BranchReviewMarkerStatus status = CompareHunkReviewStatus(*compare_tab, hunk);
           const SDL_Color tone =
               status == compare::BranchReviewMarkerStatus::Reviewed ? theme_.diff_added : theme_.diff_modified;
@@ -788,8 +685,6 @@ void WorkspaceShell::PaintCompareLeftSide(const CompareRowsPass& rows, const Com
     const std::vector<editor::SyntaxTokenKind>* cached_tokens = &CompareRowLeftTokens(*compare_tab, compare_row);
     const std::vector<compare::CompareTextSpan>& left_changed_spans = compare_row.left_changed_spans;
     editor::RowDecorationInput left_input;
-    // Continuation rows render under the line's own indent (hanging indent), so
-    // the glyph origin shifts right by it while the visual span stays absolute.
     left_input.text_x =
         surface.left_x + surface.gutter_width + static_cast<float>(wrap_row.left_indent) * char_width_px;
     left_input.y = y;
@@ -839,8 +734,6 @@ void WorkspaceShell::PaintCompareLeftSide(const CompareRowsPass& rows, const Com
                 FormatLineNumber(static_cast<std::size_t>(compare_row.left_line), line_number_buf));
     }
   } else if (wrapped && compare_row.left_line > 0) {
-    // Padding row: this side ran out of segments before the other did. Paint the
-    // row band so the pane stays a continuous column of the diff tint.
     DrawFilledRect(renderer,
                    MakeRect(surface.left_x, y - 1.0f, surface.gutter_width + surface.left_width, surface.line_height),
                    left_row_background);
@@ -894,22 +787,7 @@ void WorkspaceShell::PaintCompareRightSide(const CompareRowsPass& rows, const Co
   if (compare_row.right_line > 0 && wrap_row.right_present) {
     std::array<char, 20> line_number_buf;
     const std::size_t right_line_index = static_cast<std::size_t>(compare_row.right_line - 1);
-    // The same right_text is queried for the selection fill and (potentially) the caret
-    // visual column below. Build the boundary→visual column table once and reuse it instead
-    // of re-walking the line per query.
-    // A whole-line boundary->visual map is 16 bytes/char. On a pathological
-    // megaline (a minified bundle, or a single-line multi-hundred-MB right
-    // side) building it per visible row would be an O(line) walk and an
-    // ~8 GB allocation. Past the cap, skip the map: selection fills and the
-    // caret fall back to the identity column mapping (as the left side already
-    // does when it passes no map), keeping compare rendering bounded.
-    constexpr std::size_t kMaxCompareVisualMapBytes = 1u << 20;  // 1 MiB
-    // A line with no tab and no multi-byte code point maps byte offset to visual
-    // column exactly, which is what the null-map fallback already computes — so
-    // building the table for it is two heap vectors and an O(line) fill per
-    // visible row for an answer the fallback gets for free. Most source lines are
-    // that shape, and this was 87 % of a compare scroll-with-selection frame's
-    // allocations (TD-2026-08-06-159).
+    constexpr std::size_t kMaxCompareVisualMapBytes = 1u << 20;
     const bool right_map_allowed = compare_row.right_text.size() <= kMaxCompareVisualMapBytes &&
                                    !editor::TextLayout::VisualColumnsAreIdentity(compare_row.right_text);
     std::optional<editor::TextLayout::LineVisualColumnMap> right_visual_map;
@@ -922,20 +800,12 @@ void WorkspaceShell::PaintCompareRightSide(const CompareRowsPass& rows, const Co
       }
       return &*right_visual_map;
     };
-    // The primary selection, every SECONDARY caret's selection that reaches this
-    // row, and up to two bracket-match cells. A reused member rather than a
-    // fixed array: a Ctrl+D or box-select set is unbounded, and the pane used to
-    // paint only the primary -- so a multi-caret set on a compare tab edited
-    // text at places the user could not see.
     std::vector<editor::RowFillSpan>& right_column_fills = compare_right_fill_scratch_;
     right_column_fills.clear();
-    // A selection's part on this line (`sel` ordered, start first).
     const auto append_selection = [&](const editor::SelectionRange& sel) {
       if (right_line_index < sel.start.line || right_line_index > sel.end.line) {
         return;
       }
-      // Resolution happens in the builder against this map; build it now so the
-      // caret below reuses the same table.
       ensure_right_visual_map();
       right_column_fills.push_back(editor::RowFillSpan{
           .start_column = right_line_index == sel.start.line ? sel.start.column : 0,
@@ -945,14 +815,9 @@ void WorkspaceShell::PaintCompareRightSide(const CompareRowsPass& rows, const Co
       });
     };
     if (right_selection.has_value()) {
-      // Copy out of the optional so GCC's optimizer sees a definitely-initialized
-      // SelectionRange instead of complaining about `*right_selection` storage
-      // bytes through the inlined `std::optional` access path.
       const editor::SelectionRange sel = *right_selection;
       append_selection(sel);
     }
-    // Every secondary caret's selection, same rule per caret, over the binary-
-    // searched run for this line rather than the whole set.
     const auto row_secondaries = right_secondaries_on_line(right_line_index);
     for (const auto& caret : row_secondaries) {
       if (!caret.selection_anchor.has_value())
@@ -979,9 +844,6 @@ void WorkspaceShell::PaintCompareRightSide(const CompareRowsPass& rows, const Co
       append_bracket_cell(bracket_match_pair->open_line, bracket_match_pair->open_column);
       append_bracket_cell(bracket_match_pair->close_line, bracket_match_pair->close_column);
     }
-    // An unchanged row identical on both sides holds its tokens once, in the
-    // left window; the right one declined to fill it. Same predicate, one
-    // definition — see CompareRowRightTokensAliasLeft.
     const std::vector<editor::SyntaxTokenKind>* cached_tokens =
         CompareRowRightTokensAliasLeft(*compare_tab, static_cast<std::size_t>(model_index))
             ? &CompareRowLeftTokens(*compare_tab, compare_row)
@@ -1017,11 +879,6 @@ void WorkspaceShell::PaintCompareRightSide(const CompareRowsPass& rows, const Co
     right_input.layout =
         CompareVisibleLayoutForRow(*compare_tab, model_index, true, right_row_start,
                                    wrapped ? right_row_end - right_row_start : surface.right_visible_columns);
-    // The editable pane is where working-tree review edits happen, and it was
-    // the one text surface in the product where "Render Whitespace" and indent
-    // guides did nothing (TD-2026-08-13-206). Same marker and guide geometry as
-    // the editor pane — one implementation each, in RowDecorationBuilder and
-    // IndentGuides.
     compare_whitespace_scratch_.clear();
     if (render_whitespace_enabled) {
       editor::AppendWhitespaceMarkers(compare_whitespace_scratch_, compare_row.right_text,
@@ -1032,10 +889,6 @@ void WorkspaceShell::PaintCompareRightSide(const CompareRowsPass& rows, const Co
     append_guides(compare_whitespace_scratch_, compare_guide_right_runs_, static_cast<std::size_t>(row),
                   right_row_start, right_row_end, right_input.text_x, y);
     right_input.prepositioned_fills = std::span<const editor::DecoratedTextFill>(compare_whitespace_scratch_);
-    // Plugin text styles, keyed by the RIGHT pane's own line numbers — the only
-    // side whose line space matches the file the decoration was published
-    // against (TD-2026-08-13-206). Same field the editor renderer fills, so a
-    // decoration paints identically in either surface.
     if (right_plugin_decorations != nullptr) {
       right_input.text_styles =
           right_plugin_decorations->TextStylesForLine(static_cast<std::uint32_t>(right_line_index));
@@ -1060,16 +913,10 @@ void WorkspaceShell::PaintCompareRightSide(const CompareRowsPass& rows, const Co
                                            surface.line_height, *severity);
       }
     }
-    // Plugin gutter marks share the diagnostic marker slot and are drawn after
-    // it, which is exactly the precedence EditorViewRenderer uses — a mark and a
-    // diagnostic on the same line resolve the same way in both surfaces. Once
-    // per logical line, so a wrapped row does not stamp it per segment.
     if (right_plugin_decorations != nullptr && wrap_row.first) {
       const std::span<const editor::GutterMarkDecoration> marks =
           right_plugin_decorations->GutterMarksForLine(static_cast<std::uint32_t>(right_line_index));
       if (!marks.empty()) {
-        // Sorted (line, -priority), so the first entry is the winner of the
-        // single slot.
         editor::GutterIconRegistry::Draw(renderer, marks.front().shape, marks.front().color, surface.right_x, y,
                                          surface.gutter_width, surface.line_height);
       }
@@ -1079,15 +926,12 @@ void WorkspaceShell::PaintCompareRightSide(const CompareRowsPass& rows, const Co
                 selected ? theme_.current_line_number : theme_.line_number,
                 FormatLineNumber(static_cast<std::size_t>(compare_row.right_line), line_number_buf));
     }
-    // A caret at byte `column` of this line, drawn when its cell is on this row:
-    // under wrap the caret belongs to exactly one segment, and its on-screen cell
-    // is the hanging indent plus the offset into that segment.
     const auto draw_caret = [&](std::size_t column) {
       const editor::TextLayout::LineVisualColumnMap* caret_map = ensure_right_visual_map();
       const std::size_t caret_visual =
           caret_map != nullptr ? caret_map->VisualColumnFor(column) : std::min(column, compare_row.right_text.size());
       const bool on_this_row =
-          wrapped ? compare_tab->wrap_layout.RowForUnitColumn(presentation_index, caret_visual, /*right_side=*/true) ==
+          wrapped ? compare_tab->wrap_layout.RowForUnitColumn(presentation_index, caret_visual, true) ==
                         static_cast<std::size_t>(visual_index)
                   : caret_visual >= right_row_start && caret_visual <= right_row_end;
       if (!on_this_row) {
@@ -1101,10 +945,6 @@ void WorkspaceShell::PaintCompareRightSide(const CompareRowsPass& rows, const Co
     if (draw_compare_caret && right_line_index == compare_tab->right_viewport.cursor_line()) {
       draw_caret(compare_tab->right_viewport.cursor_column());
     }
-    // Every SECONDARY caret on this line, by the same rule. Ctrl+D and the box
-    // gesture both resolve through ActiveEditableViewport, which IS this pane on
-    // a compare tab, so a multi-caret set here is reachable -- and until this
-    // loop existed it edited text at places with no caret drawn.
     if (draw_compare_caret) {
       for (const auto& caret : row_secondaries) {
         if (caret.position.line == right_line_index) {
@@ -1112,11 +952,9 @@ void WorkspaceShell::PaintCompareRightSide(const CompareRowsPass& rows, const Co
         }
       }
     }
-    // The annotation is anchored past the END of the line, i.e. on its last
-    // wrapped row; the rect is absolute, so painting it once there is enough.
     const bool blame_row = !wrapped || compare_tab->wrap_layout.RowForUnitColumn(
                                            presentation_index, std::numeric_limits<std::size_t>::max(),
-                                           /*right_side=*/true) == static_cast<std::size_t>(visual_index);
+                                           true) == static_cast<std::size_t>(visual_index);
     if (blame_row && blame_overlay.has_value() && blame_overlay->visible) {
       while (blame_index < blame_overlay->lines.size() &&
              blame_overlay->lines[blame_index].line_index < right_line_index) {
@@ -1149,7 +987,6 @@ void WorkspaceShell::RenderCompareScrollbars(SDL_Renderer* renderer,
       ComputeCompareSurfaceLayout(editor_surface, *compare_tab);
   const auto scroll_layout =
       ComputeCompareScrollLayout(editor_surface, surface_layout, *compare_tab);
-  // The scroll this lays out against was clamped at frame prep: paint changes no state.
 
   if (scroll_layout.vertical_scrollbar.has_value()) {
     const SDL_FRect track = scroll_layout.vertical_scrollbar->track;
@@ -1170,4 +1007,4 @@ void WorkspaceShell::RenderCompareScrollbars(SDL_Renderer* renderer,
   }
 }
 
-}  // namespace microide::workspace
+}

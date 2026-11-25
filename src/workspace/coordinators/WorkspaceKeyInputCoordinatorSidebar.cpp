@@ -13,9 +13,6 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
                                                SDL_Keymod modifiers) {
   const SidebarMode sidebar_mode = operations_.active_sidebar_mode();
 
-  // Shift+F10 and the Menu key open the selected row's context menu, as in VS
-  // Code's lists: the keyboard's way to every row command the menu carries
-  // (Stage, Discard, Reveal, Copy Path...). Not while a field holds the keyboard.
   const bool field_active =
       (sidebar_mode == SidebarMode::Search && state_.overlay.workflow.project_search.editing) ||
       (sidebar_mode == SidebarMode::Git && state_.sidebar.git.commit_workflow.open);
@@ -26,12 +23,6 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
     return operations_.open_sidebar_selection_context_menu();
   }
 
-  // Escape closes an auto-opened (temporary) sidebar from *every* mode. Search,
-  // Problems, Tests and the plugin/outline list already did; the file tree and
-  // the git sidebar silently ignored it, so the one key users reach for to
-  // dismiss a transient panel worked in four modes out of six. Sub-editors that
-  // own the keyboard (the search field editor, the commit workflow) keep their
-  // own Escape below — this only fires when neither is active.
   if (event.key == SDLK_ESCAPE) {
     const bool sub_editor_active =
         (sidebar_mode == SidebarMode::Search &&
@@ -49,8 +40,6 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
   if (sidebar_mode == SidebarMode::Search) {
     const char input_character = operations_.keycode_to_ascii(event.key, modifiers);
     auto& search_state = state_.overlay.workflow.project_search;
-    // Fields the panel currently offers, in Tab order. The scope globs are only
-    // reachable while the scope section is expanded.
     const auto visible_fields = [&search_state]() {
       std::vector<ProjectSearchEditField> fields{ProjectSearchEditField::Query,
                                                  ProjectSearchEditField::Replace};
@@ -61,12 +50,6 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
       return fields;
     };
 
-    // Alt+R / Alt+C / Alt+H toggle regex, case sensitivity and hidden-file
-    // inclusion — VSCode's search-box chords, in the panel's button order. They
-    // were mouse-only (TD-2026-07-30-001). Handled before the editing branch so
-    // they work while typing a query as well as from the results list; the
-    // toggles flush the in-flight field first, so the re-run search sees the
-    // text on screen and the caret stays in the box.
     if ((modifiers & SDL_KMOD_ALT) != 0) {
       const std::function<void()>* toggle =
           event.key == SDLK_R   ? &operations_.toggle_project_search_pattern_mode
@@ -86,7 +69,6 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
           return true;
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
-          // Ctrl+Alt+Enter in the replace field replaces all (VS Code's chord).
           if (search_state.edit_field == ProjectSearchEditField::Replace &&
               (modifiers & SDL_KMOD_CTRL) != 0 && (modifiers & SDL_KMOD_ALT) != 0) {
             operations_.replace_all_project_search_matches();
@@ -95,8 +77,6 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
           operations_.commit_project_search_edit();
           return true;
         case SDLK_TAB: {
-          // Tab/Shift+Tab walk the visible fields, committing on the way out so a
-          // query or glob edit takes effect as the focus leaves it.
           const std::vector<ProjectSearchEditField> fields = visible_fields();
           std::size_t index = 0;
           for (std::size_t i = 0; i < fields.size(); ++i) {
@@ -149,13 +129,6 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
       default:
         break;
     }
-    // Typing navigates, as in VS Code's search view: the next result whose line
-    // starts with what was typed. Bare letters used to be commands here (`r`
-    // reran, `R` replaced all, `c` flipped the exact count, `i`/`x`/`=`/`/`
-    // opened fields, `j`/`k` moved), so a query typed into the list by mistake ran
-    // them one letter at a time (TD-2026-10-16-350). They are commands now
-    // (Search: Refresh / Toggle Exact Match Count / Toggle Search Details, Replace
-    // in Files on Ctrl+Shift+H, Find in Project on Ctrl+Shift+F) and buttons.
     if ((modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 && input_character > ' ' &&
         input_character < 127) {
       const auto& results = search_state.results;
@@ -180,8 +153,6 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
   if (sidebar_mode == SidebarMode::Git) {
     if (state_.sidebar.git.commit_workflow.open) {
       auto& workflow = state_.sidebar.git.commit_workflow;
-      // Ctrl+Enter commits from either field; plain Enter is a newline in the body and a
-      // no-op in the single-line subject.
       if ((event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER) &&
           (modifiers & SDL_KMOD_CTRL) != 0 && operations_.request_commit_workflow_commit != nullptr) {
         return operations_.request_commit_workflow_commit();
@@ -193,8 +164,6 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
           }
           return true;
         case SDLK_TAB:
-          // Tab moves between subject and body (Shift+Tab always returns to the subject),
-          // keeping the panel keyboard-navigable like every other multi-field surface.
           if (operations_.set_commit_workflow_focus_field != nullptr) {
             const CommitWorkflowFocusField next =
                 (modifiers & SDL_KMOD_SHIFT) != 0
@@ -211,19 +180,12 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
       if (workflow.focus_field == CommitWorkflowFocusField::Body) {
         return HandleCommitBodyKeyDown(event, modifiers);
       }
-      // The subject is a single-line field: hand navigation/editing keys to the shared
-      // single-line handler. Plain character keys return false here and are inserted by the
-      // separate SDL_TextInput event; returning early keeps git-action keys (s/c/d/...) from
-      // firing while the workflow owns the keyboard.
       return operations_.text_input_handle_single_line_key_down(event, modifiers);
     }
     const std::size_t selected_index = state_.sidebar.git.selected_index;
     if (const auto delta =
             ListNavigationKeyDelta(event.key, state_.sidebar.git.entries.size());
         delta.has_value()) {
-      // Home/End used to assign the raw first/last index, which can point at an
-      // entry hidden under a collapsed directory. SidebarService::MoveGitSelection walks
-      // visible rows only, so routing through it keeps the highlight on screen.
       operations_.move_git_sidebar_selection(*delta);
       return true;
     }
@@ -235,12 +197,6 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
       default:
         break;
     }
-    // Typing navigates by file name, as in VS Code's source control view. Bare
-    // letters used to be commands here (`s` staged, `x` discarded, `d`, `u`,
-    // `m`, `c`, `o`, `r`), so a name typed into the list by mistake staged and
-    // discarded files one letter at a time (TD-2026-10-16-350). They are on the
-    // row's context menu (right-click, Shift+F10, the Menu key), the view's
-    // buttons and the palette (Git: Commit…, Git: Refresh).
     if ((modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0) {
       const char typed = operations_.keycode_to_ascii(event.key, modifiers);
       if (typed > ' ' && typed < 127) {
@@ -314,8 +270,6 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
       case SDLK_KP_ENTER:
         return operations_.open_selected_plugin_sidebar_item();
       case SDLK_RIGHT:
-        // Expand a collapsed tree row; otherwise preserve the flat-list behavior
-        // where Right opens (confirms) the selection.
         if (selection_is_collapsible && selected_plugin_item->collapsed) {
           return operations_.toggle_plugin_sidebar_item();
         }
@@ -346,9 +300,6 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
     operations_.reveal_selected_tree_sidebar_line();
     return true;
   }
-  // VS Code's explorer clipboard: Ctrl+X / Ctrl+C hold the selected entry, Ctrl+V
-  // moves or copies it into the selected folder (a file's folder). Keys of the
-  // tree, not bindings, so the editor's and the fields' Ctrl+C/X/V stay theirs.
   if (NormalizedKeyModifiers(modifiers) == SDL_KMOD_CTRL &&
       (event.key == SDLK_X || event.key == SDLK_C || event.key == SDLK_V)) {
     (void)operations_.execute_action(event.key == SDLK_X   ? ActionId::TreeCut
@@ -358,8 +309,6 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
     return true;
   }
   switch (event.key) {
-    // VS Code's explorer keys: F2 renames and Delete deletes the selected entry,
-    // through the same prompts as the context menu.
     case SDLK_F2:
       (void)operations_.execute_action(ActionId::RenamePath, {}, ActionSource::Shortcut);
       return true;
@@ -380,8 +329,6 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
       operations_.reveal_selected_tree_sidebar_line();
       if (opened.has_value()) {
         operations_.open_file(*opened);
-        // Keep keyboard focus on the tree after opening so arrow/Enter
-        // navigation continues without a manual refocus.
         state_.surface.focus = FocusTarget::Sidebar;
       }
       return true;
@@ -389,11 +336,6 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
     default:
       break;
   }
-  // Typing navigates, as in VS Code's explorer: the next entry whose name starts
-  // with what was typed. Bare letters used to be commands here (`r` refreshed, `d`
-  // opened the compare picker), so a query typed into the tree by mistake ran them
-  // one letter at a time (TD-2026-10-15-342); Refresh and Compare are on the
-  // tree's context menu, its header button and the palette.
   if ((modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0) {
     const char typed = operations_.keycode_to_ascii(event.key, modifiers);
     if (typed > ' ' && typed < 127) {
@@ -413,4 +355,4 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
 }
 
 
-}  // namespace microide::workspace
+}

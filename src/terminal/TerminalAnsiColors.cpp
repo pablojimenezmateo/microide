@@ -19,4 +19,4 @@ TerminalCell MakeUtf8TerminalCell(std::string_view glyph, const TerminalStyle& s
   return cell;
 }
 
-}  // namespace microide::terminal
+}

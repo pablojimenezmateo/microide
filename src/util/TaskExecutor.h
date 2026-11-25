@@ -30,10 +30,6 @@ class CancellationToken {
   friend class TaskExecutor;
 };
 
-// Thread pool executor. Default thread count is 1 (single background worker,
-// preserving the original FIFO, single-task-at-a-time semantics). Pass a
-// larger thread_count for parallel work (e.g. project-wide search + git blame
-// running concurrently without serialising).
 class TaskExecutor {
  public:
   using Task = std::function<void(const CancellationToken&)>;
@@ -44,21 +40,12 @@ class TaskExecutor {
   TaskExecutor& operator=(const TaskExecutor&) = delete;
 
   void Submit(Task task);
-  // Latest-only submit: before enqueuing, cancel and drop any *queued* (not yet
-  // started) task previously submitted with the same non-empty `coalesce_key`.
-  // Lets a caller that supersedes per-subject work (e.g. git blame re-requesting
-  // the same file while scrolling) actually drop the obsolete queued lambdas
-  // instead of leaving them to wake a worker only to discover they are stale. An
-  // already-running task with the same key is left alone (the task's own
-  // staleness check handles it); an empty key coalesces nothing.
   void Submit(std::string coalesce_key, Task task);
   void CancelAll();
   void WaitForIdle();
 
  private:
-  // Cancel every running and queued task and drop the queue. Holds mutex_.
   void CancelAllLocked();
-  // No task queued or running. Holds mutex_.
   bool IdleLocked() const;
   void NotifyIfIdleLocked();
   struct TaskEntry {
@@ -79,4 +66,4 @@ class TaskExecutor {
   bool shutdown_requested_ = false;
 };
 
-}  // namespace microide::util
+}

@@ -39,29 +39,11 @@ struct TextViewportCacheStats {
   std::size_t highlight_checkpoint_advances = 0;
 };
 
-// What one open tab costs to KEEP open, broken down by which cache is holding
-// it (TD-2026-08-06-142). Every field is heap bytes held by container capacity;
-// the document text itself is deliberately absent, because it is the tab's
-// content and not something a cap could reclaim.
-//
-// The breakdown, not just the total, is the point. All five of these are
-// individually bounded BY THE DOCUMENT and none of them is bounded across tabs,
-// so choosing a ceiling means knowing which one dominates — and until this
-// existed, "how much does an open tab cost to keep open?" had no answer at all.
 struct TextViewportDerivedCacheBytes {
-  // Per-line visual width table, the wrapped-row table, the 256-entry
-  // visible-line LRU and their scratch.
   std::size_t layout_cache = 0;
-  // Per-line syntax token LRU.
   std::size_t highlight_tokens = 0;
-  // Per-line highlighter state, sized to the document, plus the periodic
-  // checkpoint chain.
   std::size_t highlight_states = 0;
-  // Multi-caret mirrors and the box-selection scratch.
   std::size_t caret_caches = 0;
-  // Undo/redo history. Not a derived cache — it cannot be recomputed — but it
-  // is per-tab retained memory that grows with use, so a ceiling that ignored
-  // it would be measuring the wrong thing.
   std::size_t undo_history = 0;
 
   std::size_t total() const {
@@ -79,14 +61,6 @@ class TextViewport {
     Bytes,
   };
 
-  // Cause classification for derived-cache invalidation. Callers pass the
-  // reason that triggered the call; the implementation fans this out into
-  // tier bumps per the table in
-  // openspec/changes/split-layout-revision-tiers/design.md Decision 2:
-  //   ContentEdit  → content_revision + presentation_revision
-  //   SyntaxConfig → syntax_revision + presentation_revision
-  //   LayoutShape  → layout_shape_revision + presentation_revision
-  //   Presentation → presentation_revision only
   enum class InvalidationReason {
     ContentEdit,
     SyntaxConfig,
@@ -94,228 +68,89 @@ class TextViewport {
     Presentation,
   };
 
-  // Exact extent of one content edit: lines [start, start + removed) were
-  // replaced by `inserted` lines. Reported only by the edit path that applies a
-  // history entry, which is the one place the counts are known.
   struct ContentSplice {
     std::size_t removed = 0;
     std::size_t inserted = 0;
-    // For an edit confined to line `start_line` (a column-scoped history entry):
-    // the first byte it changed. Every byte of that line before it is as it was.
     std::size_t edit_column = TextLayoutCache::kNoEditColumn;
   };
 
-  // One visual row of the wrapped layout: the layout cache's own row type (this
-  // used to be a field-for-field copy filled from it). `indent` is the hanging
-  // indent the renderer prepends to a continuation row (0 for a line's first row).
   using WrappedVisualRow = TextLayoutCache::WrappedRow;
 
   TextViewport();
-  // Defaulted: the members that do not travel memberwise say how they do travel
-  // in their own types (TextViewportMemberPolicies.h).
   TextViewport(const TextViewport& other) = default;
   TextViewport& operator=(const TextViewport& other) = default;
   TextViewport(TextViewport&& other) noexcept = default;
   TextViewport& operator=(TextViewport&& other) noexcept = default;
 
-  // The pure, byte-shaped half of loading a file: everything that can be
-  // computed from the bytes alone, with no document to mutate and no shared
-  // state to touch. It is therefore safe to compute on a worker thread, which is
-  // the point — for a large file it is several full passes over the buffer (the
-  // content hash, the encoding sniff, the line-ending scan, and possibly a CRLF
-  // rewrite), and doing them on the shell thread is a visibly dropped frame.
   struct ClassifiedContent {
-    // Canonical LF text ready for the buffer — or, for opaque/binary content,
-    // the raw bytes, which `AdoptClassifiedContent` splits on '\n' only so the
-    // round trip is exact.
     std::string text;
     TextEncoding encoding = TextEncoding::UTF8;
     LineEnding line_ending = LineEnding::LF;
     bool mixed_line_endings = false;
     bool utf8_bom = false;
-    // Hash of the bytes as they were on disk, before the BOM strip and the LF
-    // canonicalization. This is the one moment they exist, so it is where a
-    // later conflict check's comparison value comes from.
     std::size_t raw_content_hash = 0;
-    // How many bytes that was. A file still being written when it was read is
-    // longer by the time the baseline is stat'ed; the size says so.
     std::size_t raw_size = 0;
   };
 
   bool OpenFile(const std::filesystem::path& path);
-  // Classify a file's bytes. Static and pure: no document, no viewport, no
-  // globals — call it from whichever thread has the bytes.
   static ClassifiedContent ClassifyContent(std::string bytes);
-  // Install classified content as this viewport's document. Shell thread only;
-  // it mutates the document.
   bool AdoptClassifiedContent(const std::filesystem::path& path, ClassifiedContent content);
-  // Classify then install, for a caller that read the bytes synchronously.
   bool AdoptFileContent(const std::filesystem::path& path, std::string bytes) {
     return AdoptClassifiedContent(path, ClassifyContent(std::move(bytes)));
   }
-  // Through `gate` — the PROJECT's (ProjectWorkspaceState::write_gate()). Passed per
-  // call, with no default and nothing stored, for the reason the launcher is: the
-  // answer is per project, and a viewport that HELD a gate lost it on every path
-  // that replaces a viewport wholesale (a reload, the LSP's scratch view), then
-  // wrote the wrong place while reporting success (TD-2026-09-29-308).
-  // On failure `*error` (when given) is the gate's reason.
-  // Whether a save applies the save-time transforms (trailing whitespace, final
-  // newline) to the text it writes -- and so to the buffer, as an undoable edit.
-  // An autosave skips them (SaveMode::Autosave).
   enum class SaveTransforms { Apply, Skip };
   [[nodiscard]] bool Save(project::FileWriteGate& gate, std::error_code* error = nullptr,
                           SaveTransforms transforms = SaveTransforms::Apply);
-  // Save-time normalization knobs. When set, `Save()` applies these transforms
-  // to the in-memory line buffer (recorded as undo) before the file is
-  // serialized. Defaults are off; callers should configure them from
-  // `editor.save.*` settings before invoking Save().
   void SetSaveTrimTrailingWhitespace(bool enabled) { save_trim_trailing_whitespace_ = enabled; }
   void SetSaveEnsureFinalNewline(bool enabled) { save_ensure_final_newline_ = enabled; }
-  // Force the on-save line ending (the `editor.line_endings` setting). nullopt
-  // ("auto") keeps the file's detected ending; a value normalizes on save.
   void SetSaveLineEnding(std::optional<LineEnding> ending) { save_line_ending_override_ = ending; }
   bool save_trim_trailing_whitespace() const { return save_trim_trailing_whitespace_; }
   bool save_ensure_final_newline() const { return save_ensure_final_newline_; }
 
-  // Per-tab language contract for auto-close, surround, smart indent, etc.
-  // Default-constructed view disables every per-language behavior; pushing in
-  // a populated view is how the workspace turns these features on.
-  //
-  // The view is held by shared_ptr because every tab of the same language wants
-  // the *same* view: the workspace builds one per (language, toggle set) and
-  // hands the same instance to all of them, so a settings change no longer
-  // deep-copies four vectors and three strings into every open tab
-  // (TD-2026-08-03-110). Null means "no contract" and reads back as a static
-  // default-constructed view.
   void SetLanguageContractView(std::shared_ptr<const LanguageContractView> view) {
     lc_view_ = std::move(view);
   }
-  // Convenience overload for callers that own a one-off view (tests, and any
-  // caller with no shared table behind it). Allocates; the shared overload does
-  // not.
   void SetLanguageContractView(LanguageContractView view) {
     lc_view_ = std::make_shared<const LanguageContractView>(std::move(view));
   }
-  // Inline (not out-of-line in the .cpp): the per-keystroke language-behavior
-  // paths consult this several times per typed character, and a non-LTO build
-  // would otherwise pay a cross-TU call for a pointer deref.
   const LanguageContractView& language_contract_view() const {
     return lc_view_ != nullptr ? *lc_view_ : kNoLanguageContractView;
   }
 
-  // Memoized filetype id for this buffer ("c++", "python", … ; empty when the
-  // syntax registry has no match).
-  //
-  // Detection is cheap per call but not free: it materializes the
-  // signature-scan head of the buffer into a vector<std::string>, runs the
-  // filename / header / signature regexes, and returns an owned std::string.
-  // Callers ask constantly and almost always about an unchanged buffer -- every
-  // prepared frame (fold refresh, status bar), every LSP/assist request, and
-  // once per open tab on every settings change.
-  //
-  // The answer is a pure function of (document identity, content revision, path,
-  // syntax-registry revision), so the memo keys on exactly those and is
-  // self-invalidating. This supersedes the per-caller `runtime_syntax::
-  // FiletypeMemo` instances that the status bar and the per-tab fold state each
-  // used to carry.
-  //
-  // The reference is into the memo, so it stays valid only until the next
-  // resolve *on this viewport*. Callers that hold it across an edit, a path
-  // change, or an unrelated call that might re-resolve should copy it.
   const std::string& language_id() const;
-  // Change Language Mode: the buffer's language set by hand, for every view of it
-  // (runtime_syntax::kPlainTextFiletype for none), or "" to detect it again. The
-  // highlighting restarts in that language; language_id() answers it.
   void SetLanguageOverride(std::string language);
   const std::string& language_override() const;
   void LoadContent(std::string_view content,
                    const std::filesystem::path& path = {},
                    std::optional<LineEnding> line_ending = std::nullopt);
-  // Load an already line-split buffer directly (dirty-tab session restore), moving
-  // `lines` straight into the document instead of the LoadContent(SerializeLines(...))
-  // round-trip that joins the lines into one string only to re-split it. Marks the
-  // buffer dirty, since a restored dirty snapshot differs from the file on disk.
   void LoadLines(std::vector<std::string> lines, const std::filesystem::path& path,
                  LineEnding line_ending);
   void SetPath(const std::filesystem::path& path);
-  // Save As: the buffer now belongs to `path`, which it has never been loaded
-  // from or saved to, so the on-disk identity is forgotten (a conflict check
-  // against the old file's signature would read the new path as vanished).
-  // `signature` restores a binding instead: a Save As whose write failed goes
-  // back to the path and on-disk identity it had.
   void RebindToPath(const std::filesystem::path& path,
                     const util::FileSignature& signature = {});
   void SetDirty(bool dirty);
   void SetPlaceholderText(std::string text);
   void SetUntitledBuffer();
   void SetViewportSize(std::size_t visible_lines, std::size_t visible_columns);
-  // Scrolls just enough for the caret's row to be on screen (the same rule every
-  // caret motion applies), for callers that changed which rows exist -- e.g. a
-  // fold expanding above the caret -- without moving the caret itself.
   void RevealCaret();
   void SetScrollLine(std::size_t scroll_line);
-  // Brings this viewport's carets back into its document when another viewport
-  // over the same document changed it (see SyncCaretsIfDocumentChangedElsewhere).
-  // Frame prep calls it for every pane before painting: left to the next
-  // operation on this viewport, a pane whose caret a save's trim pushed past the
-  // end drew no current-line highlight until an unrelated command clamped it,
-  // in a frame that did not repaint the pane (QA monkey, commands profile, seed 8).
   void ReconcileCaretsWithDocument() { SyncCaretsIfDocumentChangedElsewhere(); }
-  // MICROIDE_TRACE_CARET_BOUNDS: the first time this viewport holds a caret or an
-  // anchor outside its document (and does not lag a foreign edit, which the next
-  // use reconciles), log where and a backtrace of the code that left it there.
-  // EnsureCursorVisible runs it after every move and edit; frame preparation
-  // after each frame as a backstop. The invariants query only samples every few
-  // monkey steps, long after the culprit (soak 872c8984d39b).
   void TraceCaretBounds(const char* where) const;
-  // The first caret or anchor outside the document, described ("secondary caret
-  // at 7:801 (line length 728, 9 lines)"); empty when every one is inside. Says
-  // nothing of lag: a lagging view's stale positions are reported too.
   std::string CaretBoundsFault() const;
-  // Whether another viewport over this DocumentState edited it since this one
-  // last reconciled its carets (SyncCaretsIfDocumentChangedElsewhere).
   bool CaretsLagDocument() const {
     return document_ != nullptr && carets_synced_content_revision_ != document_->content_revision;
   }
   void SetHorizontalScroll(std::size_t horizontal_scroll);
-  // Authoritatively re-applies a previously captured view state: cursor (or
-  // selection) first, then scroll LAST so the restored scroll survives even when
-  // the caret is off-screen (e.g. scroll-wheel without moving the cursor).
-  // Performs no trailing EnsureCursorVisible. Call this AFTER preference/indent
-  // application, which internally re-runs EnsureCursorVisible and would otherwise
-  // snap scroll back onto the caret.
   void ApplyRestoredViewState(std::size_t cursor_line,
                               std::size_t cursor_column,
                               std::size_t scroll_line,
                               std::size_t horizontal_scroll,
                               const std::optional<SelectionRange>& selection = std::nullopt);
-  // Replaces the buffer with `text` and puts the view back exactly where it was:
-  // same viewport size, path and line ending, same cursor/selection, same scroll.
-  //
-  // The save path (format-on-save, save participants) and the virtual-document
-  // reload path each hand-rolled this, and the two had drifted: one restored the
-  // selection AFTER the scroll, so MoveCursorTo's EnsureCursorVisible overwrote the
-  // scroll it had just restored. Select-all then save-with-formatter jumped the
-  // view to the end of the file. Restoring view state is this class's business, so
-  // it lives here and both callers are one line.
   void ReloadPreservingViewState(std::string_view text);
-  // A formatter's output, applied as an EDIT (TD-2026-10-08-324): the lines it
-  // left alone are kept, the differing middle is one ReplaceLines inside one undo
-  // group, so Undo takes the formatting back in one step and everything typed
-  // before the save stays reachable. Cursor, scroll and selection are restored as
-  // ReloadPreservingViewState does; the disk baseline is untouched. Falls back to
-  // a reload when the output differs in what the buffer stores beside its lines
-  // (a byte mark, opaque bytes). False when the output is the buffer.
   bool ApplyFormattedText(std::string_view text);
   void SetTabSize(std::size_t tab_size);
   void SetIndentWidth(std::size_t indent_width);
   void SetSoftTabs(bool soft_tabs);
-  // The buffer's OWN indentation: what detection read from the file on open, or
-  // what an indentation command chose for this buffer. Preferences are re-applied
-  // on every tab activation and settings change, and they used to overwrite these
-  // three fields with the settings' values -- a two-space Python file switched
-  // away from and back to then indented with tabs. workspace::ApplyOwnIndent
-  // re-applies this over the settings wherever .editorconfig did not pin a value.
   void SetOwnIndent(const IndentDetection& own) { own_indent_ = own; }
   const IndentDetection& own_indent() const { return own_indent_; }
   void SetSoftWrap(bool soft_wrap);
@@ -323,52 +158,20 @@ class TextViewport {
   bool soft_wrap() const { return soft_wrap_; }
   void MoveCursorVertical(int delta, bool extend_selection = false);
   void MoveCursorHorizontal(int delta, bool extend_selection = false);
-  // Word-granular horizontal motion: Ctrl+Left (`delta < 0`, VS Code
-  // `cursorWordStartLeft`) and Ctrl+Right (`delta > 0`, `cursorWordEndRight`),
-  // with Shift extending. Crosses the line boundary in both directions the way
-  // the character form does. Applies to every caret; the boundary rule is
-  // `editor/WordBoundary.h`, shared with the single-line surfaces.
   void MoveCursorWord(int delta, bool extend_selection = false);
-  // Word-granular deletion: Ctrl+Backspace (`direction < 0`) and Ctrl+Delete
-  // (`direction > 0`). Deletes the selection instead when there is one, joins
-  // with the neighbouring line at a line edge, and takes an indent run on its
-  // own (see `DeleteWordBoundaryLeft`). Applies to every caret.
   void DeleteWord(int direction);
   void MoveCursorLineStart(bool extend_selection = false);
   void MoveCursorLineEnd(bool extend_selection = false);
-  // Reposition the caret, LEAVING any secondary carets in place. This is the
-  // primitive: its internal callers (ShapingActions rebuilding a caret set,
-  // SnippetEngine placing a tabstop, the drag collapse-then-extend idiom) depend
-  // on the secondaries surviving. User-facing jumps want JumpCursorTo below.
   void MoveCursorTo(std::size_t line, std::size_t column, bool extend_selection = false);
-  // A user-facing JUMP to a location — goto-line, find-next, jump-to-bracket,
-  // go-to-definition, a problems/search-result reveal, a stack-frame click, a
-  // plugin's open-at-line. Collapses to a single caret first, then moves, which
-  // is what VS Code does for every one of these: a multi-caret set is anchored
-  // to where the user was working, and a jump elsewhere strands it off-screen
-  // where its next edit is invisible (TD-2026-08-13-203). Prefer this over
-  // ClearSecondaryCarets() + MoveCursorTo(): the open-coded pair is how these
-  // call sites diverged in the first place.
   void JumpCursorTo(std::size_t line, std::size_t column, bool extend_selection = false);
   void MoveCursorToVisualColumn(std::size_t line,
                                 std::size_t visual_column,
                                 bool extend_selection = false);
   void ScrollVertical(int delta);
-  // Scroll so `line` (0-based logical line) sits mid-viewport, clamped to the
-  // valid scroll range: a line near EOF or a tiny viewport settles as close to
-  // centred as the content allows. Soft-wrap aware (scrolls in visual rows).
-  //
-  // The request is also remembered until the next SetViewportSize, and re-applied
-  // there if the size changed: a tab opened and centred in one step (`reveal`)
-  // has no real size until the frame after it opens, and centring in its initial
-  // one-row viewport would leave the line at the top of the pane.
   void CenterLine(std::size_t line);
   void Page(int direction, bool extend_selection = false);
   void InsertCharacter(char character);
   void InsertText(std::string_view text, bool record_undo = true);
-  // Paste with VSCode multi-caret semantics: with N carets and clipboard text of
-  // exactly N lines, insert line i at caret i (position order); otherwise insert
-  // the whole text at every caret. Single-caret pastes defer to InsertText.
   bool PasteText(std::string_view text, bool record_undo = true);
   void InsertNewline();
   void InsertTab();
@@ -376,68 +179,28 @@ class TextViewport {
   void DeleteForward();
   bool Undo();
   bool Redo();
-  // Test seam: is the top undo entry the column-scoped form?
-  //
-  // An edit that stays inside one line must record {column, removed, inserted},
-  // not the whole affected line before and after. The two forms are
-  // indistinguishable from the buffer's content, and the line form costs a
-  // multiple of the LINE per keystroke -- which on a file with no line breaks in
-  // it is a multiple of the document (TD-2026-08-05-131). Exposed so a test can
-  // pin the routing instead of trusting it, in the same spirit as
-  // TextBuffer::materialized_line_count().
   bool TopUndoEntryIsColumnScopedForTesting() const;
-  // Merge subsequent edits into one undo stack entry until `EndUndoGroup()`.
-  // While a group is active, individual `PushHistoryEntry` calls are suppressed.
-  // The outermost group's end also publishes the aggregate as the
-  // last_applied_edit(): what the group changed, not the last edit inside it.
   void BeginUndoGroup();
   void EndUndoGroup();
   bool UndoGroupActive() const { return document_->undo_history.IsGroupActive(); }
   bool ReplaceRange(const SelectionRange& range,
                     std::string_view replacement,
                     bool record_undo = true);
-  // `replacement` is taken BY VALUE and moved into the history entry's
-  // after-image. A line op over a multi-caret span builds one replacement vector
-  // covering every line between the outermost carets, and copying it here was one
-  // full copy of that span per edit.
   bool ReplaceLines(std::size_t start_line,
                     std::size_t end_line,
                     std::vector<std::string> replacement,
                     bool record_undo = true);
-  // Blob form: the shaping ops (toggle comment, sort, move line, indent) build
-  // their replacement straight into one buffer plus a line-start table, so an
-  // n-line op costs a constant number of allocations rather than n
-  // (TD-2026-08-11-182).
   bool ReplaceLines(std::size_t start_line,
                     std::size_t end_line,
                     LineBlob replacement,
                     bool record_undo = true);
   std::size_t ReplaceAll(std::string_view needle, std::string_view replacement);
-  // Apply a precomputed, ascending-sorted set of single-line match ranges as one
-  // grouped Replace-All edit, WITHOUT re-scanning/re-folding the document. Each
-  // range must be confined to one line, non-empty, in range, sorted ascending by
-  // (line, column), and non-overlapping (exactly what FindLiteralSearchMatches
-  // produces). Returns the number of ranges applied, or std::nullopt when the
-  // caller's ranges fail validation (stale/inconsistent), in which case the
-  // document is left untouched and the caller can fall back to ReplaceAll.
-  // (TD-2026-07-17A-028.)
   std::optional<std::size_t> ReplaceAllRanges(const std::vector<SelectionRange>& matches,
                                               std::string_view replacement);
 
   const std::filesystem::path& path() const { return document_->path; }
-  // Cached normalized key for the per-file presentation stores. Pass this to the
-  // hot-path *ByPathKey lookups to avoid re-normalizing the path every frame.
   std::string_view path_key() const { return document_->path_key; }
-  // The file `path()` names with every link resolved (util::ResolveRealPath),
-  // taken when the path was set, or empty when `path()` already is that. The
-  // watcher reports a change under the file's real path -- never through a link,
-  // whether the link is the file (`link.txt -> a.txt`) or a folder on the way
-  // (`loop -> .`) -- so a view opened by another name is found by this, and the
-  // shell routes the change to it as well.
   const std::filesystem::path& real_path() const { return document_->real_path; }
-  // Looks again at where the path leads: it may have become (or stopped being) a
-  // link since the view opened, and real_path() is what decides which changes to
-  // other paths reach this view (TabCoordinator::OpenSymlinkAliasesOf).
   void RefreshRealPath() {
     if (document_ != nullptr) {
       SetDocumentPath(document_->path);
@@ -445,125 +208,46 @@ class TextViewport {
   }
   const TextBuffer& lines() const { return document_->lines; }
 
-  // On-disk identity recorded at the last load/save. `disk_signature().exists`
-  // is false for untitled buffers and files that were absent when last sampled.
   const util::FileSignature& disk_signature() const { return document_->disk_signature; }
   bool HasDiskSignature() const { return document_->disk_signature.exists; }
-  // True when `other` is another view of this viewport's document (a split
-  // clone, a second tab on the same file). Views of one document share its
-  // content, dirty state, undo history and disk signature; closing one of them
-  // discards nothing while another remains.
   bool SharesDocumentWith(const TextViewport& other) const {
     return document_ == other.document_;
   }
-  // The document this view shows, as an identity to key caches on. A reload from
-  // disk gives the SAME viewport a new document whose content revisions start
-  // over, so (viewport, content revision) can name two different texts; the
-  // language memo keys on this for that reason, and so must any cache of
-  // coordinates into the text.
   const void* document_identity() const { return document_.get(); }
 
-  // Result of comparing the file on disk *now* against the signature we recorded
-  // at load/last-save. Used by coordinators to avoid clobbering external edits.
   enum class DiskConflict {
-    None,      // no recorded signature, or disk still matches what we last saw
-    Changed,   // file exists but its mtime/size differs from our record
-    Vanished,  // file was present at load/save but is now gone
-    StatError,  // the stat itself failed; treat conservatively as a conflict
+    None,
+    Changed,
+    Vanished,
+    StatError,
   };
   DiskConflict DetectDiskConflict() const;
-  // True when writing this buffer would overwrite content on disk it has not
-  // seen: the file changed, or its stat failed. A VANISHED file does not count --
-  // there is nothing left to overwrite, and the save is what puts the user's text
-  // back (VS Code saves a deleted file's dirty editor the same way). Refusing it
-  // pointed at a Compare / Reload banner with nothing to compare or reload.
   bool SaveWouldOverwriteUnseenDisk() const {
     const DiskConflict conflict = DetectDiskConflict();
     return conflict == DiskConflict::Changed || conflict == DiskConflict::StatError;
   }
-  // True when `current` — a fresh stat of this viewport's path — describes the same
-  // CONTENT as the signature this viewport recorded. A stat mismatch is confirmed
-  // against the recorded content hash rather than trusted, so a touch or a
-  // byte-identical rewrite is not mistaken for someone else's edit. Re-baselines on
-  // a confirmed match, so the next call is one stat again.
   bool DiskContentUnchanged(const util::FileSignature& current) const;
-  // The same question in two halves, for a caller holding SEVERAL views of one
-  // file: ask each view whether a read could settle it (cheap, no I/O), read the
-  // file at most once, then hand every view the same digest. The one-call form
-  // above re-read the file per view, so a split pane cost one full read each for
-  // a single watcher event.
-  //
-  // `Could` is true when the recorded signature carries a content hash, the size
-  // is unchanged (a different size is a real change, no read needed), and the
-  // file is small enough that reading it is not itself the stall this check sits
-  // inside. `Confirm` compares against the RECORDED digest of what was last on
-  // disk — never against the buffer, which is dirty by construction here — and
-  // re-baselines the stat so the next event on this path is one stat again. That
-  // re-baseline is why a const method writes: it memoizes a fact about the file,
-  // and nothing a caller can observe changes.
-  // The file must be small enough that reading it to settle the question is not
-  // itself the stall the question sits inside. Public because the caller that
-  // posts the read off-thread has to bound it to the same budget.
   static constexpr std::uintmax_t kMaxConfirmBytes = 8u << 20;
   bool CouldConfirmDiskContent(const util::FileSignature& current) const;
   bool ConfirmDiskContentUnchanged(const util::FileSignature& current,
                                    std::uint64_t disk_content_hash) const;
-  // Whether this buffer would save exactly the bytes `other` was loaded from: the
-  // same lines, line ending, mixed-ending flag and BOM (ASCII and UTF-8 are one
-  // encoding on disk). A reload from disk that would install identical content
-  // keeps this buffer -- its undo/redo history, caches and folds -- and only
-  // takes `other`'s on-disk identity through AdoptDiskBaselineOf.
   bool HoldsSameFileContentAs(const TextViewport& other) const;
-  // Take `other`'s disk signature as this buffer's baseline, and mark it clean:
-  // it now holds what the file holds. That makes the current undo position the
-  // clean point exactly as a save does, so undoing away from it reads dirty.
   void AdoptDiskBaselineOf(const TextViewport& other);
-  // Revert File: make this buffer hold what `disk` (the file just read) holds, as
-  // ONE undoable edit, and make that the clean point -- Ctrl+Z gets the discarded
-  // changes back, as in VS Code (whose revert pushes edit operations). False,
-  // changing nothing, when the two differ in line ending, encoding or BOM: an
-  // edit cannot carry that, and the caller reloads instead.
   bool RevertToDiskContent(const TextViewport& disk);
-  // The file changed on disk while this buffer had unsaved edits, and the user
-  // has not yet chosen to reload or overwrite: the content it was read or saved
-  // with is no longer the file's, so no undo position is clean (the soak's
-  // 3b57c171523f: an undo back to it read clean and differed from disk).
   void NoteDiskChangedUnderEdits();
-  // Unsaved edits that an undo or redo can still walk back to a position read as
-  // clean -- the state NoteDiskChangedUnderEdits ends. False for a clean buffer.
   bool DirtyWithACleanPosition() const;
   std::size_t cursor_line() const { return cursor_line_; }
   std::size_t cursor_column() const { return cursor_column_; }
   std::size_t cursor_visual_column() const;
-  // Visual column of byte `column` on `line` in the live buffer, and its inverse.
-  //
-  // Both consult the layout cache's per-line facts first: on a plain-ASCII line
-  // the two coordinates coincide, so the answer is O(1) rather than a walk to the
-  // column. Every caret path in the editor goes through this pair, which is what
-  // keeps a caret a megabyte into one line from costing a megabyte a keystroke.
   std::size_t VisualColumnAt(std::size_t line, std::size_t column) const;
   std::size_t TextColumnAtVisualColumn(std::size_t line, std::size_t visual_column) const;
-  // What the layout cache currently knows about `line`, or an unknown value when
-  // its width table does not describe this document.
   LineLayoutFacts CachedLineFacts(std::size_t line) const;
-  // Fallback for the visual<->text column conversions when the per-line width
-  // table is not current -- which under soft wrap it never is, because nothing
-  // builds it there. See TextLayoutCache::PlainAsciiThroughColumn.
   bool PlainAsciiThroughColumn(std::size_t line, std::size_t column) const;
-  // First byte of `line` that is not plain single-cell ASCII, searched in
-  // [0, probe) and returning `probe` when there is none — so byte offset IS
-  // visual column everywhere below the result. Memoized per line and content
-  // revision by the layout cache, which is what makes it safe to ask per rendered
-  // row (see TextLayoutCache::PlainAsciiPrefixEnd).
   std::size_t PlainAsciiPrefixEnd(std::size_t line, std::size_t probe) const;
   std::size_t cursor_visual_row() const;
   std::size_t scroll_line() const { return scroll_line_; }
   std::size_t horizontal_scroll() const { return horizontal_scroll_; }
   std::size_t visible_lines() const { return visible_lines_; }
-  // Rows the sticky-scroll band covered in the last frame painted (0 with none, or
-  // before a first frame). Anything that turns a point in the pane into a row, and
-  // is not the painter, reads it: a hover resolved against a grid without the band
-  // named the line the band's height below the pointer.
   void SetStickyBandRows(std::size_t rows) { sticky_band_rows_ = rows; }
   std::size_t sticky_band_rows() const { return sticky_band_rows_; }
   std::size_t visible_columns() const { return visible_columns_; }
@@ -571,12 +255,6 @@ class TextViewport {
   std::uint64_t content_revision() const {
     return document_ != nullptr ? document_->content_revision : 0;
   }
-  // True when the caret's current position is the result of an in-flight text
-  // edit (typing, deleting) rather than a deliberate navigation move. Edits bump
-  // `content_revision` and place the caret directly; navigation routes through
-  // `PlacePrimaryCaret`, which re-syncs the anchor. Used to suppress occurrence
-  // highlighting while a word is being typed so the highlight does not chase a
-  // growing prefix.
   bool CaretIsFromActiveTextEdit() const {
     return document_ != nullptr &&
            caret_navigation_content_revision_ != document_->content_revision;
@@ -590,16 +268,9 @@ class TextViewport {
   std::uint64_t presentation_revision() const {
     return document_ != nullptr ? document_->presentation_revision : 0;
   }
-  // The line range that has changed since the folding model last looked, as a
-  // common-prefix/common-suffix window (see LineEditSpan). The model resyncs its
-  // per-line indent and bracket caches across it instead of rescanning the
-  // document. Reading it resets the accumulator, so there is exactly one
-  // consumer: the fold refresh.
   LineEditSpan ConsumeFoldEditSpan();
   std::size_t tab_size() const { return tab_size_; }
   std::size_t max_visual_columns() const { return MaxVisualColumns(); }
-  // Build the width table now (off the shell thread, for a large open) and keep
-  // it across the next tab-size round trip — see TextLayoutCache::ArmLineWidthParking.
   void PrebuildLineWidths() const {
     (void)MaxVisualColumns();
     layout_cache_.ArmLineWidthParking();
@@ -607,28 +278,12 @@ class TextViewport {
   std::size_t indent_width() const { return indent_width_; }
   bool soft_tabs() const { return soft_tabs_; }
   LineEnding line_ending() const { return document_->line_ending; }
-  // Change how the document's lines are ended, as an edit: it dirties the
-  // buffer, is one undo step, and undoing it back to the save point is clean.
-  // False when that is already the ending (and the file is not mixed), for a
-  // read-only buffer, or inside an open undo group (which records line images
-  // only and would drop the change).
   bool SetLineEnding(LineEnding ending);
   bool has_mixed_line_endings() const { return document_->mixed_line_endings; }
   TextEncoding encoding() const { return document_->encoding; }
-  // True when the file opened with a UTF-8 byte order mark. The BOM is not part
-  // of the buffer (line 0 starts at the first real byte, so Home, `^` regexes
-  // and shebang detection see the text, as in VS Code); Save writes it back and
-  // SerializeDocumentText reproduces the on-disk form for comparisons.
   bool has_utf8_bom() const { return document_->utf8_bom; }
   void SetUtf8Bom(bool has_bom) { document_->utf8_bom = has_bom; }
-  // The document as it would be written to disk: the BOM, if any, then the lines
-  // joined with `line_ending` (the document's own by default). Use it wherever
-  // the buffer stands in for the file -- a compare against a git blob, a merge
-  // result baseline -- so a BOM file does not read as modified on line 0.
   std::string SerializeDocumentText(std::optional<LineEnding> line_ending = std::nullopt) const;
-  // The text as a reader of the buffer sees it -- a language server, a plugin
-  // provider: the lines joined with the document's line ending, no BOM. Streams
-  // from the buffer without materializing a vector of lines (TD-2026-07-17-095).
   std::string SerializeText() const {
     return util::SerializeLinesStreaming(LineSpan(document_->lines), document_->line_ending);
   }
@@ -636,69 +291,34 @@ class TextViewport {
   std::string EncodingLabel() const;
   LayoutLine VisibleLineLayout(std::size_t line_index) const;
 
-  // Caret placement for one logical line, resolved against the current cursor
-  // position and scroll window. Split out of VisibleLineLayout so the layout
-  // itself can be served by reference from the cache (see VisibleLineLayoutRef)
-  // without baking the per-call caret into the cached object.
   struct LineCaret {
     bool visible = false;
     std::size_t column = 0;
   };
   LineCaret CaretForLine(std::size_t line_index) const;
 
-  // Reference to the cached visible-line layout (no caret fields set). Hot
-  // render paths bind this to avoid copying the LayoutLine (string + 2 vectors)
-  // per visible row; pair it with CaretForLine for caret drawing.
   const LayoutLine& VisibleLineLayoutRef(std::size_t line_index) const;
-  // See TextLayoutCache::VisibleLineLruIsConsistentForTesting.
   bool VisibleLineLruIsConsistentForTesting() const {
     return layout_cache_.VisibleLineLruIsConsistentForTesting();
   }
-  // Every derived table of THIS view that claims current, against a fresh build
-  // (TextLayoutCache::VerifyAgainstFreshBuildForTesting); "" when all agree. Call
-  // it on every view of a document, not only the one that edited it.
   std::string VerifyDerivedCachesForTesting() const;
 
-  // Full visual width of a logical line. Under soft wrap this is read off the
-  // wrapped-row table (a line's last row ends at its width) rather than built as
-  // a layout, so a caller that only needs the width -- end-of-line decorations
-  // anchor past it -- does not build a whole-line LayoutLine per decorated line
-  // per frame, and does not take a second reference out of the visible-line cache
-  // while it is already holding one.
   std::size_t LogicalLineVisualWidth(std::size_t line_index) const;
 
-  // Reference to the cached layout of one soft-wrapped row -- the wrap-path
-  // sibling of VisibleLineLayoutRef, with the same contract: no caret fields set
-  // (pair it with CaretForWrappedRow), valid until the next call that can evict
-  // it. Bind this in the render loop; the by-value forms below copy a string and
-  // two vectors per row.
   const LayoutLine& VisibleWrappedRowLayoutRef(std::size_t visual_row_index) const;
-  // Caret for one wrapped row. `cursor_visual_row` is threaded in by the caller
-  // so a frame resolves it once instead of per row.
   LineCaret CaretForWrappedRow(std::size_t visual_row_index,
                                std::size_t cursor_visual_row) const;
 
   LayoutLine VisibleWrappedRowLayout(std::size_t visual_row_index) const;
-  // Overload for the per-frame render loop: the caller resolves the caret's
-  // visual row once and threads it in, so this does not recompute
-  // CursorVisualRow() (an O(caret column) walk) for every visible row.
   LayoutLine VisibleWrappedRowLayout(std::size_t visual_row_index,
                                      std::size_t cursor_visual_row) const;
   WrappedVisualRow WrappedVisualRowLayout(std::size_t visual_row_index) const;
   LogicalPosition LogicalPositionForVisualHit(int visual_row, int visual_col) const;
-  // Hit-test result including which wrapped row the hit belongs to when it lands
-  // on a wrap boundary (see WrapRowAffinity).
   struct VisualHit {
     LogicalPosition position;
     WrapRowAffinity affinity = WrapRowAffinity::kNextRow;
   };
   VisualHit ResolveVisualHit(int visual_row, int visual_col) const;
-  // Hit-test + placement in one step, for the mouse paths. Doing it here is what
-  // lets a click PAST the last glyph of a soft-wrapped row keep the caret on that
-  // row: the resolved position is the wrap boundary, which the plain
-  // MoveCursorTo(line, column) path would render at the start of the row below
-  // (VS Code keeps it at the end of the clicked row). Identical to
-  // MoveCursorTo(LogicalPositionForVisualHit(...)) in every non-wrapped case.
   void MoveCursorToVisualHit(int visual_row, int visual_col, bool extend_selection = false);
   int VisualRowCount() const;
   std::size_t visual_line_count() const;
@@ -706,65 +326,21 @@ class TextViewport {
   std::size_t folding_revision() const {
     return folding_model_ != nullptr ? folding_model_->revision() : 0;
   }
-  // The fold model this viewport lays out against (owned by its tab), or null.
   const FoldingModel* folding_model() const { return folding_model_; }
-  // Per-tab retained-memory breakdown. Walks container capacities; not called
-  // on any production path (see TextViewportDerivedCacheBytes). The folding
-  // model is deliberately NOT included: it is owned per tab but reachable
-  // through a bare pointer here, and the caller that owns both is the one that
-  // can attribute it without double-counting a shared model.
   TextViewportDerivedCacheBytes DerivedCacheBytes() const;
 
   std::size_t VisualRowLineIndex(std::size_t visual_row_index) const;
   std::size_t VisualRowForLine(std::size_t line_index) const;
   const std::vector<SyntaxTokenKind>& HighlightedLineTokens(std::size_t line_index) const;
-  // Non-forcing variant: returns the cached token span if the line is in the
-  // syntax-highlight LRU, otherwise an empty span. Does not trigger
-  // `EnsureHighlightCaches` or `HighlightLine`. Callers that walk large line
-  // ranges (e.g. the folding bracket scanner) use this to avoid thrashing the
-  // LRU on lines that may be far outside the visible region.
   std::span<const SyntaxTokenKind> HighlightedLineTokensIfCached(std::size_t line_index) const;
-  // The line's tokens when the cache holds them for the current content, else
-  // nothing; never tokenizes. Unlike HighlightedLineTokensIfCached, tells a line
-  // with no tokens from one not cached (a disabled highlighter has none, current).
   std::optional<std::span<const SyntaxTokenKind>> CurrentHighlightedLineTokens(std::size_t line_index) const;
-  // After a content edit that kept the line count: when the state its last line
-  // carries out is what it was, every line below highlights as before, so their
-  // token entries and stored states -- staled by the edit -- are current again.
-  // Tokenizes the edit's last line (which the repaint does next anyway). Does
-  // nothing once settled, after another edit, or when the carry changed: then
-  // the lines below are retokenized as they are painted. Frame prep calls it, so
-  // a frame's rows read settled tokens.
   void SettleHighlightAfterLastEdit() const;
-  // Appends, sorted, the line indices whose highlight tokens are currently
-  // cached (at most kHighlightCacheLimit of them). The fold bracket scan uses
-  // this to apply string/comment suppression by walking a cursor through the
-  // set, instead of probing the hash map once per line it scans -- the probe
-  // was the per-line cost left after the byte scan itself got cheap.
   void AppendCachedHighlightedLines(std::vector<std::size_t>& out) const;
-  // Background highlight prefetch. These let a worker thread tokenize ahead of
-  // the viewport without touching live viewport state: BuildHighlightPrefetchRequest
-  // captures an immutable snapshot on the main thread, the worker turns it into a
-  // HighlightPrefetchResult, and InstallPrefetchedHighlights folds that result
-  // back into the cache on the main thread (dropping it if the document changed
-  // underneath). The synchronous HighlightedLineTokens path remains the
-  // source of truth; prefetch only pre-populates the LRU so misses are rarer.
   bool HasHighlightPrefetchGap(std::size_t start_line, std::size_t count) const;
-  // Lines the highlight cache holds at once. A prefetch window larger than this
-  // evicts its own first lines while installing its last, so its gap never closes.
   static std::size_t HighlightCacheCapacity();
   HighlightPrefetchRequest BuildHighlightPrefetchRequest(std::size_t start_line,
                                                          std::size_t count) const;
   void InstallPrefetchedHighlights(HighlightPrefetchResult result);
-  // Off-thread checkpoint-chain backfill. A deep first paint (e.g. session
-  // restore scrolled deep into a large file) needs the syntax state before a far
-  // line; building it synchronously replayed from line 0 and froze the frame.
-  // The synchronous path now caps its replay and, when it falls short, records a
-  // backfill target. TakeHighlightCheckpointBackfillRequest hands the shell one
-  // worker request (bounded line copy) that advances the chain; the worker's
-  // HighlightCheckpointResult is folded back via InstallHighlightCheckpoints.
-  // Returns nullopt when no backfill is pending. Convergence is chunked across
-  // repaints: each install lets the next synchronous replay resume deeper.
   std::optional<HighlightCheckpointRequest> TakeHighlightCheckpointBackfillRequest() const;
   void InstallHighlightCheckpoints(const HighlightCheckpointResult& result);
   bool syntax_highlighting_enabled() const { return !document_->placeholder; }
@@ -773,134 +349,36 @@ class TextViewport {
   bool dirty() const { return document_->dirty; }
   bool is_placeholder() const { return document_->placeholder; }
 
-  // Read-only view: every content edit is refused and `Save()` writes nothing.
-  //
-  // This is a property of the VIEW, not of the document — a tab whose file is
-  // still being read holds a real, empty buffer at the file's path, and a
-  // keystroke landing in it before the bytes arrive would otherwise become a
-  // buffer that shadows the file and can be saved over it. Refusing at the two
-  // edit choke points is what makes that unrepresentable rather than a rule
-  // every caller has to remember.
-  //
-  // The load paths (ResetState, LoadLines, ReloadPreservingViewState) are
-  // deliberately NOT gated: they are how the content arrives.
   void SetReadOnly(bool read_only) { read_only_ = read_only; }
   [[nodiscard]] bool read_only() const { return read_only_; }
-  // Edits refused for read-only-ness so far: what lets the shell say "Cannot edit
-  // in read-only editor" instead of swallowing a keystroke without a word.
   [[nodiscard]] std::uint64_t refused_edits() const { return refused_edits_; }
   std::vector<TextPosition> secondary_carets() const;
-  // Full secondary carets, each carrying its selection anchor (empty for a plain
-  // column caret). Shaping actions (move/indent line) use this so a ranged Ctrl-D
-  // secondary selection survives the transform instead of collapsing to a bare
-  // caret, and so line-range resolution covers lines spanned only by an anchor
-  // (A-120). secondary_carets() (positions only) stays for plain-caret callers.
   std::vector<TextViewportUndoHistory::SecondaryCaret> secondary_caret_ranges() const;
-  // Non-owning sibling of the above, for callers that only READ the set. The
-  // owning form copies the whole vector, which a shaping op pays once per
-  // keystroke purely to loop over it. Valid until the next mutating operation on
-  // this viewport — snapshot with secondary_caret_ranges() if the set is about
-  // to be edited underneath you.
   std::span<const TextViewportUndoHistory::SecondaryCaret> secondary_caret_range_view() const {
     return secondary_carets_;
   }
-  // Render-path accessor: returns a view into a cached vector that mirrors
-  // `secondary_carets_`. The cache is rebuilt only when the positions
-  // actually differ (size mismatch or any element changed), so steady-state
-  // frames pay only an O(N) compare instead of allocating a fresh vector.
-  // Result is valid until the next mutating operation on this viewport.
   std::span<const TextPosition> secondary_caret_positions() const;
   bool has_multiple_carets() const { return !secondary_carets_.empty(); }
   void AddSecondaryCaret(std::size_t line, std::size_t column);
-  // Removes the secondary caret sitting exactly at `position` (Alt+click on an
-  // existing caret takes it away again, as in VS Code). False when none is there.
   bool RemoveSecondaryCaretAt(TextPosition position);
-  // Adds a secondary caret with an active selection (anchor → position). Used
-  // by multi-caret surround and by tests; normalizes and clamps the range.
   void AddSecondaryCaretWithRange(SelectionRange range);
   void SetSecondaryCarets(std::vector<TextPosition> carets);
-  // VS Code's insertCursorAbove / insertCursorBelow (Ctrl+Alt+Up/Down): add a
-  // caret one VISUAL ROW away from EVERY existing caret, at that caret's own
-  // preferred column, then dedupe. Adding below each and deduping is what makes a
-  // repeated press grow a column one caret at a time (1, 2, 3...) rather than
-  // doubling it, and it is why two carets a row apart do not fight.
-  //
-  // Visual rows, not lines: under soft wrap a press steps one wrapped row, as
-  // VS Code's view-line-based version does, and each caret keeps its own sticky
-  // column and wrap affinity through the step.
-  //
-  // The newest caret becomes the PRIMARY, so the view follows a held chord to
-  // wherever the column now ends. Returns false when every caret was already at
-  // the edge it was travelling towards.
   bool AddCaretVertical(int delta);
-  // VS Code's insertCursorAtEndOfEachLineSelected (Shift+Alt+I): one caret at the
-  // end of every line the selection touches, selection cleared. With no selection
-  // that is the caret's own line, which is what VS Code does too.
   bool AddCaretsAtSelectedLineEnds();
-  // VS Code's expandLineSelection (Ctrl+L): grow EVERY caret's selection to whole
-  // lines, one more line per press. Expansions that meet are merged, because two
-  // line selections covering the same line would edit it twice.
   bool ExpandSelectionToWholeLines();
-  // Whether `position` lies inside (endpoints included) the primary selection or
-  // any secondary caret's selection. A right-click there keeps every selection,
-  // so the context menu's Cut and Copy act on them (VS Code).
   [[nodiscard]] bool AnySelectionContains(const TextPosition& position) const;
-  // Ranged sibling of SetSecondaryCarets: rebuilds the secondary caret set where
-  // each entry carries an active selection (anchor -> cursor). Used by the
-  // "add cursor at next/all match" (Ctrl+D) flow so multi-caret typing replaces
-  // every matched occurrence and copy aggregates them. One clamp+sort+dedupe
-  // pass keeps this O(k log k) instead of looping AddSecondaryCaretWithRange.
-  // Takes a span, not a vector: SetBoxSelection rebuilds the whole caret set on
-  // every keystroke of a held column-select gesture, so an owning parameter there
-  // costs one growing allocation per keystroke. Callers keep their buffer and its
-  // capacity persists.
   void SetSecondaryCaretsWithRanges(std::span<const SelectionRange> ranges);
   void ClearSecondaryCarets();
-  // Merges secondary carets that share a position with each other or with the
-  // primary, after a clamp has moved them.
   void PruneCoincidentSecondaryCarets();
-  // Places zero-width carets on every line between anchor_line and target_line
-  // (inclusive) at the visual column `column` occupies on `anchor_line`. Primary
-  // caret moves to target_line; other lines become secondary carets. Clears any
-  // existing secondary carets and selection. Degenerate box selection: delegates
-  // to SetBoxSelectionVisual with both corners on that visual column.
   void PlaceColumnCaretsBetweenLines(std::size_t anchor_line, std::size_t target_line,
                                      std::size_t column);
-  // Rectangular (column/box) selection between two corners. The box is a
-  // rectangle of VISUAL columns, as in VS Code: each corner's text column is read
-  // as the visual column it occupies on its own line (a column past the end of the
-  // line is virtual: one cell per byte beyond it), and every line in the row span
-  // gets a per-line selection between those two visual columns, mapped back to
-  // the nearest character boundary on that line. Tabs and multi-byte characters
-  // therefore keep the box straight instead of sliding it by a byte count; a line
-  // shorter than both columns collapses to a zero-width caret at end-of-line. The
-  // `caret` line holds the primary caret+selection; other lines become ranged
-  // secondary carets. Clears any existing secondary carets and selection. The
-  // caret span is capped so a drag across a huge file cannot allocate one caret
-  // per line.
   void SetBoxSelection(TextPosition anchor, TextPosition caret);
-  // The same box given directly by visual columns (keyboard column selection
-  // steps a virtual visual column).
   void SetBoxSelectionVisual(std::size_t anchor_line, std::size_t anchor_visual_column,
                              std::size_t caret_line, std::size_t caret_visual_column);
-  // The visual column a box corner occupies on its line; past the end of the line
-  // the column is virtual (one cell per byte).
   std::size_t BoxCornerVisualColumn(TextPosition corner) const;
-  // Maps the box's two visual columns onto one line's text columns in a single
-  // bounded read of that line: no per-call cache lookups, because a held
-  // column-select gesture does this for every spanned line on every keystroke.
   void BoxColumnsOnLine(std::size_t line, std::size_t anchor_visual_column,
                         std::size_t caret_visual_column, std::size_t* anchor_column,
                         std::size_t* caret_column);
-  // Keyboard column selection (Ctrl+Shift+Alt+Arrow). Lives on the viewport rather
-  // than in shell interaction state so it is naturally per-tab and survives a tab
-  // switch, like the secondary carets it drives. Two positions and a bool: no
-  // allocation, so this does not reopen the "TextViewport must not own copied
-  // state" perf rule that applies to the language-contract view.
-  // By value, not by reference: a gesture armed against a revision the document
-  // has since left is reported as no gesture at all (see
-  // ColumnSelectionState::document_revision). Every caller copies it anyway, and
-  // the struct is two positions, a bool and a counter.
   ColumnSelectionState column_selection() const {
     if (column_selection_.active && document_ != nullptr &&
         column_selection_.document_revision != document_->content_revision) {
@@ -913,31 +391,12 @@ class TextViewport {
     column_selection_.document_revision = document_ != nullptr ? document_->content_revision : 0;
   }
   void ClearColumnSelection() { column_selection_ = ColumnSelectionState{}; }
-  // Widest line in [lo, hi] in visual columns, used to bound the virtual column
-  // when a column selection extends right. O(span), and the span is already
-  // capped by SetBoxSelection's caret limit.
   std::size_t MaxVisualWidthInSpan(std::size_t lo, std::size_t hi) const;
   bool has_selection() const;
   std::optional<SelectionRange> selection_range() const;
-  // Where the primary selection started (the end that stays put while it is
-  // extended); nullopt with no selection anchor.
   const std::optional<TextPosition>& selection_anchor() const { return selection_anchor_; }
   const std::optional<AppliedEdit>& last_applied_edit() const { return last_applied_edit_; }
-  // Whether the last content edit changed the syntax state that `line` -- the
-  // edit's last line, after it -- carries into the next one: an opened string or
-  // block comment restyles every line below, which the edit's own line range does
-  // not cover (soak 9f2abbdf4b9c: typing ' at the top of a file recoloured it,
-  // and the frame repainted line 1). True when that cannot be told: the edit
-  // changed the line count, the state before it was not known, or `line` is not
-  // the edit's last line. False with highlighting off or nothing below `line`.
   bool LastEditChangedCarriedSyntaxState(std::size_t line) const;
-  // The last_applied_edit() as the step from `base_revision` to the current content,
-  // or null when it is not that step: several edits since (a snippet's mirrors, a
-  // choice, a plugin's edits applied one by one) or a change it does not describe.
-  // A consumer that mirrors the buffer incrementally (the LSP sync) may send it as
-  // a delta only from that exact revision; from any other it must resend the text.
-  // The last_applied_edit() when it is the latest content change (nothing changed
-  // the text after it), whatever revision it started from; null otherwise.
   const AppliedEdit* LatestAppliedEdit() const {
     return last_applied_edit_.has_value() && document_ != nullptr &&
                    last_applied_edit_revision_ == document_->content_revision
@@ -952,106 +411,43 @@ class TextViewport {
     }
     return &*last_applied_edit_;
   }
-  // Whole-line-trimmed span of the last applied edit (see AppliedEditLineSpan).
-  // Set/cleared in lockstep with last_applied_edit(); empty for multi-region edits.
   const std::optional<AppliedEditLineSpan>& last_applied_edit_line_span() const {
     return last_applied_edit_line_span_;
   }
   std::string SelectedText() const;
-  // The text of an arbitrary range. Public because a drag-and-drop move captures
-  // its source at press time and applies the edit at release, so it cannot read
-  // "whatever is selected now" (editor/TextDragDrop.h).
   std::string TextInRange(const SelectionRange& range) const;
-  // VSCode-style multi-caret copy: each caret's selection text joined by '\n' in
-  // caret position order. Returns nullopt unless there are multiple carets and
-  // every caret has a non-empty selection (the Ctrl-D case) — callers then fall
-  // back to the single-caret SelectedText()/line-copy behavior.
   std::optional<std::string> MultiCaretSelectedText() const;
   std::string CurrentLineTextForClipboard() const;
-  // Lines the "act on the caret's line" verbs touch: each caret's line, expanded
-  // through a collapsed fold's body, deduplicated, in document order. ONE answer,
-  // because the cut path has to put on the clipboard exactly what it is about to
-  // delete -- it used to copy the primary caret's line and delete every caret's.
   void AppendCaretLineVerbLines(std::vector<std::size_t>* out) const;
-  // The clipboard text for a multi-caret line copy/cut: every line of
-  // `AppendCaretLineVerbLines`, each with its terminator, so N bare carets copy N
-  // lines and a paste back across N carets lands one per caret. nullopt for a
-  // single caret, where `CurrentLineTextForClipboard` already answers.
   std::optional<std::string> MultiCaretLineTextForClipboard() const;
-  // The last line of the collapsed fold that opens at `line`, or `line` itself
-  // when none does. A collapsed fold is one row on screen, so the verbs that act
-  // on "the caret's line" -- copy and cut with nothing selected, delete line,
-  // move and duplicate line -- act on the whole hidden block, as VS Code's do.
-  // Acting on the opener alone deleted a function's signature and left its
-  // body behind, or moved the header out from over it.
   std::size_t CollapsedFoldEndAt(std::size_t line) const;
-  // The line a horizontal step across a line boundary lands on, skipping any
-  // collapsed region in the way. Returns `line` itself when there is nowhere to
-  // go (the document edge, or nothing but hidden lines beyond).
   std::size_t VisibleLineAfter(std::size_t line) const;
   std::size_t VisibleLineBefore(std::size_t line) const;
   bool DeleteSelectedText();
-  // Delete every caret's selection atomically (one undo entry). The caller must
-  // guarantee every caret has a selection (pairs with MultiCaretSelectedText for
-  // multi-caret cut).
   bool DeleteMultiCaretSelections(bool record_undo = true);
   bool DeleteCurrentLine();
   void ClearSelection();
   void SelectAll();
-  // Ctrl+D / occurrence seed: identifier content only, as VS Code's
-  // `getWordAtPosition` is -- a caret in whitespace names no word.
   void SelectWordAtCursor();
-  // Double-click: the identifier run under the pointer, or the whitespace /
-  // operator run when the pointer is not on one (VS Code `WordOperations.word`).
   void SelectWordOrRunAtCursor();
-  // The identifier run under `position`, or nullopt when it is not on one. Shared
-  // with the double-click-drag path, which needs the range for a position that is
-  // not the caret; SelectWordAtCursor is this plus "put the caret on it".
   std::optional<SelectionRange> WordRangeAt(TextPosition position) const;
-  // What a double-click at `position` selects: the identifier run it touches, or
-  // the whitespace / operator run when it is not on one. The range form of
-  // `SelectWordOrRunAtCursor`, for the drag that follows the click -- the two must
-  // agree, or dragging out of a double-clicked operator run drops to characters.
   std::optional<SelectionRange> WordSelectionRangeAt(TextPosition position) const;
-  // The whole of `line_index`, end-exclusive at the next line's start so a
-  // multi-line line-granular selection joins up across the newlines.
   SelectionRange LineRangeAt(std::size_t line_index) const;
   void SelectLineAtCursor();
-  // Expand / Shrink Selection (VS Code's Shift+Alt+Right / Left) on the primary
-  // caret: the next larger range of the ladder in editor/SmartSelect.h, and back
-  // down the ranges an expansion passed through. A selection changed any other
-  // way starts a new ladder. False when there was nothing to do.
   bool ExpandSelection();
   bool ShrinkSelection();
-  // Non-mutating seed span for occurrences highlight / match actions (single logical line).
   std::optional<SelectionRange> OccurrenceSeedSpanForHighlight() const;
   void InvalidateSyntaxHighlighting();
 
-  /// Normalizes selection endpoints so callers can reuse the same invariant as `ReplaceRange`.
   static SelectionRange NormalizeRange(const SelectionRange& range);
 
-  // MICROIDE_TRACE_BUFFER_IO=1: one log line per moment the buffer and its file
-  // meet -- a read, a write, an adopted baseline, a revert -- with the buffer's
-  // bytes as they would be written (size, sha256) and the disk identity it now
-  // records. The soak's data oracle finds a clean buffer that differs from its
-  // file long after the fact; these lines are the history that says which of
-  // those moments put the two apart -- staging into the crash-recovery snapshot
-  // among them (the session coordinator calls it). Free when the variable is unset.
   void TraceBufferIo(std::string_view event) const;
 
  private:
-  // SecondaryCaret, ViewState, HistoryEntry now live on TextViewportUndoHistory.
-  // Type-alias them here so the historical call sites compile unchanged.
   using SecondaryCaret = TextViewportUndoHistory::SecondaryCaret;
   using ViewState = TextViewportUndoHistory::ViewState;
   using HistoryEntry = TextViewportUndoHistory::Entry;
 
-  // Stamp/clear the last-applied-edit metadata (character-level AppliedEdit + the
-  // whole-line-trimmed line span) in lockstep, so consumers never see one without
-  // the other. Called from every edit primitive that sets/resets the metadata.
-  // `base_revision` is the content revision the edit was applied ON (read before
-  // its first apply); the revision it produced is the current one. Together they
-  // say whether the record is the WHOLE step from a revision a consumer holds.
   void SetLastAppliedEditFromEntry(const HistoryEntry& entry, bool forward, std::uint64_t base_revision) {
     last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(entry, forward);
     last_applied_edit_line_span_ = TextViewportUndoHistory::BuildAppliedEditLineSpan(entry, forward);
@@ -1065,17 +461,11 @@ class TextViewport {
     last_applied_edit_revision_ = 0;
   }
 
-  // A revision no other document has used: the high half counts documents.
   static std::uint64_t NextDocumentRevisionBase();
   struct DocumentState {
     std::filesystem::path path;
-    // A language set by hand (Change Language Mode), or empty to detect one.
     std::string language_override;
-    // See real_path(); recomputed with `path_key` when `path` changes.
     std::filesystem::path real_path;
-    // Cached NormalizedPathKey(path), recomputed only when `path` changes.
-    // Lets per-frame presentation-store lookups pass a precomputed key instead
-    // of re-normalizing (and re-allocating) every frame. See SetDocumentPath.
     std::string path_key;
     TextBuffer lines;
     LineEnding line_ending = LineEnding::LF;
@@ -1084,44 +474,15 @@ class TextViewport {
     bool utf8_bom = false;
     bool placeholder = true;
     bool dirty = false;
-    // Four-tier cache-invalidation revisions. Each counter monotonically
-    // increases when a mutation of its kind occurs. Derived caches key on the
-    // minimum tier set they actually depend on so a theme change does not
-    // invalidate wrapped-row layouts, a scroll does not invalidate the
-    // highlight cache, and so on. See
-    // openspec/changes/split-layout-revision-tiers/ for the full contract.
-    //
-    // Seeded from a process-wide base, not 0: every cache in the app keys on
-    // (viewport or path, content revision), and a reload hands the SAME viewport
-    // a new document. Counting from 0 again let the old revision recur over new
-    // text -- the find widget's count, the occurrence highlights and a language
-    // server's highlight set all outlived a reload (QA 2026-10-24). Distinct
-    // documents now never share a revision; edits still count up by one.
     std::uint64_t content_revision = NextDocumentRevisionBase();
-    // Bumped by the subset of content edits that touch the document's HEAD --
-    // the first `runtime_syntax::kFiletypeDetectHeadLines` lines, which is all a
-    // content-sensitive filetype detection ever reads. A memo over such a
-    // detection keys on this instead of `content_revision`, so typing at line
-    // 5,000 of a `.h` file does not re-run four signature regexes over 64 lines
-    // on every keystroke.
     std::uint64_t head_content_revision = 0;
     std::uint64_t syntax_revision = 0;
     std::uint64_t layout_shape_revision = 0;
     std::uint64_t presentation_revision = 0;
-    // On-disk identity captured at load and after each successful save. Used to
-    // detect that the file changed underneath us (external editor, VCS checkout)
-    // and to recognize our own writes when the file watcher echoes them back.
     util::FileSignature disk_signature;
-    // Undo/redo history is a property of the DOCUMENT, not of a view of it (VS
-    // Code keeps it on the model). Every pane showing a file shares this state,
-    // so it must also share the history: an entry records a splice against the
-    // buffer as it was, and a per-view stack applied it blind — undo in one pane
-    // after the other pane had typed removed the other pane's bytes.
     TextViewportUndoHistory undo_history;
   };
 
-  // WrappedRowLayout is now owned by TextLayoutCache; keep the alias so the
-  // small WrappedVisualRow / VisualHit helpers below still compile.
   using WrappedRowLayout = TextLayoutCache::WrappedRow;
 
   void ResetState(std::vector<std::string> lines,
@@ -1131,10 +492,6 @@ class TextViewport {
                   TextEncoding encoding,
                   bool placeholder,
                   bool dirty);
-  // Large-file load fast path: reset the document by handing canonical
-  // '\n'-joined `text` straight to the buffer (no split-into-lines round-trip).
-  // `text` must contain no '\r'. Shares all post-reset bookkeeping with
-  // ResetState via ResetMetadataAfterContent.
   void ResetStateFromText(std::string text,
                           const std::filesystem::path& path,
                           LineEnding line_ending,
@@ -1142,97 +499,40 @@ class TextViewport {
                           TextEncoding encoding,
                           bool placeholder,
                           bool dirty);
-  // Shared tail of ResetState / ResetStateFromText: applies path + metadata and
-  // resets cursor/selection/undo/caches once the buffer content is in place.
   void ResetMetadataAfterContent(const std::filesystem::path& path,
                                  LineEnding line_ending,
                                  bool mixed_line_endings,
                                  TextEncoding encoding,
                                  bool placeholder,
                                  bool dirty);
-  // Sets document_->path and refreshes the cached document_->path_key together
-  // so the two never drift. All path assignments must go through here.
   void SetDocumentPath(const std::filesystem::path& path);
   void InvalidateLayoutCaches();
   void RefreshEncoding();
-  // Incremental, upgrade-only encoding refresh for the per-edit hot path: scans
-  // only the inserted lines and raises the document encoding if they introduce
-  // non-ASCII / non-UTF-8 bytes. Avoids the O(document) full re-detection that
-  // RefreshEncoding performs on every keystroke. Encoding is re-detected fully
-  // on load/reset, so a downgrade after deleting the last non-ASCII content is
-  // recovered on the next reload (matching typical editor behavior).
   void UpgradeEncodingForInsertedLines(const std::vector<std::string>& inserted_lines);
   void UpgradeEncodingForInsertedLines(const LineBlob& inserted_lines);
   void UpgradeEncodingFromDelta(TextEncoding delta);
-  // Column-scoped counterpart: an in-line splice can only raise the document's
-  // classification through the bytes it actually spliced in. Every other byte on
-  // the line was scanned when it first entered the document, and the line form's
-  // re-scan of the whole rebuilt line is O(line) -- on a file with no line breaks
-  // in it, O(document) per keystroke.
   void UpgradeEncodingForInsertedText(std::string_view text);
   void EnsureInitialHighlightState() const;
   void EnsureHighlightCaches() const;
-  // One line's cached tokens plus the generation they were computed in. See
-  // highlight_cache_ for why staleness is stamped rather than erased.
   struct HighlightCacheEntry {
     std::vector<SyntaxTokenKind> tokens;
     std::uint64_t generation = 0;
   };
-  // Invalidate every per-line token cache entry without freeing it. See
-  // highlight_cache_generation_.
   void DropHighlightTokenCache() const;
-  // Invalidate the entries at or after `start_line`, keeping the ones below it —
-  // the shape a content edit needs, since the syntax state chains forward and
-  // only lines from the edit on can have changed. Also without freeing.
   void StaleHighlightTokensFrom(std::size_t start_line) const;
-  // The entry for `line_index` if it was computed in the current generation,
-  // else nullptr. The single place staleness is decided.
   const HighlightCacheEntry* CurrentHighlightCacheEntry(std::size_t line_index) const;
   SyntaxState HighlightStateBeforeLine(std::size_t line_index) const;
-  // Anchor..cursor on the caret's own line, with the preferred column restamped.
-  // Shared by the word/line selection verbs, which each open-coded it.
   void SelectOnCursorLine(std::size_t start_column, std::size_t end_column);
   void SelectRangeForExpansion(const SelectionRange& range);
   void ClampScrollState();
   void EnsureCursorVisible();
-  // Single choke point for primary-caret navigation. Sets the primary caret,
-  // updates the preferred column (unless `keep_preferred_column`, used by vertical
-  // motion which tracks a sticky column), and re-syncs the navigation anchor so the
-  // caret reads as "navigated" rather than "edited" (see CaretIsFromActiveTextEdit).
-  // `affinity` is the wrap-boundary tiebreaker for the placed caret; it defaults
-  // to kNextRow so every ordinary placement RESETS a sticky previous-row bit and
-  // only the two paths that deliberately land on a boundary (vertical motion,
-  // hit-testing) pass kPreviousRow.
   void PlacePrimaryCaret(std::size_t line, std::size_t column, bool keep_preferred_column = false,
                          WrapRowAffinity affinity = WrapRowAffinity::kNextRow);
   void BeginSelectionIfNeeded(bool extend_selection);
   bool DeleteSelection();
   ViewState CaptureViewState() const;
-  // CaptureViewState for an entry that is about to be recorded as a CHILD of an
-  // undo group, which is where the secondary-caret vector inside it is dead
-  // weight: FinishActiveGroup overwrites the aggregate's before/after state with
-  // the frame's own captures, and the disjoint extra parts carry no state at all.
-  //
-  // A multi-region edit builds three of these per region per keystroke, so on
-  // `editor_shaping_multi_caret` (32 carets) that was 96 copies of a 31-caret
-  // vector per key press, every one of them discarded. Outside a group it is
-  // exactly CaptureViewState — the state is the entry's own and must be complete.
   ViewState CaptureViewStateForGroupedEntry() const;
 
-  // The other place a per-entry caret vector is dead weight: the apply loop of
-  // ApplyMultiCaretEdit, which folds its N per-site entries into ONE aggregate
-  // and rebuilds the caret set from where the sites landed. It is not an undo
-  // GROUP — it pushes the aggregate itself — so `IsGroupActive()` was false and
-  // every site captured the whole set twice. With a cursor per line of a
-  // box selection that is O(carets^2) bytes: a single Tab over 1,201 cursors
-  // allocated 163.9 MB, of which 161 MB was 2,402 copies of a 1,200-element
-  // caret vector that nothing ever read (TD-2026-09-20-300). At the 10,000-caret
-  // cap it is ~5.6 GB.
-  //
-  // Scoped by SuppressEntryCaretCapture, never set directly: the per-site entries
-  // are applied as they are built, and RestoreViewState writes the (now empty)
-  // set back, so the suppression is only sound while the caller rebuilds the set
-  // afterwards from its own record.
   class SuppressEntryCaretCapture {
    public:
     explicit SuppressEntryCaretCapture(TextViewport& viewport) : viewport_(viewport) {
@@ -1249,94 +549,47 @@ class TextViewport {
   };
   ViewState CaptureViewStateImpl(bool with_secondary_carets) const;
   void RestoreViewState(const ViewState& state);
-  // Undo and Redo are the same walk in opposite directions: flush any open
-  // group, check the stack, pop, stamp the view state on the side being moved
-  // away from, apply, record the applied edit, push onto the other stack. They
-  // were written out twice; a fix to one would have missed the other.
   bool ApplyHistoryStep(bool redo);
   void PushHistoryEntry(HistoryEntry entry, CoalesceHint hint = CoalesceHint{});
-  // Swap a contiguous run of lines for its replacement and do everything that
-  // has to follow: mark dirty, drop redo, re-sniff the encoding, drop the
-  // layout caches, keep the caret on screen, and push the undo entry. Both
-  // replace-all paths need exactly this sequence, and a copy that forgets one
-  // step fails quietly — a missed InvalidateLayoutCaches paints stale rows, a
-  // missed ClearRedo leaves a redo stack that replays against text that no
-  // longer exists. Consumes both line vectors into the undo entry.
   void CommitLineRangeEdit(std::size_t first_changed_line,
                            LineBlob before_changed_lines,
                            LineBlob after_changed_lines,
                            const ViewState& before_state);
-  // Carries every caret and selection anchor through a replace-all's
-  // replacements (`matches`: single-line, ascending, in the pre-edit text), as
-  // the text around them moves. Runs before CommitLineRangeEdit, so its
-  // EnsureCursorVisible and undo entry see the carried carets.
   void CarryCaretsThroughReplacements(const std::vector<SelectionRange>& matches,
                                       std::string_view replacement);
   void FlushActiveUndoGroup();
   void ApplyHistoryEntry(const HistoryEntry& entry, bool forward);
   std::optional<HistoryEntry> BuildRangeHistoryEntry(const SelectionRange& range,
                                                      std::string_view replacement) const;
-  // Column-scoped entry for a one-line-in / one-line-out edit: `replacement`
-  // carries no line break and the range stays on `line`. Reads only the bytes it
-  // replaces, so its cost is the size of the delta rather than the size of the
-  // line. nullopt for an exact no-op.
   std::optional<HistoryEntry> BuildInlineHistoryEntry(std::size_t line,
                                                       std::size_t start_column,
                                                       std::size_t end_column,
                                                       std::string_view replacement) const;
-  // Rewrite a just-applied inline entry into the line-vector form, for the one
-  // consumer that cannot read the column form (undo-group aggregation). Costs one
-  // copy of the affected line; see PushHistoryEntry.
   void WidenInlineEntryToLines(HistoryEntry& entry) const;
   HistoryEntry BuildLineHistoryEntry(std::size_t start_line,
                                      std::size_t end_line,
                                      LineBlob replacement) const;
-  // The three multi-caret edit fan-outs share one pipeline (collect+sort+dedup
-  // carets, capture the affected slice, reverse-walk applying one history entry
-  // per caret with position remap, then commit one aggregate undo entry). Only
-  // the per-caret edit differs, so they route through ApplyMultiCaretEdit.
   enum class MultiCaretEditKind {
     Insert,
-    // One soft tab per caret, sized to that caret's OWN next tab stop (from the
-    // selection start when it replaces a single-line selection, as VS Code's
-    // _replaceJumpToNextIndent). Planned inside the pipeline rather than passed
-    // as a per-caret string list, so the strings cannot fall out of step with
-    // the site set the pipeline dedupes for itself.
     SoftTab,
     Backspace,
     DeleteForward,
     DeleteWordBackward,
     DeleteWordForward,
   };
-  // `per_caret_insert`, when non-null and sized to the deduped caret set on an
-  // Insert, supplies a distinct string per caret in sorted order (distribute-
-  // paste); otherwise every caret gets `insert_text`.
   bool ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view insert_text,
                            bool record_undo,
                            const std::vector<std::string>* per_caret_insert = nullptr);
   bool ApplyMultiCaretInsert(std::string_view text, bool record_undo);
   static CoalesceHint MultiCaretCoalesceHint(MultiCaretEditKind kind, std::string_view text,
                                              bool per_caret);
-  // True when any two carets' affected ranges (selection, or empty point) overlap,
-  // so no multi-caret apply path can run without double-editing shared content.
-  // Both ApplyMultiCaretEdit and TryMultiCaretPairInsert bail when this is true.
   bool MultiCaretSelectionsOverlap() const;
-  // Soft-tab insert across all carets, sizing each caret's padding to ITS OWN next
-  // tab stop (a caret at a ragged column aligns to its own stop, not the primary's).
   bool ApplyMultiCaretSoftTab(bool record_undo);
   bool ApplyMultiCaretBackspace(bool record_undo);
   bool ApplyMultiCaretDeleteForward(bool record_undo);
-  // Extract the document text spanned by a normalized (start <= end) range.
   bool ApplyRangeEdit(const SelectionRange& range, std::string_view replacement, bool record_undo,
                       CoalesceHint hint = CoalesceHint{});
-  // After ApplyRangeEdit rejected an exact no-op: if `range` is the current
-  // selection (or the caret point), collapse the selection past `replacement`.
   void CollapseSelectionAfterNoOpEdit(const SelectionRange& range, std::string_view replacement);
-  // Wrap `norm` (normalized, validated) by prepending `open` to its first line at
-  // `norm.start.column` and appending `close` to its last line at `norm.end.column`,
-  // touching only the boundary lines. Avoids materializing the whole selected text
-  // and the open+inner+close transient the generic range-replace path builds
-  // (A-021). `open`/`close` must not contain a line break. Records one undo entry.
   bool SurroundRangeBoundaries(const SelectionRange& norm,
                                std::string_view open,
                                std::string_view close);
@@ -1346,11 +599,8 @@ class TextViewport {
                      bool record_undo);
   std::string AutoIndentForNewline(std::size_t line, std::size_t column) const;
   std::string IndentUnit() const;
-  // The prefix Enter continues a doc comment with (` * `), or nullopt.
   std::optional<std::string> DocCommentContinuation(std::string_view line, std::size_t column,
                                                     const std::string& base_indent) const;
-  // Caret-local bytes for the pair/indent heuristics, read without materializing
-  // the line. See editor/CaretNeighborhood.h for why that matters.
   CaretNeighborhood ReadCaretNeighborhood(std::size_t line, std::size_t column) const {
     return editor::ReadCaretNeighborhood(document_->lines, line, column);
   }
@@ -1358,23 +608,10 @@ class TextViewport {
   bool TryAutoCloseInsert(char ch);
   bool TrySurroundInsert(char ch);
   bool TrySkipOverClose(char ch);
-  // True when the byte before `column` is an auto-close opener and the byte at
-  // `column` is its closer -- the shape auto-close leaves the caret in. Backspace
-  // removes both (VS Code's autoClosingDelete) and Enter splits them onto three
-  // lines; both read this rather than carrying their own copy of the check.
   bool CaretSitsInsideAutoClosedPair(std::size_t line, std::size_t column) const;
-  // VS Code's useTabStops rule for Backspace: with soft tabs and nothing but
-  // whitespace before the caret, the deletion runs back to the previous indent
-  // stop rather than one space. Returns that start column, or nullopt when the
-  // rule does not apply (hard tabs, text before the caret, column 0).
   std::optional<std::size_t> IndentStopBackspaceStart(std::size_t line, std::size_t column) const;
   bool MaybeDedentOnClose(char ch);
   bool TryInsertNewlineSplitBraces();
-  // Brace-split-on-newline geometry for a single caret position. Returns the
-  // replacement text (`"\n" + inner_indent + "\n" + base_indent`) plus the
-  // inner-indent landing column when (line, column) sits between a matching
-  // auto-close opener/closer, or std::nullopt otherwise. Shared by the
-  // single-caret newline path and the multi-caret insert fan-out.
   struct NewlineBraceSplit {
     std::string text;
     std::string inner_indent;
@@ -1384,22 +621,13 @@ class TextViewport {
   bool InInsertionSuppressedScope(std::size_t line, std::size_t column) const;
   bool TryMultiCaretPairInsert(char ch);
   void InvalidateDerivedCaches(InvalidationReason reason);
-  // `splice` reports the exact line range an edit replaced, for the derived
-  // caches that can resync incrementally instead of rebuilding. std::nullopt --
-  // the default -- means the extent was not reported, which degrades to "nothing
-  // from `start_line` on is reusable"; only ApplyHistoryEntry knows the splice.
   void InvalidateDerivedCaches(InvalidationReason reason, std::size_t start_line,
                                std::optional<ContentSplice> splice = std::nullopt);
   void InvalidateVisualColumnCache();
-  // `splice` describes an edit confined to one line by the text it inserted;
-  // with it the width table updates without reading the line at all. Only
-  // ApplyHistoryEntry has that, and only for a column-scoped entry.
   void UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
                                         std::size_t removed_count,
                                         std::size_t inserted_count,
                                         InlineLineSplice splice = {});
-  // `edit_column` lets the wrapped-row splice resume mid-line instead of
-  // re-wrapping the whole line; see TextLayoutCache::kNoEditColumn.
   void UpdateWrappedRowsAfterEdit(std::size_t start_line,
                                   std::size_t removed_count,
                                   std::size_t inserted_count,
@@ -1407,66 +635,28 @@ class TextViewport {
   std::size_t MaxVisualColumns() const;
   void EnsureHighlightCheckpoint(std::size_t checkpoint_index) const;
   void EnsureDocument();
-  // Clamp every caret and anchor -- primary and secondary -- back into the
-  // document. Does NOT normalise the set; callers pick which of the two
-  // normalisers they want afterwards.
   void ClampCaretSetToDocument();
-  // `position` brought into the document the way ClampCaretSetToDocument brings
-  // a caret: the last line at most, then a column on a character boundary.
   TextPosition ClampedToDocument(TextPosition position) const;
 
-  // A viewport whose DocumentState is shared -- a split clone, or the compare
-  // pane over a file an editor tab also has open -- keeps the caret set it had
-  // before the OTHER viewport's edit. Those positions can name lines the
-  // document no longer has: delete three lines in one pane and the other pane's
-  // caret sits past the end, where the next keystroke used to land two carets on
-  // one position and type the character twice. Reconciles the set the first time
-  // this viewport is used after someone else moved the document.
   void SyncCaretsWithSharedDocument();
   void SyncCaretsIfDocumentChangedElsewhere() {
-    // One integer compare on the common path: the editing viewport stamps itself
-    // current inside InvalidateDerivedCaches, so only a stale sibling pays the
-    // O(carets) walk, and only once per foreign edit.
     if (document_ != nullptr &&
         carets_synced_content_revision_ != document_->content_revision) {
       SyncCaretsWithSharedDocument();
     }
   }
   void EnsureWrappedRowLayouts() const;
-  // Returns the row payload for `visual_row_index`. Synthesizes the result
-  // inline in the trivial-layout fast path (no soft-wrap, no collapsed folds)
-  // so callers do not have to index into a vector that was never built.
   WrappedRowLayout WrappedRowAt(std::size_t visual_row_index) const;
-  // Number of visual rows. O(1) in either path; in trivial mode this is the
-  // document line count (less hidden lines).
   std::size_t WrappedRowCount() const;
-  // Full visual width of a logical line, read off the wrapped-row table: a line's
-  // LAST row ends exactly at its width. Lets a wrapped row be built without
-  // measuring the whole line it belongs to.
   std::size_t LineVisualWidthFromWrappedRows(std::size_t line_index) const;
-  // What a vertical step does when it would run off the first or last visual
-  // row. kToRowEdge is the arrow/page key rule (VS Code's MoveOperations.up/down
-  // with allowMoveOnFirstLine / allowMoveOnLastLine): Up past the top lands on
-  // the first row's START, Down past the bottom on the last row's END, so the
-  // edge key is never a silent no-op. kClamp keeps the column and stays on the
-  // edge row, which is what Add Cursor Above/Below needs -- there a seed that
-  // "advances to itself" is how the column stops growing (translateUp/Down).
   enum class VerticalEdgePolicy { kClamp, kToRowEdge };
   void AdvanceCaretVertical(TextPosition& caret, std::size_t& preferred_column,
                             WrapRowAffinity& affinity, int delta,
                             VerticalEdgePolicy edge_policy) const;
   void AdvanceCaretHorizontal(TextPosition& caret, int delta) const;
-  // Where a word-granular step from `caret` lands. `for_deletion` picks the
-  // whitespace-heuristic boundary (Ctrl+Backspace eats an indent run whole)
-  // rather than the motion boundary; the two differ only in front of a run of
-  // two or more spaces.
   TextPosition WordTargetForCaret(const TextPosition& caret,
                                   int delta,
                                   bool for_deletion) const;
-  // Sorts the secondaries, drops exact duplicates and any that coincide with the
-  // primary, then merges overlapping selections (and a collapsed caret touching
-  // one) the way VS Code normalises its cursor collection. Every caret-set
-  // mutation that can produce an overlap ends here.
   void DedupeSecondaryCaretsAgainstPrimary();
   void MergeOverlappingCaretRanges();
   std::size_t PreferredColumnForCaret(const TextPosition& caret,
@@ -1474,24 +664,9 @@ class TextViewport {
   std::size_t CursorVisualRow() const;
   std::size_t CursorVisualRowForCaret(const TextPosition& caret,
                                       WrapRowAffinity affinity = WrapRowAffinity::kNextRow) const;
-  // Absolute visual column the caret should take on `target_row`, given a
-  // preferred column measured in ON-SCREEN cells (hanging indent included).
   std::size_t ResolveSoftWrapCursorColumnForTargetRow(std::size_t preferred_column,
                                                       std::size_t target_row) const;
-  // kPreviousRow when `visual_column` sits exactly on `row`'s trailing wrap
-  // boundary, i.e. the caret belongs at the END of that row rather than at the
-  // start of the next one. kNextRow everywhere else, including the last row of a
-  // logical line (whose end is the end of the line, not a wrap point).
   WrapRowAffinity AffinityForRowLanding(std::size_t row_index, std::size_t visual_column) const;
-  // Text-column bounds of the VIEW line a caret sits on: the wrapped row under
-  // soft wrap, the whole logical line otherwise. `[first, last]` are text
-  // columns; `last_is_wrap_point` says the row ends at a wrap boundary rather
-  // than at the end of the logical line, which is what an End landing there
-  // needs in order to render at the row's trailing edge (WrapRowAffinity).
-  //
-  // Home/End are view-line verbs in VS Code (`cursorHome`/`cursorEnd`), with
-  // `cursorLineStart`/`cursorLineEnd` as the separate logical-line pair
-  // (TD-2026-08-12-188).
   struct ViewLineBounds {
     std::size_t first = 0;
     std::size_t last = 0;
@@ -1499,15 +674,8 @@ class TextViewport {
   };
   ViewLineBounds ViewLineBoundsForCaret(const TextPosition& caret,
                                         WrapRowAffinity affinity) const;
-  // First non-whitespace text column at or after `bounds.first`, or
-  // `bounds.first` when the view line is blank. The target of the first Home
-  // press; a second press falls back to `bounds.first`, as VS Code does.
   std::size_t FirstNonWhitespaceColumnInView(std::size_t line,
                                              const ViewLineBounds& bounds) const;
-  // The primary caret's affinity, honoured only while the caret is still exactly
-  // where the affinity was set. Every path that moves the caret without going
-  // through PlacePrimaryCaret (edit application, undo restore, language
-  // behaviours) therefore drops it instead of leaving a stale bit behind.
   WrapRowAffinity EffectiveCaretAffinity() const {
     return caret_wrap_affinity_ == WrapRowAffinity::kPreviousRow &&
                    caret_wrap_affinity_position_.line == cursor_line_ &&
@@ -1520,40 +688,21 @@ class TextViewport {
   static bool StripUtf8Bom(std::string& content, TextEncoding& encoding);
   static bool IsBefore(const TextPosition& lhs, const TextPosition& rhs);
 
-  // Lines that have changed since the folding model last resynced. Consumed (and
-  // reset) by `ConsumeFoldEditSpan`.
   LineEditSpan fold_edit_span_;
-  // OpenFile knows the raw bytes it read; ResetState, which records the signature,
-  // does not. This attaches their hash to the signature ResetState just wrote.
   void RecordOpenedContentHash(std::size_t raw_content_hash, std::size_t raw_size);
 
   detail::SharedOnMove<DocumentState> document_;
   std::size_t cursor_line_ = 0;
   std::size_t cursor_column_ = 0;
-  // Sticky column for vertical motion, measured in ON-SCREEN cells of the caret's
-  // visual row: under soft wrap it is `hanging indent + offset into the row`, so
-  // moving between rows with different hanging indents keeps the caret under the
-  // same screen column (VS Code's view-column model) instead of drifting by the
-  // indent. Without soft wrap it is the absolute visual column.
   std::size_t preferred_column_ = 0;
-  // Wrap-boundary tiebreaker for the primary caret + the position it was set at.
-  // See EffectiveCaretAffinity().
   WrapRowAffinity caret_wrap_affinity_ = WrapRowAffinity::kNextRow;
   TextPosition caret_wrap_affinity_position_;
-  // `content_revision` as of the last navigation move. Equal to the document's
-  // current `content_revision` ⇒ caret is settled at a navigated position; not
-  // equal ⇒ an edit has advanced the revision since, i.e. the caret is mid-edit.
   std::uint64_t caret_navigation_content_revision_ = 0;
-  // `content_revision` as of the last time this viewport's caret set was known
-  // to describe the document. See SyncCaretsIfDocumentChangedElsewhere.
   std::uint64_t carets_synced_content_revision_ = 0;
   std::size_t scroll_line_ = 0;
   std::size_t horizontal_scroll_ = 0;
   std::size_t visible_lines_ = 1;
   std::size_t sticky_band_rows_ = 0;
-  // CenterLine's target until the next SetViewportSize (see CenterLine). Copied
-  // with the rest: a pane cloned from a just-revealed tab is centred the same way
-  // on its own first sizing.
   static constexpr std::size_t kNoPendingCenter = static_cast<std::size_t>(-1);
   std::size_t pending_center_line_ = kNoPendingCenter;
   std::size_t visible_columns_ = 80;
@@ -1565,43 +714,21 @@ class TextViewport {
   bool save_trim_trailing_whitespace_ = false;
   bool save_ensure_final_newline_ = false;
   std::optional<LineEnding> save_line_ending_override_;
-  // Declared before `lc_view_` because both the copy and the move constructor
-  // initialize it there; clang's -Wreorder-ctor rejects the other order.
   bool read_only_ = false;
   std::uint64_t refused_edits_ = 0;
-  // Shared, not owned: see SetLanguageContractView. Null ⇒ no contract.
   std::shared_ptr<const LanguageContractView> lc_view_;
-  // language_id() memo. Keyed on document identity + content revision + path +
-  // syntax-registry revision; `language_id_valid_` is the "never resolved yet"
-  // flag, since an empty filetype is a legitimate cached answer.
   mutable std::string language_id_;
   mutable const void* language_id_document_ = nullptr;
   mutable std::filesystem::path language_id_path_;
   mutable std::uint64_t language_id_content_revision_ = 0;
   mutable std::size_t language_id_registry_revision_ = 0;
   mutable bool language_id_valid_ = false;
-  // Whether the cached answer depended on the buffer's bytes at all. False for an
-  // unambiguous extension, which is nearly every file: the memo then survives
-  // every content edit. True only for `.h`-style ambiguous extensions and files
-  // with no fast candidate set, where it is keyed on `head_content_revision`.
   mutable bool language_id_content_sensitive_ = false;
   std::vector<SecondaryCaret> secondary_carets_;
   ColumnSelectionState column_selection_;
-  // Cache for secondary_caret_positions(): mirrors `secondary_carets_.position` and is rebuilt
-  // lazily when sizes differ or any element changed. Capacity persists across rebuilds.
   mutable std::vector<TextPosition> secondary_caret_positions_cache_;
-  // Scratch buffers for the box/column-selection caret rebuild. That rebuild runs
-  // once per keystroke of a held Ctrl+Shift+Alt+Arrow gesture and is O(span) each
-  // time; keeping the capacity here makes it allocation-free after the first
-  // keystroke instead of allocating twice per keystroke.
   detail::ScratchBuffer<SelectionRange> box_ranges_scratch_;
   detail::ScratchBuffer<SecondaryCaret> secondary_caret_candidates_scratch_;
-  // One range per caret, the working set of MergeOverlappingCaretRanges. That
-  // merge is the tail of EVERY caret-set mutation, so it runs once per keystroke
-  // of a held column-select gesture over a span that grows with the gesture --
-  // and the overwhelmingly common outcome is that nothing merges. Keeping the
-  // capacity here makes that outcome allocation-free; a fresh vector cost one
-  // allocation per keystroke, sized by the whole caret set.
   struct CaretMergeEntry {
     TextPosition start;
     TextPosition end;
@@ -1610,74 +737,27 @@ class TextViewport {
   };
   detail::ScratchBuffer<CaretMergeEntry> caret_merge_scratch_;
   mutable detail::TransferredLayoutCache layout_cache_;
-  // Per-line token cache. Entries carry the generation they were computed in
-  // rather than being erased when the document changes: an edit bumps
-  // `highlight_cache_generation_`, every entry becomes a miss, and the next paint
-  // re-tokenizes each visible line straight back INTO the vector already sitting
-  // in the map. Clearing instead freed one hash node plus one token vector per
-  // cached line on every keystroke and re-allocated both on the same frame — a
-  // screenful of churn per character typed, for a cache whose keys and sizes are
-  // almost always identical either side of the edit.
-  //
-  // A stale entry keeps its token buffer resident until it is evicted, so the
-  // retained bytes are the entry cap (kHighlightCacheLimit lines) times the
-  // per-line token cap, which is the same ceiling the live cache already had.
   mutable std::unordered_map<std::size_t, HighlightCacheEntry> highlight_cache_;
-  // Starts at 1 so a default-constructed entry (generation 0) can never read as
-  // current. Bumped by DropHighlightTokenCache; never reset.
   mutable std::uint64_t highlight_cache_generation_ = 1;
-  // Set on an entry's generation by StaleHighlightTokensFrom when the entry was
-  // current: staled by the last edit, and current again if that edit settles.
   static constexpr std::uint64_t kStaleByLastEdit = std::uint64_t{1} << 63;
   mutable std::deque<std::size_t> highlight_cache_order_;
   mutable std::optional<SyntaxState> initial_highlight_state_;
   mutable std::vector<SyntaxState> line_highlight_states_;
-  // Lazy invalidation cursor: entries `[line_highlight_states_valid_through_,
-  // line_highlight_states_.size())` are stale and must be ignored by readers.
-  // We bump this on edits instead of resetting each entry to `SyntaxState{}`,
-  // which was an O(lines - start) loop on every keystroke (round-4 Finding 4).
-  // INVARIANT: this is a strictly contiguous-from-0 frontier — `[0, valid_through)`
-  // is always fully populated and current. Writers therefore advance it ONLY on a
-  // contiguous write (`line == valid_through`), never `line >= valid_through`: a
-  // replay that resumes from a checkpoint above the frontier (possible after an
-  // off-thread checkpoint backfill advances the checkpoint chain without touching
-  // this vector) would otherwise jump the frontier over the still-stale gap below
-  // it and falsely mark those pre-edit states valid.
   mutable std::size_t line_highlight_states_valid_through_ = 0;
-  // The end-of-line state the last content edit's last line had BEFORE the edit,
-  // snapshotted by InvalidateDerivedCaches while it is still in storage (only for
-  // an edit that keeps the line count, whose lines keep their indices).
   struct EditCarry {
-    std::size_t first_line = 0;  // the edit's first line
-    std::size_t line = 0;        // its last
+    std::size_t first_line = 0;
+    std::size_t line = 0;
     SyntaxState before;
-    // What SettleHighlightAfterLastEdit restores when the carried state is
-    // unchanged: the validity cursors as they were before the edit dropped them,
-    // for the content revision the edit made.
     std::size_t states_valid_through_before = 0;
     std::size_t checkpoints_valid_through_before = 0;
     std::uint64_t content_revision = 0;
     bool settled = false;
   };
-  mutable std::optional<EditCarry> edit_carry_before_;  // mutable: SettleHighlightAfterLastEdit marks it settled
-  // The one writer of line_highlight_states_: stores at or below the frontier,
-  // advances it on a contiguous write, drops a write above it.
+  mutable std::optional<EditCarry> edit_carry_before_;
   void StoreLineHighlightState(std::size_t line, const SyntaxState& state) const;
   mutable std::vector<SyntaxState> highlight_checkpoints_;
-  // Same lazy-invalidation pattern for the periodic checkpoint vector.
   mutable std::size_t highlight_checkpoints_valid_through_ = 0;
-  // Set when a synchronous highlight-state replay was capped short of the line a
-  // paint requested (deep cold jump). The shell drains this via
-  // TakeHighlightCheckpointBackfillRequest to schedule off-thread chain catch-up.
-  // 0 means "no backfill pending". Reset whenever the highlight caches are
-  // invalidated (content/syntax revision change).
   mutable std::size_t pending_checkpoint_backfill_target_line_ = 0;
-  // False when the most recent HighlightStateBeforeLine returned an APPROXIMATE
-  // resume state (a deep jump whose exact state would have needed an over-cap
-  // replay). HighlightedLineTokens uses this to render immediately without
-  // poisoning the authoritative per-line state cache; the off-thread backfill
-  // then makes a later repaint exact (InstallHighlightCheckpoints clears the
-  // token cache so approximate tokens are recomputed).
   mutable bool last_highlight_state_exact_ = true;
   mutable std::uint64_t highlight_state_content_revision_ = 0;
   mutable std::uint64_t highlight_state_syntax_revision_ = 0;
@@ -1686,24 +766,14 @@ class TextViewport {
   mutable std::size_t highlight_state_advances_ = 0;
   mutable std::size_t highlight_checkpoint_advances_ = 0;
   std::optional<TextPosition> selection_anchor_;
-  // TraceCaretBounds has reported this viewport (once is enough per viewport).
   mutable bool caret_bounds_reported_ = false;
-  // The selections Expand Selection grew from, innermost last; valid while the
-  // selection is still the one the last expansion made.
   std::vector<SelectionRange> expand_selection_history_;
   std::optional<AppliedEdit> last_applied_edit_;
   std::uint64_t last_applied_edit_base_revision_ = 0;
   std::uint64_t last_applied_edit_revision_ = 0;
   std::optional<AppliedEditLineSpan> last_applied_edit_line_span_;
-  // The content revision the outermost active undo group began at: the base of
-  // the aggregate edit its end publishes.
   std::uint64_t undo_group_base_revision_ = 0;
-  // Set only by SuppressEntryCaretCapture, above; see its comment. Transient, so
-  // a copy or move starts it false rather than carrying it — a viewport cannot be
-  // copied or moved while a guard holding it is alive.
   detail::NotTransferred<bool> suppress_entry_caret_capture_;
-  // Non-owning; the owner of the FoldingModel attaches it to one viewport, so a
-  // copy or move starts detached.
   detail::NotTransferred<const FoldingModel*> folding_model_;
 
 #ifndef NDEBUG
@@ -1726,4 +796,4 @@ class TextViewport {
 #endif
 };
 
-}  // namespace microide::editor
+}

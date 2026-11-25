@@ -20,17 +20,6 @@ using microide::app::DirtyRegionAnalysis;
 using microide::app::PadClipForPresentationScale;
 using microide::app::ShouldPromotePartialFrameToFull;
 
-// Property: the merged clip rects COVER every damaged pixel.
-//
-// This is the analysis that decides what a partial frame repaints. Merging
-// overlapping damage into fewer clips is a pure win right up to the moment a
-// merge loses a pixel — and a lost pixel is a stale glyph on screen, which no
-// test that only counts rects or checks a coverage ratio would notice. Padding
-// makes it sharper: every rect is grown by the backend's clip padding before
-// merging, so the covering set must contain the PADDED rect, not the raw one.
-//
-// Checked on a coarse grid rather than per pixel: the rects here are small and a
-// merge that drops a region drops far more than one pixel.
 bool DirtyPointCovered(const std::vector<SDL_Rect>& rects, int x, int y) {
   for (const SDL_Rect& rect : rects) {
     if (x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h) {
@@ -57,9 +46,6 @@ void TestDirtyRegionMergeCoversEveryDamagedPixel() {
     std::vector<SDL_FRect> dirty;
     const std::size_t count = 1 + next() % 8;
     for (std::size_t i = 0; i < count; ++i) {
-      // Include degenerate and out-of-bounds rects: a zero-size rect, one that
-      // starts off-screen, one that runs past the edge. All three reach this
-      // function in practice (a collapsed pane, a scrolled-away row).
       const float x = static_cast<float>(static_cast<int>(next() % 500) - 50);
       const float y = static_cast<float>(static_cast<int>(next() % 400) - 50);
       const float w = static_cast<float>(next() % 120);
@@ -70,14 +56,13 @@ void TestDirtyRegionMergeCoversEveryDamagedPixel() {
     const app::DirtyRegionAnalysis analysis =
         app::AnalyzeDirtyRegions(dirty, padding, kWidth, kHeight);
     if (app::ShouldPromotePartialFrameToFull(analysis)) {
-      continue;  // the frame repaints whole; there is nothing to cover
+      continue;
     }
 
     for (const SDL_FRect& rect : dirty) {
       if (rect.w <= 0.0f || rect.h <= 0.0f) {
         continue;
       }
-      // The padded, screen-clamped rect is what has to be repainted.
       const int left =
           std::max(0, static_cast<int>(std::floor(rect.x - padding.left)));
       const int top = std::max(0, static_cast<int>(std::floor(rect.y - padding.top)));
@@ -187,19 +172,16 @@ void TestPromotionUsesCoalescedClipCount() {
          "wide fragmented redraws should still promote to full redraw");
 }
 
-// TD-2026-07-16-48: non-finite, negative-size, or huge float dirty rects must be
-// rejected/clamped before the float->int cast (which is UB for NaN/inf/out-of-range).
-// A valid rect in the same batch must still produce its clip.
 void TestDirtyRegionsRejectNonFiniteAndHugeInput() {
   const float inf = std::numeric_limits<float>::infinity();
   const float nan = std::numeric_limits<float>::quiet_NaN();
   const DirtyRegionAnalysis analysis = AnalyzeDirtyRegions(
       {
-          SDL_FRect{.x = nan, .y = 0.0f, .w = 10.0f, .h = 10.0f},   // NaN origin
-          SDL_FRect{.x = 0.0f, .y = 0.0f, .w = inf, .h = 10.0f},    // infinite width
-          SDL_FRect{.x = 0.0f, .y = 0.0f, .w = -5.0f, .h = 10.0f},  // negative width
-          SDL_FRect{.x = 1e30f, .y = 1e30f, .w = 1e30f, .h = 1e30f},  // huge finite
-          SDL_FRect{.x = 2.0f, .y = 2.0f, .w = 4.0f, .h = 4.0f},    // valid
+          SDL_FRect{.x = nan, .y = 0.0f, .w = 10.0f, .h = 10.0f},
+          SDL_FRect{.x = 0.0f, .y = 0.0f, .w = inf, .h = 10.0f},
+          SDL_FRect{.x = 0.0f, .y = 0.0f, .w = -5.0f, .h = 10.0f},
+          SDL_FRect{.x = 1e30f, .y = 1e30f, .w = 1e30f, .h = 1e30f},
+          SDL_FRect{.x = 2.0f, .y = 2.0f, .w = 4.0f, .h = 4.0f},
       },
       {}, 40, 40);
 
@@ -212,11 +194,6 @@ void TestDirtyRegionsRejectNonFiniteAndHugeInput() {
          "the surviving clip is within surface bounds with a positive size");
 }
 
-// QA monkey (seed 1, step 186, ui.scale 1.25): a partial frame's clip is a
-// logical rect that SDL scales to device pixels as floor(x * s) wide by
-// ceil(w * s), which at a fractional scale can stop a device column short of a
-// rect drawn at the same logical bounds -- the blink left the caret's last column
-// on screen. Every device pixel a damaged rect touches must lie in its clip.
 void TestClipsCoverTheirDevicePixelsAtFractionalScales() {
   constexpr int kWidth = 1152;
   constexpr int kHeight = 720;
@@ -231,12 +208,10 @@ void TestClipsCoverTheirDevicePixelsAtFractionalScales() {
           return;
         }
         const SDL_Rect& clip = analysis.merged_clip_rects.front();
-        // SDL_render's conversion of a logical clip to device pixels.
         const int device_x0 = static_cast<int>(std::floor(static_cast<float>(clip.x) * scale));
         const int device_x1 = device_x0 + static_cast<int>(std::ceil(static_cast<float>(clip.w) * scale));
         const int device_y0 = static_cast<int>(std::floor(static_cast<float>(clip.y) * scale));
         const int device_y1 = device_y0 + static_cast<int>(std::ceil(static_cast<float>(clip.h) * scale));
-        // The device pixels a fill of the damaged rect touches.
         const int fill_x0 = static_cast<int>(std::floor(damaged.x * scale));
         const int fill_x1 = static_cast<int>(std::ceil((damaged.x + damaged.w) * scale));
         const int fill_y0 = static_cast<int>(std::floor(damaged.y * scale));
@@ -254,11 +229,6 @@ void TestClipsCoverTheirDevicePixelsAtFractionalScales() {
   }
 }
 
-// QA sweeps-matrix (ui.scale 1.5): a sidebar clip [0, 289) reaches device
-// column 433, half of which is the editor's (it starts at 289 = device 433.5).
-// The hint the clip was painted with was the integer rect, which the editor only
-// touches, so the editor was skipped and that column lost its edge. The hint is
-// the clip's device extent.
 void TestTheDirtyHintIsTheClipsDeviceExtent() {
   const SDL_Rect clip{0, 57, 289, 389};
   const SDL_FRect hint = DeviceClipHint(clip, 1.5f, 1.5f);
@@ -273,13 +243,6 @@ void TestTheDirtyHintIsTheClipsDeviceExtent() {
 }
 
 
-// openspec clip-discipline D2: a damage rect and the clip it becomes are one
-// computation -- the shared device-pixel snap of the padded rect -- so the clip
-// covers what a fill of the same rect touches, at every scale.
-// The frame loop analyses into one kept analysis: the same clips, coverage and
-// count as the by-value form, its clip list's storage reused from frame to frame
-// (a fresh list grew to each frame's rect count, ~log2(n) allocations a frame),
-// and nothing from a busier frame left over in a quieter one.
 void TestAnalyzingIntoAKeptAnalysisReusesItsStorage() {
   using microide::app::AnalyzeDirtyRegions;
   using microide::app::DirtyRegionAnalysis;
@@ -318,7 +281,7 @@ void TestADamageClipIsTheSharedSnapOfItsRect() {
                std::to_string(expected.w) + "," + std::to_string(expected.h));
   }
 }
-}  // namespace
+}
 
 void RegisterDirtyRegionPolicyTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DirtyRegionPolicy/RejectNonFiniteAndHugeInput",
@@ -342,4 +305,4 @@ void RegisterDirtyRegionPolicyTests(std::vector<TestCase>& tests) {
           TestAnalyzingIntoAKeptAnalysisReusesItsStorage);
 }
 
-}  // namespace microide::tests
+}

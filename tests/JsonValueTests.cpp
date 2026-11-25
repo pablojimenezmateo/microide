@@ -17,10 +17,6 @@ using microide::util::JsonValue;
 using microide::util::ParseJson;
 using microide::util::SerializeJson;
 
-// A pathologically deep nesting must be rejected as a parse error rather than
-// overflowing the native stack. This is the headless crash vector: the same
-// ParseJson chokepoint is fed by --control-spec files, socket request lines, and
-// instance descriptor files, so a depth guard here closes all of them at once.
 void TestDeeplyNestedArrayRejected() {
   const int kDepth = 200000;
   std::string payload;
@@ -44,8 +40,6 @@ void TestDeeplyNestedObjectRejected() {
   Expect(!parsed.has_value(), "deeply nested object should reject, not crash");
 }
 
-// Legitimate, modestly-nested payloads must still parse — the guard should only
-// trip well beyond any real control/DAP/LSP message.
 void TestModestNestingStillParses() {
   const int kDepth = 50;
   std::string payload;
@@ -56,7 +50,6 @@ void TestModestNestingStillParses() {
   const auto parsed = ParseJson(payload);
   Expect(parsed.has_value(), "modest nesting within the limit should parse");
 
-  // Walk down to confirm the structure round-tripped.
   const JsonValue* cursor = &*parsed;
   for (int i = 0; i < kDepth; ++i) {
     Expect(cursor->IsArray() && cursor->AsArray().size() == 1,
@@ -66,8 +59,6 @@ void TestModestNestingStillParses() {
   Expect(cursor->IsInt() && cursor->AsInt() == 42, "innermost value should be 42");
 }
 
-// Serialization must also be depth-bounded: a round-trip of a legal payload
-// stays intact, and the serializer never recurses without limit.
 void TestSerializeRoundTripsModestNesting() {
   const std::string payload = "[[[[[1]]]]]";
   const auto parsed = ParseJson(payload);
@@ -75,43 +66,31 @@ void TestSerializeRoundTripsModestNesting() {
   Expect(SerializeJson(*parsed) == payload, "round-trip should preserve structure");
 }
 
-// An integer literal that overflows int64 (a realistic uint64-range id/handle/
-// address from a DAP adapter or LSP server) must not abort the entire message
-// parse; it falls back to a lossy double so the surrounding value still resolves.
 void TestOutOfRangeIntegerFallsBackToDouble() {
-  const auto parsed = ParseJson("{\"id\":9223372036854775808}");  // 2^63
+  const auto parsed = ParseJson("{\"id\":9223372036854775808}");
   Expect(parsed.has_value(), "uint64-range integer must not reject the whole document");
   const JsonValue& id = (*parsed)["id"];
   Expect(id.IsDouble(), "over-range integer should decode as a double");
   Expect(id.AsDouble() > 9.2e18, "double fallback should preserve rough magnitude");
 }
 
-// AsInt() on an out-of-int64-range double (produced by the integer-overflow
-// fallback above) must clamp instead of executing the undefined static_cast<int64>.
-// This is reachable for a uint64-range DAP variablesReference / handle.
 void TestAsIntClampsOutOfRangeDouble() {
-  const auto parsed = ParseJson("{\"ref\":18446744073709551615}");  // ~1.8e19, past 2^63
+  const auto parsed = ParseJson("{\"ref\":18446744073709551615}");
   Expect(parsed.has_value(), "over-range integer document must parse");
   const JsonValue& ref = (*parsed)["ref"];
   Expect(ref.IsDouble(), "the over-range value should be stored as a double");
   Expect(ref.AsInt() == std::numeric_limits<std::int64_t>::max(),
          "AsInt() must clamp a too-large double to int64 max (no UB)");
 
-  const auto negative = ParseJson("{\"n\":-99999999999999999999}");  // past -2^63
+  const auto negative = ParseJson("{\"n\":-99999999999999999999}");
   Expect(negative.has_value(), "over-range negative integer document must parse");
   Expect((*negative)["n"].AsInt() == std::numeric_limits<std::int64_t>::min(),
          "AsInt() must clamp a too-negative double to int64 min");
 
-  // A NaN double (constructed directly) must fall through to the caller's fallback.
   JsonValue nan_value(std::nan(""));
   Expect(nan_value.AsInt(-7) == -7, "AsInt() on NaN must return the fallback, not trap");
 }
 
-// A lone surrogate is never emitted as invalid (CESU-8) UTF-8, which keeps every
-// host string satisfying the valid-UTF-8 invariant -- and it does not fail the
-// document either: it decodes to U+FFFD, as a JavaScript string holding one
-// renders. A rejection dropped a whole JSON-RPC message, and Node-based language
-// servers escape lone surrogates since ES2019 (RFC 8259 § 8.2 leaves it to us).
 void TestLoneSurrogateDecodesToReplacement() {
   for (const char* text : {"\"\\udc00\"", "\"\\ud800\"", "[\"\\uD800\\n\"]"}) {
     const auto lone = ParseJson(text);
@@ -120,19 +99,13 @@ void TestLoneSurrogateDecodesToReplacement() {
   Expect(ParseJson("\"\\udc00\"")->AsString() == "\xEF\xBF\xBD", "a lone low surrogate is U+FFFD");
   Expect(ParseJson("[\"\\uD800\\n\"]").value()[0].AsString() == "\xEF\xBF\xBD\n",
          "a lone high surrogate is U+FFFD and the escape after it is read on its own");
-  // A well-formed surrogate pair must still decode and stay valid UTF-8.
-  const auto pair = ParseJson("\"\\ud83d\\ude00\"");  // U+1F600
+  const auto pair = ParseJson("\"\\ud83d\\ude00\"");
   Expect(pair.has_value() && pair->IsString(), "valid surrogate pair should parse");
   Expect(microide::util::IsValidUtf8(pair->AsString()),
          "decoded surrogate pair must be valid UTF-8");
 }
 
-// The parse and serialize fast paths bulk-copy escape-free runs and drop into the
-// escape switch only at boundaries; exercise strings that mix long clean runs with
-// every escape kind, control chars, and unicode to prove the boundaries are exact.
 void TestStringEscapeRunsRoundTrip() {
-  // Build a value carrying an escape-heavy string, serialize it, parse it back, and
-  // confirm the decoded bytes are identical.
   const std::string original =
       std::string("plain text run \"quote\" and \\backslash\\ then\n\ttabs\r\n") +
       std::string("\x01\x1f control ") + "unicode: \xE2\x9C\x93 end";
@@ -144,25 +117,15 @@ void TestStringEscapeRunsRoundTrip() {
   Expect((*reparsed)["s"].AsString() == original,
          "decoded string bytes must exactly match the original");
 
-  // Direct parse of a literal covering an escape at the very start, adjacent
-  // escapes, and a trailing clean run.
   const auto direct = ParseJson("\"\\t\\\\\\\"mid\\n\\/end\"");
   Expect(direct.has_value() && direct->IsString(), "adjacent escapes should parse");
   Expect(direct->AsString() == std::string("\t\\\"mid\n/end"),
          "adjacent-escape decoding must be exact");
 
-  // An empty string and a string that is a single escape.
   Expect(ParseJson("\"\"")->AsString().empty(), "empty string should decode to empty");
   Expect(ParseJson("\"\\n\"")->AsString() == "\n", "single-escape string should decode");
 }
 
-// A non-finite double has no JSON form; the serializer emits null rather than the
-// bare token nan/inf that this parser (and any strict peer) would reject.
-// Regression: a syntactically valid float literal whose magnitude overflows
-// double must not abort the whole message parse (it previously returned nullopt
-// from ParseNumber, silently dropping the entire LSP/DAP message). It must
-// resolve the surrounding object with a best-effort non-finite value, mirroring
-// the int64-overflow fallback.
 void TestOverRangeFloatDoesNotAbortParse() {
   const auto obj = ParseJson("{\"timeout\":1e400,\"ok\":true}");
   Expect(obj.has_value(), "over-range float must not abort the enclosing parse");
@@ -173,7 +136,6 @@ void TestOverRangeFloatDoesNotAbortParse() {
          "over-range float should be stored as a (non-finite) double");
   Expect(!std::isfinite((*obj)["timeout"].AsDouble()),
          "over-range float should decode as a non-finite double");
-  // Negative overflow preserves sign.
   const auto neg = ParseJson("-1e400");
   Expect(neg.has_value() && neg->IsDouble() && neg->AsDouble() < 0.0,
          "negative over-range float preserves its sign");
@@ -184,30 +146,23 @@ void TestNonFiniteDoubleSerializesAsNull() {
   const JsonValue inf_value{std::numeric_limits<double>::infinity()};
   Expect(SerializeJson(nan_value) == "null", "NaN should serialize as null");
   Expect(SerializeJson(inf_value) == "null", "infinity should serialize as null");
-  // And the emitted text must round-trip back through the parser.
   Expect(ParseJson(SerializeJson(nan_value)).has_value(),
          "serialized non-finite output must be parseable");
 }
 
-// The additive mutable accessors let owners move data out instead of copying (the
-// LSP completion/code-action parsers use them). They must match the const API's
-// presence semantics and return nullptr on a type mismatch.
 void TestMutableAccessorsMoveOutAndTypeGuard() {
   JsonValue root = ParseJson(R"({"items":[{"label":"alpha","n":3}],"name":"root"})").value();
 
-  // MutableAt: present key -> pointer; absent key / non-object -> nullptr.
   Expect(root.MutableAt("missing") == nullptr, "MutableAt returns nullptr for an absent key");
   JsonValue* name = root.MutableAt("name");
   Expect(name != nullptr && name->IsString(), "MutableAt resolves a present key");
 
-  // MutableString on the wrong alternative is nullptr; on a string it aliases it.
   Expect(root.MutableAt("items")->MutableString() == nullptr,
          "MutableString returns nullptr for a non-string");
   std::string moved = std::move(*name->MutableString());
   Expect(moved == "root", "MutableString exposes the stored string for moving");
   Expect(root["name"].AsString().empty(), "the moved-from string is left empty in place");
 
-  // MutableArray + nested move-out from an element.
   JsonValue* items = root.MutableAt("items");
   Expect(items != nullptr && items->MutableArray() != nullptr, "MutableArray resolves an array");
   Expect(root.MutableAt("name")->MutableArray() == nullptr,
@@ -218,32 +173,20 @@ void TestMutableAccessorsMoveOutAndTypeGuard() {
   Expect(first["n"].AsInt() == 3, "unrelated fields are untouched by the move-out");
 }
 
-// RFC 8259 forbids raw control bytes (< 0x20) inside a string literal; they must
-// be escaped. A raw newline/tab/NUL/CR from a malformed peer (or a hand-authored
-// --control-spec line) must reject rather than smuggle a control char into a host
-// string. The escaped forms stay fully valid.
 void TestRawControlCharsInStringRejected() {
   Expect(!ParseJson("\"a\nb\"").has_value(), "raw newline inside a string must reject");
   Expect(!ParseJson("\"a\tb\"").has_value(), "raw tab inside a string must reject");
   Expect(!ParseJson("\"a\rb\"").has_value(), "raw carriage return inside a string must reject");
   Expect(!ParseJson(std::string("\"a\0b\"", 5)).has_value(),
          "raw NUL inside a string must reject");
-  // A control byte as the very first content byte must also reject (empty run).
   Expect(!ParseJson("\"\x01\"").has_value(), "leading raw control byte must reject");
 
-  // The escaped forms of the same characters stay valid and decode correctly.
   Expect(ParseJson("\"a\\nb\"")->AsString() == "a\nb", "escaped newline must decode");
   Expect(ParseJson("\"a\\tb\"")->AsString() == "a\tb", "escaped tab must decode");
   Expect(ParseJson("\"a\\rb\"")->AsString() == "a\rb", "escaped carriage return must decode");
 }
 
-// RFC 8259 has a strict number grammar: no lone '-', no leading zeros ("01"), a
-// '.' needs a trailing digit ("1." is invalid), and an exponent needs digits
-// ("1e"/"1e+" are invalid). Valid forms — including "0", "-0", "1.0", "1e-9" and
-// the large-integer double fallback — must still parse.
 void TestNumberGrammarStrictness() {
-  // Rejected malformed numbers. Wrap in an array so a trailing-garbage number is
-  // exercised inside a real document context.
   Expect(!ParseJson("-").has_value(), "lone '-' must reject");
   Expect(!ParseJson("01").has_value(), "leading zero must reject");
   Expect(!ParseJson("1.").has_value(), "trailing decimal point must reject");
@@ -252,7 +195,6 @@ void TestNumberGrammarStrictness() {
   Expect(!ParseJson("-e5").has_value(), "sign with no integer digit must reject");
   Expect(!ParseJson("[01]").has_value(), "leading zero inside an array must reject");
 
-  // Accepted forms round-trip to the expected value/kind.
   Expect(ParseJson("0")->AsInt() == 0, "'0' must parse");
   Expect(ParseJson("-0")->AsInt() == 0, "'-0' must parse");
   Expect(ParseJson("123")->AsInt() == 123, "'123' must parse");
@@ -266,30 +208,18 @@ void TestNumberGrammarStrictness() {
   const auto neg_half = ParseJson("-0.5");
   Expect(neg_half.has_value() && neg_half->AsDouble() == -0.5, "'-0.5' must parse");
 
-  // The int64-overflow -> double fallback for a syntactically valid literal is
-  // preserved (regression guard for the strict-grammar change).
-  const auto big = ParseJson("9223372036854775808");  // 2^63
+  const auto big = ParseJson("9223372036854775808");
   Expect(big.has_value() && big->IsDouble(),
          "valid over-range integer must still fall back to double");
 }
 
-// Structural equality is the correctness basis for the LSP registration fast
-// path (comparing init-options/settings without serializing). Objects must
-// compare key-order-independently; nested structures compare deeply.
-// JsonObject is a sorted flat vector now, not an unordered_map. Three properties
-// the old container gave for free have to be re-established explicitly, because
-// every LSP/DAP/control path depends on them.
 void TestObjectMemberSemantics() {
-  // 1. Duplicate keys: last-wins, as `obj[key] = value` did.
   const auto dup = ParseJson(R"({"k":1,"other":9,"k":2,"k":3})");
   Expect(dup.has_value(), "an object with duplicate keys should still parse");
   Expect(dup->AsObject().size() == 2, "duplicate keys collapse to one member");
   Expect((*dup)["k"].AsInt() == 3, "the LAST occurrence of a duplicate key wins");
   Expect((*dup)["other"].AsInt() == 9, "collapsing duplicates leaves other members intact");
 
-  // 2. Lookup finds every member regardless of the order they arrived in, and
-  //    misses report missing. The internal order is (length, bytes), so use keys
-  //    that would sort differently under plain lexicographic order.
   const auto mixed = ParseJson(R"({"zzz":1,"a":2,"mm":3,"bbbb":4,"n":5})");
   Expect(mixed.has_value(), "fixture should parse");
   Expect((*mixed)["zzz"].AsInt() == 1 && (*mixed)["a"].AsInt() == 2 &&
@@ -299,8 +229,6 @@ void TestObjectMemberSemantics() {
   Expect((*mixed)["missing"].IsNull() && !mixed->HasKey("missing"),
          "an absent key reports missing");
 
-  // 3. Serialization is deterministic and order-independent: two objects with the
-  //    same members in different document order produce identical bytes.
   const auto a = ParseJson(R"({"one":1,"two":[2,{"deep":true}],"three":"x"})");
   const auto b = ParseJson(R"({"three":"x","one":1,"two":[2,{"deep":true}]})");
   Expect(a.has_value() && b.has_value(), "reorder fixtures should parse");
@@ -309,13 +237,8 @@ void TestObjectMemberSemantics() {
   Expect(*a == *b, "structural equality stays key-order-independent");
 }
 
-// The parse-time sort switches from a hand-rolled insertion sort to std::stable_sort
-// past a size threshold; a wide object must come out identical either way, including
-// its duplicate handling.
 void TestWideObjectSortsAndDedupes() {
   std::string text = "{";
-  // 80 distinct keys emitted in reverse so nothing is accidentally pre-sorted,
-  // with every key also repeated once earlier carrying a wrong value.
   for (int i = 79; i >= 0; --i) {
     text += "\"k" + std::to_string(i) + "\":-1,";
   }
@@ -336,27 +259,20 @@ void TestWideObjectSortsAndDedupes() {
 
 void TestStructuralEqualityIsOrderIndependentAndDeep() {
   const auto a = ParseJson(R"({"a":1,"b":{"x":[1,2,3],"y":"t"}})");
-  const auto b = ParseJson(R"({"b":{"y":"t","x":[1,2,3]},"a":1})");  // reordered keys
-  const auto c = ParseJson(R"({"a":1,"b":{"x":[1,2,3],"y":"u"}})");  // one leaf differs
+  const auto b = ParseJson(R"({"b":{"y":"t","x":[1,2,3]},"a":1})");
+  const auto c = ParseJson(R"({"a":1,"b":{"x":[1,2,3],"y":"u"}})");
   Expect(a.has_value() && b.has_value() && c.has_value(), "fixtures must parse");
   Expect(*a == *b, "objects equal regardless of key order (unordered_map ==)");
   Expect(!(*a == *c), "a differing nested leaf must compare unequal");
 
-  // Scalars and type mismatches.
   Expect(JsonValue(std::int64_t{5}) == JsonValue(std::int64_t{5}), "equal ints compare equal");
   Expect(!(JsonValue(std::int64_t{5}) == JsonValue(std::string("5"))), "int != string");
   Expect(JsonValue() == JsonValue(), "null == null");
   Expect(!(JsonValue(true) == JsonValue(false)), "true != false");
 }
 
-}  // namespace
+}
 
-// Number formatting and parsing must not read the decimal separator from
-// LC_NUMERIC. The process locale is not ours to control — SDL's X11 toolkit
-// backend calls `setlocale(LC_ALL, "")` when it creates a window and only
-// restores it on destroy — so a comma-decimal user environment used to make
-// `SerializeJson` emit `1,5` (malformed JSON on the wire to every LSP/DAP peer)
-// and `ParseDouble` reject `1.5` outright.
 void TestNumberFormattingIsLocaleIndependent() {
   using microide::util::JsonValue;
   using microide::util::ParseDouble;
@@ -364,8 +280,6 @@ void TestNumberFormattingIsLocaleIndependent() {
   using microide::util::SerializeJson;
 
   const auto check = [](const char* where) {
-    // Serialize: no comma may appear in a bare number, and the value must
-    // round-trip bit-exactly through the parser.
     for (const double d : {1.5, 0.1, -2.25, 1e-9, 1e20, 3.14159265358979}) {
       const std::string text = SerializeJson(JsonValue(d));
       Expect(text.find(',') == std::string::npos,
@@ -374,7 +288,6 @@ void TestNumberFormattingIsLocaleIndependent() {
       Expect(reparsed.has_value() && reparsed->AsDouble() == d,
              std::string(where) + ": serialized double must round-trip exactly");
     }
-    // Parse: a dot-decimal literal must be accepted whatever LC_NUMERIC says.
     const auto parsed = ParseDouble("1.5");
     Expect(parsed.has_value() && *parsed == 1.5,
            std::string(where) + ": '1.5' must parse under any locale");
@@ -385,9 +298,6 @@ void TestNumberFormattingIsLocaleIndependent() {
 
   check("C locale");
 
-  // Repeat under a comma-decimal locale where the host has one generated. This
-  // is the configuration that actually broke; skip cleanly where it is absent
-  // (the C-locale assertions above still pin the shortest-round-trip form).
   const char* const saved = std::setlocale(LC_NUMERIC, nullptr);
   const std::string restore = saved != nullptr ? saved : "C";
   for (const char* candidate :
@@ -401,10 +311,6 @@ void TestNumberFormattingIsLocaleIndependent() {
   std::setlocale(LC_NUMERIC, restore.c_str());
 }
 
-// The shortest-round-trip form is the point of using to_chars over "%.17g":
-// `0.1` must serialize as `0.1`, not as `0.10000000000000001`. Every JSON byte
-// written here goes out over an LSP/DAP socket, so this is payload size on the
-// hot path, not cosmetics.
 void TestDoubleSerializesInShortestRoundTripForm() {
   using microide::util::JsonValue;
   using microide::util::SerializeJson;
@@ -416,11 +322,6 @@ void TestDoubleSerializesInShortestRoundTripForm() {
 }
 
 
-// Grammar conformance table derived from the JSONTestSuite y_/n_ cases (RFC 8259):
-// every accepted text is well-formed JSON and every rejected one is not. The parser
-// feeds LSP/DAP/control-channel decoding, so a lenient accept or a strict reject
-// here is a protocol bug, not a style choice. Lone surrogates are i_ cases there
-// (RFC 8259 § 8.2: implementation-defined) and are pinned on their own below.
 void TestParseJsonConformanceTable() {
   static constexpr std::string_view kValid[] = {
       "[]", " [] ", "{}", "[1]", "[1,2]", "{\"a\":1}", "{\"a\":\"b\",\"a\":\"c\"}",
@@ -445,9 +346,6 @@ void TestParseJsonConformanceTable() {
     Expect(!ParseJson(text).has_value(), "malformed JSON must be rejected: " + std::string(text));
   }
 
-  // Number semantics: an underflowing literal is zero (not infinity, which the
-  // overflow fallback deliberately produces), and -0 keeps the sign as a double
-  // or reads as integer zero.
   const auto tiny = ParseJson("[1e-400]");
   Expect(tiny.has_value() && (*tiny)[0].AsDouble(-1.0) == 0.0,
          "1e-400 underflows to zero, not to infinity");
@@ -492,4 +390,4 @@ void RegisterJsonValueTests(std::vector<TestCase>& tests) {
           TestOverRangeFloatDoesNotAbortParse);
 }
 
-}  // namespace microide::tests
+}

@@ -9,20 +9,6 @@
 
 namespace microide::editor {
 
-// Non-owning, representation-agnostic view over a sequence of text lines.
-//
-// Layout/scroll/render code must read lines without caring whether the source is
-// a piece-tree-backed `TextBuffer` (the live document) or a plain
-// `std::vector<std::string>` (compare/merge models, undo deltas). LineSpan is the
-// seam: it adapts either source behind `size()` + `operator[]` returning a
-// `std::string_view`, with no allocation and no virtual dispatch -- just a data
-// pointer and two free-function thunks. For a `TextBuffer` source, `operator[]`
-// goes straight through `LineView`, so hot paths never materialize the whole
-// document the way `Snapshot()` would.
-//
-// A LineSpan does not own its source; it must not outlive it, and (like the
-// underlying line storage) returned views are invalidated by any mutation of the
-// source.
 class LineSpan {
  public:
   LineSpan(const std::vector<std::string>& lines)  // NOLINT(google-explicit-constructor)
@@ -32,10 +18,6 @@ class LineSpan {
         length_fn_(&VectorLength),
         window_fn_(&VectorWindow) {}
 
-  // Views into a text blob the caller already holds — what `util::SplitLineViews`
-  // produces. This is the source to reach for when the lines exist only as offsets
-  // into one buffer: splitting into owned strings just to hand them over costs one
-  // allocation per line of the document (TD-2026-08-06-159).
   LineSpan(const std::vector<std::string_view>& lines)  // NOLINT(google-explicit-constructor)
       : source_(&lines),
         size_fn_(&ViewVectorSize),
@@ -55,15 +37,6 @@ class LineSpan {
   std::string_view operator[](std::size_t index) const { return at_fn_(source_, index); }
   std::size_t LineLength(std::size_t index) const { return length_fn_(source_, index); }
 
-  // Bounded slice of one line: `[byte_start, byte_start + byte_len)` clamped to
-  // the line, zero-copy whenever the source can serve it that way. `scratch` is
-  // only written when the underlying store cannot view the window contiguously
-  // (a piece-tree line that spans pieces, i.e. an edited one); the returned view
-  // is then into `scratch` and lives until it is reused.
-  //
-  // `operator[]` is the whole line, and on a piece-tree source that means
-  // materializing the whole line even when the caller wanted 4 KiB of it. Any
-  // caller with a bound belongs here instead (TD-2026-08-05-133).
   std::string_view LineWindow(std::size_t index, std::size_t byte_start, std::size_t byte_len,
                               std::string& scratch) const {
     return window_fn_(source_, index, byte_start, byte_len, scratch);
@@ -121,4 +94,4 @@ class LineSpan {
   std::string_view (*window_fn_)(const void*, std::size_t, std::size_t, std::size_t, std::string&);
 };
 
-}  // namespace microide::editor
+}

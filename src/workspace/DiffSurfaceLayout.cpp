@@ -10,12 +10,7 @@ namespace microide::workspace {
 
 ScrollSurfaceLayout ComputeCompareScrollLayout(const SDL_FRect& rect, const CompareSurfaceLayout& surface,
                                                const CompareTabState& compare_tab) {
-  // Row space is the on-screen (wrapped) one in both modes -- identical to the
-  // presentation row count while wrap is off. Wrap also removes horizontal scroll:
-  // report a content width that fits, so no horizontal scrollbar is produced.
   const std::size_t content_columns = compare_tab.right_viewport.soft_wrap() ? 0 : compare_tab.max_visual_columns;
-  // Beside the rows, as the merge editor's: over the whole surface the bar sat
-  // on the review header's right-aligned text.
   const SDL_FRect rows_area =
       MakeRect(rect.x, surface.rows_y, rect.w, std::max(0.0f, rect.y + rect.h - surface.rows_y));
   return ComputeScrollSurfaceLayout(rows_area, CompareTabVisualRowCount(compare_tab), surface.visible_rows,
@@ -28,7 +23,6 @@ int CompareMaxScrollRow(const CompareTabState& compare_tab, int visible_rows) {
 }
 
 std::size_t CompareMaxScrollColumn(const CompareTabState& compare_tab, std::size_t visible_columns) {
-  // Wrapped panes have no horizontal extent past the viewport by construction.
   if (compare_tab.right_viewport.soft_wrap() || compare_tab.max_visual_columns <= visible_columns) {
     return 0;
   }
@@ -46,12 +40,7 @@ void ClampCompareHorizontalScroll(CompareTabState& compare_tab, std::size_t visi
 
 ScrollSurfaceLayout ComputeMergeScrollLayout(const SDL_FRect& rect, const MergeSurfaceLayout& surface,
                                              const MergeTabState& merge_tab) {
-  // Wrap removes horizontal scroll: report a content width that fits so no
-  // horizontal scrollbar is produced.
   const std::size_t content_columns = merge_tab.result_viewport.soft_wrap() ? 0 : merge_tab.max_visual_columns;
-  // The bars scroll the rows, so they run beside the rows: over the whole surface
-  // the vertical bar sat on the toolbar, under Save and Mark Resolved, whose
-  // labels it cut off once the file was long enough to scroll (QA merge-panes).
   const SDL_FRect rows_area =
       MakeRect(rect.x, surface.rows_y, rect.w, std::max(0.0f, rect.y + rect.h - surface.rows_y));
   return ComputeScrollSurfaceLayout(rows_area, MergeTotalVisualRowCount(merge_tab), surface.visible_rows,
@@ -78,7 +67,6 @@ void ClampMergeHorizontalScroll(MergeTabState& merge_tab, std::size_t visible_co
   merge_tab.horizontal_scroll = std::min(merge_tab.horizontal_scroll, MergeMaxScrollColumn(merge_tab, visible_columns));
 }
 
-// its own copy of the arithmetic.
 void RevealCompareSelectedRow(CompareTabState& compare_tab, int visible_rows) {
   const int rows = std::max(1, visible_rows);
   const int first = static_cast<int>(ComparePresentationRowToVisualRow(compare_tab, compare_tab.selected_row));
@@ -102,4 +90,4 @@ std::array<SDL_FRect, 4> BuildMergeResultActionButtonRects(const MergeSurfaceLay
       interaction.result_action_widths, kMergeToolbarButtonHeight, kMergeToolbarButtonGap,
       surface.center_x + surface.center_width);
 }
-}  // namespace microide::workspace
+}

@@ -18,101 +18,48 @@
 
 namespace microide::server {
 
-// A workspace's tree as the host sees it (dev-docs/design/remote-projects.md § 6.2):
-// the content set, decided HERE rather than on the client, and a manifest row with a
-// BLAKE3 hash for every member.
-//
-// The content set is `git ls-files --cached --others --exclude-standard` in a
-// repository — tracked plus untracked-not-ignored, which excludes build/ and
-// node_modules/ with no list in a setting — and a walk with the project scanner's
-// skip rules outside one. A failure to decide it is an ERROR, never an empty set: a
-// "zero files" answer from an unmounted root is how a sync deletes a user's tree.
-//
-// Hashes come from a cache keyed by (dev, inode, size, mtime_ns, ctime_ns), so a
-// manifest rehashes only what changed since the last one; a cold tree hashes on
-// several threads.
-//
-// Threading: BuildManifest is serialized internally and may run on any thread; it
-// blocks for as long as the walk and the hashing take, so it never runs on a
-// connection's I/O thread.
 class WorkspaceTree {
  public:
   struct Options {
-    // remote.max_manifest_files: over it, the manifest fails loudly (§ 6.2).
     std::size_t max_files = static_cast<std::size_t>(project::remote::kDefaultMaxManifestFiles);
-    // 0 = min(hardware threads, 8).
     unsigned hash_threads = 0;
-    // A file whose mtime or ctime is this recent is hashed on every manifest rather
-    // than trusted from the cache (project::remote::kRacySignatureWindowNs). Tests shrink it.
     std::int64_t racy_window_ns = project::remote::kRacySignatureWindowNs;
-    // Where the hash cache persists between server processes ("" = memory only): an
-    // on-demand server exits when idle, and without this every reconnect after
-    // that hashed the whole tree again.
     std::filesystem::path cache_path;
   };
 
   struct Manifest {
-    std::uint64_t id = 0;  // increases with every manifest this tree builds
-    // Sorted by path, unique. Shared and immutable: the tree keeps the newest as its
-    // baseline and every watching connection's last-sent snapshot is the same vector,
-    // so a tree holds one copy of its rows, not one per holder (TD-2026-10-28-418).
+    std::uint64_t id = 0;
     std::shared_ptr<const std::vector<project::remote::ManifestRow>> rows;
-    bool git = false;  // the content set came from git
+    bool git = false;
   };
 
   WorkspaceTree(std::filesystem::path root, Options options);
   ~WorkspaceTree();
   explicit WorkspaceTree(std::filesystem::path root) : WorkspaceTree(std::move(root), Options{}) {}
 
-  // nullopt with *error when the root cannot be read, the content-set command
-  // fails, or the set is over the limit. `cancelled`, polled between files, stops
-  // the build early (nullopt, error "cancelled").
   std::optional<Manifest> BuildManifest(std::string* error,
                                         const std::function<bool()>& cancelled = {});
 
-  // What changed since the last manifest, as a watcher reported it: paths created,
-  // modified or deleted, directories deleted with everything under them, and
-  // whether the tree's shape changed in a way paths cannot describe.
   struct Changes {
     std::vector<std::string> touched;
     std::vector<std::string> deleted_directories;
     bool full = false;
   };
-  // The next manifest, from the last one plus `changes`: only the touched paths are
-  // stat'ed and hashed, and git is asked about the NEW paths only. A change to the
-  // membership rules (a .gitignore, .git/info/exclude), a shape change, or no
-  // previous manifest falls back to BuildManifest.
   std::optional<Manifest> UpdateManifest(const Changes& changes, std::string* error,
                                          const std::function<bool()>& cancelled = {});
-  // Whether the last UpdateManifest fell back to a full build (tests, logs).
   bool last_update_was_full() const { return last_update_was_full_; }
 
-  // What a search over this tree may read: the content set, sorted — the last
-  // manifest's paths when there is one, else the set itself. Never the tree's
-  // build/, node_modules/ or .git (remote-projects.md § 6.11).
   std::optional<std::vector<std::string>> SearchPaths(std::string* error);
 
-  // Members of the last full build's content set that sit under a directory the
-  // workspace watch prunes (the scanner's skip list, an ignored directory holding a
-  // tracked file): the watch cannot see them, so it polls them
-  // (WorkspaceWatch::SetPolledPaths). Usually empty.
   std::vector<std::string> UnwatchedMembers() const {
     std::lock_guard lock(mutex_);
     return unwatched_members_;
   }
 
   const std::filesystem::path& root() const { return root_; }
-  // The latest manifest's file count and the hashes held for it (server/status).
-  // Lock-free: a cold tree's first build holds the lock for as long as it hashes,
-  // and a status must not wait for that.
   std::size_t manifest_files() const { return manifest_files_.load(std::memory_order_relaxed); }
   std::size_t hashed_files() const { return hashed_files_.load(std::memory_order_relaxed); }
-  // Files hashed (cache misses) by the most recent BuildManifest.
   std::size_t last_hashed_files() const { return last_hashed_files_; }
-  // The id of the newest manifest built so far (0: none). Taken under the lock a
-  // build holds, so a caller that wrote a file first and asks second learns a
-  // line: every manifest at or below it was built before the write was seen (or
-  // shows it), every one above it scanned the tree after the write.
   std::uint64_t NewestManifestId() const {
     std::lock_guard lock(mutex_);
     return next_manifest_id_ - 1;
@@ -135,15 +82,11 @@ class WorkspaceTree {
   std::optional<std::vector<std::string>> ContentSet(bool* git, std::string* error);
   std::optional<Manifest> BuildManifestLocked(std::string* error,
                                               const std::function<bool()>& cancelled);
-  // Rows for `paths` (sorted, members of the set): lstat each, hash what the cache
-  // does not vouch for; the cache entries for them land in `out_cache`.
   std::optional<std::vector<project::remote::ManifestRow>> RowsFor(
       std::vector<std::string> paths, int root_fd, const std::function<bool()>& cancelled,
       std::string* error, std::unordered_map<std::string, CacheEntry>& out_cache);
-  // Which of `candidates` (paths new to the tree) the content-set rules admit.
   std::optional<std::vector<std::string>> AdmitCandidates(const std::vector<std::string>& candidates,
                                                           std::string* error);
-  // One repository's listing, descending into checked-out submodules.
   bool ListGitRepository(const std::filesystem::path& dir,
                          const std::vector<std::string>& pathspecs, int depth,
                          std::vector<std::string>& out, std::string* error,
@@ -155,25 +98,15 @@ class WorkspaceTree {
 
   std::filesystem::path root_;
   Options options_;
-  mutable std::mutex mutex_;  // serializes BuildManifest; guards the members below
+  mutable std::mutex mutex_;
   std::uint64_t next_manifest_id_ = 1;
   std::unordered_map<std::string, CacheEntry> cache_;
   std::size_t last_hashed_files_ = 0;
-  // The last manifest's rows, the base of the next incremental update.
   std::shared_ptr<const std::vector<project::remote::ManifestRow>> last_rows_ =
       std::make_shared<const std::vector<project::remote::ManifestRow>>();
   bool last_git_ = false;
-  // Checked-out gitlinks the last full listing found (sorted): which repository an
-  // incremental update asks about a new path.
   std::vector<std::string> submodule_roots_;
   std::vector<std::string> unwatched_members_;
-  // Links shipped as the file they name, by the in-root path they name: an
-  // absolute link to a file in the root is out of the root as a link (its target
-  // means another file on the client), so its row is that file's content -- and
-  // a change to the file touches the file's path, not the link's. Without this
-  // the mirror kept the link's first content for good, and a link left dangling
-  // until its target appeared was never listed. Rebuilt with every full listing;
-  // an update adds to it (a stale entry only costs a recomputed row).
   std::unordered_map<std::string, std::vector<std::string>> link_followers_;
   bool built_ = false;
   bool last_update_was_full_ = false;
@@ -182,4 +115,4 @@ class WorkspaceTree {
   std::atomic<std::size_t> hashed_files_{0};
 };
 
-}  // namespace microide::server
+}

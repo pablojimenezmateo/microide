@@ -1,9 +1,3 @@
-// Breakpoint / exception-filter send paths for DebugSession, split out of
-// DebugSession.cpp to keep that translation unit thin (mirrors the
-// DebugService / DebugServiceBreakpoints split). These are still DebugSession
-// members; only their definitions live here. The send order (line breakpoints,
-// function breakpoints, exception filters) is driven from HandleEvent's
-// `initialized` handler in DebugSession.cpp.
 #include "workspace/debug/DebugSession.h"
 
 #include <algorithm>
@@ -39,14 +33,9 @@ void DebugSession::SendBreakpointsForFile(const editor::BreakpointStore::FileBre
       continue;
     }
     dap_protocol::SetBreakpointInput input;
-    // BreakpointStore stores 0-based buffer lines; DAP wants 1-based. Clamp before
-    // the narrowing cast so a forged/corrupt persisted breakpoint near INT_MAX /
-    // SIZE_MAX cannot wrap to a negative or unrelated DAP line.
     input.line = breakpoint.line >= static_cast<std::size_t>(std::numeric_limits<int>::max() - 1)
                      ? std::numeric_limits<int>::max()
                      : static_cast<int>(breakpoint.line) + 1;
-    // Phase 6 fields, gated on adapter capabilities so we never send a key an
-    // adapter rejects. Empty values are omitted by the encoder regardless.
     if (caps.supports_conditional_breakpoints && breakpoint.condition) {
       input.condition = *breakpoint.condition;
     }
@@ -60,10 +49,6 @@ void DebugSession::SendBreakpointsForFile(const editor::BreakpointStore::FileBre
   }
 
   const std::filesystem::path path = file.path;
-  // Capture the requested 1-based lines (send order). The setBreakpoints response
-  // is positional to this list, so the host matches each result to a breakpoint by
-  // its requested line — robust to the user toggling another breakpoint in the same
-  // file while this request is in flight.
   std::vector<int> requested_lines;
   requested_lines.reserve(inputs.size());
   for (const dap_protocol::SetBreakpointInput& input : inputs) {
@@ -91,7 +76,6 @@ void DebugSession::ResendBreakpointsForFile(const std::filesystem::path& path) {
       return;
     }
   }
-  // No breakpoints remain for the file: send an empty list to clear them.
   SendBreakpointsForFile(editor::BreakpointStore::FileBreakpoints{.path = path});
 }
 
@@ -117,9 +101,6 @@ void DebugSession::SendFunctionBreakpoints() {
     requested_names.push_back(bp.name);
     inputs.push_back(std::move(input));
   }
-  // Always send (even an empty list) so a live re-send after removing the last
-  // function breakpoint clears them on the adapter. The response is positional to
-  // `requested_names`; the host matches each result back to a breakpoint by name.
   client_->SendRequestAsync(
       "setFunctionBreakpoints", dap_protocol::MakeSetFunctionBreakpointsArguments(inputs),
       [this, requested_names = std::move(requested_names)](
@@ -145,10 +126,6 @@ void DebugSession::SendExceptionFilters() {
     return;
   }
   const std::vector<ExceptionFilterRequest> enabled = callbacks_.exception_filter_provider();
-  // Send only ids the adapter advertised, in advertised order, so we never push a
-  // filter id the adapter would reject. A condition is honored only when both the
-  // adapter (supportsExceptionFilterOptions) and the specific filter
-  // (supportsCondition) accept it; otherwise the filter is sent plain.
   std::vector<std::string> ids;
   std::vector<std::pair<std::string, std::string>> options;
   for (const dap_protocol::DapExceptionFilter& filter : advertised) {
@@ -178,4 +155,4 @@ void DebugSession::ResendExceptionFilters() {
   SendExceptionFilters();
 }
 
-}  // namespace microide::workspace
+}

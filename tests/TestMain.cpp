@@ -11,11 +11,6 @@
 #include <string>
 #include <vector>
 
-// The shell's test binary: everything that needs SDL, the shell, the editor's
-// view layer, plugins or rendering. Tests of the SDL-free kernel live in
-// microide_kernel_tests (tests/KernelTestMain.cpp); both share tests/TestRunner.cpp,
-// so they take the same command line and shard the same way.
-
 namespace microide::tests {
 
 void RegisterApplicationTests(std::vector<TestCase>& tests);
@@ -368,30 +363,18 @@ void RegisterShellTests(std::vector<TestCase>& tests) {
   RegisterEditorMultiCaretMotionTests(tests);
 }
 
-}  // namespace
+}
 
-}  // namespace microide::tests
+}
 
 int main(int argc, char** argv) {
   microide::tests::TestSuiteConfig config;
   config.binary_name = "microide_tests";
   config.register_tests = &microide::tests::RegisterShellTests;
-  // Bind the kernel's wake path to SDL's event queue, exactly as Application does.
-  // Without it every producer's wake push fails and latches the shared owed bit,
-  // which is correct-but-degraded behaviour that several tests assert against.
   config.install_process_hooks = []() {
     microide::app::InstallSdlWaker();
-    // A test never opens a real OS dialog (see NativeDialogTestMode.h).
     microide::workspace::SetNativeDialogsDisabledForTesting(true);
   };
-  // Establish the dummy SDL video subsystem once, before any test runs. SDL's
-  // dummy driver derives the display content scale at video-init time; if any
-  // test emits an SDL_Log (e.g. the redraw-trace flush exercises production
-  // logging) before video is initialized, SDL's lazy-init path yields a 2x
-  // content scale. That stray scale makes the logical render size half the
-  // pixel output size, which disables the retained scene-texture path and fails
-  // Application/HeadlessRendersRetainedSceneFrame depending on test order.
-  // Initializing up front removes the order dependence on shared global state.
   config.set_up = []() -> std::optional<std::string> {
     try {
       microide::tests::EnsureDummySdlVideoInitialized();

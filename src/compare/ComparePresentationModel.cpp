@@ -8,12 +8,6 @@ namespace microide::compare {
 
 namespace {
 
-// Appends into a caller-owned buffer rather than returning a string, and uses no
-// `std::ostringstream`: the old spelling constructed a stream (and called
-// `.str()` — a whole copy of the accumulated text — once per separator test) on
-// every presentation rebuild, which is every keystroke in an editable diff. It
-// is empty for the overwhelmingly common Text/unrenamed/unchanged-mode case, so
-// almost all of that work produced nothing.
 void AppendMetadataSummary(const CompareSemanticFileMetadata& semantic, std::string& out) {
   const auto separate = [&out] {
     if (!out.empty()) {
@@ -62,14 +56,6 @@ bool RowIsChanged(const CompareRow& row) {
   return row.kind != CompareRowKind::Unchanged;
 }
 
-// Claim the next row of the slab, recycling the one already there.
-//
-// `rows` is written through a cursor rather than cleared and re-pushed, because
-// a rebuild fires on every keystroke in an editable diff and almost never
-// changes the row COUNT. Clearing freed three `std::string`s per row and the
-// rebuild allocated them straight back with, in the collapsed-run case, a count
-// that had not moved (TD-2026-08-17-261). Every field is reset here so a
-// recycled row carries nothing from its previous occupant.
 ComparePresentationRow& ClaimRow(ComparePresentationModel& presentation, std::size_t& cursor) {
   if (cursor == presentation.rows.size()) {
     presentation.rows.emplace_back();
@@ -92,8 +78,6 @@ ComparePresentationRow& ClaimRow(ComparePresentationModel& presentation, std::si
   return row;
 }
 
-// Finish a rebuild: drop any rows the new model did not need, then compose the
-// render-ready summaries.
 void FinishPresentationRows(ComparePresentationModel& presentation, std::size_t cursor) {
   presentation.rows.resize(cursor);
   for (ComparePresentationRow& row : presentation.rows) {
@@ -101,7 +85,7 @@ void FinishPresentationRows(ComparePresentationModel& presentation, std::size_t 
   }
 }
 
-}  // namespace
+}
 
 ComparePresentationCollapsedRunState* FindCollapsedRunState(
     std::vector<ComparePresentationCollapsedRunState>& collapsed_runs,
@@ -142,10 +126,6 @@ void BuildComparePresentationModelInto(ComparePresentationModel& presentation,
                                        const CompareModel& model,
                                        const CompareSemanticFileMetadata& semantic,
                                        const ComparePresentationOptions& options) {
-  // Double-buffer the collapsed-run list: the previous build's entries have to
-  // stay readable (they carry the per-run expand state) while the new ones are
-  // written. A swap recycles both buffers; the old spelling COPIED the vector to
-  // keep it, on every rebuild, plus a second copy in the by-value parameter.
   presentation.previous_collapsed_runs.swap(presentation.collapse_state.collapsed_runs);
   presentation.collapse_state.collapsed_runs.clear();
   const std::vector<ComparePresentationCollapsedRunState>& previous_collapsed_runs =
@@ -156,7 +136,7 @@ void BuildComparePresentationModelInto(ComparePresentationModel& presentation,
     ComparePresentationRow& metadata_row = ClaimRow(presentation, cursor);
     AppendMetadataSummary(semantic, metadata_row.summary_text);
     if (metadata_row.summary_text.empty()) {
-      --cursor;  // No metadata line for this file; give the slot straight back.
+      --cursor;
     } else {
       metadata_row.kind = ComparePresentationRowKind::Metadata;
     }
@@ -174,7 +154,6 @@ void BuildComparePresentationModelInto(ComparePresentationModel& presentation,
       ComparePresentationRow& note = ClaimRow(presentation, cursor);
       note.kind = ComparePresentationRowKind::ReviewNote;
       note.hunk_index = CompareDetachedNoteHunk(i);
-      // Where it was written: the line its export names.
       note.summary_text.assign("line ");
       if (detached.hunk_identity.has_value()) {
         const BranchReviewHunkIdentity& hunk = *detached.hunk_identity;
@@ -191,8 +170,6 @@ void BuildComparePresentationModelInto(ComparePresentationModel& presentation,
     return;
   }
 
-  // Every model row goes in through here, so a hunk's note follows its last row
-  // whichever loop below emits that row.
   const auto claim_model_row = [&](std::size_t index) {
     ClaimRow(presentation, cursor).model_row_index = index;
     const int hunk = model.rows[index].hunk;
@@ -308,15 +285,6 @@ void ComposeComparePresentationDisplaySummary(ComparePresentationRow& row) {
 
 std::size_t ComparePresentationRowForModelRow(const ComparePresentationModel& presentation,
                                               std::size_t model_row_index) {
-  // An exact Model row always wins. Otherwise fall to the nearest anchored row
-  // whose representative model start is <= the target: presentation rows are in
-  // ascending model order, and a collapsed run emits its visible prefix rows,
-  // then the CollapsedContext placeholder, then its visible suffix rows — so for
-  // a genuinely hidden interior row (which has no Model row of its own) the last
-  // anchor at-or-below it is exactly that run's placeholder. Note collapsed_run_
-  // length is the *full* run length including the visible context, so a
-  // containment test on it would wrongly capture the visible rows — the
-  // ascending nearest-anchor rule avoids that entirely.
   std::size_t best = 0;
   bool found = false;
   for (std::size_t i = 0; i < presentation.rows.size(); ++i) {
@@ -324,13 +292,13 @@ std::size_t ComparePresentationRowForModelRow(const ComparePresentationModel& pr
     std::size_t representative_start = 0;
     if (row.kind == ComparePresentationRowKind::Model) {
       if (row.model_row_index == model_row_index) {
-        return i;  // exact visible row
+        return i;
       }
       representative_start = row.model_row_index;
     } else if (row.kind == ComparePresentationRowKind::CollapsedContext) {
       representative_start = row.collapsed_run_start_model_row;
     } else {
-      continue;  // Metadata / HunkHeader rows have no model anchor.
+      continue;
     }
     if (representative_start <= model_row_index) {
       best = i;
@@ -362,4 +330,4 @@ std::size_t ComparePresentationToModelRow(const ComparePresentationModel& presen
   return 0;
 }
 
-}  // namespace microide::compare
+}

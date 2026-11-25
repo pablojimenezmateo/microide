@@ -36,14 +36,11 @@ using microide::util::Utf8SequenceLength;
 
 void TestStringUtilDecodeUtf8CodepointRejectsInvalidScalars() {
   using microide::util::DecodeUtf8Codepoint;
-  // Well-formed sequences decode to their scalar value.
   Expect(DecodeUtf8Codepoint("A") == U'A', "ASCII decodes to itself");
   Expect(DecodeUtf8Codepoint("\xC3\xA9") == 0x00E9, "2-byte é decodes correctly");
   Expect(DecodeUtf8Codepoint("\xE2\x82\xAC") == 0x20AC, "3-byte € decodes correctly");
   Expect(DecodeUtf8Codepoint("\xF0\x9F\x98\x80") == 0x1F600, "4-byte 😀 decodes correctly");
 
-  // Regression: the lead-byte-only length classification used to accept these
-  // malformed encodings and yield an invalid scalar. They must all map to U+FFFD.
   Expect(DecodeUtf8Codepoint("\xED\xA0\x80") == 0xFFFD,
          "UTF-16 high surrogate U+D800 must be rejected");
   Expect(DecodeUtf8Codepoint("\xE0\x80\x80") == 0xFFFD,
@@ -70,22 +67,17 @@ void TestStringUtilUtf8ByteBudgetTruncatesOnBoundary() {
   using microide::util::TruncateUtf8ToByteBudget;
   using microide::util::Utf8ByteBudgetPrefixLength;
 
-  // Fits within budget: no truncation, full length returned.
   Expect(Utf8ByteBudgetPrefixLength("abc", 3) == 3, "exact-fit keeps all bytes");
   Expect(Utf8ByteBudgetPrefixLength("abc", 100) == 3, "under-budget keeps all bytes");
   Expect(Utf8ByteBudgetPrefixLength("", 0) == 0, "empty stays empty");
 
-  // "a😀z": 'a'(1) + 😀(4 bytes: F0 9F 98 80) + 'z'(1) = 6 bytes total.
   const std::string mixed = "a😀z";
   Expect(mixed.size() == 6, "fixture is six bytes");
-  // Budget lands mid-emoji (2..4): the whole 4-byte sequence is dropped, keeping "a".
   Expect(Utf8ByteBudgetPrefixLength(mixed, 2) == 1, "budget mid-emoji backs off to boundary");
   Expect(Utf8ByteBudgetPrefixLength(mixed, 3) == 1, "budget mid-emoji backs off to boundary");
   Expect(Utf8ByteBudgetPrefixLength(mixed, 4) == 1, "budget mid-emoji backs off to boundary");
-  // Budget at the emoji's trailing edge (5) keeps 'a' + full emoji = 5 bytes.
   Expect(Utf8ByteBudgetPrefixLength(mixed, 5) == 5, "budget at codepoint boundary keeps it whole");
 
-  // In-place variant reports whether it truncated and never splits a codepoint.
   std::string s = mixed;
   Expect(TruncateUtf8ToByteBudget(s, 3), "over-budget reports truncation");
   Expect(s == "a", "truncation drops the straddling multi-byte sequence whole");
@@ -130,14 +122,9 @@ void TestStringUtilJoinLinesHonorsSeparatorsAndEmptyInput() {
   Expect(JoinLines({}, "\n").empty(),
          "join lines should keep empty inputs empty");
 
-  // A single line has no separators; the reserve-size loop (which adds one
-  // separator per line beyond the first) must not append a trailing separator.
   const std::vector<std::string> one = {"solo"};
   Expect(JoinLines(one, "::") == "solo", "a single line joins to itself with no separator");
 
-  // TD-2026-07-17-053: the reserve-size accumulation was hardened with saturating
-  // adds. Verify a larger, multi-length input still joins exactly so the refactor
-  // did not disturb the fast path (correct total reserve, no off-by-one).
   std::vector<std::string> many;
   std::string expected;
   for (int i = 0; i < 500; ++i) {
@@ -173,9 +160,6 @@ void TestStringUtilLineEndingHelpersRoundTrip() {
   Expect(ParseLineEndingLabel("cr") == LineEnding::CR,
          "line ending labels should parse back into enum values");
 
-  // TD-2026-07-17-095: the streaming serializer (used by LSP over a zero-copy
-  // LineSpan) must produce byte-identical output to SerializeLines for every line
-  // ending, so switching the LSP path off Snapshot() cannot change the payload.
   for (const LineEnding ending : {LineEnding::LF, LineEnding::CRLF, LineEnding::CR}) {
     Expect(microide::util::SerializeLinesStreaming(lines, ending) == SerializeLines(lines, ending),
            "streaming serializer matches SerializeLines for all line endings");
@@ -203,8 +187,6 @@ void TestCompareModelHandlesCrLfInputViaSharedSplitter() {
 }
 
 void TestStringUtilCollapseWhitespaceTracksMatchRange() {
-  // "  alpha   beta " collapses to "alpha beta"; the match "beta" in the raw
-  // string (bytes 9..13) should map onto the collapsed "beta" (bytes 6..10).
   const std::string_view raw = "  alpha   beta ";
   const std::size_t raw_match_start = raw.find("beta");
   std::size_t start = 99;
@@ -215,7 +197,6 @@ void TestStringUtilCollapseWhitespaceTracksMatchRange() {
   Expect(collapsed.substr(start, length) == "beta",
          "tracked match range should land on the collapsed match text");
 
-  // Leading-token match maps to offset 0.
   std::size_t lead_start = 99;
   std::size_t lead_length = 99;
   const std::string lead = microide::util::CollapseAsciiWhitespaceTrackingMatch(
@@ -223,7 +204,6 @@ void TestStringUtilCollapseWhitespaceTracksMatchRange() {
   Expect(lead_start == 0 && lead.substr(lead_start, lead_length) == "alpha",
          "leading match should map to the start of the collapsed preview");
 
-  // Out-of-range / empty match degrades to a zero-length range, never OOB.
   std::size_t empty_start = 99;
   std::size_t empty_length = 99;
   const std::string empty = microide::util::CollapseAsciiWhitespaceTrackingMatch(
@@ -231,9 +211,6 @@ void TestStringUtilCollapseWhitespaceTracksMatchRange() {
   Expect(empty == "alpha" && empty_length == 0 && empty_start <= empty.size(),
          "an out-of-range match should clamp to a safe zero-length highlight");
 
-  // Regression: a match whose last byte is whitespace and that consumes the whole
-  // trailing whitespace run (match_end points at the next word) used to lose its end
-  // (highlight collapsed to zero length). "a  b" -> "a b"; match "a  " maps to "a ".
   std::size_t trail_start = 99;
   std::size_t trail_length = 99;
   const std::string trail = microide::util::CollapseAsciiWhitespaceTrackingMatch(
@@ -245,10 +222,10 @@ void TestStringUtilCollapseWhitespaceTracksMatchRange() {
 
 void TestStringUtilAppendUtf8EncodesAllSequenceLengths() {
   std::string out;
-  microide::util::AppendUtf8(out, U'A');           // U+0041, 1 byte
-  microide::util::AppendUtf8(out, char32_t{0x00E9});   // é, 2 bytes
-  microide::util::AppendUtf8(out, char32_t{0x20AC});   // €, 3 bytes
-  microide::util::AppendUtf8(out, char32_t{0x1F600});  // 😀, 4 bytes
+  microide::util::AppendUtf8(out, U'A');
+  microide::util::AppendUtf8(out, char32_t{0x00E9});
+  microide::util::AppendUtf8(out, char32_t{0x20AC});
+  microide::util::AppendUtf8(out, char32_t{0x1F600});
   const std::string expected = {
       'A',
       static_cast<char>(0xC3), static_cast<char>(0xA9),
@@ -260,14 +237,11 @@ void TestStringUtilAppendUtf8EncodesAllSequenceLengths() {
   Expect(microide::util::IsValidUtf8(out),
          "AppendUtf8 output should be valid UTF-8");
 
-  // Round-trips against the decoder for an astral (4-byte) codepoint.
   std::string astral;
   microide::util::AppendUtf8(astral, char32_t{0x1F600});
   Expect(microide::util::DecodeUtf8Codepoint(astral) == char32_t{0x1F600},
          "AppendUtf8 should round-trip through DecodeUtf8Codepoint");
 
-  // Unencodable scalars (lone surrogate, above U+10FFFF) must fold to U+FFFD so
-  // AppendUtf8 never emits invalid UTF-8 downstream.
   const std::string replacement = {
       static_cast<char>(0xEF), static_cast<char>(0xBF), static_cast<char>(0xBD)};
   std::string surrogate;
@@ -302,20 +276,14 @@ void TestStringUtilSplitAsciiWhitespace() {
          "empty input should yield no tokens");
 }
 
-// TD-2026-07-16-30: bounded SplitNulDelimited/SplitLineViews stop materializing token
-// views once the cap is reached, so git parsers can't be forced to allocate millions
-// of slots before their own entry cap.
 void TestStringUtilBoundedSplitStopsAtCap() {
-  // NUL-delimited: 5 records, ask for 2.
   const std::string nul = std::string("a\0b\0c\0d\0e", 9);
   const auto records = microide::util::SplitNulDelimited(nul, 2);
   Expect(records.size() == 2, "bounded NUL split stops at the record cap");
   Expect(records[0] == "a" && records[1] == "b", "bounded NUL split keeps leading records");
   Expect(microide::util::SplitNulDelimited(nul, 0).empty(), "a zero cap yields no records");
-  // The unbounded form still returns everything.
   Expect(microide::util::SplitNulDelimited(nul).size() == 5, "unbounded NUL split is unchanged");
 
-  // Line views: 4 lines, ask for 2.
   const std::string_view lines = "l1\nl2\nl3\nl4";
   const auto capped = microide::util::SplitLineViews(lines, 2);
   Expect(capped.size() == 2, "bounded line split stops at the line cap");
@@ -324,8 +292,6 @@ void TestStringUtilBoundedSplitStopsAtCap() {
 }
 
 void TestStringUtilDecodeLinesSinglePassRegression() {
-  // Trailing newline keeps a final empty line; line ending detection must agree
-  // with the dominant style after the single-pass rewrite.
   const auto lf = microide::util::DecodeLines("a\nb\n");
   Expect(lf.lines.size() == 3 && lf.lines[0] == "a" && lf.lines[1] == "b" && lf.lines[2].empty(),
          "LF decode should keep the trailing empty row");
@@ -345,11 +311,6 @@ void TestStringUtilDecodeLinesSinglePassRegression() {
          "empty input should default to LF");
 }
 
-// MeasureLines exists so a caller that wants only "how many lines" and "how long
-// is the last one" does not split the text to find out. It is only correct while
-// it agrees with SplitLines/SplitLineViews on every input, so assert the
-// agreement rather than the two numbers, and pin the mixed/degenerate cases the
-// surround path can actually hand it.
 void TestMeasureLinesAgreesWithSplitLines() {
   const std::string_view cases[] = {
       "", "a", "a\nb", "a\n", "\n", "a\r\nb", "a\rb", "a\r\n", "a\r",
@@ -363,8 +324,6 @@ void TestMeasureLinesAgreesWithSplitLines() {
     Expect(shape.last_line_size == split.back().size(),
            std::string("MeasureLines last-line size must match SplitLines for ") +
                std::string(text));
-    // The normalized round trip the surround path used to take must agree too:
-    // that is the exact expression MeasureLines replaced.
     const auto normalized = microide::util::SplitLines(microide::util::NormalizeLineEndings(text));
     Expect(shape.count == normalized.size() && shape.last_line_size == normalized.back().size(),
            "MeasureLines must match SplitLines(NormalizeLineEndings(x)) as well");
@@ -431,7 +390,6 @@ void TestSaturatingMath() {
   Expect(SaturatingAdd<U64>(kMax, kMax) == kMax, "doubling the max clamps to the max");
 }
 
-// The terminal's cell width: wcwidth's rules over the generated Unicode tables.
 void TestStringUtilCodepointDisplayWidth() {
   using microide::util::CodepointDisplayWidth;
   Expect(CodepointDisplayWidth(U'a') == 1, "ASCII is one column");
@@ -469,31 +427,26 @@ void TestStringUtilUnicodeCaseFold() {
   using microide::util::Utf8IsIdentifierCodepoint;
   using microide::util::Utf8QueryHasCaseVariation;
 
-  // ASCII folds toward lowercase; non-letters untouched.
   Expect(SimpleFoldCodepoint(U'A') == U'a', "ASCII A folds to a");
   Expect(SimpleFoldCodepoint(U'z') == U'z', "ASCII z unchanged");
   Expect(SimpleFoldCodepoint(U'5') == U'5', "digit unchanged");
 
-  // Covered scripts fold uppercase to lowercase and are idempotent on lowercase.
-  Expect(SimpleFoldCodepoint(0x00C9) == 0x00E9, "É folds to é");        // Latin-1
+  Expect(SimpleFoldCodepoint(0x00C9) == 0x00E9, "É folds to é");
   Expect(SimpleFoldCodepoint(0x00E9) == 0x00E9, "é is stable");
   Expect(SimpleFoldCodepoint(0x00C4) == 0x00E4, "Ä folds to ä");
-  Expect(SimpleFoldCodepoint(0x0100) == 0x0101, "Ā folds to ā");        // Latin Ext-A even-upper
-  Expect(SimpleFoldCodepoint(0x0139) == 0x013A, "Ĺ folds to ĺ");        // Latin Ext-A odd-upper
-  Expect(SimpleFoldCodepoint(0x0391) == 0x03B1, "Greek Α folds to α");  // Greek
+  Expect(SimpleFoldCodepoint(0x0100) == 0x0101, "Ā folds to ā");
+  Expect(SimpleFoldCodepoint(0x0139) == 0x013A, "Ĺ folds to ĺ");
+  Expect(SimpleFoldCodepoint(0x0391) == 0x03B1, "Greek Α folds to α");
   Expect(SimpleFoldCodepoint(0x0394) == 0x03B4, "Greek Δ folds to δ");
   Expect(SimpleFoldCodepoint(0x0410) == 0x0430, "Cyrillic А folds to а");
   Expect(SimpleFoldCodepoint(0x042F) == 0x044F, "Cyrillic Я folds to я");
   Expect(SimpleFoldCodepoint(0x0401) == 0x0451, "Cyrillic Ё folds to ё");
 
-  // Turkish dotted/dotless I is deliberately excluded (locale-sensitive).
   Expect(SimpleFoldCodepoint(0x0130) == 0x0130, "İ intentionally unfolded");
   Expect(SimpleFoldCodepoint(0x0131) == 0x0131, "ı intentionally unfolded");
-  // The 0x3A2 Greek hole and × (0xD7) are not letters.
   Expect(SimpleFoldCodepoint(0x00D7) == 0x00D7, "× multiplication sign unchanged");
   Expect(SimpleFoldCodepoint(0x03A2) == 0x03A2, "the Greek capital hole is not a letter");
 
-  // The generated table reaches the scripts the hand-written ranges never did.
   Expect(SimpleFoldCodepoint(0x1EA0) == 0x1EA1, "Vietnamese Ạ folds to ạ");
   Expect(SimpleFoldCodepoint(0x0386) == 0x03AC, "accented Greek Ά folds to ά");
   Expect(SimpleFoldCodepoint(0x0460) == 0x0461, "extended Cyrillic Ѡ folds to ѡ");
@@ -508,8 +461,6 @@ void TestStringUtilUnicodeCaseFold() {
   Expect(Utf8CaseFold("VIỆT NAM") == Utf8CaseFold("việt nam"),
          "Vietnamese case-insensitive match after folding");
 
-  // Every fold keeps the scalar's UTF-8 byte length, which is the invariant the
-  // search paths rely on when they index a raw line by folded offsets.
   {
     std::string upper;
     std::string lower;
@@ -531,31 +482,24 @@ void TestStringUtilUnicodeCaseFold() {
     Expect(length_preserved, "every fold in the table preserves the UTF-8 byte length");
   }
 
-  // Whole-string folding matches across case for covered scripts.
   Expect(Utf8CaseFold("CafÉ") == Utf8CaseFold("café"),
          "mixed-case É matches lowercase é after folding");
   Expect(Utf8CaseFold("ПРИВЕТ") == Utf8CaseFold("привет"),
          "Cyrillic case-insensitive match after folding");
-  // Malformed bytes are preserved verbatim (byte alignment for match mapping).
   Expect(Utf8CaseFold("A\xFF" "B") == std::string("a\xFF" "b"),
          "invalid byte 0xFF preserved between folded ASCII");
 
-  // Smart-case detection is Unicode-aware.
   Expect(Utf8QueryHasCaseVariation("café") == false, "lowercase-only query has no case variation");
   Expect(Utf8QueryHasCaseVariation("cafÉ") == true, "É triggers case-sensitive smart-case");
   Expect(Utf8QueryHasCaseVariation("привет") == false, "lowercase Cyrillic has no case variation");
   Expect(Utf8QueryHasCaseVariation("Привет") == true, "uppercase Cyrillic triggers case-sensitivity");
 
-  // Identifier classification spans multi-byte letters, excludes punctuation.
   Expect(Utf8IsIdentifierCodepoint(U'a'), "ascii letter is identifier content");
   Expect(Utf8IsIdentifierCodepoint(U'_'), "underscore is identifier content");
   Expect(Utf8IsIdentifierCodepoint(0x00E9), "é is identifier content");
   Expect(Utf8IsIdentifierCodepoint(0x53D8), "CJK 变 is identifier content");
   Expect(!Utf8IsIdentifierCodepoint(U' '), "space is not identifier content");
   Expect(!Utf8IsIdentifierCodepoint(0x2013), "en-dash is not identifier content");
-  // Pictographs are symbols (UAX #31 leaves them out of identifiers): a run of
-  // emoji is not one word -- a tab typed into one split it, and the diff marked
-  // the whole line novel (soak 96055d2c8eec).
   Expect(!Utf8IsIdentifierCodepoint(0x1F600), "😀 is not identifier content");
   Expect(!Utf8IsIdentifierCodepoint(0x1F468), "👨 is not identifier content");
   Expect(!Utf8IsIdentifierCodepoint(0x1F1E9), "a regional indicator is not identifier content");
@@ -563,12 +507,10 @@ void TestStringUtilUnicodeCaseFold() {
   Expect(!Utf8IsIdentifierCodepoint(0x1FAE0), "a newer pictograph is not identifier content");
   Expect(Utf8IsIdentifierCodepoint(0x1D49C), "a mathematical letter (𝒜) is still identifier content");
 
-  // Identifier runs walk codepoints, not bytes: every byte of `größe` belongs to
-  // one run, a continuation byte snaps to its lead, and a symbol bounds the run.
   using microide::util::Utf8CodepointStartAt;
   using microide::util::Utf8IdentifierRunEnd;
   using microide::util::Utf8IdentifierRunStart;
-  const std::string_view text = "x=gr\xc3\xb6\xc3\x9f" "e+\xe2\x86\x92y";  // "x=größe+→y"
+  const std::string_view text = "x=gr\xc3\xb6\xc3\x9f" "e+\xe2\x86\x92y";
   const std::size_t g = 2;
   const std::size_t word_end = g + 7;
   Expect(Utf8CodepointStartAt(text, 5) == 4, "a continuation byte snaps to its lead byte");
@@ -585,10 +527,6 @@ void TestStringUtilUnicodeCaseFold() {
 }
 
 
-// LeadingByteRun reads eight bytes at a time, so the cases that matter are the
-// run ending at every offset inside a word, on a word boundary, and in the
-// sub-word tail — plus the all-matching span, which is the branch the indent
-// scan uses to recognise a blank line.
 void TestStringUtilLeadingByteRun() {
   const auto reference = [](std::string_view text, char byte) {
     for (std::size_t i = 0; i < text.size(); ++i) {
@@ -608,7 +546,6 @@ void TestStringUtilLeadingByteRun() {
              "an all-matching span matches the reference");
       for (std::size_t at = 0; at < length; ++at) {
         std::string text = all;
-        // A byte that differs from the searched one in every case above.
         text[at] = byte == 'z' ? 'y' : 'z';
         Expect(util::LeadingByteRun(text, byte) == reference(text, byte),
                "the run must end at the first non-matching byte, at every offset");
@@ -617,17 +554,9 @@ void TestStringUtilLeadingByteRun() {
       }
     }
   }
-  // A high byte must terminate the run like any other non-match (the word-at-a-
-  // time trick must not confuse the sign bit for a match).
   std::string high(20, ' ');
   high[13] = static_cast<char>(0xC3);
   Expect(util::LeadingByteRun(high, ' ') == 13, "a non-ASCII byte ends the run");
-  // EVERY other byte value must end the run, at every offset inside a word. The
-  // first word-at-a-time form applied the has-zero-byte trick per byte, which is
-  // exact only for "any zero byte": a byte equal to `byte ^ 0x01` above a matching
-  // byte in the same word borrowed its way into a false match, so
-  // `"  !      x"` read 9 leading spaces instead of 2 (the whole word passed, and
-  // the scalar tail started after it).
   for (char byte : kBytes) {
     for (int other = 0; other < 256; ++other) {
       if (static_cast<char>(other) == byte) {
@@ -647,11 +576,6 @@ void TestStringUtilLeadingByteRun() {
          "a backspace one byte into a tab run ends the run there");
 }
 
-// FirstNonAsciiOrByte reads eight bytes at a time, so the cases that matter are
-// exactly the ones a handful of literals miss: the target byte landing at every
-// offset inside a word, on a word boundary, and in the sub-word tail. Check it
-// against a plain byte-at-a-time reference at every length and every position,
-// for both bytes production passes it ('\t' for layout, '\0' for encoding).
 void TestStringUtilFirstNonAsciiOrByte() {
   const auto reference = [](std::string_view text, char also_match) {
     for (std::size_t i = 0; i < text.size(); ++i) {
@@ -668,17 +592,14 @@ void TestStringUtilFirstNonAsciiOrByte() {
       Expect(util::FirstNonAsciiOrByte(plain, target) == reference(plain, target),
              "a span with no match returns its size");
       for (std::size_t at = 0; at < length; ++at) {
-        // The searched-for byte itself.
         std::string with_target = plain;
         with_target[at] = target;
         Expect(util::FirstNonAsciiOrByte(with_target, target) == reference(with_target, target),
                "the target byte is found at every offset");
-        // A high byte, which must be reported even though it is not the target.
         std::string with_high = plain;
         with_high[at] = static_cast<char>(0xC3);
         Expect(util::FirstNonAsciiOrByte(with_high, target) == reference(with_high, target),
                "a non-ASCII byte is found at every offset");
-        // A high byte AFTER the target: the earlier of the two must win.
         if (at + 1 < length) {
           std::string both = plain;
           both[at] = target;
@@ -691,10 +612,6 @@ void TestStringUtilFirstNonAsciiOrByte() {
   }
 }
 
-// An LSP document must be valid UTF-8 JSON: clangd drops a didOpen holding one
-// stray byte, so a Latin-1 comment cost the whole file its language server. The
-// repair keeps every byte column (and the code-unit count the column math gives
-// it) where it was.
 void TestReplaceInvalidUtf8BytesKeepsColumns() {
   std::string latin = "// caf\xe9 au lait \xc3\xa9 ok \xe2\x82 cut \xf0\x9f\x98\x80\n";
   const std::size_t size = latin.size();
@@ -708,12 +625,8 @@ void TestReplaceInvalidUtf8BytesKeepsColumns() {
          "valid text is untouched");
 }
 
-}  // namespace
+}
 
-// The falsey/truthy token sets are shared by the env-var tracing switches and by
-// bool-typed settings (workspace::SettingFlagEnabled). Before consolidation the
-// settings copy was case-SENSITIVE and omitted "no", so `FALSE` and `no` both
-// read as ENABLED — the opposite of what the user wrote.
 void TestStringUtilConfigTokenSets() {
   using microide::util::IsFalseyToken;
   using microide::util::IsTruthyToken;
@@ -730,29 +643,18 @@ void TestStringUtilConfigTokenSets() {
     Expect(!IsFalseyToken(truthy),
            std::string("`") + std::string(truthy) + "` must not also read as falsey");
   }
-  // Neither set: an arbitrary payload (a log path, a mode name) is not a boolean.
-  // Callers that accept such values rely on the two predicates being distinct.
   for (const std::string_view other : {"", "word", "/tmp/dap.log", "offset", "nope", "falsey"}) {
     Expect(!IsFalseyToken(other) && !IsTruthyToken(other),
            std::string("`") + std::string(other) + "` is neither falsey nor truthy");
     Expect(!microide::util::ParseBoolToken(other).has_value(),
            std::string("`") + std::string(other) + "` does not parse as a boolean");
   }
-  // ParseBoolToken is the two sets as one parse: what a command argument (`:wrap
-  // On`) and a typed bool setting are read with, so neither keeps its own list.
   Expect(microide::util::ParseBoolToken("On") == std::optional<bool>(true) &&
              microide::util::ParseBoolToken("NO") == std::optional<bool>(false),
          "ParseBoolToken answers the truthy and falsey sets in any casing");
-  // SettingFlagEnabled is "enabled unless falsey", so a non-boolean payload
-  // ("word" for editor.wrap) stays enabled.
   Expect(!IsFalseyToken("word"), "a non-boolean setting payload must not read as disabled");
 }
 
-// The ASCII classifiers replaced `<cctype>` at every byte-scanning call site.
-// Two properties have to hold for that swap to be safe: they must agree with the
-// "C" locale over the ASCII range (so no parser changed meaning), and they must
-// reject every byte >= 0x80 (so UTF-8 continuation bytes can never be classified
-// as word/identifier content the way a non-C locale's `isalnum` would).
 void TestStringUtilAsciiClassifiersAreLocaleIndependent() {
   using microide::util::IsAsciiAlnum;
   using microide::util::IsAsciiAlpha;
@@ -764,7 +666,6 @@ void TestStringUtilAsciiClassifiersAreLocaleIndependent() {
   using microide::util::ToLowerAsciiChar;
   using microide::util::ToUpperAsciiChar;
 
-  // Exact "C" locale isspace set: space plus \t \n \v \f \r.
   for (int c = 0; c < 256; ++c) {
     const auto byte = static_cast<unsigned char>(c);
     const bool expected_space = (c == ' ' || (c >= 0x09 && c <= 0x0D));
@@ -778,9 +679,6 @@ void TestStringUtilAsciiClassifiersAreLocaleIndependent() {
            "IsAsciiAlnum is letters plus digits");
   }
 
-  // No byte outside ASCII is ever classified as content. This is the property a
-  // locale-sensitive `<cctype>` could violate (e.g. Latin-1 letters under a
-  // non-C locale), which would silently move word/identifier boundaries.
   for (int c = 0x80; c < 256; ++c) {
     const auto byte = static_cast<unsigned char>(c);
     Expect(!IsAsciiSpace(byte) && !IsAsciiAlnum(byte) && !IsAsciiHexDigit(byte),
@@ -807,21 +705,11 @@ void TestStringUtilContainsCaseInsensitiveAscii() {
   Expect(ContainsCaseInsensitiveAscii("abc", "abc"), "a whole-string needle matches");
   Expect(!ContainsCaseInsensitiveAscii("abc", "abcd"), "an over-long needle cannot match");
   Expect(!ContainsCaseInsensitiveAscii("", "a"), "an empty haystack matches nothing");
-  // The first-byte fast reject must not skip a later occurrence: 'a' appears
-  // three times before the only real match.
   Expect(ContainsCaseInsensitiveAscii("ax ay aZq", "azq"),
          "a repeated first byte does not hide a later match");
   Expect(!ContainsCaseInsensitiveAscii("aaaa", "aab "), "a near-miss tail still rejects");
 }
 
-// Ids and names are now expanded from one MICROIDE_PERF_COUNTERS list, so the
-// old failure mode — inserting an id without inserting its name at the matching
-// position, silently relabelling every counter after that point — is gone by
-// construction and the positional anchors this test used to pin are no longer
-// meaningful. What the macro cannot check is that two entries did not get the
-// same *name*: a copy-pasted row compiles, and then two subsystems' numbers land
-// under one label in every readout. That, and the naming convention, is what is
-// left to test.
 void TestPerformanceCounterNamesStayAlignedWithIds() {
   using microide::util::PerfCounterId;
   using microide::util::PerformanceCounterName;
@@ -830,8 +718,6 @@ void TestPerformanceCounterNamesStayAlignedWithIds() {
   for (std::size_t i = 0; i < microide::util::kPerfCounterCount; ++i) {
     const std::string_view name = PerformanceCounterName(static_cast<PerfCounterId>(i));
     Expect(!name.empty(), "every perf counter id must have a name");
-    // "<subsystem>.<event>": the dump groups by this prefix, and a name with no
-    // dot sorts into nobody's group.
     const std::size_t dot = name.find('.');
     Expect(dot != std::string_view::npos && dot > 0 && dot + 1 < name.size(),
            "perf counter names must be <subsystem>.<event>");
@@ -842,17 +728,13 @@ void TestPerformanceCounterNamesStayAlignedWithIds() {
          "perf counter names must be unique");
 }
 
-// The aggregating mode is the one that has to be right: a self-time column that
-// double-counts nested scopes would rank every outer scope above the inner one
-// actually burning the time, which is the exact mistake the summary exists to
-// avoid.
 void TestTraceChannelAggregatesSelfTimeBelowChildren() {
   using microide::util::TraceChannel;
   using microide::util::TraceScope;
 
   ::setenv("MICROIDE_TEST_TRACE_AGGREGATE", "1", 1);
-  TraceChannel channel("test", /*stream_env=*/nullptr, "MICROIDE_TEST_TRACE_AGGREGATE",
-                       /*min_duration_env=*/nullptr);
+  TraceChannel channel("test", nullptr, "MICROIDE_TEST_TRACE_AGGREGATE",
+                       nullptr);
   Expect(channel.AggregateEnabled(), "aggregate mode follows its env flag");
   Expect(!channel.StreamEnabled(), "a null stream env leaves streaming off");
 
@@ -860,9 +742,6 @@ void TestTraceChannelAggregatesSelfTimeBelowChildren() {
     TraceScope outer(channel, "outer");
     for (int i = 0; i < 3; ++i) {
       TraceScope inner(channel, "inner");
-      // Busy-wait rather than sleep: sleeping is not guaranteed to advance the
-      // steady clock by the requested amount on a loaded machine, and the
-      // assertions below only need inner to dominate outer.
       const auto start = std::chrono::steady_clock::now();
       while (std::chrono::steady_clock::now() - start < std::chrono::milliseconds(2)) {
       }
@@ -871,8 +750,6 @@ void TestTraceChannelAggregatesSelfTimeBelowChildren() {
 
   const std::vector<TraceChannel::AggregateEntry> entries = channel.AggregateSnapshot();
   Expect(entries.size() == 2, "one entry per distinct label");
-  // Ranked by self time, so the child that burned the time must come first even
-  // though the parent's total wall time is larger.
   Expect(entries.front().label == "inner", "the summary ranks by self time, not total");
   Expect(entries.front().count == 3, "repeat scopes accumulate into one row");
 
@@ -889,16 +766,13 @@ void TestTraceChannelAggregatesSelfTimeBelowChildren() {
   ::unsetenv("MICROIDE_TEST_TRACE_AGGREGATE");
 }
 
-// Labels embed paths and counts, so a long session can mint unbounded distinct
-// labels. The cap must fold the excess into one bucket rather than growing the
-// map forever — an instrumentation leak is worse than the pitfall it hunts.
 void TestTraceChannelCapsDistinctLabels() {
   using microide::util::TraceChannel;
   using microide::util::TraceScope;
 
   ::setenv("MICROIDE_TEST_TRACE_CAP", "1", 1);
-  TraceChannel channel("test", /*stream_env=*/nullptr, "MICROIDE_TEST_TRACE_CAP",
-                       /*min_duration_env=*/nullptr);
+  TraceChannel channel("test", nullptr, "MICROIDE_TEST_TRACE_CAP",
+                       nullptr);
 
   const std::size_t over = TraceChannel::kMaxAggregateLabels + 64;
   for (std::size_t i = 0; i < over; ++i) {
@@ -918,16 +792,13 @@ void TestTraceChannelCapsDistinctLabels() {
   ::unsetenv("MICROIDE_TEST_TRACE_CAP");
 }
 
-// Nesting depth used to live in one shared, mutex-guarded int, so a scope on a
-// background thread shifted the indentation of a concurrent main-thread scope
-// and both threads' self-time attribution. Depth is per-thread now.
 void TestTraceChannelKeepsNestingPerThread() {
   using microide::util::TraceChannel;
   using microide::util::TraceScope;
 
   ::setenv("MICROIDE_TEST_TRACE_THREADS", "1", 1);
-  TraceChannel channel("test", /*stream_env=*/nullptr, "MICROIDE_TEST_TRACE_THREADS",
-                       /*min_duration_env=*/nullptr);
+  TraceChannel channel("test", nullptr, "MICROIDE_TEST_TRACE_THREADS",
+                       nullptr);
 
   {
     TraceScope held(channel, "main-outer");
@@ -945,14 +816,9 @@ void TestTraceChannelKeepsNestingPerThread() {
                                     return entry.label == "main-outer";
                                   });
   Expect(outer != entries.end(), "the main-thread scope is recorded");
-  // The worker's scopes are not nested inside `main-outer` — they ran on another
-  // thread — so none of their time may be subtracted from its self time.
   Expect(outer->self_ms == outer->total_ms,
          "another thread's scopes are not charged as this scope's children");
 
-  // Main-thread attribution: a background scope costs the user no frames, so it
-  // must not be counted against the thread whose stalls they feel. Ranking on
-  // self time alone put a 161 ms background tree walk above a 32 ms render stall.
   const auto worker = std::find_if(entries.begin(), entries.end(),
                                    [](const TraceChannel::AggregateEntry& entry) {
                                      return entry.label == "worker";
@@ -967,16 +833,13 @@ void TestTraceChannelKeepsNestingPerThread() {
   ::unsetenv("MICROIDE_TEST_TRACE_THREADS");
 }
 
-// ScopeLabel replaced ten hand-rolled `if (Enabled()) label += ...` chains. Its
-// whole reason to exist is that a missed guard is a heap allocation per call in
-// production, so the off-path contract is the assertion that matters.
 void TestScopeLabelBuildsNothingWhenTheChannelIsOff() {
   using microide::util::PerformanceTrace;
   using microide::util::TraceChannel;
 
   ::unsetenv("MICROIDE_TEST_LABEL_OFF");
-  TraceChannel off("test", "MICROIDE_TEST_LABEL_OFF", /*aggregate_env=*/nullptr,
-                   /*min_duration_env=*/nullptr);
+  TraceChannel off("test", "MICROIDE_TEST_LABEL_OFF", nullptr,
+                   nullptr);
   Expect(!off.Enabled(), "an unset env leaves the channel off");
 
   PerformanceTrace::ScopeLabel label(off, "Some::Scope");
@@ -985,15 +848,13 @@ void TestScopeLabelBuildsNothingWhenTheChannelIsOff() {
   Expect(label.View().empty(), "an off channel builds no label text at all");
 
   ::setenv("MICROIDE_TEST_LABEL_ON", "1", 1);
-  TraceChannel on("test", "MICROIDE_TEST_LABEL_ON", /*aggregate_env=*/nullptr,
-                  /*min_duration_env=*/nullptr);
+  TraceChannel on("test", "MICROIDE_TEST_LABEL_ON", nullptr,
+                  nullptr);
   PerformanceTrace::ScopeLabel built(on, "Some::Scope");
   built.Field("path", std::filesystem::path("/a/b"));
   built.Field("index", 7);
   Expect(built.View() == "Some::Scope(path=/a/b,index=7)",
          "fields are comma-joined inside one parenthesized group");
-  // View() must be idempotent: a caller that reads it twice (or logs it before
-  // passing it to a Scope) must not get a second closing paren.
   Expect(built.View() == "Some::Scope(path=/a/b,index=7)", "View() is idempotent");
 
   PerformanceTrace::ScopeLabel bare(on, "Bare::Scope");
@@ -1002,10 +863,6 @@ void TestScopeLabelBuildsNothingWhenTheChannelIsOff() {
 }
 
 
-// SHA-256 against reference digests (Python hashlib) for lengths around every
-// padding boundary (55/56/57, 63/64/65, 119/120, 127/128/129) plus the FIPS
-// "abc" and million-'a' vectors. The hash gates downloaded tools and plugin
-// integrity, and it had no reference test at all.
 void TestUtilSha256MatchesReferenceVectors() {
   using microide::util::Sha256Hex;
   std::string pattern(200, '\0');
@@ -1045,8 +902,6 @@ void TestUtilSha256MatchesReferenceVectors() {
          "sha256 of one million 'a' matches FIPS 180-2");
 }
 
-// For an API that refuses invalid UTF-8 whole (SDL_SetWindowTitle): each bad
-// byte becomes U+FFFD, valid sequences stay, and valid text is left alone.
 void TestReplaceInvalidUtf8WithReplacementCharacter() {
   std::string cut = "compare: .git\xF0\x9F\x98\x80\xF0\x9F x\xFF";
   Expect(microide::util::ReplaceInvalidUtf8WithReplacementCharacter(cut), "the bad bytes are replaced");
@@ -1116,4 +971,4 @@ void RegisterStringUtilTests(std::vector<TestCase>& tests) {
           TestCompareModelHandlesCrLfInputViaSharedSplitter);
 }
 
-}  // namespace microide::tests
+}

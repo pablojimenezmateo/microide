@@ -36,9 +36,6 @@ using microide::workspace::PersistenceCoordinator;
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
-// Divider grab rects for the active merge tab. DiffDividerGeometry.h takes
-// WorkspaceShell by name, so it cannot be reached from inside the TestAccess class
-// body; this lives here instead and reads the same geometry production does.
 std::array<SDL_FRect, 2> MergeDividerRectsOf(microide::workspace::WorkspaceShell& shell) {
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
   return microide::workspace::MergeDividerHitRects(
@@ -62,9 +59,6 @@ class ScopedSessionAppHomes {
   ScopedEnvVar appdata_;
 };
 
-// The terminal panel comes back as it was (VS Code's revive): the same tabs and
-// splits, each a fresh shell in the directory it was in, the active tab and pane,
-// and the maximized panel. A split starts where the pane it splits is now.
 void TestWorkspaceShellTerminalLayoutRevivesAcrossSessions() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -83,7 +77,6 @@ void TestWorkspaceShellTerminalLayoutRevivesAcrossSessions() {
     Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, true, false), "the project opens");
     Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 1, "with its default terminal");
     Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::TerminalSplit, {}), "split");
-    // The new (active) pane's shell moves to src/ and says so (OSC 7).
     TerminalSessionTestAccess::AppendOutput(
         WorkspaceShellTestAccess::TerminalPaneSession(shell, 1),
         "\x1b]7;file://localhost" + (root / "src").string() + "\x1b\\");
@@ -119,11 +112,6 @@ void TestWorkspaceShellTerminalLayoutRevivesAcrossSessions() {
   Expect(WorkspaceShellTestAccess::PanelContent(restored) ==
              WorkspaceShell::PanelContentKind::Terminal,
          "showing the terminals");
-  // Regression: the restored session put the keyboard in the editor, and the
-  // first frame's SyncPanelMaximizedWithFocus read "the editor took focus" and
-  // un-maximized the panel. The state above was right; what the user saw was not.
-  // A maximized panel has no editor on screen to hold the keyboard, so it is the
-  // panel's.
   Expect(WorkspaceShellTestAccess::FocusIsPanel(restored),
          "a maximized panel comes back holding the keyboard");
   {
@@ -136,24 +124,17 @@ void TestWorkspaceShellTerminalLayoutRevivesAcrossSessions() {
            "the restored panel is still maximized after its first frames");
   }
 
-  // Off: the project opens with the one default terminal.
   Expect(WorkspaceShellTestAccess::SetSettingValue(restored, "terminal.restore_sessions", "false"),
          "the setting is accepted");
   WorkspaceShellTestAccess::SaveUserConfig(restored);
-  WorkspaceShellTestAccess::SaveSessionState(restored);  // what it revived, saved back
+  WorkspaceShellTestAccess::SaveSessionState(restored);
   WorkspaceShell plain;
-  // The user config is restored by a launch's Initialize, as the setting would be.
   Expect(plain.Initialize(root), "a fresh launch opens the project without reviving");
   Expect(WorkspaceShellTestAccess::TerminalTabCount(plain) == 1 &&
              WorkspaceShellTestAccess::TerminalPaneCount(plain) == 1,
          "terminal.restore_sessions off opens the default terminal only");
 }
 
-// Same root cause as the restore above, on the in-memory path: re-activating a
-// project hydrates its active editor tab through `Activate`, which took the
-// keyboard into the editor -- collapsed under the maximized panel -- and the next
-// frame restored the panel. Switching away and back must leave the project as it
-// was: maximized, with the keyboard in the panel.
 void TestWorkspaceShellProjectSwitchKeepsAMaximizedPanel() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path alpha = temp_dir.path() / "alpha";
@@ -190,9 +171,6 @@ void TestWorkspaceShellProjectSwitchKeepsAMaximizedPanel() {
          "alpha's panel is still maximized after the switch back");
 }
 
-// The ways a user actually switches -- a click on the project tab, Next/Previous
-// Project, the other project maximized too -- each painted between steps as the
-// app paints them (the "sometimes" a single SwitchProject call did not cover).
 void TestWorkspaceShellEveryProjectSwitchKeepsAMaximizedPanel() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path alpha = temp_dir.path() / "alpha";
@@ -242,7 +220,6 @@ void TestWorkspaceShellEveryProjectSwitchKeepsAMaximizedPanel() {
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "project-prev"), "Previous Project");
   alpha_maximized("Next Project and Previous Project");
 
-  // Beta maximized too: each project keeps its own.
   click_project_tab(1);
   Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::PanelToggleMaximized, {}),
          "maximize beta's panel");
@@ -253,8 +230,6 @@ void TestWorkspaceShellEveryProjectSwitchKeepsAMaximizedPanel() {
   frame();
   Expect(WorkspaceShellTestAccess::PanelMaximized(shell), "beta's panel is still maximized");
 
-  // A hover over the project strip on the way, and a click on the TERMINAL first
-  // (the keyboard is the panel's either way).
   click_project_tab(0);
   const SDL_FRect panel = WorkspaceShellTestAccess::CurrentLayout(shell).bottom_panel;
   (void)SendMouseDown(shell, panel.x + panel.w * 0.5f, panel.y + panel.h * 0.6f, SDL_BUTTON_LEFT);
@@ -424,10 +399,6 @@ void TestWorkspaceShellRestoreWorkspaceSessionAcrossProjects() {
          "restored first project should preserve compare horizontal scroll");
 }
 
-// Regression: `active_project_index` indexes the ORIGINAL saved project list. If a
-// project positioned BEFORE the active one is missing on restore, it is culled and
-// every later project shifts down — so the active index must be remapped, not just
-// clamped, or the wrong project activates on startup.
 void TestWorkspaceShellRestoreRemapsActiveIndexAfterMissingProjectCulled() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path first_root = temp_dir.path() / "alpha";
@@ -450,33 +421,23 @@ void TestWorkspaceShellRestoreRemapsActiveIndexAfterMissingProjectCulled() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, first_root, false, false), "open alpha");
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, second_root, false, false), "open beta");
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, third_root, false, false), "open gamma");
-  // Activate the MIDDLE project (beta, original index 1).
   Expect(WorkspaceShellTestAccess::SwitchProject(shell, 1, false), "activate beta");
   Expect(WorkspaceShellTestAccess::ActiveProjectIndex(shell) == 1, "beta is active pre-save");
   WorkspaceShellTestAccess::SaveSessionState(shell);
   WorkspaceShellTestAccess::SaveWorkspaceSession(shell);
 
-  // The first project vanishes between sessions.
   std::filesystem::remove_all(first_root);
 
   WorkspaceShell restored;
   Expect(WorkspaceShellTestAccess::RestoreWorkspaceSession(restored), "restore should succeed");
   Expect(WorkspaceShellTestAccess::ProjectCount(restored) == 2,
          "the two surviving projects are restored");
-  // beta must still be the active project (now at index 0), not gamma.
   Expect(WorkspaceShellTestAccess::ProjectRoot(restored) == second_root.lexically_normal(),
          "the originally-active project (beta) must stay active after culling alpha");
   Expect(WorkspaceShellTestAccess::ActiveProjectIndex(restored) == 0,
          "beta's remapped active index is 0 after the missing predecessor is culled");
 }
 
-// A project whose folder is gone at restore but whose session holds unsaved work
-// is kept, marked missing, and its unsaved buffers come back when it is opened.
-// A branch switch deleted a project's folder, the app was killed, and the
-// relaunch culled the project with the buffers in it (soak 5508be921fb2 and the
-// "did not come back after a kill -9" family): the text sat in the project's
-// session file with nothing left to read it. A missing project with nothing
-// unsaved is still culled, as before.
 void TestWorkspaceShellRestoreKeepsAMissingProjectWithUnsavedWork() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path first_root = temp_dir.path() / "alpha";
@@ -507,7 +468,6 @@ void TestWorkspaceShellRestoreKeepsAMissingProjectWithUnsavedWork() {
     WorkspaceShellTestAccess::SaveWorkspaceSession(shell);
   }
 
-  // Both folders vanish between sessions: beta with unsaved work, gamma without.
   std::filesystem::remove_all(second_root);
   std::filesystem::remove_all(third_root);
 
@@ -535,12 +495,6 @@ void TestWorkspaceShellRestoreKeepsAMissingProjectWithUnsavedWork() {
   Expect(WorkspaceShellTestAccess::SwitchProject(restored, 0, false), "and alpha opens again");
 }
 
-// Soak e946ec9333d7's shape, the app's half: a second project open -- through a
-// symlink, `weird/loop` with `loop -> .` -- active and edited when the app dies
-// after the crash-safety flush. The relaunch brings both projects back, the
-// second active, with its unsaved buffer. (The finding itself was the oracle's:
-// the QA relaunch names the first project, which then rightly activates, and the
-// oracle read only the active project's documents.)
 void TestWorkspaceShellCrashSafetyKeepsASecondProjectAndItsActiveIndex() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path first_root = temp_dir.path() / "alpha";
@@ -561,8 +515,6 @@ void TestWorkspaceShellCrashSafetyKeepsASecondProjectAndItsActiveIndex() {
     WorkspaceShellTestAccess::SaveWorkspaceSession(shell);
     Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, second_root, false, false), "open loop");
     Expect(WorkspaceShellTestAccess::ActiveProjectIndex(shell) == 1, "loop is active");
-    // Back to alpha and saved there, then to loop again: the switch is what
-    // changes the workspace record after its last write.
     Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false), "activate alpha");
     WorkspaceShellTestAccess::SaveSessionState(shell);
     WorkspaceShellTestAccess::SaveWorkspaceSession(shell);
@@ -583,10 +535,6 @@ void TestWorkspaceShellCrashSafetyKeepsASecondProjectAndItsActiveIndex() {
   const auto& view = WorkspaceShellTestAccess::ActiveEditor(restored);
   Expect(view.dirty() && !view.lines().empty() && view.lines()[0] == "unsaved beta",
          "its unsaved buffer comes back (" + view.path().string() + ")");
-  // The other project comes back as a catalog entry whose tabs load when it is
-  // activated, so a `documents` query lists nothing of it yet. The `projects`
-  // query says so; without it the kill -9 oracle read that project's unsaved
-  // buffers as lost (soak 55673209c35c).
   const util::JsonValue projects = WorkspaceShellTestAccess::ExecuteControlQuery(restored, "projects");
   std::string loaded;
   for (const util::JsonValue& project : projects.AsArray()) {
@@ -603,13 +551,6 @@ void TestWorkspaceShellCrashSafetyKeepsASecondProjectAndItsActiveIndex() {
   Expect(loaded == "11", "a project once activated stays loaded (" + loaded + ")");
 }
 
-// Soak 0afa15c55c0f (deterministic, minimized to 60 actions): with
-// `editor.autosave = on_focus_change`, the relaunch after a crash brought the
-// unsaved buffer back -- and then saved it, with the save's transforms (a final
-// newline), before the user did anything. Restoring the projects put the start
-// page, a restored tab and the start page again in front on the first frames,
-// and frame prep read each change of the editor in front as the user leaving it.
-// The focus-change autosave is the USER moving focus: it arms on the first input.
 void TestWorkspaceShellARestoredUnsavedBufferIsNotAutosaved() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -633,9 +574,7 @@ void TestWorkspaceShellARestoredUnsavedBufferIsNotAutosaved() {
     shell.Render(canvas.renderer(), 1280, 720);
     (void)shell.ConsumePendingRenderInvalidation();
   };
-  frame();  // the start page in front, as on a relaunch's first frame
-  // What a restore does, with no input: an unsaved buffer comes back, then another
-  // tab is put in front.
+  frame();
   WorkspaceShellTestAccess::OpenFile(shell, root / "empty.txt");
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("Mé");
   frame();
@@ -644,7 +583,6 @@ void TestWorkspaceShellARestoredUnsavedBufferIsNotAutosaved() {
   Expect(ReadFile(root / "empty.txt").empty(),
          "nothing the user did moved focus, so nothing is saved: empty.txt holds [" +
              ReadFile(root / "empty.txt") + "]");
-  // The user's input arms it: a key, then focus moves to the other editor.
   (void)shell.HandleEvent(KeyDownEvent(SDLK_RIGHT));
   frame();
   WorkspaceShellTestAccess::ActivateTab(shell, 1 - WorkspaceShellTestAccess::GroupActiveTabIndex(shell, 0));
@@ -754,10 +692,6 @@ void TestWorkspaceShellShutdownPreservesDistinctWorkspaceProjectRoots() {
          "restored workspace should preserve the second saved project root");
 }
 
-// Saving a merge invalidates its file's blame, and the inline annotation on the
-// result pane's caret line drops until the re-fetch lands; the repaint asked for
-// it only when an EDITOR tab showed the file, so the merge result kept the old
-// annotation (QA merge-mouse: a stale "Ada Lovelace" beside the saved line).
 void TestWorkspaceShellMergeBlameInvalidationRepaintsTheResultPane() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -783,8 +717,6 @@ void TestWorkspaceShellMergeBlameInvalidationRepaintsTheResultPane() {
   WorkspaceShellTestAccess::InvalidateEditorBlamePath(shell, output);
   const auto request = shell.ConsumePendingRenderInvalidation();
   Expect(request.HasAnyRedraw(), "invalidating the merge result's blame should owe a frame");
-  // What it repaints is what the overlay changed: in this fixture (no repository)
-  // there is no blame before or after, so the frame may damage nothing.
   (void)FrameDamage(shell, canvas, 1280, 720, request);
 }
 
@@ -815,7 +747,6 @@ void TestWorkspaceShellMergeHorizontalNavigationInvalidatesResultPane() {
                                     surface.gutter_width + surface.left_width,
                                     layout.editor_surface.h);
 
-  // A frame painted first: the derived surfaces compare with it.
   SoftwareCanvas canvas{1280, 720};
   shell.Render(canvas.renderer(), 1280, 720);
   (void)shell.ConsumePendingRenderInvalidation();
@@ -823,7 +754,6 @@ void TestWorkspaceShellMergeHorizontalNavigationInvalidatesResultPane() {
   event.type = SDL_EVENT_KEY_DOWN;
   event.key.key = SDLK_RIGHT;
   const auto result = shell.HandleEvent(event);
-  // What the frame repaints: the event's rects and what preparing it derives.
   const auto damage = FrameDamage(shell, canvas, 1280, 720, result.redraw);
 
   Expect(result.handled, "merge horizontal navigation should be handled");
@@ -861,7 +791,6 @@ void TestWorkspaceShellMoveMergeSelectionInvalidatesConflictBand() {
          "merge conflict invalidation fixture should open");
   (void)shell.ConsumePendingRenderInvalidation();
 
-  // A frame painted first: the derived surfaces compare with it.
   SoftwareCanvas canvas{1280, 720};
   shell.Render(canvas.renderer(), 1280, 720);
   (void)shell.ConsumePendingRenderInvalidation();
@@ -870,9 +799,6 @@ void TestWorkspaceShellMoveMergeSelectionInvalidatesConflictBand() {
   const auto request = shell.ConsumePendingRenderInvalidation();
   const auto next_conflict_rect = WorkspaceShellTestAccess::ActiveMergeConflictRect(shell, 1);
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
-  // What the frame repaints: the request's rects and what preparing it derives.
-  // (That the pixels then match a full repaint is QaFlowRegression/
-  // MergeRowDamageFollowsEveryStateTransition's "select conflict" steps.)
   const auto redraw = FrameDamage(shell, canvas, 1280, 720, request);
 
   Expect(!redraw.full && !redraw.rects.empty(), "merge conflict navigation should stay on a partial redraw path");
@@ -955,10 +881,6 @@ void TestWorkspaceShellRestoreSessionPreservesRenamedWorkingTreeCompareState() {
          "restored compare should preserve the pre-rename commit-vs-working-tree content");
 }
 
-// J15 regression: a stale/corrupt persisted `selected_launch_config_index` that
-// points past the rebuilt launch-config list must be clamped/reset on restore.
-// An out-of-range selection makes StartDebuggingWithDefaultConfig ignore every
-// launch config and fall back to the first registered adapter with empty args.
 void TestWorkspaceShellRestoreClampsOutOfRangeSelectedLaunchConfig() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -977,13 +899,8 @@ void TestWorkspaceShellRestoreClampsOutOfRangeSelectedLaunchConfig() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenFile(shell, source);
-  // Persist the session so a later restore has a project-session file to load
-  // (RestoreDebugState runs as part of RestoreSessionState).
   WorkspaceShellTestAccess::SaveSessionState(shell);
 
-  // Write a stale debug-state file directly: exactly one launch config, but a
-  // persisted selected index of 2 (out of range). A plain copy-through of the
-  // index would leave the restored state pointing past the end of the list.
   microide::workspace::PersistedDebugState persisted;
   persisted.launch_configs.push_back(microide::workspace::PersistedLaunchConfig{
       .name = "Debug main",
@@ -1027,8 +944,6 @@ void TestWorkspaceShellCompareSyntaxTokensAreDeferredUntilRender() {
          "working-tree comparison should open for deferred syntax-token fixture");
 
   const auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
-  // Each window is addressed by its own pane's lines (three, and the trailing
-  // empty one).
   Expect(compare.left_token_window.line_count() == compare.left_line_rows.size() &&
              compare.left_token_window.line_count() >= 3,
          "deferred compare syntax should size the left token window to the left pane's lines");
@@ -1126,9 +1041,6 @@ void TestWorkspaceShellReopenClearsFoldCollapseState() {
          "reopening a clean editor should clear prior collapsed fold state");
 }
 
-// A caret that moves into a collapsed fold's hidden body reveals the fold on the
-// next frame (VS Code's revealCursor); a fold collapsing around a caret that did
-// not move stays collapsed, and the next keystroke inside it reveals it.
 void TestWorkspaceShellCaretMovedIntoCollapsedFoldRevealsIt() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1139,8 +1051,6 @@ void TestWorkspaceShellCaretMovedIntoCollapsedFoldRevealsIt() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
-  // A real renderer: frame preparation (where the fold refresh lives) returns
-  // early for the null renderer the plain RenderFrame passes.
   SoftwareCanvas canvas(1280, 720);
   const auto frame = [&] { WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer()); };
   auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
@@ -1152,19 +1062,17 @@ void TestWorkspaceShellCaretMovedIntoCollapsedFoldRevealsIt() {
   frame();
   Expect(model->IsCollapsedAtOpener(0), "a fold collapsed away from the caret stays collapsed");
 
-  editor.JumpCursorTo(2, 2);  // goto-line / definition jump into the hidden body
+  editor.JumpCursorTo(2, 2);
   frame();
   Expect(!model->IsCollapsedAtOpener(0), "the fold hiding the caret is revealed on the next frame");
   Expect(editor.cursor_line() == 2 && editor.cursor_column() == 2, "the caret stays where it landed");
 
-  // `fold` with the caret inside: the region folds and the caret, standing still,
-  // does not reveal it again.
   Expect(model->Collapse(0), "the fold collapses around the caret");
   frame();
   frame();
   Expect(model->IsCollapsedAtOpener(0), "a caret that did not move does not undo the fold");
 
-  editor.InsertCharacter('x');  // typing inside the hidden body moves the caret
+  editor.InsertCharacter('x');
   frame();
   Expect(!model->IsCollapsedAtOpener(0), "an edit inside the fold reveals it");
 }
@@ -1259,8 +1167,6 @@ void TestWorkspaceShellBufferSearchRevealsCollapsedMatchAndKeepsItOnClose() {
          "Escape should close the non-modal find widget");
   Expect(!WorkspaceShellTestAccess::OverlayVisible(shell),
          "Escape should hide the find widget");
-  // The non-modal widget already moved the caret onto the match, so closing it
-  // keeps the fold expanded — re-collapsing would hide where the caret landed.
   Expect(!model->IsCollapsedAtOpener(0),
          "closing the find widget keeps the revealed fold expanded under the caret");
 }
@@ -1286,8 +1192,6 @@ void TestWorkspaceShellBufferSearchKeepsRevealAfterClose() {
   Expect(!model->IsCollapsedAtOpener(0),
          "buffer-search activate fixture should auto-expand the collapsed match");
 
-  // Enter now cycles to the next match and keeps the non-modal find widget open
-  // (VSCode-style) instead of jumping + dismissing.
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "Enter should advance the buffer-search match");
   Expect(WorkspaceShellTestAccess::OverlayVisible(shell),
@@ -1295,8 +1199,6 @@ void TestWorkspaceShellBufferSearchKeepsRevealAfterClose() {
   Expect(!model->IsCollapsedAtOpener(0),
          "cycling matches should keep the revealed fold expanded");
 
-  // Esc closes the widget and returns focus to the editor; the fold that the
-  // search revealed stays expanded.
   Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
          "Escape should close the non-modal find widget");
   Expect(!WorkspaceShellTestAccess::OverlayVisible(shell),
@@ -1436,9 +1338,6 @@ void TestWorkspaceShellFoldAllUnfoldAllCtrlKChord() {
          "Ctrl+keypad 0 should complete the fold-all chord");
 }
 
-// Data-integrity (B1/C10): the crash-safety session flush must stage unsaved buffer
-// content to the durable store WITHOUT a clean shutdown, so a fresh shell can restore it.
-// This is the net for a crash / kill -9 between event-driven session saves.
 void TestWorkspaceShellCrashSafetyFlushPersistsUnsavedContent() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1463,10 +1362,6 @@ void TestWorkspaceShellCrashSafetyFlushPersistsUnsavedContent() {
          "crash-safety flush fixture should accept text input");
   Expect(editor.dirty(), "the buffer should be dirty before the flush");
 
-  // Fire the exact routine the debounced timer runs — NO clean shutdown. It runs
-  // on the shell thread, mid-typing, so it must not copy the buffer there: the
-  // record shares the piece tree's storage and the persistence worker reads it
-  // (TD-2026-11-02-429 item 3). Each of these was one whole-document copy.
   microide::editor::TextBuffer::reset_snapshot_build_count();
   const std::uint64_t materialized_before =
       microide::util::ReadPerformanceCounter(microide::util::PerfCounterId::DocumentFullTextMaterializations);
@@ -1479,7 +1374,6 @@ void TestWorkspaceShellCrashSafetyFlushPersistsUnsavedContent() {
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "after "),
          "typing goes on while the worker encodes");
 
-  // A fresh shell (as if relaunched after a crash) must recover the unsaved content.
   WorkspaceShell restored;
   WorkspaceShellTestAccess::SetProjectRoot(restored, root);
   Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
@@ -1492,12 +1386,7 @@ void TestWorkspaceShellCrashSafetyFlushPersistsUnsavedContent() {
   Expect(reopened.dirty(), "restored crash-safety content must stay dirty (still unsaved to disk)");
 }
 
-// Soak 48a294e57a19 (and its kill -9 kin): a buffer opened through a symlinked
-// folder -- the fixture's `loop -> .` -- was reported staged by the app, and did
-// not come back after a kill -9. Opened by that path, edited, flushed: a fresh
-// shell must restore it, dirty, with the edit.
 void TestWorkspaceShellCrashSafetyRestoresABufferOpenedThroughASymlinkedFolder() {
-  // Either path opened first, either one the dirty buffer.
   for (const bool link_first : {true, false}) {
     for (const bool dirty_via_link : {true, false}) {
       TemporaryDirectory temp_dir;
@@ -1550,17 +1439,11 @@ void TestWorkspaceShellCrashSafetyRestoresABufferOpenedThroughASymlinkedFolder()
   }
 }
 
-// Soak 55673209c35c (and 4fb82d32fe19, 653e2be91fab, c01e0e90f93c, e946ec9333d7):
-// the lost buffers had paths that do not exist -- `weird/loop/weird/x.txt` with
-// `loop -> .` -- staged with disk_exists=0. A dirty buffer whose file, or whole
-// folder, is not there must still come back after a crash.
 void TestWorkspaceShellCrashSafetyRestoresABufferWhoseFolderDoesNotExist() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   WriteFile(root / "weird" / "bom.txt", "alpha\n");
   std::filesystem::create_directory_symlink(".", root / "weird" / "loop");
-  // Through the link, `weird/loop/weird` is `weird/weird`: there while the file is
-  // opened, gone (a `git stash -u` of the untracked folder) before the flush.
   const std::filesystem::path missing = root / "weird" / "loop" / "weird" / "bom.txt";
   WriteFile(root / "weird" / "weird" / "bom.txt", "beta\n");
   const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
@@ -1590,13 +1473,6 @@ void TestWorkspaceShellCrashSafetyRestoresABufferWhoseFolderDoesNotExist() {
              (view.dirty() ? " dirty" : " clean") + ")");
 }
 
-// The crash-recovery half of "never overwrite what you have not seen": a dirty
-// buffer restored after a crash, whose file someone changed while microide was
-// down, must not be saved over that change. The restored snapshot used to carry
-// no disk baseline, and DetectDiskConflict read "no baseline" as "no conflict":
-// Ctrl+S wrote the backup over the other edit without a word (found by a crash
-// probe, 2026-11-02). A file that did not change still saves; and a never-saved
-// buffer whose path someone created meanwhile is not written over either.
 void TestWorkspaceShellACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1619,14 +1495,8 @@ void TestWorkspaceShellACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown(
       Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "mine "), "an unsaved edit");
     }
     WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
-    // ... and the crash: no clean shutdown writes anything after this.
   }
-  // Someone else edits one file while microide is down. A different size, so the
-  // change cannot hide in the same mtime tick.
   WriteFile(changed, "alpha, edited elsewhere\n");
-  // And another is only touched -- the same bytes, a new mtime (a checkout that
-  // restored it, a build tool): not a change. The snapshot's baseline carries the
-  // buffer's content hash, so this one saves (TD-2026-11-02-429 item 2; it asked).
   WriteFile(touched, "delta\n");
   std::error_code touch_error;
   std::filesystem::last_write_time(touched, std::filesystem::file_time_type::clock::now() + std::chrono::seconds(5),
@@ -1662,7 +1532,6 @@ void TestWorkspaceShellACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown(
   Expect(saw_changed && saw_unchanged && saw_touched, "all three tabs came back");
 }
 
-// B1: the crash-safety flush debounce arms once a real edit lands on a dirty buffer.
 void TestWorkspaceShellCrashSafetyFlushTimerArmsOnEdit() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1673,25 +1542,16 @@ void TestWorkspaceShellCrashSafetyFlushTimerArmsOnEdit() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenFile(shell, source);
 
-  // First arm call only baselines the active viewport's content revision.
   WorkspaceShellTestAccess::ArmSessionFlushTimer(shell);
   Expect(!WorkspaceShellTestAccess::SessionFlushArmed(shell),
          "the flush timer should not arm before any edit");
 
-  // A real edit bumps the content revision; the next arm detects it and arms.
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
   WorkspaceShellTestAccess::ArmSessionFlushTimer(shell);
   Expect(WorkspaceShellTestAccess::SessionFlushArmed(shell),
          "an edit on a dirty buffer should arm the crash-safety flush debounce");
 }
 
-// The flush must arm for an edit to ANY buffer, not only to the one active when
-// the sampler runs. It sampled the active viewport's content revision and
-// re-baselined on a tab switch, so an edit followed by a switch in the same
-// input batch -- or an edit to a buffer that was never active (a command, a
-// replace across files) -- never armed it, and a kill -9 after it lost the
-// buffer (soak 4fb82d32fe19, 9e7e15dd237c, d36a78ef295c and more: "the unsaved
-// buffer did not come back after a kill -9").
 void TestWorkspaceShellCrashSafetyFlushArmsForAnEditBeforeATabSwitch() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1708,7 +1568,6 @@ void TestWorkspaceShellCrashSafetyFlushArmsForAnEditBeforeATabSwitch() {
   Expect(!WorkspaceShellTestAccess::SessionFlushArmed(shell),
          "the flush timer should not arm before any edit");
 
-  // One batch: an edit to the active buffer, then a switch to the other tab.
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
   WorkspaceShellTestAccess::OpenFile(shell, second);
   WorkspaceShellTestAccess::ArmSessionFlushTimer(shell);
@@ -1760,12 +1619,7 @@ void TestWorkspaceShellRestoreSessionPreservesDirtyEditorBufferContent() {
          "dirty editor-session restore should preserve the scroll position");
 }
 
-// Session save must enforce the reader's dirty-buffer budget BEFORE snapshotting:
-// an over-budget dirty editor tab persists as a path-only reference (no whole-buffer
-// snapshot materialized/written) and restores by reopening from disk.
-// TD-2026-07-17A-083.
 void TestWorkspaceShellSessionSaveOmitsOverBudgetDirtySnapshot() {
-  // Tiny budget so a small dirty edit is "over budget"; restored at scope exit.
   struct BudgetGuard {
     BudgetGuard() { PersistenceCoordinator::SetMaxDirtySnapshotBytesForTesting(8); }
     ~BudgetGuard() { PersistenceCoordinator::SetMaxDirtySnapshotBytesForTesting(0); }
@@ -1795,15 +1649,12 @@ void TestWorkspaceShellSessionSaveOmitsOverBudgetDirtySnapshot() {
   Expect(editor.dirty(), "the buffer is dirty before save");
   WorkspaceShellTestAccess::SaveSessionState(shell);
 
-  // Change the file on disk so we can tell a path-only restore (disk content) from
-  // a snapshot restore (the unsaved in-memory content).
   WriteFile(source, "DISK-ALPHA\nDISK-BETA\n");
 
   WorkspaceShell restored;
   WorkspaceShellTestAccess::SetProjectRoot(restored, root);
   Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
          "session restore should succeed");
-  // Mirror the real startup path: this hydrates the active tab's deferred viewport.
   WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
   const auto& reopened = WorkspaceShellTestAccess::ActiveEditor(restored);
   Expect(reopened.lines()[0] == "DISK-ALPHA",
@@ -1812,14 +1663,10 @@ void TestWorkspaceShellSessionSaveOmitsOverBudgetDirtySnapshot() {
          "an over-budget dirty tab restores clean (path-only, no persisted snapshot)");
 }
 
-// Session restore caps the number of tabs it rebuilds per group at a product limit
-// (far below the 4096 decode ceiling), so a huge saved session can't make startup
-// path-probe / model-build thousands of tabs before the first frame. The active tab
-// is always restored. TD-2026-07-17A-082.
 void TestWorkspaceShellRestoreSessionCapsTabCount() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
-  const std::size_t tab_count = 205;  // > the 200 per-group restore cap
+  const std::size_t tab_count = 205;
   std::vector<std::filesystem::path> files;
   for (std::size_t i = 0; i < tab_count; ++i) {
     const std::filesystem::path path = root / ("f" + std::to_string(i) + ".txt");
@@ -1856,17 +1703,13 @@ void TestWorkspaceShellRestoreSessionCapsTabCount() {
          "an oversized session restores fewer tabs than were saved (cap engaged)");
 }
 
-// A file scrolled (without moving the caret) must reopen at the SAME scroll line.
-// The 2-space-indented body makes indent-detection change the tab size on open,
-// which runs EnsureCursorVisible -- the operation that used to snap the restored
-// scroll back onto the line-0 caret.
 void TestWorkspaceShellRestoreSessionPreservesIndependentScrollPosition() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path source = root / "deep.py";
   std::string content;
   for (int i = 0; i < 200; ++i) {
-    content += "  line\n";  // consistent 2-space indentation
+    content += "  line\n";
   }
   WriteFile(source, content);
 
@@ -1883,7 +1726,6 @@ void TestWorkspaceShellRestoreSessionPreservesIndependentScrollPosition() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenFile(shell, source);
   auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
-  // Caret stays at line 0; only the viewport scrolls (scroll-wheel behaviour).
   editor.SetScrollLine(40);
   Expect(editor.cursor_line() == 0,
          "scroll-independence fixture should leave the caret at line 0");
@@ -1893,7 +1735,6 @@ void TestWorkspaceShellRestoreSessionPreservesIndependentScrollPosition() {
   WorkspaceShellTestAccess::SetProjectRoot(restored, root);
   Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
          "scroll-independence restore should succeed");
-  // Mirror the real startup path: this hydrates the active tab's deferred viewport.
   WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
 
   const auto& reopened = WorkspaceShellTestAccess::ActiveEditor(restored);
@@ -1903,11 +1744,6 @@ void TestWorkspaceShellRestoreSessionPreservesIndependentScrollPosition() {
          "restore should preserve the scroll position independent of the caret");
 }
 
-// Regression: activating a deferred (non-active, never-hydrated) editor tab whose
-// file was deleted out from under the IDE must NOT wipe the tab's path/title by
-// falling through to the empty group welcome surface. Losing the path stranded
-// the tab as "Welcome" in the strip and broke the open-file dedup (a re-open then
-// spawned a duplicate tab).
 void TestWorkspaceShellActivatingDeletedDeferredTabPreservesIdentity() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1929,9 +1765,6 @@ void TestWorkspaceShellActivatingDeletedDeferredTabPreservesIdentity() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenFile(shell, file_a);
   WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_b);
-  // Make alpha the active tab so beta restores as a deferred, never-hydrated tab
-  // (only the active tab is eager-hydrated on restore). Resolve alpha's index so
-  // the test is robust to any leading welcome tab.
   {
     const auto& tabs = WorkspaceShellTestAccess::OpenTabs(shell);
     std::size_t alpha_index = tabs.size();
@@ -1959,7 +1792,6 @@ void TestWorkspaceShellActivatingDeletedDeferredTabPreservesIdentity() {
     Expect(beta_index < tabs.size(), "beta tab should be restored (deferred)");
   }
 
-  // Delete beta.txt before it is ever activated, then activate its tab.
   std::filesystem::remove(file_b);
   WorkspaceShellTestAccess::ActivateTab(restored, beta_index);
 
@@ -1970,11 +1802,6 @@ void TestWorkspaceShellActivatingDeletedDeferredTabPreservesIdentity() {
          "a deleted deferred tab must keep its filename title, not 'Welcome'");
 }
 
-// One file is one buffer, however its tab was restored. A session tab that was
-// never activated carries only a handle, and hydrating it used to repeat the
-// restore logic with a plain OpenFile — so if the file was meanwhile live in
-// another pane, activating the restored tab created a second, independent buffer
-// of it, and the two saved over each other (TD-2026-09-29-314).
 void TestWorkspaceShellRestoredBackgroundTabSharesALiveBuffer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2013,7 +1840,6 @@ void TestWorkspaceShellRestoredBackgroundTabSharesALiveBuffer() {
            "beta comes back as a handle, never hydrated");
   }
 
-  // beta goes live in a second pane first.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
              restored, microide::workspace::EditorSplitOrientation::Vertical),
          "split");
@@ -2026,7 +1852,6 @@ void TestWorkspaceShellRestoredBackgroundTabSharesALiveBuffer() {
          "the restored tab shares the live buffer instead of reading a second one");
 }
 
-// Expanded folders + the selected node survive a session round-trip.
 void TestWorkspaceShellRestoreSessionPreservesTreeExpansion() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2046,7 +1871,6 @@ void TestWorkspaceShellRestoreSessionPreservesTreeExpansion() {
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-  // Selecting the leaf expands every ancestor directory (dir_a, dir_a/sub).
   Expect(WorkspaceShellTestAccess::SelectTreePath(shell, leaf),
          "tree fixture should be able to select the nested leaf");
   WorkspaceShellTestAccess::SaveSessionState(shell);
@@ -2125,9 +1949,6 @@ void TestWorkspaceShellRestoreSessionPreservesDirtyUntitledBufferContent() {
          "untitled session restore should preserve the dirty state");
 }
 
-// Soak d36a78ef295c: an unsaved Untitled-3 came back after a kill -9 as
-// Untitled-2, because the empty Untitled-2 before it is not persisted and the
-// restore numbered from one. A restored untitled buffer keeps its name.
 void TestWorkspaceShellRestoreSessionKeepsAnUntitledBuffersNumber() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2164,10 +1985,6 @@ void TestWorkspaceShellRestoreSessionKeepsAnUntitledBuffersNumber() {
   Expect(three_kept_its_name, "the unsaved Untitled-3 comes back as Untitled-3 (" + seen + ")");
 }
 
-// Soak 2ae149191d79: an unsaved buffer split into two panes came back after a
-// kill -9 as two buffers, both Untitled-1 -- the restore rejoins the panes of
-// one dirty buffer by path, and an untitled buffer has none. The first edit in
-// either pane then gave one name two texts, and the next restore kept one.
 void TestWorkspaceShellRestoreSessionRejoinsTheSplitPanesOfAnUntitledBuffer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2205,11 +2022,6 @@ void TestWorkspaceShellRestoreSessionRejoinsTheSplitPanesOfAnUntitledBuffer() {
          "both panes come back on ONE buffer, as they were before the kill");
 }
 
-// Soak 72acd73823bd (and what 8d52e6176b32 was): a file open dirty in an editor
-// tab and in a working-tree diff is ONE buffer. A relaunch rebuilt each on its
-// own -- the editor tab from its unsaved snapshot, the diff's editable side from
-// the file on disk -- so the diff showed the file without the unsaved edit, an
-// edit in either no longer reached the other, and each saved over the other.
 void TestWorkspaceShellRestoreSessionRejoinsADiffWithItsEditorTabsBuffer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -2259,8 +2071,6 @@ void TestWorkspaceShellRestoreSessionRejoinsADiffWithItsEditorTabsBuffer() {
   const util::JsonValue held = WorkspaceShellTestAccess::ControlQuery(restored, "invariants");
   Expect(held["ok"].AsBool(), "and the workspace's own rules hold: " + util::SerializeJson(held));
 
-  // Two diffs of the one file, in two panes and with no editor tab on it, are
-  // one buffer too (the same finding's second sighting).
   const std::filesystem::path other = root / "notes.txt";
   WriteFile(other, "notes\n");
   {
@@ -2299,11 +2109,6 @@ void TestWorkspaceShellRestoreSessionRejoinsADiffWithItsEditorTabsBuffer() {
          "the two diffs come back on one buffer");
 }
 
-// Text typed into a working-tree diff's editable side, with no editor tab on the
-// file, was gone after a crash: the session staged the unsaved buffer of every
-// EDITOR tab, a compare record carried none, and the crash-safety flush did not
-// even arm for the edit (TD-2026-11-19-453 item 1). The diff comes back with the
-// unsaved text, its line ending, and the baseline that keeps its save honest.
 void TestWorkspaceShellRestoreSessionKeepsUnsavedEditsMadeOnlyInADiff() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -2338,9 +2143,7 @@ void TestWorkspaceShellRestoreSessionKeepsUnsavedEditsMadeOnlyInADiff() {
     Expect(WorkspaceShellTestAccess::SessionFlushArmed(shell),
            "an edit in a diff arms the crash-safety flush as one in an editor tab does");
     WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
-    // ... and the crash: no clean shutdown writes anything after this.
   }
-  // Someone else changes one of the files while microide is down.
   WriteFile(changed, "two, edited elsewhere\n");
 
   WorkspaceShell restored;
@@ -2380,11 +2183,6 @@ void TestWorkspaceShellRestoreSessionKeepsUnsavedEditsMadeOnlyInADiff() {
   }
 }
 
-// A compare of two files is not kept in the session at all, but its editable side
-// is still the right-hand file's buffer: text typed into it comes back, in an
-// editor tab on that file. And when an editor tab on the file is already open but
-// has not loaded -- it holds no buffer; the diff holds the file's -- that tab is
-// the one that brings the text back, not a second tab beside it.
 void TestWorkspaceShellRestoreSessionKeepsUnsavedEditsMadeInAFileCompare() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2423,7 +2221,6 @@ void TestWorkspaceShellRestoreSessionKeepsUnsavedEditsMadeInAFileCompare() {
     const editor::TextViewport& editor = WorkspaceShellTestAccess::ActiveEditor(restored);
     Expect(editor.path() == right && editor.dirty() && editor.lines().LineView(0) == "unsaved two",
            "on the right-hand file, holding the unsaved text");
-    // Leave a session with right.txt in a background tab for the second half.
     Expect(WorkspaceShellTestAccess::ExecuteControlCommand(restored, "save").ok, "the restored text saves");
     WorkspaceShellTestAccess::OpenFile(restored, other);
     WorkspaceShellTestAccess::SaveSessionState(restored);
@@ -2453,10 +2250,6 @@ void TestWorkspaceShellRestoreSessionKeepsUnsavedEditsMadeInAFileCompare() {
          "right.txt's tab holds the unsaved text, got " + std::string(editor.lines().LineView(0)));
 }
 
-// When the diff itself cannot come back, the unsaved text it held comes back in
-// an editor tab on the file. Nothing a user does today leaves such a record (a
-// revision git no longer has reads as a file that did not exist then), so the
-// test writes one: a compare record that names no revision.
 void TestWorkspaceShellRestoreSessionKeepsADiffsUnsavedTextWhenTheDiffIsGone() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -2864,11 +2657,6 @@ void TestWorkspaceShellMergeBothOrdersAndBaseToggle() {
   Expect(!merge.base_pane_visible, "base pane toggle should hide the ancestor pane again");
 }
 
-// A conflict starts out holding its base lines, so choosing Base (`b`, Alt+B,
-// the result pane's Base button) installs the lines already there: a no-op
-// edit, which ReplaceLines reports as false. The accept returned on it, so the
-// conflict could never be resolved to its base -- it stayed unresolved, and
-// saving prompted about unresolved conflicts the user had just resolved.
 void TestWorkspaceShellMergeChoosingBaseResolvesAConflictThatShowsIt() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2900,9 +2688,6 @@ void TestWorkspaceShellMergeChoosingBaseResolvesAConflictThatShowsIt() {
          "and records Base as its choice");
 }
 
-// The diff-merge spec's "reset result hunk" had no way in: the reset was
-// reachable only from tests. It is Merge: Reset Conflict in the palette and the
-// Edit menu's merge items, and Alt+R in the merge editor beside Alt+I/C/B/M.
 void TestWorkspaceShellMergeResetConflictFromTheKeyAndTheCommand() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2935,10 +2720,6 @@ void TestWorkspaceShellMergeResetConflictFromTheKeyAndTheCommand() {
   Expect(!merge.conflicts.front().resolved, "the command resets the conflict too");
 }
 
-// QA merge-toolbar: a conflict nobody picked a side for previews a default with
-// no markers in it, so Mark Resolved -- which checked for markers -- staged that
-// preview (the base text, both sides' changes gone) in one click. It now says how
-// many conflicts are left, and only a second Mark Resolved keeps the result.
 void TestWorkspaceShellMarkResolvedAsksAboutUnresolvedConflicts() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2949,7 +2730,6 @@ void TestWorkspaceShellMarkResolvedAsksAboutUnresolvedConflicts() {
   WriteFile(base, "zero\none\ntwo\nthree\nfour\n");
   WriteFile(incoming, "zero\none incoming\ntwo\nthree incoming\nfour\n");
   WriteFile(current, "zero\none current\ntwo\nthree current\nfour\n");
-  // As git leaves it: both conflicts still in markers.
   WriteFile(output,
             "zero\n<<<<<<< HEAD\none current\n=======\none incoming\n>>>>>>> incoming\ntwo\n"
             "<<<<<<< HEAD\nthree current\n=======\nthree incoming\n>>>>>>> incoming\nfour\n");
@@ -2973,26 +2753,15 @@ void TestWorkspaceShellMarkResolvedAsksAboutUnresolvedConflicts() {
          "and says how many are left, not '" + merge.status_message + "'");
   Expect(merge.selected_hunk == 1, "and selects the one left");
 
-  // A choice made since withdraws the override: the next Mark Resolved asks again
-  // about what is left now.
   WorkspaceShellTestAccess::ResetMergeHunk(shell);
   WorkspaceShellTestAccess::MarkMergeResolved(shell);
   Expect(merge.status_message.find("1 conflict is still unresolved") != std::string::npos,
          "a reset since the question withdraws the override");
-  // Asked again with nothing changed: past the question (the fixture is no git
-  // repository, so staging is what refuses now).
   WorkspaceShellTestAccess::MarkMergeResolved(shell);
   Expect(merge.status_message.find("unresolved") == std::string::npos,
          "the second Mark Resolved keeps the result as shown, not '" + merge.status_message + "'");
 }
 
-// Text typed by hand into a merge result was lost by a crash: the merge record
-// carried the conflict choices and nothing of the result, and an edit there did
-// not arm the crash-safety flush (TD-2026-11-19-453 item 1). The result comes
-// back unsaved, as typed, with its conflicts where the tab tracked them -- the
-// spans move with the text, so a result rebuilt from the choices and a text laid
-// over it would disagree -- and a file changed while microide was down is not
-// written over.
 void TestWorkspaceShellRestoreSessionKeepsATypedMergeResult() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3022,7 +2791,6 @@ void TestWorkspaceShellRestoreSessionKeepsATypedMergeResult() {
     auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
     merge.selected_hunk = 1;
     WorkspaceShellTestAccess::ApplyMergeChoice(shell, MergeChoice::Incoming);
-    // Lines typed above the second conflict move it down by two.
     merge.result_viewport.MoveCursorTo(2, 0);
     Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "added\nadded\n"), "typing two lines into the result");
     typed = merge.result_viewport.SerializeDocumentText();
@@ -3058,7 +2826,6 @@ void TestWorkspaceShellRestoreSessionKeepsATypedMergeResult() {
                  "-" + std::to_string(back.end_line) + ", expected " + std::to_string(spans[i].start_line) + "-" +
                  std::to_string(spans[i].end_line));
     }
-    // Choosing a side of the moved conflict replaces ITS lines, not the typed ones.
     merge.selected_hunk = 1;
     WorkspaceShellTestAccess::ApplyMergeChoice(restored, MergeChoice::Current);
     const auto lines = merge.result_viewport.lines().Snapshot();
@@ -3067,8 +2834,6 @@ void TestWorkspaceShellRestoreSessionKeepsATypedMergeResult() {
            "a choice on the restored result patches the conflict where it is: '" +
                merge.result_viewport.SerializeDocumentText() + "'");
   }
-  // The result file changes while microide is down (the restore above saved
-  // nothing; the session still holds the typed result).
   WriteFile(output, "zero\nwritten elsewhere\n");
   {
     WorkspaceShell restored;
@@ -3081,9 +2846,6 @@ void TestWorkspaceShellRestoreSessionKeepsATypedMergeResult() {
   }
 }
 
-// A git conflict's merge is not kept in the session at all (it reopens from the
-// index), so the text typed into its result had nowhere to go and a crash lost
-// it. It comes back in an editor tab on the conflicted file, as typed and unsaved.
 void TestWorkspaceShellRestoreSessionKeepsATypedGitConflictResult() {
   const microide::tests::GitMergeConflictFixture fixture = microide::tests::CreateBothModifiedConflictRepo();
   const std::filesystem::path home = fixture.root.parent_path() / "session-home";
@@ -3098,7 +2860,7 @@ void TestWorkspaceShellRestoreSessionKeepsATypedGitConflictResult() {
     WorkspaceShellTestAccess::SetProjectRoot(shell, fixture.root);
     WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
     Expect(WorkspaceShellTestAccess::OpenGitConflictMerge(shell, fixture.output), "the conflict's merge opens");
-    WorkspaceShellTestAccess::FlushPendingFileReads(shell);  // its index stages are read off-thread
+    WorkspaceShellTestAccess::FlushPendingFileReads(shell);
     Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 1, "the merge tab is open");
     auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
     Expect(!merge.persistable, "a git conflict's merge is not kept in the session");
@@ -3120,13 +2882,6 @@ void TestWorkspaceShellRestoreSessionKeepsATypedGitConflictResult() {
          "an editor tab on the conflicted file, holding the typed result: '" + editor.SerializeDocumentText() + "'");
 }
 
-// Soak 02922e8eed90: a git conflict's merge held a typed result while a diff of
-// the same file held other unsaved text in the file's own buffer. The result
-// stood in as an editor record on the file, the diff's record carried the file's
-// buffer, and the restore -- one buffer per file -- gave both tabs the first
-// record's text: the file's 910 unsaved bytes came back as the merge's 669. The
-// file's buffer keeps its path; the result, which is not the file's until it is
-// kept, comes back beside it in an Untitled tab.
 void TestWorkspaceShellRestoreSessionKeepsAConflictResultBesideTheFilesUnsavedBuffer() {
   const microide::tests::GitMergeConflictFixture fixture = microide::tests::CreateBothModifiedConflictRepo();
   const std::filesystem::path home = fixture.root.parent_path() / "session-home-beside";
@@ -3245,9 +3000,6 @@ void TestWorkspaceShellMergeConflictTrackingShiftsAfterInsertion() {
          "later conflict accepts should follow the shifted tracked span");
 }
 
-// Opening a file whose conflict markers are still UNTOUCHED (each side equals the
-// model) must NOT silently collapse the conflict to base and mark it resolved. The
-// conflict must remain valid and unresolved so the user still has to pick a side.
 void TestWorkspaceShellRawConflictMarkersOpenUnresolved() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3258,7 +3010,6 @@ void TestWorkspaceShellRawConflictMarkersOpenUnresolved() {
   WriteFile(base, "zero\none\ntwo\n");
   WriteFile(incoming, "zero\none incoming\ntwo\n");
   WriteFile(current, "zero\none current\ntwo\n");
-  // Raw, unedited conflict markers whose sides exactly equal the model.
   WriteFile(output,
             "zero\n"
             "<<<<<<< HEAD\n"
@@ -3285,9 +3036,6 @@ void TestWorkspaceShellRawConflictMarkersOpenUnresolved() {
          "the untouched conflict must count as remaining, not silently resolved to base");
 }
 
-// Inserting at column 0 of a conflict's first result line inserts BEFORE the
-// conflict, so its tracking must shift down, not be invalidated (the pure-insertion
-// branch must use >= like the general edit branch).
 void TestWorkspaceShellInsertionAtConflictStartKeepsTracking() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3309,7 +3057,6 @@ void TestWorkspaceShellInsertionAtConflictStartKeepsTracking() {
   Expect(merge.conflicts.size() == 1 && merge.conflicts.front().start_line == 1,
          "the conflict starts on the second result line");
 
-  // Caret at column 0 of the conflict's first line, then insert a new line before it.
   merge.result_viewport.MoveCursorTo(1, 0);
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "merge result should accept a line insert");
 
@@ -3319,21 +3066,6 @@ void TestWorkspaceShellInsertionAtConflictStartKeepsTracking() {
          "the conflict span should shift down by the inserted line");
 }
 
-// EVERY action, not the handful that remembered to re-track. The merge result
-// pane's conflict spans are LINE NUMBERS into a buffer the user can edit freely,
-// so any edit that adds or removes lines above a conflict moves it -- and if the
-// span is not moved with it, the next "accept incoming/current" overwrites
-// whatever text now lives at the old line numbers. That is data loss, not a
-// cosmetic drift.
-//
-// Re-tracking used to need the caret and selection from BEFORE the edit, so it
-// could not live in the shared post-edit hook and stayed at the five sites that
-// captured them: typing, cut, paste, undo/redo, middle-click. The whole shaping
-// block -- move-line, copy-line, delete-line, insert-line, indent, comment
-// toggle, sort -- went through a different path and re-tracked nothing.
-//
-// The invariant needs no list of verbs and no arithmetic: a conflict that is
-// still marked VALID must still point at the same text it pointed at before.
 void TestWorkspaceShellMergeEveryActionKeepsConflictTrackingHonest() {
   const std::vector<WorkspaceShell::ActionId> skipped = {
       WorkspaceShell::ActionId::CloseActiveTab,
@@ -3344,11 +3076,6 @@ void TestWorkspaceShellMergeEveryActionKeepsConflictTrackingHonest() {
       WorkspaceShell::ActionId::CloseGroup,
       WorkspaceShell::ActionId::ProjectClose,
       WorkspaceShell::ActionId::Quit,
-      // These pop a NATIVE OS dialog (SDL's XDG-portal file chooser). A test must
-      // never open one -- and headless it also leaks SDL's per-call portal state,
-      // because with no portal to answer, SDL never runs the callback that frees
-      // it. That leak is what made the ASAN lane fail with a stack of nothing but
-      // SDL_malloc; with fast_unwind_on_malloc=0 these two frames appear.
       WorkspaceShell::ActionId::Open,
       WorkspaceShell::ActionId::ProjectOpen,
   };
@@ -3359,9 +3086,6 @@ void TestWorkspaceShellMergeEveryActionKeepsConflictTrackingHonest() {
   const std::filesystem::path incoming = root / "incoming.txt";
   const std::filesystem::path current = root / "current.txt";
   const std::filesystem::path output = root / "result.txt";
-  // Two lines of plain text above the conflict, so a caret on line 0 can add or
-  // remove a line WITHOUT touching the conflict itself -- which is the shape that
-  // moves a conflict whose span nobody updated.
   WriteFile(base, "aaa\nbbb\nccc\nddd\n");
   WriteFile(incoming, "aaa\nbbb\nccc incoming\nddd\n");
   WriteFile(current, "aaa\nbbb\nccc current\nddd\n");
@@ -3381,10 +3105,6 @@ void TestWorkspaceShellMergeEveryActionKeepsConflictTrackingHonest() {
                         std::string(spec.command_name));
       return;
     }
-    // Re-resolved on every use, never held. An action that opens a tab pushes onto
-    // the group's tab vector, and a reallocation there invalidates any reference
-    // into it -- a use-after-free only ASAN sees, and the exact hazard a sweep
-    // that runs EVERY registered action walks into.
     const auto tab = [&shell]() { return WorkspaceShellTestAccess::ActiveMergeOrNull(shell); };
     if (tab() == nullptr || tab()->conflicts.empty()) {
       Expect(false, "the merge fixture must produce a conflict to track");
@@ -3407,10 +3127,8 @@ void TestWorkspaceShellMergeEveryActionKeepsConflictTrackingHonest() {
       return out;
     };
 
-    // Caret on the FIRST line, above every conflict, with a selection inside that
-    // line so the clipboard and selection verbs have something to act on.
     tab()->result_viewport.MoveCursorTo(0, 0);
-    tab()->result_viewport.MoveCursorTo(0, 2, /*extend_selection=*/true);
+    tab()->result_viewport.MoveCursorTo(0, 2, true);
 
     std::vector<std::pair<std::size_t, std::string>> tracked_before;
     for (const auto& conflict : tab()->conflicts) {
@@ -3425,11 +3143,11 @@ void TestWorkspaceShellMergeEveryActionKeepsConflictTrackingHonest() {
     WorkspaceShellTestAccess::ExecuteAction(shell, spec.id, {});
 
     if (tab() == nullptr) {
-      continue;  // the action left the merge tab; not a question about tracking
+      continue;
     }
     const std::string text_after = joined();
     if (text_after == text_before) {
-      continue;  // not an edit for this caret
+      continue;
     }
     ++mutating_actions;
 
@@ -3437,7 +3155,7 @@ void TestWorkspaceShellMergeEveryActionKeepsConflictTrackingHonest() {
     for (const auto& conflict : tab()->conflicts) {
       if (!conflict.valid) {
         ++index;
-        continue;  // deliberately dropped: the edit reached into the conflict
+        continue;
       }
       if (index >= tracked_before.size()) break;
       const std::string& expected = tracked_before[index].second;
@@ -3648,10 +3366,6 @@ void TestWorkspaceShellMergeResultDragSelectionTracksPointer() {
          "merge result drag selection should capture the dragged text");
 }
 
-// A selection drag that leaves the result pane must keep extending toward the
-// pointer, not freeze where it crossed the edge. Both handlers refused any
-// pointer outside the pane, so the selection stopped growing while the button
-// was still held.
 void TestWorkspaceShellMergeResultDragSelectionSurvivesLeavingThePane() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -3665,13 +3379,10 @@ void TestWorkspaceShellMergeResultDragSelectionSurvivesLeavingThePane() {
 
   Expect(SendMouseDown(shell, start_x, y, SDL_BUTTON_LEFT),
          "pressing inside the merge result pane should start selection");
-  // Far left of the pane -- over the incoming/current panes, where the old
-  // Contains gate refused.
   Expect(SendMouseMotion(shell, interaction.result.rect.x - 400.0f, y, SDL_BUTTON_LMASK),
          "dragging left out of the result pane should still be handled");
   const std::string after_left = WorkspaceShellTestAccess::ActiveMergeSelectedText(shell);
 
-  // And far right, past the pane's right edge.
   const float far_right = interaction.result.rect.x + interaction.result.rect.w + 400.0f;
   Expect(SendMouseMotion(shell, far_right, y, SDL_BUTTON_LMASK),
          "dragging right out of the result pane should still be handled");
@@ -3723,8 +3434,6 @@ void TestWorkspaceShellMergeWheelScrollsRows() {
   const SDL_FRect result_rect = WorkspaceShellTestAccess::ActiveMergeResultRect(shell);
   const float wheel_x = result_rect.x + 24.0f;
   const float wheel_y = result_rect.y + 24.0f;
-  // Same contract as the compare surface and the other five scrollable surfaces:
-  // the wheel scrolls, it does not focus. See CompareWheelScrollsRows.
   WorkspaceShellTestAccess::SetFocusPanel(shell);
   Expect(SendMouseWheel(shell, wheel_x, wheel_y, -1),
          "scrolling the merge result pane should be handled");
@@ -3841,9 +3550,6 @@ void TestWorkspaceShellRestoreSessionPreservesMergeNavigationState() {
          "merge session restore should preserve the committed conflict choice metadata");
 }
 
-// Merge session save keeps hunk choices positional and capped at the reader's
-// budget; a multi-hunk tab round-trips every hunk's choice exactly.
-// TD-2026-07-17A-097.
 void TestWorkspaceShellRestoreSessionRoundTripsMultiHunkMergeChoices() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3851,7 +3557,6 @@ void TestWorkspaceShellRestoreSessionRoundTripsMultiHunkMergeChoices() {
   const std::filesystem::path incoming = root / "incoming.txt";
   const std::filesystem::path current = root / "current.txt";
   const std::filesystem::path output = root / "result.txt";
-  // Two independent conflict hunks (section 1 and section 2).
   WriteFile(base,
             "section 1\nvalue: base 1\ncontext: unchanged1\n\n"
             "section 2\nvalue: base 2\ncontext: unchanged2\n");
@@ -3881,7 +3586,6 @@ void TestWorkspaceShellRestoreSessionRoundTripsMultiHunkMergeChoices() {
 
   auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
   Expect(merge.model.hunks.size() >= 2, "fixture should produce at least two hunks");
-  // Distinct explicit choices per hunk exercise the positional persist/restore.
   merge.model.hunks[0].choice = MergeChoice::Both;
   merge.model.hunks[1].choice = MergeChoice::Incoming;
   WorkspaceShellTestAccess::RefreshMergeTabDerivedState(shell);
@@ -4003,10 +3707,6 @@ void TestWorkspaceShellDeferredTabHydrationPreservesCursorAndScroll() {
          "hydrated deferred tab should restore cursor and scroll metadata");
 }
 
-// A folder rename must retarget the paths of deferred (session-restored,
-// never-activated) editor tabs too, not only hydrated ones. Otherwise the
-// deferred tab strands on the old path: activating it later fails to open, and
-// the next session-save persists a path that no longer exists, dropping the tab.
 void TestWorkspaceShellRenameRetargetsDeferredEditorTab() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -4029,7 +3729,7 @@ void TestWorkspaceShellRenameRetargetsDeferredEditorTab() {
   WorkspaceShellTestAccess::OpenFile(shell, alpha);
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, beta),
          "rename-deferred fixture should open the secondary tab");
-  WorkspaceShellTestAccess::ActivateTab(shell, 0);  // beta (index 1) becomes inactive => deferred
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
   WorkspaceShellTestAccess::SaveSessionState(shell);
 
   WorkspaceShell restored;
@@ -4041,7 +3741,6 @@ void TestWorkspaceShellRenameRetargetsDeferredEditorTab() {
   Expect(tabs[1].deferred_handle.has_value(),
          "inactive secondary tab should restore as deferred before rename");
 
-  // Rename the enclosing folder while the beta tab is still deferred.
   WorkspaceShellTestAccess::PrepareRenamePrompt(restored, root / "src", "renamed-src");
   WorkspaceShellTestAccess::ConfirmPromptSurface(restored);
 
@@ -4056,7 +3755,6 @@ void TestWorkspaceShellRenameRetargetsDeferredEditorTab() {
   Expect(tabs_after[1].path == renamed_beta.lexically_normal(),
          "deferred tab's tab-strip path must be retargeted too");
 
-  // Activating the retargeted deferred tab must hydrate from the new path.
   WorkspaceShellTestAccess::ActivateTab(restored, 1);
   const auto& hydrated = WorkspaceShellTestAccess::ActiveEditor(restored);
   Expect(hydrated.path() == renamed_beta.lexically_normal(),
@@ -4165,8 +3863,6 @@ void TestWorkspaceShellRestoreSessionPreservesEditorGroupSplit() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1000, 700);
   WorkspaceShellTestAccess::OpenFile(shell, file_a);
   WorkspaceShellTestAccess::SetGroupScrollLine(shell, 0, 40);
-  // Stack a second group (split-down) and give it a distinct document; focus
-  // stays on the new group.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Horizontal),
          "split-down should create the second group");
   WorkspaceShellTestAccess::OpenFile(shell, file_b);
@@ -4177,7 +3873,6 @@ void TestWorkspaceShellRestoreSessionPreservesEditorGroupSplit() {
   WorkspaceShellTestAccess::SetWindowSize(restored, 1000, 700);
   Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
          "restoring a two-group session should succeed");
-  // Mirror the production startup flow, which hydrates every group's active tab.
   WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
   Expect(WorkspaceShellTestAccess::EditorGroupCount(restored) == 2,
          "restore should rebuild both editor groups");
@@ -4196,10 +3891,6 @@ void TestWorkspaceShellRestoreSessionPreservesEditorGroupSplit() {
          "group 0 should restore its independent scroll position");
 }
 
-// A dirty file open in two panes is one buffer, and both tabs persist the same
-// snapshot. The restore rebuilt each tab from its own lines, so the session came
-// back with two independent documents for one file: an edit in one pane no
-// longer showed in the other. The second restored tab must share the first's.
 void TestWorkspaceShellRestoreSessionSharesADirtyBufferAcrossPanes() {
   using microide::workspace::EditorSplitOrientation;
   TemporaryDirectory temp_dir;
@@ -4239,14 +3930,11 @@ void TestWorkspaceShellRestoreSessionSharesADirtyBufferAcrossPanes() {
   Expect(left.SharesDocumentWith(right),
          "the two restored panes must be views of ONE document, not two copies");
 
-  // And the buffer stays one: an edit through the focused pane shows in the other.
   Expect(WorkspaceShellTestAccess::HandleTextInput(restored, "Y"), "typing after the restore");
   Expect(left.lines().LineView(0) == right.lines().LineView(0),
          "an edit in one restored pane shows in the other");
 }
 
-// A three-pane grid (two columns, the second stacked) must come back with its
-// SHAPE, not just its group count: the split tree is what the session carries now.
 void TestWorkspaceShellRestoreSessionPreservesNestedEditorSplitShape() {
   using microide::workspace::EditorSplitOrientation;
   TemporaryDirectory temp_dir;
@@ -4306,21 +3994,18 @@ void TestWorkspaceShellAfterDelayAutosaveSurvivesTabSwitch() {
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-  WorkspaceShellTestAccess::OpenFile(shell, file_a);  // tab 0
-  WorkspaceShellTestAccess::OpenFile(shell, file_b);  // tab 1 (active)
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+  WorkspaceShellTestAccess::OpenFile(shell, file_b);
   Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 2, "both files should open as tabs");
 
   Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.autosave", "after_delay"),
          "after_delay autosave should be settable");
 
-  // Focus tab A and let the autosave sampler baseline it (mirrors the per-input-batch
-  // MaybeArmAutosaveTimer call the event loop makes before the first edit).
   WorkspaceShellTestAccess::ActivateTab(shell, 0);
   WorkspaceShellTestAccess::MaybeArmAutosaveTimer(shell);
   Expect(!WorkspaceShellTestAccess::AutosaveArmed(shell),
          "no edit yet -> the after_delay autosave timer should be idle");
 
-  // Edit A so it becomes dirty, then re-sample to arm the debounce.
   auto& editor_a = WorkspaceShellTestAccess::ActiveEditor(shell);
   editor_a.MoveCursorTo(0, 0);
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "x"), "editing tab A should be accepted");
@@ -4328,21 +4013,12 @@ void TestWorkspaceShellAfterDelayAutosaveSurvivesTabSwitch() {
   Expect(WorkspaceShellTestAccess::AutosaveArmed(shell),
          "editing a dirty path-backed buffer should arm the after_delay autosave");
 
-  // Switch to the clean tab B before the debounce elapses and re-sample. Tab A's
-  // pending autosave must survive the switch: content_revision() is per-viewport, so
-  // sampling B used to look like an edit and disarm A's flush, silently dropping its
-  // unsaved edits until an unrelated edit re-armed.
   WorkspaceShellTestAccess::ActivateTab(shell, 1);
   WorkspaceShellTestAccess::MaybeArmAutosaveTimer(shell);
   Expect(WorkspaceShellTestAccess::AutosaveArmed(shell),
          "switching to a clean tab must not disarm tab A's pending after_delay autosave");
 }
 
-// Regression: closing the active tab promotes a neighbor. If that neighbor is a
-// session-restored, still-deferred editor tab, the promote path must honor its
-// restored cursor/scroll (from deferred_handle) rather than opening fresh at
-// (0,0). Previously the bespoke promote branch ignored deferred_handle, silently
-// losing the persisted view state (and leaving a stale handle behind).
 void TestWorkspaceShellClosePromotesDeferredTabWithRestoredViewState() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -4366,12 +4042,11 @@ void TestWorkspaceShellClosePromotesDeferredTabWithRestoredViewState() {
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-  WorkspaceShellTestAccess::OpenFile(shell, file_a);  // tab 0
-  WorkspaceShellTestAccess::OpenFile(shell, file_b);  // tab 1 (active)
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+  WorkspaceShellTestAccess::OpenFile(shell, file_b);
   auto& editor_b = WorkspaceShellTestAccess::ActiveEditor(shell);
   editor_b.MoveCursorTo(2, 3);
   editor_b.SetScrollLine(10);
-  // Make tab A active so that on restore B is the DEFERRED neighbor.
   WorkspaceShellTestAccess::ActivateTab(shell, 0);
   WorkspaceShellTestAccess::SaveSessionState(shell);
 
@@ -4379,10 +4054,8 @@ void TestWorkspaceShellClosePromotesDeferredTabWithRestoredViewState() {
   WorkspaceShellTestAccess::SetProjectRoot(restored, root);
   Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
          "session restore should succeed");
-  // Hydrate only the active tab (A); tab B stays deferred, as on real startup.
   WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
 
-  // Close the active tab WITHOUT first activating B; B is promoted while deferred.
   WorkspaceShellTestAccess::RequestCloseTab(restored, 0);
 
   const auto& promoted = WorkspaceShellTestAccess::ActiveEditor(restored);
@@ -4392,13 +4065,6 @@ void TestWorkspaceShellClosePromotesDeferredTabWithRestoredViewState() {
          "promoting a deferred tab on close must restore its persisted scroll position");
 }
 
-// Regression: dragging a group's ACTIVE tab into the other half of a split
-// promotes a neighbour in the group it left. That neighbour is deferred whenever
-// it came back from a restored session and was never activated, and an
-// unhydrated active tab resolves to the group's welcome surface -- so the half
-// you dragged out of went blank and showed the Welcome screen instead of the tab
-// its own strip was highlighting. The destination had this loader call from the
-// start; the source never got one.
 void TestWorkspaceShellMoveTabToGroupHydratesSourceGroupNeighbor() {
   using microide::workspace::EditorSplitOrientation;
   TemporaryDirectory temp_dir;
@@ -4419,8 +4085,8 @@ void TestWorkspaceShellMoveTabToGroupHydratesSourceGroupNeighbor() {
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-  WorkspaceShellTestAccess::OpenFile(shell, file_b);  // tab 0
-  WorkspaceShellTestAccess::OpenFile(shell, file_a);  // tab 1 (active)
+  WorkspaceShellTestAccess::OpenFile(shell, file_b);
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
   WorkspaceShellTestAccess::SaveSessionState(shell);
 
   WorkspaceShell restored;
@@ -4439,7 +4105,6 @@ void TestWorkspaceShellMoveTabToGroupHydratesSourceGroupNeighbor() {
   Expect(WorkspaceShellTestAccess::GroupActiveTabIndex(restored, 0) == 1,
          "group 0's active tab is the one the split cloned");
 
-  // Drag group 0's active tab into group 1 -- the deferred neighbour is promoted.
   Expect(WorkspaceShellTestAccess::MoveTabToGroup(restored, 0, 1, 1, 1),
          "the cross-group move should commit");
   Expect(WorkspaceShellTestAccess::GroupTabCount(restored, 0) == 1, "the tab left group 0");
@@ -4450,7 +4115,7 @@ void TestWorkspaceShellMoveTabToGroupHydratesSourceGroupNeighbor() {
          "the promoted neighbour is the buffer group 0's strip is highlighting");
 }
 
-}  // namespace
+}
 
 void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/MoveTabToGroupHydratesSourceGroupNeighbor",
@@ -4629,4 +4294,4 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellShutdownPreservesDistinctWorkspaceProjectRoots);
 }
 
-}  // namespace microide::tests
+}

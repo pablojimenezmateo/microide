@@ -10,17 +10,9 @@
 #include "plugin/PluginHost.h"
 #include "plugin/PluginHostRuntimeTypes.h"
 
-// Query side of the four plugin-native language providers (go-to-definition,
-// find references, signature help, document symbols). Mirrors
-// PluginProviderQueryInterop (completion / code action) but lives in its own TU
-// to keep both under the 800-line plugin cap. Every plugin-supplied table is
-// bounded before allocation (see the kMax* limits in the .cpp).
 namespace microide::plugin::language_provider_query_interop {
 
 #if MICROIDE_HAS_LUA_PLUGINS
-// Handles both Definition and References (the only difference is References
-// forwards `include_declaration` as a third Lua argument). Returned paths are
-// resolved against `current_project_root`.
 std::vector<PluginHost::LocationResult> QueryLocations(
     runtime_types::LanguageQueryKind kind,
     std::string_view language_id,
@@ -56,4 +48,4 @@ std::vector<PluginHost::DocumentSymbolNode> QueryDocumentSymbols(
     std::string* error_message);
 #endif
 
-}  // namespace microide::plugin::language_provider_query_interop
+}

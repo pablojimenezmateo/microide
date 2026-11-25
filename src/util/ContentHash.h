@@ -10,10 +10,6 @@
 #include <string>
 #include <string_view>
 
-// BLAKE3 content hashes: the remote mirror's object address, the manifest row's
-// `content_hash`, and the compare-and-swap token a push presents
-// (dev-docs/design/remote-projects.md § 6.2). 32 raw bytes on the wire, never the
-// 64-character hex, which is for logs and file names only.
 namespace microide::util {
 
 struct ContentHash {
@@ -26,14 +22,11 @@ struct ContentHash {
   std::string_view raw() const {
     return std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size());
   }
-  // Exactly kBytes raw bytes, or nullopt.
   static std::optional<ContentHash> FromRaw(std::string_view raw);
-  // 64 lowercase hex digits.
   std::string Hex() const;
   static std::optional<ContentHash> FromHex(std::string_view hex);
 };
 
-// The digest is already uniformly distributed: its first word is a perfect bucket key.
 struct ContentHashHasher {
   std::size_t operator()(const ContentHash& hash) const noexcept {
     std::size_t word = 0;
@@ -42,8 +35,6 @@ struct ContentHashHasher {
   }
 };
 
-// Streaming hasher. Opaque storage so the vendored header stays out of every TU
-// that names a hash.
 class ContentHasher {
  public:
   ContentHasher();
@@ -56,16 +47,10 @@ class ContentHasher {
 
 ContentHash HashContent(std::string_view bytes);
 
-// The hash of everything readable from `fd` from its current offset, in 64 KiB
-// reads; `sink`, when given, sees every chunk (a reader that ships the bytes it
-// hashes). nullopt on a read error. Does not close `fd`.
 std::optional<ContentHash> HashFileDescriptor(int fd, std::uint64_t* size_out = nullptr,
                                               const std::function<void(std::string_view)>& sink = {});
 
-// A regular file's hash, read in bounded chunks. nullopt when it is not a regular
-// file (never blocks on a FIFO or device) or cannot be read. `size_out`, when given,
-// receives the number of bytes hashed.
 std::optional<ContentHash> HashFileContent(const std::filesystem::path& path,
                                            std::uint64_t* size_out = nullptr);
 
-}  // namespace microide::util
+}

@@ -24,16 +24,12 @@ class CompareMouseCoordinator {
     std::function<std::optional<std::string>()> read_primary_selection_text;
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
     std::function<void()> note_active_editable_edit;
-    // A frame owed: the editor, compare and merge surfaces derive their damage
-    // (RequestPreparedFrame); a request names no rect.
     std::function<void()> request_frame;
     std::function<CollapsedContextActionRects(const SDL_FRect&, const compare::ComparePresentationRow&)>
         build_compare_collapsed_context_action_rects;
     std::function<bool(CompareTabState&, std::size_t, CompareCollapsedContextAction)>
         expand_compare_collapsed_context;
     std::function<void()> clear_drag_state;
-    // The review or header control under a point (CompareControlAt), and running
-    // one (CompareReviewService::RunControl).
     std::function<std::optional<CompareControlHit>(const SDL_FRect&, const workspace::CompareSurfaceLayout&,
                                                    const CompareTabState&, float, float)>
         compare_control_at;
@@ -48,8 +44,6 @@ class CompareMouseCoordinator {
   bool HandleDrag(const SDL_Event& event, const SDL_FRect& surface);
   bool HandleHoverMotion(const SDL_Event& event, const SDL_FRect& surface);
   bool HandleSelectionMotion(const SDL_Event& event, const SDL_FRect& surface);
-  // Scrolls `compare_tab`, shown in `surface` -- the pane under the pointer,
-  // focused or not (scrolling is not focusing).
   bool HandleWheel(const SDL_Event& event,
                    const SDL_FRect& surface,
                    CompareTabState& compare_tab,
@@ -64,4 +58,4 @@ class CompareMouseCoordinator {
   Operations operations_;
 };
 
-}  // namespace microide::workspace
+}

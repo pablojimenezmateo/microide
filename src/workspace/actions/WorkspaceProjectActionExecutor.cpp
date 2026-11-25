@@ -12,8 +12,6 @@ namespace microide::workspace {
 
 namespace {
 
-// Why `path` did not open as a project, for the rejection's toast: ": no such
-// folder" said up front beats a bare "Failed to open project".
 std::string WhyNotAFolder(const std::filesystem::path& path) {
   std::error_code error;
   const std::filesystem::file_status status = std::filesystem::status(path, error);
@@ -29,7 +27,7 @@ std::string WhyNotAFolder(const std::filesystem::path& path) {
   return {};
 }
 
-}  // namespace
+}
 
 ActionCoordinator::DispatchResult ActionCoordinator::ExecuteProject(
     ActionId id,
@@ -48,8 +46,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteProject(
             return DispatchResult::Handled;
           case ProjectOpenPickerResult::Unavailable:
             if (source == ActionSource::Menu) {
-              // No native picker: fall back to the command palette pre-filled with the
-              // command so the user only types the path (then Enter runs it).
               context_.OpenCommandPalette("project-open ");
             }
             return DispatchResult::Handled;
@@ -95,4 +91,4 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteProject(
   }
 }
 
-}  // namespace microide::workspace
+}

@@ -27,7 +27,7 @@ std::string DisplayName(const std::filesystem::path& path) {
   return path.string();
 }
 
-}  // namespace
+}
 
 struct DirectoryTree::SortableEntry {
   std::filesystem::path path;
@@ -36,18 +36,11 @@ struct DirectoryTree::SortableEntry {
   bool is_symlink = false;
   bool ignored = false;
   bool pending = false;
-  // Parent-linked matcher for descending into this directory (null for files and
-  // collapsed dirs, which are never descended); shares the ancestor rule chain
-  // instead of copying it (TD-2026-07-17A-055).
   std::shared_ptr<const IgnoreMatcher> matcher;
 };
 
 bool DirectoryTree::SetRoot(const std::filesystem::path& root) {
   util::StartupTrace::Scope trace_scope("DirectoryTree::SetRoot");
-  // Non-throwing probes throughout: selecting a root that is inaccessible, on a
-  // flaky/unmounted volume, or otherwise un-stattable (ENAMETOOLONG, a parent dir
-  // losing +x) must fail the open cleanly rather than throw out of sidebar setup.
-  // Mirrors FileIndex::SetRoot / CollectProjectFiles.
   std::error_code error;
   const auto absolute_root = std::filesystem::absolute(root, error);
   if (error || !std::filesystem::exists(absolute_root, error) || error ||
@@ -56,7 +49,7 @@ bool DirectoryTree::SetRoot(const std::filesystem::path& root) {
   }
 
   if (absolute_root != root_) {
-    pending_.reset();  // another project's
+    pending_.reset();
   }
   root_ = absolute_root;
   root_generic_ = root_.generic_string();
@@ -72,12 +65,12 @@ void DirectoryTree::PruneDeletedDirectoryKeys() {
   const auto prune = [&](PathKeySet& keys) {
     for (auto it = keys.begin(); it != keys.end();) {
       if (*it == root_key) {
-        ++it;  // Never drop the root's own expanded key.
+        ++it;
         continue;
       }
       if (pending_ != nullptr && it->size() > root_key.size() + 1 &&
           !pending_->ChildrenOf(std::string_view(*it).substr(root_key.size() + 1)).empty()) {
-        ++it;  // a directory the sync has not created yet
+        ++it;
         continue;
       }
       std::error_code error;
@@ -93,10 +86,6 @@ void DirectoryTree::PruneDeletedDirectoryKeys() {
 }
 
 void DirectoryTree::MaybePruneDeletedDirectoryKeys() {
-  // While the remembered set is small the sweep is trivial, so keep pruning every refresh
-  // (a deleted-then-recreated dir then renders collapsed immediately). Once the set grows
-  // past that — a large session restore or heavy manual expansion — sweep only at a bounded
-  // interval so a refresh no longer pays an O(history) stat sweep for one changed row.
   static constexpr std::size_t kImmediatePruneKeyCount = 64;
   static constexpr std::size_t kKeyPruneInterval = 32;
   const std::size_t remembered = expanded_paths_.size() + manually_collapsed_paths_.size();
@@ -118,8 +107,6 @@ void DirectoryTree::Refresh() {
 
 bool DirectoryTree::ApplyGitStatuses(SharedGitTreeStatusMap statuses) {
   git_statuses_ = std::move(statuses);
-  // One scratch buffer for the whole sweep — after the first few entries it is
-  // already large enough, so the sweep stops allocating entirely.
   std::string scratch;
   bool changed = false;
   for (auto& entry : entries_) {
@@ -226,8 +213,6 @@ bool DirectoryTree::HasManuallyCollapsedAncestor(const std::filesystem::path& pa
   }
 
   const auto normalized_path = absolute_path.lexically_normal();
-  // Component-wise containment via the sanctioned helper, not a raw byte-prefix
-  // test: rfind(root,0)==0 would treat `/a/project/...` as inside root `/a/proj`.
   for (auto current = normalized_path.parent_path();
        !current.empty() && current != root_ && util::PathEqualsOrWithin(current, root_);
        current = current.parent_path()) {
@@ -356,9 +341,6 @@ void DirectoryTree::RebuildEntries() {
     return;
   }
 
-  // The same chain the index/finder walk from, so VCS metadata, dependency, and
-  // build-output dirs render grayed (ignored) here rather than as normal entries --
-  // and stay consistent with what the finder indexes.
   const std::shared_ptr<const IgnoreMatcher> matcher =
       IgnoreMatcher::ForProjectRoot(root_, exclude_globs_);
   entries_.push_back(TreeEntry{
@@ -372,7 +354,7 @@ void DirectoryTree::RebuildEntries() {
       .git_status = GitFileStatus::Clean,
   });
   SymlinkLoopGuard loop_guard(root_,
-                              /*enforce_containment=*/!follow_out_of_root_symlinks_);
+                              !follow_out_of_root_symlinks_);
   AppendDirectory(root_, 1, matcher, loop_guard);
 
   selected_index_ = 0;
@@ -390,7 +372,7 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
                                     SymlinkLoopGuard& loop_guard) {
   util::PerformanceTrace::Scope perf_scope("DirectoryTree::AppendDirectory");
   if (depth > platform::kMaxTreeWalkDepth) {
-    return;  // bound native-stack recursion on a pathologically deep tree
+    return;
   }
   if (directory != root_ && !IsExpanded(directory)) {
     return;
@@ -417,8 +399,6 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
       continue;
     }
 
-    // .git/.svn/build-output/etc. are no longer special-cased: the seeded matcher
-    // marks them ignored, so they render grayed (and stay lazily expandable).
     const bool ignored = matcher->Ignored(relative, is_directory);
     if (sort_key.starts_with('.') && !ignored) {
       iterator.increment(error);
@@ -428,17 +408,8 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
     if (is_directory) {
       std::error_code link_error;
       const bool is_symlink = iterator->is_symlink(link_error);
-      // The dir's own .gitignore only affects its GRANDCHILDREN, which are walked
-      // only when the dir is expanded (AppendDirectory early-returns for a collapsed
-      // dir). The child's own `ignored` flag above uses the parent `matcher`, not
-      // this one. So skip the matcher copy + .gitignore stat/open for collapsed rows
-      // — otherwise every refresh pays ~2 syscalls + a rules-vector copy per collapsed
-      // directory that is immediately discarded (a monorepo has many at the root).
       std::shared_ptr<const IgnoreMatcher> child_matcher;
       if (IsExpanded(path)) {
-        // Inherit the parent as a shared layer + this directory's own .gitignore;
-        // no copy of the inherited rule set (TD-2026-07-17A-055), and no layer at
-        // all when the directory has no rules of its own.
         child_matcher = IgnoreMatcher::ForDirectory(matcher, path);
       }
       children.push_back(SortableEntry{
@@ -466,10 +437,6 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
     AppendPendingChildren(directory, matcher, children);
   }
 
-  // Folders first, then the explorer order VS Code and every file manager use:
-  // case-insensitive with numeric-aware digit runs ("file2" before "file10",
-  // "Zebra" with the z's). A byte-wise tiebreak keeps names that fold equal
-  // ("a.txt" / "A.txt") in one deterministic order.
   std::sort(children.begin(), children.end(), [](const SortableEntry& lhs, const SortableEntry& rhs) {
     if (lhs.is_directory != rhs.is_directory) {
       return lhs.is_directory > rhs.is_directory;
@@ -478,7 +445,6 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
     return natural != 0 ? natural < 0 : lhs.sort_key < rhs.sort_key;
   });
 
-  // Reused across this directory's children (see EntryGitStatus).
   std::string git_key_scratch;
   for (const auto& child : children) {
     const bool expanded = child.is_directory && IsExpanded(child.path);
@@ -517,8 +483,6 @@ void DirectoryTree::SetPendingPaths(SharedPendingPaths pending) {
 void DirectoryTree::AppendPendingChildren(const std::filesystem::path& directory,
                                           const std::shared_ptr<const IgnoreMatcher>& matcher,
                                           std::vector<SortableEntry>& children) const {
-  // Every row's path is root_ plus the names this walk appended, so the relative
-  // text is the generic spelling past the root's.
   const std::string directory_text = directory.generic_string();
   const std::string_view relative =
       directory_text.size() > root_generic_.size()
@@ -537,16 +501,16 @@ void DirectoryTree::AppendPendingChildren(const std::filesystem::path& directory
   std::vector<SortableEntry> added;
   for (const PendingPaths::Child& child : pending) {
     if (std::binary_search(on_disk.begin(), on_disk.end(), child.name)) {
-      continue;  // landed meanwhile
+      continue;
     }
     std::filesystem::path path = directory / child.name;
     const bool ignored = matcher->Ignored(path.lexically_relative(root_), child.is_directory);
     if (child.name.starts_with('.') && !ignored) {
-      continue;  // the same rule the real entries follow
+      continue;
     }
     std::shared_ptr<const IgnoreMatcher> child_matcher;
     if (child.is_directory && IsExpanded(path)) {
-      child_matcher = matcher;  // nothing on disk to add rules from yet
+      child_matcher = matcher;
     }
     added.push_back(SortableEntry{
         .path = std::move(path),
@@ -566,10 +530,6 @@ namespace {
 std::vector<std::string> RelativeKeysExcludingRoot(
     const DirectoryTree::PathKeySet& keys,
     const std::filesystem::path& root) {
-  // Non-throwing with a lexical fallback (NormalizePathKey): this runs on the
-  // persistence-save path, where the throwing absolute() could abort the process
-  // if current_path() fails (unmounted CWD, ENOMEM) instead of degrading to a
-  // best-effort key.
   const std::string root_key = platform::NormalizeAbsolutePath(root).generic_string();
   std::vector<std::string> relative;
   relative.reserve(keys.size());
@@ -583,12 +543,11 @@ std::vector<std::string> RelativeKeysExcludingRoot(
     }
     relative.push_back(rel.generic_string());
   }
-  // Deterministic order so persisted records are stable across saves.
   std::sort(relative.begin(), relative.end());
   return relative;
 }
 
-}  // namespace
+}
 
 std::vector<std::string> DirectoryTree::ExpandedRelativePaths() const {
   if (root_.empty()) {
@@ -616,11 +575,6 @@ void DirectoryTree::RestoreExpansionState(const std::vector<std::string>& expand
   if (root_.empty()) {
     return;
   }
-  // Reject restored keys that are absolute, escape the root via `..`, or otherwise
-  // resolve outside the project. A tampered or cross-root session file could otherwise
-  // seed outside-root keys that PruneDeletedDirectoryKeys would stat (a syscall on an
-  // arbitrary path) or that would be re-serialized as outside-root relatives
-  // (TD-2026-07-17A-089). Purely lexical — no filesystem access.
   const auto insert_contained = [this](PathKeySet& target,
                                        const std::string& relative) {
     if (relative.empty()) {
@@ -663,18 +617,7 @@ GitFileStatus DirectoryTree::EntryGitStatus(const std::filesystem::path& path,
     return GitFileStatus::Clean;
   }
 
-  // Match the writer's key form: GitPorcelainParser stores keys in generic
-  // ('/'-separated) form, relative to the repository root.
-  //
-  // Every tree entry is enumerated from root_, so its path is root_ plus a relative
-  // tail — the key is a prefix strip, not the lexically_relative + lexically_normal
-  // + generic_string chain this used to run (measured 12x faster over a 5000-entry
-  // sweep, identical hits). A path that is NOT under root_ (an out-of-root symlink
-  // target, when following is enabled) has no repository-relative key at all, which
-  // is the Clean the old code also produced via a "../.." relative that never hit.
-  scratch.assign(path.native());  // POSIX: the native form IS the generic form.
-  // A root recorded with a trailing separator (e.g. "/") owns its separator, so the
-  // tail starts immediately after the prefix instead of one byte later.
+  scratch.assign(path.native());
   const bool root_ends_with_separator = root_generic_.back() == '/';
   const std::size_t tail = root_generic_.size() + (root_ends_with_separator ? 0 : 1);
   if (scratch.size() <= tail || scratch.compare(0, root_generic_.size(), root_generic_) != 0 ||
@@ -688,9 +631,6 @@ GitFileStatus DirectoryTree::EntryGitStatus(const std::filesystem::path& path,
 }
 
 bool DirectoryTree::ContainsPathKey(const PathKeySet& keys, const std::filesystem::path& path) {
-  // POSIX: the native spelling IS the generic spelling, and `absolute()` returns
-  // an already-absolute path unchanged, so an absolute path whose text is already
-  // normal is byte-identical to its NormalizePathKey.
   if (const std::string& text = path.native();
       !text.empty() && text.front() == '/' && !util::PathTextNeedsNormalizing(text)) {
     return keys.contains(std::string_view(text));
@@ -710,4 +650,4 @@ std::string DirectoryTree::NormalizePathKey(const std::filesystem::path& path) {
   return platform::NormalizeAbsolutePath(path).generic_string();
 }
 
-}  // namespace microide::project
+}

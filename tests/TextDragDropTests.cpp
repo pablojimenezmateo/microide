@@ -20,9 +20,6 @@ TextViewport MakeViewport(std::string_view content) {
   return viewport;
 }
 
-// Joined with '\n' BETWEEN lines, not after each: LoadContent("...\n") keeps a
-// trailing empty line, so a per-line append would report a newline the buffer
-// does not have.
 std::string DocumentText(const TextViewport& viewport) {
   std::string text;
   for (std::size_t i = 0; i < viewport.lines().size(); ++i) {
@@ -38,10 +35,6 @@ SelectionRange Range(std::size_t sl, std::size_t sc, std::size_t el, std::size_t
   return SelectionRange{TextPosition{sl, sc}, TextPosition{el, ec}};
 }
 
-// The arithmetic the entry called out: "the delete shifts the insert point when
-// the drop is after the source". It shifts by a different amount depending on
-// whether the drop shares the source's LAST line, which is the case a
-// line-count-only adjustment gets wrong.
 void TestDropAdjustmentForRemovedRange() {
   const SelectionRange source = Range(1, 2, 3, 4);
 
@@ -52,13 +45,10 @@ void TestDropAdjustmentForRemovedRange() {
   Expect(below.line == 7 && below.column == 3,
          "a drop on a later line rises by the source's line span, keeping its column");
 
-  // On the source's last line, past its end: that line's tail is spliced onto the
-  // source's first line, so the drop lands at the join plus its offset into it.
   const TextPosition same_line = drag::AdjustDropForRemovedRange(source, TextPosition{3, 10});
   Expect(same_line.line == 1 && same_line.column == 2 + (10 - 4),
          "a drop on the source's last line lands at the splice join plus its offset");
 
-  // A single-line source: no lines vanish, only columns shift.
   const SelectionRange one_line = Range(2, 3, 2, 8);
   const TextPosition after = drag::AdjustDropForRemovedRange(one_line, TextPosition{2, 12});
   Expect(after.line == 2 && after.column == 3 + (12 - 8),
@@ -80,8 +70,8 @@ void TestPositionAfterInsertedText() {
 
 void TestMoveWithinALineForward() {
   TextViewport viewport = MakeViewport("alpha bravo charlie\n");
-  const SelectionRange source = Range(0, 0, 0, 6);  // "alpha "
-  const auto moved = drag::Apply(viewport, source, TextPosition{0, 19}, /*copy=*/false);
+  const SelectionRange source = Range(0, 0, 0, 6);
+  const auto moved = drag::Apply(viewport, source, TextPosition{0, 19}, false);
   Expect(moved.has_value(), "a forward move inside one line applies");
   Expect(viewport.lines().LineView(0) == "bravo charliealpha ",
          "the text moves to the drop point, adjusted for its own removal");
@@ -91,8 +81,8 @@ void TestMoveWithinALineForward() {
 
 void TestMoveBackwardIsNotShifted() {
   TextViewport viewport = MakeViewport("alpha bravo charlie\n");
-  const SelectionRange source = Range(0, 12, 0, 19);  // "charlie"
-  const auto moved = drag::Apply(viewport, source, TextPosition{0, 0}, /*copy=*/false);
+  const SelectionRange source = Range(0, 12, 0, 19);
+  const auto moved = drag::Apply(viewport, source, TextPosition{0, 0}, false);
   Expect(moved.has_value(), "a backward move applies");
   Expect(viewport.lines().LineView(0) == "charliealpha bravo ",
          "a drop before the source is not shifted by the removal");
@@ -100,9 +90,8 @@ void TestMoveBackwardIsNotShifted() {
 
 void TestMoveAcrossLines() {
   TextViewport viewport = MakeViewport("one\ntwo\nthree\nfour\n");
-  // Move the whole "two\n" line to the top.
   const SelectionRange source = Range(1, 0, 2, 0);
-  const auto moved = drag::Apply(viewport, source, TextPosition{0, 0}, /*copy=*/false);
+  const auto moved = drag::Apply(viewport, source, TextPosition{0, 0}, false);
   Expect(moved.has_value(), "a multi-line move applies");
   Expect(DocumentText(viewport) == "two\none\nthree\nfour\n",
          "the moved lines land at the drop point and leave no gap behind");
@@ -110,8 +99,8 @@ void TestMoveAcrossLines() {
 
 void TestCopyLeavesTheSourceInPlace() {
   TextViewport viewport = MakeViewport("alpha bravo\n");
-  const SelectionRange source = Range(0, 0, 0, 5);  // "alpha"
-  const auto copied = drag::Apply(viewport, source, TextPosition{0, 11}, /*copy=*/true);
+  const SelectionRange source = Range(0, 0, 0, 5);
+  const auto copied = drag::Apply(viewport, source, TextPosition{0, 11}, true);
   Expect(copied.has_value(), "a copy applies");
   Expect(viewport.lines().LineView(0) == "alpha bravoalpha",
          "a copy inserts at the drop point WITHOUT removing the source");
@@ -122,21 +111,17 @@ void TestCopyLeavesTheSourceInPlace() {
 void TestDropInsideTheSourceIsANoOp() {
   TextViewport viewport = MakeViewport("alpha bravo\n");
   const SelectionRange source = Range(0, 0, 0, 5);
-  // Dropping onto itself must not delete-and-reinsert at a point that no longer
-  // exists; it must do nothing at all.
   for (std::size_t column = 0; column <= 5; ++column) {
-    const auto result = drag::Apply(viewport, source, TextPosition{0, column}, /*copy=*/false);
+    const auto result = drag::Apply(viewport, source, TextPosition{0, column}, false);
     Expect(!result.has_value(), "a drop inside the source is refused");
     Expect(viewport.lines().LineView(0) == "alpha bravo", "the document is untouched");
   }
 }
 
-// The entry's third requirement: "one undo entry covering a delete and an insert
-// at two places". Without the group, Ctrl+Z leaves the text in neither place.
 void TestMoveUndoesInOneStep() {
   TextViewport viewport = MakeViewport("alpha bravo charlie\n");
   const std::string before = DocumentText(viewport);
-  const auto moved = drag::Apply(viewport, Range(0, 0, 0, 6), TextPosition{0, 19}, /*copy=*/false);
+  const auto moved = drag::Apply(viewport, Range(0, 0, 0, 6), TextPosition{0, 19}, false);
   Expect(moved.has_value(), "the move applies");
   Expect(DocumentText(viewport) != before, "the document changed");
 
@@ -147,19 +132,12 @@ void TestMoveUndoesInOneStep() {
 
 void TestReversedSourceRangeIsNormalized() {
   TextViewport viewport = MakeViewport("alpha bravo\n");
-  // A drag that selects right-to-left hands over end < start.
-  const auto moved = drag::Apply(viewport, Range(0, 5, 0, 0), TextPosition{0, 11}, /*copy=*/false);
+  const auto moved = drag::Apply(viewport, Range(0, 5, 0, 0), TextPosition{0, 11}, false);
   Expect(moved.has_value(), "a reversed source range still applies");
   Expect(viewport.lines().LineView(0) == " bravoalpha",
          "the reversed range moves the same text as the forward one");
 }
 
-// Every (source, drop) pair over a small document, move and copy, against a flat
-// string oracle: offsets instead of (line, column), so the adjustment the entry
-// calls out -- and the two ways it differs on the source's last line -- is
-// checked by construction rather than at the three points a literal test picks.
-// The oracle also gives the round trip: Undo must restore the document exactly
-// and Redo must reproduce the move.
 std::size_t OffsetOf(std::string_view text, TextPosition position) {
   std::size_t offset = 0;
   for (std::size_t line = 0; line < position.line; ++line) {
@@ -194,7 +172,7 @@ void TestDragDropMatchesAFlatStringOracle() {
       if (drag::PositionBefore(end, start)) continue;
       const std::size_t start_offset = OffsetOf(kDocument, start);
       const std::size_t end_offset = OffsetOf(kDocument, end);
-      if (start_offset == end_offset) continue;  // empty source: Apply refuses
+      if (start_offset == end_offset) continue;
       for (const TextPosition& drop : positions) {
         for (const bool copy : {false, true}) {
           const std::size_t drop_offset = OffsetOf(kDocument, drop);
@@ -205,8 +183,6 @@ void TestDragDropMatchesAFlatStringOracle() {
           TextViewport viewport = MakeViewport(kDocument);
           const auto moved = drag::Apply(viewport, SelectionRange{start, end}, drop, copy);
 
-          // Oracle: splice the flat string. A drop inside the source (endpoints
-          // included) is a no-op, which is what Apply reports as nullopt.
           if (drop_offset >= start_offset && drop_offset <= end_offset) {
             Expect(!moved.has_value(), "a drop inside the source is refused: " + context);
             Expect(DocumentText(viewport) == kDocument,
@@ -245,7 +221,7 @@ void TestDragDropMatchesAFlatStringOracle() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterTextDragDropTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextDragDrop/DropAdjustmentForRemovedRange", TestDropAdjustmentForRemovedRange);
@@ -260,4 +236,4 @@ void RegisterTextDragDropTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextDragDrop/MatchesAFlatStringOracle", TestDragDropMatchesAFlatStringOracle);
 }
 
-}  // namespace microide::tests
+}

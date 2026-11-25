@@ -7,9 +7,6 @@ namespace microide::workspace {
 
 namespace {
 
-// Cap the number of expanded/collapsed tree paths a single decoded session may
-// carry. A real project tree never approaches this; the bound stops a hostile or
-// corrupt session file from allocating an unbounded string vector at restore.
 constexpr std::size_t kMaxSessionTreePaths = 100000;
 
 std::string SerializeOutgoingBaseChoiceKind(OutgoingBaseChoice::Kind kind) {
@@ -34,9 +31,6 @@ OutgoingBaseChoice::Kind ParseOutgoingBaseChoiceKind(std::string_view value) {
   return OutgoingBaseChoice::Kind::Auto;
 }
 
-// The split tree, pre-order: one entry per node as (orientation, child count,
-// child weights). Children follow their parent, so the shape needs no explicit
-// links — see EditorSplitTree::Flatten / ::Load, which own the validation.
 bool WriteSplitTree(PrimitiveWriter& w, const EditorSplitTreeRecord& record) {
   if (!w.WriteU8(static_cast<std::uint8_t>(record.size()))) {
     return false;
@@ -56,10 +50,6 @@ bool WriteSplitTree(PrimitiveWriter& w, const EditorSplitTreeRecord& record) {
 }
 
 bool ReadSplitTree(PrimitiveReader& reader, EditorSplitTreeRecord* out) {
-  // A stream that repeats this record describes one tree, the later one, as a
-  // repeated scalar field does. Appending let two in-bounds trees (each count
-  // checked against the cap only on its own) overrun the fixed node list
-  // (fuzz-smoke, ProjectSessionRecordFuzz).
   out->clear();
   std::uint8_t node_count = 0;
   if (!reader.ReadU8(&node_count) || node_count > kMaxEditorSplitNodes) {
@@ -117,8 +107,6 @@ bool EncodeTerminalTab(const TerminalTabRecord& tab, std::vector<std::byte>* out
   return true;
 }
 
-// Panes past kMaxTerminalPanes are dropped (with their weights, which then no
-// longer match and restore even) rather than failing the session.
 bool DecodeTerminalTab(std::span<const std::byte> input, TerminalTabRecord* tab) {
   return ParseRecordStream<TerminalTabTag>(
       input, [&](TerminalTabTag tag, std::span<const std::byte> payload) {
@@ -151,9 +139,6 @@ bool DecodeTerminalTab(std::span<const std::byte> input, TerminalTabRecord* tab)
                     })) {
               return false;
             }
-            // Half an identity names nothing -- an epoch with no handle, a handle
-            // with no epoch to tell its server by -- and an epoch past the hello's
-            // cap is no server's: the pane revives as a fresh shell.
             if (pane.host.handle == 0 || pane.host.epoch.empty() ||
                 pane.host.epoch.size() > kMaxRecordedHostEpochBytes) {
               pane.host = {};
@@ -176,7 +161,7 @@ bool DecodeTerminalTab(std::span<const std::byte> input, TerminalTabRecord* tab)
       });
 }
 
-}  // namespace
+}
 
 bool EncodeProjectSessionRecord(const PersistedProjectSessionState& state,
                                 std::vector<std::byte>* out) {
@@ -322,8 +307,6 @@ bool DecodeProjectSessionRecord(std::span<const std::byte> input,
                    if (!reader.ReadString(&value) || reader.remaining() != 0) {
                      return false;
                    }
-                   // Drop paths past the cap rather than failing the whole
-                   // record: a corrupt session still restores its other state.
                    if (state->expanded_tree_paths.size() < kMaxSessionTreePaths) {
                      state->expanded_tree_paths.push_back(std::move(value));
                    }
@@ -346,8 +329,6 @@ bool DecodeProjectSessionRecord(std::span<const std::byte> input,
                    if (!reader.ReadU32(&value) || reader.remaining() != 0) {
                      return false;
                    }
-                   // Encode clamps to >= 0 then writes u32; a forged 0xFFFFFFFF
-                   // must not decode to a negative row. Cap at INT_MAX.
                    state->sidebar_scroll_row = static_cast<int>(
                        std::min(value, static_cast<std::uint32_t>(std::numeric_limits<int>::max())));
                    return true;
@@ -360,8 +341,6 @@ bool DecodeProjectSessionRecord(std::span<const std::byte> input,
                    return ReadSize(reader, &state->terminal_layout.active_tab) &&
                           reader.remaining() == 0;
                  case ProjectSessionTag::TerminalTab: {
-                   // Checked before decoding, like Group: an over-cap tab is skipped
-                   // whole, never parsed.
                    if (state->terminal_layout.tabs.size() >= kMaxRevivedTerminalTabs) {
                      return true;
                    }
@@ -375,14 +354,8 @@ bool DecodeProjectSessionRecord(std::span<const std::byte> input,
                    return true;
                  }
                  case ProjectSessionTag::Group: {
-                   // Check the group cap BEFORE decoding the payload. DecodeEditorGroup can
-                   // parse up to 4096 tabs, each carrying a dirty-buffer snapshot up to the
-                   // session byte budget; a forged session could list oversized third-and-
-                   // later groups purely to make startup materialize nested payloads that are
-                   // then discarded. Skip over-cap groups without decoding their nested tabs
-                   // (TD-2026-07-17A-059).
                    if (state->groups.size() >= kMaxEditorGroups) {
-                     return true;  // tolerate extra groups; keep only what fits
+                     return true;
                    }
                    PersistedEditorGroupState group;
                    if (!DecodeEditorGroup(payload, &group)) {
@@ -392,7 +365,6 @@ bool DecodeProjectSessionRecord(std::span<const std::byte> input,
                    return true;
                  }
                  case ProjectSessionTag::ClosedEditor: {
-                   // Checked before decoding, like Group.
                    if (state->closed_editors.size() >= kMaxSessionClosedEditors) {
                      return true;
                    }
@@ -404,7 +376,6 @@ bool DecodeProjectSessionRecord(std::span<const std::byte> input,
                    return true;
                  }
                 case ProjectSessionTag::ChatRegistry:
-                  // Legacy AI/chat records are tolerated during decode and ignored.
                   return true;
                }
                return true;
@@ -425,8 +396,6 @@ bool EncodeWorkspaceSessionRecord(const PersistedWorkspaceSessionState& state,
                     out)) {
     return false;
   }
-  // Interleaved, one project at a time: an older build reads the path tags in tab
-  // order and skips the identity records as unknown tags.
   std::vector<std::byte> payload;
   for (std::size_t i = 0; i < std::max(state.projects.size(), state.project_roots.size()); ++i) {
     if (i < state.projects.size() &&
@@ -474,7 +443,6 @@ bool DecodeWorkspaceSessionRecord(std::span<const std::byte> input,
                    if (!DecodeProjectId(payload, &id)) {
                      return false;
                    }
-                   // The same cap and dedupe as the legacy roots below.
                    if (id.has_value() &&
                        std::find(state->projects.begin(), state->projects.end(), *id) ==
                            state->projects.end() &&
@@ -488,9 +456,6 @@ bool DecodeWorkspaceSessionRecord(std::span<const std::byte> input,
                    if (!reader.ReadPath(&root) || reader.remaining() != 0) {
                      return false;
                    }
-                   // Cap and dedupe: a corrupt session with thousands of (or
-                   // duplicate) roots would otherwise spin up a large startup loop
-                   // and duplicate project tabs. 256 is far past any real workspace.
                    const std::filesystem::path normalized = root.lexically_normal();
                    const bool already_present =
                        std::any_of(state->project_roots.begin(), state->project_roots.end(),
@@ -506,7 +471,6 @@ bool DecodeWorkspaceSessionRecord(std::span<const std::byte> input,
                  case WorkspaceSessionTag::ActiveProjectIndex:
                    return ReadSize(reader, &state->active_project_index) && reader.remaining() == 0;
                  case WorkspaceSessionTag::HostViewCollapsed: {
-                   // A row id is short; a file with thousands of them is not one this wrote.
                    constexpr std::size_t kMaxCollapsed = 1024;
                    constexpr std::size_t kMaxIdBytes = 4096;
                    std::string id;
@@ -524,4 +488,4 @@ bool DecodeWorkspaceSessionRecord(std::span<const std::byte> input,
          seen_schema;
 }
 
-}  // namespace microide::workspace
+}

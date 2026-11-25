@@ -84,7 +84,6 @@ struct UiFixture {
     (void)shell.ConsumePendingRenderInvalidation();
   }
 
-  // A real click at the element's center, its redraw folded as the app loop does.
   void ClickCenter(const UiElement& element) {
     const float x = element.rect.x + element.rect.w / 2.0f;
     const float y = element.rect.y + element.rect.h / 2.0f;
@@ -101,10 +100,6 @@ struct UiFixture {
   SoftwareCanvas canvas{kWidth, kHeight};
 };
 
-// A compare tab's collapsed-context buttons are reported as paint clips them, to
-// the editor surface: a block in the last, partly visible row reported its buttons
-// past the window's edge (QA monkey, commands profile, seed 85). Scrolled through
-// enough positions that some block lands in that row.
 void TestUiQueryClipsCompareContextButtonsToTheSurface() {
   EnsureDummySdlVideoInitialized();
   TemporaryDirectory temp;
@@ -115,7 +110,7 @@ void TestUiQueryClipsCompareContextButtonsToTheSurface() {
   for (int line = 0; line < 1200; ++line) {
     const std::string text = "line " + std::to_string(line) + "\n";
     before += text;
-    after += line % 25 == 0 ? "changed " + text : text;  // a hunk every 25 lines
+    after += line % 25 == 0 ? "changed " + text : text;
   }
   WriteFile(source, before);
   InitializeGitRepo(root);
@@ -141,7 +136,6 @@ void TestUiQueryClipsCompareContextButtonsToTheSurface() {
         continue;
       }
       ++checked;
-      // The query rounds to whole units, so allow the rounding.
       Expect(element.rect.y >= top - 1.0f && element.rect.y + element.rect.h <= bottom + 1.0f,
              element.name + " at scroll " + std::to_string(scroll) + " stays on the editor surface");
     }
@@ -157,9 +151,6 @@ void TestUiQueryIsRegistered() {
   Expect(found, "`ui` should be a control query verb");
 }
 
-// Whether the window has the desktop's focus, as the app last heard it: a driver
-// that takes the focus away waits on this before it acts on "unfocused" (QA
-// terminal-alert-unfocused raced a fixed sleep against it under load).
 void TestUiQueryReportsWhetherTheWindowHasTheFocus() {
   UiFixture fixture;
   Expect(TestAccess::ControlUi(fixture.shell)["window"]["focused"].AsBool(), "a fresh window has the focus");
@@ -194,10 +185,6 @@ void TestUiQueryNamesTheWorkspaceChrome() {
   Expect(beta.has_value() && beta->active == true, "the active tab should be marked active");
 }
 
-// Each element reports the cursor over its centre, and the cursor follows what a
-// click does (tools/qa cursor-sweep holds the whole app to it). The misses that
-// sweep found: a dimmed menu row and the dimmed Commit button showed the hand,
-// and the terminal find bar's buttons showed the transcript's I-beam.
 void TestUiQueryCursorFollowsWhatAClickDoes() {
   UiFixture fixture;
   const auto cursor_of = [](const util::JsonValue& ui, std::string_view name) -> std::string {
@@ -243,9 +230,6 @@ void TestUiQueryCursorFollowsWhatAClickDoes() {
   Expect(cursor_of(find, "field:terminal-find/query") == "text", "the find query is a text field");
 }
 
-// Rects are in layout units; window.scale says how many window coordinates one is.
-// Without it a driver pointing at ui.scale 1.5 clicked two thirds of the way to
-// every row and ran the row above (tools/qa menu-clicks, "scaled" layout).
 void TestUiQueryReportsTheWindowScale() {
   UiFixture fixture;
   auto state = fixture.shell.CurrentWindowPresentationState().value_or(WorkspaceShell::WindowPresentationState{});
@@ -269,7 +253,6 @@ void TestUiQueryHitsWhatItNames() {
   Expect(open["menu"]["open"].AsBool() && open["menu"]["menu"].AsString() == "Edit",
          "the ui query should report the open menu");
   ExpectElement(open, "menu-item:Edit/Undo");
-  // Escape closes it again before the next click.
   (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)});
 
   const auto alpha_tab = Find(TestAccess::ControlUi(fixture.shell), "tab:0/alpha.cpp");
@@ -287,9 +270,6 @@ void TestUiQueryHitsWhatItNames() {
          "a click at the center of a tree row should select that row");
 }
 
-// A modal owns the keyboard and the pointer, so a driver must see it to dismiss it:
-// the indent status segment opens Settings, which a QA run otherwise mistakes for
-// nothing having happened.
 void TestUiQueryReportsTheModal() {
   UiFixture fixture;
   TestAccess::OpenSettingsOverlay(fixture.shell);
@@ -309,9 +289,6 @@ void TestUiQueryIsReadOnly() {
          "answering the ui query should not request a redraw");
 }
 
-// Typing in the file tree navigates, as in VS Code's explorer, and bare letters
-// run nothing: `d` used to open the compare picker and `r` to refresh, so a query
-// typed into the tree by mistake ran commands (TD-2026-10-15-342).
 void TestTypingInTheTreeNavigates() {
   UiFixture fixture;
   TestAccess::SetFocusSidebar(fixture.shell);
@@ -336,9 +313,6 @@ void TestUiNamesAreMadeUnique() {
          "later elements sharing a name should get #2, #3 suffixes in visual order");
 }
 
-// The `buffer` query reads the live viewport: its text, every caret with its
-// selection (primary first), and the collapsed folds. tools/qa's editing flows
-// assert against it instead of saving and reading the file back.
 void TestBufferQueryReportsTextCaretsAndFolds() {
   UiFixture fixture;
   WriteFile(fixture.root / "fold.cpp", "int f() {\n  return 1;\n}\nint g;\n");
@@ -368,12 +342,6 @@ void TestBufferQueryReportsTextCaretsAndFolds() {
          "fold-all should leave the query reporting the fold at line 1");
 }
 
-// Soak 7ab9a5476905: `command-palette` opened the palette, and an `open <file>`
-// run while it was up moved the focus to the editor and left the palette shown.
-// The next Escape in the editor only took the focus back to the palette, and the
-// Return after it ran the palette's selected row -- Quit. An overlay is modal: a
-// command that sends the focus elsewhere dismisses it, and a shown overlay always
-// holds the focus.
 void TestOpeningAFileUnderTheCommandPaletteDismissesIt() {
   UiFixture fixture;
   WriteFile(fixture.root / "other.cpp", "int other;\n");
@@ -381,7 +349,6 @@ void TestOpeningAFileUnderTheCommandPaletteDismissesIt() {
   util::JsonValue ui = TestAccess::ControlQuery(fixture.shell, "ui");
   Expect(ui["overlay"]["visible"].AsBool() && ui["focus"].AsString() == "overlay",
          "the palette is shown and has the focus: " + ui["focus"].AsString());
-  // A line the palette's own input takes leaves it up.
   Expect(TestAccess::ExecuteControlCommand(fixture.shell, "type x").ok, "typing into the palette");
   ui = TestAccess::ControlQuery(fixture.shell, "ui");
   Expect(ui["overlay"]["visible"].AsBool() && ui["focus"].AsString() == "overlay", "typing keeps it up");
@@ -394,10 +361,6 @@ void TestOpeningAFileUnderTheCommandPaletteDismissesIt() {
          "the opened file has the focus and the palette is gone");
 }
 
-// Soak 76e3925879dc: a format-document's edits landed after tools/qa's undo
-// rule had read the text, so its undos and redos ran over a formatting it had
-// not seen. `status` says how many language-server requests are outstanding, so
-// a driver can wait for their answers before it reads.
 void TestStatusQueryCountsOutstandingLspRequests() {
   UiFixture fixture;
   util::JsonValue status = TestAccess::ControlQuery(fixture.shell, "status");
@@ -411,11 +374,6 @@ void TestStatusQueryCountsOutstandingLspRequests() {
   lsp.request_in_flight_count = 0;
 }
 
-// Soak a7e72d7d3c4c, cb7d46af163b, 58b38cf6a12c: a CRLF file that an edit made
-// opaque (bytes that are not UTF-8) saves with its CRLF endings since b84babbed,
-// but the query still joined an opaque buffer with LF -- the digest it gave was
-// not what the save wrote, and the data oracle called the saved, clean buffer
-// different from its file.
 void TestDocumentsQueryHashesWhatASaveWritesForABufferMadeOpaque() {
   UiFixture fixture;
   const std::filesystem::path path = fixture.root / "crlf.txt";
@@ -442,10 +400,6 @@ void TestDocumentsQueryHashesWhatASaveWritesForABufferMadeOpaque() {
   Expect(seen == 1, "the query lists the document once");
 }
 
-// The `documents` query: every open editor document once, however many panes show
-// it, with the SHA-256 of the bytes a save writes -- the QA monkey's data-loss
-// oracle compares it with the file (a clean buffer) and across a kill -9 (a dirty
-// one). The digest must follow the document's own line ending and BOM.
 void TestDocumentsQueryHashesWhatASaveWrites() {
   UiFixture fixture;
   const std::string crlf = "\xEF\xBB\xBFone\r\ntwo\r\n";
@@ -464,8 +418,6 @@ void TestDocumentsQueryHashesWhatASaveWrites() {
     }
   }
   Expect(seen == 1, "a document shown in two panes is listed once (" + std::to_string(seen) + ")");
-  // On request, one document's bytes as hex: the evidence the oracle saves when a
-  // clean buffer and its file disagree. Only for the document asked about.
   {
     const std::string path = (fixture.root / "crlf.txt").generic_string();
     util::JsonObject args;
@@ -503,11 +455,6 @@ void TestDocumentsQueryHashesWhatASaveWrites() {
   }
 }
 
-// A diff's editable side is the file's buffer too. With no editor tab on the file
-// `documents` listed nothing of it, so the kill -9 oracle could not see text typed
-// into a diff be lost (TD-2026-11-19-453), nor the clean-buffer oracle a diff
-// left showing a file's old text. It is listed as an editor tab's document is --
-// once, with the digest of what its save writes -- and names its surface.
 void TestDocumentsQueryListsAFileOpenOnlyInADiff() {
   UiFixture fixture;
   const std::filesystem::path path = fixture.root / "crlf.txt";
@@ -541,8 +488,6 @@ void TestDocumentsQueryListsAFileOpenOnlyInADiff() {
   Expect(listed.size() == 1 && listed[0]["dirty"].AsBool() &&
              listed[0]["sha256"].AsString() == util::Sha256Hex("\xEF\xBB\xBFxone\r\ntwo\r\n"),
          "typing makes it dirty, and the digest follows the edit");
-  // One file, one document: an editor tab on it is the same buffer, listed once,
-  // and as the editor tab.
   TestAccess::OpenFileInNewTab(fixture.shell, path);
   listed = rows();
   Expect(listed.size() == 1, "still one row with an editor tab on the file (" + std::to_string(listed.size()) + ")");
@@ -550,9 +495,6 @@ void TestDocumentsQueryListsAFileOpenOnlyInADiff() {
          "the editor tab's, holding the same unsaved text");
 }
 
-// A merge's typed result is unsaved text a kill -9 must bring back, so the kill
-// oracle has to see it: `documents` lists it while it is dirty, and not while it
-// is clean (its clean text is not its file's).
 void TestDocumentsQueryListsATypedMergeResult() {
   UiFixture fixture;
   const std::filesystem::path base = fixture.root / "base.txt";
@@ -585,14 +527,6 @@ void TestDocumentsQueryListsATypedMergeResult() {
          "a typed one is, with the digest of its text");
 }
 
-// The debug pane lifts a row's band a pixel above its text (line_y - 1, in
-// every mode), and the hover damage and the click hit test took the band from
-// the text line itself. A pointer on the last pixel of a row by the hit test's
-// band was already inside the NEXT row's painted band: that row lit up, and
-// leaving repainted the row the hit test named, so the lit band stayed on
-// screen (soak cf0bab62508c, 26 sightings in 11 cells). Each row is hovered at
-// both edges of the band the ui query reports for it, then left; every frame
-// must be what a full repaint paints.
 void TestDebugPaneRowHoverRepaintsTheRowItLights() {
   UiFixture fixture;
   TestAccess::SetSettingValue(fixture.shell, "debug.enabled", "true");
@@ -622,18 +556,11 @@ void TestDebugPaneRowHoverRepaintsTheRowItLights() {
     const float x = row.rect.x + row.rect.w / 2.0f;
     for (const float y : {row.rect.y + 0.5f, row.rect.y + row.rect.h - 0.5f}) {
       expect_fresh(x, y, "the pointer at y " + std::to_string(y) + " on " + row.name);
-      // Off the pane, to the editor: whatever the hover lit must go.
       expect_fresh(200.0f, 300.0f, "the pointer leaving " + row.name);
     }
   }
 }
 
-// A confirmation dialog (no text field of its own: Delete, Discard All) is as
-// modal as a text prompt, but the field hit test stopped only at a prompt with
-// an input, so a click on the terminal find bar behind "Discard All Changes"
-// focused it -- the bar redrew outlined and scrolled to its caret in a full
-// repaint, while the click damaged only the dialog (soak 750ae3401299,
-// 7bc2fd77b535). Behind any prompt, no field takes the click.
 void TestAFieldBehindAConfirmationDialogTakesNoClick() {
   UiFixture fixture;
   TestAccess::EnsureTerminalTab(fixture.shell);
@@ -663,10 +590,6 @@ void TestAFieldBehindAConfirmationDialogTakesNoClick() {
   Expect(diff.identical(), "and the frame is what a full repaint paints; " + DescribePixelDiff(diff));
 }
 
-// The `surface` query lists every query verb; each must be answered, so the
-// inventory the QA monkey's coverage is measured against cannot name a verb the
-// channel does not have (or miss one it grew). It also lists the menus, the
-// context menus and the sidebar views from their registries.
 void TestEveryListedQueryVerbIsAnswered() {
   UiFixture fixture;
   const util::JsonValue surface = TestAccess::ControlQuery(fixture.shell, "surface");
@@ -683,11 +606,6 @@ void TestEveryListedQueryVerbIsAnswered() {
   Expect(surface["commands"].AsArray().size() > 200, "the surface lists the command catalogue");
 }
 
-// The `invariants` query holds on a live workspace, and each rule names the
-// state that breaks it: the monkey asks every few steps, so a broken rule is
-// found within a few actions of the one that broke it instead of at the symptom
-// (two unsaved buffers under one Untitled-N name showed as a lost buffer after a
-// kill -9, hundreds of steps on: soak 93ba7c8703e3).
 void TestInvariantsQueryHoldsAndNamesBrokenRules() {
   UiFixture fixture;
   Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
@@ -725,8 +643,6 @@ void TestInvariantsQueryHoldsAndNamesBrokenRules() {
   }
   Expect(rules(project) == "untitled;",
          "two different buffers under one Untitled number are named, got: " + rules(project));
-  // The tab's title is quoted: a driver keys a finding on the detail with what
-  // is quoted masked, and unquoted one broken rule was a finding per file.
   const std::string named = workspace::CheckWorkspaceInvariants(project).violations.front().detail;
   Expect(named.find("group 0 tab 1 'Untitled-1'") != std::string::npos,
          "a violation names its tab with the title in quotes, got: " + named);
@@ -741,11 +657,6 @@ void TestInvariantsQueryHoldsAndNamesBrokenRules() {
   Expect(rules(project) == "tabs;", "a compare tab with no compare state is named, got: " + rules(project));
   project.editor_groups[0].open_tabs[0].kind = workspace::TabEntry::Kind::Editor;
 
-  // Two views of one document: the one in front empties a line the other's caret
-  // sits at the end of. The view behind reconciles its carets on its next use (and
-  // reads them reconciled before then), so its stored positions lag the document
-  // without breaking any rule -- the monkey reported it as a caret past the end of
-  // its line (soak 872c8984d39b).
   workspace::ProjectWorkspaceState shared;
   shared.editor_groups[0].open_tabs.resize(2);
   for (std::size_t i = 0; i < 2; ++i) {
@@ -758,13 +669,12 @@ void TestInvariantsQueryHoldsAndNamesBrokenRules() {
   behind.LoadContent("one\ntwo three\nfour\n", "/tmp/notes.txt");
   behind.MoveCursorTo(1, 9);
   editor::TextViewport& front = shared.editor_groups[0].open_tabs[0].editor_state->viewport;
-  front = behind;  // shares the document, as a second view of the file does
+  front = behind;
   front.MoveCursorTo(1, 0);
-  front.MoveCursorTo(1, 9, /*extend_selection=*/true);
+  front.MoveCursorTo(1, 9, true);
   front.Backspace();
   Expect(rules(shared).empty(),
          "a view behind another whose edit moved its document breaks no rule, got: " + rules(shared));
-  // The view that edited closes: the one behind still lags, with no sharer left.
   shared.editor_groups[0].open_tabs.erase(shared.editor_groups[0].open_tabs.begin());
   editor::TextViewport& alone = shared.editor_groups[0].open_tabs[0].editor_state->viewport;
   Expect(alone.CaretsLagDocument(), "the view behind still lags the edit of the closed one");
@@ -773,11 +683,6 @@ void TestInvariantsQueryHoldsAndNamesBrokenRules() {
   alone.ReconcileCaretsWithDocument();
   Expect(rules(shared).empty(), "and none once it reconciled, got: " + rules(shared));
 
-  // A file is one buffer. Two tabs that each read it hold two: the first edit
-  // parts them, each saves over the other, and a kill -9 restores whichever the
-  // session listed last (soak 8d52e6176b32: README.md was open dirty at 707
-  // bytes in one pane and clean at 705 in another, hundreds of steps before the
-  // kill that reported it).
   workspace::ProjectWorkspaceState twice;
   twice.editor_groups[0].open_tabs.resize(2);
   for (workspace::TabEntry& tab : twice.editor_groups[0].open_tabs) {
@@ -792,8 +697,6 @@ void TestInvariantsQueryHoldsAndNamesBrokenRules() {
   Expect(second.find("group 0 tab 1 'notes.txt' is a second buffer of the file group 0 tab 0 'notes.txt' holds") !=
              std::string::npos,
          "the violation names both tabs, got: " + second);
-  // A view still loading is not the file yet, and neither is a read-only compare
-  // side; an editable compare side is.
   twice.editor_groups[0].open_tabs[1].editor_state->content =
       workspace::TabEntry::EditorTabState::Content::Loading;
   Expect(rules(twice).empty(), "a tab still loading holds no buffer, got: " + rules(twice));
@@ -810,7 +713,6 @@ void TestInvariantsQueryHoldsAndNamesBrokenRules() {
   Expect(rules(twice).empty(), "and one that shares it breaks no rule, got: " + rules(twice));
 }
 
-// The list overlays name their rows, and a click at a row's center runs it.
 void TestUiQueryNamesOverlayRows() {
   UiFixture fixture;
   Expect(TestAccess::ExecuteCommandLine(fixture.shell, "files"), "files should open the finder");
@@ -818,8 +720,6 @@ void TestUiQueryNamesOverlayRows() {
   util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
   Expect(ui["overlay"]["query"].AsString() == "gamma", "the ui query should report the overlay query");
   Expect(ui["overlay"]["count"].AsInt() == 1, "one file should match gamma");
-  // What the finder ranks over, so "No matching files" can be told apart from an
-  // empty, truncated or elsewhere-rooted index (CI qa-asan, big-repo).
   const util::JsonValue& index = ui["overlay"]["index"];
   Expect(index["files"].AsInt() == 3 && !index["truncated"].AsBool() &&
              index["root"].AsString() == fixture.root.string() && index["version"].AsInt() > 0,
@@ -833,7 +733,6 @@ void TestUiQueryNamesOverlayRows() {
          "clicking the row should open gamma.cpp");
 }
 
-// The unsaved-changes prompt names its buttons; clicking Cancel keeps the tab.
 void TestUiQueryNamesPromptButtons() {
   UiFixture fixture;
   TestAccess::ActiveEditor(fixture.shell).InsertText("x");
@@ -850,13 +749,9 @@ void TestUiQueryNamesPromptButtons() {
   Expect(TestAccess::ControlUi(fixture.shell)["modal"].IsNull(), "Cancel should dismiss the prompt");
 }
 
-// Settings rows are named by setting id, with their controls; clicking a
-// checkbox toggles the setting.
 void TestUiQueryNamesSettingsRows() {
   UiFixture fixture;
   TestAccess::OpenSettingsOverlay(fixture.shell);
-  // Filtered to one checkbox row: unfiltered, the first checkbox is the third
-  // row, which at this size is only half inside the pane and so not drawn.
   TestAccess::SetSettingsOverlayQueryAndRefresh(fixture.shell, "soft tabs");
   const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
   ExpectElement(ui, "field:settings/filter");
@@ -879,10 +774,6 @@ void TestUiQueryNamesSettingsRows() {
   Expect(before != after, "clicking " + checkbox->name + " should toggle " + id);
 }
 
-// A row taller than the value pane can never lie wholly inside it. Painted only
-// when it did, such a row was never drawn: filtered down to project.files_exclude
-// (a long description) the pane was blank under "1 of 95 settings". It shows
-// clipped to the pane, and the query reports the part that is drawn.
 void TestUiQueryNamesASettingsRowTallerThanThePane() {
   UiFixture fixture;
   TestAccess::OpenSettingsOverlay(fixture.shell);
@@ -902,9 +793,6 @@ void TestUiQueryNamesASettingsRowTallerThanThePane() {
          "the row is reported as drawn, inside the window");
 }
 
-// The ui query's action receipt names what a key ran, by command name, so a
-// driver can tell a dead shortcut (nothing ran) from one taken by another
-// binding (something else ran).
 void TestUiQueryReportsTheLastAction() {
   UiFixture fixture;
   const std::int64_t before = TestAccess::ControlUi(fixture.shell)["actions"]["dispatched"].AsInt();
@@ -916,10 +804,6 @@ void TestUiQueryReportsTheLastAction() {
              " from " + actions["source"].AsString());
 }
 
-// `action-counts` counts each command every time it runs, whatever drove it: the
-// QA suite unions these per scenario into its command-coverage ledger, so a count
-// that missed a source (a key, the control channel) would list a driven command
-// as a gap.
 void TestActionCountsCountEveryRun() {
   UiFixture fixture;
   const auto count = [&](const char* command) {
@@ -937,10 +821,6 @@ void TestActionCountsCountEveryRun() {
          "action-counts should carry the dispatch total and the plugin commands");
 }
 
-// `key` and `pointer` are input, not actions: the receipt names what the key or
-// click ran, once, and nothing when it ran nothing. Counted as actions, the
-// Wayland run of the `keys` sweep read "the terminal owns this key, but key ran"
-// for every key the terminal took, and two actions for every menu row clicked.
 void TestInjectedInputLeavesTheReceiptToWhatItRan() {
   UiFixture fixture;
   const std::int64_t before = TestAccess::ControlUi(fixture.shell)["actions"]["dispatched"].AsInt();
@@ -959,7 +839,6 @@ void TestInjectedInputLeavesTheReceiptToWhatItRan() {
              std::to_string(actions["dispatched"].AsInt() - before) + " x " + actions["last"].AsString());
 }
 
-// A context-menu row clicked through `pointer` runs, in the tree as in the editor.
 void TestPointerRunsATreeContextMenuRow() {
   UiFixture fixture;
   const auto center = [](const UiElement& element) {
@@ -989,8 +868,6 @@ void TestPointerRunsATreeContextMenuRow() {
              actions["last"].AsString());
 }
 
-// `pointer drop` is a file dragged in from another application: the drop path
-// (WorkspaceFileDrop) opens it, as a real drop does.
 void TestPointerDropOpensTheFile() {
   UiFixture fixture;
   Expect(TestAccess::ExecuteCommandLine(fixture.shell,
@@ -1001,9 +878,6 @@ void TestPointerDropOpensTheFile() {
   Expect(!TestAccess::ExecuteCommandLine(fixture.shell, "pointer drop 700 300"), "a drop needs a path");
 }
 
-// The debug pane's mode tabs and rows are named with the rects its mouse path
-// hit-tests: a click on `debug-tab:watch` switches the mode, and a click on a
-// breakpoint row goes to the breakpoint (QA flows drive the pane this way).
 void TestUiQueryNamesTheDebugPane() {
   UiFixture fixture;
   TestAccess::SetSettingValue(fixture.shell, "debug.enabled", "true");
@@ -1042,11 +916,9 @@ void TestUiQueryNamesTheDebugPane() {
   }
 }
 
-// A toast is an element (`notification:<index>`, the message as its label) whether
-// or not it has buttons, and a click on it dismisses it.
 void TestUiQueryNamesToasts() {
   UiFixture fixture;
-  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F8, SDL_KMOD_NONE)});  // "No problems"
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F8, SDL_KMOD_NONE)});
   fixture.shell.Render(fixture.canvas.renderer(), UiFixture::kWidth, UiFixture::kHeight);
   (void)fixture.shell.ConsumePendingRenderInvalidation();
   const auto toast = Find(TestAccess::ControlUi(fixture.shell), "notification:0");
@@ -1058,17 +930,10 @@ void TestUiQueryNamesToasts() {
   }
 }
 
-// A large editor font is the editor's: the chrome keeps its size. One renderer
-// drew both, so `editor.font_size 20` set every menu title, tab, tree row and
-// status segment in a font taller than its fixed row and the text overflowed --
-// clipped descenders, and stale glyph rows under a hovered context-menu row
-// (QA sweeps-matrix, "light theme, large font").
 void TestLargeEditorFontKeepsTheChromeSize() {
   UiFixture fixture;
   const float chrome_line = TestAccess::ChromeTextLineHeight(fixture.shell);
   const float editor_line = TestAccess::TextLineHeight(fixture.shell);
-  // At the default sizes the chrome and the editor draw with one backend: one glyph
-  // atlas, not two (TD-2026-10-26-394).
   Expect(TestAccess::LiveTextBackendCount(fixture.shell) == 1,
          "the default fonts should share one text backend, live: " +
              std::to_string(TestAccess::LiveTextBackendCount(fixture.shell)));
@@ -1086,7 +951,6 @@ void TestLargeEditorFontKeepsTheChromeSize() {
   const auto row = Find(ui, "row:tree/alpha.cpp");
   Expect(row.has_value() && TestAccess::ChromeTextLineHeight(fixture.shell) <= row->rect.h + 1.0f,
          "a tree row still fits its text");
-  // The editor resolves a click with the font it draws: column 6 of line 1.
   const util::JsonValue& pane = ui["editors"][std::size_t{0}];
   Expect(pane["lineHeight"].AsDouble() > static_cast<double>(editor_line) * 1.5,
          "the ui query reports the editor's own line height");
@@ -1108,10 +972,6 @@ void TestLargeEditorFontKeepsTheChromeSize() {
          "back at the chrome's size the editor shares the chrome's backend again");
 }
 
-// What `pointer` and `key` change reaches the screen: they hand the shell an event
-// from inside the control command, and the damage that nested dispatch returned
-// was dropped -- so the frame after a control click repainted only what was still
-// pending, and the newly active tab kept its old look (QA on Wayland, `chrome`).
 void TestInjectedInputRepaintsWhatItChanged() {
   UiFixture fixture;
   const auto alpha_tab = Find(TestAccess::ControlUi(fixture.shell), "tab:0/alpha.cpp");
@@ -1121,7 +981,6 @@ void TestInjectedInputRepaintsWhatItChanged() {
   for (const std::string& line : {"pointer click " + x + " " + y, std::string("key ctrl+end"),
                                   std::string("key z")}) {
     Expect(TestAccess::ExecuteCommandLine(fixture.shell, line), "should run: " + line);
-    // The app loop: the control event's own result is what the shell has pending.
     const workspace::RenderInvalidation redraw = fixture.shell.ConsumePendingRenderInvalidation();
     const render::PixelDiffResult diff = PaintAndDiffWithFullRepaint(
         fixture.shell, fixture.canvas, UiFixture::kWidth, UiFixture::kHeight, redraw,
@@ -1130,9 +989,6 @@ void TestInjectedInputRepaintsWhatItChanged() {
   }
 }
 
-// `key` is a key press with the text a keyboard types: an agent answering a TUI's
-// `[y/N]` with `key y` got nothing, since every text surface reads the text event
-// and the command sent only the press and the release.
 void TestKeyCommandTypesPrintableKeys() {
   UiFixture fixture;
   TestAccess::SetFocusEditor(fixture.shell);
@@ -1145,9 +1001,6 @@ void TestKeyCommandTypesPrintableKeys() {
              buffer["text"].AsString());
 }
 
-// `pointer` is the mouse for a driver with no window-system input (a Wayland
-// session, an agent): it lands where `ui` says, in the same layout units, and
-// runs what a real click there would.
 void TestPointerCommandClicksWhatTheUiNames() {
   UiFixture fixture;
   const auto center = [](const UiElement& element) {
@@ -1171,7 +1024,6 @@ void TestPointerCommandClicksWhatTheUiNames() {
   const auto after = Find(TestAccess::ControlUi(fixture.shell), "tab:0/alpha.cpp");
   Expect(after.has_value() && after->active == true, "pointer click on a tab should activate it");
 
-  // A middle click closes a tab: the button argument reaches the handler.
   const auto beta_tab = Find(TestAccess::ControlUi(fixture.shell), "tab:0/beta.cpp");
   Expect(beta_tab.has_value(), "beta.cpp should still have a tab");
   Expect(TestAccess::ExecuteCommandLine(fixture.shell, "pointer click " + center(*beta_tab) + " middle"),
@@ -1179,7 +1031,6 @@ void TestPointerCommandClicksWhatTheUiNames() {
   Expect(!Find(TestAccess::ControlUi(fixture.shell), "tab:0/beta.cpp").has_value(),
          "a middle click on a tab should close it");
 
-  // Modifiers are held for the click only.
   Expect(TestAccess::ExecuteCommandLine(fixture.shell, "pointer ctrl+shift+move 10 10"),
          "a modifier prefix should parse");
   Expect(SDL_GetModState() == SDL_KMOD_NONE, "pointer should release the modifiers it held");
@@ -1191,7 +1042,7 @@ void TestPointerCommandClicksWhatTheUiNames() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/NamesToasts", TestUiQueryNamesToasts);
@@ -1244,4 +1095,4 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
           TestPointerCommandClicksWhatTheUiNames);
 }
 
-}  // namespace microide::tests
+}

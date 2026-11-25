@@ -100,8 +100,6 @@ void TestReplaceIsIdempotentAndClears() {
   PluginDecorationData data;
   data.text_styles = {Style(1, 0, 2)};
   Expect(store.ReplaceForOwnerFile("owner", path, data), "initial publish should change state");
-  // The bool return is the redraw signal: a no-op republish returns false so the
-  // host skips a needless repaint, while a real change returns true.
   Expect(!store.ReplaceForOwnerFile("owner", path, data),
          "republishing identical decorations should be a no-op");
 
@@ -141,9 +139,6 @@ void TestAggregatePerFileCapTruncatesMergedKinds() {
   PluginDecorationStore store;
   const std::filesystem::path path = "/tmp/p/huge.cpp";
 
-  // Three owners each contribute a large, distinct line range. The per-owner publish
-  // cap does not bound the multi-owner sum (270k here), so the store's aggregate
-  // per-file cap (200k) must truncate the merged view to stay render-bounded.
   constexpr std::uint32_t kPerOwner = 90000;
   for (int owner = 0; owner < 3; ++owner) {
     PluginDecorationData data;
@@ -159,20 +154,12 @@ void TestAggregatePerFileCapTruncatesMergedKinds() {
   Expect(file != nullptr, "the heavily-decorated file should be present");
   Expect(file->text_styles.size() == 200000,
          "the merged per-file text styles should be capped at the aggregate limit");
-  // The merge sorts by line before truncating, so the retained set is the lowest
-  // 200k lines (0 .. 199999) -- a deterministic head, never a wrapped/undefined tail.
   Expect(file->text_styles.front().line == 0 && file->text_styles.back().line == 199999,
          "the aggregate cap should keep the lowest-line decorations after sorting");
-  // TD-2026-07-17-090: the cap must bound WORK, not just the retained result. The
-  // bounded k-way merge reserves at most the cap and stops there, so the retained
-  // vector never over-allocates to the full 270k concatenation. (The old
-  // concatenate/sort/resize path left capacity at the full contributed total.)
   Expect(file->text_styles.capacity() <= 200000,
          "the merge must not allocate beyond the aggregate cap (peak work bounded)");
 }
 
-// A multi-kind, multi-owner merge: every kind must independently honor the cap and
-// its peak allocation, and the retained set must stay in each kind's render order.
 void TestAggregateCapBoundsEveryKind() {
   PluginDecorationStore store;
   const std::filesystem::path path = "/tmp/p/multi-kind.cpp";
@@ -204,10 +191,6 @@ void TestAggregateCapBoundsEveryKind() {
          "the retained set should be the lowest-line decorations in render order");
 }
 
-// The bookmark icon is a pennant: a full-width body whose bottom has a V-notch
-// that opens from nothing at the notch's top to its widest at the bottom edge.
-// The notch was drawn inverted -- no hole at the bottom edge and a full-width one
-// at the notch's top -- so a blank row cut the body off from a tent-shaped base.
 void TestBookmarkGutterIconIsAPennant() {
   SoftwareCanvas canvas(48, 48);
   SDL_SetRenderDrawColor(canvas.renderer(), 0, 0, 0, 255);
@@ -232,7 +215,6 @@ void TestBookmarkGutterIconIsAPennant() {
     if (row_ink(y) > 0) last_inked = y;
   }
   Expect(last_inked > top + static_cast<int>(b.h * 0.6f), "the pennant reaches into its notch");
-  // No blank row inside the icon: the inverted notch emptied the row at its top.
   for (int y = top; y <= last_inked; ++y) {
     Expect(row_ink(y) > 0, "row " + std::to_string(y - top) + " of the pennant has ink");
   }
@@ -243,7 +225,7 @@ void TestBookmarkGutterIconIsAPennant() {
 }
 
 
-}  // namespace
+}
 
 
 void RegisterPluginDecorationStoreTests(std::vector<TestCase>& tests) {
@@ -262,4 +244,4 @@ void RegisterPluginDecorationStoreTests(std::vector<TestCase>& tests) {
           TestAggregateCapBoundsEveryKind);
 }
 
-}  // namespace microide::tests
+}

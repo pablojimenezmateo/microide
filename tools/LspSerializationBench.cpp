@@ -1,17 +1,3 @@
-// Microbench for the per-keystroke LSP `textDocument/didChange` serialization cost.
-//
-// Track A of the lsp-dedup-and-feature-wiring perf pass moved this work off the UI
-// thread: LspClient::DidChange used to build the didChange JsonValue and run the
-// Content-Length + JSON serialization synchronously on the calling (UI) thread every
-// keystroke; it now defers both into the outbound builder that runs on the per-server
-// I/O thread. This bench measures the magnitude of what moved — the JSON serialization
-// of a whole-document (full-sync) didChange at a few document sizes — so the win is a
-// committed, reproducible number rather than a claim. It intentionally uses only the
-// public util::JsonValue / SerializeJson API (no subprocess, fully deterministic).
-//
-// Build:   cmake --build build --target microide_lsp_serialize_bench
-// Run:     ./build/microide_lsp_serialize_bench [iterations]
-
 #include "util/JsonValue.h"
 
 #include <algorithm>
@@ -30,7 +16,6 @@ using microide::util::JsonObject;
 using microide::util::JsonValue;
 using microide::util::SerializeJson;
 
-// A representative source document of roughly `line_count` lines of code-like text.
 std::string MakeDocument(std::size_t line_count) {
   std::string text;
   text.reserve(line_count * 48);
@@ -44,8 +29,6 @@ std::string MakeDocument(std::size_t line_count) {
   return text;
 }
 
-// Build the didChange notification JsonValue for a full-document sync, exactly as
-// LspClient::DidChange does (uri + version + single full-text contentChange).
 JsonValue MakeDidChange(const std::string& uri, int version, const std::string& text) {
   JsonObject text_doc;
   text_doc["uri"] = JsonValue(uri);
@@ -69,7 +52,7 @@ double MedianMicros(std::vector<double>& samples) {
   return samples[samples.size() / 2];
 }
 
-}  // namespace
+}
 
 int main(int argc, char** argv) {
   std::size_t iterations = 200;
@@ -94,14 +77,10 @@ int main(int argc, char** argv) {
     serialize_samples.reserve(iterations);
 
     for (std::size_t it = 0; it < iterations; ++it) {
-      // build: constructing the didChange JsonValue (the whole-document copy the
-      // calling thread still pays once, into the deferred builder's capture).
       const auto build_start = Clock::now();
       JsonValue message = MakeDidChange(uri, static_cast<int>(it + 1), doc);
       const auto build_end = Clock::now();
 
-      // serialize: JSON + Content-Length production — the work that moved OFF the UI
-      // thread onto the per-server I/O thread.
       const auto serialize_start = Clock::now();
       const std::string wire = SerializeJson(message);
       const auto serialize_end = Clock::now();
@@ -117,7 +96,6 @@ int main(int argc, char** argv) {
                 MedianMicros(build_samples), MedianMicros(serialize_samples));
   }
 
-  // Defeat dead-code elimination of the serialized payloads.
   if (sink == 0xFFFFFFFFFFFFFFFFULL) {
     std::fprintf(stderr, "unreachable\n");
   }

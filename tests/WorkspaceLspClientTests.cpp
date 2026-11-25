@@ -31,16 +31,11 @@ bool WaitForLspReadinessState(LspClient& client,
       std::chrono::milliseconds(timeout_ms), std::chrono::milliseconds(10));
 }
 
-// A server whose process dies during startup is Failed, with its reason, not
-// "Starting…" forever. The status asks FindStartedServer, which drops a dead
-// client, then LastServerError, which only EnsureStarted ever filled -- so a server
-// that started and then died (an exec the sandbox refused: csharp-ls under
-// ~/.dotnet/tools) read as starting for as long as the editor ran.
 void TestWorkspaceLspManagerReportsAServerThatDiesAtStartup() {
   workspace::LspManager manager;
   manager.RegisterServer({"qa"}, platform::LocalProcessLauncher(),
                          {"/bin/sh", "-c", "echo cannot start >&2; exit 126"}, "file:///tmp", {},
-                         /*eager_start=*/true);
+                         true);
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
   while (manager.IsServerRunning("qa") && std::chrono::steady_clock::now() < deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -52,10 +47,6 @@ void TestWorkspaceLspManagerReportsAServerThatDiesAtStartup() {
          "and the manager says why, naming the command: '" + error + "'");
 }
 
-// The client declares that it takes pushed diagnostics. typescript-language-server
-// publishes only to a client whose initialize says `textDocument.publishDiagnostics`;
-// microide never said it, so every TypeScript error went unreported while clangd,
-// which pushes regardless, hid the gap (QA lsp-typescript).
 void TestWorkspaceLspClientDeclaresPublishDiagnostics() {
   TemporaryDirectory temp_dir;
   const auto capabilities_path = temp_dir.path() / "capabilities.json";
@@ -112,10 +103,6 @@ while True:
   Expect(publish["versionSupport"].AsBool(), "with versionSupport: stale versions are dropped by version");
 }
 
-// A document with a stray byte still reaches the server: JSON must be UTF-8, and
-// clangd dropped the whole didOpen of a file with one Latin-1 byte in a comment
-// -- no diagnostics, hover or completion for it, and nothing said why. The byte
-// goes as '?', so the server's columns stay the editor's.
 void TestWorkspaceLspClientSendsInvalidUtf8AsValidJson() {
   TemporaryDirectory temp_dir;
   const auto opened_path = temp_dir.path() / "opened.txt";
@@ -244,13 +231,13 @@ while True:
   const bool started = client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string(), marker_path.string()},
                                     "file:///tmp", "python");
   Expect(started, "graceful shutdown fixture should start");
-  for (int attempt = 0; attempt < 300 && !client.IsInitialized(); ++attempt) {  // ~3s: real subprocess init can be slow under load
+  for (int attempt = 0; attempt < 300 && !client.IsInitialized(); ++attempt) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   Expect(client.IsInitialized(), "graceful shutdown fixture should initialize before shutdown");
   client.Shutdown();
 
-  for (int attempt = 0; attempt < 100 && !std::filesystem::exists(marker_path); ++attempt) {  // ~2s under load
+  for (int attempt = 0; attempt < 100 && !std::filesystem::exists(marker_path); ++attempt) {
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
   }
   Expect(std::filesystem::exists(marker_path),
@@ -317,7 +304,7 @@ while True:
   const bool started = client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string(), marker_path.string()},
                                     "file:///tmp", "python");
   Expect(started, "async graceful shutdown fixture should start");
-  for (int attempt = 0; attempt < 300 && !client.IsInitialized(); ++attempt) {  // ~3s: real subprocess init can be slow under load
+  for (int attempt = 0; attempt < 300 && !client.IsInitialized(); ++attempt) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   Expect(client.IsInitialized(), "async graceful shutdown fixture should initialize before shutdown");
@@ -396,7 +383,7 @@ while True:
   const bool started = client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string(), marker_path.string()},
                                     "file:///tmp", "python");
   Expect(started, "stdin close fixture should start");
-  for (int attempt = 0; attempt < 300 && !client.IsInitialized(); ++attempt) {  // ~3s: real subprocess init can be slow under load
+  for (int attempt = 0; attempt < 300 && !client.IsInitialized(); ++attempt) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   Expect(client.IsInitialized(), "stdin close fixture should initialize before shutdown");
@@ -426,7 +413,7 @@ time.sleep(10)
   const bool started = client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string(), marker_path.string()},
                                     "file:///tmp", "python");
   Expect(started, "preinit cancel fixture should start");
-  for (int attempt = 0; attempt < 100 && !std::filesystem::exists(marker_path); ++attempt) {  // ~2s under load
+  for (int attempt = 0; attempt < 100 && !std::filesystem::exists(marker_path); ++attempt) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   Expect(std::filesystem::exists(marker_path), "preinit cancel fixture should launch");
@@ -526,8 +513,6 @@ while True:
 
   Expect(WaitForLspReadinessState(client, LspClient::ReadinessSnapshot::State::Ready, 1000),
          "readiness snapshot should return to ready after progress ends");
-  // `message` is detail beyond the state, not a restatement of it: a Ready server has
-  // nothing extra to say, and the displayed word comes from LspReadinessWord.
   Expect(client.GetReadinessSnapshot().message.empty(),
          "a ready readiness snapshot should carry no extra message");
   Expect(LspReadinessWord(LspClient::ReadinessSnapshot::State::Ready) == "Ready",
@@ -755,9 +740,6 @@ while True:
   client.Shutdown();
 }
 
-// The client advertises utf-8 first; a server that honors it reports
-// positionEncoding "utf-8", which the client must capture so the host knows its
-// byte-offset columns are already exact LSP positions (no conversion needed).
 void TestWorkspaceLspClientCapturesNegotiatedPositionEncoding() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
@@ -819,7 +801,6 @@ while True:
 void TestLspManagerSharesOneSubprocessAcrossLanguageIds() {
   microide::workspace::LspManager manager;
 
-  // One fake client installed for three language ids: clangd-style aliasing.
   auto client = std::make_unique<LspClient>();
   LspClient* const raw = client.get();
   manager.InstallTestClientForTesting({"c", "c++", "objective-c"}, std::move(client));
@@ -832,7 +813,6 @@ void TestLspManagerSharesOneSubprocessAcrossLanguageIds() {
              manager.GetServer("objective-c") == raw,
          "all aliased language ids should resolve to the same single client");
 
-  // BeginShutdownServersNotIn keeps the shared server when ANY of its ids is active.
   manager.BeginShutdownServersNotIn({"c++"});
   Expect(manager.HasServer("c") && manager.HasServer("c++") && manager.HasServer("objective-c"),
          "a shared server stays alive while any of its language ids is active");
@@ -858,7 +838,7 @@ void TestWorkspaceLspClientSemanticTokensStubRoundTrip() {
 
   std::optional<std::vector<LspClient::SemanticToken>> received;
   client.RequestSemanticTokensAsync("file:///s.cpp", [&](auto tokens) { received = std::move(tokens.value); });
-  client.DrainCallbacks();  // stub responses dispatch on the main-thread pump
+  client.DrainCallbacks();
 
   Expect(received.has_value() && received->size() == 1, "the stubbed token is delivered");
   Expect((*received)[0].line == 3 && (*received)[0].token_type == 1,
@@ -868,7 +848,6 @@ void TestWorkspaceLspClientSemanticTokensStubRoundTrip() {
 void TestWorkspaceLspClientInlayHintStubRoundTrip() {
   LspClient client;
   client.EnableTestStubMode();
-  // The stub handler marks the capability supported.
   LspClient::Range requested_range{};
   client.SetTestInlayHintHandler(
       [&](std::string uri, LspClient::Range range, LspClient::InlayHintCallback cb) {
@@ -894,8 +873,6 @@ void TestWorkspaceLspClientInlayHintStubRoundTrip() {
          "the delivered hint preserves its fields");
   Expect(requested_range.end.line == 20, "the request forwards the whole-document range");
 
-  // Clearing the handler drops the capability advertisement path (still stub mode,
-  // so a fresh request with no handler reports nullopt).
   client.ClearTestInlayHintHandler();
   std::optional<std::vector<LspClient::InlayHint>> after_clear;
   bool called = false;
@@ -909,9 +886,6 @@ void TestWorkspaceLspClientDocumentHighlightStubRoundTrip() {
   LspClient client;
   client.EnableTestStubMode();
 
-  // Before any handler the capability is absent, and the request must short-circuit
-  // rather than send: documentHighlight fires on caret movement, so a server without
-  // the provider would otherwise take one wasted message per cursor move.
   Expect(!client.SupportsDocumentHighlight(),
          "a fresh client advertises no documentHighlight provider");
   bool short_circuited = false;
@@ -957,9 +931,6 @@ void TestWorkspaceLspClientDocumentHighlightStubRoundTrip() {
   Expect(called && !after_clear.has_value(), "with no handler the stub reports no highlights");
 }
 
-// The three capability-gated pull requests must answer without touching the wire
-// when the server advertises no provider. codeLens fires on every open and save and
-// callHierarchy on demand, so provoking a per-pull server error would be pure waste.
 void TestWorkspaceLspClientCapabilityGatedRequestsShortCircuit() {
   LspClient client;
   client.EnableTestStubMode();
@@ -984,7 +955,6 @@ void TestWorkspaceLspClientCapabilityGatedRequestsShortCircuit() {
   Expect(answered == 5, "every capability-gated request answers its callback");
   Expect(with_value == 0, "with no provider none of them produce a result");
 
-  // Installing a stub handler flips the capability and the request goes through.
   client.SetTestCodeLensHandler([](std::string, LspClient::CodeLensCallback cb) {
     LspClient::CodeLens lens;
     lens.range = {{2, 0}, {2, 4}};
@@ -999,7 +969,6 @@ void TestWorkspaceLspClientCapabilityGatedRequestsShortCircuit() {
   Expect(lenses.has_value() && lenses->size() == 1 && (*lenses)[0].title == "1 reference",
          "the stubbed lens is delivered");
 
-  // Clearing the handler puts the client back to answering with no result.
   client.ClearTestCodeLensHandler();
   std::optional<std::vector<LspClient::CodeLens>> after_clear;
   bool called = false;
@@ -1011,10 +980,6 @@ void TestWorkspaceLspClientCapabilityGatedRequestsShortCircuit() {
   Expect(called && !after_clear.has_value(), "with no handler the stub reports no lenses");
 }
 
-// Regression: formatting must deliver the FULL TextEdit[] to the caller. A prior
-// implementation returned only edits.front().newText, silently dropping every edit
-// after the first — corrupting the buffer for the common whole-document reformat
-// that comes back as many edits.
 void TestWorkspaceLspClientFormattingReturnsAllEdits() {
   LspClient client;
   client.EnableTestStubMode();
@@ -1038,11 +1003,6 @@ void TestWorkspaceLspClientFormattingReturnsAllEdits() {
          "each edit keeps its own range");
 }
 
-// didOpen/didSave/didClose must all address a document under the SAME URI. That
-// URI is percent-encoded (FileUriForPath), so a path with a space or non-ASCII
-// byte must encode consistently and round-trip back — otherwise a hand-built raw
-// "file://" + path used on the save/close side would silently mismatch the open
-// URI and leak the document server-side.
 void TestFileUriEncodesSpecialCharsAndRoundTrips() {
   const std::filesystem::path spaced = "/home/user/My Project/main file.cpp";
   const std::string uri = microide::workspace::FileUriForPath(spaced);
@@ -1061,32 +1021,22 @@ void TestFileUriEncodesSpecialCharsAndRoundTrips() {
          "non-ASCII paths must round-trip through the file URI");
 }
 
-// The outbound queue is bounded by aggregate payload BYTES, not just message count:
-// a not-yet-initialized client queues DidOpen text into deferred_messages (charged),
-// and once the aggregate byte budget is exceeded further sends are refused.
-// TD-2026-07-17A-071.
 void TestWorkspaceLspClientOutboundByteBudgetRefusesOversized() {
-  LspClient client;  // not started: stays pre-init, so DidOpen queues into deferred (charged)
+  LspClient client;
   client.SetMaxQueuedBytesForTesting(1000);
   const std::string text(600, 'x');
   Expect(client.DidOpen("file:///a", "python", text),
          "the first didOpen (600 bytes) fits within the 1000-byte budget");
   Expect(!client.DidOpen("file:///b", "python", text),
          "a second didOpen (1200 total) exceeds the aggregate byte budget and is refused");
-  // A refused message is not charged, so a smaller message that still fits the
-  // remaining budget is accepted (the cap tracks available space, not a latch).
   Expect(client.DidOpen("file:///c", "python", std::string(300, 'y')),
          "a 300-byte message still fits the remaining budget (600 + 300 <= 1000)");
-  // ...but one that would exceed the remaining space is refused.
   Expect(!client.DidOpen("file:///d", "python", std::string(300, 'z')),
          "a further 300-byte message (900 + 300 > 1000) is refused");
 }
 
-}  // namespace
+}
 
-// A single server response whose declared Content-Length exceeds the 64 MiB cap
-// must be skipped whole, not tear the session down: the stream has to resync so
-// later messages (here a diagnostics push) are still delivered.
 void TestWorkspaceLspClientSkipsOversizedFrameAndResyncs() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
@@ -1158,7 +1108,7 @@ while True:
   LspClient client;
   bool got_resynced_diag = false;
   client.SetDiagnosticsCallback(
-      [&](std::string /*uri*/, std::vector<LspClient::Diagnostic> diags) {
+      [&](std::string , std::vector<LspClient::Diagnostic> diags) {
         if (!diags.empty() && diags.front().message == "resynced") {
           got_resynced_diag = true;
         }
@@ -1180,13 +1130,6 @@ while True:
   client.Shutdown();
 }
 
-// A frame that arrives before the initialize response must be dispatched, not
-// dropped. The init loop used to `continue` on any non-init frame — but
-// framer_.Next() had already consumed the bytes, so early server pushes
-// (window/logMessage, $/progress) were lost and pre-init server requests went
-// unanswered (a request-blocking server then hangs). Here the server pushes a
-// diagnostics notification *before* the initialize response; the client must
-// still deliver it. Mirrors the DAP client's pre-initialize dispatch.
 void TestWorkspaceLspClientDispatchesPreInitializeFrames() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
@@ -1252,7 +1195,7 @@ while True:
   LspClient client;
   bool got_preinit_diag = false;
   client.SetDiagnosticsCallback(
-      [&](std::string /*uri*/, std::vector<LspClient::Diagnostic> diags) {
+      [&](std::string , std::vector<LspClient::Diagnostic> diags) {
         if (!diags.empty() && diags.front().message == "preinit-hello") {
           got_preinit_diag = true;
         }
@@ -1270,10 +1213,6 @@ while True:
   client.Shutdown();
 }
 
-// A server that answers initialize with an error has said why it will not run
-// (typescript-language-server on a TypeScript 7 with no tsserver.js, in QA's
-// lsp-typescript). The failure must carry that message: it was reported as
-// "exited before initialize response", sending the user looking for a crash.
 void TestWorkspaceLspClientInitializeErrorKeepsTheServersMessage() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
@@ -1319,12 +1258,6 @@ sys.stdout.buffer.flush()
   client.Shutdown();
 }
 
-// Regression: the initialize-wait budget is wall-clock (each miss does a ~500 ms
-// bounded read; 60 attempts ≈ 30 s). Dispatching a pre-initialize frame must NOT spend
-// a budget slot, or a chatty server that emits a burst of notifications before its
-// initialize response exhausts the budget in milliseconds and gets force-killed while
-// perfectly healthy. This server floods far more than 60 notifications ahead of the
-// response; the client must still initialize.
 void TestWorkspaceLspClientPreInitializeNotificationFloodStillInitializes() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
@@ -1395,11 +1328,6 @@ while True:
   client.Shutdown();
 }
 
-// Diagnostics computed against a document version the client has already
-// superseded with a newer edit must be dropped — applying stale ranges to the
-// newer buffer paints squiggles on the wrong spans. The server replies to the
-// v2 didChange with a stale (v1) push followed by a fresh (v2) push; only the
-// fresh one may reach the callback.
 void TestWorkspaceLspClientDropsStaleDiagnosticsVersion() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
@@ -1472,7 +1400,7 @@ while True:
   LspClient client;
   std::vector<std::string> received;
   client.SetDiagnosticsCallback(
-      [&](std::string /*uri*/, std::vector<LspClient::Diagnostic> diags) {
+      [&](std::string , std::vector<LspClient::Diagnostic> diags) {
         if (!diags.empty()) {
           received.push_back(diags.front().message);
         }
@@ -1493,7 +1421,6 @@ while True:
     client.DrainCallbacks();
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
-  // Give any stale push that slipped through a chance to surface before asserting.
   client.DrainCallbacks();
   Expect(std::find(received.begin(), received.end(), "fresh-v2") != received.end(),
          "current-version diagnostics must be delivered");
@@ -1502,10 +1429,6 @@ while True:
   client.Shutdown();
 }
 
-// Same as above, but the server echoes the document version as a JSON FLOAT
-// ("version": 1.0 / 2.0). Some servers round-trip integers through a float; the
-// stale-drop gate must accept IsDouble() as well as IsInt() (mirroring the
-// response-id gate) or the stale v1 push slips through onto the v2 buffer.
 void TestWorkspaceLspClientDropsStaleDiagnosticsFloatVersion() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
@@ -1578,7 +1501,7 @@ while True:
   LspClient client;
   std::vector<std::string> received;
   client.SetDiagnosticsCallback(
-      [&](std::string /*uri*/, std::vector<LspClient::Diagnostic> diags) {
+      [&](std::string , std::vector<LspClient::Diagnostic> diags) {
         if (!diags.empty()) {
           received.push_back(diags.front().message);
         }
@@ -1607,9 +1530,6 @@ while True:
   client.Shutdown();
 }
 
-// Ingestion and UI delivery are separate: a diagnostic can be current when
-// queued, then become stale before the UI drains its callback. This also covers
-// a fast server replying before DidChange commits its post-enqueue version.
 void TestWorkspaceLspClientDropsDiagnosticsSupersededBeforeDelivery() {
   for (const bool float_version : {false, true}) {
     LspClient client;
@@ -1668,12 +1588,6 @@ void TestWorkspaceLspClientDropsDiagnosticsSupersededBeforeDelivery() {
   }
 }
 
-// TD-2026-07-10: the staleness gate above did not survive a close -> reopen.
-// didClose erased the URI's tracked version and didOpen reset it to 1, so a
-// publishDiagnostics still in flight from the previous open (version 3) compared
-// `3 < 1` — false — and painted on the freshly reopened buffer until the next
-// republish. Versions are monotonic per URI across a reopen now, so the old push
-// is still stale.
 void TestWorkspaceLspClientDropsDiagnosticsFromAPreviousOpen() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
@@ -1751,7 +1665,7 @@ while True:
   LspClient client;
   std::vector<std::string> received;
   client.SetDiagnosticsCallback(
-      [&](std::string /*uri*/, std::vector<LspClient::Diagnostic> diags) {
+      [&](std::string , std::vector<LspClient::Diagnostic> diags) {
         if (!diags.empty()) {
           received.push_back(diags.front().message);
         }
@@ -1789,12 +1703,6 @@ while True:
   client.Shutdown();
 }
 
-// ---------------------------------------------------------------------------
-// JsonRpcMessageFramer — direct, subprocess-free unit coverage of the wire codec.
-// The parser is a hot path and a hostile-input surface; these exercise its
-// cross-chunk state (partial frames, coalesced frames, header EOL variants,
-// malformed-length resync, oversized-frame skip) deterministically.
-// ---------------------------------------------------------------------------
 namespace {
 
 std::string LspFrame(std::string_view body, bool crlf = true) {
@@ -1802,15 +1710,11 @@ std::string LspFrame(std::string_view body, bool crlf = true) {
   return "Content-Length: " + std::to_string(body.size()) + eol + eol + std::string(body);
 }
 
-}  // namespace
+}
 
-// Regression: didChange/didSave for a URI that was never opened (or already
-// closed) must be rejected rather than creating a phantom version entry that
-// would version-gate future diagnostics for a document the server has no record
-// of. After a real didOpen, both are accepted.
 void TestLspClientRejectsChangeAndSaveForUnopenedDocument() {
   workspace::LspClient client;
-  client.EnableTestStubMode();  // initialized, no subprocess
+  client.EnableTestStubMode();
   const std::string uri = "file:///tmp/never-opened.py";
   Expect(!client.DidChange(uri, "x"), "didChange for an unopened document is rejected");
   Expect(!client.DidSave(uri), "didSave for an unopened document is rejected");
@@ -1820,25 +1724,13 @@ void TestLspClientRejectsChangeAndSaveForUnopenedDocument() {
   Expect(client.DidSave(uri), "didSave after didOpen is accepted");
 }
 
-// Regression (TD-2026-07-17A-086): didOpen/didClose must commit the local
-// open-document state only after the notification is successfully enqueued,
-// matching didChange. If the enqueue is rejected (here: the outbound queue is at
-// the OOM backstop cap), the host's open/close belief must not diverge from what
-// the server actually saw. A never-initialized client parks notifications in the
-// deferred queue, so filling it to kMaxQueuedMessages gives a deterministic,
-// stable rejecting state (no subprocess, no shutdown-thread race).
 void TestLspClientDidOpenCloseCommitAfterSuccess() {
-  workspace::LspClient client;  // not initialized: enqueues defer, then cap
+  workspace::LspClient client;
   const std::string open_uri = "file:///tmp/commit-after-success.py";
 
-  // Open succeeds (deferred) and marks the document open.
   Expect(client.DidOpen(open_uri, "python", "hello"), "first didOpen enqueues");
   Expect(client.HasOpenDocument(open_uri), "the document is marked open after didOpen");
 
-  // Fill the deferred queue to the OOM backstop cap so further enqueues are
-  // rejected. Re-opening the same URI grows the deferred queue by one each call
-  // without adding map entries. The hard bound guards against an infinite loop
-  // if the cap semantics ever change; kMaxQueuedMessages is 50000.
   bool reached_cap = false;
   for (int i = 0; i < 200000; ++i) {
     if (!client.DidOpen(open_uri, "python", "hello")) {
@@ -1848,39 +1740,27 @@ void TestLspClientDidOpenCloseCommitAfterSuccess() {
   }
   Expect(reached_cap, "the deferred outbound queue reaches its OOM backstop cap");
 
-  // A rejected didOpen must NOT record the new document as open — a phantom
-  // version-1 entry would version-gate future diagnostics for a document the
-  // server never opened.
   const std::string other_uri = "file:///tmp/never-delivered.py";
   Expect(!client.DidOpen(other_uri, "python", "x"),
          "didOpen is rejected once the outbound queue is full");
   Expect(!client.HasOpenDocument(other_uri),
          "a rejected didOpen must not leave the document marked open");
 
-  // A rejected didClose must NOT erase the open state — the server still has the
-  // document open, so erasing early would drop a later didChange via the
-  // missing-version guard.
   Expect(!client.DidClose(open_uri),
          "didClose is rejected once the outbound queue is full");
   Expect(client.HasOpenDocument(open_uri),
          "a rejected didClose must not erase the open-document state");
 }
 
-// Regression: re-registering a server under the same canonical key with a
-// narrower language-id set must drop the aliases for the removed ids. Previously
-// re-registering ["cpp","c"] as ["cpp"] left alias_["c"] pointing at the C++
-// server, so HasServer("c")/GetServer("c") still resolved to it.
 void TestLspManagerReRegistrationDropsStaleAliases() {
   workspace::LspManager manager;
-  // eager_start=false so no subprocess is spawned in the unit test.
-  manager.RegisterServer({"cpp", "c"}, platform::LocalProcessLauncher(), {"true"}, "file:///tmp", /*cwd=*/{},
-                         /*eager_start=*/false);
+  manager.RegisterServer({"cpp", "c"}, platform::LocalProcessLauncher(), {"true"}, "file:///tmp", {},
+                         false);
   Expect(manager.HasServer("cpp"), "the C++ server registers under its primary id");
   Expect(manager.HasServer("c"), "the secondary language id also resolves");
 
-  // Re-register without "c": the stale alias must be gone.
-  manager.RegisterServer({"cpp"}, platform::LocalProcessLauncher(), {"true"}, "file:///tmp", /*cwd=*/{},
-                         /*eager_start=*/false);
+  manager.RegisterServer({"cpp"}, platform::LocalProcessLauncher(), {"true"}, "file:///tmp", {},
+                         false);
   Expect(manager.HasServer("cpp"), "the C++ server still resolves under cpp");
   Expect(!manager.HasServer("c"),
          "the dropped language id must no longer resolve after re-registration");
@@ -1911,16 +1791,12 @@ void TestJsonRpcMessageFramerMultipleFramesInOneChunk() {
 
 void TestJsonRpcMessageFramerBareNewlineHeaders() {
   workspace::JsonRpcMessageFramer framer;
-  framer.Append(LspFrame(R"({"method":"lf"})", /*crlf=*/false));
+  framer.Append(LspFrame(R"({"method":"lf"})", false));
   auto msg = framer.Next();
   Expect(msg.has_value() && (*msg)["method"].AsString() == "lf",
          "bare-\\n headers (no \\r) still frame a message");
 }
 
-// Regression: the Content-Length header name is case-insensitive and the
-// whitespace around the value is optional (HTTP-style tolerant peers). Previously
-// only the exact `Content-Length: ` spelling framed a message, so a lowercase or
-// no-space header made the client read the body as header noise.
 void TestJsonRpcMessageFramerToleratesHeaderCasingAndSpacing() {
   const std::string body = R"({"method":"tolerant"})";
   const auto expect_frames = [&](const std::string& header) {
@@ -1930,11 +1806,11 @@ void TestJsonRpcMessageFramerToleratesHeaderCasingAndSpacing() {
     Expect(msg.has_value() && (*msg)["method"].AsString() == "tolerant",
            "header variant should frame the message: " + header);
   };
-  expect_frames("content-length: ");   // lowercase name
-  expect_frames("CONTENT-LENGTH: ");    // uppercase name
-  expect_frames("Content-Length:");     // no space after colon
-  expect_frames("Content-Length:   ");  // extra spaces
-  expect_frames("Content-Length \t: ");  // space before colon
+  expect_frames("content-length: ");
+  expect_frames("CONTENT-LENGTH: ");
+  expect_frames("Content-Length:");
+  expect_frames("Content-Length:   ");
+  expect_frames("Content-Length \t: ");
 }
 
 void TestJsonRpcMessageFramerMalformedLengthResyncs() {
@@ -1950,7 +1826,7 @@ void TestJsonRpcMessageFramerMalformedLengthResyncs() {
 
 void TestJsonRpcMessageFramerOversizedFrameSkips() {
   workspace::JsonRpcMessageFramer framer;
-  const std::size_t oversized = 64ull * 1024 * 1024 + 1;  // just past kMaxLspMessageBytes
+  const std::size_t oversized = 64ull * 1024 * 1024 + 1;
   framer.Append("Content-Length: " + std::to_string(oversized) + "\r\n\r\n");
   Expect(!framer.Next().has_value(), "an oversized header frames no message");
   Expect(framer.skip_body_bytes == oversized, "the oversized body is queued for skipping whole");
@@ -1960,23 +1836,15 @@ void TestJsonRpcMessageFramerOversizedFrameSkips() {
   Expect(framer.BufferedBytes() == 0, "drained skip bytes leave the buffer empty");
 }
 
-// Regression: an oversized frame whose header block is not yet fully buffered
-// (a recv split right on the Content-Length line's newline, before the blank-line
-// terminator) must NOT commit the skip yet. Committing it early would count the
-// still-unseen "\r\n" terminator bytes as body, drain two bytes short, and desync
-// the stream (re-parsing trailing body bytes as a new frame). The framer must wait
-// for the terminator, then skip with a body_start that is correctly past it.
 void TestJsonRpcMessageFramerOversizedFrameSplitOnHeaderNewlineDoesNotDesync() {
   workspace::JsonRpcMessageFramer framer;
-  const std::size_t oversized = 64ull * 1024 * 1024 + 1;  // just past kMaxLspMessageBytes
-  // Feed only the Content-Length line, ending exactly on its '\n' — no blank line.
+  const std::size_t oversized = 64ull * 1024 * 1024 + 1;
   framer.Append("Content-Length: " + std::to_string(oversized) + "\r\n");
   Expect(!framer.Next().has_value(), "an incomplete header block frames no message");
   Expect(framer.skip_body_bytes == 0,
          "the skip must NOT be committed before the header terminator is seen");
   Expect(framer.BufferedBytes() > 0,
          "the header line must stay buffered until the block terminates");
-  // Now the blank-line terminator arrives; the skip commits past it (not before).
   framer.Append("\r\n");
   Expect(!framer.Next().has_value(), "the oversized frame still frames no message");
   Expect(framer.skip_body_bytes == oversized,
@@ -1985,9 +1853,6 @@ void TestJsonRpcMessageFramerOversizedFrameSplitOnHeaderNewlineDoesNotDesync() {
          "the header block (and only it) is consumed before the body drain begins");
 }
 
-// Track A regression: serialization is deferred to the I/O thread (the outbound
-// builder runs SerializeMessage lazily). This must preserve FIFO order and the full
-// per-change payload — a reorder or a captured-by-reference bug would corrupt sync.
 void TestWorkspaceLspClientDidChangePreservesOrderAndPayload() {
   TemporaryDirectory temp_dir;
   const auto log_path = temp_dir.path() / "didchange.log";
@@ -2046,8 +1911,6 @@ while True:
                                     "file:///tmp", "python");
   Expect(started, "didChange order fixture should start");
 
-  // didChange requires an open document (the client rejects a change for a URI it
-  // never saw a didOpen for). Open it first (version 1); the changes are 2..7.
   Expect(client.DidOpen("file:///tmp/s.py", "python", ""), "didOpen should enqueue");
 
   constexpr int kChanges = 6;
@@ -2079,16 +1942,11 @@ while True:
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
 
-  // Exact match asserts both FIFO order (versions 1..N in sequence) and full payload
-  // integrity through the deferred builder.
   Expect(contents == expected,
          "didChange order + full payload must survive deferred serialization");
   client.Shutdown();
 }
 
-// Track A' coverage: drive the real (non-stub) completion parser against a server
-// that returns a JSON CompletionList. The stub path bypasses the parser, so this is
-// the only place the move-out parsing of label/detail/insertText/textEdit runs.
 void TestWorkspaceLspClientCompletionParsesJsonResult() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
@@ -2182,10 +2040,6 @@ while True:
   client.Shutdown();
 }
 
-// Regression: a server that echoes the integer request id as a JSON float (e.g.
-// "id": 1.0) — common when the id round-trips through a float-typed JSON layer —
-// must still correlate to its pending request. The dispatch gate used to accept
-// only IsInt(), silently dropping float-id responses and hanging the request.
 void TestWorkspaceLspClientAcceptsFloatEchoedResponseId() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "float-id-server.py";
@@ -2263,10 +2117,6 @@ while True:
 void TestWorkspaceLspClientInitFailureFailsPendingRequest() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "stall-server.py";
-  // Consume the initialize request, then stall briefly and exit WITHOUT ever
-  // responding, so the client's init loop hits EOF and takes the !got_init
-  // failure path. The stall gives the test time to register a pending request
-  // before init fails.
   WriteFile(server_path, std::string(R"py(import sys
 import time
 
@@ -2288,10 +2138,6 @@ time.sleep(0.3)
   const bool started = client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "file:///tmp", "python");
   Expect(started, "init-failure fixture should start");
 
-  // Issue a feature request while the client is still initializing: it registers a
-  // pending request and queues the wire message. When init fails, the request must
-  // be failed (callback invoked with no result), not silently dropped -> otherwise
-  // its UI loading state strands forever.
   std::atomic<bool> hover_called{false};
   std::atomic<int> hover_outcome{-1};
   std::atomic<bool> hover_answered{true};
@@ -2313,8 +2159,6 @@ time.sleep(0.3)
   Expect(!client.IsInitialized(), "init should have failed (server never responded)");
   Expect(hover_called.load(std::memory_order_acquire),
          "a request registered during a failed init must have its callback failed, not dropped");
-  // The server can never answer -> the outcome is Unavailable, and answered() is
-  // false so the UI does not mistake it for an authoritative empty result.
   Expect(hover_outcome.load(std::memory_order_acquire) ==
              static_cast<int>(LspRequestOutcome::kUnavailable),
          "a failed-init pending request reports the Unavailable outcome");
@@ -2323,10 +2167,6 @@ time.sleep(0.3)
   client.Shutdown();
 }
 
-// A minimal LSP server fixture the outcome-taxonomy tests reuse: it responds to
-// initialize (advertising hover + definition), then dispatches on a per-method
-// script — never responding to `hover` (to exercise the timeout sweep), erroring on
-// `signatureHelp`, and returning an authoritative empty `[]` for `definition`.
 constexpr const char* kOutcomeFixtureServer = R"py(import json
 import sys
 
@@ -2389,15 +2229,12 @@ void PumpUntilOutcomeDelivered(LspClient& client, const std::atomic<bool>& done,
   client.DrainCallbacks();
 }
 
-// A silent server (never answers hover) must resolve the request as a Timeout, not a
-// silent empty success -> so a slow/hung server no longer reads as "no hover here".
 void TestWorkspaceLspClientTimeoutReportsTimeoutOutcome() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "silent-hover.py";
   WriteFile(server_path, std::string(kOutcomeFixtureServer));
 
   LspClient client;
-  // Shorten the per-request deadline so the sweep fires quickly instead of at 30s.
   client.SetRequestTimeoutForTesting(std::chrono::milliseconds(150));
   Expect(client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "file:///tmp", "python"),
          "outcome fixture should start");
@@ -2421,8 +2258,6 @@ void TestWorkspaceLspClientTimeoutReportsTimeoutOutcome() {
   client.Shutdown();
 }
 
-// A JSON-RPC error response is a ProtocolError (not answered); an empty `[]` result
-// is an authoritative empty answer (answered, so "No X found" is still correct).
 void TestWorkspaceLspClientOutcomeTaxonomy() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "outcome.py";
@@ -2432,7 +2267,6 @@ void TestWorkspaceLspClientOutcomeTaxonomy() {
   Expect(client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "file:///tmp", "python"),
          "outcome fixture should start");
 
-  // 1. signatureHelp -> JSON-RPC error -> ProtocolError, not answered.
   std::atomic<bool> sig_done{false};
   std::atomic<int> sig_outcome{-1};
   std::atomic<bool> sig_answered{true};
@@ -2450,8 +2284,6 @@ void TestWorkspaceLspClientOutcomeTaxonomy() {
   Expect(!sig_answered.load(std::memory_order_acquire),
          "a protocol error is not an authoritative answer");
 
-  // 2. definition -> [] -> answered empty (Ok with an empty list), so the caller's
-  //    own emptiness check still drives the "No definition found" message.
   std::atomic<bool> def_done{false};
   std::atomic<bool> def_answered{false};
   std::atomic<bool> def_empty{false};
@@ -2470,10 +2302,6 @@ void TestWorkspaceLspClientOutcomeTaxonomy() {
   client.Shutdown();
 }
 
-// LSP servers return completion items in arbitrary array order and encode their
-// relevance ranking in `sortText` alone. The client sorts before handing the list
-// on; this pins the VS Code comparator semantics, including the deliberate
-// asymmetry that sortText is only consulted when BOTH items carry one.
 void TestLspCompletionSortsByServerRank() {
   const auto make = [](std::string label, std::string sort_text, int kind = 1) {
     LspClient::CompletionItem item;
@@ -2491,24 +2319,19 @@ void TestLspCompletionSortsByServerRank() {
     return joined;
   };
 
-  // sortText wins over both array order and label order.
   std::vector<LspClient::CompletionItem> items = {
       make("zebra", "00"), make("apple", "01"), make("mango", "02")};
   LspClient::SortCompletionItemsByServerRank(items);
   Expect(labels(items) == "zebra,apple,mango", "sortText must outrank array and label order");
 
-  // sortText compares case-insensitively (VS Code lowercases it first), so a
-  // server mixing `A` and `a` prefixes does not split into two blocks.
   items = {make("upper", "B1"), make("lower", "a1"), make("mid", "A2")};
   LspClient::SortCompletionItemsByServerRank(items);
   Expect(labels(items) == "lower,mid,upper", "sortText comparison is case-insensitive");
 
-  // Items with no sortText fall through to label order.
   items = {make("delta", ""), make("bravo", ""), make("alpha", "")};
   LspClient::SortCompletionItemsByServerRank(items);
   Expect(labels(items) == "alpha,bravo,delta", "missing sortText falls back to label order");
 
-  // Full ties keep the server's array order (stable).
   items = {make("same", "10", 3), make("same", "10", 3), make("other", "10", 3)};
   items[0].detail = "first";
   items[1].detail = "second";
@@ -2517,7 +2340,6 @@ void TestLspCompletionSortsByServerRank() {
   Expect(items[1].detail == "first" && items[2].detail == "second",
          "a full tie preserves the server's array order");
 
-  // Kind is the final tie-break, so the order is total and deterministic.
   items = {make("dup", "10", 7), make("dup", "10", 2)};
   LspClient::SortCompletionItemsByServerRank(items);
   Expect(items[0].kind == 2 && items[1].kind == 7, "kind is the final tie-break");
@@ -2616,4 +2438,4 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestLspCompletionSortsByServerRank);
 }
 
-}  // namespace microide::tests
+}

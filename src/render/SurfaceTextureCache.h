@@ -17,38 +17,18 @@
 
 namespace microide::project {
 class ProjectBackgroundExecutor;
-}  // namespace microide::project
+}
 
 namespace microide::render {
 
-// Host-owned cache of plugin-supplied raster surfaces, keyed by content hash.
-//
-// Plugins hand the host either an encoded PNG/JPEG or raw RGBA8 bytes via
-// `ctx.surface.setRaster`. Decoding runs OFF the shell thread (on the project
-// background executor); the resulting RGBA buffer is uploaded to an SDL_Texture
-// ON the shell thread (SDL texture creation must happen on the render thread).
-// Entries are evicted LRU once the total texture VRAM passes a byte budget.
-//
-// Lifetime: decode tasks capture a shared "sink" (not `this`), so the cache may
-// be destroyed while a decode is still in flight — the in-flight task just drops
-// its result into the sink, which outlives both. No network access: the cache
-// only ever decodes plugin-provided local bytes.
 class SurfaceTextureCache {
  public:
   enum class RasterFormat { Png, Rgba8 };
 
-  // Hard caps. A surface above these is rejected at decode time (no texture).
   static constexpr int kMaxDimension = 8192;
-  static constexpr std::size_t kMaxEncodedBytes = 64u * 1024 * 1024;  // 64 MiB
+  static constexpr std::size_t kMaxEncodedBytes = 64u * 1024 * 1024;
   static constexpr std::size_t kDefaultVramBudgetBytes = 256u * 1024 * 1024;
-  // Host-memory budget for successfully-decoded RGBA buffers waiting for the shell
-  // thread's next Upload. Distinct from the VRAM texture budget (which only applies
-  // AFTER upload): without this, a plugin publishing large valid rasters faster than
-  // the shell uploads them can stack 256 MiB buffers behind the sink mutex and spike
-  // process memory before LRU eviction can help (TD-2026-07-17-092).
   static constexpr std::size_t kMaxPendingDecodedBytes = 256u * 1024 * 1024;
-  // Aggregate budget for ENCODED bytes captured by queued/in-flight decode tasks.
-  // Distinct from the post-decode RGBA budget above (TD-2026-07-17A-043).
   static constexpr std::size_t kMaxInFlightEncodedBytes = 128u * 1024 * 1024;
 
   explicit SurfaceTextureCache(project::ProjectBackgroundExecutor& executor,
@@ -60,14 +40,9 @@ class SurfaceTextureCache {
   SurfaceTextureCache(const SurfaceTextureCache&) = delete;
   SurfaceTextureCache& operator=(const SurfaceTextureCache&) = delete;
 
-  // Shell thread. Schedule a decode for `hash` if it is not already cached or
-  // in flight. `bytes` is moved onto the worker. `declared_w/h` are only used to
-  // validate the rgba8 byte length; PNG/JPEG dimensions come from the decoder.
   void Request(std::uint64_t hash, RasterFormat format, std::vector<std::byte> bytes,
                int declared_w, int declared_h);
 
-  // Shell thread. Drain decoded buffers and upload them. Call once at the top of
-  // the render pass, before any Lookup, with a live renderer.
   void Upload(SDL_Renderer* renderer);
 
   struct Entry {
@@ -76,112 +51,58 @@ class SurfaceTextureCache {
     int height = 0;
   };
 
-  // Shell thread. The uploaded texture for `hash`, or nullptr while the decode
-  // is pending or after a decode failure. Touches LRU order on a hit.
   const Entry* Lookup(std::uint64_t hash);
 
-  // Shell thread. Drop everything (textures destroyed). In-flight decodes still
-  // complete into the sink but their results are ignored.
   void Clear();
 
-  // A raster's real pixel size, which only its decode knows: an encoded image's
-  // dimensions are in its bytes, and the ones a plugin declares beside them may be
-  // missing or wrong (TD-2026-07-16-39).
   struct RasterSize {
     std::uint64_t hash = 0;
     int width = 0;
     int height = 0;
   };
 
-  // Shell thread, before the first Request. Every successful decode pushes a wake on
-  // `channel` once its size is ready to take, so the shell can lay the surface out
-  // at that size and repaint it without waiting for an unrelated event. 0 (the
-  // default) disables the wake.
   void SetWakeChannel(util::WakeChannel channel);
   util::WakeChannel wake_channel() const { return wake_channel_; }
 
-  // Shell thread. The sizes of the rasters decoded since the last call, in decode
-  // order. Independent of Upload: a size is known as soon as the decode finishes,
-  // whether or not anything has painted the raster yet.
   std::vector<RasterSize> TakeDecodedSizes();
-  // Shell thread. `hash`'s decoded size, if a decode has produced one that is
-  // still held (uploaded, or taken and awaiting its upload).
   std::optional<RasterSize> DecodedSize(std::uint64_t hash) const;
 
-  // Shell thread. Advances whenever a texture becomes resident or stops being one
-  // (an upload, an eviction, a Clear): what a Lookup answers changed, so whatever
-  // draws a surface -- an image or its "Rendering…" placeholder -- may draw
-  // something else. Frame prep keys the units that draw surfaces on it.
   std::uint64_t residency_generation() const { return residency_generation_; }
 
   std::size_t cached_count() const { return entries_.size(); }
-  // Diagnostic: number of retained permanent-failure markers. Bounded by
-  // kMaxFailedHashes so a plugin publishing distinct invalid images cannot grow it
-  // without limit; a persistently high value flags a broken image-producing plugin
-  // (TD-2026-07-17-043).
   std::size_t failed_hash_count() const { return failed_hash_order_.size(); }
 
-  // Test seam: override the SDL texture creator so a test can deterministically
-  // force SDL_CreateTexture-style failures (e.g. dimensions the decoder accepts but
-  // the renderer rejects) without a live GPU. Returns nullptr to simulate failure.
-  // Unset in production (SDL_CreateTexture is used). TD-2026-07-17A-118.
   using TextureFactoryForTesting = std::function<SDL_Texture*(SDL_Renderer*, int, int)>;
   void SetTextureFactoryForTesting(TextureFactoryForTesting factory) {
     texture_factory_for_testing_ = std::move(factory);
   }
 
-  // A decoded RGBA8 image waiting for shell-thread upload. Public so the
-  // off-thread decode helpers can construct it.
   struct Decoded {
     std::uint64_t hash = 0;
     int width = 0;
     int height = 0;
     bool ok = false;
-    // TD-2026-07-17-092: set when a valid decode was DROPPED before push because the
-    // pre-upload host-memory backlog was over budget. Distinguished from a real
-    // decode failure (ok == false, dropped_over_budget == false) so Upload treats it
-    // as transient — it drops the in-flight marker so a later Request re-decodes when
-    // there is room, instead of permanently suppressing the image.
     bool dropped_over_budget = false;
-    std::vector<std::uint8_t> rgba;  // width*height*4, only when ok
+    std::vector<std::uint8_t> rgba;
   };
 
-  // Diagnostic: bytes of decoded RGBA currently queued for upload (0 right after an
-  // Upload drains the sink). Never exceeds the pending-decoded budget.
   std::size_t pending_decoded_bytes() const;
 
-  // Diagnostic: aggregate encoded bytes charged to queued/in-flight decode tasks
-  // (0 once all posted decodes have completed). Bounded by kMaxInFlightEncodedBytes.
   std::size_t in_flight_encoded_bytes() const;
 
  private:
-  // Cross-thread handoff. Held by shared_ptr so worker tasks never touch `this`.
   struct DecodeSink {
     std::mutex mutex;
     std::vector<Decoded> ready;
-    // Bytes of ok-decoded rgba currently in `ready`. Guarded by `mutex`.
     std::size_t pending_bytes = 0;
-    // Host-memory budget for `ready` (set at construction; tests use a small value).
     std::size_t budget_bytes = kMaxPendingDecodedBytes;
-    // Aggregate ENCODED bytes captured by decode tasks that are queued or in flight
-    // (charged at Request, released when the worker finishes decoding). The
-    // pending_bytes budget above only bounds POST-decode RGBA, so without this a
-    // plugin publishing many distinct near-cap rasters faster than the executor
-    // drains them retains large encoded payloads plus in-flight markers
-    // (TD-2026-07-17A-043). Guarded by `mutex`.
     std::size_t in_flight_encoded_bytes = 0;
     std::size_t encoded_budget_bytes = kMaxInFlightEncodedBytes;
-    // Sizes of successful decodes not yet taken by TakeDecodedSizes, and the
-    // channel each one wakes. Guarded by `mutex`.
     std::vector<RasterSize> decoded_sizes;
     util::WakeChannel wake_channel = 0;
   };
 
   void EvictToBudget();
-  // Record `hash` as a permanent failure marker under the bounded FIFO policy:
-  // push it onto failed_hash_order_ and evict the oldest markers past
-  // kMaxFailedHashes. Shared by decode failures and permanent texture-create
-  // failures so neither set can grow without a budget (TD-2026-07-17A-118).
   void RetainBoundedFailureMarker(std::uint64_t hash);
 
   project::ProjectBackgroundExecutor& executor_;
@@ -190,35 +111,18 @@ class SurfaceTextureCache {
   std::size_t vram_bytes_ = 0;
   std::uint64_t residency_generation_ = 0;
 
-  // Sizes TakeDecodedSizes handed out whose decode Upload has not consumed yet, so
-  // DecodedSize can answer between the two. Erased as Upload takes each decode,
-  // which bounds it by the sink's own backlog.
   std::unordered_map<std::uint64_t, RasterSize> awaiting_upload_sizes_;
-  // The shell thread's copy of the sink's wake channel: the event dispatcher reads
-  // it per event, which must not take the sink's mutex.
   util::WakeChannel wake_channel_ = 0;
 
-  // hash -> uploaded texture. lru_ holds hashes most-recently-used at the front.
   std::unordered_map<std::uint64_t, Entry> entries_;
   std::list<std::uint64_t> lru_;
   std::unordered_map<std::uint64_t, std::list<std::uint64_t>::iterator> lru_pos_;
 
-  // Hashes that are decoding or have permanently failed: suppresses re-requests.
-  std::unordered_map<std::uint64_t, bool> in_flight_or_failed_;  // value unused
-  // TD-2026-07-17-043: failed hashes stay in in_flight_or_failed_ to short-circuit
-  // re-requests, but a plugin publishing an endless stream of DISTINCT invalid image
-  // hashes would grow that set without any budget (the VRAM budget only bounds
-  // successful textures). Bound the retained failure markers with an insertion-order
-  // FIFO: once it exceeds kMaxFailedHashes the oldest failure is forgotten (a later
-  // identical request may re-decode once, which is fine — the set stays bounded).
+  std::unordered_map<std::uint64_t, bool> in_flight_or_failed_;
   static constexpr std::size_t kMaxFailedHashes = 1024;
   std::deque<std::uint64_t> failed_hash_order_;
-  // Count of consecutive SDL_CreateTexture failures per (successfully decoded)
-  // hash. A transient GPU/renderer hiccup should let the valid bytes retry, but a
-  // genuinely un-creatable texture (e.g. dimensions past the GPU max) must stop
-  // re-decoding after a bounded number of attempts.
   std::unordered_map<std::uint64_t, int> texture_create_failures_;
   TextureFactoryForTesting texture_factory_for_testing_;
 };
 
-}  // namespace microide::render
+}

@@ -1,20 +1,3 @@
-// The multi-caret remap batch, against the reference it claims to reproduce.
-//
-// `ResolveMultiCaretRemapSites` folds every lower caret's edit into every higher
-// caret's recorded position. It has TWO paths -- an O(sites) forward pass for
-// the common shape (single-line removed ranges, no anchors) and the exact
-// O(sites^2) per-edit remap for everything else -- and the header states they
-// "yield identical results". Nothing checked that. The fast path is an
-// optimisation guarded by an eligibility test, which is the shape where a wrong
-// answer is invisible: the slow path keeps working, so every test that happens
-// to carry an anchor passes while the fast path is quietly wrong.
-//
-// So: random eligible site sets, resolved by the function, compared against the
-// exact per-edit fold written out here. And `ComputeReplacementShape`, which the
-// remap reads, checked against the line-ending normalizer it says it must
-// mirror -- the header records what goes wrong if it does not ("higher carets
-// land on the wrong line").
-
 #include "TestSupport.h"
 
 #include <cstddef>
@@ -42,8 +25,6 @@ std::string Show(const TextPosition& p) {
   return "(" + std::to_string(p.line) + "," + std::to_string(p.column) + ")";
 }
 
-// The exact reference the fast path claims to reproduce: site i is remapped by
-// edits i-1, i-2, ..., 0 in that order.
 void ResolveExactly(std::vector<MultiCaretRemapSite>& sites) {
   for (std::size_t i = 0; i < sites.size(); ++i) {
     for (std::size_t k = i; k-- > 0;) {
@@ -71,9 +52,6 @@ void TestFastRemapMatchesTheExactFold() {
   std::size_t newline_inserts = 0;
 
   for (int iteration = 0; iteration < 6000; ++iteration) {
-    // Sites in ascending caret order with single-line removed ranges and no
-    // anchors -- the shape the fast path is eligible for. Several sites share a
-    // line on purpose: that is where the column accumulator has to be right.
     std::vector<MultiCaretRemapSite> sites;
     const std::size_t count = 1 + pick(5);
     std::size_t line = pick(3);
@@ -88,14 +66,13 @@ void TestFastRemapMatchesTheExactFold() {
       column = end + 1;
 
       MultiCaretRemapSite site;
-      site.has_edit = pick(6) != 0;  // some sites produce no edit at all
+      site.has_edit = pick(6) != 0;
       site.removed = SelectionRange{TextPosition{line, start}, TextPosition{line, end}};
       site.shape.inserted_newlines = pick(4) == 0 ? 1 + pick(2) : 0;
       site.shape.last_segment_cols = pick(4);
       if (site.shape.inserted_newlines > 0) {
         ++newline_inserts;
       }
-      // Where the walk records the caret after applying this site's own edit.
       site.landed = site.shape.inserted_newlines == 0
                         ? TextPosition{line, start + site.shape.last_segment_cols}
                         : TextPosition{line + site.shape.inserted_newlines,
@@ -136,8 +113,6 @@ void TestFastRemapMatchesTheExactFold() {
              std::to_string(newline_inserts));
 }
 
-// ComputeReplacementShape must agree with the normalizer every edit path applies
-// before splitting the replacement into lines.
 void TestReplacementShapeMirrorsLineEndingNormalization() {
   const std::vector<std::string> bodies = {
       "",
@@ -159,7 +134,6 @@ void TestReplacementShapeMirrorsLineEndingNormalization() {
   for (const std::string& body : bodies) {
     const ReplacementShape shape = ComputeReplacementShape(body);
 
-    // Oracle: normalize exactly as the edit paths do, then count.
     const std::string normalized = microide::util::NormalizeLineEndings(body);
     std::size_t newlines = 0;
     std::size_t last_segment = 0;
@@ -187,7 +161,7 @@ void TestReplacementShapeMirrorsLineEndingNormalization() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterMultiCaretRemapTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MultiCaretRemap/FastRemapMatchesTheExactFold", TestFastRemapMatchesTheExactFold);
@@ -195,4 +169,4 @@ void RegisterMultiCaretRemapTests(std::vector<TestCase>& tests) {
           TestReplacementShapeMirrorsLineEndingNormalization);
 }
 
-}  // namespace microide::tests
+}

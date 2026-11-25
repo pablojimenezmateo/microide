@@ -16,9 +16,6 @@ using namespace detail;
 
 namespace {
 
-// The fingerprint of everything a toast paints. The structured bindings name
-// every field of the entry, its layout and its buttons: one added to them stops
-// this from compiling until it is folded in too.
 std::uint64_t FingerprintOf(const NotificationEntryViewModel& entry, std::uint64_t style) {
   const auto& [index, tone, message, lines, progress, layout, buttons, focused] = entry;
   const auto& [rect, accent, text, button_row, progress_track] = layout;
@@ -37,8 +34,6 @@ std::uint64_t FingerprintOf(const NotificationEntryViewModel& entry, std::uint64
   return fingerprint.Add(focused).Add(style).value();
 }
 
-// A toast's unit rect: the card's, snapped as its PaintElement clips (clip-discipline D2).
-
 SDL_Color ToneAccent(const render::Theme& theme, NotificationService::Tone tone) {
   switch (tone) {
     case NotificationService::Tone::Error:
@@ -51,7 +46,7 @@ SDL_Color ToneAccent(const render::Theme& theme, NotificationService::Tone tone)
   return theme.diagnostic_info;
 }
 
-}  // namespace
+}
 
 void PrepareNotificationToastsFrame(PreparedFrameState& frame, SDL_Renderer* renderer,
                                     const NotificationsViewModel& toasts, const render::Theme& theme,
@@ -88,9 +83,6 @@ void PaintNotificationToasts(SDL_Renderer* renderer, const PreparedFrameState& f
     const SDL_Rect clip{static_cast<int>(toast.text.x), static_cast<int>(toast.text.y),
                         static_cast<int>(std::ceil(toast.text.w)), static_cast<int>(std::ceil(toast.text.h))};
     {
-      // Truncate rather than let the clip rect shear the last glyph: a toast is
-      // transient, so a message that ends mid-word with no "…" reads as a
-      // rendering fault instead of "there was more here".
       const render::ScopedRenderClip clip_scope(renderer, clip);
       const float line_height = text_renderer.LineHeight();
       for (std::size_t line = 0; line < entry.lines.size(); ++line) {
@@ -102,7 +94,6 @@ void PaintNotificationToasts(SDL_Renderer* renderer, const PreparedFrameState& f
       }
     }
 
-    // The last button is the primary one (VS Code's order), drawn in the accent.
     for (std::size_t i = 0; i < entry.buttons.size(); ++i) {
       const NotificationButtonViewModel& button = entry.buttons[i];
       DrawButtonCentered(text_renderer, renderer, theme, button.rect,
@@ -120,9 +111,6 @@ void PaintNotificationToasts(SDL_Renderer* renderer, const PreparedFrameState& f
     }
 
     if (entry.progress.has_value()) {
-      // Track then fill, in the row's own tone: a progress row reports work that
-      // is still running, so it is sticky and this is the only thing on the card
-      // that changes between frames.
       FillRect(renderer, toast.progress_track, theme.overlay_background);
       SDL_FRect fill = toast.progress_track;
       fill.w = toast.progress_track.w * *entry.progress;
@@ -131,4 +119,4 @@ void PaintNotificationToasts(SDL_Renderer* renderer, const PreparedFrameState& f
   }
 }
 
-}  // namespace microide::workspace
+}

@@ -13,22 +13,15 @@ using util::PutVarint;
 
 constexpr std::uint8_t kHasForeground = 1u << 0;
 constexpr std::uint8_t kHasBackground = 1u << 1;
-// Not a style bit: the run's cell-extra id (TerminalCell::extra) follows the
-// colours.
 constexpr std::uint8_t kHasExtra = 1u << 2;
 
-// Optional-field presence bits.
 constexpr std::uint8_t kHasTitle = 1u << 0;
 constexpr std::uint8_t kHasWorkingDirectory = 1u << 1;
 constexpr std::uint8_t kHasClipboard = 1u << 2;
 constexpr std::uint8_t kHasNotification = 1u << 3;
 constexpr std::uint8_t kHasExtras = 1u << 4;
 constexpr std::uint8_t kHasOpenUrl = 1u << 5;
-// Wire version 4: (extra id, colour) pairs for the extras that carry an SGR 58
-// underline colour. A section of its own, after everything version 3 sends, so
-// the extras list keeps its version-3 shape.
 constexpr std::uint8_t kHasUnderlineColors = 1u << 6;
-// Wire version 5: a file to edit, after everything version 4 sends.
 constexpr std::uint8_t kHasEdit = 1u << 7;
 
 void PutRgba(std::string& out, const util::Rgba8& color) {
@@ -44,8 +37,6 @@ util::Rgba8 GetRgba(ByteReader& in) {
                      static_cast<std::uint8_t>(value >> 16), static_cast<std::uint8_t>(value >> 24)};
 }
 
-// A run is one style AND one extra: the extra is per cell, not in the style, but
-// it changes exactly where a run would.
 void PutRunStyle(std::string& out, const TerminalCell& cell) {
   const TerminalStyle& style = cell.style;
   PutVarint(out, style.attrs);
@@ -88,9 +79,6 @@ bool SameRun(const TerminalCell& a, const TerminalCell& b) {
          a.style.foreground == b.style.foreground && a.style.background == b.style.background;
 }
 
-// One cell's glyph: a printable ASCII byte stands for itself (the overwhelmingly
-// common cell costs one byte); anything else is a length byte below 0x20 and then
-// that many bytes, so the two forms cannot be confused.
 void PutGlyph(std::string& out, const TerminalCell& cell) {
   if (cell.length == 1 && static_cast<unsigned char>(cell.bytes[0]) >= 0x20 &&
       static_cast<unsigned char>(cell.bytes[0]) < 0x7f) {
@@ -145,10 +133,6 @@ bool GetLine(ByteReader& in, TerminalLine& line) {
   return !in.failed();
 }
 
-// `max_count` is what the caller already knows the count may be: the frame's
-// header has fixed it before the lines arrive. Checked BEFORE the resize: an
-// empty line is one byte on the wire and a `TerminalLine` in memory, so a count
-// bounded only by the bytes left would let one 64 MiB frame allocate 2 GiB.
 bool GetLines(ByteReader& in, std::vector<TerminalLine>& lines, std::uint64_t max_count) {
   const std::uint64_t count = in.Varint();
   if (in.failed() || count > max_count || count > in.remaining()) {
@@ -170,10 +154,8 @@ void PutLines(std::string& out, const std::vector<TerminalLine>& lines) {
   }
 }
 
-}  // namespace
+}
 
-// Cells are grouped into runs of one style: a line of output is usually one or two
-// styles across a hundred cells.
 void EncodeTerminalLine(std::string& out, const TerminalLine& line) {
   PutVarint(out, (static_cast<std::uint64_t>(line.cells.size()) << 1) |
                      (line.wrapped_from_previous ? 1u : 0u));
@@ -300,8 +282,6 @@ std::optional<TerminalHostFrame> DecodeTerminalHostFrame(std::string_view bytes)
   frame.cursor_row = static_cast<std::uint32_t>(cursor_row);
   frame.cursor_column = static_cast<std::uint32_t>(cursor_column);
 
-  // A screen that grew upward (screen_top < previous_top) moves no line into
-  // scrollback, so it carries no runs.
   const std::uint64_t moved =
       frame.screen_top >= frame.previous_top ? frame.screen_top - frame.previous_top : 0;
   const std::uint64_t runs = in.Varint();
@@ -311,10 +291,6 @@ std::optional<TerminalHostFrame> DecodeTerminalHostFrame(std::string_view bytes)
   frame.scrollback.resize(static_cast<std::size_t>(runs));
   std::uint64_t covered = 0;
   std::uint64_t line_runs = 0;
-  // A Promote names lines of the client's PREVIOUS screen, so together they are at
-  // most one screen. Bounded by nothing else (`moved` is the peer's to choose), a
-  // count the client then loops over -- a line appended per promoted line -- let one
-  // small frame hang the client and exhaust its memory.
   std::uint64_t promoted = 0;
   for (TerminalHostRun& run : frame.scrollback) {
     const std::uint64_t kind = in.Le(1);
@@ -387,7 +363,6 @@ std::optional<TerminalHostFrame> DecodeTerminalHostFrame(std::string_view bytes)
     frame.open_url = std::string(in.Bytes(kMaxHostOpenUrlBytes));
   }
   if ((present & kHasUnderlineColors) != 0) {
-    // Each names an extra the list above defined; frame.extras is sorted by id.
     const std::uint64_t count = in.Varint();
     if (in.failed() || count == 0 || count > frame.extras.size()) {
       return std::nullopt;
@@ -523,4 +498,4 @@ bool DecodeTerminalInputEvents(std::string_view bytes, std::vector<TerminalInput
   return true;
 }
 
-}  // namespace microide::terminal
+}

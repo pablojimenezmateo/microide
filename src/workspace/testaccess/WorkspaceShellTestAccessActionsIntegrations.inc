@@ -6,23 +6,14 @@
     return *shell.context_.project_catalog.entries.at(index);
   }
   static void ConsumeLspCallbacks(WorkspaceShell& shell) { shell.ConsumeLspCallbacks(); }
-  // A language server's textDocument/publishDiagnostics for `path`, as the client
-  // delivers it (UTF-16 positions), without a server process.
   static void PublishLspDiagnostics(WorkspaceShell& shell, const std::filesystem::path& path,
                                     std::vector<LspClient::Diagnostic> diagnostics) {
     shell.lsp_service_.PublishLspDiagnostics(shell.context_.current_project_state, FileUriForPath(path),
                                              lsp_encoding::PositionEncoding::Utf16, std::move(diagnostics));
   }
-  // TD-2026-07-17A-033: tab activation must SCHEDULE LSP hydration, not run it
-  // inline. True between the activation and the post-present drain
-  // (OnFramePresented -> LspService::ConsumeDeferredBufferOpen).
   static bool HasPendingLspBufferOpen(const WorkspaceShell& shell) {
     return shell.lsp_service_.HasPendingBufferOpen();
   }
-  // Re-point the hover cache at a cell (1-based line/column) exactly as a hit-test
-  // miss does -- generation bump included, since that stamp is what an in-flight
-  // completion compares against -- and dispatch the LSP fallback for it WITHOUT
-  // draining. Pair with HoverCacheContentForTesting to stage a superseded reply.
   static void BeginLspHoverForTesting(WorkspaceShell& shell, const std::filesystem::path& path,
                                       std::size_t line, std::size_t column) {
     shell.plugin_hover_cache_.path = path;
@@ -34,15 +25,12 @@
     ++shell.plugin_hover_cache_.generation;
     shell.KickOffLspHover(path, line, column);
   }
-  // The cell (1-based line) the last hover hit-test asked a provider about.
   static std::size_t HoverCacheLineForTesting(const WorkspaceShell& shell) {
     return shell.plugin_hover_cache_.line;
   }
   static std::string HoverCacheContentForTesting(const WorkspaceShell& shell) {
     return shell.plugin_hover_cache_.result.content;
   }
-  // Drive the LSP hover fallback for a cell (1-based line/column) directly, drain
-  // the async result, and return the resolved hover content ("" if it failed).
   static std::string ResolveLspHoverForTesting(WorkspaceShell& shell,
                                                const std::filesystem::path& path, std::size_t line,
                                                std::size_t column) {
@@ -50,10 +38,7 @@
     shell.ConsumeLspCallbacks();
     return HoverCacheContentForTesting(shell);
   }
-  // Apply a settings change to live subsystem state, as the next prepared frame does.
   static void ApplyLiveSettings(WorkspaceShell& shell) { shell.ApplyLiveSettings(); }
-  // Fire one code-lens pull for the active buffer, as didOpen/save/undo-to-clean do.
-  // Drives the trigger directly so a test can have two responses in flight at once.
   static bool RequestCodeLensesForActiveBuffer(WorkspaceShell& shell) {
     editor::TextViewport* viewport = shell.ActiveEditableViewport();
     if (viewport == nullptr) {
@@ -67,7 +52,6 @@
     shell.lsp_service_.RequestLspCodeLenses(*viewport, *client);
     return true;
   }
-  // Run a published code lens's server command, exactly as a click on it would.
   static void ActivateCodeLens(WorkspaceShell& shell, std::uint64_t payload) {
     shell.lsp_service_.ActivateCodeLens(payload);
     shell.ConsumeLspCallbacks();
@@ -75,8 +59,6 @@
   static bool IsControlChannelRunning(const WorkspaceShell& shell) {
     return shell.control_channel_service_.IsRunning();
   }
-  // One command line through the control channel's chokepoint, with the outcome a
-  // remote driver would read back.
   static ControlChannelService::CommandOutcome ExecuteControlCommand(
       WorkspaceShell& shell, const std::string& command_line) {
     return shell.ExecuteControlCommand(command_line);
@@ -84,8 +66,6 @@
   static const std::vector<microide::project::ProjectId>& RecentProjects(const WorkspaceShell& shell) {
     return shell.recents_service_.RecentProjects();
   }
-  // One query verb through the control channel, as its socket client gets it; a
-  // null value (with *error) when the verb is refused.
   static util::JsonValue ExecuteControlQuery(const WorkspaceShell& shell, const std::string& verb,
                                              std::string* error = nullptr) {
     bool ok = false;
@@ -96,8 +76,6 @@
     }
     return ok ? result : util::JsonValue();
   }
-  // Launch-config picker (Phase 9): seed configs, drive the picker, and read back
-  // its filtered matches / the persisted selection on confirm.
   static void SeedLaunchConfigs(WorkspaceShell& shell,
                                 std::vector<microide::workspace::LaunchConfig> configs) {
     shell.context_.current_project_state.launch_configs = std::move(configs);
@@ -176,10 +154,6 @@
   static bool OpenPlainComparison(WorkspaceShell& shell, CompareInput left, CompareInput right) {
     return shell.MakeCompareMergeService().diff_tabs().OpenPlainComparison(std::move(left), std::move(right));
   }
-  // What SelectForCompare stashed. ResolveCurrentCompareInput decides this: a
-  // context-menu invocation takes the tree target, otherwise the ACTIVE BUFFER
-  // wins with its live, possibly-unsaved text, and only then does it fall back
-  // to a file on disk. `compare_selection_from_file` records which happened.
   static const CompareInput& CompareSelection(const WorkspaceShell& shell) {
     return *shell.context_.current_project_state.compare_selection;
   }
@@ -189,11 +163,6 @@
   static bool HasCompareSelection(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.compare_selection.has_value();
   }
-  // Editor hover hit-testing. WorkspaceShellHoverTargets.cpp resolves what sits
-  // under the pointer -- blame, diagnostics, debug values, plugin hovers, code
-  // lenses -- across every pane, and had no direct coverage at all: it is
-  // reachable in production only from mouse motion at real coordinates, and the
-  // one test that touched it asserted on the view model rather than on a hit.
   static std::optional<EditorHoverTarget> EditorHoverTargetAtPosition(
       const WorkspaceShell& shell, float x, float y) {
     return shell.EditorHoverTargetAtPosition(x, y);
@@ -211,10 +180,6 @@
     return shell.context_.current_project_state.diagnostics_store.ReplaceForOwnerFile(
         "test", path, std::move(diagnostics));
   }
-  // Menu-popup paint drivers. The menu popups are reachable in production only
-  // through chrome mouse/keyboard events at real coordinates, which is why the
-  // popup PAINT path had no coverage at all -- the state readers below it were
-  // exercised, the three draw loops above it never were.
   static void OpenMenuBarMenuForTest(WorkspaceShell& shell, WorkspaceShell::MenuId id) {
     shell.MakeMenuCoordinator().OpenMenuBarMenu(id);
   }
@@ -236,28 +201,17 @@
   static void OpenMenuOverflowPopupForTest(WorkspaceShell& shell) {
     OpenMenuOverflowPopup(shell.context_.menu_state);
   }
-  // True when the last painted frame had at least one menu popup on screen.
-  // RenderMenuPopups is a chain of early returns; without this a paint test that
-  // asserts only on pixels passes whether or not a popup was ever drawn.
   static bool AnyMenuPopupOpen(const WorkspaceShell& shell) {
     return shell.context_.menu_state.menu_bar_open ||
            shell.context_.menu_state.overflow_popup_open ||
            shell.context_.menu_state.tree_context_menu.open;
   }
-  // How many rows the LAST `draw_popup_body` call actually laid out. Open state
-  // alone is not proof the body drew: the popup-rect helpers return nullopt on a
-  // window too small to hold the popup, and the draw is skipped with the menu
-  // still open. This reads the render TU's own reused scratch, so it is zero
-  // exactly when nothing was drawn. (The overflow popup has its own loop and
-  // does not touch this, by design -- it is not a shared-body popup.)
   static std::size_t LastPaintedPopupRowCount(const WorkspaceShell& shell) {
     return shell.menu_popup_rows_scratch_.size();
   }
   static void ClearPaintedPopupRowsForTest(WorkspaceShell& shell) {
     shell.menu_popup_rows_scratch_.clear();
   }
-  // A language-server request going out and its reply landing, as the status
-  // bar's "LSP: Working…" segment sees them.
   static void BeginTrackedLspRequest(WorkspaceShell& shell) { shell.lsp_service_.BeginTrackedLspRequest(); }
   static void FinishTrackedLspRequest(WorkspaceShell& shell) { shell.lsp_service_.FinishTrackedLspRequest(); }
   static void OpenTreeContextMenuForPath(WorkspaceShell& shell,
@@ -265,13 +219,9 @@
                                          const std::filesystem::path& path) {
     shell.MakeMenuCoordinator().OpenTreeContextMenu(target, path, SDL_FRect{0, 0, 0, 0});
   }
-  // Changes what the open context menu lists, requesting no repaint: the state a
-  // menu whose rows depend on the active editor is in once a command switched it.
   static void SetTreeContextMenuTargetForTest(WorkspaceShell& shell, TreeContextTargetKind target) {
     shell.context_.menu_state.tree_context_menu.target = target;
   }
-  // Scrolls the project strip, requesting no repaint (as its overflow arrows'
-  // click path did).
   static void SetProjectStripScrollForTest(WorkspaceShell& shell, int first_visible) {
     shell.context_.project_catalog.tab_scroll_index = first_visible;
   }
@@ -304,8 +254,6 @@
   static int TreeContextMenuActiveItemIndex(const WorkspaceShell& shell) {
     return shell.context_.menu_state.tree_context_menu.active_item_index;
   }
-  // Count of items the keyboard can land on (separators are skipped by the mover
-  // but still occupy an index, so this is the raw item count).
   static std::size_t TreeContextMenuItemCount(TreeContextTargetKind target) {
     return WorkspaceTreeContextMenuItems(target).size();
   }
@@ -316,13 +264,10 @@
       if (item.separator) {
         continue;
       }
-      labels.emplace_back(shell.MenuItemLabel(item, /*with_reason=*/false));
+      labels.emplace_back(shell.MenuItemLabel(item, false));
     }
     return labels;
   }
-  // The tree context menu's painted rows, as the full row-building path sees
-  // them. The mouse paths resolve a row by geometry instead (HitTestPopupRow +
-  // IsMenuItemEnabled), so a test can hold the two against each other.
   static std::vector<WorkspaceShell::VisiblePopupMenuItem> TreeContextMenuVisibleItems(
       const WorkspaceShell& shell) {
     const auto popup_rect = shell.ComputeTreeContextMenuRect();
@@ -340,7 +285,6 @@
     return shell.context_.menu_state.tree_context_menu.open &&
            shell.context_.menu_state.tree_context_menu.target == TreeContextTargetKind::GitEntry;
   }
-  // The label of the open context menu's highlighted item ("" with none).
   static std::string TreeContextMenuActiveLabel(const WorkspaceShell& shell) {
     const auto& menu = shell.context_.menu_state.tree_context_menu;
     const auto items = WorkspaceTreeContextMenuItems(menu.target);
@@ -348,7 +292,7 @@
         static_cast<std::size_t>(menu.active_item_index) >= items.size()) {
       return {};
     }
-    return std::string(shell.MenuItemLabel(items[static_cast<std::size_t>(menu.active_item_index)], /*with_reason=*/false));
+    return std::string(shell.MenuItemLabel(items[static_cast<std::size_t>(menu.active_item_index)], false));
   }
   static std::vector<std::string> GitEntryContextMenuLabels(const WorkspaceShell& shell) {
     std::vector<std::string> labels;
@@ -356,7 +300,7 @@
       if (item.separator) {
         continue;
       }
-      labels.emplace_back(shell.MenuItemLabel(item, /*with_reason=*/false));
+      labels.emplace_back(shell.MenuItemLabel(item, false));
     }
     return labels;
   }
@@ -369,7 +313,6 @@
         WorkspaceShell::ActionId::ShowInFileExplorer, {},
         WorkspaceShell::ActionSource::ContextMenu);
   }
-  // `id` run bare as a menu row runs it (no arguments, ActionSource::Menu).
   static bool ExecuteBareMenuAction(WorkspaceShell& shell, WorkspaceShell::ActionId id) {
     return ActionCoordinator(shell.MakeActionContext()).Execute(id, {}, WorkspaceShell::ActionSource::Menu);
   }
@@ -383,7 +326,6 @@
     return ActionCoordinator(shell.MakeActionContext())
         .Execute(id, {}, WorkspaceShell::ActionSource::ContextMenu);
   }
-  // Dispatch as the editor-tab/menu-bar surfaces do (ActionSource::Menu).
   static bool ExecuteMenuAction(WorkspaceShell& shell, WorkspaceShell::ActionId id) {
     return ActionCoordinator(shell.MakeActionContext())
         .Execute(id, {}, WorkspaceShell::ActionSource::Menu);
@@ -428,36 +370,25 @@
   static bool SaveTab(WorkspaceShell& shell, std::size_t index) {
     return shell.SaveTab(index, SaveMode::Blocking);
   }
-  // Save As on a tab of the focused group, as the `save <path>` command reaches it.
   static bool SaveTabAs(WorkspaceShell& shell, std::size_t index, const std::filesystem::path& path,
                         std::string* error) {
     return shell.MakeEditorTabService().SaveGroupTabAs(
         shell.context_.current_project_state.clamped_focused_group_index(), index, path, error);
   }
-  // The LSP half of every keystroke: shift stored diagnostics, drop edit-stale
-  // overlays, sync the open document. Exposed to pin its per-key cost.
   static void SyncLspForActiveEditableLastChange(WorkspaceShell& shell) {
     shell.lsp_service_.SyncLspForActiveEditableLastChange();
   }
-  // Point the current project at another write gate, as a remote project's
-  // MirrorWriteGate would be. Set AFTER the project is opened: opening resets the
-  // project state, gate included.
   static void SetProjectWriteGate(WorkspaceShell& shell, microide::project::FileWriteGate& gate) {
     shell.context_.current_project_state.locality.write_gate = &gate;
   }
   static const microide::platform::ProcessLauncher& ProjectLauncher(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.launcher();
   }
-  // Open a project with a locality fixed AT the open, as a remote project is: the
-  // open registers language servers, loads plugins and starts git with it. (The
-  // parity suite's loopback locality, tests/parity.)
   static bool OpenProjectTabWithLocality(WorkspaceShell& shell,
                                          const std::filesystem::path& project_root,
                                          const microide::project::ProjectLocality& locality) {
     return shell.OpenProjectTab(project_root, false, false, locality);
   }
-  // The watcher's reload of a clean buffer whose file changed on disk — the path
-  // that replaces the editor's viewport wholesale.
   static void ReloadCleanEditorTabsForPath(WorkspaceShell& shell,
                                            const std::filesystem::path& path) {
     shell.ReloadCleanEditorTabsForPath(path,
@@ -475,24 +406,16 @@
   static int DrainSaveFormatterCompletions(WorkspaceShell& shell) {
     return shell.save_formatter_service_.DrainCompletions();
   }
-  // Wait for every outstanding off-thread file read and apply its completion —
-  // the same end state a frame reaches, without depending on frame timing.
   static void FlushPendingFileReads(WorkspaceShell& shell) {
     shell.file_read_service_.FlushPendingReads();
   }
-  // A compare load's completion delivered as CANCELLED, whatever the real read is
-  // doing. Cancelling the real one races the reader (a fast disk finishes first),
-  // so a test that needs the cancelled outcome delivers it; the real completion
-  // then arrives for a slot that no longer holds its id, and must be dropped.
   static void DeliverCancelledCompareLoad(WorkspaceShell& shell, std::uint64_t id) {
     microide::workspace::CompareTabLoadResult empty;
-    shell.MakeDiffTabCoordinator().ApplyCompareTabLoad(id, /*cancelled=*/true,
-                                                        /*read_ok=*/false, empty);
+    shell.MakeDiffTabCoordinator().ApplyCompareTabLoad(id, true,
+                                                        false, empty);
   }
-  // The same for a compare tab's off-thread refresh (DiffTabCoordinator::
-  // StartCompareTabRefresh).
   static void DeliverCancelledCompareRefresh(WorkspaceShell& shell, std::uint64_t id) {
-    (void)shell.MakeDiffTabCoordinator().ApplyCompareTabRefresh(id, /*cancelled=*/true,
+    (void)shell.MakeDiffTabCoordinator().ApplyCompareTabRefresh(id, true,
                                                                  microide::workspace::CompareRevisionSides{});
   }
   static bool OpenGitConflictMerge(WorkspaceShell& shell, const std::filesystem::path& path) {
@@ -504,8 +427,6 @@
   static std::uint64_t PostedFileReadCount(const WorkspaceShell& shell) {
     return shell.file_read_service_.PostedCount();
   }
-  // Content state of a specific tab in a specific group, for asserting what a
-  // split clone inherited.
   static TabEntry::EditorTabState::Content GroupTabContentState(const WorkspaceShell& shell,
                                                                 std::size_t group_index,
                                                                 std::size_t tab_index) {
@@ -546,7 +467,6 @@
     shell.ShowSearchSidebar(std::move(query), temporary);
   }
   static void ShowTreeSidebar(WorkspaceShell& shell) { shell.ShowTreeSidebar(); }
-  // How many units with a rect a derived surface laid out for the last prepared frame.
   static std::size_t DerivedUnitCount(const WorkspaceShell& shell, DerivedSurface surface) {
     return shell.frame_state_.derived_damage.LaidOutUnitCount(surface);
   }
@@ -641,11 +561,6 @@
   static void RequestProjectSearchReplaceAll(WorkspaceShell& shell) { shell.RequestProjectSearchReplaceAll(); }
   static void ReplaceAllProjectSearchMatches(WorkspaceShell& shell) {
     shell.ReplaceAllProjectSearchMatches();
-    // Replace-all now runs the read/replace/atomic-write off the shell thread
-    // (TD-2026-07-17-021). Drive it to completion deterministically: barrier the
-    // background job (a trailing Post runs after it on the serial worker), then drain
-    // the mailbox so the outcome applies on this (main) thread. A no-op dispatch
-    // (nothing posted) simply leaves the mailbox empty.
     std::promise<void> ran;
     std::future<void> ran_future = ran.get_future();
     shell.project_background_executor_.Post([&ran]() { ran.set_value(); });
@@ -659,12 +574,9 @@
       const WorkspaceShell& shell) {
     return shell.notification_service_.Active();
   }
-  // Run the expiry sweep at an arbitrary clock reading, so a test can ask what
-  // survives four seconds without waiting four seconds.
   static bool ExpireNotificationsAt(WorkspaceShell& shell, std::uint64_t now_ms) {
     return shell.notification_service_.ExpireDue(now_ms);
   }
-  // The shell's own Notify, with the redraw request it makes (a frame).
   static void Notify(WorkspaceShell& shell, NotificationService::Tone tone, std::string message) {
     shell.Notify(tone, std::move(message));
   }
@@ -673,12 +585,9 @@
                                std::string message) {
     shell.notification_service_.Show(tone, std::move(message), 0);
   }
-  // Grab rect of the toast at `stack_position` (0 = newest, just above the status
-  // bar), resolved through the same view model the painter and hit-test use.
   static SDL_FRect NotificationToastRect(WorkspaceShell& shell, std::size_t stack_position) {
     return NotificationsVm(shell).entries[stack_position].layout.rect;
   }
-  // Rect of button `action` on the toast at `stack_position`.
   static SDL_FRect NotificationButtonRect(WorkspaceShell& shell, std::size_t stack_position,
                                           std::size_t action) {
     return NotificationsVm(shell).entries[stack_position].buttons[action].rect;
@@ -711,7 +620,6 @@
   static void ConsumeTerminalSessionUpdates(WorkspaceShell& shell) {
     shell.ConsumeTerminalSessionUpdates();
   }
-  // --- terminal panes / panel (TerminalPanelService) ---
   static std::size_t TerminalPaneCount(const WorkspaceShell& shell) {
     const auto* tab = shell.context_.current_project_state.active_terminal_tab();
     return tab == nullptr ? 0 : tab->pane_count();
@@ -752,12 +660,9 @@
     const auto* pane = shell.context_.current_project_state.active_terminal_pane();
     return pane == nullptr ? std::filesystem::path{} : pane->launch_working_directory;
   }
-  // What the tab strip prefixes a tab's title with ("host · " for a host terminal).
   static std::string TerminalTabLabelPrefix(const WorkspaceShell& shell, std::size_t tab_index) {
     return shell.context_.current_project_state.terminal_tabs[tab_index]->active()->label_prefix;
   }
-  // The launcher terminal tab `tab_index` runs through: its own (a host terminal),
-  // else the project's — what the panel's link click hands RemoteHostService.
   static const platform::ProcessLauncher& TerminalTabLauncher(WorkspaceShell& shell, std::size_t tab_index) {
     const auto* pane = shell.context_.current_project_state.terminal_tabs[tab_index]->active();
     return pane->launcher != nullptr ? *pane->launcher : shell.context_.current_project_state.launcher();
@@ -841,10 +746,6 @@
   static bool RequestCommitWorkflowCommit(WorkspaceShell& shell) {
     return shell.RequestCommitWorkflowCommit();
   }
-  // Test seam: make every subsequent git refresh publish `error` as its
-  // refresh_error while otherwise reproducing the state the last real refresh
-  // produced — the shape of a repository whose status query failed. Used to prove
-  // a commit hears about the failure of the refresh it asked for.
   static void FailGitRefreshesForTesting(WorkspaceShell& shell, std::string error) {
     shell.git_repository_service_.SetRepositoryStateProviderForTesting(
         [state = shell.git_repository_service_.CurrentState(), error](
@@ -867,9 +768,6 @@
   static std::string CommitBodyText(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.sidebar.git.commit_workflow.BodyText();
   }
-  // The commit body's own viewport. Its motion and edit keys are the SHARED
-  // switch the compare and merge panes use (HandleEditableViewportMotionAndEdit),
-  // so a test can check the caret rather than only the text.
   static const editor::TextViewport& CommitBodyViewport(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.sidebar.git.commit_workflow.body;
   }
@@ -884,20 +782,16 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return microide::workspace::BottomPanelContentRect(layout);
   }
-  // The link (URL or resolved file reference) under a panel point, or nullopt.
-  // The active pane's underlined (hovered) link.
   static std::optional<TerminalLinkSpan> TerminalHoveredLink(const WorkspaceShell& shell) {
     const auto* pane = shell.ActiveTerminalPane();
     return pane != nullptr ? pane->hovered_link : std::nullopt;
   }
-  // Pane `index`'s underlined link, active or not.
   static std::optional<TerminalLinkSpan> TerminalPaneHoveredLink(const WorkspaceShell& shell,
                                                                  std::size_t index) {
     const auto* tab = shell.context_.current_project_state.active_terminal_tab();
     return tab != nullptr && index < tab->pane_count() ? tab->panes[index]->hovered_link
                                                        : std::nullopt;
   }
-  // The centre of a cell in pane `index` of the active tab, active or not.
   static SDL_FPoint TerminalPaneCellPoint(WorkspaceShell& shell, std::size_t index,
                                           std::size_t row, std::size_t column) {
     const auto& tab = *shell.context_.current_project_state.active_terminal_tab();
@@ -965,8 +859,6 @@
   static bool TerminalHasSelection(const WorkspaceShell& shell) {
     return TerminalPanelService::HasSelection(shell.context_.current_project_state);
   }
-  // Sets (or with nullopt clears) the active pane's selection directly, with no
-  // damage of its own: what a path that forgets to repaint does.
   static void SetActiveTerminalSelectionForTest(WorkspaceShell& shell,
                                                 std::optional<TerminalSelectionPoint> anchor,
                                                 std::optional<TerminalSelectionPoint> head) {
@@ -1020,15 +912,10 @@
   static std::string ProjectTabDisplayTitle(WorkspaceShell& shell, std::size_t index) {
     return shell.ProjectTabDisplayTitle(index);
   }
-  // The name prompts use for the active project ("Discard all … changes in <it>?").
   static std::string ProjectLabel(const WorkspaceShell& shell) { return shell.ProjectLabel(); }
   static const microide::project::ProjectId& ProjectCatalogId(const WorkspaceShell& shell, std::size_t index) {
     return shell.context_.ProjectCatalogId(index);
   }
-  // Every project's terminal panes, the active one's and the background ones', as
-  // one line each: root, pending/running, host handle and the first screen line --
-  // what a remote terminal test prints when a pane did not do what it expected
-  // (TD-2026-10-28-414: a background project's pending terminal that never started).
   static std::string TerminalPanesSummary(WorkspaceShell& shell) {
     std::string out;
     const auto describe = [&out](const ProjectWorkspaceState& state, bool active) {

@@ -28,21 +28,13 @@ struct VisibleStripTab {
   std::string badge_text;
   SDL_Color badge_color{};
   bool show_badge = false;
-  // Terminal strip only: output arrived in this tab while it was not on screen,
-  // and (stronger) the program rang the bell.
   bool activity_dot = false;
   bool bell_mark = false;
-  // Terminal strip only: a host terminal whose link is down -- its title is drawn
-  // dimmed, and says `detached` (§ 7.4a).
   bool dimmed = false;
-  // Project strip only, for a remote project: its host after the name (` · worky`,
-  // drawn dimmer), and its connection's state as the tab's top-left corner.
   std::string secondary_title;
   std::optional<editor::WelcomeStageState> remote_state;
 };
 
-// The tab a drag lifted out of `tabs` (its `index` is `source_index`), or null
-// when it scrolled out of the list: what the drag's ghost paints.
 inline const VisibleStripTab* DraggedStripTab(const std::vector<VisibleStripTab>& tabs, std::size_t source_index) {
   for (const VisibleStripTab& tab : tabs) {
     if (tab.index == source_index) {
@@ -69,15 +61,12 @@ struct BottomPanelTabModel {
   BottomPanelTabKind kind = BottomPanelTabKind::Terminal;
   std::size_t terminal_index = 0;
   std::string output_channel_id;
-  // Identifies a plugin-surface preview tab (Phase E0) when kind == PluginSurface.
   std::string surface_owner;
   std::string surface_id;
   std::string label;
   std::string tooltip_label;
-  // Terminal tabs: unseen output and an unseen bell, see TerminalTabState.
   bool activity = false;
   bool bell = false;
-  // A host terminal whose connection is down: running on the host, detached.
   bool detached = false;
 };
 
@@ -95,7 +84,6 @@ class TabStripService {
   using TitleProvider = std::function<std::string(std::size_t)>;
 
   std::string BuildProjectBadgeText(std::string_view label) const;
-  // `secondary_title` is a remote project's ` · host` (empty for a local one).
   float MeasureProjectTabWidth(std::string_view display_title, std::string_view secondary_title,
                                const MeasureWidthFn& measure_width) const;
   float MeasureEditorTabWidth(std::string_view display_title,
@@ -119,9 +107,6 @@ class TabStripService {
                                     const TitleProvider& display_title,
                                     const TitleProvider& tooltip_label,
                                     std::uint64_t dirty_fingerprint) const;
-  // Returns the memoized vector by reference: on a cache hit a by-value return
-  // still copied two std::strings per visible tab per call, and this is called
-  // from paint, hit-test, cursor and tooltip paths several times a frame.
   const std::vector<VisibleStripTab>& ComputeVisibleEditorTabs(
       const EditorGroup& group,
       std::size_t group_index,
@@ -131,9 +116,6 @@ class TabStripService {
       const TitleProvider& tooltip_label,
       std::uint64_t dirty_fingerprint) const;
   static const std::vector<VisibleStripTab>& EmptyVisibleTabs();
-  // Drops every strip's memoized geometry. The project strip's cache lives in
-  // WorkspaceTabStripChrome (that is where its titles/badges are produced), so
-  // it folds this epoch into its own key rather than needing a second hook.
   void InvalidateTabStripGeometry();
   std::uint64_t GeometryEpoch() const { return geometry_epoch_; }
 
@@ -148,11 +130,6 @@ class TabStripService {
   bool ScrollProjectTabStrip(ProjectCatalogState& catalog, int direction) const;
   bool ScrollEditorTabStrip(EditorGroup& group, std::size_t group_index, int direction);
 
-  // Both memoized, both returned BY REFERENCE. The model list has been cached on
-  // a content fingerprint since TD-2026-07-17A-084, but it was handed back by
-  // value — five std::strings per tab, copied on every cache HIT — and the
-  // laid-out list above it had no cache at all while four call sites asked for it
-  // per frame or per motion event (TD-2026-08-14-209).
   const std::vector<BottomPanelTabModel>& BuildBottomPanelTabs(
       const ProjectWorkspaceState& state,
       std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const;
@@ -179,33 +156,21 @@ class TabStripService {
   bool ScrollBottomPanelTabStrip(ProjectWorkspaceState& state,
                                  int direction,
                                  std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const;
-  // Header buttons, right-aligned: the maximize/restore toggle at the far right
-  // and the new-terminal plus to its left. Both size with the header.
   SDL_FRect BottomPanelMaximizeButtonRect(LayoutMode mode, const SDL_FRect& panel_header) const;
   SDL_FRect BottomPanelTerminalNewTabRect(LayoutMode mode, const SDL_FRect& panel_header) const;
 
  private:
   struct TabStripGeometryCache {
     std::size_t tab_count = 0;
-    // The width of the strip these widths were laid out for. With a split open
-    // that is the PANE's strip, not the window.
     float strip_width = 0.0f;
     std::vector<float> widths;
     std::vector<std::string> display_titles;
     std::vector<std::string> tooltip_labels;
-    // Fingerprint of the per-tab dirty state at the last rebuild. The display
-    // titles carry a leading "*" for dirty buffers, so a dirty flip changes the
-    // rendered strip even when tab_count/strip_width are unchanged; folding it
-    // into the cache key rebuilds the titles/widths when a buffer is saved/edited.
     std::uint64_t dirty_fingerprint = 0;
     std::uint64_t version = 0;
     bool valid = false;
   };
 
-  // Memoizes ComputeVisibleEditorTabs output. The geometry cache version above
-  // bumps each time RefreshEditorGeometryCache rebuilds the source widths /
-  // titles; this cache hits when (version, strip, active, scroll) match the
-  // previous call, skipping BuildVisibleStripTabs + ChromeTabRenderItem churn.
   struct VisibleEditorTabsCache {
     std::uint64_t geometry_version = 0;
     SDL_FRect strip{};
@@ -215,12 +180,6 @@ class TabStripService {
     bool valid = false;
   };
 
-  // Fills `out` in place. The two strip builders settle their overflow reserve by
-  // laying the strip out up to four times, and each pass used to materialise
-  // three vectors and copy each tab's title twice, on its way through
-  // ComputeVisibleStripLayouts -> BuildChromeTabRenderItems -> VisibleStripTab
-  // (TD-2026-08-14-222). Building into the memo's own vector means a rebuild
-  // reuses the buffers the previous rebuild left.
   void BuildVisibleStripTabsInto(
       std::vector<VisibleStripTab>& out,
       const std::vector<float>& widths,
@@ -259,28 +218,11 @@ class TabStripService {
       std::size_t total_count) const;
   bool ScrollTabIndex(int& scroll_index, int direction, std::size_t total) const;
 
-  // Memoizes BuildBottomPanelTabs output. Many callers rebuild the bottom-panel
-  // tab-model list per frame / mouse event (render, hit-test, overflow, scroll,
-  // BottomPanelTabIsTerminal, chrome), each constructing terminal/output/plugin
-  // tab models from scratch and scanning channel info O(tab_count*channel_count).
-  // The fingerprint is a content hash of every input that shapes the model list
-  // (terminal launch labels, resolved output ids + all channel id/labels, plugin
-  // preview surface owner/id/titles, panel content/channel). Repeated same-state
-  // calls skip the whole rebuild + nested channel scan and return the cached list.
   struct BottomPanelTabsCache {
     std::uint64_t fingerprint = 0;
     std::vector<BottomPanelTabModel> tabs;
     bool valid = false;
   };
-  // Memoizes the LAID-OUT bottom-panel strip. The model cache above answers "what
-  // tabs are there"; this answers "where are they", which additionally depends on
-  // the header rect, the layout mode (the new-tab button's reserve), which tab is
-  // active and how far the strip is scrolled — none of which shape the model, so
-  // none of which are in its fingerprint. Plus the geometry epoch: the widths here
-  // come out of `measure_width`, and a font change moves every one of them without
-  // moving any other key (the header is a constant height over a user-resized
-  // panel), so without the epoch this strip alone kept the old font's rects
-  // (TD-2026-08-14-215).
   struct VisibleBottomPanelTabsCache {
     std::uint64_t model_fingerprint = 0;
     std::uint64_t geometry_epoch = 0;
@@ -297,24 +239,14 @@ class TabStripService {
       const ProjectWorkspaceState& state,
       std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const;
 
-  // One cache slot per editor group. Both groups render every frame, so a single
-  // shared slot would thrash; indexing by group keeps each hot. The cap is
-  // `workspace::kMaxEditorGroups` (WorkspaceLayout.h), shared with the surface
-  // split so the two cannot drift.
   mutable std::array<TabStripGeometryCache, kMaxEditorGroups> editor_tab_geometry_cache_;
   mutable std::array<VisibleEditorTabsCache, kMaxEditorGroups> visible_editor_tabs_cache_;
   mutable BottomPanelTabsCache bottom_panel_tabs_cache_;
-  // Scratch for the two intermediate lists a strip build walks through. Members,
-  // not locals, so a rebuild that lays the strip out four times allocates once
-  // rather than eight times (TD-2026-08-14-222).
   mutable std::vector<StripSlotLayout> strip_slot_scratch_;
   mutable std::vector<ChromeTabRenderItem> chrome_item_scratch_;
   std::uint64_t geometry_epoch_ = 0;
 };
 
-// What the panel's tab strip puts before `pane`'s label: its own prefix ("ssh · ",
-// "local · "), or "local · " / the project's host while host and local terminals
-// are mixed; empty otherwise.
 std::string TerminalPaneLabelPrefix(const ProjectWorkspaceState& state, const TerminalPaneState& pane);
 
-}  // namespace microide::workspace
+}

@@ -68,7 +68,6 @@ void TestBoundingBoxSpansScatteredPixels() {
 void TestRowPaddingIsIgnored() {
   Image lhs(8, 4, 12);
   Image rhs(8, 4, 4);
-  // Bytes past the row (pitch padding) differ between the images and must not count.
   lhs.bytes[static_cast<std::size_t>(lhs.width) * 4] = 0x99;
   const PixelDiffResult diff = DiffPixels(lhs.View(), rhs.View());
   Expect(diff.identical(), "pitch padding should not take part in the comparison");
@@ -85,7 +84,7 @@ void TestSizeMismatchIsNotComparable() {
          "a pitch shorter than a row should not compare");
 }
 
-}  // namespace
+}
 
 void RegisterPixelDiffTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PixelDiff/IdenticalImagesHaveNoDifference", TestIdenticalImagesHaveNoDifference);
@@ -95,4 +94,4 @@ void RegisterPixelDiffTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PixelDiff/SizeMismatchIsNotComparable", TestSizeMismatchIsNotComparable);
 }
 
-}  // namespace microide::tests
+}

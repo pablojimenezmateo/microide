@@ -20,34 +20,18 @@
 namespace microide::platform {
 
 namespace {
-// A control response/event line is small (query results, debug state). Bound the
-// read buffer so a peer that streams bytes without ever sending a newline can't
-// grow it without limit — over a local Unix socket that is GB/s, so an unbounded
-// buffer would OOM the `control-send` process long before its --timeout elapses.
-// Mirrors the server's kMaxRequestLineBytes intent for the client direction.
-constexpr std::size_t kMaxResponseLineBytes = 16u << 20;  // 16 MiB
-// Outbound direction: THE server's ceiling, not a second copy of it
-// (platform/ControlSocketLimits.h). A private 16 MiB copy here meant the client
-// framed and sent request lines the server answered by shedding the connection.
-// The response cap above is deliberately larger and its own: a query result is
-// allowed to be big, a request is not.
+constexpr std::size_t kMaxResponseLineBytes = 16u << 20;
 constexpr std::size_t kMaxRequestLineBytes = kMaxControlRequestLineBytes;
-}  // namespace
+}
 
 ControlSocketClient::~ControlSocketClient() { Close(); }
 
 bool ControlSocketClient::Connect(const std::filesystem::path& socket_path) {
   Close();
-  // Close-on-exec at creation (ConnectUnixSocket): without it the editor's every
-  // child — shells, language servers, adapters, git, plugin tools — would inherit
-  // a live connected handle to the interface that drives the editor headlessly.
   const int fd = ConnectUnixSocket(socket_path);
   if (fd < 0) {
     return false;
   }
-  // Make subsequent send()/recv() non-blocking so poll-driven deadlines are honored
-  // even when the peer's receive buffer is full: a blocking send() would otherwise
-  // stall inside the kernel past the caller's timeout. connect() above stays blocking.
   util::SetNonBlocking(fd);
   fd_ = fd;
   return true;
@@ -57,8 +41,6 @@ bool ControlSocketClient::SendLine(const std::string& line, std::chrono::millise
   if (fd_ < 0) {
     return false;
   }
-  // Cap the outbound size before framing so a runaway caller cannot try to stream an
-  // unbounded line (the +1 accounts for the appended newline terminator).
   if (line.size() + 1 > kMaxRequestLineBytes) {
     return false;
   }
@@ -69,7 +51,7 @@ bool ControlSocketClient::SendLine(const std::string& line, std::chrono::millise
   while (offset < framed.size()) {
     const auto now = std::chrono::steady_clock::now();
     if (now >= deadline) {
-      return false;  // overall write deadline exceeded (peer not draining)
+      return false;
     }
     const auto remaining =
         std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
@@ -82,7 +64,7 @@ bool ControlSocketClient::SendLine(const std::string& line, std::chrono::millise
       return false;
     }
     if (ready == 0) {
-      return false;  // timed out waiting for the socket to become writable
+      return false;
     }
     const ssize_t written =
         ::send(fd_, framed.data() + offset, framed.size() - offset, MSG_NOSIGNAL);
@@ -91,7 +73,7 @@ bool ControlSocketClient::SendLine(const std::string& line, std::chrono::millise
       continue;
     }
     if (written < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) {
-      continue;  // transient: re-poll against the deadline
+      continue;
     }
     return false;
   }
@@ -131,14 +113,12 @@ std::optional<std::string> ControlSocketClient::ReadLine(std::chrono::millisecon
       if (ready < 0 && errno == EINTR) {
         continue;
       }
-      return std::nullopt;  // timeout or poll error
+      return std::nullopt;
     }
     char chunk[4096];
     const ssize_t count = ::recv(fd_, chunk, sizeof(chunk), 0);
     if (count > 0) {
       read_buf_.append(chunk, static_cast<std::size_t>(count));
-      // No newline within the cap: a runaway / malicious peer. Abandon rather
-      // than let the buffer grow toward OOM.
       if (read_buf_.size() > kMaxResponseLineBytes &&
           read_buf_.find('\n') == std::string::npos) {
         return std::nullopt;
@@ -146,7 +126,6 @@ std::optional<std::string> ControlSocketClient::ReadLine(std::chrono::millisecon
       continue;
     }
     if (count == 0) {
-      // EOF: surface a final un-terminated line if one is buffered, else done.
       if (!read_buf_.empty()) {
         std::string line = std::move(read_buf_);
         read_buf_.clear();
@@ -172,4 +151,4 @@ void ControlSocketClient::Close() {
   read_buf_.clear();
 }
 
-}  // namespace microide::platform
+}

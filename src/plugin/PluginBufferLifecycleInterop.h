@@ -20,4 +20,4 @@ void DispatchBufferCallbacks(
                              const std::filesystem::path&)>& call_buffer_callback);
 #endif
 
-}  // namespace microide::plugin::buffer_lifecycle_interop
+}

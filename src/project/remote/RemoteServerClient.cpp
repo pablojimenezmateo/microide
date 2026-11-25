@@ -18,8 +18,6 @@
 namespace microide::project::remote {
 namespace {
 
-// {ports: [n], roots: {"<port>": root}} from the host, untrusted: anything not a
-// port is dropped, and a root only for a port the list holds.
 RemoteServerClient::HostPorts PortsFromJson(const util::JsonValue& json) {
   RemoteServerClient::HostPorts result;
   if (json["ports"].IsArray()) {
@@ -42,18 +40,13 @@ RemoteServerClient::HostPorts PortsFromJson(const util::JsonValue& json) {
   return result;
 }
 
-// Output held for a handle whose spawn reply has not been handled yet. Bounded:
-// the race this covers is a few frames, not a stream.
 constexpr std::size_t kMaxOrphanBytes = 4 * 1024 * 1024;
 
-}  // namespace
+}
 
 std::shared_ptr<RemoteServerClient> RemoteServerClient::Create() {
   return std::shared_ptr<RemoteServerClient>(new RemoteServerClient(), [](RemoteServerClient* client) {
     if (client->peer_.OnIoThread()) {
-      // Released inside one of its own callbacks. The destructor stops the peer
-      // (joining this thread) before any member goes, so the callback returns
-      // into a live peer and the I/O loop then exits on the stop.
       std::thread([client] {
         util::NameCurrentThread("client-release");
         delete client;
@@ -65,21 +58,10 @@ std::shared_ptr<RemoteServerClient> RemoteServerClient::Create() {
 }
 
 RemoteServerClient::~RemoteServerClient() {
-  // Send what is already queued before the connection goes: quit Stop()s each
-  // exited host terminal (a term/close) and then drops the client, and without
-  // this a close still behind other frames was discarded -- the host kept the dead
-  // shell, unclaimed, holding its server. Bounded as the server's own goodbye is
-  // (RemoteServer), and immediate on a link that is already closed.
   (void)peer_.FlushForTeardown();
   peer_.Stop();
-  // The flush only put those frames into the command's stdin pipe. The relay
-  // (`microide-server attach`, or ssh to one) forwards them and exits once it
-  // reads the EOF and the server closes; SIGTERM at once killed it with the bytes
-  // still in the pipe whenever it had not been scheduled yet -- a loaded machine
-  // -- and a typed line, a term/close or a term/detach never reached the host
-  // (TD-2026-10-28-413). A dead link's ssh never exits on EOF: bounded.
   if (command_.IsRunning()) {
-    command_.Finish(/*grace_ms=*/1000, /*kill_timeout_ms=*/2000);
+    command_.Finish(1000, 2000);
   }
   if (command_stderr_fd_ >= 0) {
     ::close(command_stderr_fd_);
@@ -97,7 +79,6 @@ bool RemoteServerClient::ConnectCommand(const std::vector<std::string>& argv,
   }
   RemotePeer::Options options;
   options.send_pings = true;
-  // The descriptors belong to command_, which closes them when it shuts down.
   options.transport.owns_fds = false;
   InstallRouting();
   if (!peer_.Start(command_.stdout_fd(), command_.stdin_fd(), options)) {
@@ -108,9 +89,6 @@ bool RemoteServerClient::ConnectCommand(const std::vector<std::string>& argv,
     AppendCommandStderr(error);
     return false;
   }
-  // Connected: what the command printed getting here is no longer wanted, and it
-  // keeps this stderr for the whole session. Empty the file and seal it against
-  // growth, so anything it prints later fails to write instead of piling up.
   if (command_stderr_fd_ >= 0 && ::ftruncate(command_stderr_fd_, 0) == 0) {
     (void)::fcntl(command_stderr_fd_, F_ADD_SEALS, F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL);
   }
@@ -121,7 +99,6 @@ void RemoteServerClient::AppendCommandStderr(std::string* error) {
   if (command_stderr_fd_ < 0 || error == nullptr) {
     return;
   }
-  // The command is exiting; let what it printed land (bounded).
   (void)command_exit_code(std::chrono::seconds(2));
   std::string text;
   char buffer[4096];
@@ -164,7 +141,6 @@ bool RemoteServerClient::ConnectFds(int read_fd, int write_fd, const HelloReques
 }
 
 void RemoteServerClient::InstallRouting() {
-  // Before Start: the peer reads its handler tables unlocked from its I/O thread.
   peer_.OnContent([this](FrameType type, std::uint64_t handle, std::string bytes) {
     if (type == FrameType::TermFrame) {
       DeliverTerminalFrame(handle, std::move(bytes));
@@ -190,7 +166,6 @@ void RemoteServerClient::InstallRouting() {
           route = it->second;
         }
       }
-      // An answer to nothing in flight (a cancelled request's tail) is dropped.
       if (route && *route) {
         (*route)(type, std::move(bytes));
       }
@@ -223,7 +198,6 @@ void RemoteServerClient::InstallRouting() {
         route = it->second;
       }
     }
-    // A batch for a search no longer waited on (a cancelled one's tail) is dropped.
     if (route && *route) {
       (*route)(params);
     }
@@ -266,7 +240,7 @@ void RemoteServerClient::InstallRouting() {
     const util::JsonValue& root = params["root"];
     const util::JsonValue& generation = params["generation"];
     if (!root.IsString() || !generation.IsInt() || generation.AsInt() < 0) {
-      return;  // untrusted: a malformed push is dropped, and git runs instead
+      return;
     }
     std::shared_ptr<std::function<void(const std::string&)>> handler;
     std::optional<GitMetadata> metadata;
@@ -279,12 +253,8 @@ void RemoteServerClient::InstallRouting() {
       const auto it = pushed_git_.find(root.AsString());
       if (params["unchanged"].AsBool(false)) {
         if (it == pushed_git_.end()) {
-          return;  // nothing held to vouch for
+          return;
         }
-        // Only news when it makes the held status current again (a mutation the
-        // client ran has exited) or the repository itself moved. Otherwise the
-        // sidebar already shows this, and refreshing it would run its own git on
-        // the host for nothing.
         const auto new_generation = static_cast<std::uint64_t>(generation.AsInt());
         const bool now_current = it->second.generation < git_required_generation_ &&
                                  new_generation >= git_required_generation_;
@@ -336,7 +306,6 @@ bool RemoteServerClient::Handshake(const HelloRequest& hello, std::string* error
     incompatible_ = true;
     return false;
   }
-  // The server's effective value, so both directions use one bound.
   peer_.SetFixedBulkWindow(static_cast<std::size_t>(
       EffectiveBackfillInflightBytes(parsed->settings.backfill_inflight_bytes)));
   hello_reply_ = std::move(*parsed);
@@ -354,8 +323,6 @@ std::uint64_t RemoteServerClient::RequestStream(std::string_view method,
       method, params, lane,
       [this, registered, done = std::move(done)](std::optional<util::JsonValue> result,
                                                  std::optional<RemotePeer::RpcError> error) {
-        // The response travels behind every content frame on its lane, so the
-        // route is finished with; unregister before `done` sees the result.
         {
           std::lock_guard lock(mutex_);
           streams_.erase(*registered);
@@ -385,7 +352,6 @@ std::optional<util::JsonValue> RemoteServerClient::Call(std::string_view method,
     std::optional<util::JsonValue> result;
     std::string error;
   };
-  // Shared: a late reply after a timeout must not touch a dead stack frame.
   auto state = std::make_shared<State>();
   const std::uint64_t id = peer_.Request(
       method, params, Lane::Interactive,
@@ -495,7 +461,6 @@ void RemoteServerClient::Deliver(std::uint64_t handle, FrameType type, std::stri
 }
 
 void RemoteServerClient::DeliverExit(std::uint64_t handle, const util::JsonValue& params) {
-  // Before the exit is delivered: the Run waiting on it reads this once it returns.
   if (const util::JsonValue& generation = params["git_generation"]; generation.IsInt()) {
     const auto value = static_cast<std::uint64_t>(std::max<std::int64_t>(generation.AsInt(), 0));
     std::uint64_t seen = last_git_generation_.load();
@@ -544,8 +509,6 @@ void RemoteServerClient::DeliverTerminalFrame(std::uint64_t handle, std::string 
 
 void RemoteServerClient::RegisterTerminal(std::uint64_t handle,
                                           std::shared_ptr<TerminalEvents> events) {
-  // Replayed under the lock, so a frame arriving meanwhile on the I/O thread
-  // cannot overtake the held ones; the I/O thread waits on mutex_ for that long.
   std::lock_guard lock(mutex_);
   if (const auto orphan = terminal_orphans_.find(handle); orphan != terminal_orphans_.end()) {
     for (auto& [type, bytes] : orphan->second.output) {
@@ -706,7 +669,6 @@ std::optional<util::JsonValue> RemoteServerClient::RunSearch(
     }
   }
   lock.unlock();
-  // The reply travels behind every batch on its lane: the route is finished with.
   unregister();
   if (!outcome->result.has_value() && error != nullptr) {
     *error = outcome->error;
@@ -775,4 +737,4 @@ std::optional<RemoteServerClient::GitMetadata> RemoteServerClient::QueryGitMetad
                      .git_dir = (*reply)["git_dir"].AsString()};
 }
 
-}  // namespace microide::project::remote
+}

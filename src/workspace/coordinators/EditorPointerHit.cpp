@@ -21,12 +21,10 @@ bool SettingOn(const SettingValueGetter& get_setting_value, std::string_view id)
   return get_setting_value && SettingFlagEnabled(get_setting_value(id));
 }
 
-}  // namespace
+}
 
 namespace {
 
-// The inset gaps the renderer draws for `viewport`, as options: the one producer
-// both the pointer hit-test and the row report read.
 editor::InsetGapOptions PointerInsetGapOptions(const ProjectWorkspaceState& state,
                                                const editor::TextViewport& viewport,
                                                const editor::EditorViewMetrics& metrics,
@@ -35,8 +33,6 @@ editor::InsetGapOptions PointerInsetGapOptions(const ProjectWorkspaceState& stat
       .inline_surfaces = SettingOn(get_setting_value, "plugins.inline_surfaces"),
       .code_lens_above = SettingOn(get_setting_value, "plugins.code_lens_above"),
       .code_lens_height = metrics.line_height};
-  // Mirror the render path's ghost-text Below gap (geometry only) so a click below
-  // a multi-line suggestion lands on the line the user actually sees.
   if (const auto* ghost = state.ghost_text_if_present();
       ghost != nullptr && ghost->lines.size() > 1 &&
       SettingOn(get_setting_value, "plugins.ghost_text") &&
@@ -47,7 +43,7 @@ editor::InsetGapOptions PointerInsetGapOptions(const ProjectWorkspaceState& stat
   return options;
 }
 
-}  // namespace
+}
 
 void VisibleRowTops(const ProjectWorkspaceState& state, const editor::TextViewport& viewport,
                     const editor::EditorViewMetrics& metrics,
@@ -71,8 +67,6 @@ void VisibleRowTops(const ProjectWorkspaceState& state, const editor::TextViewpo
 editor::EditorRowYLayout::HitResult ResolveGapAwareRow(
     const ProjectWorkspaceState& state, const editor::TextViewport& viewport,
     const editor::EditorViewMetrics& metrics, float y, const SettingValueGetter& get_setting_value) {
-  // No plugin/LSP contribution: no insets can exist, so the gap list is empty and
-  // the mapping collapses to the legacy formula. Skip the store probing entirely.
   const auto* pres = state.plugin_presentation_if_present();
   if (pres == nullptr) {
     return editor::EditorRowYLayout(metrics.first_line_y, metrics.line_height,
@@ -135,4 +129,4 @@ EditorPointerHit ResolveEditorPointerHit(const ProjectWorkspaceState& state,
   return hit;
 }
 
-}  // namespace microide::workspace
+}

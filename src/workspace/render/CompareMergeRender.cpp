@@ -17,7 +17,7 @@ namespace {
 constexpr float kCompareButtonHeight = 16.0f;
 constexpr float kCompareButtonHorizontalPadding = 12.0f;
 
-}  // namespace
+}
 
 float CompareButtonWidth(const render::TextRenderer& text_renderer, std::string_view label) {
   return std::max(48.0f, text_renderer.MeasureWidth(label) + kCompareButtonHorizontalPadding);
@@ -52,7 +52,6 @@ CollapsedContextActionRects BuildCollapsedContextActionRects(
     const SDL_FRect& row_rect,
     bool show_previous,
     bool show_next) {
-  // Right to left, unclipped (the bar has always kept all three).
   CompareButtonRowPlacer placer{.text_renderer = text_renderer,
                                 .row_rect = row_rect,
                                 .right = row_rect.x + row_rect.w,
@@ -80,4 +79,4 @@ SDL_FRect CompareCollapsedContextBlockRect(const SDL_FRect& editor_surface,
   return MakeRect(editor_surface.x + 4.0f, row_y, std::max(0.0f, content_width - 8.0f), line_height);
 }
 
-}  // namespace microide::workspace
+}

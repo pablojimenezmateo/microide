@@ -18,7 +18,7 @@ class LocalSource final : public GitMetadataSource {
   }
 };
 
-}  // namespace
+}
 
 const GitMetadataSource& LocalGitMetadataSource() {
   static const LocalSource source;
@@ -26,13 +26,10 @@ const GitMetadataSource& LocalGitMetadataSource() {
 }
 
 const GitMetadataSource& GitMetadataFor(const platform::ProcessLauncher& launcher) {
-  // A sideways cast, answered from the vtable: a git call site pays one type check,
-  // and a remote launcher opts in by implementing the interface, with nothing to
-  // register and nothing to keep in sync.
   if (const auto* source = dynamic_cast<const GitMetadataSource*>(&launcher)) {
     return *source;
   }
   return LocalGitMetadataSource();
 }
 
-}  // namespace microide::project
+}

@@ -9,10 +9,9 @@
 namespace microide::project {
 namespace {
 
-// A repository with more working trees than this is listing something else.
 constexpr std::size_t kMaxWorktrees = 1024;
 
-}  // namespace
+}
 
 std::vector<GitWorktree> ParseGitWorktreeList(std::string_view porcelain_z) {
   std::vector<GitWorktree> worktrees;
@@ -33,12 +32,11 @@ std::vector<GitWorktree> ParseGitWorktreeList(std::string_view porcelain_z) {
       close();
       continue;
     }
-    // "<key>" or "<key> <value>"; `locked` and `prunable` may carry a reason.
     const std::size_t space = line.find(' ');
     const std::string_view key = line.substr(0, space);
     const std::string_view value = space == std::string_view::npos ? std::string_view() : line.substr(space + 1);
     if (key == "worktree") {
-      close();  // a record with no terminator before the next one
+      close();
       current.path = std::string(value);
       open = true;
     } else if (key == "HEAD") {
@@ -78,7 +76,6 @@ GitWorktreeState ParseGitWorktreeState(std::string_view porcelain_v2_z) {
     porcelain_v2_z.remove_prefix(end == std::string_view::npos ? porcelain_v2_z.size() : end + 1);
     constexpr std::string_view kAheadBehind = "# branch.ab ";
     if (record.starts_with(kAheadBehind)) {
-      // "+<ahead> -<behind>": present only when the branch has an upstream.
       const std::string_view counts = record.substr(kAheadBehind.size());
       const std::size_t space = counts.find(' ');
       const auto count = [](std::string_view text, char sign) {
@@ -99,7 +96,6 @@ GitWorktreeState ParseGitWorktreeState(std::string_view porcelain_v2_z) {
     }
     switch (record.front()) {
       case '2': {
-        // A rename or copy carries its original path as a record of its own.
         const std::size_t original_end = porcelain_v2_z.find('\0');
         porcelain_v2_z.remove_prefix(original_end == std::string_view::npos ? porcelain_v2_z.size()
                                                                             : original_end + 1);
@@ -111,7 +107,7 @@ GitWorktreeState ParseGitWorktreeState(std::string_view porcelain_v2_z) {
         ++state.changed;
         break;
       default:
-        break;  // a header, or an ignored path
+        break;
     }
   }
   return state;
@@ -129,7 +125,6 @@ std::vector<GitWorktree> ListGitWorktreesWithState(const std::filesystem::path& 
     if (asked++ == kMaxWorktreeStates) {
       break;
     }
-    // By its own path, which is git's machine's: the same for a host's tree.
     const auto status = repo.Execute(
         std::vector<std::string>{"-C", worktree.path, "status", "--porcelain=v2", "--branch", "-z"});
     if (status.success()) {
@@ -139,4 +134,4 @@ std::vector<GitWorktree> ListGitWorktreesWithState(const std::filesystem::path& 
   return worktrees;
 }
 
-}  // namespace microide::project
+}

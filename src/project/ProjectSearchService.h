@@ -21,9 +21,6 @@ class ProcessLauncher;
 
 namespace microide::project {
 
-// Single source of truth for how many matches the search retains/displays. The
-// worker stops emitting once this many results are collected; the consumer caps
-// its own accumulated list at the same value.
 inline constexpr std::size_t kMaxProjectSearchResults = 200;
 
 enum class ProjectSearchPatternMode {
@@ -41,40 +38,18 @@ struct ProjectSearchOptions {
   ProjectSearchPatternMode pattern_mode = ProjectSearchPatternMode::Literal;
   ProjectSearchCaseMode case_mode = ProjectSearchCaseMode::Smart;
   bool show_hidden = false;
-  // When true the worker keeps scanning after the display cap is reached so it can
-  // report the exact total match count (it still only stores the first
-  // kMaxProjectSearchResults for display). Default false preserves early-stop
-  // speed; the UI exposes this as an opt-in toggle.
   bool count_all_matches = false;
-  // VSCode-style scope filters: comma-separated glob lists parsed by
-  // `project::GlobSet` (see GlobMatch.h for the exact pattern grammar). A file is
-  // searched when it matches `include_globs` (or the box is empty) and does not
-  // match `exclude_globs`. Both are empty by default, which costs one predicate
-  // per file and skips the glob machinery entirely.
-  //
-  // This is the cheapest possible speedup for a scoped search: a filtered-out
-  // file is rejected on its path alone, so it is never opened, read, or scanned.
   std::string include_globs;
   std::string exclude_globs;
 };
 
 struct ProjectSearchResult {
   std::filesystem::path relative_path;
-  // Always the `relative_path.string()` of the sibling field, materialized once by
-  // the search worker so the render path never converts a path per visible row.
-  // Never conditionally empty: it is empty exactly when relative_path is, so a
-  // "fall back to relative_path.string()" branch is dead and was removed.
   std::string relative_path_string;
-  // Position of `relative_path` in the (sorted) candidate file list. Workers run
-  // in parallel and publish out of order, so consumers sort by
-  // (file_index, line, column) to restore the deterministic, file-grouped order
-  // the UI renders.
   std::size_t file_index = 0;
   std::size_t line = 0;
   std::size_t column = 0;
   std::string preview;
-  // Byte range of the match within `preview` (whitespace-collapsed space) so the
-  // sidebar can highlight the matched span. Length 0 means "do not highlight".
   std::size_t match_preview_start = 0;
   std::size_t match_preview_length = 0;
 };
@@ -83,28 +58,15 @@ struct ProjectSearchUpdate {
   std::uint64_t run_id = 0;
   std::uint64_t search_id = 0;
   std::vector<ProjectSearchResult> results;
-  // Progress counters for "X of Y files" status. `total_files` is the candidate
-  // set sized at search start; `searched_files` advances as the worker visits
-  // each file (regardless of whether the file matched).
   std::size_t searched_files = 0;
   std::size_t total_files = 0;
-  // Exact total match count. Only meaningful (non-zero) on the final update of a
-  // count-all search; 0 otherwise (the default early-stop run cannot know it).
   std::size_t total_matches = 0;
   bool truncated = false;
   bool finished = false;
-  // The project's tree lives on a host that could not be reached, so the local
-  // copy was searched instead — which may be behind the host; the panel says so
-  // (remote-projects.md § 6.11).
   bool searched_local_copy = false;
   std::string error;
 };
 
-// One search's matching rule: the query compiled under its options (regex or
-// literal, the case mode). The search workers scan files with it, and the open
-// buffers whose hits are re-derived from their text as they are edited scan their
-// lines with it, so the two cannot disagree about what a line matches. Immutable
-// once built and shared read-only; each thread scans through its own Scanner.
 class ProjectSearchMatcher {
  public:
   ProjectSearchMatcher(std::string_view query, const ProjectSearchOptions& options);
@@ -112,10 +74,8 @@ class ProjectSearchMatcher {
   bool valid() const { return error_.empty(); }
   const std::string& error() const { return error_; }
 
-  // A thread's scan state: the regex match data and the case-folded line.
   class Scanner {
    public:
-    // Starts a line; then Next() yields its matches left to right.
     void BeginLine(std::string_view line);
     bool Next(std::string_view line,
               std::size_t* search_from,
@@ -141,16 +101,9 @@ class ProjectSearchMatcher {
   std::string error_;
 };
 
-// The most source bytes of a line a hit's preview holds: a window that keeps
-// kProjectSearchPreviewContextBytes before the match and fills the rest after it.
-// Far wider than a sidebar row, and far below what a long line costs per hit (one
-// copy of the line for every hit on it). Under RemoteSearchWire's 4 KiB preview cap.
 inline constexpr std::size_t kMaxProjectSearchPreviewBytes = 512;
 inline constexpr std::size_t kProjectSearchPreviewContextBytes = 64;
 
-// A hit as the search reports it: a window of the line around the match (all of
-// a line that fits), whitespace-collapsed for display, with the match's span
-// mapped into that preview. `column` stays the match's offset in the line.
 ProjectSearchResult MakeProjectSearchResult(std::string_view line,
                                             std::size_t match_start,
                                             std::size_t match_end,
@@ -158,9 +111,6 @@ ProjectSearchResult MakeProjectSearchResult(std::string_view line,
                                             std::size_t file_index,
                                             std::size_t line_index);
 
-// The hits of one in-memory text -- an open buffer's lines, `line_at(i)` for
-// i < `line_count` -- exactly as the search reports a file's, at most
-// `max_results` of them.
 std::vector<ProjectSearchResult> SearchLines(const ProjectSearchMatcher& matcher,
                                              std::size_t line_count,
                                              const std::function<std::string_view(std::size_t)>& line_at,
@@ -175,17 +125,11 @@ struct ProjectSearchCompletion {
   bool searched_local_copy = false;
 };
 
-// Where a search's output goes while it runs, on the searching threads.
 struct ProjectSearchSink {
   std::function<void(std::vector<ProjectSearchResult> batch)> results;
   std::function<void(std::size_t searched_files, std::size_t total_files)> progress;
 };
 
-// The search itself, on the calling thread (it fans out to its own workers):
-// every candidate file under `root` (or `indexed_files`, relative to it), matched
-// against `query`. Stops early when `cancel` or `token` is set. The service runs
-// it on its worker; a host runs it in-process for a remote project's search/run
-// (remote-projects.md § 6.11), so both sides answer with one implementation.
 ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
                                          const std::string& query,
                                          const ProjectSearchOptions& options,
@@ -194,22 +138,15 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
                                          const std::atomic_bool& cancel,
                                          const util::CancellationToken& token);
 
-// A tree whose authoritative bytes are on another machine (a remote project's
-// mirror can be behind its host): the search runs THERE, over the real tree
-// (remote-projects.md § 6.11). Implemented by the launcher of such a project.
 class ProjectSearchHost {
  public:
   virtual ~ProjectSearchHost() = default;
-  // Blocks the calling (search worker) thread until the host's search ends, or
-  // `cancel`/`token` asks it to stop; results and progress arrive through `sink`.
-  // nullopt when the host cannot be asked (not connected): search the local copy.
   virtual std::optional<ProjectSearchCompletion> SearchOnHost(
       const std::filesystem::path& root, const std::string& query,
       const ProjectSearchOptions& options, const ProjectSearchSink& sink,
       const std::atomic_bool& cancel, const util::CancellationToken& token) const = 0;
 };
 
-// The host that searches trees whose processes `launcher` runs; null = here.
 const ProjectSearchHost* ProjectSearchHostFor(const platform::ProcessLauncher& launcher);
 
 class ProjectSearchService {
@@ -217,41 +154,19 @@ class ProjectSearchService {
   ~ProjectSearchService();
 
   void SetWakeChannel(util::WakeChannel channel);
-  // With `host`, the search runs on it (falling back to the local tree when it
-  // cannot be reached); `host` must outlive the search.
   std::uint64_t Start(const std::filesystem::path& root,
                       std::string query,
                       ProjectSearchOptions options = {},
                       SharedPathList indexed_files = nullptr,
                       const ProjectSearchHost* host = nullptr);
   void Stop();
-  // Returns and clears the accumulated delta since the previous call: results
-  // produced by the worker since the last `TakePendingUpdate`, plus current
-  // progress/finished/error/truncated state. Consumers should append the
-  // returned results to their own cumulative view (the service no longer
-  // exposes a snapshot of all results because every call copied the full
-  // accumulator under a shared lock).
   ProjectSearchUpdate TakePendingUpdate();
   std::uint64_t active_search_id() const;
-  // True once the active worker has published its finished update (or there is no
-  // active search). Unlike TakePendingUpdate this does NOT consume/clear pending
-  // results, so a caller can wait for genuine completion and then drain exactly
-  // once — used by the perf harness to keep search scenarios deterministic
-  // instead of snapshotting a racing mid-search state.
   bool WorkerFinished() const { return worker_finished_.load(std::memory_order_acquire); }
 
-  // Block until the search worker task has fully joined (no queued or in-flight
-  // work), not merely signaled `finished`. Unlike WorkerFinished()/running, this
-  // guarantees every file the worker read has completed AND is visible (the
-  // executor's mutex provides the release/acquire barrier), which deterministic
-  // read-count assertions rely on: a finished-but-not-yet-joined worker can
-  // otherwise land a trailing counted read after the test has reset its counter.
   void WaitForWorkersIdle() { task_executor_.WaitForIdle(); }
 
  private:
-  // Points `pending_update_` at `run_id` (dropping another run's leftovers) and
-  // refreshes its progress counts; false when `run_id` is no longer active.
-  // Caller holds mutex_.
   bool BeginPendingUpdateLocked(std::uint64_t run_id);
   void WorkerMain(std::filesystem::path root,
                   std::string query,
@@ -273,20 +188,11 @@ class ProjectSearchService {
   std::uint64_t next_search_id_ = 0;
   util::WakeChannel wake_channel_ = 0;
   std::atomic_bool cancel_requested_{false};
-  // True when no worker is running (initial state, or the active worker has
-  // published `finished`). Set false at Start, true at PublishFinished / Stop.
-  // Peeked by WorkerFinished() without touching pending_update_.
   std::atomic_bool worker_finished_{true};
-  // Set when a wake event is queued and unconsumed; cleared when the shell
-  // drains via TakePendingUpdate. Lets PushWakeEvent collapse the per-batch /
-  // per-progress flood into a single pending wake (the coalesced state always
-  // lives in pending_update_, so no update — including `finished` — is lost).
   mutable bool wake_pending_ = false;
   ProjectSearchUpdate pending_update_;
-  // Latest progress counters for the active run, retained across publishes so
-  // each pending update carries the denominator even when only results changed.
   std::size_t last_progress_searched_files_ = 0;
   std::size_t last_progress_total_files_ = 0;
 };
 
-}  // namespace microide::project
+}

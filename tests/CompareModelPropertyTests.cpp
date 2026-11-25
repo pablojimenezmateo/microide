@@ -1,15 +1,3 @@
-// Randomized property tests for the compare (diff) model.
-//
-// The hand-written cases in CompareModelTests.cpp pin specific diffs. These
-// assert the invariants that must hold for EVERY input, over a deterministic
-// pseudo-random corpus -- the class of bug that survives a literal-by-literal
-// suite because nobody thought to write the literal that breaks it.
-//
-// The load-bearing invariant is reconstruction: whatever alignment the diff
-// chooses, walking the rows must reproduce both input files exactly. A model
-// that drops, duplicates, or reorders a line is a data-loss bug in the
-// stage/discard path, because the patch generator reads those same rows.
-
 #include "TestSupport.h"
 
 #include <cstdint>
@@ -29,9 +17,6 @@ using microide::compare::CompareRow;
 using microide::compare::CompareRowKind;
 using microide::compare::DiffOpKind;
 
-// xorshift64*, so the corpus is identical on every machine and every run. A
-// std::mt19937 would do, but this keeps the failure message's seed meaningful
-// without depending on a library's generation scheme.
 struct Rng {
   std::uint64_t state;
   explicit Rng(std::uint64_t seed) : state(seed == 0 ? 0x9E3779B97F4A7C15ull : seed) {}
@@ -45,9 +30,6 @@ struct Rng {
   bool Chance(std::size_t percent) { return Below(100) < percent; }
 };
 
-// A small alphabet of lines, some multi-byte, some whitespace-only, some
-// prefixes of each other -- the shapes that make an aligner pick between two
-// equally-long alignments.
 const std::vector<std::string>& LinePool() {
   static const std::vector<std::string> pool = {
       "",
@@ -70,7 +52,7 @@ const std::vector<std::string>& LinePool() {
       "日本語",
       "emoji 🙂 here",
       "emoji 🙃 here",
-      "áccent",  // combining acute
+      "áccent",
       "long line ------------------------------------------------------ end",
       "long line ------------------------------------------------------ END",
   };
@@ -87,9 +69,6 @@ std::string BuildDocument(Rng& rng, std::size_t line_count, bool final_newline) 
   return out;
 }
 
-// Mutate `source` the way an edit session would: drop, insert, replace and swap
-// lines. A pure random pair of documents is mostly all-different, which never
-// exercises the interesting alignment paths.
 std::string MutateDocument(Rng& rng, const std::string& source, bool final_newline) {
   const std::vector<std::string> lines = util::SplitLines(source);
   const std::vector<std::string>& pool = LinePool();
@@ -97,12 +76,12 @@ std::string MutateDocument(Rng& rng, const std::string& source, bool final_newli
   out.reserve(lines.size() + 4);
   for (const std::string& line : lines) {
     const std::size_t roll = rng.Below(100);
-    if (roll < 12) continue;                                  // delete
-    if (roll < 24) {                                          // replace
+    if (roll < 12) continue;
+    if (roll < 24) {
       out.push_back(pool[rng.Below(pool.size())]);
       continue;
     }
-    if (roll < 32) {                                          // insert before
+    if (roll < 32) {
       out.push_back(pool[rng.Below(pool.size())]);
     }
     out.push_back(line);
@@ -121,8 +100,6 @@ std::string Describe(const std::string& left, const std::string& right, std::uin
          "B right=" + std::to_string(right.size()) + "B]";
 }
 
-// Walk the rows and rebuild each side's line list. Every non-empty side of a row
-// contributes its text; the result must equal SplitLines of the input.
 void ExpectRowsReconstructBothSides(const CompareModel& model,
                                     const std::string& left,
                                     const std::string& right,
@@ -201,9 +178,6 @@ void ExpectRowKindsAgreeWithSides(const CompareModel& model,
   }
 }
 
-// Intra-line highlight spans index into the row's own text. A span that runs
-// past the end, or splits a UTF-8 sequence, is drawn as a mojibake block or
-// reads out of bounds in the renderer.
 void ExpectSpansAreInBoundsAndOnBoundaries(const CompareModel& model,
                                            const std::string& left,
                                            const std::string& right,
@@ -237,7 +211,6 @@ void ExpectSpansAreInBoundsAndOnBoundaries(const CompareModel& model,
   }
 }
 
-// Hunks index the row vector; a stale or overlapping hunk stages the wrong rows.
 void ExpectHunksCoverChangedRowsExactlyOnce(const CompareModel& model,
                                             const std::string& left,
                                             const std::string& right,
@@ -288,18 +261,16 @@ void RunOneCase(std::uint64_t seed, bool ignore_whitespace) {
 
 void TestCompareModelReconstructsBothSidesOverRandomCorpus() {
   for (std::uint64_t seed = 1; seed <= 600; ++seed) {
-    RunOneCase(seed, /*ignore_whitespace=*/false);
+    RunOneCase(seed, false);
   }
 }
 
 void TestCompareModelHoldsUnderIgnoreWhitespace() {
   for (std::uint64_t seed = 1; seed <= 600; ++seed) {
-    RunOneCase(seed, /*ignore_whitespace=*/true);
+    RunOneCase(seed, true);
   }
 }
 
-// The op stream is the aligner's own output, one level below the rows. Deletes
-// plus Equals must spell the left file; Inserts plus Equals the right one.
 void TestLineDiffOpsReplayBothSides() {
   for (std::uint64_t seed = 1; seed <= 600; ++seed) {
     Rng rng(seed ^ 0xABCDEFull);
@@ -343,8 +314,6 @@ void TestLineDiffOpsReplayBothSides() {
   }
 }
 
-// Diffing a file against itself is the cheapest possible answer and the one a
-// reader notices instantly when it is wrong.
 void TestIdenticalDocumentsProduceNoHunks() {
   for (std::uint64_t seed = 1; seed <= 200; ++seed) {
     Rng rng(seed ^ 0x515151ull);
@@ -360,7 +329,7 @@ void TestIdenticalDocumentsProduceNoHunks() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterCompareModelPropertyTests(std::vector<TestCase>& tests) {
   AddTest(tests, "CompareModelProperty/ReconstructsBothSidesOverRandomCorpus",
@@ -373,4 +342,4 @@ void RegisterCompareModelPropertyTests(std::vector<TestCase>& tests) {
           TestIdenticalDocumentsProduceNoHunks);
 }
 
-}  // namespace microide::tests
+}

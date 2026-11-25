@@ -1,7 +1,3 @@
-// The workspace half of the server's protocol (dev-docs/design/remote-projects.md
-// § 6.2-6.4): the manifest, content reads, writes and tree operations of the root a
-// connection's hello named. Every handler here hands its work to the workspace's
-// workers and returns; a connection's I/O thread never touches the disk.
 #include "server/RemoteServer.h"
 
 #include <algorithm>
@@ -35,11 +31,7 @@
 namespace microide::server {
 namespace {
 
-// The largest object a fetch serves unless the request asks for less (the client
-// holds the server to it).
 constexpr std::uint64_t kMaxObjectBytes = remote::RemoteWorkspace::kMaxBufferedObjectBytes;
-// The invalid-params reply for a request that needs a workspace: a missing
-// workspace is reported first, else `problem` (what was wrong with the params).
 void ReplyInvalidParams(remote::RemotePeer& peer, std::uint64_t id, bool has_workspace,
                         std::string_view problem) {
   peer.ReplyError(id, remote::kErrorInvalidParams,
@@ -47,23 +39,10 @@ void ReplyInvalidParams(remote::RemotePeer& peer, std::uint64_t id, bool has_wor
                                 : std::string("no workspace: send server/hello with a root"));
 }
 
-// Objects up to this size are kept for, and sent as, deltas; larger ones stream
-// (and go to disk on the client) whole.
 constexpr std::uint64_t kMaxDeltaBaseBytes = 8u * 1024 * 1024;
-// A changed file at least this large whose base is not in RecentObjects asks git's
-// index for it: one `git show` against a whole-file transfer. Below it the file is
-// cheaper to send than the process is to run.
 constexpr std::size_t kIndexBaseMinBytes = 16 * 1024;
-// Object bytes a fetch burst must have sent before its end trims the heap: below
-// it there is too little freed to be worth the arena walk.
 constexpr std::uint64_t kTrimAfterServedBytes = 4u * 1024 * 1024;
 
-// The base a client holds for `path` when it is not in RecentObjects: a file the
-// client got in its first sync and that the host has changed since. When the file
-// was clean then, what the client holds is git's index blob, already on the host's
-// disk -- so the first change of a committed file is still a delta, with nothing
-// kept in memory for it. Used only when its hash IS the client's base: a filter
-// (CRLF, LFS) or a file that was dirty at the backfill is a miss, never a wrong base.
 std::optional<std::string> IndexBlobWithHash(const std::filesystem::path& root, std::string_view path,
                                              std::string_view hash_hex) {
   if (project::LocalGitMetadataSource().Availability(root) != project::GitAvailability::Repository) {
@@ -71,7 +50,7 @@ std::optional<std::string> IndexBlobWithHash(const std::filesystem::path& root, 
   }
   const project::GitRepository repo(root, platform::LocalProcessLauncher());
   std::optional<project::GitRepository::BlobAtRevision> blob =
-      repo.ReadBlobAtRevision(std::filesystem::path(std::string(path)), /*revision=*/"");  // ":path"
+      repo.ReadBlobAtRevision(std::filesystem::path(std::string(path)), "");
   if (!blob.has_value() || blob->truncated || blob->content.size() > kMaxDeltaBaseBytes ||
       util::HashContent(blob->content).Hex() != hash_hex) {
     return std::nullopt;
@@ -79,9 +58,6 @@ std::optional<std::string> IndexBlobWithHash(const std::filesystem::path& root, 
   return std::move(blob->content);
 }
 
-// `manifest`: the tree's newest manifest id once the operation is done, so a
-// client can tell a watch row the host built before the write (its id is not
-// above this) from one that saw it (TD-2026-10-22-385).
 util::JsonValue OpResultJson(const remote::FileOpResult& result, std::uint64_t manifest = 0) {
   util::JsonObject json;
   if (manifest != 0) {
@@ -97,9 +73,6 @@ util::JsonValue OpResultJson(const remote::FileOpResult& result, std::uint64_t m
   return util::JsonValue(std::move(json));
 }
 
-// Cut `count` rows into frames under the bulk chunk size, so an interactive frame
-// queued behind them waits for at most one. `bytes_of(i)` is a row's variable
-// size; the fixed part is estimated.
 template <typename BytesOf, typename Emit>
 void ForEachChunk(std::size_t count, const BytesOf& bytes_of, const Emit& emit) {
   std::size_t begin = 0;
@@ -118,7 +91,7 @@ void ForEachChunk(std::size_t count, const BytesOf& bytes_of, const Emit& emit) 
   }
 }
 
-}  // namespace
+}
 
 std::shared_ptr<RemoteServer::ServedTree> RemoteServer::TreeOf(const Connection& connection) {
   std::lock_guard lock(mutex_);
@@ -143,11 +116,9 @@ void RemoteServer::InstallTreeHandlers(Connection& connection) {
                  [this, &connection](std::uint64_t id, const util::JsonValue&) {
                    const std::shared_ptr<ServedTree> served = TreeOf(connection);
                    if (!served) {
-                     ReplyInvalidParams(connection.peer, id, /*has_workspace=*/false, {});
+                     ReplyInvalidParams(connection.peer, id, false, {});
                      return;
                    }
-                   // The raw pointer is safe in the job: ~ServedTree joins the queue
-                   // before the tree goes.
                    ServedTree* tree = served.get();
                    const std::uint64_t connection_id = connection.id;
                    tree->queue.Post([this, tree, connection_id, id]() {
@@ -160,7 +131,6 @@ void RemoteServer::InstallTreeHandlers(Connection& connection) {
                      if (manifest.has_value() && tree->watch) {
                        tree->watch->SetPolledPaths(tree->tree.UnwatchedMembers());
                      }
-                     // Encode outside the server lock (WithPeer holds it).
                      std::vector<std::string> chunks;
                      if (manifest.has_value()) {
                        const std::vector<remote::ManifestRow>& rows = *manifest->rows;
@@ -171,11 +141,10 @@ void RemoteServer::InstallTreeHandlers(Connection& connection) {
                              chunks.emplace_back();
                              remote::EncodeManifestRows(rows.data() + from, to - from, chunks.back());
                            });
-                       // A watching connection's baseline is exactly what it is sent.
                        std::lock_guard publish(tree->publish_mutex);
                        if (const auto subscriber = tree->subscribers.find(connection_id);
                            subscriber != tree->subscribers.end()) {
-                         subscriber->second.last_sent = manifest->rows;  // shared, not copied
+                         subscriber->second.last_sent = manifest->rows;
                        }
                      }
                      WithPeer(connection_id, [&](remote::RemotePeer& peer) {
@@ -208,15 +177,13 @@ void RemoteServer::InstallWatchHandlers(Connection& connection) {
                                                                  const util::JsonValue&) {
     const std::shared_ptr<ServedTree> served = TreeOf(connection);
     if (!served) {
-      ReplyInvalidParams(connection.peer, id, /*has_workspace=*/false, {});
+      ReplyInvalidParams(connection.peer, id, false, {});
       return;
     }
     {
       std::lock_guard publish(served->publish_mutex);
       served->subscribers.try_emplace(connection.id);
     }
-    // Starting the watch walks the tree: on the workspace's worker, not here. The
-    // reply follows it, so `native` is known.
     ServedTree* tree = served.get();
     const std::uint64_t connection_id = connection.id;
     tree->queue.Post([this, tree, connection_id, id]() {
@@ -228,7 +195,6 @@ void RemoteServer::InstallWatchHandlers(Connection& connection) {
                 return;
               }
               {
-                // Batches that pile up behind a slow one fold into the next.
                 std::lock_guard pending(tree->watch_mutex);
                 WorkspaceTree::Changes& into = tree->watch_changes;
                 into.touched.insert(into.touched.end(), changes.touched.begin(), changes.touched.end());
@@ -240,7 +206,7 @@ void RemoteServer::InstallWatchHandlers(Connection& connection) {
               tree->queue.PostLatest("watch", [this, tree]() { PublishWatchBatch(*tree); });
             });
         tree->watch->SetPolledPaths(tree->tree.UnwatchedMembers());
-        tree->published_head.SetProjectRoot(tree->tree.root());  // the baseline
+        tree->published_head.SetProjectRoot(tree->tree.root());
         tree->watch_mode.store(tree->watch->native() ? WatchMode::Native : WatchMode::Polling);
       }
       util::JsonObject result;
@@ -252,15 +218,11 @@ void RemoteServer::InstallWatchHandlers(Connection& connection) {
 }
 
 void RemoteServer::InstallGitHandlers(Connection& connection) {
-  // git/subscribe: push `git/status` (the sidebar's porcelain status) after every
-  // change to the tree or its repository, so the client renders the git sidebar
-  // from what it holds (remote-projects.md § 6.5). Answered once the first status
-  // is queued; the push follows on the bulk lane.
   connection.peer.OnRequest("git/subscribe", [this, &connection](std::uint64_t id,
                                                                  const util::JsonValue&) {
     const std::shared_ptr<ServedTree> served = TreeOf(connection);
     if (!served) {
-      ReplyInvalidParams(connection.peer, id, /*has_workspace=*/false, {});
+      ReplyInvalidParams(connection.peer, id, false, {});
       return;
     }
     {
@@ -269,15 +231,13 @@ void RemoteServer::InstallGitHandlers(Connection& connection) {
     }
     ServedTree* tree = served.get();
     tree->queue.Post([this, tree]() {
-      tree->git_last_pushed.reset();  // a new subscriber holds nothing: push in full
+      tree->git_last_pushed.reset();
       if (!tree->git_sampler && !tree->closing.load()) {
         tree->git_sampler = std::make_unique<GitStatusSampler>(
             tree->tree.root(), std::chrono::seconds(30), [this, tree]() {
               ScheduleGitStatus(*tree);
-              // A HEAD move with no worktree batch after it (a checkout whose files
-              // were all published before it moved) is still announced.
               tree->queue.PostLatest("watch", [this, tree]() {
-                if (tree->watch) {  // the queue's own member: read here, not on the sampler
+                if (tree->watch) {
                   PublishWatchBatch(*tree);
                 }
               });
@@ -290,11 +250,6 @@ void RemoteServer::InstallGitHandlers(Connection& connection) {
 }
 
 void RemoteServer::InstallSearchHandlers(Connection& connection) {
-  // search/run (remote-projects.md § 6.11): the client's project search, run here
-  // over the real tree — the mirror may be behind it — restricted to the content
-  // set. Results stream as `search/results` (frame id = the request) on the bulk
-  // lane and the completion follows on the same lane; op/cancel or a closed
-  // connection stops it at the next progress tick.
   connection.peer.OnRequest("search/run", [this, &connection](std::uint64_t id,
                                                               const util::JsonValue& params) {
     const std::shared_ptr<ServedTree> served = TreeOf(connection);
@@ -316,7 +271,7 @@ void RemoteServer::InstallSearchHandlers(Connection& connection) {
         std::atomic_bool cancel{false};
         std::size_t searched = 0;
         std::size_t total = 0;
-        std::mutex send_mutex;  // the search's own workers call the sink concurrently
+        std::mutex send_mutex;
         const project::ProjectSearchSink sink{
             .results =
                 [&](std::vector<project::ProjectSearchResult> batch) {
@@ -340,7 +295,6 @@ void RemoteServer::InstallSearchHandlers(Connection& connection) {
         completion = project::RunProjectSearch(
             served->tree.root(), query, options,
             std::make_shared<const std::vector<std::string>>(std::move(*paths)), sink, cancel, token);
-        // The final counters ride an empty batch, so the client's "X of Y" is exact.
         sink.results({});
       }
       WithPeer(connection_id, [&](remote::RemotePeer& peer) {
@@ -357,7 +311,7 @@ void RemoteServer::ScheduleGitStatus(ServedTree& tree) {
       return;
     }
   }
-  ServedTree* raw = &tree;  // ~ServedTree joins the queue before it goes
+  ServedTree* raw = &tree;
   tree.queue.PostLatest("git", [this, raw]() { PublishGitStatus(*raw); });
 }
 
@@ -377,8 +331,6 @@ void RemoteServer::PublishGitStatus(ServedTree& tree) {
                                            project::kGitStatusArguments.end());
   project::GitRepository::CommandResult result;
   std::uint64_t generation = 0;
-  // A git process that exited WHILE status ran may have changed what it read, and
-  // a status from before an exit must not be pushed as the state after it.
   for (int attempt = 0; attempt < 4; ++attempt) {
     generation = git_generation_.load();
     result = repo.Execute(arguments, false);
@@ -398,7 +350,6 @@ void RemoteServer::PublishGitStatus(ServedTree& tree) {
                          tree.git_last_pushed->truncated == result.truncated &&
                          tree.git_last_pushed->output == result.output;
   if (unchanged) {
-    // What the client holds is current as of `generation`: say so in a few bytes.
     params["unchanged"] = util::JsonValue(true);
   } else {
     params["exit_code"] = util::JsonValue(static_cast<std::int64_t>(result.exit_code));
@@ -421,9 +372,7 @@ void RemoteServer::PublishGitStatus(ServedTree& tree) {
 }
 
 void RemoteServer::PublishWatchBatch(ServedTree& tree) {
-  // A worktree change is a status change: queued behind this batch, coalesced.
   ScheduleGitStatus(tree);
-  // Sampled every batch, published or not, so the next one compares with now.
   const std::vector<project::RepositoryChange> repository = tree.published_head.SampleChanges();
   const bool head_moved =
       std::any_of(repository.begin(), repository.end(), [](const project::RepositoryChange& change) {
@@ -435,7 +384,7 @@ void RemoteServer::PublishWatchBatch(ServedTree& tree) {
         std::any_of(tree.subscribers.begin(), tree.subscribers.end(),
                     [](const auto& entry) { return entry.second.last_sent != nullptr; });
     if (!anyone_primed) {
-      return;  // nobody has a baseline yet: their next manifest carries this
+      return;
     }
   }
   WorkspaceTree::Changes changes;
@@ -454,11 +403,8 @@ void RemoteServer::PublishWatchBatch(ServedTree& tree) {
     tree.watch->SetPolledPaths(tree.tree.UnwatchedMembers());
   }
   std::shared_ptr<const std::vector<remote::ManifestRow>> current = std::move(manifest->rows);
-  // Subscribers primed by the same manifest share a baseline: one diff for each
-  // distinct baseline, not one per connection.
   std::map<const std::vector<remote::ManifestRow>*, std::vector<std::string>> frames_for;
   std::vector<std::pair<std::uint64_t, const std::vector<remote::ManifestRow>*>> sends;
-  // The replaced baselines stay alive until their frames are sent: they key the map.
   std::vector<std::shared_ptr<const std::vector<remote::ManifestRow>>> previous;
   {
     std::lock_guard publish(tree.publish_mutex);
@@ -472,7 +418,6 @@ void RemoteServer::PublishWatchBatch(ServedTree& tree) {
         std::vector<const std::string*> deleted;
         remote::DiffManifests(*baseline, *current, changed, deleted);
         std::vector<std::string>& frames = frames_for[baseline];
-        // Deletes ride the first frame; rows are chunked.
         ForEachChunk(
             changed.size(), [&](std::size_t i) { return changed[i]->path.size(); },
             [&](std::size_t from, std::size_t to) {
@@ -492,12 +437,10 @@ void RemoteServer::PublishWatchBatch(ServedTree& tree) {
     for (const auto& [connection_id, baseline] : sends) {
       const std::vector<std::string>& frames = frames_for[baseline];
       if (frames.empty() && !head_moved) {
-        continue;  // the batch changed nothing this connection can see
+        continue;
       }
       WithPeer(connection_id, [&](remote::RemotePeer& peer) {
         if (head_moved) {
-          // Ahead of the frames, on their lane, so the client has it before their
-          // deletes; sent with no frames too (the checkout's files went earlier).
           util::JsonObject moved;
           moved["manifest"] = util::JsonValue(static_cast<std::int64_t>(manifest->id));
           peer.Notify(remote::method::kWatchMoved, util::JsonValue(std::move(moved)), remote::Lane::Bulk);
@@ -512,8 +455,6 @@ void RemoteServer::PublishWatchBatch(ServedTree& tree) {
 
 namespace {
 
-// Stream one file's bytes as ObjectData frames (varint `index`, then a piece) and
-// answer what object/fetch and file/read answer for it.
 template <typename Send, typename Read>
 util::JsonValue StreamObject(std::size_t index, const Send& send, const Read& read,
                              std::string* kept = nullptr, std::size_t keep_limit = 0) {
@@ -562,7 +503,7 @@ util::JsonValue StreamObject(std::size_t index, const Send& send, const Read& re
   return util::JsonValue(std::move(entry));
 }
 
-}  // namespace
+}
 
 std::filesystem::path RemoteServer::UploadsDirectory() const {
   if (!config_.socket_path.empty()) {
@@ -572,8 +513,6 @@ std::filesystem::path RemoteServer::UploadsDirectory() const {
 }
 
 std::filesystem::path RemoteServer::WorkspaceStateDirectory(const std::filesystem::path& root) const {
-  // Beside the socket, whose directory is the user's own; a server with no socket
-  // (serve-stdio, tests) uses a directory of its own under $TMPDIR, as uploads do.
   const std::filesystem::path home =
       !config_.socket_path.empty()
           ? config_.socket_path.parent_path() / "workspace-state"
@@ -620,7 +559,6 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
   });
   peer.OnRequest(remote::method::kFileWrite, [this, &connection](std::uint64_t id,
                                                                  const util::JsonValue& params) {
-    // Claim the content first, whatever the verdict, so a refused write cannot pin it.
     std::string content;
     if (const auto upload = connection.uploads.find(id); upload != connection.uploads.end()) {
       content = std::move(upload->second);
@@ -645,7 +583,6 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
     tree->io_queue.Post([this, tree, connection_id, id, path = path.AsString(),
                          content = std::move(content), expect = *expect, bits]() {
       const remote::FileOpResult result = remote::WriteTreeFile(tree->tree.root(), path, content, expect, bits);
-      // After the write, so the line it draws falls after it (NewestManifestId).
       const std::uint64_t manifest = tree->tree.NewestManifestId();
       WithPeer(connection_id, [&](remote::RemotePeer& peer) {
         if (result.status == remote::FileOpResult::Status::Error) {
@@ -663,8 +600,6 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
                    HandleFileUpload(connection, id, params);
                  });
 
-  // A text one client leaves for the next (remote::method::kStatePut): written
-  // and read on the tree's own queue, like every other file of the workspace.
   const auto on_state = [this, &connection](bool put) {
     return [this, &connection, put](std::uint64_t id, const util::JsonValue& params) {
       const std::shared_ptr<ServedTree> served = TreeOf(connection);
@@ -683,14 +618,11 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
                            text = put ? text.AsString() : std::string()]() {
         util::JsonObject reply;
         std::string error;
-        // The store and the workspace's directory in it are this user's alone, or
-        // nothing is written there and nothing found there is believed.
         const bool usable = platform::EnsurePrivateDirectory(path.parent_path().parent_path(), &error) &&
                             platform::EnsurePrivateDirectory(path.parent_path(), &error);
         if (put) {
           std::error_code ec;
           if (!usable) {
-            // `error` says which directory.
           } else if (!util::WriteTextFileAtomically(path, text, &ec)) {
             error = "cannot write " + path.string() + ": " + ec.message();
           } else {
@@ -715,8 +647,8 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
       });
     };
   };
-  peer.OnRequest(remote::method::kStatePut, on_state(/*put=*/true));
-  peer.OnRequest(remote::method::kStateGet, on_state(/*put=*/false));
+  peer.OnRequest(remote::method::kStatePut, on_state(true));
+  peer.OnRequest(remote::method::kStateGet, on_state(false));
 
   peer.OnRequest(remote::method::kFsOp, [this, &connection](std::uint64_t id,
                                                             const util::JsonValue& params) {
@@ -765,21 +697,16 @@ void RemoteServer::HandleObjectFetch(Connection& connection, std::uint64_t id,
     return;
   }
   std::vector<std::string> paths;
-  std::vector<std::string> bases;  // hex; "" = the client holds no base
+  std::vector<std::string> bases;
   for (const util::JsonValue& object : objects.AsArray()) {
     paths.push_back(object["path"].AsString());
     bases.push_back(object["base"].AsString());
   }
   const std::int64_t asked_max = params["max_bytes"].AsInt(0);
-  // Objects stream from disk in chunks, so a client that writes them to disk as
-  // they come (RemoteWorkspace::FetchObjectToFile) may ask past the 64 MiB a
-  // client holding them in memory gets by default.
   const std::uint64_t max_bytes =
       asked_max > 0 ? std::min<std::uint64_t>(static_cast<std::uint64_t>(asked_max),
                                               remote::RemoteWorkspace::kMaxStreamedObjectBytes)
                     : kMaxObjectBytes;
-  // Content and the reply travel on the lane the request came on: the file the
-  // user just opened is interactive, backfill is bulk.
   const remote::Lane lane = params["bulk"].AsBool(false) ? remote::Lane::Bulk
                                                          : remote::Lane::Interactive;
   ServedTree* tree = served.get();
@@ -801,8 +728,6 @@ void RemoteServer::HandleObjectFetch(Connection& connection, std::uint64_t id,
           peer.SendContent(remote::FrameType::ObjectData, id, frame, lane);
         });
       };
-      // The client holds `base` (the version this server last sent it): send
-      // what changed since, when that is smaller (remote-projects.md § 6.2).
       if (!bases[index].empty()) {
         std::string content;
         const remote::FileOpResult read = remote::ReadTreeFile(
@@ -834,24 +759,16 @@ void RemoteServer::HandleObjectFetch(Connection& connection, std::uint64_t id,
             });
             entry = util::JsonValue(std::move(object));
           } else {
-            // Whole, from the bytes already read.
             entry = StreamObject(index, send, [&](const std::function<void(std::string_view)>& sink) {
               sink(content);
               return read;
             });
           }
-          // A path the client asks about with a base is one that changes: its next
-          // change wants this version as the base.
           tree->recent_objects.Put(hash, std::move(content));
           results.push_back(std::move(entry));
           continue;
         }
-        // Over the delta-base limit, or not readable: whole (or its error) below.
       }
-      // A first fetch (the backfill, a file new to the client) is not kept: most
-      // of a content set is never fetched again, and keeping it pinned the whole
-      // set in this process (TD-2026-10-28-417). Its first change finds its base
-      // in the git index instead.
       results.push_back(StreamObject(index, send, [&](const std::function<void(std::string_view)>& sink) {
         return remote::ReadTreeFile(tree->tree.root(), paths[index], max_bytes, sink);
       }));
@@ -861,8 +778,6 @@ void RemoteServer::HandleObjectFetch(Connection& connection, std::uint64_t id,
     WithPeer(connection_id, [&](remote::RemotePeer& peer) {
       peer.Reply(id, util::JsonValue(std::move(reply)), lane);
     });
-    // Keyed, so it moves behind every fetch queued after this one and runs once
-    // the burst has drained.
     tree->served_since_trim.fetch_add(sent_bytes);
     tree->io_queue.PostLatest("heap-trim", [tree]() {
       if (tree->served_since_trim.load() >= kTrimAfterServedBytes) {
@@ -875,7 +790,7 @@ void RemoteServer::HandleObjectFetch(Connection& connection, std::uint64_t id,
 
 void RemoteServer::HandleFileUpload(Connection& connection, std::uint64_t id,
                                     const util::JsonValue& params) {
-  std::string content;  // claimed first, as file/write's
+  std::string content;
   if (const auto upload = connection.uploads.find(id); upload != connection.uploads.end()) {
     content = std::move(upload->second);
     connection.upload_bytes -= content.size();
@@ -883,8 +798,6 @@ void RemoteServer::HandleFileUpload(Connection& connection, std::uint64_t id,
   }
   const std::shared_ptr<ServedTree> served = TreeOf(connection);
   const std::string name = params["name"].AsString();
-  // A file NAME, never a path: it cannot reach outside its own directory. Any
-  // length the filesystem takes (NAME_MAX), and a name past it says why.
   constexpr std::size_t kMaxNameBytes = 255;
   const bool named = !name.empty() && name != "." && name != ".." &&
                      name.find_first_of(std::string_view("/\0", 2)) == std::string::npos;
@@ -916,4 +829,4 @@ void RemoteServer::HandleFileUpload(Connection& connection, std::uint64_t id,
   });
 }
 
-}  // namespace microide::server
+}

@@ -39,9 +39,6 @@ void SerialWorkQueue::EnsureStartedLocked() {
 
 void SerialWorkQueue::EraseQueuedLocked(JobIter it) {
   if (!it->key.empty()) {
-    // Only drop the index entry when it still names THIS node — a later PostLatest
-    // (e.g. after a Cancel cleared the index) may have re-pointed the key at a
-    // newer node that must survive.
     if (const auto mit = keyed_index_.find(it->key);
         mit != keyed_index_.end() && mit->second == it) {
       keyed_index_.erase(mit);
@@ -55,9 +52,6 @@ void SerialWorkQueue::ShedIfOverBudgetLocked() {
   if (limits_.max_depth == 0 || queue_.size() < limits_.max_depth) {
     return;
   }
-  // Shed the oldest droppable, still-live job. Critical jobs are never shed, so a
-  // queue saturated with critical work simply exceeds the budget rather than
-  // losing correctness-bearing work.
   for (auto it = queue_.begin(); it != queue_.end(); ++it) {
     if (it->droppable && !it->cancelled) {
       EraseQueuedLocked(it);
@@ -72,9 +66,6 @@ void SerialWorkQueue::Post(std::function<void()> task, Shedding shedding) {
     if (stop_) {
       return;
     }
-    // Honor the lazy-start contract: a kLazy queue starts its worker on first post so
-    // a caller can default-construct + Post without a separate EnsureStarted() and
-    // still have the job run (rather than sit forever in an unstarted queue).
     EnsureStartedLocked();
     ShedIfOverBudgetLocked();
     util::InvokeIfSet(hooks_.on_enqueue);
@@ -118,16 +109,9 @@ void SerialWorkQueue::PostLatest(std::string key, std::function<void()> task, Sh
       return;
     }
     EnsureStartedLocked();
-    // O(1) dedup: find (or reserve) the key's slot. If a live job with this key is
-    // already queued, drop it (balancing its on_complete) so only the latest work
-    // for this key runs; the replacement is appended at the tail below.
     auto [map_it, inserted] = keyed_index_.try_emplace(key);
     if (!inserted) {
       queue_.erase(map_it->second);
-      // Retarget the slot immediately: ShedIfOverBudgetLocked below walks the queue
-      // and compares each node against the index entry for its key, and comparing a
-      // just-erased list iterator is undefined. end() is a stable, comparable value
-      // that matches no live node, and the real node is stored a few lines down.
       map_it->second = queue_.end();
       util::InvokeIfSet(hooks_.on_complete);
     }
@@ -146,7 +130,6 @@ void SerialWorkQueue::Cancel() {
   for (auto& job : queue_) {
     job.cancelled = job.cancelled || !job.durable;
   }
-  // Every queued node is now cancelled, so none is a live dedup target.
   ClearKeyIndexLocked();
 }
 
@@ -156,9 +139,6 @@ void SerialWorkQueue::Drain() {
   {
     std::lock_guard lock(mutex_);
     if (stop_ || !started_.load(std::memory_order_acquire)) {
-      // Never started (no worker will ever run the barrier) or already stopped:
-      // there is no in-flight job to wait for. Cancel any queued jobs for symmetry
-      // and balance their enqueue hooks so the counter stays exact.
       if (hooks_.on_complete) {
         for (std::size_t i = queue_.size(); i > 0; --i) {
           hooks_.on_complete();
@@ -172,8 +152,6 @@ void SerialWorkQueue::Drain() {
       job.cancelled = true;
     }
     ClearKeyIndexLocked();
-    // Trailing, non-cancelled barrier: it runs after the current in-flight job and
-    // all the now-skipped queued jobs, so its completion means the worker is idle.
     util::InvokeIfSet(hooks_.on_enqueue);
     queue_.push_back(Job{.key = {},
                          .task = [&barrier]() { barrier.set_value(); },
@@ -190,13 +168,8 @@ void SerialWorkQueue::Flush() {
   {
     std::lock_guard lock(mutex_);
     if (stop_ || !started_.load(std::memory_order_acquire)) {
-      // Never started: nothing was ever queued, so there is nothing to complete.
-      // Already stopped: Shutdown() cancelled the backlog and joined the worker, so
-      // no one is left to run a barrier -- blocking on one would hang forever.
       return;
     }
-    // Unlike Drain(), leave the queued jobs alone: the barrier simply goes to the
-    // TAIL, so waiting on it waits for all of them to run first.
     util::InvokeIfSet(hooks_.on_enqueue);
     queue_.push_back(Job{.key = {},
                          .task = [&barrier]() { barrier.set_value(); },
@@ -221,15 +194,9 @@ void SerialWorkQueue::Shutdown(std::chrono::milliseconds deadline) {
   }
   cv_.notify_all();
   if (worker_.joinable()) {
-    // std::thread has no timed join; in-flight jobs are kept bounded by callers so
-    // this blocking join stays prompt. The deadline is reserved for a future
-    // cooperative-cancellation path.
     (void)deadline;
     worker_.join();
   } else if (hooks_.on_complete) {
-    // Never-started queue: no worker will drain these jobs, so balance their
-    // enqueue hooks here. (Production users with hooks start eagerly, so this is
-    // a defensive path that keeps the on_complete contract unconditional.)
     std::lock_guard lock(mutex_);
     for (std::size_t i = queue_.size(); i > 0; --i) {
       hooks_.on_complete();
@@ -251,8 +218,6 @@ void SerialWorkQueue::WorkerMain() {
       if (queue_.empty()) {
         continue;
       }
-      // Drop the front node's key-index entry before popping it (only if the index
-      // still names this exact node — see EraseQueuedLocked's identity check).
       const JobIter front = queue_.begin();
       if (!front->key.empty()) {
         if (const auto mit = keyed_index_.find(front->key);
@@ -264,12 +229,6 @@ void SerialWorkQueue::WorkerMain() {
       queue_.pop_front();
     }
     if (job.task && (!job.cancelled || job.run_even_if_cancelled)) {
-      // Exception firewall: a job that escapes with a C++ exception must never
-      // propagate out of the worker functor (that is a std::terminate for the
-      // whole app). Swallow it here and keep the worker draining. Jobs that need
-      // to signal a waiter (RunOnWorkerBlocking) set their promise inside their
-      // own body's try/catch so a throw cannot strand a UI-thread wait; this is
-      // the last-resort net for everything else (plugin harvest bad_alloc, etc).
       try {
         job.task();
       } catch (const std::exception& ex) {
@@ -282,4 +241,4 @@ void SerialWorkQueue::WorkerMain() {
   }
 }
 
-}  // namespace microide::util
+}

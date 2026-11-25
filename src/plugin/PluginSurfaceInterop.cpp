@@ -26,17 +26,11 @@ using lua_interop::ReadStringField;
 
 constexpr lua_Integer kMaxHitRegions = 4096;
 
-// Reads the `color` field of the table at `table_index` into `out`; missing keeps
-// `out` unchanged. A present-but-malformed color is an error.
 bool ReadColorField(lua_State* state, int table_index, SDL_Color* out, std::string* error) {
   return lua_interop::ReadOptionalColorField(state, table_index, "color", out, error);
 }
 
 SDL_FRect ReadRectFields(lua_State* state, int table_index) {
-  // Sanitize plugin-provided geometry at parse time: a non-finite coordinate
-  // (NaN/inf from a bad computation) would poison layout/scroll extents, and a
-  // negative width/height is a meaningless inverted rect. Fold non-finite to 0 and
-  // clamp dimensions to >= 0 so hit-testing and display-list replay see valid rects.
   const auto finite_or_zero = [](float v) { return std::isfinite(v) ? v : 0.0f; };
   const float x = finite_or_zero(ReadNumberField(state, table_index, "x", 0.0f));
   const float y = finite_or_zero(ReadNumberField(state, table_index, "y", 0.0f));
@@ -45,9 +39,6 @@ SDL_FRect ReadRectFields(lua_State* state, int table_index) {
   return SDL_FRect{x, y, w, h};
 }
 
-// Parse one display-list op table (already on the stack at `entry`) into the list.
-// Image ops are intentionally not exposed to plugins in v1 (rasters use the
-// `raster` body instead), so the recognized ops are rect/line/polyline/text/clip.
 bool ReadDisplayOp(lua_State* state, int entry, render::PluginDisplayList* list,
                    std::string* error) {
   std::string kind;
@@ -103,7 +94,7 @@ bool ReadDisplayOp(lua_State* state, int entry, render::PluginDisplayList* list,
           SDL_FPoint{ReadNumberField(state, p, "x", 0.0f), ReadNumberField(state, p, "y", 0.0f)});
       lua_pop(state, 1);
     }
-    lua_pop(state, 1);  // points
+    lua_pop(state, 1);
   } else if (kind == "clip_push") {
     op.op = render::DrawOp::ClipPush;
     op.rect = ReadRectFields(state, entry);
@@ -143,14 +134,13 @@ bool ReadDisplayList(lua_State* state, int dl_index, render::PluginDisplayList* 
     }
     lua_pop(state, 1);
   }
-  lua_pop(state, 1);  // ops
+  lua_pop(state, 1);
   if (!ok) return false;
   if (!render::ValidateDisplayList(*list, error)) return false;
   list->content_hash = render::ComputeDisplayListHash(*list);
   return true;
 }
 
-// FNV-1a fold of an integer into an existing hash (little-endian byte order).
 std::uint64_t MixHashValue(std::uint64_t h, std::uint64_t value) {
   for (int i = 0; i < 8; ++i) {
     h ^= (value & 0xffULL);
@@ -160,8 +150,6 @@ std::uint64_t MixHashValue(std::uint64_t h, std::uint64_t value) {
   return h == 0 ? 1 : h;
 }
 
-// Parse a `raster` body, fill the handle + intrinsic size, and dispatch the bytes
-// to the host texture cache for off-thread decode.
 bool ReadRaster(lua_State* state, int raster_index, editor::SurfaceContent* content,
                 const PluginHost::Callbacks& callbacks, std::string* error) {
   std::string format;
@@ -185,20 +173,14 @@ bool ReadRaster(lua_State* state, int raster_index, editor::SurfaceContent* cont
   std::string bytes(data, len);
   lua_pop(state, 1);
 
-  // Clamp before the double->int narrowing: a plugin-supplied width/height outside
-  // [0, kMaxRasterDimension] (e.g. 3e9, or negative) is undefined behavior when cast
-  // straight to int, and a garbage/negative dimension would poison RasterHandle and
-  // the decode_raster callback.
   constexpr double kMaxRasterDimension = 65535.0;
   const auto read_dimension = [&](const char* field) -> int {
     const double raw = static_cast<double>(ReadNumberField(state, raster_index, field, 0.0f));
-    if (!(raw > 0.0)) return 0;  // also rejects NaN
+    if (!(raw > 0.0)) return 0;
     return static_cast<int>(std::min(raw, kMaxRasterDimension));
   };
   const int width = read_dimension("width");
   const int height = read_dimension("height");
-  // Key raw rasters by bytes + format + dimensions (see ComputeRasterContentHash);
-  // encoded bytes stay bytes-only.
   const std::uint64_t hash = ComputeRasterContentHash(bytes, is_rgba, width, height);
 
   editor::RasterHandle handle;
@@ -252,7 +234,7 @@ bool ReadHitRegions(lua_State* state, int spec_index, editor::SurfaceContent* co
     }
     lua_pop(state, 1);
   }
-  lua_pop(state, 1);  // array
+  lua_pop(state, 1);
   return ok;
 }
 
@@ -286,11 +268,7 @@ bool ReadAnchor(lua_State* state, int spec_index,
   lua_interop::GetFieldProtected(state, anchor_index, "line");
   const lua_Integer line = lua_isinteger(state, -1) ? lua_tointeger(state, -1) : 0;
   lua_pop(state, 1);
-  lua_pop(state, 1);  // anchor
-  // The anchor line is stored 0-based (line - 1) in a uint32_t, so the largest
-  // representable 1-based input is UINT32_MAX + 1. Reject anything above that (and
-  // non-positive) — without the upper bound the cast below wraps (e.g. 2^32 + 1 ->
-  // 0), silently mis-anchoring the surface. Mirrors ReadOneBasedField.
+  lua_pop(state, 1);
   constexpr lua_Integer kMaxOneBased =
       static_cast<lua_Integer>(std::numeric_limits<std::uint32_t>::max()) + 1;
   if (raw_path.empty() || line <= 0 || line > kMaxOneBased) {
@@ -303,7 +281,7 @@ bool ReadAnchor(lua_State* state, int spec_index,
   return true;
 }
 
-}  // namespace
+}
 
 std::uint64_t ComputeRasterContentHash(std::string_view bytes, bool is_rgba, int width,
                                        int height) {
@@ -313,12 +291,8 @@ std::uint64_t ComputeRasterContentHash(std::string_view bytes, bool is_rgba, int
     hash *= 0x100000001b3ULL;
   }
   if (hash == 0) {
-    hash = 1;  // 0 is the cache's "no raster" sentinel
+    hash = 1;
   }
-  // Fold a raw/encoded discriminator so a raw raster never aliases an encoded one;
-  // for raw rgba8 also fold the declared dimensions (identical bytes at different
-  // geometry are different images). Encoded bytes fully determine the image, so no
-  // dimensions are mixed in — avoiding cache fragmentation across display sizes.
   hash = MixHashValue(hash, is_rgba ? 1ULL : 0ULL);
   if (is_rgba) {
     hash = MixHashValue(hash, static_cast<std::uint64_t>(width));
@@ -393,6 +367,6 @@ bool ClearSurface(std::string_view plugin_id, std::string_view surface_id,
   return true;
 }
 
-}  // namespace microide::plugin::surface_interop
+}
 
 #endif

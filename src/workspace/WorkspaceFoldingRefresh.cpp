@@ -11,12 +11,6 @@ namespace microide::workspace {
 
 namespace {
 
-// Per-refresh line budget for the fold scan. It bounds how many *uncached* lines
-// a single refresh may scan or measure, so opening a very large file never
-// stalls one frame on the whole document; the model returns partial results and
-// the renderer paints the resolved ranges. The model doubles this internally
-// while it is still catching up, so a jump deep into a huge file converges in
-// O(log n) frames rather than O(n / budget).
 constexpr std::size_t kFoldingModelComputeBudget = 2000;
 
 editor::FoldingModel::ComputeOptions BuildComputeOptions(const LanguageContract* contract,
@@ -39,19 +33,12 @@ editor::FoldingModel::Fingerprint BuildFingerprint(const editor::TextViewport& v
                                                    const LanguageContract* contract,
                                                    std::size_t tab_size) {
   editor::FoldingModel::Fingerprint fingerprint;
-  // The fingerprint identifies the source bytes the scan was built from; only
-  // content mutations change those.
   fingerprint.layout_revision = viewport.content_revision();
   fingerprint.tab_size = tab_size == 0 ? 1 : tab_size;
   fingerprint.language_id = contract == nullptr ? std::string{} : contract->language_id;
   return fingerprint;
 }
 
-// The LINE range the viewport's visual rows currently span. Fold ranges are
-// addressed by logical line, and a collapsed fold makes those two coordinate
-// systems diverge by however many lines it hides -- resolving row indices as if
-// they were line indices would leave the rows below a collapsed fold outside the
-// resolved window.
 std::pair<std::size_t, std::size_t> VisibleLineRange(const editor::TextViewport& viewport,
                                                      std::size_t visible_rows) {
   const std::size_t visual_count = viewport.visual_line_count();
@@ -64,7 +51,7 @@ std::pair<std::size_t, std::size_t> VisibleLineRange(const editor::TextViewport&
   return {viewport.VisualRowLineIndex(first_row), viewport.VisualRowLineIndex(last_row)};
 }
 
-}  // namespace
+}
 
 void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
                              editor::TextViewport& viewport,
@@ -74,12 +61,8 @@ void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
                              std::size_t visible_rows) {
   auto& model = *tab.folding_model;
   if (!fold_enabled) {
-    // Folds a restore was holding for this tab would collapse whenever folding
-    // came back on, long after the user stopped expecting them.
     tab.restore.collapsed_fold_openers.clear();
     if (model.HasFolds()) {
-      // Auto-expand any persisted user collapses so disabling the toggle never
-      // leaves rows hidden, then drop the resolved ranges.
       model.ExpandAll();
       model.Clear();
     }
@@ -90,9 +73,6 @@ void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
       BuildFingerprint(viewport, contract, tab_size);
   const auto [first_line, last_line] = VisibleLineRange(viewport, visible_rows);
 
-  // Content-freshness alone is not enough to skip: a resolve covers a window, so
-  // scrolling to lines outside it must resolve again even though the content has
-  // not changed.
   if (model.IsFresh(fingerprint) && model.IsWindowResolved(first_line, last_line)) {
     CollapseRestoredFolds(tab, viewport);
     return;
@@ -112,11 +92,7 @@ void CollapseRestoredFolds(TabEntry::EditorTabState& tab, editor::TextViewport& 
     return;
   }
   editor::FoldingModel& model = *tab.folding_model;
-  // The openers can be anywhere in the file, outside the window the refresh
-  // resolved; Fold All widens the same way.
   model.ResolveAllFolds(viewport.lines(), &viewport);
-  // The restored scroll is a row of the FOLDED layout, applied before the folds
-  // existed. Unless the view has moved since, it is placed again over them.
   const bool scroll_untouched = viewport.scroll_line() == tab.restore.scroll_line;
   for (const std::size_t opener : openers) {
     if (model.FoldStartingAt(opener).has_value()) {
@@ -124,8 +100,6 @@ void CollapseRestoredFolds(TabEntry::EditorTabState& tab, editor::TextViewport& 
     }
   }
   openers.clear();
-  // The view is where the user left it: a caret inside one of these folds stood
-  // still while it collapsed, and the reveal must not take the restore for a move.
   tab.fold_reveal_last_caret = editor::TextPosition{viewport.cursor_line(), viewport.cursor_column()};
   tab.fold_reveal_last_secondary_count = viewport.secondary_caret_positions().size();
   viewport.SetFoldingModel(model.HasFolds() ? &model : nullptr);
@@ -154,8 +128,6 @@ bool RevealCaretsInsideCollapsedFolds(TabEntry::EditorTabState& tab,
     if (!model->IsLineHidden(line)) {
       return;
     }
-    // Walk the collapsed set, not the resolved window: the fold hiding this line
-    // can be anywhere in the document. Collect first -- expanding mutates the set.
     hiding.clear();
     for (const editor::FoldRange& range : model->collapsed_ranges()) {
       if (line > range.opener_line && line <= range.closer_line) {
@@ -173,4 +145,4 @@ bool RevealCaretsInsideCollapsedFolds(TabEntry::EditorTabState& tab,
   return changed;
 }
 
-}  // namespace microide::workspace
+}

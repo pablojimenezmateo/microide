@@ -38,17 +38,6 @@ IndexUpdateBatch::Change MakeDeleteChange(std::filesystem::path relative_path) {
   return change;
 }
 
-// ApplyBatch against the plainest model of its contract, over random batches:
-// changes apply in batch order, a create or modify sets a path's size, a delete
-// removes it, a recursive delete removes the directory's whole subtree. The
-// incremental path batches its insertions and removals into one merge per run of
-// non-recursive changes (TD-2026-10-28-418); this is what holds it to applying them
-// one by one -- repeated paths, a delete then a recreate, a recreate then a
-// recursive delete of its parent, in any mix.
-// ApplyBatch has two callers on two threads: the index watcher applies on its own
-// thread, the shell thread applies a Replace All's outcome. The batch bookkeeping
-// kept across batches was first shared unguarded, and the two crashed into each
-// other in the suite (path compare in ApplySegmentLocked on freed ops).
 void TestFileIndexConcurrentBatchesFromTwoThreads() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -76,8 +65,6 @@ void TestFileIndexConcurrentBatchesFromTwoThreads() {
   apply_from("replaced");
   watcher.join();
 
-  // Each thread's last round leaves the same four paths per directory, so the
-  // index is the union -- and sorted, unique: nothing interleaved into it.
   const auto files = index.Snapshot();
   for (std::size_t i = 1; i < files.size(); ++i) {
     Expect(files[i - 1].relative_path < files[i].relative_path, "the index stays sorted and unique");
@@ -281,10 +268,6 @@ void TestFileIndexExcludesGitMetadataFromInitialAndIncrementalBatches() {
          "incremental .git metadata update should not change file index version");
 }
 
-// Regression: on a case-insensitive host (Windows / default macOS) `.GIT` names
-// the same metadata directory as `.git`, so it must also be excluded — otherwise
-// repository internals leak into the file finder / search index. On a
-// case-sensitive host `.GIT` is a real, different directory and is NOT excluded.
 void TestFileIndexExcludesGitMetadataCaseInsensitiveOnFoldingHosts() {
   const auto index_with_git_variant = [](const char* variant_path) {
     TemporaryDirectory temp_dir;
@@ -300,8 +283,6 @@ void TestFileIndexExcludesGitMetadataCaseInsensitiveOnFoldingHosts() {
     return index.Snapshot();
   };
 
-  // Linux paths are case-sensitive: `.GIT` is a genuine directory, indexed rather
-  // than excluded as git metadata.
   const auto snapshot = index_with_git_variant(".GIT/config");
   Expect(snapshot.size() == 2, "a case-sensitive host treats .GIT as a real directory");
 }
@@ -316,7 +297,6 @@ void TestFileIndexInitialBatchAbortsWhenCancelled() {
          "cancel fixture should initialize deferred file index root");
   const std::uint64_t set_root_version = index.version();
 
-  // A batch large enough to cross the cancel-check stride so the abort path runs.
   IndexUpdateBatch batch;
   batch.is_initial = true;
   for (int i = 0; i < 10000; ++i) {
@@ -330,16 +310,12 @@ void TestFileIndexInitialBatchAbortsWhenCancelled() {
   Expect(index.Snapshot().empty(),
          "a cancelled initial bulk load must leave the index contents unchanged");
 
-  // The same batch applies normally when the predicate never cancels.
   Expect(index.ApplyBatch(batch, []() { return false; }),
          "a non-cancelled initial bulk load should apply");
   Expect(index.Snapshot().size() == 10000,
          "a completed initial bulk load should populate every file");
 }
 
-// A recursive Deleted change (a directory removed or moved out) must drop the
-// directory and every file beneath it — not just an exact path match — otherwise
-// the removed subtree's files linger in the index as ghosts.
 void TestFileIndexRecursiveDeleteRemovesSubtree() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -353,7 +329,7 @@ void TestFileIndexRecursiveDeleteRemovesSubtree() {
   initial.changes.push_back(MakeCreateChange("keep.txt"));
   initial.changes.push_back(MakeCreateChange("sub/a.cpp"));
   initial.changes.push_back(MakeCreateChange("sub/nested/b.cpp"));
-  initial.changes.push_back(MakeCreateChange("subtly/kept.cpp"));  // prefix-similar, must survive
+  initial.changes.push_back(MakeCreateChange("subtly/kept.cpp"));
   Expect(index.ApplyBatch(initial), "initial batch populates");
   Expect(index.Snapshot().size() == 4, "four files indexed");
 
@@ -380,16 +356,6 @@ void TestFileIndexRecursiveDeleteRemovesSubtree() {
   Expect(!has_sub_file, "no file under the deleted directory should remain");
 }
 
-// The range-bounded recursive delete (two binary searches over the sorted index)
-// has to agree with the containment predicate it replaced on EVERY input, and the
-// interesting inputs are the byte neighbours of the separator: '.' (0x2E) and '-'
-// (0x2D) sort before '/' (0x2F), digits and letters sort after, so a name like
-// "sub.txt" lands between "sub" and "sub/a.cpp" in the index while "sub0" lands
-// past the whole run. A scan could not get those wrong; a bounded erase can.
-//
-// Stated as a differential test against the predicate itself rather than a list
-// of hand-computed survivors: the oracle is the definition of "at or below", so
-// this stays honest if the ordering or the separator handling ever moves.
 void TestFileIndexRecursiveDeleteMatchesContainmentOracle() {
   const std::vector<std::filesystem::path> corpus = {
       "keep.txt",      "sub",           "sub-dash.txt",  "sub.txt",
@@ -443,19 +409,9 @@ void TestFileIndexRecursiveDeleteMatchesContainmentOracle() {
   }
 }
 
-// A run of recursive deletions in one batch is applied as a single compaction
-// pass over the index, so the union of overlapping and NESTED ranges has to come
-// out identical to applying them one at a time. Nested is the interesting case:
-// deleting "sub" and "sub/nested" together produces two ranges where one encloses
-// the other, and a sweep that does not notice would double-count the overlap and
-// drop surviving entries with it.
 void TestFileIndexRecursiveDeleteRunMatchesSequentialApplication() {
   const std::vector<std::filesystem::path> corpus = {
       "keep.txt",       "a/1.cpp",        "a/deep/2.cpp",   "a/deep/deeper/3.cpp",
-      // Sorts AFTER the whole "a/deep" run but still inside "a", so deleting both
-      // gives a range STRICTLY enclosed by another -- the one shape a left-to-right
-      // sweep can get wrong, by rewinding its read cursor into ground it already
-      // erased and resurrecting the entries in between.
       "a/zzz.cpp",
       "ab/4.cpp",       "b/5.cpp",        "b/6.cpp",        "c/7.cpp",
       "cc/8.cpp",       "z/9.cpp",
@@ -483,7 +439,6 @@ void TestFileIndexRecursiveDeleteRunMatchesSequentialApplication() {
   const std::filesystem::path root = temp_dir.path() / "workspace";
   WriteFile(root / "README.md", "root\n");
 
-  // One batch carrying the whole run: the coalesced path.
   FileIndex coalesced;
   Expect(coalesced.SetRoot(root, FileIndex::RootPopulationMode::Deferred), "coalesced root");
   populate(coalesced);
@@ -495,7 +450,6 @@ void TestFileIndexRecursiveDeleteRunMatchesSequentialApplication() {
   }
   Expect(coalesced.ApplyBatch(run), "a run of recursive deletes should mutate the index");
 
-  // The same deletions, one batch each: the sequential reference.
   FileIndex sequential;
   Expect(sequential.SetRoot(root, FileIndex::RootPopulationMode::Deferred), "sequential root");
   populate(sequential);
@@ -513,9 +467,6 @@ void TestFileIndexRecursiveDeleteRunMatchesSequentialApplication() {
          "only keep.txt, ab/4.cpp, cc/8.cpp and z/9.cpp survive the run");
 }
 
-// A recursive delete followed by a create UNDER the deleted directory is how a
-// directory move-in reaches the index, so the run must not be hoisted past the
-// creates that follow it.
 void TestFileIndexRecursiveDeleteRunStopsAtTheNextCreate() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -545,10 +496,6 @@ void TestFileIndexRecursiveDeleteRunStopsAtTheNextCreate() {
          "a create after a recursive delete of its parent must survive the run");
 }
 
-// "." is the project root spelled as a relative path: the containment predicate
-// says every entry is within it, and no byte prefix can express that, so the
-// bounded erase has to special-case it. A batch that recursively deletes "."
-// empties the index.
 void TestFileIndexRecursiveDeleteOfDotClearsTheIndex() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -569,17 +516,11 @@ void TestFileIndexRecursiveDeleteOfDotClearsTheIndex() {
   Expect(index.ApplyBatch(remove), "a recursive delete of '.' should mutate the index");
   Expect(index.Snapshot().empty(), "a recursive delete of '.' removes every entry");
 
-  // ...and reports "no change" the second time, so it cannot spin the index
-  // version (and every cache keyed on it) on a repeat.
   Expect(!index.ApplyBatch(remove), "a repeated recursive delete of '.' is not a change");
 }
 
-}  // namespace
+}
 
-// Regression: the hand-rolled FileIndex move ctor/assignment (required by the
-// files_mutex_) dropped the follow_out_of_root_symlinks_ atomic, so a project
-// switch (which move-assigns FileIndex) silently reverted a user who enabled
-// following out-of-root symlinks back to containment-enforced.
 void TestFileIndexMovePreservesFollowSymlinksFlag() {
   FileIndex source;
   source.SetFollowOutOfRootSymlinks(true);
@@ -594,18 +535,12 @@ void TestFileIndexMovePreservesFollowSymlinksFlag() {
   Expect(moved_assign.FollowOutOfRootSymlinks(),
          "the move assignment must carry the follow-symlinks flag");
 
-  // A false flag must also survive (guards against unconditionally forcing true).
   FileIndex off;
   off.SetFollowOutOfRootSymlinks(false);
   FileIndex off_moved(std::move(off));
   Expect(!off_moved.FollowOutOfRootSymlinks(), "a cleared flag must also survive the move");
 }
 
-// A forced rescan (ScanFiles -> ReplaceScannedFiles) carries the scan's status
-// into truncated()/scan_status(): a budget-truncated status asserts it (with the
-// specific cause preserved), and a later complete rescan clears it rather than
-// leaving the prior root's "truncated" state asserted over a freshly scanned tree
-// (TD-2026-07-17-008/033).
 void TestFileIndexReplaceScannedFilesCarriesTruncation() {
   using microide::project::ProjectFile;
   using microide::project::ProjectFileScanStatus;
@@ -627,13 +562,6 @@ void TestFileIndexReplaceScannedFilesCarriesTruncation() {
   Expect(!index.scan_status().incomplete(), "a complete rescan clears every cause");
 }
 
-// Every document save stages `.＜name＞.microide-staging.<pid>.<seq>` beside its
-// target inside the project tree and renames it into place. A watcher batch that
-// lands inside that window used to leave the staging path in the index, so it
-// showed up in the Ctrl+P file finder and in the project-search candidate set
-// until the next full rescan (it also made the replace-all read-count test flaky,
-// ~12% of runs). Both scan modes must filter it — "include hidden files" too,
-// since the leading dot alone only covers the default mode.
 void TestFileIndexHidesAtomicWriteStagingFiles() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -661,8 +589,6 @@ void TestFileIndexHidesAtomicWriteStagingFiles() {
   }
 }
 
-// Quick-open lists what a remote mirror's sync has not fetched yet (it opens by
-// fetching), once each and in order; a search, which reads the files, does not.
 void TestFileIndexVisitsPendingPaths() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -688,11 +614,6 @@ void TestFileIndexVisitsPendingPaths() {
   Expect(visited.size() == 2, "cleared");
 }
 
-// A save's temporary whose writer crashed between writing it and renaming it
-// into place was never removed: it sat in the user's project for good (git
-// status lists it). A scan removes one whose writer is gone and that is older
-// than any save takes; a fresh one (maybe another machine's save on a shared
-// filesystem) and one whose writer is alive stay.
 void TestFileIndexScanSweepsAbandonedSaveTemporaries() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -759,4 +680,4 @@ void RegisterFileIndexTests(std::vector<TestCase>& tests) {
           TestFileIndexInitialBatchAbortsWhenCancelled);
 }
 
-}  // namespace microide::tests
+}

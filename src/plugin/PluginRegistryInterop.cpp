@@ -14,10 +14,6 @@ namespace {
 
 using lua_interop::IsValidIdentifier;
 
-// The per-kind contribution ceiling (kMaxPluginContributionsPerKind) and
-// ContributionLimitReached now live in plugin/PluginContributionLimits.h so the
-// parallel contribution_interop register path enforces the identical envelope.
-
 void RebuildCommandNamesImpl(
     const std::unordered_map<std::string, runtime_types::PluginCommand>& commands,
     std::vector<std::string>* command_names) {
@@ -49,7 +45,7 @@ void RebuildSidebarProvidersImpl(
             });
 }
 
-}  // namespace
+}
 
 void RebuildCommandNames(const std::unordered_map<std::string, runtime_types::PluginCommand>& commands,
                          std::vector<std::string>* command_names) {
@@ -118,8 +114,6 @@ bool RegisterSidebar(lua_State* state,
     lua_pop(state, 1);
     return false;
   }
-  // NUL-reject: a truncated id would pass IsValidIdentifier on its prefix and could
-  // collide with another sidebar (TD-2026-07-17A-080).
   const std::string id = lua_interop::ToHostString(state, -1).value_or(std::string{});
   lua_pop(state, 1);
   if (!IsValidIdentifier(id)) {
@@ -212,7 +206,6 @@ bool RegisterHoverProvider(lua_State* state,
     lua_pop(state, 1);
     return false;
   }
-  // NUL-reject the hover provider id (TD-2026-07-17A-080); see sidebar id above.
   const std::string id = lua_interop::ToHostString(state, -1).value_or(std::string{});
   lua_pop(state, 1);
   if (!IsValidIdentifier(id)) {
@@ -338,9 +331,6 @@ bool RegisterStatusItem(
   if (status_items == nullptr || status_item_order == nullptr) {
     return util::Fail(error_message, "status item registry is unavailable");
   }
-  // Status items use the tighter refresh-budget-derived cap: the whole vector
-  // is re-resolved + sorted on the main thread per ctx.status.update
-  // (TD-2026-07-17-019; see PluginContributionLimits.h).
   if (ContributionLimitReachedAt(status_items, kMaxPluginStatusItems, error_message)) {
     return false;
   }
@@ -390,8 +380,6 @@ bool ExtractStatusItemUpdate(lua_State* state,
   lua_interop::GetFieldProtected(state, 2, "progress");
   if (lua_isnumber(state, -1)) {
     const double value = lua_tonumber(state, -1);
-    // Ignore non-finite progress (NaN slips through std::clamp) so it cannot
-    // reach the status-bar progress-bar layout; treat it as "no bar".
     if (std::isfinite(value)) {
       out->has_progress = true;
       out->progress = value < 0.0 ? -1.0f : std::clamp(static_cast<float>(value), 0.0f, 1.0f);
@@ -415,18 +403,12 @@ bool ApplyStatusItemUpdate(
       index->emplace((*status_item_order)[i].id, i);
     }
   };
-  // Ids are unique, so index->size() tracks the vector's size 1:1. A structural
-  // change (register append / teardown erase) always changes the vector size;
-  // in-place field updates below keep positions valid. Rebuild only on a size
-  // mismatch so steady-state updates stay O(1).
   if (index->size() != status_item_order->size()) {
     rebuild_index();
   }
   auto it = index->find(update.full_id);
   if (it == index->end() || it->second >= status_item_order->size() ||
       (*status_item_order)[it->second].id != update.full_id) {
-    // Defend against a same-size structural swap: rebuild once and retry before
-    // concluding the item is absent.
     rebuild_index();
     it = index->find(update.full_id);
     if (it == index->end()) {
@@ -452,6 +434,6 @@ bool ApplyStatusItemUpdate(
   return true;
 }
 
-}  // namespace microide::plugin::registry_interop
+}
 
 #endif

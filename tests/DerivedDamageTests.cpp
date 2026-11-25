@@ -25,10 +25,6 @@ bool Same(const SDL_FRect& a, const SDL_FRect& b) {
   return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
 }
 
-// The mechanism, on its own: the first frame damages nothing (it paints whole),
-// an unchanged frame nothing, a changed unit its rect, a moved one both rects (one
-// when they slid along an axis and touch), and
-// one that appeared or went away its own rect.
 void TestDerivedDamageRepaintsWhatChanged() {
   DerivedDamage damage;
   const SDL_FRect a{0, 0, 10, 10};
@@ -39,13 +35,10 @@ void TestDerivedDamageRepaintsWhatChanged() {
   auto changed = Commit(damage, {{a, 1}, {b, 3}});
   Expect(changed.size() == 1 && Same(changed[0], b), "a changed unit damages its rect, and only it");
 
-  // A unit that slid along one axis, its rects overlapping: one rect, their exact
-  // union (a divider dragged a few pixels).
   const SDL_FRect b_moved{12, 0, 10, 10};
   auto moved = Commit(damage, {{a, 1}, {b_moved, 3}});
   Expect(moved.size() == 1 && Same(moved[0], SDL_FRect{10, 0, 12, 10}),
          "a unit that slid damages where it was and where it is, as one rect");
-  // Moved far, or diagonally: the union would cover pixels neither held, so two.
   const SDL_FRect b_far{60, 0, 10, 10};
   auto far = Commit(damage, {{a, 1}, {b_far, 3}});
   Expect(far.size() == 2 && Same(far[0], b_moved) && Same(far[1], b_far),
@@ -67,11 +60,6 @@ void TestDerivedDamageRepaintsWhatChanged() {
   Expect(again.size() == 1 && Same(again[0], a), "and where they appear when it shows again");
 }
 
-// Scattered changes in one surface damage at most two rects (the nearest merged),
-// not one rect each: five rows spaced apart plus the frame's other damage reached the clip
-// count at which the frame is promoted to a full repaint, so every debugger step
-// repainted the window (debug_pane_step_paint, 42.7 ms against 10.1). Up to
-// kSeparateRectsPerSurface rects stay apart (a moved unit's old and new place).
 void TestDerivedDamageCoalescesScatteredChangesInASurface() {
   DerivedDamage damage;
   std::vector<DerivedDamage::Unit> rows;
@@ -92,8 +80,6 @@ void TestDerivedDamageCoalescesScatteredChangesInASurface() {
   for (const int i : {0, 2, 4, 6, 9}) {
     five[i].fingerprint = 3;
   }
-  // Rows 0,2,4,6 and 9 changed: at most two rects, the nearest merged, together
-  // covering every changed row.
   auto merged = Commit(damage, five);
   Expect(merged.size() == 2, "five scattered rows damage two rects: " + std::to_string(merged.size()));
   for (const int i : {0, 2, 4, 6, 9}) {
@@ -106,7 +92,6 @@ void TestDerivedDamageCoalescesScatteredChangesInASurface() {
   }
 }
 
-// Every kind of value a unit folds in moves its fingerprint.
 void TestPaintFingerprintFoldsEveryValue() {
   const auto base = [] {
     return PaintFingerprint().Add(std::string_view("Ln 1, Col 1")).Add(SDL_FRect{1, 2, 3, 4})
@@ -123,14 +108,11 @@ void TestPaintFingerprintFoldsEveryValue() {
                  .Add(SDL_Color{1, 2, 3, 4}).Add(false).Add(7).value() != reference, "flag");
   Expect(PaintFingerprint().Add(std::string_view("Ln 1, Col 1")).Add(SDL_FRect{1, 2, 3, 4})
                  .Add(SDL_Color{1, 2, 3, 4}).Add(true).Add(8).value() != reference, "integer");
-  // Adjacent strings do not run together: "ab"+"c" is not "a"+"bc".
   Expect(PaintFingerprint().Add(std::string_view("ab")).Add(std::string_view("c")).value() !=
              PaintFingerprint().Add(std::string_view("a")).Add(std::string_view("bc")).value(),
          "string boundaries are part of the fingerprint");
 }
 
-// Every field a status-bar segment paints moves its fingerprint (and adding a
-// field without folding it in does not compile: FingerprintOf binds them all).
 void TestAStatusBarSegmentsFingerprintCoversWhatItPaints() {
   using Segment = workspace::PreparedFrameState::StatusBarSegmentPaint;
   const SDL_Color background{10, 10, 10, 255};
@@ -152,7 +134,7 @@ void TestAStatusBarSegmentsFingerprintCoversWhatItPaints() {
   Expect(workspace::FingerprintOf(base, SDL_Color{11, 10, 10, 255}) != reference, "the background");
 }
 
-}  // namespace
+}
 
 void RegisterDerivedDamageTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DerivedDamage/RepaintsWhatChanged", TestDerivedDamageRepaintsWhatChanged);
@@ -163,4 +145,4 @@ void RegisterDerivedDamageTests(std::vector<TestCase>& tests) {
           TestAStatusBarSegmentsFingerprintCoversWhatItPaints);
 }
 
-}  // namespace microide::tests
+}

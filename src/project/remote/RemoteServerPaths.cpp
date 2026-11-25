@@ -27,7 +27,7 @@ std::string OctalMode(unsigned mode) {
   return buffer;
 }
 
-}  // namespace
+}
 
 std::filesystem::path DefaultServerSocketDir(const std::filesystem::path& home) {
   std::error_code ec;
@@ -39,10 +39,6 @@ std::filesystem::path DefaultServerSocketDir(const std::filesystem::path& home) 
 }
 
 std::string_view ServerInstallScript() {
-  // The staging name is this shell's own ($$): two windows or projects reaching a
-  // fresh host at once install side by side, and each rename replaces the binary
-  // atomically. A shared name let one `mv` take the other's file away from under
-  // it ("cannot stat .microide-server.tmp"), and that project stayed disconnected.
   return "umask 077 && d=\"$HOME/$0\" && mkdir -p \"$d\" && t=\"$d/.microide-server.tmp.$$\" && "
          "{ cat > \"$t\" && chmod 700 \"$t\" && mv -f \"$t\" \"$d/microide-server\" || "
          "{ rm -f \"$t\"; exit 1; }; }";
@@ -78,9 +74,6 @@ bool EnsureServerSocketDir(const std::filesystem::path& dir, std::string* error)
     return false;
   }
   const uid_t uid = ::geteuid();
-  // Walk down from "/", one component at a time, each opened relative to its
-  // parent's descriptor: a name checked and then used by path could be swapped
-  // for a symlink in between, a descriptor cannot.
   int parent = ::open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
   if (parent < 0) {
     *error = "cannot open /";
@@ -105,9 +98,6 @@ bool EnsureServerSocketDir(const std::filesystem::path& dir, std::string* error)
     }
     struct stat st{};
     if (::fstatat(parent, name.c_str(), &st, AT_SYMLINK_NOFOLLOW) != 0) {
-      // EEXIST: another starter created it between the stat and the mkdir (two
-      // projects reaching a fresh host at once). Whoever made it, it is checked
-      // below exactly like one that was already there.
       if (errno != ENOENT || (::mkdirat(parent, name.c_str(), 0700) != 0 && errno != EEXIST) ||
           ::fstatat(parent, name.c_str(), &st, AT_SYMLINK_NOFOLLOW) != 0) {
         *error = "cannot create " + walked.string() + ": " + std::strerror(errno);
@@ -172,7 +162,6 @@ std::string MakeDaemonEpoch() {
     }
   }
   if (!filled) {
-    // Unique enough to tell two server processes apart, which is all it is for.
     const auto stamp = static_cast<std::uint64_t>(
         std::chrono::steady_clock::now().time_since_epoch().count());
     for (std::size_t i = 0; i < 8; ++i) {
@@ -224,8 +213,6 @@ SessionSurvival ReadSessionSurvival(const std::filesystem::path& root, std::stri
   };
   const std::filesystem::path etc = root / "etc" / "systemd";
   apply(etc / "logind.conf");
-  // Drop-ins override the main file, in lexical order (systemd's rule); /run and
-  // /usr/lib drop-ins are the distribution's and come first.
   std::vector<std::filesystem::path> drop_ins;
   for (const std::filesystem::path& dir :
        {root / "usr" / "lib" / "systemd" / "logind.conf.d", root / "run" / "systemd" / "logind.conf.d",
@@ -250,4 +237,4 @@ SessionSurvival ReadSessionSurvival(const std::filesystem::path& root, std::stri
   return survival;
 }
 
-}  // namespace microide::project::remote
+}

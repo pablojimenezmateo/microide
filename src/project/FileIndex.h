@@ -26,22 +26,10 @@ struct ProjectFile {
   bool operator==(const ProjectFile&) const = default;
 };
 
-// Immutable, shared list of relative paths produced by FileIndex, as normalized
-// generic ('/'-separated) TEXT.
-//
-// Text and not `std::filesystem::path`, because a path copy allocates twice — its
-// pathname and the parsed component list — and the whole list is rebuilt on the
-// shell thread whenever the index changes. On a 10k-file project that was 20,000
-// allocations between a save and the next search (TD-2026-08-17-259). It also
-// removes an allocation on the OTHER side: the search worker's per-candidate
-// `generic_string()` is now the stored value itself.
 using SharedPathList = std::shared_ptr<const std::vector<std::string>>;
 
 struct FilePathSnapshot {
   std::uint64_t version = 0;
-  // Shared with the FileIndex cache: consumers can iterate without copying. The
-  // pointer stays valid for as long as the consumer holds the snapshot, even if
-  // the cache is rebuilt under them (a rebuild swaps in a new shared_ptr).
   SharedPathList files;
 };
 
@@ -63,61 +51,23 @@ class FileIndex {
                RootPopulationMode population_mode = RootPopulationMode::ScanNow);
   void Reset();
   void Refresh();
-  // Pure full-tree scan + per-file stat, split out so a forced refresh can run it
-  // on a background thread (it touches no FileIndex state — only its arguments):
-  // the shell captures root/follow/excludes by value, scans off the UI thread, and
-  // hands the sorted result to ReplaceScannedFiles() back on the main thread. This
-  // keeps the whole-project `is_directory`/`file_size`/`last_write_time` sweep
-  // (TD-2026-07-17-081/082) off the shell thread on manual refresh / exclude edits.
-  // `out_status` (optional) reports why (if at all) the underlying tree walk
-  // returned only a prefix, so a forced refresh can carry that status to
-  // ReplaceScannedFiles() instead of silently dropping it (TD-2026-07-17-008/033).
   static std::vector<ProjectFile> ScanFiles(const std::filesystem::path& root,
                                             bool follow_out_of_root_symlinks,
                                             const std::vector<std::string>& exclude_globs,
                                             ProjectFileScanStatus* out_status = nullptr);
-  // Commits a pre-scanned (already sorted) file list produced by ScanFiles(),
-  // replacing the current contents. Runs on the owning (main) thread. `status` is
-  // the completeness status reported by ScanFiles() for this same scan.
   void ReplaceScannedFiles(std::vector<ProjectFile> files, ProjectFileScanStatus status);
-  // Same commit, but it first DIFFS the scan against what the index already holds
-  // and reports the difference through `out_changes` (optional). Returns false —
-  // leaving the index, its version and its derived caches completely untouched —
-  // when the scan is identical to the current contents.
-  //
-  // This is the synchronous "is anything different right now?" oracle. It replaced
-  // a whole second file watcher: the project used to keep an independent tree
-  // snapshot (plus its own inotify instance and thread) purely to answer that
-  // question, when the index is already a sorted list of exactly the same paths
-  // with exactly the same mtime/size (TD-2026-08-15-252).
   bool ReplaceScannedFilesReportingChanges(
       std::vector<ProjectFile> files, ProjectFileScanStatus status,
       std::vector<platform::IndexUpdateBatch::Change>* out_changes);
-  // Mirrors the `project.follow_out_of_root_symlinks` user setting; consulted by
-  // the full rescan in Refresh(). Default false keeps the out-of-root containment
-  // guard active.
   void SetFollowOutOfRootSymlinks(bool follow) {
     follow_out_of_root_symlinks_.store(follow, std::memory_order_relaxed);
   }
   bool FollowOutOfRootSymlinks() const {
     return follow_out_of_root_symlinks_.load(std::memory_order_relaxed);
   }
-  // User/project-configured ignore globs folded into the full-rescan (Refresh) via
-  // CollectProjectFiles, alongside the built-in defaults. The background watcher
-  // carries its own copy (FileIndexWatcher::SetExcludeGlobs); this covers the
-  // manual ScanNow/Refresh path.
   void SetExcludeGlobs(std::vector<std::string> globs);
-  // True when the last population of the index (the initial watcher batch or a
-  // full ScanFiles/Refresh rescan) returned only a prefix of the tree: the index
-  // therefore must not be presented as an authoritative complete file set
-  // (TD-2026-07-17-008/033). `scan_status()` reports the specific cause(s).
   bool truncated() const;
   ProjectFileScanStatus scan_status() const;
-  // Applies an index update batch. For the initial full-scan batch (the only
-  // expensive case), `is_cancelled` is polled during the bulk rebuild; if it
-  // returns true the rebuild aborts before committing, leaving the index
-  // unchanged and returning false. This lets a teardown (StopFileIndexWatcher)
-  // abandon an in-flight initial load instead of blocking on it.
   bool ApplyBatch(const platform::IndexUpdateBatch& batch,
                   const std::function<bool()>& is_cancelled = {});
   std::vector<ProjectFile> Snapshot() const;
@@ -125,36 +75,15 @@ class FileIndex {
       ProjectFileScanMode mode = ProjectFileScanMode::ExcludeHidden) const;
   std::vector<std::filesystem::path> SnapshotPaths(
       ProjectFileScanMode mode = ProjectFileScanMode::ExcludeHidden) const;
-  // Visit every indexed relative path in `mode`, in sorted order, and return the
-  // version the visit observed. Nothing is copied: `visit` sees the index's own
-  // paths.
-  //
-  // For a consumer that builds its own derived structure from the paths and
-  // throws the intermediate away. The file finder used to reach the same set
-  // through SnapshotWithVersion(), whose deep copy cost one heap allocation per
-  // indexed file — 10,000 of them on the 10k-file fixture — for two fields
-  // (`mtime`, `size`) it never reads (TD-2026-08-06-154).
-  //
-  // `visit` runs WITH the index's shared lock held, so it must not call back
-  // into this index (a nested unique_lock would deadlock) and should stay pure
-  // CPU work: a writer — the watcher thread applying a batch — blocks for its
-  // duration. That is the same window the deep copy held, doing more work.
-  //
-  // The visit includes the pending paths (SetPendingPaths) that are not on disk:
-  // it is what quick-open lists, and a file the sync has not fetched yet is one
-  // the user can open. Snapshot*() — what a search reads — does not.
   std::uint64_t VisitRelativePaths(
       ProjectFileScanMode mode,
       const std::function<void(const std::filesystem::path&)>& visit) const;
-  // Files the project lists that are not on disk yet (a remote mirror's first
-  // sync). Replaces the previous set; null or empty clears it.
   void SetPendingPaths(SharedPendingPaths pending);
   std::uint64_t version() const;
 
   const std::filesystem::path& root() const { return root_; }
 
  private:
-  // The move body: every member taken from `other`. Both locks are held.
   void TakeStateFrom(FileIndex& other);
   struct CacheBucket {
     SharedPathList files;
@@ -164,74 +93,40 @@ class FileIndex {
   static std::size_t CacheIndex(ProjectFileScanMode mode);
   static bool IsGitMetadataRelativePath(const std::filesystem::path& path);
   static bool IsHiddenRelativePath(const std::filesystem::path& path);
-  // True for an in-flight atomic-write staging temp (util::UniqueTemporaryPath).
-  // Excluded from every snapshot in both scan modes: it exists only between a
-  // save's write and its rename, so surfacing it in the finder or the search
-  // candidate set only ever shows the user a file that is already gone.
   static bool IsTemporaryStagingRelativePath(const std::filesystem::path& path);
-  // One change of an incremental ApplyBatch, built before the lock. A create or
-  // modify carries its ProjectFile, which names the path; only a deletion keeps a
-  // path of its own (a second copy per op was one allocation per change).
   struct BatchOp {
-    std::optional<ProjectFile> file;  // set: create or modify; unset: delete
+    std::optional<ProjectFile> file;
     std::filesystem::path deleted_path;
     bool recursive = false;
     const std::filesystem::path& path() const {
       return file.has_value() ? file->relative_path : deleted_path;
     }
   };
-  // One run of non-recursive changes from ApplyBatch (its ops, in batch order):
-  // last change per path wins, modifications in place, insertions and removals
-  // in one merge. Whether the index changed.
   bool ApplySegmentLocked(std::vector<BatchOp*>& segment);
   static bool LessProjectPath(const ProjectFile& lhs, const std::filesystem::path& rhs);
   static bool LessProjectFile(const ProjectFile& lhs, const ProjectFile& rhs);
-  // `normalized_relative_path` must already be lexically normal. Both callers
-  // normalize it for the containment checks they run first, so normalizing again
-  // here was a second ~12-allocation no-op per file of a batch -- and its result
-  // was immediately overwritten with the caller's copy.
   static ProjectFile ToProjectFile(const platform::IndexFileEntry& entry,
                                    const std::filesystem::path& normalized_relative_path);
   void EnsureFresh(ProjectFileScanMode mode) const;
   bool RemoveProjectFileLocked(const std::filesystem::path& relative_path);
-  // Remove every directory in `relative_dirs`, and every indexed file beneath
-  // them, in ONE compaction pass. Used for recursive deletions (a watched/nested
-  // directory removed or moved out).
-  //
-  // The run, rather than one call per directory, is the point: a single `rm -rf`
-  // reaches the index as one recursive change per removed directory -- doubled,
-  // because the parent watch's IN_DELETE and the directory's own IN_DELETE_SELF
-  // each report it -- and every separate erase shifts the tail of a vector that is
-  // routinely tens of thousands of entries. Recursive deletions are idempotent and
-  // commute with each other, so a consecutive run is exactly the union of its
-  // ranges.
   bool RemoveProjectSubtreesLocked(const std::vector<std::filesystem::path>& relative_dirs);
-  // Compact `files_`, dropping the (possibly overlapping) half-open index ranges.
-  // Sorts `ranges` in place. Returns whether anything was dropped.
   bool EraseIndexRangesLocked(std::vector<std::pair<std::size_t, std::size_t>>& ranges);
   void RebuildCacheLocked(ProjectFileScanMode mode, CacheBucket& cache) const;
 
   std::filesystem::path root_;
   std::atomic<bool> follow_out_of_root_symlinks_{false};
   mutable std::shared_mutex files_mutex_;
-  std::vector<std::string> exclude_globs_;   // guarded by files_mutex_
-  ProjectFileScanStatus scan_status_;        // guarded by files_mutex_
+  std::vector<std::string> exclude_globs_;
+  ProjectFileScanStatus scan_status_;
   std::vector<ProjectFile> files_;
-  SharedPendingPaths pending_;  // never empty when set
+  SharedPendingPaths pending_;
   std::uint64_t version_ = 0;
   mutable CacheBucket exclude_hidden_cache_;
   mutable CacheBucket include_hidden_cache_;
-  // ApplyBatch's bookkeeping, kept across batches so a warm one allocates none of
-  // it: a one-file save, the common batch, paid three vectors for a merge it never
-  // runs. Guarded by batch_scratch_mutex_, held for a whole incremental apply: the
-  // index watcher applies on its own thread while the shell thread applies a
-  // Replace All's outcome, and the ops are built before files_mutex_ is taken (an
-  // unguarded first version crashed the two into each other). Readers wait only on
-  // files_mutex_. Not moved by TakeStateFrom.
   std::mutex batch_scratch_mutex_;
   std::vector<BatchOp> batch_ops_;
   std::vector<BatchOp*> batch_segment_;
   std::vector<std::filesystem::path> batch_subtrees_;
 };
 
-}  // namespace microide::project
+}

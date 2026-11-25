@@ -25,7 +25,7 @@ ProjectCatalogCoordinator::Operations ProjectCatalogService::BuildCoordinatorOpe
                                                           restore_persistence,
                                                           log_feedback,
                                                           true,
-                                                          /*root_missing=*/false,
+                                                          false,
                                                           locality);
           },
       .activate_project_state =
@@ -78,9 +78,6 @@ bool ProjectCatalogService::ActivateProjectState(ProjectWorkspaceState& state,
   }
   util::PerformanceTrace::Scope trace_scope(perf_label.View());
   if (!state.initialized) {
-    // A project restored without its folder opens as missing -- unless the folder
-    // is back by now (the branch switched back, the drive mounted), when it opens
-    // as any other.
     if (std::error_code error; state.root_missing && std::filesystem::is_directory(state.root, error)) {
       state.root_missing = false;
     }
@@ -109,14 +106,6 @@ bool ProjectCatalogService::ActivateProjectState(ProjectWorkspaceState& state,
         "ProjectCatalogService::ActivateProjectState::ActivateCurrentTabAfterStateLoad");
     operations_.activate_current_tab_after_state_load();
   }
-  // A project's watcher is stopped while another is in front, and the restarted
-  // one's first batch is a baseline, not a change list: a file rewritten
-  // meanwhile -- by the other project's save of the same file, an outside tool,
-  // a checkout -- reports nothing. A background git completion arms the full
-  // catch-up below (git state, tree, compares); any other change is caught
-  // only by re-checking the open buffers on every activation, or the clean
-  // buffer keeps the old text and its next save writes it over the file (soak
-  // 88696b6b00ac and its cluster).
   if (std::exchange(context_.current_project_state.catch_up_on_activate, false) &&
       operations_.catch_up_background_changes) {
     util::PerformanceTrace::Scope scope(
@@ -232,4 +221,4 @@ void ProjectCatalogService::LoadProjectState(ProjectWorkspaceState& state) {
   }
 }
 
-}  // namespace microide::workspace
+}

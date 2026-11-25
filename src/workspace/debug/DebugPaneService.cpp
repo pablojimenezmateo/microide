@@ -28,7 +28,6 @@ void DebugPaneService::Close() {
     return;
   }
   pane.visible = false;
-  // Don't strand keyboard focus on a hidden surface.
   if (state_.surface.focus == FocusTarget::DebugPane) {
     state_.surface.focus = FocusTarget::Editor;
   }
@@ -48,9 +47,7 @@ void DebugPaneService::OpenOnStop() {
   if (state_.debug_pane.visible) {
     return;
   }
-  // Open on the Variables inspector by default — inspecting locals is the common
-  // first action at a stop; the user can switch to Call Stack when needed.
   Activate(DebugPaneMode::Variables);
 }
 
-}  // namespace microide::workspace
+}

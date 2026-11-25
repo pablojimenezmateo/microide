@@ -10,9 +10,6 @@
 namespace microide::workspace {
 namespace {
 
-// Expiry for a transient row posted at `now_ms`. Saturates rather than wrapping: a
-// monotonic clock near UINT64_MAX would otherwise overflow to a tiny expiry and
-// drop the notification on the next ExpireDue.
 std::uint64_t TransientExpiry(std::uint64_t now_ms, std::uint64_t duration_ms) {
   return now_ms > std::numeric_limits<std::uint64_t>::max() - duration_ms
              ? std::numeric_limits<std::uint64_t>::max()
@@ -26,7 +23,7 @@ NotificationService::Actions CapActions(std::vector<NotificationService::Action>
       break;
     }
     if (action.label.empty()) {
-      continue;  // a button with no label is a button nobody can find
+      continue;
     }
     if (util::TruncateUtf8ToByteBudget(action.label, NotificationService::MaxActionLabelBytes())) {
       action.label += "…";
@@ -36,7 +33,7 @@ NotificationService::Actions CapActions(std::vector<NotificationService::Action>
   return actions;
 }
 
-}  // namespace
+}
 
 NotificationService::Tone NotificationService::ToneFromLevel(std::string_view level) {
   if (level == "error" || level == "err") {
@@ -49,12 +46,9 @@ NotificationService::Tone NotificationService::ToneFromLevel(std::string_view le
 }
 
 bool NotificationService::CapMessage(std::string& message) {
-  // Byte-cap the message at ingress on a UTF-8 codepoint boundary so one oversized
-  // toast (a plugin ctx.notify, or a subprocess/provider error) cannot force large
-  // string copies + text measurement during a full redraw (TD-2026-07-17A-101).
   const bool truncated = util::TruncateUtf8ToByteBudget(message, MaxMessageBytes());
   if (truncated) {
-    message += "…";  // ellipsis marker so the shortened display string reads as clipped
+    message += "…";
   }
   return truncated;
 }
@@ -68,17 +62,11 @@ bool NotificationService::Show(Request request, std::uint64_t now_ms) {
     return false;
   }
   const bool truncated = CapMessage(request.message);
-  // Progress implies sticky: the row ends when the work does. A sticky row with no
-  // key is a row nothing can ever dismiss, so it is posted transient instead —
-  // silently leaking a permanent toast is the worse failure.
   const bool sticky = (request.sticky || request.progress.has_value()) && !request.key.empty();
   Actions actions = CapActions(request.actions);
   const std::uint64_t expiry_ms =
       TransientExpiry(now_ms, actions.empty() ? DurationMs() : ActionDurationMs());
 
-  // Identity first: a keyed row replaces the one already on screen IN PLACE, so an
-  // updating row keeps its stack position instead of walking to the top under the
-  // pointer.
   if (!request.key.empty()) {
     for (Notification& existing : notifications_) {
       if (existing.key == request.key) {
@@ -93,8 +81,6 @@ bool NotificationService::Show(Request request, std::uint64_t now_ms) {
         existing.truncated = truncated;
         existing.sticky = sticky;
         existing.progress = request.progress;
-        // The button set is part of what the row says, so it is replaced with
-        // the text; a hovered button that no longer exists stops being hovered.
         existing.actions = std::move(actions);
         if (existing.hovered_action.has_value() &&
             *existing.hovered_action >= existing.actions.size()) {
@@ -110,10 +96,6 @@ bool NotificationService::Show(Request request, std::uint64_t now_ms) {
       }
     }
   } else {
-    // Anonymous rows keep the old dedup: repeating the same message refreshes the
-    // one already on screen instead of stacking a copy. A held shortcut that keeps
-    // getting refused, or a button clicked twice, would otherwise push the other
-    // toasts out of the stack with duplicates of one sentence.
     for (Notification& existing : notifications_) {
       if (existing.key.empty() && existing.tone == request.tone &&
           existing.message == request.message) {
@@ -130,7 +112,7 @@ bool NotificationService::Show(Request request, std::uint64_t now_ms) {
       sticky_count += existing.sticky ? 1 : 0;
     }
     if (sticky_count >= MaxSticky()) {
-      return false;  // refused rather than stacked off the top of the window
+      return false;
     }
   }
 
@@ -157,9 +139,6 @@ void NotificationService::Remember(const Notification& posted) {
 }
 
 void NotificationService::TrimTransientOverflow() {
-  // Drop the OLDEST transient rows past the cap. Sticky rows are skipped: they
-  // report a state, and dropping one because three warnings arrived would hide the
-  // state rather than the warnings.
   std::size_t transient = 0;
   for (const Notification& existing : notifications_) {
     transient += existing.sticky ? 0 : 1;
@@ -203,8 +182,6 @@ std::optional<std::uint64_t> NotificationService::NextExpiryDelayMs(std::uint64_
   std::optional<std::uint64_t> earliest;
   for (const Notification& notification : notifications_) {
     if (notification.sticky || notification.hovered || notification.focused) {
-      // Nothing to wake for: a sticky row ends when its owner says so, and a
-      // hovered one when the pointer leaves (SetHovered re-arms its expiry).
       continue;
     }
     earliest = earliest.has_value() ? std::min(*earliest, notification.expiry_ms)
@@ -227,8 +204,6 @@ bool NotificationService::SetHovered(std::optional<std::size_t> index,
         hovered && action.has_value() && *action < notification.actions.size() ? action
                                                                                 : std::nullopt;
     if (notification.hovered && !hovered && !notification.sticky) {
-      // Leaving a row that expired under the pointer: give the eye a moment to
-      // follow instead of removing it on the very motion event that left it.
       notification.expiry_ms =
           std::max(notification.expiry_ms, TransientExpiry(now_ms, HoverGraceMs()));
     }
@@ -259,7 +234,7 @@ std::optional<std::size_t> PrimaryAction(const NotificationService::Notification
                              : std::optional<std::size_t>(row.actions.size() - 1);
 }
 
-}  // namespace
+}
 
 bool NotificationService::Focus() {
   ClearFocus();
@@ -326,9 +301,6 @@ NotificationService::FocusKeyResult NotificationService::HandleFocusKey(FocusKey
       if (!row.focused_action.has_value()) {
         return {};
       }
-      // A transient row closes behind its action and takes the focus with it, so
-      // the keyboard goes back to where it was — as after a click on the button.
-      // A row that stays up (sticky, or keep_open) stays focused.
       std::optional<Action> action = TakeAction(index, *row.focused_action);
       return {.changed = true, .action = std::move(action)};
     }
@@ -390,4 +362,4 @@ std::optional<std::size_t> NotificationService::FindAction(std::size_t row,
   return std::nullopt;
 }
 
-}  // namespace microide::workspace
+}

@@ -21,12 +21,8 @@ using microide::editor::TextViewport;
 namespace util = microide::util;
 using microide::util::WriteTextFileAtomically;
 
-// True when the current process can bypass DAC permission checks (root), which would
-// defeat a "make the directory unwritable" failure-injection test.
 bool RunningAsRoot() { return ::geteuid() == 0; }
 
-// POSIX permission bits (mode & 07777) of an existing path, or -1 if it cannot be
-// stat'd.
 int PosixModeBits(const std::filesystem::path& path) {
   struct stat status{};
   if (::stat(path.c_str(), &status) != 0) {
@@ -35,8 +31,6 @@ int PosixModeBits(const std::filesystem::path& path) {
   return static_cast<int>(status.st_mode & 07777);
 }
 
-// (inode, hardlink count) of a path, or (0, 0) if it cannot be stat'd. Used to prove that an
-// atomic save replaces the inode (and thus breaks a hardlink) rather than writing in place.
 std::pair<ino_t, nlink_t> PosixInodeAndLinks(const std::filesystem::path& path) {
   struct stat status{};
   if (::stat(path.c_str(), &status) != 0) {
@@ -45,10 +39,6 @@ std::pair<ino_t, nlink_t> PosixInodeAndLinks(const std::filesystem::path& path) 
   return {status.st_ino, status.st_nlink};
 }
 
-// No directory entry beside `path` should be a leftover staging temp once a save
-// settles. Asks the generator's own predicate rather than re-spelling the naming
-// scheme here: this helper previously hardcoded "<file>.tmp." and would have gone
-// silently vacuous the moment the staging name changed.
 bool NoStagingTempLeftBehind(const std::filesystem::path& path) {
   std::error_code error;
   for (const auto& entry : std::filesystem::directory_iterator(path.parent_path(), error)) {
@@ -59,9 +49,6 @@ bool NoStagingTempLeftBehind(const std::filesystem::path& path) {
   return true;
 }
 
-// The generator and the predicate must agree — the file index's staging filter and
-// this suite's leftover check both go through the predicate, so a naming change that
-// the predicate did not follow would hide staging files from every check at once.
 void TestStagingTempNameIsRecognizedByItsOwnPredicate() {
   const std::filesystem::path target = std::filesystem::path("/tmp/project") / "main.cpp";
   const std::filesystem::path staging = util::UniqueTemporaryPath(target);
@@ -74,7 +61,6 @@ void TestStagingTempNameIsRecognizedByItsOwnPredicate() {
   Expect(util::UniqueTemporaryPath(target) != staging,
          "two staging paths for the same target must be distinct");
 
-  // False-positive control: ordinary project files that merely look temp-ish.
   for (const char* name : {"build.tmp.json", "notes.tmp", ".gitignore", "main.cpp",
                            ".microide-staging"}) {
     Expect(!util::IsTemporaryStagingFilename(name),
@@ -82,16 +68,11 @@ void TestStagingTempNameIsRecognizedByItsOwnPredicate() {
   }
 }
 
-// A2/A3: the atomic writer stages to a unique per-write temp, so a pre-existing file
-// that happens to share the old fixed ".tmp" name is neither consumed nor clobbered,
-// and no staging temp survives the write.
 void TestAtomicWriteUsesUniqueTempAndSpareTmpSurvives() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "doc.txt";
   Expect(WriteTextFileAtomically(path, "v1\n"), "initial atomic write should succeed");
 
-  // A stray sibling named exactly "<path>.tmp" (the old fixed staging name) must be
-  // left completely untouched by the unique-temp writer.
   const std::filesystem::path decoy = path.string() + ".tmp";
   WriteFile(decoy, "decoy-should-survive");
 
@@ -104,9 +85,6 @@ void TestAtomicWriteUsesUniqueTempAndSpareTmpSurvives() {
          "the unique staging temp must be renamed/removed, not left behind");
 }
 
-// A1: an atomic save must preserve the destination's permission bits instead of
-// resetting the file to a fresh 0644 inode. Executable and restrictive modes are the
-// data-integrity-critical cases.
 void TestAtomicWritePreservesFileMode() {
   TemporaryDirectory temp_dir;
 
@@ -125,8 +103,6 @@ void TestAtomicWritePreservesFileMode() {
          "an executable 0755 file must keep its +x bits across an atomic save");
 }
 
-// A2: saving a symlinked file must update the link's target and keep the link itself,
-// not replace the link node with a regular file.
 void TestAtomicWriteThroughSymlinkPreservesLink() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path target = temp_dir.path() / "real.txt";
@@ -147,9 +123,6 @@ void TestAtomicWriteThroughSymlinkPreservesLink() {
   Expect(NoStagingTempLeftBehind(link), "no staging temp should be left beside the link");
 }
 
-// A2b: saving through a symlink whose target does not yet exist must create the target
-// and keep the link — weakly_canonical() would stop at the missing target and return the
-// link node, so a naive resolve replaces the link with a regular file.
 void TestAtomicWriteThroughSymlinkWithMissingTargetPreservesLink() {
   TemporaryDirectory temp_dir;
   std::error_code error;
@@ -157,7 +130,6 @@ void TestAtomicWriteThroughSymlinkWithMissingTargetPreservesLink() {
   Expect(!error, "creating the subdirectory should succeed");
 
   const std::filesystem::path link = temp_dir.path() / "link.txt";
-  // Relative target that does not exist yet (resolved against the link's parent).
   std::filesystem::create_symlink("sub/missing.txt", link, error);
   Expect(!error, "creating the dangling symlink should succeed");
 
@@ -172,12 +144,9 @@ void TestAtomicWriteThroughSymlinkWithMissingTargetPreservesLink() {
   Expect(NoStagingTempLeftBehind(link), "no staging temp should be left beside the link");
 }
 
-// C1: a failed save must not lose data — the buffer stays dirty, the on-disk file is
-// left intact (not truncated), no staging temp lingers, and the undo baseline is NOT
-// re-based (MarkSaved must not run), so undoing back to the loaded text reads clean.
 void TestSaveWriteFailureKeepsDirtyAndFileIntact() {
   if (RunningAsRoot()) {
-    return;  // root bypasses the directory-permission failure injection.
+    return;
   }
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "doc.txt";
@@ -190,15 +159,12 @@ void TestSaveWriteFailureKeepsDirtyAndFileIntact() {
   viewport.InsertText("X");
   Expect(viewport.dirty(), "an edit marks the buffer dirty");
 
-  // Make the parent directory unwritable so staging the temp fails.
   Expect(::chmod(temp_dir.path().c_str(), 0500) == 0, "chmod dir 0500 should succeed");
   std::error_code why;
   const bool saved = viewport.Save(microide::project::LocalFileWriteGate(), &why);
   Expect(::chmod(temp_dir.path().c_str(), 0700) == 0, "restoring dir perms should succeed");
 
   Expect(!saved, "a save into an unwritable directory must fail");
-  // The reason reaches the caller, which words it for the error row: a bare
-  // "Failed to save doc.txt" left nothing to fix.
   Expect(why == std::errc::permission_denied, "the failure says why: " + why.message());
   Expect(microide::util::DescribeWriteError(why) == "permission denied",
          "in the row's words: " + microide::util::DescribeWriteError(why));
@@ -207,8 +173,6 @@ void TestSaveWriteFailureKeepsDirtyAndFileIntact() {
          "a failed save must leave the on-disk file untouched, not truncated");
   Expect(NoStagingTempLeftBehind(path), "a failed save must not leave a staging temp behind");
 
-  // The failed save must not have re-baselined the undo history: undoing back to the
-  // loaded content reports clean, proving MarkSaved did not run on the failure path.
   Expect(viewport.Undo(), "undo should reverse the edit");
   Expect(viewport.lines().Snapshot() == std::vector<std::string>({"original", ""}) ||
              viewport.lines().Snapshot() == std::vector<std::string>({"original"}),
@@ -217,9 +181,6 @@ void TestSaveWriteFailureKeepsDirtyAndFileIntact() {
          "after a failed save, undoing to the loaded content must read clean (MarkSaved not applied)");
 }
 
-// C3: an in-place round-trip through the editor must preserve the file's original line
-// ending. Opening canonicalizes CRLF/CR to an LF buffer; saving must restore the
-// detected ending byte-for-byte.
 void TestSavePreservesCrlfLineEnding() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "crlf.txt";
@@ -248,7 +209,6 @@ void TestSavePreservesCrOnlyLineEnding() {
   Expect(ReadFile(path) == "a\rb\r", "a clean CR round-trip must preserve CR endings on disk");
 }
 
-// C3: an explicit SetSaveLineEnding override must actually rewrite the on-disk endings.
 void TestSaveLineEndingOverrideRewritesEndings() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "lf.txt";
@@ -262,16 +222,11 @@ void TestSaveLineEndingOverrideRewritesEndings() {
          "an explicit CRLF save override must rewrite LF endings to CRLF on disk");
 }
 
-// C11: a file with no trailing newline must stay that way across an in-place round-trip,
-// and a file that ends in a newline must keep exactly one. The line-based buffer models a
-// trailing newline as a final empty line, so this pins that the split/join is byte-exact
-// and that save-normalization stays off by default (POSIX tools and git treat a spurious
-// or missing final newline as a real content change).
 void TestSavePreservesTrailingNewlinePresence() {
   TemporaryDirectory temp_dir;
 
   const std::filesystem::path no_nl = temp_dir.path() / "no_final_nl.txt";
-  WriteFile(no_nl, "a\nb");  // deliberately no trailing newline
+  WriteFile(no_nl, "a\nb");
   {
     TextViewport viewport;
     Expect(viewport.OpenFile(no_nl), "opening the no-final-newline file should succeed");
@@ -295,11 +250,6 @@ void TestSavePreservesTrailingNewlinePresence() {
   }
 }
 
-// A clean save (no whitespace/final-newline transform enabled) serializes straight from
-// the live TextBuffer via SerializeLinesStreaming rather than materializing a
-// whole-document vector with Snapshot() first (TD-2026-07-17A-013). Pin that a
-// multi-line buffer round-trips byte-for-byte and that repeated clean saves stay
-// byte-stable, so the streaming path matches the old snapshot-then-join output exactly.
 void TestCleanSaveStreamsMultiLineBufferByteExact() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "multiline.txt";
@@ -308,27 +258,21 @@ void TestCleanSaveStreamsMultiLineBufferByteExact() {
 
   TextViewport viewport;
   Expect(viewport.OpenFile(path), "opening the multi-line file should succeed");
-  // Transforms default off — this is the clean/streaming path, not the normalize path.
   Expect(viewport.Save(microide::project::LocalFileWriteGate()), "clean save should succeed");
   Expect(ReadFile(path) == content,
          "a clean multi-line save must reproduce the buffer byte-for-byte via streaming");
 
-  // A second clean save must be idempotent (streaming is deterministic; no drift).
   Expect(viewport.Save(microide::project::LocalFileWriteGate()), "a second clean save should succeed");
   Expect(ReadFile(path) == content, "repeated clean saves stay byte-stable");
 }
 
-// C12: binary / non-text ("Bytes"-encoded) content must survive an unedited open->save
-// round-trip byte-for-byte. The editor canonicalizes CR/CRLF to an LF buffer for text, but
-// for opaque bytes a 0x0D or 0x0A is payload, not a line ending -- rewriting it silently
-// corrupts the file. Each case here is a distinct newline shape embedded in binary data.
 void TestSaveBinaryContentRoundTripsExactly() {
   const std::string cases[] = {
-      std::string("bin\0data\n", 9),               // NUL + a single LF
-      std::string("a\0b\r\nc\0\n", 8),             // NUL + CRLF + lone LF (mixed)
-      std::string("x\0y\rz\0", 6),                 // NUL + a lone CR (old-Mac-style byte)
-      std::string("h\0\r\n\ni\0\r", 8),            // NUL + CRLF + LF + trailing CR (mixed)
-      std::string("\0\0\0", 3),                    // pure NUL run, no newline at all
+      std::string("bin\0data\n", 9),
+      std::string("a\0b\r\nc\0\n", 8),
+      std::string("x\0y\rz\0", 6),
+      std::string("h\0\r\n\ni\0\r", 8),
+      std::string("\0\0\0", 3),
   };
   int index = 0;
   for (const std::string& payload : cases) {
@@ -347,9 +291,6 @@ void TestSaveBinaryContentRoundTripsExactly() {
   }
 }
 
-// #4: a UTF-8 BOM (EF BB BF) is valid UTF-8, so it stays content on line 0 rather than being
-// stripped or misread as binary. A clean round-trip must reproduce the BOM byte-for-byte;
-// losing it would corrupt files that tools (MSVC, some CSV readers) require a BOM on.
 void TestSavePreservesUtf8Bom() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "bom.txt";
@@ -361,20 +302,12 @@ void TestSavePreservesUtf8Bom() {
   Expect(viewport.OpenFile(path), "opening a UTF-8 BOM file should succeed");
   Expect(viewport.encoding() != TextViewport::TextEncoding::Bytes,
          "a UTF-8 BOM is valid UTF-8 and must not be misclassified as binary");
-  // The mark is stripped from the buffer (it is file metadata, not text) and
-  // remembered, so the save writes it back.
   Expect(viewport.has_utf8_bom() && viewport.lines().LineView(0) == "hello",
          "the BOM is remembered and kept out of line 0");
   Expect(viewport.Save(microide::project::LocalFileWriteGate()), "clean save should succeed");
   Expect(ReadFile(path) == original, "a clean save must preserve the UTF-8 BOM bytes verbatim");
 }
 
-// #5: the atomic temp+rename save deliberately replaces the file's inode, which breaks a
-// hardlink -- other names for the old inode keep the pre-save content. This is the accepted
-// trade-off for crash-atomic saves (a partial in-place write would risk corruption), so pin
-// the contract explicitly: the saved path gets the new content on a fresh inode, and the
-// sibling hardlink is left pointing at the original bytes rather than silently diverging
-// half-written.
 void TestAtomicSaveReplacesInodeAndBreaksHardlink() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path original_name = temp_dir.path() / "a.txt";
@@ -398,10 +331,6 @@ void TestAtomicSaveReplacesInodeAndBreaksHardlink() {
          "the sibling hardlink keeps the original bytes intact, never a half-written file");
 }
 
-// C13: saving over a file that changed on disk since it was opened must be detectable so the
-// higher layer can refuse and surface the reload/overwrite banner instead of silently
-// clobbering the external change. DetectDiskConflict is the guard signal the coordinator's
-// SaveTab consults (WorkspaceTabCoordinator.cpp), so pin its transitions here.
 void TestSaveDetectsExternalChangeConflict() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "shared.txt";
@@ -413,27 +342,20 @@ void TestSaveDetectsExternalChangeConflict() {
          "a freshly opened file has no disk conflict");
 
   viewport.InsertText("X");
-  // Another process rewrites the file after we opened and edited it.
   WriteFile(path, "changed-elsewhere\n");
   Expect(viewport.DetectDiskConflict() == TextViewport::DiskConflict::Changed,
          "an external write after open must be detected as a conflict (guards against clobber)");
 
-  // The vanished case is data-loss-adjacent too: the file we would overwrite is gone.
   std::error_code error;
   std::filesystem::remove(path, error);
   Expect(viewport.DetectDiskConflict() == TextViewport::DiskConflict::Vanished,
          "a file deleted on disk after open must be reported as vanished");
 
-  // After our own successful save the signature re-baselines, so there must be no false
-  // conflict that would nag the user or block the next legitimate save.
   Expect(viewport.Save(microide::project::LocalFileWriteGate()), "save should succeed and re-record the disk signature");
   Expect(viewport.DetectDiskConflict() == TextViewport::DiskConflict::None,
          "our own save must not leave a phantom disk conflict behind");
 }
 
-// C7: reloading a file from disk (the external-change reload mechanism) must reset the
-// undo/redo history. Otherwise a post-reload undo/redo could resurrect pre-reload content
-// that no longer matches disk, silently diverging the buffer from the file.
 void TestReloadResetsUndoHistory() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "reload.txt";
@@ -446,8 +368,6 @@ void TestReloadResetsUndoHistory() {
   Expect(viewport.Undo(), "undo returns to the loaded content");
   Expect(!viewport.dirty(), "undone-to-loaded content is clean");
 
-  // External change on disk, then reload through OpenFile (what the shell's clean-reload
-  // path does under the hood: it replaces the viewport with a fresh OpenFile).
   WriteFile(path, "b\n");
   Expect(viewport.OpenFile(path), "reload should succeed");
   Expect(viewport.lines()[0] == "b", "reload replaces the buffer with the on-disk content");
@@ -458,8 +378,6 @@ void TestReloadResetsUndoHistory() {
          "no stale content can be resurrected: the buffer stays at the reloaded disk content");
 }
 
-// C9: discarding a working-tree change is a destructive (data-loss) operation, so it must
-// restore the committed content byte-for-byte.
 void TestGitDiscardRestoresExactCommittedBytes() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -498,16 +416,12 @@ void TestGitDiscardAllRestoresEveryFile() {
   Expect(ReadFile(root / "b.txt") == b_committed, "discard-all must restore b.txt exactly");
 }
 
-// TD-2026-07-16-01: an atomic write targeting an existing directory must fail without
-// removing/replacing that directory. RenameReplacing must never delete a non-regular
-// destination as a side effect of a first-rename failure.
 void TestAtomicWriteRefusesDirectoryDestination() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path target = temp_dir.path() / "target";
   std::error_code ec;
   std::filesystem::create_directory(target, ec);
   Expect(!ec, "fixture directory should be created");
-  // Put a sentinel child inside so we can prove the directory (and its contents) survive.
   const std::filesystem::path sentinel = target / "keep.txt";
   WriteFile(sentinel, "sentinel\n");
 
@@ -521,8 +435,6 @@ void TestAtomicWriteRefusesDirectoryDestination() {
          "the directory's contents must be untouched");
 }
 
-// TD-2026-07-16-01, lower-level: RenameReplacing must refuse to clobber a directory
-// destination and leave the source temp in place for the caller to clean up.
 void TestRenameReplacingRefusesDirectoryDestination() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path source = temp_dir.path() / "src.tmp";
@@ -538,8 +450,6 @@ void TestRenameReplacingRefusesDirectoryDestination() {
          "the directory destination must survive a refused rename");
 }
 
-// TD-2026-07-16-02: a bare relative filename has an empty parent_path; the atomic
-// writer must not fail create_directories("") but write into the current directory.
 void TestAtomicWriteSupportsRelativeFilenameInCurrentDirectory() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path prev = std::filesystem::current_path();
@@ -548,14 +458,13 @@ void TestAtomicWriteSupportsRelativeFilenameInCurrentDirectory() {
   Expect(!ec, "should be able to enter the temp dir");
   const bool ok = WriteTextFileAtomically(std::filesystem::path("relative.txt"), "hi\n");
   const std::string readback = ok ? ReadFile(temp_dir.path() / "relative.txt") : std::string();
-  std::filesystem::current_path(prev, ec);  // restore before asserting
+  std::filesystem::current_path(prev, ec);
   Expect(ok, "atomic write of a bare relative filename should succeed");
   Expect(readback == "hi\n", "relative-path atomic write must land in the current directory");
 }
 
-}  // namespace
+}
 
-// The words of each errno a save meets most, and a sane fallback for the rest.
 void TestDescribeWriteErrorWordsTheCommonCauses() {
   using microide::util::DescribeWriteError;
   Expect(DescribeWriteError({}).empty(), "no error, no words");
@@ -571,8 +480,6 @@ void TestDescribeWriteErrorWordsTheCommonCauses() {
          "anything else: the system's own message, lower-cased to sit after a colon: " + other);
 }
 
-// The directory flush after an atomic replace: it flushes a real directory and
-// says so when there is none (callers treat it as best effort).
 void TestFsyncDirectoryFlushesARealDirectory() {
   TemporaryDirectory temp_dir;
   Expect(microide::util::FsyncDirectory(temp_dir.path()), "a directory flushes");
@@ -627,4 +534,4 @@ void RegisterSaveDataIntegrityTests(std::vector<TestCase>& tests) {
           TestGitDiscardAllRestoresEveryFile);
 }
 
-}  // namespace microide::tests
+}

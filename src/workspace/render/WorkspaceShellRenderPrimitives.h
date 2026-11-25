@@ -21,8 +21,6 @@
 
 namespace microide::workspace::detail {
 
-// The render layer's card vocabulary, used as is: this namespace had its own
-// value-for-value copy of CardStyle and three wrappers translating it back.
 using render::CardBackground;
 using render::CardStyle;
 using render::DrawCardFrame;
@@ -59,16 +57,11 @@ enum class StripAccentEdge {
 struct StripTabPalette {
   SDL_Color active_fill{};
   SDL_Color inactive_fill{};
-  // Background for an inactive tab while the pointer is over it. Defaults (zero
-  // alpha) fall back to inactive_fill so callers that never set it keep the old look.
   SDL_Color hover_fill{};
   SDL_Color active_text{};
   SDL_Color inactive_text{};
   SDL_Color active_glyph{};
   SDL_Color inactive_glyph{};
-  // Accent edge drawn along an active tab. Zero alpha (the default) means
-  // `theme.accent`; the editor strips of UNFOCUSED split panes pass a dimmed one
-  // so the focused pane's active tab is the only fully-lit tab on screen.
   SDL_Color active_accent{};
 };
 
@@ -88,7 +81,6 @@ inline void OutlineRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color
   render::OutlineRect(renderer, rect, color);
 }
 
-// The colour a status tone paints with, or `fallback` for the default tone.
 inline SDL_Color StatusToneColor(const render::Theme& theme, StatusTone tone, SDL_Color fallback) {
   switch (tone) {
     case StatusTone::Error:
@@ -153,20 +145,12 @@ inline void DrawButtonCentered(const render::TextRenderer& text_renderer,
                                std::string_view label,
                                ButtonTone tone,
                                const ButtonVisualState& state) {
-  // An empty rect is a button the layout left out for want of room: nothing to
-  // draw (its outline and label would land at the origin).
   if (rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
   const ButtonColors colors = ResolveButtonColors(theme, tone, state);
   FillRect(renderer, rect, colors.fill);
   OutlineRect(renderer, rect, colors.border);
-  // A label wider than its button is cut to it with an ellipsis, and one taller
-  // than it is left out: drawn past its edge it lay over the next control, where
-  // the button's own repaint (a hover) left it (QA monkey seed 4: the search
-  // view's Hidden toggle at the narrowest sidebar). Clipped there instead, it
-  // still drew outside its element (clip-discipline: the git panel's Discard All
-  // at a narrow sidebar), and showed half a glyph.
   const float line_height = text_renderer.LineHeight();
   if (rect.h + render::kSnapEdgeNoise < line_height) {
     return;
@@ -219,9 +203,6 @@ struct WrappedTooltipLayout {
   std::vector<std::string> lines;
 };
 
-// Multi-line variant of BuildTooltipLayout: greedy word-wrap on spaces to a card
-// no wider than max_width, sized to the wrapped line count. Use for longer help
-// text (e.g. the settings scope chip) that a single-line tooltip would truncate.
 inline WrappedTooltipLayout BuildWrappedTooltipLayout(const render::TextRenderer& text_renderer,
                                                       std::string_view label,
                                                       float max_width,
@@ -305,9 +286,6 @@ inline void DrawScrollbarThumb(SDL_Renderer* renderer,
     return;
   }
 
-  // Resting thumbs need to read as grabbable at a glance; the prior 0.35 blend sat
-  // almost flush with the track. Lift the resting contrast and keep accent for the
-  // active drag so the grab gives a strong, distinct response.
   const SDL_Color thumb_color =
       active ? theme.accent : render::BlendColors(theme.text_muted, theme.surface_raised, 0.6f);
   FillRect(renderer, thumb, thumb_color);
@@ -375,9 +353,6 @@ inline void DrawChevron(SDL_Renderer* renderer,
 }
 
 inline void DrawCloseGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
-  // A tab too narrow for its close button has an empty close rect at the origin;
-  // the glyph centred on it landed at the window's top-left, hidden only by the
-  // strip's clip (found by the paint-overrun recorder, clip-discipline 1.3).
   if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
@@ -409,21 +384,8 @@ inline void DrawArrowGlyph(SDL_Renderer* renderer,
   }
 }
 
-// --- Debug-toolbar control glyphs ----------------------------------------------
-// Simple line/scanline glyphs (matching the existing gutter/arrow style) for the
-// floating debug control bar. Each is centered in its button rect. (DrawGlyphDot
-// is defined further down; forward-declared here so these can use it.)
-
 inline void DrawGlyphDot(SDL_Renderer* renderer, float cx, float cy, SDL_Color color);
 
-// Stroke an arc `thickness` px wide.
-//
-// SDL's line renderer draws 1px, unantialiased. A curve built from a handful of
-// long hairline segments therefore reads at icon size as a faceted scribble with
-// gaps at the joins — which is exactly what the step-over and restart glyphs
-// looked like. Walking the arc at roughly one sample per pixel and stamping a
-// small square at each sample gives a continuous stroke with round joins for
-// free, and batches into one SDL_RenderFillRects call.
 inline void DrawArcStroke(SDL_Renderer* renderer, float cx, float cy, float radius,
                           float start_rad, float end_rad, SDL_Color color,
                           float thickness = 1.0f) {
@@ -431,10 +393,6 @@ inline void DrawArcStroke(SDL_Renderer* renderer, float cx, float cy, float radi
     return;
   }
   const float sweep = std::fabs(end_rad - start_rad);
-  // Two samples per pixel of arc length: the defect in the old glyphs was sample
-  // DENSITY, not stroke weight. A handful of long chords shows its facets; enough
-  // samples give a smooth curve at the same 1px weight as the straight-line glyphs
-  // (Step Into/Out), which is the shell's line-art convention.
   const int samples = std::max(12, static_cast<int>(sweep * radius * 2.0f) + 2);
   constexpr int kMaxSamples = 320;
   const int count = std::min(samples, kMaxSamples);
@@ -442,8 +400,6 @@ inline void DrawArcStroke(SDL_Renderer* renderer, float cx, float cy, float radi
   for (int i = 0; i < count; ++i) {
     const float t = static_cast<float>(i) / static_cast<float>(count - 1);
     const float ang = start_rad + (end_rad - start_rad) * t;
-    // Snap to the pixel grid so a 1px stroke stays crisp instead of smearing
-    // across two rows at sub-pixel positions.
     stamps[static_cast<std::size_t>(i)] =
         SDL_FRect{std::floor(cx + radius * std::cos(ang)), std::floor(cy + radius * std::sin(ang)),
                   thickness, thickness};
@@ -452,7 +408,6 @@ inline void DrawArcStroke(SDL_Renderer* renderer, float cx, float cy, float radi
   render::FillRectsInDrawColor(renderer, stamps.data(), count);
 }
 
-// Right-pointing filled triangle (Continue / play).
 inline void DrawPlayGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
   if (renderer == nullptr) {
     return;
@@ -475,7 +430,6 @@ inline void DrawPlayGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Col
   }
 }
 
-// Two vertical bars (Pause).
 inline void DrawPauseGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
   if (renderer == nullptr) {
     return;
@@ -490,7 +444,6 @@ inline void DrawPauseGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Co
   render::FillRectInDrawColor(renderer, right);
 }
 
-// Filled square (Stop / terminate).
 inline void DrawStopGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
   if (renderer == nullptr) {
     return;
@@ -502,15 +455,10 @@ inline void DrawStopGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Col
   render::FillRectInDrawColor(renderer, square);
 }
 
-// Arc arrow over a dot (Step Over).
 inline void DrawStepOverGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
   if (renderer == nullptr) {
     return;
   }
-  // An arc hopping left-to-right over a dot, at the same 1px weight and with the
-  // same two-line head as Step Into/Out. The old version drew the arc as ten long
-  // chords, so it showed its facets and read as a scribble; the fix is sample
-  // density, not a heavier stroke.
   constexpr float kPi = 3.14159265f;
   const float cx = std::floor(rect.x + rect.w * 0.5f) + 0.5f;
   const float cy = std::floor(rect.y + rect.h * 0.52f) + 0.5f;
@@ -523,7 +471,6 @@ inline void DrawStepOverGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL
   DrawGlyphDot(renderer, cx, cy + 4.0f, color);
 }
 
-// Down arrow into a dot (Step Into).
 inline void DrawStepIntoGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
   if (renderer == nullptr) {
     return;
@@ -538,7 +485,6 @@ inline void DrawStepIntoGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL
   DrawGlyphDot(renderer, cx, std::floor(rect.y + rect.h * 0.76f), color);
 }
 
-// Up arrow out of a dot (Step Out).
 inline void DrawStepOutGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
   if (renderer == nullptr) {
     return;
@@ -553,14 +499,10 @@ inline void DrawStepOutGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_
   DrawGlyphDot(renderer, cx, std::floor(rect.y + rect.h * 0.76f), color);
 }
 
-// Open circular arrow (Restart).
 inline void DrawRestartGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
   if (renderer == nullptr) {
     return;
   }
-  // A 1px ring with a gap at the top-right and a two-line head, matching the other
-  // toolbar glyphs. The old version stepped a full turn in sixteen chords, so it
-  // drew a visibly lumpy polygon instead of a circle.
   constexpr float kPi = 3.14159265f;
   const float cx = std::floor(rect.x + rect.w * 0.5f) + 0.5f;
   const float cy = std::floor(rect.y + rect.h * 0.5f) + 0.5f;
@@ -574,7 +516,6 @@ inline void DrawRestartGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_
   render::RenderClipStableLine(renderer, hx, hy, hx - 1.0f, hy + 4.0f);
 }
 
-// Left-pointing filled triangle (Reverse Continue) — the mirror of DrawPlayGlyph.
 inline void DrawReverseContinueGlyph(SDL_Renderer* renderer, const SDL_FRect& rect,
                                      SDL_Color color) {
   if (renderer == nullptr) {
@@ -598,7 +539,6 @@ inline void DrawReverseContinueGlyph(SDL_Renderer* renderer, const SDL_FRect& re
   }
 }
 
-// Mirror of DrawStepOverGlyph, head landing on the left (Step Back).
 inline void DrawStepBackGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
   if (renderer == nullptr) {
     return;
@@ -620,9 +560,6 @@ inline void DrawCheckGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Co
     return;
   }
 
-  // Proportional geometry at the shell's 1px line-art weight. The tick used to mix
-  // fractions with a fixed -3px inset, which made it lopsided and clipped at the
-  // bottom of the box; the weight was never the problem.
   render::SetDrawColor(renderer, color);
   const float left = std::floor(rect.x + rect.w * 0.22f);
   const float mid_x = std::floor(rect.x + rect.w * 0.43f);
@@ -652,7 +589,6 @@ inline void DrawGlyphDot(SDL_Renderer* renderer, float cx, float cy, SDL_Color c
   render::FillRectInDrawColor(renderer, dot);
 }
 
-// Sidebar mode-tab icons (line art, sized to match the existing glyphs above).
 inline void DrawFolderGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
   if (renderer == nullptr) {
     return;
@@ -662,7 +598,6 @@ inline void DrawFolderGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_C
   const float cy = std::floor(rect.y + rect.h * 0.5f);
   const SDL_FRect body{cx - 5.0f, cy - 2.0f, 10.0f, 7.0f};
   render::OutlineRectInDrawColor(renderer, body);
-  // Folder tab on the top-left edge.
   render::RenderClipStableLine(renderer, cx - 5.0f, cy - 2.0f, cx - 3.0f, cy - 4.0f);
   render::RenderClipStableLine(renderer, cx - 3.0f, cy - 4.0f, cx, cy - 4.0f);
   render::RenderClipStableLine(renderer, cx, cy - 4.0f, cx, cy - 2.0f);
@@ -675,7 +610,6 @@ inline void DrawSearchGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_C
   render::SetDrawColor(renderer, color);
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
-  // Diamond lens (rounder than a square) plus a diagonal handle.
   const float lx = cx - 1.0f;
   const float ly = cy - 1.0f;
   render::RenderClipStableLine(renderer, lx, ly - 4.0f, lx + 4.0f, ly);
@@ -693,7 +627,6 @@ inline void DrawBranchGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_C
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
   const float trunk_x = cx - 3.0f;
-  // Trunk with two nodes, and a branch that forks up to a third node.
   render::RenderClipStableLine(renderer, trunk_x, cy - 5.0f, trunk_x, cy + 5.0f);
   render::RenderClipStableLine(renderer, trunk_x, cy + 1.0f, cx + 3.0f, cy - 3.0f);
   DrawGlyphDot(renderer, trunk_x, cy - 5.0f, color);
@@ -712,10 +645,6 @@ inline void DrawEllipsisGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL
   DrawGlyphDot(renderer, cx + 4.0f, cy, color);
 }
 
-// A strip tab's close glyph, only where its 7x7 box fits inside the tab. The close
-// rect is laid out for the strip's full height, so a tab a squeezed group cut
-// short -- down to 1 px -- still drew the glyph centred on the full strip, outside
-// the tab (soak eb7ec08fed8e, seen again after the label was fitted).
 inline bool StripTabCloseGlyphFits(const SDL_FRect& tab, const SDL_FRect& close) {
   if (close.w <= 0.0f || close.h <= 0.0f) {
     return false;
@@ -733,7 +662,6 @@ inline void DrawHoverableCloseGlyph(SDL_Renderer* renderer,
   DrawCloseGlyph(renderer, rect, hovered ? hover_color : color);
 }
 
-// A strip tab's close glyph (hovered or not), drawn only where it fits the tab.
 inline void DrawStripTabCloseGlyph(SDL_Renderer* renderer, const SDL_FRect& tab, const SDL_FRect& close,
                                    bool hovered, SDL_Color color, SDL_Color hover_color) {
   if (StripTabCloseGlyphFits(tab, close)) {
@@ -741,8 +669,6 @@ inline void DrawStripTabCloseGlyph(SDL_Renderer* renderer, const SDL_FRect& tab,
   }
 }
 
-// A panel tab's unseen-output square (or the larger bell mark) left of its close
-// glyph, drawn only where it fits the tab.
 inline void DrawStripTabActivityMark(SDL_Renderer* renderer, const SDL_FRect& tab, const SDL_FRect& close, bool bell,
                                      SDL_Color color) {
   const float dot = bell ? 8.0f : 6.0f;
@@ -809,17 +735,6 @@ inline void DrawTextOn(const render::TextRenderer& text_renderer,
   text_renderer.DrawStringOn(renderer, x, y, foreground, background, text);
 }
 
-// Empty-state hint for a narrow rail (sidebar, debug pane). These strings are
-// written to be actionable — "No breakpoints — click the editor gutter to add
-// one." — which is roughly twice what a ~270px rail fits on one line, so drawing
-// them flat either clipped at the panel edge or truncated away the half that
-// told the user what to do. Greedy word-wrap instead, ellipsizing only if the
-// line budget genuinely runs out.
-//
-// Allocation-free: the wrapped lines are views into `text` (which every caller
-// owns for longer than the call), and only the final clipped line goes through
-// the renderer's ephemeral truncation scratch — so `emit` must consume each line
-// before asking for the next. Returns the number of lines emitted.
 template <typename EmitFn>
 inline std::size_t ForEachWrappedLabelLine(const render::TextRenderer& text_renderer,
                                            std::string_view text,
@@ -832,7 +747,7 @@ inline std::size_t ForEachWrappedLabelLine(const render::TextRenderer& text_rend
 
   std::size_t emitted = 0;
   std::size_t line_start = 0;
-  std::size_t line_end = 0;  // end of the longest prefix known to fit
+  std::size_t line_end = 0;
   std::size_t word_start = 0;
   const auto push = [&](std::string_view line) {
     emit(emitted, line);
@@ -845,7 +760,6 @@ inline std::size_t ForEachWrappedLabelLine(const render::TextRenderer& text_rend
     const std::string_view candidate = text.substr(line_start, word_end - line_start);
     if (line_start != word_start && text_renderer.MeasureWidth(candidate) > max_width) {
       if (emitted + 1 == max_lines) {
-        // Last line allowed: spend it on as much of the remainder as fits.
         push(text_renderer.TruncateToWidthEphemeralView(text.substr(line_start), max_width));
         return emitted;
       }
@@ -859,11 +773,6 @@ inline std::size_t ForEachWrappedLabelLine(const render::TextRenderer& text_rend
   return emitted;
 }
 
-// A wrapped placeholder (a hint, an empty list's note, a prompt's message) is an
-// element: it draws inside `box` and nothing else, so it spends only the lines the
-// box holds whole -- at most `max_lines`, the last one ellipsized. There is no
-// unboxed form: a wrap told only its top and width drew its later lines past a
-// short box (soak 3cf85812902b, the Output panel's hint at scale 2.75).
 inline constexpr std::size_t kWrapAsTheBoxHolds = static_cast<std::size_t>(-1);
 
 inline std::size_t DrawWrappedPlaceholderIn(const render::TextRenderer& text_renderer,
@@ -877,8 +786,6 @@ inline std::size_t DrawWrappedPlaceholderIn(const render::TextRenderer& text_ren
   if (line_height <= 0.0f) {
     return 0;
   }
-  // A box a snap's noise short of a whole line still holds it: its edges round
-  // to the same device pixels (render::kSnapEdgeNoise).
   const float whole_lines = std::floor((box.h + render::kSnapEdgeNoise) / line_height);
   const std::size_t fit = whole_lines <= 0.0f ? 0 : static_cast<std::size_t>(whole_lines);
   return ForEachWrappedLabelLine(
@@ -902,18 +809,6 @@ inline void DrawVCenteredTextOn(const render::TextRenderer& text_renderer,
   DrawText(text_renderer, renderer, rect.x + left_padding, y, foreground, text);
 }
 
-// One tab of a mode strip: the icon-plus-label chips that pick the sidebar view
-// (Explorer / Search / Source Control / ...) and the debug pane's mode
-// (Variables / Watch / Breakpoints). Both strips collapse to icon-only when the
-// pane is too narrow for labels, which is what `label.empty()` selects.
-//
-// The two strips are laid out by different code and carry different tab types,
-// but they are the same control and must keep looking like one: same neutral
-// button tone, same 4px icon inset, same 16px icon column, same 1px gap before
-// the label, same 4px trailing inset. Those five constants used to live twice.
-//
-// `draw_icon(icon_rect, color)` paints the glyph; each strip owns its own
-// mode-to-glyph mapping.
 template <typename DrawIcon>
 inline void DrawModeTab(const render::TextRenderer& text_renderer,
                         SDL_Renderer* renderer,
@@ -969,15 +864,7 @@ inline void DrawPrimarySecondaryRowText(const render::TextRenderer& text_rendere
                                         float gap = 8.0f) {
   const float text_y =
       rect.y + std::floor(std::max(0.0f, rect.h - text_renderer.LineHeight()) * 0.5f);
-  // No floor: text that starts at or past `right_edge` draws nothing. A 20 px
-  // minimum drew a deeply indented tree label out of its row, onto pixels the
-  // row's repaint does not cover (soak 538a455016ef).
   const float max_width = std::max(0.0f, right_edge - text_x);
-  // Ephemeral views, not owned strings: this runs once per visible row per frame in
-  // the secondary sidebars and the debug pane, and the common case (a label that
-  // fits) then costs no allocation at all instead of a std::string copy. The two
-  // views never overlap — the primary is drawn and measured before the secondary
-  // truncation overwrites the shared scratch.
   const std::string_view primary_text = text_renderer.TruncateToWidthEphemeralView(
       primary, secondary.empty() ? max_width : max_width * primary_width_fraction);
   DrawTextOn(text_renderer, renderer, text_x, text_y, primary_color, background, primary_text);
@@ -993,13 +880,9 @@ inline void DrawPrimarySecondaryRowText(const render::TextRenderer& text_rendere
              text_renderer.TruncateToWidthEphemeralView(secondary, secondary_width));
 }
 
-// A remote project tab's extras (VisibleStripTab::secondary_title / remote_state):
-// the host after the name, dimmer, and the connection's state as a corner triangle,
-// which stays visible when the strip squeezes the name to nothing.
 struct StripTabRemoteMark {
   std::string_view secondary_label;
   std::optional<editor::WelcomeStageState> state;
-  // A detached host terminal's tab: its title in the secondary colour.
   bool dimmed = false;
 };
 
@@ -1027,7 +910,7 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
   constexpr float kAccentThickness = 2.0f;
   const bool accent_on_top = active && style.accent_edge == StripAccentEdge::Top;
   if (active) {
-    const float thickness = std::min(kAccentThickness, rect.h);  // a tab cut thinner than its accent
+    const float thickness = std::min(kAccentThickness, rect.h);
     const SDL_FRect accent =
         accent_on_top ? SDL_FRect{rect.x, rect.y, rect.w, thickness}
                       : SDL_FRect{rect.x, rect.y + rect.h - thickness, rect.w, thickness};
@@ -1035,10 +918,6 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
              palette.active_accent.a != 0 ? palette.active_accent : theme.accent);
   }
   float text_left_padding = style.text_left_padding;
-  // A tab shorter than a line of text -- its group squeezed below the strip's
-  // height -- shows no text and no badge: centred in it, the line's box drew past
-  // the tab into whatever is below, and a label cut to a sliver reads as damage
-  // anyway (soak eb7ec08fed8e). Fitted before drawing, as the width is.
   const bool text_fits = rect.h >= text_renderer.LineHeight();
   if (text_fits && show_badge && style.badge_size > 0.0f && style.badge_size <= rect.h && !badge_text.empty()) {
     const float badge_y =
@@ -1059,15 +938,6 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
                                badge_color, badge_text);
     text_left_padding += style.badge_size + style.badge_gap;
   }
-  // Every visible tab in the project, editor and panel strips passes through here on
-  // every frame, and most tab labels fit — so an owned truncation was a per-tab
-  // per-frame std::string copy for nothing. The view is consumed by this one call.
-  // What is left of the tab after the label's left padding (badge included) and
-  // the close button's reserve. It left out the base padding and floored at 8 px,
-  // so a label could run up to its padding past the tab's right edge -- the Welcome
-  // placeholder, reserve 0, by the whole 10 px -- into the next tab or the gap
-  // beside it, which a partial frame clipped to the tab did not repaint (soak
-  // 053365e38e57, clip-discipline 1.3).
   const float label_width =
       text_fits ? std::max(0.0f, rect.w - text_left_padding - style.close_right_reserve) : 0.0f;
   const std::string_view title = text_renderer.TruncateToWidthEphemeralView(label, label_width);
@@ -1076,9 +946,6 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
                       : active      ? palette.active_text
                                     : palette.inactive_text,
                       background, title);
-  // The name keeps the room; the host gets what is left (the corner already says
-  // "remote" when there is none). The title is drawn before the second truncation
-  // reuses the shared scratch.
   if (!remote.secondary_label.empty()) {
     const float title_width = text_renderer.MeasureWidth(title);
     if (const float room = label_width - title_width; room > 24.0f) {
@@ -1089,9 +956,6 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
   }
   if (remote.state.has_value() &&
       rect.h >= 8.0f + (accent_on_top ? kAccentThickness : 0.0f) && rect.w >= 8.0f) {
-    // Hung from the tab's top edge: the active tab's top accent when it has one --
-    // the flag starts just under it, so the two meet instead of overlapping -- and
-    // the tab's own top otherwise, so an inactive tab shows no gap above the flag.
     constexpr int kCorner = 8;
     render::SetDrawColor(renderer, editor::WelcomeStageColor(theme, *remote.state));
     const float x = std::floor(rect.x);
@@ -1103,10 +967,6 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
   }
 }
 
-// Paints a chevron-glyph button with an optional hidden-tab count badge,
-// matching the look of the workspace tab strip chrome. Used for the
-// click-to-scroll overflow indicators at the strip ends (project, editor, and
-// bottom-panel tab strips).
 inline void DrawTabStripOverflowButton(const render::TextRenderer& text_renderer,
                                        SDL_Renderer* renderer,
                                        const render::Theme& theme,
@@ -1117,7 +977,6 @@ inline void DrawTabStripOverflowButton(const render::TextRenderer& text_renderer
   if (rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
-  // An element of its own beside the tabs (clip-discipline 1.3).
   const render::PaintElement element(renderer, rect, "tab-overflow");
   const SDL_Color background = hovered ? theme.row_highlight : theme.surface_raised;
   const SDL_Color foreground = hovered ? theme.text_primary : theme.text_secondary;
@@ -1128,12 +987,7 @@ inline void DrawTabStripOverflowButton(const render::TextRenderer& text_renderer
   const float cy = rect.y + rect.h * 0.5f;
   const float arm = std::max(3.0f, rect.h * 0.22f);
   render::SetDrawColor(renderer, foreground);
-  // Each part only where it fits: a strip cut short by a squeezed group cuts its
-  // buttons too, and the glyph and the count's line box drew past them (soak
-  // c257fce655f3).
-  // A line's end pixel is drawn too, so the glyph needs a pixel past its arms.
   if (2.0f * arm + 2.0f > rect.h || cx + arm + 1.0f > rect.x + rect.w) {
-    // No room for the chevron, nor the count beside it.
   } else if (point_right) {
     render::RenderClipStableLine(renderer, cx - arm * 0.5f, cy - arm, cx + arm * 0.5f, cy);
     render::RenderClipStableLine(renderer, cx + arm * 0.5f, cy, cx - arm * 0.5f, cy + arm);
@@ -1158,14 +1012,6 @@ inline void DrawTabStripOverflowButton(const render::TextRenderer& text_renderer
   }
 }
 
-// Renders the floating "lifted" ghost for an in-flight tab drag, shared by every
-// tab strip. `tabs` are the visible tabs (model-space); the ghost is the tab
-// whose index == `source_index`, offset to track under the pointer. The
-// insertion point is shown by the gap the neighbor tabs slide open (Chrome-like),
-// so no caret is drawn here. No allocations: the ghost reuses the visible tab's
-// already-built title string_view. `tabs_strip` is the strip `tabs` were laid
-// out in -- in a drag across editor groups, the SOURCE strip, while `strip` is
-// the one the ghost paints over.
 inline void DrawTabDragFeedback(const render::TextRenderer& text_renderer,
                                 SDL_Renderer* renderer,
                                 const render::Theme& theme,
@@ -1181,26 +1027,14 @@ inline void DrawTabDragFeedback(const render::TextRenderer& text_renderer,
     return;
   }
 
-  // Floating ghost of the dragged tab (skipped when it scrolled off-screen).
   const VisibleStripTab* ghost = DraggedStripTab(tabs, source_index);
   if (ghost == nullptr) {
     return;
   }
-  // No wider than the strip it paints over: a tab dragged from a wider pane's strip
-  // kept its own width, and the clamp could only pin its left edge, so its right
-  // edge and outline ran past the strip into the gap beside it, which the drag's
-  // damage never covers (soak 86cbec1c3c41). Its x is the same either way: a ghost
-  // as wide as the strip or wider sits at the strip's left edge, where the drop
-  // math (ClampedGhostX on the tab's own width) puts it too.
   const float ghost_w = std::min(ghost->rect.w, std::max(0.0f, strip.w));
   const float ghost_x = ClampedGhostX(strip.x, strip.w, ghost_w, pointer_x, grab_offset_x);
-  // In the strip it paints over, at the tab's place within its own: with the
-  // panes stacked, the source tab's y put the ghost in the row above, over a strip
-  // no damage covered (soak d9ec05f4132a).
   const SDL_FRect ghost_rect =
       MakeRect(ghost_x, strip.y + (ghost->rect.y - tabs_strip.y), ghost_w, ghost->rect.h);
-  // The drop shadow stays inside the strip: a drag damages the strip and no more,
-  // so shadow drawn below it was never painted over (soak 0c1b56e84217).
   const SDL_FRect shadow = MakeRect(ghost_rect.x + 1.0f, ghost_rect.y + 2.0f, ghost_rect.w, ghost_rect.h);
   SDL_FRect shadow_in_strip{};
   if (SDL_GetRectIntersectionFloat(&shadow, &strip, &shadow_in_strip)) {
@@ -1208,8 +1042,8 @@ inline void DrawTabDragFeedback(const render::TextRenderer& text_renderer,
              render::BlendColors(theme.surface_background, SDL_Color{0, 0, 0, 255}, 0.5f));
   }
   DrawStripTab(text_renderer, renderer, theme, ghost_rect, ghost->display_title, ghost->badge_text,
-               ghost->badge_color, ghost->show_badge, /*active=*/true, style, palette,
-               /*hovered=*/false, RemoteMarkOf(*ghost));
+               ghost->badge_color, ghost->show_badge, true, style, palette,
+               false, RemoteMarkOf(*ghost));
   OutlineRect(renderer, ghost_rect, theme.accent);
 }
 
@@ -1232,19 +1066,11 @@ inline void DrawMenuRow(const render::TextRenderer& text_renderer,
                    enabled ? theme.accent : theme.text_disabled);
   }
   float accelerator_width = accelerator.empty() ? 0.0f : text_renderer.MeasureWidth(accelerator);
-  // A popup is as wide as its widest label and shortcut, except when it breaks
-  // into columns in a window too narrow for them: a row squeezed below its
-  // content shows its label and no shortcut. The shortcut is placed from the
-  // row's right edge, so one wider than the row started left of it -- over the
-  // column before, or off the popup (soak 3ff704b0c337, a diff's menu at 3x).
   if (accelerator_width > 0.0f && rect.w - 42.0f - accelerator_width < text_renderer.MeasureWidth(label)) {
     accelerator = {};
     accelerator_width = 0.0f;
   }
   const float label_width = std::max(0.0f, rect.w - 42.0f - accelerator_width);
-  // Ephemeral view: consumed by this call, and the accelerator drawn below is a
-  // separate borrowed view that does not touch the truncation scratch. An open menu
-  // repaints on every pointer move, so this was an allocation per row per frame.
   DrawVCenteredTextOn(text_renderer, renderer,
                       MakeRect(rect.x + 24.0f, rect.y, label_width, rect.h), 0.0f, text_color,
                       background, text_renderer.TruncateToWidthEphemeralView(label, label_width));
@@ -1256,8 +1082,6 @@ inline void DrawMenuRow(const render::TextRenderer& text_renderer,
   }
 }
 
-// A tree drag's ghost: the dragged name riding beside the pointer. One rect for
-// prep's unit and for paint (RenderWindowChrome).
 inline constexpr float kPathDragGhostPaddingPx = 8.0f;
 inline SDL_FRect PathDragGhostRect(const PathDragState& drag, const render::TextRenderer& text_renderer) {
   const float height = text_renderer.LineHeight() + 6.0f;
@@ -1265,10 +1089,6 @@ inline SDL_FRect PathDragGhostRect(const PathDragState& drag, const render::Text
   return MakeRect(drag.pointer_x + 14.0f, drag.pointer_y + 10.0f, width, height);
 }
 
-// Where the custom title bar draws the window title, `title_width` wide: centred
-// in the menu bar, and only when it fits between the last visible menu and the
-// window buttons (which menus show depends on the bar's width). One answer for
-// prep's unit and for paint (RenderWindowChrome).
 template <typename MenuItems, typename WindowButtons>
 std::optional<SDL_FRect> WindowTitleRect(const SDL_FRect& menu_bar, const MenuItems& menu_items,
                                          const WindowButtons& window_buttons, float title_width) {
@@ -1283,4 +1103,4 @@ std::optional<SDL_FRect> WindowTitleRect(const SDL_FRect& menu_bar, const MenuIt
   return MakeRect(title_x, menu_bar.y, title_width, menu_bar.h);
 }
 
-}  // namespace microide::workspace::detail
+}

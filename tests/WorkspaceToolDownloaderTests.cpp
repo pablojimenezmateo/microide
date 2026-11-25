@@ -19,7 +19,6 @@ void TestToolDownloaderFallsBackToShasumWhenSha256sumMissing() {
   std::filesystem::create_directories(bin_dir);
   WriteFile(source, "payload\n");
 
-  // Keep PATH scoped to this fixture so `sha256sum` is absent and fallback uses `shasum`.
   const std::filesystem::path shasum_path = bin_dir / "shasum";
   WriteFile(shasum_path,
             "#!/bin/sh\n"
@@ -42,10 +41,6 @@ void TestToolDownloaderFallsBackToShasumWhenSha256sumMissing() {
          "successful download should return the cached tool path");
 }
 
-// Regression: with no user cache directory the default used to be a literal `~`
-// path -- relative, so it cached under the working directory and ClearCache would
-// remove that tree. The default now comes from ResolveAppDirectory, and an empty
-// one refuses instead.
 void TestToolDownloaderWithoutUserCacheDirectoryRefuses() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path source = temp_dir.path() / "tool.bin";
@@ -62,9 +57,6 @@ void TestToolDownloaderWithoutUserCacheDirectoryRefuses() {
          "no cache tree may appear under the working directory");
 }
 
-// Regression: the expected digest may be uppercase (manifests accept either case)
-// while the computed digest is lowercase. Download must compare case-insensitively
-// so a correct file with an uppercase expected sha still verifies.
 void TestToolDownloaderAcceptsUppercaseExpectedSha() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path bin_dir = temp_dir.path() / "bin";
@@ -84,19 +76,15 @@ void TestToolDownloaderAcceptsUppercaseExpectedSha() {
 
   ToolDownloader downloader;
   downloader.SetCacheDir(cache_dir);
-  // Same digest, uppercased. Must still verify against the lowercase computed hash.
   const auto downloaded = downloader.Download(
       "tool", source.string(), "D4E4877BAC978B7952F0D544FC52EBFF5411D351D129F1F056FA43F11DA9AF2B");
   Expect(downloaded.has_value(),
          "an uppercase expected sha256 must verify against the lowercase computed digest");
 }
 
-// A tool_id containing path-traversal (or an absolute-ish component) must be
-// rejected so it can never read/write/probe outside the cache directory.
 void TestToolDownloaderRejectsTraversalToolId() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path cache_dir = temp_dir.path() / "cache";
-  // A file the traversal would target if the guard were missing.
   const std::filesystem::path outside = temp_dir.path() / "secret.bin";
   WriteFile(outside, "secret\n");
 
@@ -111,38 +99,29 @@ void TestToolDownloaderRejectsTraversalToolId() {
            std::string("Download must reject unsafe id: ") + evil);
   }
 
-  // A well-formed id is still accepted by the cache lookups (absent -> not cached).
   Expect(!downloader.IsCached("valid-tool"), "a safe but absent id is simply not cached");
 }
 
-// An empty expected hash gives no integrity guarantee, so a cached copy must NOT be
-// served blindly when there is no trusted local source to re-copy from. Regression for
-// inventory J22.
 void TestToolDownloaderEmptyHashDoesNotTrustCacheWithoutLocalSource() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path cache_dir = temp_dir.path() / "cache";
   std::filesystem::create_directories(cache_dir);
-  // Simulate a previously cached (possibly stale/tampered) tool binary.
   WriteFile(cache_dir / "tool", "maybe-tampered\n");
 
   ToolDownloader downloader;
   downloader.SetCacheDir(cache_dir);
 
-  // Empty hash + a non-local URL that the downloader cannot fetch: nothing to verify
-  // against and no trusted local source, so the request must be rejected.
   Expect(!downloader.Download("tool", "https://example.invalid/tool.tgz", "").has_value(),
          "an empty sha256 must not blindly return a cached tool when no local source resolves");
 }
 
-// With an empty hash but an explicitly-trusted local source, the downloader re-copies
-// from that source rather than trusting a stale cache. Regression for inventory J22.
 void TestToolDownloaderEmptyHashReCopiesFromLocalSource() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path cache_dir = temp_dir.path() / "cache";
   const std::filesystem::path source = temp_dir.path() / "tool.bin";
   WriteFile(source, "fresh-bytes\n");
   std::filesystem::create_directories(cache_dir);
-  WriteFile(cache_dir / "tool", "stale-bytes\n");  // pre-existing stale cache
+  WriteFile(cache_dir / "tool", "stale-bytes\n");
 
   ToolDownloader downloader;
   downloader.SetCacheDir(cache_dir);
@@ -156,12 +135,11 @@ void TestToolDownloaderEmptyHashReCopiesFromLocalSource() {
 void TestToolDownloaderFileUriPercentDecodesLocalHost() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path cache_dir = temp_dir.path() / "cache";
-  const std::filesystem::path source = temp_dir.path() / "my tool.bin";  // space in name
+  const std::filesystem::path source = temp_dir.path() / "my tool.bin";
   WriteFile(source, "uri-bytes\n");
 
   ToolDownloader downloader;
   downloader.SetCacheDir(cache_dir);
-  // file://<empty host>/<percent-encoded path> resolves to the real local file.
   const std::string encoded = "file://" + (temp_dir.path() / "my%20tool.bin").generic_string();
   const auto path = downloader.Download("tool", encoded, "");
   Expect(path.has_value(), "a percent-encoded file:// URL resolves to the local file");
@@ -172,16 +150,10 @@ void TestToolDownloaderRejectsRemoteFileUri() {
   TemporaryDirectory temp_dir;
   ToolDownloader downloader;
   downloader.SetCacheDir(temp_dir.path() / "cache");
-  // file://remote/... is NOT this machine and must not be read as the relative
-  // path "remote/...".
   Expect(!downloader.Download("tool", "file://remote/etc/passwd", "").has_value(),
          "a non-local file:// host is rejected");
 }
 
-// TD-2026-07-17A-109: the tool downloader's file:// parsing now shares the strict
-// PathFromFileUri decoder. A malformed percent-escape rejects the whole URI (instead of
-// decoding to a literal '%'), and a decoded NUL is rejected (instead of truncating the
-// native path), matching the shared file-URI path used elsewhere.
 void TestToolDownloaderRejectsMalformedFileUri() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path cache_dir = temp_dir.path() / "cache";
@@ -193,8 +165,6 @@ void TestToolDownloaderRejectsMalformedFileUri() {
   downloader.SetCacheDir(cache_dir);
 
   const std::string base = "file://" + source.generic_string();
-  // A well-formed file:// URL for the same bytes still resolves (proving the rejections
-  // below are about the malformation, not a blanket file:// failure).
   Expect(downloader.Download("tool", base, sha).has_value(),
          "a well-formed file:// URL still resolves under the strict decoder");
   Expect(!downloader.Download("tool2", base + "%zz", sha).has_value(),
@@ -211,8 +181,6 @@ void TestToolDownloaderHashMismatchLeavesNoPartialFile() {
 
   ToolDownloader downloader;
   downloader.SetCacheDir(cache_dir);
-  // A wrong expected hash must fail AND leave neither the published cache entry
-  // nor the temp ".partial" sibling behind (atomic temp-then-verify-then-rename).
   const auto path = downloader.Download("tool", source.string(), std::string(64, 'b'));
   Expect(!path.has_value(), "a hash mismatch fails the download");
   Expect(!std::filesystem::exists(cache_dir / "tool"),
@@ -221,9 +189,6 @@ void TestToolDownloaderHashMismatchLeavesNoPartialFile() {
          "the temporary partial file is cleaned up on mismatch");
 }
 
-// Regression: GetCachedTool must verify the cached file's digest before handing
-// it to a launcher when an expected sha is supplied — a mismatch (stale/tampered
-// cache) returns nothing; an empty expected digest returns the path unverified.
 void TestToolDownloaderGetCachedToolVerifiesHash() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path bin_dir = temp_dir.path() / "bin";
@@ -232,10 +197,6 @@ void TestToolDownloaderGetCachedToolVerifiesHash() {
   std::filesystem::create_directories(cache_dir);
   WriteFile(cache_dir / "tool", "cached-bytes\n");
 
-  // TD-2026-07-17-060: hashing is now in-process (util::Sha256FileHex), so there is
-  // no external shasum/sha256sum subprocess to stub. The expected digest is the real
-  // SHA-256 of "cached-bytes\n". Point PATH at an empty dir to prove no hash tool is
-  // consulted (the verification must succeed with no external binary available).
   ScopedEnvVar path_env("PATH", bin_dir.string());
 
   ToolDownloader downloader;
@@ -252,8 +213,6 @@ void TestToolDownloaderGetCachedToolVerifiesHash() {
          "GetCachedTool returns the path unverified when no expected digest is given");
 }
 
-// Regression: there is NO networking. Any remote scheme is rejected regardless of
-// the expected hash — the downloader only resolves local file:// URIs and paths.
 void TestToolDownloaderRejectsRemoteSchemesNoNetworking() {
   TemporaryDirectory temp_dir;
   ToolDownloader downloader;
@@ -267,7 +226,7 @@ void TestToolDownloaderRejectsRemoteSchemesNoNetworking() {
          "an ftp URL is rejected: there is no networking");
 }
 
-}  // namespace
+}
 
 void RegisterWorkspaceToolDownloaderTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceToolDownloader/GetCachedToolVerifiesHash",
@@ -296,4 +255,4 @@ void RegisterWorkspaceToolDownloaderTests(std::vector<TestCase>& tests) {
           TestToolDownloaderEmptyHashReCopiesFromLocalSource);
 }
 
-}  // namespace microide::tests
+}

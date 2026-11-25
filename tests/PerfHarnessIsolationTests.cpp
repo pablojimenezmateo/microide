@@ -11,8 +11,6 @@ namespace microide::tests {
 namespace {
 
 void TestEstablishIsolatedAppRootExportsAllXdgVars() {
-  // Snapshot existing XDG values so we can restore them after the helper
-  // mutates the process environment.
   ScopedEnvVar xdg_config("XDG_CONFIG_HOME", "");
   ScopedEnvVar xdg_state("XDG_STATE_HOME", "");
   ScopedEnvVar xdg_cache("XDG_CACHE_HOME", "");
@@ -51,14 +49,11 @@ void TestEstablishIsolatedAppRootKeepArtifactsPreservesRoot() {
   perf::CleanupIsolatedAppRoot(root, true);
   Expect(std::filesystem::is_directory(root),
          "CleanupIsolatedAppRoot must not remove kept sandbox");
-  // Hand-cleanup so the test does not leave files behind.
   std::error_code ec;
   std::filesystem::remove_all(root, ec);
 }
 
 void TestColdStartupIgnoresRealUserWorkspaceSession() {
-  // Simulate a developer machine that has a real workspace-session file under
-  // ~/.local/state/microide. The harness must not see it after isolation.
   TemporaryDirectory fake_home;
   const std::filesystem::path real_state =
       fake_home.path() / ".local" / "state" / "microide";
@@ -70,13 +65,11 @@ void TestColdStartupIgnoresRealUserWorkspaceSession() {
          "planted workspace-session must exist");
 
   ScopedEnvVar home_var("HOME", fake_home.path().string());
-  // Force XDG_*_HOME unset (empty value is treated as unset by AppDirectories).
   ScopedEnvVar xdg_config("XDG_CONFIG_HOME", "");
   ScopedEnvVar xdg_state("XDG_STATE_HOME", "");
   ScopedEnvVar xdg_cache("XDG_CACHE_HOME", "");
   ScopedEnvVar xdg_data("XDG_DATA_HOME", "");
 
-  // Sanity: without isolation, AppDirectories points at the planted state dir.
   const std::filesystem::path baseline_state =
       platform::ResolveAppDirectory(platform::UserDirectoryKind::State, "microide");
   Expect(baseline_state == real_state,
@@ -96,14 +89,13 @@ void TestColdStartupIgnoresRealUserWorkspaceSession() {
   Expect(!std::filesystem::exists(isolated_state / "workspace-session"),
          "sandboxed state must not contain the planted workspace-session");
 
-  // Real planted file must still exist (the harness did not touch it).
   Expect(std::filesystem::exists(real_state / "workspace-session"),
          "harness must not delete the user's real state file");
 
   perf::CleanupIsolatedAppRoot(sandbox, false);
 }
 
-}  // namespace
+}
 
 void RegisterPerfHarnessIsolationTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PerfHarnessIsolation/ExportsAllXdgVars",
@@ -114,4 +106,4 @@ void RegisterPerfHarnessIsolationTests(std::vector<TestCase>& tests) {
           TestColdStartupIgnoresRealUserWorkspaceSession);
 }
 
-}  // namespace microide::tests
+}

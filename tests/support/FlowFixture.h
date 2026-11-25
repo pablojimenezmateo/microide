@@ -1,10 +1,5 @@
 #pragma once
 
-// A flow test's scene: a project with one file open in a 1280x720 window, its
-// first frame painted. Click() drives a control the `ui` query names, and
-// ExpectFresh() paints an event's damage as the app loop would and expects the
-// result to equal a full repaint (support/RetainedRedraw.h).
-
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -31,13 +26,10 @@ struct FlowFixture {
   explicit FlowFixture(std::string_view file_name, std::string_view content)
       : FlowFixture(file_name, content, kWidth, kHeight) {}
 
-  // `before_open` runs on the project's directory, its file written, before the
-  // project opens (a test that needs a git repository makes one there).
   FlowFixture(std::string_view file_name, std::string_view content,
               const std::function<void(const std::filesystem::path&)>& before_open)
       : FlowFixture(file_name, content, kWidth, kHeight, before_open) {}
 
-  // A window of another size, as a monkey cell had it.
   FlowFixture(std::string_view file_name, std::string_view content, int window_width, int window_height,
               const std::function<void(const std::filesystem::path&)>& before_open = {})
       : width(window_width), height(window_height), canvas{window_width, window_height} {
@@ -49,10 +41,6 @@ struct FlowFixture {
       before_open(root);
     }
     Expect(workspace::WorkspaceShell::TestAccess::OpenProjectTab(shell, root, false, false), "the flow fixture should open its project");
-    // The initial index scan runs in the background, and a project search reads its
-    // candidates from the index: a flow that searches before it lands searched no
-    // files (QaFlowRegression/SearchResultsCaughtUpAtFramePrepRepaintTheirCount, on
-    // a loaded machine). Start every flow from an indexed project.
     Expect(WaitForFileIndexSize(shell, 1, std::chrono::seconds(10)),
            "the flow fixture's project should be indexed");
     workspace::WorkspaceShell::TestAccess::SetWindowSize(shell, width, height);
@@ -67,7 +55,6 @@ struct FlowFixture {
 
   void PinCaret() { workspace::WorkspaceShell::TestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); }
 
-  // The element the ui query names `name`, or nullopt.
   std::optional<SDL_FRect> ElementRect(std::string_view name) {
     const util::JsonValue ui = workspace::WorkspaceShell::TestAccess::ControlUi(shell);
     for (const util::JsonValue& entry : ui["elements"].AsArray()) {
@@ -88,7 +75,6 @@ struct FlowFixture {
                                   MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)});
   }
 
-  // Paints `redraw` as the app would and expects it to equal a full repaint.
   void ExpectFresh(const workspace::RenderInvalidation& redraw, const std::string& what) {
     if (const char* dump = std::getenv("MQA_TEST_DUMP"); dump != nullptr) {
       for (const auto& r : redraw.rects) {
@@ -110,4 +96,4 @@ struct FlowFixture {
   SoftwareCanvas canvas;
 };
 
-}  // namespace microide::tests
+}

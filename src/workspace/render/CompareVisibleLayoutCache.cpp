@@ -9,7 +9,7 @@
 namespace microide::workspace {
 namespace {
 
-constexpr std::size_t kMaxCompareLayoutBytes = 1u << 20;  // 1 MiB
+constexpr std::size_t kMaxCompareLayoutBytes = 1u << 20;
 
 static_assert((CompareVisibleLayoutCache::kTableSize &
                (CompareVisibleLayoutCache::kTableSize - 1)) == 0,
@@ -17,10 +17,6 @@ static_assert((CompareVisibleLayoutCache::kTableSize &
 static_assert(CompareVisibleLayoutCache::kTableSize >= 2 * CompareVisibleLayoutCache::kLimit,
               "linear probing only terminates while the table keeps a free position");
 
-// Probe the open-addressed index for `key`. Returns the table position holding
-// it, or the first empty position if it is absent — `found` says which. Linear
-// probing is safe to run unguarded because `live_count` is capped at half the
-// table size, so an empty position always exists.
 struct LayoutIndexProbe {
   std::size_t position = 0;
   bool found = false;
@@ -43,14 +39,10 @@ LayoutIndexProbe ProbeLayoutIndex(const CompareVisibleLayoutCache& cache,
   }
 }
 
-}  // namespace
+}
 
 void ResetCompareVisibleLayoutCache(CompareTabState& compare_tab) {
   CompareVisibleLayoutCache& cache = compare_tab.visible_layouts;
-  // Deliberately neither `layouts.clear()` nor an index rebuild: the slab keeps
-  // its `LayoutLine` storage so the next build refills it in place, and the
-  // table is zeroed rather than freed. See the type comment in
-  // `WorkspaceTabState.h` (TD-2026-08-17-261).
   cache.live_count = 0;
   std::fill(cache.table.begin(), cache.table.end(), 0u);
 }
@@ -162,4 +154,4 @@ const editor::LayoutLine* CompareVisibleLayoutForRow(const CompareTabState& comp
   return &cache.layouts[cache.table[probe.position] - 1];
 }
 
-}  // namespace microide::workspace
+}

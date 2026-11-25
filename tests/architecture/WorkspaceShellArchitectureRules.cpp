@@ -32,11 +32,6 @@ RuleResult CheckWorkspaceFriends(const std::filesystem::path& repo_root) {
       if (pos < testing_mask.size() && testing_mask[pos]) {
         continue;
       }
-      // Sanctioned exception: the test-only TestAccess backdoor. It is now
-      // declared unconditionally (not under #ifdef MICROIDE_TESTING) so the
-      // shared core object library compiles an ODR-identical WorkspaceShell for
-      // the production and test binaries. Exempt the friend by the befriended
-      // type name rather than by guard.
       const std::size_t decl_end = text.find(';', pos);
       const std::string_view decl(text.data() + pos,
                                   (decl_end == std::string::npos ? text.size() : decl_end) - pos);
@@ -75,27 +70,15 @@ RuleResult CheckCoordinatorShellConstructors(const std::filesystem::path& repo_r
   return result;
 }
 
-// openspec clip-discipline D5: every direct SDL draw call lives in a file on this
-// list, so the list is exactly the set of entry points the paint-overrun recorder
-// (render::PaintElement) must instrument -- nothing draws unseen by it. A render
-// TU that called SDL_Render* itself would paint past its element with no report.
-// Each entry is a primitive, a text backend, or code a later stage of the change
-// moves into the primitives; an entry that no longer draws (or no longer exists)
-// fails, so the list cannot go stale.
 namespace {
 constexpr std::array<std::string_view, 5> kSdlDrawAllowlist = {
-    // The hooked primitives (NotePaint) -- the batched, geometry, texture and
-    // polyline forms included (FillRectsInDrawColor, DrawGeometry, DrawTexture,
-    // DrawPolyline) -- and the text front end's backends, whose strings and runs
-    // TextRenderer reports.
     "src/render/SurfacePrimitives.h",
     "src/render/ClipStableLine.h",
     "src/render/SdlTtfTextBackend.cpp",
     "src/render/DebugTextBackend.cpp",
-    // Presenting the finished scene texture: not an element's paint.
     "src/app/Application.cpp",
 };
-}  // namespace
+}
 
 std::span<const std::string_view> SdlDrawAllowlist() { return kSdlDrawAllowlist; }
 
@@ -133,15 +116,7 @@ RuleResult CheckSdlDrawCallsStayInTheAllowlist(const std::filesystem::path& repo
 RuleResult CheckThrowingStoParsers(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "try/std::sto parsing";
-  // Hard: CLAUDE.md and openspec/specs/workspace-architecture list "numeric token
-  // parsing uses util/Parse.h; no try/catch around std::sto*" as a load-bearing
-  // invariant, and the tree is clean of it. Warn-only meant a reintroduced
-  // throwing parser printed a line nobody reads and shipped anyway.
   result.hard_fail = true;
-  // The non-throwing parse policy also covers the developer tools and the perf
-  // harness: benchmark CLI parsers and /proc sample parsers are part of the speed
-  // regression workflow, and divergent parsing style tempts future agents to copy the
-  // old try/catch-std::sto pattern back into production code.
   const std::array<std::filesystem::path, 3> roots = {
       repo_root / "src", repo_root / "tools", repo_root / "tests/perf"};
   for (const auto& root : roots) {
@@ -169,18 +144,12 @@ RuleResult CheckDapTransportUsesCheckedResponseSeqNarrowing(
   RuleResult result;
   result.label = "DAP transport range-checks inbound request_seq/seq before narrowing";
   result.hard_fail = true;
-  // The DAP transport must not narrow an adapter-controlled request_seq/seq with a bare
-  // static_cast<int>(...AsInt()): an out-of-int-range value from a hostile/buggy adapter
-  // wraps and can collide with a live pending request or forge an initialize match. All
-  // inbound seq narrowing routes through DapResponseSeqInRange. (TD-2026-07-16-44.)
   const std::filesystem::path target =
       repo_root / "src/workspace/debug/WorkspaceDapClientInternal.h";
   if (!RequireRuleTarget(result, target)) {
     return result;
   }
   const std::string text = ReadText(target);
-  // Any static_cast<int>( ... request_seq ... ) or ( ... ["seq"] ... AsInt()) that is
-  // not the checked helper is a violation. Match the raw narrowing shapes directly.
   const std::regex raw_narrow(
       R"(static_cast<int>\s*\(\s*msg\[\"(request_seq|seq)\"\]\.AsInt\(\)\s*\))");
   AppendViolations(result, target, text, raw_narrow,
@@ -193,27 +162,20 @@ RuleResult CheckPublicScriptsUseRunChecksForCtest(const std::filesystem::path& r
   RuleResult result;
   result.label = "public tools/*.sh route ctest through run-checks.sh";
   result.hard_fail = true;
-  // tools/run-checks.sh is the blessed test entry point: it scopes the build, writes
-  // the deterministic /tmp log, and applies sanitizer options + TSAN suppressions. Any
-  // other tools/*.sh calling ctest directly is a split-brain gate that bypasses those
-  // controls. Only a `ctest` token at the start of a command word counts (a comment or
-  // a substring like "run-checks" does not). (TD-2026-07-16-28.)
   const std::filesystem::path tools_dir = repo_root / "tools";
   std::error_code dir_ec;
   if (!std::filesystem::is_directory(tools_dir, dir_ec) || dir_ec) {
     return result;
   }
-  // A ctest invocation: line start or `;`/`|`/`&`/`(`/`do`/`then` boundary, then ctest.
   const std::regex ctest_invocation(R"((^|[;&|(]|\bdo\b|\bthen\b)\s*ctest\b)");
   for (const auto& entry : std::filesystem::directory_iterator(tools_dir)) {
     if (!entry.is_regular_file() || entry.path().extension() != ".sh") {
       continue;
     }
     if (entry.path().filename() == "run-checks.sh") {
-      continue;  // the sanctioned wrapper
+      continue;
     }
     const std::string text = ReadText(entry.path());
-    // Scan line by line so we can skip comment lines (leading # after whitespace).
     std::size_t line_no = 1;
     std::size_t start = 0;
     while (start <= text.size()) {
@@ -244,13 +206,6 @@ RuleResult CheckOneShotWakeProducersCheckPushResultOrHaveBackstop(
   RuleResult result;
   result.label = "one-shot wake producers route through the checked pusher";
   result.hard_fail = true;
-  // These producers make a result ready in shared state and then push a neutral
-  // wake. A bare SDL_PushEvent() is fire-and-forget: a rejected push strands the ready
-  // state until unrelated input. They must route through util::PushWake, which
-  // latches the shared "wake owed" bit that CurrentIdleWaitState consumes as a fallback
-  // wait. (TD-2026-07-16-54.) Any bare SDL_PushEvent in these files is a violation —
-  // and in the kernel producers among them it is also a layering violation, which
-  // CheckKernelStaysFreeOfTheWindowingLibrary catches independently.
   static constexpr std::array<const char*, 5> kProducerFiles = {
       "src/project/GitBlameService.cpp",
       "src/platform/ControlSocketServer.cpp",
@@ -277,11 +232,6 @@ RuleResult CheckPerfScenariosUseNonThrowingFilesystemProbes(
   RuleResult result;
   result.label = "perf scenarios use non-throwing filesystem probes";
   result.hard_fail = true;
-  // The perf runner is the speed-regression oracle: fixture discovery must degrade to
-  // a labelled "fixture absent" message, never throw a raw std::filesystem_error. A
-  // single-arg (throwing) exists()/is_directory() — no error_code — is the violation;
-  // the two-arg ec overload has a comma and is exempt. Use PathExistsNoThrow /
-  // DirectoryExistsNoThrow instead. (TD-2026-07-16-29.)
   const std::filesystem::path perf_dir = repo_root / "tests/perf";
   std::error_code dir_ec;
   if (!std::filesystem::is_directory(perf_dir, dir_ec) || dir_ec) {
@@ -303,37 +253,17 @@ RuleResult CheckPerfMeasureBodiesDoNotBuildTheirOwnInput(
   RuleResult result;
   result.label = "perf Measure bodies do not build their own input";
   result.hard_fail = true;
-  // TD-2026-08-07-166. `plugin_status_item_update` composed
-  // `"plugin.status.item_" + std::to_string(i)` inside its `Measure(...)` body,
-  // so 95 % of the phase's 168,001 allocations were the scenario building its own
-  // input — an allocation gate on `operator+`, wearing the product function's
-  // name, that a real regression in that function could not have moved.
-  //
-  // The rule is narrow on purpose: string materialisation (`std::to_string`,
-  // `std::format`/`fmt::format`, or a `+` adjacent to a string literal) inside a
-  // `Measure(...)` lambda body. Everything a scenario needs to build is supposed
-  // to be built before the window opens.
-  //
-  // The legitimate case — a pure-unit scenario where CONSTRUCTION IS THE WORK —
-  // opts out by naming itself: put `perf-measure-builds-input:` and a reason in a
-  // comment inside the body. That keeps the exemption in the file a reader is
-  // already looking at, and makes it greppable.
   const std::filesystem::path perf_dir = repo_root / "tests/perf";
   std::error_code dir_ec;
   if (!std::filesystem::is_directory(perf_dir, dir_ec) || dir_ec) {
     return result;
   }
-  // `" +` / `+ "` catches concatenation onto or from a literal without matching
-  // arithmetic; to_string/format are named directly.
   const std::regex materializes(
       R"((std::to_string\s*\()|((std|fmt)::format\s*\()|("\s*\+)|(\+\s*"))");
   std::size_t measure_bodies_seen = 0;
   for (const std::filesystem::path& path : SourceFilesUnder(perf_dir)) {
     const std::string text = ReadText(path);
     for (const std::size_t call : FindCodeLiteralOccurrences(text, "Measure(")) {
-      // The lambda body is the first `{` after the `]` that closes the capture
-      // list. Anything else (a Measure call spelled across a macro, a helper that
-      // takes a function pointer) is skipped rather than guessed at.
       const std::size_t capture = text.find(']', call);
       if (capture == std::string::npos) {
         continue;
@@ -366,9 +296,6 @@ RuleResult CheckPerfMeasureBodiesDoNotBuildTheirOwnInput(
       });
     }
   }
-  // Loud-missing-target guard: a rule that found no Measure body at all is not
-  // passing, it is blind — the harness could have renamed the call and this would
-  // report green forever.
   if (measure_bodies_seen == 0) {
     result.violations.push_back(Violation{
         .path = perf_dir,
@@ -384,27 +311,11 @@ RuleResult CheckShellGlueIsBoundByReference(const std::filesystem::path& repo_ro
   RuleResult result;
   result.label = "Make*Service()/Make*Coordinator() results must be bound by reference";
   result.hard_fail = true;
-  // These factories return a REFERENCE into the shell-owned ShellGlueCache: the
-  // instance is built once and reused, which was the whole point of caching them
-  // (2026-09-13). Binding the result to a value silently undoes that —
-  // `EditorTabService x = MakeEditorTabService();` copies the entire
-  // TabCoordinator, two references and seventeen std::functions, on every call.
-  // Twenty-two sites had drifted back to the value spelling, including the
-  // watcher's change sweep, which runs once per changed file: a branch switch
-  // paid a few thousand of those copies on the shell thread.
-  //
-  // It needs a lint rather than review for the same reason TD-2026-08-10-177 did:
-  // the two spellings read identically and only the declaration's `&` tells them
-  // apart. A temporary used and discarded in one expression (`MakeX().Handle(…)`)
-  // binds nothing and is not matched.
   const std::filesystem::path workspace_dir = repo_root / "src/workspace";
   std::error_code dir_ec;
   if (!std::filesystem::is_directory(workspace_dir, dir_ec) || dir_ec) {
     return result;
   }
-  // A declaration whose type is `auto` or a CapitalisedType, with no `&`, taking a
-  // Make*Service()/Make*Coordinator() call. `\s+` after the type (not `\s*&?\s*`)
-  // is what excludes the reference spelling.
   const std::regex bound_by_value(
       R"((?:^|[;{}])\s*(?:const\s+)?(?:auto|[A-Z][A-Za-z_0-9]*)\s+[a-z_][A-Za-z_0-9]*\s*=\s*Make[A-Za-z_0-9]*(?:Service|Coordinator)\s*\(\s*\)\s*;)");
   std::size_t factory_calls_seen = 0;
@@ -425,8 +336,6 @@ RuleResult CheckShellGlueIsBoundByReference(const std::filesystem::path& repo_ro
         "reference into the shell's glue cache, and a value binding copies the whole "
         "coordinator -- seventeen std::functions -- on every call");
   }
-  // Loud rather than vacuous: a rule that finds no call sites has stopped looking
-  // at the thing it guards. TD-2026-08-10-177's rule went blind exactly this way.
   if (factory_calls_seen == 0) {
     result.missing_targets.push_back(Violation{
         .path = workspace_dir,
@@ -443,30 +352,6 @@ RuleResult CheckFactoryResultsAreNotCapturedByValue(
   RuleResult result;
   result.label = "Make*Service/Coordinator results are not captured by value into a callback";
   result.hard_fail = true;
-  // TD-2026-08-10-177. MakeTabMouseCoordinator and MakePanelMouseCoordinator each
-  // built one TerminalPanelService and captured it BY VALUE into their terminal
-  // hooks. TerminalPanelService is nine std::functions -- 288 bytes -- which
-  // overflows std::function's 16-byte small-object buffer, so every such capture
-  // heap-allocates its own copy of the whole service: twice in one factory, SEVEN
-  // times in the other, and both are constructed per mouse event. Fixing the two
-  // took 55 % off scroll_large_file's allocations.
-  //
-  // The defect is invisible at the call site -- `[terminal_panel]` reads like any
-  // other capture -- so it gets a lint rather than a comment. The fix is always
-  // the same and always free: capture `this` and construct inside the body, since
-  // every one of these factories returns a struct of `this`-capturing lambdas that
-  // costs nothing to build.
-  //
-  // Shape: a local initialised from a Make*Service()/Make*Coordinator() factory,
-  // then named inside a lambda capture list in the same file.
-  //
-  // The local may be bound by reference (`auto& s = MakeX();`, which is now the
-  // required spelling — see CheckShellGlueIsBoundByReference) or by value. BOTH
-  // matter here, and matching only the value spelling is how this rule went blind:
-  // the sweep that converted every site to `auto&` left the regex matching nothing
-  // at all, and only the loud-missing-target guard below said so. A reference
-  // binding does not make `[s]` free — capturing a reference by value copies the
-  // referent, which is the same heap copy per hook that the rule exists for.
   const std::filesystem::path workspace_dir = repo_root / "src/workspace";
   std::error_code dir_ec;
   if (!std::filesystem::is_directory(workspace_dir, dir_ec) || dir_ec) {
@@ -477,8 +362,6 @@ RuleResult CheckFactoryResultsAreNotCapturedByValue(
   std::size_t factory_locals_seen = 0;
   for (const std::filesystem::path& path : SourceFilesUnder(workspace_dir)) {
     const std::string text = ReadText(path);
-    // Code-masked so a factory name mentioned in a comment or a string literal is
-    // not treated as a declaration, and neither is a capture-shaped comment.
     const std::vector<bool> code_mask = BuildCodeMask(text);
     const auto is_code = [&code_mask](std::size_t offset) {
       return offset < code_mask.size() && code_mask[offset];
@@ -490,18 +373,6 @@ RuleResult CheckFactoryResultsAreNotCapturedByValue(
       }
       ++factory_locals_seen;
       const std::string name = (*it)[1].str();
-      // A capture list naming it: `[name]`, `[name,`, `[..., name]`. Deliberately
-      // not `[&name]` or `[name = ...]` -- a reference capture is free, and an
-      // explicit init-capture is someone saying what they mean.
-      // The name as a STANDALONE capture entry: a capture-list opener or
-      // separator, optional space, the name, optional space, then a separator or
-      // the closer. Written this way rather than as "somewhere inside `[...]`"
-      // because the surrounding characters are the whole distinction — `[&name]`
-      // is a reference capture and free, and an earlier draft that scanned the
-      // interior flagged it. (An earlier draft still also used `[^]` in the
-      // negated class, which ECMAScript reads as "any character", so it matched
-      // everything and passed on the very defect the rule was written for. Both
-      // mistakes are pinned by fixtures.)
       const std::regex captured("[\\[,]\\s*" + name + "\\s*[,\\]]");
       for (auto cap = std::sregex_iterator(text.begin(), text.end(), captured);
            cap != std::sregex_iterator(); ++cap) {
@@ -524,7 +395,6 @@ RuleResult CheckFactoryResultsAreNotCapturedByValue(
       }
     }
   }
-  // Loud-missing-target guard: these factories are the whole subject of the rule.
   if (factory_locals_seen == 0) {
     result.violations.push_back(Violation{
         .path = workspace_dir,
@@ -541,34 +411,11 @@ RuleResult CheckPerfMeasureBodiesDoNotWaitOnWallClock(
   RuleResult result;
   result.label = "perf Measure bodies do not wait on the wall clock";
   result.hard_fail = true;
-  // TD-2026-08-10-179. `linter_on_save`'s gated phase was
-  // `Measure("linter.wait_diagnostics", [&]{ WaitForDiagnostics(source, 120ms); })`.
-  // Those helpers poll to a deadline and pump a frame per iteration, so the
-  // phase's allocation count is HOW MANY TIMES A WALL-CLOCK LOOP GOT ROUND — a
-  // duration wearing an allocation's clothes, gated at the 10 % tolerance the
-  // suite reserves for the one metric it calls byte-identical run to run. Three
-  // runs of an unchanged binary read 3,561 / 3,644 / 3,711 against a 2,745
-  // baseline. Underneath, the wait had never once succeeded: nothing here lints
-  // JavaScript, so every run since the scenario was written measured the timeout.
-  //
-  // Sibling of CheckPerfMeasureBodiesDoNotBuildTheirOwnInput and deliberately the
-  // same shape: a narrow pattern inside a `Measure(...)` lambda body, with a
-  // greppable in-body exemption for the case that is genuinely fine.
-  //
-  // The legitimate case exists — `WaitForProjectSearchFinished` is written NOT to
-  // pump while spinning precisely so it can sit inside a measured window, and
-  // `repo_open.idle_500ms` measures a fixed idle on purpose. Both are
-  // byte-identical across runs. They opt out by naming themselves: put
-  // `perf-measure-waits-on-clock:` and a reason in a comment inside the body,
-  // and confirm the claim the way the entry says — three runs of one unchanged
-  // binary, comparing the phase's p50_allocations.
   const std::filesystem::path perf_dir = repo_root / "tests/perf";
   std::error_code dir_ec;
   if (!std::filesystem::is_directory(perf_dir, dir_ec) || dir_ec) {
     return result;
   }
-  // The harness's own blocking helpers, plus a raw sleep. Named directly rather
-  // than by a `Wait` substring so an unrelated identifier does not trip it.
   const std::regex waits(
       R"((\bWaitFor[A-Za-z]*\s*\()|(\bcontext\.Wait\s*\()|(std::this_thread::sleep_for\s*\())");
   std::size_t measure_bodies_seen = 0;
@@ -609,8 +456,6 @@ RuleResult CheckPerfMeasureBodiesDoNotWaitOnWallClock(
       });
     }
   }
-  // Loud-missing-target guard, same reasoning as the sibling rule: a rule that
-  // found no Measure body is blind, not passing.
   if (measure_bodies_seen == 0) {
     result.violations.push_back(Violation{
         .path = perf_dir,
@@ -627,17 +472,6 @@ RuleResult CheckPerfHarnessIsolatesBeforeConstructingTheShell(
   RuleResult result;
   result.label = "perf harness isolates the app-root before the Driver";
   result.hard_fail = true;
-  // TD-2026-08-07-165. `PerfHarness::Driver` holds a `workspace::WorkspaceShell`
-  // BY VALUE, so `Driver driver;` runs the shell's constructor — which resolves
-  // the user state root and loads `recents` from it. Establishing the isolated
-  // app-root one statement later meant every scenario read the developer's real
-  // ~/.local/state/microide, and `repo_open_rss_idle` measured 369 allocations on
-  // a fresh machine and 627 on a used one, from identical code.
-  //
-  // The ordering is the invariant, so the ordering is what this pins: inside
-  // PerfHarness.cpp, the first EstablishIsolatedAppRoot must appear before the
-  // first `Driver driver;`. Loud when either anchor disappears — a rule that
-  // cannot find what it orders is not passing, it is blind.
   const std::filesystem::path harness = repo_root / "tests/perf/PerfHarness.cpp";
   const std::string text = ReadRuleTarget(result, harness);
   if (text.empty()) {
@@ -736,13 +570,6 @@ RuleResult CheckRenderSurfaceGeometryAccess(const std::filesystem::path& repo_ro
   return result;
 }
 
-// Ratchet-only cap on the number of `WorkspaceShell*.cpp` translation units.
-// File decomposition has reached a plateau (see dev-docs/project/known-tech-debt.md
-// item #16); new shell-adjacent behavior should land on a service, not on
-// a new `WorkspaceShell*.cpp` companion. If a migration removes one of
-// these files, lower the cap; do not raise it. This guardrail blocks
-// regressions; it is not the desired end state.
-
 RuleResult CheckPerClipRenderPathDoesNotRunFramePrep(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "per-clip render path avoids frame prep";
@@ -787,11 +614,6 @@ RuleResult CheckPerClipRenderPathDoesNotRunFramePrep(const std::filesystem::path
       });
     }
   } else {
-    // Loud-missing-target guard: both halves of this rule are anchored on an
-    // exact source shape, and a rename/restructure of either would make the rule
-    // silently inspect nothing while still reporting green. Fail instead so the
-    // anchor gets repointed. (Three hard rules were found passing vacuously for
-    // exactly this reason in the 2026-07-26 lint sweep.)
     result.violations.push_back(Violation{
         .path = app_cpp,
         .line = 1,
@@ -855,26 +677,9 @@ RuleResult CheckPerClipRenderPathDoesNotRunFramePrep(const std::filesystem::path
 }
 
 RuleResult CheckPersistenceFileIoBoundary(const std::filesystem::path& repo_root) {
-  // TD-2026-07-17-032. Workspace-state persistence (project state, user config,
-  // session restore) routes through PersistenceService + PersistedRecordReader/
-  // Writer; general text file access goes through util/TextFileIO or
-  // platform-layer helpers. The previous incarnation of this rule matched raw
-  // streams only when a "workspace|session|config" literal appeared inside the
-  // open() argument on the same line, and exempted four file paths that no
-  // longer exist — i.e. it was vacuous. The precise, load-bearing form is an
-  // allowlist ratchet: raw file-stream I/O is banned in src/workspace/* except
-  // the enumerated TUs below, so any NEW direct open must either use a
-  // sanctioned seam or grow this list in review.
   RuleResult result;
   result.label = "persistence file-io boundary (workspace raw-stream ratchet)";
   result.hard_fail = true;
-  // Each allowlisted TU opens files for a documented non-persisted-state purpose:
-  // - PersistenceService.cpp: the sanctioned home of persisted-state I/O (today it
-  //   routes through persistence/PersistedRecord{Reader,Writer}, but the seam is here).
-  // - ControlChannelService.cpp: control-spec snapshot read + response mirror
-  //   (external control channel artifacts, not workspace/session/config state).
-  // - LspService.cpp: server-requested WorkspaceEdit resource-op file creation
-  //   (project source files, not state).
   constexpr std::array<std::string_view, 3> kAllowedFiles = {
       "src/workspace/persistence/PersistenceService.cpp",
       "src/workspace/control/ControlChannelService.cpp",
@@ -912,27 +717,6 @@ RuleResult CheckPersistenceFileIoBoundary(const std::filesystem::path& repo_root
   return result;
 }
 
-// Task 4.1: No synchronous blocking-wait primitives in workspace code.
-// Blocking on a subprocess from the main thread stalls the event loop.
-// All git/lint subprocesses must be dispatched through ProjectBackgroundExecutor.
-
-
-// Every ActionId must be REACHABLE by a user. An action is dispatched by the
-// executors and gated by the availability table, both of which are `switch`
-// statements — so an action can be fully implemented, compile cleanly, appear in
-// three switches, and still be impossible to invoke because nothing ever
-// *produces* it: no command spec, no keybinding, no menu item, no context-menu
-// call site.
-//
-// That is not hypothetical. `ActionId::ToggleFullscreen` reached
-// Application.cpp's SDL_SetWindowFullscreen call and was unreachable; so were
-// `InlineCompletion` and the two `DebugBreakpointEdit*` actions.
-//
-// "Produced" is deliberately broad: any mention of `ActionId::X` on a line that
-// is not a `case` label counts, so context-menu-only actions (the git sidebar
-// entry actions, which are documented as such and are constructed directly in
-// the mouse coordinators) pass without an allowlist. The rule only catches the
-// case where the ONLY mentions anywhere are `case` labels.
 RuleResult CheckEveryActionIdIsReachable(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "every ActionId is reachable from a surface AND handled by a dispatch";
@@ -963,7 +747,7 @@ RuleResult CheckEveryActionIdIsReachable(const std::filesystem::path& repo_root)
     for (std::sregex_iterator it(body.begin(), body.end(), name_pattern), last; it != last; ++it) {
       const std::size_t start = static_cast<std::size_t>(it->position(1));
       if (start < body_is_code.size() && !body_is_code[start]) {
-        continue;  // a name inside a comment is not an enumerator
+        continue;
       }
       action_names.push_back(it->str(1));
     }
@@ -979,14 +763,6 @@ RuleResult CheckEveryActionIdIsReachable(const std::filesystem::path& repo_root)
     return result;
   }
 
-  // Two directions, collected in one walk. `produced` is a mention that is not a
-  // `case` label -- a command spec, a keybinding, a menu item, a call site -- so
-  // the action can be INVOKED. `handled` is a `case` label, so something acts on
-  // it. An action missing either half is inert, and the two failures look
-  // completely different to a user: one is a behaviour with no way to reach it,
-  // the other is a palette entry, menu item or key binding that does nothing at
-  // all when used. (Same mirrored pair as CheckSettingsReadAreRegistered and
-  // CheckRegisteredSettingsAreRead.)
   std::set<std::string> produced;
   std::set<std::string> handled;
   for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src")) {
@@ -1010,10 +786,6 @@ RuleResult CheckEveryActionIdIsReachable(const std::filesystem::path& repo_root)
       }
       const std::size_t line_start = text.rfind('\n', start) + 1;
       const std::string prefix = text.substr(line_start, start - line_start);
-      // `case ActionId::X:` is a handler, not a producer. Fall-through groups of
-      // case labels are handled the same way. The label has to START its line,
-      // which is how every switch in the tree is written; an inline
-      // `switch (id) { case ActionId::X: ... }` would read as a producer here.
       if (std::regex_search(prefix, std::regex(R"(^\s*case\s*$)"))) {
         handled.insert(it->str(1));
         continue;
@@ -1059,4 +831,4 @@ RuleResult CheckEveryActionIdIsReachable(const std::filesystem::path& repo_root)
   return result;
 }
 
-}  // namespace microide::tests::architecture
+}

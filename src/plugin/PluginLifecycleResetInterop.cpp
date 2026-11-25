@@ -41,4 +41,4 @@ void ShutdownForDisabledRuntime(
   current_project_root->clear();
 }
 
-}  // namespace microide::plugin::lifecycle_reset_interop
+}

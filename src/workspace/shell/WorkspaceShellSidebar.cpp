@@ -22,16 +22,14 @@ namespace microide::workspace {
 namespace {
 
 constexpr float kSidebarRowHeight = 20.0f;
-// Mode-switch tab row (replaces the old dropdown) at the top of the sidebar header.
 constexpr float kSidebarModeRowTop = 4.0f;
 constexpr float kSidebarModeRowHeight = 20.0f;
 constexpr float kSidebarModeTabGap = 4.0f;
-constexpr float kSidebarModeIconSlot = 16.0f;       // icon cell width within a tab
-constexpr float kSidebarModeIconLabelGap = 5.0f;    // icon -> label spacing
-constexpr float kSidebarModeLabelPadding = 10.0f;   // leading + trailing label padding
-constexpr float kSidebarModeOverflowWidth = 24.0f;  // "⋯" overflow button
+constexpr float kSidebarModeIconSlot = 16.0f;
+constexpr float kSidebarModeIconLabelGap = 5.0f;
+constexpr float kSidebarModeLabelPadding = 10.0f;
+constexpr float kSidebarModeOverflowWidth = 24.0f;
 
-// Static label for a builtin sidebar mode (tab labels are always builtin views).
 std::string_view BuiltinSidebarModeLabel(SidebarMode mode) {
   const SidebarViewSpec* view = FindBuiltinSidebarView(mode);
   return view != nullptr ? view->label : std::string_view{};
@@ -52,7 +50,7 @@ bool UseCompactTreeHeader(float sidebar_width,
   return sidebar_width < minimum_required_width;
 }
 
-}  // namespace
+}
 
 std::optional<SDL_FRect> WorkspaceShell::GitSidebarOutgoingBaseButtonRect(
     const SDL_FRect& sidebar_rect) const {
@@ -107,10 +105,6 @@ float WorkspaceShell::GitSidebarSummaryHeight() const {
           .view_model;
 
   float height = 0.0f;
-  // Keep list offset in sync with the compact grouped summary block. summary_lines
-  // carries only banners now; the branch line moved to the status bar, the per-selection
-  // line and the redundant staged/unstaged counts were removed. The commit-readiness
-  // line is replaced by the Commit button (or a hint while the draft is open).
   if (view_model.show_commit_button) {
     height += git_sidebar_header::kCommitButtonHeight + git_sidebar_header::kCommitButtonGap;
   } else if (!view_model.commit_summary_line.empty()) {
@@ -231,13 +225,6 @@ SidebarModeRowLayout WorkspaceShell::SidebarModeRow(const SDL_FRect& sidebar_rec
     return layout;
   }
 
-  // Primary tabs are the builtin Project / Search / Source Control views, honoring the user's
-  // hidden/order policy. Everything else -- Problems, Tests, Outline, and any
-  // non-hidden plugin view -- spills into the overflow menu. Those three builtins
-  // used to be filtered out of both the row and the menu, a leftover from when they
-  // were retired surfaces; they came back without the rail being told, so they were
-  // reachable only by typing `sidebar-show problems` and, once shown, left the rail
-  // with no highlighted tab and no control to get back.
   const auto& policies = context_.current_project_state.sidebar_policies;
   for (const SidebarViewInfo& view : OrderedSidebarViews(plugin_runtime_.Host(), policies)) {
     if (view.id == "tree" || view.id == "search" || view.id == "git") {
@@ -258,7 +245,6 @@ SidebarModeRowLayout WorkspaceShell::SidebarModeRow(const SDL_FRect& sidebar_rec
   const float avail = std::max(0.0f, layout.row_rect.w - overflow_w);
   const float gaps = kSidebarModeTabGap * static_cast<float>(layout.tab_count - 1);
 
-  // Choose icon+label when the labelled row fits, else collapse to equal icon-only cells.
   float labelled_total = gaps;
   for (int i = 0; i < layout.tab_count; ++i) {
     labelled_total += kSidebarModeIconSlot + kSidebarModeIconLabelGap +
@@ -266,10 +252,6 @@ SidebarModeRowLayout WorkspaceShell::SidebarModeRow(const SDL_FRect& sidebar_rec
                       kSidebarModeLabelPadding;
   }
   layout.icon_only = labelled_total > avail;
-  // Icon-only cells have a floor, so a narrow enough sidebar cannot hold them
-  // all: drawn anyway they ran past its edge and under the "⋯" button, and a
-  // hover lit one control while the damage named another (QA monkey, seed 4).
-  // The ones that do not fit go into the "⋯" menu, which lists every view.
   if (layout.icon_only) {
     const auto fits = [&](int count, bool overflow) {
       const float room =
@@ -314,10 +296,6 @@ SidebarModeRowLayout WorkspaceShell::SidebarModeRow(const SDL_FRect& sidebar_rec
 }
 
 const std::vector<WorkspaceShell::GitSidebarLine>& WorkspaceShell::BuildGitSidebarLines() const {
-  // Always reads live git state through the shared revision-exact memo (never the
-  // possibly-stale per-frame prepare cache), so hit-testing between frames matches
-  // the current collapse/entry state and is cheap when nothing changed. The render
-  // TU instead consumes the frame's pre-flattened `git_sidebar_lines` directly.
   return workspace::CachedGitSidebarPresentation(context_.current_project_state.sidebar.git,
                                                  context_.current_project_state.root,
                                                  context_.current_project_state.branch_review)
@@ -337,9 +315,6 @@ bool WorkspaceShell::ToggleGitSidebarDirectoryCollapsed(const std::string& tree_
     collapsed.erase(it);
   }
 
-  // Collapsing a directory can hide the selected entry (selection is a flat entry
-  // index, the tree filters rows). Snap the flat selection to the nearest still-
-  // visible entry so arrow keys and the highlight don't strand on an invisible row.
   if (git.selected_index < git.entries.size()) {
     const std::vector<GitSidebarLine>& lines = BuildGitSidebarLines();
     if (!FindSelectedGitSidebarLineIndex(lines, git.selected_index).has_value()) {
@@ -347,8 +322,6 @@ bool WorkspaceShell::ToggleGitSidebarDirectoryCollapsed(const std::string& tree_
       for (const GitSidebarLine& line : lines) {
         if (line.kind == GitSidebarLine::Kind::Entry && line.entry_index >= 0) {
           const auto candidate = static_cast<std::size_t>(line.entry_index);
-          // Prefer the first visible entry at/after the old selection; otherwise
-          // keep the last visible entry before it.
           if (candidate >= git.selected_index) {
             nearest = candidate;
             break;
@@ -361,8 +334,6 @@ bool WorkspaceShell::ToggleGitSidebarDirectoryCollapsed(const std::string& tree_
       }
     }
   }
-  // The rows below the folder moved up or down: the list is the damage, not the
-  // clicked row the pointer's own redraw covered (QA monkey, seed 45 at 600 steps).
   RequestPreparedFrame();
   return true;
 }
@@ -383,4 +354,4 @@ void WorkspaceShell::SetGitOutgoingBaseChoice(OutgoingBaseChoice choice) {
   ConsumeGitSidebarRefresh();
 }
 
-}  // namespace microide::workspace
+}

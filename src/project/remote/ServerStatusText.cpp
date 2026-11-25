@@ -8,8 +8,6 @@ namespace microide::project::remote {
 namespace {
 
 void Pad(std::string& line, std::size_t column) {
-  // Padding counts bytes; the table's text is ASCII but for "…" and "·", which
-  // only ever follow the last padded column.
   if (line.size() < column) {
     line.append(column - line.size(), ' ');
   } else {
@@ -17,7 +15,7 @@ void Pad(std::string& line, std::size_t column) {
   }
 }
 
-}  // namespace
+}
 
 std::string FormatCount(std::size_t n, std::string_view one, std::string_view many) {
   return std::to_string(n) + " " + std::string(n == 1 ? one : many);
@@ -119,7 +117,7 @@ std::string ProcessDisplayName(const std::vector<std::string>& argv, std::size_t
   if (name.size() > max_bytes) {
     std::size_t cut = max_bytes;
     while (cut > 0 && (static_cast<unsigned char>(name[cut]) & 0xC0) == 0x80) {
-      --cut;  // not inside a UTF-8 sequence
+      --cut;
     }
     name.resize(cut);
     name.append(kNotReported);
@@ -242,4 +240,4 @@ std::string FormatServerStatusTable(const ServerStatus& status) {
   return out;
 }
 
-}  // namespace microide::project::remote
+}

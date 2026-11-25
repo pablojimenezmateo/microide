@@ -9,21 +9,11 @@
 
 namespace microide::util {
 
-// True when two paths denote the same location once normalized. The raw `==`
-// comparison runs first so the common case (both already normalized, which is how
-// the workspace stores document paths) never allocates the temporaries that
-// `lexically_normal()` produces; the normalization only happens on a mismatch.
 [[nodiscard]] inline bool SamePathNormalized(const std::filesystem::path& a,
                                              const std::filesystem::path& b) {
   return a == b || a.lexically_normal() == b.lexically_normal();
 }
 
-// True when a lexically relative path (a `lexically_relative` result, or git's
-// '/'-separated relative text) climbs out of its base: its FIRST COMPONENT is
-// "..". Not a text-prefix test. `..cache/x` is a child folder named `..cache`, and
-// nine sites that asked `starts_with("..")` read it as outside -- the tree's copy
-// guard among them, so a folder copied into its own `..cache` subfolder copied its
-// own copy (TD-2026-10-29-423).
 [[nodiscard]] inline bool RelativeTextClimbsOut(std::string_view relative) {
   return relative == ".." || relative.starts_with("../");
 }
@@ -31,10 +21,6 @@ namespace microide::util {
   return !relative.empty() && *relative.begin() == "..";
 }
 
-// True when `path` is a '/'-separated path another machine may name: relative and
-// normal by construction -- no "..", no ".", no empty component (so no "//" and no
-// trailing slash), nothing absolute, no NUL -- and at most `max_bytes` long. The
-// roaming session and the roaming review both read paths this way.
 [[nodiscard]] inline bool IsPortableRelativePath(std::string_view path, std::size_t max_bytes) {
   if (path.empty() || path.size() > max_bytes || path.front() == '/' || path.find('\0') != std::string_view::npos) {
     return false;
@@ -47,23 +33,12 @@ namespace microide::util {
     }
     path.remove_prefix(slash == std::string_view::npos ? path.size() : slash + 1);
     if (slash != std::string_view::npos && path.empty()) {
-      return false;  // a trailing slash
+      return false;
     }
   }
   return true;
 }
 
-// True when `candidate` is `root` itself or a path nested under it, for inputs the
-// caller has ALREADY normalized. Allocation-free: it answers with a prefix compare
-// on the two native strings instead of building the `lexically_normal()` /
-// `lexically_relative()` / `generic_string()` temporaries the general entry point
-// below needs (four allocations per call). Use it wherever the containment check
-// sits in a per-entry loop — the project traversal filter runs it once per
-// filesystem entry of every index walk.
-//
-// Passing a NON-normalized path here is a caller bug, not UB: the answer then
-// simply reflects the textual form ("a/./b" is not seen as within "a/b"). The
-// text form is the same question about two paths' native spellings.
 [[nodiscard]] inline bool NormalizedPathTextEqualsOrWithin(std::string_view candidate_text,
                                                            std::string_view root_text) {
   if (candidate_text.empty() || root_text.empty()) {
@@ -72,9 +47,6 @@ namespace microide::util {
   const auto is_separator = [](char c) {
     return c == '/';
   };
-  // `/a/b/` and `/a/b` are one location (a normal path keeps a trailing separator
-  // as an empty final component): without this, `/a/b` was not within its own
-  // root spelled `/a/b/`, while `/a/b/` was within `/a/b`.
   const auto drop_trailing_separator = [&](std::string_view& text) {
     if (text.size() > 1 && is_separator(text.back())) {
       text.remove_suffix(1);
@@ -85,12 +57,9 @@ namespace microide::util {
   if (candidate_text == root_text) {
     return true;
   }
-  // A "." root is the current directory, whose members are spelled without any
-  // "./" prefix once normalized ("./x" normalizes to "x"), so the prefix compare
-  // below would miss them. Every relative path that does not climb out is within.
   if (root_text.size() == 1 && root_text[0] == '.') {
     if (is_separator(candidate_text.front())) {
-      return false;  // absolute
+      return false;
     }
     const bool climbs_out = candidate_text.size() >= 2 && candidate_text[0] == '.' &&
                             candidate_text[1] == '.' &&
@@ -101,8 +70,6 @@ namespace microide::util {
       candidate_text.compare(0, root_text.size(), root_text) != 0) {
     return false;
   }
-  // A root that already ends in a separator ("/", "C:\") needs no extra one; any
-  // other root must be followed by a separator so "/a/bc" is not "within" "/a/b".
   return is_separator(root_text.back()) || is_separator(candidate_text[root_text.size()]);
 }
 
@@ -111,29 +78,9 @@ namespace microide::util {
   return NormalizedPathTextEqualsOrWithin(candidate.native(), root.native());
 }
 
-// True when `candidate` denotes the same location as `normalized_reference`, which
-// the caller has ALREADY normalized (once, outside the loop).
-//
-// This is the shape a SCAN needs, and it is not `SamePathNormalized`. A scan is
-// mostly mismatches, and that helper normalizes BOTH sides on every mismatch — so
-// looking one path up among twenty open tabs costs ~19 x 24 allocations to answer
-// "no" nineteen times. Here a mismatch between two already-normal paths is a
-// string compare and nothing else; only an unusually spelled candidate normalizes,
-// and the reference never does.
 [[nodiscard]] inline bool SameAsNormalizedPath(const std::filesystem::path& candidate,
                                                const std::filesystem::path& normalized_reference);
 
-// The portion of `candidate_text` that is relative to `root_text`, as a view INTO
-// `candidate_text` — the allocation-free companion to
-// `NormalizedPathEqualsOrWithin`, whose preconditions it shares: both texts are
-// already lexically normal, and the containment check above has already returned
-// true for them. Returns an empty view when the two denote the same location.
-//
-// This exists so a per-entry traversal decision can be made without the
-// `lexically_relative()` + `lexically_normal()` + `generic_string()` temporaries
-// (a dozen-odd allocations) that deriving the same text through `path` costs. The
-// containment check has already established the prefix; the relative part is that
-// prefix removed, and nothing else.
 [[nodiscard]] inline std::string_view NormalizedRelativeView(std::string_view candidate_text,
                                                              std::string_view root_text) {
   const auto is_separator = [](char c) {
@@ -142,14 +89,12 @@ namespace microide::util {
   if (root_text.empty() || candidate_text == root_text) {
     return {};
   }
-  // A "." root is the current directory; its members are spelled with no prefix
-  // at all once normalized, so the whole candidate is the relative part.
   if (root_text.size() == 1 && root_text[0] == '.') {
     return candidate_text;
   }
   std::size_t offset = root_text.size();
   if (!is_separator(root_text.back())) {
-    ++offset;  // skip the separator the containment check proved is there
+    ++offset;
   }
   if (offset >= candidate_text.size()) {
     return {};
@@ -157,34 +102,17 @@ namespace microide::util {
   return candidate_text.substr(offset);
 }
 
-// The directory part of an already-normalized path's text, as a view into it —
-// what `path::parent_path()` would yield, without constructing a path. An empty
-// view means the path has no directory part (a bare relative filename).
 [[nodiscard]] inline std::string_view NormalizedParentDirectoryView(std::string_view text) {
   const std::size_t last_separator = text.find_last_of('/');
   if (last_separator == std::string_view::npos) {
     return {};
   }
   if (last_separator == 0) {
-    return text.substr(0, 1);  // the filesystem root itself keeps its separator
+    return text.substr(0, 1);
   }
   return text.substr(0, last_separator);
 }
 
-// True when `text` — a path's own separator-separated spelling — is NOT already in
-// lexically-normal form, i.e. when `lexically_normal()` would produce something
-// different and therefore has to run.
-//
-// `lexically_normal()` costs ~12 allocations (a fresh path plus a component list
-// with a string per component). Almost every path the workspace holds is already
-// normalized: the git status ingress, the branch-review store and the project
-// catalog all normalize once on the way in. This is the allocation-free scan that
-// confirms it, so a hot loop can spend one string instead of one path per item and
-// still fall back to the authoritative form for anything unusual.
-//
-// A normalized path contains no "." component, no ".." component, and no empty
-// component other than a leading one (the root separator) or a trailing one (the
-// directory-form separator, which `lexically_normal()` preserves).
 [[nodiscard]] inline bool PathTextNeedsNormalizing(std::string_view text) {
   const auto is_separator = [](char c) {
     return c == '/';
@@ -200,7 +128,7 @@ namespace microide::util {
     }
     const std::string_view component = text.substr(begin, end - begin);
     if (component.empty() && begin != 0 && end != text.size()) {
-      return true;  // an interior "//" run
+      return true;
     }
     if (component == "." || component == "..") {
       return true;
@@ -212,20 +140,6 @@ namespace microide::util {
   }
 }
 
-// `path.lexically_normal()`, skipped when the path is ALREADY normal.
-//
-// `lexically_normal()` is ~12 allocations: a fresh path plus a component list
-// with a string per component, built eagerly by libstdc++'s constructor. Almost
-// every path the workspace holds is already normal (the git ingress, the project
-// catalog and the branch-review store each normalize once on the way in), so the
-// call is usually an expensive way to reproduce its own input.
-//
-// Two forms, and the second is the one a hot path wants:
-//   - `NormalizedPath` returns an owned path. Still a path COPY (two
-//     allocations) in the already-normal case, but not twelve.
-//   - `NormalizedPathView` returns a reference to the input when it is already
-//     normal and to `scratch` otherwise, so the common case allocates nothing at
-//     all. The reference is valid as long as both arguments are.
 [[nodiscard]] inline std::filesystem::path NormalizedPath(const std::filesystem::path& path) {
   return PathTextNeedsNormalizing(path.native()) ? path.lexically_normal() : path;
 }
@@ -251,30 +165,9 @@ inline bool SameAsNormalizedPath(const std::filesystem::path& candidate,
   return candidate.lexically_normal().native() == normalized_reference.native();
 }
 
-// `PathEqualsOrWithin` for a candidate that may not be normalized yet, without
-// paying `lexically_normal()` when it already is. The eager-argument form
-// (`PathEqualsOrWithin(x.lexically_normal(), root)`) builds a whole path before
-// the containment test can reject it.
 [[nodiscard]] inline bool PathEqualsOrWithinNormalized(const std::filesystem::path& candidate,
                                                        const std::filesystem::path& root);
 
-// True when `candidate` is `root` itself or nested under it AFTER symlinks are
-// resolved. Use this — not the lexical form below — wherever the containment check
-// is a SECURITY boundary against a path some other program supplied.
-//
-// The lexical check answers about spelling. A symlink INSIDE the root pointing
-// outside it is spelled entirely within the root, so the lexical check accepts it
-// and a write through that path lands outside — and repositories carry symlinks,
-// so the attacker does not even need to create one. `weakly_canonical` resolves the
-// existing prefix and appends any not-yet-existing leaf lexically, which is what
-// makes it correct for a CREATE as well: `link/new.txt`, where `link` points out of
-// the project, resolves to the real parent before the comparison.
-//
-// Fails CLOSED: if canonicalization errors (a symlink loop, a permission error on
-// an intermediate directory) the answer is false. Returning the lexical result
-// there would silently downgrade this back to the check it exists to replace.
-// Two syscall-ish resolutions per call, so keep it off per-entry scan loops; the
-// lexical form below is what those want.
 [[nodiscard]] inline bool PathEqualsOrWithinResolvingSymlinks(
     const std::filesystem::path& candidate,
     const std::filesystem::path& root) {
@@ -296,26 +189,19 @@ inline bool SameAsNormalizedPath(const std::filesystem::path& candidate,
                                       canonical_root.lexically_normal());
 }
 
-// True when `candidate` is `root` itself or a path nested under it. Purely
-// lexical: it never touches the filesystem (no symlink resolution, no cwd
-// dependency), which keeps it cheap enough for hot path-prefix scans in the
-// diagnostics/decoration stores and deterministic regardless of the process's
-// working directory. Empty inputs are never "within" anything.
 [[nodiscard]] inline bool PathEqualsOrWithin(const std::filesystem::path& candidate,
                                              const std::filesystem::path& root) {
   if (candidate.empty() || root.empty()) {
     return false;
   }
   if (candidate == root) {
-    return true;  // already-normalized identical paths: skip the normalize cost
+    return true;
   }
   std::filesystem::path normalized_candidate = candidate.lexically_normal();
   std::filesystem::path normalized_root = root.lexically_normal();
   if (normalized_candidate.empty() || normalized_root.empty()) {
     return false;
   }
-  // As NormalizedPathTextEqualsOrWithin: a trailing separator names the same
-  // location, and left in it made `/a/b` "outside" a root spelled `/a/b/`.
   for (std::filesystem::path* path : {&normalized_candidate, &normalized_root}) {
     if (path->has_relative_path() && !path->has_filename()) {
       *path = path->parent_path();
@@ -332,13 +218,6 @@ inline bool SameAsNormalizedPath(const std::filesystem::path& candidate,
   return relative_text != "." && relative_text != ".." && relative_text.rfind("../", 0) != 0;
 }
 
-// Forward-slashed, project-relative representation of `candidate` when it is nested
-// under `root`, else nullopt. Purely lexical — never touches the filesystem — so it
-// stays correct and cheap on deleted paths, symlinks, or inaccessible mounts, where
-// std::filesystem::relative would stat/canonicalize and can fail, slow, or depend on
-// the process cwd. Returns nullopt when either input is empty, when candidate is root
-// itself, or when candidate escapes root via `..`. Use this for display labels and
-// any prefix trimming that must not incur a syscall per path.
 [[nodiscard]] inline std::optional<std::string> RelativePathWithin(
     const std::filesystem::path& candidate, const std::filesystem::path& root) {
   if (candidate.empty() || root.empty()) {
@@ -356,11 +235,6 @@ inline bool SameAsNormalizedPath(const std::filesystem::path& candidate,
   return text;
 }
 
-// Rewrite `path` so a leading `old_prefix` becomes `new_prefix`, returning the
-// normalized result. Paths outside `old_prefix` are returned unchanged (still
-// normalized). Purely lexical like PathEqualsOrWithin — no filesystem access, no
-// symlink resolution — so it is safe to call once per stored path when remapping
-// after a rename without incurring a syscall per entry.
 [[nodiscard]] inline std::filesystem::path ReplacePathPrefix(
     const std::filesystem::path& path,
     const std::filesystem::path& old_prefix,
@@ -368,8 +242,6 @@ inline bool SameAsNormalizedPath(const std::filesystem::path& candidate,
   const std::filesystem::path normalized_path = path.lexically_normal();
   const std::filesystem::path normalized_old_prefix = old_prefix.lexically_normal();
   const std::filesystem::path normalized_new_prefix = new_prefix.lexically_normal();
-  // The inputs are normalized right here, so use the variant that does not
-  // normalize them a second time.
   if (!NormalizedPathEqualsOrWithin(normalized_path, normalized_old_prefix)) {
     return normalized_path;
   }
@@ -390,4 +262,4 @@ inline bool PathEqualsOrWithinNormalized(const std::filesystem::path& candidate,
   return PathEqualsOrWithin(NormalizedPathView(candidate, scratch), root);
 }
 
-}  // namespace microide::util
+}

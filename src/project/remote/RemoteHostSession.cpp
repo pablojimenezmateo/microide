@@ -25,11 +25,6 @@
 namespace microide::project::remote {
 namespace {
 
-// The ONLY shell scripts this client sends to a host (dev-docs/design/
-// remote-projects.md § 6.6). Fixed text: nothing a user typed is spliced in. The
-// install script and its directory (relative to $HOME) live in RemoteServerPaths.
-// The server: the self-installed one, else one on PATH; 127 when neither exists,
-// which is what tells the client to install.
 constexpr std::string_view kServerChain =
     "c=\"$HOME/.local/share/microide/server/microide-server\"; "
     "[ -x \"$c\" ] || c=$(command -v microide-server) || exit 127; exec \"$c\"";
@@ -42,9 +37,6 @@ bool ValidName(std::string_view text) {
          });
 }
 
-// `remote.server_socket_dir` reaches the host's argv, so it is held to a set no
-// login shell (sh, bash, zsh, fish) gives a meaning to: an absolute path of
-// letters, digits, `.`, `_`, `-` and `/`, with no component starting with `-`.
 bool ValidSocketDir(std::string_view dir) {
   return dir.size() > 1 && dir.size() <= 4096 && dir.front() == '/' &&
          dir.find("/-") == std::string_view::npos &&
@@ -54,9 +46,6 @@ bool ValidSocketDir(std::string_view dir) {
          });
 }
 
-// `sh -c '<script>' [arg]` as ONE remote command string: ssh joins its words
-// with spaces for the login shell, so the script is single-quoted (it contains
-// no single quote) and the argument is from the validated set.
 std::string ShellCommand(std::string_view script, std::string_view arg = {}) {
   std::string command = "sh -c '";
   command.append(script);
@@ -68,7 +57,6 @@ std::string ShellCommand(std::string_view script, std::string_view arg = {}) {
   return command;
 }
 
-// What a BatchMode failure that a person could fix by answering a prompt looks like.
 bool NeedsInteractiveAuth(std::string_view log) {
   for (const std::string_view marker :
        {"Permission denied", "Host key verification failed", "passphrase", "password",
@@ -103,7 +91,7 @@ std::string JoinForDisplay(const std::vector<std::string>& argv) {
   return out;
 }
 
-}  // namespace
+}
 
 std::string RemoteHostTarget::Display() const {
   std::string out = user.empty() ? host : user + "@" + host;
@@ -115,8 +103,6 @@ std::string RemoteHostTarget::Display() const {
 
 namespace {
 
-// One ssh_config line's keyword and arguments: `Keyword arg "quoted arg"`, the
-// keyword optionally followed by `=`. Comments and blank lines yield no keyword.
 std::vector<std::string> SshConfigWords(std::string_view line) {
   std::vector<std::string> words;
   std::size_t i = 0;
@@ -128,7 +114,7 @@ std::vector<std::string> SshConfigWords(std::string_view line) {
   while (true) {
     skip_blanks();
     if (words.size() == 1 && i < line.size() && line[i] == '=') {
-      ++i;  // `Keyword=value`
+      ++i;
       skip_blanks();
     }
     if (i >= line.size() || (words.empty() && line[i] == '#')) {
@@ -159,7 +145,7 @@ std::string LowerAscii(std::string_view text) {
 void CollectSshConfigHosts(const std::filesystem::path& file, const std::filesystem::path& ssh_directory,
                            int depth, std::vector<std::string>& hosts) {
   if (depth > 16) {
-    return;  // ssh's own include depth limit
+    return;
   }
   const std::optional<std::string> text = util::ReadTextFile(file);
   if (!text.has_value()) {
@@ -204,7 +190,6 @@ void CollectSshConfigHosts(const std::filesystem::path& file, const std::filesys
           CollectSshConfigHosts(path, ssh_directory, depth + 1, hosts);
           continue;
         }
-        // A glob in the last component (`config.d/*`), in name order as glob(3) gives.
         std::vector<std::filesystem::path> matches;
         std::error_code ec;
         for (const auto& entry : std::filesystem::directory_iterator(path.parent_path(), ec)) {
@@ -221,7 +206,7 @@ void CollectSshConfigHosts(const std::filesystem::path& file, const std::filesys
   }
 }
 
-}  // namespace
+}
 
 std::vector<std::string> SshConfigHosts(const std::filesystem::path& config_file,
                                         const std::filesystem::path& ssh_directory) {
@@ -378,10 +363,6 @@ RemoteHostSession::~RemoteHostSession() {
   (void)config_.forwards->Release(this);
   const auto client = connection_->client();
   connection_->Replace(nullptr);
-  // Stopped, not just let go of: a host terminal's channel may still hold the
-  // client, and its I/O thread would go on delivering git pushes and watch
-  // frames to handlers this session's owner installed and is about to destroy
-  // (RemoteHostService's mailbox: a TSan race at shell teardown). Stop joins it.
   if (client != nullptr) {
     client->peer().Stop();
   }
@@ -391,7 +372,7 @@ void RemoteHostSession::LinkDied() {
   {
     std::lock_guard lock(mutex_);
     if (pending_ != Wake::None) {
-      return;  // a Disconnect or shutdown outranks it
+      return;
     }
     pending_ = Wake::LinkDied;
   }
@@ -444,7 +425,6 @@ bool RemoteHostSession::WaitFor(std::chrono::milliseconds delay) {
 }
 
 std::filesystem::path RemoteHostSession::control_path() const {
-  // Hashed, so any target fits the AF_UNIX path limit.
   const std::string digest = util::Sha256Hex(config_.target.Display());
   return config_.control_dir / ("m-" + digest.substr(0, 16));
 }
@@ -468,8 +448,6 @@ std::vector<std::string> RemoteHostSession::MasterArgv(bool batch) const {
   std::vector<std::string> argv = SshArgv(batch);
   argv.insert(argv.end(), {"-o", "ControlMaster=auto", "-o", "ControlPersist=10m", "-fN"});
   if (batch) {
-    // Errors to a file rather than a pipe: the backgrounded master inherits the
-    // pipe and would hold it open long after this command has answered.
     argv.insert(argv.end(), {"-E", (control_path().string() + ".log")});
   }
   argv.insert(argv.end(), {"--", config_.target.host});
@@ -477,18 +455,15 @@ std::vector<std::string> RemoteHostSession::MasterArgv(bool batch) const {
 }
 
 std::vector<std::string> RemoteHostSession::InteractiveMasterArgv() const {
-  return MasterArgv(/*batch=*/false);
+  return MasterArgv(false);
 }
 
 std::vector<std::string> RemoteHostSession::RemoteArgv(std::string command) const {
-  std::vector<std::string> argv = SshArgv(/*batch=*/true);
+  std::vector<std::string> argv = SshArgv(true);
   argv.insert(argv.end(), {"-o", "ControlMaster=no", "--", config_.target.host, std::move(command)});
   return argv;
 }
 
-// `verb` ("attach", "stop") for the configured server, with the socket directory
-// override when there is one (validated: ValidSocketDir). In the default chain it
-// travels as `$0`, so the script text stays fixed.
 std::string RemoteHostSession::ServerCommand(std::string_view verb) const {
   const std::string& dir = config_.server_socket_dir;
   if (!config_.server_command.empty()) {
@@ -513,7 +488,6 @@ std::string RemoteHostSession::LingerCommandText() const {
 }
 
 std::string RemoteHostSession::InstallCommandText() const {
-  // The host's architecture is known only once something tried to install.
   std::string arch;
   {
     std::lock_guard lock(mutex_);
@@ -534,7 +508,6 @@ std::string RemoteHostSession::HostArchitecture() {
       return host_architecture_;
     }
   }
-  // The ssh round trip happens unlocked; only this (session) thread writes it.
   const platform::SubprocessResult result = platform::LocalProcessLauncher().Run(
       RemoteArgv("uname -m"), platform::SubprocessOptions{.timeout_ms = 20000});
   if (!result.success()) {
@@ -546,9 +519,8 @@ std::string RemoteHostSession::HostArchitecture() {
 }
 
 bool RemoteHostSession::MasterAlive() {
-  std::vector<std::string> argv = SshArgv(/*batch=*/true);
+  std::vector<std::string> argv = SshArgv(true);
   argv.insert(argv.end(), {"-O", "check", "--", config_.target.host});
-  // The local launcher on purpose: ssh is THIS machine's client to the host.
   return platform::LocalProcessLauncher()
       .Run(argv, platform::SubprocessOptions{.capture_stdout = false,
                                              .capture_stderr = false,
@@ -567,7 +539,7 @@ bool RemoteHostSession::BringUpMaster(bool reconnecting) {
   std::error_code ec_remove;
   std::filesystem::remove(log, ec_remove);
   const platform::SubprocessResult master = platform::LocalProcessLauncher().Run(
-      MasterArgv(/*batch=*/true),
+      MasterArgv(true),
       platform::SubprocessOptions{.capture_stdout = false,
                                   .capture_stderr = false,
                                   .silence_stderr = true,
@@ -587,7 +559,7 @@ bool RemoteHostSession::BringUpMaster(bool reconnecting) {
   const auto deadline = std::chrono::steady_clock::now() + config_.auth_timeout;
   while (std::chrono::steady_clock::now() < deadline) {
     if (!WaitFor(config_.auth_poll)) {
-      return false;  // disconnected meanwhile
+      return false;
     }
     if (MasterAlive()) {
       return true;
@@ -667,8 +639,6 @@ bool RemoteHostSession::Attempt(bool reconnecting) {
   bool incompatible = false;
   std::string error;
   std::shared_ptr<RemoteServerClient> client = StartServer(&not_installed, &incompatible, &error);
-  // Only the default chain is ever installed into: a configured server command
-  // is the user's, and retrying it after an install would fail the same way.
   if (client == nullptr && config_.server_command.empty() && (not_installed || incompatible)) {
     if (!config_.install || !config_.server_binary) {
       Report(State::Disconnected, {},
@@ -684,8 +654,6 @@ bool RemoteHostSession::Attempt(bool reconnecting) {
     Report(State::StartingServer, "starting the server on " + config_.target.Display());
     client = StartServer(&not_installed, &incompatible, &error);
     if (client == nullptr && incompatible) {
-      // The new binary is installed, but the daemon that answered is the old one,
-      // still serving its terminals: only the user may end those.
       error += " — the new server is installed beside it; stop the running one (Remote: "
                "Stop Host Server) to switch";
     }
@@ -698,13 +666,9 @@ bool RemoteHostSession::Attempt(bool reconnecting) {
     Report(State::Disconnected, {}, error.empty() ? "the server did not start" : error);
     return false;
   }
-  // A compatible but OLDER server keeps serving, so a release upgrade never ended
-  // its terminals -- and never reached the host either: install only ran for a
-  // missing or incompatible server. Put this release's binary beside it (an
-  // atomic rename; the running daemon keeps its inode) for the next start.
   const bool server_older = ReleaseIsOlder(client->hello().release, config_.release);
   if (!server_older) {
-    update_installed_ = false;  // the restart happened: this one is current
+    update_installed_ = false;
   } else if (!update_installed_ && config_.install && config_.server_command.empty() &&
              config_.server_binary) {
     std::string install_error;
@@ -718,10 +682,6 @@ bool RemoteHostSession::Attempt(bool reconnecting) {
 
 namespace {
 
-// A local TCP port for a forward of `wanted`: `wanted` itself when nothing here
-// listens on it (the address a host program prints then works as printed), else
-// one the kernel picks. Probed by binding, the only answer that counts; the
-// window until ssh binds it is a race ssh reports as a failed forward.
 std::optional<std::uint16_t> FreeLocalPort(std::uint16_t wanted) {
   for (const std::uint16_t candidate : {wanted, std::uint16_t{0}}) {
     const int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -743,11 +703,11 @@ std::optional<std::uint16_t> FreeLocalPort(std::uint16_t wanted) {
   return std::nullopt;
 }
 
-}  // namespace
+}
 
 bool RemoteHostSession::ForwardControl(std::string_view verb, const PortForward& forward,
                                        std::string* error) {
-  std::vector<std::string> argv = SshArgv(/*batch=*/true);
+  std::vector<std::string> argv = SshArgv(true);
   argv.insert(argv.end(), {"-O", std::string(verb), "-L",
                            "127.0.0.1:" + std::to_string(forward.local_port) + ":localhost:" +
                                std::to_string(forward.host_port),
@@ -768,7 +728,7 @@ std::optional<RemoteHostSession::PortForward> RemoteHostSession::ForwardPort(std
     return std::nullopt;
   }
   if (const std::optional<PortForward> kept = config_.forwards->Find(host_port)) {
-    return kept;  // already forwarded: the same address again
+    return kept;
   }
   if (!MasterAlive()) {
     *error = "not connected to " + config_.target.Display();
@@ -793,8 +753,6 @@ bool RemoteHostSession::CancelForward(std::uint16_t host_port, std::string* erro
     *error = "port " + std::to_string(host_port) + " is not forwarded";
     return false;
   }
-  // Gone from the list whatever ssh says: a master that already died took the
-  // listener with it.
   (void)ForwardControl("cancel", *forward, error);
   return true;
 }
@@ -806,9 +764,6 @@ std::vector<RemoteHostSession::PortForward> RemoteHostSession::forwards() const 
 void RemoteHostSession::ReapplyForwards() {
   config_.forwards->Hold(this);
   for (const PortForward& forward : forwards()) {
-    // A master that survived (ControlPersist) still holds it: ssh's mux answers an
-    // identical forward with success and no second listener (checked against
-    // OpenSSH 9), so no cancel first — that would close the port for a moment.
     std::string ignored;
     (void)ForwardControl("forward", forward, &ignored);
   }
@@ -833,7 +788,7 @@ void RemoteHostSession::Run() {
       wake_.wait(lock, [this] { return pending_ != Wake::None; });
       wake = std::exchange(pending_, Wake::None);
       if (wake == Wake::Stop) {
-        pending_ = Wake::Stop;  // sticky: later calls must not restart the thread's work
+        pending_ = Wake::Stop;
         return;
       }
     }
@@ -843,17 +798,10 @@ void RemoteHostSession::Run() {
         if (state == State::Ready || state == State::Connecting) {
           break;
         }
-        // A failed attempt has already reported Disconnected with its error.
         (void)Attempt(state == State::Offline);
         break;
       }
       case Wake::Disconnect: {
-        // The master outlives a disconnect (ControlPersist), and with it every
-        // listener: a host nothing is connected to must not stay reachable on a
-        // local port. Another session to it (a host terminal beside a closed
-        // project) still holds it, and its ports. The list is kept, so a reconnect
-        // forwards them again. Before the report, so "disconnected" means the
-        // ports are closed.
         if (config_.forwards->Release(this)) {
           for (const PortForward& forward : forwards()) {
             std::string ignored;
@@ -861,16 +809,10 @@ void RemoteHostSession::Run() {
           }
         }
         const auto client = connection_->client();
-        // Kept host processes are ended over the link while it still works,
-        // rather than left running on the host for nobody.
         connection_->Replace(nullptr);
         if (client != nullptr) {
-          // Fail, not Stop: every host terminal is told the link is gone. The
-          // LinkDied this raises finds the session Disconnected and does nothing.
           client->peer().Fail("disconnected");
         }
-        // Last, so "disconnected" means it: a git refresh or a search started on
-        // the report used to find the old client still there and reach the host.
         Report(State::Disconnected, "disconnected");
         break;
       }
@@ -882,14 +824,14 @@ void RemoteHostSession::Run() {
         for (bool first = true;; first = false) {
           Report(first ? State::Reconnecting : State::Offline,
                  "reconnecting to " + config_.target.Display());
-          if (Attempt(/*reconnecting=*/true)) {
+          if (Attempt(true)) {
             break;
           }
           const Status failed = status();
           Report(State::Offline, "offline: retrying in " + std::to_string(delay.count() / 1000) + " s",
                  failed.error);
           if (!WaitFor(delay)) {
-            break;  // Disconnect, Connect (retry now) or shutdown: the loop above decides
+            break;
           }
           delay = std::min(delay * 2, config_.max_backoff);
         }
@@ -902,4 +844,4 @@ void RemoteHostSession::Run() {
   }
 }
 
-}  // namespace microide::project::remote
+}

@@ -11,7 +11,6 @@ namespace {
 
 constexpr const char* kCompileCommands = "compile_commands.json";
 
-// Returns the compile_commands.json mtime for `dir` if the file exists, else nullopt.
 std::optional<std::filesystem::file_time_type> CompileCommandsMtime(
     const std::filesystem::path& dir) {
   std::error_code error;
@@ -21,13 +20,11 @@ std::optional<std::filesystem::file_time_type> CompileCommandsMtime(
   }
   const auto mtime = std::filesystem::last_write_time(candidate, error);
   if (error) {
-    // The file exists but we can't stat it; still a valid location, treat as epoch.
     return std::filesystem::file_time_type{};
   }
   return mtime;
 }
 
-// Consider `dir` as a candidate; keep it if it has the newest compile_commands.json seen.
 void ConsiderCandidate(const std::filesystem::path& dir,
                        std::optional<std::filesystem::path>& best_dir,
                        std::optional<std::filesystem::file_time_type>& best_mtime) {
@@ -41,7 +38,7 @@ void ConsiderCandidate(const std::filesystem::path& dir,
   }
 }
 
-}  // namespace
+}
 
 std::optional<std::filesystem::path> DiscoverCompileCommandsDir(
     const std::filesystem::path& project_root) {
@@ -54,14 +51,11 @@ std::optional<std::filesystem::path> DiscoverCompileCommandsDir(
   std::optional<std::filesystem::path> best_dir;
   std::optional<std::filesystem::file_time_type> best_mtime;
 
-  // 1) The project root and conventional fixed-name build directories.
   ConsiderCandidate(root, best_dir, best_mtime);
   for (const char* name : {"build", "builds", "out"}) {
     ConsiderCandidate(root / name, best_dir, best_mtime);
   }
 
-  // 2) Immediate children: cmake-build-* dirs, and any dir holding a
-  //    build.ninja / CMakeCache.txt (a real out-of-source build tree).
   std::error_code iter_error;
   constexpr auto options = std::filesystem::directory_options::skip_permission_denied;
   for (std::filesystem::directory_iterator it(root, options, iter_error), end;
@@ -91,11 +85,11 @@ ClangdCommandPlan PlanClangdCommand(std::vector<std::string> command,
   ClangdCommandPlan plan{.command = std::move(command)};
   if (plan.command.empty() ||
       std::filesystem::path(plan.command.front()).filename().string().rfind("clangd", 0) != 0) {
-    return plan;  // not clangd; the flag would break other servers
+    return plan;
   }
   for (const std::string& arg : plan.command) {
     if (arg.rfind("--compile-commands-dir", 0) == 0) {
-      return plan;  // plugin/user already specified one
+      return plan;
     }
   }
   if (!launcher.is_local()) {
@@ -111,12 +105,10 @@ ClangdCommandPlan PlanClangdCommand(std::vector<std::string> command,
                 " -- clangd cross-file features will be limited until one is generated";
     return plan;
   }
-  // As clangd -- running where the project's launcher runs it -- sees the
-  // directory, not as this machine's copy of the tree does (TD-2026-10-07-322).
   plan.command.push_back("--compile-commands-dir=" +
                          launcher.ResolveWorkingDirectory(*dir).generic_string());
   plan.note = "cpp-lsp: pointing clangd at compile_commands.json in " + dir->generic_string();
   return plan;
 }
 
-}  // namespace microide::project
+}

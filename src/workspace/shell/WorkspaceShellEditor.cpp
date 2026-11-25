@@ -34,8 +34,6 @@ void WorkspaceShell::ApplyDetectedIndentOnOpen(editor::TextViewport& viewport) c
 
 void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport,
                                             bool include_contract) const {
-  // Single-viewport entry point: resolve the shared snapshot for this one call.
-  // The all-tabs path resolves once and calls the overload below directly.
   ApplyEditorPreferences(viewport, include_contract,
                          ResolveEditorPreferenceSettings(
                              [this](std::string_view id) { return GetSettingValue(id); }));
@@ -44,35 +42,19 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport,
 void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport,
                                             bool include_contract,
                                             const EditorPreferenceSettings& settings) const {
-  // A copy of a host file outside a remote project (a system header behind go to
-  // definition) is not the project's to edit, however it was opened — the open
-  // funnel, a restored session, a split. Every view's content passes through here.
   if (glue_->remote_host_service != nullptr && !viewport.path().empty() &&
       glue_->remote_host_service->IsHostFileCopy(viewport.path())) {
     viewport.SetReadOnly(true);
   }
-  // A `.editorconfig` in the repository is the project author's statement of how
-  // its files are formatted, so it wins over our own settings for the properties
-  // it names — matching VSCode, where EditorConfig overrides both the configured
-  // indent and detectIndentation. Properties it does not name fall through to the
-  // user/project setting untouched. Resolution is memoized per path; a project
-  // with no `.editorconfig` costs one hash lookup here.
   static const project::EditorConfigProperties kNoEditorConfig;
   const project::EditorConfigProperties* editor_config = &kNoEditorConfig;
   if (settings.editorconfig_enabled && !viewport.path().empty()) {
-    // Point the resolver at the active root before asking. A project-catalog slot
-    // that was reset carries its root but a fresh resolver, and an unset root
-    // resolves to "no opinion" silently — this is a path compare in the common
-    // case, and cheap next to the filetype detection below.
     context_.current_project_state.editor_config.EnsureProjectRoot(
         context_.current_project_state.root);
     editor_config = &context_.current_project_state.editor_config.Resolve(viewport.path());
   }
 
   const EditorPreferences& preferences = context_.current_project_state.editor_preferences;
-  // Cheap per-viewport setters, always applied. The indentation is .editorconfig's,
-  // else the buffer's own (detected on open, or chosen for it by an indentation
-  // command), else the settings -- resolved first and set once.
   ApplyResolvedIndent(viewport, ResolveIndent(viewport.own_indent(), *editor_config,
                                               ResolvedIndent{.tab_size = preferences.tab_size,
                                                              .indent_width = preferences.indent_width,
@@ -82,18 +64,10 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport,
       editor_config->trim_trailing_whitespace.value_or(settings.trim_trailing_whitespace));
   viewport.SetSaveEnsureFinalNewline(
       editor_config->insert_final_newline.value_or(settings.ensure_final_newline));
-  // editor.line_endings: "auto" keeps the file's detected ending; lf/crlf force it.
-  // `.editorconfig`'s end_of_line still wins where it names one.
   viewport.SetSaveLineEnding(editor_config->line_ending.has_value()
                                  ? editor_config->line_ending
                                  : settings.save_line_ending);
 
-  // The per-tab contract work, skipped when no contract-affecting toggle changed —
-  // see the family split in ApplyLiveSettings (TD-2026-07-17A-103). Both halves are
-  // memoized now (TD-2026-08-03-110): the filetype behind the viewport's own
-  // memo (nothing about the buffer changed, so a settings walk re-detects
-  // nothing), and the view behind the contract table's shared cache, so 40 tabs
-  // of one language share one view instead of owning 40 copies of it.
   if (!include_contract) {
     return;
   }
@@ -107,15 +81,10 @@ void WorkspaceShell::ApplyLanguageModeToActiveEditor(const std::string& language
     return;
   }
   const std::filesystem::path path = viewport->path();
-  // VS Code closes the document and reopens it in its new language: the servers
-  // and plugins that held it under the old one let it go (diagnostics, semantic
-  // colours), and the new language's take it up.
   if (!path.empty()) {
     NotifyLspBufferClose(path);
   }
   viewport->SetLanguageOverride(language);
-  // Every view of the document: its language contract (auto-close pairs,
-  // comments, indentation rules) is the new language's.
   ApplyEditorPreferencesToAllTabs();
   if (!path.empty()) {
     NotifyPluginBufferOpen(path);
@@ -126,50 +95,19 @@ void WorkspaceShell::ApplyLanguageModeToActiveEditor(const std::string& language
 
 void WorkspaceShell::ApplyEditorPreferencesToAllTabs(bool refresh_language_contracts) {
   util::AddPerformanceCounter(util::PerfCounterId::FrameApplyEditorPreferencesAllTabsCalls);
-  // Font size is a project preference but the text renderer is shared across all
-  // projects, so push the active project's value here -- this hook fires on
-  // project activation, session restore, and live setting changes, so switching
-  // projects automatically re-applies that project's font size. SetFontPointSize
-  // no-ops when the size is unchanged, so the common case stays cheap.
   editor_text_renderer_.SetFontPointSize(
       static_cast<float>(context_.current_project_state.editor_preferences.font_size));
-  // Font family is a user-scope, renderer-global setting (not an EditorPreferences
-  // field); push it alongside the size so project activation / session restore
-  // re-applies it. SetFontFamily no-ops when the family is unchanged. The chrome
-  // shares the editor's family but keeps its own size: `ui.scale` sizes the chrome.
   const std::string font_family = GetSettingValue("editor.font_family").value_or("");
   editor_text_renderer_.SetFontFamily(font_family);
   text_renderer_.SetFontFamily(font_family);
   NoteLayoutInputsChanged();
   tab_strip_service_.InvalidateTabStripGeometry();
   RequestPreparedFrame();
-  // Apply to EVERY editor group, not just the focused one: preference fields (tab_size,
-  // soft_wrap, auto_close, smart_indent, save-trim, …) live on each per-tab TextViewport,
-  // so a split's non-focused pane would otherwise keep the stale config and render/behave
-  // differently once clicked into. Mirrors the all-groups walks in ReloadCleanOpenBuffers
-  // and RetargetOpenTabsForRename.
-  // Split by setting family: the cheap runtime setters (tab size, wrap, save
-  // normalization) always apply, but the O(tabs) filetype-detect + language-contract
-  // rebuild is skipped when no contract-affecting toggle changed. A project with
-  // thousands of restored tabs no longer rebuilds every tab's contract for a
-  // font-size / save-flag / wrap checkbox change (TD-2026-07-17A-103).
-  // Resolve the shared settings ONCE for the whole walk. They are shell-global,
-  // so reading them per viewport made this O(tabs x settings) in lookups -- and
-  // since each lookup returns std::optional<std::string> by value, O(tabs x
-  // settings) in allocations too. Gated by `settings_change_many_tabs`.
   const EditorPreferenceSettings settings = ResolveEditorPreferenceSettings(
       [this](std::string_view id) { return GetSettingValue(id); });
   for (auto& group : context_.current_project_state.editor_groups) {
     ApplyEditorPreferences(group.welcome_surface.viewport, refresh_language_contracts, settings);
     for (auto& tab : group.open_tabs) {
-      // Every EDITABLE viewport in the workspace, not just the plain editor tabs.
-      // A compare tab's right pane and a merge tab's result pane are the same
-      // `editor::TextViewport` reached by the same actions and the same key
-      // handling, so a walk that skipped them left them on whatever preferences
-      // happened to be current when the tab opened: tab size, indent width, soft
-      // tabs, the two save-normalization flags, the save line ending and the
-      // language contract all silently stopped following the settings there, and
-      // Word Wrap looked like it did nothing at all (TD-2026-08-13-200).
       switch (tab.kind) {
         case TabEntry::Kind::Editor:
           if (tab.editor_state.has_value()) {
@@ -196,9 +134,6 @@ void WorkspaceShell::ApplyEditorPreferencesToAllTabs(bool refresh_language_contr
 
 namespace {
 
-// The frame-prep reveal: a caret that moved into a collapsed fold since it last
-// looked opens that fold. True when it opened one; the caret's row moved with
-// the rows above it, so it is scrolled into view again.
 bool SettleFoldReveal(TabEntry::EditorTabState* editor_tab, editor::TextViewport* viewport) {
   if (editor_tab == nullptr || viewport == nullptr || !RevealCaretsInsideCollapsedFolds(*editor_tab, *viewport)) {
     return false;
@@ -207,18 +142,12 @@ bool SettleFoldReveal(TabEntry::EditorTabState* editor_tab, editor::TextViewport
   return true;
 }
 
-}  // namespace
+}
 
 editor::FoldingModel* WorkspaceShell::EnsureActiveFoldingModelFresh() {
   TabEntry::EditorTabState* editor_tab = ActiveEditorTab();
   editor::TextViewport* viewport = ActiveEditorViewport();
   editor::FoldingModel* model = EnsureFoldingModelFreshForTab(editor_tab, viewport);
-  // A fold command or a gutter click about to change the folds acts on the state a
-  // frame would have reached: the caret moves before it are settled first. Left to
-  // the next frame, a click on a line and Ctrl+Shift+[ arriving in one event batch
-  // read as "the caret moved into a collapsed fold", and the reveal opened the
-  // fold the chord had just closed (QA edit-folding, on a driver with no delay
-  // between the two).
   if (SettleFoldReveal(editor_tab, viewport)) {
     RequestPreparedFrame();
   }
@@ -236,11 +165,6 @@ editor::FoldingModel* WorkspaceShell::EnsureFoldingModelFreshForTab(
   const auto setting_enabled = [this](std::string_view id, bool default_value) {
     return SettingFlagEnabled(GetSettingValue(id), default_value);
   };
-  // Memoized: this runs for every editor group on every prepared frame, and the
-  // fold model itself is fingerprint-gated to a no-op on a settled frame -- so
-  // without the memo the only work the frame did here was re-detecting a
-  // filetype that had not changed. Measured at ~0.85 ms/frame on a 50k-line
-  // buffer, which was 60% of the whole editor_sticky_scroll_scroll scenario.
   const LanguageContract* contract = nullptr;
   {
     util::PerformanceTrace::Scope s("WorkspaceShell::EnsureFoldingModelFreshForTab::Language");
@@ -263,18 +187,10 @@ editor::FoldingModel* WorkspaceShell::EnsureFoldingModelFreshForTab(
 
 void WorkspaceShell::RefreshEditorFoldingModels() {
   util::AddPerformanceCounter(util::PerfCounterId::FrameRefreshEditorFoldingModelsCalls);
-  // Resolve folding freshness once per prepared frame for every editor group's
-  // active tab (both panes of a split fold independently). EnsureFoldingModelFreshForTab
-  // is fingerprint-gated to a no-op on settled frames and folds/expands based on the
-  // live editor.fold.enabled setting, so this subsumes the render path's former
-  // per-pane refresh and fold-disabled clear. The render TUs then only read the
-  // resolved model — no state mutation inside RenderClip.
   for (EditorGroup& group : context_.current_project_state.editor_groups) {
     TabEntry::EditorTabState* editor_tab = GroupActiveEditorTab(group);
     editor::TextViewport* viewport = GroupActiveViewport(group);
     EnsureFoldingModelFreshForTab(editor_tab, viewport);
-    // This runs before the frame's layout, so the scroll and the repaint both
-    // land in this frame.
     if (SettleFoldReveal(editor_tab, viewport)) {
       RequestPreparedFrame();
     }
@@ -282,10 +198,6 @@ void WorkspaceShell::RefreshEditorFoldingModels() {
 }
 
 void WorkspaceShell::ActivateTab(std::size_t index) {
-  // Leaving the current buffer for a different tab is a focus change, so flush dirty
-  // buffers before the switch (mirrors the window-blur autosave). MaybeAutosaveDirtyTabs
-  // is a no-op unless editor.autosave == on_focus_change, so the common case pays only
-  // one setting read.
   if (index != context_.current_project_state.focused_group().active_tab_index) {
     MaybeAutosaveDirtyTabs(true);
   }
@@ -304,38 +216,20 @@ void WorkspaceShell::RequestActiveHighlightPrefetch() {
   if (line_count == 0) {
     return;
   }
-  // On a tab switch, prewarm the newly active filetype's rule-regex compile on
-  // the highlight worker so the first visible-line render does not pay it on the
-  // UI thread. The service gates on the viewport identity, so detection (cheap:
-  // bounded head scan, eager regexes) and the prewarm run once per switch, not
-  // every settled frame.
   highlight_prefetch_service_.PrewarmForViewport(viewport, [viewport]() {
     return editor::runtime_syntax::DetectState(viewport->path(), viewport->lines()).definition_id;
   });
-  // Off-thread checkpoint backfill for a deep cold paint: when the synchronous
-  // highlight-state replay was capped short (e.g. session restore scrolled deep
-  // into a large file), this hands the worker a bounded chain segment so the
-  // chain catches up without freezing the frame. Checked before the visible-band
-  // gap early-out so a deep jump that already tokenized its visible window
-  // (approximately) still converges to exact highlighting.
   if (auto backfill = viewport->TakeHighlightCheckpointBackfillRequest()) {
     highlight_prefetch_service_.RequestCheckpoints(std::move(*backfill));
   }
-  // Prefetch the visible band plus a look-ahead window below it so scrolling
-  // down lands on already-tokenized lines instead of stalling the render path.
   const std::size_t top =
       std::min(viewport->VisualRowLineIndex(viewport->scroll_line()), line_count - 1);
-  // No more than the cache holds: a window past its capacity evicted its own top
-  // (the visible rows) while installing its bottom, so the gap never closed and
-  // the request came back every frame (soak a64655101a5a).
   const std::size_t visible = std::max<std::size_t>(viewport->visible_lines(), 1);
   const std::size_t count =
       std::min({visible * 3, line_count - top, editor::TextViewport::HighlightCacheCapacity()});
   if (!viewport->HasHighlightPrefetchGap(top, count)) {
     return;
   }
-  // And never the same window twice in a row: whatever its answer left uncached,
-  // asking again would not fill, and each answer schedules the next frame.
   if (!highlight_prefetch_service_.Admit(editor::HighlightPrefetchService::WindowKey{
           .viewport = viewport,
           .content_revision = viewport->content_revision(),
@@ -350,11 +244,6 @@ void WorkspaceShell::RequestActiveHighlightPrefetch() {
 void WorkspaceShell::ConsumeHighlightPrefetchResults() {
   editor::TextViewport* active_viewport = ActiveEditorViewport();
   for (auto& result : highlight_prefetch_service_.DrainResults()) {
-    // result.viewport is only an identity token: install only when it still
-    // matches the live active viewport (the install path additionally drops
-    // results whose document revision has moved on). The result is drained and
-    // discarded here, so move it in to avoid copying every prefetched token
-    // vector on the active-scroll path.
     if (active_viewport != nullptr && result.viewport == active_viewport) {
       active_viewport->InstallPrefetchedHighlights(std::move(result));
     }
@@ -475,9 +364,6 @@ void WorkspaceShell::RequestCloseTabs(std::vector<std::size_t> indices) {
     return;
   }
 
-  // Prompt for the tabs whose close would actually discard edits. A dirty buffer
-  // another pane still shows lives on when this view closes — VS Code closes
-  // such an editor silently — so it gets no Save / Discard / Cancel here.
   std::vector<std::size_t> dirty_indices;
   dirty_indices.reserve(indices.size());
   for (std::size_t index : indices) {
@@ -504,16 +390,8 @@ void WorkspaceShell::ReloadCleanOpenBuffersFromDisk() {
   ++reload_clean_open_buffers_from_disk_invocation_count_;
   SyncActiveEditorTab();
   std::vector<std::filesystem::path> paths;
-  // Collect across every group so a buffer open only in the non-focused split is still
-  // reloaded (ReloadCleanEditorTabsForPath itself reloads all groups per path).
   for (const EditorGroup& group : context_.current_project_state.editor_groups) {
     for (const auto& tab : group.open_tabs) {
-      // A diff's editable side is its file's buffer as much as an editor tab's is
-      // (the reload repoints both): passed over here, a file open only in diffs
-      // kept its old text across a change this sweep stands in for -- a diff that
-      // could not be rebuilt (the file binary now), or two diffs of one file each
-      // rejoining the other's old buffer -- and the editor tab opened on the file
-      // next was handed that text as the file (soak b8f2d54da0f1).
       if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() && tab.compare->right_editable &&
           !tab.compare->load_pending && !tab.compare->right_viewport.path().empty()) {
         paths.push_back(tab.compare->right_viewport.path().lexically_normal());
@@ -533,12 +411,6 @@ void WorkspaceShell::ReloadCleanOpenBuffersFromDisk() {
   EditorTabService& editor_tabs = MakeEditorTabService();
   bool noted_any = false;
   for (const auto& path : paths) {
-    // A dirty buffer is no reload's business, but a change made while this
-    // project was in the background (another project saving the same file, a
-    // checkout) is still a change under its edits: the watcher path notes it
-    // and raises the banner, and this sweep is the watcher's stand-in for what
-    // it never delivered. Passing over it let an undo back to the read content
-    // read clean against a file that held something else (soak ed121110a40f).
     if (editor_tabs.NoteMissedDiskChangeUnderEdits(path)) {
       SetEditorBanner(context_.current_project_state, EditorBannerState::Kind::ExternalChange, path);
       noted_any = true;
@@ -560,17 +432,12 @@ void WorkspaceShell::CloseAllTabs() {
 }
 
 void WorkspaceShell::CloseTab(std::size_t index) {
-  // A deferred save writes when its formatter returns; it must land before the tab
-  // closes (see SettleTabIoBeforeTeardown -- one tab, so no read is cancelled).
   save_formatter_service_.FlushPendingRuns();
   MakeEditorTabService().Close(index);
 }
 
 namespace {
 
-// The single normalized buffer path a tab contributes to LSP open-view
-// accounting, or nullopt if the tab holds no editable buffer view. Shared by the
-// single-path count and the whole-workspace count map so both stay in lockstep.
 std::optional<std::filesystem::path> OpenBufferViewPath(const TabEntry& tab) {
   if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
     std::filesystem::path view_path =
@@ -593,7 +460,7 @@ std::optional<std::filesystem::path> OpenBufferViewPath(const TabEntry& tab) {
   return std::nullopt;
 }
 
-}  // namespace
+}
 
 std::size_t WorkspaceShell::CountOpenBufferViews(const std::filesystem::path& path) const {
   if (path.empty()) {
@@ -601,8 +468,6 @@ std::size_t WorkspaceShell::CountOpenBufferViews(const std::filesystem::path& pa
   }
   const std::filesystem::path normalized = path.lexically_normal();
   std::size_t count = 0;
-  // Count across every editor group: a buffer shared by several panes of a split
-  // must not be reported as closed until the last view in either group is gone.
   for (const EditorGroup& group : context_.current_project_state.editor_groups) {
     for (const TabEntry& tab : group.open_tabs) {
       const std::optional<std::filesystem::path> view = OpenBufferViewPath(tab);
@@ -615,9 +480,6 @@ std::size_t WorkspaceShell::CountOpenBufferViews(const std::filesystem::path& pa
 }
 
 std::unordered_map<std::string, std::size_t> WorkspaceShell::OpenBufferViewCounts() const {
-  // One O(views) pass producing the same per-path counts CountOpenBufferViews
-  // would return individually, so bulk-close paths avoid an O(tabs * views)
-  // rescan (and repeated path normalization) when deciding LSP didClose.
   std::unordered_map<std::string, std::size_t> counts;
   for (const EditorGroup& group : context_.current_project_state.editor_groups) {
     for (const TabEntry& tab : group.open_tabs) {
@@ -630,4 +492,4 @@ std::unordered_map<std::string, std::size_t> WorkspaceShell::OpenBufferViewCount
   return counts;
 }
 
-}  // namespace microide::workspace
+}

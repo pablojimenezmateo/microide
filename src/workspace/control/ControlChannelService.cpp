@@ -40,29 +40,14 @@ namespace microide::workspace {
 
 namespace {
 
-// The instances directory is world-droppable on the /tmp fallback (when
-// $XDG_RUNTIME_DIR is unset), so every descriptor there is untrusted input to
-// `control-list`/`control-send` — the CLI path an external driver runs. Bound
-// both the per-descriptor slurp and the directory sweep so a hostile local
-// process can't OOM or hang the driver by dropping one giant file or a million
-// tiny ones.
-constexpr std::uintmax_t kMaxDescriptorFileBytes = 1u << 20;  // 1 MiB
+constexpr std::uintmax_t kMaxDescriptorFileBytes = 1u << 20;
 constexpr std::size_t kMaxControlInstances = 4096;
-// Cap on directory entries *examined*, independent of how many are accepted. The
-// accepted-instance cap above does NOT bound the sweep: every reject path (bad stem,
-// oversized, unparseable, pid-mismatch) skips the instance push, and the pid-mismatch
-// case is never pruned, so a hostile directory of `<int>.json` files with mismatched
-// bodies would otherwise scan without limit. Legitimate instances number in the dozens;
-// this ceiling is far above any real fleet while still bounding an adversarial sweep.
 constexpr std::size_t kMaxControlInstanceScan = 65536;
 
 int CurrentProcessId() {
   return static_cast<int>(::getpid());
 }
 
-// Base runtime directory for control sockets/descriptors: $XDG_RUNTIME_DIR when
-// set (the correct home for ephemeral per-user sockets), else the app state
-// directory, else /tmp. Always the `microide` subdirectory of that base.
 std::filesystem::path RuntimeBaseDir() {
   if (const char* runtime = std::getenv("XDG_RUNTIME_DIR");
       runtime != nullptr && runtime[0] != '\0') {
@@ -80,22 +65,12 @@ std::filesystem::path SocketPathForPid(int pid) {
   return RuntimeBaseDir() / (std::to_string(pid) + ".sock");
 }
 
-// Whether a command line's verb is part of the debugger surface (and so should
-// auto-enable the debugger). Prefix match on the first token covers every
-// breakpoint-*/debug-* command, present and future, without an explicit list.
 bool CommandTouchesDebugger(const std::string& command) {
   std::size_t start = command.find_first_not_of(" \t");
   if (start == std::string::npos) {
     return false;
   }
   const std::string_view verb(command.data() + start, command.size() - start);
-  // ...except the master switch itself. `debug-toggle-enabled` exists to flip
-  // `debug.enabled`, so auto-enabling first made it impossible to turn the
-  // debugger OFF over the channel: the toggle read "enabled" every single time,
-  // wrote "false", reported "Debugger disabled" — and the next debug- command
-  // turned it straight back on. Three toggles in a row logged
-  // raw=true/wrote=1/after=false three times, i.e. a no-op that always claims to
-  // have disabled. Everything else in the surface still auto-enables.
   if (verb.starts_with("debug-toggle-enabled")) {
     return false;
   }
@@ -106,8 +81,6 @@ std::filesystem::path DescriptorPathForPid(int pid) {
   return RuntimeBaseDir() / "instances" / (std::to_string(pid) + ".json");
 }
 
-// Whether a process is still running. Used to drop descriptors left behind by a
-// hard kill / crash (the graceful shutdown path removes its own).
 bool ProcessIsAlive(int pid) {
   if (pid <= 0) {
     return false;
@@ -115,10 +88,10 @@ bool ProcessIsAlive(int pid) {
   if (::kill(static_cast<pid_t>(pid), 0) == 0) {
     return true;
   }
-  return errno == EPERM;  // exists but not signalable by us
+  return errno == EPERM;
 }
 
-}  // namespace
+}
 
 std::vector<ControlInstanceDescriptor> EnumerateControlInstances() {
   std::vector<ControlInstanceDescriptor> instances;
@@ -128,33 +101,20 @@ std::vector<ControlInstanceDescriptor> EnumerateControlInstances() {
     return instances;
   }
   std::size_t scanned = 0;
-  // Advance with the non-throwing increment(ec): the range-for form uses the throwing
-  // operator++, and this directory lives under a fallback runtime dir treated as
-  // attacker-droppable/stale — an entry removed mid-sweep, a permission flip, or a
-  // transient directory error would otherwise throw straight out of `control-list`.
-  // A mid-sweep error stops enumeration with whatever was collected so far.
   std::filesystem::directory_iterator it(dir, ec);
   const std::filesystem::directory_iterator end;
   for (; !ec && it != end; it.increment(ec)) {
     const std::filesystem::directory_entry& entry = *it;
-    // Bound the sweep by ENTRIES EXAMINED, not instances accepted: a reject path
-    // (bad stem, oversized, unparseable, pid-mismatch) never grows `instances`, so a
-    // million dropped files must not turn `control-list` into an unbounded loop /
-    // kill-storm. Also stop once we have collected the accepted-instance cap.
     if (++scanned > kMaxControlInstanceScan || instances.size() >= kMaxControlInstances) {
       break;
     }
     if (entry.path().extension() != ".json") {
       continue;
     }
-    // The descriptor is named <pid>.json by DescriptorPathForPid. Trust only that
-    // filename for the pid — the file body is attacker-controllable. A file whose
-    // stem is not a positive integer is not one of ours.
     const std::optional<int> filename_pid = util::ParseInt(entry.path().stem().string());
     if (!filename_pid.has_value() || *filename_pid <= 0) {
       continue;
     }
-    // Refuse to slurp an oversized descriptor (OOM guard) before opening it.
     std::error_code size_ec;
     const std::uintmax_t file_bytes = entry.file_size(size_ec);
     if (size_ec || file_bytes > kMaxDescriptorFileBytes) {
@@ -164,14 +124,6 @@ std::vector<ControlInstanceDescriptor> EnumerateControlInstances() {
     if (!in) {
       continue;
     }
-    // Bound the ACTUAL read, not just the file_size() pre-check above: a hostile
-    // local writer can grow the descriptor between the stat and the open (TOCTOU),
-    // and an unbounded istreambuf slurp would then defeat kMaxDescriptorFileBytes and
-    // OOM/stall the driver. Size the buffer to the stat'd length (already proven
-    // <= kMaxDescriptorFileBytes above) rather than pre-allocating and zero-filling the
-    // full 1 MiB cap for every ~1 KB descriptor — a hostile directory of small files
-    // must not amplify into gigabytes of zero-fill. A file grown past its stat reads
-    // truncated, fails JSON parsing, and is rejected below.
     const std::size_t read_size = static_cast<std::size_t>(file_bytes);
     std::string contents(read_size, '\0');
     in.read(contents.data(), static_cast<std::streamsize>(read_size));
@@ -187,14 +139,10 @@ std::vector<ControlInstanceDescriptor> EnumerateControlInstances() {
     if (!parsed.has_value() || !parsed->IsObject()) {
       continue;
     }
-    // The pid must match the filename — a descriptor claiming a different (living)
-    // pid is either stale or forged; don't let its body override the filename.
     const int pid = static_cast<int>((*parsed)["pid"].AsInt());
     if (pid != *filename_pid) {
       continue;
     }
-    // Drop (and prune) descriptors whose process is gone, e.g. after a crash or
-    // SIGKILL that skipped the graceful teardown.
     if (!ProcessIsAlive(pid)) {
       std::error_code remove_ec;
       std::filesystem::remove(entry.path(), remove_ec);
@@ -202,24 +150,9 @@ std::vector<ControlInstanceDescriptor> EnumerateControlInstances() {
     }
     ControlInstanceDescriptor descriptor;
     descriptor.pid = pid;
-    // Ignore the advertised `socket` field entirely: reconstruct the canonical
-    // path from the validated pid. The server only ever binds/rebinds
-    // SocketPathForPid(pid), so a legitimate descriptor always matches — and a
-    // forged `socket` field can never redirect a driver's connection to an
-    // attacker-controlled Unix socket (which would inject spoofed responses/events
-    // into the driver's stdout stream).
     descriptor.socket = SocketPathForPid(pid);
     descriptor.project_root = (*parsed)["project_root"].AsString();
     descriptor.project_hash = (*parsed)["project_hash"].AsString();
-    // Re-serialize from the VALIDATED fields rather than echoing the file body.
-    // `descriptor.socket` above is deliberately reconstructed from the pid so a
-    // forged `socket` field cannot redirect a driver onto an attacker-controlled
-    // Unix socket — but `control-list` prints this string, and printing the raw
-    // body handed the forged field straight back to the driver, defeating that
-    // defense at the only surface that matters. Re-serializing also guarantees
-    // one line per instance: JSON escaping turns an embedded newline in a
-    // descriptor written by a hostile local process into `\n`, so it can no
-    // longer inject an extra forged line into the JSONL listing.
     util::JsonObject canonical;
     canonical["pid"] = util::JsonValue(static_cast<std::int64_t>(descriptor.pid));
     canonical["socket"] = util::JsonValue(descriptor.socket.generic_string());
@@ -257,11 +190,6 @@ bool ControlChannelService::Start(const std::filesystem::path& project_root) {
     return true;
   }
   const int pid = CurrentProcessId();
-  // Harden the runtime base directory before binding. In the `/tmp/microide`
-  // fallback (no $XDG_RUNTIME_DIR, no app state dir) the parent is world-writable,
-  // so a local attacker could pre-create it as a symlink or a foreign-owned dir to
-  // force rebinds or plant forged descriptors. Refuse to start on an untrusted
-  // directory rather than expose sockets/descriptors there. (TD-2026-07-17-040.)
   if (!platform::EnsureSecurePrivateDirectory(RuntimeBaseDir())) {
     return false;
   }
@@ -271,15 +199,10 @@ bool ControlChannelService::Start(const std::filesystem::path& project_root) {
   }
   server_.SetWakeChannel(wake_event_type_);
 
-  // Write the discovery descriptor so an external tool can locate this socket by
-  // project. One file per process, so no cross-process locking is needed.
   descriptor_path_ = DescriptorPathForPid(pid);
   project_root_ = project_root;
   WriteDescriptor();
 
-  // Handshake line for the headless agent: announce pid + socket + project so the
-  // stream's first line tells a driver what it is attached to. Mirrored to stdout
-  // only (no clients are connected at bind time).
   util::JsonObject ready;
   ready["event"] = util::JsonValue(std::string("ready"));
   ready["pid"] = util::JsonValue(static_cast<std::int64_t>(pid));
@@ -297,9 +220,6 @@ void ControlChannelService::WriteDescriptor() {
   std::error_code ec;
   const std::filesystem::path parent = descriptor_path_.parent_path();
   std::filesystem::create_directories(parent, ec);
-  // The descriptor exposes project_root/project_hash. Keep the runtime + instances
-  // directories owner-only (0700) so other local users cannot enumerate active
-  // project roots even when $XDG_RUNTIME_DIR is absent and we fell back to /tmp.
   ::chmod(parent.c_str(), S_IRWXU);
   if (parent.has_parent_path()) {
     ::chmod(parent.parent_path().c_str(), S_IRWXU);
@@ -312,9 +232,6 @@ void ControlChannelService::WriteDescriptor() {
       util::JsonValue(project_root_.empty() ? std::string()
                                             : ProjectStateDirectoryName(project_root_));
 
-  // Atomic publish: write a temp file then rename into place, so a concurrent
-  // reader (a driver racing startup) never observes an empty or half-written
-  // descriptor and skips a live instance. A crash mid-write leaves only the temp.
   std::filesystem::path temp_path = descriptor_path_;
   temp_path += ".tmp";
   {
@@ -330,7 +247,7 @@ void ControlChannelService::WriteDescriptor() {
       return;
     }
   }
-  ::chmod(temp_path.c_str(), S_IRUSR | S_IWUSR);  // 0600 before it becomes visible
+  ::chmod(temp_path.c_str(), S_IRUSR | S_IWUSR);
   std::error_code rename_ec;
   std::filesystem::rename(temp_path, descriptor_path_, rename_ec);
   if (rename_ec) {
@@ -365,9 +282,6 @@ void ControlChannelService::Stop() {
 bool ControlChannelService::IsRunning() const { return server_.IsRunning(); }
 
 void ControlChannelService::ConsumeControlCallbacks() {
-  // The I/O thread re-binds the listener when the advertised socket vanishes
-  // mid-run; re-publish the discovery descriptor (which vanished with it) so
-  // external tooling can rediscover the socket.
   if (server_.ConsumeRebound()) {
     WriteDescriptor();
   }
@@ -380,8 +294,6 @@ void ControlChannelService::ConsumeControlCallbacks() {
       response.ok = false;
       response.error = request.parse_error;
     } else if (request.is_command()) {
-      // A breakpoint-/debug- command auto-enables the debugger transiently, so a
-      // headless driver never has to send `set-setting debug.enabled true` first.
       if (operations_.ensure_debugger_enabled && CommandTouchesDebugger(request.command)) {
         operations_.ensure_debugger_enabled();
       }
@@ -396,7 +308,6 @@ void ControlChannelService::ConsumeControlCallbacks() {
       response.error = outcome.error;
     } else if (request.query == "idle" && request.args.IsObject() && request.args.HasKey("wait") &&
                request.args["wait"].IsBool() && request.args["wait"].AsBool()) {
-      // Answered at the next idle point (ReleaseIdleWaiters), not now.
       idle_waiters_.emplace_back(message.connection_id, request.id);
       continue;
     } else {
@@ -439,11 +350,6 @@ void ControlChannelService::ReleaseIdleWaiters() {
 util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
                                                    const util::JsonValue& args, bool* ok,
                                                    std::string* error) const {
-  // ControlQueryVerbs() is the one list of verbs (the help text, the man page and
-  // the `surface` inventory read it): a verb answered below and missing there is
-  // refused here, and ControlUiQuery/EveryListedQueryVerbIsAnswered asks every
-  // listed one, so the two cannot drift apart. (`settings` was answered and
-  // unlisted until this check.)
   const std::span<const std::string_view> verbs = ControlQueryVerbs();
   if (std::find(verbs.begin(), verbs.end(), verb) == verbs.end()) {
     *ok = false;
@@ -497,13 +403,10 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
     return BuildTerminalOutput(args, ok, error);
   }
   if (verb == "compare") {
-    // The focused group's active tab, when it is a diff.
     return BuildControlCompareJson(
         context_ != nullptr ? context_->current_project_state.focused_group().active_compare() : nullptr);
   }
   if (verb == "idle") {
-    // Read now: an app serving a query is busy serving it. {"wait": true} is
-    // answered at the next idle point instead (ConsumeControlCallbacks).
     util::JsonObject idle;
     idle["idle"] = util::JsonValue(false);
     return util::JsonValue(std::move(idle));
@@ -526,8 +429,6 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
     return BuildControlBufferJson(active.viewport, active.kind);
   }
   if (verb == "hit-test") {
-    // The QA driver asks before a press it sends through X, so it waits for the
-    // button events only when the app will get them (tools/qa/microide_qa.py).
     if (!operations_.window_hit_region || !args.IsObject() || !args.HasKey("x") ||
         !args.HasKey("y")) {
       *ok = false;
@@ -544,8 +445,6 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
                                : ControlUiQuery::Build(*context_, operations_.ui);
   }
   if (verb == "persistence") {
-    // `staged` is the one a driver waits for before a kill -9: nothing unsaved is
-    // waiting on the debounce, and every write handed to the worker has finished.
     const ControlPersistenceState state =
         operations_.persistence ? operations_.persistence() : ControlPersistenceState{};
     util::JsonObject result;
@@ -559,9 +458,6 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
                                         : util::JsonValue(util::JsonObject{});
   }
   if (verb == "code-coverage") {
-    // A source-coverage build's counters, written on request ({"flush": true}):
-    // the QA driver asks before a kill -9, which would take them with it
-    // (util/CoverageProfile.h). {instrumented: false} in any other build.
     util::JsonObject result;
     result["instrumented"] = util::JsonValue(util::CoverageProfileInstrumented());
     if (args.IsObject() && args.HasKey("flush") && args["flush"].AsBool(false)) {
@@ -570,19 +466,12 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
     return util::JsonValue(std::move(result));
   }
   if (verb == "invariants") {
-    // The workspace's structural rules, checked from the inside
-    // (ControlInvariantsQuery.h); {"deep": true} adds the focused editor's
-    // derived layout tables against a fresh build.
     ControlInvariantsQueryOptions options;
     options.deep = args.IsObject() && args.HasKey("deep") && args["deep"].AsBool(false);
     return BuildControlInvariantsJson(context_ != nullptr ? &context_->current_project_state : nullptr,
                                       options);
   }
   if (verb == "crash-points") {
-    // QA's handle on the durable-write boundaries (util/CrashPointControl.h):
-    // which ones this process has passed, by site and file, and one rule to kill
-    // or stall itself at the next pass of one -- {"arm": "kill:<site>@<text>#<n>"},
-    // {"disarm": true}. Installed only under MICROIDE_QA_CRASH_POINTS.
     if (args.IsObject() && args.HasKey("arm")) {
       std::string why;
       if (!util::CrashPointControl::Arm(args["arm"].AsString(), &why)) {
@@ -618,8 +507,6 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
   return util::JsonValue(nullptr);
 }
 
-// `output [{"channel": id}]`: every output channel with its line count, and the
-// lines of `channel` -- by default the one the panel's Output tab shows.
 util::JsonValue ControlChannelService::BuildOutput(const util::JsonValue& args) const {
   util::JsonObject object;
   const WorkspaceOutputChannels* channels = operations_.output_channels;
@@ -644,7 +531,6 @@ util::JsonValue ControlChannelService::BuildOutput(const util::JsonValue& args) 
   util::JsonArray text;
   if (const std::vector<std::string>* lines = channels != nullptr ? channels->Entries(wanted) : nullptr;
       lines != nullptr) {
-    // The newest lines when a log is long; a QA flow reads what just arrived.
     const std::size_t first = lines->size() > kMaxControlQueryEntries ? lines->size() - kMaxControlQueryEntries : 0;
     for (std::size_t i = first; i < lines->size(); ++i) {
       text.push_back(util::JsonValue((*lines)[i]));
@@ -660,10 +546,6 @@ util::JsonValue ControlChannelService::BuildDebugState() const {
     return util::JsonValue(std::move(object));
   }
   const DebugExecutionView& exec = context_->current_project_state.debug_execution;
-  // The active session's lifecycle, so a driver can wait for "running" before it
-  // pauses: `stopped` alone cannot tell a running program from no session. And
-  // every live session (id, label, state, active), so it can tell which one a
-  // Switch Debug Session landed on and that Stop All stopped them all.
   const auto state_name = [](DebugSession::State state) -> const char* {
     switch (state) {
       case DebugSession::State::Inactive: return "inactive";
@@ -724,8 +606,6 @@ util::JsonValue ControlChannelService::BuildBreakpoints() const {
   }
   const std::vector<editor::BreakpointStore::FileBreakpoints> snapshot =
       context_->current_project_state.breakpoint_store.SnapshotAll();
-  // Cap by aggregate breakpoint count (not just file count) so one huge file can't
-  // dominate the response.
   std::size_t emitted = 0;
   for (const editor::BreakpointStore::FileBreakpoints& file : snapshot) {
     if (emitted >= kMaxControlQueryEntries) {
@@ -817,9 +697,6 @@ util::JsonValue ControlChannelService::BuildTabs() const {
   }
   const ProjectWorkspaceState& state = context_->current_project_state;
   const std::size_t focused_group_index = state.clamped_focused_group_index();
-  // Enumerate every editor group (a split workspace has two) so a headless driver
-  // can see and target tabs in either split. Each entry carries its `group` index;
-  // `active` is true only for the active tab of the focused group.
   for (std::size_t g = 0; g < state.editor_groups.size(); ++g) {
     const EditorGroup& group = state.editor_groups[g];
     for (std::size_t i = 0; i < group.open_tabs.size(); ++i) {
@@ -846,11 +723,6 @@ util::JsonValue ControlChannelService::BuildTabs() const {
 
 namespace {
 
-// One editor tab for the `editor` query. Positions are 1-based on the wire, like
-// the rest of the control surface. A tab whose content is ready reports its live
-// viewport; one still deferred or loading reports the position it will open at.
-// `is_active_in_focus` (the focused group's active tab) also reports the visible
-// range, so an agent can tell what the user is looking at.
 util::JsonValue BuildEditorTabJson(std::size_t index, const TabEntry& tab, bool active,
                                    bool is_active_in_focus) {
   util::JsonObject object;
@@ -864,13 +736,10 @@ util::JsonValue BuildEditorTabJson(std::size_t index, const TabEntry& tab, bool 
   object["active"] = util::JsonValue(active);
   object["dirty"] = util::JsonValue(TabEntryIsDirty(tab));
   if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
-    // What a diff shows, so a driver can tell what its toggles changed: the
-    // change count, the two whitespace modes and its place in a review's files.
     const CompareTabState& compare = *tab.compare;
     object["changes"] = util::JsonValue(static_cast<std::int64_t>(compare.model.hunks.size()));
     object["ignoreWhitespace"] = util::JsonValue(compare.build_options.ignore_whitespace);
     object["showWhitespace"] = util::JsonValue(compare.show_whitespace);
-    // Lines drawn as moved between hunks, per side (TD-2026-11-11-443).
     std::int64_t moved_left = 0;
     std::int64_t moved_right = 0;
     for (const compare::CompareRow& row : compare.model.rows) {
@@ -881,8 +750,6 @@ util::JsonValue BuildEditorTabJson(std::size_t index, const TabEntry& tab, bool 
     object["movedRightLines"] = util::JsonValue(moved_right);
     object["leftLabel"] = util::JsonValue(compare.left_label);
     object["rightLabel"] = util::JsonValue(compare.right_label);
-    // A branch review's hunk marks as the diff draws them: hunks marked reviewed,
-    // and hunks carrying a note.
     if (compare.review_markers_valid) {
       std::int64_t reviewed = 0;
       std::int64_t noted = 0;
@@ -899,8 +766,6 @@ util::JsonValue BuildEditorTabJson(std::size_t index, const TabEntry& tab, bool 
     }
   }
   if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
-    // What the merge editor's header shows: the conflicts, how many are left,
-    // which is selected, whether the base pane is out and the file resolved.
     const MergeTabState& merge = *tab.merge;
     std::int64_t unresolved = 0;
     for (const MergeTrackedConflict& conflict : merge.conflicts) {
@@ -955,7 +820,7 @@ const char* SplitOrientationName(EditorSplitOrientation orientation) {
   return "leaf";
 }
 
-}  // namespace
+}
 
 util::JsonValue ControlChannelService::BuildEditor() const {
   util::JsonObject root;
@@ -965,8 +830,6 @@ util::JsonValue ControlChannelService::BuildEditor() const {
   const ProjectWorkspaceState& state = context_->current_project_state;
   const std::size_t focused = state.clamped_focused_group_index();
   root["focusedGroupIndex"] = util::JsonValue(static_cast<std::int64_t>(focused));
-  // The split tree in its persisted pre-order form: a leaf is one group (in group
-  // order); a branch lays its children along `orientation` with `weights`.
   util::JsonArray split;
   for (const EditorSplitNodeRecord& record : state.editor_split.Flatten()) {
     util::JsonObject node;
@@ -1003,20 +866,6 @@ util::JsonValue ControlChannelService::BuildEditor() const {
   return util::JsonValue(std::move(root));
 }
 
-// `documents`: every file buffer open in the current project (an editor tab's, a
-// diff's editable side: LoadedBufferViewOf), once each however many views show
-// it -- its path, the surface listed for it, whether it is unsaved, and the SHA-256
-// of the bytes a save would write now (the BOM, the lines joined with the
-// document's ending). The QA monkey's data-loss oracle reads it: a clean
-// document's file holds exactly those bytes, and a dirty one comes back with the
-// same digest after a kill -9 and a relaunch (dev-docs/project/safety-plan.md W4).
-// A view whose content has not landed yet has no document to describe.
-//
-// `{"content": "<path>"}` adds that one document's bytes as `contentHex`, the
-// evidence the oracle saves when a clean buffer and its file disagree: the
-// digests say THAT they differ, the bytes say how (a stale load, a dropped BOM,
-// a save transform that never reached the buffer). Hex, because the fixture's
-// files carry NULs, Latin-1 and raw binary that a JSON string cannot.
 util::JsonValue ControlChannelService::BuildDocuments(const util::JsonValue& args) const {
   const std::string content_path =
       args.IsObject() && args.HasKey("content") ? args["content"].AsString() : std::string{};
@@ -1024,11 +873,6 @@ util::JsonValue ControlChannelService::BuildDocuments(const util::JsonValue& arg
   if (context_ == nullptr) {
     return util::JsonValue(std::move(documents));
   }
-  // `{"all": true}`: every open project's documents, not only the active one's,
-  // each naming its project and whether that project is the active one. The
-  // kill -9 oracle compares across a relaunch, and a buffer of a project that
-  // came back inactive -- or did not come back -- was indistinguishable from a
-  // lost one (soak e946ec9333d7: the dirty buffers were in a second project).
   const bool all_projects = args.IsObject() && args.HasKey("all") && args["all"].AsBool();
   std::vector<std::pair<const ProjectWorkspaceState*, bool>> projects{{&context_->current_project_state, true}};
   if (all_projects) {
@@ -1041,11 +885,6 @@ util::JsonValue ControlChannelService::BuildDocuments(const util::JsonValue& arg
   }
   std::vector<const void*> seen;
   for (const auto& [project, active] : projects) {
-    // Editor tabs first: a document an editor tab and a diff share is listed as
-    // the editor tab's, wherever the two sit. A merge's result only while it
-    // holds typed text: it is no file's buffer, and its clean text is not its
-    // file's (a conflicted file opens with its markers resolved), but its unsaved
-    // text is what a kill -9 must bring back (TD-2026-11-19-453).
     for (const TabEntry::Kind surface : {TabEntry::Kind::Editor, TabEntry::Kind::Compare, TabEntry::Kind::Merge}) {
     for (const EditorGroup& group : project->editor_groups) {
       for (const TabEntry& tab : group.open_tabs) {
@@ -1063,11 +902,6 @@ util::JsonValue ControlChannelService::BuildDocuments(const util::JsonValue& arg
         }
         seen.push_back(view.document_identity());
         const bool opaque = view.encoding() == editor::TextViewport::TextEncoding::Bytes;
-        // What Save writes: the document's own ending and mark. A file opened as
-        // bytes records LF (its CR bytes are data, kept in the lines); a text file
-        // an edit made opaque keeps the ending it was opened with. Forcing LF for
-        // every opaque buffer hashed bytes the save does not write (soak
-        // a7e72d7d3c4c: a saved, clean crlf.txt read as differing from its file).
         const std::string bytes = view.SerializeDocumentText();
         util::JsonObject object;
         object["path"] = util::JsonValue(view.path().generic_string());
@@ -1075,8 +909,6 @@ util::JsonValue ControlChannelService::BuildDocuments(const util::JsonValue& arg
         object["surface"] = util::JsonValue(std::string(surface == TabEntry::Kind::Editor    ? "editor"
                                                         : surface == TabEntry::Kind::Compare ? "compare"
                                                                                              : "merge"));
-        // Where the tab sits and the number its title claims, so a duplicate
-        // Untitled-N names the two tabs that collide (soak 2ae149191d79).
         object["group"] = util::JsonValue(static_cast<std::int64_t>(&group - project->editor_groups.data()));
         object["tab"] = util::JsonValue(static_cast<std::int64_t>(&tab - group.open_tabs.data()));
         object["untitledNumber"] = util::JsonValue(static_cast<std::int64_t>(tab.untitled_number));
@@ -1113,7 +945,7 @@ util::JsonValue ControlChannelService::BuildCommands() const {
   util::JsonArray commands;
   for (const ActionSpec& spec : WorkspaceCommandSpecs()) {
     if (spec.command_name.empty()) {
-      continue;  // context-menu-only specs are not runnable by name
+      continue;
     }
     util::JsonObject object;
     object["command"] = util::JsonValue(std::string(spec.command_name));
@@ -1134,9 +966,6 @@ util::JsonValue ControlChannelService::BuildCommands() const {
   return util::JsonValue(std::move(commands));
 }
 
-// Every registered setting with its current value, so a driver can sweep the
-// catalogue without reading the registry's source: the type decides what to
-// set (every enum value, both booleans, the ends of a numeric range).
 util::JsonValue ControlChannelService::BuildSettings() const {
   util::JsonArray rows;
   if (!operations_.settings) {
@@ -1203,9 +1032,6 @@ util::JsonValue ControlChannelService::BuildSettings() const {
   return util::JsonValue(std::move(rows));
 }
 
-// Every resolved keybinding, in dispatch order: what a driver presses, and where
-// the registration says it is active (KeybindingContext; a Global binding is
-// active everywhere but a focused terminal unless it skips the shell).
 util::JsonValue ControlChannelService::BuildKeybindings() const {
   util::JsonArray rows;
   if (!operations_.keybindings) {
@@ -1230,13 +1056,9 @@ util::JsonValue ControlChannelService::BuildKeybindings() const {
     object["context"] = util::JsonValue(context_name(binding.context));
     object["skipsTerminal"] = util::JsonValue(binding.skips_terminal);
     object["plugin"] = util::JsonValue(binding.from_plugin);
-    // F6 is debug-pause while a program runs and focus-next-part otherwise: the
-    // key runs the first enabled binding of those sharing it.
     object["sharesChord"] = util::JsonValue(binding.shares_chord);
     object["enabled"] = util::JsonValue(!binding.command_name.empty() || !operations_.action_enabled ||
                                         operations_.action_enabled(binding.action));
-    // The command the binding runs, as the `ui` action receipt names it: a
-    // driver presses the chord and checks this ran.
     std::string command = binding.command_name;
     if (command.empty()) {
       for (const ActionSpec& spec : WorkspaceCommandSpecs()) {
@@ -1265,10 +1087,6 @@ util::JsonValue ControlChannelService::BuildNotifications(bool recent) const {
     }
     return "info";
   };
-  // `recent`: the rows posted lately, oldest first, up or not (NotificationService::
-  // Recent) -- what a driver reads to see a row that came and went between looks.
-  // Each recent row carries its posting's `seq`, so "posted after X" holds once
-  // the ring is full and its length stops growing.
   std::vector<std::pair<const NotificationService::Notification*, std::uint64_t>> listed;
   if (recent) {
     for (const NotificationService::Posted& posted : operations_.notifications->Recent()) {
@@ -1340,11 +1158,8 @@ util::JsonValue ControlChannelService::BuildTerminals() const {
       pane_object["pane"] = util::JsonValue(static_cast<std::int64_t>(p));
       pane_object["active"] = util::JsonValue(p == tab->active_pane);
       pane_object["label"] = util::JsonValue(pane->session.LaunchLabel());
-      // What the tab strip shows before the label ("host · " for a host terminal).
       pane_object["labelPrefix"] = util::JsonValue(TerminalPaneLabelPrefix(state, *pane));
       pane_object["running"] = util::JsonValue(pane->session.running());
-      // A host terminal waiting for its project's connection, and which host
-      // terminal a pane is (0: none) -- what a reopen reattaches to.
       pane_object["pending"] = util::JsonValue(pane->session.host_pending());
       pane_object["hostHandle"] =
           util::JsonValue(static_cast<std::int64_t>(pane->session.host_identity().handle));
@@ -1360,7 +1175,6 @@ util::JsonValue ControlChannelService::BuildTerminals() const {
 
 util::JsonValue ControlChannelService::BuildTerminalOutput(const util::JsonValue& args, bool* ok,
                                                            std::string* error) const {
-  // The tail of the scrollback is what an agent wants; the cap bounds the reply.
   constexpr std::int64_t kDefaultMaxLines = 1000;
   constexpr std::int64_t kMaxLines = 20000;
   const auto fail = [&](const char* message) {
@@ -1410,9 +1224,8 @@ util::JsonValue ControlChannelService::BuildTerminalOutput(const util::JsonValue
     if (i != 0) {
       text.push_back('\n');
     }
-    text += TerminalLineSliceText(lines[i], 0, lines[i].cells.size(), /*trim_trailing=*/true);
+    text += TerminalLineSliceText(lines[i], 0, lines[i].cells.size(), true);
   }
-  // Trailing blank grid rows below the prompt carry nothing.
   while (!text.empty() && text.back() == '\n') {
     text.pop_back();
   }
@@ -1422,7 +1235,6 @@ util::JsonValue ControlChannelService::BuildTerminalOutput(const util::JsonValue
   object["running"] = util::JsonValue(session.running());
   object["lineCount"] = util::JsonValue(static_cast<std::int64_t>(line_count));
   object["text"] = util::JsonValue(std::move(text));
-  // Row is absolute, the same space as the transcript's rows; shape is DECSCUSR's.
   const terminal::TerminalCursorSnapshot cursor = session.CursorSnapshot();
   util::JsonObject cursor_object;
   cursor_object["row"] = util::JsonValue(static_cast<std::int64_t>(cursor.row));
@@ -1450,12 +1262,8 @@ util::JsonValue ControlChannelService::BuildProjects() const {
     project_object["root"] =
         util::JsonValue(entry != nullptr ? entry->root.generic_string() : std::string());
     project_object["active"] = util::JsonValue(i == catalog.active_index);
-    // A project restored from the workspace session loads its tabs when it is
-    // first activated; until then `documents` lists nothing of it, and a reader
-    // comparing across a relaunch must not take that for lost buffers.
     project_object["loaded"] =
         util::JsonValue(i == catalog.active_index || (entry != nullptr && entry->initialized));
-    // From the id, so a restored remote project is marked before it is activated.
     if (const project::ProjectId::Remote* remote = context_->ProjectCatalogId(i).remote()) {
       project_object["host"] = util::JsonValue(remote->host);
       project_object["hostRoot"] = util::JsonValue(remote->host_root);
@@ -1481,8 +1289,6 @@ util::JsonValue ControlChannelService::BuildLaunchConfigs() const {
     object["type"] = util::JsonValue(config.type);
     object["request"] = util::JsonValue(config.request);
     object["selected"] = util::JsonValue(i == state.selected_launch_config_index);
-    // Surface the launch/attach body (program, args, cwd, stopOnEntry, ...) so a
-    // headless driver can see exactly what each config will run.
     object["arguments"] = config.arguments;
     configs.push_back(util::JsonValue(std::move(object)));
   }
@@ -1519,13 +1325,10 @@ util::JsonValue ControlChannelService::BuildStatus() const {
   }
   object["tabCount"] = util::JsonValue(static_cast<std::int64_t>(total_tabs));
   object["debugStopped"] = util::JsonValue(state.debug_execution.stopped);
-  // Requests whose answer has been neither applied nor dropped: a driver waits
-  // for zero before it reads a buffer a format or a rename may still edit.
   object["lspRequestsInFlight"] =
       util::JsonValue(static_cast<std::int64_t>(state.lsp.request_in_flight_count));
   object["connections"] = util::JsonValue(static_cast<std::int64_t>(server_.ConnectionCount()));
   object["renderer"] = util::JsonValue(context_->render_driver_name);
-  // The allocator's view: what is live versus freed-but-kept (TD-2026-10-28-418).
   if (const std::optional<util::HeapUsage> heap = util::CurrentHeapUsage()) {
     util::JsonObject heap_object;
     heap_object["inUse"] = util::JsonValue(static_cast<std::int64_t>(heap->in_use_bytes));
@@ -1549,8 +1352,6 @@ util::JsonValue ControlChannelService::BuildStatus() const {
     }
   }
 
-  // Whether the per-plugin kernel confinement layers are actually live on this host. The confinement
-  // is fail-open, so this lets an operator confirm it was installed rather than silently skipped.
   const platform::SandboxSupport& sandbox = context_->sandbox_support;
   util::JsonObject sandbox_object;
   sandbox_object["compiledLandlock"] = util::JsonValue(sandbox.compiled_with_landlock);
@@ -1567,8 +1368,6 @@ void ControlChannelService::OnDebugStopBegan(const std::string& reason, int thre
   if (context_ == nullptr || (!server_.IsRunning() && !stdout_mirror_)) {
     return;
   }
-  // The immediate phase carries only what the DAP `stopped` event already knows;
-  // file/line/frames follow in OnDebugStopped once the stack resolves.
   util::JsonObject event;
   event["event"] = util::JsonValue(std::string("stopped"));
   event["reason"] = util::JsonValue(reason);
@@ -1624,12 +1423,7 @@ void ControlChannelService::OnDebugOutput(const std::string& category, const std
   util::JsonObject event;
   event["event"] = util::JsonValue(std::string("output"));
   event["category"] = util::JsonValue(category);
-  // TD-2026-07-17A-096: the IDE console side caps line fan-out at 100k lines, but the
-  // raw output string was copied whole into this JSON event, so a DAP output event that
-  // stays within the protocol body cap could still force a large JSON allocation/escape
-  // pass and per-client write-buffer attempt. Byte-cap the emitted text on a UTF-8
-  // boundary with a truncation marker/flag.
-  constexpr std::size_t kMaxDebugOutputEventBytes = 64u * 1024;  // 64 KiB
+  constexpr std::size_t kMaxDebugOutputEventBytes = 64u * 1024;
   if (text.size() <= kMaxDebugOutputEventBytes) {
     event["text"] = util::JsonValue(text);
   } else {
@@ -1641,4 +1435,4 @@ void ControlChannelService::OnDebugOutput(const std::string& category, const std
   EmitEvent(util::JsonValue(std::move(event)));
 }
 
-}  // namespace microide::workspace
+}

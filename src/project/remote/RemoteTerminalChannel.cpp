@@ -35,7 +35,7 @@ util::JsonValue AttachParams(std::uint64_t handle,
   return util::JsonValue(std::move(params));
 }
 
-}  // namespace
+}
 
 std::shared_ptr<RemoteTerminalChannel> RemoteTerminalChannel::Open(
     std::shared_ptr<RemoteServerClient> client,
@@ -45,8 +45,6 @@ std::shared_ptr<RemoteTerminalChannel> RemoteTerminalChannel::Open(
     return nullptr;
   }
   auto channel = std::make_shared<RemoteTerminalChannel>(client, session, std::move(host_to_local));
-  // Bound before the request goes out: the first frame can beat the caller's own
-  // bookkeeping, and a session that does not know its channel drops it.
   session.ReattachHost(channel);
   if (!request.attach.empty()) {
     if (client->hello().daemon_epoch == request.attach.epoch) {
@@ -57,11 +55,10 @@ std::shared_ptr<RemoteTerminalChannel> RemoteTerminalChannel::Open(
         channel->fallback_ = request;
         channel->fallback_->attach = {};
       }
-      return channel->SendAttach(client, request.attach.handle, std::nullopt, /*reattach=*/false)
+      return channel->SendAttach(client, request.attach.handle, std::nullopt, false)
                  ? channel
                  : nullptr;
     }
-    // Recorded under another server process: its handles name nothing here.
     std::lock_guard lock(channel->mutex_);
     channel->reattach_state_ = terminal::HostReattach::ServerRestarted;
   }
@@ -93,13 +90,7 @@ bool RemoteTerminalChannel::SendOpen(const std::shared_ptr<RemoteServerClient>& 
   if (request.prefetch_lines != 0) {
     params["prefetch_lines"] = util::JsonValue(static_cast<std::int64_t>(request.prefetch_lines));
   }
-  // The reply runs on the I/O thread; a channel closed by then just closes the
-  // terminal it was given.
   const std::weak_ptr<RemoteTerminalChannel> weak = weak_from_this();
-  // The client WEAKLY: this callback lives in the client's own peer, so a strong
-  // capture is a cycle that keeps the connection alive until the reply. (A last
-  // reference released on the I/O thread is safe in itself: see
-  // RemoteServerClient::Create.)
   const std::weak_ptr<RemoteServerClient> weak_client = client;
   return client->peer().Request(
              method::kTermOpen, util::JsonValue(std::move(params)), Lane::Interactive,
@@ -107,7 +98,7 @@ bool RemoteTerminalChannel::SendOpen(const std::shared_ptr<RemoteServerClient>& 
                                  std::optional<RemotePeer::RpcError> error) {
                const std::shared_ptr<RemoteServerClient> client = weak_client.lock();
                if (client == nullptr) {
-                 return;  // the connection is gone with everything it served
+                 return;
                }
                const std::shared_ptr<RemoteTerminalChannel> channel = weak.lock();
                const std::int64_t handle = result.has_value() ? (*result)["handle"].AsInt(0) : 0;
@@ -125,7 +116,7 @@ bool RemoteTerminalChannel::SendOpen(const std::shared_ptr<RemoteServerClient>& 
                channel->Attached(client, static_cast<std::uint64_t>(handle),
                                  static_cast<std::size_t>(
                                      (*result)["credit_bytes"].AsInt(kDefaultCreditBytes)),
-                                 /*reattach=*/false);
+                                 false);
              }) != 0;
 }
 
@@ -137,7 +128,7 @@ bool RemoteTerminalChannel::FallBackToOpen(const std::shared_ptr<RemoteServerCli
       return false;
     }
     request.swap(fallback_);
-    handle_ = 0;  // the new terminal's, once term/open answers
+    handle_ = 0;
     reattach_state_ = terminal::HostReattach::Gone;
   }
   if (!SendOpen(client, *request)) {
@@ -154,12 +145,12 @@ std::shared_ptr<RemoteTerminalChannel> RemoteTerminalChannel::Attach(
     return nullptr;
   }
   auto channel = std::make_shared<RemoteTerminalChannel>(client, session, std::move(host_to_local));
-  session.ReattachHost(channel);  // see Open
+  session.ReattachHost(channel);
   {
     std::lock_guard lock(channel->mutex_);
     channel->handle_ = handle;
   }
-  return channel->SendAttach(client, handle, resume, /*reattach=*/false) ? channel : nullptr;
+  return channel->SendAttach(client, handle, resume, false) ? channel : nullptr;
 }
 
 void RemoteTerminalChannel::Reattach(std::shared_ptr<RemoteServerClient> client) {
@@ -179,10 +170,6 @@ void RemoteTerminalChannel::Reattach(std::shared_ptr<RemoteServerClient> client)
     reattaching_ = false;
     received_bytes_ = 0;
     acked_bytes_ = 0;
-    // A different server process (it was killed, or the host rebooted): its
-    // handles name nothing of ours -- the shell ended with the old one, as Open
-    // decides for a recorded terminal. Asking would at best be refused, at worst
-    // attach to another terminal the new server numbered the same.
     const std::string& before = previous != nullptr ? previous->hello().daemon_epoch : std::string();
     restarted = !before.empty() && before != client->hello().daemon_epoch;
   }
@@ -193,12 +180,12 @@ void RemoteTerminalChannel::Reattach(std::shared_ptr<RemoteServerClient> client)
     Ended(terminal::HostReattach::ServerRestarted, "the host's server restarted");
     return;
   }
-  SendAttach(client, handle, resume, /*reattach=*/true);
+  SendAttach(client, handle, resume, true);
 }
 
 void RemoteTerminalChannel::Ended(terminal::HostReattach outcome, const std::string& reason) {
   std::lock_guard lock(mutex_);
-  handle_ = 0;  // claims nothing on the host any more
+  handle_ = 0;
   reattach_state_ = outcome;
   if (session_ != nullptr) {
     session_->HostEnded(terminal::HostEnd::TerminalGone, reason);
@@ -209,7 +196,7 @@ bool RemoteTerminalChannel::SendAttach(
     const std::shared_ptr<RemoteServerClient>& client, std::uint64_t handle,
     const std::optional<terminal::TerminalSession::HostResumePoint>& resume, bool reattach) {
   const std::weak_ptr<RemoteTerminalChannel> weak = weak_from_this();
-  const std::weak_ptr<RemoteServerClient> weak_client = client;  // see Open
+  const std::weak_ptr<RemoteServerClient> weak_client = client;
   return client->peer().Request(
              method::kTermAttach, AttachParams(handle, resume), Lane::Interactive,
              [weak, weak_client, handle, reattach](std::optional<util::JsonValue> result,
@@ -220,14 +207,9 @@ bool RemoteTerminalChannel::SendAttach(
                  return;
                }
                if (!result.has_value()) {
-                 // A recorded terminal the server no longer has: a fresh shell in
-                 // its place, when this attach was a reopen's.
                  if (!reattach && channel->FallBackToOpen(client)) {
                    return;
                  }
-                 // A live terminal the reconnect's server refused: it is gone, not
-                 // waiting on the link (which is back) -- say so instead of
-                 // leaving it "detached" for good.
                  if (reattach && client->connected()) {
                    channel->Ended(terminal::HostReattach::Gone,
                                   "the host no longer has this terminal (" +
@@ -264,9 +246,6 @@ std::uint64_t RemoteTerminalChannel::received_bytes() const {
 
 terminal::HostIdentity RemoteTerminalChannel::identity() const {
   std::lock_guard lock(mutex_);
-  // The epoch of the server this handle belongs to: the client's hello is fixed
-  // for the client's life, and a reconnect's warm reattach keeps the handle only
-  // on the same server.
   return terminal::HostIdentity{.epoch = handle_ != 0 && client_ != nullptr ? client_->hello().daemon_epoch
                                                                             : std::string(),
                                 .handle = handle_};
@@ -300,8 +279,6 @@ void RemoteTerminalChannel::Attached(const std::shared_ptr<RemoteServerClient>& 
   {
     std::lock_guard lock(mutex_);
     if (session_ == nullptr || client_ != client) {
-      // Closed meanwhile, or superseded by a newer reconnect. A terminal this
-      // channel was detached from stays the host's.
       if (session_ == nullptr && !reattach && !detached_) {
         client->peer().Notify(method::kTermClose, HandleParams(handle));
       }
@@ -316,17 +293,12 @@ void RemoteTerminalChannel::Attached(const std::shared_ptr<RemoteServerClient>& 
     }
     credit_bytes_ = std::max<std::size_t>(credit_bytes, 4096);
     input.swap(pending_input_);
-    // Queued before the handle is visible to any other caller: a Detach or Close
-    // that reads it next queues term/detach / term/close BEHIND what was typed
-    // while the open was in flight (one lane, in order). Sent after the lock, the
-    // detach could overtake it, and the host drops input from a connection that
-    // is no longer attached -- the typed command never ran. Send only queues.
     if (!input.empty()) {
       client->peer().SendContent(FrameType::TermInput, handle, input, Lane::Interactive);
     }
     rows = pending_rows_;
     columns = pending_columns_;
-    sent_rows_ = rows;  // a new attach: the host knows nothing of this client's size
+    sent_rows_ = rows;
     sent_columns_ = columns;
     session = session_;
   }
@@ -347,11 +319,9 @@ void RemoteTerminalChannel::Attached(const std::shared_ptr<RemoteServerClient>& 
     }
   };
   if (reattach) {
-    // Before the held frames replay: they are this connection's frames for the
-    // same mirror, and the session must take input again.
     session->ReattachHost(shared_from_this());
   } else if (reattached) {
-    session->NoteHostReattached();  // before the cold frame replays
+    session->NoteHostReattached();
   }
   client->RegisterTerminal(handle, std::move(events));
   if (rows > 0) {
@@ -377,8 +347,6 @@ void RemoteTerminalChannel::ApplyFrame(std::string_view bytes) {
       host_to_local_) {
     *frame->working_directory = host_to_local_(*frame->working_directory).string();
   }
-  // A host program's `file:///abs` link (the host session normalized its own
-  // host name away) names a host path: open it where the editor has it.
   if (host_to_local_) {
     for (terminal::TerminalHostCellExtra& extra : frame->extras) {
       if (extra.uri.starts_with("file:///")) {
@@ -400,8 +368,6 @@ void RemoteTerminalChannel::ApplyFrame(std::string_view bytes) {
     reattaching_ = false;
   }
   if (!consistent && !reattaching_) {
-    // The mirror disagrees with the host's model of it (a bug, or frames lost):
-    // ask for a cold frame rather than draw a screen that is wrong.
     reattaching_ = true;
     received_bytes_ = 0;
     acked_bytes_ = 0;
@@ -421,7 +387,6 @@ void RemoteTerminalChannel::Send(const terminal::TerminalInputEvent& event) {
       return;
     }
     if (!attached_) {
-      // Before the open (or a reattach) is answered: keep it, in order.
       pending_input_ += bytes;
       return;
     }
@@ -476,8 +441,6 @@ bool RemoteTerminalChannel::FetchHistory(std::uint64_t before, std::size_t count
              Lane::Bulk,
              [weak = weak_from_this(), count, done = std::move(done)](std::optional<util::JsonValue> result,
                                                                std::optional<RemotePeer::RpcError>) {
-               // Only to a session the channel still serves, under its lock, as
-               // frames are: a reply after Close() reaches nothing.
                const auto channel = weak.lock();
                if (!channel) {
                  return;
@@ -505,15 +468,10 @@ void RemoteTerminalChannel::Detach() {
       return;
     }
     session_ = nullptr;
-    // An open not answered yet has no handle anyone could record: its answer
-    // closes it, as for Close. A known handle is left running.
     detached_ = handle_ != 0;
     client = client_;
     handle = handle_;
   }
-  // Frames stop here, and the host is told so: it stops framing for this
-  // connection and lists the terminal as unclaimed if nobody else holds it,
-  // whether or not the connection stays up.
   if (handle != 0 && client != nullptr) {
     client->UnregisterTerminal(handle);
     client->peer().Notify(method::kTermDetach, HandleParams(handle));
@@ -538,4 +496,4 @@ void RemoteTerminalChannel::Close() {
   }
 }
 
-}  // namespace microide::project::remote
+}

@@ -30,14 +30,9 @@ bool IsValidUtf8(std::string_view text) {
   return util::IsValidUtf8(text);
 }
 
-}  // namespace
+}
 
 GitRepositoryPathIdentity MakeGitRepositoryPathIdentity(std::string relative_path) {
-  // git's porcelain output is already relative, '/'-separated and normal, so
-  // `lexically_normal()` is a no-op for every real entry — but it costs ~12
-  // allocations (a fresh path plus a string per component) and this runs once per
-  // changed file on every refresh. Confirm the spelling instead, and pay the path
-  // round-trip only for the unusual spellings (TD-2026-08-10-174).
   if (util::PathTextNeedsNormalizing(relative_path)) {
     relative_path = std::filesystem::path(relative_path).lexically_normal().generic_string();
   }
@@ -72,8 +67,6 @@ GitRefreshErrorCategory ClassifyGitRefreshFailure(int exit_code,
   if (stderr_text.find("Submodule") != std::string_view::npos) {
     return GitRefreshErrorCategory::SubmoduleError;
   }
-  // Subprocess's child exits 127 when execvp finds no git; a hook or alias that
-  // exits 127 says something first.
   if (exit_code == 127 && (stderr_text.find_first_not_of(" \t\r\n") == std::string_view::npos ||
                            stderr_text.find("execvp") != std::string_view::npos)) {
     return GitRefreshErrorCategory::GitNotFound;
@@ -124,24 +117,10 @@ GitOperationStateKind DetectGitOperationState(const std::filesystem::path& repos
   if (!git_dir.has_value()) {
     return GitOperationStateKind::None;
   }
-  // Non-throwing probes: the git directory can sit on an unmounted network
-  // volume or a directory that lost +x, and a refresh must degrade to "no
-  // operation" rather than abort the background worker.
   const auto present = [&git_dir](std::string_view name) {
     std::error_code error;
     return std::filesystem::exists(*git_dir / name, error) && !error;
   };
-  // Precedence mirrors git's own wt_status_get_state: a merge is reported by
-  // MERGE_HEAD, a rebase by either of its two state directories, and the
-  // sequencer operations by their respective HEAD files.
-  //
-  // All five marker names were verified against real git, and so was the
-  // precedence: a rebase leaves `rebase-merge/` + AUTO_MERGE + MERGE_MSG, a
-  // revert leaves REVERT_HEAD + AUTO_MERGE + MERGE_MSG, and a cherry-pick leaves
-  // CHERRY_PICK_HEAD — none of them leave MERGE_HEAD. So checking MERGE_HEAD
-  // first cannot shadow the others, even though the merge-ish AUTO_MERGE and
-  // MERGE_MSG files are present in every case. Those two are deliberately NOT
-  // probed for exactly that reason.
   if (present("MERGE_HEAD")) {
     return GitOperationStateKind::Merge;
   }
@@ -166,12 +145,10 @@ std::size_t CountGitWorktrees(const std::filesystem::path& repository_root, cons
     return 0;
   }
   const std::filesystem::path common = internal::ResolveCommonDir(*git_dir);
-  std::size_t count = 1;  // the main working tree
+  std::size_t count = 1;
   std::error_code error;
   for (std::filesystem::directory_iterator it(common / "worktrees", error), end; !error && it != end;
        it.increment(error)) {
-    // `gitdir` names the tree's `.git` file; a tree whose directory is gone is
-    // prunable, and `git worktree list` marks it so: not a tree to switch to.
     const std::string gitdir = internal::ReadFirstLineOfGitFile(it->path() / "gitdir").value_or(std::string());
     std::error_code exists_error;
     if (!gitdir.empty() && std::filesystem::exists(gitdir, exists_error) && !exists_error) {
@@ -181,4 +158,4 @@ std::size_t CountGitWorktrees(const std::filesystem::path& repository_root, cons
   return count;
 }
 
-}  // namespace microide::project
+}

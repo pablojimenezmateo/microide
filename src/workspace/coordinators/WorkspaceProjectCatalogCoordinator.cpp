@@ -9,14 +9,8 @@
 namespace microide::workspace {
 
 namespace {
-// Upper bound on concurrently-open projects. Each entry owns a full
-// ProjectWorkspaceState (file index, finder, per-project LSP, editor groups), so
-// a control client issuing `project-open <distinct path>` in a loop would grow
-// the catalog — and per-project service count — without bound. Already-open roots
-// switch rather than re-add (WorkspaceShellProjects), so this only bounds genuinely
-// distinct opens; set well beyond any human workflow.
 constexpr std::size_t kMaxOpenProjects = 128;
-}  // namespace
+}
 
 ProjectCatalogCoordinator::ProjectCatalogCoordinator(WorkspaceContext& context, Operations operations)
     : context_(context), operations_(std::move(operations)) {}
@@ -28,7 +22,7 @@ bool ProjectCatalogCoordinator::Open(const project::ProjectId& id,
                                      const project::ProjectLocality& locality) {
   util::PerformanceTrace::Scope trace_scope("ProjectCatalogCoordinator::Open");
   if (context_.project_catalog.entries.size() >= kMaxOpenProjects) {
-    return false;  // Refuse a distinct-path project-open flood; see kMaxOpenProjects.
+    return false;
   }
   const ActivationCheckpoint checkpoint = CaptureActivationCheckpoint();
 
@@ -177,4 +171,4 @@ void ProjectCatalogCoordinator::FinalizeMutation() {
   operations_.request_window_redraw();
 }
 
-}  // namespace microide::workspace
+}

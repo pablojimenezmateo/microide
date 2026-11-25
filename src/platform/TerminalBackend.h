@@ -12,29 +12,10 @@ namespace microide::platform {
 
 struct TerminalStartRequest {
   std::filesystem::path working_directory;
-  // Run this instead of starting an interactive shell; empty means interactive.
-  // How it attaches to `shell` is BuildTerminalArgv's decision (ShellProcess.h):
-  // `-lc` for a bare shell name, `-c` for a multi-word value that names a shell,
-  // and a trailing argument for one that does not — `ssh build-host` must not be
-  // handed a flag it will read as its own.
   std::string command;
-  // The shell to launch, as argv — NOT a program path. `terminal.shell`'s own
-  // description has always said "shell command", and treating it as a path is what
-  // made `terminal.shell = "ssh host"` fail with a usage error from ssh's identity
-  // flag, and `terminal.shell = "bash"` fail outright (a bare name was exec'd
-  // without a PATH search). Empty falls back to the platform default
-  // ($SHELL / /bin/sh).
-  //
-  // A ONE-word shell is launched interactively (`bash -i`), because that is what a
-  // bare shell name means. A multi-word one is exec'd exactly as written, because
-  // the user already said what to run — appending `-i` to `ssh host` is the bug
-  // this field exists to fix. `command` follows the same rule: see BuildTerminalArgv.
   std::vector<std::string> shell;
   std::size_t rows = 24;
   std::size_t columns = 80;
-  // `KEY=VALUE` entries set in the shell's environment on top of the inherited
-  // one, replacing an inherited entry of the same key (the remote server's
-  // BROWSER forwarder, TerminalTable::Open).
   std::vector<std::string> environment;
 };
 
@@ -61,13 +42,9 @@ class TerminalBackend {
   virtual void Resize(std::size_t rows, std::size_t columns) = 0;
   virtual void Write(std::string_view bytes) = 0;
   virtual bool running() const = 0;
-  // Output the program has written that has not reached on_output yet: bytes
-  // still in the pty, or being delivered. "The program printed nothing" is this
-  // being false, not on_output having been quiet -- a reader thread behind on a
-  // loaded host is not a silent program. Any thread.
   virtual bool HasUnreadOutput() const { return false; }
 };
 
 std::unique_ptr<TerminalBackend> CreateTerminalBackend();
 
-}  // namespace microide::platform
+}

@@ -9,7 +9,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-// Landlock (filesystem) — guarded so the build still works on kernels/toolchains without the uapi.
 #if defined(__has_include)
 #if __has_include(<linux/landlock.h>)
 #define MICROIDE_HAS_LANDLOCK 1
@@ -18,7 +17,6 @@
 #endif
 #endif
 
-// seccomp (network) — only meaningful on architectures whose audit arch + syscall numbers we know.
 #if defined(__has_include) && (defined(__x86_64__) || defined(__aarch64__))
 #if __has_include(<linux/seccomp.h>) && __has_include(<linux/filter.h>) && \
     __has_include(<linux/audit.h>)
@@ -43,7 +41,7 @@ void ApplyLimit(int resource, long value) {
   rlimit limit{};
   limit.rlim_cur = static_cast<rlim_t>(value);
   limit.rlim_max = static_cast<rlim_t>(value);
-  setrlimit(resource, &limit);  // Best-effort; ignore failure.
+  setrlimit(resource, &limit);
 }
 
 void ApplyResourceLimits(const SubprocessResourceLimits& limits) {
@@ -65,15 +63,10 @@ int LandlockRestrictSelf(int ruleset_fd, __u32 flags) {
   return static_cast<int>(syscall(__NR_landlock_restrict_self, ruleset_fd, flags));
 }
 
-// Read/execute access bits that exist since Landlock ABI v1. Reading and executing the system is
-// always permitted; this is what keeps execvp and shared-library loading working under the ruleset.
 __u64 ReadAccess() {
   return LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR | LANDLOCK_ACCESS_FS_EXECUTE;
 }
 
-// Full read+write+manage access, down-masked to what the running kernel's ABI actually supports so
-// landlock_add_rule does not reject unknown bits. Newer access types are added only when both the
-// header defines them and the detected ABI is recent enough.
 __u64 WriteAccess(int abi) {
   __u64 access = ReadAccess() | LANDLOCK_ACCESS_FS_WRITE_FILE | LANDLOCK_ACCESS_FS_REMOVE_DIR |
                  LANDLOCK_ACCESS_FS_REMOVE_FILE | LANDLOCK_ACCESS_FS_MAKE_CHAR |
@@ -96,7 +89,7 @@ __u64 WriteAccess(int abi) {
 bool AddRule(int ruleset_fd, const char* path, __u64 access) {
   const int path_fd = open(path, O_PATH | O_CLOEXEC);
   if (path_fd < 0) {
-    return false;  // Path absent on this system; nothing to grant.
+    return false;
   }
   landlock_path_beneath_attr attr{};
   attr.allowed_access = access;
@@ -106,28 +99,23 @@ bool AddRule(int ruleset_fd, const char* path, __u64 access) {
   return rc == 0;
 }
 
-// Confines the child's filesystem writes to `write_roots` while leaving the wider system readable
-// and executable. The handled-access set covers read+write; any path not granted a given access is
-// denied it. Returns without restricting (fail-open) when the kernel lacks Landlock support.
 void ApplyLandlock(const std::vector<std::filesystem::path>& read_roots,
                    const std::vector<std::filesystem::path>& read_files,
                    const std::vector<std::filesystem::path>& write_roots) {
   const int abi = LandlockCreateRuleset(nullptr, 0, LANDLOCK_CREATE_RULESET_VERSION);
   if (abi < 1) {
-    return;  // Landlock unavailable or disabled.
+    return;
   }
   const __u64 read_access = ReadAccess();
   const __u64 write_access = WriteAccess(abi);
 
   landlock_ruleset_attr ruleset{};
-  ruleset.handled_access_fs = write_access;  // Superset of read_access.
+  ruleset.handled_access_fs = write_access;
   const int ruleset_fd = LandlockCreateRuleset(&ruleset, sizeof(ruleset), 0);
   if (ruleset_fd < 0) {
     return;
   }
 
-  // System roots stay read+execute so binaries, the loader, and shared libraries resolve. /tmp,
-  // /dev, and /run keep read+write because most tools need scratch space and /dev/null.
   static const char* const kSystemReadRoots[] = {"/usr", "/bin",  "/sbin", "/lib",
                                                   "/lib64", "/etc", "/opt",  "/proc",
                                                   "/sys"};
@@ -148,8 +136,6 @@ void ApplyLandlock(const std::vector<std::filesystem::path>& read_roots,
       AddRule(ruleset_fd, root.c_str(), write_access);
     }
   }
-  // A rule on a FILE may carry only file rights; READ_DIR or EXECUTE on one makes the
-  // kernel reject the rule outright.
   for (const std::filesystem::path& file : read_files) {
     if (!file.empty()) {
       AddRule(ruleset_fd, file.c_str(), LANDLOCK_ACCESS_FS_READ_FILE);
@@ -161,7 +147,7 @@ void ApplyLandlock(const std::vector<std::filesystem::path>& read_roots,
   }
   close(ruleset_fd);
 }
-#endif  // MICROIDE_HAS_LANDLOCK
+#endif
 
 #if defined(MICROIDE_HAS_SECCOMP)
 
@@ -171,14 +157,11 @@ constexpr __u32 kAuditArch = AUDIT_ARCH_X86_64;
 constexpr __u32 kAuditArch = AUDIT_ARCH_AARCH64;
 #endif
 
-// Installs a seccomp filter that fails socket(AF_INET/AF_INET6, ...) with EACCES while allowing
-// every other syscall (including AF_UNIX/AF_NETLINK sockets, so local IPC keeps working). Loading
-// args[0] as a 32-bit word reads the socket domain on the little-endian arches we gate on.
 void ApplyNetworkBlock() {
   sock_filter filter[] = {
       BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, arch)),
       BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, kAuditArch, 1, 0),
-      BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),  // Foreign arch (e.g. 32-bit compat): allow.
+      BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
       BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, nr)),
       BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_socket, 0, 4),
       BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, args[0])),
@@ -194,19 +177,13 @@ void ApplyNetworkBlock() {
   if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
     return;
   }
-  prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &program, 0, 0);  // Best-effort.
+  prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &program, 0, 0);
 }
-#endif  // MICROIDE_HAS_SECCOMP
+#endif
 
-}  // namespace
+}
 
 void ApplyChildSandbox(const SubprocessSandbox& sandbox) {
-  // Resource ceilings are independent of the filesystem/network confinement: a
-  // memory/CPU cap is a safety limit we want even when the child is otherwise
-  // unconfined (e.g. a debug adapter, which must keep writing its debuginfo index
-  // cache to ~/.cache and so cannot run under the Landlock write ruleset). Limits
-  // default to 0 (= inherit the parent's), so this is a no-op unless a caller set
-  // one.
   ApplyResourceLimits(sandbox.limits);
   if (!sandbox.enabled) {
     return;
@@ -226,8 +203,6 @@ SandboxSupport ProbeSandboxSupport() {
   SandboxSupport support;
 #if defined(MICROIDE_HAS_LANDLOCK)
   support.compiled_with_landlock = true;
-  // Version probe only: passing a null attr returns the supported ABI without creating a ruleset or
-  // restricting this process. A negative result means Landlock is unavailable or disabled.
   const int abi = LandlockCreateRuleset(nullptr, 0, LANDLOCK_CREATE_RULESET_VERSION);
   if (abi >= 1) {
     support.landlock_runtime_available = true;
@@ -236,8 +211,6 @@ SandboxSupport ProbeSandboxSupport() {
 #endif
 #if defined(MICROIDE_HAS_SECCOMP)
   support.compiled_with_seccomp = true;
-  // Read-only query: returns the current filter mode (0 = none) and never installs a filter. A
-  // non-negative return means the kernel honors seccomp queries, i.e. PR_SET_SECCOMP is available.
   support.seccomp_runtime_available = prctl(PR_GET_SECCOMP, 0, 0, 0, 0) >= 0;
 #endif
   return support;
@@ -295,4 +268,4 @@ void AllowUserToolchains(SubprocessSandbox& sandbox, std::string_view path_env,
   sandbox.read_roots.insert(sandbox.read_roots.end(), roots.begin(), roots.end());
 }
 
-}  // namespace microide::platform
+}

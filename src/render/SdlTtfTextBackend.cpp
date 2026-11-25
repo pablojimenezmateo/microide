@@ -35,20 +35,13 @@ namespace {
 
 constexpr float kMinPresentationScale = 0.1f;
 
-// The glyphs of an ASCII run drawn from the atlas, placed exactly where the
-// composite surface would put them: each non-space character's atlas slot at the
-// integer cell offset lround(index * cell_width_px), clipped to the run's surface
-// width (see AsciiRunSurfaceWidthPx). Calls `place(cell_left_px, sx, sw, sh)` per
-// glyph with coverage. Returns false -- placing nothing further -- when a glyph has
-// no atlas slot (outside the atlas, or a failed raster) or `place` refuses: the
-// caller then composites the whole run so output stays faithful.
 template <typename Place>
 bool ForEachAtlasGlyph(AsciiGlyphAtlas& atlas, std::string_view text, float cell_width_px,
                        int run_width_px, Place&& place) {
   for (std::size_t index = 0; index < text.size(); ++index) {
     const char ch = text[index];
     if (ch == ' ') {
-      continue;  // spaces contribute no coverage; advance only
+      continue;
     }
     int sx = 0;
     int sw = 0;
@@ -70,7 +63,7 @@ bool ForEachAtlasGlyph(AsciiGlyphAtlas& atlas, std::string_view text, float cell
 }
 
 
-}  // namespace
+}
 
 std::unique_ptr<SdlTtfTextBackend> SdlTtfTextBackend::Create(SDL_Renderer* renderer) {
   auto backend = std::unique_ptr<SdlTtfTextBackend>(new SdlTtfTextBackend());
@@ -126,21 +119,6 @@ bool SdlTtfTextBackend::Initialize(SDL_Renderer* renderer) {
     regular_font_path_ = font_path;
   }
 
-  // Build glyph composites in the format the renderer will actually store them
-  // in. SDL_CreateTextureFromSurface converts when the surface format differs
-  // from the texture format it picks, and it picked one that differed: the
-  // composites were RGBA32 (ABGR8888 on little-endian) while the software
-  // renderer's textures are ARGB8888, so every string upload swizzled the whole
-  // bitmap channel by channel. On a scroll through fresh content that is a
-  // per-row conversion of the row text plus its line number, and it measured at
-  // three times the cost of rasterizing the glyphs in the first place.
-  //
-  // The renderer's texture-format list is in its own preference order, but these
-  // surfaces hold glyph COVERAGE, which lives in the alpha channel -- so the
-  // first entry is only usable if it has one. The software renderer advertises
-  // XRGB8888 first, and picking it discarded every glyph's shape and painted the
-  // whole UI as solid blocks. ChooseGlyphSurfaceFormat keeps the preference
-  // order and skips the formats that cannot carry alpha.
   texture_format_ = SDL_PIXELFORMAT_RGBA32;
   if (const SDL_PropertiesID renderer_properties = SDL_GetRendererProperties(renderer_);
       renderer_properties != 0) {
@@ -149,12 +127,6 @@ bool SdlTtfTextBackend::Initialize(SDL_Renderer* renderer) {
     texture_format_ = ChooseGlyphSurfaceFormat(formats);
   }
 
-  // Batched-text path is GPU-only: it is a measured win on a GPU backend
-  // (row + gutter runs collapse to per-row SDL_RenderGeometry submits, avoiding
-  // composite build+upload churn on scroll) and pixel-identical to the composite
-  // path, but it regresses on the software renderer (SDL_RenderGeometry
-  // rasterizes per-pixel there). So it defaults on for GPU renderers only;
-  // MICROIDE_RENDER_GLYPH_ATLAS=0 is an escape hatch to force the composite path.
   is_gpu_renderer_ = RendererIsGpu(renderer_);
   const char* atlas_env = SDL_getenv("MICROIDE_RENDER_GLYPH_ATLAS");
   glyph_atlas_enabled_ = (atlas_env == nullptr) || (atlas_env[0] != '0');
@@ -190,9 +162,6 @@ void SdlTtfTextBackend::ApplyFontSizeAtCurrentScale() {
       TTF_SetFontSizeDPI(fallback_font, font_point_size_, hdpi, vdpi);
     }
   }
-  // Both the composite and batched-text paths rebuild against the new glyph size.
-  // The composites built from them are the renderers' (StringTextureCache), and
-  // each renderer drops its own when it sees the glyphs change.
   ClearGlyphAtlases();
   RefreshMetrics();
 }
@@ -244,21 +213,14 @@ bool SdlTtfTextBackend::SetFontFamily(std::string_view family) {
   if (requested_font_family_ == family && font_ != nullptr) {
     return false;
   }
-  // Record the request up front so an unresolvable or unopenable family is
-  // remembered and the early-out above suppresses a full font re-lookup on every
-  // subsequent frame (ApplyLiveSettings / ApplyTerminalFontPreferences call this
-  // per frame). Failure paths keep the current font; only success rebuilds glyphs.
   requested_font_family_ = std::string(family);
   const std::filesystem::path resolved = ResolveFamilyToFile(family);
   if (resolved.empty()) {
-    // Keep the current font; an unresolved family must never brick text rendering.
     SDL_Log("microide text: font family \"%.*s\" not found; keeping current font",
             static_cast<int>(family.size()), family.data());
     return false;
   }
   if (resolved == regular_font_path_ && font_ != nullptr) {
-    // Same underlying file (e.g. empty family resolving to the current default):
-    // the request is already recorded; nothing visually changed.
     return false;
   }
   const std::filesystem::path previous_regular = regular_font_path_;
@@ -304,15 +266,9 @@ bool SdlTtfTextBackend::OpenFaceForStyle() {
   }
   synthetic_style_ = synthetic;
   TTF_SetFontStyle(font_, synthetic);
-  // Fallbacks are relative to the new primary. Reload them only if they were
-  // already open — otherwise stay lazy and let the next shaped subject resolve
-  // them against the new primary (a family switch before any non-ASCII text must
-  // not be what pays for five TTF opens).
   if (fallback_fonts_loaded_) {
     LoadFallbackFonts();
   } else {
-    // The previous primary's registrations died with TTF_CloseFont in
-    // OpenPrimaryFont, but the handles are ours to free.
     CloseFallbackFonts();
   }
   ApplyFontSizeAtCurrentScale();
@@ -321,19 +277,6 @@ bool SdlTtfTextBackend::OpenFaceForStyle() {
 
 SdlTtfTextBackend::PixelMetrics SdlTtfTextBackend::MeasurePixelMetrics(TTF_Font* font,
                                                                       const MetricsKey& key) {
-  // 95 FT_Load_Glyph calls, ~0.9 ms, and it runs once per backend per font-size
-  // or presentation-scale change. Two backends exist (editor text and terminal
-  // text) and at startup they open the same file at the same size, so this used
-  // to be measured twice on the frame the user waits for. Process-wide because
-  // the answer is a property of (file, size, dpi) and of nothing else.
-  //
-  // A font file edited in place during a session would go unnoticed here. That
-  // is not a case worth a stat() per lookup on this path.
-  //
-  // Unsynchronized because this type is shell-thread-confined by construction:
-  // it holds the SDL_Renderer, and SDL renderers are main-thread only. The cache
-  // stores plain integers, not TTF handles, so it also stays valid across the
-  // TTF_Quit/TTF_Init of a shutdown/re-initialize cycle.
   static std::map<MetricsKey, PixelMetrics> cache;
   if (const auto it = cache.find(key); it != cache.end()) {
     return it->second;
@@ -404,13 +347,6 @@ float SdlTtfTextBackend::MeasureWidth(std::string_view text) const {
     return static_cast<float>(text.size()) * char_width_;
   }
 
-  // Every string is laid out on the cell grid, non-ASCII included: a wide code
-  // point takes two cells, a combining mark none (util::GridCellWidth), and
-  // BuildGridCompositeSurface draws each glyph on exactly that cell. This used
-  // to ask the shaper, whose answer was the fallback font's own advances -- 1.75
-  // cells for an emoji, anything for a CJK glyph -- so the editor's caret,
-  // selection and mouse hit-test (which count cells) disagreed with the pixels
-  // by a fraction of a cell per wide character on the line.
   return static_cast<float>(util::GridCellCount(text)) * char_width_;
 }
 
@@ -431,13 +367,6 @@ void SdlTtfTextBackend::DrawString(SDL_Renderer* renderer,
 
   const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
   const float scale_y = std::max(kMinPresentationScale, presentation_scale_y_);
-  // Snap only the origin onto the device-pixel grid: snapped*scale is integral,
-  // and entry->width/height are whole physical pixels -- expressed through
-  // DeviceExactLogical, since width / scale * scale can truncate one pixel short
-  // -- so both edges land on the grid and the NEAREST-sampled glyph texture maps
-  // 1:1. Origins within a line
-  // share a fractional base plus integer cell multiples, so all runs snap by the
-  // same delta and intra-line spacing is preserved.
   const SDL_FRect destination = SDL_FRect{
       DeviceAlignedOrigin(x, scale_x),
       DeviceAlignedOrigin(y, scale_y),
@@ -482,11 +411,6 @@ void SdlTtfTextBackend::EnsureClusterAtlas() {
   if (cluster_atlas_ != nullptr || font_ == nullptr) {
     return;
   }
-  // A slot has to hold the widest cluster the grid composite will ask for. That
-  // is a double-width cell; +2 px of headroom for a fallback glyph that renders
-  // a hair past its advance, matching AsciiGlyphAtlas's reservation. A cluster
-  // that still overruns is clipped to its own cells on the way out, exactly as
-  // the direct render path clips it.
   const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
   const int slot_width = static_cast<int>(std::ceil(char_width_ * scale_x * 2.0f)) + 2;
   cluster_atlas_ = GlyphClusterAtlas::Build(font_, texture_format_, slot_width,
@@ -498,9 +422,6 @@ SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text
   if (font_ == nullptr || text.empty()) {
     return nullptr;
   }
-  // Only opaque colours go through the atlas. Coverage is colour-independent, so
-  // an opaque tint reproduces the per-colour render exactly; translucent text
-  // falls back to the SDL_ttf whole-string path in ResolveEntry.
   if (color.a != 255) {
     return nullptr;
   }
@@ -515,8 +436,6 @@ SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text
   const int total_width_px =
       std::max(1, static_cast<int>(std::ceil(static_cast<float>(text.size()) * cell_width_px)));
 
-  // Starts transparent: atlas blits supply the visible pixels at exact cell
-  // positions; spaces and outside-cell gaps remain alpha=0.
   SDL_Surface* composite = AcquireCompositeSurface(total_width_px, font_height_px);
   if (composite == nullptr) {
     return nullptr;
@@ -529,10 +448,6 @@ SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text
       continue;
     }
     const int dst_x = static_cast<int>(std::lround(static_cast<float>(index) * cell_width_px));
-    // Atlas blits are straight copies of colour-modulated coverage, preserving
-    // the per-pixel alpha exactly. If a glyph is somehow uncovered, bail so
-    // ResolveEntry falls back to the whole-string SDL_ttf render rather than
-    // caching a composite with a missing glyph.
     if (!ascii_atlas_->BlitInto(composite, dst_x, ch, color)) {
       SDL_DestroySurface(composite);
       return nullptr;
@@ -543,17 +458,8 @@ SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text
 
 SDL_Surface* SdlTtfTextBackend::AcquireCompositeSurface(int width, int height) {
   util::PerformanceTrace::Scope alloc_scope("render::TextBackend::CompositeAllocate");
-  // A composite lives from its build to its upload, a few lines later in
-  // ResolveEntry, so one buffer serves every miss. It used to be a fresh surface
-  // each time -- a pixel allocation plus a clear as large as the string, which on
-  // a scroll through fresh content cost as much as the glyph blits themselves
-  // (TD-2026-08-30-276). The surface handed out is a header over that buffer at
-  // exactly width x height, so every blit clips where it always did and the upload
-  // reads what it always read; destroying it frees the header and not the pixels.
   const std::size_t pixels = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
   SDL_Surface* composite = nullptr;
-  // Every format ChooseGlyphSurfaceFormat picks today is four bytes a pixel; the
-  // scratch is laid out for exactly that, and anything else gets its own surface.
   if (SDL_BYTESPERPIXEL(texture_format_) == sizeof(std::uint32_t) &&
       pixels * sizeof(std::uint32_t) <= kMaxCompositeScratchBytes) {
     if (composite_scratch_.size() < pixels) {
@@ -562,7 +468,6 @@ SDL_Surface* SdlTtfTextBackend::AcquireCompositeSurface(int width, int height) {
     composite = SDL_CreateSurfaceFrom(width, height, texture_format_, composite_scratch_.data(),
                                       width * static_cast<int>(sizeof(std::uint32_t)));
   } else {
-    // A string wider than the scratch is worth keeping: its own surface, once.
     composite = SDL_CreateSurface(width, height, texture_format_);
   }
   if (composite == nullptr) {
@@ -575,22 +480,9 @@ SDL_Surface* SdlTtfTextBackend::AcquireCompositeSurface(int width, int height) {
   return composite;
 }
 
-// The non-ASCII counterpart of BuildAsciiCompositeSurface: the string laid out
-// on the cell grid, one glyph cluster per cell span. A cluster is a base code
-// point plus the zero-width marks that follow it (rendered together, so the
-// mark sits on its base); it lands at lround(cell * cell_width_px) and takes
-// util::GridCellWidth cells. Printable ASCII cells come straight from the atlas
-// when the colour is opaque; everything else is one SDL_ttf render of the
-// cluster, blitted as a straight copy (like the atlas blits, so the coverage
-// alpha stays what the texture blend expects) and clipped to the cluster's own
-// cells so a glyph the fallback font draws wider than its cells cannot paint
-// over a neighbour.
 SDL_Surface* SdlTtfTextBackend::BuildGridCompositeSurface(std::string_view text,
                                                           SDL_Color color) {
   util::AddPerformanceCounter(util::PerfCounterId::RenderGridCompositeSurfaces);
-  // Accumulated, not bumped per cluster: one atomic per string rather than one
-  // per glyph, matching RenderGlyphAtlasGlyphs below. An instrument that costs
-  // a locked instruction per glyph would be measuring itself.
   std::uint64_t cluster_rasterizations = 0;
   std::uint64_t cluster_atlas_blits = 0;
   if (font_ == nullptr || text.empty()) {
@@ -619,7 +511,6 @@ SDL_Surface* SdlTtfTextBackend::BuildGridCompositeSurface(std::string_view text,
   util::PerformanceTrace::Scope blit_scope("render::TextBackend::CompositeGlyphBlits");
   std::size_t cell = 0;
   for (std::size_t offset = 0; offset < text.size();) {
-    // The cluster: one base code point and any zero-width code points after it.
     const std::size_t base_length =
         static_cast<unsigned char>(text[offset]) < 0x80 ? 1 : util::Utf8SequenceLength(text, offset);
     const char32_t base =
@@ -640,18 +531,10 @@ SDL_Surface* SdlTtfTextBackend::BuildGridCompositeSurface(std::string_view text,
       end += mark_length;
     }
     if (width == 0) {
-      // A mark with nothing before it to sit on: give it a cell of its own
-      // rather than drawing it over the cell to the left, which is not ours.
       width = 1;
     }
     const std::string_view cluster = text.substr(offset, end - offset);
     const int dst_x = static_cast<int>(std::lround(static_cast<float>(cell) * cell_width_px));
-    // Where the cluster's ink may go: its own cells, and the blank cells right
-    // after it, up to its own width again. A fallback font draws many one-cell
-    // symbols wider than the cell (✳, ✻ -- the spinner Claude Code puts in its
-    // terminal title), and a blank cell has no ink of its own to protect, so the
-    // glyph keeps the part that falls there instead of being sheared off at its
-    // cell edge. A neighbour WITH ink still clips it.
     std::size_t blank_after = 0;
     while (blank_after < width && end + blank_after < text.size() && text[end + blank_after] == ' ') {
       ++blank_after;
@@ -661,19 +544,13 @@ SDL_Surface* SdlTtfTextBackend::BuildGridCompositeSurface(std::string_view text,
         dst_x;
     const bool ascii_cell = cluster.size() == 1 && base >= 0x20 && base <= 0x7E;
     if (!ascii_cell) {
-      EnsureCodepointCovered(base);  // before its first raster, so no box is cached
+      EnsureCodepointCovered(base);
     }
     if (ascii_cell && base == ' ') {
-      // Spaces contribute no coverage.
     } else if (ascii_cell && atlas_ok && ascii_atlas_ != nullptr &&
                ascii_atlas_->BlitInto(composite, dst_x, static_cast<char>(base), color)) {
-      // Atlas blit, identical pixels to the ASCII composite path.
     } else if (atlas_ok && cluster_atlas_ != nullptr &&
                cluster_atlas_->BlitInto(composite, dst_x, span_px, cluster, color)) {
-      // Cluster coverage atlas hit: the same straight tint-copy the ASCII cells
-      // above take. This is the case that matters — the distinct clusters in a
-      // document are bounded by its script, while their occurrences are not, so
-      // past the first screen of a CJK file almost every cell lands here.
       ++cluster_atlas_blits;
     } else {
       ++cluster_rasterizations;
@@ -705,9 +582,6 @@ std::filesystem::path SdlTtfTextBackend::LocateFontFile() {
       "/usr/share/fonts/opentype/urw-base35/NimbusMonoPS-Regular.otf",
   };
 
-  // Non-throwing probes throughout: a bad asset root or an inaccessible font dir must
-  // fall through to the next candidate (and ultimately system fonts), never throw
-  // std::filesystem_error out of render initialization.
   std::error_code font_ec;
   std::filesystem::path bundled_font =
       platform::ResolveBundledAssetPath("fonts/JetBrainsMono-Regular.ttf");
@@ -727,9 +601,6 @@ std::filesystem::path SdlTtfTextBackend::LocateFontFile() {
 
 namespace {
 
-// Normalize a family/stem/extension for fuzzy matching: lowercase, drop spaces,
-// hyphens, underscores and dots so "JetBrains Mono" matches "JetBrainsMono-Regular"
-// and an extension like ".ttf" normalizes to "ttf" (not ".ttf").
 std::string NormalizeFontToken(std::string_view text) {
   std::string out;
   out.reserve(text.size());
@@ -742,41 +613,25 @@ std::string NormalizeFontToken(std::string_view text) {
   return out;
 }
 
-// Whether a requested family (normalized) names a font whose family is `family`
-// (normalized): the family itself, the start of it ("JetBrains" for "JetBrains
-// Mono"), or the family with more after it ("DejaVu Sans Mono Book", a style
-// word). Never a run of letters from inside the name: "x" matched "Noto Sans
-// Tifinagh Rhissa Ixa", and the editor and the chrome both set Latin text in a
-// Tifinagh font (soak 44006d93d642).
 bool FamilyNameMatches(std::string_view requested, std::string_view family) {
   return !requested.empty() && !family.empty() &&
          (family.starts_with(requested) || requested.starts_with(family));
 }
 
-// True when `token` (already lowercased, no separators) is a weight/style word we
-// want to strip from a file stem to recover the family name for the picker list.
-// Includes the common short forms and concatenations that vendors bake into file
-// stems (e.g. URW's "BdIta", DejaVu's "BoldOblique") so weight variants collapse
-// to a single family entry instead of appearing as duplicates.
 bool IsFontStyleToken(std::string_view token) {
   static constexpr std::string_view kStyles[] = {
-      // Full words.
       "regular", "bold", "italic", "oblique", "bolditalic", "boldoblique",
       "light", "medium", "semibold", "demibold", "thin", "black", "heavy",
       "book", "roman", "extralight", "ultralight", "extrabold", "ultrabold",
       "condensed", "semicondensed", "extracondensed", "expanded", "extended",
       "semilight", "semibolditalic", "retina", "text", "display", "variablefont",
       "hairline", "narrow", "wide",
-      // Short forms / abbreviations used in file stems.
       "reg", "rg", "bd", "it", "ita", "ital", "obl", "obli", "md", "lt", "blk",
       "sb", "demi", "semibd", "demibd", "xbd", "extbd", "ultbd", "ultlt", "cond",
       "cn", "nrw", "extd"};
   return std::find(std::begin(kStyles), std::end(kStyles), token) != std::end(kStyles);
 }
 
-// Split a segment into sub-words at camelCase and alpha→digit boundaries (the same
-// breaks FontDisplayNameFromStem uses for display), lowercased and separator-free
-// so each piece can be matched against IsFontStyleToken.
 std::vector<std::string> StyleSubWords(std::string_view segment) {
   std::vector<std::string> words;
   std::string current;
@@ -807,8 +662,6 @@ std::vector<std::string> StyleSubWords(std::string_view segment) {
   return words;
 }
 
-// True when every sub-word of `segment` is a style/weight token, so the whole
-// trailing segment can be dropped to recover the family name.
 bool SegmentIsAllStyleTokens(std::string_view segment) {
   const std::vector<std::string> words = StyleSubWords(segment);
   if (words.empty()) {
@@ -822,23 +675,14 @@ bool SegmentIsAllStyleTokens(std::string_view segment) {
   return true;
 }
 
-// Derive a human-facing family name from a font file stem for the picker list:
-// drop a trailing style token (after the last '-'/'_'), then split camelCase and
-// digit boundaries into words. The exact spelling is cosmetic — selection routes
-// back through ResolveFamilyToFile's fuzzy matcher, which ignores spacing/case.
 std::string FontDisplayNameFromStem(std::string_view stem) {
   std::string base(stem);
-  // Drop variable-font axis tags like "[wght]" / "[wght,wdth]".
   if (const std::size_t bracket = base.find('['); bracket != std::string::npos) {
     base = base.substr(0, bracket);
   }
   while (!base.empty() && (base.back() == '-' || base.back() == '_' || base.back() == ' ')) {
     base.pop_back();
   }
-  // Iteratively drop a trailing style segment (after the last '-'/'_') when every
-  // sub-word in it is a style token. Looping handles multiple separated tails like
-  // "Font-Bold-Italic"; the sub-word split handles abbreviated/concatenated tails
-  // like "BdIta" or "BoldOblique" so all weight variants map to one family name.
   for (;;) {
     const std::size_t sep = base.find_last_of("-_");
     if (sep == std::string::npos || !SegmentIsAllStyleTokens(base.substr(sep + 1))) {
@@ -849,7 +693,6 @@ std::string FontDisplayNameFromStem(std::string_view stem) {
       base.pop_back();
     }
   }
-  // Remaining '-'/'_' separators become spaces.
   for (char& c : base) {
     if (c == '-' || c == '_') {
       c = ' ';
@@ -870,7 +713,6 @@ std::string FontDisplayNameFromStem(std::string_view stem) {
     }
     out.push_back(c);
   }
-  // Collapse any accidental double spaces from the substitutions above.
   std::string collapsed;
   collapsed.reserve(out.size());
   bool prev_space = false;
@@ -888,13 +730,9 @@ std::string FontDisplayNameFromStem(std::string_view stem) {
   return collapsed.empty() ? std::string(stem) : collapsed;
 }
 
-}  // namespace
+}
 
 std::vector<std::filesystem::path> SdlTtfTextBackend::FontSearchRoots() {
-  // This scan is only the fallback for builds without fontconfig. To stay portable
-  // across distros we derive roots from the XDG base directories (which NixOS,
-  // Flatpak, Nix home-manager, Arch, Fedora, etc. all populate) rather than a fixed
-  // FHS list, then add well-known extras as belt-and-suspenders.
   std::vector<std::filesystem::path> roots;
   std::unordered_set<std::string> seen;
   const auto add = [&](std::filesystem::path path) {
@@ -908,7 +746,6 @@ std::vector<std::filesystem::path> SdlTtfTextBackend::FontSearchRoots() {
 
   const char* home = SDL_getenv("HOME");
 
-  // 1. Per-user: $XDG_DATA_HOME/fonts (default ~/.local/share/fonts) + legacy ~/.fonts.
   if (const char* xdg_data_home = SDL_getenv("XDG_DATA_HOME");
       xdg_data_home != nullptr && xdg_data_home[0] != '\0') {
     add(std::filesystem::path(xdg_data_home) / "fonts");
@@ -917,13 +754,9 @@ std::vector<std::filesystem::path> SdlTtfTextBackend::FontSearchRoots() {
   }
   if (home != nullptr) {
     add(std::filesystem::path(home) / ".fonts");
-    // Nix home-manager installs into the user profile.
     add(std::filesystem::path(home) / ".nix-profile/share/fonts");
   }
 
-  // 2. System: each $XDG_DATA_DIRS entry + "/fonts" (default /usr/local/share:/usr/share).
-  //    On NixOS this carries the current-system + profile store paths; on Flatpak
-  //    the runtime's /app + host paths.
   const char* xdg_data_dirs = SDL_getenv("XDG_DATA_DIRS");
   const std::string data_dirs =
       (xdg_data_dirs != nullptr && xdg_data_dirs[0] != '\0') ? xdg_data_dirs
@@ -940,9 +773,6 @@ std::vector<std::filesystem::path> SdlTtfTextBackend::FontSearchRoots() {
     start = colon + 1;
   }
 
-  // 3. Well-known extras not always present in XDG_DATA_DIRS: the NixOS system
-  //    profile, the Flatpak host mount, and the FHS defaults (in case XDG is unset
-  //    or minimal in the environment we were launched from).
   for (const char* extra : {"/run/current-system/sw/share/fonts",
                             "/run/host/usr/share/fonts", "/usr/share/fonts",
                             "/usr/local/share/fonts"}) {
@@ -954,8 +784,6 @@ std::vector<std::filesystem::path> SdlTtfTextBackend::FontSearchRoots() {
 std::vector<std::string> SdlTtfTextBackend::AvailableFontFamilies() const {
   std::vector<std::string> families;
 #if MICROIDE_HAS_FONTCONFIG
-  // Prefer fontconfig: it yields real family names (properly cased/spaced) and
-  // dedupes weights for us.
   if (FcConfig* config = FcInitLoadConfigAndFonts()) {
     FcPattern* pattern = FcPatternCreate();
     FcObjectSet* object_set = FcObjectSetBuild(FC_FAMILY, nullptr);
@@ -981,7 +809,6 @@ std::vector<std::string> SdlTtfTextBackend::AvailableFontFamilies() const {
     FcConfigDestroy(config);
   }
 #else
-  // Fallback: scan the standard font trees and derive family names from stems.
   for (const std::filesystem::path& root : FontSearchRoots()) {
     std::error_code ec;
     if (!std::filesystem::exists(root, ec)) {
@@ -1031,9 +858,6 @@ std::filesystem::path SdlTtfTextBackend::StyledFaceFile(const std::filesystem::p
   if (regular.empty() || style == FontStyle::Regular) {
     return {};
   }
-  // Shell-thread-confined like MeasurePixelMetrics' cache: one answer per
-  // (file, style) for the session, misses included, so a family with no bold
-  // face asks the disk and fontconfig once.
   static std::map<std::pair<std::string, int>, std::filesystem::path> cache;
   const auto key = std::make_pair(regular.string(), static_cast<int>(style));
   if (const auto it = cache.find(key); it != cache.end()) {
@@ -1044,9 +868,6 @@ std::filesystem::path SdlTtfTextBackend::StyledFaceFile(const std::filesystem::p
   const bool italic = (static_cast<int>(style) & 2) != 0;
   std::filesystem::path found;
 
-  // 1) Siblings: the naming every packaged family uses (JetBrainsMono-Regular ->
-  // -Bold / -Italic / -BoldItalic, DejaVuSansMono -> -Bold / -Oblique /
-  // -BoldOblique, LiberationMono-Regular -> -Bold / -Italic / -BoldItalic).
   {
     std::string base = regular.stem().string();
     for (const std::string_view tail : {"-Regular", "Regular", "-Book", "-Roman"}) {
@@ -1075,10 +896,6 @@ std::filesystem::path SdlTtfTextBackend::StyledFaceFile(const std::filesystem::p
   }
 
 #if MICROIDE_HAS_FONTCONFIG
-  // 2) fontconfig: the family the regular file declares, at the asked weight and
-  // slant. Accepted only when the match really is that family, that weight and
-  // that slant: FcFontMatch always answers, with the regular face itself when the
-  // family has nothing better.
   if (found.empty()) {
     if (FcConfig* config = FcInitLoadConfigAndFonts()) {
       std::string family;
@@ -1138,8 +955,6 @@ std::filesystem::path SdlTtfTextBackend::ResolveFamilyToFile(std::string_view fa
   if (family.empty()) {
     return LocateFontFile();
   }
-  // Allow an explicit path (absolute or existing) so power users can point straight
-  // at a font file.
   {
     const std::filesystem::path direct(family);
     std::error_code ec;
@@ -1158,12 +973,6 @@ std::filesystem::path SdlTtfTextBackend::ResolveFamilyToFile(std::string_view fa
       FcDefaultSubstitute(pattern);
       FcResult match_result = FcResultNoMatch;
       if (FcPattern* matched = FcFontMatch(config, pattern, &match_result)) {
-        // FcFontMatch always returns *some* font — its configured default when the
-        // requested family is unknown. Only accept the match when the matched font
-        // actually advertises the requested family (fontconfig alias substitution
-        // adds legitimate aliases like Arial→Liberation to the pattern), so a
-        // garbage family stays unresolved (a no-op that keeps the current font)
-        // instead of silently switching to the system default.
         const std::string needle = NormalizeFontToken(family);
         bool family_matches = false;
         for (int i = 0; !family_matches && !needle.empty(); ++i) {
@@ -1194,10 +1003,6 @@ std::filesystem::path SdlTtfTextBackend::ResolveFamilyToFile(std::string_view fa
   }
 #endif
 
-  // Fallback: scan the standard font directories once per family (cheap: only on a
-  // font-family setting change) and match the file stem. Prefer an exact stem
-  // match, then a "<family>-regular" variant, then a file whose family -- the name
-  // the picker shows for it -- the request names (FamilyNameMatches).
   const std::string needle = NormalizeFontToken(family);
   if (needle.empty()) {
     return LocateFontFile();
@@ -1243,18 +1048,11 @@ std::filesystem::path SdlTtfTextBackend::ResolveFamilyToFile(std::string_view fa
   if (!regular.empty()) {
     return regular;
   }
-  return same_family;  // empty when nothing matched -> caller keeps the current font
+  return same_family;
 }
 
 std::vector<std::filesystem::path> SdlTtfTextBackend::LocateFallbackFontFiles(
     const std::filesystem::path& primary_font) {
-  // Broad-Unicode / symbol fallback fonts, resolved once and cached: the file set
-  // is session-stable, and LoadFallbackFonts runs on every font-family change, so
-  // re-resolving each time would add avoidable work. For each fallback we try a
-  // fast known Debian/Ubuntu path first (a cheap exists() check, no scan); only when
-  // that is absent (Arch, Fedora, NixOS, Flatpak, …) do we resolve the family by
-  // name via ResolveFamilyToFile (fontconfig when available, else the XDG scan), so
-  // symbol/CJK glyph fallback is portable rather than Debian-only.
   static const std::vector<std::filesystem::path> kResolvedFallbacks = [] {
     struct Fallback {
       const char* family;
@@ -1290,15 +1088,14 @@ std::vector<std::filesystem::path> SdlTtfTextBackend::LocateFallbackFontFiles(
       const std::filesystem::path debian(fallback.debian_path);
       std::error_code debian_ec;
       if (std::filesystem::exists(debian, debian_ec) && !debian_ec) {
-        push(debian);  // fast path: no directory scan / fontconfig query
+        push(debian);
       } else {
-        push(ResolveFamilyToFile(fallback.family));  // portable resolution
+        push(ResolveFamilyToFile(fallback.family));
       }
     }
     return resolved;
   }();
 
-  // Exclude the current primary (already the main font); return the rest in order.
   std::filesystem::path primary_resolved;
   if (!primary_font.empty()) {
     std::error_code ec;
@@ -1327,7 +1124,7 @@ void SdlTtfTextBackend::CloseFallbackFonts() {
   }
   fallback_fonts_.clear();
   fallback_fonts_loaded_ = false;
-  checked_codepoints_.clear();  // a new chain answers them afresh
+  checked_codepoints_.clear();
   checked_codepoints_.shrink_to_fit();
 }
 
@@ -1344,16 +1141,9 @@ void SdlTtfTextBackend::LoadFallbackFonts() {
     return;
   }
   util::PerformanceTrace::Scope perf_scope("SdlTtfTextBackend::LoadFallbackFonts");
-  // Free any fallbacks registered against a previous primary before opening a new
-  // set; otherwise repeated family switches leak TTF_Font handles and grow the
-  // vector unbounded.
   CloseFallbackFonts();
   fallback_fonts_loaded_ = true;
 
-  // The primary is already at the current scale's DPI by the time a lazy load
-  // runs (Initialize and every size/scale change size it immediately), so a
-  // fallback opened at the bare point size would shape at the wrong size on a
-  // scaled display. Size each one the way ApplyFontSizeAtCurrentScale would.
   const int hdpi = CurrentHorizontalDpi();
   const int vdpi = CurrentVerticalDpi();
   for (const auto& fallback_path : LocateFallbackFontFiles(font_path_)) {
@@ -1375,9 +1165,6 @@ void SdlTtfTextBackend::LoadFallbackFonts() {
 namespace {
 
 #if MICROIDE_HAS_FONTCONFIG
-// A scalable, monochrome face that has `codepoint`, nearest the defaults first;
-// empty when the machine has none. Not a colour face: a bitmap emoji font draws
-// at its own fixed strike size, not the cell's.
 std::filesystem::path FaceCoveringCodepoint(char32_t codepoint) {
   static const bool initialized = FcInit() == FcTrue;
   FcConfig* config = initialized ? FcConfigGetCurrent() : nullptr;
@@ -1428,7 +1215,7 @@ std::filesystem::path FaceCoveringCodepoint(char32_t codepoint) {
 }
 #endif
 
-}  // namespace
+}
 
 std::filesystem::path SdlTtfTextBackend::FaceCoveringCodepointForTesting(char32_t codepoint) {
 #if MICROIDE_HAS_FONTCONFIG
@@ -1440,7 +1227,6 @@ std::filesystem::path SdlTtfTextBackend::FaceCoveringCodepointForTesting(char32_
 }
 
 void SdlTtfTextBackend::EnsureCodepointCovered(char32_t codepoint) const {
-  // Once per code point: a hit is the common case (every later cell of a script).
   constexpr std::size_t kScalarCount = 0x110000;
   if (font_ == nullptr || codepoint >= kScalarCount) {
     return;
@@ -1463,9 +1249,6 @@ void SdlTtfTextBackend::EnsureCodepointCovered(char32_t codepoint) const {
     }
   }
 #if MICROIDE_HAS_FONTCONFIG
-  // No face the chain knows has it (gdb's error prefix, U+274C, is in none of the
-  // fixed fallbacks, and drew as a box: TD-2026-11-01-427 item 5): ask fontconfig
-  // for one that does, as terminals do, and put it at the end of the chain.
   util::AddPerformanceCounter(util::PerfCounterId::RenderFontFallbackQueries);
   const std::filesystem::path face = FaceCoveringCodepoint(codepoint);
   if (face.empty() || face == font_path_) {
@@ -1512,9 +1295,6 @@ bool SdlTtfTextBackend::EnsureAtlasTexture() {
   if (texture == nullptr) {
     return false;
   }
-  // Coverage is sampled and modulated by per-vertex colour; alpha-blend the
-  // result over the destination. NEAREST keeps the device-pixel-snapped glyph
-  // 1:1 with its rasterized coverage, matching the composite path.
   SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
   SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
   atlas_texture_ = texture;
@@ -1523,21 +1303,6 @@ bool SdlTtfTextBackend::EnsureAtlasTexture() {
   return true;
 }
 
-// Width of an ASCII run's composite surface, and therefore the right edge both
-// atlas paths must clip their glyphs against. BuildAsciiCompositeSurface sizes the
-// surface to this and blits each glyph at lround(index * cell_width_px), so a
-// glyph whose rendered extent overhangs that edge -- any glyph whose bitmap is
-// wider than the font's advance, which is the same overhang `clip_padding_` exists
-// for -- is CLIPPED there. An atlas path that draws the full slot instead paints
-// pixels the composite never had, and the same string then renders differently
-// depending on which renderer is in use. Keep the composite authoritative: it is
-// the path every backend falls back to.
-//
-// Not exercised by the bundled font: no printable ASCII glyph in JetBrains Mono
-// overhangs its cell, so removing this min() leaves every test green here. It is
-// kept because the agreement should hold by construction rather than by a property
-// of one font, and the pixel test sweeps the whole printable range, so it becomes
-// live coverage on any font where the case is real.
 int SdlTtfTextBackend::AsciiRunSurfaceWidthPx(std::size_t char_count) const {
   const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
   const float cell_width_px = char_width_ * scale_x;
@@ -1549,10 +1314,6 @@ bool SdlTtfTextBackend::AppendAsciiRunGeometry(float x, float y, SDL_Color color
   const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
   const float scale_y = std::max(kMinPresentationScale, presentation_scale_y_);
   const float cell_width_px = char_width_ * scale_x;
-  // Snap the run origin to the device grid exactly as DrawString does, then place
-  // each glyph at the same integer cell offset the composite surface uses
-  // (lround(index * cell_width_px)). This reproduces the composite path's pixel
-  // positions so ASCII typography is identical to the non-atlas path.
   const float origin_x_dev = DeviceAlignedOrigin(x, scale_x) * scale_x;
   const float origin_y_dev = DeviceAlignedOrigin(y, scale_y) * scale_y;
   const float atlas_w = static_cast<float>(atlas_texture_width_);
@@ -1596,21 +1357,15 @@ bool SdlTtfTextBackend::AppendAsciiRunGeometry(float x, float y, SDL_Color color
 bool SdlTtfTextBackend::DrawAsciiRunFromAtlas(float x, float y, SDL_Color color,
                                               std::string_view text) {
   if (ascii_atlas_ == nullptr || atlas_texture_ == nullptr) {
-    return false;  // EnsureAtlasTexture keeps these in lockstep; do not trust it blind
+    return false;
   }
   const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
   const float scale_y = std::max(kMinPresentationScale, presentation_scale_y_);
   const float cell_width_px = char_width_ * scale_x;
-  // Same origin snap and same integer cell offsets as DrawString + the composite
-  // surface (lround(index * cell_width_px)), so a glyph lands on the pixel it
-  // would have landed on inside a composite drawn at this origin.
   const float origin_x_dev = std::round(x * scale_x);
   const float top = DeviceAlignedOrigin(y, scale_y);
   const int run_width_px = AsciiRunSurfaceWidthPx(text.size());
 
-  // The atlas is white coverage (RGB=255, A=coverage); modulating by an opaque
-  // colour yields (colour.rgb, coverage) -- exactly what AsciiGlyphAtlas::BlitInto
-  // writes into a composite, and 255 * c / 255 == c makes that an identity.
   SDL_SetTextureColorMod(atlas_texture_, color.r, color.g, color.b);
   SDL_SetTextureAlphaMod(atlas_texture_, 255);
 
@@ -1641,8 +1396,6 @@ bool SdlTtfTextBackend::DrawAsciiRunFromAtlas(float x, float y, SDL_Color color,
 
 void SdlTtfTextBackend::DrawEphemeralRuns(SDL_Renderer* renderer, StringTextureCache& cache,
                                           const TextRun* runs, std::size_t count) {
-  // The GPU renderer has a strictly better path for these than per-glyph blits,
-  // and it is the same one DrawRuns uses: one submit for the whole set.
   if (is_gpu_renderer_) {
     DrawRuns(renderer, cache, runs, count);
     return;
@@ -1664,8 +1417,6 @@ void SdlTtfTextBackend::DrawEphemeralRuns(SDL_Renderer* renderer, StringTextureC
       ++atlas_runs;
       continue;
     }
-    // Translucent, non-ASCII, or a glyph the atlas does not cover: the cached
-    // composite is the only faithful path, and it is what this run used to take.
     DrawString(renderer, cache, run.x, run.y, run.color, run.text);
   }
   util::AddPerformanceCounter(util::PerfCounterId::RenderGlyphAtlasRuns, atlas_runs);
@@ -1673,19 +1424,12 @@ void SdlTtfTextBackend::DrawEphemeralRuns(SDL_Renderer* renderer, StringTextureC
 
 void SdlTtfTextBackend::DrawRuns(SDL_Renderer* renderer, StringTextureCache& cache,
                                  const TextRun* runs, std::size_t count) {
-  // Fall back to the per-run composite path unless the GPU batched path is armed.
   if (renderer == nullptr || renderer != renderer_ || !glyph_atlas_enabled_ ||
       !is_gpu_renderer_ || !EnsureAtlasTexture() || atlas_texture_width_ <= 0 || atlas_texture_height_ <= 0) {
     TextRendererBackend::DrawRuns(renderer, cache, runs, count);
     return;
   }
 
-  // Accumulate every opaque ASCII run in this row into one geometry buffer and
-  // submit a single SDL_RenderGeometry. Per-vertex colour means a multi-colour
-  // line is one draw call; batching across runs (not just within a run) is what
-  // avoids the per-run geometry/fill state flapping that regressed the per-run
-  // variant. Non-ASCII / translucent runs (and any glyph outside the atlas) draw
-  // via the composite path; runs are non-overlapping so draw order is immaterial.
   geom_vertices_.clear();
   geom_indices_.clear();
   std::size_t batched_runs = 0;
@@ -1700,7 +1444,6 @@ void SdlTtfTextBackend::DrawRuns(SDL_Renderer* renderer, StringTextureCache& cac
         ++batched_runs;
         continue;
       }
-      // A glyph was uncovered: discard this run's partial geometry and composite it.
       geom_vertices_.resize(mark);
       geom_indices_.resize(mark / 4 * 6);
     }
@@ -1722,13 +1465,6 @@ void SdlTtfTextBackend::DrawRuns(SDL_Renderer* renderer, StringTextureCache& cac
 const StringTextureCache::Entry* SdlTtfTextBackend::ResolveEntry(StringTextureCache& cache,
                                                                 std::string_view text,
                                                                 SDL_Color color) {
-  // Bound the rendered text length. The surface/texture built below is sized to
-  // text.size() * cell_width (BuildAsciiCompositeSurface, or the whole-string
-  // TTF_RenderText_Blended fallback), so a single caller passing a megabyte string
-  // — e.g. a plugin display-list Text op, whose arena cap allows up to ~1 MiB in
-  // one op — would allocate a multi-hundred-MB-to-GB surface on the render thread.
-  // The editor's own text is already sliced to the visible columns; anything past
-  // this width is off-screen. Truncate so the allocation stays bounded.
   constexpr std::size_t kMaxRenderTextChars = 8192;
   if (text.size() > kMaxRenderTextChars) {
     text = text.substr(0, kMaxRenderTextChars);
@@ -1737,24 +1473,13 @@ const StringTextureCache::Entry* SdlTtfTextBackend::ResolveEntry(StringTextureCa
     return cached;
   }
 
-  // ASCII strings render through a cell-positioned composite (per-glyph blits
-  // into a single surface) so the resulting texture is one whole-string draw
-  // call at runtime, while preserving the deterministic monospaced cell layout
-  // that the ASCII-spacing regressions depend on. Non-ASCII falls back to the
-  // SDL_ttf whole-string blended path, which already handles shaped glyphs.
   SDL_Surface* surface = nullptr;
   {
-    // The two halves of a cache miss, separated: rasterizing the string and
-    // uploading it. On a scroll through fresh content every row misses twice (its
-    // text and its line number), so this is the dominant render cost there, and
-    // the ranked summary could not previously say which half it was.
     util::PerformanceTrace::Scope raster_scope("render::TextBackend::RasterizeString");
     if (CanUseFastAscii(text)) {
       surface = BuildAsciiCompositeSurface(text, color);
     }
     if (surface == nullptr) {
-      // Non-ASCII, translucent, or a glyph the atlas could not supply: the
-      // cell-grid composite (see MeasureWidth for why it is not the shaper).
       surface = BuildGridCompositeSurface(text, color);
     }
   }
@@ -1776,6 +1501,6 @@ const StringTextureCache::Entry* SdlTtfTextBackend::ResolveEntry(StringTextureCa
   return cache.Insert(text, color, texture, width, height);
 }
 
-}  // namespace microide::render
+}
 
-#endif  // MICROIDE_HAS_SDL3_TTF
+#endif

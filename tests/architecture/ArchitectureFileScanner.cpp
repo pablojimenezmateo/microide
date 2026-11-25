@@ -216,9 +216,6 @@ std::vector<std::filesystem::path> SourceFilesUnder(const std::filesystem::path&
         files.push_back(entry.path());
       }
     }
-    // The error_code increment is the point: a generated fixture tree can be
-    // rewritten by a concurrent ctest setup test, and the throwing form takes the
-    // whole shard down with it.
     it.increment(ec);
     if (ec) {
       break;
@@ -278,15 +275,11 @@ std::vector<std::size_t> FindTryCatchStoViolations(std::string_view text) {
     if (has_sto && MatchesCodeAt(text, is_code, after, "catch")) {
       violations.push_back(i);
     }
-    // Advance one token at a time so nested try/catch blocks are also scanned.
     ++i;
   }
   return violations;
 }
 
-// Build a per-byte mask flagging positions inside `#ifdef MICROIDE_TESTING` blocks.
-// Test-only backdoor access (e.g. `friend struct TestAccess`) is an accepted exception
-// to the workspace no-friend policy; everything outside those guards is still policed.
 std::vector<bool> BuildTestingGuardMask(const std::string& text) {
   std::vector<bool> mask(text.size(), false);
   std::size_t depth = 0;
@@ -364,4 +357,4 @@ std::optional<std::pair<std::string, std::size_t>> ExtractMemberFunctionBodyWith
   return std::pair<std::string, std::size_t>{*body, open + 1};
 }
 
-}  // namespace microide::tests::architecture
+}

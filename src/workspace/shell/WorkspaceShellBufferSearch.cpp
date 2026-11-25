@@ -17,12 +17,6 @@ namespace microide::workspace {
 
 namespace {
 
-// Compiles the in-file find query as a regex. Case sensitivity comes from the
-// widget's `Aa` toggle, exactly as it does in literal mode — regex used to be
-// smart-case while literal was always insensitive, so flipping `.*` silently
-// changed whether `Alpha` matched `alpha`. PCRE2_MULTILINE so `^`/`$` anchor at
-// every line boundary and `\n` matches line breaks: the query runs over the whole
-// '\n'-joined buffer, not per line, so multi-line patterns work.
 util::CompiledRegex CompileBufferSearchRegex(const std::string& query, bool case_sensitive) {
   const std::uint32_t options =
       util::SearchRegexCompileOptions(query, case_sensitive) | PCRE2_MULTILINE;
@@ -37,7 +31,6 @@ BufferSearchOptions OptionsOf(const BufferSearchState& state) {
   };
 }
 
-// Whole-document range [(0,0) .. (last_line, last_line_length)].
 editor::SelectionRange WholeDocumentRange(const editor::TextViewport& viewport) {
   const std::size_t line_count = viewport.lines().LineCount();
   const std::size_t last = line_count == 0 ? 0 : line_count - 1;
@@ -47,34 +40,20 @@ editor::SelectionRange WholeDocumentRange(const editor::TextViewport& viewport) 
   };
 }
 
-// The whole buffer as one '\n'-joined string (the buffer is internally
-// CRLF-normalized, so this contains only '\n' line breaks).
 std::string BuildWholeBufferContent(const editor::TextViewport& viewport) {
-  // The piece tree already stores exactly this: the document '\n'-joined. One
-  // walk with a memcpy per piece, instead of two tree descents per line plus a
-  // per-line cache entry for every line that spans pieces (which, on a heavily
-  // edited buffer, retained a second full copy of the document until the next
-  // mutation).
   std::string content;
   viewport.lines().AppendWholeText(content);
   return content;
 }
 
-// The offset of `position` in the '\n'-joined buffer.
 std::size_t WholeBufferOffset(const editor::TextBuffer& lines, const editor::TextPosition& position) {
   std::size_t offset = 0;
   for (std::size_t i = 0; i < position.line; ++i) {
-    offset += lines.LineLength(i) + 1;  // + newline
+    offset += lines.LineLength(i) + 1;
   }
   return offset + position.column;
 }
 
-// Find in Selection's Replace All: `matches` (sorted, all inside `scope`) each
-// replaced by what `replacement` expands to for it, as ONE edit of the scope's
-// text -- one undo entry, and an edit the scope follows exactly. A regex
-// replacement expands against the whole buffer, so capture groups and
-// lookarounds see the text around the scope as the matching did. False (no
-// edit) when an expansion fails.
 bool ReplaceMatchesInScope(editor::TextViewport& viewport,
                            const editor::SelectionRange& scope,
                            const std::vector<editor::SelectionRange>& matches,
@@ -108,10 +87,6 @@ bool ReplaceMatchesInScope(editor::TextViewport& viewport,
   return viewport.ReplaceRange(scope, rebuilt);
 }
 
-// Applies a regex replace-all across `viewport` as ONE undo entry. Substitutes over
-// the whole '\n'-joined buffer (so `\n`/multi-line matches and capture groups work)
-// and replaces the entire document with the result. A no-match (rc 0) or a bad
-// replacement escape (rc < 0) leaves the document untouched.
 void ApplyBufferRegexReplaceAll(editor::TextViewport& viewport,
                                 const std::string& query,
                                 std::string_view replacement,
@@ -128,12 +103,12 @@ void ApplyBufferRegexReplaceAll(editor::TextViewport& viewport,
   std::string rebuilt;
   const int rc = pattern.SubstituteInto(content, replacement, rebuilt);
   if (rc <= 0) {
-    return;  // 0: nothing matched; < 0: invalid replacement escape — no edit.
+    return;
   }
   viewport.ReplaceRange(whole, rebuilt);
 }
 
-}  // namespace
+}
 
 void WorkspaceShell::ToggleBufferSearchOption(BufferFindToggle toggle) {
   auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
@@ -152,8 +127,6 @@ void WorkspaceShell::ToggleBufferSearchOption(BufferFindToggle toggle) {
         buffer_search.scope.reset();
       } else if (const editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
         FollowFindScopes(buffer_search, *viewport);
-        // A selection that is the widget's current match is the widget's answer,
-        // not the user's: the scope is then what the widget opened over.
         const auto selection = viewport->selection_range();
         const bool widget_selection =
             selection.has_value() && BufferSearchMatchesAreFresh() &&
@@ -172,10 +145,8 @@ void WorkspaceShell::ToggleBufferSearchOption(BufferFindToggle toggle) {
   RefreshBufferSearch();
 }
 
-void WorkspaceShell::RefreshBufferSearch() { RefreshBufferSearch(/*reveal=*/true); }
+void WorkspaceShell::RefreshBufferSearch() { RefreshBufferSearch(true); }
 
-// True when `matches` still describes the buffer in front of the user. Cheap
-// enough (a pointer and a counter) to ask before every use.
 bool WorkspaceShell::BufferSearchMatchesAreFresh() const {
   const auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
   const editor::TextViewport* viewport = ActiveEditorViewport();
@@ -185,21 +156,12 @@ bool WorkspaceShell::BufferSearchMatchesAreFresh() const {
            buffer_search.matches_content_revision == viewport->content_revision()));
 }
 
-// The find widget is describing a buffer that is no longer the one in front of
-// the user as it is now: an edit moved its text, or another tab (another group,
-// a closed tab's neighbour) came to the front. Recompute the match set WITHOUT
-// revealing: the caret belongs to whatever the user is doing, and yanking it onto
-// a match after every keystroke is not a find, it is a fight. Called after every
-// edit and at frame prep; costs nothing while the widget is closed, which is
-// nearly always, and a pointer and a counter while it is open and fresh.
 void WorkspaceShell::RefreshBufferSearchIfStale() {
   const OverlayMode mode = context_.current_project_state.overlay.mode;
   if (mode != OverlayMode::BufferSearch && mode != OverlayMode::BufferReplace) {
     return;
   }
   auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
-  // The scopes follow every edit, with a query or without: carried through one
-  // edit at a time, they cannot wait for the query to be typed.
   if (const editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
     FollowFindScopes(buffer_search, *viewport);
   }
@@ -208,7 +170,7 @@ void WorkspaceShell::RefreshBufferSearchIfStale() {
   }
   util::PerformanceTrace::Scope scope("WorkspaceShell::RefreshBufferSearchIfStale");
   util::AddPerformanceCounter(util::PerfCounterId::SearchBufferRefreshesAfterEdit);
-  RefreshBufferSearch(/*reveal=*/false);
+  RefreshBufferSearch(false);
 }
 
 void WorkspaceShell::RefreshBufferSearch(bool reveal) {
@@ -230,33 +192,18 @@ void WorkspaceShell::RefreshBufferSearch(bool reveal) {
   const std::string& query = buffer_search.query.text();
   const editor::TextBuffer& buffer = viewport->lines();
   const std::uint64_t content_revision = viewport->content_revision();
-  FollowFindScopes(buffer_search, *viewport);  // drops them if the widget moved buffers
+  FollowFindScopes(buffer_search, *viewport);
   const std::optional<editor::SelectionRange> find_scope =
       buffer_search.scope.has_value() ? std::optional(buffer_search.scope->range) : std::nullopt;
 
-  // Find-as-you-type fast path: when the query only grows onto the end of the
-  // previously searched query over the same unchanged buffer, every match for the
-  // longer query is also a match for the shorter one, so the new set is a subset
-  // of the cached `matches`. Refine it in O(prior matches) instead of rescanning
-  // the whole document each keystroke. Identity (viewport pointer) + content
-  // revision guard against a stale or wrong-buffer cache.
   auto& incremental = buffer_search.incremental;
   if (buffer_search.regex) {
-    // Regex mode: smart-case + MULTILINE over the whole buffer (so `\n`/multi-line
-    // patterns match), full-scan every keystroke. An invalid pattern yields no
-    // matches (the widget shows 0/0). The literal refine cache is bypassed and
-    // invalidated so switching back to literal rescans.
     const util::CompiledRegex pattern = CompileBufferSearchRegex(query, buffer_search.match_case);
     buffer_search.matches = pattern.valid()
                                 ? FindRegexSearchMatches(buffer, pattern, OptionsOf(buffer_search))
                                 : std::vector<editor::SelectionRange>{};
     incremental.valid = false;
   } else {
-    // Refining is only sound when the options are unchanged. Whole-word is the
-    // other restriction -- a longer query's whole-word hits are NOT a subset of a
-    // shorter prefix's -- and RefineLiteralSearchMatches now enforces that itself
-    // by falling back to the cold scan, so it is not repeated here.
-    // So is the scope: matches outside an old scope were never kept.
     const bool options_unchanged = incremental.match_case == buffer_search.match_case &&
                                    incremental.whole_word == buffer_search.whole_word &&
                                    incremental.scope == find_scope;
@@ -286,17 +233,9 @@ void WorkspaceShell::RefreshBufferSearch(bool reveal) {
   buffer_search.matches_viewport = viewport;
   buffer_search.matches_document = viewport->document_identity();
   buffer_search.matches_content_revision = content_revision;
-  // What the scan actually walked. The refine fast path answers from the previous
-  // match set and touches no lines, so a large number here IS the cold scan.
   util::AddPerformanceCounter(util::PerfCounterId::SearchBufferRefreshLinesScanned,
                               buffer.LineCount());
 
-  // The current match is the first one at or after the caret (the selection's
-  // start when there is one), wrapping to the top -- VS Code searches from the
-  // cursor, so find-as-you-type in the middle of a file stays there instead of
-  // jumping to the first hit in the document, a query that keeps matching keeps
-  // its match while it is typed, and a Replace moves on to the NEXT occurrence
-  // (the caret sits after the replacement) rather than back to the first.
   buffer_search.selected_index = 0;
   if (!buffer_search.matches.empty()) {
     const editor::TextPosition seed =
@@ -336,8 +275,6 @@ void WorkspaceShell::OpenBufferSearchFromProjectSearchResult() {
   const std::size_t target_line = result.line;
   const std::size_t target_column = result.column;
 
-  // Carry the project-search term into the in-file find surface so the user can
-  // keep moving between matches in the file they just opened.
   ShowOverlay(OverlayMode::BufferSearch);
   context_.current_project_state.overlay.buffer_search_field = BufferSearchField::Search;
   ResetBufferSearchFoldRevealState(false);
@@ -351,8 +288,6 @@ void WorkspaceShell::OpenBufferSearchFromProjectSearchResult() {
     return;
   }
 
-  // Start navigation on the match at (or after) the project-search hit rather
-  // than the top of the file.
   std::size_t selected = buffer_search.matches.size() - 1;
   for (std::size_t i = 0; i < buffer_search.matches.size(); ++i) {
     const auto& start = buffer_search.matches[i].start;
@@ -372,12 +307,8 @@ void WorkspaceShell::OpenBufferSearchFromProjectSearchResult() {
 
 void WorkspaceShell::MoveBufferSearchSelection(int delta) {
   auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
-  // A set taken over another tab's buffer (the widget stays open across a tab
-  // switch) names that buffer's coordinates: F3 selected nothing at them. Rescan
-  // this one first; the rescan already makes the match at or after the caret
-  // current, which is where a forward step from a fresh buffer belongs.
   if (!BufferSearchMatchesAreFresh() && !buffer_search.query.text().empty()) {
-    RefreshBufferSearch(/*reveal=*/false);
+    RefreshBufferSearch(false);
     if (delta > 0) {
       --delta;
     }
@@ -391,8 +322,6 @@ void WorkspaceShell::MoveBufferSearchSelection(int delta) {
     return;
   }
 
-  // Wrap around both ends (next on the last match jumps to the first, previous on
-  // the first jumps to the last) — VSCode-style cyclic navigation.
   const int count = static_cast<int>(buffer_search.matches.size());
   const int current = static_cast<int>(buffer_search.selected_index);
   buffer_search.selected_index =
@@ -407,13 +336,8 @@ void WorkspaceShell::MoveBufferSearchSelection(int delta) {
 }
 
 void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
-  // The match set is a set of LINE:COLUMN ranges, so replacing through a stale one
-  // rewrites whatever text has since inherited those coordinates -- silently, and
-  // leaving the real match untouched. The announced edit paths keep it fresh
-  // (RefreshBufferSearchIfStale); this covers the ones that do not, such
-  // as a reload from disk under an open widget.
   if (!BufferSearchMatchesAreFresh()) {
-    RefreshBufferSearch(/*reveal=*/false);
+    RefreshBufferSearch(false);
   }
   auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
   if (buffer_search.matches.empty() ||
@@ -430,9 +354,6 @@ void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
 
   bool replaced = false;
   if (buffer_search.regex) {
-    // Regex mode: expand the replacement for THIS match against the whole '\n'-joined
-    // buffer (so capture groups + lookarounds resolve in full context and a multi-
-    // line match works), then apply it to the match span.
     const std::string& query = buffer_search.query.text();
     const util::CompiledRegex pattern = CompileBufferSearchRegex(query, buffer_search.match_case);
     if (!pattern.valid() || match.start.line >= viewport->lines().LineCount()) {
@@ -452,9 +373,6 @@ void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
     if (viewport->read_only()) {
       return;
     }
-    // A no-op: the match already reads as its replacement (`foo` -> `Foo` over a
-    // `Foo`). The match set is unchanged, so moving on is a step to the next
-    // index; returning here left every later Replace on this same match.
     MoveBufferSearchSelection(1);
     return;
   }
@@ -470,7 +388,7 @@ void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
 
 void WorkspaceShell::ReplaceAllBufferSearchMatches() {
   if (!BufferSearchMatchesAreFresh()) {
-    RefreshBufferSearch(/*reveal=*/false);
+    RefreshBufferSearch(false);
   }
   auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
   if (buffer_search.query.text().empty()) {
@@ -480,28 +398,19 @@ void WorkspaceShell::ReplaceAllBufferSearchMatches() {
   buffer_search.preserve_temporarily_expanded_folds = true;
   editor::TextViewport* viewport = ActiveEditorViewport();
   if (viewport != nullptr && buffer_search.scope.has_value()) {
-    // Find in Selection: exactly the matches shown, which RefreshBufferSearch
-    // limited to the scope (fresh: checked above), as one edit of the scope.
     const util::CompiledRegex pattern =
         buffer_search.regex ? CompileBufferSearchRegex(buffer_search.query.text(), buffer_search.match_case)
                             : util::CompiledRegex{};
     if (!buffer_search.regex || pattern.valid()) {
       (void)ReplaceMatchesInScope(*viewport, buffer_search.scope->range, buffer_search.matches,
                                   buffer_search.replace_text.text(),
-                                  buffer_search.regex ? &pattern : nullptr);  // false: nothing changed
+                                  buffer_search.regex ? &pattern : nullptr);
     }
   } else if (viewport != nullptr) {
     if (buffer_search.regex) {
       ApplyBufferRegexReplaceAll(*viewport, buffer_search.query.text(),
                                  buffer_search.replace_text.text(), buffer_search.match_case);
     } else {
-      // TD-2026-07-17A-028: RefreshBufferSearch already computed the exact match
-      // set (same case-insensitive fold ReplaceAll uses) for this query over the
-      // current content. When that set is fresh (same viewport + content revision +
-      // query) and complete (below the retained-match cap, so not truncated), apply
-      // it as one grouped range edit instead of re-scanning + re-folding the whole
-      // document. Any inconsistency makes ReplaceAllRanges return nullopt, and we
-      // fall back to the self-contained scanning ReplaceAll.
       const auto& incremental = buffer_search.incremental;
       const bool matches_fresh =
           incremental.valid && incremental.viewport == static_cast<const void*>(viewport) &&
@@ -515,9 +424,6 @@ void WorkspaceShell::ReplaceAllBufferSearchMatches() {
           viewport->ReplaceAllRanges(buffer_search.matches, buffer_search.replace_text.text())
               .has_value();
       if (!applied) {
-        // TextViewport::ReplaceAll is the case-insensitive whole-needle scan, so it
-        // can only stand in for the default options. Under Aa/ab, rescan here and
-        // apply the ranges rather than silently replacing more than was highlighted.
         if (buffer_search.match_case || buffer_search.whole_word) {
           const auto rescanned = FindLiteralSearchMatches(viewport->lines(),
                                                           buffer_search.query.text(),
@@ -538,11 +444,8 @@ void WorkspaceShell::RevealBufferSearchMatch(const editor::SelectionRange& match
   if (viewport == nullptr) {
     return;
   }
-  // The match is SELECTED, anchor at its start and caret at its end, as VS Code's
-  // find does: closing the widget leaves it selected to type over, and Ctrl+D
-  // continues from it. Jumping the caret to the start alone selected nothing.
   viewport->JumpCursorTo(match.start.line, match.start.column);
-  viewport->JumpCursorTo(match.end.line, match.end.column, /*extend_selection=*/true);
+  viewport->JumpCursorTo(match.end.line, match.end.column, true);
 
   auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
   editor::FoldingModel* model = EnsureActiveFoldingModelFresh();
@@ -551,9 +454,6 @@ void WorkspaceShell::RevealBufferSearchMatch(const editor::SelectionRange& match
   }
 
   bool changed = false;
-  // Walk the collapsed set, not the resolved ranges: a fold hiding this match can
-  // be anywhere in the document, including outside the window the last refresh
-  // resolved. Collect first, then expand -- expanding mutates the set.
   std::vector<editor::FoldRange> hiding;
   for (const editor::FoldRange& range : model->collapsed_ranges()) {
     if (match.start.line > range.opener_line && match.start.line <= range.closer_line) {
@@ -594,8 +494,6 @@ void WorkspaceShell::ResetBufferSearchFoldRevealState(bool preserve_expanded_fol
         util::SameAsNormalizedPath(viewport->path(),
                                    buffer_search.temporarily_expanded_fold_tab_path)) {
       bool changed = false;
-      // CollapseRange, not Collapse(opener): the fold may no longer be inside the
-      // resolved window now that the viewport has moved to the match.
       for (auto it = buffer_search.temporarily_expanded_folds.rbegin();
            it != buffer_search.temporarily_expanded_folds.rend(); ++it) {
         changed = model->CollapseRange(*it) || changed;
@@ -623,4 +521,4 @@ std::optional<editor::SelectionRange> WorkspaceShell::ActiveBufferSearchMatch() 
   return context_.current_project_state.overlay.workflow.buffer_search.matches[context_.current_project_state.overlay.workflow.buffer_search.selected_index];
 }
 
-}  // namespace microide::workspace
+}

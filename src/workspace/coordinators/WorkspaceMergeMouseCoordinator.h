@@ -29,8 +29,6 @@ class MergeMouseCoordinator {
     std::function<std::optional<std::string>()> read_primary_selection_text;
     std::function<void(MergeTabState&)> update_merge_tracking_after_viewport_edit;
     std::function<void()> note_active_editable_edit;
-    // A frame owed: the editor, compare and merge surfaces derive their damage
-    // (RequestPreparedFrame); a request names no rect.
     std::function<void()> request_frame;
     std::function<void()> clear_drag_state;
     std::function<std::optional<std::size_t>(const MergeTabState&, std::size_t, bool)>
@@ -59,8 +57,6 @@ class MergeMouseCoordinator {
   bool HandleDrag(const SDL_Event& event, const SDL_FRect& surface);
   bool HandleHoverMotion(const SDL_Event& event, const SDL_FRect& surface);
   bool HandleSelectionMotion(const SDL_Event& event, const SDL_FRect& surface);
-  // Scrolls `merge_tab`, shown in `surface` -- the pane under the pointer,
-  // focused or not (scrolling is not focusing).
   bool HandleWheel(const SDL_Event& event,
                    const SDL_FRect& surface,
                    MergeTabState& merge_tab,
@@ -75,4 +71,4 @@ class MergeMouseCoordinator {
   Operations operations_;
 };
 
-}  // namespace microide::workspace
+}

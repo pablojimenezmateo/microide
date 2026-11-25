@@ -22,56 +22,23 @@
 
 namespace microide::util {
 
-// The running app's handle on its own crash points (util/CrashPoint.h), for QA.
-//
-// A kill -9 from outside lands at whatever instant the kernel delivers it. The
-// soak's largest severe family -- an unsaved buffer that did not come back after
-// one -- showed a few times a day and never once from a replay of its actions:
-// the kill that mattered fell between two particular disk writes, and no replay
-// kills there again. The crash points are those places, named. Armed, the
-// process kills ITSELF at one: the same boundary every time, which a replay
-// re-arms and reaches again.
-//
-// Installed only when MICROIDE_QA_CRASH_POINTS is set (the QA driver sets it),
-// so production keeps the bare `CrashPoint` cost of one atomic load. Installed,
-// every pass is counted by site and by the file it acted on -- the inventory of
-// boundaries a run reached, which is what a driver picks from -- and one rule
-// may be armed:
-//
-//     kill:<site>[@<file>][#<nth>]        SIGKILL at the nth matching pass
-//     delay=<ms>:<site>[@<file>][#<nth>]  sleep there instead: a slow disk, or a
-//                                         race's window held open
-//
-// `nth` counts matching passes from the arming on (default 1); a delay with #0
-// applies to every one. `site` is exact, or `*` for any. `file` is the name the
-// inventory lists the pass under (FileNameOf: `session`, `session.bak`,
-// `session (staging)`), matched whole -- a record's backup and its staging
-// temporary are boundaries of their own, and `session` must not mean all three.
-//
-// Header-only: the entry point and the control channel include it, and no
-// curated target list changes.
 class CrashPointControl {
  public:
   struct SitePasses {
     std::string site;
     std::uint64_t passes = 0;
-    // The file names the site acted on, most of them a handful of state records
-    // and whatever the editor saved; capped (kMaxFilesPerSite).
     std::vector<std::pair<std::string, std::uint64_t>> files;
   };
 
   struct Snapshot {
     bool installed = false;
-    std::string armed;  // the rule as it was given; empty when none
+    std::string armed;
     std::uint64_t armed_matches = 0;
     std::vector<SitePasses> sites;
   };
 
   static constexpr std::size_t kMaxFilesPerSite = 48;
 
-  // Installs the counting hook when MICROIDE_QA_CRASH_POINTS is set, and arms
-  // its value when it is a rule (anything but "count" or "1"). Call once, early
-  // in main.
   static bool InstallFromEnvironment() {
     const char* text = std::getenv("MICROIDE_QA_CRASH_POINTS");
     if (text == nullptr) {
@@ -81,7 +48,7 @@ class CrashPointControl {
     const std::string_view value(text);
     if (!value.empty() && value != "count" && value != "1") {
       std::string error;
-      (void)Arm(value, &error);  // a rule that does not parse arms nothing; the query says so
+      (void)Arm(value, &error);
     }
     return true;
   }
@@ -101,8 +68,6 @@ class CrashPointControl {
     return state.installed;
   }
 
-  // Arms `rule` (replacing any other); false with `*error` when it does not
-  // parse or nothing is installed.
   static bool Arm(std::string_view rule, std::string* error) {
     Rule parsed;
     if (!Parse(rule, &parsed, error)) {
@@ -151,8 +116,8 @@ class CrashPointControl {
     std::string text;
     Action action = Action::Kill;
     std::int64_t delay_ms = 0;
-    std::string site;    // exact, or "*"
-    std::string file;    // the pass's file name (FileNameOf); empty: any
+    std::string site;
+    std::string file;
     std::int64_t nth = 1;
   };
 
@@ -170,7 +135,6 @@ class CrashPointControl {
     std::map<std::string, Passes> sites;
   };
 
-  // Process-lifetime: a worker thread may pass a crash point during exit.
   static State& Shared() {
     static State* const state = new State();
     return *state;
@@ -225,8 +189,6 @@ class CrashPointControl {
   static std::string FileNameOf(std::string_view detail) {
     const std::size_t slash = detail.rfind('/');
     std::string_view name = slash == std::string_view::npos ? detail : detail.substr(slash + 1);
-    // A staging temporary is `.<name>.microide-staging.<pid>.<seq>`: counted
-    // under the file it stages, as `<name> (staging)`.
     constexpr std::string_view marker = ".microide-staging.";
     if (const std::size_t at = name.find(marker); at != std::string_view::npos && name.starts_with(".")) {
       return std::string(name.substr(1, at - 1)) + " (staging)";
@@ -256,7 +218,7 @@ class CrashPointControl {
           action = state.rule.action;
           delay_ms = state.rule.delay_ms;
           if (state.rule.nth != 0) {
-            state.armed = false;  // one shot
+            state.armed = false;
           }
         }
       }
@@ -268,15 +230,12 @@ class CrashPointControl {
       std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
       return;
     }
-    // Said first, so the log tells an asked-for death from a crash and names
-    // the boundary; one write, and nothing after it runs.
     const std::string line = "microide crash-point: killed at " + std::string(site) + " (" +
                              std::string(detail) + "), pass " + std::to_string(pass) + "\n";
     (void)!::write(STDERR_FILENO, line.data(), line.size());
-    // A source-coverage build's counters, which a SIGKILL would take with it.
     (void)FlushCoverageProfile();
     ::kill(::getpid(), SIGKILL);
   }
 };
 
-}  // namespace microide::util
+}

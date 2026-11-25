@@ -39,57 +39,36 @@ enum class SidebarMode {
   Git,
   Tests,
   Plugin,
-  // Host-owned document outline. Reuses the plugin item-tree surface (storage,
-  // render, key/mouse handlers): its rows are flattened DocumentSymbol nodes from
-  // the plugin language providers, and confirming a row navigates the editor.
   Outline,
-  // Remote projects' "Changed on Host" (dev-docs/design/remote-projects.md § 7.9):
-  // the files the host changed since connect or the last Clear, on the same item
-  // surface as Outline; confirming a row opens the file or its before/after compare.
   HostChanges,
-  // Remote projects' "Host" (remote-host-activity D4): what one connected host is
-  // running for microide -- its server, workspaces, terminals and processes, with
-  // their CPU and memory -- on the same item surface; Enter and Delete act on a row.
   Host,
-  // Remote projects' "Conflicts" (§ 7.9b): the files both the host and the mirror
-  // changed, each tickable with Enter, and action rows (Select all, Keep Local,
-  // Take Remote, Merge) that act on the ticked ones; on the same item surface.
   Conflicts,
 };
 
-// The views drawn and driven by the shared plugin item-list surface
-// (`SidebarState::plugin`): one predicate instead of a disjunction per call site.
 constexpr bool UsesPluginItemSurface(SidebarMode mode) {
   return mode == SidebarMode::Plugin || mode == SidebarMode::Outline ||
          mode == SidebarMode::HostChanges || mode == SidebarMode::Host ||
          mode == SidebarMode::Conflicts;
 }
 
-// The item-surface views whose rows the host builds (RemoteHostService), not a
-// plugin or the outline query: one refresh path, and the keys route back to it.
 constexpr bool IsHostOwnedItemView(SidebarMode mode) {
   return mode == SidebarMode::HostChanges || mode == SidebarMode::Host ||
          mode == SidebarMode::Conflicts;
 }
 
-// One clickable mode tab in the sidebar header row. `id` points at a builtin view's static
-// label/id storage, so it is allocation-free to copy.
 struct SidebarModeTab {
   std::string_view id;
   SidebarMode mode = SidebarMode::None;
   SDL_FRect rect{};
 };
 
-// Geometry of the sidebar header mode-switch row: up to three primary tabs (Project / Search /
-// Source Control) plus an optional overflow button for plugin-contributed views. Built without
-// heap allocation so it can be recomputed cheaply on the render / hit-test / hover paths.
 struct SidebarModeRowLayout {
   std::array<SidebarModeTab, 3> tabs{};
   int tab_count = 0;
   bool has_overflow = false;
   SDL_FRect overflow_rect{};
-  bool icon_only = false;  // labels don't fit -> render icons only, name shown on hover
-  SDL_FRect row_rect{};    // whole header band, for pointer-cursor / hover hit-testing
+  bool icon_only = false;
+  SDL_FRect row_rect{};
 };
 
 enum class GitSidebarRefreshScope {
@@ -108,20 +87,11 @@ struct GitSidebarEntry {
   };
 
   Section section = Section::Changed;
-  // Both are '/'-separated generic TEXT, not `std::filesystem::path`: `path` is the
-  // repository root joined to `relative_path`, and neither is ever traversed by
-  // component here. Holding two `path`s cost ~4 allocations per changed file on
-  // every refresh — a `path` is its pathname plus an eagerly built component list —
-  // and the only consumer that needs a real path (opening the file, staging it)
-  // builds one at the point of use (TD-2026-08-11-183).
   std::string path;
   std::string relative_path;
   project::GitFileStatus status = project::GitFileStatus::Clean;
   bool conflicted = false;
   bool staged = false;
-  // True when this entry is the destination of a staged rename (the repository
-  // entry carried an old_path). Lets unstage/discard skip the whole-index staged
-  // rename-detection diff for the common non-rename case.
   bool is_staged_rename = false;
   std::string provider_id;
   std::string provider_label;
@@ -140,10 +110,6 @@ struct GitSidebarLine {
   Kind kind = Kind::Empty;
   GitSidebarEntry::Section section = GitSidebarEntry::Section::Changed;
   std::string label;
-  // Fully-assembled primary text the sidebar render TU draws for this row, including
-  // the "[<marker>] " branch-review prefix for entry rows. Precomputed here so the
-  // render TU no longer assembles the label per paint (TD-2026-07-17A-008). Equals
-  // `label` for header/directory/empty rows.
   std::string display_label;
   std::string tree_node_key;
   bool expanded = false;
@@ -160,11 +126,9 @@ struct ProblemsSidebarEntry {
 };
 
 struct GitSidebarState {
-  // Typing in the entry list selects by file name (workspace/TypeNavigation.h).
   TypeNavigationState type_navigation;
   struct RefreshSnapshotEntry {
     GitSidebarEntry::Section section = GitSidebarEntry::Section::Changed;
-    // Generic '/'-separated text, straight from GitRepositoryPathIdentity.
     std::string relative_path;
     project::GitFileStatus status = project::GitFileStatus::Clean;
     bool conflicted = false;
@@ -194,8 +158,6 @@ struct GitSidebarState {
   std::string upstream_label;
   int ahead = 0;
   int behind = 0;
-  // The repository's working trees (GitRepositoryState::worktree_count): the
-  // status bar names them when there is more than one. 0: not known.
   std::size_t worktree_count = 0;
   std::string base_ref;
   std::string base_label;
@@ -209,12 +171,6 @@ struct GitSidebarState {
   std::string error;
   std::size_t selected_index = 0;
   std::uint64_t snapshot_generation = 0;
-  // Bumped whenever a repository change lands (which now includes `.git`
-  // appearing or disappearing — see GitRepositoryMetadataTracker). It is the
-  // invalidation key for answers derived from the repository's mere EXISTENCE,
-  // which is otherwise a filesystem probe with nothing to key on: the status
-  // bar's availability probe ran a `stat` on every painted frame for want of
-  // one (TD-2026-08-06-158).
   std::uint64_t repository_marker_generation = 0;
   std::unordered_set<std::string> collapsed_directory_keys;
   CommitWorkflowState commit_workflow;
@@ -232,9 +188,6 @@ struct TestsSidebarEntry {
   int line = 0;
   std::string parent_id;
   std::string status;
-  // The row's right-hand column ("passed · src/foo_test.cpp:42"), built when the
-  // entry is refreshed rather than per paint, so the sidebar render path stays
-  // allocation-free. Mirrors ProblemsSidebarEntry::detail_label.
   std::string detail_label;
 };
 
@@ -250,15 +203,11 @@ struct PluginSidebarState {
   std::vector<plugin::PluginHost::SidebarItem> items;
   std::string error;
   std::size_t selected_index = 0;
-  // Prebuilt empty/error text the sidebar render TU draws verbatim, recomputed
-  // only when items/error change (never per frame). Empty means "draw nothing".
-  // `placeholder_is_error` picks the error vs muted text color.
   std::string placeholder;
   bool placeholder_is_error = false;
 };
 
 struct SidebarState;
-// Whether `sidebar` shows the Host view: what RemoteHostService's subscription follows.
 bool HostViewShown(const SidebarState& sidebar);
 
 struct SidebarState {
@@ -272,9 +221,7 @@ struct SidebarState {
   ProblemsSidebarState problems;
   TestsSidebarState tests;
   PluginSidebarState plugin;
-  // The file tree's type navigation (workspace/TypeNavigation.h).
   TypeNavigationState tree_type_navigation;
-  // What the tree's Cut / Copy holds for Paste (ActionId::TreeCut / TreeCopy).
   struct TreeClipboard {
     std::filesystem::path path;
     bool cut = false;
@@ -286,4 +233,4 @@ inline bool HostViewShown(const SidebarState& sidebar) {
   return sidebar.visible && sidebar.view_id == "host";
 }
 
-}  // namespace microide::workspace
+}

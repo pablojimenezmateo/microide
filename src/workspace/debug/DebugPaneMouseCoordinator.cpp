@@ -12,9 +12,6 @@ namespace microide::workspace {
 
 namespace {
 
-// Resolve a click to an absolute row in the active surface, sharing the exact
-// geometry the render and cursor paths use (DebugPaneRowAtPoint) so they cannot
-// drift and the top text inset is not a dead-zone.
 std::optional<std::size_t> DebugPaneLineIndexAtPoint(
     const WorkspaceShell::LogSurfaceLayout& panel_layout, float x, float y,
     std::size_t line_count) {
@@ -27,7 +24,7 @@ std::optional<std::size_t> DebugPaneLineIndexAtPoint(
   return static_cast<std::size_t>(hit.row_index);
 }
 
-}  // namespace
+}
 
 DebugPaneMouseCoordinator::DebugPaneMouseCoordinator(ProjectWorkspaceState& state,
                                                      InteractionState& interaction_state,
@@ -52,13 +49,10 @@ bool DebugPaneMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     return HandleRowContextMenu(event, layout);
   }
 
-  // The scrollbar overlaps the row area, so it must claim the press before the
-  // row hit test turns a bar grab into a frame/breakpoint activation.
   if (BeginScrollbarDrag(event, layout)) {
     return true;
   }
 
-  // Mode-row button switcher: a click on a tab activates that surface.
   const DebugPaneModeRowLayout mode_row = operations_.debug_pane_mode_row(layout.right_pane);
   for (int i = 0; i < mode_row.tab_count; ++i) {
     const DebugPaneModeTab& tab = mode_row.tabs[static_cast<std::size_t>(i)];
@@ -72,11 +66,6 @@ bool DebugPaneMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   return HandleRowClick(event, layout);
 }
 
-// Focus the session, thread or frame a Call Stack row names, exactly as a click
-// does. Shared with the keyboard so the two cannot answer the same row
-// differently. `move_focus_to_editor` is the one difference between them: a click
-// hands focus to the editor it just navigated, while an arrow key must leave focus
-// in the pane or the next arrow key would go somewhere else.
 void DebugPaneMouseCoordinator::ActivateCallStackRow(std::size_t line_index,
                                                      bool move_focus_to_editor) {
   DebugExecutionView& exec = state_.debug_execution;
@@ -109,16 +98,9 @@ void DebugPaneMouseCoordinator::ActivateCallStackRow(std::size_t line_index,
       viewport != nullptr) {
     viewport->JumpCursorTo(frame.line, 0);
   }
-  // Opening the frame's file focuses the editor on its own, so the keyboard path
-  // has to claim focus back rather than merely decline to hand it over.
   state_.surface.focus = move_focus_to_editor ? FocusTarget::Editor : FocusTarget::DebugPane;
 }
 
-// Act on a Breakpoints row, exactly as a click does. Shared with the keyboard so
-// the two cannot drift: Enter is a single click (navigate to the source line) and
-// Space is a double click (toggle enabled), which is also how the exception-filter
-// and function-breakpoint rows already behave under the mouse. As in the Call
-// Stack, only the keyboard declines to hand focus to the editor.
 void DebugPaneMouseCoordinator::ActivateBreakpointRow(std::size_t line_index, bool toggle,
                                                       bool move_focus_to_editor) {
   const std::vector<DebugBreakpointRowView>& rows = state_.debug_breakpoints_panel.Rows();
@@ -132,7 +114,6 @@ void DebugPaneMouseCoordinator::ActivateBreakpointRow(std::size_t line_index, bo
     return;
   }
   if (row.kind == DebugBreakpointRowView::Kind::FunctionBreakpoint) {
-    // No source location to navigate to, so either gesture toggles enabled.
     util::InvokeIfSet(operations_.toggle_debug_function_breakpoint_enabled, row.function_index);
     state_.surface.focus = FocusTarget::DebugPane;
     return;
@@ -151,7 +132,6 @@ void DebugPaneMouseCoordinator::ActivateBreakpointRow(std::size_t line_index, bo
       viewport != nullptr) {
     viewport->JumpCursorTo(row.line, 0);
   }
-  // Opening the file focuses the editor by itself; see ActivateCallStackRow.
   state_.surface.focus = move_focus_to_editor ? FocusTarget::Editor : FocusTarget::DebugPane;
 }
 
@@ -177,7 +157,7 @@ bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
       state_.surface.focus = FocusTarget::DebugPane;
       return true;
     }
-    ActivateCallStackRow(*line_index, /*move_focus_to_editor=*/true);
+    ActivateCallStackRow(*line_index, true);
     return true;
   }
 
@@ -201,9 +181,6 @@ bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
       if (event.button.clicks >= 2 && row.editable && !row.has_children) {
         util::InvokeIfSet(operations_.begin_debug_variable_edit, *line_index);
       } else if (event.button.clicks == 1 && (row.has_children || row.is_show_more)) {
-        // A "show more…" row has no children but toggling it loads the next page
-        // (ToggleRow handles it); without this the row was drawn/cursored as
-        // clickable but did nothing, stranding children past the page size.
         util::InvokeIfSet(operations_.toggle_debug_variable_row, *line_index);
       }
     }
@@ -232,7 +209,6 @@ bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
       } else if (event.button.clicks >= 2 && row.editable && !row.has_children) {
         util::InvokeIfSet(operations_.begin_debug_watch_edit, *line_index);
       } else if (event.button.clicks == 1 && (row.has_children || row.is_show_more)) {
-        // "show more…" rows page in the next batch via ToggleRow (see Variables above).
         util::InvokeIfSet(operations_.toggle_debug_watch_row, *line_index);
       }
     } else util::InvokeIfSet(operations_.add_debug_watch_expression);
@@ -256,8 +232,8 @@ bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
                                   static_cast<float>(event.button.y), rows.size());
     if (line_index.has_value() && *line_index < rows.size()) {
       state_.debug_pane.breakpoints_selected_row = static_cast<int>(*line_index);
-      ActivateBreakpointRow(*line_index, /*toggle=*/event.button.clicks >= 2,
-                            /*move_focus_to_editor=*/true);
+      ActivateBreakpointRow(*line_index, event.button.clicks >= 2,
+                            true);
       return true;
     }
     state_.surface.focus = FocusTarget::DebugPane;
@@ -271,7 +247,7 @@ bool DebugPaneMouseCoordinator::HandleRowContextMenu(const SDL_Event& event,
                                                      const WorkspaceLayout& layout) {
   const DebugPaneMode mode = state_.debug_pane.mode;
   if (mode == DebugPaneMode::CallStack) {
-    return true;  // Frames/threads/sessions have no row-scoped commands yet.
+    return true;
   }
 
   const std::size_t row_count = operations_.debug_pane_active_row_count();
@@ -288,8 +264,6 @@ bool DebugPaneMouseCoordinator::HandleRowContextMenu(const SDL_Event& event,
 
   const SDL_FRect anchor = MakeRect(static_cast<float>(event.button.x),
                                     static_cast<float>(event.button.y), 1.0f, 1.0f);
-  // Select the row first, then open on the selection — the order every other list
-  // surface uses, so the menu and the highlight cannot disagree.
   state_.surface.focus = FocusTarget::DebugPane;
 
   if (mode == DebugPaneMode::Breakpoints) {
@@ -298,8 +272,6 @@ bool DebugPaneMouseCoordinator::HandleRowContextMenu(const SDL_Event& event,
       return true;
     }
     const DebugBreakpointRowView& row = rows[*line_index];
-    // Only line breakpoints carry the (path, line) the gutter menu acts on;
-    // function breakpoints and exception filters have no source location.
     if (row.kind == DebugBreakpointRowView::Kind::Breakpoint && !row.path.empty() &&
         operations_.open_breakpoint_context_menu) {
       operations_.open_breakpoint_context_menu(row.path, row.line, anchor);
@@ -329,9 +301,7 @@ bool DebugPaneMouseCoordinator::BeginScrollbarDrag(const SDL_Event& event,
   interaction_state_.drag_target = DragTarget::DebugPaneScrollbar;
   interaction_state_.drag_scrollbar_offset =
       ScrollbarGrabOffset(*panel_layout.scroll.vertical_scrollbar,
-                          static_cast<float>(event.button.y), /*vertical=*/true);
-  // Clicking the track jumps the thumb to the pointer, matching every other
-  // scrollbar in the shell.
+                          static_cast<float>(event.button.y), true);
   operations_.set_debug_pane_scroll_row(
       std::clamp(static_cast<int>(std::lround(ScrollUnitsForPointer(
                      *panel_layout.scroll.vertical_scrollbar, static_cast<float>(event.button.y),
@@ -378,8 +348,7 @@ bool DebugPaneMouseCoordinator::HandleWheel(const SDL_Event& event, const Worksp
       std::clamp(panel_layout.scroll.vertical_scroll - vertical_ticks * kWheelScrollRows, 0,
                  panel_layout.scroll.max_vertical_scroll),
       line_count, panel_layout.scroll.visible_rows);
-  // Scrolling is not focusing — see SidebarMouseCoordinator::HandleWheel.
   return true;
 }
 
-}  // namespace microide::workspace
+}

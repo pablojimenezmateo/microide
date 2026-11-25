@@ -36,8 +36,6 @@ const ManifestRow* Find(const WorkspaceTree::Manifest& manifest, std::string_vie
   return nullptr;
 }
 
-// The content set is git's: tracked plus untracked-not-ignored, minus what the
-// worktree deleted; hashes are of the bytes on disk.
 void TestWorkspaceTreeGitContentSet() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "repo";
@@ -77,18 +75,12 @@ void TestWorkspaceTreeWalksWithoutGit() {
          "the walk uses the scanner's skip rules (node_modules is not content)");
 }
 
-// A tree write's temporary is never content (TreeFiles.h). One a SIGKILLed server
-// left between writing it and renaming it into place used to be listed, and so
-// pulled into every mirror as a file nobody made (MirrorFaultMatrix/*/PushLarge/
-// KillServer); it is now removed by the next manifest. One whose writer is alive
-// is a write in progress: skipped, and left alone -- by the full walk and by a
-// watch update that names it alike.
 void TestWorkspaceTreeWriteTemporariesAreNotContent() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "plain";
   WriteFile(root / "a.txt", "a\n");
   const std::string live = ".a.txt.microide-" + std::to_string(::getpid()) + "-7.tmp";
-  const std::string abandoned = "sub/.b.txt.microide-2147483646-0.tmp";  // no such pid
+  const std::string abandoned = "sub/.b.txt.microide-2147483646-0.tmp";
   WriteFile(root / live, "half");
   WriteFile(root / abandoned, "half");
   WorkspaceTree tree(root);
@@ -108,19 +100,13 @@ void TestWorkspaceTreeWriteTemporariesAreNotContent() {
          "a watch update does not list a temporary it names either");
 }
 
-// A link naming a file of the root by an absolute path is shipped as that file
-// (§ 6.2: an absolute target is out of the root as a link), so its row is the
-// file's content. A change to the file touches the file's path, not the link's,
-// and the mirror kept the link's first content for good (QA monkey, remote
-// profile: a link to CMakeLists.txt, rewritten later); a link left dangling
-// until its target appeared was never listed.
 void TestWorkspaceTreeAnAbsoluteLinkFollowsTheFileItNames() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "plain";
   WriteFile(root / "CMakeLists.txt", "project(a)\n");
   std::filesystem::create_directories(root / "qa-ext");
   std::filesystem::create_symlink(root / "CMakeLists.txt", root / "qa-ext/link1");
-  std::filesystem::create_symlink(root / "later.txt", root / "qa-ext/link2");  // dangling for now
+  std::filesystem::create_symlink(root / "later.txt", root / "qa-ext/link2");
   WorkspaceTree tree(root, WorkspaceTree::Options{.racy_window_ns = 0});
   std::string error;
   const auto manifest = tree.BuildManifest(&error);
@@ -144,11 +130,6 @@ void TestWorkspaceTreeAnAbsoluteLinkFollowsTheFileItNames() {
          "the link whose target appeared is listed, as that file");
 }
 
-// Soak 5fdc4f6dac88: the absolute link named another LINK of the root
-// (`qa-ext/link1 -> /root/qa-weird/link-to-crlf.txt`, itself `-> crlf.txt`). The
-// row is crlf.txt's content, but only the link it named was recorded as what it
-// follows: crlf.txt changed, the link in the middle did not, and the mirror kept
-// the old text. Every in-root hop of the chain is followed.
 void TestWorkspaceTreeAnAbsoluteLinkFollowsTheChainItNames() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "plain";
@@ -173,7 +154,6 @@ void TestWorkspaceTreeAnAbsoluteLinkFollowsTheChainItNames() {
   Expect(link != nullptr && link->hash == util::HashContent("rewritten\n"),
          "a change to the file at the end of the chain reaches the link's row");
 
-  // The link in the middle re-pointed: the chain now ends elsewhere.
   std::filesystem::remove(root / "qa-weird/link-to-crlf.txt");
   std::filesystem::create_symlink("other.txt", root / "qa-weird/link-to-crlf.txt");
   updated = tree.UpdateManifest(WorkspaceTree::Changes{.touched = {"qa-weird/link-to-crlf.txt"}}, &error);
@@ -188,9 +168,6 @@ void TestWorkspaceTreeAnAbsoluteLinkFollowsTheChainItNames() {
          "and from then on the new end of the chain is followed");
 }
 
-// Soak 20f30956197f (remote profile): in a repository, the file an absolute link
-// names was deleted, the link was made -- dangling, in a directory new to the
-// tree -- and the file came back. The mirror never got the link.
 void TestWorkspaceTreeALinkMadeDanglingByAnUpdateIsListedWhenItsFileReturns() {
   for (const bool dir_reported : {false, true}) {
     TemporaryDirectory temp;
@@ -245,27 +222,21 @@ void TestWorkspaceTreeHashCache() {
          "the changed file's row has the new hash");
 }
 
-// A file written moments ago is racily clean: a same-size rewrite in the same
-// timestamp tick would leave (size, mtime, ctime) as they were, so its cached hash
-// would be served for different bytes and the change never synced. Within the
-// window the cache does not vouch for it.
 void TestWorkspaceTreeDoesNotTrustARacyCacheEntry() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "plain";
   WriteFile(root / "hot.txt", "one\n");
-  WorkspaceTree tree(root);  // the default window
+  WorkspaceTree tree(root);
   std::string error;
   Expect(tree.BuildManifest(&error).has_value() && tree.last_hashed_files() == 1, "hashed once");
   Expect(tree.BuildManifest(&error).has_value() && tree.last_hashed_files() == 1,
          "and again: a just-written file is not served from the cache");
-  WriteFile(root / "hot.txt", "two\n");  // same size
+  WriteFile(root / "hot.txt", "two\n");
   const auto manifest = tree.BuildManifest(&error);
   Expect(manifest.has_value() && (*manifest->rows)[0].hash == util::HashContent("two\n"),
          "a same-size rewrite is seen at once");
 }
 
-// A watch batch re-stats only what it names and asks git only about new paths —
-// and lands on exactly the manifest a full rebuild would.
 void TestWorkspaceTreeIncrementalUpdateMatchesAFullBuild() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "repo";
@@ -306,8 +277,6 @@ void TestWorkspaceTreeIncrementalUpdateMatchesAFullBuild() {
          "and a newly ignored untracked file leaves the set");
 }
 
-// The hash cache outlives the server process: an on-demand server that idled out
-// and was started again hashes nothing a predecessor already hashed.
 void TestWorkspaceTreeCachePersists() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "plain";
@@ -323,15 +292,11 @@ void TestWorkspaceTreeCachePersists() {
   WorkspaceTree again(root, options);
   Expect(again.BuildManifest(&error).has_value() && again.last_hashed_files() == 0,
          "a new process with the saved cache hashes nothing");
-  WorkspaceTree other(temp.path(), options);  // another root, the same file
+  WorkspaceTree other(temp.path(), options);
   Expect(other.BuildManifest(&error).has_value() && other.last_hashed_files() > 0,
          "a cache saved for another root is not used");
 }
 
-// A member that cannot be hashed (unreadable, or gone between the stat and the
-// read) is left out — and only it: the rows before it keep their paths. (The
-// compaction once self-moved them, emptying their paths into a manifest the
-// client rejected, which dropped the connection.)
 void TestWorkspaceTreeDropsOnlyWhatItCannotHash() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "plain";
@@ -340,7 +305,7 @@ void TestWorkspaceTreeDropsOnlyWhatItCannotHash() {
   WriteFile(root / "c.txt", "c");
   std::filesystem::permissions(root / "c.txt", std::filesystem::perms::none);
   if (::access((root / "c.txt").c_str(), R_OK) == 0) {
-    return;  // root reads everything
+    return;
   }
   WorkspaceTree tree(root);
   std::string error;
@@ -350,7 +315,6 @@ void TestWorkspaceTreeDropsOnlyWhatItCannotHash() {
   std::filesystem::permissions(root / "c.txt", std::filesystem::perms::owner_all);
 }
 
-// A failure to decide the set is an error, never an empty manifest.
 void TestWorkspaceTreeFailsLoudly() {
   TemporaryDirectory temp;
   WorkspaceTree missing(temp.path() / "nope");
@@ -398,9 +362,6 @@ void TestWorkspaceTreeSymlinks() {
   Expect(Find(*manifest, "dangling") == nullptr, "a dangling out-of-root link is not content");
 }
 
-// A checked-out submodule is a mirrored subtree: its files are its own repository's
-// content set (its .gitignore applies), not an empty gitlink directory. A new file
-// inside it is admitted by asking the submodule, not the enclosing repository.
 void TestWorkspaceTreeDescendsIntoSubmodules() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "repo";
@@ -412,7 +373,7 @@ void TestWorkspaceTreeDescendsIntoSubmodules() {
   WriteFile(sub / "lib.c", "lib");
   WriteFile(sub / "lib.o", "object");
   CommitAll(sub, "sub", "submodule");
-  CommitAll(root, "init", "with gitlink");  // `git add` records vendor/lib as a gitlink
+  CommitAll(root, "init", "with gitlink");
   WorkspaceTree tree(root, WorkspaceTree::Options{.racy_window_ns = 0});
   std::string error;
   const auto manifest = tree.BuildManifest(&error);
@@ -432,9 +393,6 @@ void TestWorkspaceTreeDescendsIntoSubmodules() {
          "the submodule's repository admits its new file and refuses its ignored one");
 }
 
-// A TRACKED file under a directory the scanner prunes (build/ here) is invisible
-// to the native watch and the poll walk alike: the tree names it, and the watch
-// polls exactly those paths and reports a change like any other touched path.
 void TestWorkspaceWatchPollsTrackedFilesItsFilterPrunes() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "repo";
@@ -471,7 +429,7 @@ void TestWorkspaceWatchPollsTrackedFilesItsFilterPrunes() {
          "the change to the polled file is reported");
 }
 
-}  // namespace
+}
 
 void RegisterWorkspaceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceTree/GitContentSet", TestWorkspaceTreeGitContentSet);
@@ -497,4 +455,4 @@ void RegisterWorkspaceTreeTests(std::vector<TestCase>& tests) {
           TestWorkspaceWatchPollsTrackedFilesItsFilterPrunes);
 }
 
-}  // namespace microide::tests
+}

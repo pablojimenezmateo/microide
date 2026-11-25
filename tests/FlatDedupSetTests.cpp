@@ -33,9 +33,6 @@ void TestFlatDedupSetContainsMatchesInsert() {
   Expect(!seen.Contains("y"), "a key that was never inserted is not found");
 }
 
-// The whole point of the container is that the table is sized once from the
-// caller's bound. An UNDER-estimated bound must still be correct — it grows
-// rather than filling up and probing forever — so exercise that path directly.
 void TestFlatDedupSetGrowsPastAnUnderEstimatedBound() {
   FlatDedupSet<std::string> seen(2);
   constexpr std::size_t kCount = 5000;
@@ -47,14 +44,10 @@ void TestFlatDedupSetGrowsPastAnUnderEstimatedBound() {
     Expect(!seen.Insert("key_" + std::to_string(i)), "no key survives a rehash twice");
   }
   Expect(seen.size() == kCount, "the second pass added nothing");
-  // Order survives growth: keys live in their own append-only vector, so a
-  // rehash moves slots and never the key storage.
   Expect(seen.keys().front() == "key_0" && seen.keys().back() == "key_4999",
          "first-occurrence order survives the rehash");
 }
 
-// Colliding hashes must not merge distinct keys: the slot stores the hash, and a
-// probe that matches on hash alone would fuse two different strings into one.
 void TestFlatDedupSetDistinguishesKeysWithEqualHashes() {
   struct CollidingHash {
     std::size_t operator()(const std::string&) const { return 7; }
@@ -66,7 +59,6 @@ void TestFlatDedupSetDistinguishesKeysWithEqualHashes() {
   Expect(seen.size() == 2, "equal hashes do not merge distinct keys");
 }
 
-// Agreement with the container it replaces, over a set with heavy duplication.
 void TestFlatDedupSetAgreesWithUnorderedSet() {
   std::vector<std::string> input;
   for (std::size_t i = 0; i < 4000; ++i) {
@@ -89,9 +81,6 @@ void TestFlatDedupSetAgreesWithUnorderedSet() {
   Expect(flat.keys() == reference_order, "the stored key order matches the accept order");
 }
 
-// A duplicate must not consume the caller's moved-from argument: RankedUnion
-// passes a freshly built key by value and relies on the rejection path leaving
-// nothing behind.
 void TestFlatDedupSetRejectionDoesNotStoreTheKey() {
   FlatDedupSet<std::string> seen(8);
   std::string key = "shared-key-long-enough-to-heap-allocate";
@@ -101,9 +90,6 @@ void TestFlatDedupSetRejectionDoesNotStoreTheKey() {
          "the rejected insert left the stored key intact");
 }
 
-// Intern is the value-map half of the container: the id it returns must be the
-// key's index in keys(), dense and stable, so a caller can hang a parallel
-// vector off it (the compare path's occurrence counts).
 void TestFlatDedupSetInternAssignsDenseFirstOccurrenceIds() {
   FlatDedupSet<std::string> ids(8);
   Expect(ids.Intern("b") == 0, "the first key gets id 0");
@@ -116,8 +102,6 @@ void TestFlatDedupSetInternAssignsDenseFirstOccurrenceIds() {
   }
 }
 
-// Intern and Insert are the same probe. Growth past the caller's bound must not
-// renumber anything a parallel vector is already indexed by.
 void TestFlatDedupSetInternIdsSurviveGrowth() {
   FlatDedupSet<std::string> ids(2);
   constexpr std::size_t kCount = 3000;
@@ -142,10 +126,6 @@ void TestFlatDedupSetInternAgreesWithInsert() {
   Expect(interned.keys() == inserted.keys(), "both paths store the same keys in the same order");
 }
 
-// TD-2026-08-13-199: FlatKeyIndex dedupes against strings the CALLER owns, so
-// the index stores no keys at all. The load-bearing property is that it stays
-// correct while the owning vector reallocates under it — which is exactly what
-// rules out a string_view index (a short string lives inside its std::string).
 void TestFlatKeyIndexDedupesWithoutStoringKeys() {
   std::vector<std::string> ids;
   auto index = util::FlatKeyIndex(
@@ -171,15 +151,12 @@ void TestFlatKeyIndexDedupesWithoutStoringKeys() {
 
 void TestFlatKeyIndexSurvivesOwnerReallocation() {
   std::vector<std::string> ids;
-  // Seeded deliberately small so both the vector and the slot table grow several
-  // times during the run: every short id moves with its std::string, and every
-  // recorded index is rehashed through the accessor.
   auto index = util::FlatKeyIndex(
       2, [&ids](std::size_t i) -> std::string_view { return ids[i]; });
 
   constexpr std::size_t kCount = 500;
   for (std::size_t i = 0; i < kCount; ++i) {
-    std::string id = "id." + std::to_string(i);  // short: lives in the string's inline buffer
+    std::string id = "id." + std::to_string(i);
     Expect(index.Find(id) == util::kFlatKeyNotFound, "each generated id is distinct");
     ids.push_back(std::move(id));
     index.Insert(ids.size() - 1);
@@ -193,7 +170,7 @@ void TestFlatKeyIndexSurvivesOwnerReallocation() {
          "an id that was never inserted is still not found");
 }
 
-}  // namespace
+}
 
 void RegisterFlatDedupSetTests(std::vector<TestCase>& tests) {
   AddTest(tests, "FlatKeyIndex/DedupesWithoutStoringKeys",
@@ -216,4 +193,4 @@ void RegisterFlatDedupSetTests(std::vector<TestCase>& tests) {
           TestFlatDedupSetRejectionDoesNotStoreTheKey);
 }
 
-}  // namespace microide::tests
+}

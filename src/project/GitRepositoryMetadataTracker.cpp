@@ -13,11 +13,6 @@
 namespace microide::project {
 namespace {
 
-// A symbolic HEAD ref must be a relative name under the common gitdir (e.g.
-// `refs/heads/main`). Reject absolute paths, root names, and empty/`.`/`..`
-// components so `common_dir / ref` cannot escape the git directory
-// (TD-2026-07-17A-110). A dangling `ref: /tmp/x` would otherwise ignore common_dir
-// entirely on POSIX.
 bool IsSafeRelativeRefName(const std::string& ref) {
   if (ref.empty() || ref.find('\\') != std::string::npos) {
     return false;
@@ -35,11 +30,6 @@ bool IsSafeRelativeRefName(const std::string& ref) {
   return true;
 }
 
-// If HEAD is symbolic (`ref: refs/heads/<branch>`), return the ref path relative to the
-// common gitdir (e.g. `refs/heads/main`). Returns nullopt for a detached HEAD (raw oid),
-// where the HEAD file tick itself already tracks movement.
-// Split from the file read so a caller that already has HEAD's first line does not
-// open the file a second time to ask what it points at.
 std::optional<std::string> SymbolicRefFromHeadLine(const std::optional<std::string>& line) {
   if (!line.has_value()) {
     return std::nullopt;
@@ -47,18 +37,16 @@ std::optional<std::string> SymbolicRefFromHeadLine(const std::optional<std::stri
   const std::string trimmed = util::TrimAsciiWhitespace(*line);
   constexpr std::string_view kPrefix = "ref:";
   if (std::string_view(trimmed).substr(0, kPrefix.size()) != kPrefix) {
-    return std::nullopt;  // detached HEAD (raw object id)
+    return std::nullopt;
   }
   std::string ref = util::TrimAsciiWhitespace(std::string_view(trimmed).substr(kPrefix.size()));
-  // Refuse anything that is not a safe relative ref name so `common_dir / ref`
-  // cannot escape the git directory (absolute/rooted refs, `..` segments).
   if (!IsSafeRelativeRefName(ref)) {
     return std::nullopt;
   }
   return ref;
 }
 
-}  // namespace
+}
 
 std::optional<std::string> ReadHeadBranchName(const std::filesystem::path& project_root,
                                               const GitMetadataSource& metadata) {
@@ -69,14 +57,8 @@ std::optional<std::string> ReadHeadBranchName(const std::filesystem::path& proje
   const std::optional<std::string> ref =
       SymbolicRefFromHeadLine(internal::ReadFirstLineOfGitFile(*git_dir / "HEAD"));
   if (!ref.has_value()) {
-    return std::nullopt;  // detached HEAD — no branch name to show
+    return std::nullopt;
   }
-  // The short name git prints (`git status --porcelain=v2` `# branch.head`,
-  // `git branch --show-current`) is the ref minus its `refs/heads/` namespace,
-  // and it keeps its slashes: `feature/stable-sort`, not `stable-sort`. Taking
-  // the path's leaf here made the status bar flip from one to the other when the
-  // first snapshot landed. A HEAD outside `refs/heads/` (a `refs/remotes/...`
-  // checkout is not a branch) is reported by its full ref, as git does.
   const std::string_view name = internal::StripBranchRefPrefix(*ref);
   if (name.empty()) {
     return std::nullopt;
@@ -96,13 +78,6 @@ void GitRepositoryMetadataTracker::SetProjectRoot(const std::filesystem::path& p
 
 std::vector<RepositoryChange> GitRepositoryMetadataTracker::SampleChanges() {
   const std::optional<MetadataFingerprint> current = ReadCurrentFingerprint();
-  // The repository appearing or disappearing IS head movement, and the tracker
-  // used to swallow it: `ReadCurrentFingerprint` returns nullopt when there is no
-  // usable `.git`, and both transitions (an in-session `git init`, an `rm -rf
-  // .git`) hit the "no baseline to compare" branch below, which re-baselines and
-  // reports nothing. Every consumer of a repository change — the sidebar's
-  // staleness mark, the status bar's cached availability probe — therefore kept
-  // the pre-init answer until something unrelated forced a refresh.
   if (current.has_value() != baseline_.has_value()) {
     baseline_ = current;
     return {RepositoryChange{.kind = RepositoryChangeKind::HeadChanged}};
@@ -113,9 +88,6 @@ std::vector<RepositoryChange> GitRepositoryMetadataTracker::SampleChanges() {
   }
 
   std::vector<RepositoryChange> changes;
-  // HEAD movement is any of: the HEAD file text/tick (branch switch, detached move),
-  // the resolved branch ref advancing (ordinary same-branch commit), or packed-refs
-  // changing (packed branch refs). (TD-2026-07-16-63.)
   if (current->head_text != baseline_->head_text ||
       current->branch_ref_text != baseline_->branch_ref_text ||
       current->packed_refs != baseline_->packed_refs || current->worktrees != baseline_->worktrees) {
@@ -170,14 +142,6 @@ GitRepositoryMetadataTracker::ReadCurrentFingerprint() const {
   const std::filesystem::path& git_dir = *git_dir_opt;
 
   MetadataFingerprint fingerprint;
-  // HEAD by content: one line, read ONCE and used for both the fingerprint and the
-  // branch-ref resolution below. It replaces a `last_write_time` stat with a read
-  // of a ~30-byte file — not free, but it is what stops a rewrite with identical
-  // bytes (`git checkout` of the branch already checked out, a tool that rewrites
-  // HEAD) from reporting a change and spawning a `git status` with nothing to find,
-  // which costs a process. An earlier version of this comment claimed the read was
-  // already happening and therefore free; it was not — it had added a second open
-  // of the same file.
   const std::optional<std::string> head_line = internal::ReadFirstLineOfGitFile(git_dir / "HEAD");
   if (head_line.has_value()) {
     fingerprint.head_text = util::TrimAsciiWhitespace(*head_line);
@@ -186,10 +150,6 @@ GitRepositoryMetadataTracker::ReadCurrentFingerprint() const {
     fingerprint.index = *index_tick;
   }
 
-  // The branch ref HEAD points at, so an ordinary same-branch commit (which leaves
-  // `.git/HEAD` text unchanged but advances `refs/heads/<branch>`) is detected. The
-  // ref lives under the COMMON gitdir for linked worktrees, so resolve `commondir`.
-  // By content too: it is a single object id, and that id is exactly the question.
   const std::filesystem::path common_dir = internal::ResolveCommonDir(git_dir);
   if (const std::optional<std::string> ref = SymbolicRefFromHeadLine(head_line);
       ref.has_value()) {
@@ -199,7 +159,6 @@ GitRepositoryMetadataTracker::ReadCurrentFingerprint() const {
       fingerprint.branch_ref_text = util::TrimAsciiWhitespace(*ref_line);
     }
   }
-  // packed-refs fallback: a branch ref stored packed (no loose file) still bumps this.
   if (const auto packed_tick = util::FileModificationTick(common_dir / "packed-refs");
       packed_tick.has_value()) {
     fingerprint.packed_refs = *packed_tick;
@@ -210,4 +169,4 @@ GitRepositoryMetadataTracker::ReadCurrentFingerprint() const {
   return fingerprint;
 }
 
-}  // namespace microide::project
+}

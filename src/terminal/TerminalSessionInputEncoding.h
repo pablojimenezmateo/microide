@@ -23,22 +23,11 @@ inline TerminalMouseTrackingMode CurrentTerminalMouseTrackingMode(bool mouse_tra
   return TerminalMouseTrackingMode::Disabled;
 }
 
-// Encode a modified key press. When `kitty_flags` is non-zero the Kitty
-// keyboard protocol is active and keys the legacy encoding cannot disambiguate
-// (modified Enter/Tab/Backspace/Escape, control letters) are emitted in CSI-u
-// form; otherwise the standard xterm encoding (with CSI `1;mod` / `n;mod~`
-// modifier parameters and SS3/CSI application-cursor handling) is used.
 std::string FormatTerminalKeyPress(bool application_cursor_keys_mode,
                                    std::uint8_t kitty_flags,
                                    const TerminalSession::KeyPress& press);
 
 inline std::string FormatTerminalPasteBytes(bool bracketed_paste_mode, std::string_view text) {
-  // A pasted line break is the Enter KEY, and Enter is a carriage return on the
-  // wire: VTE and xterm.js (VS Code's terminal) both rewrite `\r?\n` to `\r` on
-  // paste. Sending the LF through as typed is wrong for anything in raw mode
-  // that tells the two apart — a readline prompt takes ^J as accept-line, but
-  // vim/fzf/less and most TUIs bind Enter (^M), and a multi-line paste into
-  // them used to land as Ctrl+J keystrokes.
   const auto push_normalized = [](std::string& out, char c, char previous) {
     if (c == '\n') {
       if (previous != '\r') {
@@ -59,17 +48,6 @@ inline std::string FormatTerminalPasteBytes(bool bracketed_paste_mode, std::stri
     return bytes;
   }
 
-  // Neutralize any embedded end marker in the pasted text: otherwise a poisoned
-  // clipboard containing `ESC[201~<payload>` would terminate paste mode early and
-  // deliver <payload> to the shell as if typed — the exact injection bracketed
-  // paste exists to prevent. Drop the marker (as xterm does) and keep the rest.
-  //
-  // A single non-overlapping deletion pass is NOT enough: deleting one marker can
-  // splice its surrounding bytes into a *new* marker at the seam (e.g. the paste
-  // `ESC[` + `ESC[201~` + `201~payload` collapses to `ESC[201~payload`). We instead
-  // build the body incrementally and, whenever its tail forms the marker, erase it —
-  // a fixed point that also catches deletion-created markers. The body is kept
-  // separate from the wrapping markers so the intentional guards aren't rescanned.
   static constexpr std::string_view kEndMarker = "\x1b[201~";
   std::string body;
   body.reserve(text.size());
@@ -105,4 +83,4 @@ bool EncodeTerminalSessionMouseEvent(bool mouse_tracking_any,
                                      bool can_encode,
                                      std::string& out_bytes);
 
-}  // namespace microide::terminal
+}

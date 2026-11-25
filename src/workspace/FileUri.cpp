@@ -14,16 +14,9 @@ bool IsUnreservedUriByte(unsigned char ch) {
   return util::IsAsciiAlnum(static_cast<unsigned char>(ch)) != 0 || ch == '-' || ch == '_' || ch == '.' || ch == '~' || ch == '/';
 }
 
-}  // namespace
+}
 
 std::string FileUriForPath(const std::filesystem::path& path) {
-  // `lexically_normal()` costs ~12 allocations (a fresh path plus a component list
-  // holding a string per component) and `generic_string()` one more, and this runs
-  // three times per keystroke on the LSP sync path — once to invalidate the inlay
-  // generation, once for code lenses, once to resolve the open document — for a
-  // path the editor normalized when it opened the file. `PathTextNeedsNormalizing`
-  // is the allocation-free scan that says so, leaving the common case at the one
-  // allocation the result itself needs (TD-2026-08-06-159).
   std::filesystem::path normalized;
   const std::filesystem::path* source = &path;
   if (util::PathTextNeedsNormalizing(path.native())) {
@@ -50,34 +43,25 @@ std::optional<std::filesystem::path> PathFromFileUri(std::string_view uri) {
     return std::nullopt;
   }
 
-  // Split authority from path: after "file://" the authority runs up to the first
-  // '/'. Only an empty authority (file:///path) or the explicit local host
-  // (file://localhost/path) is a local file. A non-local authority such as
-  // file://server/share is a UNC/remote reference the editor must not silently
-  // treat as the relative path "server/share".
   std::string_view rest = uri.substr(kFileScheme.size());
   const std::size_t path_start = rest.find('/');
   if (path_start == std::string_view::npos) {
-    return std::nullopt;  // no path component
+    return std::nullopt;
   }
   const std::string_view authority = rest.substr(0, path_start);
   if (!authority.empty() && authority != "localhost") {
-    return std::nullopt;  // non-local authority
+    return std::nullopt;
   }
   const std::string_view encoded = rest.substr(path_start);
 
-  // Strict percent-decode: a malformed escape (e.g. %zz or a trailing %) rejects
-  // the whole URI rather than decoding to a path containing a literal '%'.
   std::optional<std::string> decoded = util::PercentDecodeStrict(encoded);
   if (!decoded || decoded->empty()) {
     return std::nullopt;
   }
-  // A decoded NUL can never appear in a legitimate path and would truncate
-  // downstream C-string uses; reject it.
   if (decoded->find('\0') != std::string::npos) {
     return std::nullopt;
   }
   return std::filesystem::path(*decoded).lexically_normal();
 }
 
-}  // namespace microide::workspace
+}

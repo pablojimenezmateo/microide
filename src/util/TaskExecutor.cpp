@@ -44,10 +44,6 @@ void TaskExecutor::Submit(std::string coalesce_key, Task task) {
       return;
     }
     if (!coalesce_key.empty()) {
-      // Drop still-queued work for the same subject: cancel its token (so a racing
-      // reader sees it obsolete) and remove it from the deque so the worker never
-      // wakes for it. Only queued entries live in pending_; an entry already
-      // popped into an active slot is intentionally untouched.
       for (auto it = pending_.begin(); it != pending_.end();) {
         if (it->coalesce_key == coalesce_key) {
           if (it->state != nullptr) it->state->cancelled.store(true);
@@ -57,9 +53,6 @@ void TaskExecutor::Submit(std::string coalesce_key, Task task) {
         }
       }
     }
-    // Counted before the worker can coalesce or cancel it, so
-    // enqueued-minus-run is the amount of submitted work that never ran. That
-    // gap is the signal; treating them as equal would hide it.
     AddPerformanceCounter(PerfCounterId::TaskExecutorTasksEnqueued);
     pending_.push_back(TaskEntry{.task = std::move(task),
                                  .state = std::move(state),
@@ -116,11 +109,6 @@ void TaskExecutor::WorkerMain(std::size_t slot) {
 
     CancellationToken token(entry.state);
     if (!token.IsCancellationRequested() && entry.task) {
-      // Exception firewall: background tasks touch the filesystem, allocation-heavy
-      // vectors, and regex/search state. An uncaught std::filesystem_error/bad_alloc
-      // would escape the std::thread entry point and std::terminate the whole IDE —
-      // and skip the active_states_ clear below, hanging WaitForIdle(). Swallow it
-      // here and keep the worker alive, matching SerialWorkQueue's firewall.
       try {
         AddPerformanceCounter(PerfCounterId::TaskExecutorTasksRun);
         entry.task(token);
@@ -150,4 +138,4 @@ void TaskExecutor::RequestShutdown() {
   cv_.notify_all();
 }
 
-}  // namespace microide::util
+}

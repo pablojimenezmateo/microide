@@ -41,4 +41,4 @@ SyntaxState SyntaxHighlighter::AdvanceState(std::string_view line,
   return runtime_syntax::AdvanceState(line, path, state, first_line);
 }
 
-}  // namespace microide::editor
+}

@@ -48,8 +48,6 @@ namespace {
 
 namespace remote = project::remote;
 
-// The AF_UNIX limit makes the usual long temp paths unusable for a socket, so the
-// daemon tests use a short directory of their own.
 class ShortTempDir {
  public:
   ShortTempDir() {
@@ -84,8 +82,6 @@ unsigned Mode(const std::filesystem::path& path) {
   return st.st_mode & 07777u;
 }
 
-// A missing directory is created 0700; an existing group-writable one is refused
-// with its mode and the expected mode, and never "fixed".
 void TestSocketDirIsCreatedPrivateAndBadModesAreRefused() {
   ShortTempDir temp;
   const std::filesystem::path dir = temp.path() / "a" / "server";
@@ -135,7 +131,6 @@ void TestSessionSurvivalReadsLogindAndLinger() {
   Expect(!remote::ReadSessionSurvival(root.path(), "../alice").linger, "a user name is not a path");
 }
 
-// Talk to a running server over its socket.
 struct Client {
   remote::RemotePeer peer;
   bool Connect(const std::filesystem::path& socket_dir) {
@@ -171,9 +166,6 @@ util::JsonValue Hello(std::string_view root, std::int64_t protocol = remote::kPr
       .protocol = protocol, .min_protocol = min_protocol, .release = "test", .root = std::string(root)});
 }
 
-// Several starters creating the same fresh socket directory at once all succeed:
-// one wins the mkdir, the rest see EEXIST and check what it made like any existing
-// directory. Losing that race failed the start ("cannot create ...: File exists").
 void TestConcurrentCallersCreateTheSocketDirTogether() {
   for (int round = 0; round < 20; ++round) {
     ShortTempDir temp;
@@ -197,18 +189,13 @@ void TestConcurrentCallersCreateTheSocketDirTogether() {
   }
 }
 
-// Processes whose argv is a `microide-server start` for `dir` and that are still
-// running: the daemons serving it (each starter exits once the socket answers).
 int DaemonsFor(const std::filesystem::path& dir) {
-  // The starters exit while this reads them: ReadProcFile and the error_code walk
-  // do not throw on a process that has just gone (an istreambuf_iterator over its
-  // /proc file did, with ESRCH -- a UBSan CI run).
   int count = 0;
   std::error_code ec;
   for (std::filesystem::directory_iterator it("/proc", ec), end; !ec && it != end; it.increment(ec)) {
     const std::string pid = it->path().filename().string();
     if (pid.empty() || pid.find_first_not_of("0123456789") != std::string::npos) {
-      continue;  // not a process
+      continue;
     }
     const std::string argv = server_fixture_detail::ReadProcFile(it->path() / "cmdline");
     const std::string stat = server_fixture_detail::ReadProcFile(it->path() / "stat");
@@ -223,16 +210,11 @@ int DaemonsFor(const std::filesystem::path& dir) {
   return count;
 }
 
-// A program a fake host's terminal ran names nothing of the fixture on its
-// command line -- only its environment says whose it is (HOME, the fake host's
-// home). The sweep matched command lines alone, and a terminal test's `yes` ran
-// at a full core for five days after its fixture was gone.
 void TestTheFixtureSweepEndsWhatAHostTerminalRan() {
   ShortTempDir temp;
   const std::filesystem::path home = temp.path() / "h";
   std::filesystem::create_directories(home);
   platform::AsyncSubprocess program;
-  // `env` execs the program: its command line is then `sleep 60`, nothing of the fixture.
   Expect(program.Start({"env", "HOME=" + home.string(), "sleep", "60"}), "a program starts on the host");
   const std::filesystem::path cmdline = "/proc/" + std::to_string(program.pid()) + "/cmdline";
   Expect(WaitUntil([&] { return server_fixture_detail::ReadProcFile(cmdline).starts_with("sleep"); },
@@ -243,12 +225,6 @@ void TestTheFixtureSweepEndsWhatAHostTerminalRan() {
          "the sweep ends it");
 }
 
-// Two projects reaching one fresh host at once each run `attach`, which starts a
-// daemon when none answers. Both found none, both started one, and the second's
-// bind unlinked the first's LIVE socket: two daemons, the projects split between
-// them, and every later connection -- `status`, the next launch's reattach -- only
-// ever reaching the second (TD-2026-10-28-414, found by its test's flake). One
-// daemon per socket directory, by a lock it holds for life.
 void TestConcurrentStartsLeaveOneDaemon() {
   ShortTempDir temp;
   const std::filesystem::path dir = temp.path() / "s";
@@ -272,7 +248,6 @@ void TestConcurrentStartsLeaveOneDaemon() {
     starter.join();
   }
   Expect(succeeded.load() == 6, "every start answers: " + std::to_string(succeeded.load()) + failures);
-  // A loser that found the socket answering has exited by now; give a slow one a moment.
   int daemons = DaemonsFor(dir);
   for (int i = 0; i < 100 && daemons > 1; ++i) {
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -282,10 +257,6 @@ void TestConcurrentStartsLeaveOneDaemon() {
   Expect(RunServer({"stop", "--socket-dir", dir.string()}).success(), "and it stops");
 }
 
-// `start` daemonizes and returns — and the pipe it was started with reaches EOF,
-// because the daemon does not hold the starter's stdio (or `ssh host -- … start`
-// would never return). Hello, status listing two workspaces, a refused handshake,
-// and a hand-started server that does not idle out.
 void TestStartedServerServesWorkspacesAndDoesNotHoldStdio() {
   ShortTempDir temp;
   const std::filesystem::path dir = temp.path() / "s";
@@ -316,7 +287,6 @@ void TestStartedServerServesWorkspacesAndDoesNotHoldStdio() {
              error->message.find("test") != std::string::npos,
          "an incompatible hello is refused naming both releases");
 
-  // A hand-started server outlives its idle timeout with nobody attached.
   a.peer.Stop();
   b.peer.Stop();
   old.peer.Stop();
@@ -331,9 +301,6 @@ void TestStartedServerServesWorkspacesAndDoesNotHoldStdio() {
          "stop removes the socket");
 }
 
-// `attach` starts a server on demand when none is running and relays the protocol
-// over its stdio; once the client goes and the idle timeout passes, the on-demand
-// server exits and removes its socket.
 void TestAttachStartsOnDemandAndTheServerIdlesOut() {
   ShortTempDir temp;
   const std::filesystem::path dir = temp.path() / "s";
@@ -372,11 +339,6 @@ void TestAttachStartsOnDemandAndTheServerIdlesOut() {
          "the on-demand server idles out and removes its socket");
 }
 
-// An on-demand server is started for a client that connects a moment later (attach
-// forks `start --on-demand`, waits for it, then connects). With a short idle
-// timeout it used to idle out in that moment on a loaded machine, and attach died
-// with "started, but cannot connect" (CI at 7bcdda4be). Until its first client has
-// come it waits; once one has come and gone it idles out on the timeout as before.
 void TestAnOnDemandServerWaitsForItsFirstClient() {
   ShortTempDir temp;
   const std::filesystem::path dir = temp.path() / "s";
@@ -384,7 +346,7 @@ void TestAnOnDemandServerWaitsForItsFirstClient() {
       RunServer({"start", "--on-demand", "--socket-dir", dir.string(), "--idle-timeout-ms", "50"});
   Expect(started.success(), "start --on-demand: exit " + std::to_string(started.exit_code) + " " +
                                 started.stderr_text);
-  std::this_thread::sleep_for(std::chrono::milliseconds(1000));  // twenty timeouts, no client yet
+  std::this_thread::sleep_for(std::chrono::milliseconds(1000));
   Expect(::access(remote::ServerSocketPath(dir).c_str(), F_OK) == 0,
          "with no client yet, the on-demand server is still there for it");
   {
@@ -417,10 +379,6 @@ void TestAnOnDemandServerWaitsForItsFirstClient() {
          "once its client has come and gone, it idles out on its timeout");
 }
 
-// A script polling `microide-server status` is an observer, not a client
-// (TD-2026-10-27-407): it used to restart an on-demand server's idle countdown at
-// every poll, keeping it alive for good. Polled every 100 ms against a 400 ms
-// timeout, the server idles out all the same.
 void TestPollingStatusDoesNotKeepAnOnDemandServerAlive() {
   ShortTempDir temp;
   const std::filesystem::path dir = temp.path() / "s";
@@ -437,28 +395,13 @@ void TestPollingStatusDoesNotKeepAnOnDemandServerAlive() {
   bool gone = false;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
   while (!gone && std::chrono::steady_clock::now() < deadline) {
-    (void)RunServer({"status", "--json", "--socket-dir", dir.string()});  // one ask, no 1 s wait
+    (void)RunServer({"status", "--json", "--socket-dir", dir.string()});
     gone = ::access(remote::ServerSocketPath(dir).c_str(), F_OK) != 0;
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
   Expect(gone, "polled with status every 100 ms, the on-demand server still idles out");
 }
 
-// /proc/net/tcp{,6}: this user's LISTEN sockets on a loopback or wildcard address,
-// whatever the table's spacing; another user's, a connected socket and one bound to
-// an outside address are not forwardable ports.
-// The host's ephemeral range, as the kernel prints net.ipv4.ip_local_port_range,
-// and this host's own read the same way (TD-2026-11-02-429 item 4: the client used
-// Linux's default even on a host that had moved it).
-// file/upload (TD-2026-11-02-428 item 5): a file from the editor's machine that
-// is not in the project -- a screenshot dropped onto a host terminal -- lands on
-// the host, privately, under the name it had, and its host path comes back for
-// the terminal to type. Two uploads of one name do not collide; a name that is a
-// path is refused, so nothing escapes the uploads directory.
-// state/put and state/get: a small text one client leaves with the workspace for
-// the next -- what a project had open, moving between machines. Per workspace
-// root, private to the user, kept across connections; a key that is a path and a
-// text past the cap are refused, so nothing is written outside its directory.
 void TestWorkspaceStateIsKeptForTheNextClient() {
   ShortServerDir dir;
   StartServer(dir);
@@ -514,8 +457,6 @@ void TestWorkspaceStateIsKeptForTheNextClient() {
   }
   first_client.reset();
 
-  // Another machine connects to the same workspace: it reads what was left; a
-  // different workspace on the host has its own.
   auto second_client = connect(root);
   remote::RemoteWorkspace second(std::make_shared<remote::RemoteConnection>(second_client));
   Expect(get(second, "session").first == std::optional<std::string>("replaced"),
@@ -560,7 +501,7 @@ void TestUploadPutsAFileOnTheHostPrivately() {
     });
     return answered.get_future().get();
   };
-  const std::string png(200 * 1024, '\x89');  // several WriteData chunks
+  const std::string png(200 * 1024, '\x89');
   const auto [first, first_error] = upload("Screen shot.png", png);
   Expect(first.has_value(), "uploaded: " + first_error);
   const std::filesystem::path path(first.value_or(""));
@@ -578,8 +519,6 @@ void TestUploadPutsAFileOnTheHostPrivately() {
   }
   Expect(!std::filesystem::exists(dir.path() / "escape") && !std::filesystem::exists(dir.scratch() / "escape"),
          "and nothing escaped");
-  // Any name the filesystem takes is taken (a 230-byte screenshot name was refused
-  // at 200 as "needs a file name"); one it cannot take says so.
   const std::string long_name = std::string(226, 'n') + ".png";
   const auto [long_ok, long_error] = upload(long_name, "x");
   Expect(long_ok.has_value() && std::filesystem::path(*long_ok).filename() == long_name,
@@ -630,7 +569,6 @@ void TestListeningPortsParseProcNetTcp() {
          "::1, :: and ::ffff:127.0.0.1, not a global address");
 }
 
-// One SOCK_DIAG_BY_FAMILY reply, built the way the kernel frames it.
 class SockDiagReply {
  public:
   SockDiagReply& Listener(int family, const std::vector<std::uint8_t>& address, std::uint16_t port,
@@ -666,8 +604,6 @@ class SockDiagReply {
   std::vector<std::uint8_t> bytes_;
 };
 
-// The netlink source keeps exactly what the /proc one keeps (the shared address
-// rule): this user's LISTEN sockets on a loopback or wildcard address.
 void TestListeningPortsParseSockDiag() {
   const std::vector<std::uint8_t> v4_loopback{127, 0, 0, 1}, v4_any{0, 0, 0, 0}, v4_lan{10, 0, 0, 10};
   std::vector<std::uint8_t> v6_loopback(16, 0), v6_any(16, 0), v6_mapped(16, 0), v6_global(16, 0);
@@ -681,9 +617,9 @@ void TestListeningPortsParseSockDiag() {
   SockDiagReply reply;
   reply.Listener(AF_INET, v4_loopback, 3000, 1000)
       .Listener(AF_INET, v4_any, 8080, 1000)
-      .Listener(AF_INET, v4_loopback, 8081, 1001)                   // another user's
-      .Listener(AF_INET, v4_loopback, 8082, 1000, TCP_ESTABLISHED)  // not listening
-      .Listener(AF_INET, v4_lan, 8083, 1000)                        // an outside address
+      .Listener(AF_INET, v4_loopback, 8081, 1001)
+      .Listener(AF_INET, v4_loopback, 8082, 1000, TCP_ESTABLISHED)
+      .Listener(AF_INET, v4_lan, 8083, 1000)
       .Listener(AF_INET6, v6_loopback, 5432, 1000)
       .Listener(AF_INET6, v6_any, 9000, 1000)
       .Listener(AF_INET6, v6_mapped, 9001, 1000)
@@ -703,7 +639,6 @@ void TestListeningPortsParseSockDiag() {
              server::PortsOf(listeners) == std::vector<std::uint16_t>{3000},
          "a reply without NLMSG_DONE asks for the next read, keeping what it held");
 
-  // A length past the buffer cannot be framed: the dump ends, what came before stays.
   SockDiagReply truncated;
   truncated.Listener(AF_INET, v4_loopback, 3000, 1000).Listener(AF_INET, v4_any, 8080, 1000);
   listeners.clear();
@@ -713,9 +648,6 @@ void TestListeningPortsParseSockDiag() {
          "a truncated message ends the dump without reading past the buffer");
 }
 
-// Against the running kernel: both sources see a listener this test opens, and
-// they agree on the whole list (retried: another process on the machine may open
-// or close a listener between the two reads).
 void TestListeningPortsSourcesAgreeOnTheLiveHost() {
   const int listener = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
   Expect(listener >= 0, "a TCP socket");
@@ -728,7 +660,6 @@ void TestListeningPortsSourcesAgreeOnTheLiveHost() {
              ::getsockname(listener, reinterpret_cast<sockaddr*>(&address), &length) == 0,
          "listening on 127.0.0.1:0");
   const std::uint16_t port = ntohs(address.sin_port);
-  // The socket's own inode, the number /proc/<pid>/fd links name it by.
   struct stat st{};
   Expect(::fstat(listener, &st) == 0, "the listener's inode");
   const server::Listener mine{.port = port, .inode = static_cast<std::uint64_t>(st.st_ino)};
@@ -753,8 +684,6 @@ void TestListeningPortsSourcesAgreeOnTheLiveHost() {
   ::close(listener);
 }
 
-// The context switches of this process's thread named `name` (the table's loop
-// names itself), or -1 when there is no such thread.
 long ThreadSwitches(const std::string& name) {
   for (const auto& task : std::filesystem::directory_iterator("/proc/self/task")) {
     std::ifstream comm(task.path() / "comm");
@@ -774,11 +703,6 @@ long ThreadSwitches(const std::string& name) {
   return -1;
 }
 
-// Once every process it ran has exited and been released, the table's loop sleeps
-// until something happens. The exit marks lived in a map local to the loop that
-// Release could not reach, so after the first remote process ever exited (a git
-// the sidebar ran) the loop polled twice a second for the server's whole life, and
-// the map grew by one entry per process (TD-2026-10-28-418).
 void TestAProcessTableWithNothingRunningSleeps() {
   std::mutex mutex;
   std::condition_variable exited;
@@ -804,7 +728,7 @@ void TestAProcessTableWithNothingRunningSleeps() {
     lock.unlock();
     table.Release(spawned.handle);
   }
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));  // the release's own wake
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
   const long before = ThreadSwitches("srv-processes");
   Expect(before >= 0, "the table's loop names its thread");
   std::this_thread::sleep_for(std::chrono::milliseconds(1500));
@@ -812,11 +736,6 @@ void TestAProcessTableWithNothingRunningSleeps() {
   Expect(woke <= 1, "an idle table does not poll: woke " + std::to_string(woke) + " times in 1.5 s");
 }
 
-// The git sampler is event-driven (TD-2026-10-28-418 item 4): it notices a commit,
-// a commit on a branch checked out since it started and a repository created under
-// it, each well inside a safety interval it never reaches here -- and between them
-// its thread sleeps. It stat-polled once a second, an idle server's largest wakeup
-// source.
 void TestTheGitSamplerSleepsUntilTheRepositoryMoves() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "repo";
@@ -849,7 +768,7 @@ void TestTheGitSamplerSleepsUntilTheRepositoryMoves() {
   git({"init", "-q", "-b", "main"}, "init");
   git({"commit", "-q", "--allow-empty", "-m", "one"}, "first commit");
   expect_past(seen, "a repository created under the root is noticed");
-  std::this_thread::sleep_for(std::chrono::milliseconds(400));  // the burst settles
+  std::this_thread::sleep_for(std::chrono::milliseconds(400));
   const long before = ThreadSwitches("srv-git");
   Expect(before >= 0, "the sampler names its thread");
   std::this_thread::sleep_for(std::chrono::milliseconds(1500));
@@ -866,11 +785,6 @@ void TestTheGitSamplerSleepsUntilTheRepositoryMoves() {
   git({"commit", "-q", "--allow-empty", "-m", "three"}, "commit on the new branch");
   expect_past(seen, "a commit on the branch checked out since is noticed");
 
-  // An orphan branch in a directory that does not exist yet, whose ref is then
-  // written from outside. refs/heads/later/ is not watched (it did not exist), but
-  // git takes HEAD.lock in the gitdir whenever it updates the ref HEAD names --
-  // with reflogs off too -- and the gitdir is watched. Pinned here because the
-  // sampler relies on it.
   seen = count();
   git({"checkout", "-q", "--orphan", "later/orphan"}, "an orphan branch");
   expect_past(seen, "the orphan checkout is noticed");
@@ -880,11 +794,6 @@ void TestTheGitSamplerSleepsUntilTheRepositoryMoves() {
   expect_past(seen, "a ref created in a directory that did not exist is noticed");
 }
 
-// A connection that dies before the hello carries the host's own reason. The
-// attach command's stderr went wherever the editor's did, so a server refusing to
-// start ("... has mode 0775 ...; a parent of the socket directory must ...")
-// reached the user as "the peer closed the connection" and nothing else (found
-// standing up tools/qa/local-sshd.sh, whose state directory was group-writable).
 void TestAConnectionThatDiesEarlyReportsWhatTheHostSaid() {
   auto client = remote::RemoteServerClient::Create();
   std::string error;
@@ -893,7 +802,6 @@ void TestAConnectionThatDiesEarlyReportsWhatTheHostSaid() {
          "a command that exits before the hello does not connect");
   Expect(error.find("the socket directory is unsafe") != std::string::npos,
          "the error carries what the command printed: " + error);
-  // And a command that connects keeps working: its stderr is sealed, not grown.
   TemporaryDirectory root;
   auto good = remote::RemoteServerClient::Create();
   Expect(good->ConnectCommand({Server(), "serve-stdio"},
@@ -901,8 +809,6 @@ void TestAConnectionThatDiesEarlyReportsWhatTheHostSaid() {
          "a real server still connects: " + error);
 }
 
-// ports/subscribe end to end: the answer is what listens now, and a port this
-// user starts listening on afterwards is pushed (the sampler's 2 s period).
 void TestPortsSubscribePushesANewListener() {
   TemporaryDirectory root;
   auto client = remote::RemoteServerClient::Create();
@@ -946,13 +852,10 @@ void TestPortsSubscribePushesANewListener() {
   }
   ::close(fd);
 
-  // A process the workspace spawned listens: the push names the workspace's root
-  // as the port's owner, so the client's row says which project it came from.
-  // `python3 -c` is the smallest portable listener with a port of the kernel's choosing.
   const remote::RemoteServerClient::Spawned listener = client->Spawn(
       {"python3", "-c",
        "import socket,time\ns=socket.socket()\ns.bind(('127.0.0.1',0))\ns.listen()\ntime.sleep(60)"},
-      root.path(), {}, /*keep_on_detach=*/false, {});
+      root.path(), {}, false, {});
   Expect(listener.handle != 0, "the listener spawns: " + listener.error);
   std::string owned_root;
   const bool owned_pushed = WaitUntil(
@@ -967,10 +870,6 @@ void TestPortsSubscribePushesANewListener() {
         return false;
       },
       std::chrono::seconds(20), std::chrono::milliseconds(20));
-  // What the host did push, for the run where this fails (CI, ubsan, never here):
-  // the ports say whether the process listened at all, the owners whether any
-  // was attributed, and the first listener's port whether the kernel gave the
-  // spawned one the same number.
   std::string last_push;
   {
     std::lock_guard lock(mutex);
@@ -989,11 +888,6 @@ void TestPortsSubscribePushesANewListener() {
   client->Signal(listener.handle, "KILL");
 }
 
-// A port number is not a listener. One closes and a workspace's process binds
-// the same number before the next 2 s sample: the set of PORTS is what it was,
-// so the sampler saw no change, attributed nothing, and the port stayed nobody's
-// for as long as the process listened (the reverse leaves a dead owner on a
-// port something else took). The sampler compares sockets -- port and inode.
 void TestAPortTakenOverBetweenSamplesGetsItsOwner() {
   TemporaryDirectory root;
   auto client = remote::RemoteServerClient::Create();
@@ -1033,14 +927,12 @@ void TestAPortTakenOverBetweenSamplesGetsItsOwner() {
     std::lock_guard lock(mutex);
     Expect(!pushed_roots.contains(port), "and is nobody's project's");
   }
-  // A sample just ran, so the next is two seconds away: the port changes hands
-  // well inside that.
   ::close(fd);
   const remote::RemoteServerClient::Spawned listener = client->Spawn(
       {"python3", "-c",
        "import socket,time\ns=socket.socket()\ns.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\n"
        "s.bind(('127.0.0.1'," + std::to_string(port) + "))\ns.listen()\ntime.sleep(60)"},
-      root.path(), {}, /*keep_on_detach=*/false, {});
+      root.path(), {}, false, {});
   Expect(listener.handle != 0, "the workspace's listener spawns: " + listener.error);
   std::string seen;
   const bool owned = WaitUntil(
@@ -1055,14 +947,8 @@ void TestAPortTakenOverBetweenSamplesGetsItsOwner() {
   client->Signal(listener.handle, "KILL");
 }
 
-}  // namespace
+}
 
-// The last reference to a client can be released inside one of its own I/O-thread
-// callbacks: here a response handler holds it, and the peer destroys the handler
-// on that thread once it has run. The destructor joins the I/O thread, which
-// cannot join itself -- std::terminate with no exception in flight, which is what
-// CI's ASan job hit in two remote kernel tests (TD-2026-10-21-373, a terminal
-// channel kept alive across a dropped link by its frame callback's weak lock).
 void TestAClientReleasedOnItsOwnThreadIsDestroyedElsewhere() {
   TemporaryDirectory root;
   auto client = remote::RemoteServerClient::Create();
@@ -1081,7 +967,7 @@ void TestAClientReleasedOnItsOwnThreadIsDestroyedElsewhere() {
                                   answered = true;
                                 }) != 0,
          "the request is sent");
-  client.reset();  // the handler holds the only reference now
+  client.reset();
   Expect(WaitUntil([&] { return answered.load(); }, std::chrono::seconds(10)), "the ping is answered");
   Expect(released_on_io_thread.load(), "the handler ran on the client's I/O thread");
   Expect(WaitUntil([&] { return weak.expired(); }, std::chrono::seconds(10)),
@@ -1125,4 +1011,4 @@ void RegisterRemoteServerTests(std::vector<TestCase>& tests) {
           TestAClientReleasedOnItsOwnThreadIsDestroyedElsewhere);
 }
 
-}  // namespace microide::tests
+}

@@ -19,51 +19,19 @@
 
 namespace microide::editor {
 
-// The bracket cap must not exceed the tokenization cap: past the latter a line has
-// no syntax tokens, so a brace inside a string literal is indistinguishable from a
-// real one and the folds derived from it would be arbitrary rather than merely
-// approximate. See FoldingModel::kMaxBracketScanLineBytes.
 static_assert(FoldingModel::kMaxBracketScanLineBytes <=
                   runtime_syntax::kMaxHighlightLineBytes,
               "a line that folds must be a line that can be tokenized");
 
 namespace {
 
-// Returned by MeasureLineIndent for a line whose every byte is a space or a tab
-// (including an empty line). It doubles as the "blank or indent only" predicate:
-// nothing else can produce it, so callers must not re-derive that separately.
 constexpr std::size_t kSentinelIndent = static_cast<std::size_t>(-1);
 
-// Cache slots for `line_indent_`. `kBlankIndent` is the stored form of
-// `kSentinelIndent`; `kUnmeasuredIndent` marks a line whose width has not been
-// measured since an edit touched it, so a read measures it then. Both sit above
-// any width a real line can produce (a width is bounded by the line's byte count
-// times the tab size, and lines are 32-bit-addressed).
 constexpr std::uint32_t kBlankIndent = std::numeric_limits<std::uint32_t>::max();
 constexpr std::uint32_t kUnmeasuredIndent = kBlankIndent - 1;
 
-// Block partition tuning.
-//
-// The obvious trade is the rebuild of the block an edit lands in (O(block))
-// against the number of words a walk applies (O(document / block)), which would
-// put the optimum near sqrt(document). But a rebuild reads cached per-line arrays
-// rather than document bytes -- about 4 ns a line -- so it is nearly free at any
-// size in this range, while each block costs a handful of ALLOCATIONS for its
-// word lists the first time it is built. That is the binding cost: at 256 lines,
-// first-touching a 50k-line file added ~750 allocations, enough to fail a perf
-// gate on its own. Fewer, larger blocks buy that back for a few microseconds of
-// extra line walking per refresh.
 constexpr std::size_t kTargetBlockLines = 1024;
 
-// Indent of line `index`, reading only its leading whitespace, with the sentinel
-// this file's caches store for a blank or whitespace-only line.
-//
-// `MeasureIndent(lines[index], tab_size)` asked for the whole line to look at its
-// first few bytes; on a piece-tree source that materializes any line that spans
-// pieces -- every edited line -- so a fold refresh copied a minified bundle's
-// single line on every keystroke (TD-2026-08-05-133). The chunked scan lives in
-// LineIndentScan.h because the indent guides ask the same question and had grown
-// their own byte-identical copy of it.
 std::size_t MeasureLineIndent(LineSpan lines, std::size_t index, std::size_t tab_size) {
   if (tab_size == 0) tab_size = 1;
   bool found_content = false;
@@ -71,23 +39,12 @@ std::size_t MeasureLineIndent(LineSpan lines, std::size_t index, std::size_t tab
   return found_content ? visual : kSentinelIndent;
 }
 
-// Distinct bracket bytes the SWAR skip below can filter on. Real inputs ship 3-4
-// pairs (6-8 bytes); past this the skip falls back to the scalar loop, which is
-// correct for any set, just slower.
 constexpr std::size_t kMaxSwarBracketBytes = 8;
 
-// `byte` replicated into all eight lanes of a 64-bit word.
 constexpr std::uint64_t LowOnesForByte(unsigned char byte) {
   return 0x0101010101010101ULL * static_cast<std::uint64_t>(byte);
 }
 
-// True when the bracket at `column` is inside a string or comment and must not
-// take part in fold matching.
-//
-// When the syntax-highlight LRU is cold for a line, `tokens` is empty and the
-// bracket is **not** suppressed. The alternative was forcing full syntax
-// highlighting of every scanned line, which thrashed the 256-entry LRU on large
-// documents (perf round-4 Finding 1).
 inline bool IsSuppressedBracketAt(std::span<const SyntaxTokenKind> tokens, std::size_t column) {
   if (column >= tokens.size()) {
     return false;
@@ -96,16 +53,11 @@ inline bool IsSuppressedBracketAt(std::span<const SyntaxTokenKind> tokens, std::
   return kind == SyntaxTokenKind::String || kind == SyntaxTokenKind::Comment;
 }
 
-}  // namespace
+}
 
-// 256-entry table: `KindFor(byte)` selects which pair a byte belongs to (1..31),
-// or 0 when the byte is not a bracket at all. The bracket-scan inner loop runs
-// once per source byte, so a linear scan of the pair vector would be paid per
-// byte; the lookup makes the per-byte check a single load and compare.
 class FoldingModel::BracketTable {
  public:
   explicit BracketTable(const std::vector<std::pair<char, char>>& pairs) {
-    // Cap at 31 distinct pairs; real inputs ship 3-4.
     const std::size_t capped = std::min<std::size_t>(pairs.size(), 31);
     for (std::size_t i = 0; i < capped; ++i) {
       const std::uint8_t kind = static_cast<std::uint8_t>(i + 1);
@@ -121,9 +73,6 @@ class FoldingModel::BracketTable {
       pair_for_kind_[kind] = pair;
       any_bracket_ = true;
     }
-    // Collect the distinct bracket bytes for the SWAR filter. `swar_covers_all_`
-    // gates it: the filter is only sound when every bracket byte is represented,
-    // so an oversized set disables the fast skip rather than dropping brackets.
     swar_covers_all_ = any_bracket_;
     for (std::size_t byte = 0; byte < kind_for_byte_.size(); ++byte) {
       if (kind_for_byte_[byte] == 0) {
@@ -143,14 +92,6 @@ class FoldingModel::BracketTable {
     return pair_for_kind_[kind];
   }
 
-  // Index of the first byte at/after `from` that could be a bracket, or
-  // `line.size()`.
-  //
-  // Source is almost entirely non-bracket bytes, so filter eight at a time with
-  // the has-zero-byte trick against each distinct bracket byte, then resolve
-  // inside a flagged word with the exact table. The word test can flag a word
-  // with no real bracket in it (borrow across byte lanes); it can never miss
-  // one, and a false flag costs only the scalar re-scan of those eight bytes.
   std::size_t NextCandidate(std::string_view line, std::size_t from) const {
     constexpr std::uint64_t kHighBits = 0x8080808080808080ULL;
     constexpr std::uint64_t kLowOnes = 0x0101010101010101ULL;
@@ -178,14 +119,6 @@ class FoldingModel::BracketTable {
     return line.size();
   }
 
-  // Append every bracket byte of line `index` to `out`.
-  //
-  // Asks the LENGTH before the BYTES. `ScanLine(lines[index], out)` applied the
-  // cap correctly and still paid for the line: `operator[]` materializes a
-  // piece-tree line that spans pieces (every edited line), so the over-cap line
-  // this exists to skip was copied in full and then dropped, once per keystroke
-  // on a file with no line breaks in it (TD-2026-08-05-133). LineLength is a pair
-  // of offset lookups and reads no text.
   void ScanLineAt(LineSpan lines, std::size_t index, std::vector<CachedBracket>& out) const {
     if (lines.LineLength(index) > kMaxBracketScanLineBytes) {
       util::AddPerformanceCounter(util::PerfCounterId::EditorFoldBracketLinesSkippedTooLong);
@@ -194,14 +127,6 @@ class FoldingModel::BracketTable {
     ScanLine(lines[index], out);
   }
 
-  // Append every bracket byte on `line` to `out`.
-  //
-  // A line past `kMaxBracketScanLineBytes` contributes nothing: see that cap for
-  // why folds derived from such a line were arbitrary anyway. This is the single
-  // point the cap is applied, so both the incremental splice and the extend path
-  // get it and neither can drift from the other. Callers holding a `LineSpan`
-  // must go through `ScanLineAt`, which applies the same cap without reading the
-  // line first.
   void ScanLine(std::string_view line, std::vector<CachedBracket>& out) const {
     if (line.size() > kMaxBracketScanLineBytes) {
       util::AddPerformanceCounter(util::PerfCounterId::EditorFoldBracketLinesSkippedTooLong);
@@ -222,19 +147,11 @@ class FoldingModel::BracketTable {
   bool any_bracket_ = false;
 };
 
-// Resolves "is the bracket at this column inside a string or comment?" without a
-// hash probe per line.
-//
-// Only lines in the syntax highlighter's LRU (<= 256 entries) can be suppressed
-// at all, and a walk visits lines in increasing order, so a sorted list of those
-// line indices plus a cursor answers it in O(1) amortised.
 class FoldingModel::SuppressionCursor {
  public:
   SuppressionCursor(const TextViewport* viewport, const std::vector<std::size_t>& sorted_lines)
       : viewport_(viewport), lines_(sorted_lines) {}
 
-  // Tokens for `line_index` if it is one of the cached lines, else empty. Must be
-  // called with non-decreasing `line_index`.
   std::span<const SyntaxTokenKind> TokensFor(std::size_t line_index) {
     if (viewport_ == nullptr) {
       return {};
@@ -256,15 +173,10 @@ class FoldingModel::SuppressionCursor {
   std::size_t cursor_ = 0;
 };
 
-// ---------------------------------------------------------------------------
-// Per-line caches
-// ---------------------------------------------------------------------------
-
 void FoldingModel::SyncLineIndentCache(std::size_t line_count, std::size_t tab_size,
                                        const LineEditSpan& edit_span) {
   util::PerformanceTrace::Scope perf_scope("FoldingModel::SyncLineIndentCache");
   const std::size_t effective_tab_size = tab_size == 0 ? 1 : tab_size;
-  // Widths are measured against a tab size, so a change invalidates all of them.
   const bool tab_size_changed = line_indent_tab_size_ != effective_tab_size;
   line_indent_tab_size_ = effective_tab_size;
 
@@ -272,21 +184,13 @@ void FoldingModel::SyncLineIndentCache(std::size_t line_count, std::size_t tab_s
   const std::size_t current_end = edit_span.ResolvedCurrentEnd(line_count);
   const std::size_t begin = edit_span.begin();
 
-  // The span claims cache[cached_end, size) and document[current_end, line_count)
-  // are the same lines, so those two suffixes must be the same length. If they
-  // are not, an edit reached the document without being reported and nothing
-  // cached can be trusted -- rebuild rather than splice onto a lie.
-  // Both ends at or past the begin: each is clamped to its own side's length, so
-  // a span the document contradicts (it has fewer lines than the span starts at)
-  // resolved its current end below the begin, and `current_end - begin` below
-  // wrapped to ~2^64 lines to insert (soak e041d436ae59: std::length_error).
   const bool splice_is_sound = !tab_size_changed && !edit_span.empty() &&
                                begin <= cached_end && begin <= current_end &&
                                begin <= line_indent_.size() &&
                                line_indent_.size() - cached_end == line_count - current_end;
 
   if (edit_span.empty() && !tab_size_changed && line_indent_.size() == line_count) {
-    return;  // nothing changed since the last sync
+    return;
   }
   if (!splice_is_sound) {
     line_indent_.assign(line_count, kUnmeasuredIndent);
@@ -296,8 +200,6 @@ void FoldingModel::SyncLineIndentCache(std::size_t line_count, std::size_t tab_s
   const std::size_t removed = cached_end - begin;
   const std::size_t inserted = current_end - begin;
   if (removed == inserted) {
-    // In-line edit: no suffix entry moves, so overwrite in place rather than
-    // memmoving the tail twice. This is the dominant keystroke.
     std::fill(line_indent_.begin() + static_cast<std::ptrdiff_t>(begin),
               line_indent_.begin() + static_cast<std::ptrdiff_t>(cached_end), kUnmeasuredIndent);
   } else {
@@ -317,7 +219,6 @@ std::uint32_t FoldingModel::IndentAt(LineSpan lines, std::size_t line, std::size
   util::AddPerformanceCounter(util::PerfCounterId::EditorFoldIndentLinesMeasured);
   budget.Spend();
   const std::size_t measured = MeasureLineIndent(lines, line, tab_size);
-  // Clamp so a pathological width can never collide with a reserved slot.
   slot = measured == kSentinelIndent
              ? kBlankIndent
              : static_cast<std::uint32_t>(std::min<std::size_t>(measured, kUnmeasuredIndent - 1));
@@ -325,9 +226,6 @@ std::uint32_t FoldingModel::IndentAt(LineSpan lines, std::size_t line, std::size
 }
 
 std::size_t FoldingModel::EventIndexForLine(std::size_t line) const {
-  // Blocks carry their own event totals, so this is a walk over ~200 blocks plus
-  // the lines of one block rather than a prefix sum over every line of the
-  // document (which a mid-file keystroke used to pay two or three times).
   EnsureBlockStarts();
   if (blocks_.empty()) {
     return 0;
@@ -350,8 +248,6 @@ void FoldingModel::SyncLineBracketCache(LineSpan lines, const BracketTable& tabl
   util::PerformanceTrace::Scope perf_scope("FoldingModel::SyncLineBracketCache");
   const std::size_t line_count = lines.size();
 
-  // A pair-set change (a language switch) changes which bytes are recorded, so
-  // every cached column becomes suspect.
   if (pairs_changed) {
     bracket_cache_pairs_ = pairs;
     line_brackets_.clear();
@@ -361,18 +257,6 @@ void FoldingModel::SyncLineBracketCache(LineSpan lines, const BracketTable& tabl
   }
   SpliceLineBracketCache(lines, table, edit_span);
   if (bracket_cache_valid_through_ > line_count) {
-    // Still cached past the document's end: the line count moved with no extent
-    // that says where (or one that does not add up), and SyncBlocks repartitions
-    // for exactly those. Keep what the document still covers.
-    //
-    // AFTER the splice, never before it. A deletion the extent describes takes
-    // its own lines out of the cache, and the cache then ends where the document
-    // does. Cutting to the new line count first dropped the document's LAST
-    // lines instead -- lines of later blocks, whose event totals an incremental
-    // SyncBlocks keeps -- and rescanning them added their brackets to those
-    // totals a second time: every block after one counted twice read the event
-    // array too far in (wrong folds, and an index past its end: soak
-    // fe3e0094d24a).
     const std::size_t keep = line_count;
     std::size_t events = 0;
     for (std::size_t i = 0; i < keep; ++i) {
@@ -395,8 +279,6 @@ void FoldingModel::SpliceLineBracketCache(LineSpan lines, const BracketTable& ta
   const std::size_t current_end = edit_span.current_end();
   if (cached_end == LineEditSpan::kToEnd || current_end == LineEditSpan::kToEnd ||
       cached_end > bracket_cache_valid_through_ || current_end > line_count) {
-    // The changed window reaches past what is cached (or has no describable end),
-    // so nothing below the edit can be carried across. Keep the prefix.
     const std::size_t keep = begin;
     std::size_t events = 0;
     for (std::size_t i = 0; i < keep; ++i) {
@@ -408,12 +290,7 @@ void FoldingModel::SpliceLineBracketCache(LineSpan lines, const BracketTable& ta
     return;
   }
 
-  // Rescan just the replaced lines and splice both arrays. Counts plus one flat
-  // event array means this is two memmoves and no offset fixup pass.
   const std::size_t first_event = EventIndexForLine(begin);
-  // Derived from `first_event`, not walked from 0 again: both are prefix sums
-  // over the same array and `begin <= cached_end`, so the second index is the
-  // first plus the counts of the replaced window -- usually one or two lines.
   std::size_t last_event = first_event;
   for (std::size_t line = begin; line < cached_end; ++line) {
     last_event += line_bracket_count_[line];
@@ -472,10 +349,6 @@ bool FoldingModel::ExtendBracketCache(LineSpan lines, const BracketTable& table,
   }
   return true;
 }
-
-// ---------------------------------------------------------------------------
-// Block partition
-// ---------------------------------------------------------------------------
 
 void FoldingModel::EnsureBlockStarts() const {
   if (!block_starts_dirty_) {
@@ -542,8 +415,6 @@ void FoldingModel::SyncBlocks(std::size_t line_count, const LineEditSpan& edit_s
   }
   if (edit_span.empty()) {
     if (document_line_count_ != line_count) {
-      // The line count moved with no reported extent: nothing cached can be
-      // trusted about where the change landed.
       RepartitionAll(line_count);
     }
     return;
@@ -552,7 +423,6 @@ void FoldingModel::SyncBlocks(std::size_t line_count, const LineEditSpan& edit_s
   const std::size_t begin = edit_span.begin();
   const std::size_t cached_end = edit_span.ResolvedCachedEnd(document_line_count_);
   const std::size_t current_end = edit_span.ResolvedCurrentEnd(line_count);
-  // A span the document contradicts (see SyncLineIndentCache): repartition.
   if (begin > cached_end || begin > current_end || begin > document_line_count_ ||
       cached_end > document_line_count_ || current_end > line_count ||
       document_line_count_ - cached_end != line_count - current_end) {
@@ -582,9 +452,6 @@ void FoldingModel::SyncBlocks(std::size_t line_count, const LineEditSpan& edit_s
       region_new_lines == 0 ? 0 : (region_new_lines + kTargetBlockLines - 1) / kTargetBlockLines;
 
   if (new_block_count != old_block_count) {
-    // The edited region no longer partitions into the same number of blocks.
-    // Splicing the block vector is a memmove over ~200 small records, which is
-    // still nothing next to re-deriving every word.
     blocks_.erase(blocks_.begin() + static_cast<std::ptrdiff_t>(first_block),
                   blocks_.begin() + static_cast<std::ptrdiff_t>(last_block + 1));
     blocks_.insert(blocks_.begin() + static_cast<std::ptrdiff_t>(first_block), new_block_count,
@@ -600,18 +467,12 @@ void FoldingModel::SyncBlocks(std::size_t line_count, const LineEditSpan& edit_s
   }
   block_starts_dirty_ = true;
   document_line_count_ = line_count;
-  // Everything before the edited region is untouched, so the memoised state at
-  // the START of `first_block` still holds; the next boundary does not.
   InvalidatePrefixFrom(first_block + 1);
   EnsureBlockStarts();
   for (std::size_t i = 0; i < new_block_count; ++i) {
     RecomputeBlockEventCount(first_block + i);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Block summaries
-// ---------------------------------------------------------------------------
 
 bool FoldingModel::EnsureBlockSummary(LineSpan lines, const ComputeOptions& options,
                                       const BracketTable& table, std::size_t block_index,
@@ -633,9 +494,6 @@ bool FoldingModel::EnsureBlockSummary(LineSpan lines, const ComputeOptions& opti
   util::AddPerformanceCounter(util::PerfCounterId::EditorFoldBlockSummariesBuilt);
   util::AddPerformanceCounter(util::PerfCounterId::EditorFoldBlockSummaryLines, end - start);
 
-  // Built into reused scratch and `assign`ed in below, so a block costs one
-  // allocation per non-empty list rather than a push_back growth series -- ~2900
-  // extra allocations across a 50k-line file, which is a perf gate on its own.
   build_bracket_closers_.clear();
   build_bracket_openers_.clear();
   build_indent_dedents_.clear();
@@ -643,18 +501,6 @@ bool FoldingModel::EnsureBlockSummary(LineSpan lines, const ComputeOptions& opti
   block.last_nonblank = kNoLine;
 
   if (table.any()) {
-    // Reduce the block's bracket events to (closers reaching before it, openers
-    // still open at its end). Pairs matched INSIDE the block are deliberately
-    // dropped: a fold whose opener and closer both sit in a block outside the
-    // resolved window is not something any query can ask for, and the window
-    // itself is walked line by line.
-    //
-    // Suppression (string/comment brackets) is deliberately NOT applied here.
-    // The block word is cached across frames while the syntax-highlight LRU it
-    // would consult changes as the user *scrolls*, so baking a suppression
-    // decision into the word would pin whatever happened to be highlighted when
-    // the block was first built. The window walk, which is redone per resolve,
-    // applies suppression to the lines that actually matter.
     std::vector<StackBracket>& stack = build_bracket_stack_;
     stack.clear();
     std::size_t event = event_index;
@@ -664,7 +510,7 @@ bool FoldingModel::EnsureBlockSummary(LineSpan lines, const ComputeOptions& opti
         const CachedBracket& bracket = line_brackets_[event + i];
         const std::uint8_t kind = table.KindFor(static_cast<unsigned char>(bracket.byte));
         if (kind == 0) {
-          continue;  // not a bracket under the current pair set
+          continue;
         }
         const auto& pair = table.PairForKind(kind);
         if (pair.first == pair.second) {
@@ -677,8 +523,6 @@ bool FoldingModel::EnsureBlockSummary(LineSpan lines, const ComputeOptions& opti
           if (stack.back().close == bracket.byte) {
             stack.pop_back();
           }
-          // A closer that does not match the top is dropped, exactly as the
-          // line-by-line scanner drops it.
         } else {
           build_bracket_closers_.push_back(WordCloser{bracket.byte, rel});
         }
@@ -696,15 +540,12 @@ bool FoldingModel::EnsureBlockSummary(LineSpan lines, const ComputeOptions& opti
     const std::size_t tab_size = options.tab_size == 0 ? 1 : options.tab_size;
     std::vector<StackIndent>& stack = build_indent_stack_;
     stack.clear();
-    // Lowest dedent threshold that has already reached before this block. Only a
-    // strictly lower one can pop anything more, so the recorded sequence is the
-    // running minimum -- which is what keeps the word short.
     std::uint32_t min_threshold = kNoLine;
     std::uint32_t last_nonblank_rel = kNoLine;
     for (std::size_t line = start; line < end; ++line) {
       const std::uint32_t indent = IndentAt(lines, line, tab_size, budget);
       if (indent == kBlankIndent) {
-        continue;  // blank lines neither open nor close a block
+        continue;
       }
       while (!stack.empty() && stack.back().level >= indent) {
         stack.pop_back();
@@ -725,14 +566,6 @@ bool FoldingModel::EnsureBlockSummary(LineSpan lines, const ComputeOptions& opti
     block.last_nonblank = last_nonblank_rel;
   }
 
-  // `assign` keeps the destination's existing capacity, so a block rebuilt by a
-  // keystroke costs nothing; the allocation TD-2026-08-06-144 is about is the
-  // FIRST store into each of a fresh block's four lists.
-  //
-  // The two counters are what make the size of that word a measurement rather
-  // than an assumption, and they are the reason the entry's proposed fix was not
-  // taken: `entries / stored` reads ~32 on the 50k-line C++ fixture, so these are
-  // not the tiny lists the entry pictured. See Block in the header.
   const auto store = [](auto& destination, const auto& source) {
     destination.assign(source.begin(), source.end());
     util::AddPerformanceCounter(util::PerfCounterId::EditorFoldBlockWordsStored);
@@ -762,7 +595,7 @@ void FoldingModel::LoadPrefixState(std::size_t boundary, WalkState& out) const {
 void FoldingModel::StorePrefixState(std::size_t boundary, const WalkState& state,
                                     std::size_t event_index) {
   if (boundary != prefix_states_.size()) {
-    return;  // boundaries are only ever appended in order
+    return;
   }
   PrefixState entry;
   entry.bracket_offset = static_cast<std::uint32_t>(prefix_bracket_pool_.size());
@@ -822,16 +655,12 @@ std::size_t FoldingModel::EnsurePrefixState(LineSpan lines, const ComputeOptions
   return prefix_states_.size() - 1;
 }
 
-// ---------------------------------------------------------------------------
-// Walking
-// ---------------------------------------------------------------------------
-
 void FoldingModel::ApplyBlockWord(const Block& block, std::size_t block_start, WalkState& state,
                                   std::vector<FoldRange>* out,
                                   std::size_t emit_opener_limit) const {
   for (const WordCloser& closer : block.bracket_closers) {
     if (state.brackets.empty() || state.brackets.back().close != closer.close) {
-      continue;  // unmatched or mismatched: dropped, as the scanner drops it
+      continue;
     }
     const StackBracket top = state.brackets.back();
     state.brackets.pop_back();
@@ -884,9 +713,6 @@ void FoldingModel::WalkLines(LineSpan lines, const ComputeOptions& options,
       const std::size_t count =
           line < line_bracket_count_.size() ? line_bracket_count_[line] : 0;
       if (count != 0) {
-        // Deferred exactly as the byte scan deferred it: only a line that
-        // actually carries a bracket can be suppressed, so only those lines
-        // consult the syntax tokens.
         const std::span<const SyntaxTokenKind> tokens = suppression.TokensFor(line);
         for (std::size_t i = 0; i < count; ++i) {
           const CachedBracket& bracket = line_brackets_[event_index + i];
@@ -947,10 +773,6 @@ void FoldingModel::FlushIndentsAtEof(WalkState& state, std::vector<FoldRange>* o
   }
 }
 
-// ---------------------------------------------------------------------------
-// Refresh
-// ---------------------------------------------------------------------------
-
 bool FoldingModel::Refresh(LineSpan lines, const ComputeOptions& options, std::size_t first_line,
                            std::size_t last_line, std::size_t max_lines,
                            const LineEditSpan& edit_span, const TextViewport* syntax_viewport) {
@@ -963,10 +785,6 @@ bool FoldingModel::Refresh(LineSpan lines, const ComputeOptions& options, std::s
   const std::size_t tab_size = options.tab_size == 0 ? 1 : options.tab_size;
   const bool tab_size_changed = line_indent_tab_size_ != 0 && line_indent_tab_size_ != tab_size;
   const bool indent_source_changed = indent_source_enabled_ != options.use_indent_source;
-  // Each of these invalidates every block word: the pair set changes which bytes
-  // are brackets, the tab size changes every measured indent width, and turning
-  // the indent source off leaves indent entries in words that would still be
-  // applied.
   const bool reset_all = pairs_changed || tab_size_changed || indent_source_changed;
   indent_source_enabled_ = options.use_indent_source;
 
@@ -980,17 +798,11 @@ bool FoldingModel::Refresh(LineSpan lines, const ComputeOptions& options, std::s
     return true;
   }
 
-  // ---- resync the incremental caches ------------------------------------
-  //
-  // Order matters twice over: the collapsed shift reads the PREVIOUS line count,
-  // which `SyncBlocks` overwrites, and the bracket splice resolves its flat event
-  // index through the PREVIOUS block partition, which `SyncBlocks` replaces.
   ShiftCollapsedRanges(edit_span, line_count);
   SyncLineBracketCache(lines, table, options.bracket_pairs, edit_span, pairs_changed);
   SyncLineIndentCache(line_count, tab_size, edit_span);
   SyncBlocks(line_count, edit_span, reset_all);
 
-  // ---- window ------------------------------------------------------------
   const std::size_t clamped_first = std::min(first_line, line_count - 1);
   const std::size_t clamped_last =
       last_line == kAllLines ? line_count - 1 : std::min(last_line, line_count - 1);
@@ -1001,10 +813,6 @@ bool FoldingModel::Refresh(LineSpan lines, const ComputeOptions& options, std::s
 
   WorkBudget budget;
   if (max_lines != 0) {
-    // The multiplier doubles while the model is still catching up, so a jump into
-    // a huge file converges in O(log n) frames instead of O(n / max_lines) --
-    // and it resets the moment a resolve completes, so steady-state typing keeps
-    // the caller's bound.
     budget.remaining = max_lines > WorkBudget::kUnlimited / budget_multiplier_
                            ? WorkBudget::kUnlimited - 1
                            : max_lines * budget_multiplier_;
@@ -1019,8 +827,6 @@ bool FoldingModel::Refresh(LineSpan lines, const ComputeOptions& options, std::s
   complete_ = true;
   range_scratch_.clear();
 
-  // Reach the state at the window's first block boundary, then walk the rest of
-  // that block by line so the window's own resolve starts from an exact state.
   EnsureBlockStarts();
   const std::size_t window_block = BlockIndexForLine(window_first);
   const std::size_t reached = EnsurePrefixState(lines, options, table, window_block, budget);
@@ -1031,10 +837,6 @@ bool FoldingModel::Refresh(LineSpan lines, const ComputeOptions& options, std::s
   LoadPrefixState(reached, walk_);
   std::size_t event_index = prefix_states_[reached].event_index;
 
-  // The bracket events for everything we are about to walk by line must be
-  // cached; a budget shortfall here only makes the resolve partial. Stopping the
-  // line walk at the cached prefix is what keeps a partial resolve honest --
-  // walking past it would silently read "this line has no brackets".
   std::size_t line_walk_end = window_last + 1;
   if (!ExtendBracketCache(lines, table, line_walk_end, budget)) {
     complete_ = false;
@@ -1049,14 +851,6 @@ bool FoldingModel::Refresh(LineSpan lines, const ComputeOptions& options, std::s
   WalkLines(lines, options, table, suppression, emit_from, line_walk_end, event_index, walk_,
             &range_scratch_, window_last, budget);
 
-  // ---- forward walk: close whatever the window left open ------------------
-  //
-  // Every stack entry still open at `window_last` has its opener at or before
-  // the window, so it is a fold the window needs. Consuming whole block words
-  // rather than lines is what makes a top-level `{` closing 50k lines below cost
-  // ~200 word applications instead of 50k line visits. The walk stops as soon as
-  // the last of those entries is closed (or falls off the depth cap); anything
-  // still open below that belongs to somebody else's window.
   walk_.ArmPending(window_last);
   std::size_t line = line_walk_end;
   const std::size_t forward_limit =
@@ -1068,7 +862,6 @@ bool FoldingModel::Refresh(LineSpan lines, const ComputeOptions& options, std::s
     const std::size_t partial_end =
         std::min(block_start_line_[block_index] + blocks_[block_index].line_count, line_count);
     if (ExtendBracketCache(lines, table, partial_end, budget)) {
-      // Finish the block the window ended inside by line, then take whole words.
       WalkLines(lines, options, table, suppression, line, partial_end, event_index, walk_,
                 &range_scratch_, window_last, budget);
       line = partial_end;
@@ -1090,13 +883,10 @@ bool FoldingModel::Refresh(LineSpan lines, const ComputeOptions& options, std::s
     }
   }
   if (line >= line_count) {
-    // End of document: every indent level still open genuinely ends here.
     FlushIndentsAtEof(walk_, &range_scratch_, window_last);
   }
 
   FinishRanges();
-  // A partial resolve must not claim its window, or the refresh gate would never
-  // come back for the rest of it.
   resolved_ = complete_;
   resolved_first_line_ = window_first;
   resolved_last_line_ = window_last;
@@ -1115,9 +905,7 @@ bool FoldingModel::ResolveAllFolds(LineSpan lines, const TextViewport* syntax_vi
   options.bracket_pairs = bracket_cache_pairs_;
   options.use_indent_source = indent_source_enabled_;
   options.tab_size = line_indent_tab_size_ == 0 ? 4 : line_indent_tab_size_;
-  // An empty edit span: the caller has just refreshed, so every per-line cache
-  // and block word is current and only the WINDOW needs widening.
-  return Refresh(lines, options, 0, kAllLines, /*max_lines=*/0, LineEditSpan{}, syntax_viewport);
+  return Refresh(lines, options, 0, kAllLines, 0, LineEditSpan{}, syntax_viewport);
 }
 
 void FoldingModel::FinishRanges() {
@@ -1132,8 +920,6 @@ void FoldingModel::FinishRanges() {
               }
               return a.closer_line > b.closer_line;
             });
-  // The sort already orders each opener's candidates best-first (bracket before
-  // indent, then widest), so keeping the first entry per opener is the dedupe.
   ranges_.clear();
   for (const FoldRange& range : range_scratch_) {
     if (!ranges_.empty() && ranges_.back().opener_line == range.opener_line) {
@@ -1149,10 +935,6 @@ void FoldingModel::FinishRanges() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Queries
-// ---------------------------------------------------------------------------
-
 namespace {
 
 std::ptrdiff_t IndexOfOpener(const std::vector<FoldRange>& ranges, std::size_t opener_line) {
@@ -1165,7 +947,7 @@ std::ptrdiff_t IndexOfOpener(const std::vector<FoldRange>& ranges, std::size_t o
   return static_cast<std::ptrdiff_t>(it - ranges.begin());
 }
 
-}  // namespace
+}
 
 std::optional<FoldRange> FoldingModel::FoldStartingAt(std::size_t line) const {
   const auto index = IndexOfOpener(ranges_, line);
@@ -1217,13 +999,8 @@ void FoldingModel::AppendFoldsContaining(std::size_t line, std::vector<FoldRange
       out->push_back(ranges_[index]);
     }
   }
-  // Collected innermost-first; the contract is outermost-first.
   std::reverse(out->begin() + static_cast<std::ptrdiff_t>(first_out), out->end());
 }
-
-// ---------------------------------------------------------------------------
-// Collapsed state
-// ---------------------------------------------------------------------------
 
 void FoldingModel::BumpCollapseRevision() {
   ++revision_;
@@ -1253,7 +1030,7 @@ bool FoldingModel::CollapseRange(FoldRange range) {
       [](const FoldRange& entry, std::size_t value) { return entry.opener_line < value; });
   if (it != collapsed_.end() && it->opener_line == range.opener_line) {
     if (it->closer_line == range.closer_line && it->source == range.source) {
-      return false;  // already collapsed at this opener
+      return false;
     }
     *it = range;
     BumpCollapseRevision();
@@ -1295,8 +1072,6 @@ bool FoldingModel::CollapseAllResolved() {
   if (ranges_.empty()) {
     return false;
   }
-  // `ranges_` is already sorted by opener with unique openers, so a merge against
-  // the existing collapsed list beats inserting one at a time.
   std::vector<FoldRange> merged;
   merged.reserve(collapsed_.size() + ranges_.size());
   std::size_t i = 0;
@@ -1309,7 +1084,6 @@ bool FoldingModel::CollapseAllResolved() {
     } else if (collapsed_[i].opener_line < ranges_[j].opener_line) {
       merged.push_back(collapsed_[i++]);
     } else {
-      // Same opener: the freshly resolved range is the authoritative one.
       merged.push_back(ranges_[j++]);
       ++i;
     }
@@ -1348,9 +1122,6 @@ bool FoldingModel::IsLineHidden(std::size_t line) const {
     return false;
   }
   EnsureCollapsedIndex();
-  // Largest entry index whose body starts at or before `line`. Bodies start at
-  // opener + 1, and `collapsed_` is sorted by opener, so this is a binary search
-  // plus the prefix running max of the closers.
   const auto it = std::upper_bound(
       collapsed_.begin(), collapsed_.end(), line,
       [](std::size_t value, const FoldRange& entry) { return value < entry.opener_line + 1; });
@@ -1367,9 +1138,6 @@ std::size_t FoldingModel::FirstVisibleLineAtOrAfter(std::size_t line,
     return line;
   }
   EnsureCollapsedIndex();
-  // Jump past whole regions rather than stepping lines: the prefix max names the
-  // furthest closer among the ranges whose body has started, so one lookup moves
-  // the probe past every fold covering it. A nest needs one more round.
   while (line < line_count) {
     const auto it = std::upper_bound(
         collapsed_.begin(), collapsed_.end(), line,
@@ -1403,8 +1171,6 @@ std::size_t FoldingModel::LastVisibleLineAtOrBefore(std::size_t line) const {
     if (collapsed_hi_prefix_max_[index] < line) {
       return line;
     }
-    // The opener of the region covering `line` is visible, so the answer is at
-    // or before it; step there and re-check for an enclosing fold.
     const std::size_t opener = collapsed_[index].opener_line;
     if (opener == 0) {
       return 0;
@@ -1437,7 +1203,7 @@ void FoldingModel::ShiftCollapsedRanges(const LineEditSpan& edit_span, std::size
     range.closer_line = shift(range.closer_line);
     if (range.closer_line <= range.opener_line || range.opener_line >= line_count) {
       changed = true;
-      continue;  // the edit swallowed the fold
+      continue;
     }
     range.closer_line = std::min(range.closer_line, line_count - 1);
     changed = changed || range.opener_line != collapsed_[i].opener_line ||
@@ -1447,9 +1213,6 @@ void FoldingModel::ShiftCollapsedRanges(const LineEditSpan& edit_span, std::size
   if (out != collapsed_.size()) {
     collapsed_.resize(out);
   }
-  // Only a real move bumps the revision: the wrapped-row layout cache keys on it,
-  // so bumping on every keystroke that touched nothing would rebuild the whole
-  // document's row layout per keystroke whenever any fold is collapsed.
   if (changed) {
     BumpCollapseRevision();
   }
@@ -1459,10 +1222,6 @@ void FoldingModel::RevalidateCollapsedInWindow() {
   if (collapsed_.empty() || !resolved_) {
     return;
   }
-  // A collapsed fold whose opener falls inside the resolved window must still be
-  // a fold there; if the edit dissolved it, drop the collapse rather than keep
-  // hiding lines behind a fold that no longer exists. Openers outside the window
-  // are not observable from here and are left alone.
   std::size_t out = 0;
   bool changed = false;
   for (std::size_t i = 0; i < collapsed_.size(); ++i) {
@@ -1489,8 +1248,6 @@ void FoldingModel::RevalidateCollapsedInWindow() {
     BumpCollapseRevision();
   }
 }
-
-// ---------------------------------------------------------------------------
 
 void FoldingModel::Clear() {
   line_brackets_.clear();
@@ -1534,10 +1291,6 @@ std::size_t FoldingModel::ApproximateResidentBytes() const {
   bytes += vec_bytes(line_indent_);
   bytes += vec_bytes(blocks_);
   for (const Block& block : blocks_) {
-    // Four heap blocks per block, which is what TD-2026-08-06-144 is about: a
-    // 50k-line document is ~196 blocks and therefore ~784 small allocations held
-    // for the life of the tab. Counted individually so that entry has a number --
-    // and the number is why it stays open rather than fixed.
     bytes += vec_bytes(block.bracket_closers);
     bytes += vec_bytes(block.bracket_openers);
     bytes += vec_bytes(block.indent_dedents);
@@ -1564,4 +1317,4 @@ std::size_t FoldingModel::ApproximateResidentBytes() const {
   return bytes;
 }
 
-}  // namespace microide::editor
+}

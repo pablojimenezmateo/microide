@@ -29,15 +29,6 @@ bool HasGitMarker(const std::filesystem::path& root) {
   if (root.empty()) {
     return false;
   }
-  // POSIX fast path: assemble `<root>/.git` in a stack buffer and stat it.
-  // `root / ".git"` is not free — the resulting path allocates its own string
-  // plus libstdc++'s component list, ~167 bytes across the pair — and this runs
-  // on the background executor for essentially every git operation as well as
-  // once per painted frame from the status bar (TD-2026-08-06-158). `native()`
-  // hands back the string that already exists, so this path allocates nothing.
-  //
-  // Same failure policy as the fallback below: any stat error, not just ENOENT,
-  // reads as "no usable repository here".
   {
     const std::string& native = root.native();
     constexpr std::string_view kMarker = "/.git";
@@ -46,7 +37,7 @@ bool HasGitMarker(const std::filesystem::path& root) {
       std::size_t end = native.size();
       std::memcpy(buffer, native.data(), end);
       while (end > 0 && buffer[end - 1] == '/') {
-        --end;  // "/" and "/repo/" must not produce "//.git" or "/repo//.git"
+        --end;
       }
       std::memcpy(buffer + end, kMarker.data(), kMarker.size());
       end += kMarker.size();
@@ -55,11 +46,6 @@ bool HasGitMarker(const std::filesystem::path& root) {
       return ::stat(buffer, &info) == 0;
     }
   }
-  // Use the non-throwing overload: this runs on the background-executor thread on
-  // essentially every git operation, and the throwing exists() aborts the process
-  // when the failure is not "does not exist" (a parent dir losing +x, an unmounted
-  // network volume, ENAMETOOLONG). Those must degrade to "repo unavailable", not
-  // crash. Matches every other filesystem probe in this subsystem.
   std::error_code error;
   return std::filesystem::exists(root / ".git", error) && !error;
 }
@@ -72,10 +58,6 @@ std::optional<std::filesystem::path> ComputeAbsoluteToRelativePath(
   const std::filesystem::path normalized_root = util::NormalizedPath(root);
   const std::filesystem::path normalized_path = util::NormalizedPath(absolute_path);
 
-  // The overwhelmingly common answer -- the path sits under the root -- is a
-  // prefix strip, not a component walk. Taking it here matters on the MISS path
-  // of the memo below, which is where a bulk resolve lives: a git sidebar refresh
-  // resolves every changed file once, and each of those is a memo miss.
   if (util::NormalizedPathEqualsOrWithin(normalized_path, normalized_root)) {
     const std::string_view relative_text =
         util::NormalizedRelativeView(normalized_path.native(), normalized_root.native());
@@ -94,7 +76,7 @@ std::optional<std::filesystem::path> ComputeAbsoluteToRelativePath(
   return util::NormalizedPath(relative);
 }
 
-}  // namespace
+}
 
 std::optional<std::filesystem::path> AbsoluteToRelativePath(
     const std::filesystem::path& root,
@@ -110,28 +92,6 @@ const std::optional<std::filesystem::path>& AbsoluteToRelativePathRef(
     return kNone;
   }
 
-  // Memoized because this is on the per-frame render path and it is expensive
-  // out of all proportion to what it does: `lexically_normal` builds a fresh
-  // path component by component, so one call is ~12 allocations, and the inline
-  // blame overlay resolves the SAME two paths three to four times on every frame
-  // it paints (the overlay's own eligibility check, then GitBlameService's
-  // Request and Snapshot). Measured with the phase-scoped allocation tracer that
-  // TD-2026-08-06-151 made aimable: 11 of the top 12 sites in
-  // editor_fold_viewport_refresh's measured phase were this call, ~20% of the
-  // phase's 31,079 allocations.
-  //
-  // Memoizing is correct by construction rather than by convention.
-  // `lexically_normal` and `lexically_relative` are PURELY LEXICAL -- neither
-  // touches the filesystem -- so the result is a pure function of the two
-  // arguments and there is no state it could go stale against. That is the whole
-  // reason the cache needs no invalidation hook, no generation counter, and no
-  // participation in any watcher.
-  //
-  // Per thread, so it needs no lock: the shell thread paints while the
-  // background executor runs git, and both call this. Four entries because a
-  // split editor with two panes plus a git-sidebar refresh touches more than one
-  // (root, path) pair between frames, and a one-entry memo would thrash to a 0%
-  // hit rate exactly when there is most to save.
   struct Entry {
     std::filesystem::path root;
     std::filesystem::path absolute_path;
@@ -155,7 +115,6 @@ const std::optional<std::filesystem::path>& AbsoluteToRelativePathRef(
   Entry entry{.root = root,
               .absolute_path = absolute_path,
               .result = ComputeAbsoluteToRelativePath(root, absolute_path)};
-  // Evict the least recently used by rotating it to the back, then overwrite it.
   std::rotate(memo.begin(), memo.end() - 1, memo.end());
   memo[0] = std::move(entry);
   memo_used = std::min(memo_used + 1, kMemoEntries);
@@ -191,8 +150,6 @@ std::filesystem::path ResolveCommonDir(const std::filesystem::path& git_dir) {
 }
 
 std::optional<std::string> ReadFirstLineOfGitFile(const std::filesystem::path& path) {
-  // status() stats without opening, so a special file is rejected before any
-  // potentially-blocking stream operation.
   std::error_code error;
   if (!std::filesystem::is_regular_file(std::filesystem::status(path, error)) || error) {
     return std::nullopt;
@@ -203,9 +160,6 @@ std::optional<std::string> ReadFirstLineOfGitFile(const std::filesystem::path& p
   }
   std::string line;
   line.reserve(64);
-  // Bounded read: stop at the newline or the cap, whichever comes first, so an
-  // unterminated multi-megabyte file cannot be pulled into memory by a helper
-  // whose whole job is to look at one short line.
   for (std::size_t read = 0; read < kMaxGitMetadataLineBytes; ++read) {
     const int byte = stream.get();
     if (byte == std::char_traits<char>::eof() || byte == '\n') {
@@ -223,9 +177,6 @@ std::optional<std::filesystem::path> ResolveGitDirectory(const std::filesystem::
   if (root.empty()) {
     return std::nullopt;
   }
-  // Non-throwing probes throughout: this can run against an unmounted network
-  // volume or a directory that lost +x, and those must degrade to "no git dir"
-  // rather than abort the process (same reasoning as HasGitMarker).
   std::filesystem::path marker = root / ".git";
   std::error_code error;
   if (std::filesystem::is_directory(marker, error) && !error) {
@@ -251,11 +202,6 @@ std::optional<std::filesystem::path> ResolveGitDirectory(const std::filesystem::
     return std::nullopt;
   }
   std::filesystem::path git_dir(line);
-  // A `.git` file may hold either an absolute path or one relative to the worktree
-  // root. Both are normalized: the absolute case used to be returned verbatim, which
-  // is how this and the change tracker's own copy of this function could return two
-  // different paths for the same repository (`/a/b/../.git` vs `/a/.git`) and compare
-  // unequal.
   return (git_dir.is_absolute() ? git_dir : root / git_dir).lexically_normal();
 }
 
@@ -274,8 +220,6 @@ std::optional<std::string> ReadPendingMergeHeadId(const std::filesystem::path& r
          (first_line.back() == ' ' || first_line.back() == '\t')) {
     first_line.remove_suffix(1);
   }
-  // Only accept a plain object id. A ref file holding anything else (a symref, a
-  // truncated write mid-merge) must not be surfaced as a commit label.
   if (first_line.size() < 7 || first_line.size() > 64) {
     return std::nullopt;
   }
@@ -306,10 +250,6 @@ CommandResult ReadGitCommandOutputWithStdin(
     bool silence_stderr,
     int timeout_ms,
     std::vector<platform::SubprocessEnvironmentOverride> environment) {
-  // Label by subcommand only. This is the single choke point every git call in
-  // the app funnels through, so `git.status` vs `git.blame` vs `git.diff` is the
-  // breakdown worth having; the operands (paths, revs, sha1s) would mint a fresh
-  // label per invocation and turn the ranked summary back into a log.
   util::PerformanceTrace::ScopeLabel label("git::RunCommand");
   if (!arguments.empty()) {
     label.Field("sub", arguments.front());
@@ -319,45 +259,20 @@ CommandResult ReadGitCommandOutputWithStdin(
   std::vector<std::string> command;
   command.reserve(arguments.size() + 4);
   command.emplace_back("git");
-  // Suppress optional index refresh so read-only commands (status, blame, etc.)
-  // never touch .git/index.lock; concurrent invocations and killed subprocesses
-  // previously left stale locks that blocked the user's own `git commit`.
   command.emplace_back("--no-optional-locks");
-  // Force every pathspec across all git commands to be a literal path. Without
-  // this, a file whose name begins with git pathspec magic — `:(glob)`, `:(top)`,
-  // `:(exclude)`, `:!…`, etc. — passed after `--` still triggers that magic and
-  // could stage/discard/blame/diff/history the wrong path. No git call in this
-  // codebase intentionally uses pathspec magic, so this is a pure safety gate.
   command.emplace_back("--literal-pathspecs");
   for (std::string& argument : arguments) {
     command.push_back(std::move(argument));
   }
   platform::SubprocessOptions options;
-  // The repository is the working directory, not `-C <root>`: a launcher maps a
-  // working directory onto the machine that runs git, and cannot see a path
-  // inside argv (ProcessLauncher::Run). Locally the two are the same chdir.
   options.cwd = root.lexically_normal();
-  // Never let git block on an interactive credential/passphrase prompt. The child
-  // inherits our stdio, so a git launched from a terminal can read a password from
-  // a tty the user is not looking at and simply hang until the wall-clock cap kills
-  // it (300 s for write ops). With this, git fails immediately and reports why,
-  // which the caller can surface. A configured GUI askpass still works — only the
-  // terminal prompt is disabled.
   options.environment_overrides = std::move(environment);
   options.environment_overrides.push_back({"GIT_TERMINAL_PROMPT", "0"});
   options.environment_overrides.push_back({"GCM_INTERACTIVE", "never"});
-  // The repository is the one AT the root, never one above it. The app decides a
-  // folder is a repository by its own `<root>/.git` marker, but git searches
-  // upward from its working directory: with a `.git` at the root that is not a
-  // valid repository (an empty or half-deleted one) git walks on to the nearest
-  // enclosing repository, and a commit, a branch switch or a push made "in this
-  // project" lands there. A ceiling at the root's parent stops the search at the
-  // root, so such a root fails instead. A `.git` FILE (a linked worktree, a
-  // submodule) is still followed: that is resolution, not search.
   {
     std::filesystem::path normal = options.cwd;
     if (!normal.has_filename()) {
-      normal = normal.parent_path();  // "/repo/" names the same folder as "/repo"
+      normal = normal.parent_path();
     }
     if (normal.is_absolute() && normal.has_relative_path()) {
       options.environment_overrides.push_back(
@@ -398,4 +313,4 @@ bool GitCommandSucceeds(const platform::ProcessLauncher& launcher,
   return ReadGitCommandOutput(launcher, root, std::move(arguments), silence_stderr).success();
 }
 
-}  // namespace microide::project::internal
+}

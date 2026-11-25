@@ -19,23 +19,12 @@ namespace {
 constexpr std::size_t kScrollMargin = 3;
 constexpr std::size_t kHorizontalScrollMargin = 6;
 
-}  // namespace
+}
 
 void TextViewport::SetViewportSize(std::size_t visible_lines, std::size_t visible_columns) {
   const std::size_t next_visible_lines = std::max<std::size_t>(1, visible_lines);
   const std::size_t next_visible_columns = std::max<std::size_t>(8, visible_columns);
   const bool wrap_width_changed = soft_wrap_ && visible_columns_ != next_visible_columns;
-  // The logical line at the top of the view, resolved against the OLD wrap width
-  // (so before visible_columns_ moves). scroll_line_ counts VISUAL rows, and a
-  // width change renumbers every one of them: without re-anchoring, widening a
-  // soft-wrapped pane scrolled the document to an unrelated place -- and, since
-  // this path also skipped ClampScrollState, could leave scroll_line_ past the
-  // last row entirely, painting an empty editor until the user scrolled. VS Code
-  // keeps the top of the viewport pinned across a re-layout the same way.
-  // `scroll_line_ == 0` needs no lookup: row 0 is the first visible line either
-  // way, and asking would force a wrapped-row build at the OLD width -- which for
-  // a tab whose first real SetViewportSize is also its first wrap width is a
-  // whole extra O(document) wrap of a width nothing will ever paint.
   const bool reanchor = wrap_width_changed && document_ != nullptr && scroll_line_ != 0;
   const std::size_t anchor_line = reanchor ? VisualRowLineIndex(scroll_line_) : 0;
   const bool size_changed =
@@ -52,9 +41,6 @@ void TextViewport::SetViewportSize(std::size_t visible_lines, std::size_t visibl
     }
   }
   ClampScrollState();
-  // A centre requested before this viewport had its real size: re-centre now that
-  // it does. One-shot either way — the request describes the sizing that follows
-  // it, not every later resize.
   if (pending_center_line_ != kNoPendingCenter) {
     const std::size_t line = pending_center_line_;
     pending_center_line_ = kNoPendingCenter;
@@ -82,17 +68,12 @@ void TextViewport::ApplyRestoredViewState(std::size_t cursor_line,
                                           std::size_t scroll_line,
                                           std::size_t horizontal_scroll,
                                           const std::optional<SelectionRange>& selection) {
-  // Cursor / selection first: MoveCursorTo runs EnsureCursorVisible, which we let
-  // happen here so the caret is well-placed, then override scroll below.
   if (selection.has_value()) {
     MoveCursorTo(selection->start.line, selection->start.column);
     MoveCursorTo(selection->end.line, selection->end.column, true);
   } else {
     MoveCursorTo(cursor_line, cursor_column);
   }
-  // Scroll LAST so it is authoritative. ClampScrollState only reduces against the
-  // current (possibly default) viewport size; the first real-size SetViewportSize
-  // at render re-clamps safely.
   SetScrollLine(scroll_line);
   SetHorizontalScroll(horizontal_scroll);
 }
@@ -107,12 +88,6 @@ void TextViewport::ReloadPreservingViewState(std::string_view text) {
   const std::optional<SelectionRange> selection_before = selection_range();
   const std::filesystem::path path_before = path();
   const std::optional<LineEnding> line_ending_before = line_ending();
-  // This replaces the content IN MEMORY (a formatter's output, a virtual
-  // document's new text); it is not a read of the file. LoadContent re-stats the
-  // path to take a new conflict baseline, which here would adopt whatever is on
-  // disk NOW: an external change made while the formatter ran became the
-  // baseline, and the save right after this overwrote it without a word. The
-  // baseline stays the one the buffer was loaded or last saved against.
   const util::FileSignature disk_signature_before =
       document_ != nullptr ? document_->disk_signature : util::FileSignature{};
 
@@ -133,11 +108,6 @@ void TextViewport::SetTabSize(std::size_t tab_size) {
   if (document_ != nullptr) {
     InvalidateDerivedCaches(InvalidationReason::LayoutShape, 0);
   }
-  // Every caret stays on its character; what a tab is worth changed, so the
-  // VISUAL column it remembers for Up/Down is re-derived, as a wrap toggle does.
-  // Re-deriving the character from the remembered visual column instead
-  // (ClampCursorColumn) moved a caret after a tab: `\tx|` became `\t|x` going
-  // from tabs of 4 to tabs of 8 (QA state oracle: the status bar's Col).
   preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   for (SecondaryCaret& caret : secondary_carets_) {
     caret.preferred_column = PreferredColumnForCaret(caret.position);
@@ -165,28 +135,13 @@ void TextViewport::SetSoftWrap(bool soft_wrap) {
   if (soft_wrap_ == soft_wrap) {
     return;
   }
-  // Same re-anchor as a wrap-width change, for the same reason: toggling wrap
-  // renumbers every visual row, so the pre-toggle scroll_line_ points at an
-  // unrelated part of the document afterwards.
-  // Anchoring a view that is already at the top is the identity, and asking costs
-  // a wrapped-row build (see SetViewportSize).
   const bool reanchor = document_ != nullptr && scroll_line_ != 0;
   const std::size_t anchor_line = reanchor ? VisualRowLineIndex(scroll_line_) : 0;
-  // Whether the caret was on screen decides which of the two anchors wins below.
-  // Revealing it unconditionally threw the re-anchor away for the one case that
-  // needs it most: wheel-scroll away from the caret, then toggle wrap, and the
-  // view snapped back to the caret instead of staying where the reader was.
-  //
-  // Only asked of a view that is scrolled, and for two reasons: a view at the top
-  // has nothing to preserve, and resolving the caret's row in the OLD wrap mode
-  // would build that mode's row table -- for EVERY open tab, since a wrap toggle
-  // runs this on all of them, including ones no frame has ever painted.
   const bool caret_was_visible = reanchor && [&] {
     const std::size_t caret_row = CursorVisualRow();
     return caret_row >= scroll_line_ && caret_row < scroll_line_ + visible_lines_;
   }();
   soft_wrap_ = soft_wrap;
-  // The rows the caret's affinity referred to no longer exist.
   caret_wrap_affinity_ = WrapRowAffinity::kNextRow;
   preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   for (SecondaryCaret& caret : secondary_carets_) {
@@ -214,15 +169,6 @@ void TextViewport::SetFoldingModel(const FoldingModel* folding_model) {
     return;
   }
   folding_model_ = folding_model;
-  // Deliberately no InvalidateVisualColumnCache() here. Attaching or detaching a
-  // fold model changes which lines are *visible*, never how wide any line is, so
-  // the per-line visual-column table and the visible-line text cache it wipes are
-  // both still valid. The one layout product that does depend on folds -- the
-  // wrapped-row layout -- is already keyed on (folding_model, fold_revision) and
-  // rebuilds itself. Wiping the lot cost a full O(lines) recompute of
-  // MaxVisualColumns() on the very next line (ClampScrollState reads it): ~10 ms
-  // of shell-thread stall on a 50k-line buffer, paid the first time a fold scan
-  // resolved a range. Only the vertical mapping moved, so only re-clamp.
   ClampScrollState();
   EnsureCursorVisible();
 }
@@ -238,10 +184,6 @@ void TextViewport::MoveCursorVertical(int delta, bool extend_selection) {
   TextPosition primary{cursor_line_, cursor_column_};
   WrapRowAffinity primary_affinity = EffectiveCaretAffinity();
   if (!extend_selection) {
-    // A plain Up/Down over a selection steps from the selection's START for Up
-    // and its END for Down (VS Code's MoveOperations.moveUp/moveDown), not from
-    // the caret: with a reversed selection Down leaves from the far end. Per
-    // caret, and before BeginSelectionIfNeeded drops the anchors this reads.
     const auto collapse_to_edge = [&](TextPosition& caret,
                                       const std::optional<TextPosition>& anchor,
                                       std::size_t& preferred_column,
@@ -253,7 +195,7 @@ void TextViewport::MoveCursorVertical(int delta, bool extend_selection) {
       }
       const TextPosition edge = delta < 0 ? selection->start : selection->end;
       if (edge == caret) {
-        return;  // the caret already sits on the edge that leads: keep its sticky column
+        return;
       }
       caret = edge;
       affinity = WrapRowAffinity::kNextRow;
@@ -268,7 +210,7 @@ void TextViewport::MoveCursorVertical(int delta, bool extend_selection) {
   BeginSelectionIfNeeded(extend_selection);
   AdvanceCaretVertical(primary, preferred_column_, primary_affinity, delta,
                        VerticalEdgePolicy::kToRowEdge);
-  PlacePrimaryCaret(primary.line, primary.column, /*keep_preferred_column=*/true, primary_affinity);
+  PlacePrimaryCaret(primary.line, primary.column, true, primary_affinity);
 
   for (SecondaryCaret& caret : secondary_carets_) {
     AdvanceCaretVertical(caret.position, caret.preferred_column, caret.wrap_affinity, delta,
@@ -287,13 +229,6 @@ void TextViewport::MoveCursorHorizontal(int delta, bool extend_selection) {
 
   document_->undo_history.NotifyCursorMoved();
 
-  // VSCode: a plain (non-extending) Left/Right over a selection collapses to that
-  // selection's edge -- the left edge for Left, the right edge for Right -- WITHOUT
-  // advancing past it, and does so per caret. The main editor previously cleared
-  // the anchor and then stepped one position further, so pressing Right after
-  // selecting a word landed the caret one column past the selection instead of at
-  // its end. This mirrors SingleLineEditor::MoveLeft/MoveRight. Carets with no
-  // selection advance one position as before.
   if (!extend_selection) {
     const bool to_end = delta > 0;
     bool any_selection = has_selection();
@@ -354,16 +289,11 @@ TextPosition TextViewport::WordTargetForCaret(const TextPosition& caret,
   const std::size_t length = document_->lines.LineLength(line);
   const std::size_t column = std::min(caret.column, length);
   if (delta < 0) {
-    // At the line start the step is the line break itself, which is what makes
-    // Ctrl+Left walk into the previous line and Ctrl+Backspace join them.
     if (column == 0) {
       const std::size_t previous = VisibleLineBefore(line);
       return previous == line ? TextPosition{line, 0}
                               : TextPosition{previous, document_->lines.LineLength(previous)};
     }
-    // LineView, not operator[]: the latter materializes an owned copy of the line
-    // into a per-revision cache, which on a file with no line breaks in it is the
-    // whole document per keystroke (TD-2026-08-05-133).
     const std::string_view text = document_->lines.LineView(line);
     return TextPosition{line, for_deletion ? DeleteWordBoundaryLeft(text, column)
                                            : WordBoundaryLeft(text, column)};
@@ -385,18 +315,13 @@ void TextViewport::MoveCursorWord(int delta, bool extend_selection) {
   }
 
   document_->undo_history.NotifyCursorMoved();
-  // Unlike the character form, a word step over a selection does NOT merely
-  // collapse to the selection's edge: VS Code's cursorWordStartLeft /
-  // cursorWordEndRight move word-wise from the active caret and let the anchor
-  // go, which is also what a GTK/Qt entry does. BeginSelectionIfNeeded drops the
-  // anchors on a plain move and seeds them on a Shift move, per caret.
   BeginSelectionIfNeeded(extend_selection);
   const TextPosition primary =
-      WordTargetForCaret(TextPosition{cursor_line_, cursor_column_}, delta, /*for_deletion=*/false);
+      WordTargetForCaret(TextPosition{cursor_line_, cursor_column_}, delta, false);
   PlacePrimaryCaret(primary.line, primary.column);
 
   for (SecondaryCaret& caret : secondary_carets_) {
-    caret.position = WordTargetForCaret(caret.position, delta, /*for_deletion=*/false);
+    caret.position = WordTargetForCaret(caret.position, delta, false);
     caret.preferred_column = PreferredColumnForCaret(caret.position);
     caret.wrap_affinity = WrapRowAffinity::kNextRow;
   }
@@ -419,8 +344,6 @@ TextViewport::ViewLineBounds TextViewport::ViewLineBoundsForCaret(
   }
   const std::size_t row = CursorVisualRowForCaret(caret, affinity);
   const WrappedRowLayout layout = WrappedRowAt(row);
-  // A caret on a fold-hidden line resolves to the OPENER's row, which belongs to
-  // another logical line: Home/End must stay on the caret's own line there.
   if (layout.line_index != caret.line || layout.visual_end <= layout.visual_start) {
     return whole_line;
   }
@@ -445,10 +368,6 @@ std::size_t TextViewport::FirstNonWhitespaceColumnInView(std::size_t line,
   return bounds.first;
 }
 
-// Home. VS Code's `cursorHome`: within the VIEW line (so with word wrap on it
-// stops at the start of the wrapped row, not three rows back up the paragraph),
-// and to the first non-whitespace character, toggling to the row's true start
-// when the caret is already there (TD-2026-08-12-188).
 void TextViewport::MoveCursorLineStart(bool extend_selection) {
   SyncCaretsIfDocumentChangedElsewhere();
 
@@ -471,16 +390,11 @@ void TextViewport::MoveCursorLineStart(bool extend_selection) {
   EnsureCursorVisible();
 }
 
-// End. VS Code's `cursorEnd`: the end of the VIEW line. Landing exactly on a
-// wrap point takes kPreviousRow affinity, or the caret would render at the start
-// of the NEXT row -- the one position two rows both claim.
 void TextViewport::MoveCursorLineEnd(bool extend_selection) {
   SyncCaretsIfDocumentChangedElsewhere();
 
   document_->undo_history.NotifyCursorMoved();
   BeginSelectionIfNeeded(extend_selection);
-  // VS Code's cursorEnd: the end of the wrapped row the caret is on, and from
-  // there (a second End) the end of the whole line.
   const auto end_target = [this](const TextPosition& caret, WrapRowAffinity affinity) {
     const ViewLineBounds bounds = ViewLineBoundsForCaret(caret, affinity);
     if (bounds.last_is_wrap_point && caret.column == bounds.last &&
@@ -492,7 +406,7 @@ void TextViewport::MoveCursorLineEnd(bool extend_selection) {
   };
   const auto [primary_column, primary_affinity] =
       end_target(TextPosition{cursor_line_, cursor_column_}, EffectiveCaretAffinity());
-  PlacePrimaryCaret(cursor_line_, primary_column, /*keep_preferred_column=*/false, primary_affinity);
+  PlacePrimaryCaret(cursor_line_, primary_column, false, primary_affinity);
   for (SecondaryCaret& caret : secondary_carets_) {
     if (caret.position.line < document_->lines.size()) {
       const auto [column, affinity] = end_target(caret.position, caret.wrap_affinity);
@@ -512,10 +426,6 @@ void TextViewport::MoveCursorTo(std::size_t line, std::size_t column, bool exten
     return;
   }
 
-  // End the typing coalesce run like every other caret-move method: MoveCursorTo is
-  // the path for mouse-click positioning, goto-line, bracket-match, find-nav, and
-  // snippet/tabstop jumps. Without this, typing after a click that lands on the exact
-  // column the previous run ended at merges both edits into one undo step.
   document_->undo_history.NotifyCursorMoved();
   BeginSelectionIfNeeded(extend_selection);
   const std::size_t clamped_line = std::min(line, document_->lines.size() - 1);
@@ -526,11 +436,6 @@ void TextViewport::MoveCursorTo(std::size_t line, std::size_t column, bool exten
   for (SecondaryCaret& caret : secondary_carets_) {
     caret.preferred_column = PreferredColumnForCaret(caret.position);
   }
-  // A Shift+click can run the primary's selection over a secondary's; merge as
-  // the keyboard motions do. Deliberately not the full dedupe: a plain click
-  // does not clear the secondary set (see the callers that pair this with
-  // ClearSecondaryCarets), and a collapsed secondary the primary lands on is
-  // already dropped by the appliers.
   MergeOverlappingCaretRanges();
   EnsureCursorVisible();
 }
@@ -583,10 +488,6 @@ void TextViewport::Page(int direction, bool extend_selection) {
   MoveCursorVertical(static_cast<int>(step) * direction, extend_selection);
 }
 
-// Only the PREFIX matters: the conversion is the identity at `column` as long as
-// every byte before it is single-cell. That is a much weaker question than "is
-// this whole line plain ASCII", and on a two-megabyte line it is the difference
-// between reading up to the column once and reading to the column on every call.
 bool TextViewport::PlainAsciiThroughColumn(std::size_t line, std::size_t column) const {
   if (document_ == nullptr) {
     return false;
@@ -620,18 +521,11 @@ std::size_t TextViewport::VisualColumnAt(std::size_t line, std::size_t column) c
   if (document_->lines.empty() || line >= document_->lines.size()) {
     return 0;
   }
-  // A plain-ASCII line spends one cell per byte, so the visual column IS the byte
-  // column and there is nothing to walk -- nor any need to materialize the line to
-  // find that out. Without this the caret's own visual column costs O(column):
-  // on a line with no newlines in it and the caret a megabyte in, that is a
-  // megabyte scanned per keystroke by EnsureCursorVisible and again by the
-  // preferred-column update (TD-2026-08-05-132).
   const LineLayoutFacts facts = CachedLineFacts(line);
   if (facts.known ? facts.plain_ascii : PlainAsciiThroughColumn(line, column)) {
     return std::min(column, document_->lines.LineLength(line));
   }
   if (facts.known && facts.tab_indented) {
-    // Leading tabs then plain ASCII: arithmetic, no line read.
     const std::size_t line_length =
         facts.leading_tabs + (facts.visual_columns - facts.leading_tabs * tab_size_);
     const std::size_t clamped = std::min(column, line_length);
@@ -652,14 +546,11 @@ std::size_t TextViewport::TextColumnAtVisualColumn(std::size_t line,
   if (document_->lines.empty() || line >= document_->lines.size()) {
     return 0;
   }
-  // The inverse of the above, and exact for the same reason.
   const LineLayoutFacts facts = CachedLineFacts(line);
   if (facts.known ? facts.plain_ascii : PlainAsciiThroughColumn(line, visual_column)) {
     return std::min(visual_column, document_->lines.LineLength(line));
   }
   if (facts.known && facts.tab_indented) {
-    // The inverse, with the nearest-boundary rounding inside a tab that
-    // TextLayout::TextColumnForVisualColumn applies.
     const std::size_t line_length =
         facts.leading_tabs + (facts.visual_columns - facts.leading_tabs * tab_size_);
     const std::size_t indent_width = facts.leading_tabs * tab_size_;
@@ -670,8 +561,6 @@ std::size_t TextViewport::TextColumnAtVisualColumn(std::size_t line,
     return visual_column / tab_size_ + (into_tab * 2 <= tab_size_ ? 0 : 1);
   }
   const std::string_view text = document_->lines.LineView(line);
-  // Counted the same way: this walk stops at the requested visual column, which on
-  // a line of single-cell characters is the same bound as the forward one.
   util::AddPerformanceCounter(util::PerfCounterId::EditorVisualColumnWalkBytes,
                               std::min(visual_column, text.size()));
   util::AddPerformanceCounter(facts.known ? util::PerfCounterId::EditorVisualColumnWalkNotPlainAscii
@@ -680,11 +569,6 @@ std::size_t TextViewport::TextColumnAtVisualColumn(std::size_t line,
 }
 
 void TextViewport::ClampScrollState() {
-  // Same argument as the horizontal clamp below: this can only LOWER the offset,
-  // and zero is the floor. Reading the visual row count to reach that conclusion
-  // builds the whole document's wrapped-row table under soft wrap (or with a
-  // collapsed fold) -- an O(document) walk for an answer that is 0 either way,
-  // and ClampScrollState runs on every SetViewportSize, i.e. on every paint.
   if (scroll_line_ != 0) {
     const std::size_t total_visual_lines = visual_line_count();
     const std::size_t max_vertical_scroll =
@@ -697,14 +581,6 @@ void TextViewport::ClampScrollState() {
     return;
   }
   if (horizontal_scroll_ == 0) {
-    // Nothing to clamp: the clamp below can only lower the offset, and it is
-    // already at the floor. Reading MaxVisualColumns() to reach that conclusion
-    // builds the whole-document per-line width table -- an O(document) walk for
-    // an answer that is 0 either way. Every file opens at column 0, and every
-    // restored background tab stays there without any pane ever drawing a
-    // horizontal scrollbar, so this was the single most common trigger of that
-    // build (TD-2026-08-06-138). The table is still built lazily by whoever
-    // genuinely needs it: the scrollbar geometry of a pane that is on screen.
     return;
   }
   const std::size_t max_visual_columns = MaxVisualColumns();
@@ -726,19 +602,6 @@ void TextViewport::PlacePrimaryCaret(std::size_t line,
   }
   caret_navigation_content_revision_ =
       document_ != nullptr ? document_->content_revision : 0;
-  // A keyboard column-select gesture is anchored to where the caret WAS. Any
-  // caret placement that is not the gesture's own therefore ends it, so the next
-  // Ctrl+Shift+Alt+Arrow re-anchors instead of extending a box from a corner the
-  // user has since left. This used to be two hand-placed ClearColumnSelection()
-  // calls in the two key handlers, which covered keys and nothing else: a mouse
-  // click, a `goto` from the palette, a control-channel caret move or a
-  // jump-to-definition all left the stale box armed. Here it cannot be missed --
-  // and it is also more faithful, because a key that moves NO caret (a settings
-  // toggle, F5) no longer breaks a gesture it did not touch.
-  //
-  // The gesture's own step re-arms after placing its carets; see the
-  // ColumnSelect* case in WorkspaceEditActionExecutor, where the SetColumnSelection
-  // call deliberately follows SetBoxSelectionVisual.
   column_selection_ = ColumnSelectionState{};
 }
 
@@ -787,7 +650,7 @@ void TextViewport::TraceCaretBounds(const char* where) const {
   void* frames[32];
   const int count = ::backtrace(frames, 32);
   if (char** symbols = ::backtrace_symbols(frames, count); symbols != nullptr) {
-    for (int i = 1; i < count; ++i) {  // frame 0 is this function
+    for (int i = 1; i < count; ++i) {
       report += "  #" + std::to_string(i) + " " + symbols[i] + "\n";
     }
     std::free(symbols);  // NOLINT(cppcoreguidelines-no-malloc): backtrace_symbols' contract
@@ -836,10 +699,6 @@ void TextViewport::EnsureCursorVisible() {
     }
   }
 
-  // Both branches end here. The left-edge one used to return early, so a caret
-  // near column 0 on the last lines left the vertical scroll past its maximum (the
-  // bottom margin pushed it there); the next paint clamped it back, and every
-  // damage rect computed in between -- the edit's own -- was rows off.
   ClampScrollState();
 }
 
@@ -866,10 +725,6 @@ std::size_t TextViewport::PreferredColumnForCaret(const TextPosition& caret,
     return 0;
   }
   const WrappedRowLayout row = WrappedRowAt(CursorVisualRowForCaret(caret, affinity));
-  // ON-SCREEN cell, not offset-into-the-row: continuation rows render their
-  // content shifted right by the hanging indent, so a preferred column that
-  // ignored it moved the caret sideways by the indent width every time vertical
-  // motion crossed between a first row and a continuation row.
   return row.indent + (visual >= row.visual_start ? visual - row.visual_start : 0);
 }
 
@@ -887,15 +742,6 @@ std::size_t TextViewport::CursorVisualRowForCaret(const TextPosition& caret,
   }
   const std::size_t base_row = layout_cache_.WrappedLineRowOffset(caret.line);
   if (folding_model_ != nullptr && folding_model_->IsLineHidden(caret.line)) {
-    // The row-offset table stores, for every hidden line, the row where the last
-    // VISIBLE line STARTED. Under soft wrap that opener can span several rows, so
-    // answering its first row parks a caret that is inside the fold (a search hit,
-    // a restored session, a jump-to-definition into a folded body) at the TOP of
-    // the opener — and vertical motion then has to walk the opener's own wrapped
-    // rows before it can leave a fold it is not even in (TD-2026-08-12-185).
-    //
-    // The fold's trailing edge is the honest answer: one Down leaves it, which is
-    // what the equivalent caret without soft wrap already does.
     if (!soft_wrap_) {
       return base_row;
     }
@@ -905,12 +751,6 @@ std::size_t TextViewport::CursorVisualRowForCaret(const TextPosition& caret,
   if (!soft_wrap_) {
     return base_row;
   }
-  // Resolve the caret's visual row by locating, among the rows that actually
-  // belong to this line, the one whose [visual_start, visual_end) span owns the
-  // caret's visual column. The builder wraps at whitespace, so spans are
-  // non-uniform — integer division by the wrap width would land on the wrong
-  // row whenever a line breaks before its column limit. `affinity` decides the
-  // one column two rows both answer for: the wrap point itself.
   const std::size_t caret_visual = VisualColumnAt(caret.line, caret.column);
   const auto [first_row, last_row] =
       layout_cache_.WrappedRowRangeForLine(caret.line, document_->lines.size());
@@ -929,18 +769,11 @@ std::size_t TextViewport::ResolveSoftWrapCursorColumnForTargetRow(std::size_t pr
   const std::size_t clamped_row = std::min(target_row, row_count - 1);
   const WrappedRowLayout target = WrappedRowAt(clamped_row);
   if (!soft_wrap_) {
-    // preferred_column is already an ABSOLUTE visual column (PreferredColumnForCaret
-    // returns the absolute visual in the non-wrap case), so it must be returned as
-    // is. Adding horizontal_scroll_ double-counted the scroll offset and marched the
-    // caret past the intended column — invisible only while horizontal_scroll_ == 0.
     return preferred_column;
   }
   if (target.visual_end <= target.visual_start) {
     return target.visual_start;
   }
-  // preferred_column counts on-screen cells; the row's first `indent` of them are
-  // the hanging-indent gutter, which holds no text. A caret aimed inside the
-  // gutter lands on the row's first column, exactly as a click there does.
   const std::size_t content_offset =
       preferred_column > target.indent ? preferred_column - target.indent : 0;
   return std::min(target.visual_start + content_offset, target.visual_end);
@@ -955,8 +788,6 @@ WrapRowAffinity TextViewport::AffinityForRowLanding(std::size_t row_index,
   if (visual_column != row.visual_end) {
     return WrapRowAffinity::kNextRow;
   }
-  // The end of the line's LAST row is the end of the line, not a wrap point: no
-  // other row answers for it, so there is nothing to disambiguate.
   if (row_index + 1 >= WrappedRowCount() ||
       WrappedRowAt(row_index + 1).line_index != row.line_index) {
     return WrapRowAffinity::kNextRow;
@@ -975,11 +806,6 @@ void TextViewport::AdvanceCaretHorizontal(TextPosition& caret, int delta) const 
   if (delta < 0) {
     for (int i = delta; i < 0; ++i) {
       if (caret.column == 0) {
-        // At the start of a line, step back to the end of the previous VISIBLE
-        // line (VS Code semantics: horizontal motion is a view-space step, and a
-        // collapsed region is not in the view). Landing inside the region would
-        // put the caret where nothing paints it. Stop only at the very start of
-        // the document.
         const std::size_t previous = VisibleLineBefore(caret.line);
         if (previous == caret.line) {
           break;
@@ -994,9 +820,6 @@ void TextViewport::AdvanceCaretHorizontal(TextPosition& caret, int delta) const 
     for (int i = 0; i < delta; ++i) {
       const std::string_view line = document_->lines.LineView(caret.line);
       if (caret.column >= line.size()) {
-        // At the end of a line, step forward to the start of the next VISIBLE
-        // line -- over a collapsed region, not into it. Stop only at the very
-        // end of the document.
         const std::size_t next = VisibleLineAfter(caret.line);
         if (next == caret.line) {
           break;
@@ -1015,12 +838,6 @@ TextPosition TextViewport::ClampedToDocument(TextPosition position) const {
     return TextPosition{0, 0};
   }
   position.line = std::min(position.line, document_->lines.size() - 1);
-  // ReadCaretNeighborhood, not LineView + ClampTextColumn: this runs on the
-  // undo-entry restore, i.e. on every edit, and `LineView` materializes the
-  // WHOLE line when that line spans pieces -- which every edited line does. On
-  // a file with no line breaks in it that is a copy of the document per
-  // keystroke (TD-2026-08-05-133), which is exactly what
-  // TextViewport/TypingInALongLineCopiesNothing exists to catch, and did.
   position.column = ReadCaretNeighborhood(position.line, position.column).clamped_column;
   return position;
 }
@@ -1043,15 +860,8 @@ void TextViewport::ClampCaretSetToDocument() {
 }
 
 void TextViewport::SyncCaretsWithSharedDocument() {
-  // Stamp FIRST: the normalise below runs the same tail every caret-set mutation
-  // runs, and that tail must not re-enter this through the guard.
   carets_synced_content_revision_ = document_->content_revision;
   ClampCaretSetToDocument();
-  // Clamping can land two carets on one position -- which is exactly how a
-  // foreign delete used to make one keystroke type two characters. The full
-  // normalise, not just the position prune: a clamp can also push two ranged
-  // carets into overlapping selections, and the multi-caret appliers refuse to
-  // run over those.
   DedupeSecondaryCaretsAgainstPrimary();
   ClampScrollState();
 }
@@ -1065,13 +875,6 @@ void TextViewport::DedupeSecondaryCaretsAgainstPrimary() {
                            lhs.selection_anchor == rhs.selection_anchor;
                   }),
       secondary_carets_.end());
-  // Drop a secondary that IS the primary: same caret, same anchor (or both
-  // collapsed). One that merely shares the primary's position but owns a
-  // different selection is left for the merge below to judge -- a nested or
-  // same-direction selection overlaps and merges there, but two selections that
-  // only TOUCH at the shared caret (one leading left, one right, as after
-  // Ctrl+Shift+Right lands a reversed secondary on the primary) are two cursors
-  // in VS Code, and dropping the secondary here silently lost its selection.
   const TextPosition primary{cursor_line_, cursor_column_};
   secondary_carets_.erase(
       std::remove_if(secondary_carets_.begin(), secondary_carets_.end(),
@@ -1084,35 +887,18 @@ void TextViewport::DedupeSecondaryCaretsAgainstPrimary() {
 }
 
 void TextViewport::MergeOverlappingCaretRanges() {
-  // VS Code's CursorCollection.normalize: two cursors merge when their
-  // selections overlap, or when they touch and one of them is collapsed. The
-  // merged cursor spans the union; the primary keeps its direction and survives
-  // when it is involved, otherwise the lower cursor's direction wins.
-  //
-  // The multi-caret edit paths refuse to run over overlapping sites (each site
-  // edits a disjoint region, so an overlap would double-edit shared text). With
-  // overlaps allowed to exist, Alt+click at the start of a selection or a
-  // Shift+arrow that runs one selection into the next left a caret set on which
-  // every keystroke silently did nothing. Merging here, at the one tail every
-  // caret-set mutation runs through, keeps the invariant the appliers assume.
   bool any_selection = selection_anchor_.has_value();
   for (const SecondaryCaret& caret : secondary_carets_) {
     any_selection = any_selection || caret.selection_anchor.has_value();
   }
   if (!any_selection || secondary_carets_.empty()) {
-    return;  // collapsed carets only: the position dedupe above is the whole rule
+    return;
   }
 
   constexpr std::size_t kPrimary = std::numeric_limits<std::size_t>::max();
   using Entry = CaretMergeEntry;
-  // Reused scratch, not a local: this runs at the tail of every caret-set
-  // mutation, so a held column-select gesture allocated one growing vector per
-  // keystroke for a merge that almost never has anything to merge.
   std::vector<Entry>& entries = caret_merge_scratch_;
   entries.clear();
-  // Grow geometrically. reserve() takes the exact count, so reserving size()+1
-  // against a set that gains one caret per keystroke reallocated on EVERY
-  // keystroke -- the reused buffer above would have bought nothing.
   const std::size_t needed = secondary_carets_.size() + 1;
   if (entries.capacity() < needed) {
     entries.reserve(std::max(needed, entries.capacity() * 2));
@@ -1136,9 +922,6 @@ void TextViewport::MergeOverlappingCaretRanges() {
     if (detail::PositionLess(rhs.start, lhs.start)) return false;
     return detail::PositionLess(lhs.end, rhs.end);
   };
-  // Carets are sorted by position, which for disjoint ranges is also start
-  // order; a held column-select gesture rebuilds thousands of ranges per
-  // keystroke, so the sort only runs when that order does not already hold.
   if (!std::is_sorted(entries.begin(), entries.end(), by_start)) {
     std::sort(entries.begin(), entries.end(), by_start);
   }
@@ -1173,13 +956,6 @@ void TextViewport::MergeOverlappingCaretRanges() {
   }
   entries.resize(out);
 
-  // Write the merged set back over `secondary_carets_` rather than into a fresh
-  // vector: exactly one entry carries the primary, so the secondaries written
-  // are `out - 1` <= the size the vector already has, and nothing below reads
-  // `secondary_carets_` (the entries hold their own copies of every position and
-  // anchor, and PreferredColumnForCaret does not consult the caret set). A fresh
-  // vector cost one allocation per merge, and the merge runs at the tail of
-  // every caret-set mutation.
   std::size_t written = 0;
   for (const Entry& entry : entries) {
     const bool collapsed = entry.start == entry.end;
@@ -1219,16 +995,10 @@ void TextViewport::AdvanceCaretVertical(TextPosition& caret,
   const int max_row = static_cast<int>(row_count) - 1;
   const int wanted_row = static_cast<int>(current_row) + delta;
   if (edge_policy == VerticalEdgePolicy::kToRowEdge && (wanted_row < 0 || wanted_row > max_row)) {
-    // Off the top: the first row's start. Off the bottom: the last row's end.
-    // Any overshoot counts (a PageUp from the middle of the first screen lands
-    // on the document start), which is VS Code's rule too. The sticky column
-    // resets to the landing, as after any horizontal key.
     const std::size_t edge_row = wanted_row < 0 ? 0 : static_cast<std::size_t>(max_row);
     const WrappedRowLayout edge = WrappedRowAt(edge_row);
     caret.line = edge.line_index;
     const std::size_t line_length = document_->lines.LineLength(caret.line);
-    // In trivial mode the row table's visual span is the scroll window, not the
-    // line, so only a real row table can name the row's own edges.
     const bool row_table = soft_wrap_ && !layout_cache_.wrapped_row_layouts_trivial();
     if (wanted_row < 0) {
       caret.column = row_table ? TextColumnAtVisualColumn(caret.line, edge.visual_start) : 0;
@@ -1237,8 +1007,6 @@ void TextViewport::AdvanceCaretVertical(TextPosition& caret,
                                           line_length)
                                : line_length;
     }
-    // Neither landing is a wrap point: the document's first row starts at its
-    // line's column 0, and the last row's end is its line's end.
     affinity = WrapRowAffinity::kNextRow;
     preferred_column = PreferredColumnForCaret(caret, affinity);
     return;
@@ -1249,11 +1017,6 @@ void TextViewport::AdvanceCaretVertical(TextPosition& caret,
       ResolveSoftWrapCursorColumnForTargetRow(preferred_column, target_row);
   caret.line = target.line_index;
   caret.column = TextColumnAtVisualColumn(target.line_index, target_visual_column);
-  // A preferred column past the target row's last cell lands exactly on that
-  // row's wrap point. That position is also the next row's first column, so
-  // without the affinity the caret resolves BACK to the row we just left: Up off
-  // the last row of a wrapped line did nothing at all, and Down from a wide row
-  // skipped the short one under it.
   affinity = AffinityForRowLanding(target_row, target_visual_column);
 }
 
@@ -1263,4 +1026,4 @@ void TextViewport::EnsureDocument() {
   }
 }
 
-}  // namespace microide::editor
+}

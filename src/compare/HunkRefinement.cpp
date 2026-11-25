@@ -33,13 +33,10 @@ struct RefineScratch {
   std::vector<LinePair> pairs;
   std::vector<std::uint64_t> best;
   std::vector<std::uint32_t> pred;
-  // Fenwick tree over right lines: the best chain ending at or before a line.
   std::vector<std::uint64_t> fenwick_value;
   std::vector<std::uint32_t> fenwick_pair;
   std::vector<std::uint32_t> chain;
 
-  // A huge hunk's trees and match are not worth keeping for the next, ordinary,
-  // hunk on this thread.
   void ReleaseIfLarge() {
     constexpr std::size_t kRetainTokens = 1u << 16;
     if (lhs.tokens.capacity() + rhs.tokens.capacity() > kRetainTokens) {
@@ -66,7 +63,6 @@ void ResetSpans(std::vector<std::vector<CompareTextSpan>>& spans, std::size_t li
   }
 }
 
-// Appends [start, end), trimmed of surrounding blanks, to a line's spans.
 void AddSpan(std::vector<CompareTextSpan>& spans, std::string_view line, std::size_t start,
              std::size_t end) {
   while (start < end && IsBlank(line[start])) {
@@ -80,8 +76,6 @@ void AddSpan(std::vector<CompareTextSpan>& spans, std::string_view line, std::si
   }
 }
 
-// Sorts a line's spans and joins those that touch or are separated only by
-// blanks: two novel tokens in a row read as one change.
 void NormalizeSpans(std::vector<CompareTextSpan>& spans, std::string_view line) {
   if (spans.size() < 2) {
     return;
@@ -105,8 +99,6 @@ void NormalizeSpans(std::vector<CompareTextSpan>& spans, std::string_view line) 
   spans.resize(kept + 1);
 }
 
-// Marks the bytes [begin, end) of a region — given as pointers into its lines,
-// starting the search at `line` — novel, line by line.
 void AddRange(std::span<const std::string_view> lines, std::uint32_t line, const char* begin,
               const char* end, std::vector<std::vector<CompareTextSpan>>& spans) {
   const auto address = [](const char* pointer) { return reinterpret_cast<std::uintptr_t>(pointer); };
@@ -115,7 +107,7 @@ void AddRange(std::span<const std::string_view> lines, std::uint32_t line, const
     const std::uintptr_t line_begin = address(text.data());
     const std::uintptr_t line_end = line_begin + text.size();
     if (address(begin) > line_end) {
-      continue;  // the range starts on a later line
+      continue;
     }
     const std::size_t start = address(begin) > line_begin ? address(begin) - line_begin : 0;
     const std::size_t stop = std::min<std::uintptr_t>(address(end), line_end) - line_begin;
@@ -159,8 +151,6 @@ void SplitWords(std::string_view text, std::vector<std::string_view>& words) {
   }
 }
 
-// A replaced string or comment: diff its words, and mark only the words that
-// changed. A literal that was merely re-indented or re-wrapped marks nothing.
 void AddReplacedWords(std::span<const std::string_view> left_lines,
                       std::span<const std::string_view> right_lines, const DiffToken& lhs,
                       const DiffToken& rhs, HunkRefinement& out, RefineScratch& scratch) {
@@ -178,9 +168,6 @@ void AddReplacedWords(std::span<const std::string_view> left_lines,
   }
 }
 
-// The rows of a hunk: the heaviest chain of (left line, right line) pairs that
-// share matched tokens, strictly increasing on both sides, with the lines
-// between consecutive anchors zipped side by side.
 void AlignRows(std::size_t left_count, std::size_t right_count, RefineScratch& scratch,
                std::vector<HunkRow>& rows) {
   std::vector<LinePair>& pairs = scratch.pairs;
@@ -198,10 +185,6 @@ void AlignRows(std::size_t left_count, std::size_t right_count, RefineScratch& s
   }
   pairs.resize(merged);
 
-  // Weighted longest increasing chain: pairs grouped by left line; a pair may
-  // extend any chain ending at a strictly smaller left AND right line, which
-  // the Fenwick prefix-max over right lines answers once a whole left-line
-  // group has been scored.
   const std::size_t size = right_count + 1;
   scratch.fenwick_value.assign(size, 0);
   scratch.fenwick_pair.assign(size, kNoHunkLine);
@@ -275,7 +258,7 @@ void AlignRows(std::size_t left_count, std::size_t right_count, RefineScratch& s
   zip_until(static_cast<std::uint32_t>(left_count), static_cast<std::uint32_t>(right_count));
 }
 
-}  // namespace
+}
 
 namespace {
 
@@ -304,7 +287,7 @@ bool SideEquals(std::string_view stored, std::span<const std::string_view> lines
   return at == stored.size();
 }
 
-}  // namespace
+}
 
 HunkRefinementView::HunkRefinementView(std::span<const HunkRow> rows,
                                        std::span<const CompareTextSpan> spans,
@@ -335,7 +318,7 @@ std::uint64_t MixHash(std::uint64_t value) {
   return value;
 }
 
-}  // namespace
+}
 
 void HunkRefinementCache::Arena::Clear() {
   syntax.reset();
@@ -380,7 +363,6 @@ std::uint32_t HunkRefinementCache::Arena::Find(std::uint64_t hash,
 
 void HunkRefinementCache::Arena::Index(std::uint32_t entry) {
   if ((entries.size() + 1) * 2 > index.size()) {
-    // Grow and reinsert every entry; only while a cache is first filling.
     index.assign(std::max<std::size_t>(64, index.size() * 2), 0u);
     const std::size_t mask = index.size() - 1;
     for (std::uint32_t existing = 0; existing < entries.size(); ++existing) {
@@ -425,7 +407,6 @@ std::uint32_t HunkRefinementCache::CopyFrom(const Arena& source, std::uint32_t e
   entry.rows_begin = static_cast<std::uint32_t>(current_.rows.size());
   current_.rows.insert(current_.rows.end(), source.rows.begin() + from.rows_begin,
                        source.rows.begin() + from.rows_begin + from.rows_count);
-  // Line starts are offsets into the arena's span list, so rebase them.
   const std::uint32_t lines = from.left_lines + from.right_lines;
   const std::uint32_t old_base = source.line_starts[from.lines_begin];
   const std::uint32_t old_end = source.line_starts[from.lines_begin + lines];
@@ -547,7 +528,6 @@ void RefineHunk(std::span<const std::string_view> left_lines,
   ResetSpans(out.left_spans, left_lines.size());
   ResetSpans(out.right_spans, right_lines.size());
 
-  // A one-sided hunk is novel through and through: no tree to compare.
   if (left_lines.empty() || right_lines.empty()) {
     for (std::size_t line = 0; line < left_lines.size(); ++line) {
       AddSpan(out.left_spans[line], left_lines[line], 0, left_lines[line].size());
@@ -601,4 +581,4 @@ void RefineHunk(std::span<const std::string_view> left_lines,
   scratch.ReleaseIfLarge();
 }
 
-}  // namespace microide::compare
+}

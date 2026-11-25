@@ -15,7 +15,6 @@ using namespace detail;
 
 namespace {
 
-// A key under construction: one multiply per value, eight bytes of text to one.
 class Key {
  public:
   explicit Key(std::uint64_t seed) : hash_(seed) {}
@@ -52,7 +51,7 @@ class Key {
   std::uint64_t hash_;
 };
 
-constexpr std::uint64_t kCardSeed = 0x73657474696e6773ull;  // "settings"
+constexpr std::uint64_t kCardSeed = 0x73657474696e6773ull;
 
 std::uint64_t RowKey(const SettingsRowViewModel& row, std::uint64_t style, bool hovered, bool pane_focused) {
   const SettingsControlViewModel& control = row.control;
@@ -88,7 +87,7 @@ std::uint64_t RowKey(const SettingsRowViewModel& row, std::uint64_t style, bool 
   return key.value();
 }
 
-}  // namespace
+}
 
 void PrepareSettingsCardFrame(PreparedFrameState& frame, SettingsCardInputs inputs) {
   PreparedFrameState::SettingsCardPaint& card = frame.settings_card;
@@ -126,8 +125,6 @@ void PrepareSettingsCardFrame(PreparedFrameState& frame, SettingsCardInputs inpu
     };
     const bool settings = vm.mode == SettingsOverlayMode::Settings && vm.empty_label.empty();
 
-    // The backdrop the card dims, and the card's own chrome: all it shows that is
-    // not a row of its rail or of its values.
     unit(card.backdrop, style);
     {
       Key key(style);
@@ -152,8 +149,6 @@ void PrepareSettingsCardFrame(PreparedFrameState& frame, SettingsCardInputs inpu
           .Add(vm.scrollbar, card.scrollbar_active)
           .Add(vm.category_scrollbar, card.category_scrollbar_active);
       if (vm.mode == SettingsOverlayMode::HelpAbout) {
-        // The Help list is the card's too: its entries from the scroll row on, as
-        // many as can show (an entry is at least a line tall).
         key.Add(vm.help_list_rect)
             .Add(vm.scroll_row)
             .Add(vm.help_label_column)
@@ -170,8 +165,6 @@ void PrepareSettingsCardFrame(PreparedFrameState& frame, SettingsCardInputs inpu
       unit(vm.rect, key.value());
     }
 
-    // The scope chip's help, for the chip under the pointer: laid out here so the
-    // card over the rows is a unit and paint draws what was keyed.
     {
       SDL_FRect tooltip_rect{};
       std::uint64_t tooltip_key = 0;
@@ -183,7 +176,6 @@ void PrepareSettingsCardFrame(PreparedFrameState& frame, SettingsCardInputs inpu
           }
           WrappedTooltipLayout tooltip =
               BuildWrappedTooltipLayout(text, row.scope_help, std::max(240.0f, vm.rect.w * 0.45f));
-          // Below the chip; above it when below would run past the card.
           const float below_y = row.scope_rect.y + row.scope_rect.h + 6.0f;
           const float above_y = row.scope_rect.y - 6.0f - tooltip.rect.h;
           const float y = (below_y + tooltip.rect.h <= vm.rect.y + vm.rect.h - 6.0f || above_y < vm.rect.y)
@@ -202,7 +194,6 @@ void PrepareSettingsCardFrame(PreparedFrameState& frame, SettingsCardInputs inpu
       unit(tooltip_rect, tooltip_key);
     }
 
-    // The font picker's dropdown, over the rows below its field.
     if (settings && vm.value_picker.visible) {
       const SettingsPickerViewModel& picker = vm.value_picker;
       Key key(style);
@@ -216,8 +207,6 @@ void PrepareSettingsCardFrame(PreparedFrameState& frame, SettingsCardInputs inpu
     }
 
     if (settings) {
-      // The rail: a row lit under the pointer unless it is the selected one, which
-      // keeps its stronger fill (and the focus ring while the rail has the keys).
       const bool rail_focused = vm.focused_pane == SettingsPane::Categories;
       for (std::size_t index = 0; index < vm.categories.size(); ++index) {
         const SettingsCategoryViewModel& category = vm.categories[index];
@@ -236,8 +225,6 @@ void PrepareSettingsCardFrame(PreparedFrameState& frame, SettingsCardInputs inpu
                                 .Add(category.selected && rail_focused)
                                 .value());
       }
-      // The values: a row with the strip its sub-header takes above it, inside
-      // the pane the rows are clipped to.
       const bool values_focused = vm.focused_pane == SettingsPane::Values;
       const float line_height = text.LineHeight();
       for (std::size_t index = 0; index < vm.rows.size(); ++index) {
@@ -265,4 +252,4 @@ void PrepareSettingsCardFrame(PreparedFrameState& frame, SettingsCardInputs inpu
   frame.derived_damage.Commit(DerivedSurface::SettingsCard, inputs.damage);
 }
 
-}  // namespace microide::workspace
+}

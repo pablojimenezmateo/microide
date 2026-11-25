@@ -36,7 +36,7 @@ bool WorkspacePluginAssetMonitor::ConsumeWakeEvent(Uint32 type) {
   return true;
 }
 
-void WorkspacePluginAssetMonitor::SetProjectRoot(const std::filesystem::path& /*project_root*/) {
+void WorkspacePluginAssetMonitor::SetProjectRoot(const std::filesystem::path& ) {
   std::vector<std::filesystem::path> roots;
   const std::filesystem::path user_plugin_root = plugin::ResolveUserPluginInstallRoot();
   if (!user_plugin_root.empty()) {
@@ -90,14 +90,10 @@ void WorkspacePluginAssetMonitor::PushWakeEvent() const {
     return;
   }
 
-  // TD-2026-07-17-087: route through util::PushWake so a rejected push latches
-  // the owed-wake bit the idle-wait poll consumes, instead of stranding a ready
-  // plugin-asset change until unrelated input. Clear the local flag on failure so
-  // a later producer retries.
   if (!util::PushWake(event_type)) {
     std::scoped_lock lock(wake_mutex_);
     wake_event_pending_ = false;
   }
 }
 
-}  // namespace microide::workspace
+}

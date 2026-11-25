@@ -15,7 +15,7 @@ int& ActiveSidebarScrollRow(ProjectWorkspaceState& state, SidebarMode sidebar_mo
   return state.sidebar.scroll_row;
 }
 
-}  // namespace
+}
 
 bool SidebarMouseCoordinator::HandleDrag(const SDL_Event& event,
                                          const WorkspaceLayout& layout) {
@@ -52,8 +52,6 @@ bool SidebarMouseCoordinator::HandleWheel(const SDL_Event& event,
   int& scroll_row = ActiveSidebarScrollRow(state_, sidebar_mode);
   scroll_row =
       std::clamp(scroll_row - vertical_ticks * kWheelScrollRows, 0, list_layout.max_scroll);
-  // Scrolling is not focusing: the wheel must not pull keyboard focus out of whatever
-  // the user is typing into (VS Code behaves the same way).
   return true;
 }
 
@@ -72,7 +70,7 @@ bool SidebarMouseCoordinator::BeginScrollbarDrag(const SDL_Event& event,
 
   interaction_state_.drag_target = DragTarget::SidebarScrollbar;
   interaction_state_.drag_scrollbar_offset = ScrollbarGrabOffset(
-      *list_layout.scrollbar, static_cast<float>(event.button.y), /*vertical=*/true);
+      *list_layout.scrollbar, static_cast<float>(event.button.y), true);
   const SidebarMode sidebar_mode = operations_.active_sidebar_mode();
   ActiveSidebarScrollRow(state_, sidebar_mode) = std::clamp(
       static_cast<int>(std::lround(ScrollUnitsForPointer(
@@ -109,4 +107,4 @@ ScrollableListLayout SidebarMouseCoordinator::CurrentListLayout(const WorkspaceL
                                                     state_.directory_tree.entries().size());
 }
 
-}  // namespace microide::workspace
+}

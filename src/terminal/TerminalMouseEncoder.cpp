@@ -20,7 +20,7 @@ int MouseModifierBits(util::KeyModifiers modifiers) {
   return bits;
 }
 
-}  // namespace
+}
 
 bool EncodeTerminalMouseEvent(const TerminalMouseEncodeRequest& request, std::string& out_bytes) {
   out_bytes.clear();
@@ -68,10 +68,6 @@ bool EncodeTerminalMouseEvent(const TerminalMouseEncodeRequest& request, std::st
   if (!request.mouse_sgr_ext_mode && !request.pressed && !request.motion &&
       request.button != TerminalMouseButton::WheelUp &&
       request.button != TerminalMouseButton::WheelDown) {
-    // Legacy X10/normal encoding cannot distinguish which button was released, so
-    // it collapses every release to the ambiguous button-3 code. SGR (1006) mode
-    // must NOT: it signals release via the trailing 'm' and keeps the real button
-    // number in Pb, so gate this override off when SGR extended reporting is on.
     code = 3;
   }
   if (request.motion) {
@@ -89,11 +85,6 @@ bool EncodeTerminalMouseEvent(const TerminalMouseEncodeRequest& request, std::st
     return true;
   }
 
-  // Legacy X10 encoding can only represent coordinates up to column/row 223
-  // (cell + 33 must fit in one byte). Beyond that, clamping to the edge cell
-  // would deliver the event at the wrong location; drop it instead so the app
-  // never sees a phantom edge click. Terminals this large should enable SGR
-  // (1006) reporting, which has no such limit.
   if (clamped_column > 222 || clamped_row > 222) {
     return false;
   }
@@ -109,4 +100,4 @@ bool EncodeTerminalMouseEvent(const TerminalMouseEncodeRequest& request, std::st
   return true;
 }
 
-}  // namespace microide::terminal
+}

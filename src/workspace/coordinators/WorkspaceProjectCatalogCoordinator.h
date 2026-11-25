@@ -26,9 +26,6 @@ class ProjectCatalogCoordinator {
 
   ProjectCatalogCoordinator(WorkspaceContext& context, Operations operations);
 
-  // `id` and `locality` are fixed here, at the open, and travel with the project
-  // (project::ProjectId, project::ProjectLocality). `normalized_root` is the id's
-  // I/O root.
   bool Open(const project::ProjectId& id,
             const std::filesystem::path& normalized_root,
             bool restore_persistence,
@@ -54,4 +51,4 @@ class ProjectCatalogCoordinator {
   Operations operations_;
 };
 
-}  // namespace microide::workspace
+}

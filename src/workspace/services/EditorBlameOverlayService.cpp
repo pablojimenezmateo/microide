@@ -11,17 +11,10 @@
 namespace microide::workspace {
 namespace {
 
-// Inline blame annotates the caret line only, the way VSCode/GitLens does. A
-// wider radius painted the same "author, date" string on the rows above and
-// below the caret too, which read as a rendering bug and cost 3x the snapshot
-// copies, truncation, and text measurement every painted frame.
 constexpr std::size_t kCaretBlameRadius = 0;
 constexpr std::size_t kInlineBlameGapColumns = 8;
 constexpr std::size_t kMinimumCodeColumnsWithBlame = 24;
 
-// A `std::filesystem::path` assignment reallocates unconditionally, and both
-// paths in a blame request are the same values frame after frame, so compare
-// first. The comparison is a string compare on the native pathname.
 void AssignPathIfChanged(std::filesystem::path& target, const std::filesystem::path& source) {
   if (target != source) {
     target = source;
@@ -37,9 +30,6 @@ std::string FormatBlameDate(std::int64_t author_time) {
   std::tm utc_time{};
   gmtime_r(&timestamp, &utc_time);
 
-  // strftime into a stack buffer rather than an ostringstream: the stream is
-  // several allocations plus a locale imbue for a fixed 21-byte result, and this
-  // runs once per annotated line per painted frame while inline blame is on.
   char formatted[32] = {};
   const std::size_t written =
       std::strftime(formatted, sizeof(formatted), "%Y-%m-%d %H:%M UTC", &utc_time);
@@ -49,7 +39,7 @@ std::string FormatBlameDate(std::int64_t author_time) {
   return std::string(formatted, written);
 }
 
-}  // namespace
+}
 
 const platform::ProcessLauncher* EditorBlameOverlayService::ProjectLauncher() const {
   const platform::ProcessLauncher* launcher = project_launcher_ ? project_launcher_() : nullptr;
@@ -65,7 +55,6 @@ bool EditorBlameOverlayService::FitsPane(render::TextRenderer& text_renderer,
     return false;
   }
 
-  // Columns only: the sticky band takes rows, never columns.
   const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
       text_renderer, viewport, rect, editor::kNoStickyBand, show_line_numbers);
   return metrics.visible_columns >= kMinimumCodeColumnsWithBlame;
@@ -93,14 +82,11 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildEditor
       text_renderer, viewport, rect, sticky_scroll_rows, show_line_numbers);
   viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
   const std::size_t visible_start_line = viewport.VisualRowLineIndex(viewport.scroll_line());
-  // Inline blame only renders the caret +/- kCaretBlameRadius, so request just
-  // that window of snapshot lines (the visible window still drives prefetch).
   const std::size_t caret_start =
       viewport.cursor_line() > kCaretBlameRadius ? viewport.cursor_line() - kCaretBlameRadius : 0;
   const std::size_t caret_end =
       viewport.line_count() == 0 ? 0
                                  : std::min(viewport.line_count() - 1, viewport.cursor_line() + kCaretBlameRadius);
-  // Reuse the descriptor rather than build one: see editor_request_'s comment.
   project::GitBlameRequest& request = editor_request_;
   request.launcher = ProjectLauncher();
   AssignPathIfChanged(request.root, project_root);
@@ -179,17 +165,11 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildCompar
   }
   if (project_root.empty() || compare_tab.right_viewport.is_placeholder() ||
       compare_tab.right_viewport.path().empty() || compare_tab.right_viewport.dirty() ||
-      // The compare surface renders its own gutter (WorkspaceShellRenderCompare),
-      // independent of the editor.line_numbers toggle, so this blame-fits heuristic
-      // keeps the line-number-reserved width regardless.
       !FitsPane(text_renderer, compare_tab.right_viewport, layout.pane_rect, 320.0f,
-                /*show_line_numbers=*/true)) {
+                true)) {
     return std::nullopt;
   }
 
-  // …Ref, not the copying form: this only asks has_value(), and the copy is an
-  // owned path per painted frame (the editor overlay above was converted by
-  // TD-2026-08-14-223; the compare one was missed).
   if (!project::internal::AbsoluteToRelativePathRef(project_root,
                                                     compare_tab.right_viewport.path())
            .has_value()) {
@@ -360,4 +340,4 @@ const editor::EditorBlameLine* EditorBlameOverlayService::LineAtPosition(float x
   return it == visible_overlay_->lines.end() ? nullptr : &*it;
 }
 
-}  // namespace microide::workspace
+}

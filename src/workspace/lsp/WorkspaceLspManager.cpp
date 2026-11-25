@@ -11,16 +11,13 @@ namespace microide::workspace {
 
 namespace {
 
-// Why a server whose process is gone is gone: the client's own reason (an exec
-// the sandbox refused, a crash) and the command. One text whichever path notices
-// first -- EnsureStarted dropping the client or LastServerError reading it.
 std::string DeadServerError(const std::vector<std::string>& command, const LspClient& client) {
   const std::string why = client.LastError();
   return (why.empty() ? std::string("language server process exited unexpectedly") : why) +
          " [command: " + SummarizeCommandForError(command) + "]";
 }
 
-}  // namespace
+}
 
 LspManager::LspManager() = default;
 
@@ -55,15 +52,10 @@ void LspManager::RegisterServer(const std::vector<std::string>& language_ids,
   if (language_ids.empty()) {
     return;
   }
-  // Canonical key is the first language id; every id aliases to it.
   const std::string& key = language_ids.front();
   auto it = servers_.find(key);
   if (it != servers_.end()) {
     ServerEntry& existing = it->second;
-    // Structural JSON comparison (no serialization/allocation): re-registering a
-    // server with an unchanged config is the common project-activation / plugin-
-    // refresh case, and large init-options/settings trees should not materialize
-    // four JSON strings just to detect "nothing changed".
     if (existing.language_ids == language_ids && existing.launcher == &launcher &&
         existing.command == command &&
         existing.root_uri == root_uri && existing.cwd == cwd &&
@@ -89,9 +81,6 @@ void LspManager::RegisterServer(const std::vector<std::string>& language_ids,
   entry.initialization_options = initialization_options;
   entry.settings = settings;
   entry.sandbox = sandbox;
-  // Drop any aliases left over from a prior registration of this key before
-  // installing the new set. Re-registering `["cpp","c"]` as `["cpp"]` must not
-  // leave `alias_["c"] = "cpp"` resolving to a server that no longer serves C.
   for (auto alias_it = alias_.begin(); alias_it != alias_.end();) {
     if (alias_it->second == key) {
       alias_it = alias_.erase(alias_it);
@@ -109,7 +98,6 @@ void LspManager::RegisterServer(const std::vector<std::string>& language_ids,
 
 void LspManager::BeginShutdownServersNotIn(const std::unordered_set<std::string>& language_ids) {
   for (auto it = servers_.begin(); it != servers_.end();) {
-    // Keep a server if any language id it serves is still active.
     bool keep = false;
     for (const std::string& id : it->second.language_ids) {
       if (language_ids.contains(id)) {
@@ -127,7 +115,6 @@ void LspManager::BeginShutdownServersNotIn(const std::unordered_set<std::string>
     }
     it = servers_.erase(it);
   }
-  // Drop alias entries that no longer point at a live server.
   for (auto alias_it = alias_.begin(); alias_it != alias_.end();) {
     if (servers_.find(alias_it->second) == servers_.end()) {
       alias_it = alias_.erase(alias_it);
@@ -147,7 +134,6 @@ LspClient* LspManager::EnsureStarted(ServerEntry& entry) {
     entry.last_error.clear();
     entry.client = std::make_unique<LspClient>();
     entry.client->SetWakeChannel(wake_event_type_);
-    // The label is only used for tracing; use the canonical language id.
     const std::string& label =
         entry.language_ids.empty() ? std::string() : entry.language_ids.front();
     if (!entry.client->Start(*entry.launcher, entry.command, entry.root_uri, label, entry.cwd,
@@ -165,10 +151,6 @@ LspClient* LspManager::EnsureStarted(ServerEntry& entry) {
   if (entry.client->IsRunning()) {
     return entry.client.get();
   }
-  // Died -- possibly before Start() returned, which a server whose exec fails at
-  // once does on a busy machine. Keep the client's own reason and the command,
-  // the text LastServerError gives for a client still in place; this path used
-  // to record a bare "exited unexpectedly" and drop both.
   if (entry.last_error.empty()) {
     entry.last_error = DeadServerError(entry.command, *entry.client);
   }
@@ -221,14 +203,9 @@ std::size_t LspManager::NotifyWatchedFileChanges(
   }
   util::PerformanceTrace::Scope perf_scope("LspManager::NotifyWatchedFileChanges");
   std::size_t notified = 0;
-  // Reused across servers so a project with several language servers does not
-  // reallocate the per-server list once per server.
   std::vector<LspClient::WatchedFileChange> wanted;
   for (auto& [_, entry] : servers_) {
     LspClient* const client = entry.client.get();
-    // Skip a server that registered nothing (one relaxed atomic load) before
-    // touching any string. Retiring clients are deliberately excluded: they are
-    // shutting down and a notification would only race their exit.
     if (client == nullptr || !client->WantsWatchedFiles()) {
       continue;
     }
@@ -260,12 +237,6 @@ std::size_t LspManager::NotifyWatchedFileChanges(
 void LspManager::DrainCallbacks() {
   util::StartupTrace::Scope trace_scope("LspManager::DrainCallbacks");
   for (auto& [_, entry] : servers_) {
-    // Drain regardless of IsRunning(): when a server dies unexpectedly its IO
-    // thread posts synthetic failure callbacks (FailPendingRequests) — the only
-    // thing that clears a hung "LSP: working..." indicator and the requesting UI's
-    // loading state — and by then IsRunning() is already false. Gating on
-    // IsRunning() stranded those callbacks unrun until teardown. Mirrors
-    // DapManager::DrainCallbacks and the retiring_clients_ loop below.
     if (entry.client) {
       entry.client->DrainCallbacks();
     }
@@ -291,10 +262,6 @@ std::string LspManager::LastServerError(const std::string& language_id) const {
   if (!entry->last_error.empty()) {
     return entry->last_error;
   }
-  // A client whose process died (an exec the sandbox refused, a crash during
-  // startup) says why itself; only EnsureStarted copied that into the entry, so a
-  // status that never re-started the server read nothing and showed "Starting…"
-  // forever (QA lsp-csharp: csharp-ls never ran and no one said so).
   if (entry->client != nullptr && !entry->test_install && !entry->client->IsRunning()) {
     return DeadServerError(entry->command, *entry->client);
   }
@@ -315,9 +282,6 @@ void LspManager::BeginShutdownAll() {
 
 std::vector<std::unique_ptr<LspClient>> LspManager::BeginShutdownAllAndTakeClients() {
   BeginShutdownAll();
-  // BeginShutdownAll left every client in retiring_clients_ (and reaped the already-
-  // complete ones). Hand the rest to the caller so this manager can be destroyed
-  // without ~LspManager -> ShutdownAll blocking on their WaitForShutdown.
   std::vector<std::unique_ptr<LspClient>> taken = std::move(retiring_clients_);
   retiring_clients_.clear();
   return taken;
@@ -381,4 +345,4 @@ void LspManager::CollectRetiredClients() {
   retiring_clients_.erase(write_it, retiring_clients_.end());
 }
 
-}  // namespace microide::workspace
+}

@@ -98,8 +98,6 @@ std::string GitSidebarWorkflowSummaryLine(const GitSidebarState& git_state,
       line += "  ·  ";
     }
     AppendUnsigned(line, counts.staged);
-    // No plural form: these read as "3 staged", not "3 stageds". (The conflicts
-    // count above is the only one that genuinely pluralizes.)
     line += " staged";
   }
   if (counts.changed > 0) {
@@ -116,9 +114,6 @@ std::string GitSidebarWorkflowSummaryLine(const GitSidebarState& git_state,
     AppendUnsigned(line, counts.untracked);
     line += " untracked";
   }
-  // Outgoing is intentionally excluded: it has its own section with a count, so
-  // surfacing it again in the working-tree summary is redundant. A tree with only
-  // outgoing commits reads as clean here, which is accurate.
   if (line.empty()) {
     line = "Working tree clean.";
   }
@@ -162,12 +157,8 @@ std::string GitSidebarSelectionSummaryLine(const GitSidebarEntry& entry,
 std::string GitSidebarSelectionActionLine(const GitSidebarEntry& entry,
                                           const GitSidebarActionAvailability& actions,
                                           bool commit_ready) {
-  // The row's commands are on its menu (Shift+F10 / the Menu key / a right-click):
-  // the bare letters this line used to name were removed, since a name typed into
-  // the list ran them (TD-2026-10-16-350). Typing selects by file name.
   std::string line;
   if (actions.default_view) {
-    // A conflicted row's default is the three-way merge.
     AppendHintSegment(line, actions.merge ? "Enter merge" : "Enter default");
   }
   std::string menu;
@@ -196,8 +187,6 @@ std::string GitSidebarSelectionActionLine(const GitSidebarEntry& entry,
   return line;
 }
 
-// Only reached for a section that survived ShouldShowSection, i.e. a repository is
-// available and the section is either non-empty or the base-ref-less Outgoing one.
 std::string EmptySectionLabel(GitSidebarEntry::Section section, std::string_view git_base_ref) {
   switch (section) {
     case GitSidebarEntry::Section::Conflicts:
@@ -230,16 +219,6 @@ std::size_t SectionCount(const GitSidebarCounts& counts, GitSidebarEntry::Sectio
   return 0;
 }
 
-// VSCode hides a source-control group that has nothing in it instead of stamping a
-// header and a placeholder for each one; on a clean tree that is ten rows of prose
-// saying nothing. Hide ours too, with two exceptions:
-//
-//   * Without a repository every group is meaningless, so none is shown; the
-//     headerless "Not a git repository" line below carries that state instead.
-//   * `Outgoing` always survives. Its header is not decoration: it carries the
-//     base-branch button, the only way to change what "outgoing" compares against,
-//     so hiding the empty group would stall the user with no way to pick a base.
-//     Its empty label also reports a missing base ref.
 bool ShouldShowSection(GitSidebarEntry::Section section,
                        std::size_t count,
                        const GitSidebarState& git_state) {
@@ -249,7 +228,7 @@ bool ShouldShowSection(GitSidebarEntry::Section section,
   return count > 0 || section == GitSidebarEntry::Section::Outgoing;
 }
 
-}  // namespace
+}
 
 GitSidebarEntry::Section ClassifyGitSidebarSection(bool conflicted,
                                                    bool staged,
@@ -440,8 +419,6 @@ GitSidebarViewModel BuildGitSidebarViewModel(
   view_model.refreshing = git_state.refreshing;
   view_model.branch_button_label =
       git_state.branch_label.empty() ? std::string("Branch\u2026") : git_state.branch_label;
-  // "Sync 2\u2193 1\u2191" reads as "two to pull, one to push". Counts are omitted when
-  // both are zero so the common in-sync case stays a plain verb.
   view_model.sync_button_label = "Sync";
   if (git_state.behind > 0 || git_state.ahead > 0) {
     view_model.sync_button_label += ' ';
@@ -475,10 +452,6 @@ GitSidebarViewModel BuildGitSidebarViewModel(
     }
   }
 
-  // The branch / upstream / ahead-behind line is intentionally omitted here: it is
-  // already shown in the status bar at the bottom of the window, so repeating it at
-  // the top of the panel is redundant. Only banners (stale snapshot, refresh error)
-  // remain in summary_lines.
   if (!view_model.stale_banner.empty()) {
     view_model.summary_lines.push_back(view_model.stale_banner);
   }
@@ -496,11 +469,6 @@ GitSidebarViewModel BuildGitSidebarViewModel(
       GitSidebarEntry::Section::Outgoing,
   };
 
-  // A clean tree means no rows anywhere, so the panel would otherwise render blank
-  // once the empty groups are hidden. One line of prose replaces them, headerless.
-  // `refreshing` deliberately does not change this text: an in-flight refresh is
-  // reported by the panel's own activity affordance, not by rewriting list content
-  // that then flickers back (see BuildGitStaleBanner, which makes the same call).
   if (!git_state.repo_available || git_state.entries.empty()) {
     view_model.sections.push_back(GitSidebarSectionViewModel{
         .section = GitSidebarEntry::Section::Changed,
@@ -523,9 +491,6 @@ GitSidebarViewModel BuildGitSidebarViewModel(
         .show_header = true,
         .rows = {},
     };
-    // `counts` already knows how many rows this section gets, and a section with
-    // a thousand changed files would otherwise grow its row vector by doubling —
-    // ~10 reallocations, each move-constructing every row's five strings.
     section_vm.rows.reserve(count);
 
     for (std::size_t i = 0; i < git_state.entries.size(); ++i) {
@@ -533,9 +498,6 @@ GitSidebarViewModel BuildGitSidebarViewModel(
         continue;
       }
       const GitSidebarEntry& entry = git_state.entries[i];
-      // Non-const so its two labels MOVE into the row below. They were copied,
-      // which on a large refresh is two string allocations per changed file, on
-      // the main thread, for strings whose only other reference dies here.
       GitSidebarEntryTextModel text_model =
           BuildGitSidebarEntryTextModel(entry.relative_path, entry.section == GitSidebarEntry::Section::Staged);
       const GitSidebarActionAvailability actions = GitSidebarActionAvailabilityForEntry(
@@ -581,15 +543,10 @@ GitSidebarViewModel BuildGitSidebarViewModel(
         GitSidebarSelectionActionLine(selected_entry, actions, commit_ready);
   } else if (git_state.repo_available) {
     view_model.selection_summary_line = "Select a file to review or mutate.";
-    // The no-selection variant of the SAME line the selected branch above builds
-    // with AppendHintSegment: it has to be punctuated the same way, or the git
-    // sidebar's action line changes separator as the selection comes and goes.
-    // It was spelled "  |  " until 2026-09-19 -- the redefined-joiner cleanup
-    // fixed the joined branch and left this hand-written one behind.
     view_model.selection_action_line = "Enter default · r refresh";
   }
 
   return view_model;
 }
 
-}  // namespace microide::workspace
+}

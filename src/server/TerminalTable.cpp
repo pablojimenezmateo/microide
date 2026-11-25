@@ -15,7 +15,7 @@ namespace {
 constexpr std::size_t kMaxShellArgs = 256;
 constexpr std::size_t kMaxShellBytes = 64 * 1024;
 
-}  // namespace
+}
 
 TerminalTable::TerminalTable(Sink sink, Limits limits) : sink_(std::move(sink)), limits_(limits) {
   thread_ = std::thread([this]() {
@@ -54,8 +54,6 @@ std::optional<TerminalTable::OpenRequest> TerminalTable::ParseOpen(const util::J
     return fail("term/open params must be an object");
   }
   OpenRequest request;
-  // No cwd: the user's home, as a login shell would start (a directory outside
-  // the project, or a terminal-only session's terminal).
   const util::JsonValue& cwd = params["cwd"];
   if (cwd.IsNull()) {
     const char* home = std::getenv("HOME");
@@ -95,7 +93,6 @@ std::optional<TerminalTable::OpenRequest> TerminalTable::ParseOpen(const util::J
       !in_range(columns, terminal::kMaxHostTerminalDimension) || !in_range(scrollback, 1000000)) {
     return fail("rows, columns and scrollback_lines must be positive and bounded");
   }
-  // Bounded so a client cannot ask the host to buffer without limit.
   request.credit_bytes = static_cast<std::size_t>(
       std::clamp<std::int64_t>(params["credit_bytes"].AsInt(0), 0, 16 * 1024 * 1024));
   request.prefetch_lines = static_cast<std::size_t>(
@@ -118,10 +115,6 @@ TerminalTable::Client* TerminalTable::Terminal::FindClient(std::uint64_t connect
 void TerminalTable::ApplySharedSizeLocked(Terminal& terminal) {
   std::size_t rows = 0;
   std::size_t columns = 0;
-  // The client that typed last is the person at the keyboard: the pty is their
-  // pane's size (tmux's `window-size latest`). The smallest pane held everyone
-  // to a machine left attached elsewhere -- a suspended laptop, whose link takes
-  // hours to time out -- for as long as it stayed attached.
   const Client* typist = nullptr;
   for (const Client& client : terminal.clients) {
     if (client.rows == 0 || client.columns == 0) {
@@ -131,7 +124,6 @@ void TerminalTable::ApplySharedSizeLocked(Terminal& terminal) {
         (typist == nullptr || client.written_at > typist->written_at)) {
       typist = &client;
     }
-    // Until one of them types, the smallest: every client sees the whole screen.
     rows = rows == 0 ? client.rows : std::min(rows, client.rows);
     columns = columns == 0 ? client.columns : std::min(columns, client.columns);
   }
@@ -139,7 +131,6 @@ void TerminalTable::ApplySharedSizeLocked(Terminal& terminal) {
     rows = typist->rows;
     columns = typist->columns;
   }
-  // Nobody attached, or nobody has said: keep the size it has.
   if (rows == 0 || (rows == terminal.session.rows() && columns == terminal.session.columns())) {
     return;
   }
@@ -176,7 +167,6 @@ TerminalTable::OpenResult TerminalTable::Open(std::uint64_t connection, OpenRequ
     environment = shell_environment_;
   }
   environment.push_back("MICROIDE_TERMINAL_HANDLE=" + std::to_string(terminal->handle));
-  // This process IS the host: the shell runs here, through the local launcher.
   if (!terminal->session.StartArgv(platform::LocalProcessLauncher(), request.cwd, request.command,
                                    std::move(request.shell), {}, std::move(environment))) {
     terminal->session.Stop();
@@ -205,9 +195,6 @@ bool TerminalTable::RequestOpenUrl(std::uint64_t handle, std::string url) {
     if (it == terminals_.end() || it->second->clients.empty()) {
       return false;
     }
-    // Two machines on one terminal: the one whose user typed the command opens
-    // the page, not both. A client that never typed sorts first, so with one
-    // client attached it is that one.
     Client* target = &it->second->clients.front();
     for (Client& client : it->second->clients) {
       if (client.written_at > target->written_at) {
@@ -253,14 +240,11 @@ bool TerminalTable::Attach(std::uint64_t connection, std::uint64_t handle,
       return false;
     }
     Terminal& terminal = *it->second;
-    // The same connection attaching again (a reattach over it) starts over; any
-    // other connection is one more client, sharing the terminal.
     Client* client = terminal.FindClient(connection);
     if (client == nullptr) {
       client = &terminal.clients.emplace_back();
       client->connection = connection;
     } else {
-      // Input sequence numbers and credit are per client: a new start resets them.
       *client = Client{.connection = connection, .rows = client->rows, .columns = client->columns};
     }
     client->wire = wire;
@@ -269,7 +253,7 @@ bool TerminalTable::Attach(std::uint64_t connection, std::uint64_t handle,
     } else {
       client->builder.Reset();
     }
-    client->seen_generation = 0;  // due at once
+    client->seen_generation = 0;
   }
   Notify();
   return true;
@@ -281,7 +265,6 @@ void TerminalTable::Input(std::uint64_t connection, std::uint64_t handle,
   {
     std::lock_guard lock(mutex_);
     const auto it = terminals_.find(handle);
-    // Only an attached client types into a terminal.
     if (it == terminals_.end() || events.empty() || it->second->FindClient(connection) == nullptr) {
       return;
     }
@@ -289,18 +272,11 @@ void TerminalTable::Input(std::uint64_t connection, std::uint64_t handle,
   }
   using Kind = terminal::TerminalInputEvent::Kind;
   terminal::TerminalSession& session = terminal->session;
-  // The input is on record as written -- with what the program had printed
-  // before it -- BEFORE it reaches the pty, so whatever is applied after answers
-  // it. Recorded after the write, a quick echo could be captured first: counted
-  // as older than the input, or captured while no input was outstanding at all,
-  // so a frame showed the echo without acking it and the client's prediction was
-  // re-placed past it (TD-2026-10-25-392).
   {
     std::lock_guard lock(mutex_);
     if (Client* client = terminal->FindClient(connection)) {
       client->written_seq = std::max(client->written_seq, events.back().seq);
       client->written_at = std::chrono::steady_clock::now();
-      // Typing takes the pty's size from whoever had it, before the input lands.
       if (terminal->clients.size() > 1) {
         ApplySharedSizeLocked(*terminal);
       }
@@ -308,8 +284,6 @@ void TerminalTable::Input(std::uint64_t connection, std::uint64_t handle,
       client->written_output = session.OutputCount();
     }
   }
-  // Encoded HERE, against the modes this session is in now — not the client's
-  // one-round-trip-old view of them.
   for (const terminal::TerminalInputEvent& event : events) {
     switch (event.kind) {
       case Kind::Key:
@@ -367,7 +341,6 @@ void TerminalTable::Ack(std::uint64_t connection, std::uint64_t handle,
     if (client == nullptr) {
       return;
     }
-    // Never past what was sent, never backwards: an ack is untrusted.
     client->acked_bytes = std::clamp(received_bytes, client->acked_bytes, client->sent_bytes);
   }
   Notify();
@@ -409,7 +382,7 @@ void TerminalTable::Close(std::uint64_t connection, std::uint64_t handle) {
     }
   }
   if (detached) {
-    Notify();  // the others may have room again (see Detach)
+    Notify();
     return;
   }
   terminal->session.Stop();
@@ -422,7 +395,7 @@ bool TerminalTable::RemoveClientLocked(Terminal& terminal, std::uint64_t connect
   if (removed == 0) {
     return false;
   }
-  ApplySharedSizeLocked(terminal);  // the others may have room again
+  ApplySharedSizeLocked(terminal);
   return true;
 }
 
@@ -435,7 +408,7 @@ void TerminalTable::Detach(std::uint64_t connection, std::uint64_t handle) {
     }
   }
   if (resized) {
-    Notify();  // as below
+    Notify();
   }
 }
 
@@ -448,9 +421,6 @@ void TerminalTable::Detach(std::uint64_t connection) {
       resized = RemoveClientLocked(*terminal, connection) || resized;
     }
   }
-  // Wake the frame pump as Resize does: a pty that grew back draws nothing by
-  // itself (an idle shell prints no prompt on SIGWINCH), so without this the
-  // remaining client kept the smaller size until the program next printed.
   if (resized) {
     Notify();
   }
@@ -461,7 +431,6 @@ std::vector<TerminalTable::Listing> TerminalTable::List() const {
   std::vector<Listing> list;
   list.reserve(terminals_.size());
   for (const auto& [handle, terminal] : terminals_) {
-    // Table lock, then the session's: the order the frame pump's captures take.
     list.push_back(Listing{.handle = handle,
                            .root = terminal->root,
                            .cwd = terminal->session.reported_working_directory().string(),
@@ -508,18 +477,12 @@ void TerminalTable::Run() {
     const auto wake_at = [&](Clock::time_point when) {
       next_wake = next_wake ? std::min(*next_wake, when) : when;
     };
-    // The timeout stands for "the program printed nothing", so it does not run
-    // out while output is still on its way to the session: a server whose reader
-    // falls behind (a loaded host) otherwise acked input whose echo was sitting in
-    // the pty, and the client judged its prediction contradicted and stopped
-    // drawing (TD-2026-10-21-373, PredictionLeadsTheEchoByARoundTrip on CI's ASan
-    // job). The output's arrival notifies this loop.
     const auto echo_due = [&](const Terminal& terminal, const Client& client) {
       if (client.written_seq <= client.echo_ack) {
         return false;
       }
       if (terminal.output_generation.load(std::memory_order_acquire) > client.written_generation) {
-        return true;  // answered
+        return true;
       }
       return now - client.written_at >= limits_.echo_timeout && !terminal.session.HasUnreadOutput();
     };
@@ -530,8 +493,6 @@ void TerminalTable::Run() {
       for (Client& client : terminal->clients) {
         const bool echo = echo_due(*terminal, client);
         if (client.written_seq > client.echo_ack && !echo) {
-          // Past the timeout only while output is unread: look again a frame
-          // later rather than spin (its arrival also notifies).
           wake_at(std::max(client.written_at + limits_.echo_timeout, now + limits_.frame_interval));
         }
         if (client.seen_generation == generation && !echo && !client.signal_pending()) {
@@ -554,16 +515,6 @@ void TerminalTable::Run() {
       if (client == nullptr) {
         continue;
       }
-      // The ack is decided by the CAPTURE: answered when the lines it holds include
-      // output applied after the input was written, read under the same lock as
-      // the lines. Deciding from output_generation before capturing left a window
-      // -- the observer bumps it after the buffer's lock is released -- in which a
-      // frame showed the echo without acking it; the client then re-placed the
-      // still-pending prediction one cell past the echo, and the next frame's ack
-      // judged it against a blank cell: contradicted, and drawing stopped
-      // (TD-2026-10-25-392, PredictionLeadsTheEchoByARoundTrip on CI). The
-      // timeout half ("printed nothing") is read before capturing, so nothing it
-      // relies on being unread can land in between.
       const bool unanswered = client->written_seq > client->echo_ack;
       const bool timed_out = unanswered && now - client->written_at >= limits_.echo_timeout &&
                              !terminal.session.HasUnreadOutput();
@@ -573,7 +524,6 @@ void TerminalTable::Run() {
           client->builder.capture_lines_before_screen(terminal.prefetch_lines), capture);
       const bool answered = unanswered && capture.output_count > client->written_output;
       const std::uint64_t echo_ack = answered || timed_out ? client->written_seq : client->echo_ack;
-      // A capture CONSUMES the one-shot signals; every client is owed them.
       terminal::TerminalHostFrame& header = capture.header;
       if (header.has(terminal::TerminalHostFrame::kBell) || header.clipboard || header.notification) {
         for (Client& other : terminal.clients) {
@@ -626,7 +576,7 @@ void TerminalTable::Run() {
       }
       outgoing.clear();
       lock.lock();
-      continue;  // re-evaluate: input may have arrived while sending
+      continue;
     }
     if (woken_) {
       woken_ = false;
@@ -641,4 +591,4 @@ void TerminalTable::Run() {
   }
 }
 
-}  // namespace microide::server
+}

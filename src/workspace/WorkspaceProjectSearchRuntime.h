@@ -27,12 +27,7 @@ class WorkspaceProjectSearchRuntime {
                       const project::ProjectSearchHost* host = nullptr);
   void Stop();
   std::optional<project::ProjectSearchUpdate> ConsumeActiveUpdate();
-  // True when the active search worker has finished (or none is running), without
-  // consuming its pending results. See ProjectSearchService::WorkerFinished.
   bool WorkerFinished() const { return service_.WorkerFinished(); }
-  // Block until the search worker task has fully joined (see
-  // ProjectSearchService::WaitForWorkersIdle). Used by tests that measure the
-  // process-global text-search read counter deterministically.
   void WaitForWorkersIdle() { service_.WaitForWorkersIdle(); }
 
  private:
@@ -42,4 +37,4 @@ class WorkspaceProjectSearchRuntime {
   std::uint64_t active_search_id_ = 0;
 };
 
-}  // namespace microide::workspace
+}

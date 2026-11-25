@@ -14,21 +14,19 @@ namespace microide::workspace {
 enum class StatusBarSegmentId : std::uint8_t {
   Project = 0,
   Branch,
-  Worktrees,  // "3 worktrees" when the repository has linked ones
+  Worktrees,
   Language,
   Indent,
   Encoding,
-  LineEnding,  // LF / CRLF, apart from the encoding: a click changes it
+  LineEnding,
   LineColumn,
   Problems,
   Lsp,
   LayoutMode,
-  Remote,  // the remote hosts' connection state (RemoteHostService)
+  Remote,
   Count,
 };
 
-// The segment's stable name, as automation (the control channel's `ui` query)
-// spells it.
 constexpr std::string_view StatusBarSegmentName(StatusBarSegmentId id) {
   switch (id) {
     case StatusBarSegmentId::Project: return "project";
@@ -51,18 +49,8 @@ constexpr std::string_view StatusBarSegmentName(StatusBarSegmentId id) {
 struct StatusBarSegmentValue {
   std::string text;
   std::string tooltip;
-  // Command run when the segment is clicked, empty for a read-only segment.
-  // `clickable` is derived from it: the two used to be independent, and every
-  // segment shipped with clickable=false and no command at all, so the bar showed
-  // imperative tooltips ("Go to Line", "Open Problems") for controls that did
-  // nothing. Keeping the flag derived means an actionable-looking segment and an
-  // actual action cannot drift apart again.
   std::string command;
   std::string command_arg;
-  // A menu the click opens, anchored at the segment, in place of a command (the
-  // remote segment opens the Remote menu, as VS Code's remote indicator lists its
-  // verbs). Data the host owns rather than a `menu-open` command string: the
-  // command path has no rect to anchor a popup at.
   MenuId menu = MenuId::None;
   bool visible = false;
   StatusTone tone = StatusTone::Default;
@@ -74,19 +62,13 @@ class StatusBarService {
  public:
   StatusBarService() = default;
 
-  // Returns whether a painted aspect changed, for a caller outside the frame (an
-  // asynchronous publisher) that must ask for a frame to show it.
   bool SetSegment(StatusBarSegmentId id, StatusBarSegmentValue value) {
     StatusBarSegmentValue& slot = segments_[static_cast<std::size_t>(id)];
-    // Only the painted aspects mark the bar dirty. Tooltip text and clickability
-    // are hover/click state, not pixels, so a change to either must not schedule
-    // a repaint.
     const bool painted = slot.text != value.text || slot.visible != value.visible || slot.tone != value.tone;
     slot = std::move(value);
     return painted;
   }
 
-  // A segment's fields as VIEWS of strings the caller already owns.
   struct StatusBarSegmentUpdate {
     std::string_view text;
     std::string_view tooltip;
@@ -97,13 +79,6 @@ class StatusBarService {
     StatusTone tone = StatusTone::Default;
   };
 
-  // Assign INTO the stored segment instead of replacing it.
-  //
-  // The model refresh runs once per painted frame and most segments say the same
-  // thing on consecutive frames, but the value-taking form above made the caller
-  // build a fresh `StatusBarSegmentValue` — one allocation per non-SSO field —
-  // and then move-assigned it, which also freed the slot's identically sized
-  // buffers. Assigning reuses them, so a steady frame allocates nothing here.
   void SetSegment(StatusBarSegmentId id, const StatusBarSegmentUpdate& update) {
     StatusBarSegmentValue& slot = segments_[static_cast<std::size_t>(id)];
     slot.text.assign(update.text);
@@ -114,17 +89,10 @@ class StatusBarService {
     slot.visible = update.visible;
     slot.tone = update.tone;
   }
-  // Clear a segment without naming its (empty) fields.
   void ClearSegment(StatusBarSegmentId id) { SetSegment(id, StatusBarSegmentUpdate{}); }
   const StatusBarSegmentValue& Segment(StatusBarSegmentId id) const {
     return segments_[static_cast<std::size_t>(id)];
   }
-
-  // What the frame repaints is derived from the strip as painted (openspec
-  // derived-damage, WorkspaceShell::PrepareStatusBarFrame): its content is other
-  // surfaces' state -- caret, language, indent, git, LSP -- that the event changing
-  // it never asked to repaint here, and a flag set here missed what changed
-  // without a SetSegment (the hover, the layout, the theme).
 
   const std::array<StatusBarSegmentValue, static_cast<std::size_t>(StatusBarSegmentId::Count)>&
   Snapshot() const {
@@ -136,4 +104,4 @@ class StatusBarService {
       segments_{};
 };
 
-}  // namespace microide::workspace
+}

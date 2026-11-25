@@ -6,20 +6,16 @@
 namespace microide::plugin::lifecycle_load_interop {
 
 bool ProcessAllowlistEntryAccepted(std::string_view entry, std::size_t accepted_bytes) {
-  // Real executable names/paths never carry an embedded NUL; the C-string reader would
-  // truncate one silently, so reject rather than truncate (TD-2026-07-17A-121).
   if (entry.find('\0') != std::string_view::npos) {
     return false;
   }
   if (entry.size() > kMaxProcessAllowItemBytes) {
     return false;
   }
-  // `accepted_bytes` only ever accumulates already-accepted (in-budget) entries, so it
-  // never exceeds the aggregate cap and this subtraction cannot underflow.
   return entry.size() <= kMaxProcessAllowAggregateBytes - accepted_bytes;
 }
 
-}  // namespace microide::plugin::lifecycle_load_interop
+}
 
 #if MICROIDE_HAS_LUA_PLUGINS
 
@@ -36,8 +32,6 @@ namespace {
 using lua_interop::IsValidIdentifier;
 using microide::plugin::LuaErrorString;
 
-// Reads a string capability field ("none" | "project" | "data") from the `fs` table at
-// `table_index`, leaving `fallback` in place for absent or unrecognized values.
 FsAccess ParseFsAccess(lua_State* state, int table_index, const char* field, FsAccess fallback) {
   lua_interop::GetFieldProtected(state, table_index, field);
   FsAccess result = fallback;
@@ -55,10 +49,6 @@ FsAccess ParseFsAccess(lua_State* state, int table_index, const char* field, FsA
   return result;
 }
 
-// Parses the optional `capabilities` table on the plugin descriptor at `table_index`.
-// Absent capabilities keep struct defaults (project-scoped fs, no process, no network).
-// Returns false only when `capabilities` is present but not a table; malformed sub-fields
-// fall back to defaults leniently rather than failing the whole plugin load.
 bool ParseCapabilities(lua_State* state,
                        int table_index,
                        PluginCapabilities* out,
@@ -93,18 +83,11 @@ bool ParseCapabilities(lua_State* state,
     lua_pop(state, 1);
     lua_interop::GetFieldProtected(state, process_index, "allow");
     if (lua_istable(state, -1)) {
-      // Clamp against a sparse-border lua_rawlen even though this parses the plugin's
-      // own manifest at load; matches the hardened harvest loops elsewhere.
       const lua_Integer raw_count = static_cast<lua_Integer>(lua_rawlen(state, -1));
       const lua_Integer count =
           raw_count < static_cast<lua_Integer>(kMaxProcessAllowEntries)
               ? raw_count
               : static_cast<lua_Integer>(kMaxProcessAllowEntries);
-      // TD-2026-07-17A-121: mirror the shared string-array byte budgets here instead of
-      // copying each entry blindly through the C-string `lua_tostring` (no per-item or
-      // aggregate cap, and truncation at embedded NUL). A length-bearing read plus the
-      // acceptance predicate drops over-budget / NUL-bearing entries — keeping the rest —
-      // so a manifest with a few enormous allowlist strings cannot inflate host RSS.
       std::size_t accepted_bytes = 0;
       for (lua_Integer i = 1; i <= count; ++i) {
         lua_rawgeti(state, -1, i);
@@ -130,7 +113,7 @@ bool ParseCapabilities(lua_State* state,
   }
   lua_pop(state, 1);
 
-  lua_pop(state, 1);  // capabilities table
+  lua_pop(state, 1);
   return true;
 }
 
@@ -178,7 +161,7 @@ int ExtractFunctionRef(lua_State* state,
   return luaL_ref(state, LUA_REGISTRYINDEX);
 }
 
-}  // namespace
+}
 
 bool InitializeState(runtime_types::PluginInstance* plugin,
                      lua_CFunction open_microide,
@@ -222,8 +205,6 @@ bool LoadPluginDescriptor(runtime_types::PluginInstance* plugin, std::string* er
     lua_pop(plugin->state, 2);
     return false;
   }
-  // NUL-reject the id (TD-2026-07-17A-080): a truncated "valid\0evil" would otherwise
-  // pass IsValidIdentifier as "valid" and could collide with a distinct plugin's id.
   if (auto host = lua_interop::ToHostString(plugin->state, -1)) {
     plugin->id = std::move(*host);
   } else {
@@ -241,9 +222,6 @@ bool LoadPluginDescriptor(runtime_types::PluginInstance* plugin, std::string* er
     return false;
   }
 
-  // Resolve the plugin's writable scratch directory once. It is only reachable when the
-  // plugin declares data-scope filesystem access; create it eagerly in that case so the
-  // first ctx.files.write_text into it succeeds.
   plugin->data_dir = platform::ResolveAppDirectory(platform::UserDirectoryKind::Data, "microide") /
                      "plugins" / plugin->id;
   if (plugin->capabilities.fs_read == FsAccess::kProjectAndData ||
@@ -316,6 +294,6 @@ bool LoadPluginDescriptor(runtime_types::PluginInstance* plugin, std::string* er
   return true;
 }
 
-}  // namespace microide::plugin::lifecycle_load_interop
+}
 
 #endif

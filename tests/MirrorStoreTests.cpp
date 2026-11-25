@@ -62,8 +62,6 @@ void TestMirrorStoreRoundTrips() {
          "a local-only entry survives");
 }
 
-// The state is written lazily, the journal at once: a reopened mirror takes the
-// pending pushes and tree operations from the journal when it is newer.
 void TestMirrorStoreJournalOverridesALaggingState() {
   TemporaryDirectory temp;
   std::string error;
@@ -73,8 +71,8 @@ void TestMirrorStoreJournalOverridesALaggingState() {
     store.entries()["a.txt"].push_pending = true;
     store.entries()["b.txt"];
     Expect(store.Save(&error), "the full state (a.txt pending)");
-    store.entries()["a.txt"].push_pending = false;  // acknowledged
-    store.entries()["b.txt"].push_pending = true;   // a new save
+    store.entries()["a.txt"].push_pending = false;
+    store.entries()["b.txt"].push_pending = true;
     store.pending_tree_ops().push_back(
         MirrorStore::PendingTreeOp{MirrorStore::PendingTreeOp::Kind::Delete, "gone.txt", {}});
     Expect(store.SaveJournal(&error), "only the journal after that");
@@ -87,11 +85,6 @@ void TestMirrorStoreJournalOverridesALaggingState() {
          "and its tree operations");
 }
 
-// A pull moves its entry's base in memory and the state is saved lazily: between
-// the two a crash leaves the pulled bytes in tree/ unrecorded (read back as an edit
-// made here). The journal, written at once, carries them (NotePulled) and Open
-// adopts each whose file still holds them -- or whose path has a save journaled
-// after the pull, made on top of them -- and leaves alone one written since.
 void TestMirrorStoreJournalCarriesPullsTheStateLacks() {
   TemporaryDirectory temp;
   std::string error;
@@ -108,8 +101,6 @@ void TestMirrorStoreJournalCarriesPullsTheStateLacks() {
       WriteFile(store.tree() / name, "one\n");
     }
     Expect(store.Save(&error), "the state, every base at the old version");
-    // Then, before any save: three pulls land, one is saved over through the
-    // gate, one is rewritten outside it.
     for (const char* name : {"a.txt", "saved.txt", "edited.txt"}) {
       WriteFile(store.tree() / name, "two\n");
       store.Find(name)->base = pulled;
@@ -129,8 +120,6 @@ void TestMirrorStoreJournalCarriesPullsTheStateLacks() {
            "a save journaled after the pull was made on top of it: its base is the pull");
     Expect(reopened.Find("edited.txt")->base == std::optional(old),
            "a file rewritten since holds neither: left for the reconcile");
-    // Kept until a Save records them, in case a journal-only write comes first
-    // (SaveJournal rewrites the hint); a Save then drops the hint.
     Expect(reopened.SaveJournal(&error), "the journal again");
     MirrorStore again(temp.path() / "m");
     Expect(again.Open(&error) && again.Find("a.txt")->base == std::optional(pulled), "still carried");
@@ -140,7 +129,6 @@ void TestMirrorStoreJournalCarriesPullsTheStateLacks() {
     MirrorStore reopened(temp.path() / "m");
     Expect(reopened.Open(&error) && reopened.Find("a.txt")->base == std::optional(pulled), "recorded by the state");
     Expect(!std::filesystem::exists(reopened.pulled_hint_path()), "and the hint is gone");
-    // A hint that does not decode is no hint, never an error.
     WriteFile(reopened.pulled_hint_path(), "garbage");
     MirrorStore tolerant(temp.path() / "m");
     Expect(tolerant.Open(&error) && tolerant.Find("a.txt")->base == std::optional(pulled),
@@ -148,12 +136,6 @@ void TestMirrorStoreJournalCarriesPullsTheStateLacks() {
   }
 }
 
-// meta/pulled is appended per pull batch, never rewritten: rewritten whole per
-// batch (and per journal write) it cost O(paths pulled since the last save) each
-// time -- quadratic over a first sync, and the largest source of the allocator
-// slack TD-2026-10-28-418 measured. A later record for a path wins; a torn last
-// record (a crash mid-append) is dropped and appends after it still read; a
-// version-1 hint written before the format changed is still adopted.
 void TestMirrorStorePulledHintIsAppendedAndSurvivesATornTail() {
   TemporaryDirectory temp;
   std::string error;
@@ -172,7 +154,6 @@ void TestMirrorStorePulledHintIsAppendedAndSurvivesATornTail() {
       WriteFile(store.tree() / name, "base\n");
     }
     Expect(store.Save(&error), "the state");
-    // Two batches, each pulling a.txt.
     WriteFile(store.tree() / "a.txt", "first\n");
     store.NotePulled("a.txt", first);
     Expect(store.WritePulledHint(), "batch one");
@@ -180,7 +161,6 @@ void TestMirrorStorePulledHintIsAppendedAndSurvivesATornTail() {
     store.NotePulled("a.txt", second);
     Expect(store.WritePulledHint(), "batch two");
     Expect(store.WritePulledHint(), "a write with nothing new adds nothing");
-    // A version byte, then two records of (length 5, "a.txt", 32-byte hash).
     Expect(std::filesystem::file_size(store.pulled_hint_path()) == 1 + 2 * (1 + 5 + 32),
            "each batch appended its own record: " +
                std::to_string(std::filesystem::file_size(store.pulled_hint_path())));
@@ -192,7 +172,7 @@ void TestMirrorStorePulledHintIsAppendedAndSurvivesATornTail() {
   }
   {
     std::ofstream torn(MirrorStore(dir).pulled_hint_path(), std::ios::binary | std::ios::app);
-    torn << "\x05a.t";  // a record cut short
+    torn << "\x05a.t";
   }
   {
     MirrorStore reopened(dir);
@@ -209,7 +189,6 @@ void TestMirrorStorePulledHintIsAppendedAndSurvivesATornTail() {
            "the hint was rewritten whole, so what came after the tear is read");
   }
   {
-    // Version 1: a count, then the records.
     std::string v1;
     util::PutVarint(v1, 1);
     util::PutVarint(v1, 1);
@@ -250,7 +229,6 @@ void TestMirrorStoreCheckLocal() {
   Expect(!entry.local_known,
          "a stat seconds old does not vouch for the bytes (a same-size rewrite in the same "
          "tick would keep it): the next check hashes again");
-  // Backdated (what a pull does with the host's mtime), it does.
   std::filesystem::last_write_time(store.tree() / "f.txt",
                                    std::filesystem::file_time_type::clock::now() - std::chrono::hours(1));
   WriteFile(store.tree() / "g.txt", "base");
@@ -277,11 +255,8 @@ void TestMirrorStoreDefaultDirectory() {
   Expect(odd.parent_path().filename() == ".._evil_host", "a host string is one safe component");
 }
 
-}  // namespace
+}
 
-// A pull's temporary is made in meta/staging (TreeFiles' `staging`), so a crash
-// mid-write leaves nothing in tree/; Open removes what a dead writer left there
-// and keeps a live one's (MirrorFaultMatrix/*/PullLarge/KillClient).
 void TestMirrorStoreOpenSweepsAbandonedStaging() {
   TemporaryDirectory temp;
   MirrorStore store(temp.path() / "mirror");
@@ -310,4 +285,4 @@ void RegisterMirrorStoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorStore/DefaultDirectory", TestMirrorStoreDefaultDirectory);
 }
 
-}  // namespace microide::tests
+}

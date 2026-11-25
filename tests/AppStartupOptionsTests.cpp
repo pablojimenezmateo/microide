@@ -76,8 +76,6 @@ void TestParseSetOverridesAreRepeatable() {
 }
 
 void TestParseDapLogDoesNotSwallowProjectPath() {
-  // Regression: `--dap-log /repo` used to consume /repo as the log path and open
-  // no project. The bare flag now defaults its path and the token is the project.
   std::vector<std::string> args = {"microide", "--dap-log", "/tmp/project"};
   auto argv = ArgvFromStrings(args);
   const auto parsed = ParseAppStartupOptions(static_cast<int>(argv.size()), argv.data());
@@ -178,11 +176,6 @@ void TestDisablePluginsSkipsUserPluginsAndSyntax() {
          "plugin syntax should not be loaded when plugins are disabled");
 }
 
-// `--set` overrides are in effect before the startup project opens. They were
-// applied only once the window was up, after Initialize had restored the session:
-// a remote project reconnected with the configured ssh instead of the override's
-// (`--set remote.ssh_command "ssh -F ..."` relaunching on a mirror stayed
-// disconnected -- found by tools/qa/remote.py's L against a loopback sshd).
 void TestSettingOverridesApplyBeforeTheStartupProjectOpens() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path config_home = temp_dir.path() / "config";
@@ -201,10 +194,6 @@ void TestSettingOverridesApplyBeforeTheStartupProjectOpens() {
          "the override should be in effect once Initialize returns, before anything re-applies it");
 }
 
-// `microide notes.txt`: a startup path that names a regular file opens its
-// directory as the project and the file as the first tab, as `code notes.txt`
-// does. It used to be handed to the tree and the index as a project root, which
-// refused it, and the launch failed with "Workspace initialization failed".
 void TestFilePathAtStartupOpensItsDirectoryAndTheFile() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path config_home = temp_dir.path() / "config";
@@ -228,12 +217,6 @@ void TestFilePathAtStartupOpensItsDirectoryAndTheFile() {
   Expect(editor.line_count() >= 1 && editor.lines()[0] == "hello", "with its content loaded");
 }
 
-// `microide <project>` opens that project instead of the saved workspace, but
-// with its OWN saved state -- its tabs and its project-scoped settings -- as
-// `code <folder>` reopens the folder's editors. The explicit path used to skip
-// the project's config and session along with the workspace session, so a
-// relaunch came back with only the default tab and none of the project's
-// settings (QA flow session-restore).
 void TestExplicitProjectRestoresItsOwnSession() {
   TemporaryDirectory temp_dir;
   ScopedAppHomes homes(temp_dir.path() / "state", temp_dir.path() / "config");
@@ -310,7 +293,7 @@ void TestSafeModeSurfacesStartupState() {
   Expect(has_startup_row, "Help/About should document safe mode");
 }
 
-}  // namespace
+}
 
 void RegisterAppStartupOptionsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "AppStartupOptions/ParseDisablePlugins", TestParseDisablePluginsFlag);
@@ -339,4 +322,4 @@ void RegisterAppStartupOptionsTests(std::vector<TestCase>& tests) {
           TestSafeModeSurfacesStartupState);
 }
 
-}  // namespace microide::tests
+}

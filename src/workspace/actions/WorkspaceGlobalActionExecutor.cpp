@@ -30,32 +30,24 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     case ActionId::Colorscheme: {
       const std::optional<ColorschemeRequest> request = BuildColorschemeRequest(args);
       if (!request.has_value()) {
-        // Bare (the palette's Color Theme…, Ctrl+K Ctrl+T): pick one, as VS Code does.
         context_.OpenColorThemePicker();
         return DispatchResult::Handled;
       }
       if (request->list) {
-        // `colorscheme list` refreshed the names and then said nothing.
         context_.RefreshAvailableColorschemeNames();
         context_.ReportColorschemeNames();
         return DispatchResult::Handled;
       }
       context_.RefreshAvailableColorschemeNames();
-      // The apply used to report nothing for a name no theme has: the command
-      // answered ok and the colors stayed put.
       if (!context_.ApplyColorscheme(request->name)) {
         return reject("Unknown colorscheme: " + request->name + " (colorscheme list)");
       }
       return DispatchResult::Handled;
     }
     case ActionId::ToggleFullscreen:
-      // The shell only records the request; Application owns the SDL window and
-      // applies it on the next ConsumeWindowAction poll.
       context_.ToggleWindowFullscreen();
       return DispatchResult::Handled;
     case ActionId::ToggleColorTheme: {
-      // Flip between the built-in light and dark themes; any other active scheme
-      // resolves to dark first so the toggle has a predictable two-state feel.
       const bool currently_light = util::ToLowerAscii(std::string(
                                        context_.CurrentColorschemeName())) == "light";
       context_.RefreshAvailableColorschemeNames();
@@ -63,14 +55,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::TabSize: {
-      // A palette row dispatches its action with NO arguments, so these three
-      // rows ("Tab Size", "Indent Width", "UI Scale") could only ever answer
-      // their own usage error. They take a VALUE rather than a boolean, so there
-      // is nothing to toggle: seed the palette with the verb and let the user type
-      // just the value -- the fallback `open` and `project-open` already use when
-      // they are invoked from a UI surface with nothing to act on. A *typed* bare
-      // verb keeps rejecting: that user is already at a command line with the
-      // value in reach.
       if (args.empty() && source != ActionSource::Command) {
         context_.OpenCommandPalette("tab-size ");
         return DispatchResult::Handled;
@@ -84,7 +68,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::IndentWidth: {
-      if (args.empty() && source != ActionSource::Command) {  // see TabSize above
+      if (args.empty() && source != ActionSource::Command) {
         context_.OpenCommandPalette("indent-width ");
         return DispatchResult::Handled;
       }
@@ -97,7 +81,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::UiScale: {
-      if (args.empty() && source != ActionSource::Command) {  // see TabSize above
+      if (args.empty() && source != ActionSource::Command) {
         context_.OpenCommandPalette("ui-scale ");
         return DispatchResult::Handled;
       }
@@ -119,11 +103,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::SoftTabs: {
-      // Bare `soft-tabs` toggles, exactly as its sibling `wrap` does below. Both
-      // usages declare the argument optional (`soft-tabs [on|off]`), and both are
-      // palette rows -- which dispatch with NO arguments, so rejecting here made
-      // "Soft Tabs" a row that could only ever answer "soft-tabs expects on or
-      // off". Same dead-entry shape the bare `open` fix repaired.
       if (args.empty()) {
         context_.SetSoftTabs(!context_.SoftTabsEnabled());
         return DispatchResult::Handled;
@@ -227,8 +206,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       if (!action.has_value()) {
         return reject(error);
       }
-      // Exactly what a click on the button runs. A rejection of the inner action is
-      // reported by that call; this one only has to say it did not succeed.
       return Execute(action->id, action->args, source) ? DispatchResult::Handled
                                                        : DispatchResult::Rejected;
     }
@@ -236,7 +213,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       if (args.empty()) {
         return reject("usage: banner-action <Compare|Reload|Overwrite|Keep|Retry|Save As>");
       }
-      // A label may be two words ("Save As").
       std::string label = args[0];
       for (std::size_t i = 1; i < args.size(); ++i) {
         label += ' ';
@@ -275,8 +251,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");
       }
-      // Nothing to stop: Shift+F5 between sessions closed the debug pane the user
-      // had opened and said "Debugging stopped" (QA dbg-exception-breakpoints).
       if (!context_.debug().IsSessionActive()) {
         return reject("No debug session is running");
       }
@@ -298,8 +272,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::Quit:
-      // Every quit says what asked for it: an unrequested clean exit was a soak
-      // "crash" with nothing to say why (soak 7ab9a5476905).
       util::Log("microide quit: the Quit action");
       context_.RequestQuit();
       return DispatchResult::Handled;
@@ -307,7 +279,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       if (args.empty()) {
         return reject("set-setting requires <id> <value>");
       }
-      // value is the remainder so string settings can carry spaces.
       const std::string value = JoinCommandArguments(args, 1);
       if (!context_.SetSettingValue(args[0], value)) {
         return reject("set-setting: unknown setting or invalid value for \"" + args[0] + "\"");
@@ -319,4 +290,4 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
   }
 }
 
-}  // namespace microide::workspace
+}

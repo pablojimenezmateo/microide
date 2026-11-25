@@ -20,16 +20,13 @@ SDL_FRect PointerAnchor(const SDL_Event& event) {
                   1.0f);
 }
 
-// A keyboard-opened menu hangs under the row it is about, a little in from its
-// left edge, where a right-click on the row's text would have put it. A row
-// scrolled out of view anchors at the list's top.
 SDL_FRect RowAnchor(const ScrollableListLayout& list, int row) {
   const int visible = std::max(0, row - list.scroll_row);
   const SDL_FRect rect = ScrollableListRowRect(list, visible);
   return MakeRect(rect.x + 16.0f, rect.y + rect.h, 1.0f, 1.0f);
 }
 
-}  // namespace
+}
 
 SidebarMouseCoordinator::SidebarMouseCoordinator(ProjectWorkspaceState& state,
                                                  InteractionState& interaction_state,
@@ -47,9 +44,6 @@ bool SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   }
 
   state_.surface.focus = FocusTarget::Sidebar;
-  // The layout's own origin (SidebarMetrics.h), not a second copy of it: this
-  // used to re-derive `sidebar.y + 26 + 6` here, so the two had to be kept in
-  // step by hand or every click would land on the wrong row.
   const float local_y = event.button.y - SidebarListTop(layout.sidebar);
   const SidebarMode sidebar_mode = operations_.active_sidebar_mode();
 
@@ -78,8 +72,6 @@ bool SidebarMouseCoordinator::HandleSearchButtonDown(const SDL_Event& event,
   if (event.button.button != SDL_BUTTON_LEFT && !is_right) {
     return true;
   }
-  // The header chrome (fields, toggles) is left-click only; the right button only
-  // means anything over a result row.
   if (is_right) {
     return HandleSearchResultContextMenu(event, layout, local_y);
   }
@@ -92,8 +84,6 @@ bool SidebarMouseCoordinator::HandleSearchButtonDown(const SDL_Event& event,
     }
   }
 
-  // Every toggle button commits an in-flight field edit first so the click never
-  // silently discards typed text.
   const struct {
     SDL_FRect rect;
     const std::function<void()>& action;
@@ -156,8 +146,6 @@ bool SidebarMouseCoordinator::HandleSearchResultContextMenu(const SDL_Event& eve
   if (!line_index.has_value() || line_map[*line_index] < 0) {
     return true;
   }
-  // Select first, then open the menu on the selection — the same order the tree
-  // and git sidebars use, so the menu and the highlight can never disagree.
   auto& search = state_.overlay.workflow.project_search;
   search.selected_index = static_cast<std::size_t>(line_map[*line_index]);
   operations_.open_tree_context_menu(TreeContextTargetKind::ResultRow,
@@ -248,16 +236,11 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
   }
   const Operations::PaintedGitList painted =
       operations_.painted_git_sidebar_list ? operations_.painted_git_sidebar_list() : Operations::PaintedGitList{};
-  // Header chrome (stage-all / discard-all / refresh / commit / outgoing base)
-  // responds to left-click only.
   if (is_left) {
     const float px = static_cast<float>(event.button.x);
     const float py = static_cast<float>(event.button.y);
     if (operations_.can_stage_all_git_sidebar_entries() &&
         Contains(git_sidebar_header::StageAllButtonRect(layout.sidebar), px, py)) {
-      // The click belongs to this button whether or not the git call succeeded;
-      // reporting it as unhandled would hand the press on to the tab strip / panel
-      // and skip the sidebar redraw that shows the outcome.
       operations_.stage_all_git_sidebar_entries();
       return true;
     }
@@ -269,8 +252,6 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
     if (Contains(git_sidebar_header::RefreshButtonRect(layout.sidebar), px, py)) {
       return operations_.execute_action(ActionId::GitRefresh, {}, ActionSource::Shortcut);
     }
-    // Branch row. Switching opens the picker (the argument-less form of the action);
-    // Sync pulls then pushes. Both dispatch onto the background executor.
     if (Contains(git_sidebar_header::BranchButtonRect(layout.sidebar), px, py)) {
       return operations_.execute_action(ActionId::GitSwitchBranch, {}, ActionSource::Shortcut);
     }
@@ -311,8 +292,6 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
   }
 
   const auto& line = lines[*line_index];
-  // Right-click on a directory, or on the Outgoing header (the whole review):
-  // the review comments under it.
   if (is_right && (line.kind == GitSidebarLine::Kind::Directory ||
                    (line.kind == GitSidebarLine::Kind::Header && line.section == GitSidebarEntry::Section::Outgoing))) {
     const std::filesystem::path scope = state_.root / std::filesystem::path(GitSidebarDirectoryPath(line));
@@ -330,12 +309,6 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
     return true;
   }
 
-  // Both buttons select the entry. Left-click opens its diff (DefaultView);
-  // right-click opens the entry context menu (Stage/Unstage, Discard, …). The
-  // menu acts on the selected entry, so selecting first keeps them in sync.
-  // The row was painted from a list a refresh may since have reordered or
-  // shrunk: its entry is found again by path, and a row whose file is gone does
-  // nothing rather than act on whatever now sits at its index.
   const std::optional<std::size_t> entry =
       operations_.resolve_git_sidebar_entry
           ? operations_.resolve_git_sidebar_entry(line)
@@ -353,11 +326,6 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
         PointerAnchor(event));
     return true;
   }
-  // A click opens the entry's diff and keeps the keyboard on the list, as the
-  // file tree's click does and VS Code's source control view does: the view's
-  // own keys (s, u, d) then act on the entry just clicked. It used to hand the
-  // keyboard to the opened editor, so an `s` meant to stage typed an "s" into
-  // the file. Enter is the open that moves the keyboard to what it opened.
   const bool opened = operations_.dispatch_git_sidebar_action(GitSidebarActionId::DefaultView,
                                                               state_.sidebar.git.selected_index);
   state_.surface.focus = FocusTarget::Sidebar;
@@ -440,10 +408,6 @@ bool SidebarMouseCoordinator::HandlePluginButtonDown(const SDL_Event& event,
   state_.sidebar.plugin.selected_index = *item_index;
   operations_.reveal_selected_plugin_sidebar_line();
   if (event.button.button == SDL_BUTTON_LEFT) {
-    // A click in the indentation + disclosure slot of a collapsible tree row
-    // toggles it (re-snapshotting the provider) instead of confirming it. The
-    // hit region must mirror the render geometry exactly (label_x in the
-    // plugin branch of WorkspaceShellRenderSidebar.cpp).
     const auto& item = state_.sidebar.plugin.items[static_cast<std::size_t>(*item_index)];
     if (item.collapsible && operations_.toggle_plugin_sidebar_item) {
       const SDL_FRect row_rect =
@@ -505,8 +469,6 @@ bool SidebarMouseCoordinator::HandleTreeButtonDown(const SDL_Event& event,
       return true;
     }
     if (Contains(row_rect, event.button.x, event.button.y) && event.button.button == SDL_BUTTON_LEFT) {
-      // The press selects and arms a drag; the release opens the row unless the
-      // pointer moved away with it (FinishPathDrag).
       const auto& entry = entries[*entry_index];
       interaction_state_.path_drag = PathDragState{
           .armed = true,
@@ -532,4 +494,4 @@ bool SidebarMouseCoordinator::HandleTreeButtonDown(const SDL_Event& event,
   return true;
 }
 
-}  // namespace microide::workspace
+}

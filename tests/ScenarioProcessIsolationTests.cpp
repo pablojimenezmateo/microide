@@ -19,32 +19,19 @@ using microide::tests::perf::Iteration;
 using microide::tests::perf::MetricSet;
 using microide::tests::perf::PhaseMetricSet;
 
-// TD-2026-08-06-152: a scenario's Aggregate now crosses a process boundary before
-// it is gated, so the transport has to be EXACT. A gate compares a measured double
-// against a baseline double with a percentage tolerance; a value that lost its last
-// mantissa bit on the way back would read as a real move, and one that gained a
-// digit would read as none.
-//
-// The fixture uses values chosen to break a lazy codec rather than round numbers:
-// a double with a full mantissa, a negative one (net_heap_bytes legitimately is),
-// the smallest normal, values that decimal text cannot represent, a 64-bit counter
-// at its maximum, an empty string, and a name with an embedded NUL.
 Aggregate MakeWireFixture() {
   Aggregate aggregate;
   aggregate.scenario_name = "wire_fixture";
   aggregate.smoke = true;
-  // The child is the only process that knows which revision of the scenario ran,
-  // and the parent is the one that gates. Not 1: a default that survives by
-  // accident proves nothing (TD-2026-08-07-167).
   aggregate.measurement_revision = 7;
   aggregate.metrics = MetricSet{
-      .p50_wall_ms = 0.1 + 0.2,  // 0.30000000000000004, not 0.3
+      .p50_wall_ms = 0.1 + 0.2,
       .p95_wall_ms = 1.0 / 3.0,
       .max_wall_ms = std::numeric_limits<double>::min(),
-      .p50_allocations = 9007199254740993.0,  // past exact integer range
+      .p50_allocations = 9007199254740993.0,
       .p95_allocations = -0.0,
       .max_allocations = 1e308,
-      .p50_cpu_ms = 4.9406564584124654e-324,  // denormal
+      .p50_cpu_ms = 4.9406564584124654e-324,
       .p95_cpu_ms = 2.2250738585072014e-308,
       .max_cpu_ms = -1.7976931348623157e308,
       .p50_rss_growth_bytes = 123456.789,
@@ -65,8 +52,6 @@ Aggregate MakeWireFixture() {
   first.metrics.cpu_ms = 1.0 / 3.0;
   first.metrics.cpu_calibration_ns = 485793;
   first.metrics.rss_growth_bytes = 4096;
-  // Signed and legitimately negative: a scenario whose setup allocates and whose
-  // measured window releases reports below zero.
   first.metrics.net_heap_bytes = -141047;
   first.phase_metrics.push_back(Iteration::PhaseMetrics{
       .name = std::string("phase\0with-nul", 14),
@@ -96,7 +81,6 @@ Aggregate MakeWireFixture() {
 }
 
 bool SameDouble(double a, double b) {
-  // Bit equality, not approximate equality: that is the whole claim.
   return std::memcmp(&a, &b, sizeof(double)) == 0;
 }
 
@@ -134,7 +118,6 @@ void TestScenarioAggregateSurvivesTheWireExactly() {
     Expect(SameDouble(metric_pairs[i].first, metric_pairs[i].second),
            "metric " + std::to_string(i) + " must survive the wire bit-for-bit");
   }
-  // -0.0 must stay -0.0: `==` would not notice, which is why the check is memcmp.
   Expect(std::signbit(decoded->metrics.p95_allocations),
          "negative zero keeps its sign across the wire");
 
@@ -167,8 +150,6 @@ void TestScenarioAggregateSurvivesTheWireExactly() {
          "the aggregated phase set round-trips");
 }
 
-// A truncated or corrupt stream must be REFUSED, not silently decoded into a
-// half-populated Aggregate — which would be gated as if it were a measurement.
 void TestScenarioAggregateRejectsATruncatedStream() {
   const std::string bytes = EncodeScenarioAggregate(MakeWireFixture());
   Expect(!bytes.empty(), "the fixture must encode to something");
@@ -180,7 +161,6 @@ void TestScenarioAggregateRejectsATruncatedStream() {
   Expect(DecodeScenarioAggregate(bytes).has_value(),
          "the untruncated stream must still decode, or the loop above proves nothing");
 
-  // A length field claiming more than the stream holds must not be trusted.
   std::string corrupt = bytes;
   for (int i = 0; i < 8; ++i) {
     corrupt[static_cast<std::size_t>(i)] = static_cast<char>(0xFF);
@@ -189,7 +169,7 @@ void TestScenarioAggregateRejectsATruncatedStream() {
          "a string length past the end of the stream must be refused");
 }
 
-}  // namespace
+}
 
 void RegisterScenarioProcessIsolationTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ScenarioProcessIsolation/AggregateSurvivesTheWireExactly",
@@ -198,4 +178,4 @@ void RegisterScenarioProcessIsolationTests(std::vector<TestCase>& tests) {
           TestScenarioAggregateRejectsATruncatedStream);
 }
 
-}  // namespace microide::tests
+}

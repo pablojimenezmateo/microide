@@ -13,15 +13,6 @@ namespace microide::project::remote {
 class MirrorStore;
 class MirrorSyncEngine;
 
-// The write gate of a remote project (dev-docs/design/remote-projects.md § 6.3):
-// every writer in the editor — the save, the plugin file API, replace-in-project,
-// the merge writer, the LSP's resource ops, the sidebar — lands here, and here
-// alone decides that a write into the mirror also reaches the host.
-//
-// A write lands on local disk first, at local speed and under the path's lock (so
-// a pull of the same path cannot interleave), and then is journaled and pushed by
-// the sync engine under compare-and-swap. The caller never waits on the network.
-// Writes outside the mirror's tree/ are local writes and nothing more.
 class MirrorWriteGate final : public FileWriteGate {
  public:
   MirrorWriteGate(MirrorStore& store, MirrorSyncEngine& engine) : store_(store), engine_(engine) {}
@@ -32,16 +23,8 @@ class MirrorWriteGate final : public FileWriteGate {
   [[nodiscard]] TreeResult ApplyTreeOps(std::span<const TreeOp> ops) override;
   void DisposeStaged(std::span<const std::filesystem::path> staged) override;
 
-  // `path` as a path relative to tree/, or nullopt when it is not under it.
   std::optional<std::string> MirrorRelative(const std::filesystem::path& path) const;
-  // The path the host knows `path`'s node by: every folder link on the way
-  // resolved, the node itself kept as named (a tree op acts on the node, which may
-  // be a link); nullopt when that place is not under tree/. The host refuses a
-  // path through a link.
   std::optional<std::string> HostRelative(const std::filesystem::path& path) const;
-  // `path` is inside the mirror's tree but under a name the host cannot be sent
-  // (IsSafeRelativePath: a backslash, a component too long): what it is, for the
-  // user. Nullopt for a path that can be synced, or one outside the tree.
   std::optional<std::string> UnsyncableTarget(const std::filesystem::path& path) const;
 
  private:
@@ -49,4 +32,4 @@ class MirrorWriteGate final : public FileWriteGate {
   MirrorSyncEngine& engine_;
 };
 
-}  // namespace microide::project::remote
+}

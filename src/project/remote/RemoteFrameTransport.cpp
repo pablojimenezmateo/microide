@@ -31,7 +31,7 @@ std::uint64_t DecodeU64(std::string_view bytes) {
   return value;
 }
 
-}  // namespace
+}
 
 RemoteFrameTransport::~RemoteFrameTransport() {
   Stop();
@@ -68,7 +68,7 @@ void RemoteFrameTransport::SetFixedBulkWindow(std::size_t bytes) {
   if (bytes != 0) {
     bulk_window_.store(bytes, std::memory_order_relaxed);
   }
-  wake_.Wake();  // a larger window may let a waiting bulk frame go
+  wake_.Wake();
 }
 
 bool RemoteFrameTransport::Send(FrameType type, Lane lane, std::uint64_t id,
@@ -104,8 +104,6 @@ void RemoteFrameTransport::Stop() {
   wake_.Wake();
   if (io_thread_.joinable()) {
     if (io_thread_.get_id() == std::this_thread::get_id()) {
-      // From a callback: the thread exits after the callback returns; whoever
-      // destroys the transport joins it.
       return;
     }
     io_thread_.join();
@@ -195,7 +193,7 @@ void RemoteFrameTransport::Run() {
       if (now >= next_tick_) {
         const std::chrono::milliseconds next = callbacks_.on_tick ? callbacks_.on_tick() : options_.tick_interval;
         next_tick_ = std::chrono::steady_clock::now() + std::max(next, std::chrono::milliseconds(1));
-        continue;  // the tick may have queued a frame (a ping): recompute the poll set
+        continue;
       }
       timeout_ms = static_cast<int>(
           std::chrono::duration_cast<std::chrono::milliseconds>(next_tick_ - now).count() + 1);
@@ -214,7 +212,7 @@ void RemoteFrameTransport::Run() {
       return;
     }
     if ((fds[0].revents & (POLLIN | POLLHUP | POLLERR)) != 0 && !ReadAvailable()) {
-      return;  // ReadAvailable closed it
+      return;
     }
     {
       std::lock_guard lock(queue_mutex_);
@@ -230,7 +228,6 @@ void RemoteFrameTransport::Run() {
         want_write && (write_fd_ == read_fd_ ? (fds[0].revents & POLLOUT) != 0
                                               : (fds[write_index].revents &
                                                  (POLLOUT | POLLERR | POLLHUP)) != 0);
-    // Acks queued by the read above can be written without waiting for a poll.
     if ((write_ready || HasWritable()) && !FlushWrites()) {
       Close("write to the peer failed");
       return;
@@ -244,7 +241,6 @@ bool RemoteFrameTransport::FlushWrites() {
       writing_.clear();
       writing_offset_ = 0;
       std::lock_guard lock(queue_mutex_);
-      // Interactive first, re-checked between every frame.
       if (!interactive_.frames.empty()) {
         writing_ = std::move(interactive_.frames.front());
         interactive_.frames.pop_front();
@@ -336,8 +332,6 @@ bool RemoteFrameTransport::ReadAvailable() {
     Close("read from the peer failed");
     return false;
   }
-  // Everything available has been read: acknowledge whatever bulk is still unacked,
-  // so a sender at the end of a transfer is not left waiting on a threshold.
   if (bulk_bytes_received_ > bulk_bytes_received_acked_) {
     QueueAck();
   }
@@ -354,16 +348,10 @@ void RemoteFrameTransport::QueueAck() {
   interactive_.frames.push_back(std::move(encoded));
 }
 
-// Bandwidth x (base RTT + the allowance): see the class comment. A window below
-// the true product measures as window / RTT and the allowance grows it back each
-// round, so it converges on the link from either side. Always from the values
-// published as bulk_bandwidth() and base_rtt(), so the window is their rule.
 void RemoteFrameTransport::RetargetBulkWindow() {
   const double horizon =
       base_rtt_.has_value() ? std::chrono::duration<double>(*base_rtt_ + kQueueAllowance).count()
                             : 0.1;
-  // A base-RTT sample is frame-to-ack, so it includes that frame's own time on
-  // the wire: one chunk's worth of window is already in it.
   const double chunk = base_rtt_.has_value() ? static_cast<double>(kMaxBulkChunkBytes) : 0.0;
   const auto target = static_cast<std::size_t>(std::max(0.0, bulk_bandwidth_ * horizon - chunk));
   bulk_window_.store(std::clamp(target, options_.bulk_window_floor, options_.bulk_window_cap),
@@ -372,14 +360,11 @@ void RemoteFrameTransport::RetargetBulkWindow() {
 
 void RemoteFrameTransport::HandleAck(std::string_view payload) {
   const std::uint64_t acked = DecodeU64(payload);
-  // A peer acknowledging bytes never sent, or taking an ack back, is lying about
-  // the window; trusting it would let bulk flood the link.
   if (acked > bulk_bytes_sent_ || acked < bulk_bytes_acked_) {
     Close("ack outside the bytes sent");
     return;
   }
   const auto now = std::chrono::steady_clock::now();
-  // The newest frame this ack covers gives one round-trip sample.
   std::optional<std::chrono::steady_clock::time_point> covered_sent;
   while (!bulk_in_flight_.empty() && bulk_in_flight_.front().first <= acked) {
     covered_sent = bulk_in_flight_.front().second;
@@ -398,15 +383,11 @@ void RemoteFrameTransport::HandleAck(std::string_view payload) {
     std::lock_guard lock(queue_mutex_);
     sender_was_waiting = !bulk_.frames.empty();
   }
-  // Measure bandwidth only while bulk is actually queued: the gap between two acks
-  // of an idle sender is idle time, and would shrink the window for no reason.
   if (sender_was_waiting && fixed_bulk_window_.load(std::memory_order_relaxed) == 0 &&
       last_ack_time_ != std::chrono::steady_clock::time_point{} &&
       acked - last_ack_bytes_ >= 16 * 1024) {
     const double seconds = std::chrono::duration<double>(now - last_ack_time_).count();
     if (seconds > 0.0) {
-      // Smoothed (TCP's 1/8 gain): one ack pair is ~32 KiB, and a burst of acks
-      // read raw doubles the estimate -- and the window -- for a round.
       const double sample = static_cast<double>(acked - last_ack_bytes_) / seconds;
       bulk_bandwidth_ = bulk_bandwidth_ > 0.0 ? bulk_bandwidth_ + (sample - bulk_bandwidth_) / 8.0
                                               : sample;
@@ -415,9 +396,6 @@ void RemoteFrameTransport::HandleAck(std::string_view payload) {
     }
   } else if (base_rtt_dropped && bulk_bandwidth_ > 0.0 &&
              fixed_bulk_window_.load(std::memory_order_relaxed) == 0) {
-    // A lower base RTT is a smaller product even with no new bandwidth sample
-    // (an ack that arrives once the queue drained): the window follows it, so it
-    // is never left sized for a round trip the link has since shown to be shorter.
     RetargetBulkWindow();
   }
   last_ack_time_ = now;
@@ -425,4 +403,4 @@ void RemoteFrameTransport::HandleAck(std::string_view payload) {
   bulk_bytes_acked_ = acked;
 }
 
-}  // namespace microide::project::remote
+}

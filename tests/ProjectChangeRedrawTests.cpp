@@ -1,15 +1,3 @@
-// What a project-change batch repaints (TD-2026-10-15-341).
-//
-// The watcher's wake used to answer every applied batch with a full-window frame.
-// Under agents writing a tree that was two full frames a second, almost all of it
-// the editor re-rasterizing text nothing had changed. The apply now requests the
-// surfaces it touched. Each test here paints ONLY those rects over the previous
-// frame -- as the app loop does -- and requires the result to be pixel-identical
-// to a full repaint of the same state, so a surface the narrowing forgets is a
-// failure here rather than stale pixels on someone's screen. Each also proves the
-// change was visible at all, or "identical" would hold for a frame that never
-// changed.
-
 #include "TestSupport.h"
 #include "TestSupportSdl.h"
 #include "WorkspaceShellEventHelpers.h"
@@ -51,8 +39,6 @@ struct Fixture {
   std::filesystem::path open_file = root / "open.cpp";
   WorkspaceShell shell;
   SoftwareCanvas retained{kWidth, kHeight};
-  // Every rect the change repainted -- named, or derived by preparing the frame --
-  // across the wake and the frames it led to.
   std::vector<SDL_FRect> painted;
   bool painted_full = false;
 
@@ -69,8 +55,6 @@ struct Fixture {
            "the fixture's open file should be the tab on screen");
     WorkspaceShellTestAccess::SetSidebarVisible(shell, sidebar_visible);
     WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
-    // The initial index lands asynchronously; let it, then stop the live watcher so
-    // the only batches are the ones a test dispatches (see QuiesceFileIndexWatcher).
     Expect(WaitUntil([&]() { return WorkspaceShellTestAccess::ProjectFileIndexVersion(shell) > 0; },
                      std::chrono::seconds(5), std::chrono::milliseconds(5)),
            "the redraw fixture's initial index should land");
@@ -84,7 +68,6 @@ struct Fixture {
     painted_full = false;
   }
 
-  // A blinking caret would make two paints of one state differ by when they ran.
   void PinCaret() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); }
 
   void Paint(const RenderInvalidation& redraw) {
@@ -93,8 +76,6 @@ struct Fixture {
     PaintInvalidation(shell, retained, kWidth, kHeight, redraw, &painted);
   }
 
-  // What a frame queues for the NEXT one (frame prep asks for the status bar when a
-  // segment moved) is painted too, as the app loop would.
   void Settle() {
     for (int frame = 0; frame < 4; ++frame) {
       const RenderInvalidation pending = WorkspaceShellTestAccess::TakePendingRenderInvalidation(shell);
@@ -105,22 +86,17 @@ struct Fixture {
     }
   }
 
-  // A copy of what is on screen now. Glyph textures belong to the renderer that
-  // made them, so a reference frame has to be drawn on THIS canvas, not a fresh one
-  // (a second canvas differs everywhere there is text) -- hence copies.
   SurfacePtr Snapshot() {
     SDL_FlushRenderer(retained.renderer());
     return SurfacePtr(SDL_DuplicateSurface(retained.surface()));
   }
 
-  // Repaints the whole window in place: the ground truth for the current state.
   SurfacePtr FullFrame() {
     PinCaret();
     shell.Render(retained.renderer(), kWidth, kHeight);
     return Snapshot();
   }
 
-  // Deliver `batch` the way the watcher thread does, then run the wake that applies it.
   void ApplyThroughTheWake(platform::IndexUpdateBatch batch) {
     Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(shell, std::move(batch)),
            "the redraw fixture should deliver its batch");
@@ -149,7 +125,6 @@ struct Fixture {
   void ExpectRetainedMatchesFull(const std::string& what) {
     const SurfacePtr retained_pixels = Snapshot();
     const SurfacePtr full_pixels = FullFrame();
-    // Where they differ names the surface the narrowing forgot.
     int x0 = kWidth, y0 = kHeight, x1 = -1, y1 = -1;
     for (int y = 0; y < kHeight; ++y) {
       for (int x = 0; x < kWidth; ++x) {
@@ -186,10 +161,9 @@ struct Fixture {
 };
 
 void TestAWriteToAnUnopenedFileRepaintsTheSidebarNotTheEditor() {
-  Fixture fixture(/*sidebar_visible=*/true);
+  Fixture fixture(true);
   const SurfacePtr before = fixture.Snapshot();
 
-  // A new file at the root: the tree grows a row, the open buffer is untouched.
   const std::filesystem::path created = fixture.root / "agent-notes.md";
   WriteFile(created, "written by an agent\n");
   platform::IndexUpdateBatch batch;
@@ -198,8 +172,6 @@ void TestAWriteToAnUnopenedFileRepaintsTheSidebarNotTheEditor() {
 
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(fixture.shell);
   Expect(!fixture.painted_full, "a write to a file nobody has open must not repaint the window");
-  // The tree's rows are derived units: the batch owes them a frame (or names the
-  // sidebar, for a view that is not derived).
   Expect(fixture.PaintedAny(layout.sidebar),
          "the tree lists files, so the sidebar gets its repaint");
   Expect(!AnyRectIntersects(fixture.painted, layout.editor_surface),
@@ -211,11 +183,8 @@ void TestAWriteToAnUnopenedFileRepaintsTheSidebarNotTheEditor() {
          "the new file should have changed the tree on screen (or the comparison proves nothing)");
 }
 
-// The apply rate (TD-2026-10-28-419): batches that keep arriving are held past the
-// coalescer's burst, and a held batch must not wait for unrelated input -- the idle
-// wait names its deadline, and the scheduled wake at that deadline applies it.
 void TestAHeldChangeBatchIsAppliedByTheScheduledWake() {
-  Fixture fixture(/*sidebar_visible=*/true);
+  Fixture fixture(true);
   const auto deliver = [&](int serial) {
     const std::filesystem::path created = fixture.root / ("burst-" + std::to_string(serial) + ".md");
     WriteFile(created, "burst\n");
@@ -227,7 +196,6 @@ void TestAHeldChangeBatchIsAppliedByTheScheduledWake() {
     (void)WorkspaceShellTestAccess::HandleScheduledWake(fixture.shell);
     return WorkspaceShellTestAccess::LastAppliedProjectChangeGeneration(fixture.shell) > before;
   };
-  // Deliveries back to back, as a sync's are: within a few the burst is spent.
   bool held = false;
   for (int serial = 0; serial < 4 * static_cast<int>(project::ProjectChangeCoalescer::kApplyBurst) && !held;
        ++serial) {
@@ -254,7 +222,7 @@ void TestAHeldChangeBatchIsAppliedByTheScheduledWake() {
 }
 
 void TestAWriteToTheOpenFileRepaintsItsPane() {
-  Fixture fixture(/*sidebar_visible=*/true);
+  Fixture fixture(true);
   const SurfacePtr before = fixture.Snapshot();
 
   WriteFile(fixture.open_file, "int open() {\n  return 42;  // an agent was here\n}\n");
@@ -272,11 +240,8 @@ void TestAWriteToTheOpenFileRepaintsItsPane() {
          "the reload should have changed the editor on screen");
 }
 
-// The QA monkey (editor profile, seed 3, with files rewritten under the editor):
-// a reloaded buffer shown in a group that does not have the focus kept its old
-// text on screen -- the reload repainted the focused pane.
 void TestAWriteToAFileOpenInAnotherGroupRepaintsThatPane() {
-  Fixture fixture(/*sidebar_visible=*/true);
+  Fixture fixture(true);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(fixture.shell, "split-down other.cpp"),
          "split-down should open other.cpp in a second group");
   fixture.Paint(RenderInvalidation{.full = true, .rects = {}});
@@ -296,10 +261,8 @@ void TestAWriteToAFileOpenInAnotherGroupRepaintsThatPane() {
          "the reload should have changed that pane on screen");
 }
 
-// The same, under a modal: the monkey's reload landed while the unsaved-changes
-// prompt of a group being closed was up.
 void TestAWriteToAnOpenFileUnderAPromptRepaintsItsPane() {
-  Fixture fixture(/*sidebar_visible=*/true);
+  Fixture fixture(true);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(fixture.shell, "split-down other.cpp"),
          "split-down should open other.cpp in a second group");
   Expect(WorkspaceShellTestAccess::HandleTextInput(fixture.shell, "x"), "typing dirties other.cpp");
@@ -322,10 +285,8 @@ void TestAWriteToAnOpenFileUnderAPromptRepaintsItsPane() {
          "the reload should have changed the pane under the prompt");
 }
 
-// The monkey's buffer was scrolled far down a long file: a line prepended on disk
-// shifts every row on screen while the reload's change is one line far above it.
 void TestALinePrependedAboveTheScrolledViewRepaintsThePane() {
-  Fixture fixture(/*sidebar_visible=*/true);
+  Fixture fixture(true);
   std::string text;
   for (int i = 1; i <= 300; ++i) {
     text += "line " + std::to_string(i) + "\n";
@@ -352,13 +313,8 @@ void TestALinePrependedAboveTheScrolledViewRepaintsThePane() {
          "the shifted rows should have changed the pane on screen");
 }
 
-// The QA monkey (editor profile, seeds 3 and 6): one file in both groups of a
-// split, rewritten on disk while the find widget had the keyboard, then a tab
-// moved from the command line. Moving a tab gives the editor the focus, and only
-// HandleEvent repainted the surfaces a focus change moves the ring between: the
-// editor's ring showed in a full frame and not in the partial one.
 void TestATabMovedAfterAReloadRepaintsTheFocusRing() {
-  Fixture fixture(/*sidebar_visible=*/true);
+  Fixture fixture(true);
   std::string text;
   for (int i = 1; i <= 120; ++i) {
     text += "line " + std::to_string(i) + "\n";
@@ -393,12 +349,8 @@ void TestATabMovedAfterAReloadRepaintsTheFocusRing() {
       "a tab move that gives the editor the focus leaves the window identical to a full repaint");
 }
 
-// The QA monkey (editor profile, seeds 3 and 6) had a tab move scroll the pane in
-// a frame that damaged only the tab strips, the pane a page away from a full
-// repaint. Frame prep repaints a pane whose scroll position moved since it was
-// painted, whichever path moved it and whatever else the frame repaints.
 void TestAScrollWithNoDamageOfItsOwnRepaintsThePane() {
-  Fixture fixture(/*sidebar_visible=*/true);
+  Fixture fixture(true);
   std::string text;
   for (int i = 1; i <= 300; ++i) {
     text += "line " + std::to_string(i) + "\n";
@@ -423,7 +375,7 @@ void TestAScrollWithNoDamageOfItsOwnRepaintsThePane() {
 }
 
 void TestAHiddenSidebarRepaintsNothingForAnUnopenedFile() {
-  Fixture fixture(/*sidebar_visible=*/false);
+  Fixture fixture(false);
 
   const std::filesystem::path other = fixture.root / "other.cpp";
   WriteFile(other, "int other() { return 3; }\n");
@@ -431,10 +383,6 @@ void TestAHiddenSidebarRepaintsNothingForAnUnopenedFile() {
   batch.changes.push_back(fixture.Modified(other));
   fixture.ApplyThroughTheWake(std::move(batch));
 
-  // RequestSidebarRedraw fell back to the whole WINDOW when the sidebar was hidden,
-  // so the automatic git refresh every batch triggers was the full frame under
-  // another name. The status-bar strip is all it may ask for now: its branch and
-  // counts are re-derived at frame prep, which needs some frame to run in.
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(fixture.shell);
   Expect(!fixture.painted_full, "a hidden sidebar must not turn a batch into a full frame;" +
                                     fixture.DescribePainted());
@@ -447,11 +395,9 @@ void TestAHiddenSidebarRepaintsNothingForAnUnopenedFile() {
 }
 
 void TestATreeShapeChangeRepaintsTheEditorColumnNotTheWindow() {
-  Fixture fixture(/*sidebar_visible=*/true);
+  Fixture fixture(true);
   const SurfacePtr before = fixture.Snapshot();
 
-  // A directory appearing is a shape change with no file in it: a "rescan", which
-  // re-checks every open buffer. The open file changed too, unannounced.
   std::filesystem::create_directories(fixture.root / "agent-work");
   WriteFile(fixture.open_file, "int open() {\n  return 7;\n}\n");
   platform::IndexUpdateBatch batch;
@@ -460,9 +406,6 @@ void TestATreeShapeChangeRepaintsTheEditorColumnNotTheWindow() {
 
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(fixture.shell);
   Expect(!fixture.painted_full, "a tree rescan must not repaint the window");
-  // The tree's rows are derived units, so the rescan owes them a frame (or names the
-  // sidebar, for a view that is not derived); the editor column's rows are derived
-  // too, so the same frame repaints the reloaded buffer's rows.
   Expect(fixture.PaintedAny(layout.sidebar) && fixture.PaintedAny(layout.editor_surface),
          "a rescan repaints the tree and the editor column, where any buffer may have reloaded");
   fixture.ExpectRetainedMatchesFull(
@@ -471,7 +414,7 @@ void TestATreeShapeChangeRepaintsTheEditorColumnNotTheWindow() {
   Expect(CountPixelDifferences(before.get(), fixture.Snapshot().get()) > 0, "the rescan should have changed the screen");
 }
 
-}  // namespace
+}
 
 void RegisterProjectChangeRedrawTests(std::vector<TestCase>& tests) {
 #if MICROIDE_HAS_SDL3_TTF
@@ -500,4 +443,4 @@ void RegisterProjectChangeRedrawTests(std::vector<TestCase>& tests) {
 #endif
 }
 
-}  // namespace microide::tests
+}

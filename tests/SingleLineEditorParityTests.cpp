@@ -1,28 +1,3 @@
-// The single-line fields and the main editor, held against each other.
-//
-// Every prompt, search box, rename field and commit-message line in the window
-// is a `SingleLineEditor`; the editor pane is a `TextViewport`. They are two
-// implementations of the same keyboard contract over the same text, and the
-// history here is drift, not bugs in one of them: the word rule lived as three
-// file-local statics inside SingleLineEditor.cpp, so the main editor had no word
-// verbs at all; double-click resolved its run with a second private scan, so the
-// prompt selected nothing where the editor selected `->`. Both are now shared
-// (`editor/WordBoundary.h`), which removes the arithmetic as a source of
-// divergence but not the code AROUND it -- what a verb does at a boundary, over
-// a selection, or when it declines to act is still written twice.
-//
-// So: drive both with the same text, the same caret, the same selection and the
-// same verb, and require the same (text, caret, selection) out. Over the shapes
-// the two paths get wrong -- multi-byte scalars, tabs, operator runs, leading
-// and trailing whitespace, an empty field.
-//
-// Deliberately NOT compared: Home and End. `TextViewport::MoveCursorLineStart`
-// is VS Code's `cursorHome`, which stops at the first non-whitespace character
-// and toggles to column 0 from there; a single-line field has no indentation to
-// toggle against and goes to 0, which is what every GTK/Qt entry does. That is a
-// real difference in the contract, not drift, and it has its own tests on both
-// sides.
-
 #include "TestSupport.h"
 
 #include <cstddef>
@@ -43,7 +18,6 @@ using microide::editor::SingleLineEditor;
 using microide::editor::TextPosition;
 using microide::editor::TextViewport;
 
-// One comparable state: the text, where the caret is, and what is selected.
 struct State {
   std::string text;
   std::size_t caret = 0;
@@ -143,9 +117,6 @@ void Apply(SingleLineEditor& editor, Verb verb, char typed, std::size_t word_at)
     case Verb::kDeleteWordRight: editor.DeleteWordRight(); break;
     case Verb::kSelectAll: editor.SelectAll(); break;
     case Verb::kSelectWord:
-      // Both sides put the caret on the click point first, which is what the two
-      // mouse handlers do; comparing a bare SelectWordAt against the editor's
-      // move-then-select would be comparing two different gestures.
       editor.SetSelectionAnchor(std::nullopt);
       editor.SetCaret(word_at);
       editor.SelectWordAt(word_at);
@@ -178,9 +149,6 @@ void Apply(TextViewport& viewport, Verb verb, char typed, std::size_t word_at) {
   }
 }
 
-// The shapes the two paths get wrong: multi-byte scalars, a tab, operator runs
-// that are words of their own, leading and trailing whitespace, and the empty
-// field every verb has to decline on.
 const std::vector<std::string>& ParityTexts() {
   static const std::vector<std::string> texts = {
       "hello world",
@@ -211,22 +179,16 @@ void TestSingleLineAndViewportAgreeOnEveryVerb() {
       viewport.SetViewportSize(4, 400);
       viewport.LoadContent(text, "/tmp/single-line-parity.txt");
 
-      // The same caret and the same selection on both, set by BYTE offset so
-      // nothing about the placement can differ.
       const std::size_t caret = pick(text.size() + 1);
       editor.SetCaret(caret);
       viewport.MoveCursorTo(0, caret);
       if (pick(2) == 0 && !text.empty()) {
         const std::size_t anchor = pick(text.size() + 1);
-        // Caret first, then the anchor: SetSelectionAnchor normalises an anchor
-        // that equals the caret away, so the other order silently loses it.
         editor.SetCaret(caret);
         editor.SetSelectionAnchor(anchor);
         viewport.MoveCursorTo(0, anchor);
-        viewport.MoveCursorTo(0, caret, /*extend_selection=*/true);
+        viewport.MoveCursorTo(0, caret, true);
       }
-      // Whatever each side's own clamp did to a mid-scalar offset has to agree
-      // before a verb is judged, or the first difference is the setup's.
       Expect(Read(editor) == Read(viewport),
              "the setup itself diverged: field " + Show(Read(editor)) + " vs editor " +
                  Show(Read(viewport)));
@@ -267,11 +229,11 @@ void TestSingleLineAndViewportAgreeOnEveryVerb() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterSingleLineEditorParityTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SingleLineEditorParity/AgreeOnEveryVerb",
           TestSingleLineAndViewportAgreeOnEveryVerb);
 }
 
-}  // namespace microide::tests
+}

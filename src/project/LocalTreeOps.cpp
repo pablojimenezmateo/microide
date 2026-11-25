@@ -22,10 +22,6 @@ namespace fs = std::filesystem;
 using TreeOp = FileWriteGate::TreeOp;
 using TreeResult = FileWriteGate::TreeResult;
 
-// Atomically create `path` failing if it already exists. Returns 1 on success, 0
-// if the file already existed (EEXIST), -1 on any other error. O_CREAT|O_EXCL is
-// a single kernel operation, so unlike an exists() probe followed by a truncating
-// open it cannot clobber a file another process creates in the meantime.
 int ExclusiveCreateEmptyFile(const fs::path& path) {
   const int fd = ::open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0644);
   if (fd < 0) {
@@ -35,10 +31,6 @@ int ExclusiveCreateEmptyFile(const fs::path& path) {
   return 1;
 }
 
-// Presence of the directory entry itself, without following a symlink. exists()
-// dereferences the link, so a dangling symlink (a real, renameable entry) reports
-// as absent (TD-2026-07-17A-125). A stat error also counts as "present" so
-// rename/no-overwrite decisions fail closed rather than clobbering.
 bool NodeExists(const fs::path& path) {
   std::error_code error;
   return fs::symlink_status(path, error).type() != fs::file_type::not_found;
@@ -54,15 +46,14 @@ bool IsReservedPathComponent(const fs::path& path) {
   return false;
 }
 
-// One applied mutation's inverse. Rolled back in reverse order.
 struct Undo {
   enum class Kind : std::uint8_t {
-    RemoveCreatedFile,  // a: the file this batch created
-    RemoveCreatedDirs,  // a: the TOPMOST directory this batch created
-    RenameBack,         // a: current (new) path, b: original path
-    RestoreStaged,      // a: original path, b: where it was staged
-    RecreateDirectory,  // a: an empty directory this batch removed
-    Untrash,            // a: original path, b: its place in the trash
+    RemoveCreatedFile,
+    RemoveCreatedDirs,
+    RenameBack,
+    RestoreStaged,
+    RecreateDirectory,
+    Untrash,
   };
   Kind kind;
   fs::path a;
@@ -72,8 +63,6 @@ struct Undo {
 class Batch {
  public:
   TreeResult Apply(std::span<const TreeOp> ops) {
-    // A NUL cannot be in a file name: a system call stops at it and would act on
-    // the name cut short there (see WriteTextFileAtomically). Refused before any op.
     for (std::size_t i = 0; i < ops.size(); ++i) {
       if (ops[i].path.native().find('\0') != std::string::npos ||
           ops[i].new_path.native().find('\0') != std::string::npos) {
@@ -88,7 +77,6 @@ class Batch {
       std::string failure = ApplyOne(ops[i]);
       if (!failure.empty()) {
         Rollback();
-        // Anything staged by the undone ops was restored by the rollback.
         return TreeResult{.ok = false,
                           .failed_index = i,
                           .error_message = std::move(failure),
@@ -101,9 +89,6 @@ class Batch {
                       .error_message = {},
                       .resulting_path = std::move(resulting_path_),
                       .staged_directories = {}};
-    // The batch landed: dispose of what it staged. A staged FILE is one unlink,
-    // done here so the hidden staging entry can never reach the file index; a
-    // staged DIRECTORY is handed back for the caller to remove off-thread.
     for (fs::path& staged : staged_) {
       std::error_code error;
       if (fs::is_directory(fs::symlink_status(staged, error))) {
@@ -150,9 +135,6 @@ class Batch {
         return "Could not set aside the existing " + path.filename().string();
       }
     }
-    // Exclusive create: never truncate an existing file. A plain exists()-then-open
-    // sequence would silently overwrite a file that a racing process created
-    // between the two steps.
     const int created = ExclusiveCreateEmptyFile(path);
     if (created == 0) {
       return "The file already exists";
@@ -170,11 +152,6 @@ class Batch {
       return "Invalid directory name";
     }
     const fs::path topmost = TopmostMissingAncestorOrSelf(path);
-    // Create-first, then classify. A prior exists() probe followed by
-    // create_directories is a TOCTOU: a racing process can drop a non-directory at
-    // the target in the window between the two calls. create_directories is the
-    // authoritative step — it returns false without error when the path already
-    // exists — so "already exists" is told from a real failure by status.
     std::error_code error;
     if (fs::create_directories(path, error)) {
       undo_.push_back({Undo::Kind::RemoveCreatedDirs, topmost, {}});
@@ -207,7 +184,6 @@ class Batch {
     }
     if (NodeExists(destination)) {
       if (!overwrite) {
-        // Kept for a clear early message; the move below is no-overwrite anyway.
         return "The destination path already exists";
       }
       if (!StageAside(destination)) {
@@ -217,8 +193,6 @@ class Batch {
     if (!EnsureParentDirectories(destination)) {
       return "Failed to prepare the destination directory";
     }
-    // No-overwrite and atomic (renameat2 RENAME_NOREPLACE) on one filesystem, so a
-    // destination racing into existence after the check above cannot be clobbered.
     if (!platform::MovePathNoOverwrite(source, destination)) {
       return NodeExists(destination) ? "The destination path already exists"
                                      : "Failed to rename the path";
@@ -240,7 +214,6 @@ class Batch {
     if (status.type() == fs::file_type::not_found) {
       return "The source path does not exist";
     }
-    // A folder copied into itself would copy its own copy, forever.
     const fs::path relative = destination.lexically_relative(source);
     if (fs::is_directory(status) && !relative.empty() && !util::RelativePathClimbsOut(relative)) {
       return "A folder cannot be copied into itself";
@@ -256,13 +229,12 @@ class Batch {
     } else if (fs::is_symlink(status)) {
       fs::copy_symlink(source, destination, error);
     } else {
-      // No overwrite: a target that appeared since the check fails the copy.
       fs::copy_file(source, destination, fs::copy_options::none, error);
     }
     if (error) {
       std::error_code cleanup;
       if (NodeExists(destination)) {
-        fs::remove_all(destination, cleanup);  // a partial directory copy
+        fs::remove_all(destination, cleanup);
       }
       return "Failed to copy " + source.filename().string();
     }
@@ -278,8 +250,6 @@ class Batch {
       return "The path does not exist";
     }
     if (fs::is_directory(status) && !recursive) {
-      // rmdir: the kernel refuses a non-empty directory, so content that appears
-      // after any emptiness check the caller made is never taken with it.
       if (!fs::remove(path, error) || error) {
         return "The directory is not empty";
       }
@@ -305,15 +275,13 @@ class Batch {
     return {};
   }
 
-  // Rename `victim` to a hidden sibling — same directory, so a pure rename that
-  // stays restorable until the batch lands.
   bool StageAside(const fs::path& victim) {
     for (;;) {
       const fs::path staged = victim.parent_path() /
                               (".microide-staged-" + std::to_string(stage_seq_++) + "-" +
                                victim.filename().string());
       if (NodeExists(staged)) {
-        continue;  // leftover debris from an interrupted run; try the next name
+        continue;
       }
       if (!platform::MovePathNoOverwrite(victim, staged)) {
         return false;
@@ -333,8 +301,6 @@ class Batch {
     return topmost;
   }
 
-  // Create `target`'s missing parents, journalling the TOPMOST one created so a
-  // rollback removes the whole new chain rather than just the leaf.
   bool EnsureParentDirectories(const fs::path& target) {
     const fs::path parent = target.parent_path();
     if (parent.empty() || NodeExists(parent)) {
@@ -370,8 +336,6 @@ class Batch {
           fs::create_directory(it->a, error);
           break;
         case Undo::Kind::Untrash:
-          // The trash's .trashinfo stays behind; a stale info file is harmless and
-          // the user's file is back where it was, which is what matters.
           (void)platform::MovePathNoOverwrite(it->b, it->a);
           break;
       }
@@ -386,10 +350,10 @@ class Batch {
   fs::path resulting_path_;
 };
 
-}  // namespace
+}
 
 TreeResult ApplyLocalTreeOps(std::span<const TreeOp> ops) {
   return Batch{}.Apply(ops);
 }
 
-}  // namespace microide::project
+}

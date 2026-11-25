@@ -26,9 +26,6 @@ struct DecoratedTextFill {
   SDL_Color color{};
 };
 
-// A decorated run is exactly a positioned text run; alias so a row's runs can be
-// handed straight to TextRenderer::DrawRuns with no per-row conversion (the
-// batched-text path on the GPU backend submits the whole row in one draw).
 using DecoratedTextRun = render::TextRun;
 
 struct DecoratedUnderline {
@@ -73,11 +70,6 @@ void AppendLayoutSyntaxTextRuns(DecoratedTextRow& row,
                                 std::span<const TextStyleDecoration> foreground_overrides = {},
                                 const InlayRowDisplacement& inlay = {});
 
-// Append the glyph runs (and optional background fills) for a row's mid-line inlay
-// hints, positioned in the phantom cells the displacement reserved for them.
-// `inline_texts` is the line's decoration slice; `spans` are the row-local
-// InlayCellSpans produced by BuildInlayRowSpans (parallel to the mid-line entries
-// in `inline_texts`, in the same order). Draws nothing when `spans` is empty.
 void AppendInlayHintRuns(DecoratedTextRow& row,
                          const render::TextRenderer& text_renderer,
                          float x,
@@ -95,11 +87,7 @@ class DecoratedTextGridRenderer {
                  const DecoratedTextRow& row) const;
 
  private:
-  // Scratch buffer used to coalesce same-color fill runs into a single
-  // SDL_RenderFillRects batch. Reused across rows; capacity persists across
-  // frames so per-row batching does not allocate. Mutable so RenderRow stays
-  // logically const.
   mutable std::vector<SDL_FRect> fill_batch_scratch_;
 };
 
-}  // namespace microide::editor
+}

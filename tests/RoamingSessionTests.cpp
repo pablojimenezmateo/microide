@@ -1,7 +1,3 @@
-// What a remote project had open on one machine, for the next (RoamingSession):
-// what is captured from a session, the text kept on the host, and how little of
-// that text is trusted.
-
 #include "TestSupport.h"
 #include "compare/BranchReviewStateService.h"
 #include "workspace/git/BranchReviewStateBridge.h"
@@ -41,14 +37,14 @@ void TestRoamingSessionCapturesTheProjectsOpenFiles() {
   PersistedProjectSessionState session;
   PersistedEditorGroupState left;
   left.tabs.push_back(Tab(root / "src/a.cpp", 4, 2));
-  left.tabs.push_back(Tab("/elsewhere/host-file.h"));  // outside the project
+  left.tabs.push_back(Tab("/elsewhere/host-file.h"));
   PersistedEditorTabState compare = Tab(root / "src/a.cpp");
   compare.kind = "compare";
   left.tabs.push_back(compare);
-  left.tabs.push_back(Tab({}));  // an untitled buffer
+  left.tabs.push_back(Tab({}));
   PersistedEditorGroupState right;
   right.tabs.push_back(Tab(root / "docs/notes.md", 10, 0));
-  right.tabs.push_back(Tab(root / "src/a.cpp", 99, 0));  // the same file in a second group
+  right.tabs.push_back(Tab(root / "src/a.cpp", 99, 0));
   right.tabs.push_back(Tab(root / "src/b.cpp", 7, 3));
   right.active_tab_index = 2;
   session.groups = {left, right};
@@ -92,8 +88,6 @@ void TestRoamingSessionTextRoundTripsAndIsNotTrusted() {
          "the same files and carets are the same session, whoever left it and whenever");
   later.files[0].line = 5;
   Expect(RoamingSessionFingerprint(later) != RoamingSessionFingerprint(roaming), "a moved caret is not");
-  // The list of files alone does not move with the caret: it is what decides
-  // whether a save is worth sending at once.
   using microide::workspace::RoamingSessionFileList;
   Expect(RoamingSessionFileList(later) == RoamingSessionFileList(roaming), "the same files are the same list");
   later.files[0].active = true;
@@ -107,8 +101,6 @@ void TestRoamingSessionTextRoundTripsAndIsNotTrusted() {
              !DecodeRoamingSession(R"({"version": 2, "client": "x", "saved_at": 1, "files": []})").has_value() &&
              !DecodeRoamingSession(R"({"version": 1, "client": 5, "saved_at": 1})").has_value(),
          "anything but that form is no session");
-  // Another machine -- or anything on the host -- wrote it: a path that leaves the
-  // root, or names nothing, is dropped; a caret that is no position reads as 0.
   const std::optional<RoamingSession> hostile = DecodeRoamingSession(R"({
     "version": 1, "client": "laptop-a", "saved_at": 1,
     "files": [
@@ -133,11 +125,6 @@ void TestRoamingSessionTextRoundTripsAndIsNotTrusted() {
          "a list past the cap is cut at it");
 }
 
-// Review marks and notes follow the user between machines the same way: the
-// targets of the repository at the project's root are left as text, without the
-// root (each machine's mirror is its own), and merged target by target on the
-// machine that reads them -- the copy changed last wins, so a review cleared on
-// one machine stays cleared on the other.
 void TestRoamingReviewMergesTheNewerCopyOfEachTarget() {
   using microide::compare::BranchReviewNoteScope;
   using microide::compare::BranchReviewStateService;
@@ -172,7 +159,6 @@ void TestRoamingReviewMergesTheNewerCopyOfEachTarget() {
   Expect(EncodeRoamingReview(ToPersistedBranchReviewState(work), "/no/such/project").empty(),
          "a project with no review leaves nothing");
 
-  // The other machine: its own mirror, no marks yet.
   std::optional<std::vector<PersistedBranchReviewTarget>> theirs = DecodeRoamingReview(left, home_mirror);
   Expect(theirs.has_value() && theirs->size() == 2, "both targets arrive");
   PersistedBranchReviewState home_state;
@@ -195,8 +181,6 @@ void TestRoamingReviewMergesTheNewerCopyOfEachTarget() {
          "the same marks are the same text on either machine");
   Expect(!MergeRoamingReview(*DecodeRoamingReview(left, home_mirror), &home_state), "and merging them again changes nothing");
 
-  // At home the review is cleared: an emptied target, changed later, which the
-  // work machine takes instead of bringing its marks back.
   std::this_thread::sleep_for(std::chrono::milliseconds(3));
   home.ClearTarget(home_main);
   const std::string cleared = EncodeRoamingReview(ToPersistedBranchReviewState(home), home_mirror);
@@ -208,10 +192,8 @@ void TestRoamingReviewMergesTheNewerCopyOfEachTarget() {
          "a review cleared on one machine is cleared on the other");
   Expect(work.NotesAsReferences(checkpoint) == "docs/plan.md: tighten this" && work.FindTarget(elsewhere) != nullptr,
          "the target that did not change, and another repository's, are as they were");
-  // ...and the older copy does not come back over the newer one.
   Expect(!MergeRoamingReview(*DecodeRoamingReview(left, work_mirror), &work_state), "an older copy changes nothing");
 
-  // Untrusted: anything on the host could have written it.
   Expect(!DecodeRoamingReview("", home_mirror).has_value() && !DecodeRoamingReview("[]", home_mirror).has_value() &&
              !DecodeRoamingReview(R"({"version": 2, "targets": []})", home_mirror).has_value(),
          "anything but that form is no review");
@@ -243,13 +225,12 @@ void TestRoamingReviewMergesTheNewerCopyOfEachTarget() {
     Expect(target.notes.size() == 1 && target.notes[0].text == "a file's" && target.notes[0].scope == "file",
            "a note needs a place and a text, and a hunk's note its hunk");
   }
-  // Past the budget the oldest reviews stay behind, whole.
   const std::string one = EncodeRoamingReview(ToPersistedBranchReviewState(home), home_mirror, cleared.size() - 1);
   Expect(!one.empty() && one.size() < cleared.size() && DecodeRoamingReview(one, home_mirror).value().size() == 1,
          "a budget too small for both targets carries the one changed last");
 }
 
-}  // namespace
+}
 
 void RegisterRoamingSessionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RoamingSession/ReviewMergesTheNewerCopyOfEachTarget", TestRoamingReviewMergesTheNewerCopyOfEachTarget);
@@ -257,4 +238,4 @@ void RegisterRoamingSessionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RoamingSession/TextRoundTripsAndIsNotTrusted", TestRoamingSessionTextRoundTripsAndIsNotTrusted);
 }
 
-}  // namespace microide::tests
+}

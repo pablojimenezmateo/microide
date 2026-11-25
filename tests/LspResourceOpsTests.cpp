@@ -13,10 +13,6 @@
 #include <system_error>
 #include <vector>
 
-// LSP WorkspaceEdit file resource ops (TD-2026-07-17-011): validate-first apply
-// with rollback-safe staging. These exercise WorkspaceEditService::ApplyResourceOps
-// directly — the filesystem-mutating half that the protocol-parser tests do not
-// reach.
 namespace microide::tests {
 namespace {
 
@@ -28,8 +24,6 @@ using microide::workspace::WorkspaceContext;
 using microide::workspace::WorkspaceResourceOp;
 using Kind = WorkspaceResourceOp::Kind;
 
-// One configured service plus the project root it is scoped to. Reconcile hooks
-// append to `log` so ordering/coverage is observable.
 struct Fixture {
   TemporaryDirectory dir;
   WorkspaceContext context;
@@ -103,9 +97,6 @@ void TestCreateRenameDeleteApplyInOrder() {
          "only the rename reconciles; the view refresh runs once after the batch");
 }
 
-// The reconcile hooks must fire in APPLY order. [delete B, rename A->B] retargets
-// A's tabs onto B; running the delete reconcile afterwards would close the tab
-// that was just retargeted (and lose its unsaved contents).
 void TestReconcileFollowsApplyOrderNotOpKind() {
   Fixture fx;
   WriteText(fx.At("a.rs"), "a\n");
@@ -127,8 +118,6 @@ void TestPreconditionFailureLeavesNothingApplied() {
   WriteText(fx.At("keep.rs"), "keep\n");
   WriteText(fx.At("clash.rs"), "clash\n");
 
-  // The second op is invalid (create over an existing file without overwrite), so
-  // validation must reject the batch before the first op touches the disk.
   const auto result = fx.service.ApplyResourceOps({
       Create(fx.At("fresh.rs")),
       Create(fx.At("clash.rs")),
@@ -146,8 +135,6 @@ void TestValidationUsesTheSimulatedOverlay() {
   Fixture fx;
   WriteText(fx.At("src.rs"), "src\n");
 
-  // create-then-rename: the rename source does not exist on disk yet, only in the
-  // overlay the earlier create populates.
   const auto created_then_renamed = fx.service.ApplyResourceOps({
       Create(fx.At("staged.rs")),
       Rename(fx.At("staged.rs"), fx.At("final.rs")),
@@ -156,7 +143,6 @@ void TestValidationUsesTheSimulatedOverlay() {
   Expect(std::filesystem::exists(fx.At("final.rs")) && !std::filesystem::exists(fx.At("staged.rs")),
          "the created file should end up at the rename destination");
 
-  // delete-then-create of the same path is likewise legal.
   const auto deleted_then_created = fx.service.ApplyResourceOps({
       Delete(fx.At("src.rs")),
       Create(fx.At("src.rs")),
@@ -188,7 +174,7 @@ void TestOverwriteWinsOverIgnoreIfExists() {
 
   WorkspaceResourceOp op = Create(fx.At("target.rs"));
   op.overwrite = true;
-  op.ignore_if_exists = true;  // LSP: overwrite wins
+  op.ignore_if_exists = true;
 
   const auto result = fx.service.ApplyResourceOps({op});
   Expect(result.ok && result.any_applied, "overwrite should apply");
@@ -210,17 +196,10 @@ void TestTargetsOutsideTheProjectRootAreRejected() {
   Expect(std::filesystem::exists(fx.At("inside.rs")) && !std::filesystem::exists(outside),
          "the rejected rename must leave the source in place");
 
-  // Escaping through a traversal component is caught by the same containment
-  // check (paths are lexically normalized before comparison).
   Expect(!fx.service.ApplyResourceOps({Create(fx.At("../traversed.rs"))}).ok,
          "a ..-traversal target must fail the batch");
 }
 
-// A SYMLINK inside the project pointing out of it is spelled entirely within the
-// root, so a lexical containment check accepts it — and creating through a
-// symlinked parent lands wherever the link points. The link does not have to be
-// planted by the attacker: it is an ordinary thing for a checkout to contain, so a
-// compromised server only has to name a path the repository already provides.
 void TestTargetsEscapingThroughASymlinkAreRejected() {
   Fixture fx;
   const std::filesystem::path outside_dir = fx.dir.path().parent_path() / "outside-root";
@@ -231,23 +210,18 @@ void TestTargetsEscapingThroughASymlinkAreRejected() {
   std::filesystem::create_symlink(outside_dir, fx.At("link"), ec);
   Expect(!ec, "symlink fixture created");
 
-  // Creating through the symlinked parent: the leaf does not exist yet, which is
-  // exactly the case a lexical check cannot see through.
   const std::filesystem::path through_link = fx.At("link") / "escaped.rs";
   Expect(!fx.service.ApplyResourceOps({Create(through_link)}).ok,
          "a create through a symlink out of the project must fail the batch");
   Expect(!std::filesystem::exists(outside_dir / "escaped.rs"),
          "nothing may be written outside the project root");
 
-  // And the rename destination, which is the other half of the same check.
   WriteText(fx.At("inside.rs"), "inside\n");
   Expect(!fx.service.ApplyResourceOps({Rename(fx.At("inside.rs"), through_link)}).ok,
          "a rename destination through a symlink out of the project must fail");
   Expect(std::filesystem::exists(fx.At("inside.rs")),
          "the rejected rename must leave the source in place");
 
-  // A symlink that stays INSIDE the project is still usable — the check bounds
-  // where writes land, it does not ban links.
   std::filesystem::create_directories(fx.At("real"), ec);
   std::filesystem::create_symlink(fx.At("real"), fx.At("inner_link"), ec);
   Expect(!ec, "inside-the-root symlink fixture created");
@@ -274,16 +248,11 @@ void TestNonRecursiveDirectoryDeleteIsRefused() {
   Expect(!std::filesystem::exists(fx.At("pkg")), "the recursive delete should remove the tree");
 }
 
-// A delete stages its target aside rather than removing it, so a later I/O
-// failure in the same batch restores it byte-identically.
 void TestMidBatchFailureRollsBackCompletedOps() {
   Fixture fx;
   WriteText(fx.At("doomed.rs"), "original\n");
   WriteText(fx.At("source.rs"), "source\n");
 
-  // The rename destination's parent is an existing REGULAR FILE, so
-  // create_directories for it fails at apply time — validation cannot see this
-  // (the overlay only tracks existence), which is exactly the rollback path.
   WriteText(fx.At("blocker"), "not a directory\n");
 
   const auto result = fx.service.ApplyResourceOps({
@@ -300,8 +269,6 @@ void TestMidBatchFailureRollsBackCompletedOps() {
   Expect(fx.log.empty(), "a rolled-back batch reconciles nothing");
 }
 
-// Staged backups of a fully-applied batch are disposed; nothing hidden is left
-// behind in the project tree.
 void TestStagedBackupsAreDisposedAfterSuccess() {
   Fixture fx;
   WriteText(fx.At("gone.rs"), "gone\n");
@@ -322,7 +289,7 @@ void TestEmptyBatchIsASuccessfulNoOp() {
   Expect(fx.log.empty(), "an empty batch reconciles nothing");
 }
 
-}  // namespace
+}
 
 void RegisterLspResourceOpsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LspResourceOps/CreateRenameDeleteApplyInOrder",
@@ -349,4 +316,4 @@ void RegisterLspResourceOpsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LspResourceOps/EmptyBatchIsASuccessfulNoOp", TestEmptyBatchIsASuccessfulNoOp);
 }
 
-}  // namespace microide::tests
+}

@@ -6,9 +6,8 @@ namespace microide::terminal {
 
 namespace {
 constexpr std::size_t kColorBytes = 4;
-}  // namespace
+}
 
-// The colour leads at a fixed width, so no URI can be read as another pair.
 std::string TerminalCellExtraTable::KeyOf(std::string_view uri, TerminalColor underline_color) {
   const util::Rgba8 color = underline_color.value_or(util::Rgba8{0, 0, 0, 0});
   std::string key;
@@ -78,7 +77,7 @@ void TerminalCellExtraTable::Retain(const std::vector<bool>& live) {
       --colored_entries_;
     }
     entry.key.clear();
-    entry.key.shrink_to_fit();  // a long URI's buffer goes back, not just its length
+    entry.key.shrink_to_fit();
     entry.underline_color.reset();
     free_.push_back(static_cast<std::uint16_t>(id));
   }
@@ -95,7 +94,7 @@ void CollectUnderlineColors(const TerminalCellExtraTable& table, const std::vect
                             std::vector<TerminalUnderlineColor>& out) {
   out.clear();
   if (!table.has_underline_colors()) {
-    return;  // nearly every terminal: no walk at all
+    return;
   }
   for (const TerminalLine& line : lines) {
     for (const TerminalCell& cell : line.cells) {
@@ -115,4 +114,4 @@ void CollectUnderlineColors(const TerminalCellExtraTable& table, const std::vect
   }
 }
 
-}  // namespace microide::terminal
+}

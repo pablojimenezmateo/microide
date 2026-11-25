@@ -14,11 +14,9 @@ using microide::editor::RowGap;
 bool Near(float a, float b) { return std::fabs(a - b) < 0.001f; }
 
 void TestNoGapsMatchesLegacyFormula() {
-  // The whole point of the helper: with no insets it must be bit-identical to the
-  // old `first_line_y + row*line_height` math the renderer used to inline.
   const float first = 40.0f;
   const float lh = 14.0f;
-  const EditorRowYLayout layout(first, lh, /*scroll_line=*/5);
+  const EditorRowYLayout layout(first, lh, 5);
   for (std::size_t row = 0; row < 10; ++row) {
     Expect(Near(layout.RowTop(row), first + static_cast<float>(row) * lh),
            "RowTop must equal the legacy formula when there are no gaps");
@@ -31,7 +29,6 @@ void TestGapShiftsRowsBelowIt() {
   const float first = 40.0f;
   const float lh = 14.0f;
   const std::uint32_t scroll = 5;
-  // A 20px inset sits below visual row 6 (the second visible row).
   const std::vector<RowGap> gaps{RowGap{.visual_row = 6, .height = 20.0f}};
   const EditorRowYLayout layout(first, lh, scroll, gaps);
 
@@ -52,20 +49,17 @@ void TestHitTestDistinguishesGap() {
   const std::vector<RowGap> gaps{RowGap{.visual_row = 0, .height = 20.0f}};
   const EditorRowYLayout layout(first, lh, scroll, gaps);
 
-  // Inside row 0's text band.
-  EditorRowYLayout::HitResult hit = layout.HitTest(first + 2.0f, /*visible_rows=*/5);
+  EditorRowYLayout::HitResult hit = layout.HitTest(first + 2.0f, 5);
   Expect(hit.row == 0 && !hit.in_gap, "a click on the text row maps to that row, not the gap");
 
-  // Inside the inert gap below row 0.
   hit = layout.HitTest(first + lh + 5.0f, 5);
   Expect(hit.row == 0 && hit.in_gap, "a click in the inert gap is reported as in_gap");
 
-  // On the next text row.
   hit = layout.HitTest(first + lh + 20.0f + 2.0f, 5);
   Expect(hit.row == 1 && !hit.in_gap, "a click past the gap maps to the following row");
 }
 
-}  // namespace
+}
 
 void RegisterEditorRowYLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorRowYLayout/NoGapsMatchesLegacyFormula", TestNoGapsMatchesLegacyFormula);
@@ -73,4 +67,4 @@ void RegisterEditorRowYLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorRowYLayout/HitTestDistinguishesGap", TestHitTestDistinguishesGap);
 }
 
-}  // namespace microide::tests
+}

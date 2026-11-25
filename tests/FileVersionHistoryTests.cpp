@@ -1,6 +1,3 @@
-// The index behind File History (FileVersionHistory): which contents a mirrored
-// file had before the host replaced them, its bounds, and its file form.
-
 #include "TestSupport.h"
 
 #include "project/remote/FileVersionHistory.h"
@@ -28,7 +25,6 @@ void TestFileVersionHistoryListsNewestFirstWithinItsBounds() {
          "a path's versions, newest first");
   Expect(history.VersionsOf("b.txt").size() == 1 && history.path_count() == 2, "each path has its own");
 
-  // Restored and replaced again: one row, at its latest time.
   history.Record("a.txt", HashContent("v2"), 300);
   a = history.VersionsOf("a.txt");
   Expect(a.size() == 2 && a[0].replaced_at == 300, "the same content twice in a row is listed once");
@@ -44,7 +40,6 @@ void TestFileVersionHistoryListsNewestFirstWithinItsBounds() {
   history.Record(std::string(FileVersionHistory::kMaxPathBytes + 1, 'p'), HashContent("x"), 1);
   Expect(history.path_count() == 3, "an empty or absurd path is not recorded");
 
-  // Past the path cap, the path whose newest version is oldest goes.
   FileVersionHistory full;
   for (std::size_t i = 0; i < FileVersionHistory::kMaxPaths; ++i) {
     full.Record("f" + std::to_string(i), HashContent("c"), 10 + i);
@@ -68,7 +63,6 @@ void TestFileVersionHistorySurvivesItsFileFormAndDistrustsIt() {
 
   Expect(FileVersionHistory::Decode("").empty() && FileVersionHistory::Decode("\x07garbage").empty(),
          "an empty file or another format's is no history");
-  // Cut anywhere: the records before the cut, never a crash or a half record.
   for (std::size_t cut = 0; cut < encoded.size(); ++cut) {
     const FileVersionHistory partial = FileVersionHistory::Decode(encoded.substr(0, cut));
     Expect(partial.path_count() <= 2, "a truncated file decodes to at most what it held");
@@ -80,13 +74,12 @@ void TestFileVersionHistorySurvivesItsFileFormAndDistrustsIt() {
       }
     }
   }
-  // A forged count does not allocate or loop on trust.
   std::string forged = encoded.substr(0, 1);
   forged += "\xff\xff\xff\xff\xff\xff\xff\xff\x7f";
   Expect(FileVersionHistory::Decode(forged).empty(), "a forged path count yields nothing");
 }
 
-}  // namespace
+}
 
 void RegisterFileVersionHistoryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "FileVersionHistory/ListsNewestFirstWithinItsBounds",
@@ -95,4 +88,4 @@ void RegisterFileVersionHistoryTests(std::vector<TestCase>& tests) {
           TestFileVersionHistorySurvivesItsFileFormAndDistrustsIt);
 }
 
-}  // namespace microide::tests
+}

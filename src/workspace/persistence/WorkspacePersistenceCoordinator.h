@@ -37,9 +37,6 @@ class PersistenceCoordinator {
                                           const std::filesystem::path&)>
         build_merge_tab_entry;
     std::function<void(MergeTabState&)> refresh_merge_tab_derived_state;
-    // A merge's conflicts placed by matching its model against a result text (as a
-    // result read from disk is): for a restored typed result whose recorded spans
-    // no longer fit the rebuilt model.
     std::function<std::vector<MergeTrackedConflict>(compare::MergeModel&, const std::vector<std::string>&)>
         merge_conflicts_for_result;
     std::function<std::filesystem::path(const TabEntry::EditorTabState&)> editor_view_path;
@@ -48,23 +45,11 @@ class PersistenceCoordinator {
     std::function<void()> reset_project_catalog_to_welcome_state;
     std::function<bool(std::size_t, bool)> restore_project_catalog_after_removal;
     std::function<void()> ensure_active_project_visible;
-    // True when the `debug.enabled` setting is on; gates restoring the right-side
-    // debug pane visible (so a pane left open in a prior session stays hidden when
-    // the debugger feature is currently disabled).
     std::function<bool()> debugger_enabled;
-    // The terminal panel as a session saves it (TerminalPanelService::CaptureLayout).
     std::function<TerminalLayoutRecord()> capture_terminal_layout;
-    // The active project's session, as it is about to be written: a remote
-    // project leaves what it has open on its host (RemoteHostService::SessionSaved).
     std::function<void(const PersistedProjectSessionState&)> session_saved;
-    // The Host view's collapsed groups (RemoteHostService), kept with the
-    // workspace session.
     std::function<std::vector<std::string>()> host_view_collapsed;
     std::function<void(const std::vector<std::string>&)> restore_host_view_collapsed;
-    // Phase D plugin colour themes. `plugin_theme_names` lists contributed theme
-    // ids for the colorscheme picker; `resolve_plugin_theme` derives the Theme for
-    // a contributed id (nullopt when the id is not a plugin theme, so colorscheme
-    // resolution falls back to built-in/filesystem `.microide` loading).
     std::function<std::vector<std::string>()> plugin_theme_names;
     std::function<std::optional<render::Theme>(std::string_view)> resolve_plugin_theme;
   };
@@ -85,26 +70,13 @@ class PersistenceCoordinator {
   void SaveUserConfig() const;
   bool RestoreConfigState();
   void SaveConfigState() const;
-  // Recompute the current project's canonical editor preferences (tab size,
-  // indent width, font size, soft tabs, wrap) and active colorscheme from the
-  // layered settings store, resolving project-override → user-level default →
-  // spec default. Applies the colorscheme live only when it actually changes.
-  // This is the single materialization point so a user-level default applies to
-  // any project that has no per-project override.
   void MaterializeCanonicalPreferences();
   bool RestoreSessionState();
   void SaveSessionState();
-  // Rewrite only the terminal layout of the session saved for the project at
-  // `root` -- an inactive one, whose state is not the current one -- leaving the
-  // rest of that record as its last save wrote it. False when there is no such
-  // record to amend.
   bool SaveTerminalLayout(const std::filesystem::path& root, TerminalLayoutRecord layout);
   bool RestoreWorkspaceSession();
   void SaveWorkspaceSession() const;
 
-  // Test seam: override the dirty-buffer snapshot byte budget process-wide so a
-  // test can exercise the over-budget omission without a 64 MiB buffer. 0 restores
-  // the production budget. TD-2026-07-17A-083.
   static void SetMaxDirtySnapshotBytesForTesting(std::size_t bytes);
 
  private:
@@ -114,8 +86,6 @@ class PersistenceCoordinator {
   void SaveDebugState();
   void RestoreDebugState();
 
-  // RestoreSessionState's phases. The dirty views restored so far, by buffer: the
-  // tabs of one dirty buffer share one view (see RestoreDirtyView).
   using RestoredDirtyViews = std::unordered_map<std::string, editor::TextViewport>;
   void RestoreEditorGroups(const PersistedProjectSessionState& persisted_session);
   std::optional<TabEntry> RebuildTab(const PersistedEditorTabState& persisted_tab,
@@ -125,9 +95,6 @@ class PersistenceCoordinator {
                                         RestoredDirtyViews& dirty_views);
   void RestoreSessionLayout(PersistedProjectSessionState& persisted_session);
 
-  // Rebuild one persisted compare / merge tab; nullopt when its inputs are gone.
-  // `unsaved_right`: the restored unsaved buffer the compare's record carried for
-  // its editable side, which the tab then holds -- or nullopt when it cannot.
   std::optional<TabEntry> RestoreCompareTab(const PersistedEditorTabState& persisted_tab,
                                             const std::filesystem::path& root,
                                             const editor::TextViewport* unsaved_right);
@@ -146,9 +113,6 @@ class PersistenceCoordinator {
   ProjectWorkspaceState& CurrentProjectState();
   const ProjectWorkspaceState& CurrentProjectState() const;
 
-  // Drop session-only setting overrides (context_.transient_setting_keys) from a
-  // settings list before it is serialized, so `--set` / cold-start spec settings
-  // never persist to the user's saved config.
   void StripTransientSettings(
       std::vector<std::pair<std::string, std::string>>& settings) const;
 
@@ -161,4 +125,4 @@ class PersistenceCoordinator {
   Operations operations_;
 };
 
-}  // namespace microide::workspace
+}

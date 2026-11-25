@@ -1,10 +1,3 @@
-// The manifest row decoder (src/project/remote/RemoteManifest.h). Its bytes come
-// from the host, and every path it yields is about to name a file under the mirror,
-// so it is a hostile-input surface (dev-docs/design/remote-projects.md § 6.9).
-//
-// Invariants: a successful decode yields only safe relative paths, and re-encoding
-// the rows reproduces the input exactly (no row dropped, invented or altered); a
-// failed decode leaves the output vector as it was.
 #include "project/remote/RemoteManifest.h"
 
 #include <cstddef>
@@ -36,8 +29,6 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   }
   std::string reencoded;
   EncodeManifestRows(rows.data() + 1, rows.size() - 1, reencoded);
-  // Varints have one canonical spelling only when the encoder wrote them, so compare
-  // by decoding again rather than byte-for-byte.
   std::vector<ManifestRow> again;
   if (!DecodeManifestRows(reencoded, again) || again.size() != rows.size() - 1) {
     std::abort();

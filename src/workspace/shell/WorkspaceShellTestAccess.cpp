@@ -14,14 +14,14 @@ const std::string& DetectActiveLanguageId(const editor::TextViewport& viewport) 
   return viewport.language_id();
 }
 
-}  // namespace
+}
 
 bool WorkspaceShell::DiscoverTestsForActiveBuffer(std::string* error_message) {
   util::ClearError(error_message);
   editor::TextViewport* viewport = ActiveEditableViewport();
   if (viewport == nullptr || viewport->path().empty()) {
     if (error_message != nullptr) {
-      *error_message = "No active file";  // was the bare "Test discovery failed"
+      *error_message = "No active file";
     }
     return false;
   }
@@ -108,4 +108,4 @@ bool WorkspaceShell::RunAllDiscoveredTests(std::string* error_message) {
   return RunTests(test_ids, error_message);
 }
 
-}  // namespace microide::workspace
+}

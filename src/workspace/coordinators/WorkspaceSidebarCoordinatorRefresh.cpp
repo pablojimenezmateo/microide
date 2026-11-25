@@ -28,17 +28,10 @@ void ClampSelectionToItemCount(std::size_t item_count, std::size_t* selected_ind
   *selected_index = item_count == 0 ? 0 : std::min(*selected_index, item_count - 1);
 }
 
-// Depth-first flatten of the plugin document-symbol tree into the flat
-// SidebarItem row set the outline view renders. `depth` drives host-drawn
-// indentation; outline rows are not collapsible (fully expanded first pass).
 void FlattenDocumentSymbols(const std::vector<plugin::PluginHost::DocumentSymbolNode>& nodes,
                             const std::filesystem::path& path,
                             int depth,
                             std::vector<plugin::PluginHost::SidebarItem>* out) {
-  // The node tree originates from a language server (QueryDocumentSymbolsAsync) or a
-  // plugin (SnapshotSidebarAsync) — semi-trusted input. A pathologically deep
-  // documentSymbol response would overflow the native stack via this recursion; cap the
-  // depth well above any legitimate outline (real code nests a handful of levels).
   constexpr int kMaxDocumentSymbolDepth = 256;
   if (depth > kMaxDocumentSymbolDepth) {
     return;
@@ -64,15 +57,6 @@ void ApplyGitRefreshSnapshot(GitSidebarState& git_state,
                              const std::filesystem::path& project_root) {
   git_state.entries.clear();
   git_state.entries.reserve(snapshot.entries.size());
-  // Loop-invariant, and the only input that can be unnormalized in practice:
-  // every `relative_path` was normalized on ingress by
-  // MakeGitRepositoryPathIdentity, so joining it to a normalized root produces a
-  // normalized absolute path and the per-entry `lexically_normal()` this used to
-  // run was ~6 allocations spent to confirm that (TD-2026-08-06-159).
-  //
-  // The join is now string concatenation into one reserved buffer rather than
-  // `path / path`, which built a fresh pathname AND re-split the whole joined
-  // string into a component list for every changed file (TD-2026-08-11-183).
   const std::filesystem::path normalized_root =
       util::PathTextNeedsNormalizing(project_root.native()) ? project_root.lexically_normal()
                                                             : project_root;
@@ -120,7 +104,7 @@ void ApplyGitRefreshSnapshot(GitSidebarState& git_state,
   git_state.snapshot_generation = snapshot.generation;
 }
 
-}  // namespace
+}
 
 void SidebarCoordinator::ApplyTreeGitStatuses(project::SharedGitTreeStatusMap statuses) {
   if (state_.directory_tree.ApplyGitStatuses(std::move(statuses)) && state_.sidebar.visible &&
@@ -146,8 +130,6 @@ void SidebarCoordinator::ApplyGitSnapshotKeepingSelection(
   GitSidebarState& git = state_.sidebar.git;
   git.selected_index = 0;
   ApplyGitRefreshSnapshot(git, std::move(snapshot), project_root_);
-  // Preserve refresh-in-flight state when data was rendered from a synchronous
-  // fallback while an async refresh request is still pending.
   git.refreshing = false;
 
   const bool git_view_shown = state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git;
@@ -189,18 +171,12 @@ void SidebarCoordinator::RefreshGit() {
     state_.sidebar.git.entries.clear();
     return;
   }
-  // A wake with no snapshot (a paced refresh's timer, a compare picker's answer)
-  // leaves the selection alone: it used to reset it to the first row.
 
   GitSidebarState::RefreshSnapshot snapshot;
   const bool has_snapshot =
       operations_.consume_git_refresh_snapshot != nullptr &&
       operations_.consume_git_refresh_snapshot(&snapshot);
   if (!has_snapshot) {
-    // Nothing landed: only the git view, which may have just started a refresh,
-    // has anything to show for it. With another view in front this repainted
-    // that view for nothing (QaFlowRegression/
-    // AGitWakeWithProblemsInFrontRepaintsNothingInTheSidebar).
     if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git) {
       if (!state_.sidebar.git.refreshing && operations_.request_git_refresh != nullptr) {
         operations_.request_git_refresh();
@@ -275,13 +251,9 @@ bool SidebarCoordinator::RefreshTests() {
 }
 
 bool SidebarCoordinator::RefreshPlugin() {
-  // The outline view is a builtin that shares this item-tree storage but is
-  // populated from the host's document-symbol query rather than a plugin snapshot.
   if (state_.sidebar.view_id == "outline") {
     return RefreshOutline();
   }
-  // R in Changed on Host cleared its rows here, as if it were a plugin view with
-  // no provider, until the next host change refilled them.
   if (IsHostOwnedItemView(ActiveSidebarMode())) {
     RefreshHostView();
     return true;
@@ -302,18 +274,12 @@ bool SidebarCoordinator::RefreshPlugin() {
     return false;
   }
 
-  // Show the (empty) loading state immediately; the snapshot runs on the plugin
-  // worker and fills items in on the drain without blocking the UI.
   const std::string request_view_id = state_.sidebar.view_id;
   RecomputePluginSidebarPlaceholder();
   if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Plugin) {
     operations_.request_sidebar_redraw();
   }
 
-  // The snapshot completes on a later main-thread drain, by which time this
-  // coordinator (a stack temporary) is destroyed. So the callback must NOT capture
-  // `this`: it routes the result back through the shell, which re-creates a fresh
-  // coordinator to apply it. `apply` holds the shell, not the coordinator.
   auto apply = operations_.apply_plugin_sidebar_result;
   plugin_runtime_.Host().SnapshotSidebarAsync(
       request_view_id,
@@ -331,7 +297,7 @@ void SidebarCoordinator::ApplyPluginSidebarResult(
     const std::string& request_view_id, bool ok,
     std::vector<plugin::PluginHost::SidebarItem> items, std::string error_message) {
   if (state_.sidebar.view_id != request_view_id) {
-    return;  // superseded: the active sidebar view changed
+    return;
   }
   state_.sidebar.plugin.items.clear();
   state_.sidebar.plugin.error.clear();
@@ -368,8 +334,6 @@ bool SidebarCoordinator::RefreshOutline() {
     return false;
   }
 
-  // Show the loading state immediately; the symbols are queried off the shell
-  // thread and applied by a fresh coordinator when they land.
   RecomputePluginSidebarPlaceholder();
   if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Outline) {
     operations_.request_sidebar_redraw();
@@ -391,8 +355,6 @@ void SidebarCoordinator::RefreshHostView() {
   plugin.items = operations_.host_view_rows ? operations_.host_view_rows(mode)
                                             : std::vector<plugin::PluginHost::SidebarItem>{};
   plugin.error.clear();
-  // Rows arrive above the selection (Changed on Host is newest first; a Host
-  // push adds a terminal): it must not move to a different row under the keyboard.
   plugin.selected_index = 0;
   for (std::size_t i = 0; i < plugin.items.size() && !selected_path.empty(); ++i) {
     if (plugin.items[i].id == selected_path) {
@@ -409,8 +371,6 @@ void SidebarCoordinator::RefreshHostView() {
 void SidebarCoordinator::ApplyOutlineResult(
     const std::filesystem::path& request_path, const std::string& error,
     const std::vector<plugin::PluginHost::DocumentSymbolNode>& symbols) {
-  // Superseded if the user switched away from the outline or changed buffer while the
-  // request was in flight.
   if (state_.sidebar.view_id != "outline") {
     return;
   }
@@ -421,8 +381,6 @@ void SidebarCoordinator::ApplyOutlineResult(
   }
   state_.sidebar.plugin.items.clear();
   state_.sidebar.plugin.error.clear();
-  // The plugin provider's "no provider" message shows only when the language
-  // server came back empty too, so a working fallback never shows a stale error.
   if (symbols.empty() && !error.empty()) {
     state_.sidebar.plugin.error = error;
   }
@@ -445,7 +403,6 @@ void SidebarCoordinator::RecomputePluginSidebarPlaceholder() {
   }
   plugin.placeholder_is_error = false;
   if (plugin.items.empty()) {
-    // Outline shares this storage but reports symbols, not generic items.
     const SidebarMode mode = ActiveSidebarMode();
     plugin.placeholder = mode == SidebarMode::HostChanges ? std::string("Nothing changed on the host since you connected")
                          : mode == SidebarMode::Host  ? std::string("Not connected to a host")
@@ -482,7 +439,6 @@ void SidebarCoordinator::RevealSelectedGitLine() {
   if (!selected_line.has_value()) {
     return;
   }
-  // Git rows are derived from a built line model, not a flat entries vector.
   RevealListSelection(operations_.build_git_sidebar_lines().size(), *selected_line,
                       operations_.compute_git_sidebar_list_layout);
 }
@@ -503,4 +459,4 @@ void SidebarCoordinator::RevealSelectedPluginLine() {
                       operations_.compute_plugin_sidebar_list_layout);
 }
 
-}  // namespace microide::workspace
+}

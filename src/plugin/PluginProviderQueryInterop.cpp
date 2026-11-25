@@ -12,11 +12,6 @@
 namespace microide::plugin::provider_query_interop {
 namespace {
 
-// Cap host-side harvests from plugin result tables. lua_rawlen already bounds the
-// loop against a metamethod-driven __len, but a provider can still return a
-// genuinely huge (or sparse-border-overstated) array within the 256 MB Lua budget;
-// without a cap that stalls the worker thread and grows an unbounded host vector.
-// Mirrors the clamps in the sidebar/diagnostics/language-provider harvesters.
 constexpr lua_Integer kMaxCompletionCandidates = 20000;
 constexpr lua_Integer kMaxCodeActions = 4096;
 constexpr lua_Integer kMaxCodeActionArguments = 256;
@@ -26,19 +21,10 @@ constexpr lua_Integer kMaxScmEntries = 200000;
 constexpr lua_Integer kMaxAnnotationLines = 200000;
 constexpr lua_Integer kMaxAuthScopes = 4096;
 
-// Per-QUERY aggregate ceilings across ALL matching providers. The per-provider
-// caps above are an INPUT guard, not the final product size: a language can
-// register many providers of a kind, each staying under its own table cap yet
-// summing to millions of rows fed to the assist/annotation UI. Bound the harvested
-// total per query so provider count does not multiply into unbounded host memory
-// (TD-2026-07-17A-046).
 constexpr lua_Integer kMaxAggregateCompletionCandidates = 20000;
 constexpr lua_Integer kMaxAggregateCodeActions = 4096;
 constexpr lua_Integer kMaxAggregateAnnotationLines = 200000;
 
-// A discovered test's 1-based `line`, validated: a non-positive or out-of-int value is
-// treated as ABSENT (0), never a wrapped positive that would navigate the Tests sidebar
-// row to a wrong/huge line. (TD-2026-07-16-67.)
 constexpr int ReadTestLineOrAbsent(lua_Integer raw) {
   if (raw <= 0 || raw > static_cast<lua_Integer>(std::numeric_limits<int>::max())) {
     return 0;
@@ -46,8 +32,6 @@ constexpr int ReadTestLineOrAbsent(lua_Integer raw) {
   return static_cast<int>(raw);
 }
 
-// A test-run `duration_ms`, clamped to [0, INT_MAX] so a huge/negative Lua integer can
-// never wrap into a misleading small/negative duration. (TD-2026-07-16-67.)
 constexpr int ClampDurationMs(lua_Integer raw) {
   if (raw < 0) {
     return 0;
@@ -58,7 +42,7 @@ constexpr int ClampDurationMs(lua_Integer raw) {
   return static_cast<int>(raw);
 }
 
-}  // namespace
+}
 
 std::vector<PluginHost::CompletionCandidate> QueryCompletions(
     std::string_view language_id,
@@ -76,7 +60,7 @@ std::vector<PluginHost::CompletionCandidate> QueryCompletions(
       continue;
     }
     if (static_cast<lua_Integer>(results.size()) >= kMaxAggregateCompletionCandidates) {
-      break;  // aggregate budget reached across providers
+      break;
     }
     lua_State* state = provider.state;
     const lua_interop::StackResetGuard stack_guard(state);
@@ -87,18 +71,10 @@ std::vector<PluginHost::CompletionCandidate> QueryCompletions(
     const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
     std::string call_error;
     if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(3, 1, &call_error)) {
-      // Continue to later providers instead of discarding every earlier provider's
-      // healthy candidates (TD-2026-07-17A-047). Queries run with
-      // allow_registration=false, so `completion_runtimes` cannot reallocate across the
-      // PCall and `provider` stays valid for the error record.
       lua_interop::AppendProviderFailure(error_message, "completion", provider.id, call_error);
       continue;
     }
     if (lua_istable(state, -1)) {
-      // Bound the harvest by lua_rawlen and read entries with lua_rawgeti: the
-      // result table arrives after PCall has disarmed the count-hook watchdog, so
-      // an unbounded for(;;) + metamethod-invoking lua_geti over an adversarial
-      // __index/__len would hang the worker thread or longjmp past native frames.
       const int array_index = lua_absindex(state, -1);
       const lua_Integer remaining =
           kMaxAggregateCompletionCandidates - static_cast<lua_Integer>(results.size());
@@ -161,7 +137,7 @@ std::vector<PluginHost::CodeActionCandidate> QueryCodeActions(
       continue;
     }
     if (static_cast<lua_Integer>(results.size()) >= kMaxAggregateCodeActions) {
-      break;  // aggregate budget reached across providers
+      break;
     }
     lua_State* state = provider.state;
     const lua_interop::StackResetGuard stack_guard(state);
@@ -171,8 +147,6 @@ std::vector<PluginHost::CodeActionCandidate> QueryCodeActions(
     const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
     std::string call_error;
     if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(2, 1, &call_error)) {
-      // Keep earlier providers' actions and keep scanning later providers
-      // (TD-2026-07-17A-047).
       lua_interop::AppendProviderFailure(error_message, "code action", provider.id, call_error);
       continue;
     }
@@ -200,8 +174,6 @@ std::vector<PluginHost::CodeActionCandidate> QueryCodeActions(
               static_cast<lua_Integer>(lua_rawlen(state, args_index)), kMaxCodeActionArguments);
           for (lua_Integer arg_index = 1; arg_index <= args_count; ++arg_index) {
             lua_rawgeti(state, args_index, arg_index);
-            // These arguments feed command execution; NUL-reject rather than truncate
-            // (TD-2026-07-17A-080).
             if (auto arg = lua_interop::ToHostString(state, -1)) {
               action.arguments.push_back(std::move(*arg));
             }
@@ -250,10 +222,6 @@ bool DiscoverTests(
   std::string call_error;
   if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 1, &call_error)) {
     if (error_message != nullptr) {
-      // NB: use the caller-owned `provider_id` (== it->id for the matched item), not
-      // `it->id`: the PCall above runs with allow_registration=true, so a provider
-      // callback that registers another provider can reallocate the runtimes vector and
-      // dangle `it` before this error path reads it (use-after-free).
       *error_message =
           "test discovery provider '" + std::string(provider_id) + "' failed: " + call_error;
     }
@@ -323,7 +291,6 @@ bool RunTests(
   std::string call_error;
   if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 1, &call_error)) {
     if (error_message != nullptr) {
-      // provider_id (== it->id) is caller-owned; `it` may dangle after PCall (see above).
       *error_message = "test provider '" + std::string(provider_id) + "' run failed: " + call_error;
     }
     return false;
@@ -381,7 +348,6 @@ bool SnapshotScm(
   std::string call_error;
   if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(0, 1, &call_error)) {
     if (error_message != nullptr) {
-      // provider_id (== it->id) is caller-owned; `it` may dangle after PCall (see above).
       *error_message = "scm provider '" + std::string(provider_id) + "' failed: " + call_error;
     }
     return false;
@@ -453,7 +419,7 @@ std::vector<PluginHost::AnnotationLine> QueryAnnotations(
       continue;
     }
     if (static_cast<lua_Integer>(lines.size()) >= kMaxAggregateAnnotationLines) {
-      break;  // aggregate budget reached across providers (provider_id-empty fan-out)
+      break;
     }
 
     lua_State* state = provider.state;
@@ -506,11 +472,6 @@ std::vector<PluginHost::AnnotationLine> QueryAnnotations(
   return lines;
 }
 
-// Decodes the session table a `login`/`refresh` auth-provider callback left on
-// the Lua stack top. Both call sites carried a byte-identical copy of this
-// (including the scope-count cap), differing only in whether an absent `id`
-// falls back to the session id being refreshed — a divergence risk on a
-// security-relevant path. Leaves the stack depth unchanged.
 static void ReadAuthSessionTable(lua_State* state, std::string_view fallback_id,
                           PluginHost::AuthSessionData* session) {
   if (!lua_istable(state, -1)) {
@@ -540,8 +501,6 @@ static void ReadAuthSessionTable(lua_State* state, std::string_view fallback_id,
 
 namespace {
 
-// The auth provider `provider_id` when it registered `hook` (login / refresh /
-// logout); otherwise null, with `error_message` saying which of the two is missing.
 const runtime_types::AuthProviderRuntime* FindAuthHook(
     std::string_view provider_id,
     const std::vector<runtime_types::AuthProviderRuntime>& auth_provider_runtimes,
@@ -562,10 +521,6 @@ const runtime_types::AuthProviderRuntime* FindAuthHook(
   return &*it;
 }
 
-// Calls the hook (with its one argument) already pushed on `plugin`'s stack. The
-// message names `provider_id`, which is caller-owned: the provider entry may
-// dangle after PCall: the hook runs with registration allowed, and registering a
-// provider can reallocate the runtimes vector.
 bool PCallAuthHook(std::string_view provider_id, const runtime_types::PluginInstance* plugin,
                    int nresults, std::string_view verb, std::string* error_message) {
   std::string call_error;
@@ -576,7 +531,7 @@ bool PCallAuthHook(std::string_view provider_id, const runtime_types::PluginInst
   return true;
 }
 
-}  // namespace
+}
 
 bool LoginAuthProvider(
     std::string_view provider_id,
@@ -600,7 +555,7 @@ bool LoginAuthProvider(
     lua_pushlstring(state, scopes[i].c_str(), scopes[i].size());
     lua_rawseti(state, -2, static_cast<lua_Integer>(i + 1));
   }
-  if (!PCallAuthHook(provider_id, plugin, /*nresults=*/1, "login", error_message)) {
+  if (!PCallAuthHook(provider_id, plugin, 1, "login", error_message)) {
     return false;
   }
   ReadAuthSessionTable(state, std::string_view{}, session);
@@ -627,7 +582,7 @@ bool RefreshAuthSession(
   const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
   lua_rawgeti(state, LUA_REGISTRYINDEX, provider->refresh_ref);
   lua_pushlstring(state, session_id.data(), session_id.size());
-  if (!PCallAuthHook(provider_id, plugin, /*nresults=*/1, "refresh", error_message)) {
+  if (!PCallAuthHook(provider_id, plugin, 1, "refresh", error_message)) {
     return false;
   }
   ReadAuthSessionTable(state, session_id, session);
@@ -652,7 +607,7 @@ bool LogoutAuthSession(
   const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
   lua_rawgeti(state, LUA_REGISTRYINDEX, provider->logout_ref);
   lua_pushlstring(state, session_id.data(), session_id.size());
-  if (!PCallAuthHook(provider_id, plugin, /*nresults=*/0, "logout", error_message)) {
+  if (!PCallAuthHook(provider_id, plugin, 0, "logout", error_message)) {
     return false;
   }
   return true;
@@ -690,7 +645,6 @@ bool ExecuteCommand(
   if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(2, 1, &call_error)) {
     return util::Fail(error_message, "plugin command '" + std::string(name) + "' failed: " + call_error);
   }
-  // A command may return a string (or {message = "..."}) to surface as host feedback.
   if (feedback != nullptr) {
     if (lua_isstring(state, -1)) {
       *feedback = lua_tostring(state, -1);
@@ -720,13 +674,6 @@ bool RunSaveParticipants(
     if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 1, &call_error)) {
       return util::Fail(error_message, "save participant '" + participant.id + "' failed: " + call_error);
     }
-    // Cap the participant's replacement text at the same ceiling the editor uses to
-    // read/write files (kMaxTextFileBytes). Without it, a participant could hand back
-    // an arbitrarily large string that the host would assign straight into the
-    // document, blowing past the size the buffer could ever have been loaded from and
-    // ballooning host memory. An over-limit result rejects that participant's
-    // transform (the text is left unchanged) and is surfaced through Lua's warning
-    // channel rather than failing the whole save.
     const auto assign_if_within_limit = [&](const char* updated, std::size_t size) {
       if (updated == nullptr) {
         return;
@@ -758,6 +705,6 @@ bool RunSaveParticipants(
   return true;
 }
 
-}  // namespace microide::plugin::provider_query_interop
+}
 
 #endif

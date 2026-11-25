@@ -526,7 +526,7 @@ RunMetrics RunBenchmark(const std::filesystem::path& repo_root,
   return metrics;
 }
 
-}  // namespace
+}
 
 int main(int argc, char** argv) {
   if (argc < 3) {

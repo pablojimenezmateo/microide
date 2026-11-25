@@ -26,13 +26,8 @@
 namespace microide::project::remote {
 namespace {
 
-// 2: the tree-operation journal follows the entries. 3: entries record ctime.
-// 4: a parked rename records its original path (kRenamedFrom). Bumped although the
-// field is flagged, so an older binary refuses the file instead of misreading it.
 constexpr std::uint64_t kStateVersion = 4;
 constexpr std::uint64_t kJournalVersion = 1;
-// 1: a count, then that many records, rewritten whole. 2: records until the end,
-// appended (MirrorStore::WritePulledHint).
 constexpr std::uint64_t kPulledHintVersionRewritten = 1;
 constexpr std::uint64_t kPulledHintVersion = 2;
 
@@ -53,7 +48,6 @@ std::int64_t UnZigZag(std::uint64_t value) {
   return static_cast<std::int64_t>(value >> 1) ^ -static_cast<std::int64_t>(value & 1);
 }
 
-// A host string as a single safe path component.
 std::string Component(std::string_view text) {
   std::string out;
   for (const char c : text) {
@@ -74,11 +68,6 @@ struct LocalStat {
   std::int64_t mtime_ns = 0;
   std::int64_t ctime_ns = 0;
 
-  // Whether this stat may stand for the content from now on. A rewrite moves the
-  // mtime (or, when a tool puts the mtime back, the ctime, which is also compared),
-  // so the only stat that cannot vouch is one whose MTIME is so recent that a
-  // same-size rewrite in the same timestamp tick would leave it as it is. A pull
-  // writes the host's (past) mtime, so the files it writes are trusted at once.
   bool Trustworthy() const {
     return exists && regular && WallClockNowNs() - mtime_ns >= kRacySignatureWindowNs;
   }
@@ -134,7 +123,7 @@ bool WriteRecord(const std::filesystem::path& path, const std::string& body) {
       0);
 }
 
-}  // namespace
+}
 
 MirrorStore::MirrorStore(std::filesystem::path directory, std::string_view tree_name)
     : directory_(std::move(directory)),
@@ -176,8 +165,6 @@ bool MirrorStore::Open(std::string* error) {
     }
   }
   {
-    // A write a crash interrupted left its temporary here -- a pull's or a save's;
-    // a live writer's (another instance on this mirror) stays.
     std::error_code ec;
     for (std::filesystem::directory_iterator it(staging(), ec), end; !ec && it != end; it.increment(ec)) {
       const std::string name = it->path().filename().string();
@@ -196,7 +183,7 @@ bool MirrorStore::Open(std::string* error) {
   const auto record = persistence::PersistedRecordReader::ReadFile(state_path(), &read_error);
   if (!record.has_value()) {
     if (read_error == persistence::PersistedRecordReaderError::NotFound) {
-      return true;  // a new mirror
+      return true;
     }
     *error = "the mirror's state file " + state_path().string() +
              " is unreadable; move it aside to start this mirror over";
@@ -242,7 +229,7 @@ bool MirrorStore::Open(std::string* error) {
       if (version >= 3) {
         entry.local_ctime_ns = UnZigZag(in.Varint());
       } else {
-        entry.local_known = false;  // no ctime recorded: confirm once by hash
+        entry.local_known = false;
       }
     }
     entry.push_pending = (flags & kPushPending) != 0;
@@ -271,8 +258,6 @@ bool MirrorStore::Open(std::string* error) {
     *error = "the mirror's state file " + state_path().string() + " is truncated or corrupt";
     return false;
   }
-  // The journal is written before every push and tree operation, the state only
-  // lazily: where both exist, the journal's pending set is the newer truth.
   const auto journal = persistence::PersistedRecordReader::ReadFile(journal_path());
   if (journal.has_value()) {
     const std::string_view jbody(reinterpret_cast<const char*>(journal->body.data()),
@@ -304,20 +289,13 @@ bool MirrorStore::Open(std::string* error) {
       return false;
     }
   }
-  // Pulls the state missed (NotePulled, meta/pulled): the base moves to the pulled
-  // bytes where the file still holds them, or where a save journaled after the
-  // pull was made on top of them. Anything else (a file written since, outside the
-  // gate) is left for the reconcile to judge as before. Kept until a Save records
-  // them. A hint that does not decode is no hint: it is checked, never trusted.
   if (const std::optional<std::string> hint = util::ReadTextFile(pulled_hint_path()); hint.has_value()) {
     util::ByteReader hin(*hint);
     std::vector<std::pair<std::string, util::ContentHash>> pulled;
     const std::uint64_t version = hin.Varint();
-    // Version 1 says how many records follow; version 2 runs to the end, and an
-    // append a crash cut short leaves a torn last record, which is dropped.
     const bool counted = version == kPulledHintVersionRewritten;
     const std::uint64_t count = counted ? hin.Varint() : std::numeric_limits<std::uint64_t>::max();
-    bool whole = false;  // read to its end with no torn or foreign bytes
+    bool whole = false;
     if (!hin.failed() && (counted || version == kPulledHintVersion)) {
       for (std::uint64_t i = 0; i < count && !hin.at_end() && i <= hint->size(); ++i) {
         std::string path(hin.Bytes(kMaxManifestPathBytes));
@@ -339,9 +317,6 @@ bool MirrorStore::Open(std::string* error) {
       pulled_unsaved_.insert_or_assign(path, hash);
     }
     if (counted || !whole) {
-      // A version-1 hint, or one with a torn or foreign tail, cannot be appended
-      // to (what followed would not be read): start a version-2 one holding what it
-      // said, on the next write.
       std::error_code ignored;
       std::filesystem::remove(pulled_hint_path(), ignored);
       for (const auto& [path, hash] : pulled_unsaved_) {
@@ -370,7 +345,6 @@ bool MirrorStore::WritePulledHint() const {
   if (::fstat(fd.Get(), &info) == 0 && info.st_size == 0) {
     util::PutVarint(body, kPulledHintVersion);
   }
-  // A later record for the same path wins on read, as the map does here.
   for (const auto& [path, hash] : pulled_unwritten_) {
     util::PutBytes(body, path);
     body.append(hash.raw());
@@ -410,15 +384,13 @@ bool MirrorStore::SaveJournal(std::string* error) const {
     return false;
   }
   if (!pulled_unsaved_.empty()) {
-    (void)WritePulledHint();  // a hint: its loss costs nothing the journal must not lose
+    (void)WritePulledHint();
   }
   return true;
 }
 
 bool MirrorStore::Save(std::string* error) const {
   std::string body;
-  // Sized once: grown by doubling, a 5,000-file state reallocated through a dozen
-  // buffers past the allocator's mmap threshold per save (TD-2026-10-28-418).
   body.reserve(64 + entries_.size() * 96);
   util::PutVarint(body, kStateVersion);
   util::PutVarint(body, manifest_id_);
@@ -462,7 +434,7 @@ bool MirrorStore::Save(std::string* error) const {
     *error = "cannot write the mirror's state file " + state_path().string();
     return false;
   }
-  pulled_unsaved_.clear();  // the state just written records them
+  pulled_unsaved_.clear();
   pulled_unwritten_.clear();
   std::error_code ignored;
   std::filesystem::remove(pulled_hint_path(), ignored);
@@ -490,8 +462,6 @@ MirrorStore::LocalState MirrorStore::CheckLocal(std::string_view path, Entry& en
   std::uint64_t size = 0;
   const auto hash = util::HashFileContent(local, &size);
   if (hash.has_value() && *hash == *entry.base) {
-    // Touched, or rewritten with the same bytes: re-record so the next check is a
-    // stat — unless the stat is too recent to vouch for the bytes.
     entry.local_known = now.Trustworthy();
     entry.local_size = now.size;
     entry.local_mtime_ns = now.mtime_ns;
@@ -534,7 +504,7 @@ MirrorStore::LocalWork MirrorStore::LocalWorkNotOnHost() {
     }
     const std::string relative = it->path().lexically_relative(tree_).generic_string();
     if (!entries_.contains(relative)) {
-      note(work.unsent, relative);  // made here, recorded nowhere
+      note(work.unsent, relative);
     }
   }
   return work;
@@ -552,4 +522,4 @@ std::mutex& MirrorStore::PathLock(std::string_view path) {
   return path_locks_[std::hash<std::string_view>{}(path) % path_locks_.size()];
 }
 
-}  // namespace microide::project::remote
+}

@@ -38,7 +38,7 @@ void SetCause(std::error_code* cause, const std::error_code& value) {
 
 thread_local std::uint64_t t_writes_on_this_thread = 0;
 
-}  // namespace
+}
 
 const char* PersistedRecordWriterErrorName(PersistedRecordWriterError error) {
   switch (error) {
@@ -66,13 +66,6 @@ bool PersistedRecordWriter::WriteFile(const std::filesystem::path& path,
                                       std::uint32_t capability_flags,
                                       PersistedRecordWriterError* error,
                                       std::error_code* cause) {
-  // Session/config saves run on the shell thread at project switch and shutdown,
-  // where a slow durable write shows up to the user as a stall on close. Nothing
-  // measured them before.
-  // Labelled by file stem: the store holds a handful of well-known files (project
-  // state, user config, session), so this ranks "which state file is being
-  // rewritten, how often" instead of collapsing every save into one row. Without
-  // it a hot row here says only that something is writing.
   util::PerformanceTrace::ScopeLabel perf_label("persistence::WriteFile");
   perf_label.Field("file", path.stem().native());
   util::PerformanceTrace::Scope perf_scope(perf_label.View());
@@ -87,11 +80,6 @@ bool PersistedRecordWriter::WriteFile(const std::filesystem::path& path,
     return false;
   }
 
-  // Rotate through the symlink's target, not the link node. POSIX rename moves the
-  // link node itself, so backing up + replacing `path` when it is a symlink would move
-  // the user's config/session symlink to `.bak` and publish a fresh regular file at the
-  // link path. Resolving here lands every temp/backup/rename on the real target and
-  // preserves the link (same fix already applied to editor text saves, TD-2026-07-17A-127).
   std::filesystem::path target;
   {
     util::PerformanceTrace::Scope scope("persistence::WriteFile::ResolveAndMakeDirs");
@@ -155,12 +143,9 @@ bool PersistedRecordWriter::WriteFile(const std::filesystem::path& path,
     SetError(error, PersistedRecordWriterError::RenameFailed);
     return false;
   }
-  // The renames durable too: a session or a hot-exit backup that reverts to its
-  // previous version after a power cut loses exactly the unsaved text it exists
-  // to keep. Off the shell thread (the write queue), so it costs no frame.
   (void)util::FsyncDirectory(target.parent_path());
 
   return true;
 }
 
-}  // namespace microide::persistence
+}

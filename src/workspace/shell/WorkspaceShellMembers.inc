@@ -52,7 +52,7 @@
     int logical_height = 0;
     float scale_x = 1.0f;
     float scale_y = 1.0f;
-    SDL_FPoint window_per_unit{1.0f, 1.0f};  // window coordinates per layout unit (ui.scale, HiDPI)
+    SDL_FPoint window_per_unit{1.0f, 1.0f};
     WindowChromeState chrome{};
   };
   using RenderInvalidation = workspace::RenderInvalidation;
@@ -95,33 +95,19 @@
   void SetStartupOptions(WorkspaceStartupOptions options);
   const WorkspaceStartupOptions& StartupOptions() const { return startup_options_; }
   bool Initialize(const std::filesystem::path& project_root);
-  // Apply a cold-start control spec (set breakpoints, reveal files, optionally
-  // start debugging). Public: invoked by Application right after Initialize.
   void ApplyControlSpec(const ControlSpec& spec);
-  // Force-start the control channel + stdout JSONL mirror when `--control` was
-  // passed (startup_options_.control_stdout). No-op otherwise. Invoked by
-  // Application right after Initialize, before the cold-start spec.
   void ForceStartControlChannel();
-  // Apply the `--set <id> <value>` startup overrides transiently (persist=false).
-  // Invoked by Application after Initialize.
   void ApplyStartupSettingOverrides();
   void Shutdown();
-  // Record the SDL renderer driver Application created (name + GPU/software).
-  // Set once after SDL_CreateRenderer; backs the control `status` query and the
-  // GPU-gated batched-text path. Cheap value setter; no rendering side effects.
   void SetRenderBackendInfo(std::string driver_name, bool is_gpu) {
     context_.render_driver_name = std::move(driver_name);
     context_.render_is_gpu = is_gpu;
   }
-  // Record the parent-side kernel-confinement probe Application ran at startup. Cheap value setter;
-  // backs the control `status` query (`sandbox` object). No side effects.
   void SetSandboxSupport(const platform::SandboxSupport& support) {
     context_.sandbox_support = support;
   }
   EventResult HandleEvent(const SDL_Event& event);
   EventResult HandleScheduledWake();
-  // The wake sources themselves; HandleScheduledWake wraps this to merge in any
-  // redraw the render path asked for (see its comment).
   EventResult HandleScheduledWakeSources();
   FrameToken PrepareFrameOnce(SDL_Renderer* renderer, int width, int height);
   void RenderClip(const FrameToken& frame_token, SDL_Renderer* renderer, int width, int height,
@@ -132,52 +118,26 @@
   void RenderPrepared(SDL_Renderer* renderer, int width, int height);
   IdleWaitState CurrentIdleWaitState();
   std::optional<Uint32> NextAnimationDelayMs() const;
-  // The repaint owed after a frame that reflowed the terminal, or nullopt when
-  // none is owed. Scoped to the bottom panel rather than the whole window --
-  // see the definition.
   std::optional<RenderInvalidation> ConsumePostRenderRedrawRequest();
-  // Background highlight prefetch around the active viewport; no-ops when cached.
   void RequestActiveHighlightPrefetch();
   void OnFramePresented();
   std::optional<SDL_FRect> CurrentCaretDirtyRect() const;
   RenderInvalidation ConsumePendingRenderInvalidation();
-  void RequestQuit(bool forced = false);  // forced: past any open prompt (a signal)
+  void RequestQuit(bool forced = false);
   bool ConsumeQuitRequested();
   float UiScale() const { return ui_scale_; }
   render::TextClipPadding PartialRedrawClipPadding() const;
   void SetWindowPresentationState(WindowPresentationState state);
-  // Returns the last value pushed via SetWindowPresentationState. Used by the
-  // outer app loop so it can skip re-querying SDL window/render dimensions on
-  // every frame when nothing has invalidated the cached state.
   std::optional<WindowPresentationState> CurrentWindowPresentationState() const;
   void SetDialogWindow(SDL_Window* window) { dialog_window_ = window; }
   SDL_HitTestResult WindowHitTest(float x, float y) const;
   bool WindowDragRegionContains(float x, float y) const;
   bool MenuSurfaceCapturingMouse() const;
   WindowAction ConsumeWindowAction();
-  // Force the next UpdateMouseCursor to re-apply our cursor to the platform even
-  // if the cursor kind is unchanged. SDL's Wayland backend sets resize/draggable
-  // cursors from our hit test (and re-asserts a stale one on pointer-enter)
-  // without updating SDL's current-cursor bookkeeping, so the displayed cursor
-  // can drift out of sync with what we intend. Call this on the events where SDL
-  // may have changed the cursor behind our back: pointer-enter, focus-gain, and
-  // after a window resize.
   void ForceCursorReassert();
 
-  // Seed the cached pointer position from an event-time live query (window
-  // resize/move/restore/maximize, where the window manager can suppress the motion
-  // events that normally keep last_mouse_* fresh). Coordinates are render-space, so
-  // the caller (which owns the renderer) converts before calling. This keeps the
-  // render path free of any live SDL_GetMouseState poll — the source of
-  // nondeterministic hover highlights in retained-vs-full redraw comparisons.
   void SeedPointerPosition(float render_x, float render_y);
 
-  // Bump the cursor hit-generation so the next UpdateMouseCursor re-runs the
-  // hit-test instead of taking the stationary-pointer fast path. Call this whenever
-  // a cursor surface may have moved without a Request* redraw helper running — most
-  // notably the Application apply seam for full-redraw EventResult literals (async
-  // file/plugin reloads, window show/expose) that repaint the scene under a still
-  // pointer. Every Request* redraw already calls this internally.
   void InvalidateCursorKindFingerprint();
 
   struct VisiblePopupMenuItem {
@@ -189,19 +149,10 @@
     bool separator = false;
   };
 
-  // The shell's one action context, built on first use and reused. Its three data
-  // members are references to shell state (project catalog, current project state,
-  // UI scale) whose addresses never move, and every operation lambda captures only
-  // `this`, so the whole struct is invariant for the shell's lifetime — while
-  // rebuilding it cost ~180 std::function constructions per dispatched action.
   WorkspaceActionContext& MakeActionContext();
-  // Its two largest operations, members of their own.
   bool ActionContextRunCompareCommand(ActionId id, std::string* error);
   SaveAllOutcome ActionContextSaveAllDirtyTabs();
 
-  // Test seam: the full TestAccess definition lives in the test-only header
-  // WorkspaceShellTestAccess.h. Forward-declared + friended unconditionally so
-  // core compiles identically for the production and test binaries.
   struct TestAccess;
   friend struct TestAccess;
 
@@ -243,7 +194,7 @@
   using TextCompositionState = workspace::TextCompositionState;
   using TextInputState = workspace::TextInputState;
 
-  using CursorKind = workspace::CursorKind;  // workspace/WorkspaceCursorKind.h
+  using CursorKind = workspace::CursorKind;
 
  public:
   struct TextInputVisual {
@@ -259,14 +210,9 @@
     std::optional<std::pair<std::size_t, std::size_t>> selection_bytes;
   };
 
-  // Shared with RenderViewModelBuilder (workspace/render/SingleLineViewMetrics.h).
   using SingleLineViewMetrics = workspace::SingleLineViewMetrics;
 
  public:
-  // Geometry of a scrollable text/list surface (content rect + text origin +
-  // scroll surface). Shared by the bottom panel (terminal/output) and the
-  // right-side debug pane; computed by ComputeBottomPanelLogLayout /
-  // ComputeDebugPaneListLayout respectively.
   struct LogSurfaceLayout {
     SDL_FRect content_rect{};
     float text_x = 0.0f;
@@ -276,11 +222,6 @@
     ScrollSurfaceLayout scroll;
   };
 
-  // The terminal caret's rect inside a bottom-panel log layout, or nullopt when it
-  // is scrolled out of view or would sit past the right edge. The paint path and
-  // the blink-invalidation path both resolve through it — computing a caret's rect
-  // twice is how a caret ends up leaving a ghost, or blinking a region that does
-  // not quite cover it.
   std::optional<SDL_FRect> TerminalCaretRectIn(
       const LogSurfaceLayout& panel_layout,
       const terminal::TerminalCursorSnapshot& cursor) const;
@@ -296,9 +237,6 @@
     bool hovered = false;
   };
 
-  // Heap-free: the menu bar's length is a property of the static spec table, and
-  // a pointer motion over it used to rebuild these ~10 times per event through
-  // three independent call chains (TD-2026-08-06-149).
   using VisibleMenuBarItems = workspace::VisibleMenuBarItems;
   using MenuBarOverflowIds = workspace::MenuBarOverflowIds;
   using VisibleWindowControlButtons =
@@ -316,9 +254,6 @@
     bool active = false;
   };
 
-  // One pane per editor group. Heap-free for the same reason
-  // `EditorGroupRectsLayout::groups` is: every hit-test and redraw-rect query
-  // rebuilds them. Dividers come straight off `EditorGroupRectsLayout::dividers`.
   using EditorPaneLayouts = util::InlineVector<EditorPaneLayout, kMaxEditorGroups>;
 
   using BottomPanelTabKind = workspace::BottomPanelTabKind;
@@ -332,25 +267,15 @@
     SDL_FRect copy_sha_rect{};
   };
 
-  // Plugin-provided signature-help popup (Phase C follow-up). Unlike the
-  // mouse-driven hover popup, this is an explicitly triggered, caret-anchored
-  // surface: the `signature-help` command fills it from the plugin language
-  // providers and it self-expires once the caret leaves the request position.
-  // The two text blocks are prebuilt off the render path (in AssistService) so
-  // RenderSignatureHelpPopup stays a pure draw.
   struct SignatureHelpPopup {
-    std::string signature;      // active signature label (primary line)
-    std::string documentation;  // active-parameter + doc text (secondary block)
+    std::string signature;
+    std::string documentation;
     std::filesystem::path path;
     std::size_t cursor_line = 0;
     std::size_t cursor_column = 0;
   };
   void LayOutSignatureHelpCard(const SignatureHelpPopup& popup, const SDL_FRect& rect, CardPaint& card) const;
 
-  // Recorded by the (const) debug-value hover resolver when it classifies a cache
-  // MISS, and consumed by the non-const UpdateEditorHover to kick off the async
-  // `evaluate` request. Keeps the const resolver pure-read (no DAP I/O); the
-  // instance-scoped, cleaner analog of the thread_local cache the plugin hover uses.
   struct PendingHoverEval {
     int frame_id = 0;
     std::string expression;
@@ -358,30 +283,13 @@
   };
   mutable PendingHoverEval pending_hover_eval_;
 
-  // Async plugin-hover cache. The const hover resolver classifies the cursor cell
-  // against it: Resolved -> popup, Kickoff/Pending/Failed -> nothing. On a Miss it
-  // records a Kickoff; UpdateEditorHover then dispatches the worker query, whose
-  // completion stores the result and re-drives the hover into a hit. Replaces the
-  // old synchronous QueryHover-on-the-hit-test-path, so a slow plugin hover
-  // provider never blocks the UI.
   struct PluginHoverCache {
     enum class State { Empty, Kickoff, Pending, Resolved, Failed };
     std::filesystem::path path;
     std::size_t line = 0;
     std::size_t column = 0;
-    // Bumped by MoveTo whenever the cache starts describing a different cell, so
-    // an in-flight async completion can ask "is this still my cell?" by comparing
-    // one integer. It used to ask by capturing a copy of `path` in the callback,
-    // and a libstdc++ `std::filesystem::path` copy is four allocations (the
-    // string, the component vector, and a string per component). During a scroll
-    // the cell under a stationary pointer changes every frame, so that was a
-    // per-frame cost; capturing `this` plus this stamp is 16 bytes, which also
-    // fits std::function's inline buffer and stops the functor allocating.
     std::uint64_t generation = 0;
     State state = State::Empty;
-    // When a cell got no answer (Failed). No answer is not one for good -- a
-    // server still loading its project says nothing -- so after kNoHoverRetryMs
-    // the next look at the cell asks again.
     Uint64 failed_at_ms = 0;
     plugin::PluginHost::HoverResult result;
     bool Matches(const std::filesystem::path& other_path, std::size_t other_line,
@@ -392,9 +300,6 @@
   };
   mutable PluginHoverCache plugin_hover_cache_;
   void KickOffPluginHover(const std::filesystem::path& path, std::size_t line, std::size_t column);
-  // LSP hover fallback: when the plugin provider yields no hover for the cached
-  // cell, query the language server and populate the same cache from its contents.
-  // Leaves the cell in Pending until the async result lands (then Resolved/Failed).
   void KickOffLspHover(const std::filesystem::path& path, std::size_t line, std::size_t column);
 
   static const ActionSpec* FindActionByCommand(std::string_view command_name);
@@ -413,29 +318,15 @@
       std::span<const MenuItemSpec> items,
       int active_item_index,
       const SDL_FRect& popup_rect) const;
-  // Fill-in-place form for the paint path, which runs this per open popup per
-  // frame; the value-returning overload heap-allocates a vector each time and
-  // exists for the isolated callers (mouse hit-test, tests) that want one.
   void ComputeVisiblePopupMenuItemsInto(std::span<const MenuItemSpec> items,
                                         int active_item_index,
                                         const SDL_FRect& popup_rect,
                                         std::vector<VisiblePopupMenuItem>& out) const;
   std::vector<VisiblePopupMenuItem> ComputeVisiblePopupMenuItems(MenuId id,
                                                                  const SDL_FRect& popup_rect) const;
-  // The label/accelerator a menu row paints. Both return borrowed views: static registry
-  // literals in every case but one — an LSP-gated entry's "(LSP: Starting…)" form, which
-  // borrows a single reused buffer. Consume the view before resolving the next row's
-  // label (which every caller does: layout measures one row at a time, paint draws one
-  // row at a time). Returning std::string here cost two allocations per visible row per
-  // frame for as long as a menu stayed open.
   std::string_view MenuItemLabel(const MenuItemSpec& item, bool with_reason = true) const;
   std::string_view MenuItemAccelerator(const MenuItemSpec& item) const;
   bool IsMenuItemEnabled(const MenuItemSpec& item) const;
-  // Row-loop overload: enablement for a whole popup is resolved against ONE
-  // ActionAvailability. Building it costs 26 std::function constructions plus a
-  // move, and ComputeVisiblePopupMenuItems runs per visible row per frame for as
-  // long as a menu stays open — per-row construction made that O(rows) for a
-  // value that cannot change inside the loop.
   bool IsMenuItemEnabled(const MenuItemSpec& item, const ActionAvailability& availability) const;
   bool IsMenuItemChecked(const MenuItemSpec& item) const;
   bool ExecuteCustomMenuItem(MenuId id, std::size_t item_index);
@@ -443,9 +334,6 @@
                           const std::vector<std::string>& args,
                           ActionSource source,
                           std::string* error_message = nullptr);
-  // Surface the outcome of an async plugin command (run on the worker, delivered on
-  // the drain) as a toast: an error tone when the handler failed, otherwise the
-  // command's returned feedback message if any.
   void NotifyPluginCommandOutcome(const std::string& command,
                                   bool ran,
                                   const std::string& error,
@@ -456,9 +344,6 @@
   void NormalizeSidebarViewSelection();
   void RebuildPhase3Registries(bool reconcile_language_servers = true);
   void RebuildPhase4Registries();
-  // Phase D: rebuild plugin-contributed presentation registries (colour themes,
-  // file-icon themes) from the host. Re-applies the active colorscheme so a
-  // currently-selected plugin theme refreshes after a reload.
   void RebuildPresentationRegistries();
   std::vector<VisibleStatusItem> ComputeVisibleStatusItems(const SDL_FRect& breadcrumb) const;
   std::optional<SDL_FRect> ActiveSubmenuRect(const SDL_FRect& menu_bar) const;
@@ -473,18 +358,11 @@
                                                   const char* const* filelist,
                                                   int filter);
   void ConsumePendingProjectOpenDialogResult();
-  // Native "Open File…" picker behind File > Open File… / Ctrl+O / the welcome
-  // screen's Open File action. Async in the same shape as the project picker: the
-  // result is staged under a mutex and consumed on the shared dialog wake event.
   ProjectOpenPickerResult OpenNativeFilePicker(std::string* error_message = nullptr);
   static void SDLCALL OnOpenFileDialogComplete(void* userdata,
                                                const char* const* filelist,
                                                int filter);
   void ConsumePendingOpenFileDialogResult();
-  // Native "Choose font file…" picker for a font-family setting row. Async: mirrors
-  // the project picker (result staged under a mutex, consumed on the shared dialog
-  // wake event + frame prep). On success writes the chosen .ttf/.otf path into the
-  // launching setting id (ResolveFamilyToFile accepts explicit file paths).
   void OpenNativeFontFilePicker(std::string setting_id);
   static void SDLCALL OnFontFileDialogComplete(void* userdata, const char* const* filelist,
                                                int filter);
@@ -507,11 +385,6 @@
   SidebarCoordinator MakeSidebarCoordinator();
   SidebarService& MakeSidebarService();
   DebugPaneService& MakeDebugPaneService();
-  // Cached for the shell's lifetime. KeyInputCoordinator is 149 std::functions
-  // over three references to stable shell state (current project state, prompts,
-  // menu state) and holds no per-event state — and this runs on every keystroke,
-  // where rebuilding it was 149 std::function constructions plus two moves of the
-  // struct before a single key was looked at.
   KeyInputCoordinator& MakeKeyInputCoordinator();
   TextInputCoordinator& MakeTextInputCoordinator();
   EditorTabService& MakeEditorTabService();
@@ -529,7 +402,7 @@
   RemoteHostService& MakeRemoteHostService();
   void ResetLifecycleStartupState();
   void RegisterLifecycleWakeEvents();
-  void ConsumeHighlightPrefetchResults();  // installs worker prefetch results (main thread)
+  void ConsumeHighlightPrefetchResults();
   void RebindProjectState(ProjectWorkspaceState& state);
   void ResetCurrentProjectStateStorage();
   void ResetTransientInteractionState();
@@ -539,32 +412,19 @@
   const std::filesystem::path& ProjectCatalogRoot(std::size_t index) const;
   void ResetProjectCatalogToWelcomeState();
   bool ReloadPluginsForCurrentProject(PluginReloadRequest request = {});
-  // Post-reload consumption (registry rebuilds, sidebar/syntax refresh, redraws). Runs
-  // from the ReloadPluginsForCurrentProject completion once the rebuilt contribution
-  // snapshot is published (inline when no worker is wired).
   void ConsumeReloadResult(PluginReloadRequest request, bool clean_reload);
   void RefreshPluginSurfacesForReactivation();
   bool ReloadPluginsIfPluginAssetsChanged(bool force_check);
   bool ReloadProjectIfFilesChanged(bool force_check);
   void ApplyProjectChangeBatch(const project::ProjectChangeBatch& batch);
-  // The file set under the root changed: the tree, the finder and project search
-  // re-read it, and only the surfaces that list files repaint (TD-2026-10-15-341).
   void RefreshProjectFileViews();
-  // The per-path half of an external change, shared by the immediate verdict and
-  // the deferred one.
   void ApplyExternalFileChange(const std::filesystem::path& normalized_path,
                                std::set<std::filesystem::path>& dirty_external_paths,
                                std::set<std::filesystem::path>& refresh_compare_paths);
-  // Post the content digest that settles whether a stat mismatch is our own write
-  // coming back, and act on it when it lands. The read is bounded by
-  // TextViewport::kMaxConfirmBytes and never reaches the shell thread.
   void BeginExternalChangeConfirm(const std::filesystem::path& normalized_path);
   void ApplyExternalChangeConfirm(const std::filesystem::path& normalized_path, bool read_ok,
                                   const std::optional<std::uint64_t>& digest,
                                   const util::FileSignature& read_signature);
-  // Paths whose digest is in flight, so a repeat event does not read the same
-  // file twice for the same question. Keyed by generic string, as every other
-  // path-keyed store here is.
   std::set<std::string> pending_external_change_confirms_;
   void MarkCompareTabsStaleForPath(const std::filesystem::path& path);
   void InvalidateMergeTabsForPath(const std::filesystem::path& path);
@@ -577,22 +437,13 @@
   std::string PluginRuntimeReloadSummary() const;
   void NotifyPluginsAboutOpenBuffers(bool replay_plugin_buffer_opens = true,
                                      bool open_lsp_documents = true);
-  // Runs the save's participants and formatter. `SaveMode::Deferred` hands the
-  // formatter to SaveFormatterService's worker and returns without writing; the
-  // completion (ApplyDeferredSaveFormat) finishes that save.
   SavePreparation PrepareEditorViewportForSave(const std::filesystem::path& path,
                                                editor::TextViewport& viewport,
                                                std::string* error_message,
                                                SaveMode mode);
-  // Shell thread, from the SaveFormatterService completion: find the tab that posted
-  // this run and finish its save.
   void ApplyDeferredSaveFormat(const SaveFormatterService::Completion& completion);
-  // Shell thread: hydrate the tab whose off-thread file read has landed, or mark
-  // it Failed. Finds its tab by the read id the tab holds in `pending_load`.
   void ApplyAsyncFileRead(project::FileReadService::Completion completion,
                           editor::TextViewport loaded);
-  // Hand a just-loaded buffer to every other tab still waiting on the same path,
-  // so one file is one read and one buffer however many panes show it.
   void ShareLoadedBufferWithWaitingTabs(const std::filesystem::path& path,
                                         const editor::TextViewport& loaded);
   void ReportSaveFormatterFailure(const SaveFormatterService::Completion& completion,
@@ -607,17 +458,8 @@
   void ResetProjectScopedState(bool show_welcome);
   bool StartFileIndexWatcherForCurrentProject();
   void StopFileIndexWatcher();
-  // Synchronous "has anything changed right now?": one tree walk, diffed against
-  // the index, appended to `batch` as per-file changes plus the coarse rescan bit.
-  // Only the forced path calls it (TD-2026-08-15-252).
   void AppendForcedProjectRescanChanges(project::ProjectChangeBatch& batch);
-  // Off-thread forced full rescan (TD-2026-07-17-081/082): scan on the background
-  // executor, apply the sorted result on the main thread via file_index_refresh_mailbox_.
   void RequestFileIndexRefresh();
-  // `index_version_at_dispatch` is the file index's version when the scan was
-  // requested. A scan describes the filesystem at that moment, so applying it over
-  // an index that has since taken a watcher batch DROPS whatever that batch
-  // reported — see the definition.
   void ApplyForcedFileIndexRefresh(const std::filesystem::path& root,
                                    std::vector<project::ProjectFile> files,
                                    project::ProjectFileScanStatus status,
@@ -641,20 +483,10 @@
   void RequestCloseTabs(std::vector<std::size_t> indices);
   void SyncActiveEditorTab();
   bool SaveTab(std::size_t index, SaveMode mode);
-  // Group-aware save wrapper (mirrors SaveTab's save_tab_mutex_ + format-suppress
-  // bracket) so autosave / save-on-quit can flush a tab in the non-focused group.
   bool SaveGroupTab(std::size_t group_index, std::size_t index,
                     SaveMode mode);
-  // Autosave dirty, titled editor tabs when editor.autosave selects the matching
-  // trigger (on_focus_change vs after_delay). Safe: never prompts, never clobbers.
   void MaybeAutosaveDirtyTabs(bool on_focus_change);
   bool TabIsDirty(std::size_t index) const;
-  // Title and tooltip for one editor tab come from the same text model; this
-  // resolves the tab (including a compare/merge tab's real path) and builds it
-  // once. Empty model for an out-of-range group or tab index.
-  // The tab a label request names, or nullptr when the indices are stale. Shared
-  // by the three label entry points so each builds only the string it was asked
-  // for (TD-2026-08-06-159).
   const TabEntry* TabForLabels(std::size_t group_index, std::size_t index) const;
   std::string TabDisplayTitle(std::size_t index) const;
   std::string TabDisplayTitle(std::size_t group_index, std::size_t index) const;
@@ -663,22 +495,11 @@
   std::vector<std::size_t> DirtyEditorTabIndices() const;
   std::vector<std::size_t> DirtyEditorTabIndicesForProject(std::size_t project_index) const;
   bool HasDirtyEditorTabForProject(std::size_t project_index) const;
-  // All-groups dirty enumerators (VSCode "Save All" semantics) used by the quit
-  // count and save-on-quit paths; the focused-group variants above stay for the
-  // close-tab UI that is legitimately scoped to the focused group.
   std::vector<GroupTabRef> DirtyEditorGroupTabs() const;
   std::vector<GroupTabRef> DirtyEditorGroupTabsForProject(std::size_t project_index) const;
   void ShowDirtyPromptForQuit();
   void DismissDirtyPrompt(bool restore_focus);
   void ConfirmDirtyPrompt();
-  // Every one of these returns literals or a view of prompt state, so they are
-  // views: they are called from the render TU on EVERY painted prompt frame --
-  // which, on a text-input prompt, is every keystroke and every caret blink.
-  // PromptSurfaceActionLabels used to return a vector<string> (a heap
-  // allocation plus two strings a frame) and PromptSurfaceDetail copied the
-  // whole detail member, which for OpenExternalUrl is the URL.
-  //
-  // The two *Message getters genuinely compose and keep returning std::string.
   std::array<std::string_view, 3> DirtyPromptActionLabels() const;
   std::string_view DirtyPromptTitle() const;
   std::string DirtyPromptMessage() const;
@@ -700,11 +521,6 @@
   bool ActiveTabIsEditor() const;
   TabEntry::EditorTabState* ActiveEditorTab();
   const TabEntry::EditorTabState* ActiveEditorTab() const;
-  // Group-aware viewport/tab resolution: the editor render/cursor/mouse paths
-  // drive each split group through these instead of the focused-group helpers.
-  // Resolve the viewport for a specific editor pane (split group) rather than the
-  // globally-focused group. Read/hit-test paths (hover, cursor shape, right-click)
-  // must use this so they inspect the pane under the cursor, not the active group.
   editor::TextViewport* ViewportForPane(const EditorPaneLayout& pane);
   const editor::TextViewport* ViewportForPane(const EditorPaneLayout& pane) const;
   void SyncActiveEditorTabMetadata();
@@ -715,25 +531,10 @@
   const editor::TextViewport* ActiveNavigableViewport() const;
   std::filesystem::path ActiveTabPath() const;
   EditorPaneLayouts ComputeEditorPaneLayouts(const WorkspaceLayout& layout) const;
-  // Derive pane layouts from already-computed group rects, so a render pass that
-  // needs panes and dividers does not walk the split tree twice per frame.
   EditorPaneLayouts EditorPaneLayoutsFromGroupRects(
       const EditorGroupRectsLayout& group_rects) const;
-  // Per-group chrome rects (tab strip / breadcrumb / surface) for the current
-  // editor-group state, carved from `layout`. Single source of truth shared by
-  // the render, cursor, and mouse paths so they cannot drift apart.
   EditorGroupRectsLayout ComputeEditorGroupRectsForState(const WorkspaceLayout& layout) const;
-  // The surface the focused group's active tab paints in: that group's pane, not
-  // the editor column. A compare or merge tab lays out, paints and hit-tests
-  // against this, so in a split it stays inside its own pane (TD-2026-11-11-439).
-  // With one group it IS `layout.editor_surface`. With `shown` (a compare or
-  // merge tab's state), the pane whose front tab it is -- a diff scrolled under
-  // the pointer need not be the focused one; the focused pane when none shows it.
   SDL_FRect ActiveTabSurface(const WorkspaceLayout& layout, const void* shown = nullptr) const;
-  // Width of one pane's editor tab strip. With a split open a pane's strip is a
-  // fraction of the window, so the tab-scroll math has to size against THAT, not
-  // the window (which fits far more tabs and so never scrolled the active one
-  // into view). Falls back to the window width before the first layout exists.
   float EditorGroupTabStripWidth(std::size_t group_index) const;
   std::size_t FocusedEditorGroupIndex() const;
   ScrollSurfaceLayout ComputeEditorScrollLayout(const SDL_FRect& rect,
@@ -753,9 +554,6 @@
   TextGridInteractionLayout BuildMergeSourceInteractionLayout(const MergeSurfaceLayout& surface,
                                                               const MergeTabState& merge_tab,
                                                               bool incoming) const;
-  // Const: the cursor path needs the same layout from a const tab, and the copy
-  // it kept instead is how the two came to disagree about the grid's row total.
-  // Sizing the viewport is the caller's job (see BuildMergeInteractionLayout).
   MergeResultInteractionLayout BuildMergeResultInteractionLayout(
       const SDL_FRect& rect,
       const MergeSurfaceLayout& surface,
@@ -779,10 +577,6 @@
   void RevealActiveMergeSelection();
   bool OpenComparePickerForPath(const std::filesystem::path& path,
                                 std::string_view commit_spec = {});
-  // Async picker orchestration (host-owned; the stack-temporary coordinator asks
-  // for these via its Operations). Request* dispatch the git query on the
-  // background executor keyed by a fresh generation; Apply* run on the main thread
-  // and drop stale/closed completions before repopulating the picker.
   void RequestComparePickerFileHistory(const std::filesystem::path& path);
   void RequestComparePickerRefs(bool include_commits);
   void ApplyComparePickerFileHistory(std::uint64_t generation,
@@ -790,8 +584,6 @@
   void ApplyComparePickerRefs(std::uint64_t generation,
                               const std::vector<project::GitBranchReference>& branches,
                               const std::vector<project::GitCommitEntry>& commits);
-  // True only if the async request `generation` still owns the visible commit
-  // picker (not closed, not superseded by a newer open or a project switch).
   bool ComparePickerRequestCurrent(std::uint64_t generation) const;
   SidebarMode ActiveSidebarMode() const;
   std::optional<TabEntry> BuildCompareTabEntry(const std::filesystem::path& path,
@@ -807,27 +599,11 @@
                                              const std::filesystem::path& incoming_path,
                                              const std::filesystem::path& current_path,
                                              const std::filesystem::path& output_path) const;
-  // Launch-config picker (Phase 9): open the fuzzy picker over the project's launch
-  // configs, re-filter on query change, and start a session for the chosen config.
-  // Open the command palette, optionally pre-filling the query (e.g. "project-open ") so the
-  // user only types the argument. The palette is also the command-line surface: typing a
-  // verb + arguments and pressing Enter runs it via the shared command executor.
   void OpenCommandPalette(std::string seed = {});
   void RefreshCommandPalette();
   void ConfirmCommandPaletteSelection();
-  // True when the palette query should run as a command line (verb + args) rather than
-  // confirming the highlighted fuzzy row.
   bool CommandPaletteQueryIsCommandLine() const;
-  // Tab-complete the palette query (command verbs, paths, colorscheme names, …) in place.
   void CompleteCommandPaletteQuery();
-  // Build the welcome-surface model + geometry for the current placeholder editor, so
-  // the click handler and cursor resolver hit-test the same regions the renderer drew.
-  // Returns false when the welcome home surface is not currently showing.
-  //
-  // Both outputs are BORROWED from memos (see the definition): valid until the
-  // next probe or welcome-view build on this thread, and invalidated by anything
-  // that changes the MRU or the project root. A caller acting on a listed path
-  // must copy it out first.
   bool ProbeWelcomeSurface(const editor::WelcomeViewModel** model,
                            const editor::WelcomeLayout** layout) const;
   void JumpCompareHunk(int delta);
@@ -847,28 +623,16 @@
   void UpdateMergeMaxVisualColumns(MergeTabState& merge_tab,
                                    std::span<const std::string> result_lines) const;
   void PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab, const SDL_FRect& rect);
-  // Re-track the conflict spans after the result pane's buffer changed. Reads the
-  // viewport's own last-applied-edit span; the caller captures nothing.
   void UpdateMergeTrackingAfterViewportEdit(MergeTabState& merge_tab);
   editor::TextViewport* ActiveEditableViewport();
   const editor::TextViewport* ActiveEditableViewport() const;
-  // Collect the diagnostics for `viewport`'s file that overlap `range`, in LSP
-  // wire form, to populate a textDocument/codeAction request context.
   std::vector<LspClient::Diagnostic> CollectLspContextDiagnostics(const editor::TextViewport& viewport, const editor::SelectionRange& range, lsp_encoding::PositionEncoding encoding) const;
-  // Ghost text (Copilot-style inline suggestion). The plugin publishes a proposal;
-  // the host validates it against the live caret, stores at most one (last writer
-  // wins), renders it dimmed, inserts it on Tab (Accept), and clears it on Esc
-  // (Dismiss) or any caret/content/focus change (InvalidateGhostTextIfStale). All
-  // are no-ops when nothing is published, keeping ghost text zero-cost when unused.
   void PublishPluginGhostText(std::string_view owner,
                               const plugin::PluginHost::GhostTextRequest& request);
   void ClearPluginGhostText(std::string_view owner);
   bool AcceptGhostText();
   void DismissGhostText();
   void InvalidateGhostTextIfStale();
-  // SEAM 1 reactive editor events: recompute which events any plugin wants (after
-  // reload), sample the active buffer once per input batch, and dispatch coalesced
-  // events when their debounce deadline elapses.
   void RefreshPluginEditorEventInterest();
   void SamplePluginEditorEvents();
   bool DispatchDuePluginEditorEvents();
@@ -890,7 +654,7 @@
   void RenderMergeSurface(SDL_Renderer* renderer,
                           const SDL_FRect& rect,
                           MergeTabState& merge_tab,
-                          bool focused,  // the caret
+                          bool focused,
                           const DiffSurfacePaint& paint);
   void ShowTreeSidebar(const std::filesystem::path& root = {});
   void ShowSearchSidebar(std::string query = {}, bool temporary = false);
@@ -902,14 +666,11 @@
   void RefreshGitSidebar();
   void ConsumeGitSidebarRefresh();
   bool RefreshProblemsSidebar();
-  // Phase E0: open/refresh a plugin surface preview in the bottom panel, and keep
-  // the panel consistent when a previewed surface is cleared.
   void ActivatePluginSurfacePreview(std::string_view owner, std::string_view surface_id,
                                     editor::SurfacePreviewSlot slot);
   void SyncPluginSurfacePreviewClosed();
   void RenderPluginSurfaceInto(SDL_Renderer* renderer, const SDL_FRect& rect,
                                const editor::SurfaceContent* content, float scroll_y);
-  // PrepareFrameOnce's phases, in order (WorkspaceShellRenderFrame.cpp).
   struct FramePrepPass;
   void PrepareFrameState(FramePrepPass& pass);
   void ResolveFrameLayout(FramePrepPass& pass);
@@ -933,7 +694,6 @@
   void PrepareHoverFrame(FramePrepPass& pass);
   void PrepareWindowChromeUnits(FramePrepPass& pass);
   void PrepareTextInputOverlays(FramePrepPass& pass);
-  // The surfaces those phases prepare, one each.
   void PrepareGitPanelSurface(FramePrepPass& pass);
   void PrepareTreeSidebarSurface(FramePrepPass& pass);
   void PrepareSidebarListSurface(FramePrepPass& pass);
@@ -947,7 +707,6 @@
   void PrepareTerminalGridSurface(FramePrepPass& pass);
   void PrepareDebugPaneSurface(FramePrepPass& pass);
   void PrepareTabStripUnits(FramePrepPass& pass);
-  // The overlay card's derived units, laid out at prep after the pointer occluder.
   void PrepareOverlayUnits(const WorkspaceLayout& layout, bool overlay_visible);
   void PaintEditorPane(SDL_Renderer* renderer, std::size_t group_index, bool draw_caret);
   void DrawEditorInsets(SDL_Renderer* renderer, const SDL_FRect& pane_rect,
@@ -973,9 +732,6 @@
                                                      std::size_t line_count) const;
   ScrollableListLayout ComputePluginSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                       std::size_t line_count) const;
-  // Reference to the shared revision-exact cached line model (valid until the next
-  // CachedGitSidebarPresentation call on the same thread). Navigation/hit-testing
-  // read this to avoid copying the whole flattened tree per arrow key / mouse move.
   const std::vector<GitSidebarLine>& BuildGitSidebarLines() const;
   bool ToggleGitSidebarDirectoryCollapsed(const std::string& tree_node_key);
   std::optional<std::size_t> SelectedGitSidebarLineIndex() const;
@@ -1005,16 +761,7 @@
       std::span<const editor::PublishedDiagnostic> diagnostics,
       float x,
       float y) const;
-  // Code-lens click routing (Phase B): resolve the clickable end-of-line lens
-  // under (x,y), or nullopt. Returned by value — dispatching it can republish the
-  // decoration store, which would dangle a pointer into it. The per-viewport
-  // resolver is a file-local free function (CodeLensCommandForViewport) sharing
-  // editor::BuildEolDecorationSegments with the renderer so the hit rect matches
-  // the painted affordance exactly.
   std::optional<editor::CodeLensDecoration> CodeLensAtPosition(float x, float y) const;
-  // Phase E2: resolve the above-line code-lens inset under (x,y) when
-  // `plugins.code_lens_above` is on, sharing the gap geometry the
-  // renderer drew (editor::ResolveInsetClick). Returns nullopt outside any strip.
   std::optional<editor::CodeLensDecoration> AboveLensAtPosition(float x, float y) const;
   std::optional<EditorHoverTarget> PluginHoverTargetAtPosition(float x, float y) const;
   std::optional<EditorHoverTarget> PluginHoverTargetForViewport(
@@ -1022,11 +769,6 @@
       const TextGridInteractionLayout& interaction,
       float x,
       float y) const;
-  // `grid_row` is the visible row in `interaction`-space (used for the row-identity
-  // check and popup anchor Y); `document_line` is the 0-based file/document line
-  // (used as the plugin query line). They coincide in a plain editor/merge viewport
-  // but differ in compare view, where a visible row maps to a right-file line offset
-  // by the diff hunks above it.
   std::optional<EditorHoverTarget> PluginHoverTargetForLine(
       const std::filesystem::path& path,
       std::string_view line,
@@ -1035,9 +777,6 @@
       const TextGridInteractionLayout& interaction,
       float x,
       float y) const;
-  // Debug hover-to-inspect (Phase 5). Resolves the identifier under (x,y) in the
-  // focused frame's source file and serves a cached `evaluate` value, recording a
-  // PendingHoverEval on a cache miss so UpdateEditorHover can kick off the request.
   std::optional<EditorHoverTarget> DebugValueHoverTargetAtPosition(float x, float y) const;
   std::optional<EditorHoverTarget> DebugValueHoverTargetForViewport(
       const editor::TextViewport& viewport,
@@ -1050,10 +789,6 @@
   std::vector<std::string> WrapEditorHoverPopupText(std::string_view text,
                                                     float max_width,
                                                     std::size_t max_lines) const;
-  // Shared "secondary title line(s) + gap + primary content line(s)" hover-card
-  // shape used by the Plugin (title/content) and DebugValue (type/value) popups.
-  // Compute the positioned card rect, and draw the two stacked text blocks with
-  // their first line at `area`'s top-left, wrapped to its width.
   SDL_FRect ComputeTwoBlockHoverCardRect(std::string_view title,
                                          std::string_view content,
                                          std::size_t max_title_lines,
@@ -1066,29 +801,14 @@
                                std::string_view content,
                                std::size_t max_title_lines,
                                std::size_t max_content_lines) const;
-  // The editor's hover card and the signature-help card, laid out at frame prep
-  // into what their paint draws (HoverCardPaint.h).
   void LayOutEditorHoverCard(const EditorHoverPopupLayout& popup, CardPaint& card) const;
   void UpdateEditorHover(float x, float y);
-  // Signature-help popup (Phase C follow-up). ShowSignatureHelpPopup captures the
-  // request position from the active editable viewport; MaybeExpireSignatureHelp
-  // clears the popup once the caret/buffer no longer matches; the render method
-  // draws the prebuilt blocks anchored to the caret.
   void ShowSignatureHelpPopup(std::string signature, std::string documentation);
   void MaybeExpireSignatureHelp();
   std::optional<EditorBlamePopupLayout> ActiveEditorBlamePopupLayout() const;
-  // True when the last-known pointer position is inside `rect`. Shared by render
-  // paths that lift a surface to its hover style; centralizes the
-  // last_mouse_position_valid_ + Contains idiom so hover affordances stay uniform.
   bool PointerOver(const SDL_FRect& rect) const;
-  // The rect of the row/tab/menu element under (x, y) that paints a hover
-  // background, or nullopt over no such element. Rendering is surface-granular, so
-  // the motion handler only needs a rect that *changes* when the hovered element
-  // changes; pushing it as damage re-renders the containing surface with the new
-  // hover. Mirrors the surfaces threaded through PointerOver in the render TUs.
   std::optional<SDL_FRect> HoveredInteractiveRect(const WorkspaceLayout& layout,
                                                   float x, float y) const;
-  // HoveredInteractiveRect's steps; an empty answer is "not over my surface".
   std::optional<std::optional<SDL_FRect>> HoverOverOverlayAndWidgets(const WorkspaceLayout& layout, float x,
                                                                      float y) const;
   std::optional<std::optional<SDL_FRect>> HoverOverChrome(const WorkspaceLayout& layout, float x, float y) const;
@@ -1100,8 +820,6 @@
                                                      std::string_view left_ref,
                                                      std::string_view right_ref) const;
   std::optional<std::size_t> FindOpenMergeTabIndex(const std::filesystem::path& path) const;
-  // `left_exists`/`right_exists`: whether each side's file exists at all, as
-  // opposed to being empty — see CompareBuildOptions.
   std::optional<TabEntry> BuildCompareTabFromBuffers(const std::filesystem::path& path,
                                                      std::string left_content,
                                                      std::string right_content,
@@ -1140,14 +858,9 @@
   void RevealBufferSearchMatch(const editor::SelectionRange& match);
   void ResetBufferSearchFoldRevealState(bool preserve_expanded_folds);
   void RefreshBufferSearch();
-  // `reveal=false` recomputes the match set without moving the caret onto the
-  // pick -- what an edit under an open widget needs.
   void RefreshBufferSearch(bool reveal);
   void RefreshBufferSearchIfStale();
   bool BufferSearchMatchesAreFresh() const;
-  // Flips one of the in-file find widget's three toggles (Aa / ab / .*) and
-  // recomputes the match set. One entry point for the button, the Alt chord and
-  // the tests, so the three cannot disagree about what a toggle does.
   void ToggleBufferSearchOption(BufferFindToggle toggle);
   void OpenBufferSearchFromProjectSearchResult();
   void RefreshProjectSearch(ProjectSearchRerun rerun = ProjectSearchRerun::Fresh);
@@ -1164,13 +877,8 @@
   bool ActivateOverlaySelection();
   void BeginProjectSearchEdit(ProjectSearchEditField field);
   void CommitProjectSearchEdit();
-  // Write an in-flight edit back to its field without leaving edit mode, so an
-  // option toggle re-runs the search against what is on screen.
   void FlushProjectSearchEditField();
   void CancelProjectSearchEdit();
-  // Panel geometry lives in workspace/ProjectSearchPanelLayout.h (free functions
-  // of the sidebar rect + the scope-expanded flag) so the shell owns behaviour,
-  // not layout arithmetic.
   bool ProjectSearchScopeExpanded() const;
   void ToggleProjectSearchScopeExpanded();
   std::string_view ProjectSearchCaseButtonLabel() const;
@@ -1179,13 +887,9 @@
   void ToggleProjectSearchPatternMode();
   void CycleProjectSearchCaseMode();
   void ToggleProjectSearchHiddenFiles();
-  // Asks first (ConfirmProjectReplaceAll); ReplaceAllProjectSearchMatches runs it.
   void RequestProjectSearchReplaceAll();
   void ReplaceAllProjectSearchMatches();
-  // Main-thread reconciliation of a completed off-thread replace-all (reload clean
-  // tabs, refresh index/tree/finder, report status). Generation/root-guarded.
   void ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome);
-  // The memo itself: valid until the results next change.
   const std::vector<int>& BuildProjectSearchLineMap() const;
   int ProjectSearchLineForResult(std::size_t index) const;
   void MoveBufferSearchSelection(int delta);
@@ -1201,37 +905,16 @@
   std::filesystem::path ConfigStatePath() const;
   std::filesystem::path UserConfigPath() const;
   std::filesystem::path ProjectStateDirectory() const;
-  // include_language_contract=false applies only the cheap per-viewport setters (tab
-  // size, indent, soft tabs/wrap, save normalization) and skips the expensive
-  // bounded-head-scan filetype detection + language-contract build (TD-2026-07-17A-103).
   void ApplyEditorPreferences(editor::TextViewport& viewport, bool include_contract = true) const;
-  // Overload taking a pre-resolved settings snapshot, so the all-tabs walk
-  // resolves the shell-global settings once instead of once per viewport.
   void ApplyEditorPreferences(editor::TextViewport& viewport, bool include_contract,
                               const EditorPreferenceSettings& settings) const;
   void ApplyDetectedIndentOnOpen(editor::TextViewport& viewport) const;
-  // refresh_language_contracts=false skips the O(tabs) filetype-detect + contract
-  // rebuild, applying only the cheap runtime setters. Full callers (project
-  // activation, session restore, init) keep the default true.
   void ApplyEditorPreferencesToAllTabs(bool refresh_language_contracts = true);
-  // Change Language Mode on the active editor's document ("" detects it again):
-  // its language servers swap, every view's contract and highlighting follow.
   void ApplyLanguageModeToActiveEditor(const std::string& language);
-  // Refresh the active editor tab's `editor::FoldingModel` from the active
-  // viewport, the resolved language contract, and the current `editor.fold.enabled`
-  // setting. Returns the (now-fresh) model pointer or nullptr when no editor
-  // tab is active. Callers (render path, fold-action handlers) consume the
-  // model directly.
   editor::FoldingModel* EnsureActiveFoldingModelFresh();
   editor::FoldingModel* EnsureFoldingModelFreshForTab(TabEntry::EditorTabState* editor_tab,
                                                       editor::TextViewport* active_viewport);
-  // Once-per-frame folding freshness for every editor group's active tab. Runs in
-  // PrepareFrameOnce so the fold scan (state-mutating) executes exactly once per
-  // prepared frame instead of per pane per partial-redraw RenderClip. The render
-  // path then only reads the already-resolved model via GroupFoldingModelPtr.
   void RefreshEditorFoldingModels();
-  // Non-mutating fetch of a group's active-tab folding model. Safe to call from
-  // the render path because RefreshEditorFoldingModels already made it fresh.
   bool WriteClipboardText(std::string_view text) const;
   bool WritePrimarySelectionText(std::string_view text) const;
   std::optional<std::string> ReadPrimarySelectionText() const;
@@ -1239,77 +922,39 @@
   void SyncPrimarySelectionWithActiveEditor();
   void SyncPrimarySelectionWithTerminalSelection();
   std::size_t CountOpenBufferViews(const std::filesystem::path& path) const;
-  // Per-path open-view counts across all groups, built in a single pass for
-  // bulk-close callers that would otherwise call CountOpenBufferViews per tab.
   std::unordered_map<std::string, std::size_t> OpenBufferViewCounts() const;
-  // Thin forwarders to lsp_service_ (see src/workspace/LspService.*).
   bool PluginServesLspMenuAction(ActionId id) const;
   LspManager& CurrentLspManager();
-  // Thin forwarders to debug_service_ (see src/workspace/DebugService.*).
   DapManager& CurrentDapManager();
   DapManager& EnsureProjectDapManager(ProjectWorkspaceState& state);
   void ConsumeDapCallbacks();
-  // Control channel (live remote control). ConsumeControlCallbacks drains the
-  // socket server on the control wake event; ExecuteControlCommand runs one
-  // command line through the in-app command chokepoint and reports the outcome;
-  // ApplyControlSpec applies a cold-start spec; MaybeStartControlChannel starts
-  // the listener when the `control.enabled` setting is on.
   void ConsumeControlCallbacks();
   ControlChannelService::CommandOutcome ExecuteControlCommand(const std::string& command_line);
   void MaybeStartControlChannel();
   bool StartDebugging(const LaunchConfig& config, const std::string& cwd = {});
-  // Builds a minimal launch config from a registered adapter and starts it.
-  // Returns an error string (empty on success). Launch-config selection /
-  // persistence is a later phase; Phase 1 launches the first registered adapter.
   std::string StartDebuggingWithDefaultConfig();
-  // Start a session for the launch config named `name` (case-insensitive). An
-  // empty name defers to StartDebuggingWithDefaultConfig(). Returns an error
-  // string (empty on success). Drives the `debug-launch` command / spec field.
   std::string StartNamedDebugConfig(const std::string& name);
-  // Ad-hoc launch by program path (the `debug-run` command). Synthesizes a
-  // transient LaunchConfig from `program` (resolved against the project root) +
-  // `args`, using `type` (or the sole registered adapter when empty), then starts
-  // it. Returns an error string (empty on success). No pre-defined config needed.
   std::string StartAdHocDebug(const std::string& program, const std::vector<std::string>& args,
                               const std::string& type);
   void StopDebugging();
   bool IsDebugSessionStopped() const;
-  // Canonical read of the master `debug.enabled` toggle (default off). The one
-  // place that interprets the stored setting string as a bool for shell code.
   bool DebugEnabled() const;
-  // Turn the debugger on transiently (never persisted) when it is off. Shared by
-  // the cold-start spec and the control channel so a headless driver never needs
-  // a separate `set-setting debug.enabled true` prelude before breakpoint-/debug-
-  // commands. Returns true when it flipped the setting on.
   bool EnsureDebuggerEnabledTransiently();
-  // Breakpoint-modifier context menu (Phase 6). Read the breakpoint gutter
-  // menu's target path+line; open a seeded prompt for a condition/hit/log field
-  // (mapped from the ActionId) or remove the breakpoint and live-resend.
   void OpenBreakpointContextMenu(const std::filesystem::path& path, std::size_t line,
                                  const SDL_FRect& anchor_rect);
   void EditBreakpointModifierFromMenu(ActionId id);
-  // Prompt-less gutter-menu actions: toggle enabled / clear the condition.
   void BreakpointQuickActionFromMenu(ActionId id);
   void RemoveBreakpointFromMenu();
-  // Commit a SetBreakpoint* prompt: write the field (empty clears) + live-resend.
   void CommitBreakpointModifierPrompt();
-  // Watch panel (Phase 6): open the add/edit-expression prompt (nullopt = add),
-  // and commit it into the watch model (edit with empty text removes).
   void OpenWatchExpressionPrompt(std::optional<std::size_t> index);
   void CommitWatchExpressionPrompt();
-  // Debug-console REPL (Phase 9): open the single-line evaluate prompt, and commit
-  // it (evaluate in the active session, then re-open for the next expression).
   void OpenDebugReplPrompt();
   void CommitDebugReplPrompt();
   void AppendDebugConsoleOutput(int session_id, const std::string& label,
                                 const dap_protocol::DapOutputEvent& output);
   void ShowDebugConsole(int session_id, const std::string& label);
-  // Surface the active debug session's console output in the bottom panel on
-  // demand (Debug → Show Output / Ctrl+Shift+5). No-op without an active session.
   void ShowDebugOutput();
-  // Remove a pruned session's console channel + close its tab (Phase 10).
   void RemoveDebugConsole(int session_id);
-  // Frame-memoized, never-starting readiness for the menu paint/hit-test paths.
   const LspClient::ReadinessSnapshot& MenuLspReadiness() const;
   void ActiveLspStatusStrings(bool ensure_started, std::string& text, std::string& tooltip, StatusTone& tone);
   void BeginTrackedLspRequest();
@@ -1319,10 +964,6 @@
   void EnsureLspDocumentOpen(const editor::TextViewport& viewport,
                              LspClient& client,
                              std::string_view language_id);
-  // A buffer's document symbols: a plugin provider's, else the language server's
-  // textDocument/documentSymbol (adapted to the plugin node shape), delivered on a
-  // later main-thread drain -- to the outline, or the Go to Symbol pick. An empty
-  // answer when neither has any, with the plugin's error if it gave one.
   using DocumentSymbolsReady = std::function<void(
       const std::filesystem::path&, const std::string& error, std::vector<plugin::PluginHost::DocumentSymbolNode>)>;
   void QueryDocumentSymbols(const editor::TextViewport& viewport, DocumentSymbolsReady deliver);
@@ -1345,35 +986,18 @@
   bool MoveActiveOutputTabTo(std::size_t index);
   void ConsumeTerminalSessionUpdates();
   bool BottomPanelVisible() const;
-  // Whether the project tab strip is laid out this frame. Hidden only when the
-  // "chrome.project_tabs.hide_when_single" setting is on and at most one project is
-  // open; a zero-height strip rect then suppresses its render and hit-testing.
   bool ProjectTabStripVisible() const;
   bool BottomPanelShowsTerminal() const;
   bool BottomPanelShowsOutput() const;
-  // The renderer whose metrics drive the current bottom-panel content: the dedicated
-  // terminal renderer while a terminal is shown, else the shared editor renderer for the
-  // output log. Keeps grid sizing and glyph drawing on the same font.
   const render::TextRenderer& PanelTextRenderer() const;
-  // Push `terminal.font_size` / `terminal.font_family` into terminal_text_renderer_. Called
-  // from the render prepare step only while a terminal is shown; re-grids on a real change.
   void ApplyTerminalFontPreferences();
-  // Body rect of the terminal pane the keyboard acts on (the whole panel body
-  // unless the active tab is split); falls back to the panel body for Output.
   SDL_FRect ActiveTerminalBodyRect(const WorkspaceLayout& layout) const;
-  // One pane's log layout: its own scroll/follow-tail, the panel's row count.
   LogSurfaceLayout ComputeTerminalPaneLogLayout(const SDL_FRect& body, float panel_height, const TerminalPaneState& pane, std::size_t line_count) const;
   LogSurfaceLayout ComputeBottomPanelLogLayout(const WorkspaceLayout& layout,
                                                    std::size_t line_count) const;
   int BottomPanelVisibleRows(float panel_height) const;
   int BottomPanelScrollRow(std::size_t line_count, int visible_rows) const;
   void SetBottomPanelScrollRow(int scroll_row, std::size_t line_count, int visible_rows);
-  // Rebase the active terminal tab's absolute-row mirrors (scroll_row, selection,
-  // last-command row) by however many scrollback lines the session trimmed since the
-  // last call, so a coalesced trim does not shift content out from under a scrolled-up
-  // view or a held selection. Cumulative-delta based, so a background tab catches up in
-  // one call when it next becomes active. A switch to or from the alternate screen
-  // changes the row space outright, so it drops the selection.
   void RebaseActiveTerminalRowSpace();
   void PrepareTerminalPanesForFrame(TerminalTabState& tab, const TerminalPaneRectsLayout& rects, float panel_height);
   void ClearTerminalSelection();
@@ -1401,7 +1025,6 @@
                           std::size_t line,
                           std::size_t column);
   bool HandleMouseButtonDown(const SDL_Event& event);
-  // HandleMouseButtonDown's steps, in the order it tries them.
   std::optional<bool> MouseDownOnModals(const SDL_Event& event, const WorkspaceLayout& layout, DamageMark mark,
                                         const std::optional<SDL_FRect>& window_rect);
   std::optional<bool> MouseDownOnChrome(const SDL_Event& event, const WorkspaceLayout& layout, DamageMark mark);
@@ -1410,11 +1033,8 @@
   std::optional<bool> MouseDownOpensContextMenu(const SDL_Event& event, const WorkspaceLayout& layout, DamageMark mark);
   bool MouseDownOnEditorArea(const SDL_Event& event, const WorkspaceLayout& layout, DamageMark mark);
   bool HandleMouseButtonUp(const SDL_Event& event);
-  // Ends every pointer gesture in flight without its effect (no drop, no move):
-  // for a release that will not reach it (focus loss) or that a modal takes.
   void AbandonPointerGestures();
   bool HandleMouseMotion(const SDL_Event& event);
-  // HandleMouseMotion's steps, in the order it tries them.
   std::optional<bool> MotionDuringDrag(const SDL_Event& event, const WorkspaceLayout& layout, DamageMark mark);
   std::optional<bool> MotionDuringPointerGesture(const SDL_Event& event, const WorkspaceLayout& layout,
                                                  DamageMark mark);
@@ -1422,9 +1042,6 @@
   bool MotionHover(const SDL_Event& event, const WorkspaceLayout& layout, DamageMark mark,
                    bool previous_mouse_position_valid, float previous_mouse_x, float previous_mouse_y);
   bool HandleMouseWheel(const SDL_Event& event);
-  // Cached for the shell's lifetime, like MakeActionContext: ActionAvailability is
-  // 26 std::functions over a const WorkspaceContext& and holds no per-query state,
-  // and the menu paint path asks for one per open popup per frame.
   const ActionAvailability& MakeActionAvailability() const;
   void DrawFilledRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) const;
   void DrawRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) const;
@@ -1435,48 +1052,21 @@
   void RenderOverlaySurface(SDL_Renderer* renderer,
                             const WorkspaceLayout& layout,
                             const OverlaySurfaceViewModel& overlay_vm);
-  // Shared by the in-file find widget (overlay) and the terminal find bar
-  // (bottom panel): both are the same compact floating card, so they draw
-  // through one painter rather than two that can drift apart.
   void RenderFindWidget(SDL_Renderer* renderer, const OverlayFindWidgetViewModel& fw_vm);
-  // Floating, icon-only debug control bar (Continue/Pause, Step Over/In/Out,
-  // Restart, Stop) anchored top-right of the editor area while a session is
-  // active. Mirrors the find-widget pattern. Defined in
-  // WorkspaceShellDebugToolbar.cpp (not a render-named TU, so it may read state
-  // for the hit-test alongside the render).
   void RenderDebugToolbar(SDL_Renderer* renderer) const;
   void PaintEditorAreaChrome(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
-  // y below which the toolbar must sit (find widget's bottom when the buffer
-  // search/replace widget is visible), so the two floating bars stack instead of
-  // overlapping. std::nullopt anchors the toolbar at the editor top.
   std::optional<float> DebugToolbarAvoidBelowY(const WorkspaceLayout& layout) const;
-  // Left-click hit-test for the debug toolbar. Returns true (consuming the click)
-  // when the bar is showing and the point lands on it; dispatches the button's
-  // action. No-op when debugging is disabled or no session is active.
   bool HandleDebugToolbarButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
-  // Whether the debug toolbar is currently shown (debugger enabled + active
-  // session). Used to gate rendering and hit-testing.
   bool DebugToolbarVisible() const;
   void RenderBottomPanelSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout);
-  // Right-side debug pane (Call Stack / Variables / Watch / Breakpoints). Defined in
-  // DebugPaneRender.cpp; the four structured debug surfaces moved here from the
-  // bottom panel.
   void RenderDebugPaneSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout);
   DebugPaneModeRowLayout DebugPaneModeRow(const SDL_FRect& pane_rect) const;
-  // List geometry below the mode-row, anchored to layout.right_pane. Reuses the
-  // LogSurfaceLayout shape (content rect + text origin + scroll surface).
   LogSurfaceLayout ComputeDebugPaneListLayout(const WorkspaceLayout& layout,
                                                   std::size_t line_count) const;
-  // Row count + clamped scroll for the currently active debug-pane surface.
   std::size_t DebugPaneActiveRowCount() const;
-  // Scrolls the debug pane so its keyboard selection stays on screen.
   void RevealDebugPaneSelection();
-  // Focuses the Call Stack row at `row`, sharing the click path's activation.
   void FocusDebugCallStackRow(std::size_t row);
   void ActivateDebugBreakpointRow(std::size_t row, bool toggle);
-  // True when a click on `row` of the active surface does something (frame/thread/
-  // session focus, variable/watch expand or edit, breakpoint navigate, filter
-  // toggle). Drives the hover-cursor pointer/default decision for the pane.
   bool DebugPaneRowIsActionable(std::size_t row) const;
   int DebugPaneScrollRow(std::size_t line_count, int visible_rows) const;
   void SetDebugPaneScrollRow(int scroll_row, std::size_t line_count, int visible_rows);
@@ -1484,43 +1074,18 @@
   void RenderStatusBar(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void PrepareStatusBarFrame(const WorkspaceLayout& layout);
   void RefreshStatusBar();
-  // The viewport the status bar describes: whatever the caret is actually in,
-  // which on a compare/merge tab is not the group's active editor viewport.
   const editor::TextViewport* StatusBarSourceViewport() const;
   void ApplyLiveSettings();
-  // Write a setting through the canonical chokepoint. When persist is false the
-  // value is applied live (UpsertSetting + ApplyLiveSettings) but never saved to
-  // disk, and the id is recorded so the persistence coordinator strips it on
-  // shutdown — the transient path used by `--set`, cold-start spec settings, and
-  // debug auto-enable so headless drives never clobber the user's saved config.
   bool SetSettingValue(std::string_view id, std::string value, bool persist = true);
-  // Write a project-scoped setting's value into the USER layer as a cross-project
-  // default. A per-project override (project layer) still wins over this default.
-  // For user-scoped settings this behaves like SetSettingValue.
   bool SetSettingAsUserDefault(std::string_view id, std::string value, bool persist = true);
-  // Shared implementation for the two entry points above; as_user_default forces
-  // the write into the user layer even for a project-scoped setting.
   bool WriteSettingValue(std::string_view id, std::string value, bool as_user_default,
                          bool persist);
   bool ResetSettingValue(std::string_view id);
-  // Clear a setting's override from a specific layer (used by the overlay's
-  // per-row scope toggle: reset "This Project" vs "All Projects" independently).
   bool ResetSettingInScope(std::string_view id, SettingScope scope);
-  // Re-materialize canonical editor preferences after a write/reset of a canonical
-  // id and, for the colorscheme, apply the resolved theme live (its enum value is
-  // materialized into the theme rather than the editor-preferences cache).
   void ApplyCanonicalPreferenceSideEffects(std::string_view id);
-  // Resolved editor.line_numbers flag. Feeds ComputeMetrics so the gutter width used
-  // for hit-testing/cursor geometry matches what the editor render path draws.
   bool LineNumbersEnabled() const;
-  // True when an overlay edit of a built-in project-scoped setting should land on
-  // the user-level default layer (a default exists and there is no per-project
-  // override) rather than pinning a per-project override.
   bool SettingWritesToUserDefault(std::string_view id) const;
-  // Write a value to whichever layer the per-row scope target currently points at.
   bool WriteSettingRespectingScope(std::string_view id, std::string value);
-  // Flip a project-scoped setting between "This Project" and "All Projects" by
-  // moving the current effective value between the project and user layers.
   void ToggleSettingScope(std::string_view id);
   void RefreshSettingsOverlayCatalog();
   void OpenSettingsOverlay();
@@ -1529,28 +1094,19 @@
   void RenderSettingsOverlay(SDL_Renderer* renderer) const;
   bool HandleSettingsOverlayButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   void StepSetting(std::string_view id, bool forward);
-  // Inline String-value editing in the Settings overlay.
   void BeginSettingValueEdit(std::string_view id);
   void CommitSettingValueEdit();
   void CancelSettingValueEdit();
-  // Move the font-picker highlight (Up/Down) while a font row is being edited.
   void MoveSettingsFontPicker(int delta);
-  // Apply the font-picker row at `dropdown_index` (a filtered family, or the
-  // "Choose file…" entry which launches the native picker). Used by mouse clicks.
   void ApplySettingsFontPickerIndex(int dropdown_index);
-  // Lazily enumerated installed font families for the picker.
   const std::vector<std::string>& CachedFontFamilies();
   void TogglePluginEnabled(std::string_view plugin_id);
   void EnsureSettingsSelectionVisible();
-  // Scrolls the Settings/Help row list by whole entries, clamped against the max
-  // scroll the view model resolves for the live layout.
   void ScrollSettingsOverlayRows(int delta);
   void RenderPromptSurface(
       SDL_Renderer* renderer,
       const WorkspaceLayout& layout) const;
   void RenderDirtyPromptSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
-  // The focused single-line field's selection and IME preedit, and its caret, laid
-  // out at frame prep into what the text-input pass draws (HoverCardPaint.h).
   void LayOutTextInputMarks(const std::optional<TextInputVisual>& visual, CardPaint& marks) const;
   void LayOutTextInputCaret(const std::optional<TextInputVisual>& visual, CardPaint& caret) const;
   std::optional<TextInputVisual> BuildActiveTextInputVisual(
@@ -1559,16 +1115,10 @@
   SingleLineViewMetrics ComputeSingleLineViewMetrics(const editor::SingleLineEditor& state,
                                                      std::string_view prefix,
                                                      float available_width) const;
-  // Maps a pointer x-offset (relative to the input's text_x) to a byte position within
-  // state.text(). Uses the same view-start computation as the renderer so the caret lands
-  // under the glyph the user clicked even when the text is horizontally scrolled.
   std::size_t HitTestSingleLineByteOffset(const editor::SingleLineEditor& state,
                                           std::string_view prefix,
                                           float available_width,
                                           float relative_x) const;
-  // Returns the active single-line input's hit-test rect (text rect) and surface tag, or
-  // nullopt when no single-line input is currently editable. Used by mouse handlers to
-  // decide whether a click landed inside an input.
  public:
   struct SingleLineInputHit {
     TextInputSurface surface = TextInputSurface::None;
@@ -1583,9 +1133,6 @@
   std::optional<SingleLineInputHit> FindSingleLineInputHit(const WorkspaceLayout& layout,
                                                             float x,
                                                             float y);
-  // Handles a single-line input mouse press by placing the caret, extending the selection
-  // when shift is held, selecting the word at the caret for double-click, and selecting
-  // all for triple-click. Begins drag-select tracking when the press was a plain click.
   bool HandleSingleLineInputMouseDown(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleSingleLineInputDrag(const SDL_Event& event, const WorkspaceLayout& layout);
   void DrawSingleLineTextTail(SDL_Renderer* renderer,
@@ -1598,47 +1145,24 @@
   void UpdateTextInputArea(SDL_Renderer* renderer,
                            SDL_Window* render_window,
                            const std::optional<TextInputVisual>& visual) const;
-  // The shell's one hovered-tooltip answer (HoverTooltipSurface.cpp): the tab
-  // strips, breadcrumb status items, sidebar mode row and view headers, the two
-  // find widgets and the status bar all resolve through it, in that order, and it
-  // returns the winner already truncated and already placed. Only one tooltip can
-  // ever show, so paint, redraw invalidation, motion change-detection and the
-  // tests all read this single answer rather than each listing every provider.
   std::optional<HoverTooltip> HoveredTooltip(const WorkspaceLayout& layout) const;
-  // Hovered interactive-element rects used both by the cursor (pointer feedback) and by
-  // the motion handler (hover-state redraw invalidation). Centralizing the geometry here
-  // keeps render, cursor, and invalidation from each maintaining their own hit-test copy.
   std::optional<SDL_FRect> HoveredStatusBarSegmentRect(const WorkspaceLayout& layout, float x,
                                                        float y) const;
-  // Screen region for the surface that currently owns keyboard focus (nullopt for the
-  // modal Overlay focus, or when the surface is hidden). Used to draw the focus ring and
-  // to invalidate the old+new surface when focus moves (see HandleEvent).
   std::optional<SDL_FRect> FocusSurfaceRect(const WorkspaceLayout& layout,
                                             FocusTarget focus) const;
   void DrawSurfaceFocusRing(SDL_Renderer* renderer, const SDL_FRect& region) const;
   void EnsureOutputChannelTabOpen(std::string_view channel_id);
   void CloseOutputChannelTab(std::string_view channel_id);
   SDL_FRect ComputeOverlayRect(const SDL_FRect& editor_area) const;
-  SDL_FRect FindWidgetAnchorRect(const SDL_FRect& fallback) const;  // editor_surface anchor
+  SDL_FRect FindWidgetAnchorRect(const SDL_FRect& fallback) const;
   SDL_FRect ComputeCaretAnchoredOverlayRect(const SDL_FRect& editor_area,
                                             const SDL_FRect& caret_anchor) const;
-  // Content-sized centered menu (code actions): height tracks the visible row
-  // count like the caret-anchored popup, but it is horizontally centered and
-  // pinned to a fixed vertical fraction so a short action list stays compact
-  // instead of filling a finder-sized modal.
   SDL_FRect ComputeCenteredMenuOverlayRect(const SDL_FRect& editor_area) const;
   const std::string& BreadcrumbLabel() const;
   const std::string& BreadcrumbLabel(std::size_t group_index) const;
-  // Cross-paint memo for BreadcrumbLabel (BreadcrumbLabelCache is namespace-scoped in
-  // WorkspaceShell.h to keep this file within its size budget); TD-2026-07-17A-023.
-  // One slot per editor pane: the breadcrumb band is per pane (each top-row pane
-  // of a split carries its own over its own column), so a single shared memo would
-  // thrash between panes on every painted frame.
   mutable std::array<BreadcrumbLabelCache, kMaxEditorGroups> breadcrumb_label_cache_;
   std::string ProjectLabel() const;
-  // The `ui` control query's element geometry (control/ControlUiQuery.h).
   ControlUiQuery::Operations MakeControlUiOperations();
-  // Its sections of the `ui` answer, one member each (ControlUiShellSources.cpp).
   void ControlUiMenus(const WorkspaceLayout& layout, ControlUiElements& out);
   void ControlUiTabs(const WorkspaceLayout& layout, ControlUiElements& out);
   void ControlUiSidebar(const WorkspaceLayout& layout, ControlUiElements& out);
@@ -1651,8 +1175,6 @@
   void ControlUiDetails(const WorkspaceLayout& layout, util::JsonObject& root);
   std::string ProjectTabDisplayTitle(std::size_t index) const;
   std::string ProjectTabTooltipLabel(std::size_t index) const;
-  // Allocation-free truncate for render hot paths; see
-  // render::TextRenderer::TruncateToWidthEphemeralView for the returned view's lifetime.
   std::string_view TruncateLabelView(std::string_view text, float max_width) const;
   std::optional<SDL_FRect> CurrentWindowRect() const;
   std::optional<WorkspaceLayout> CurrentWorkspaceLayout() const;
@@ -1662,21 +1184,10 @@
   void RequestFullRedraw();
   void RequestPreparedFrame();
   void NoteActiveEditableEdit();
-  // Post a transient notification toast and schedule a full redraw so it paints.
-  // The single host-owned entry point for toasts (plugins + built-in callers).
   void Notify(NotificationService::Tone tone, std::string message);
-  // The keyed/sticky/progress form. See NotificationService::Request.
   void Notify(NotificationService::Request request);
   void RequestRedrawRect(const SDL_FRect& rect);
-  // Request the smallest present that still re-latches the hardware cursor plane
-  // after an event-time cursor change (see UpdateMouseCursor / the Wayland cursor
-  // desync note). Not a visual repaint — just a commit so an idle compositor shows
-  // the new shape.
   void RequestCursorPresent();
-  // Repaint after a divider drag changed the outer geometry. Both the sidebar and
-  // the bottom panel need the same rule — mark layout dirty, and if either of the
-  // two rects the drag can move actually moved, fall back to a full redraw because
-  // retained redraw cannot prove the exposed area is clean.
   void RequestOuterLayoutChangeRedraw(const WorkspaceLayout& previous_layout,
                                       SDL_FRect WorkspaceLayout::*first,
                                       SDL_FRect WorkspaceLayout::*second);
@@ -1684,17 +1195,7 @@
   void RequestActiveEditableChangeRedraw(const std::vector<std::string>& before_lines,
                                          const std::vector<std::string>& after_lines);
   void RequestBottomPanelLayoutChangeRedraw(const WorkspaceLayout& previous_layout);
-  // Repaint whichever surface owns a single-line drag selection. Used by both the
-  // motion handler (while dragging) and the button-up handler (on release), which
-  // must agree or a released selection repaints somewhere the drag did not.
   void RequestSingleLineDragSurfaceRedraw(DamageMark mark, TextInputSurface surface);
-  // The fallback-redraw guard shared by every mouse/input handler: take a mark
-  // before dispatching, and EnsureRedraw(mark, ...) repaints the surface only when
-  // nothing asked for damage SINCE the mark. It used to ask "is anything queued?",
-  // which could not tell the handler's own precise rects from unrelated damage
-  // queued earlier (a tooltip, a focus change, a background tick) and so left a
-  // surface stale whenever something else got there first (TD-2026-10-13-337).
-  // A template (not std::function) so the call stays inlined with no heap churn.
   [[nodiscard]] DamageMark MarkDamage() const { return damage_generation_; }
   template <typename RequestRedraw>
   void EnsureRedraw(DamageMark since, RequestRedraw request_redraw) {
@@ -1708,55 +1209,30 @@
                                                       std::size_t end_row) const;
   std::optional<SDL_FRect> CurrentMergeConflictRect(std::size_t conflict_index) const;
   std::optional<Uint32> NextCaretBlinkDelayMs() const;
-  // "After delay" autosave (WorkspaceTabCoordinatorShellBridge.cpp). MaybeArmAutosaveTimer
-  // re-arms the debounce on every real buffer edit; NextAutosaveDelayMs feeds the idle loop
-  // so it wakes near the deadline; the fire check lives in HandleScheduledWake. Returns the
-  // configured idle delay clamped to a sane band.
   Uint64 AutosaveDelayMs() const;
   void MaybeArmAutosaveTimer();
   std::optional<Uint32> NextAutosaveDelayMs() const;
-  // Crash-safety session flush (WorkspaceShellRedraw.cpp). ALWAYS ON, independent of
-  // editor.autosave: unlike autosave (which writes the user's file only when opted in),
-  // this periodically writes the in-memory SESSION snapshot — including unsaved buffer
-  // content — to the durable record store so a crash / kill -9 loses at most the last
-  // debounce window instead of everything since the last event-driven session save. It
-  // never touches the user's files. MaybeArmSessionFlushTimer re-arms on each real edit;
-  // NextSessionFlushDelayMs wakes the idle loop near the deadline; HandleScheduledWake
-  // fires FlushSessionStateForCrashSafety once the buffer settles.
   void MaybeArmSessionFlushTimer();
   std::optional<Uint32> NextSessionFlushDelayMs() const;
   void FlushSessionStateForCrashSafety();
-  // Chrome-like tab-slide animation (WorkspaceShellRedraw.cpp). NextTabSlideDelayMs
-  // schedules ~60fps wakes while a strip is easing; AdvanceTabSlide steps the
-  // offsets on a scheduled wake and clears the state when the post-release settle
-  // finishes; TabStripRectForKind scopes the repaint to the animating strip. It
-  // is also what the live drag and the drag auto-scroll pump damage, so all three
-  // resolve the same rect from the same place.
   std::optional<Uint32> NextTabSlideDelayMs() const;
   bool AdvanceTabSlide();
   std::optional<SDL_FRect> TabStripRectForKind(TabDragKind kind, std::size_t group_index) const;
   void ResetCaretBlink();
   bool ShouldBlinkCaret() const;
-  // Caret-blink settings: whether the caret blinks at all (else it stays solid)
-  // and the blink half-period in milliseconds (clamped to 100..2000).
   bool CaretBlinkEnabled() const;
   Uint64 CaretBlinkIntervalMs() const;
-  // True when ShouldBlinkCaret() AND the caret hasn't been idle past
-  // kCaretBlinkIdleStopMs since the last ResetCaretBlink(). After that
-  // window the caret freezes visible and no further blink wakes fire.
   bool CaretBlinkAnimating() const;
   bool CaretVisibleNow() const;
   std::optional<SDL_FRect> ActiveEditorCaretRect(const WorkspaceLayout& layout) const;
   std::optional<SDL_FRect> ActiveTerminalCaretRect(const WorkspaceLayout& layout) const;
   std::optional<TextInputVisual> BuildCompareTextInputVisual(const SDL_FRect& editor_surface) const;
   std::optional<TextInputVisual> BuildMergeTextInputVisual(const SDL_FRect& editor_surface) const;
-  // `focused`: the pane whose scrollbar a drag in flight belongs to.
   void RenderCompareScrollbars(SDL_Renderer* renderer, const SDL_FRect& editor_surface,
                                CompareTabState& compare_tab, const DiffSurfacePaint& paint);
   void RenderMergeScrollbars(SDL_Renderer* renderer, const SDL_FRect& editor_surface,
                              MergeTabState& merge_tab, const DiffSurfacePaint& paint);
   CursorKind CursorKindForPosition(float x, float y) const;
-  // CursorKindForPosition's surfaces, in the priority order it asks them.
   std::optional<CursorKind> CursorKindOverModalsAndMenus(float x, float y, const WorkspaceLayout& layout) const;
   std::optional<CursorKind> CursorKindOverChrome(float x, float y, const WorkspaceLayout& layout) const;
   std::optional<CursorKind> CursorKindOverSidebar(float x, float y, const WorkspaceLayout& layout) const;
@@ -1766,48 +1242,19 @@
   CursorKind CursorKindOverMerge(float x, float y, const SDL_FRect& view_surface) const;
   SDL_Cursor* CursorHandle(CursorKind kind);
   void ClearMouseHoverState();
-  // during_frame_prepare is true only for the render-path call (PrepareFrameOnce),
-  // which already presents this frame. Event-time calls leave it false so that a
-  // cursor re-application requests a present — without one, an idle compositor
-  // (e.g. caret not blinking, welcome screen) never recomposites and the hardware
-  // cursor plane keeps the stale shape. See dev-docs/platform/wayland-stale-cursor.md.
   void UpdateMouseCursor(float x, float y, bool update_editor_hover = true,
                          bool workspace_layout_recomputed = false,
                          bool during_frame_prepare = false);
 
   render::Theme theme_ = render::MakeDefaultTheme();
-  // Two glyph renderers: text_renderer_ draws the chrome (menus, tabs, sidebar,
-  // status bar, overlays, panels) at the fixed UI size, and editor_text_renderer_
-  // the editor area's document grid (panes, compare, merge) at `editor.font_size`.
-  // One renderer for both made a large editor font overflow every fixed-height
-  // chrome row (QA sweeps-matrix, "light theme, large font"). All three glyph
-  // renderers share the chrome's backend pool, so while their fonts match they draw
-  // with one backend: one atlas and one glyph cache, not three (TD-2026-10-26-394).
   render::TextRenderer text_renderer_;
   render::TextRenderer editor_text_renderer_{text_renderer_.backend_pool()};
-  // Dedicated glyph renderer for the terminal grid so `terminal.font_size` /
-  // `terminal.font_family` are independent of the editor font. Lazily initialized only
-  // when the bottom panel first shows a terminal, so a session that never opens one never
-  // resolves its font; one whose font matches the chrome's draws with the chrome's backend. All terminal cell/cursor/grid metrics read from this renderer;
-  // the shared bottom-panel layout helpers branch to it via PanelTextRenderer().
   render::TextRenderer terminal_text_renderer_{text_renderer_.backend_pool()};
-  // terminal_text_renderer_.MetricsGeneration() the terminal was last re-gridded at.
   std::size_t terminal_grid_metrics_generation_ = 0;
-  // Settings-store revision at the last ApplyTerminalFontPreferences apply. The
-  // function runs every prepared frame a terminal is shown; gating on the revision
-  // keeps the steady-state path allocation-free (no per-frame GetSettingValue).
   std::uint64_t last_applied_terminal_font_settings_revision_ = std::numeric_limits<std::uint64_t>::max();
   editor::EditorViewRenderer editor_view_renderer_;
   WorkspaceContext context_;
-  // Every lazily built coordinator / service / action context the shell reuses,
-  // in one holder (see ShellGlueCache.h for what they are and why they are
-  // cached). Declared AFTER context_ so they are destroyed BEFORE the state they
-  // hold references into.
   std::unique_ptr<ShellGlueCache> glue_ = std::make_unique<ShellGlueCache>();
-  // Single owner of settings resolution + mutation. Binds non-owning pointers to
-  // the user / active-project layers in context_ and keeps an O(1) resolved
-  // index. Bound in the constructor and re-bound on every project switch
-  // (RebindProjectState / ResetCurrentProjectStateStorage).
   SettingsStore settings_store_;
   WindowPresentationState window_presentation_;
   struct SidebarModeMenuEntry {
@@ -1828,9 +1275,6 @@
   mutable std::vector<std::string> resolved_keybindings_disabled_ids_snapshot_;
   mutable std::size_t resolved_keybindings_reload_generation_ = std::numeric_limits<std::size_t>::max();
   mutable std::uint64_t resolved_keybindings_settings_revision_ = std::numeric_limits<std::uint64_t>::max();
-  // Resolved plugin status-item view, rebuilt only when the host's status items
-  // change. ComputeVisibleStatusItems runs per frame from the render, hit-test,
-  // and hover paths, so this avoids re-copying + re-sorting on every call.
   mutable StatusItemCache status_item_cache_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
   project::ProjectChangeCoalescer project_change_coalescer_;
@@ -1841,22 +1285,8 @@
   PatchApplyService patch_apply_service_{project_background_executor_, git_repository_service_};
   CommitWorkflowService commit_workflow_service_{project_background_executor_, git_repository_service_};
   GitOperationService git_operation_service_{project_background_executor_};
-  // Async compare/ref picker: the blocking git history/branch queries run on the
-  // background executor and marshal results back through this mailbox (wake reuses
-  // git_sidebar_event_type_, drained in ConsumeGitSidebarRefresh). The generation
-  // is process-monotonic; each open stamps it into the picker state so a stale
-  // completion (overlay closed, project switched, newer open) is dropped instead
-  // of populating the wrong list. Main-thread-only. Providers default to the real
-  // free functions; tests inject fakes to exercise the loading/stale paths.
   util::MainThreadMailbox compare_picker_mailbox_;
   std::uint64_t compare_picker_generation_ = 0;
-  // Dedicated lane for latency-sensitive interactive queries (the compare/ref
-  // picker git history/branch/commit lookups). Kept OFF project_background_executor_
-  // so a picker open never queues behind an in-flight sidebar `git status` refresh
-  // (the single serial worker would otherwise serialize them, adding that refresh's
-  // full latency before the picker can populate). Shut down explicitly in the
-  // WorkspaceShell dtor before this member is destroyed so any in-flight job finishes
-  // posting into compare_picker_mailbox_ while it is still alive.
   project::ProjectBackgroundExecutor interactive_background_executor_;
   std::function<project::GitFileHistoryResult(const std::filesystem::path& root,
                                               const std::filesystem::path& path)>
@@ -1866,37 +1296,17 @@
   std::function<std::vector<project::GitCommitEntry>(const std::filesystem::path& root,
                                                     std::size_t limit)>
       compare_picker_recent_commits_provider_;
-  // Dedicated lane for plugin raster decode (TD-2026-07-17-044). Kept OFF
-  // project_background_executor_ so a plugin flooding image decodes cannot queue
-  // ahead of core git/diff/merge/project-state work on the single shared serial
-  // worker. Decode tasks capture the cache's sink (shared_ptr), never `this`, so
-  // this executor destructing after the cache is safe.
   project::ProjectBackgroundExecutor media_background_executor_;
-  // Host-owned cache of plugin-published raster surfaces (Phase E). Declared after
-  // the executor so it tears down first, while the executor is still alive.
   render::SurfaceTextureCache surface_texture_cache_{media_background_executor_};
   std::mutex save_tab_mutex_;
   std::unique_ptr<platform::FileIndexWatcher> file_index_watcher_;
   std::atomic<std::uint64_t> file_index_watcher_generation_{0};
   std::atomic<bool> file_index_has_pending_changes_{false};
-  // Forced full-rescan (manual sidebar refresh / exclude-glob edit) runs the whole-
-  // tree scan + per-file stat on project_background_executor_ and marshals the sorted
-  // result back here (wake reuses project_file_event_type_, drained in
-  // ReloadProjectIfFilesChanged). The apply drops a scan whose project was switched
-  // away (root mismatch). Keeps TD-2026-07-17-081/082 off the shell thread.
   util::MainThreadMailbox file_index_refresh_mailbox_;
-  // Off-thread project-wide replace-all (TD-2026-07-17-021 / TD-2026-07-16-21): the
-  // read/replace/buffer/atomic-write phases run on project_background_executor_; the
-  // outcome is applied on the main thread via this mailbox (wake + drain reuse
-  // project_file_event_type_ / ReloadProjectIfFilesChanged). The generation supersedes
-  // a stale apply after a newer replace, and the apply is dropped on a project switch.
   util::MainThreadMailbox project_replace_mailbox_;
   std::uint64_t project_replace_generation_ = 0;
   std::atomic<bool> file_index_initial_build_in_flight_{false};
   std::atomic<bool> project_file_event_pending_{false};
-  // "The index holds only a prefix of this project" toast. Set on the watcher
-  // thread by a truncated initial batch, consumed on the shell thread in
-  // ReloadProjectIfFilesChanged (TD-2026-08-15-252).
   std::atomic<bool> project_index_truncated_notice_pending_{false};
   WorkspacePluginRuntime plugin_runtime_;
   std::size_t reload_plugins_invocation_count_ = 0;
@@ -1904,39 +1314,19 @@
   std::size_t render_compare_surface_invocation_count_ = 0;
   std::optional<WorkspaceLayout> prepared_frame_layout_;
   mutable TabStripService tab_strip_service_;
-  // `CurrentWorkspaceLayout()` memo, keyed on every input the layout reads, so it
-  // cannot go stale (TD-2026-08-30-280). `mutable`: the query is const and every
-  // hit test, cursor-kind resolve and redraw-rect helper asks through it. The
-  // generation counts recomputes; frame prep reads it to learn the layout moved.
   mutable std::optional<WorkspaceLayoutInputs> layout_memo_inputs_;
   mutable WorkspaceLayout layout_memo_{};
   mutable std::uint64_t layout_memo_generation_ = 0;
-  // `ComputeEditorGroupRectsForState()` memo, valid for one (layout VALUE, split
-  // tree revision) pair -- the value rather than the generation above because the
-  // divider drag hands in a preview layout that is not the current one.
   mutable std::optional<WorkspaceLayout> editor_group_rects_memo_layout_;
   mutable std::uint64_t editor_group_rects_memo_tree_revision_ = 0;
   mutable EditorGroupRectsLayout editor_group_rects_memo_{};
   std::size_t prepare_frame_layout_compute_count_ = 0;
   bool prepared_frame_draw_editor_caret_ = false;
-  // Per-frame paint decisions and what the last frame painted (render/PreparedFrameState.h).
   PreparedFrameState frame_state_;
   std::uint64_t prepared_frame_id_ = 0;
-  // Frame-scoped memo for the menu's LSP-readiness probe. Menu layout, each row's
-  // label and each row's enablement all asked for readiness independently, and every
-  // ask locks the active LspClient's mutex (shared with its reader thread) and copies
-  // the snapshot's std::string — so an open menu paid O(rows) locks per frame for a
-  // value that is frame-stable. Between frames the memo returns what the user is
-  // actually looking at, which is the right answer for a click on a painted row.
-  // Not the status bar's probe: that one stays live, and it is what pumps
-  // ExpireTrackedLspRequestIfNeeded every frame.
-  // Reused across popups and frames by the menu paint path; see
-  // ComputeVisiblePopupMenuItemsInto. Menu popups paint one at a time.
   mutable std::vector<VisiblePopupMenuItem> menu_popup_rows_scratch_;
   mutable LspClient::ReadinessSnapshot menu_lsp_readiness_{};
   mutable std::uint64_t menu_lsp_readiness_frame_id_ = 0;
-  // `BuildFrameSurface` / `BuildOverlaySurface` are shared across `RenderClip` iterations (partial
-  // redraw) and between `RenderFrameBase` + `RenderActiveWorkspaceSurface` within one clip.
   mutable bool clip_frame_overlay_view_models_valid_ = false;
   mutable std::uint64_t clip_frame_overlay_view_models_frame_id_ = 0;
   mutable WorkspaceLayout clip_frame_overlay_view_models_layout_{};
@@ -1946,12 +1336,7 @@
   mutable std::optional<BottomPanelSurfaceViewModel> prepare_cached_bottom_panel_vm_;
   mutable std::optional<DebugPaneSurfaceViewModel> prepare_cached_debug_pane_vm_;
   mutable std::optional<TextInputSurfaceViewModel> prepare_cached_text_input_vm_;
-  // Last bottom-panel rect for which ResizeTerminalToPanel was invoked. When
-  // the panel rect is unchanged between frames there's nothing to recompute,
-  // so we skip the call entirely. Reset when no terminal is active.
   std::optional<SDL_FRect> last_terminal_panel_rect_;
-  // (active tab, its pane layout revision) the grid was last fitted for, so a tab
-  // switch, a split or a divider move re-grids without asking every pane.
   std::uint64_t last_terminal_grid_key_ = 0;
   WorkspaceOutputChannels output_channels_;
   FormatterRegistry formatter_registry_;
@@ -1959,11 +1344,6 @@
   CompletionRegistry completion_registry_;
   CodeActionRegistry code_action_registry_;
   ToolRegistry tool_registry_;
-  // NOTE: no ToolDownloader member. The downloader is implemented but not wired to
-  // any command or plugin surface yet (see README "not exercised against production
-  // tool catalogs"), and holding one here was not free: its ProjectBackgroundExecutor
-  // starts its worker thread EAGERLY, so every shell paid an idle OS thread for a
-  // feature nothing could invoke. Construct one where the feature is wired up.
   TestController test_controller_;
   ScmRegistry scm_registry_;
   AnnotationRegistry annotation_registry_;
@@ -1981,10 +1361,6 @@
   project::FileReadService file_read_service_;
   SettingsOverlayService settings_overlay_service_;
   QuickPickService quick_pick_service_;
-  // Terminal find bar. All of its state, scanning, and match navigation live in
-  // the service; what stays here are the two input entry points, which have to
-  // run ahead of the terminal's own key/mouse handling because the bar floats
-  // over it. Both are defined in WorkspaceTextInputCoordinatorTerminal.cpp.
   TerminalFindService terminal_find_service_;
   bool HandleTerminalFindKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleTerminalFindMouseDown(float x, float y);
@@ -2002,37 +1378,17 @@
     int font_size = 0;
     bool soft_tabs = false;
     bool soft_wrap = false;
-    // WorkspaceLanguageContract::SettingsFingerprint: the overrides and toggles.
     std::string language_contract_inputs;
     std::optional<std::string> save_trim_trailing_whitespace;
     std::optional<std::string> save_ensure_final_newline;
   };
   std::optional<LiveSettingsEditorSnapshot> last_live_settings_editor_snapshot_;
-  // Settings-store revision last consumed by ApplyLiveSettings. The store bumps
-  // its revision on every mutation/reset/layer-bind (project switch, config load),
-  // so the settings-derived block runs only when something resolvable changed —
-  // steady-state ApplyLiveSettings is then a single integer compare. The max
-  // sentinel forces the first apply (real revisions start at 1).
   std::uint64_t last_applied_settings_revision_ = std::numeric_limits<std::uint64_t>::max();
-  // Cached resolution of "chrome.project_tabs.hide_when_single" for
-  // ProjectTabStripVisible(). That predicate runs inside the uncached ComputeLayout
-  // on the per-mouse-move window-drag hit-test path, so the string-keyed
-  // GetSettingValue lookup (plus its default-value allocation) is memoized and
-  // re-resolved only when the settings-store revision changes. The max sentinel
-  // forces the first resolve.
   mutable std::uint64_t project_tabs_hide_when_single_revision_ = std::numeric_limits<std::uint64_t>::max();
   mutable bool project_tabs_hide_when_single_ = false;
-  // Last terminal scrollback cap pushed to live sessions; -1 forces the first apply.
   int last_applied_terminal_scrollback_ = -1;
-  // Last-applied value of "project.follow_out_of_root_symlinks". Defaults to the
-  // setting default (false) so a live toggle re-scans the tree/index exactly once.
   bool last_applied_follow_out_of_root_symlinks_ = false;
-  // Last-applied raw value of "project.files_exclude" so a live edit re-applies the
-  // exclude globs and re-scans exactly once (empty default matches an unset setting).
   std::string last_applied_files_exclude_;
-  // Ceiling on the aggregate modified-content Replace-All buffers before writing.
-  // Above it the operation aborts (surfacing an error) rather than risk OOM. A
-  // member (not a local constant) so tests can lower it without a huge fixture.
   std::size_t replace_all_aggregate_cap_bytes_ = 512ull * 1024 * 1024;
   util::WakeChannel git_blame_event_type_ = 0;
   util::WakeChannel git_sidebar_event_type_ = 0;
@@ -2061,71 +1417,29 @@
   NativePickerState project_dialog_state_;
   NativePickerState open_file_dialog_state_;
   FontFileDialogState font_file_dialog_state_;
-  // Installed font families for the settings font picker, enumerated lazily on the
-  // first picker open (scanning the system is not cheap) and reused thereafter.
   std::vector<std::string> cached_font_families_;
   bool font_families_cached_ = false;
   bool quit_requested_ = false;
   WorkspaceStartupOptions startup_options_;
   std::vector<std::string> available_colorscheme_names_;
-  // Backs `available_colorscheme_names_`'s filesystem half. Rebuilding the picker
-  // runs on every project switch to pick up plugin themes; the memo keeps that
-  // from re-walking the themes directory each time (see render::ThemeNameCatalog).
   render::ThemeNameCatalog theme_name_catalog_;
   float ui_scale_ = 1.0f;
   float presentation_scale_x_ = 1.0f;
   float presentation_scale_y_ = 1.0f;
   WindowAction pending_window_action_ = WindowAction::None;
   Uint64 caret_blink_epoch_ms_ = 0;
-  // "After delay" autosave debounce state. `autosave_edit_epoch_ms_` marks the last
-  // detected buffer edit; the timer is armed only while a dirty, path-backed buffer is
-  // active and re-armed on each edit (tracked via content_revision) so we save once the
-  // buffer settles rather than mid-keystroke.
   Uint64 autosave_edit_epoch_ms_ = 0;
   std::uint64_t autosave_last_content_revision_ = 0;
-  // Identity of the viewport `autosave_last_content_revision_` was sampled from.
-  // content_revision() is per-viewport, so this lets MaybeArmAutosaveTimer tell a
-  // genuine edit apart from a tab switch (which re-baselines the sample rather than
-  // resetting the debounce or disarming a pending flush).
   const editor::TextViewport* autosave_last_viewport_ = nullptr;
   bool autosave_armed_ = false;
-  // Crash-safety session-flush debounce (see MaybeArmSessionFlushTimer). Independent of
-  // the autosave debounce above so it stays always-on regardless of the autosave setting
-  // and covers untitled/path-less dirty buffers too.
   CrashSafetyFlushSchedule session_flush_;
-  // What MaybeArmSessionFlushTimer last saw of every open editor document.
   std::uint64_t session_flush_content_fingerprint_ = 0;
-  // The focused text input's visual (its field's text, caret and selection, or the
-  // editor's caret for an IME preedit), resolved once per prepared frame: the
-  // prompt's field and the text-input overlays paint it, and the IME's area
-  // follows it.
   std::optional<TextInputVisual> prepared_text_input_visual_;
   RenderInvalidation pending_render_invalidation_;
-  // Bumped by every damage request, including one a pending full redraw absorbs;
-  // see MarkDamage.
   DamageMark damage_generation_ = 0;
   int post_render_redraws_remaining_ = 0;
   CursorKind cursor_kind_ = CursorKind::Default;
-  // When set, the next UpdateMouseCursor bypasses both the fingerprint and the
-  // unchanged-kind short-circuits and forces the platform cursor to be re-shown.
-  // See ForceCursorReassert.
   bool force_cursor_reassert_ = false;
-  // Cached fingerprint that lets the per-frame UpdateMouseCursor short-circuit the
-  // expensive CursorKindForPosition hit-test when nothing relevant changed.
-  //
-  // The cursor only needs recomputing when (a) the pointer moved, or (b) something
-  // that affects cursor geometry/state changed. Proxy for (b): a redraw was
-  // requested. EVERY redraw path bumps cursor_hit_generation_ — partial redraws
-  // through RequestRedrawRect/RequestFullRedraw/NoteLayoutInputsChanged, and full-redraw
-  // EventResult literals via the Application apply choke point (which calls
-  // InvalidateCursorKindFingerprint when applying redraw.full). The lone exception
-  // is the idle caret-blink partial redraw, which deliberately does NOT bump the
-  // generation so a stationary pointer keeps skipping the hit-test while only the
-  // caret toggles. This makes the previous 20+ hand-maintained scalar fields
-  // redundant: if a cursor-relevant surface changed, a redraw bumped the generation;
-  // if nothing redrew, UpdateMouseCursor never ran. Tracking x/y plus the two
-  // generations is therefore exact — and cannot silently under-specify the way the
-  // hand-maintained allowlist did (the long-standing stale-cursor bug).
   struct CursorKindFingerprint {
     float x = 0.0f;
     float y = 0.0f;
@@ -2136,11 +1450,6 @@
   CursorKindFingerprint cursor_kind_fingerprint_{};
   std::uint32_t cursor_hit_generation_ = 0;
   std::uint32_t editor_hover_target_generation_ = 0;
-  // One lazily-created system cursor per CursorKind, OWNED. These were twelve raw
-  // pointers that nothing ever destroyed: an SDL cursor is a heap object, so a
-  // shell that had shown a text or resize cursor leaked one per kind at teardown.
-  // With one shell per process that is a shutdown leak; under the test suite it is
-  // one leak per shell, which is what ASAN reported.
   struct SdlCursorDeleter {
     void operator()(SDL_Cursor* cursor) const;
   };
@@ -2148,20 +1457,10 @@
   float last_mouse_x_ = 0.0f;
   float last_mouse_y_ = 0.0f;
   bool last_mouse_position_valid_ = false;
-  // One terminal row's paint plan, reused row to row (TerminalRowPaint).
   mutable TerminalRowPaintPlan terminal_row_plan_;
-  // Reused per-row scratch for compare/merge surface rendering (mirrors
-  // EditorViewRenderer::scratch_row_): BuildDecoratedRow clears these before
-  // filling, so reuse keeps the per-visible-row path allocation-free.
-  // Row fill spans for one compare right-pane row: the primary selection, each
-  // secondary caret's selection, and the bracket-match cells. Reused so a
-  // multi-caret set costs no per-row allocation.
   std::vector<editor::RowFillSpan> compare_right_fill_scratch_;
   editor::DecoratedTextRow compare_left_scratch_row_;
   editor::DecoratedTextRow compare_right_scratch_row_;
-  // Render-whitespace markers for the compare panes, reused per row like the
-  // scratch rows above: the markers are pre-positioned fills, so they are built
-  // per painted row and must not allocate on a scroll (TD-2026-08-13-206).
   std::vector<editor::DecoratedTextFill> compare_whitespace_scratch_;
   editor::DecoratedTextRow merge_incoming_scratch_row_;
   editor::DecoratedTextRow merge_current_scratch_row_;

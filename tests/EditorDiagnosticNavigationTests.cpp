@@ -8,23 +8,6 @@
 #include <string>
 #include <vector>
 
-// Go to next / previous diagnostic.
-//
-// WorkspaceActionContext::StepDiagnostic is a self-contained wrap-around search
-// over a file's published diagnostics, and it had no test at any level: neither
-// ActionId::GoToNextDiagnostic nor its command name `next-diagnostic` appeared
-// anywhere in tests/, and StepDiagnostic itself had no direct caller in a test.
-//
-// The properties below are what the scan actually promises. Two of them are
-// documented in its own comment and neither was checked: the search is STRICTLY
-// after (or before) the caret, so a diagnostic sitting exactly at the caret is
-// stepped past rather than re-selected; and when nothing qualifies it wraps to
-// the first (or last) rather than standing still.
-//
-// The list is deliberately unsorted in the fixture. StepDiagnostic does a linear
-// scan with min/max tracking precisely so it does not depend on store order, and
-// a fixture in sorted order would pass even if it did.
-
 namespace microide::tests {
 namespace {
 
@@ -41,8 +24,6 @@ struct Caret {
   }
 };
 
-// Diagnostic start positions in the fixture, in DOCUMENT order (not the order
-// they are published in).
 const std::vector<Caret>& ExpectedOrder() {
   static const std::vector<Caret> kOrder = {{2, 4}, {5, 0}, {5, 9}, {11, 2}, {20, 7}};
   return kOrder;
@@ -66,7 +47,6 @@ struct DiagnosticFixture {
     WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 800);
     WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
 
-    // Published out of document order on purpose.
     const std::vector<Caret> published = {{11, 2}, {2, 4}, {20, 7}, {5, 9}, {5, 0}};
     std::vector<Diagnostic> diagnostics;
     for (std::size_t i = 0; i < published.size(); ++i) {
@@ -94,11 +74,6 @@ struct DiagnosticFixture {
     return {viewport->cursor_line(), viewport->cursor_column()};
   }
 
-  // Driven through the ACTION, not StepDiagnostic directly: the command wiring
-  // is the part that had no coverage, and this way one test covers both. The
-  // return value is deliberately ignored -- a rejection travels through
-  // command-line plumbing whose bool means "the rejection was handled", not
-  // "the step succeeded". The caret is the unambiguous observable.
   void Step(int delta) {
     WorkspaceShellTestAccess::ExecuteAction(
         shell,
@@ -116,7 +91,6 @@ void TestNextVisitsEveryDiagnosticInDocumentOrder() {
     Expect(fixture.caret() == expected,
            "next should visit diagnostics in document order regardless of publish order");
   }
-  // One more wraps back to the first.
   fixture.Step(1);
   Expect(fixture.caret() == ExpectedOrder().front(),
          "next from the last diagnostic should wrap to the first");
@@ -124,7 +98,6 @@ void TestNextVisitsEveryDiagnosticInDocumentOrder() {
 
 void TestPreviousVisitsEveryDiagnosticInReverse() {
   DiagnosticFixture fixture;
-  // Past the last diagnostic, so the first Previous lands on it.
   fixture.PlaceCaret(29, 0);
   for (auto it = ExpectedOrder().rbegin(); it != ExpectedOrder().rend(); ++it) {
     fixture.Step(-1);
@@ -136,9 +109,6 @@ void TestPreviousVisitsEveryDiagnosticInReverse() {
 }
 
 void TestADiagnosticAtTheCaretIsSteppedPast() {
-  // The scan is documented as STRICTLY after/before, so standing exactly on a
-  // diagnostic and pressing next must advance rather than re-select it. This is
-  // what stops the keystroke looking dead when the caret is already on a problem.
   DiagnosticFixture fixture;
   const std::vector<Caret>& order = ExpectedOrder();
   for (std::size_t i = 0; i < order.size(); ++i) {
@@ -156,10 +126,6 @@ void TestADiagnosticAtTheCaretIsSteppedPast() {
 }
 
 void TestNextAndPreviousAreInversesOnADiagnostic() {
-  // Standing ON a diagnostic, next-then-previous returns to it. (From a position
-  // that is NOT a diagnostic this does not hold, and deliberately is not
-  // asserted: next lands on the nearest one after, and previous from there is
-  // the nearest before IT, which can be behind where you started.)
   DiagnosticFixture fixture;
   for (const Caret& start : ExpectedOrder()) {
     fixture.PlaceCaret(start.line, start.column);
@@ -181,8 +147,6 @@ void TestSteppingTheWholeCycleReturnsToStart() {
 }
 
 void TestStepFailsWithNoDiagnostics() {
-  // No diagnostics published: the step must report failure (which is what raises
-  // "No problems in this file") rather than moving the caret anywhere.
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   std::filesystem::create_directories(root);
@@ -208,9 +172,6 @@ void TestStepFailsWithNoDiagnostics() {
 }
 
 void TestSingleDiagnosticIsStableUnderRepeatedSteps() {
-  // With one diagnostic there is nowhere else to go, so every step lands back on
-  // it -- including from the diagnostic itself, where the strictly-after search
-  // finds nothing and falls through to the wrap candidate.
   DiagnosticFixture fixture;
   Diagnostic only;
   only.range.start = {7, 3};
@@ -228,10 +189,6 @@ void TestSingleDiagnosticIsStableUnderRepeatedSteps() {
   }
 }
 
-// F8 / Shift+F8 (VS Code's Go to Next / Previous Problem): every file's problems
-// in path order, opening the next file when the active one has no more, and
-// wrapping at the ends. F8 used to start the debugger -- which, with debugging
-// off, only toasted "Debugging is disabled" (QA, notifications exploration).
 void TestF8StepsThroughProblemsAcrossFiles() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -277,7 +234,7 @@ void TestF8StepsThroughProblemsAcrossFiles() {
   Expect(where() == "b.cpp:1", "Shift+F8 should wrap back to the last problem, got " + where());
 }
 
-}  // namespace
+}
 
 void RegisterEditorDiagnosticNavigationTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorDiagnosticNavigation/F8StepsThroughProblemsAcrossFiles",
@@ -298,4 +255,4 @@ void RegisterEditorDiagnosticNavigationTests(std::vector<TestCase>& tests) {
           TestSingleDiagnosticIsStableUnderRepeatedSteps);
 }
 
-}  // namespace microide::tests
+}

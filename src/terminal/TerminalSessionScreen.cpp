@@ -24,10 +24,6 @@ namespace microide::terminal {
 void TerminalSession::EnsureCursorLineExistsLocked() {
   if (lines_.size() <= cursor_row_) {
     const std::size_t grew = cursor_row_ + 1 - lines_.size();
-    // Not `resize`: each new line takes a recycled cell buffer when one is
-    // waiting, so the growth that follows a trim reuses the trim's own storage
-    // instead of walking std::vector's doubling curve from empty
-    // (TD-2026-08-14-231).
     for (std::size_t i = 0; i < grew; ++i) {
       lines_.push_back(line_buffer_pool_.Take());
     }
@@ -48,8 +44,6 @@ void TerminalSession::SaveCursorLocked() {
 }
 
 void TerminalSession::RestoreCursorLocked() {
-  // DECRC restores the graphic rendition and origin mode saved by DECSC before the
-  // cursor move (origin mode affects how MoveCursorLocked clamps the row).
   current_style_ = saved_style_;
   pen_underline_color_ = saved_underline_color_;
   current_extra_ = InternExtraLocked(pen_link_uri_, pen_underline_color_);
@@ -59,9 +53,6 @@ void TerminalSession::RestoreCursorLocked() {
 }
 
 void TerminalSession::SaveActiveScreenMetadataLocked(TerminalScreenState& screen) {
-  // Persist only the cheap scalar cursor / scroll-region state. The line buffer
-  // is handled separately by the caller so the alternate-screen transition can
-  // move the (potentially multi-MB) scrollback instead of copying it.
   screen.cursor_row = cursor_row_;
   screen.cursor_column = cursor_column_;
   screen.saved_cursor_row = saved_cursor_row_;
@@ -81,10 +72,6 @@ void TerminalSession::SaveActiveScreenLocked() {
 }
 
 void TerminalSession::RestoreSavedScreenLocked() {
-  // Move the saved buffer into the active grid: the backing store is only read
-  // here and is rewritten on the next alternate-screen enter, so there is never
-  // a second live reference to copy for. `SaveActiveScreenLocked`/`SetAlternate-
-  // ScreenLocked` are the sole callers (no aliasing concern).
   TerminalScreenState& screen = use_alternate_screen_ ? alternate_screen_ : primary_screen_;
   if (screen.lines.empty()) {
     lines_ = std::deque<TerminalLine>{TerminalLine{}};
@@ -111,14 +98,6 @@ void TerminalSession::RestoreSavedScreenLocked() {
   if (use_alternate_screen_ && rows_ > 0) {
     cursor_row_ = std::min(cursor_row_, rows_ - 1);
   } else {
-    // TD-2026-07-17-067: the primary restore trusts the saved cursor_row_ and then
-    // allocates lines up to it via EnsureCursorLineExistsLocked. An oversized or
-    // corrupted saved row would balloon the deque, so clamp to the same scrollback
-    // ceiling MoveCursorLocked enforces (max_scrollback_lines_ + rows_) — exactly
-    // what TrimScrollbackLocked would collapse to anyway. The alternate branch above
-    // already clamps to rows_ - 1. This clamp is deliberately NOT inside
-    // EnsureCursorLineExistsLocked: the normal scroll path grows the deque past this
-    // ceiling within one output chunk and relies on end-of-chunk trimming.
     const std::size_t max_row = max_scrollback_lines_ + std::max<std::size_t>(1, rows_);
     cursor_row_ = std::min(cursor_row_, max_row);
   }
@@ -140,23 +119,16 @@ void TerminalSession::ResetScreenLocked(bool fill_rows) {
 }
 
 void TerminalSession::SetAlternateScreenLocked(bool enabled, bool clear) {
-  pointer_.hover.Reset();  // a probed row of the other screen describes nothing here
+  pointer_.hover.Reset();
   if (enabled) {
     bool should_clear = clear;
     if (!use_alternate_screen_) {
-      // Whether the alternate screen has never been initialized. Captured before
-      // the move below empties the backing store (the move replaces the copy the
-      // original implementation relied on to read this after the restore).
       should_clear = should_clear || alternate_screen_.lines.empty();
-      // Hand the primary scrollback to its backing store by move (O(1)); the
-      // active grid is about to be replaced by the alternate buffer anyway.
       SaveActiveScreenMetadataLocked(primary_screen_);
       primary_screen_.lines = std::move(lines_);
       use_alternate_screen_ = true;
-      RestoreSavedScreenLocked();  // moves alternate_screen_.lines into lines_
+      RestoreSavedScreenLocked();
     } else {
-      // Already on the alternate screen: a redundant enter. Snapshot the current
-      // alternate grid so a later restore sees the latest contents.
       SaveActiveScreenLocked();
       should_clear = should_clear || alternate_screen_.lines.empty();
     }
@@ -171,12 +143,10 @@ void TerminalSession::SetAlternateScreenLocked(bool enabled, bool clear) {
     return;
   }
 
-  // Hand the alternate grid back to its store by move, then move the primary
-  // scrollback back into the active grid.
   SaveActiveScreenMetadataLocked(alternate_screen_);
   alternate_screen_.lines = std::move(lines_);
   use_alternate_screen_ = false;
-  RestoreSavedScreenLocked();  // moves primary_screen_.lines into lines_
+  RestoreSavedScreenLocked();
 }
 
 void TerminalSession::AdvanceCursorRowLocked(bool wrapped_from_previous) {
@@ -202,20 +172,11 @@ void TerminalSession::AdvanceCursorRowLocked(bool wrapped_from_previous) {
       return;
     }
     if (cursor_row_ + 1 >= terminal_rows) {
-      // The cursor is OUTSIDE the scroll region (a custom DECSTBM region that does
-      // not reach the physical bottom) and on the last physical row. Per DEC/xterm,
-      // IND/LF here does NOT scroll — only motion inside the region scrolls. The
-      // previous ScrollRegionUpLocked(0, rows-1, 1) scrolled the WHOLE screen,
-      // corrupting a header/status-split layout. Clamp at the bottom instead.
       cursor_column_ = 0;
       EnsureCursorLineExistsLocked();
       return;
     }
   } else if (HasCustomScrollRegionLocked()) {
-    // Primary buffer with a custom DECSTBM region (e.g. a bottom-status-line
-    // program that stays off the alternate screen). Respect the region instead of
-    // accumulating scrollback across it. Without a custom region we fall through
-    // to the normal grow-scrollback path below (the common, well-tested case).
     const std::size_t terminal_rows = std::max<std::size_t>(1, rows_);
     const std::size_t screen_top = PrimaryScreenTopLocked();
     const std::size_t rel_top = ActiveScrollRegionTopLocked();
@@ -236,28 +197,15 @@ void TerminalSession::AdvanceCursorRowLocked(bool wrapped_from_previous) {
       lines_[cursor_row_].wrapped_from_previous = wrapped_from_previous;
       return;
     }
-    // Cursor below the region: clamp at the physical screen bottom (no scroll),
-    // matching the alt-screen rule above.
     if (cursor_row_ > region_bottom_abs && cursor_row_ + 1 >= screen_top + terminal_rows) {
       cursor_column_ = 0;
       EnsureCursorLineExistsLocked();
       return;
     }
-    // Otherwise (above the region, or below it but not yet at the bottom) fall
-    // through to the plain advance.
   }
 
   ++cursor_row_;
   cursor_column_ = 0;
-  // Stamp the soft-wrap flag when the row is freshly created, OR whenever this
-  // advance is itself a soft wrap (auto-wrap at the right margin): the row the
-  // wrapped glyph lands on is, by definition, a continuation of the previous row
-  // even if that row already existed (cursor was moved up into mid-screen, then a
-  // long line was printed that wraps onto an existing row below). Only a *hard* LF
-  // (wrapped_from_previous == false) landing on a pre-existing row is left
-  // untouched, so it never relabels an existing soft-wrapped continuation as a
-  // hard boundary. Getting this wrong split the wrapped logical line in two for
-  // reflow / command capture / selection-by-logical-line.
   const bool row_existed = cursor_row_ < lines_.size();
   EnsureCursorLineExistsLocked();
   if (!row_existed || wrapped_from_previous) {
@@ -274,16 +222,6 @@ std::size_t TerminalSession::PrimaryScreenTopLocked() const {
 }
 
 void TerminalSession::MoveCursorLocked(std::size_t row, std::size_t column) {
-  // Rows are deque rows, and the screen starts at PrimaryScreenTopLocked() (0 on
-  // the alternate screen). A move (CUP, CUD `CSI B`, CNL `CSI E`, VPA, DECRC)
-  // stops at the screen's bottom row, as in xterm: a cursor move never scrolls,
-  // and a stream of `\x1b[65535B` cannot balloon the line deque on the reader
-  // thread. Under origin mode (DECOM) it stays inside the scroll region, on
-  // either screen. The primary ceiling was `max_scrollback_lines_ + rows_`, the
-  // deque's size only AFTER the end-of-chunk trim, so in one chunk carrying more
-  // lines than the scrollback holds (`cat big.log; clear`) a CUP to the screen's
-  // top landed thousands of rows up in history, and CUD on the bottom row grew
-  // the deque.
   const std::size_t screen_top = PrimaryScreenTopLocked();
   const std::size_t min_row = origin_mode_ ? screen_top + ActiveScrollRegionTopLocked() : 0;
   const std::size_t max_row = screen_top + (origin_mode_ ? ActiveScrollRegionBottomLocked()
@@ -294,13 +232,11 @@ void TerminalSession::MoveCursorLocked(std::size_t row, std::size_t column) {
 }
 
 void TerminalSession::PutGlyphLocked(std::string_view glyph) {
-  // Fast path: a single ASCII byte is always one column, so skip UTF-8 decoding
-  // and the width tables entirely for the overwhelmingly common case.
   const bool ascii = glyph.size() == 1 && static_cast<unsigned char>(glyph.front()) < 0x80;
   std::string_view effective_glyph = glyph;
   int width;
   if (ascii) {
-    width = 1;  // DEC Special Graphics maps a byte to one column too
+    width = 1;
     if (charsets_.DecGraphicsActive()) {
       if (const std::string_view mapped = DecSpecialGraphicsGlyph(static_cast<unsigned char>(glyph.front()));
           !mapped.empty()) {
@@ -309,20 +245,12 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
     }
   } else {
     const char32_t codepoint = util::DecodeUtf8Codepoint(glyph);
-    // A multibyte sequence that decodes to U+FFFD is malformed (overlong form,
-    // surrogate, or out-of-range). Store the replacement character instead of the
-    // raw invalid bytes so the cell always holds valid UTF-8 (a genuine U+FFFD
-    // encodes to those same bytes, so this substitution is a no-op for it).
     if (codepoint == 0xFFFD) {
       effective_glyph = util::kUtf8ReplacementChar;
     }
     width = util::CodepointDisplayWidth(codepoint);
   }
 
-  // Zero-width (combining marks, variation selectors, joiners): attach to the
-  // previously written cell instead of consuming a column, so accents and emoji
-  // modifiers stay with their base glyph. Dropped if it would overflow the
-  // 4-byte inline cell or there is no base cell yet.
   if (width == 0) {
     if (cursor_column_ == 0) {
       return;
@@ -330,11 +258,6 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
     EnsureCursorLineExistsLocked();
     auto& line = lines_[cursor_row_];
     std::size_t base = cursor_column_ - 1;
-    // A double-width base glyph advanced the cursor by two and left a
-    // wide-trailing spacer in the column just behind it. The mark belongs to the
-    // lead cell one column further back — the spacer holds no bytes, so the
-    // `cell.length > 0` guard below silently dropped every combining mark that
-    // followed a wide glyph (2026-07-10 pass).
     if (base > 0 && base < line.cells.size() && line.cells[base].style.wide_trailing()) {
       --base;
     }
@@ -350,29 +273,15 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
   }
 
   std::size_t advance = width == 2 ? 2 : 1;
-  // A screen narrower than the glyph has nowhere to put its second column, and
-  // wrapping does not help -- the next row is exactly as narrow. Write it as a
-  // single cell, which is what the no-autowrap branch below already does for a
-  // glyph that will not fit.
-  //
-  // Without this the wrap below "made room" that does not exist: on a one-column
-  // terminal a double-width glyph advanced the cursor to column 2 and sized the
-  // line to two cells, so cursor_column() reported a column the screen does not
-  // have and the caret drew outside the pane. A one-column terminal is reachable
-  // by dragging the panel divider, and a CJK prompt puts a wide glyph there on
-  // the first keystroke.
   if (columns_ > 0 && advance > columns_) {
     advance = columns_;
   }
 
-  // Ensure the whole glyph fits on the current row before writing. A
-  // double-width glyph cannot straddle the right margin.
   if (columns_ > 0 && cursor_column_ + advance > columns_) {
     if (auto_wrap_mode_) {
       AdvanceCursorRowLocked(true);
     } else {
       cursor_column_ = columns_ - 1;
-      // Without autowrap a wide glyph degrades to a single overwrite in place.
       EnsureCursorLineExistsLocked();
       auto& line = lines_[cursor_row_];
       ResizeLineLocked(line, cursor_column_ + 1);
@@ -386,7 +295,6 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
   EnsureCursorLineExistsLocked();
   auto& line = lines_[cursor_row_];
   if (insert_mode_) {
-    // IRM: the glyph goes in front of the rest of the row, as after ICH.
     detail::InsertBlankCells(line, cursor_column_, advance, columns_, current_style_);
   }
   ResizeLineLocked(line, cursor_column_ + advance);
@@ -398,8 +306,6 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
   line.cells[cursor_column_] = MakeUtf8TerminalCell(effective_glyph, current_style_);
   line.cells[cursor_column_].extra = current_extra_;
   if (advance == 2) {
-    // Trailing spacer carries the lead's style (so background fills span both
-    // columns) plus the wide-trailing marker so the renderer skips painting it.
     TerminalCell spacer;
     spacer.style = current_style_;
     spacer.style.set(cell_attr::kWideTrailing, true);
@@ -410,9 +316,6 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
 }
 
 std::size_t TerminalSession::PutAsciiRunLocked(std::string_view run) {
-  // Longest prefix of bytes that PutGlyphLocked would each resolve to "one plain
-  // ASCII column": 0x20..0x7E. 0x7F (DEL) and everything below 0x20 are control
-  // bytes the per-byte switch handles, and >= 0x80 starts a UTF-8 sequence.
   std::size_t length = 0;
   while (length < run.size()) {
     const auto byte = static_cast<unsigned char>(run[length]);
@@ -421,16 +324,9 @@ std::size_t TerminalSession::PutAsciiRunLocked(std::string_view run) {
     }
     ++length;
   }
-  // Insert mode shifts the row per glyph, and DEC Special Graphics maps bytes to
-  // other glyphs: both are PutGlyphLocked's.
   if (length == 0 || insert_mode_ || charsets_.DecGraphicsActive()) {
     return 0;
   }
-  // Stop at the right margin. PutGlyphLocked defers the wrap to the NEXT write
-  // (it wraps when `cursor_column_ + advance > columns_`), so ending the run
-  // exactly at `columns_` reproduces its cursor state byte for byte. A cursor
-  // already at or past the margin means a wrap — or the no-autowrap overwrite —
-  // is due, so hand that byte back to the per-byte path that implements it.
   if (columns_ > 0) {
     if (cursor_column_ >= columns_) {
       return 0;
@@ -441,9 +337,6 @@ std::size_t TerminalSession::PutAsciiRunLocked(std::string_view run) {
   EnsureCursorLineExistsLocked();
   TerminalLine& line = lines_[cursor_row_];
   ResizeLineLocked(line, cursor_column_ + length);
-  // One break for the whole span is exactly equivalent to one per cell: an
-  // interior wide pair is fully overwritten by the run (no orphan to clear), so
-  // only the two edges can strand a half-pair.
   BreakWideGlyphPairForWriteLocked(line, cursor_column_, length);
 
   TerminalCell cell;
@@ -464,26 +357,6 @@ void TerminalSession::ResizeLineLocked(TerminalLine& line, std::size_t size) {
   if (line.cells.size() >= size) {
     return;
   }
-  // A line is written a RUN at a time, so letting the vector double its way to
-  // the line's width costs one allocation per doubling: ~8 for an 80-column line,
-  // ~11 measured. `TerminalLineBufferPool` already removed that for a line whose
-  // buffer came from a trimmed one — but the pool is empty until the scrollback
-  // reaches its cap, which is the whole first `max_scrollback_lines_` of every
-  // session and the entirety of `terminal.stream_chunked`. The pool fixed the
-  // steady state and left the fill (TD-2026-08-15-240).
-  //
-  // Reserve the terminal's width on the FIRST growth of an unpooled buffer, so
-  // the line allocates once and every later run on it is free. Capacity only —
-  // `size` still says how long the line is, which is what every reader means by
-  // it.
-  //
-  // This is the memory trade `TerminalLineBufferPool`'s comment declined, and the
-  // reason it is taken now is that the pool bounds it: a full-width buffer that
-  // scrolls out is rescued into the pool and handed to the next line rather than
-  // freed and regrown, so the width is paid once per live line rather than once
-  // per line of output. Only the first growth reserves, so a line that legitimately
-  // exceeds `columns_` (a resize narrowing the terminal under existing content)
-  // still just grows.
   if (line.cells.capacity() < size) {
     line.cells.reserve(std::max(size, columns_));
   }
@@ -495,11 +368,9 @@ void TerminalSession::BreakWideGlyphPairForWriteLocked(TerminalLine& line, std::
   if (advance == 0 || start >= line.cells.size()) {
     return;
   }
-  // Left edge: overwriting a trailing spacer orphans its lead one column back.
   if (line.cells[start].style.wide_trailing() && start > 0) {
     line.cells[start - 1] = MakeAsciiTerminalCell(' ', current_style_);
   }
-  // Right edge: overwriting a wide lead orphans its trailing spacer one column on.
   const std::size_t last = start + advance - 1;
   if (last + 1 < line.cells.size() && line.cells[last + 1].style.wide_trailing()) {
     line.cells[last + 1] = MakeAsciiTerminalCell(' ', current_style_);
@@ -512,8 +383,6 @@ void TerminalSession::ClearLineRangeLocked(TerminalLine& line, std::size_t start
   }
 
   ResizeLineLocked(line, end);
-  // Erasing half of a wide glyph erases all of it (xterm): a lead left without
-  // its spacer still painted two columns, over the erased one.
   BreakWideGlyphPairForWriteLocked(line, start, end - start);
   for (std::size_t i = start; i < end; ++i) {
     line.cells[i] = MakeAsciiTerminalCell(' ', current_style_);
@@ -525,19 +394,12 @@ void TerminalSession::EraseInLineLocked(int mode) {
   auto& line = lines_[cursor_row_];
   switch (mode) {
     case 1: {
-      // Clamp the erase end to the right margin: at the pending-wrap column
-      // (cursor_column_ == columns_) a bare cursor_column_ + 1 would grow the row
-      // one cell past the terminal width, mirroring the EL 2 fix below.
       const std::size_t end =
           columns_ > 0 ? std::min<std::size_t>(cursor_column_ + 1, columns_) : cursor_column_ + 1;
       ClearLineRangeLocked(line, 0, end);
       break;
     }
     case 2: {
-      // Erase the entire line: span the full terminal width, not just up to the
-      // cursor. Using cursor_column_ + 1 left a line shorter than the cursor only
-      // partly cleared and, at the pending-wrap column (cursor_column_ ==
-      // columns_), grew the line one cell past the right margin.
       const std::size_t end =
           columns_ > 0 ? std::max<std::size_t>(line.cells.size(), columns_) : line.cells.size();
       ClearLineRangeLocked(line, 0, end);
@@ -553,11 +415,6 @@ void TerminalSession::EraseInLineLocked(int mode) {
 }
 
 void TerminalSession::BlankLineToCurrentBackgroundLocked(TerminalLine& line) {
-  // Background Color Erase: an erase with a non-default background (an explicit
-  // background color, or reverse video which swaps in the foreground) must paint
-  // the blanked cells with that background. A default-background erase renders the
-  // same whether the row is empty or full of default-styled blanks, so keep the
-  // cheap empty reset for it to avoid materializing a full-width row per clear.
   const bool erases_to_default_background =
       !current_style_.background.has_value() && !current_style_.has(cell_attr::kInverse);
   if (erases_to_default_background || columns_ == 0) {
@@ -571,9 +428,6 @@ void TerminalSession::EraseInDisplayLocked(int mode) {
   EnsureCursorLineExistsLocked();
   switch (mode) {
     case 1: {
-      // Erase from the start of the *visible screen* to the cursor. On the primary
-      // buffer that start is the top of the viewport, not the top of scrollback —
-      // blanking absolute row 0 would destroy history above the screen.
       const std::size_t top = PrimaryScreenTopLocked();
       for (std::size_t row = top; row < cursor_row_ && row < lines_.size(); ++row) {
         BlankLineToCurrentBackgroundLocked(lines_[row]);
@@ -588,10 +442,6 @@ void TerminalSession::EraseInDisplayLocked(int mode) {
           BlankLineToCurrentBackgroundLocked(row);
         }
       } else {
-        // ED 2 erases the visible screen in place and MUST preserve scrollback
-        // (this is what `clear`/`tput clear`'s `ESC[2J` sends). Blank only the last
-        // `rows_` lines of the deque; everything above is history. Previously this
-        // collapsed the whole deque, silently destroying all scrollback.
         const std::size_t visible = std::max<std::size_t>(1, rows_);
         while (lines_.size() < visible) {
           lines_.push_back(TerminalLine{});
@@ -602,29 +452,15 @@ void TerminalSession::EraseInDisplayLocked(int mode) {
       }
       break;
     case 3: {
-      // ED 3 (xterm "Erase Saved Lines"): drop the scrollback, leave the visible
-      // screen intact. Previously mode 3 fell through to the ED-0 path below,
-      // which erases from the cursor to the end of the display — so a bare
-      // `\x1b[3J` (not preceded by 2J) destroyed on-screen content, the opposite
-      // of the spec. On the primary screen the visible viewport is the last
-      // `rows_` lines of the deque; everything before that is scrollback. Trim it
-      // and shift the cursor bookkeeping down, mirroring TrimScrollbackLocked. The
-      // alternate screen has no scrollback, so 3J is a no-op there.
       if (!use_alternate_screen_) {
         const std::size_t visible = std::max<std::size_t>(1, rows_);
         if (lines_.size() > visible) {
           const std::size_t trim_count = lines_.size() - visible;
-          // Same rescue as TrimScrollbackLocked: ED 3 drops the whole scrollback
-          // and the screen keeps writing straight afterwards.
           line_buffer_pool_.RecycleRange(
               lines_.begin(), lines_.begin() + static_cast<std::ptrdiff_t>(trim_count));
           lines_.erase(lines_.begin(),
                        lines_.begin() + static_cast<std::ptrdiff_t>(trim_count));
           cursor_row_ = cursor_row_ > trim_count ? cursor_row_ - trim_count : 0;
-          // Account the front-trim exactly as TrimScrollbackLocked does. Workspace
-          // scroll/selection mirrors rebase against the *delta* of ScrollbackTrimTotal();
-          // omitting it here would strand those absolute rows `trim_count` too high after
-          // a `clear`/`tput clear` (which emits ED2 then ED3).
           scrollback_trim_total_ += static_cast<std::uint64_t>(trim_count);
         }
       }
@@ -646,13 +482,10 @@ void TerminalSession::ResetScrollRegionLocked() {
 }
 
 void TerminalSession::ResetEmulationStateLocked() {
-  // Process bookkeeping.
   child_pid_ = -1;
   running_ = false;
   stop_requested_ = false;
 
-  // Parser state: a half-consumed escape or UTF-8 sequence from the old child
-  // would otherwise be completed by the new one's first bytes.
   current_style_ = TerminalStyle{};
   pen_link_uri_.clear();
   pen_underline_color_.reset();
@@ -669,9 +502,6 @@ void TerminalSession::ResetEmulationStateLocked() {
   reported_working_directory_.clear();
   tab_stops_.clear();
 
-  // Screens, cursor, and the scroll region. ResetScrollRegionLocked derives the
-  // bottom margin from rows_, so a caller that also reseeds the geometry must do
-  // that FIRST — otherwise the region is computed against the outgoing height.
   primary_screen_ = TerminalScreenState{};
   alternate_screen_ = TerminalScreenState{};
   cursor_row_ = 0;
@@ -680,9 +510,6 @@ void TerminalSession::ResetEmulationStateLocked() {
 }
 
 void TerminalSession::ResetTerminalModesLocked() {
-  // DEC/xterm private modes. auto_wrap_mode_ and cursor_visible_ default on;
-  // every other mode defaults off. use_alternate_screen_ is the caller's: it
-  // names which grid lines_ holds.
   mouse_ = {};
   application_cursor_keys_mode_ = false;
   origin_mode_ = false;
@@ -700,7 +527,6 @@ void TerminalSession::ResetTerminalModesLocked() {
   pen_underline_color_.reset();
   current_extra_ = 0;
 
-  // DECSC's saved state.
   saved_cursor_row_ = 0;
   saved_cursor_column_ = 0;
   saved_style_ = TerminalStyle{};
@@ -708,8 +534,6 @@ void TerminalSession::ResetTerminalModesLocked() {
   saved_origin_mode_ = false;
   saved_charsets_ = {};
 
-  // Negotiated protocol state. Stale Kitty-keyboard flags mis-encode Enter/Tab,
-  // and a stuck synchronized-output flag suppresses the first redraw wakes.
   kitty_keyboard_flags_ = 0;
   kitty_keyboard_stack_.clear();
   synchronized_output_ = false;
@@ -725,9 +549,6 @@ void TerminalSession::ReseedForStartLocked(const std::filesystem::path& working_
   default_launch_label_ = std::move(launch_label);
   launch_label_ = default_launch_label_;
   lines_ = {TerminalLine{}};
-  // Geometry BEFORE ResetEmulationStateLocked: it resets the scroll region, whose
-  // bottom margin is derived from rows_. Reset it against the stale pre-restart
-  // height and the region outlives the 24x80 reseed.
   rows_ = 24;
   columns_ = 80;
   ResetEmulationStateLocked();
@@ -744,8 +565,6 @@ void TerminalSession::ResetTabStopsLocked() {
 }
 
 void TerminalSession::ResizeTabStopsLocked() {
-  // A resize must preserve custom HTS/TBC tab stops in the surviving columns
-  // (xterm behaviour); only newly-exposed columns get the default every-8 stops.
   const std::size_t width = std::max<std::size_t>(1, columns_);
   if (tab_stops_.empty()) {
     ResetTabStopsLocked();
@@ -762,9 +581,6 @@ void TerminalSession::ResizeTabStopsLocked() {
 
 std::size_t TerminalSession::NextTabStopLocked(std::size_t column) const {
   const std::size_t width = std::max<std::size_t>(1, columns_);
-  // At or past the last usable column there is no forward tab stop. Return the
-  // column unchanged rather than snapping to width-1: at the pending-wrap column
-  // (column == columns_) the old code moved the cursor *backward* by one.
   if (column >= width - 1) {
     return column;
   }
@@ -830,10 +646,6 @@ bool TerminalSession::HasCustomScrollRegionLocked() const {
 
 namespace {
 
-// The deque rows a region scroll rotates, and by how much: `top`/`bottom` are
-// screen-relative and clamped to the screen, then offset by `screen_top` (the
-// visible screen's first deque row; 0 on the alt screen). `shift` is 0 when
-// there is nothing to move.
 struct ScrollRotation {
   std::size_t first_row = 0;
   std::size_t last_row = 0;
@@ -851,16 +663,13 @@ ScrollRotation ResolveScrollRotation(std::size_t top, std::size_t bottom, std::s
   };
 }
 
-}  // namespace
+}
 
 void TerminalSession::ScrollRegionUpLocked(std::size_t top, std::size_t bottom, std::size_t count) {
   if (rows_ == 0) {
     return;
   }
 
-  // `top`/`bottom` are screen-relative. On the primary buffer the visible screen
-  // begins at PrimaryScreenTopLocked() within the scrollback deque, so offset the
-  // rotate range by that base; on the alt screen the base is 0.
   const std::size_t terminal_rows = std::max<std::size_t>(1, rows_);
   const std::size_t screen_top = use_alternate_screen_ ? 0 : PrimaryScreenTopLocked();
   if (lines_.size() < screen_top + terminal_rows) {
@@ -874,8 +683,6 @@ void TerminalSession::ScrollRegionUpLocked(std::size_t top, std::size_t bottom, 
   auto begin = lines_.begin() + static_cast<std::ptrdiff_t>(rotation.first_row);
   auto end = lines_.begin() + static_cast<std::ptrdiff_t>(rotation.last_row + 1);
   std::rotate(begin, begin + static_cast<std::ptrdiff_t>(shift), end);
-  // Background Color Erase: lines exposed by the scroll take the current
-  // background, matching xterm/VTE (and the ED/EL erase paths above).
   for (auto it = end - static_cast<std::ptrdiff_t>(shift); it != end; ++it) {
     BlankLineToCurrentBackgroundLocked(*it);
   }
@@ -901,8 +708,6 @@ void TerminalSession::ScrollRegionDownLocked(std::size_t top,
   auto begin = lines_.begin() + static_cast<std::ptrdiff_t>(rotation.first_row);
   auto end = lines_.begin() + static_cast<std::ptrdiff_t>(rotation.last_row + 1);
   std::rotate(begin, end - static_cast<std::ptrdiff_t>(shift), end);
-  // Background Color Erase: lines exposed by the scroll take the current
-  // background, matching xterm/VTE (and the ED/EL erase paths above).
   for (auto it = begin; it != begin + static_cast<std::ptrdiff_t>(shift); ++it) {
     BlankLineToCurrentBackgroundLocked(*it);
   }
@@ -912,12 +717,6 @@ void TerminalSession::TrimScrollbackLocked() {
   const std::size_t max_lines = use_alternate_screen_ ? std::max<std::size_t>(1, rows_)
                                                       : max_scrollback_lines_ +
                                                             std::max<std::size_t>(1, rows_);
-  // Coalesce trims: only act once we are 25 % above the target, then trim all
-  // the way down to `max_lines`. The previous implementation trimmed on every
-  // newline once the cap was reached, calling `vector::erase(begin, …)` ~6 700
-  // times per `terminal_scroll_long_output` iteration; each erase walked the
-  // remaining N tail elements. Coalescing cuts the call count by an order of
-  // magnitude (round-4 Finding 3).
   const std::size_t trim_high_watermark = max_lines + max_lines / 4 + 1;
   if (lines_.size() < trim_high_watermark) {
     return;
@@ -926,9 +725,6 @@ void TerminalSession::TrimScrollbackLocked() {
   const std::size_t trim_count = lines_.size() - max_lines;
   util::AddPerformanceCounter(util::PerfCounterId::TerminalTrimScrollbackCalls);
   util::AddPerformanceCounter(util::PerfCounterId::TerminalTrimScrollbackLines, trim_count);
-  // Rescue the batch's cell buffers before the erase frees them: the lines that
-  // replace these are about to be created and would otherwise each grow from
-  // empty (TD-2026-08-14-231).
   line_buffer_pool_.RecycleRange(lines_.begin(),
                                  lines_.begin() + static_cast<std::ptrdiff_t>(trim_count));
   lines_.erase(lines_.begin(), lines_.begin() + static_cast<std::ptrdiff_t>(trim_count));
@@ -939,7 +735,6 @@ void TerminalSession::TrimScrollbackLocked() {
   }
 }
 std::string_view DecSpecialGraphicsGlyph(unsigned char byte) {
-  // VT100 DEC Special Graphics, 0x5F..0x7E, as xterm renders it.
   static constexpr std::string_view kGlyphs[] = {
       "\u00a0", "\u25c6", "\u2592", "\u2409", "\u240c", "\u240d", "\u240a", "\u00b0",
       "\u00b1", "\u2424", "\u240b", "\u2518", "\u2510", "\u250c", "\u2514", "\u253c",
@@ -957,20 +752,16 @@ void InsertBlankCells(TerminalLine& line, std::size_t at, std::size_t count, std
   if (at >= line.cells.size() || count == 0) {
     return;
   }
-  // Inserting inside a wide pair splits it: both halves become blanks.
   if (line.cells[at].style.wide_trailing() && at > 0) {
     line.cells[at - 1] = MakeAsciiTerminalCell(' ', style);
     line.cells[at] = MakeAsciiTerminalCell(' ', style);
   }
-  // Nothing is shifted further than the margin, so never insert more than fits:
-  // `CSI 65535 @` must not churn a 65535-cell insert before the trim.
   if (columns > 0) {
     count = std::min(count, columns);
   }
   line.cells.insert(line.cells.begin() + static_cast<std::ptrdiff_t>(at), count,
                     MakeAsciiTerminalCell(' ', style));
   if (columns > 0 && line.cells.size() > columns) {
-    // A lead whose spacer is pushed past the margin would be half a pair.
     if (line.cells[columns].style.wide_trailing()) {
       line.cells[columns - 1] = MakeAsciiTerminalCell(' ', style);
     }
@@ -978,5 +769,5 @@ void InsertBlankCells(TerminalLine& line, std::size_t at, std::size_t count, std
   }
 }
 
-}  // namespace detail
-}  // namespace microide::terminal
+}
+}

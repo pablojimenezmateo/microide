@@ -20,10 +20,6 @@
 namespace microide::project::remote {
 namespace {
 
-// Run an asynchronous call to completion on the calling thread (never the
-// connection's I/O thread, which is the one that would complete it). On timeout the
-// request is cancelled and `on_timeout` returned; a late completion lands in the
-// shared state, never on a dead stack frame.
 template <typename Result, typename Start>
 Result Await(Start&& start, const std::shared_ptr<RemoteConnection>& connection,
              std::chrono::milliseconds timeout, Result on_timeout) {
@@ -55,7 +51,7 @@ RemoteWorkspace::WriteResult WriteResultFrom(std::optional<util::JsonValue> resu
   if (error.has_value() || !result.has_value()) {
     out.error = error.has_value() ? error->message : "no answer";
     out.unreachable = !error.has_value() || error->code == kErrorCancelled;
-    out.may_have_applied = out.unreachable;  // this request was sent
+    out.may_have_applied = out.unreachable;
     out.blocked = error.has_value() && error->code == kErrorPathRefused;
     return out;
   }
@@ -80,7 +76,7 @@ RemoteWorkspace::WriteResult WriteResultFrom(std::optional<util::JsonValue> resu
 
 constexpr const char* kNotConnected = "not connected to the host";
 
-}  // namespace
+}
 
 std::shared_ptr<RemoteServerClient> RemoteWorkspace::Client() const {
   return connection_ ? connection_->client() : nullptr;
@@ -97,7 +93,7 @@ std::uint64_t RemoteWorkspace::FetchManifest(ManifestDone done) {
     done(std::nullopt, kNotConnected);
     return 0;
   }
-  RemoteServerClient* raw = client.get();  // the stream's own frames: it outlives them
+  RemoteServerClient* raw = client.get();
   const std::uint64_t id = client->RequestStream(
       method::kTreeManifest, util::JsonValue(util::JsonObject{}), Lane::Bulk,
       [state, raw](FrameType, std::string bytes) {
@@ -123,8 +119,6 @@ std::uint64_t RemoteWorkspace::FetchManifest(ManifestDone done) {
           done(std::nullopt, "the server's manifest did not match its own row count");
           return;
         }
-        // Chunks are each sorted; across chunks the order must hold too, or a
-        // later lookup by binary search lies.
         const auto& decoded = state->manifest.rows;
         for (std::size_t i = 1; i < decoded.size(); ++i) {
           if (!(decoded[i - 1].path < decoded[i].path)) {
@@ -176,8 +170,7 @@ bool RemoteWorkspace::SubscribeWatch(std::function<void(WatchDelta delta)> on_de
   if (!client) {
     return util::Fail(error, kNotConnected);
   }
-  RemoteServerClient* raw = client.get();  // its own handler: it outlives the calls
-  // The same sink, in the same order: a HEAD move is a delta with nothing in it.
+  RemoteServerClient* raw = client.get();
   client->SetWatchMovedHandler([on_delta](std::uint64_t manifest_id) {
     on_delta(WatchDelta{.manifest_id = manifest_id, .repository_moved = true});
   });
@@ -328,7 +321,6 @@ std::uint64_t RemoteWorkspace::FetchObjectToFile(
           object.error = state->write_error;
         } else if (answer["hash"].IsString()) {
           const auto claimed = util::ContentHash::FromHex(answer["hash"].AsString());
-          // Checked, not trusted, exactly as an in-memory fetch is.
           if (claimed.has_value() && state->hasher.Finish() == *claimed &&
               ::fsync(state->fd) == 0) {
             object.hash = claimed;
@@ -408,7 +400,6 @@ std::uint64_t RemoteWorkspace::StreamObjects(std::string_view stream_method, uti
             continue;
           }
           if (answer["delta"].AsBool(false)) {
-            // Only against a base this side named; the caller applies and checks it.
             const auto claimed = util::ContentHash::FromHex(answer["hash"].AsString());
             if (claimed.has_value() && i < bases.size() && bases[i].has_value()) {
               object.hash = claimed;
@@ -418,7 +409,6 @@ std::uint64_t RemoteWorkspace::StreamObjects(std::string_view stream_method, uti
             object.error = "the host sent a delta for " + object.path + " against nothing asked for";
           } else if (answer["hash"].IsString()) {
             const auto claimed = util::ContentHash::FromHex(answer["hash"].AsString());
-            // The object store is keyed by this hash: it is checked, not trusted.
             if (claimed.has_value() && util::HashContent(object.content) == *claimed) {
               object.hash = claimed;
               continue;
@@ -470,8 +460,6 @@ std::uint64_t RemoteWorkspace::WriteFile(std::string path, std::string_view cont
     return 0;
   }
   RemotePeer& peer = client->peer();
-  // The content goes first, on the request's lane, tagged with the request's id:
-  // it is on the wire before the request that claims it.
   const std::uint64_t id = peer.Request(
       method::kFileWrite, util::JsonValue(std::move(params)), lane,
       [done](std::optional<util::JsonValue> result, std::optional<RemotePeer::RpcError> error) {
@@ -525,7 +513,6 @@ void RemoteWorkspace::UploadFile(std::string name, std::string_view content, Upl
 
 namespace {
 
-// The client when its server keeps workspace state; null and *why otherwise.
 std::shared_ptr<RemoteServerClient> StateClient(std::shared_ptr<RemoteServerClient> client, std::string* why) {
   if (!client) {
     *why = "not connected";
@@ -539,7 +526,7 @@ std::shared_ptr<RemoteServerClient> StateClient(std::shared_ptr<RemoteServerClie
   return client;
 }
 
-}  // namespace
+}
 
 void RemoteWorkspace::PutState(std::string key, std::string text, StatePutDone done) {
   std::string why;
@@ -568,7 +555,6 @@ void RemoteWorkspace::FinishTerminalEdit(std::string_view epoch, std::uint64_t t
     done(std::nullopt);
     return;
   }
-  // A token means nothing to another server process, and may be one of its own.
   if (client->hello().daemon_epoch != epoch) {
     done(false);
     return;
@@ -581,8 +567,6 @@ void RemoteWorkspace::FinishTerminalEdit(std::string_view epoch, std::uint64_t t
   const std::uint64_t id = client->peer().Request(
       method::kTermEditDone, util::JsonValue(std::move(params)), Lane::Interactive,
       [done](std::optional<util::JsonValue> result, std::optional<RemotePeer::RpcError> error) {
-        // A reply of either kind is the host's answer; only a connection that
-        // closed first (kErrorCancelled) leaves the program waiting.
         if (result.has_value()) {
           done((*result)["delivered"].AsBool());
         } else {
@@ -612,7 +596,7 @@ void RemoteWorkspace::GetState(std::string key, StateGetDone done) {
         }
         const util::JsonValue& text = (*result)["text"];
         if (!text.IsString() || text.AsString().size() > method::kMaxWorkspaceStateBytes) {
-          done(std::nullopt, {});  // none kept (or nothing usable): not an error
+          done(std::nullopt, {});
           return;
         }
         done(text.AsString(), {});
@@ -675,4 +659,4 @@ RemoteWorkspace::WriteResult RemoteWorkspace::ApplyTreeOpSync(TreeOp op, std::st
       WriteResult{.error = "timed out waiting for fs/op", .unreachable = true, .may_have_applied = true});
 }
 
-}  // namespace microide::project::remote
+}

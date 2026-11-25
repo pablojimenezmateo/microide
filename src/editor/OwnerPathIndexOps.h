@@ -12,25 +12,6 @@
 
 namespace microide::editor {
 
-// Shared owner-keyed index operations.
-//
-// DiagnosticsStore and PluginDecorationStore keep the same two-level index:
-// owner -> (normalized path key -> per-file entry), where the entry carries the
-// original `path` it came from, plus a flattened merged-by-path view that has to
-// be rebuilt for every path an operation touched.
-//
-// That gave the two stores four methods each that were character-identical
-// apart from the member's name and the entry type — clear an owner, clear one
-// owner's file, clear everything under a path prefix, and retarget everything
-// under a prefix onto a new one. The prefix pair in particular is the fiddly
-// kind: erase-while-iterating at two levels, dropping owners that go empty,
-// then dedupe the affected keys before rebuilding so a path touched by three
-// owners is rebuilt once.
-//
-// Each takes the caller's `rebuild(path_key)` because what "rebuild" means is
-// the one thing the two stores genuinely do differently.
-
-// Drop every entry an owner holds. Returns true when anything was removed.
 template <typename OwnerMap, typename Rebuild>
 bool ClearOwnerEntries(OwnerMap& by_owner, std::string_view owner, Rebuild&& rebuild) {
   const auto owner_it = by_owner.find(owner);
@@ -49,8 +30,6 @@ bool ClearOwnerEntries(OwnerMap& by_owner, std::string_view owner, Rebuild&& reb
   return !path_keys.empty();
 }
 
-// Drop one owner's entry for one path key, dropping the owner if that was its
-// last. Both keys are expected already normalized by the caller.
 template <typename OwnerMap, typename Rebuild>
 bool ClearOwnerFileEntry(OwnerMap& by_owner,
                          const std::string& owner_key,
@@ -73,7 +52,6 @@ bool ClearOwnerFileEntry(OwnerMap& by_owner,
   return true;
 }
 
-// Rebuild each path key once, in a stable order, after a multi-owner sweep.
 template <typename Rebuild>
 void RebuildAffectedPathKeys(std::vector<std::string>& affected_path_keys, Rebuild&& rebuild) {
   std::sort(affected_path_keys.begin(), affected_path_keys.end());
@@ -84,8 +62,6 @@ void RebuildAffectedPathKeys(std::vector<std::string>& affected_path_keys, Rebui
   }
 }
 
-// Drop every entry, across every owner, whose path is the prefix or lies under
-// it. Owners left with nothing are dropped too.
 template <typename OwnerMap, typename Rebuild>
 bool ClearEntriesUnderPrefix(OwnerMap& by_owner,
                              const std::filesystem::path& path_prefix,
@@ -117,17 +93,6 @@ bool ClearEntriesUnderPrefix(OwnerMap& by_owner,
   return changed;
 }
 
-// Move every entry under `old_prefix` to the same relative spot under
-// `new_prefix`, re-keying it. `rewrite(entry, old_prefix, new_prefix)` fixes up
-// whatever paths the entry itself carries — the two stores differ only here
-// (diagnostics also rewrite the path on each individual diagnostic).
-//
-// The scan is read-only: matches are collected, then erased, then re-inserted.
-// Erasing or inserting while iterating would be wrong, because a retarget can
-// map an entry onto a key that is still ahead in the same owner's map.
-//
-// An entry whose retargeted path normalizes to an empty key is skipped and left
-// where it is rather than being erased into nothing.
 template <typename OwnerMap, typename Rewrite, typename Rebuild>
 bool RetargetEntriesUnderPrefix(OwnerMap& by_owner,
                                 const std::filesystem::path& old_prefix,
@@ -183,4 +148,4 @@ bool RetargetEntriesUnderPrefix(OwnerMap& by_owner,
   return changed;
 }
 
-}  // namespace microide::editor
+}

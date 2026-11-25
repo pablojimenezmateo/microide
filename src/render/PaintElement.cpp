@@ -19,8 +19,6 @@ bool& RecordingFlag() {
   return enabled;
 }
 
-// The innermost open scope and the overruns noted, per painting thread (paint is
-// single-threaded; the thread_local keeps tests in parallel shards apart).
 thread_local PaintElement* t_innermost = nullptr;
 thread_local PaintPassScope* t_pass = nullptr;
 thread_local std::vector<PaintOverrun> t_overruns;
@@ -30,7 +28,7 @@ bool Contains(const SDL_Rect& outer, const SDL_Rect& inner) {
          inner.y + inner.h <= outer.y + outer.h;
 }
 
-}  // namespace
+}
 
 bool PaintOverrunRecordingEnabled() { return RecordingFlag(); }
 
@@ -81,8 +79,6 @@ PaintPassScope::~PaintPassScope() {
 }
 
 void PaintPassScope::Check(SDL_Renderer* renderer, const SDL_FRect& logical) const {
-  // What of the draw can show: inside the innermost element (it clips to its
-  // rect) and inside the renderer's clip (a pane's own clip, a partial frame's).
   SDL_FRect visible = logical;
   const auto intersect = [&visible](const SDL_FRect& with) {
     SDL_FRect both{};
@@ -119,8 +115,6 @@ PaintElement::PaintElement(SDL_Renderer* renderer, const SDL_FRect& rect, std::s
   clip_.emplace(renderer, snapped_);
   t_innermost = this;
   if (opaque_background.has_value()) {
-    // The element owns its background: a partial frame cannot leave older paint
-    // under what it draws (clip-discipline cause 4).
     FillRect(renderer, rect, *opaque_background);
   }
 }
@@ -130,4 +124,4 @@ PaintElement::~PaintElement() {
   clip_.reset();
 }
 
-}  // namespace microide::render
+}

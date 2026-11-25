@@ -1,5 +1,6 @@
 #include "architecture/WorkspaceServiceArchitectureRules.h"
 
+#include "TestSupport.h"
 #include "architecture/ArchitectureFileScanner.h"
 
 #include <array>
@@ -23,10 +24,6 @@ RuleResult CheckRenderTuDoesNotMaterializeStrings(const std::filesystem::path& r
   AppendViolations(
       result, sidebar_path, text, std::regex(R"(std::string\s*\(\s*"replace>\s*"\s*\)\s*\+)"),
       "render code must use RenderViewModelBuilder replace_fallback_text");
-  // These two patterns anchor on a string-literal quote, so they must use the
-  // trailing-anchored helper -- AppendViolations/AppendCodeMaskRegexViolations
-  // would never fire on a `"..." +` match because BuildCodeMask flags the
-  // opening quote as non-code.
   AppendTrailingCodeRegexViolations(
       result, sidebar_path, text, std::regex(R"("search>\s*"\s*\+\s*[A-Za-z_])"),
       "render code must not concatenate search fallback text in render path");
@@ -54,36 +51,15 @@ RuleResult CheckRenderTuDoesNotCallToStringOrFormat(const std::filesystem::path&
   }
   render_files.push_back(repo_root / "src/workspace/render/WorkspaceShellHoverPopup.cpp");
   render_files.push_back(repo_root / "src/workspace/render/WorkspaceShellHoverTargets.cpp");
-  // The debug pane's bottom-panel render TU is view-model-only like the editor
-  // render TUs: it draws prebuilt row strings (DebugVariableRowView /
-  // DebugBreakpointRowView) and must never format on the render hot path.
   render_files.push_back(repo_root / "src/workspace/render/DebugPaneRender.cpp");
 
   const std::regex to_string_pattern(R"(\bstd::to_string\s*\()");
   const std::regex std_format_pattern(R"(\bstd::format\s*\()");
   const std::regex fmt_format_pattern(R"(\bfmt::format\s*\()");
-  // Throwaway string concatenation in the render path: `std::string(view) + ...`
-  // or `... + std::string(view)` builds a temporary buffer per frame. Numeric `+`
-  // is unaffected — these only match an std::string construction adjacent to `+`.
   const std::regex concat_lhs_pattern(R"(std::string\s*\([^)]*\)\s*\+)");
   const std::regex concat_rhs_pattern(R"(\+\s*std::string\s*\()");
-  // std::filesystem::path -> std::string conversion. Every one of these returns a
-  // FRESH std::string, so it is a per-frame (often per-row) allocation, but none of
-  // the patterns above name it: the ban on std::to_string / std::format / string
-  // concat let `viewport.path().generic_string()` through untouched. Two render TUs
-  // were doing exactly that. The normalized form is already cached per document as
-  // TextViewport::path_key() (editor::NormalizedPathKey), and any other render text
-  // belongs in RenderViewModelBuilder.
   const std::regex path_to_string_pattern(
       R"(\.\s*(generic_string|generic_u8string|u8string|string)\s*\(\s*\))");
-  // Every helper in WorkspaceUiText.h returns a fresh std::string by value, so a
-  // call from a render TU is a per-frame heap allocation that none of the patterns
-  // above name — `FormatEmptyState("matches")` and
-  // `JoinHintSegments({...})` are not to_string, not std::format, and not an
-  // `std::string(...) +` concat. The project-search sidebar composed its empty-state
-  // placeholder that way on every repaint of a running search, and the dirty-file
-  // prompt re-joined a constant hint line every frame. Composition belongs in
-  // RenderViewModelBuilder, which caches it; render TUs draw the resulting view.
   const std::regex ui_text_composer_pattern(
       R"(\b(JoinHintSegments|FormatEmptyState|BuildCountStatus|BuildSelectionSummary|BuildShownOfTotalStatus|BuildSearchProgressSuffix)\s*\()");
   for (const auto& path : render_files) {
@@ -123,12 +99,6 @@ RuleResult CheckRenderTuDoesNotCallToStringOrFormat(const std::filesystem::path&
 
 namespace {
 
-// Shared scan for the no-whole-buffer-materialization invariant: within the body
-// of `signature`, flag every construct that materializes all of document_->lines.
-// The assignment forms guard a hypothetical return to the old vector<string>
-// document model; ToVector()/Snapshot()/begin()/end() are the live TextBuffer
-// APIs that copy every line and are banned in the edit-apply funnel (bounded
-// LineView/SliceLines/ReplaceLineRange are the sanctioned accessors there).
 void AppendFullDocumentMaterializationViolations(RuleResult& result,
                                                  const std::filesystem::path& path,
                                                  const std::string& text,
@@ -185,7 +155,7 @@ void AppendFullDocumentMaterializationViolations(RuleResult& result,
   }
 }
 
-}  // namespace
+}
 
 RuleResult CheckTextViewportNoFullDocCopy(const std::filesystem::path& repo_root) {
   RuleResult result;
@@ -263,12 +233,6 @@ RuleResult CheckWorkspaceShellRenderFrameAvoidsEphemeralEditorViewModelStrings(
   return result;
 }
 
-// SdlTtfTextBackend must not regress to issuing one SDL_RenderTexture per
-// character. Per-glyph dispatch was the steady-state cost that the
-// 2026-05-14 render-perf pass replaced with a per-string composite cache.
-// If a future refactor reintroduces a per-character DrawString loop we want
-// the regression to be loud and immediate.
-
 RuleResult CheckSdlTtfBackendNoPerGlyphLoop(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "SdlTtfTextBackend must not regress to per-glyph SDL_RenderTexture loops";
@@ -278,18 +242,11 @@ RuleResult CheckSdlTtfBackendNoPerGlyphLoop(const std::filesystem::path& repo_ro
     return result;
   }
   const std::string text = ReadText(path);
-  // The legacy per-glyph dispatcher was named DrawFastAsciiString. The new
-  // composite path uses BuildAsciiCompositeSurface (single SDL_RenderTexture
-  // per cached string). DrawFastAsciiString must stay deleted.
   AppendCodeMaskRegexViolations(
       result, path, text, std::regex(R"(\bDrawFastAsciiString\b)"),
       "per-glyph DrawFastAsciiString path was removed in the 2026-05-14 perf pass; "
       "ASCII text must render through ResolveEntry+BuildAsciiCompositeSurface so the "
       "steady-state path is one SDL_RenderTexture call per cached (text, color)");
-  // Required-presence anchor. Banning the old symbol alone is satisfied by a
-  // rewrite that reintroduces a per-glyph loop under any other name, and by the
-  // file being renamed out from under the rule. Requiring the composite path to
-  // still be here makes the rule fail loudly instead of going quiet.
   if (text.find("BuildAsciiCompositeSurface") == std::string::npos) {
     result.violations.push_back(Violation{
         .path = path,
@@ -302,11 +259,6 @@ RuleResult CheckSdlTtfBackendNoPerGlyphLoop(const std::filesystem::path& repo_ro
   return result;
 }
 
-// DecoratedTextGridRenderer::RenderRow must keep emitting SDL_RenderFillRects
-// for same-color fill runs. Without this batching the editor row paint flips
-// SDL3's draw-color state once per fill, breaking the internal command
-// batcher and roughly doubling fill-side CPU.
-
 RuleResult CheckDecoratedTextGridRendererBatchesFills(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "DecoratedTextGridRenderer must coalesce same-color fills via SDL_RenderFillRects";
@@ -316,23 +268,24 @@ RuleResult CheckDecoratedTextGridRendererBatchesFills(const std::filesystem::pat
     return result;
   }
   const std::string text = ReadText(path);
-  if (text.find("SDL_RenderFillRects") == std::string::npos) {
+  const std::vector<bool> is_code = BuildCodeMask(text);
+  const std::regex batched(R"(\bFillRectsInDrawColor\s*\()");
+  bool batches = false;
+  for (std::sregex_iterator it(text.begin(), text.end(), batched), last; it != last && !batches; ++it) {
+    const auto at = static_cast<std::size_t>(it->position());
+    batches = at < is_code.size() && is_code[at];
+  }
+  if (!batches) {
     result.violations.push_back(Violation{
         .path = path,
         .line = 1,
-        .message = "DecoratedTextGridRenderer.cpp must call SDL_RenderFillRects to batch "
-                   "same-color fills; do not regress to one SDL_RenderFillRect per fill",
+        .message = "DecoratedTextGridRenderer.cpp must batch same-color fills through "
+                   "render::FillRectsInDrawColor (SDL_RenderFillRects); do not regress to one "
+                   "fill call per rect",
     });
   }
   return result;
 }
-
-// EditorViewRenderer::Render must reuse scratch DecoratedTextRow members
-// across rows/frames instead of constructing fresh per-row instances. The
-// scratch_row_ / sticky_scratch_row_ members on the renderer keep their
-// fills/runs/underlines vector capacity alive across frames; falling back to
-// per-row stack instances allocates and frees ~150 vectors per frame in a
-// typical editor pane.
 
 RuleResult CheckEditorViewRendererUsesScratchRows(const std::filesystem::path& repo_root) {
   RuleResult result;
@@ -343,16 +296,10 @@ RuleResult CheckEditorViewRendererUsesScratchRows(const std::filesystem::path& r
     return result;
   }
   const std::string text = ReadText(path);
-  // A stack-local `DecoratedTextRow name;` declaration inside the renderer is
-  // the regression we want to catch. Reference-bindings of the scratch
-  // members (`DecoratedTextRow& name = scratch_row_;`) are allowed and use
-  // `&`.
   AppendCodeMaskRegexViolations(
       result, path, text,
       std::regex(R"(\bDecoratedTextRow\s+[A-Za-z_][A-Za-z_0-9]*\s*;)"),
       "do not declare a fresh DecoratedTextRow per row; use scratch_row_/sticky_scratch_row_");
-  // Also require the scratch members to be referenced — if a refactor removes
-  // them but the regex above still passes (e.g. via auto), this catches it.
   if (text.find("scratch_row_") == std::string::npos ||
       text.find("sticky_scratch_row_") == std::string::npos) {
     result.violations.push_back(Violation{
@@ -365,10 +312,6 @@ RuleResult CheckEditorViewRendererUsesScratchRows(const std::filesystem::path& r
 }
 
 RuleResult CheckCompareMergeRenderUsesScratchRows(const std::filesystem::path& repo_root) {
-  // The compare/merge surface render TUs build one DecoratedTextRow per visible
-  // row per pane per frame. Reusing mutable scratch members (cleared by
-  // BuildDecoratedRow before refill) keeps that path allocation-free; a fresh
-  // stack `DecoratedTextRow name;` per row is the regression this blocks.
   RuleResult result;
   result.label = "compare/merge render TUs must reuse scratch DecoratedTextRow members";
   result.hard_fail = true;
@@ -404,10 +347,6 @@ RuleResult CheckCompareMergeRenderUsesScratchRows(const std::filesystem::path& r
   return result;
 }
 
-// SceneTexturePresenter::Ensure must coalesce reallocation across resize
-// bursts. Without the resize-time check, dragging the window destroyed and
-// recreated the full-window render target on every WINDOW_RESIZED event.
-
 RuleResult CheckApplicationCoalescesResize(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "Scene texture must coalesce realloc during resize bursts";
@@ -429,11 +368,6 @@ RuleResult CheckApplicationCoalescesResize(const std::filesystem::path& repo_roo
   return result;
 }
 
-// HandleMouseWheel must accumulate fractional wheel.y deltas. Without the
-// accumulator, smooth-scroll trackpad input (event.wheel.integer_y == 0,
-// event.wheel.y ~ 0.3) produces no scroll until enough deltas land in a
-// single discrete tick.
-
 RuleResult CheckMouseWheelUsesFractionalAccumulator(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "HandleMouseWheel must use the fractional wheel accumulator";
@@ -451,8 +385,6 @@ RuleResult CheckMouseWheelUsesFractionalAccumulator(const std::filesystem::path&
                    "AccumulateWheelEvent so fractional deltas accumulate across events",
     });
   }
-  // The legacy form that rounds fractional deltas to zero must not be
-  // reintroduced as the only source of the wheel tick.
   AppendCodeMaskRegexViolations(
       result, path, text,
       std::regex(R"(integer_y\s*!=\s*0\s*\?\s*event\.wheel\.integer_y\s*:\s*static_cast<int>\(std::lround)"),
@@ -460,11 +392,6 @@ RuleResult CheckMouseWheelUsesFractionalAccumulator(const std::filesystem::path&
       "feed event.wheel.{y,x} into AccumulateWheelEvent and consume the returned ticks");
   return result;
 }
-
-// PrepareFrameOnce must short-circuit ResizeTerminalToPanel when the bottom
-// panel rect is unchanged from the previous frame. Without this the resize
-// call ran every frame (its internal short-circuit avoided the actual
-// terminal resize but the rect math and trace marker still ran).
 
 RuleResult CheckBottomPanelTerminalRectCache(const std::filesystem::path& repo_root) {
   RuleResult result;
@@ -485,9 +412,6 @@ RuleResult CheckBottomPanelTerminalRectCache(const std::filesystem::path& repo_r
   }
   return result;
 }
-
-// 2026-05-15 P0 lint additions (perf deep-dive round 2 Finding 19). Each guards a regression that
-// the same-day fixes closed; see dev-docs/performance/investigations/performance-bottleneck-deep-dive-2.md.
 
 RuleResult CheckNoStdStoInRenderOrBuilderTus(const std::filesystem::path& repo_root) {
   RuleResult result;
@@ -523,27 +447,13 @@ RuleResult CheckNoStdStoInRenderOrBuilderTus(const std::filesystem::path& repo_r
 }
 
 RuleResult CheckStatusBarRefreshIsAsyncOnly(const std::filesystem::path& repo_root) {
-  // RefreshStatusBar runs in PrepareFrameOnce. It MUST NOT spawn subprocesses or
-  // synchronously consult `git symbolic-ref`/`rev-parse` -- the branch label is
-  // populated by the async sidebar git coordinator. The previous synchronous
-  // `git symbolic-ref --short HEAD` fallback was removed in
-  // dev-docs/performance/investigations/performance-bottleneck-deep-dive-2.md Finding 3 to eliminate per-frame
-  // UI stalls.
   RuleResult result;
   result.label = "RefreshStatusBar must not run synchronous git from the frame path";
   result.hard_fail = true;
-  // The frame-path status-bar refresh spans two TUs: WorkspaceShell::RefreshStatusBar
-  // (WorkspaceShellPresentation.cpp, called from PrepareFrameOnce) and the model build
-  // it invokes (StatusBarModelService.cpp). This rule previously scanned the retired
-  // WorkspaceShellChrome.cpp and silently passed once that file was split up — a
-  // missing target is now a violation so a future rename fails loudly instead of
-  // going vacuous (the 022 fixture-path-drift lesson).
   const std::array<std::string_view, 2> targets = {
       "src/workspace/shell/WorkspaceShellPresentation.cpp",
       "src/workspace/services/StatusBarModelService.cpp",
   };
-  // Block any `repo.Execute(` or `git symbolic-ref` mention in the files. The IsValid() probe is
-  // still allowed because it is a filesystem-only check cached by the model service.
   const std::array<std::regex, 3> patterns = {
       std::regex(R"(\brepo\.Execute\s*\()"),
       std::regex(R"(\.Execute\s*\(\s*\{\s*\"symbolic-ref\")"),
@@ -582,11 +492,6 @@ RuleResult CheckStatusBarRefreshIsAsyncOnly(const std::filesystem::path& repo_ro
 
 RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
     const std::filesystem::path& repo_root) {
-  // 2026-05-15 perf deep-dive round 2 Finding 7: render TUs used to construct
-  // `std::string(1, ch)` for single-char git markers and `std::string("prefix ")` /
-  // `"prefix " + …` for prompt scaffolds, allocating once per row/frame. The
-  // fixes route through std::string_view (the marker case) or a thread_local
-  // scratch (the prompt case). This rule blocks the regression.
   RuleResult result;
   result.label = "render TUs do not materialize std::string(1, ch) / prefix-concat strings";
   result.hard_fail = true;
@@ -605,37 +510,11 @@ RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
   render_files.push_back(repo_root / "src/editor/EditorViewRenderer.cpp");
   render_files.push_back(repo_root / "src/editor/DecoratedTextGridRenderer.cpp");
 
-  // `std::string(1, x)` materializes a 1-char std::string — use a string_view over the char
-  // storage instead. `std::string(<view>)` is also a per-call allocation.
   const std::regex single_char_pattern(R"(std::string\s*\(\s*1\s*,)");
-  // `"literal" + <expr>` concatenation in a render TU.
   const std::regex literal_plus_pattern(R"("[^"\n]*"\s*\+\s*[A-Za-z_])");
-  // Plain `std::string("literal")` constructions in render TUs (occasional helpful in tests but
-  // not in hot paint paths).
   const std::regex string_from_view_pattern(R"(std::string\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\.)");
-  // `TruncateToWidth` returns an owning std::string — it is literally
-  // `std::string(TruncateToWidthEphemeralView(...))`. Every call in a paint path
-  // is an allocation per label per frame, and none of the existing patterns above
-  // catch it because the allocation happens behind the helper's name. That gap
-  // let the Settings overlay allocate three strings per visible row per repaint
-  // (plus six for the chrome) while every other render TU used the view variant.
-  // The owning form stays correct for anything STORED past the draw — the blame
-  // overlay's view model, for instance — which is why the ban is scoped to TUs
-  // that only paint.
   const std::regex owning_truncate_pattern(R"(\bTruncateToWidth\s*\()");
 
-  // single_char_pattern is enforced across every render TU. literal+ident
-  // concatenation used to be enforced only on the four hot per-row render TUs,
-  // because the surface paints (sidebar/overlay/prompts) still built prefix
-  // strings and routing them through the view model was deferred. That deferral
-  // let the project-search sidebar keep composing `"Error: " + state.error` on
-  // every repaint of a running search — a per-frame allocation on a surface that
-  // repaints on every search-progress wake. Those sites are now precomposed in
-  // RenderViewModelBuilder, so the rule covers every render TU it scans — with no
-  // carve-outs. The last one would have been the hover popup's word wrapper
-  // (`line + " " + words[i]`), which is genuine text layout rather than a message
-  // compose; it now builds candidates in a reused scratch buffer instead, so the
-  // rule applies there too.
   for (const auto& path : render_files) {
     if (!RequireRuleTarget(result, path)) {
       continue;
@@ -644,9 +523,6 @@ RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
     AppendCodeMaskRegexViolations(
         result, path, text, single_char_pattern,
         "render TU must not build std::string(1, ch); use std::string_view over the char storage");
-    // Trailing-anchored: the pattern starts on a string-literal quote, which
-    // BuildCodeMask flags as non-code, so AppendCodeMaskRegexViolations would
-    // never fire here.
     AppendTrailingCodeRegexViolations(
         result, path, text, literal_plus_pattern,
         "render TU must not concatenate literal + identifier in a paint path; use a "
@@ -657,27 +533,14 @@ RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
         "call); draw TruncateToWidthEphemeralView / TruncateLabelView instead, and consume "
         "the view before the next truncation on the same thread");
   }
-  (void)string_from_view_pattern;  // advisory; some derived-type constructors still match.
+  (void)string_from_view_pattern;
   return result;
 }
 
 RuleResult CheckPaintedScrollbarsAreGrabbable(const std::filesystem::path& repo_root) {
-  // A scrollbar drawn with a hardcoded `false` for its active flag can never
-  // render as being dragged, which means nothing hit-tests it -- it is decoration
-  // that looks like a control. Three shipped that way before this rule: the debug
-  // pane's, Help/About's, and the Settings font-picker's, each reachable by mouse
-  // wheel only. The active flag has to be a live expression (a drag-target
-  // comparison, or a flag threaded down from one), so this bans the literal.
-  //
-  // The rule is deliberately about the argument rather than about hit-testing,
-  // which is not decidable from the text: the literal is the exact tell that
-  // caught all three, and there is no surface in this app whose scrollbar should
-  // legitimately be undraggable.
   RuleResult result;
   result.label = "painted scrollbars are grabbable (no hardcoded inactive flag)";
   result.hard_fail = true;
-  // `DrawScrollbar(a, b, c, d, false)` -- the active flag is the last argument, so
-  // match a `false` followed by the closing paren of the call.
   const std::regex pattern(R"(DrawScrollbar\s*\((?:[^();]|\([^()]*\))*\bfalse\s*\))");
 
   std::vector<std::filesystem::path> targets;
@@ -707,12 +570,6 @@ RuleResult CheckPaintedScrollbarsAreGrabbable(const std::filesystem::path& repo_
 }
 
 RuleResult CheckPointerHandlersReadQueuedModifiers(const std::filesystem::path& repo_root) {
-  // SDL updates its live modifier state when it pumps, ahead of the event being
-  // handled: End ran as Ctrl+End under a following Ctrl+Alt+Down, and a Ctrl drop
-  // read Ctrl as released by the key-up queued behind it (TD-2026-10-25-392). A
-  // key event carries its own `mod`; a pointer handler reads
-  // InteractionState::key_modifiers, which the dispatcher keeps in queue order.
-  // The dispatcher's resync on focus gain is the one sanctioned live read.
   RuleResult result;
   result.label = "handlers read the modifiers in queue order, not SDL's live state";
   result.hard_fail = true;
@@ -742,16 +599,6 @@ RuleResult CheckPointerHandlersReadQueuedModifiers(const std::filesystem::path& 
 }
 
 RuleResult CheckWheelHandlersDoNotMoveFocus(const std::filesystem::path& repo_root) {
-  // Scrolling is not focusing. The wheel must never pull the keyboard out of
-  // whatever the user is typing into — VS Code behaves the same way, and five of
-  // the shell's seven wheel handlers say so in a comment. Compare and merge were
-  // the two that assigned `surface.focus = FocusTarget::Editor` on every tick, so
-  // a wheel nudge over a diff while typing in the terminal silently redirected the
-  // next keystroke.
-  //
-  // The rule scans the body of each coordinator's HandleWheel for an assignment to
-  // surface.focus. Reads are fine (a handler may branch on who has focus); it is
-  // the write that steals it.
   RuleResult result;
   result.label = "wheel handlers scroll without taking keyboard focus";
   result.hard_fail = true;
@@ -803,17 +650,6 @@ RuleResult CheckWheelHandlersDoNotMoveFocus(const std::filesystem::path& repo_ro
 }
 
 RuleResult CheckDebugSubsystemThreadingBehindDapClient(const std::filesystem::path& repo_root) {
-  // The debug subsystem's entire threading model lives behind WorkspaceDapClient:
-  // it owns the adapter I/O thread (plus the init/shutdown threads) and marshals
-  // every response/event back to the main thread via a wake event +
-  // DrainCallbacks. DebugSession, DebugService, DapManager, the value tree, and
-  // the pane are therefore plain single-threaded main-thread code. Spawning a
-  // thread (or std::async) anywhere else in the subsystem would bypass that
-  // single-owner model and reintroduce exactly the data races TSAN guards (two
-  // adapter I/O threads, callbacks firing off-thread). Keep all concurrency
-  // behind the DAP client; this lint blocks the regression structurally rather
-  // than relying on TSAN catching it after the fact. WorkspaceDapClient.cpp is
-  // the sole exempt TU (it is the owner).
   RuleResult result;
   result.label = "debug subsystem threading stays behind WorkspaceDapClient";
   result.hard_fail = true;
@@ -838,4 +674,22 @@ RuleResult CheckDebugSubsystemThreadingBehindDapClient(const std::filesystem::pa
 }
 
 
-}  // namespace microide::tests::architecture
+void RunDecoratedGridBatchesFillsRuleFixtures() {
+  TemporaryDirectory fixture;
+  const std::filesystem::path& root = fixture.path();
+  std::filesystem::create_directories(root / "src/editor");
+  const std::filesystem::path file = root / "src/editor/DecoratedTextGridRenderer.cpp";
+  WriteFile(file,
+            "// render::FillRectsInDrawColor(r, rects, n) used to batch here\n"
+            "void F(){ for (auto& r : rects) render::FillRect(renderer, r); }\n");
+  Expect(CheckDecoratedTextGridRendererBatchesFills(root).violations.size() == 1,
+         "the fill-batching rule must not count a call named only in a comment");
+  WriteFile(file, "void F(){ render::FillRectsInDrawColor(renderer, batch.data(), n); }\n");
+  Expect(CheckDecoratedTextGridRendererBatchesFills(root).violations.empty(),
+         "the fill-batching rule must accept the batched call");
+  std::filesystem::remove(file);
+  Expect(!CheckDecoratedTextGridRendererBatchesFills(root).missing_targets.empty(),
+         "the fill-batching rule must fail loudly when its file moves");
+}
+
+}

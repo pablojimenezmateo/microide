@@ -17,14 +17,10 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
                                     const editor::TextViewport* active_viewport) {
   util::AddPerformanceCounter(util::PerfCounterId::FrameRefreshStatusBarCalls);
 
-  // Views into memoized strings, published through the assigning SetSegment: a
-  // steady frame must not materialize a segment's text again just to hand it over.
   StatusBarService::StatusBarSegmentUpdate project_segment;
   StatusBarService::StatusBarSegmentUpdate branch_segment;
   StatusBarService::StatusBarSegmentUpdate worktrees_segment;
   if (!project_state.root.empty()) {
-    // See GitSnapshotDerivedCache: both of these are per-frame costs keyed on
-    // state that moves on a project switch / git snapshot, not on a frame.
     if (git_derived_cache_.raw_root != project_state.root) {
       git_derived_cache_.raw_root = project_state.root;
       git_derived_cache_.normalized_root = project_state.root.lexically_normal();
@@ -51,28 +47,14 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
         !has_git_snapshot && project_state.directory_tree.has_dirty_files();
     const bool has_worktree_changes = snapshot_has_worktree_changes || tree_has_worktree_changes;
     bool repo_available = git_state.repo_available;
-    // A git snapshot that says "repository" has already answered the question;
-    // the probe below is only for the window before one exists.
     project::GitAvailability availability = repo_available
                                                 ? project::GitAvailability::Repository
                                                 : project::GitAvailability::Unknown;
-    // A refresh that FAILED (a remote project whose link is down) answered
-    // nothing: its empty snapshot is not "clean" and its placeholder branch is not
-    // the branch. Say unknown until a refresh succeeds.
     const bool refresh_failed = !git_state.refresh_error.empty();
     if (refresh_failed) {
       availability = project::GitAvailability::Unknown;
       repo_available = false;
     } else if (!repo_available) {
-      // is_git_repo_valid is a `.git` stat (not a subprocess), but this refresh
-      // runs from PrepareFrameOnce, so "cheap" was still one syscall per painted
-      // frame — 120 a second, forever, for any project git has not answered for
-      // yet (TD-2026-08-06-158). It ran uncached because a per-root cache went
-      // stale after an in-session `git init` until an unrelated refresh
-      // superseded it. `repository_marker_generation` is the missing
-      // invalidation key: `.git` cannot appear or disappear under a live project
-      // without producing a repository change, and one now fires for exactly
-      // that transition (GitRepositoryMetadataTracker).
       if (!marker_probe_cache_.valid ||
           marker_probe_cache_.project_root != project_root ||
           marker_probe_cache_.marker_generation != git_state.repository_marker_generation) {
@@ -86,10 +68,6 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
       availability = marker_probe_cache_.availability;
       repo_available = availability == project::GitAvailability::Repository;
     }
-    // Three answers, three labels. "no-scm" is a CLAIM — it says this directory
-    // has no source control — and making it the answer while the question is
-    // still open is how a remote project would spend its first round trip
-    // telling the user their repository is not one. Unknown says so instead.
     const std::string_view cleanliness =
         availability == project::GitAvailability::Unknown
             ? "scm-unknown"
@@ -103,12 +81,6 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
       branch_label = git_state.base_ref;
     }
     if (branch_label.empty() && repo_available && operations.read_head_branch) {
-      // Nothing has produced a `git status` snapshot yet — which is the normal
-      // state for the first seconds after opening a project, and stays the state
-      // indefinitely if the user never opens the Source Control view. Falling
-      // through to "no-scm" here made a perfectly ordinary git checkout label
-      // itself "no-scm [clean]": a contradiction, since only source control can
-      // know it is clean. `<gitdir>/HEAD` answers this with one file read.
       if (!head_branch_cache_.valid || head_branch_cache_.project_root != project_root ||
           head_branch_cache_.marker_generation != git_state.repository_marker_generation) {
         head_branch_cache_.project_root = project_root;
@@ -119,8 +91,6 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
       branch_label = head_branch_cache_.branch;
     }
     if (branch_label.empty()) {
-      // A detached HEAD in a real repository still is not "no source control";
-      // say what it actually is. And a pending answer is neither.
       branch_label = repo_available ? "detached"
                      : availability == project::GitAvailability::Unknown ? "scm-unknown"
                                                                          : "no-scm";
@@ -133,8 +103,6 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
       project_segment_cache_.branch_label.assign(branch_label);
       project_segment_cache_.cleanliness.assign(cleanliness);
       if (branch_label == cleanliness) {
-        // Both halves say the same thing (no-scm/no-scm, scm-unknown/scm-unknown);
-        // "no-scm [no-scm]" reads as a fault rather than a state.
         project_segment_cache_.text.assign(branch_label);
       } else {
         project_segment_cache_.text.clear();
@@ -154,12 +122,9 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     project_segment.text = project_segment_cache_.text;
     project_segment.tooltip = project_segment_cache_.tooltip;
     project_segment.visible = true;
-    // Its tooltip has always read "Open Source Control (...)"; now it does.
     project_segment.command = "sidebar-show";
     project_segment.command_arg = "git";
     branch_segment = {};
-    // The repository's working trees, once there is more than the one: where
-    // parallel agents work. A click switches to one (Git > Switch Worktree...).
     if (repo_available && !refresh_failed && git_state.worktree_count > 1) {
       if (worktree_segment_cache_.count != git_state.worktree_count) {
         worktree_segment_cache_.count = git_state.worktree_count;
@@ -184,7 +149,7 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
                                  ? operations.startup_mode_text
                                  : operations.startup_mode_tooltip;
     branch_segment.visible = true;
-    branch_segment.command = {};  // startup-mode text is a readout, not a control
+    branch_segment.command = {};
   }
   status_bar_service.SetSegment(StatusBarSegmentId::Branch, branch_segment);
   status_bar_service.SetSegment(StatusBarSegmentId::Worktrees, worktrees_segment);
@@ -201,19 +166,11 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
       editor_segments_cache_.cursor_line = viewport->cursor_line();
       editor_segments_cache_.cursor_column = viewport->cursor_column();
       editor_segments_cache_.content_revision = viewport->content_revision();
-      // Composed in place, like the tooltip below: the `+` chain built three
-      // temporaries and assigned the last one, so a caret move past column 15
-      // (where SSO stops covering "Ln N, Col M") allocated twice per keystroke on
-      // the shell thread. Appending into the memo's own buffer reuses a capacity
-      // the previous caret position already paid for.
       std::string& line_column_text = editor_segments_cache_.line_column_text;
       line_column_text.clear();
       line_column_text.append("Ln ");
       util::AppendUnsigned(line_column_text, viewport->cursor_line() + 1);
       line_column_text.append(", Col ");
-      // The VISIBLE column (VS Code's "Col"): a tab counts as its width and a
-      // multibyte character as one, where the raw byte offset put the caret at
-      // "Col 3" after a single accented letter and "Col 2" after a tab.
       util::AppendUnsigned(line_column_text, viewport->cursor_visual_column() + 1);
     }
     StatusBarService::StatusBarSegmentUpdate line_col;
@@ -242,13 +199,8 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     status_bar_service.SetSegment(StatusBarSegmentId::Indent, indent);
 
     StatusBarService::StatusBarSegmentUpdate language;
-    // The viewport owns the memo, so a settled buffer costs a field compare here.
-    // The normalized-path cache this used to keep existed only to key the status
-    // bar's own filetype memo; both went away with it.
     const std::string& filetype = viewport->language_id();
     if (!filetype.empty()) {
-      // The tooltip is the only composed string here, so it gets its own memo
-      // rather than being rebuilt per frame from a filetype that rarely changes.
       if (editor_segments_cache_.language_tooltip_source != filetype) {
         editor_segments_cache_.language_tooltip_source = filetype;
         editor_segments_cache_.language_tooltip.clear();
@@ -256,9 +208,6 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
         editor_segments_cache_.language_tooltip.append("Language: ");
         editor_segments_cache_.language_tooltip.append(filetype);
       }
-      // "unknown" is the fallback definition's id, which keys syntax, the LSP and
-      // the language-contract cache, so it stays; on screen it read as an error.
-      // VS Code calls the same state "Plain Text".
       language.text = filetype == "unknown" ? std::string_view("Plain Text") : std::string_view(filetype);
       language.tooltip = editor_segments_cache_.language_tooltip;
       language.command = "language-mode";
@@ -266,9 +215,6 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     }
     status_bar_service.SetSegment(StatusBarSegmentId::Language, language);
 
-    // VS Code's two segments: the encoding, and the line ending a click changes
-    // (Change End of Line Sequence…). The labels are owned strings the viewport
-    // composes; memoized so a settled buffer copies nothing per frame.
     const std::string encoding_label = viewport->EncodingLabel();
     const std::string line_ending_label = viewport->LineEndingLabel();
     if (editor_segments_cache_.encoding_label != encoding_label) {
@@ -330,17 +276,12 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
 
   StatusBarService::StatusBarSegmentUpdate lsp;
   if (active_viewport != nullptr) {
-    // Reused buffers, not locals: the callback assigns into them, so a steady
-    // frame reuses the capacity rather than allocating both strings again.
     editor_segments_cache_.lsp_text.clear();
     editor_segments_cache_.lsp_tooltip.clear();
     StatusTone lsp_tone = StatusTone::Default;
     operations.active_lsp_status_strings(false, editor_segments_cache_.lsp_text,
                                          editor_segments_cache_.lsp_tooltip, lsp_tone);
     if (!editor_segments_cache_.lsp_text.empty()) {
-      // The tone comes from typed LSP readiness state (idle/busy/failed), so a
-      // server named "Ready…" or a "Not Ready" message no longer mis-colors the
-      // segment, and a failed server is flagged Error rather than mere Info.
       lsp.tone = lsp_tone;
       lsp.text = editor_segments_cache_.lsp_text;
       lsp.tooltip = editor_segments_cache_.lsp_tooltip;
@@ -355,4 +296,4 @@ std::string ProblemsSegmentText(std::size_t errors, std::size_t warnings) {
          (warnings == 1 ? " warning" : " warnings");
 }
 
-}  // namespace microide::workspace
+}

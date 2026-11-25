@@ -8,19 +8,9 @@ namespace microide::workspace {
 
 namespace {
 
-// Host-imposed virtual-address-space ceiling for every debug adapter (and, by
-// inheritance, the debuggee it spawns). A debug adapter can be driven into
-// unbounded allocation — notably gdb formatting an uninitialized STL container
-// whose garbage size field reads as billions of elements — which would otherwise
-// swap the whole machine to a freeze. Capping RLIMIT_AS turns that into a clean
-// ENOMEM on the adapter instead of a host lockup. Sized to comfortably fit normal
-// debugging (gdb + a loaded debuginfo index) yet small enough that a pathological
-// runaway ENOMEMs within ~1 s instead of thrashing the host toward swap — a higher
-// ceiling (we shipped 8 GiB) lets a runaway climb for many seconds first. Applied
-// only when the contributed adapter did not already set a tighter limit.
-constexpr long kDefaultAdapterAddressSpaceBytes = 3L * 1024 * 1024 * 1024 / 2;  // 1.5 GiB
+constexpr long kDefaultAdapterAddressSpaceBytes = 3L * 1024 * 1024 * 1024 / 2;
 
-}  // namespace
+}
 
 DapManager::DapManager() = default;
 
@@ -103,14 +93,9 @@ int DapManager::StartSession(const LaunchConfig& config,
   }
   session_entry.session->SetCallbacks(make_callbacks ? make_callbacks(id)
                                                      : DebugSession::Callbacks{});
-  // Make the session active before Start() so any synchronous state callback it
-  // fires already sees it as the active session.
   sessions_.push_back(std::move(session_entry));
   active_session_id_ = id;
   DebugSession& session = *sessions_.back().session;
-  // Force a memory ceiling on the adapter so a runaway (e.g. gdb formatting a
-  // garbage container) fails with ENOMEM instead of freezing the host. Respect a
-  // tighter contributed limit if one was set.
   platform::SubprocessSandbox spawn_sandbox = entry.sandbox;
   if (spawn_sandbox.limits.address_space_bytes <= 0) {
     spawn_sandbox.limits.address_space_bytes = kDefaultAdapterAddressSpaceBytes;
@@ -121,7 +106,6 @@ int DapManager::StartSession(const LaunchConfig& config,
       last_error_ = "debug adapter failed to start";
     }
     last_error_ += " [command: " + SummarizeCommandForError(entry.command) + "]";
-    // Drop the failed entry and repoint active to the most recent survivor.
     sessions_.pop_back();
     active_session_id_ = sessions_.empty() ? 0 : sessions_.back().id;
     return 0;
@@ -230,7 +214,6 @@ void DapManager::ClearActiveEntry() {
     return;
   }
   sessions_[index].session->RequestStop();
-  // ~DebugSession -> ~DapClient blocks until shutdown completes.
   sessions_.erase(sessions_.begin() + static_cast<std::ptrdiff_t>(index));
   active_session_id_ = sessions_.empty() ? 0 : sessions_.back().id;
 }
@@ -246,9 +229,6 @@ bool DapManager::ReapExitedSessions() {
     if (state == DebugSession::State::Inactive || terminal) {
       continue;
     }
-    // A live session always spawned a process; once IsRunning() goes false the
-    // adapter has exited. If no `terminated`/`exited` event drove the transition,
-    // force it here so the session can be pruned.
     if (!session.Client().IsRunning()) {
       session.NotifyProcessExited();
       changed = true;
@@ -266,7 +246,6 @@ std::vector<PrunedSession> DapManager::PruneTerminated() {
         state == DebugSession::State::Terminated || state == DebugSession::State::Failed;
     if (terminal && !session.Client().IsRunning()) {
       const bool was_active = it->id == active_session_id_;
-      // Capture the caller's console bookkeeping before the session is destroyed.
       const std::string& name = session.Config().name;
       removed.push_back(PrunedSession{
           .id = it->id,
@@ -303,4 +282,4 @@ void DapManager::ShutdownAll() {
   active_session_id_ = 0;
 }
 
-}  // namespace microide::workspace
+}

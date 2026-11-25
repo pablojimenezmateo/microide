@@ -22,16 +22,11 @@ class DiffTabCoordinator {
     std::function<void()> reveal_active_merge_selection;
     std::function<void()> ensure_active_tab_visible;
     std::function<void(bool)> dismiss_overlay;
-    // A frame owed: a diff's rows, header and breadcrumb derive their damage
-    // (RequestPreparedFrame); a request names no rect.
     std::function<void()> request_frame;
     std::function<std::optional<TabEntry>(const std::filesystem::path&,
                                           const project::GitCommitEntry&,
                                           std::size_t)>
         build_compare_tab_entry;
-    // A compare tab rebuilt from its state; the third argument, when not null,
-    // holds its ref-named sides already read (a refresh's), which it then does not
-    // read again.
     std::function<std::optional<TabEntry>(const std::filesystem::path&, const CompareTabState&,
                                           const CompareRevisionSides*)>
         rebuild_compare_tab_entry;
@@ -63,32 +58,14 @@ class DiffTabCoordinator {
         build_merge_tab_from_buffers;
     std::function<void(MergeTabState&, const std::filesystem::path&)> finalize_git_merge_tab;
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
-    // Post a working-tree compare load off the shell thread (TD-2026-09-29-312).
-    // Returns the id the completion will carry, or 0 when no reader is wired — in
-    // which case the open stays synchronous, exactly as before. The completion
-    // must reach ApplyCompareTabLoad, whatever its outcome.
     std::function<std::uint64_t(CompareTabLoadRequest)> begin_compare_tab_load;
-    // Read a conflicted file's three index stages off the shell thread, then finish
-    // the open there with them (TD-2026-09-29-312) -- through a coordinator made
-    // at completion time, since this one is a per-use value that is long gone by
-    // then. Unset: the open reads them inline, as it always did.
     std::function<void(const std::filesystem::path& path)> begin_git_conflict_prefetch;
     std::function<void(editor::TextViewport&)> apply_editor_preferences;
     std::function<void(std::string)> report_compare_load_failure;
-    // Read a loaded compare tab's ref-named sides off the shell thread. Returns the
-    // id the completion will carry, which must reach ApplyCompareTabRefresh
-    // whatever its outcome; 0 when no reader is wired, and then the refresh reads
-    // them inline, as it always did.
     std::function<std::uint64_t(CompareTabRefreshRequest)> begin_compare_tab_refresh;
-    // Drop an off-thread read whose answer is no longer wanted (its completion
-    // still arrives, cancelled).
     std::function<void(std::uint64_t)> cancel_file_read;
   };
 
-  // A working-tree compare at least this large opens as a stand-in and loads off
-  // the shell thread. The editor's async-open threshold, for the same reason: below
-  // it the whole load is a fraction of a frame and a handoff costs more than it
-  // saves (TabCoordinator::kAsyncOpenThresholdBytes).
   static constexpr std::uintmax_t kAsyncCompareThresholdBytes = 4ull * 1024 * 1024;
 
   DiffTabCoordinator(ProjectWorkspaceState& state, Operations operations);
@@ -100,27 +77,15 @@ class DiffTabCoordinator {
   std::optional<std::size_t> FindOpenPlainCompareTabIndex(
       const std::filesystem::path& left_path, const std::filesystem::path& right_path) const;
   void OpenComparison(const project::GitCommitEntry& commit);
-  // Opens a non-git comparison of two arbitrary sides (file/buffer/clipboard).
-  // `left` is the reference side, `right` the primary (possibly editable) side.
   bool OpenPlainComparison(CompareInput left, CompareInput right);
   bool OpenMergeEditor(const std::filesystem::path& base_path,
                        const std::filesystem::path& incoming_path,
                        const std::filesystem::path& current_path,
                        const std::filesystem::path& output_path);
-  // `prefetched` is an optional bulk-read hint (project::GitRevisionBlobCache);
-  // omitting it, or passing one that does not hold a side, just reads that side
-  // with its own git spawn. A multi-file review passes one so the whole set costs
-  // a couple of spawns instead of two or three per file.
   bool OpenWorkingTreeComparison(const std::filesystem::path& path,
                                  const std::string& left_ref,
                                  const std::string& left_label,
                                  const project::GitRevisionBlobCache* prefetched = nullptr);
-  // `review_files` is the project-relative file list this comparison is one entry
-  // of, used by the next/previous-review-file jump. Pass it whenever the caller
-  // already knows the set: deriving it here costs a whole `git diff` spawn per
-  // opened tab, which is per-file work for a per-review answer, and for a commit
-  // review the derived list is the wrong set anyway (`<commit>~1...HEAD`, i.e.
-  // everything since that commit, rather than the commit's own files).
   bool OpenBranchHeadComparison(const std::filesystem::path& path,
                                 const std::string& left_ref,
                                 const std::string& left_label,
@@ -131,33 +96,14 @@ class DiffTabCoordinator {
   bool OpenGitConflictMerge(const std::filesystem::path& path,
                             const project::GitRevisionBlobCache* prefetched = nullptr);
 
-  // Post the load a stand-in compare tab owes, if it owes one and none is in
-  // flight. Called for each pane's FRONT compare tab when a frame is prepared, so
-  // a tab loads when it is first shown and again after a cancelled load. Returns
-  // whether a load was posted.
   bool StartPendingCompareLoad(CompareTabState& compare_tab);
-  // Every open compare of `normalized_path`, brought up to date with the file and
-  // with what its refs name now: after the file changed, or a stage, commit or
-  // checkout moved a ref. A tab whose sides git must answer for keeps the diff it
-  // has, editable, until the off-thread read lands (soak a509a3f35fe0).
   void RefreshCompareTabsForPath(const std::filesystem::path& normalized_path);
-  // Post the re-read a compare tab owes (`refresh_owed`), if none is in flight.
-  // Called by the refresh and, for a read cancelled under it, by the next frame
-  // that shows the tab. Returns whether a read was posted.
   bool StartCompareTabRefresh(CompareTabState& compare_tab);
-  // Shell thread: the completion of a re-read StartCompareTabRefresh posted.
-  // False when no tab of this project holds the id (closed, retargeted, or in a
-  // project no longer in front).
   bool ApplyCompareTabRefresh(std::uint64_t id, bool cancelled, const CompareRevisionSides& sides);
-  // Shell thread: the completion of a load posted by StartPendingCompareLoad.
-  // `cancelled` leaves the tab owing its load; `read_ok` is the working file's read.
   void ApplyCompareTabLoad(std::uint64_t id, bool cancelled, bool read_ok,
                            CompareTabLoadResult& result);
 
  private:
-  // Opens a built compare tab in the focused group and activates it; false at the
-  // per-group tab ceiling. A tab still loading off-thread gets its first-change
-  // selection and its buffer-open announcement when the load lands.
   bool AddCompareTab(TabEntry tab, bool load_off_thread);
   void ActivateCompareTab(std::size_t index, bool dismiss_overlay);
   void ActivateMergeTab(std::size_t index);
@@ -171,4 +117,4 @@ class DiffTabCoordinator {
   Operations operations_;
 };
 
-}  // namespace microide::workspace
+}

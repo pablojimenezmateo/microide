@@ -9,12 +9,6 @@
 #include "workspace/render/EditorRowUnits.h"
 #include "workspace/render/SidebarModeRowPaint.h"
 
-// The sidebar's mode tab row. Prep settles what each tab shows -- which view is
-// up, what the pointer is over, whether the overflow's menu is open -- into the
-// frame's snapshot and derives the row's damage from it; paint draws the snapshot.
-// The overflow button lights while its menu is up, which nothing compared before:
-// it was repainted by whoever asked for the whole sidebar.
-
 namespace microide::workspace {
 
 using namespace detail;
@@ -37,12 +31,11 @@ void DrawModeGlyph(SDL_Renderer* renderer, SidebarMode mode, const SDL_FRect& ic
   }
 }
 
-}  // namespace
+}
 
 void PrepareSidebarModeRowFrame(PreparedFrameState& frame, const SidebarModeRowInputs& inputs) {
   PreparedFrameState::SidebarModeRowPaint& row = frame.sidebar_mode_row;
   row = PreparedFrameState::SidebarModeRowPaint{};
-  // Every frame, shown or not: a hidden sidebar has no units.
   std::vector<DerivedDamage::Unit>& units = frame.derived_damage.Begin(DerivedSurface::SidebarModeRow);
   if (inputs.visible) {
     row.visible = true;
@@ -57,7 +50,6 @@ void PrepareSidebarModeRowFrame(PreparedFrameState& frame, const SidebarModeRowI
       row.tabs[static_cast<std::size_t>(i)] = SidebarModeTabPaint{
           .rect = tab.rect,
           .mode = tab.mode,
-          // Icon only when the labels do not fit; the name shows on hover.
           .label = layout.icon_only || spec == nullptr ? std::string_view{} : spec->label,
           .hovered = inputs.pointer_over(tab.rect),
           .active = active,
@@ -67,9 +59,6 @@ void PrepareSidebarModeRowFrame(PreparedFrameState& frame, const SidebarModeRowI
       row.has_overflow = true;
       row.overflow_rect = layout.overflow_rect;
       row.overflow_hovered = inputs.pointer_over(layout.overflow_rect);
-      // Lit whenever the current view lives behind the overflow rather than in a tab
-      // (Problems / Tests / Outline / any plugin view), so the rail always shows where
-      // you are, and while its menu is open.
       row.overflow_active = inputs.overflow_menu_open || !active_view_has_tab;
     }
 
@@ -85,7 +74,6 @@ void PrepareSidebarModeRowFrame(PreparedFrameState& frame, const SidebarModeRowI
                                     .Add(theme.text_muted)
                                     .Add(inputs.text_renderer->MetricsGeneration())
                                     .value();
-    // A slot per tab the row can hold, laid out or not, then the overflow's.
     for (std::size_t i = 0; i < row.tabs.size(); ++i) {
       const SidebarModeTabPaint& tab = row.tabs[i];
       if (static_cast<int>(i) >= row.tab_count) {
@@ -135,4 +123,4 @@ void PaintSidebarModeRow(SDL_Renderer* renderer, const PreparedFrameState& frame
   }
 }
 
-}  // namespace microide::workspace
+}

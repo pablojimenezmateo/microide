@@ -20,11 +20,6 @@ PersistedBranchReviewHunkIdentity ToPersistedHunkIdentity(
   };
 }
 
-// The persistence file is the one ingress into the review state that does not go
-// through a service mutator, so it is where the "stored paths are normalized"
-// invariant (see compare::NormalizeReviewPath) has to be re-established: a config
-// written by an older build, or hand-edited, can carry "./src/foo.cpp" -- or an
-// absolute path, which builds before 2026-10-19 stored for a mark made in a diff.
 compare::BranchReviewHunkIdentity FromPersistedHunkIdentity(
     const std::filesystem::path& repository_root,
     const PersistedBranchReviewHunkIdentity& identity) {
@@ -124,7 +119,7 @@ compare::BranchReviewTargetState FromPersistedTarget(const PersistedBranchReview
   return target_state;
 }
 
-}  // namespace
+}
 
 PersistedBranchReviewState ToPersistedBranchReviewState(
     const compare::BranchReviewStateService& service) {
@@ -160,8 +155,6 @@ bool TakeRoamingReview(std::string_view text, ProjectWorkspaceState* state) {
     return false;
   }
   LoadBranchReviewStateFromPersisted(mine, &state->branch_review);
-  // The repository's cap on targets, and the revision the git view's markers
-  // are cached on.
   state->branch_review.PruneForRepository(state->root, nullptr);
   for (EditorGroup& group : state->editor_groups) {
     for (TabEntry& tab : group.open_tabs) {
@@ -183,4 +176,4 @@ std::optional<compare::BranchReviewTargetIdentity> OutgoingBranchReviewTarget(
                                                  git_state.base_ref, git_state.snapshot_generation);
 }
 
-}  // namespace microide::workspace
+}

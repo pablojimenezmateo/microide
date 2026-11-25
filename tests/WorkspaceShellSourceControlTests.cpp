@@ -26,8 +26,6 @@ using microide::workspace::TabEntry;
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
-// The git list's row commands by keyboard (they were bare letters, TD-2026-10-16-350):
-// Shift+F10 opens the selected row's menu, Down walks it to `label`, Enter runs it.
 bool ChooseFromGitRowMenu(WorkspaceShell& shell, std::string_view label) {
   if (!SendKeyDown(shell, SDLK_F10, SDL_KMOD_SHIFT) || !WorkspaceShellTestAccess::GitEntryContextMenuOpen(shell)) {
     return false;
@@ -54,11 +52,6 @@ std::optional<microide::editor::EditorBlameOverlay> WaitForActiveEditorBlameOver
   return WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell);
 }
 
-// A refresh requested while another is in flight is parked and run when the first
-// finishes. When the first is SUPERSEDED (which the second request makes it), the
-// parked one used to run under the generation it was copied with, superseded
-// itself, and left the sidebar refreshing forever with no entries -- what pressing
-// Refresh right after opening the git view did.
 void TestWorkspaceShellGitRefreshDuringInFlightRefreshPublishes() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -69,18 +62,13 @@ void TestWorkspaceShellGitRefreshDuringInFlightRefreshPublishes() {
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "open the project");
-  WorkspaceShellTestAccess::ShowGitSidebar(shell);  // starts a refresh
-  WorkspaceShellTestAccess::RefreshGitSidebar(shell);  // parked behind it
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  WorkspaceShellTestAccess::RefreshGitSidebar(shell);
   Expect(WaitForGitSidebarEntryCount(shell, 1),
          "the parked refresh publishes once the superseded one finishes");
   Expect(!WorkspaceShellTestAccess::GitSidebarRefreshing(shell), "and the sidebar leaves refreshing");
 }
 
-// Git: Refresh asks git again whatever the sidebar shows. It used to refresh the
-// files and leave git to the Source Control view's own refresh, which runs only
-// while that view is showing — and a finished snapshot waiting to be consumed
-// answered it instead — so with the explorer up the status bar kept what git last
-// said (a remote project's "master [dirty]" after its link went down).
 void TestWorkspaceShellGitRefreshCommandAsksGitFromAnyView() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -103,8 +91,6 @@ void TestWorkspaceShellGitRefreshCommandAsksGitFromAnyView() {
          "and asks git again with the explorer showing");
 }
 
-// The outgoing-base ref picker now runs its branch/commit git queries on the
-// background executor; drive the mailbox drain until it leaves the loading state.
 bool SettleComparePicker(WorkspaceShell& shell) {
   return WaitUntil(
       [&shell]() { return !WorkspaceShellTestAccess::ComparePickerLoading(shell); },
@@ -177,17 +163,11 @@ void TestWorkspaceShellGitSidebarEntryRightClickOpensContextMenu() {
                                              "Stage",              "Discard…",
                                              "Accept Local",     "Accept Remote",
                                              "Copy Relative Path", "Copy Absolute Path",
-                                             // Disabled with no review comments: no count.
                                              "Copy Review Comments", "Send Review Comments to Terminal"};
   Expect(labels == expected,
          "the git entry context menu should expose the expected action labels");
 }
 
-// Collapsing a folder in the git sidebar moves every row below it. The toggle asked
-// for no repaint and left it to the click, whose own damage was the clicked row
-// when the sidebar already had the keyboard: the files under the folder and the
-// sections below stayed where they were (QA monkey, seed 45 at 600 steps). The
-// toggle now repaints the sidebar itself, whoever calls it.
 void TestWorkspaceShellGitSidebarFolderCollapseRepaintsTheRowsBelow() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -241,8 +221,6 @@ void TestWorkspaceShellGitSidebarLeftClickDoesNotFireActions() {
          "left-click fixture should expose one changed entry");
 
   const SDL_FRect row_rect = WorkspaceShellTestAccess::GitSidebarEntryRowRect(shell, 0);
-  // Click on the far right of the row, where the inline Stage/Discard buttons
-  // used to live: this must select + open the diff, never stage the entry.
   Expect(SendMouseDown(shell, row_rect.x + row_rect.w - 8.0f, row_rect.y + row_rect.h * 0.5f,
                        SDL_BUTTON_LEFT),
          "left-clicking a git sidebar entry should be handled");
@@ -276,7 +254,6 @@ void TestWorkspaceShellGitSidebarContextMenuActionsActOnSelectedEntry() {
          "menu action fixture should expose one changed entry");
   WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, 0);
 
-  // Unstaged entry: the toggle item stages it and reports "Stage".
   Expect(WorkspaceShellTestAccess::GitEntryContextMenuLabels(shell)[2] == "Stage",
          "an unstaged entry's toggle item should read Stage");
   Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, WorkspaceShell::ActionId::GitDiscardEntry),
@@ -293,12 +270,10 @@ void TestWorkspaceShellGitSidebarContextMenuActionsActOnSelectedEntry() {
                      }),
          "the stage toggle action should move the entry into the staged section");
 
-  // Now staged: the toggle item flips to "Unstage".
   WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, 0);
   Expect(WorkspaceShellTestAccess::GitEntryContextMenuLabels(shell)[2] == "Unstage",
          "a staged entry's toggle item should read Unstage");
 
-  // Discard opens the confirmation prompt rather than mutating immediately.
   Expect(WorkspaceShellTestAccess::ExecuteContextMenuAction(
              shell, WorkspaceShell::ActionId::GitDiscardEntry),
          "the discard context-menu action should be handled");
@@ -343,8 +318,6 @@ void TestWorkspaceShellOpeningGitSidebarEntryAlsoInvalidatesSidebarSelection() {
   event.button.y = row_rect.y + row_rect.h * 0.5f;
   const auto result = shell.HandleEvent(event);
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
-  // What the frame repaints: the click's request plus what preparing it derives
-  // (the git panel's rows are units, the selection among them).
   microide::workspace::RenderInvalidation requested = result.redraw;
   requested.Merge(shell.ConsumePendingRenderInvalidation());
   const auto damage = FrameDamage(shell, canvas, 1280, 720, requested);
@@ -529,7 +502,6 @@ void TestWorkspaceShellGitOutgoingBaseButtonOpensMenuAndPrompt() {
       WorkspaceShellTestAccess::CurrentProjectState(shell).overlay.workflow.compare_picker;
   Expect(picker.purpose == microide::workspace::ComparePickerPurpose::OutgoingBaseRef,
          "outgoing base picker should run in the outgoing-base purpose");
-  // The branch/commit list is populated asynchronously; wait for the query to land.
   Expect(SettleComparePicker(shell), "the async outgoing-base query should settle");
   Expect(!picker.items.empty(),
          "outgoing base picker should list at least the current branch / recent commit");
@@ -640,9 +612,6 @@ void TestWorkspaceShellGitSidebarGroupsWorkflowSections() {
          "rename fixture should surface the destination path in the sidebar");
 }
 
-// A clean checkout used to fill the rail with five "(0)" headers and five "No …"
-// placeholders. Only the populated groups render now; Outgoing stays because its
-// header carries the base-branch button.
 void TestWorkspaceShellGitSidebarHidesEmptySections() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -674,7 +643,6 @@ void TestWorkspaceShellGitSidebarHidesEmptySections() {
   Expect(WorkspaceShellTestAccess::GitSidebarOutgoingBaseButtonRect(shell).has_value(),
          "hiding empty groups must not hide the outgoing base-branch button");
 
-  // One unstaged edit brings back exactly one group, and no others.
   WriteFile(tracked, "int value() { return 2; }\n");
   WorkspaceShellTestAccess::RefreshGitSidebar(shell);
   Expect(WaitForGitSidebarEntryCount(shell, 1),
@@ -720,12 +688,6 @@ void TestWorkspaceShellGitSidebarDiscardRequiresConfirmation() {
          "confirmed discard should restore the committed file contents");
 }
 
-// The discard prompt names the file it was opened for, whatever the sidebar does
-// under it. It kept only the row's index and composed its message from the live
-// entry at that index, so a git refresh that slid another file into the slot
-// renamed the question while the confirm (which re-checks the path) still acted on
-// the first file -- and only the frames that repainted the dialog showed the new
-// name (soak 5ec45751b332: QA-STALE over the prompt's message line).
 void TestWorkspaceShellGitSidebarDiscardPromptKeepsTheFileItWasOpenedFor() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -749,7 +711,6 @@ void TestWorkspaceShellGitSidebarDiscardPromptKeepsTheFileItWasOpenedFor() {
   Expect(WorkspaceShellTestAccess::PromptSurfaceMessage(shell).find("c.txt") != std::string::npos,
          "the prompt asks about c.txt");
 
-  // a.txt sorts first: after the refresh b.txt holds the prompt's old index.
   WriteFile(root / "a.txt", "a\n");
   WorkspaceShellTestAccess::RefreshGitSidebar(shell);
   Expect(WaitForGitSidebarEntryCount(shell, 3), "the refresh lists a.txt");
@@ -759,11 +720,6 @@ void TestWorkspaceShellGitSidebarDiscardPromptKeepsTheFileItWasOpenedFor() {
          "the prompt still asks about c.txt, not the row now at its index: " + message);
 }
 
-// Regression (data loss): discarding an UNTRACKED file from the git sidebar must honor
-// the confirm prompt's promise ("Existing file-operation policy applies (trash when
-// configured)") and route through the same trash the file tree's Delete uses — NOT
-// `git clean -fd`, which permanently destroys a file the user created. The trashed file
-// must be recoverable from the freedesktop trash under XDG_DATA_HOME.
 void TestWorkspaceShellGitSidebarDiscardUntrackedFileTrashesNotDeletes() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -774,7 +730,6 @@ void TestWorkspaceShellGitSidebarDiscardUntrackedFileTrashesNotDeletes() {
   WriteFile(tracked, "int main() { return 0; }\n");
   InitializeGitRepo(root);
   CommitAll(root, "base", "base");
-  // A brand-new untracked file with content that must survive as recoverable.
   const std::filesystem::path untracked = root / "notes.txt";
   WriteFile(untracked, "important untracked notes\n");
 
@@ -801,7 +756,6 @@ void TestWorkspaceShellGitSidebarDiscardUntrackedFileTrashesNotDeletes() {
   Expect(!std::filesystem::exists(untracked),
          "the untracked file should be gone from the worktree after discard");
 
-  // The correctness property: it was TRASHED (recoverable), not `git clean`-deleted.
   const std::filesystem::path trash_files = trash_home / "Trash" / "files";
   bool trashed_content_found = false;
   std::error_code ec;
@@ -819,10 +773,6 @@ void TestWorkspaceShellGitSidebarDiscardUntrackedFileTrashesNotDeletes() {
          "it rather than permanently deleting it with git clean");
 }
 
-// A staged NEW file has no committed content to restore either. Discarding its
-// Staged row used to run `git clean -f` on it -- a permanent deletion behind the
-// same prompt that promises the trash policy, and unlike Discard All, which already
-// trashed such files. It is now unstaged and trashed like the untracked row it is.
 void TestWorkspaceShellGitSidebarDiscardStagedNewFileTrashesNotDeletes() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -901,7 +851,6 @@ void TestWorkspaceShellGitSidebarKeyboardStageShortcut() {
   WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, changed_index);
 
   WorkspaceShellTestAccess::SetFocusSidebar(shell);
-  // `s` is typing now: it selects by file name and stages nothing.
   Expect(SendKeyDown(shell, SDLK_S, SDL_KMOD_NONE), "a letter in the git list is handled");
   Expect(std::none_of(WorkspaceShellTestAccess::GitSidebarEntries(shell).begin(),
                       WorkspaceShellTestAccess::GitSidebarEntries(shell).end(),
@@ -920,9 +869,6 @@ void TestWorkspaceShellGitSidebarKeyboardStageShortcut() {
          "Stage from the keyboard-opened menu should move the row into the staged section");
 }
 
-// Typing in the git list selects by file name, as VS Code's source control view
-// does; the row commands are on its menu (Shift+F10), Open File among them, and
-// Git: Commit… is a command that says why it cannot open with nothing staged.
 void TestWorkspaceShellGitSidebarTypesToNavigate() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -963,10 +909,6 @@ void TestWorkspaceShellGitSidebarTypesToNavigate() {
          "the refusal says why: " + WorkspaceShellTestAccess::CommandFeedbackText(shell));
 }
 
-// QA big-repo: with 300 changes the git view scrolled to its first file showed
-// no "Changes (300)" header, and Home -- the selection already on that file --
-// moved nothing and scrolled nothing, so the header could not be brought back by
-// keyboard. Home onto the first entry shows the top of the list, as VS Code's do.
 void TestWorkspaceShellGitSidebarHomeShowsTheListTop() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -985,7 +927,6 @@ void TestWorkspaceShellGitSidebarHomeShowsTheListTop() {
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
   Expect(WaitForGitSidebarEntryCount(shell, 60), "the fixture should list sixty changed files");
   WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, 0);
-  // Scrolled so the first file is the top row: the header and folder above it are out.
   WorkspaceShellTestAccess::SetSidebarScrollRow(shell, 2);
   Expect(SendKeyDown(shell, SDLK_HOME, SDL_KMOD_NONE), "Home should be handled by the git view");
   Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) == 0,
@@ -1010,9 +951,6 @@ void TestWorkspaceShellGitStageFailureSurfacesFeedback() {
   Expect(WaitForGitSidebarEntryCount(shell, 1),
          "stage-failure fixture should expose the single changed row");
 
-  // Remove the repository so the staging git command fails deterministically
-  // while the sidebar still believes the entry is stageable (the silent-failure
-  // scenario this guards).
   std::filesystem::remove_all(root / ".git");
 
   Expect(!WorkspaceShellTestAccess::StageGitSidebarEntry(shell, 0),
@@ -1024,16 +962,6 @@ void TestWorkspaceShellGitStageFailureSurfacesFeedback() {
          "stage-failure feedback should name the affected file");
 }
 
-// Soak `c8c7389e178d` (overlap oracle, 640x480 at ui.scale 2 with the terminal
-// panel open): the commit draft is a fixed-height panel -- a four-row body among
-// it -- so on a short sidebar its Commit button was laid out below the sidebar's
-// bottom, under the panel's tab row, where nothing drew it and a click on it was
-// a click on a terminal tab. The body gives up rows, down to one, to keep the
-// button inside the sidebar; at every height that leaves room for that panel.
-// Soak 186050c5eb72 and e8bd4c6176d9 (640x480 at ui.scale 3): a sidebar 61 high
-// beside a bottom panel. The branch/Sync row was laid out at y 83 in a sidebar
-// ending at 86, its buttons reaching into the panel, and a hover on them
-// repainted only the part the panel's repaint happened to cover.
 void TestGitSidebarHeaderRowsThatDoNotFitAreLeftOut() {
   namespace header = microide::workspace::git_sidebar_header;
   const SDL_FRect short_sidebar{0.0f, 25.0f, 120.0f, 61.0f};
@@ -1068,9 +996,6 @@ void TestWorkspaceShellCommitButtonStaysInsideAShortSidebar() {
   Expect(WaitForGitSidebarEntryCount(shell, 1), "fixture should expose a single modified entry");
   Expect(WorkspaceShellTestAccess::OpenCommitWorkflow(shell), "commit workflow should open");
 
-  // Every pre-check and the status line take a row of the panel too. A draft with
-  // several of them still at 640x400 put the button below the sidebar after its body
-  // had already given up every row it could (soak c8c7389e178d, second sighting).
   auto& draft = WorkspaceShellTestAccess::CommitWorkflow(shell);
   for (const char* message : {"Commit subject is required", "Untracked files are not included",
                               "Staged changes touch a file open with unsaved edits"}) {
@@ -1080,7 +1005,6 @@ void TestWorkspaceShellCommitButtonStaysInsideAShortSidebar() {
   draft.status_message = "Untracked files are not included in this commit";
 
   for (const int height : {720, 400, 340, 320, 300}) {
-    // The commit panel's rects are cached by its paint, so paint for real.
     SoftwareCanvas canvas(640, height);
     WorkspaceShellTestAccess::SetWindowSize(shell, 640, height);
     WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
@@ -1088,8 +1012,6 @@ void TestWorkspaceShellCommitButtonStaysInsideAShortSidebar() {
     const auto& workflow = WorkspaceShellTestAccess::CommitWorkflow(shell);
     const SDL_FRect button = workflow.commit_button_rect;
     Expect(workflow.body_visible_rows >= 1, "the body keeps at least one row");
-    // Where even one body row and the button cannot fit, the button is left out
-    // (an empty rect no click or query finds) rather than laid out below the sidebar.
     if (height <= 340 && button.w <= 0.0f) {
       continue;
     }
@@ -1130,15 +1052,11 @@ void TestWorkspaceShellCommitWorkflowFieldsAreKeyboardEditable() {
          "typed text should populate the commit subject");
   WorkspaceShellTestAccess::RenderFrame(shell);
 
-  // While a commit field owns the keyboard, git-action keys are gated: 's' (Stage) and the
-  // Down navigation key must be ignored by the git sidebar (returning unhandled) instead of
-  // staging the file or moving the git selection.
   Expect(!WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_S, SDL_KMOD_NONE),
          "'s' must not trigger Stage while the commit subject is focused");
   Expect(!WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE),
          "Down must not move the git selection while the commit subject is focused");
 
-  // Tab moves focus to the body; typing then lands in the body.
   Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
          "Tab should be consumed by the commit panel");
   Expect(WorkspaceShellTestAccess::CommitWorkflow(shell).focus_field ==
@@ -1152,10 +1070,6 @@ void TestWorkspaceShellCommitWorkflowFieldsAreKeyboardEditable() {
   Expect(WorkspaceShellTestAccess::CommitBodyText(shell).find("More detail") != std::string::npos,
          "typed text should populate the commit body");
 
-  // Exercise the multi-line body render path: add many lines (far more than the body's
-  // visible rows, so most are scrolled off), select across them, and render to confirm the
-  // panel paints without faulting. A large body also guards TD-2026-07-17-083: the commit
-  // body must paint via per-visible-row LineView, never a whole-buffer TextBuffer::Snapshot().
   for (int i = 0; i < 40; ++i) {
     Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
            "Enter should insert a newline in the commit body");
@@ -1164,18 +1078,11 @@ void TestWorkspaceShellCommitWorkflowFieldsAreKeyboardEditable() {
   }
   WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_HOME, SDL_KMOD_CTRL);
   WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_END, SDL_KMOD_CTRL | SDL_KMOD_SHIFT);
-  // No editor/merge tab is open, so the commit body is the only TextViewport in the frame;
-  // a whole-buffer snapshot here could only come from the commit-body paint path.
   microide::editor::TextBuffer::reset_snapshot_build_count();
   WorkspaceShellTestAccess::RenderFrame(shell);
   Expect(microide::editor::TextBuffer::snapshot_build_count() == 0,
          "commit-body render must not materialize a whole-buffer snapshot");
 
-  // Motion and editing in the body run the SAME switch as the compare and merge
-  // panes (HandleEditableViewportMotionAndEdit) -- it used to be a third
-  // hand-maintained copy. Only Enter, Ctrl+Home and Ctrl+Shift+End were covered,
-  // so the arms that copy could have drifted on were untested. Check the caret,
-  // not just the text.
   {
     const auto& body = WorkspaceShellTestAccess::CommitBodyViewport(shell);
     WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_HOME, SDL_KMOD_CTRL);
@@ -1205,7 +1112,6 @@ void TestWorkspaceShellCommitWorkflowFieldsAreKeyboardEditable() {
            "Ctrl+Delete removes a word from the body");
   }
 
-  // Shift+Tab returns to the subject.
   Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_TAB, SDL_KMOD_SHIFT),
          "Shift+Tab should be consumed by the commit panel");
   Expect(WorkspaceShellTestAccess::CommitWorkflow(shell).focus_field ==
@@ -1213,8 +1119,6 @@ void TestWorkspaceShellCommitWorkflowFieldsAreKeyboardEditable() {
          "Shift+Tab should move focus back to the commit subject");
 }
 
-// Git write operations run on the project background executor and publish through a
-// main-thread mailbox, so a test must drain that mailbox rather than sleep.
 bool SettleGitOperation(WorkspaceShell& shell) {
   return WaitUntil([&shell]() { return !WorkspaceShellTestAccess::GitOperationBusy(shell); },
                    std::chrono::seconds(10), std::chrono::milliseconds(5),
@@ -1231,8 +1135,6 @@ std::string CurrentGitBranch(const std::filesystem::path& root) {
   return {};
 }
 
-// End-to-end through the action layer: `git-create-branch` and `git-switch-branch`
-// must actually move HEAD, and must do so off the shell thread.
 void TestWorkspaceShellGitBranchActionsSwitchHead() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1260,12 +1162,6 @@ void TestWorkspaceShellGitBranchActionsSwitchHead() {
   Expect(CurrentGitBranch(root) == base_branch, "git-switch-branch should move HEAD back");
 }
 
-// A git operation belongs to the project it ran in, not to whichever project is in
-// front when it finishes. The completion used to toast unnamed into the project
-// the user had switched to, refresh THAT project's git view and reload ITS clean
-// buffers -- while the project whose worktree the branch switch rewrote kept
-// showing the old files after the user came back (its watcher was stopped, and a
-// re-activated watcher's first batch is a baseline, not a change list).
 void TestWorkspaceShellGitOperationFinishingInTheBackgroundStaysWithItsProject() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path alpha = temp_dir.path() / "alpha";
@@ -1292,7 +1188,6 @@ void TestWorkspaceShellGitOperationFinishingInTheBackgroundStaysWithItsProject()
          "alpha's a.txt is open, clean, on the base branch");
   Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::GitSwitchBranch, {"topic"}),
          "git-switch-branch is accepted in alpha");
-  // Switched away before the completion is drained: it lands with beta in front.
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, beta, true, false), "beta in front");
   Expect(SettleGitOperation(shell), "the switch completes");
   Expect(CurrentGitBranch(alpha) == "topic", "alpha's HEAD moved");
@@ -1317,11 +1212,6 @@ void TestWorkspaceShellGitOperationFinishingInTheBackgroundStaysWithItsProject()
              std::string(WorkspaceShellTestAccess::ActiveEditor(shell).lines().LineView(0)) + "'"; });
 }
 
-// A commit is its project's even when it finishes after a switch. The completion
-// found its state by ADDRESS -- the front project's commit workflow -- and a
-// switch moves the project's state out of that address and the next project's in,
-// so it cleared the OTHER project's subject and body and closed its panel, and
-// the clear-draft callback wiped the front project's persisted draft too.
 void TestWorkspaceShellCommitFinishingAfterAProjectSwitchLeavesTheOtherDraftAlone() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path alpha = temp_dir.path() / "alpha";
@@ -1349,7 +1239,6 @@ void TestWorkspaceShellCommitFinishingAfterAProjectSwitchLeavesTheOtherDraftAlon
   WorkspaceShellTestAccess::CommitWorkflow(shell).subject.SetText("Alpha's commit");
   Expect(WorkspaceShellTestAccess::RequestCommitWorkflowCommit(shell), "alpha's commit is dispatched");
 
-  // Beta in front before the completion is drained; the user starts a draft there.
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, beta, true, false), "beta in front");
   WorkspaceShellTestAccess::CommitWorkflow(shell).subject.SetText("Beta's draft");
   const auto toast_with = [&](std::string_view fragment) {
@@ -1372,10 +1261,6 @@ void TestWorkspaceShellCommitFinishingAfterAProjectSwitchLeavesTheOtherDraftAlon
          "alpha's own draft was the one cleared");
 }
 
-// Accept Local / Accept Remote (VS Code's whole-file conflict choices): the
-// only resolution a binary conflict has in the editor. From its merge tab the
-// action resolves that file and closes the tab; from a git sidebar conflict row's
-// context menu it resolves the row; with a path it resolves that path.
 void TestWorkspaceShellAcceptConflictSideResolvesWholeFiles() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1403,7 +1288,6 @@ void TestWorkspaceShellAcceptConflictSideResolvesWholeFiles() {
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
   Expect(WaitForGitSidebarEntryCount(shell, 3), "three conflicted files are listed");
 
-  // From the binary file's merge tab.
   Expect(WorkspaceShellTestAccess::OpenGitConflictMerge(shell, root / "img.bin"),
          "the binary conflict opens in a merge tab");
   WorkspaceShellTestAccess::FlushPendingFileReads(shell);
@@ -1414,7 +1298,6 @@ void TestWorkspaceShellAcceptConflictSideResolvesWholeFiles() {
   Expect(ReadFile(root / "img.bin") == std::string("\0ours\1", 6), "the current bytes are kept");
   Expect(!WorkspaceShellTestAccess::ActiveTabIsMerge(shell), "and the merge tab closes");
 
-  // From a conflict row's context menu.
   WorkspaceShellTestAccess::RefreshGitSidebar(shell);
   Expect(WaitForGitSidebarEntryCount(shell, 2), "two conflicts are left");
   const auto& entries = WorkspaceShellTestAccess::GitSidebarEntries(shell);
@@ -1432,7 +1315,6 @@ void TestWorkspaceShellAcceptConflictSideResolvesWholeFiles() {
   Expect(SettleGitOperation(shell), "the resolution completes");
   Expect(ReadFile(root / "a.txt") == "incoming\n", "the incoming bytes are taken");
 
-  // By path, from the command line.
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "git-accept-local b.txt"),
          "git-accept-local takes a path");
   Expect(SettleGitOperation(shell), "the resolution completes");
@@ -1441,13 +1323,6 @@ void TestWorkspaceShellAcceptConflictSideResolvesWholeFiles() {
          "every choice was staged: nothing is left unmerged");
 }
 
-// TD-2026-07-26-003: a successful commit marks the repository stale and asks for a
-// refresh, then reports plain success and returns. When that refresh fails the user
-// used to be told only by the git sidebar's "Git refresh failed: …" banner, and
-// CommitOperationResultCategory::RefreshFailedAfterSuccess -- which both
-// ResultFeedback and ResultTone have a branch for -- was never produced by anything.
-// The commit now watches the refresh generation it asked for and posts a follow-up
-// warning toast when that refresh comes back failed.
 void TestWorkspaceShellCommitReportsFailedFollowUpRefresh() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1467,9 +1342,6 @@ void TestWorkspaceShellCommitReportsFailedFollowUpRefresh() {
   Expect(WorkspaceShellTestAccess::OpenCommitWorkflow(shell), "commit workflow should open");
   WorkspaceShellTestAccess::CommitWorkflow(shell).subject.SetText("Change the return value");
 
-  // Arm the failure only now: the pre-checks and the dispatch read the state the
-  // real refresh above produced, so the commit itself still runs normally and only
-  // the refresh it triggers comes back broken.
   WorkspaceShellTestAccess::FailGitRefreshesForTesting(shell, "simulated status failure");
   Expect(WorkspaceShellTestAccess::RequestCommitWorkflowCommit(shell),
          "a staged repo with a subject should accept the commit");
@@ -1481,8 +1353,6 @@ void TestWorkspaceShellCommitReportsFailedFollowUpRefresh() {
                          return notification.message.find(fragment) != std::string::npos;
                        });
   };
-  // ConsumeGitSidebarRefresh drains the commit completion AND consumes the refresh
-  // snapshot, which is where the outcome is reported back to the commit workflow.
   const bool reported = WaitUntil(
       [&]() { return has_toast("repository refresh failed"); }, std::chrono::seconds(3),
       std::chrono::milliseconds(5),
@@ -1503,8 +1373,6 @@ void TestWorkspaceShellCommitReportsFailedFollowUpRefresh() {
   Expect(refresh_toast->message.find("simulated status failure") != std::string::npos,
          "the follow-up toast should name why the refresh failed");
 
-  // The watch is one-shot: further failing refreshes belong to whatever caused
-  // them, so they must not keep re-attributing themselves to this commit.
   const std::size_t after_first = notifications.size();
   WorkspaceShellTestAccess::RefreshGitSidebar(shell);
   WaitUntil([]() { return false; }, std::chrono::milliseconds(300),
@@ -1514,8 +1382,6 @@ void TestWorkspaceShellCommitReportsFailedFollowUpRefresh() {
          "a later failing refresh must not post another commit-refresh toast");
 }
 
-// A missing required argument must be rejected before anything is dispatched, and a
-// git failure must surface as a notification rather than being swallowed.
 void TestWorkspaceShellGitOperationFailuresAreReported() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1542,8 +1408,6 @@ void TestWorkspaceShellGitOperationFailuresAreReported() {
          "a failure notification should not be posted as plain info");
 }
 
-// Stash push/pop through the action layer must move the working tree, and the shell
-// must re-read the file it rewrote underneath.
 void TestWorkspaceShellGitStashActionsRoundTrip() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1569,9 +1433,6 @@ void TestWorkspaceShellGitStashActionsRoundTrip() {
   Expect(ReadFile(file) == "stashed edit\n", "popping should restore the stashed edit");
 }
 
-// The branch picker is how a branch switch is actually reached: `git-switch-branch`
-// with no argument opens it, it lists every branch except the one HEAD is on, and
-// activating a row checks that branch out.
 void TestWorkspaceShellGitBranchPickerSwitchesBranch() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1591,7 +1452,6 @@ void TestWorkspaceShellGitBranchPickerSwitchesBranch() {
   Expect(SettleGitOperation(shell), "the create-branch operation should complete");
   Expect(CurrentGitBranch(root) == "topic", "the fixture should now be on topic");
 
-  // No argument means "let me choose".
   Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::GitSwitchBranch,
                                                  {}),
          "argument-less git-switch-branch should be accepted");
@@ -1612,9 +1472,6 @@ void TestWorkspaceShellGitBranchPickerSwitchesBranch() {
          "activating a branch row should check that branch out");
 }
 
-// The branch row is the mouse-reachable surface for branch work. Clicking the
-// branch button opens the switch picker; the rows must not overlap the working-tree
-// action row above them or the clicks would land on the wrong control.
 void TestWorkspaceShellGitSidebarBranchRowIsClickable() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1646,12 +1503,6 @@ void TestWorkspaceShellGitSidebarBranchRowIsClickable() {
          "clicking the branch button should open the picker overlay");
 }
 
-// Regression (silent no-op): "Discard All" is the header button, so the click path —
-// not just the prompt helper — is what has to work end to end. The bug it guards:
-// the bulk discard asked whether ANY tab under the project ROOT was dirty, so one
-// unsaved buffer anywhere (here a file git does not even list as changed) refused the
-// whole operation, and the refusal went only to `panel.feedback.text`, which nothing
-// paints. The prompt closed and nothing happened, with nothing said.
 void TestWorkspaceShellGitSidebarDiscardAllIgnoresUnrelatedDirtyTab() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1668,8 +1519,6 @@ void TestWorkspaceShellGitSidebarDiscardAllIgnoresUnrelatedDirtyTab() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
-  // `unrelated.cpp` is committed and unmodified on disk: it is NOT a git sidebar row,
-  // and the discard cannot touch it. Its buffer being dirty must not matter.
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, unrelated);
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("// dirty ");
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
@@ -1692,9 +1541,6 @@ void TestWorkspaceShellGitSidebarDiscardAllIgnoresUnrelatedDirtyTab() {
          "the unrelated dirty buffer should keep its unsaved edits");
 }
 
-// Counterpart: when the dirty tab IS one of the files the discard would rewrite, the
-// refusal stands (unsaved work wins) — but it must be SAID. A refusal reported only
-// through command feedback is invisible to the button that raised it.
 void TestWorkspaceShellGitSidebarDiscardAllBlockedByDirtyTabNotifies() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1727,10 +1573,6 @@ void TestWorkspaceShellGitSidebarDiscardAllBlockedByDirtyTabNotifies() {
          "a blocked bulk discard must tell the user which tab is blocking it");
 }
 
-// Regression: git tracks files, not directories, so trashing every untracked file left
-// the folders that only held them on disk — the source control view reported success
-// while the file tree still showed the change's directory tree. (`git clean -fd` would
-// have removed them, but taking that path would destroy the files instead of trashing.)
 void TestWorkspaceShellGitSidebarDiscardAllPrunesEmptiedDirectories() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1741,12 +1583,10 @@ void TestWorkspaceShellGitSidebarDiscardAllPrunesEmptiedDirectories() {
   InitializeGitRepo(root);
   CommitAll(root, "base", "base");
 
-  // A tracked sibling directory that must survive untouched.
   const std::filesystem::path kept_dir = root / "openspec" / "kept";
   WriteFile(kept_dir / "keep.md", "keep\n");
   CommitAll(root, "track sibling", "track sibling");
 
-  // The shape the bug was reported on: one untracked change directory, nested files.
   const std::filesystem::path change_dir = root / "openspec" / "changes" / "feature";
   WriteFile(change_dir / "proposal.md", "proposal\n");
   WriteFile(change_dir / "specs" / "api" / "spec.md", "spec\n");
@@ -1774,8 +1614,6 @@ void TestWorkspaceShellGitSidebarDiscardAllPrunesEmptiedDirectories() {
   Expect(std::filesystem::exists(root), "the project root itself must never be pruned");
 }
 
-// Regression: a failing bulk discard returned false and said nothing, which is
-// indistinguishable from the button being dead.
 void TestWorkspaceShellGitSidebarDiscardAllFailureNotifies() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1792,8 +1630,6 @@ void TestWorkspaceShellGitSidebarDiscardAllFailureNotifies() {
   Expect(WaitForGitSidebarEntryCount(shell, 1),
          "discard-all failure fixture should expose the single changed row");
 
-  // Remove the repository so the discard git command fails deterministically while
-  // the sidebar still believes the row is discardable.
   std::filesystem::remove_all(root / ".git");
 
   WorkspaceShellTestAccess::PrepareDiscardAllGitPrompt(shell);
@@ -1810,9 +1646,6 @@ void TestWorkspaceShellGitSidebarDiscardAllFailureNotifies() {
          "a failed bulk discard must raise a toast, the only channel a click can see");
 }
 
-// Regression: the commit workflow refused an empty commit through `set_command_feedback`
-// alone, which nothing paints — so pressing Commit with nothing staged looked like a
-// dead button. The refusal has to reach a toast, the only channel a click can see.
 void TestWorkspaceShellCommitWorkflowNothingStagedNotifies() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1820,7 +1653,6 @@ void TestWorkspaceShellCommitWorkflowNothingStagedNotifies() {
   WriteFile(source, "int main() { return 0; }\n");
   InitializeGitRepo(root);
   CommitAll(root, "seed commit", "seed body");
-  // Modified but NOT staged: the commit workflow opens, and committing must refuse.
   WriteFile(source, "int main() { return 1; }\n");
 
   WorkspaceShell shell;
@@ -1833,8 +1665,6 @@ void TestWorkspaceShellCommitWorkflowNothingStagedNotifies() {
 
   Expect(!WorkspaceShellTestAccess::RequestCommitWorkflowCommit(shell),
          "committing with nothing staged should refuse");
-  // The refusal is the "nothing is staged" blocking pre-check; the sentence itself is
-  // the service's, the contract under test is that it reaches a toast at all.
   const auto& notifications = WorkspaceShellTestAccess::ActiveNotifications(shell);
   Expect(std::any_of(notifications.begin(), notifications.end(),
                      [](const microide::workspace::NotificationService::Notification& toast) {
@@ -1843,14 +1673,9 @@ void TestWorkspaceShellCommitWorkflowNothingStagedNotifies() {
          "a refused commit must say why instead of looking like a dead button");
 }
 
-// Regression: a rejected action reported its sentence to `panel.feedback.text` (painted
-// nowhere outside the palette) and to the `actions.log` output channel (which nobody has
-// open), so a git verb refused from a button/menu/shortcut was indistinguishable from a
-// no-op. UI-sourced rejections toast.
 void TestWorkspaceShellUiActionRejectionNotifies() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
-  // No project is open, so every git verb rejects with "No active project".
   Expect(WorkspaceShellTestAccess::ExecuteActionFromMenu(shell, WorkspaceShell::ActionId::GitSync),
          "a menu-sourced action reports handled even when the verb refuses");
   const auto& notifications = WorkspaceShellTestAccess::ActiveNotifications(shell);
@@ -1861,7 +1686,7 @@ void TestWorkspaceShellUiActionRejectionNotifies() {
          "a refused UI action must surface its rejection sentence as a toast");
 }
 
-}  // namespace
+}
 
 void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/GitRefreshCommandAsksGitFromAnyView",
@@ -1944,4 +1769,4 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCommitButtonStaysInsideAShortSidebar);
 }
 
-}  // namespace microide::tests
+}

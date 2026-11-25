@@ -18,9 +18,9 @@ std::span<const SidebarViewSpec> BuiltinSidebarViewSpecs() {
       SidebarViewSpec{"tests", "Tests", SidebarMode::Tests},
       SidebarViewSpec{"outline", "Outline", SidebarMode::Outline},
       SidebarViewSpec{"host-changes", "Changed on Host", SidebarMode::HostChanges,
-                      /*contextual=*/true},
-      SidebarViewSpec{"host", "Host", SidebarMode::Host, /*contextual=*/true},
-      SidebarViewSpec{"conflicts", "Conflicts", SidebarMode::Conflicts, /*contextual=*/true},
+                      true},
+      SidebarViewSpec{"host", "Host", SidebarMode::Host, true},
+      SidebarViewSpec{"conflicts", "Conflicts", SidebarMode::Conflicts, true},
   });
   return kSpecs;
 }
@@ -135,19 +135,6 @@ SidebarViewRequest ParseSidebarViewRequest(const std::vector<std::string>& args,
 
 OrderedSidebarViewList OrderedSidebarViews(const plugin::PluginHost& plugin_host,
                                            const std::vector<SidebarViewPolicy>& policies) {
-  // First entry wins, matching EffectiveSidebarViewPolicy. This used to pre-index
-  // `policies` into an `unordered_map` to avoid re-scanning it inside every
-  // filter/sort comparison — but the sort no longer resolves anything (the order
-  // is cached per view below), so the scan is once per view, and the map was one
-  // heap node per policy plus a bucket array **per call**. `SidebarModeRow` runs
-  // this on the frame path, so that was ~10 allocations a frame on every scroll
-  // scenario (TD-2026-08-06-159). Both sides are bounded by the sidebar view set
-  // — a handful of built-ins plus the capped plugin contributions — so a linear
-  // scan is a few dozen `string_view` compares against no allocation at all.
-  //
-  // Returns only the two fields the caller reads. Returning a `SidebarViewPolicy`
-  // by value meant a `std::string` copy per view, and the not-found branch built
-  // one from the id purely to fill a field nobody looked at.
   struct ResolvedPolicy {
     bool hidden;
     int order;
@@ -161,26 +148,13 @@ OrderedSidebarViewList OrderedSidebarViews(const plugin::PluginHost& plugin_host
     return ResolvedPolicy{false, std::numeric_limits<int>::max()};
   };
 
-  // Resolve each surviving view's effective order once, then stable-sort on the
-  // cached key (views with no explicit policy entry sort at order = INT_MAX).
-  //
-  // Built inline from the two sources rather than from `SidebarViews(...)`: that
-  // helper materialises a whole third vector this function would immediately
-  // filter and drop, and `SidebarViewInfo` is two string_views and an enum, so
-  // there is nothing to reuse from it.
   struct Ordered {
     SidebarViewInfo info;
     int order;
-    // Insertion index, so the sort below can be a plain `std::sort` and still be
-    // stable. `std::stable_sort` takes a `_Temporary_buffer` above libstdc++'s
-    // 15-element threshold, which is one heap allocation per call — and this runs
-    // once per painted frame.
     std::size_t index;
   };
   const auto builtins = BuiltinSidebarViewSpecs();
   const auto& plugin_providers = plugin_host.SidebarProviders();
-  // Both lists are the same bounded shape and both used to be heap vectors, on a
-  // path that runs once per painted frame (TD-2026-08-14-221).
   util::SmallVector<Ordered, 16> ordered;
   ordered.reserve(builtins.size() + plugin_providers.size());
   const auto consider = [&](SidebarViewInfo info) {
@@ -221,4 +195,4 @@ SidebarViewPolicy EffectiveSidebarViewPolicy(std::string_view view_id,
   return SidebarViewPolicy{std::string(view_id), false, std::numeric_limits<int>::max()};
 }
 
-}  // namespace microide::workspace
+}

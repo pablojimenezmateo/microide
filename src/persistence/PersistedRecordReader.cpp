@@ -18,10 +18,6 @@
 namespace microide::persistence {
 namespace {
 
-// Upper bound on a persisted-state file we will read into memory. Project/session/
-// config records are small (KB–MB); a file above this is corrupt or hostile, so
-// we refuse it before allocating rather than risk an uncaught bad_alloc on a
-// multi-GB file. The CRC gate downstream would reject the content anyway.
 constexpr std::uintmax_t kMaxPersistedFileBytes = 256ull * 1024 * 1024;
 
 void SetError(PersistedRecordReaderError* error, PersistedRecordReaderError value) {
@@ -38,10 +34,6 @@ bool ReadAllBytes(const std::filesystem::path& path,
     return false;
   }
 
-  // TD-2026-07-17-073: prove the path is a regular file before opening. A persisted
-  // path swapped for a FIFO/device/procfs entry can block ifstream open/seek before
-  // the size cap below runs. A non-regular path (or a stat error) is a read failure,
-  // not a missing record. std::filesystem::status follows symlinks to the target.
   std::error_code status_error;
   const std::filesystem::file_status status = std::filesystem::status(path, status_error);
   if (status_error || !std::filesystem::is_regular_file(status)) {
@@ -67,13 +59,6 @@ bool ReadAllBytes(const std::filesystem::path& path,
   }
   file.seekg(0, std::ios::beg);
 
-  // Header-first validation: read the fixed prefix (magic + version + flags +
-  // crc) and reject a bad magic or unsupported version BEFORE allocating the
-  // body — so a corrupt/hostile large file (up to the 256 MiB cap) costs ~16
-  // bytes instead of the full allocation. A valid prefix falls through to the
-  // full read; the CRC over the body is still verified downstream. (The body
-  // length is implicit — the rest of the file — so there is no declared length
-  // to validate here.)
   constexpr std::size_t kHeaderBytes = kPersistedRecordMagic.size() + sizeof(std::uint32_t) * 3;
   if (static_cast<std::uintmax_t>(size) >= kHeaderBytes) {
     std::array<std::byte, kHeaderBytes> head{};
@@ -141,11 +126,6 @@ std::optional<PersistedRecordReadResult> TryReadSpecificFile(
     PersistedRecordReaderError* error) {
   std::error_code exists_error;
   const bool present = std::filesystem::exists(path, exists_error);
-  // exists() returns false *and* sets exists_error on a genuine stat failure
-  // (EACCES/ELOOP/ENOTDIR/ENAMETOOLONG on a path component). Check the error
-  // first: reporting such a failure as NotFound let the caller treat a transient
-  // I/O error as "no persisted state" and later overwrite good state with
-  // defaults. Only a clean false means the file is genuinely absent.
   if (exists_error) {
     SetError(error, PersistedRecordReaderError::ReadFailed);
     return std::nullopt;
@@ -193,7 +173,7 @@ PersistedRecordReaderError MergeErrors(PersistedRecordReaderError primary,
   return PersistedRecordReaderError::NotFound;
 }
 
-}  // namespace
+}
 
 std::optional<PersistedRecordReadResult> PersistedRecordReader::ReadFile(
     const std::filesystem::path& path,
@@ -205,10 +185,6 @@ std::optional<PersistedRecordReadResult> PersistedRecordReader::ReadFile(
     return primary;
   }
 
-  // A version-mismatched primary must not be silently replaced by a possibly
-  // older backup: doing so lets the next save overwrite newer state with stale
-  // data and hides the mismatch from operators. Refuse the fallback and surface
-  // the mismatch unless the caller explicitly opts into downgrade recovery.
   if (primary_error == PersistedRecordReaderError::UnsupportedVersion &&
       !allow_backup_for_unsupported_version) {
     SetError(error, PersistedRecordReaderError::UnsupportedVersion);
@@ -219,8 +195,6 @@ std::optional<PersistedRecordReadResult> PersistedRecordReader::ReadFile(
   const std::filesystem::path backup_path = PersistedRecordWriter::BackupPathFor(path);
   if (auto backup = TryReadSpecificFile(backup_path, &backup_error); backup.has_value()) {
     backup->used_backup = true;
-    // Surface the primary failure that triggered recovery through the result so
-    // callers do not lose the signal that a fallback occurred.
     backup->primary_error = primary_error;
     SetError(error, PersistedRecordReaderError::None);
     return backup;
@@ -235,9 +209,6 @@ std::optional<PersistedRecordReadResult> PersistedRecordReader::Decode(
     PersistedRecordReaderError* error) {
   PersistedRecordReadResult decoded;
   PersistedRecordReaderError decode_error = PersistedRecordReaderError::None;
-  // DecodeRecordFile only reads through the span (the body is copied into
-  // decoded.body), so decode directly from the caller's view instead of copying
-  // the whole file (up to the 256 MB cap) into an owned buffer first.
   if (!DecodeRecordFile(file_bytes, &decoded, &decode_error)) {
     SetError(error, decode_error);
     return std::nullopt;
@@ -246,4 +217,4 @@ std::optional<PersistedRecordReadResult> PersistedRecordReader::Decode(
   return decoded;
 }
 
-}  // namespace microide::persistence
+}

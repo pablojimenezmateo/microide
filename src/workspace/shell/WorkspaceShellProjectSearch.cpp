@@ -25,11 +25,6 @@ using project::kMaxProjectSearchResults;
 
 namespace {
 
-// Pure read/replace/buffer + atomic-write pass for a project-wide replace-all, run
-// on the background executor (touches only its arguments + the filesystem, never
-// shell state). Buffers every modified file's new content before committing any
-// write so an aggregate-cap or open-dirty-file abort leaves the tree untouched
-// (matching the old synchronous behaviour). TD-2026-07-17-021 / TD-2026-07-16-21.
 ProjectReplaceOutcome RunProjectReplace(const std::filesystem::path& root,
                                         const std::vector<std::filesystem::path>& files,
                                         const std::unordered_set<std::string>& dirty_open,
@@ -48,33 +43,19 @@ ProjectReplaceOutcome RunProjectReplace(const std::filesystem::path& root,
   std::vector<Buffered> pending;
   std::size_t aggregate_bytes = 0;
 
-  // Instrumentation for the candidate-set reduction this function exists to
-  // exploit: `files` is the matched subset on the fast path and the whole indexed
-  // catalog on the fallback, so these two counters say which path ran and how much
-  // of the project it opened. They are private to this path — nothing else bumps
-  // them — which is what makes them a usable oracle where the shared
-  // ReadFileForTextSearch counter is not (TD-2026-07-26-005).
   util::AddPerformanceCounter(util::PerfCounterId::SearchProjectReplaceCandidateFiles,
                               files.size());
 
   for (const auto& relative_path : files) {
     const std::filesystem::path absolute_path = (root / relative_path).lexically_normal();
     std::string content;
-    // Same read cap as the finder/search: a file too large to search shows no
-    // matches, so replace-all must not silently rewrite it either.
     util::AddPerformanceCounter(util::PerfCounterId::SearchProjectReplaceFilesRead);
-    // The reader strips a UTF-8 byte order mark, as search must; the write below
-    // puts it back. It did not, and every file a project replace touched lost its
-    // BOM (soak 88696b6b00ac).
     bool had_utf8_bom = false;
     if (!util::ReadFileForTextSearch(absolute_path, content, util::kMaxSearchFileBytes, &had_utf8_bom)) {
       continue;
     }
     std::size_t replacements = 0;
     if (regex != nullptr) {
-      // Regex mode: per-line substitution with capture-group expansion. A negative
-      // result means an invalid replacement escape / match-limit hit — deterministic
-      // across every file, so abort the whole operation with a precise message.
       const std::optional<std::size_t> count =
           ReplaceRegexMatchesInText(content, *regex, replace_text);
       if (!count.has_value()) {
@@ -88,8 +69,6 @@ ProjectReplaceOutcome RunProjectReplace(const std::filesystem::path& root,
     if (replacements == 0) {
       continue;
     }
-    // Refuse to overwrite a file open with unsaved edits (snapshot taken on the main
-    // thread before dispatch). Abort the whole operation — no writes — as before.
     if (dirty_open.count(absolute_path.string()) != 0) {
       outcome.status = ProjectReplaceOutcome::Status::BlockedByDirty;
       outcome.blocked_relative_path = relative_path.generic_string();
@@ -117,8 +96,6 @@ ProjectReplaceOutcome RunProjectReplace(const std::filesystem::path& root,
   outcome.status = ProjectReplaceOutcome::Status::Applied;
   outcome.written.reserve(pending.size());
   for (auto& buffered : pending) {
-    // Atomic temp-file + rename: a failed write leaves the original intact. Keep
-    // going and collect failures rather than leaving a partial half-applied set.
     if (const project::FileWriteGate::Result written = gate.WriteText(buffered.absolute_path, buffered.content);
         !written.ok) {
       if (outcome.failed_write_count++ == 0) {
@@ -135,8 +112,6 @@ ProjectReplaceOutcome RunProjectReplace(const std::filesystem::path& root,
   return outcome;
 }
 
-// Deterministic, file-grouped display order (the engine streams matches in
-// whatever order its parallel workers find them).
 void SortProjectSearchResults(std::vector<project::ProjectSearchResult>& results) {
   std::sort(results.begin(), results.end(),
             [](const project::ProjectSearchResult& lhs, const project::ProjectSearchResult& rhs) {
@@ -150,12 +125,8 @@ void SortProjectSearchResults(std::vector<project::ProjectSearchResult>& results
             });
 }
 
-// Appends one streamed update to the shown results (a fresh run).
 void AppendProjectSearchUpdate(ProjectSearchState& search, project::ProjectSearchUpdate& update) {
   auto& shell_results = search.results;
-  // Workers publish out of order, so remember which result is selected (by its
-  // stable position identity) and restore it after the re-sort below, keeping the
-  // highlighted row from jumping as later batches stream in.
   const bool had_selection = search.selected_index < shell_results.size();
   const std::size_t selected_file_index =
       had_selection ? shell_results[search.selected_index].file_index : 0;
@@ -165,18 +136,12 @@ void AppendProjectSearchUpdate(ProjectSearchState& search, project::ProjectSearc
 
   for (auto& result : update.results) {
     if (shell_results.size() >= kMaxProjectSearchResults) {
-      // Dropping a published match here IS truncation, whoever noticed first. The
-      // worker caps its own stores at the same number so this should not normally
-      // fire, but a silent `break` would leave the sidebar claiming a complete
-      // result set while discarding matches — the one failure mode the flag exists
-      // to prevent. Flag it at the point of loss rather than trusting the producer.
       search.truncated = true;
       break;
     }
     shell_results.push_back(std::move(result));
   }
   SortProjectSearchResults(shell_results);
-  // Results just changed (appended + re-sorted); invalidate the cached line map.
   ++search.results_revision;
 
   if (had_selection) {
@@ -191,10 +156,6 @@ void AppendProjectSearchUpdate(ProjectSearchState& search, project::ProjectSearc
   search.truncated = search.truncated || update.truncated;
 }
 
-// Collects an in-place re-run's update off screen, and on the last one replaces
-// the shown results in one step. The selection follows the same match by PATH
-// and position: `file_index` is a position in the run's candidate list, which the
-// very change that triggered the re-run may have shifted.
 void StageInPlaceRerunUpdate(ProjectSearchState& search, project::ProjectSearchUpdate& update) {
   for (auto& result : update.results) {
     if (search.staged_results.size() >= kMaxProjectSearchResults) {
@@ -234,23 +195,18 @@ void StageInPlaceRerunUpdate(ProjectSearchState& search, project::ProjectSearchU
   ++search.results_revision;
 }
 
-}  // namespace
+}
 
 void WorkspaceShell::RefreshProjectSearch(ProjectSearchRerun rerun) {
   StopProjectSearch();
   ProjectSearchState& search = context_.current_project_state.overlay.workflow.project_search;
-  // In place only when there is something on screen to keep; an empty list has
-  // nothing to blink, and a fresh run streams into it as before.
   const bool in_place = rerun == ProjectSearchRerun::InPlace && !search.results.empty();
-  // Starting (or clearing) a search invalidates the cached-results marker; it is
-  // re-armed in ConsumeProjectSearchUpdates once this run reports `finished`.
   search.searched_query.clear();
   if (!in_place) {
     search.results.clear();
     ++search.results_revision;
     search.selected_index = 0;
     search.truncated = false;
-    // A fresh search resets the selection to the top of the list.
     context_.current_project_state.sidebar.scroll_row = 0;
   }
   search.rerun_in_place = in_place;
@@ -274,25 +230,16 @@ void WorkspaceShell::RefreshProjectSearch(ProjectSearchRerun rerun) {
                                                            : project::ProjectFileScanMode::ExcludeHidden;
   const project::FilePathSnapshot file_snapshot =
       context_.current_project_state.file_index.SnapshotPathsWithVersion(scan_mode);
-  // Pin the catalog's completeness at search start: if the index is only a prefix
-  // of the tree, the search can't have seen every file (TD-2026-07-17-008/033).
   context_.current_project_state.overlay.workflow.project_search.index_incomplete =
       context_.current_project_state.file_index.truncated();
   util::AddPerformanceCounter(util::PerfCounterId::SearchProjectCandidateFilesFromIndex,
                               file_snapshot.files ? file_snapshot.files->size() : 0);
-  // Mirror the committed scope editors into the options the worker sees. Held on
-  // the options (not re-read from the editors) so an in-flight run keeps the scope
-  // it started with.
   project::ProjectSearchOptions options =
       context_.current_project_state.overlay.workflow.project_search.options;
   options.include_globs =
       context_.current_project_state.overlay.workflow.project_search.include_globs.text();
   options.exclude_globs =
       context_.current_project_state.overlay.workflow.project_search.exclude_globs.text();
-  // A remote project searches on its host, over the real tree (§ 6.11); the
-  // mirror's index is what it falls back to when the host cannot be reached.
-  // What the open buffers' hits are re-derived under once this run's results
-  // are in (ProjectSearchLiveHits).
   search.run_query = search.query.text();
   search.run_options = options;
   search.live_hits_document = nullptr;
@@ -310,8 +257,6 @@ void WorkspaceShell::StopProjectSearch() {
   project_search_runtime_.Stop();
   ProjectSearchState& search = context_.current_project_state.overlay.workflow.project_search;
   search.running = false;
-  // A stopped in-place re-run leaves the shown results as they were; its partial
-  // set must not be swapped in by a later run.
   search.rerun_in_place = false;
   search.staged_results.clear();
   search.staged_truncated = false;
@@ -332,8 +277,6 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
     AppendProjectSearchUpdate(search, update);
   }
   if (update.total_files > 0) {
-    // The service always publishes the latest counters on each update; reflect
-    // them as-is so "Searching X matches (Y of Z files)" stays current.
     context_.current_project_state.overlay.workflow.project_search.searched_files =
         update.searched_files;
     context_.current_project_state.overlay.workflow.project_search.total_files =
@@ -350,12 +293,8 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
     context_.current_project_state.overlay.workflow.project_search.running = false;
     context_.current_project_state.overlay.workflow.project_search.searched_local_copy =
         update.searched_local_copy;
-    // Arm the results cache so returning to the search sidebar with this same
-    // query reuses the results instead of re-running the search.
     context_.current_project_state.overlay.workflow.project_search.searched_query =
         context_.current_project_state.overlay.workflow.project_search.query.text();
-    // The worker read the files from disk; an open buffer with unsaved edits is
-    // searched as it stands instead, as VS Code searches open editors.
     for (const EditorGroup& group : context_.current_project_state.editor_groups) {
       for (const TabEntry& tab : group.open_tabs) {
         if (tab.editor_state.has_value() && tab.editor_state->viewport.dirty()) {
@@ -381,12 +320,6 @@ void WorkspaceShell::BeginProjectSearchEdit(ProjectSearchEditField field) {
   RequestPreparedFrame();
 }
 
-// Write the in-flight edit buffer back into the field it is editing WITHOUT
-// leaving edit mode. The option toggles below re-run the search, and the search
-// reads the committed field values — so a toggle pressed mid-typing would
-// otherwise re-run against the stale query. Unlike CommitProjectSearchEdit this
-// keeps `editing` and the caret intact, which is what a keyboard chord needs
-// (the mouse path genuinely does move focus off the field, so it still commits).
 void WorkspaceShell::FlushProjectSearchEditField() {
   auto& search = context_.current_project_state.overlay.workflow.project_search;
   if (!search.editing) {
@@ -400,8 +333,6 @@ void WorkspaceShell::CommitProjectSearchEdit() {
   search.editing = false;
   const ProjectSearchEditField field = search.edit_field;
   ProjectSearchFieldEditor(search, field).SetText(search.edit_buffer.text());
-  // Query and scope globs all change WHICH files match, so committing any of them
-  // re-runs the search. Replace text only affects a later replace-all.
   if (field == ProjectSearchEditField::Replace) {
     RequestPreparedFrame();
     return;
@@ -426,16 +357,11 @@ void WorkspaceShell::ToggleProjectSearchScopeExpanded() {
   if (!search.scope_expanded && search.editing &&
       (search.edit_field == ProjectSearchEditField::Include ||
        search.edit_field == ProjectSearchEditField::Exclude)) {
-    // Collapsing while a scope field is focused would strand the caret on a
-    // surface that is no longer drawn; commit the edit so focus returns to the
-    // panel and any glob change takes effect.
     CommitProjectSearchEdit();
   }
   RequestPreparedFrame();
 }
 
-// The case toggle's label (the other two are project_search_panel::k*ButtonLabel): a word,
-// because this toggle is tri-state and no glyph carries that.
 std::string_view WorkspaceShell::ProjectSearchCaseButtonLabel() const {
   switch (context_.current_project_state.overlay.workflow.project_search.options.case_mode) {
     case project::ProjectSearchCaseMode::Sensitive:
@@ -449,8 +375,6 @@ std::string_view WorkspaceShell::ProjectSearchCaseButtonLabel() const {
 }
 
 bool WorkspaceShell::ProjectSearchCanReplaceAll() const {
-  // Both literal and regex modes support replace-all (regex substitutes with
-  // capture-group expansion). The only gate is a non-empty query.
   return !context_.current_project_state.overlay.workflow.project_search.query.text().empty();
 }
 
@@ -528,7 +452,7 @@ void WorkspaceShell::RequestProjectSearchReplaceAll() {
       }
     }
     if (ps.results.empty()) {
-      return;  // nothing matches: nothing to confirm
+      return;
     }
     detail = "Replace " + std::to_string(ps.results.size()) +
              (ps.results.size() == 1 ? " occurrence" : " occurrences") + " across " +
@@ -546,7 +470,6 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   if (ps.query.text().empty() || !ProjectSearchCanReplaceAll()) {
     return;
   }
-  // Clear any prior abort/search error so it does not linger past a fresh run.
   ps.error.clear();
 
   const std::filesystem::path root = context_.current_project_state.root;
@@ -554,12 +477,6 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
     return;
   }
 
-  // Determine the target file set on the main thread. Fast path: when the just-
-  // completed search's cached results provably cover every matching file, only those
-  // files can contain a match, so touch just them (see TD-2026-07-16-21's candidate-
-  // set reduction). Eligibility requires an authoritative, complete result set:
-  // finished (!running), same query, and neither truncated nor capped. Otherwise fall
-  // back to the whole indexed catalog. Materialize a value the background job owns.
   const bool results_cover_all_matches =
       !ps.running && !ps.truncated && ps.results.size() < kMaxProjectSearchResults &&
       ps.searched_query == ps.query.text();
@@ -577,19 +494,12 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
             ps.options.show_hidden ? project::ProjectFileScanMode::IncludeHidden
                                    : project::ProjectFileScanMode::ExcludeHidden);
     if (snapshot.files) {
-      // Copy out rather than hand the shared pointer to the worker: holding it
-      // would pin the index's cache buffer for the whole replace, which is what
-      // makes the next rebuild allocate a fresh one instead of recycling this.
       files.reserve(snapshot.files->size());
       for (const std::string& text : *snapshot.files) {
         files.emplace_back(text);
       }
     }
   }
-  // Replace-all must honor the same scope the search did. The fast path above is
-  // already scoped (it is built from scoped results), but the whole-catalog
-  // fallback is not — without this, replace-all would rewrite exactly the files
-  // the user excluded and whose matches were never shown.
   const project::GlobSet include_globs = project::GlobSet::Parse(ps.include_globs.text());
   const project::GlobSet exclude_globs = project::GlobSet::Parse(ps.exclude_globs.text());
   if (!include_globs.empty() || !exclude_globs.empty()) {
@@ -609,9 +519,6 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   const bool regex_mode =
       ps.options.pattern_mode == project::ProjectSearchPatternMode::Regex;
 
-  // Regex mode: compile once on the main thread so an invalid pattern surfaces
-  // immediately (before dispatch). The compiled pattern is a shared_ptr-backed,
-  // thread-safe-const value shared read-only by the background job.
   std::shared_ptr<util::CompiledRegex> regex;
   if (regex_mode) {
     const uint32_t regex_options = util::SearchRegexCompileOptions(query, case_sensitive);
@@ -625,16 +532,6 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
     }
   }
 
-  // A file open with unsaved edits is replaced IN ITS BUFFER, here on the shell
-  // thread, as one undoable edit that leaves it dirty (VS Code applies a
-  // replace-all to the editor, not under it): the disk is not written beneath the
-  // user's changes, and the user's changes are not a reason to refuse the whole
-  // operation -- which is what this did, aborting every file with "save open
-  // changes first". The same transform the background applies to the files on
-  // disk, over the buffer's text, so both give the same result. Every editor
-  // group's views of the file share one document, so one edit reaches them all.
-  // What is left in `dirty_open` -- open dirty files the files list does not name --
-  // the background still refuses to write, as before.
   std::unordered_set<std::string> dirty_open;
   std::size_t buffer_replacements = 0;
   std::size_t buffers_replaced = 0;
@@ -644,15 +541,9 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
       candidates.insert((root / relative_path).lexically_normal().string());
     }
     std::unordered_set<std::string> handled;
-    // One edit per buffer: the span between the first and the last byte the
-    // replacement changed, applied through the workspace-edit service like any
-    // workspace edit (LSP sync, fold rescan, breakpoint follow, damage) -- not a
-    // whole-document ReplaceRange beside it. That one never told the language
-    // server, whose copy and diagnostics stayed on the old text until the next
-    // keystroke, and its undo entry held the whole document twice.
     std::vector<CodeActionEdit> buffer_edits;
     struct CaretToKeep {
-      editor::TextViewport* viewport = nullptr;  // a tab's: the edit moves no tab
+      editor::TextViewport* viewport = nullptr;
       std::size_t line = 0;
       std::size_t column = 0;
     };
@@ -669,7 +560,7 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
           continue;
         }
         if (!handled.insert(key).second) {
-          continue;  // another view of the same document: already replaced
+          continue;
         }
         editor::TextViewport& viewport = tab.editor_state->viewport;
         std::string original;
@@ -691,7 +582,6 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
         if (count == 0) {
           continue;
         }
-        // The changed span: common prefix and suffix of the two texts.
         std::size_t prefix = 0;
         const std::size_t shorter = std::min(original.size(), content.size());
         while (prefix < shorter && original[prefix] == content[prefix]) {
@@ -745,13 +635,8 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
 
   const std::size_t aggregate_cap = replace_all_aggregate_cap_bytes_;
   const std::uint64_t generation = ++project_replace_generation_;
-  // The project's gate, captured here: the job runs off the shell thread and must
-  // not read project state. The gate outlives the job (see ProjectWorkspaceState).
   project::FileWriteGate* gate = &context_.current_project_state.write_gate();
 
-  // Run the read/replace/buffer/atomic-write off the shell thread; apply the outcome
-  // (reload clean tabs, refresh index/tree/finder, status) back on the main thread.
-  // PostLatest so a burst of replace-all clicks only runs the newest queued job.
   project_background_executor_.PostLatest(
       "project-replace-all",
       [this, files = std::move(files), dirty_open = std::move(dirty_open), query, replace_text,
@@ -768,9 +653,6 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
 }
 
 void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
-  // Drop a stale apply: the project was switched away, or a newer replace-all
-  // superseded this one. The on-disk writes already happened; only the UI
-  // reconciliation is gated (a newer run will reconcile its own writes).
   if (outcome.generation != project_replace_generation_ ||
       outcome.project_root != context_.current_project_state.root) {
     return;
@@ -799,14 +681,6 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
 
   bool reloaded_open_view = false;
   for (const auto& change : outcome.written) {
-    // Refresh every clean open view of the rewritten file across ALL editor groups.
-    // A tab that became dirty AFTER the pre-dispatch snapshot is left alone (its
-    // buffer keeps the user's unsaved edits; the on-disk replace is overridden when
-    // they next save) rather than clobbered by a reload.
-    //
-    // Read the file ONCE and hand every view a copy of that one viewport: copies
-    // share the DocumentState, which is what keeps two panes on the same file one
-    // buffer. Reopening per view split them into independent documents.
     std::optional<editor::TextViewport> reopened_view;
     for (std::size_t group_index = 0;
          group_index < context_.current_project_state.editor_groups.size(); ++group_index) {
@@ -829,7 +703,7 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
         const editor::TextViewport& current_view =
             compare_side_of_file ? tab.compare->right_viewport : tab.editor_state->viewport;
         if (current_view.dirty()) {
-          continue;  // became dirty mid-flight: keep the user's edits
+          continue;
         }
 
         if (!reopened_view.has_value()) {
@@ -842,8 +716,6 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
           reopened_view = std::move(fresh_view);
         }
         if (compare_side_of_file) {
-          // The compare's editable side is a view of the same file; it takes the
-          // one reopened document too (see RepointCompareRightSideToReloadedBuffer).
           RepointCompareRightSideToReloadedBuffer(*tab.compare, *reopened_view);
           reloaded_open_view = true;
           continue;
@@ -868,7 +740,6 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
   metadata_updates.is_initial = false;
   metadata_updates.changes.reserve(outcome.written.size());
   for (const auto& change : outcome.written) {
-    // One stat for classify + mtime + size; this was three, per written file.
     const std::optional<platform::FileMetadata> metadata =
         platform::ReadFileMetadata(change.absolute_path);
     if (!metadata || metadata->type != platform::PathType::RegularFile) {
@@ -886,9 +757,6 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
   if (!metadata_updates.changes.empty()) {
     (void)context_.current_project_state.file_index.ApplyBatch(metadata_updates);
   }
-  // Every pane that showed a rewritten file now shows the new text. Nothing else
-  // asked for those pixels: this used to ride on the full frame the file-event
-  // wake answered every reload with (TD-2026-10-15-341).
   if (reloaded_open_view) {
     RequestPreparedFrame();
   }
@@ -906,9 +774,6 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
 
 const std::vector<int>& WorkspaceShell::BuildProjectSearchLineMap() const {
   const auto& search = context_.current_project_state.overlay.workflow.project_search;
-  // Rebuild only when `results` actually changed (revision mismatch), so a
-  // hover/scroll/keystroke repaint reuses the prior grouped line map instead of
-  // re-walking every result and re-copying the group-boundary paths.
   if (!search.cached_line_map_valid ||
       search.cached_line_map_revision != search.results_revision) {
     search.cached_line_map = BuildProjectSearchResultLineMap(search.results);
@@ -932,10 +797,6 @@ void WorkspaceShell::MoveProjectSearchSelection(int delta) {
   context_.current_project_state.overlay.workflow.project_search.selected_index =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
   if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
-    // Pull the selected row into view in the sidebar list (mirrors the
-    // git/problems/tests sidebars' RevealSelected* helpers). Only navigation
-    // moves the scroll; mouse-wheel/scrollbar scrolling is left untouched so the
-    // user can scroll freely past the selection.
     if (ActiveSidebarMode() == SidebarMode::Search && layout->sidebar.h > 0.0f) {
       const auto line_map = BuildProjectSearchLineMap();
       const auto list_layout =
@@ -952,4 +813,4 @@ void WorkspaceShell::MoveProjectSearchSelection(int delta) {
   RequestPreparedFrame();
 }
 
-}  // namespace microide::workspace
+}

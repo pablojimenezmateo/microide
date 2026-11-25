@@ -52,7 +52,7 @@ std::size_t MaxVisualColumns(const editor::TextViewport& viewport) {
   return viewport.max_visual_columns();
 }
 
-}  // namespace
+}
 
 void WorkspaceShell::InvalidateCursorKindFingerprint() {
   ++cursor_hit_generation_;
@@ -67,16 +67,11 @@ void WorkspaceShell::SeedPointerPosition(float render_x, float render_y) {
   last_mouse_x_ = render_x;
   last_mouse_y_ = render_y;
   last_mouse_position_valid_ = true;
-  // The position moved without a motion event, so recompute the cursor and refresh
-  // editor hover against the new location on the next prepared frame.
   QueueEditorHoverRefresh();
   InvalidateCursorKindFingerprint();
 }
 
 void WorkspaceShell::NoteLayoutInputsChanged() {
-  // The layout memo needs no notice -- it is keyed on the inputs themselves. The
-  // cursor-kind fingerprint is not, and the geometry under a still pointer may
-  // just have moved, so the next frame's cursor resolve must not short-circuit.
   InvalidateCursorKindFingerprint();
 }
 
@@ -99,12 +94,6 @@ void WorkspaceShell::SetWindowPresentationState(WindowPresentationState state) {
   if (window_presentation_.logical_width != previous_width ||
       window_presentation_.logical_height != previous_height) {
     NoteLayoutInputsChanged();
-    // Tab-strip scroll uses the current window width to decide how many tabs
-    // fit; the fallback width (1440) is wider than typical windows, so the
-    // initial post-session-restore call may leave the active tab/project
-    // scrolled off-screen until the user manually scrolls. Re-run both
-    // visibility passes on every size change so the active chips stay
-    // anchored in view.
     if (window_presentation_.logical_width != previous_width) {
       tab_strip_chrome_.EnsureActiveProjectVisible();
       tab_strip_chrome_.EnsureActiveTabVisibleForAllGroups();
@@ -122,7 +111,6 @@ WorkspaceShell::CurrentWindowPresentationState() const {
 }
 
 render::TextClipPadding WorkspaceShell::PartialRedrawClipPadding() const {
-  // A partial clip must cover the overhang of whichever font drew there.
   const render::TextClipPadding chrome = text_renderer_.ClipPadding();
   const render::TextClipPadding editor = editor_text_renderer_.ClipPadding();
   return render::TextClipPadding{.left = std::max(chrome.left, editor.left),
@@ -164,12 +152,6 @@ std::optional<WorkspaceLayout> WorkspaceShell::CurrentWorkspaceLayout() const {
   if (!window_rect.has_value()) {
     return std::nullopt;
   }
-  // Input-keyed, not flag-keyed (TD-2026-08-30-280): one grid scenario asked for
-  // this ~475 times -- about once per damage event -- and each answer was a full
-  // recompute. Gathering the key IS what the old call did before computing, so a
-  // hit costs the reads plus a dozen compares and nothing else. There is no way
-  // to serve a stale answer: anything that changes what `ComputeLayout` reads
-  // changes the key.
   const WorkspaceLayoutInputs inputs = CurrentLayoutInputs(window_rect->w, window_rect->h);
   if (layout_memo_inputs_.has_value() && *layout_memo_inputs_ == inputs) {
     util::AddPerformanceCounter(util::PerfCounterId::WorkspaceLayoutMemoHits);
@@ -189,29 +171,16 @@ WorkspaceShell::RenderInvalidation WorkspaceShell::ConsumePendingRenderInvalidat
   if (pending_render_invalidation_.rects.spilled()) {
     util::AddPerformanceCounter(util::PerfCounterId::WorkspaceRedrawRectSpills);
   }
-  // Move, not copy. This runs once per handled event; copying the struct out and
-  // then default-constructing over the original meant the rect list was built
-  // twice and freed twice per event for no reason (TD-2026-08-06-145).
   RenderInvalidation result = std::move(pending_render_invalidation_);
   pending_render_invalidation_.full = false;
   pending_render_invalidation_.rects.clear();
   pending_render_invalidation_.present = false;
-  // A moved-from struct keeps its bools: an owed frame that stayed set was owed
-  // for good -- every later event reported a redraw, and the idle wait never
-  // waited while it was set (the idle-wake loop the qa monkey found after
-  // be0181bfa).
   pending_render_invalidation_.frame = false;
   return result;
 }
 
 namespace {
 
-// One line per repaint request, with the code that asked (MICROIDE_TRACE_DAMAGE,
-// on in QA runs): a stale frame is damage that missed a change, and which call
-// asked for the damage that DID come -- a prompt's key path, a frame prep, a save's
-// pane -- is the first question, answered twice by temporary backtraces in the app
-// (soak e93ce81f04ac, 2026-11-20). Raw frames, as the caret-bounds report prints
-// them; tools/qa symbolizes the ones before a stale frame into its evidence.
 void TraceDamageRequest(const SDL_FRect* rect) {
   static const bool enabled = util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_DAMAGE");
   if (!enabled) {
@@ -225,7 +194,7 @@ void TraceDamageRequest(const SDL_FRect* rect) {
   void* frames[kFrames];
   const int count = ::backtrace(frames, kFrames);
   if (char** symbols = ::backtrace_symbols(frames, count); symbols != nullptr) {
-    for (int i = 1; i < count; ++i) {  // frame 0 is this function
+    for (int i = 1; i < count; ++i) {
       report += "  #" + std::to_string(i) + " " + symbols[i] + "\n";
     }
     std::free(symbols);  // NOLINT(cppcoreguidelines-no-malloc): backtrace_symbols' contract
@@ -234,7 +203,7 @@ void TraceDamageRequest(const SDL_FRect* rect) {
   util::Log(report);
 }
 
-}  // namespace
+}
 
 void WorkspaceShell::RequestFullRedraw() {
   TraceDamageRequest(nullptr);
@@ -248,16 +217,12 @@ void WorkspaceShell::RequestFullRedraw() {
 
 void WorkspaceShell::Notify(NotificationService::Tone tone, std::string message) {
   notification_service_.Show(tone, std::move(message), SDL_GetTicks());
-  // The toasts are a derived surface (NotificationToastPaint): a frame repaints
-  // the toasts that moved, appeared or went, and nothing else. The shell
-  // schedules a single wake at the toast's expiry (see NextAnimationDelayMs).
   RequestPreparedFrame();
 }
 
 void WorkspaceShell::Notify(NotificationService::Request request) {
-  // A keyed row reposted unchanged (a state publisher's every tick) paints nothing.
   if (notification_service_.Show(std::move(request), SDL_GetTicks())) {
-    RequestPreparedFrame();  // see the overload above
+    RequestPreparedFrame();
   }
 }
 
@@ -266,7 +231,6 @@ void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
     return;
   }
   TraceDamageRequest(&rect);
-  // Counted even when a pending full redraw absorbs the rect: the caller asked.
   ++damage_generation_;
   if (pending_render_invalidation_.full) {
     return;
@@ -274,38 +238,18 @@ void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
   InvalidateCursorKindFingerprint();
   pending_render_invalidation_.Add(rect);
   util::AddPerformanceCounter(util::PerfCounterId::WorkspaceRedrawRectsQueued);
-  // Area, not count: a strip repaint and a window repaint queue one rect each.
   util::AddPerformanceCounter(util::PerfCounterId::WorkspaceRedrawRectPixels,
                               static_cast<std::uint64_t>(rect.w * rect.h));
   QueueEditorHoverRefresh();
 }
 
 void WorkspaceShell::RequestCursorPresent() {
-  // Not damage: nothing in the scene changed, the compositor just has to commit a
-  // frame so it re-latches the hardware cursor plane and an event-time cursor
-  // change actually shows. The app loop re-presents the retained scene for it.
   pending_render_invalidation_.present = true;
 }
 
-// "Something on screen may have changed": the one way to ask for a repaint.
-// Everything the window paints is a derived surface (openspec derived-damage) --
-// the chrome and its style, the strips and bands, the editor, compare and merge
-// panes, the sidebar's views, the bottom panel and the debug pane, the overlays,
-// prompts, menus, cards and toasts -- so a change names no rect: the frame lays
-// out each surface's units, damages the ones whose fingerprint or rect moved, and
-// paints nothing when none did. Each area once had its own request naming a rect
-// (the window, the sidebar, the editor surface, the panel, the strip...), and the
-// stale pixels were the rects someone forgot.
 void WorkspaceShell::RequestPreparedFrame() {
-  // A frame whose damage frame prep derives (RenderInvalidation::frame). It is a
-  // request like any rect: an EnsureRedraw fallback after it must not fire, or a
-  // click the editor answered with a frame repainted the whole editor surface.
   pending_render_invalidation_.frame = true;
   ++damage_generation_;
-  // What is under a still pointer may have changed, as with a rect: the cursor is
-  // resolved again. Without this a derived surface whose content changed under
-  // the pointer -- search results landing on the row it rests on -- kept the
-  // cursor of what was there until the pointer moved.
   InvalidateCursorKindFingerprint();
 }
 
@@ -322,9 +266,6 @@ void WorkspaceShell::RequestOuterLayoutChangeRedraw(const WorkspaceLayout& previ
       RectsEqual(previous_layout.*second, (*current_layout).*second)) {
     return;
   }
-  // A divider drag changes outer workspace geometry — several surface boundaries
-  // move at once. Repaint the whole scene while it moves so retained redraw does
-  // not leave stale pixels in the newly exposed area.
   RequestFullRedraw();
 }
 
@@ -334,9 +275,6 @@ void WorkspaceShell::RequestSidebarLayoutChangeRedraw(
                                  &WorkspaceLayout::content);
 }
 
-// An edit was applied to the active editable surface (an editor, a diff's
-// working side, a merge result): everything that holds coordinates into its text
-// follows it, and a frame repaints what the edit changed (the surfaces are derived).
 void WorkspaceShell::NoteActiveEditableEdit() {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::NoteActiveEditableEdit");
   RequestPreparedFrame();
@@ -348,34 +286,15 @@ void WorkspaceShell::NoteActiveEditableEdit() {
     util::PerformanceTrace::Scope scope("WorkspaceShell::NoteActiveEditableEdit::SyncLsp");
     SyncLspForActiveEditableLastChange();
   }
-  // The find widget's match set is coordinates into THIS buffer, so an edit under
-  // an open widget leaves it describing text that has moved -- wrong highlights,
-  // a wrong n-of-m, and a Replace that rewrites the line the old range landed on.
-  // Nothing but a bool test while the widget is closed.
   RefreshBufferSearchIfStale();
-  // A finished project search's hits in this file follow the edit too, while the
-  // search view shows them: re-deriving rescans the buffer, which a keystroke
-  // should not pay for a list nobody is looking at (frame prep catches the active
-  // buffer up when the view comes back).
   (void)MakeSidebarService().CatchUpSearchResults(*viewport);
-  // A snippet session's placeholders are LINE:COLUMN ranges that only the snippet
-  // engine's own ops keep in step with the text. Any other edit -- move-line,
-  // sort, paste, format, an LSP workspace edit -- moves the text under them, and
-  // Tab would then jump to whatever inherited their coordinates. Ends the session
-  // in that case; the engine's own edits stamp the revision and are ignored here.
   assist_service_.snippets().NotifyBufferChanged();
-  // Slide stored line breakpoints through this edit so a line inserted/removed
-  // above a breakpoint keeps it on its statement (VSCode-style). Cheap no-op for
-  // files without breakpoints; the gutter's dots are in the rows' keys.
   (void)debug_service_.ShiftBreakpointsForViewportEdit(*viewport);
 }
 
 void WorkspaceShell::RequestActiveEditableChangeRedraw(const std::vector<std::string>& before_lines,
                                                        const std::vector<std::string>& after_lines) {
   lsp_service_.SyncLspForActiveEditableChange(before_lines, after_lines);
-  // The editor, compare and merge surfaces are derived (EditorRowUnits,
-  // CompareRowUnits): a frame repaints what changed in them, so the request
-  // names no rect (derived-damage 2.4).
   RequestPreparedFrame();
 }
 
@@ -386,19 +305,10 @@ void WorkspaceShell::RequestBottomPanelLayoutChangeRedraw(
 }
 
 void WorkspaceShell::QueueEditorHoverRefresh() {
-  // A card pinned to the caret (Show Hover) refreshes with no pointer at all.
   editor_hover_refresh_pending_ =
       last_mouse_position_valid_ || context_.interaction_state.caret_hover.active;
 }
 
-// Each piece of chrome that floats over the workspace while it is open: the menu
-// bar, an open menu and its submenu, the overflow popup, the tree context menu.
-// Kept as separate shapes because their BOUNDING BOX is not chrome: the menu bar
-// spans the window, so with a tall menu open (Edit reaches below the editor) the
-// box covers the whole editor and sidebar. RenderClip used to test a dirty rect
-// against that box to decide "only a popup changed, skip the editor" -- so a
-// caret blink or a file reload under an open Edit menu painted the window
-// background over the editor until the menu closed.
 util::InlineVector<SDL_FRect, 5> WorkspaceShell::CurrentChromeRects() const {
   util::InlineVector<SDL_FRect, 5> rects;
   const auto layout = CurrentWorkspaceLayout();
@@ -449,19 +359,11 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineRangeRect(std::size_t 
   if (viewport == nullptr) {
     return std::nullopt;
   }
-  // On the grid the last frame painted, sticky-scroll band included: without the
-  // band every row sat its height too high, and a keystroke under pinned headers
-  // repainted a line above the one it typed on (QA monkey, seed 608).
   const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
       editor_text_renderer_, *viewport, pane_rect, viewport->sticky_band_rows(), LineNumbersEnabled());
   const std::size_t visible_start_row = viewport->scroll_line();
   const std::size_t visible_end_row = visible_start_row + metrics.visible_rows;
   const std::size_t start_row = viewport->VisualRowForLine(start_line);
-  // The exclusive end is the row after the range's last line. Reading it as
-  // VisualRowForLine(end_line) alone was wrong whenever `end_line` sits inside a
-  // collapsed fold: a hidden line maps to its opener's row, so an edit on a
-  // folded opener (range [opener, opener + 1)) became the empty range
-  // [opener row, opener row) and the edited row was never repainted.
   const std::size_t end_row =
       end_line == 0 ? start_row + 1
       : end_line >= viewport->line_count()
@@ -473,10 +375,6 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineRangeRect(std::size_t 
   }
   const std::size_t clipped_start = std::max(start_row, visible_start_row);
   const std::size_t clipped_end = std::min(end_row, visible_end_row);
-  // Inset gaps (a code lens above its line, an inline surface) push the rows below
-  // them down, as the paint and the pointer place them: on the plain grid a
-  // keystroke on a line under a lens repainted the lens strip and left the line
-  // (soak a25ecf6e5ab9, 7776ee909316).
   if (context_.current_project_state.plugin_presentation_if_present() != nullptr) {
     std::vector<float> row_tops;
     VisibleRowTops(context_.current_project_state, *viewport, metrics,
@@ -497,8 +395,6 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineRangeRect(std::size_t 
 }
 
 std::optional<Uint32> WorkspaceShell::NextTabSlideDelayMs() const {
-  // A drag parked at the edge of an overflowing strip auto-scrolls on a timer, and
-  // a still pointer emits no motion events, so the wake has to come from here.
   if (context_.interaction_state.tab_drag.autoscroll_direction != 0) {
     return static_cast<Uint32>(16);
   }
@@ -506,28 +402,18 @@ std::optional<Uint32> WorkspaceShell::NextTabSlideDelayMs() const {
   if (!slide.active()) {
     return std::nullopt;
   }
-  // During the post-release settle, keep waking until the animation clears itself
-  // (AdvanceTabSlide snaps the last sub-pixel and resets the state). Otherwise the
-  // final "land at rest" wake would never fire once motion falls below the snap
-  // threshold, stranding a sub-pixel offset and a non-None kind.
   if (slide.settling) {
-    return static_cast<Uint32>(16);  // ~60 fps
+    return static_cast<Uint32>(16);
   }
-  // Mid-drag: only keep waking while something is actually in motion. A drag whose
-  // neighbors have settled (pointer held still) needs no wakes until the next
-  // motion event moves the target again. A cross-group drag animates two strips,
-  // and either one still moving is a reason to wake.
   for (const TabStripSlide& strip : slide.strips) {
     if (!strip.idle() && SlideOffsetsMoving(strip.current, strip.target)) {
-      return static_cast<Uint32>(16);  // ~60 fps
+      return static_cast<Uint32>(16);
     }
   }
   return std::nullopt;
 }
 
 bool WorkspaceShell::AdvanceTabSlide() {
-  // Pump the drag auto-scroll first: it can move every tab, which reseeds the
-  // slide targets the ease below then steps.
   bool scrolled = false;
   if (context_.interaction_state.tab_drag.autoscroll_direction != 0) {
     scrolled = MakeTabMouseCoordinator().TickDragAutoScroll();
@@ -538,8 +424,6 @@ bool WorkspaceShell::AdvanceTabSlide() {
   }
   const Uint64 now = SDL_GetTicks();
   const Uint64 raw_dt = now >= slide.last_advance_ms ? now - slide.last_advance_ms : 0;
-  // Cap the step so a long idle gap (animation had converged, then resumed)
-  // can't teleport tabs; it settles in one brisk step instead.
   const float dt_ms = static_cast<float>(std::min<Uint64>(raw_dt, 100));
   slide.last_advance_ms = now;
   bool moving = false;
@@ -550,13 +434,9 @@ bool WorkspaceShell::AdvanceTabSlide() {
   }
   if (!moving) {
     if (slide.settling) {
-      // Post-release glide finished: drop the animation so every tab renders at
-      // its base rect. Repaint once more to land cleanly at rest.
       slide = TabSlideState{};
       return true;
     }
-    // Converged mid-drag with the pointer still: no repaint unless auto-scroll
-    // moved the strip under it.
     return scrolled;
   }
   return true;
@@ -611,14 +491,6 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
       next_delay = plugin_delay_ms;
     }
   }
-  // No project-watcher tick here any more. External file changes arrive as
-  // FileIndexWatcher batches on their own thread and wake the loop through
-  // project_file_event_type_, so an idle project schedules NOTHING — where it used
-  // to re-arm a 2 s timer forever, and (before that) walk the whole tree on it.
-  // The poll fallback for hosts without native events lives inside the watcher and
-  // wakes the same way (TD-2026-08-15-252).
-  // File changes the apply rate held back (TD-2026-10-28-419): the scheduled wake
-  // calls ReloadProjectIfFilesChanged, which applies them once the budget allows.
   if (const auto change_delay = project_change_coalescer_.NextReadyDelayMs(SDL_GetTicks());
       change_delay.has_value()) {
     const Uint32 change_delay_ms = static_cast<Uint32>(*change_delay);
@@ -633,8 +505,6 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
       next_delay = toast_delay_ms;
     }
   }
-  // Pending debounced editor events wake the loop near their deadline so the
-  // coalesced plugin callback fires promptly after typing settles.
   if (const auto editor_event_delay = plugin_editor_event_tracker_.NextDelayMs(SDL_GetTicks());
       editor_event_delay.has_value()) {
     const Uint32 editor_event_delay_ms = static_cast<Uint32>(*editor_event_delay);
@@ -642,7 +512,6 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
       next_delay = editor_event_delay_ms;
     }
   }
-  // Search as you type: wake when the search view's debounce passes.
   if (const std::uint64_t due =
           context_.current_project_state.overlay.workflow.project_search.search_on_type_due_ms;
       due != 0) {
@@ -652,15 +521,11 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
       next_delay = delay;
     }
   }
-  // "After delay" autosave wakes the loop near the debounce deadline so a settled
-  // dirty buffer is written without any input to drive the save.
   if (const auto autosave_delay = NextAutosaveDelayMs(); autosave_delay.has_value()) {
     if (!next_delay.has_value() || *autosave_delay < *next_delay) {
       next_delay = *autosave_delay;
     }
   }
-  // The crash-safety session flush likewise wakes the loop near its debounce deadline so
-  // a settled dirty buffer is staged for restore without any input to drive it.
   if (const auto session_flush_delay = NextSessionFlushDelayMs(); session_flush_delay.has_value()) {
     if (!next_delay.has_value() || *session_flush_delay < *next_delay) {
       next_delay = *session_flush_delay;
@@ -669,39 +534,18 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
   return next_delay;
 }
 
-// When it is due: CrashSafetyFlushSchedule (quiet after the last edit, bounded after
-// the first unstaged one).
 std::optional<Uint32> WorkspaceShell::NextSessionFlushDelayMs() const {
   const std::optional<std::uint64_t> delay = session_flush_.DelayMs(SDL_GetTicks());
   return delay.has_value() ? std::optional<Uint32>(static_cast<Uint32>(*delay)) : std::nullopt;
 }
 
 void WorkspaceShell::FlushSessionStateForCrashSafety() {
-  // Stage the active project's session (open tabs + unsaved buffer content) to the
-  // durable record store. Routed through the same PersistenceCoordinator the clean
-  // shutdown / event-driven saves use, so it inherits the robust unique-temp + .bak
-  // write. Deliberately does NOT touch the user's files — this is a restore snapshot,
-  // not a save.
   MakePersistenceCoordinator().SaveSessionState();
-  // NOT waited for. The session is encoded and written on the persistence worker
-  // (SaveProjectSession takes it by value): waiting here held the shell thread for
-  // the encode of every unsaved buffer -- ~30 ms measured with a 1 MiB one, the
-  // same at 32 MiB -- and since the flush fires during steady typing too
-  // (CrashSafetyFlushSchedule's maximum wait), that was a hitch mid-keystroke. The
-  // write lands a few milliseconds behind this call, which is all a kill in that
-  // window can cost; quit still flushes (flush_persisted_state) before it exits.
 }
 
 WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() {
   std::optional<Uint32> wait_ms;
-  // Something still owed off the main thread: the loop's short wait is for it.
   bool in_flight = false;
-  // The loop is about to block. When nothing is moving -- no tab sliding, no
-  // selection autoscroll, no file-change batch due, nothing queued, nothing in
-  // flight -- the app is idle, and every `idle` query waiting for that moment is
-  // answered (ControlChannelService::ReleaseIdleWaiters). A blinking caret, a
-  // toast's expiry and a plugin's poll timer are compatible with idle; a driver
-  // used to infer this moment from 30 ms of silence in the app's log.
   const auto release_idle_waiters = [&] {
     if (in_flight || NextTabSlideDelayMs().has_value() ||
         selection_autoscroll::NextDelayMs(context_.interaction_state).has_value() ||
@@ -714,50 +558,24 @@ WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() {
   if (const auto next_delay = NextAnimationDelayMs(); next_delay.has_value()) {
     wait_ms = std::max<Uint32>(1, *next_delay);
   }
-  // A redraw asked for from the render path — progressive compare tokenization, the
-  // status-bar strip — lands in pending_render_invalidation_, which only the event
-  // dispatcher and the scheduled wake drain. Blocking here would strand it until
-  // unrelated input arrived, so don't wait at all while one is owed.
-  // HandleScheduledWake picks the rects up; the frame it produces clears them, so
-  // this does not spin.
   if (pending_render_invalidation_.HasAnyRedraw()) {
     return IdleWaitState{
         .hint = IdleHint::Full,
         .caret_remaining_ms = 0,
     };
   }
-  // While a debug-adapter request is in flight, poll on a short interval so the
-  // async response is applied promptly. The response path already wakes the loop
-  // via MainThreadMailbox::PushWake (SDL_PushEvent), but a cross-thread pushed
-  // event is not a guaranteed wake for a blocking SDL_WaitEventTimeout on every
-  // platform, so this poll is the backstop that stops scopes/variables/evaluate
-  // from feeling frozen. 16 ms (~62 wakes/sec) was needlessly tight given the
-  // wake usually fires: 64 ms cuts the idle-wake rate ~4x while keeping the
-  // worst-case backstop latency (only hit if the wake is dropped) below the
-  // ~100 ms perception threshold, so stepping still feels immediate.
   if (DebugEnabled() && debug_service_.HasInFlightDapWork()) {
     in_flight = true;
     constexpr Uint32 kDapPollMs = 64;
     wait_ms = wait_ms.has_value() ? std::min(*wait_ms, kDapPollMs) : kDapPollMs;
   }
-  // Fallback backstop for one-shot wake producers (git blame, control channel, native
-  // dialogs, highlight prefetch, background-task wakes): if any of their SDL_PushEvent
-  // wakes was rejected while its result sat ready in shared state, PushWake latched
-  // a shared "wake owed" bit. Consume it here to shorten this idle wait so the loop
-  // re-checks and drains the ready state instead of blocking until unrelated input.
-  // (TD-2026-07-16-54.)
   if (util::ConsumeOwedWake()) {
     in_flight = true;
     constexpr Uint32 kWakeOwedPollMs = 32;
     wait_ms = wait_ms.has_value() ? std::min(*wait_ms, kWakeOwedPollMs) : kWakeOwedPollMs;
   }
-  // Startup wake-registration degraded mode: at least one subsystem's custom SDL event
-  // could not be allocated, so its ready state has no event to drain it. Poll on a
-  // steady interval so LSP/DAP/dialog/terminal/etc. results are still consumed rather
-  // than stranded until unrelated input. Rare (SDL event-type exhaustion at startup),
-  // so the steady poll is acceptable. (TD-2026-07-16-56.)
   if (util::WakeRegistrationDegraded()) {
-    in_flight = true;  // a result may sit ready with no wake: never call this idle
+    in_flight = true;
     constexpr Uint32 kDegradedPollMs = 64;
     wait_ms = wait_ms.has_value() ? std::min(*wait_ms, kDegradedPollMs) : kDegradedPollMs;
   }
@@ -777,9 +595,6 @@ WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() {
 
 bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::ReloadProjectIfFilesChanged");
-  // Apply any completed off-thread forced rescan (TD-2026-07-17-081/082) and
-  // project replace-all (TD-2026-07-17-021) first; their wakes reuse this event, and
-  // the applies invalidate the finder/search/index below.
   save_formatter_service_.DrainCompletions();
   file_read_service_.DrainCompletions();
   if (glue_->remote_host_service != nullptr) {
@@ -799,25 +614,11 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
     }
   }
 
-  // Unforced, this call only DRAINS: the FileIndexWatcher has already put whatever
-  // changed into the coalescer from its own thread. `force_check` is the "answer
-  // now, synchronously" path (an explicit refresh, and the tests/perf harness that
-  // mutate the tree and immediately ask), so it pays one tree walk and diffs it
-  // against the index.
   if (force_check) {
     AppendForcedProjectRescanChanges(supplemental);
   }
 
-  // Surface a notice when the project is too large to index completely. Done before
-  // the early returns below so it fires even when there is no change batch to apply.
   if (project_index_truncated_notice_pending_.exchange(false, std::memory_order_acq_rel)) {
-    // Sticky, because this reports a STATE and not an event: the index IS a
-    // prefix of the project for as long as this project is open, and search and
-    // Go to File keep covering part of it. As a four-second toast it told whoever
-    // happened to be looking at the bottom-right corner at that moment, and then
-    // the only explanation for incomplete results was gone. It clears where the
-    // state does — whenever the watcher restarts (a rescan, another project), in
-    // Start/StopFileIndexWatcher.
     Notify(NotificationService::Request{
         .tone = NotificationService::Tone::Warning,
         .key = std::string(kProjectIndexTruncatedNotificationKey),
@@ -833,9 +634,6 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
 
   const std::optional<project::ProjectChangeBatch> ready = [&] {
     util::PerformanceTrace::Scope consume_scope("WorkspaceShell::ReloadProjectIfFilesChanged::ConsumeReady");
-    // Unforced, at the coalescer's apply rate: a sync or a build that keeps writing
-    // repaints a few times a second, not once per watcher batch. The scheduled
-    // wake (NextAnimationDelayMs) comes back for what this leaves pending.
     return force_check ? project_change_coalescer_.ConsumeReady()
                        : project_change_coalescer_.ConsumeReadyAt(SDL_GetTicks());
   }();
@@ -857,8 +655,6 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
   }
 
   ApplyProjectChangeBatch(*ready);
-  // A batch is also how the root's own delete or move arrives (IN_DELETE_SELF /
-  // IN_MOVE_SELF): one stat per applied batch says whether the folder is still there.
   if (PublishProjectRootPresence(notification_service_, context_.current_project_state.root, SDL_GetTicks())) {
     RequestFullRedraw();
   }
@@ -867,14 +663,7 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
 
 WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
   EventResult result = HandleScheduledWakeSources();
-  // As HandleEvent: a wake whose result showed a maximized panel (a Git command's
-  // output) leaves no keyboard on a surface it covers (soak b6cc343b6ee1).
   MakeTerminalPanelService().SyncPanelMaximizedWithFocus();
-  // Redraws requested from the render path (progressive compare tokenization, the
-  // status-bar strip) accumulate in pending_render_invalidation_, which the event
-  // dispatcher drains for events. A frame with no event behind it has to drain it
-  // too, or those rects sit there until unrelated input arrives. Merging here is
-  // the single seam that covers every wake source above.
   const RenderInvalidation pending = ConsumePendingRenderInvalidation();
   if (pending.HasAnyRedraw()) {
     result.redraw.Merge(pending);
@@ -886,12 +675,8 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
 WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleScheduledWake");
   if (notification_service_.ExpireDue(SDL_GetTicks())) {
-    // An expired toast is repainted by the toasts' derived units: a frame, not
-    // a full repaint.
     return EventResult{.handled = true, .redraw = RenderInvalidation{.frame = true}};
   }
-  // Drain results marshalled back from the plugin worker thread. Gated on a
-  // lockless atomic so a project with no plugin work pays a single load here.
   if (plugin_runtime_.PendingPluginThreadActionCount() > 0 &&
       plugin_runtime_.DrainPluginThreadActions() > 0) {
     return EventResult{
@@ -902,16 +687,10 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
         },
     };
   }
-  // Crash-safety session flush fires once its debounce elapses. Invisible background
-  // persistence (no user-file write, no UI change), so disarm and fall through WITHOUT
-  // returning — other wake work (autosave, project reload, animation) still runs this
-  // tick. Disarming stops the deadline from busy-looping the wake until the next edit.
   if (session_flush_.Due(SDL_GetTicks())) {
     session_flush_.Disarm();
     FlushSessionStateForCrashSafety();
   }
-  // Search as you type: run the search on the text in the field being edited once
-  // the typing pauses. The field stays open; Enter still commits it.
   if (ProjectSearchState& search = context_.current_project_state.overlay.workflow.project_search;
       search.search_on_type_due_ms != 0 && SDL_GetTicks() >= search.search_on_type_due_ms) {
     search.search_on_type_due_ms = 0;
@@ -921,9 +700,6 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
       RequestPreparedFrame();
     }
   }
-  // "After delay" autosave fires once the debounce elapses. Disarm before saving so a
-  // clean/manually-saved buffer does not busy-loop the wake; the save clears the dirty
-  // marker, so a full redraw refreshes the tab's modified indicator.
   if (autosave_armed_ && (SDL_GetTicks() - autosave_edit_epoch_ms_) >= AutosaveDelayMs()) {
     autosave_armed_ = false;
     MaybeAutosaveDirtyTabs(false);
@@ -935,8 +711,6 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
         },
     };
   }
-  // Debounced reactive editor events fire here once their deadline elapses. A full
-  // redraw covers any decorations a handler republishes in response.
   if (DispatchDuePluginEditorEvents()) {
     return EventResult{
         .handled = true,
@@ -946,21 +720,12 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
         },
     };
   }
-  // The apply requests exactly the surfaces it changed; HandleScheduledWake merges
-  // them. A blanket full frame here repainted the window on every agent write
-  // (TD-2026-10-15-341).
   if (ReloadProjectIfFilesChanged(false)) {
     return EventResult{.handled = true, .redraw = {}};
   }
-  // Step the Chrome-like tab-slide animation. Capture the dirty strip before
-  // advancing so the settle-end frame (which clears the state) still repaints
-  // the right region instead of falling back to a full redraw.
   if (context_.interaction_state.tab_slide.active() ||
       context_.interaction_state.tab_drag.autoscroll_direction != 0) {
     const TabSlideState& slide = context_.interaction_state.tab_slide;
-    // A cross-group drag animates two strips, so this is a list rather than one
-    // rect; falling back to a full-window repaint because the second strip had
-    // nowhere to go would undo the whole point of the damage-scoped drag.
     util::SmallVector<SDL_FRect, kInlineRedrawRects> slide_rects;
     bool resolved_every_strip = true;
     for (const TabStripSlide& strip : slide.strips) {
@@ -991,25 +756,9 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
       };
     }
   }
-  // Step a selection drag whose pointer is held past an edge of the text band.
-  // Scrolls content, so the repaint is the editor surface rather than a strip.
-  // Only the re-extend below needs the shell; the step itself is in
-  // workspace/coordinators/SelectionAutoscroll.
-  // One autoscroll tick against whichever text surface is active. The editor and
-  // the merge result pane scroll a TextViewport; the compare surface scrolls its
-  // own `scroll_row` through the clamping helper that owns it, which is why the
-  // autoscroll hands out deltas rather than reaching for a viewport (TD-201).
-  //
-  // A lambda rather than a member: the shell's declaration budget is a hard
-  // invariant, and nothing outside this wake needs to step an autoscroll.
   const auto step_selection_autoscroll = [this]() -> bool {
-    // Only the surface whose drag armed it, and only while that drag lasts: a drag
-    // that ended with no release must not hand its velocity to whatever surface
-    // is in front (InteractionState::selection_autoscroll_owner).
     using Owner = InteractionState::SelectionAutoscrollOwner;
     if (context_.interaction_state.selection_autoscroll_owner == Owner::Terminal) {
-      // The bottom panel's terminal: its selection drag is independent of which
-      // editor tab is active, so it is keyed off its own pane (TD-2026-08-13-205).
       TerminalPaneState* terminal_tab = ActiveTerminalPane();
       if (terminal_tab == nullptr || !terminal_tab->mouse_selecting || !BottomPanelVisible() ||
           !BottomPanelShowsTerminal()) {
@@ -1028,8 +777,6 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
       if (!layout.has_value()) {
         return selection_autoscroll::FinishStep(context_.interaction_state, false);
       }
-      // The terminal scrolls its own scrollback offset rather than a viewport,
-      // which is what BeginStep/FinishStep were split apart for.
       const std::size_t line_count = terminal_tab->session.LineCount();
       const LogSurfaceLayout panel_layout = ComputeBottomPanelLogLayout(*layout, line_count);
       const int before_row = terminal_tab->scroll_row;
@@ -1073,8 +820,6 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
       }
       const bool stepped =
           selection_autoscroll::Step(context_.interaction_state, merge_tab->result_viewport);
-      // The merge surface keeps its own mirror of the result pane's scroll;
-      // leaving it stale would make the next layout snap the view back.
       merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
       merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
       return stepped;
@@ -1088,12 +833,6 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
   };
   if (context_.interaction_state.selection_autoscroll_active() && step_selection_autoscroll()) {
     const auto layout = CurrentWorkspaceLayout();
-    // Re-extend the selection to the held pointer against the scrolled surface.
-    // Replaying the pointer through the ordinary handler is what keeps the
-    // scrolled-into rows selected; without it the view would move under a
-    // stationary selection. Each surface's own motion handler does that, and
-    // each refuses when its tab is not the active one, so the dispatch is just
-    // offering the event to all three.
     if (layout.has_value()) {
       SDL_Event synthetic{};
       synthetic.type = SDL_EVENT_MOUSE_MOTION;
@@ -1111,8 +850,6 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
         (void)MakeEditorMouseCoordinator().HandleSelectionMotion(synthetic, *layout);
       }
     }
-    // The scroll and the selection are in the panes' row keys: the frame repaints
-    // the rows they moved, not the editor area.
     return EventResult{.handled = true, .redraw = RenderInvalidation{.frame = true}};
   }
   return Bootstrapper(*this).BuildWakeController().HandleScheduledWake();
@@ -1124,13 +861,6 @@ WorkspaceShell::ConsumePostRenderRedrawRequest() {
     return std::nullopt;
   }
   --post_render_redraws_remaining_;
-  // Both producers are the terminal reflow (a panel resize, or a terminal font
-  // change that re-grids it), and a reflow can only change what the bottom panel
-  // shows. It used to force two whole-window redraws per reflow, which on the
-  // startup path — a restored terminal tab is re-gridded on the first prepared
-  // frame — meant two more full renders of a frame the user was already looking
-  // at. Scope them to the panel, or the window when the panel is not laid out or
-  // not visible.
   RenderInvalidation invalidation;
   if (const auto layout = CurrentWorkspaceLayout(); layout.has_value() && BottomPanelVisible()) {
     invalidation.Add(layout->bottom_panel);
@@ -1144,25 +874,10 @@ ScrollSurfaceLayout WorkspaceShell::ComputeEditorScrollLayout(
     const SDL_FRect& rect,
     const editor::TextViewport& viewport,
     const editor::EditorViewMetrics& metrics) const {
-  // Soft-wrap reflows content into the visible window, so horizontal scrolling
-  // is meaningless; collapse `total_columns` to `visible_columns` so the
-  // scrollbar geometry computes `max_horizontal_scroll == 0` and the bar is
-  // hidden entirely.
   const std::size_t total_columns =
       viewport.soft_wrap()
           ? metrics.visible_columns
           : std::max<std::size_t>(metrics.visible_columns, MaxVisualColumns(viewport));
-  // VISUAL rows, not logical lines. `scroll_line()` is a visual row -- it is what
-  // ClampScrollState bounds against visual_line_count() -- so passing line_count()
-  // here described the thumb in one space and positioned it in another. With soft
-  // wrap on (or a collapsed fold) the two differ, and the consequences were not
-  // cosmetic: ComputeScrollSurfaceLayout clamps the scroll to
-  // `total_rows - visible_rows`, and ScrollUnitsForPointer maps a drag back through
-  // the same total straight into SetScrollLine -- so the thumb was over-sized and
-  // dragging it to the bottom of a wrapped file stopped at visual row
-  // (line_count - visible), leaving the end of the document unreachable by the
-  // scrollbar. The merge surface already sizes its bar in visual rows
-  // (MergeTotalVisualRowCount); the editor was the one that did not.
   return ComputeScrollSurfaceLayout(rect, viewport.visual_line_count(),
                                     static_cast<int>(metrics.visible_rows),
                                     static_cast<int>(viewport.scroll_line()), total_columns,
@@ -1205,4 +920,4 @@ const editor::TextViewport* WorkspaceShell::ActiveEditableViewport() const {
   return viewport != nullptr && IsReadOnlyVirtualDocument(viewport->path()) ? nullptr : viewport;
 }
 
-}  // namespace microide::workspace
+}

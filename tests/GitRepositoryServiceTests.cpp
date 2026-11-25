@@ -27,15 +27,6 @@ using microide::workspace::GitSidebarRefreshScope;
 using microide::workspace::GitSidebarState;
 using microide::workspace::OutgoingBaseChoice;
 
-// End-to-end for the D/F probe against a REAL file-vs-directory merge conflict.
-//
-// This test started out asserting conditionally ("if git left a conflicted
-// directory, then...") and passed while detecting nothing, because the first
-// implementation probed the wrong path. git does not report the colliding path:
-// it leaves the directory in place and moves the file side aside, so the record
-// names `thing~file-side` (an ordinary file) while `thing` is the directory. The
-// assertions below are therefore unconditional — a detector that stops firing
-// must fail here, not quietly pass.
 void TestRefreshMarksFileDirectoryConflict() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path repo_path = temp_dir.path() / "repo";
@@ -43,17 +34,14 @@ void TestRefreshMarksFileDirectoryConflict() {
   WriteFile(repo_path / "seed.txt", "seed\n");
   CommitAll(repo_path, "base", "base");
 
-  // Branch A turns `thing` into a FILE.
   RequireGitCommandSuccess(repo_path, {"checkout", "-b", "file-side"}, "branch file-side");
   WriteFile(repo_path / "thing", "i am a file\n");
   CommitAll(repo_path, "file", "file");
 
-  // main turns the same path into a DIRECTORY, then merges A.
   RequireGitCommandSuccess(repo_path, {"checkout", "main"}, "checkout main");
   std::filesystem::create_directories(repo_path / "thing");
   WriteFile(repo_path / "thing" / "inner.txt", "i am inside a directory\n");
   CommitAll(repo_path, "dir", "dir");
-  // Expected to exit non-zero: this merge is the conflict under test.
   (void)RunGitCommand(repo_path, {"merge", "file-side"});
 
   Expect(std::filesystem::is_directory(repo_path / "thing"),
@@ -84,18 +72,10 @@ void TestRefreshMarksFileDirectoryConflict() {
          "file side, so the probe has to test the prefix before the `~`");
 }
 
-// The D/F probe must look at the FINAL path component only. Scanning the whole
-// path matched a `~` in a DIRECTORY name, so an ordinary content conflict at
-// `dir~x/file.txt` probed `dir`, found a directory, and was misreported as
-// file/directory — which also flips TextHunksAvailable to false and denies the
-// user the three-way merge editor for a perfectly normal conflict. Reproduced
-// against real git before the fix.
 void TestRefreshDoesNotMistakeTildeDirectoryForFileDirectoryConflict() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path repo_path = temp_dir.path() / "repo";
   InitializeGitRepo(repo_path);
-  // `dir` exists AND a sibling directory's name contains `~`, which is what made
-  // the whole-path scan fire.
   std::filesystem::create_directories(repo_path / "dir");
   std::filesystem::create_directories(repo_path / "dir~x");
   WriteFile(repo_path / "dir" / "keep.txt", "keep\n");
@@ -130,11 +110,6 @@ void TestRefreshDoesNotMistakeTildeDirectoryForFileDirectoryConflict() {
   Expect(saw_conflict, "the fixture should produce a conflicted entry");
 }
 
-// A real conflicted submodule emits `u UU S... 160000 ... dep`, and `dep` IS a
-// directory on disk (the submodule checkout) — so it trips the D/F probe too.
-// That makes the submodule-before-file/directory precedence load-bearing, not
-// merely defensive, which is why this is an end-to-end test against real git
-// rather than a hand-built entry.
 void TestRefreshMarksSubmoduleConflict() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path inner = temp_dir.path() / "inner";
@@ -148,17 +123,13 @@ void TestRefreshMarksSubmoduleConflict() {
   RequireGitCommandSuccess(inner, {"checkout", "-b", "right"}, "inner right");
   WriteFile(inner / "a.txt", "right\n");
   CommitAll(inner, "right", "right");
-  // Leave inner on `main` so `submodule add` records the BASE pointer. Adding
-  // while inner sits on `right` would make the base equal one side, and the
-  // merge below would then be a fast-forward with nothing to conflict over.
   RequireGitCommandSuccess(inner, {"checkout", "main"}, "inner back to main");
 
   const std::filesystem::path outer = temp_dir.path() / "outer";
   InitializeGitRepo(outer);
-  // file:// submodules need the protocol allowlist on modern git.
   if (RunGitCommand(outer, {"-c", "protocol.file.allow=always", "submodule", "add", "-q",
                             inner.string(), "dep"}) != 0) {
-    return;  // submodules unavailable in this environment; nothing to assert
+    return;
   }
   CommitAll(outer, "add submodule", "add submodule");
 
@@ -301,10 +272,6 @@ void TestRefreshSurfacesMergeConflictsInSidebar() {
          "conflicted file should not be duplicated in Outgoing");
 }
 
-// The service no longer counts the global background-task counter itself — the
-// counter is owned entirely by ProjectBackgroundExecutor's queue hooks. An async
-// refresh must therefore raise the global counter by EXACTLY one (the enqueue),
-// never two (the old double-count where the service also incremented manually).
 void TestAsyncRefreshCountsGlobalCounterOnce() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path repo_path = temp_dir.path() / "repo";
@@ -317,8 +284,6 @@ void TestAsyncRefreshCountsGlobalCounterOnce() {
 
   const int base = microide::util::GetBackgroundTaskCount();
 
-  // Occupy the single serial worker so the git refresh job stays queued (its
-  // on_enqueue hook has fired, but it has not run/completed) while we sample.
   std::promise<void> running;
   std::promise<void> gate;
   executor.Post([&]() {
@@ -332,9 +297,6 @@ void TestAsyncRefreshCountsGlobalCounterOnce() {
 
   service.RequestRefresh(repo_path, platform::LocalProcessLauncher(),
                          GitSidebarRefreshScope::StatusOnly, OutgoingBaseChoice{}, false);
-  // Both the executor enqueue and — under the old bug — the service's manual
-  // increment happen synchronously before this line, so the old code reads
-  // before+2 here and fails.
   Expect(microide::util::GetBackgroundTaskCount() == before + 1,
          "an async git refresh must raise the global counter by exactly one (no double-count)");
 
@@ -344,8 +306,6 @@ void TestAsyncRefreshCountsGlobalCounterOnce() {
          "the global counter must drain back to its baseline");
 }
 
-// The synchronous test path bypasses ProjectBackgroundExecutor entirely, so it is
-// counter-neutral: it must not move the global counter at all.
 void TestSyncRefreshLeavesGlobalCounterUntouched() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path repo_path = temp_dir.path() / "repo";
@@ -376,18 +336,8 @@ void TestConcurrentRefreshBurstStaysLiveAndBalanced() {
   ProjectBackgroundExecutor executor;
   GitRepositoryService service(executor);
 
-  // The global background-task counter is owned by the executor's queue hooks and
-  // starts at this test's baseline. Every enqueued refresh must eventually drain
-  // back to it, even across superseded generations.
   const int base = microide::util::GetBackgroundTaskCount();
 
-  // Hammer RequestRefresh from several threads. Each in-flight refresh that is
-  // superseded by a newer generation (bumped by a concurrent RequestRefresh)
-  // must still (a) decrement the background-task counter it incremented and
-  // (b) hand off any deferred follow-up. The pre-fix PublishSnapshot early-return
-  // and ScheduleRefresh early-out skipped one or both, leaking the counter and
-  // freezing refresh_in_flight_ so the sidebar silently stopped updating until
-  // Reset(). This exercises those superseded exits under real contention.
   constexpr int kThreads = 4;
   constexpr int kPerThread = 60;
   std::vector<std::thread> threads;
@@ -404,12 +354,6 @@ void TestConcurrentRefreshBurstStaysLiveAndBalanced() {
     thread.join();
   }
 
-  // Quiesce: with the fix every enqueued task eventually completes, so once the
-  // deferred-follow-up chain drains the global counter returns to a *stable* base.
-  // Require several consecutive base reads so the brief complete->re-enqueue
-  // hand-off window between a superseded task and its follow-up is not mistaken
-  // for a drained queue. Bounded so a regression (leaked counter / frozen chain)
-  // fails instead of hanging.
   int stable_base = 0;
   for (int i = 0; i < 1000 && stable_base < 4; ++i) {
     stable_base = (microide::util::GetBackgroundTaskCount() == base) ? stable_base + 1 : 0;
@@ -418,9 +362,6 @@ void TestConcurrentRefreshBurstStaysLiveAndBalanced() {
   Expect(stable_base >= 4,
          "concurrent refresh burst must drain the global background-task counter to baseline");
 
-  // Liveness: after the burst, refresh_in_flight_ must not be stuck. A fresh
-  // request must schedule, run, and publish a new snapshot. A frozen state
-  // machine would defer this forever and never publish.
   const std::uint64_t generation_before = service.CurrentState().generation;
   service.RequestRefresh(repo_path, platform::LocalProcessLauncher(), GitSidebarRefreshScope::Full,
                          OutgoingBaseChoice{}, false);
@@ -439,13 +380,6 @@ void TestConcurrentRefreshBurstStaysLiveAndBalanced() {
   executor.Shutdown();
 }
 
-// Fake-git seam: a refresh must open the sidebar in a refreshing state and
-// dispatch the status query to the background executor WITHOUT blocking the
-// caller. Injecting a provider that stalls on a gate lets the test assert the
-// service is refreshing (and has published nothing) while git is "still running",
-// then completes once released — all without spawning real git. This mirrors the
-// async compare-picker provider seam and closes the "no cheap fake git/executor
-// seam" gap for the sidebar refresh path.
 void TestBlockingRepositoryStateProviderIsAsync() {
   ProjectBackgroundExecutor executor;
   GitRepositoryService service(executor);
@@ -453,7 +387,7 @@ void TestBlockingRepositoryStateProviderIsAsync() {
   std::atomic<bool> release{false};
   std::atomic<int> provider_calls{0};
   service.SetRepositoryStateProviderForTesting(
-      [&](const std::filesystem::path& /*root*/,
+      [&](const std::filesystem::path& ,
           std::uint64_t generation) -> microide::project::GitRepositoryState {
         provider_calls.fetch_add(1);
         while (!release.load()) {
@@ -476,18 +410,12 @@ void TestBlockingRepositoryStateProviderIsAsync() {
     return true;
   }});
 
-  // SpecificRef keeps ResolveGitOutgoingBase git-free; StatusOnly scope skips the
-  // outgoing-files diff — so the entire refresh path runs without real git once the
-  // status producer is injected.
   OutgoingBaseChoice choice;
   choice.kind = OutgoingBaseChoice::Kind::SpecificRef;
   choice.custom_ref = "HEAD~1";
   service.RequestRefresh("/fake/repo", platform::LocalProcessLauncher(),
                          GitSidebarRefreshScope::StatusOnly, choice, false);
 
-  // The caller returned immediately; wait until the worker is actually parked
-  // inside the injected provider so the assertions below prove async behavior
-  // rather than a not-yet-started task.
   for (int i = 0; i < 2000 && provider_calls.load() == 0; ++i) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
@@ -522,17 +450,13 @@ void TestBlockingRepositoryStateProviderIsAsync() {
   executor.Shutdown();
 }
 
-// The outgoing-base resolution (several git subprocesses on the Auto path) is
-// memoized across refreshes: a plain status refresh after a file edit leaves the
-// branch/HEAD/upstream unchanged and must be served from cache, while a HEAD
-// movement re-resolves.
 void TestOutgoingBaseResolutionIsMemoizedByRepositoryIdentity() {
   ProjectBackgroundExecutor executor;
   GitRepositoryService service(executor);
 
   std::string head_oid = "aaaaaaa";
   service.SetRepositoryStateProviderForTesting(
-      [&](const std::filesystem::path& /*root*/,
+      [&](const std::filesystem::path& ,
           std::uint64_t generation) -> microide::project::GitRepositoryState {
         microide::project::GitRepositoryState state;
         state.repo_available = true;
@@ -542,8 +466,6 @@ void TestOutgoingBaseResolutionIsMemoizedByRepositoryIdentity() {
         return state;
       });
 
-  // SpecificRef keeps ResolveGitOutgoingBase git-free; StatusOnly skips the
-  // outgoing-files diff. The cache key/hit/miss logic is identical for every kind.
   OutgoingBaseChoice choice;
   choice.kind = OutgoingBaseChoice::Kind::SpecificRef;
   choice.custom_ref = "origin/main";
@@ -553,14 +475,12 @@ void TestOutgoingBaseResolutionIsMemoizedByRepositoryIdentity() {
                                             choice, false);
   Expect(service.OutgoingBaseResolveCountForTesting() == 1, "first refresh resolves the base once");
 
-  // Same branch + HEAD + choice: served from cache, no re-resolution.
   service.RunRefreshSynchronouslyForTesting("/fake/repo", platform::LocalProcessLauncher(),
                                             GitSidebarRefreshScope::StatusOnly,
                                             choice, false);
   Expect(service.OutgoingBaseResolveCountForTesting() == 1,
          "an unchanged repository identity must hit the outgoing-base cache");
 
-  // HEAD moved (commit/checkout/reset): the memo must invalidate and re-resolve.
   head_oid = "bbbbbbb";
   service.RunRefreshSynchronouslyForTesting("/fake/repo", platform::LocalProcessLauncher(),
                                             GitSidebarRefreshScope::StatusOnly,
@@ -571,12 +491,6 @@ void TestOutgoingBaseResolutionIsMemoizedByRepositoryIdentity() {
   executor.Shutdown();
 }
 
-// TD-2026-07-17-093: GitRepositoryService::Reset() must NOT cancel the shared
-// project background executor — a git-state reset would otherwise discard queued
-// commit/patch/monitor/refresh work. Git-result correctness is preserved by
-// generation gating, not by cancelling the queue. Enqueue an unrelated job behind
-// a worker-blocking latch, reset git while it is still queued, then prove the
-// unrelated job still runs.
 void TestResetDoesNotCancelUnrelatedQueuedWork() {
   ProjectBackgroundExecutor executor;
   GitRepositoryService service(executor);
@@ -586,19 +500,14 @@ void TestResetDoesNotCancelUnrelatedQueuedWork() {
   bool release = false;
   std::atomic<bool> victim_ran{false};
 
-  // Blocker occupies the single worker thread until released, so the victim stays
-  // queued (not yet running) when Reset() is called.
   executor.Post([&] {
     std::unique_lock<std::mutex> lock(m);
     cv.wait(lock, [&] { return release; });
   });
-  // An unrelated (non-git) job queued behind the blocker.
   executor.Post([&] { victim_ran.store(true); });
 
-  // A git-state reset must leave the queued unrelated job intact.
   service.Reset();
 
-  // Release the blocker and wait (bounded) for the victim to run.
   {
     std::lock_guard<std::mutex> lock(m);
     release = true;
@@ -615,9 +524,6 @@ void TestResetDoesNotCancelUnrelatedQueuedWork() {
   executor.Shutdown();
 }
 
-// Automatic refreshes are paced -- one at a time, kIntervalMs apart -- and none is
-// dropped: one turned away is kept until Resume() finds it due (TD-2026-10-25-392,
-// journey-feature-branch). Channel 0 arms no real timer; the deadline is recorded.
 void TestAutomaticGitRefreshPacerKeepsWhatItTurnsAway() {
   using microide::workspace::AutomaticGitRefreshPacer;
   constexpr std::uint64_t kInterval = AutomaticGitRefreshPacer::kIntervalMs;
@@ -634,7 +540,6 @@ void TestAutomaticGitRefreshPacerKeepsWhatItTurnsAway() {
   Expect(pacer.Request(1000 + kInterval, false), "and the caller's request issues it");
   Expect(!pacer.pending(), "nothing is kept after it ran");
 
-  // A request while one runs waits for it, with no timer: the snapshot resumes it.
   AutomaticGitRefreshPacer running(no_channel);
   Expect(!running.Request(5000, true), "a request while a refresh runs waits");
   Expect(running.pending() && running.wake_armed_for_ms() == 0,
@@ -646,7 +551,7 @@ void TestAutomaticGitRefreshPacerKeepsWhatItTurnsAway() {
          "with nothing kept, Resume issues nothing");
 }
 
-}  // namespace
+}
 
 void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GitRepositoryService/AutomaticRefreshPacerKeepsWhatItTurnsAway",
@@ -677,4 +582,4 @@ void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests) {
           TestOutgoingBaseResolutionIsMemoizedByRepositoryIdentity);
 }
 
-}  // namespace microide::tests
+}

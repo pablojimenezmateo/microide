@@ -19,43 +19,23 @@
 
 namespace microide::project::remote {
 
-// Which host tree a mirror is a mirror of: `meta/remote` beside the mirror's tree.
-// It is what makes a mirror tree recognizable when the editor reopens it from the
-// recents list or a restored session, so it reconnects instead of opening the
-// mirror as a plain local folder.
 struct RemoteProjectRecord {
-  std::string host;       // `[user@]host[:port]`, as RemoteHostTarget::Display
-  std::string host_root;  // absolute, on the host
+  std::string host;
+  std::string host_root;
 
   friend bool operator==(const RemoteProjectRecord&, const RemoteProjectRecord&) = default;
 };
 
-// One remote project (dev-docs/design/remote-projects.md § 6.1): its own channel
-// to the host (a session whose hello names the host root), the mirror the editor
-// opens as the project root, the engine that keeps it equal to the host's tree,
-// and the locality — the launcher every process runs through and the gate every
-// write goes through.
-//
-// The mirror is usable before, and without, a connection: the files are local.
-// Each time the session becomes Ready the engine resubscribes to the host's watch
-// and syncs (which also replays the journal).
 class RemoteProject {
  public:
   struct Config {
-    RemoteHostSession::Config session;  // `workspace_root` is the host root
-    // "" = MirrorStore::DefaultDirectory(host, root).
+    RemoteHostSession::Config session;
     std::filesystem::path mirror_directory;
     MirrorSyncEngine::Options engine;
-    // Per host terminal (RemoteProcessLauncher::Options): remote.term_credit_bytes and
-    // remote.scrollback_prefetch_lines; 0 = the host's defaults.
     std::size_t terminal_credit_bytes = 0;
     std::size_t terminal_prefetch_lines = 0;
-    // The host pushed a new git status for the tree (git/subscribe): the git
-    // sidebar can re-render from it without a host process. Any thread.
     std::function<void()> git_status_changed;
   };
-  // Something a user can see changed: the session's state or the sync's status.
-  // Any thread.
   using Listener = std::function<void()>;
 
   RemoteProject(Config config, Listener listener);
@@ -63,30 +43,20 @@ class RemoteProject {
   RemoteProject(const RemoteProject&) = delete;
   RemoteProject& operator=(const RemoteProject&) = delete;
 
-  // Open the mirror (writing its record) and start connecting. False with *error
-  // when the mirror cannot be opened; a host that cannot be reached is not an
-  // error here — it is the session's state.
   bool Open(std::string* error);
 
-  // Where the mirror of `host_root` on `host` lives by default, and its tree.
   static std::filesystem::path DefaultTree(std::string_view host, std::string_view host_root);
-  // The record of the mirror whose tree is `tree`, if it is one.
   static std::optional<RemoteProjectRecord> ReadRecord(const std::filesystem::path& tree);
-  // Write it (Open does, each time). False when it cannot be written.
   [[nodiscard]] static bool WriteRecord(const std::filesystem::path& tree, const RemoteProjectRecord& record);
 
   const std::filesystem::path& tree() const { return store_->tree(); }
   RemoteProjectRecord record() const;
   ProjectLocality locality() const;
-  // The out-of-project cache: host files outside the content set that a language
-  // server or debugger names map here (RemoteProcessLauncher::Options).
   std::filesystem::path host_file_cache() const { return store_->meta() / "host-files"; }
   RemoteHostSession& session() { return *session_; }
   MirrorSyncEngine& engine() { return *engine_; }
   RemoteWorkspace& workspace() { return *workspace_; }
   const std::shared_ptr<RemoteProcessLauncher>& launcher() const { return launcher_; }
-  // Whether the host watches the tree natively (false: it polls — inotify
-  // unavailable or out of watches). Unknown until the first connection subscribes.
   std::optional<bool> watch_native() const {
     std::lock_guard lock(watch_mutex_);
     return watch_native_;
@@ -107,4 +77,4 @@ class RemoteProject {
   std::optional<bool> watch_native_;
 };
 
-}  // namespace microide::project::remote
+}

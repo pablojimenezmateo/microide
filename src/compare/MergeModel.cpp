@@ -20,7 +20,6 @@ namespace {
 struct SideChange {
   int base_start = 0;
   int base_end = 0;
-  // Views into the variant side's source buffer, via the diff ops' own views.
   std::vector<std::string_view> lines;
 };
 
@@ -36,14 +35,7 @@ struct TaggedChange {
 
 std::vector<SideChange> BuildSideChanges(std::span<const std::string_view> base_lines,
                                          std::span<const std::string_view> variant_lines) {
-  // Scoped: BuildMergeModel is one synchronous 50 ms call on the shell path when a
-  // merge tab opens, and until this scope existed there was no way to say which of
-  // its three phases (split, the two diffs, hunk grouping) that time was.
   util::PerformanceTrace::Scope perf_scope("merge::BuildSideChanges");
-  // BuildLineDiffOps consumes views, and the model's line vectors ARE views now,
-  // so it takes them directly. This used to copy both sides into freshly built
-  // view vectors -- two more whole-file vectors per side, on top of the owned
-  // strings that existed only to be viewed.
   const std::vector<DiffOp> ops = BuildLineDiffOps(base_lines, variant_lines);
   std::vector<SideChange> changes;
   int base_line = 0;
@@ -82,11 +74,6 @@ std::vector<std::string_view> SliceBaseLines(const std::vector<std::string_view>
                                        base_lines.begin() + safe_end);
 }
 
-// `changes` is taken by mutable reference and sorted IN PLACE. It used to be a
-// by-value parameter fed an lvalue, so every call deep-copied a vector of
-// SideChange — each of which owns a vector<string> of the changed lines. On a
-// merge with many hunks that copy was paid once per hunk per side, on the
-// synchronous shell path that opens a merge tab.
 std::vector<std::string_view> ApplySideChangesToSlice(
     const std::vector<std::string_view>& base_lines,
     int start,
@@ -115,8 +102,6 @@ std::vector<std::string_view> ApplySideChangesToSlice(
   return lines;
 }
 
-// Consumes `changes`: tagging is a relabel, not a copy. Each SideChange owns the
-// changed lines, so copying here duplicated one side of the diff wholesale.
 std::vector<TaggedChange> TaggedChanges(std::vector<SideChange>&& changes, MergeSide side) {
   std::vector<TaggedChange> tagged;
   tagged.reserve(changes.size());
@@ -129,16 +114,6 @@ std::vector<TaggedChange> TaggedChanges(std::vector<SideChange>&& changes, Merge
   return tagged;
 }
 
-// Walks the resolved result line-by-line, as views into the model, without
-// materializing anything. `bootstrap` selects the hunk choice: the recorded one,
-// or the one BootstrapMergeChoice would pick before the user has chosen.
-//
-// The four public result builders are the same walk with different sinks. They
-// used to be four separate copies of it, each one materializing a
-// `vector<std::string>` of every result line -- the text forms then handed that
-// to JoinLines, which copied every line into the joined buffer and freed all of
-// them. On a 25,700-line merge that was 25,700 owned strings to produce one
-// (TD-2026-08-15-239).
 template <typename Fn>
 void ForEachMergeResultLine(const MergeModel& model, bool bootstrap, Fn&& fn) {
   const auto emit_span = [&fn](std::span<const std::string_view> lines) {
@@ -178,17 +153,12 @@ std::vector<std::string> CollectMergeResultLines(const MergeModel& model, bool b
 std::string BuildMergeResultText(const MergeModel& model,
                                  std::string_view separator,
                                  bool bootstrap) {
-  // Two passes over the same walk: bytes, then bytes. Every line is already
-  // resident in `model`, so the total is bounded by what is in memory and cannot
-  // wrap -- unlike util::JoinLines, which takes an arbitrary span and has to
-  // saturate.
   std::size_t bytes = 0;
   std::size_t count = 0;
   ForEachMergeResultLine(model, bootstrap, [&](std::string_view line) {
     bytes += line.size();
     ++count;
   });
-  // An empty result is one empty line, which joins to the empty string.
   if (count == 0) {
     return {};
   }
@@ -205,7 +175,7 @@ std::string BuildMergeResultText(const MergeModel& model,
   return text;
 }
 
-}  // namespace
+}
 
 MergeModel BuildMergeModel(const std::string& base,
                            const std::string& incoming,
@@ -217,23 +187,11 @@ MergeModel BuildMergeModel(const std::string& base,
   model.current_source = MakeCompareText(current);
   {
     util::PerformanceTrace::Scope split_scope("merge::BuildMergeModel::SplitLines");
-    // Views into the model's own shared buffers, not owned strings. Splitting
-    // into owned lines was one allocation per line PER SIDE, and every consumer
-    // of them -- the diff, the hunks, the renderers -- only ever read them.
     model.base_lines = util::SplitLineViews(*model.base_source);
     model.incoming_lines = util::SplitLineViews(*model.incoming_source);
     model.current_lines = util::SplitLineViews(*model.current_source);
   }
 
-  // SplitLineViews leaves a trailing "" after a final '\n' (and one for an
-  // empty buffer): the phantom, the mark that the side ends in a newline, not
-  // a line. When every side has one it is one equal line at the end, so keep it
-  // out of the diffs — aligned with the real lines it matched any blank line
-  // near the end, and two sides deleting one of two blank lines came out as two
-  // deletions (dropping both), or a side's trailing insertion landed past the
-  // phantom and stopped touching the other side's change that git says it
-  // touches. When the sides disagree on the final newline the phantom IS the
-  // difference and stays in.
   const auto has_phantom = [](const std::string& source) {
     return source.empty() || source.back() == '\n';
   };
@@ -266,20 +224,6 @@ MergeModel BuildMergeModel(const std::string& base,
     return lhs.side < rhs.side;
   });
 
-  // Single linear pass over the sorted change list. After sort-by base_start,
-  // any change whose base_start is <= group_max_end overlaps OR TOUCHES the
-  // group's union interval and therefore interacts with at least one existing
-  // member. Touching counts: git's merge (xdiff's xdl_merge) treats two changes
-  // as conflicting unless at least one unchanged base line separates them, so
-  // an insertion at the boundary of the other side's replacement, or two
-  // deletions that meet, are one conflict to `git merge-file` and were two
-  // clean, independently applied hunks here — 175 of 500 random three-way
-  // merges git refused came out silently auto-merged (an interleaving that,
-  // for two identical deletions, also dropped a line twice). A side's own
-  // changes never touch — a diff separates them by an equal line — so the
-  // group's members always come from both sides.
-  // Reused across groups: one hunk's partition buffers are the next hunk's, and a
-  // merge with hundreds of hunks otherwise allocated two vectors per hunk.
   std::vector<SideChange> hunk_incoming_changes;
   std::vector<SideChange> hunk_current_changes;
   auto flush_group = [&](const std::vector<std::size_t>& group) {
@@ -291,10 +235,6 @@ MergeModel BuildMergeModel(const std::string& base,
     for (std::size_t group_index : group) {
       base_start = std::min(base_start, all_changes[group_index].change.base_start);
       base_end = std::max(base_end, all_changes[group_index].change.base_end);
-      // Moved, not copied: a flushed group's entries are never read again — the
-      // scan pushes `i` only AFTER flushing, and the one backward look
-      // (`all_changes[group.back()]`) is always at an element of the group still
-      // being accumulated.
       if (all_changes[group_index].side == MergeSide::Incoming) {
         hunk_incoming_changes.push_back(std::move(all_changes[group_index].change));
       } else {
@@ -381,9 +321,6 @@ MergeChoiceLineSpans MergeChoiceLineViews(const MergeHunk& hunk, MergeChoice cho
         return {hunk.incoming_lines, {}};
       }
       return {hunk.incoming_lines, hunk.current_lines};
-    // Plain "both" (the `b` key) keeps CURRENT first, then incoming: the order of
-    // the file's own conflict markers and of VS Code's "Accept Both Changes". The
-    // explicit incoming-first variant stays available above.
     case MergeChoice::Both:
     case MergeChoice::BothCurrentFirst:
       if (hunk.incoming_lines == hunk.current_lines) {
@@ -415,15 +352,15 @@ std::size_t MergeChoiceLineCount(const MergeHunk& hunk, MergeChoice choice) {
 }
 
 std::string BootstrapMergeResultText(const MergeModel& model, std::string_view separator) {
-  return BuildMergeResultText(model, separator, /*bootstrap=*/true);
+  return BuildMergeResultText(model, separator, true);
 }
 
 std::vector<std::string> MergeResultLines(const MergeModel& model) {
-  return CollectMergeResultLines(model, /*bootstrap=*/false);
+  return CollectMergeResultLines(model, false);
 }
 
 std::string MergeResultText(const MergeModel& model, std::string_view separator) {
-  return BuildMergeResultText(model, separator, /*bootstrap=*/false);
+  return BuildMergeResultText(model, separator, false);
 }
 
 MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model) {
@@ -433,11 +370,7 @@ MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model) {
   int incoming_line = 1;
   int result_line = 1;
   int current_line = 1;
-  // Reused across hunks: one hunk's flattened choice lines are the next hunk's.
   std::vector<std::string_view> hunk_result_scratch;
-  // A run of base lines no hunk touches: identical in all three panes, so every
-  // *_changed flag is false and all three line numbers advance together. Emitted
-  // both for the gap ahead of each hunk and for the tail after the last one.
   const auto emit_unchanged_rows = [&](int from_line, int to_line) {
     for (int line = from_line; line < to_line; ++line) {
       const std::string_view text = model.base_lines[static_cast<std::size_t>(line)];
@@ -459,8 +392,6 @@ MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model) {
   for (const MergeHunk& hunk : model.hunks) {
     emit_unchanged_rows(base_cursor, hunk.base_start);
 
-    // Views, like every other line list here: the display model copies them into
-    // its own owned rows below, and comparing them against the base needs no copy.
     const MergeChoiceLineSpans result_spans = MergeChoiceLineViews(hunk, hunk.choice);
     hunk_result_scratch.clear();
     hunk_result_scratch.reserve(result_spans.size());
@@ -493,11 +424,6 @@ MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model) {
           .current_changed = current_changed,
       });
     }
-    // A hunk whose selected incoming/current/result lines are all empty
-    // (row_count == 0, e.g. an auto-resolved both-sides deletion) contributes no
-    // display rows. Recording it would yield end_row = start_row - 1 (an inverted
-    // range) that navigation/minimap code reads as a zero-or-negative span. Skip
-    // the display hunk when no rows were emitted.
     if (static_cast<int>(display.rows.size()) > start_row) {
       display.hunks.push_back(CompareHunk{
           .index = hunk.index,
@@ -510,9 +436,6 @@ MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model) {
 
   emit_unchanged_rows(base_cursor, static_cast<int>(model.base_lines.size()));
 
-  // Only materialize the full merge result for the empty-display fallback; a
-  // non-empty display (the common case) never needs it, so a large clean merge
-  // no longer allocates the whole output on every display rebuild.
   if (display.rows.empty()) {
     const std::vector<std::string> result_lines = MergeResultLines(model);
     for (const std::string& text : result_lines) {
@@ -559,4 +482,4 @@ MergeChoice ParseMergeChoice(std::string_view label) {
   return MergeChoice::Base;
 }
 
-}  // namespace microide::compare
+}

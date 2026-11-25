@@ -60,4 +60,4 @@ const SaveContinuation* SaveContinuationQueue::Find(std::uint64_t id) const {
   return match == continuations_.end() ? nullptr : &*match;
 }
 
-}  // namespace microide::workspace
+}

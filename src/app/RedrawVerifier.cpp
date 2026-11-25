@@ -8,9 +8,6 @@ namespace microide::app {
 
 namespace {
 
-// Both readbacks come from targets of one format (the scene and reference
-// textures are created alike), so the bytewise diff needs no conversion; this only
-// guards the assumption.
 bool Diffable(const SDL_Surface* surface) {
   return surface != nullptr && SDL_BYTESPERPIXEL(surface->format) == 4 && !SDL_MUSTLOCK(surface);
 }
@@ -20,7 +17,7 @@ render::PixelImageView View(const SDL_Surface* surface) {
                                 surface->h, surface->pitch};
 }
 
-}  // namespace
+}
 
 std::string FormatStaleFrameReport(const render::PixelDiffResult& diff,
                                    const VerifiedFrameInfo& frame) {
@@ -98,4 +95,4 @@ std::optional<render::PixelDiffResult> RedrawVerifier::CompareWithReference(
   return result;
 }
 
-}  // namespace microide::app
+}

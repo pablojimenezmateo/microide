@@ -12,7 +12,7 @@ void HashBytes(std::uint64_t& h, const void* data, std::size_t size) {
   const auto* bytes = static_cast<const unsigned char*>(data);
   for (std::size_t i = 0; i < size; ++i) {
     h ^= static_cast<std::uint64_t>(bytes[i]);
-    h *= 0x100000001b3ULL;  // FNV-1a prime
+    h *= 0x100000001b3ULL;
   }
 }
 
@@ -21,7 +21,7 @@ bool RectIsFinite(const SDL_FRect& rect) {
          std::isfinite(rect.h);
 }
 
-}  // namespace
+}
 
 bool ValidateDisplayList(const PluginDisplayList& list, std::string* error) {
   const auto fail = [&](const char* message) {
@@ -41,20 +41,12 @@ bool ValidateDisplayList(const PluginDisplayList& list, std::string* error) {
     return fail("display list exceeds the maximum image count");
   }
 
-  // Plugin-supplied coordinates flow straight from Lua with no finiteness check.
-  // Replay casts them to int (e.g. ToIntRect for clip rects), and static_cast<int>
-  // of a NaN/±inf or out-of-int-range float is undefined behavior (UBSAN trap; a
-  // garbage clip rect in release). Reject non-finite geometry here — validation is
-  // the sole gate replay trusts.
   for (const SDL_FPoint& point : list.point_arena) {
     if (!std::isfinite(point.x) || !std::isfinite(point.y)) {
       return fail("display list has a non-finite polyline point");
     }
   }
 
-  // Content dimensions feed the host's scroll extents / intrinsic layout size, so
-  // a NaN/±inf or negative value poisons layout math even when every op is valid.
-  // Validation is the sole gate the host trusts, so reject it here.
   if (!std::isfinite(list.content_width) || !std::isfinite(list.content_height) ||
       list.content_width < 0.0f || list.content_height < 0.0f) {
     return fail("display list has a non-finite or negative content dimension");
@@ -67,10 +59,6 @@ bool ValidateDisplayList(const PluginDisplayList& list, std::string* error) {
     }
     switch (op.op) {
       case DrawOp::Text: {
-        // The slice must fit the arena. Even an empty (count == 0) op must have an
-        // in-bounds offset: replay forms `text_arena.data() + data_offset`, and a
-        // past-the-end offset is UB (invalid pointer formation) regardless of
-        // count. Validation is the sole gate replay trusts, so it must hold here.
         const std::uint64_t end =
             static_cast<std::uint64_t>(op.data_offset) + op.data_count;
         if (end > list.text_arena.size()) {
@@ -115,7 +103,7 @@ bool ValidateDisplayList(const PluginDisplayList& list, std::string* error) {
 }
 
 std::uint64_t ComputeDisplayListHash(const PluginDisplayList& list) {
-  std::uint64_t h = 0xcbf29ce484222325ULL;  // FNV-1a offset basis
+  std::uint64_t h = 0xcbf29ce484222325ULL;
   for (const DisplayOp& op : list.ops) {
     const std::uint8_t op_byte = static_cast<std::uint8_t>(op.op);
     HashBytes(h, &op_byte, sizeof(op_byte));
@@ -137,4 +125,4 @@ std::uint64_t ComputeDisplayListHash(const PluginDisplayList& list) {
   return h;
 }
 
-}  // namespace microide::render
+}

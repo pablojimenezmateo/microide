@@ -23,8 +23,6 @@ using microide::project::RunGitRemoteOperation;
 using microide::project::StashGitChanges;
 using microide::project::SwitchGitBranch;
 
-// Every operation here is exercised against a real local repository, so every
-// call names the local launcher; this keeps that from dominating each line.
 const platform::ProcessLauncher& Local() { return platform::LocalProcessLauncher(); }
 
 bool ListContains(const std::vector<microide::project::GitBranchReference>& branches,
@@ -42,10 +40,6 @@ std::string CurrentBranchLabel(const std::vector<microide::project::GitBranchRef
   return {};
 }
 
-// The classifier is the whole reason these operations are usable: it turns git's
-// prose into an outcome the UI can act on. Pin every branch against the actual
-// phrases git emits, so a message the UI relies on cannot silently fall back to
-// UnknownError.
 void TestGitOperationFailureClassification() {
   Expect(ClassifyGitOperationFailure(127, "") == GitOperationOutcome::GitNotFound,
          "a silent 127 is git missing from PATH");
@@ -145,7 +139,6 @@ void TestGitBranchListingAndSwitch() {
          "an empty branch name should be rejected without spawning git");
 }
 
-// Uncommitted work must block a switch rather than being silently carried or lost.
 void TestGitSwitchRefusesToOverwriteLocalChanges() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -195,8 +188,6 @@ void TestGitStashRoundTrip() {
   Expect(ReadFile(root / "a.txt") == "stashed edit\n", "popping should restore the edit");
 }
 
-// Without a remote there is nothing to talk to; every network verb must say so
-// precisely instead of hanging on a credential prompt or reporting UnknownError.
 void TestGitRemoteOperationsWithoutRemoteAreClassified() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -217,7 +208,6 @@ void TestGitRemoteOperationsWithoutRemoteAreClassified() {
          "pulling with no remote should be reported as a missing remote/upstream");
 }
 
-// A path that is not a repository must be rejected before any subprocess runs.
 void TestGitOperationsOutsideRepositoryAreRejected() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "plain";
@@ -233,9 +223,6 @@ void TestGitOperationsOutsideRepositoryAreRejected() {
          "an empty root should report not-a-repo");
 }
 
-// Accept Local / Accept Remote keep one side whole and stage it, for a text
-// conflict, a binary one (the only resolution the merge tab cannot offer), and a
-// modify/delete one (where keeping the deleting side IS the deletion).
 void TestGitResolveConflictWithSide() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -273,7 +260,7 @@ void TestGitResolveConflictWithSide() {
          "a file that is not conflicted is nothing to do");
 }
 
-}  // namespace
+}
 
 void RegisterGitBranchOperationsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GitBranchOperations/FailureClassification",
@@ -289,4 +276,4 @@ void RegisterGitBranchOperationsTests(std::vector<TestCase>& tests) {
           TestGitOperationsOutsideRepositoryAreRejected);
 }
 
-}  // namespace microide::tests
+}

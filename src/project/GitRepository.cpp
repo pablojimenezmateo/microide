@@ -27,7 +27,7 @@ std::vector<std::string> OwnArguments(std::initializer_list<std::string_view> ar
   return owned;
 }
 
-}  // namespace
+}
 
 GitRepository::GitRepository(std::filesystem::path root, const platform::ProcessLauncher& launcher)
     : root_(std::move(root)), launcher_(&launcher) {
@@ -37,7 +37,6 @@ GitRepository::GitRepository(std::filesystem::path root, const platform::Process
 }
 
 bool GitRepository::IsValid() const {
-  // Asked of the host, not of this machine's copy of the tree (TD-2026-10-06-319).
   return GitMetadataFor(*launcher_).IsRepository(root_);
 }
 
@@ -81,7 +80,7 @@ GitRepository::CommandResult GitRepository::ExecuteWithEnvironment(
     std::vector<platform::SubprocessEnvironmentOverride> environment,
     int timeout_ms) const {
   return gitutil::ReadGitCommandOutputWithStdin(*launcher_, root_, std::vector<std::string>(arguments), {},
-                                               /*silence_stderr=*/true, timeout_ms, std::move(environment));
+                                               true, timeout_ms, std::move(environment));
 }
 
 bool GitRepository::ExecuteSucceeds(std::initializer_list<std::string_view> arguments,
@@ -97,20 +96,16 @@ bool GitRepository::ExecuteSucceeds(const std::vector<std::string>& arguments,
 std::optional<std::vector<GitWorkingTreeEntry>> GitRepository::GetWorkingTreeEntries() const {
   const auto result = Execute({"status", "--porcelain=v1", "-z", "--untracked-files=all"});
   if (!result.success() || result.truncated) {
-    return std::nullopt;  // no answer, as opposed to an answer of "nothing"
+    return std::nullopt;
   }
   if (result.output.empty()) {
-    return std::vector<GitWorkingTreeEntry>{};  // git answered: the tree is clean
+    return std::vector<GitWorkingTreeEntry>{};
   }
   return GitPorcelainParser::ParseWorkingTreeEntries(result.output);
 }
 
 GitFileHistoryResult GitRepository::GetFileHistory(
     const std::filesystem::path& relative_path) const {
-  // Cap the walk: a file with an enormous history would otherwise stream every
-  // commit into one entry-per-line vector, an unbounded memory/parse cost. We ask
-  // for one past the cap so we can tell whether the history was actually longer
-  // and report `truncated`, rather than silently hiding older commits.
   constexpr std::size_t kMaxFileHistoryCommits = 5000;
   const auto result = Execute({"log", "--follow", "--no-color", "-n", "5001",
                                "--pretty=format:%H%x1f%h%x1f%an%x1f%ar%x1f%s", "--",
@@ -135,11 +130,6 @@ bool GitRepository::FileExistsAtRevision(const std::filesystem::path& relative_p
 
 std::optional<GitRepository::BlobAtRevision> GitRepository::InterpretBlobResult(
     const CommandResult& result) {
-  // A `truncated` result means the blob exceeded the subprocess capture ceiling and
-  // git was killed (non-zero exit). Surface the partial content WITH the truncated
-  // flag so a caller can render a "content truncated" state instead of mistaking the
-  // clipped prefix for the whole file. A genuine failure (missing revision, other
-  // non-zero exit) stays nullopt so it is distinguishable from a real empty blob.
   if (!result.success() && !result.truncated) {
     return std::nullopt;
   }
@@ -158,12 +148,6 @@ bool GitRepository::ReadNextBatchBlob(std::string_view output,
   }
   const std::string_view header = output.substr(offset, header_end - offset);
 
-  // A resolved blob's header is `<oid> <type> <size>`. Anything else is git
-  // declining the name — `<name> missing`, `<name> ambiguous`, and the other
-  // one-word verdicts — which is an absent file, not a failure. Parsing the
-  // success shape and treating every non-match as "absent" covers those without
-  // having to enumerate git's verdict vocabulary. A declined name's reply is the
-  // header line alone, with no payload.
   const std::size_t size_space = header.rfind(' ');
   const std::size_t type_space =
       size_space == std::string_view::npos ? std::string_view::npos
@@ -176,16 +160,11 @@ bool GitRepository::ReadNextBatchBlob(std::string_view output,
     }
   }
   if (!size.has_value()) {
-    // A tree (a directory named at that revision), a tag, or a declined name.
     offset = header_end + 1;
     out = BlobLookup{};
     return true;
   }
 
-  // The payload is exactly `size` bytes after the header newline, then one LF that
-  // is framing rather than content. A capture-ceiling kill leaves fewer bytes than
-  // the header promised; hand back what arrived and let `truncated` say so — but a
-  // clipped payload ends the stream, because the next reply's framing is gone.
   const std::size_t payload_start = header_end + 1;
   const std::size_t available = output.size() - payload_start;
   const std::size_t taken = std::min(*size, available);
@@ -194,15 +173,12 @@ bool GitRepository::ReadNextBatchBlob(std::string_view output,
       .content = std::string(output.substr(payload_start, taken)),
       .truncated = taken < *size,
   };
-  // Skip the payload and git's trailing LF (absent when the payload was clipped).
   offset = std::min(payload_start + taken + 1, output.size());
   return true;
 }
 
 std::optional<GitRepository::BlobLookup> GitRepository::InterpretBatchBlobResult(
     const CommandResult& result) {
-  // A capture-ceiling kill is a non-zero exit with `truncated` set; anything else
-  // non-zero is a real git failure. Same policy as InterpretBlobResult.
   if (!result.success() && !result.truncated) {
     return std::nullopt;
   }
@@ -222,10 +198,6 @@ std::vector<std::optional<GitRepository::BlobLookup>> GitRepository::LookupBlobs
     return answers;
   }
 
-  // Chunked rather than one giant batch: the whole reply is captured as a single
-  // string before it is split up, so an unbounded batch peaks at two copies of
-  // every blob it asked for. A chunk still collapses 128 fork+execs into one,
-  // which is where essentially all of the win is.
   constexpr std::size_t kBlobsPerSpawn = 128;
 
   std::vector<std::size_t> chunk_indices;
@@ -244,7 +216,7 @@ std::vector<std::optional<GitRepository::BlobLookup>> GitRepository::LookupBlobs
       for (const std::size_t index : chunk_indices) {
         BlobLookup lookup;
         if (!ReadNextBatchBlob(result.output, offset, lookup)) {
-          break;  // stream ended early (capture ceiling): the rest stay unanswered
+          break;
         }
         answers[index] = std::move(lookup);
       }
@@ -255,9 +227,6 @@ std::vector<std::optional<GitRepository::BlobLookup>> GitRepository::LookupBlobs
   for (std::size_t index = 0; index < requests.size(); ++index) {
     const BlobRequest& request = requests[index];
     std::string spec = request.revision + ":" + request.relative_path.generic_string();
-    // `--batch` reads newline-delimited names; a path carrying one cannot be asked
-    // for this way (`--batch -z` is git 2.42+). Leave it unanswered — the caller
-    // falls back to the single-blob path for it.
     if (spec.find('\n') != std::string::npos) {
       continue;
     }
@@ -280,9 +249,6 @@ std::optional<GitRepository::BlobLookup> GitRepository::LookupBlobAtRevision(
   spec.append(revision);
   spec.push_back(':');
   spec.append(relative_path.generic_string());
-  // `--batch` reads newline-delimited names; a path carrying one cannot be asked
-  // for this way (`--batch -z` is git 2.42+). Caller falls back to the two-spawn
-  // path for that.
   if (spec.find('\n') != std::string::npos) {
     return std::nullopt;
   }
@@ -335,16 +301,10 @@ bool GitRepository::Stage(const std::filesystem::path& relative_path) const {
 std::optional<std::filesystem::path> GitRepository::StagedRenameSource(
     const std::filesystem::path& dest_relative) const {
   const std::string dest = dest_relative.generic_string();
-  // `-z` name-status: non-rename records are <status>\0<path>\0; rename/copy
-  // records are R<score>\0<source>\0<dest>\0. -M asks git to detect renames.
   const auto result = Execute({"diff", "--cached", "--name-status", "-M", "-z"});
   if (!result.success()) {
     return std::nullopt;
   }
-  // Bound token materialization: this only needs one matching rename source, and a
-  // rename record spans 3 NUL fields. Split at most 3x a generous file cap so a hostile
-  // staged diff cannot build millions of record views; a legit staged rename set is far
-  // smaller, so the match (if any) is well within the bound. (TD-2026-07-16-30.)
   constexpr std::size_t kMaxStagedRenameRecords = 50000 * 3 + 2;
   const std::vector<std::string_view> records =
       util::SplitNulDelimited(result.output, kMaxStagedRenameRecords);
@@ -370,8 +330,6 @@ bool GitRepository::Unstage(const std::filesystem::path& relative_path,
                             bool may_be_staged_rename) const {
   if (may_be_staged_rename) {
     if (const auto rename_source = StagedRenameSource(relative_path); rename_source.has_value()) {
-      // Unstaging a staged rename must reset BOTH sides to HEAD, else the source's
-      // staged deletion is orphaned (left staged with the file already gone).
       return ExecuteSucceeds(std::vector<std::string>{
           "restore", "--staged", "--", rename_source->generic_string(),
           relative_path.generic_string()});
@@ -387,10 +345,6 @@ bool GitRepository::Discard(const std::filesystem::path& relative_path,
                             bool may_be_staged_rename) const {
   if (may_be_staged_rename) {
     if (const auto rename_source = StagedRenameSource(relative_path); rename_source.has_value()) {
-      // Discarding a staged rename restores the source (content + tracking) and
-      // removes the destination in one operation, fully undoing the rename. Without
-      // this the source's staged deletion is left behind and its content is lost —
-      // the destination-only path below would delete `new` and orphan `old`.
       return ExecuteSucceeds(std::vector<std::string>{
           "restore", "--source=HEAD", "--staged", "--worktree", "--",
           rename_source->generic_string(), relative_path.generic_string()});
@@ -402,31 +356,10 @@ bool GitRepository::Discard(const std::filesystem::path& relative_path,
          relative_path.generic_string()});
   }
 
-  // The remaining case is an untracked file row. `git status --untracked-files=all`
-  // lists individual files (never bare directories), so a single-row discard must
-  // never recurse: `clean -fd <path>` on a path that is (or became, via a stale
-  // row) a directory would delete the entire subtree — silent data loss. Refuse a
-  // directory target here (a recursive clean must go through an explicit,
-  // separately-confirmed directory flow) and drop `-d` so only the file is removed.
   std::error_code dir_error;
-  // Classify the row node itself (symlink_status does not follow the link). An
-  // untracked symlink whose target happens to be a directory is a single entry that
-  // `git clean -f -- <link>` removes on its own; is_directory() would follow it and
-  // refuse the discard as if it were a real subtree (TD-2026-07-17A-124). Only a
-  // genuine directory node must be refused here.
-  // A path already gone from disk (a file staged as new, then deleted) is no
-  // stat error: libstdc++ reports it as not_found WITH dir_error set to ENOENT, and
-  // refusing it left such a row undiscardable. A real stat error reports
-  // file_type::none.
   const std::filesystem::file_status node_status =
       std::filesystem::symlink_status(root_ / relative_path, dir_error);
   if (node_status.type() == std::filesystem::file_type::none) {
-    // Fail CLOSED on a stat error. `file_type::none` is not a directory, so an
-    // unconsulted error read as "not a directory" and let the discard proceed --
-    // the gate's whole job is to refuse a target it cannot classify. The
-    // `git clean -f` below (no `-d`) would not have recursed, so this was not
-    // data loss; it was a verb that could neither act nor report, which is the
-    // shape TD-2026-09-17-294 was about. Refusing lets the caller say so.
     return false;
   }
   if (std::filesystem::is_directory(node_status)) {
@@ -459,4 +392,4 @@ bool GitRepository::DiscardAll(bool remove_untracked) const {
   return !remove_untracked || ExecuteSucceeds({"clean", "-fd", "--", "."});
 }
 
-}  // namespace microide::project
+}

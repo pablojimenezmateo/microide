@@ -1,41 +1,3 @@
-// The plugin sandbox's string.find / string.match / string.gmatch / string.gsub:
-// Lua 5.4.8's own pattern matcher, made to honour the plugin call's time budget.
-//
-// Why: the per-call watchdog (LuaRuntime::TimeoutHook) is a count hook, and a
-// count hook only runs between Lua VM instructions. A pattern match is ONE call
-// into C, so a backtracking pattern on a long subject ran unbounded under it --
-// `([%w_]+)%s*%b()` on a 300 000-character line is ~10^11 steps -- while the UI
-// thread waited on the plugin worker for the answer (soak 7ff52075dc30: the
-// editor stopped answering in `tests-discover`). The matcher below counts its
-// own steps and checks the same deadline every kStepsPerDeadlineCheck, raising
-// the watchdog's own error; everything else is the reference implementation,
-// so patterns mean exactly what they mean in Lua.
-//
-// Raising: the functions here hold no C++ object with a destructor, so a raise
-// from inside the matcher's recursion (lua_error) skips nothing; luaL_error is
-// banned in src/plugin, so messages are pushed with lua_pushfstring/PushMessage.
-//
-// Adapted from lstrlib.c, Lua 5.4.8:
-//   Copyright (C) 1994-2025 Lua.org, PUC-Rio.
-//
-//   Permission is hereby granted, free of charge, to any person obtaining a copy
-//   of this software and associated documentation files (the "Software"), to deal
-//   in the Software without restriction, including without limitation the rights
-//   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-//   copies of the Software, and to permit persons to whom the Software is
-//   furnished to do so, subject to the following conditions:
-//
-//   The above copyright notice and this permission notice shall be included in
-//   all copies or substantial portions of the Software.
-//
-//   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-//   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-//   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-//   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-//   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-//   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-//   SOFTWARE.
-
 #include "plugin/LuaBudgetedPatterns.h"
 
 #include "plugin/LuaRuntime.h"
@@ -50,14 +12,12 @@
 namespace microide::plugin {
 namespace {
 
-constexpr int kMaxCaptures = 32;          // LUA_MAXCAPTURES
-constexpr int kMaxMatchDepth = 200;       // MAXCCALLS
-constexpr ptrdiff_t kCapUnfinished = -1;  // CAP_UNFINISHED
-constexpr ptrdiff_t kCapPosition = -2;    // CAP_POSITION
-constexpr char kEsc = '%';                // L_ESC
+constexpr int kMaxCaptures = 32;
+constexpr int kMaxMatchDepth = 200;
+constexpr ptrdiff_t kCapUnfinished = -1;
+constexpr ptrdiff_t kCapPosition = -2;
+constexpr char kEsc = '%';
 constexpr const char* kSpecials = "^$*+?.([%-";
-// How many matcher steps run between two looks at the clock: a few microseconds
-// of matching, so a spent budget is noticed within a millisecond of it ending.
 constexpr unsigned kStepsPerDeadlineCheck = 4096;
 
 inline int Uchar(char c) { return static_cast<unsigned char>(c); }
@@ -85,7 +45,6 @@ struct MatchState {
   __builtin_unreachable();
 }
 
-// The watchdog, for the work no count hook sees.
 void Step(MatchState* ms) {
   if (++ms->steps % kStepsPerDeadlineCheck == 0 && LuaRuntime::CallBudgetSpent(ms->L)) {
     Raise(ms->L, "%s", LuaRuntime::kTimeBudgetMessage);
@@ -537,7 +496,6 @@ struct GMatchState {
 int GMatchAux(lua_State* L) {
   auto* gm = static_cast<GMatchState*>(lua_touserdata(L, lua_upvalueindex(3)));
   gm->ms.L = L;
-  // Each call is a call of its own budget: the steps start over with the deadline.
   gm->ms.steps = 0;
   for (const char* src = gm->src; src <= gm->ms.src_end; src++) {
     RePrepState(&gm->ms);
@@ -609,7 +567,6 @@ int AddValue(MatchState* ms, luaL_Buffer* b, const char* s, const char* e, int t
     }
     case LUA_TTABLE: {
       PushOneCapture(ms, 0, s, e);
-      // __index honoured, as Lua's gsub does (the architecture lint's exemption).
       lua_gettable(L, 3);
       break;
     }
@@ -677,11 +634,9 @@ int GSub(lua_State* L) {
   return 2;
 }
 
-}  // namespace
+}
 
 void InstallBudgetedPatternFunctions(lua_State* state) {
-  // The string library's table is also the strings' metatable __index, so both
-  // `string.match(s, p)` and `s:match(p)` reach these.
   lua_getglobal(state, "string");
   if (!lua_istable(state, -1)) {
     lua_pop(state, 1);
@@ -693,6 +648,6 @@ void InstallBudgetedPatternFunctions(lua_State* state) {
   lua_pop(state, 1);
 }
 
-}  // namespace microide::plugin
+}
 
-#endif  // MICROIDE_HAS_LUA_PLUGINS
+#endif

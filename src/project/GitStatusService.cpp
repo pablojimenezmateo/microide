@@ -17,7 +17,7 @@ std::optional<std::vector<GitWorkingTreeEntry>> CollectGitWorkingTreeEntries(
   util::AddPerformanceCounter(util::PerfCounterId::GitStatusRefreshCalls);
   const GitRepository repo(root, launcher);
   if (!repo.IsValid()) {
-    return std::nullopt;  // not a repository is not the same as a clean one
+    return std::nullopt;
   }
   std::optional<std::vector<GitWorkingTreeEntry>> entries = repo.GetWorkingTreeEntries();
   if (entries.has_value()) {
@@ -89,4 +89,4 @@ bool GitDiscardAll(const std::filesystem::path& root,
   return repo.DiscardAll(remove_untracked);
 }
 
-}  // namespace microide::project
+}

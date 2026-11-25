@@ -156,19 +156,13 @@ void TestWorkspaceShellTerminalOsc52CopiesToClipboard() {
         return true;
       });
 
-  // Default: OSC 52 clipboard writes are refused (silent-poisoning guard). The
-  // pending text is still drained, but the clipboard writer is never invoked.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b]52;c;Y29waWVkIGZyb20gdGVybQ==\x07");
   WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
   Expect(clipboard_text.empty(),
          "OSC 52 must not write the system clipboard by default (poisoning guard)");
-  // A blocked write must not be silent: surface a hint.
   Expect(WorkspaceShellTestAccess::ActiveNotifications(shell).size() == 1,
          "a blocked OSC 52 write should surface a hint");
 
-  // Every blocked write notifies, but a terminal can emit the sequence in a loop, so
-  // the repeat refreshes the hint already on screen rather than stacking copies of one
-  // sentence until they push every other toast out of the four-deep stack.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b]52;c;Y29waWVkIGZyb20gdGVybQ==\x07");
   WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
   Expect(clipboard_text.empty(),
@@ -179,7 +173,6 @@ void TestWorkspaceShellTerminalOsc52CopiesToClipboard() {
   Expect(!blocked_hints.front().message.empty(),
          "the blocked-write hint should still be on screen after the repeat");
 
-  // Opt-in: enabling the setting routes OSC 52 text to the clipboard writer.
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(
              shell, "set-setting terminal.osc52_clipboard_write true"),
          "the OSC 52 opt-in setting should flip");
@@ -201,8 +194,6 @@ void TestWorkspaceShellTerminalFocusModeTracksPanelFocus() {
 
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[I",
          "focused terminal tabs should receive an initial focus-in notification when focus mode is enabled");
-  // F6 in a focused terminal is the program's (htop's sort, mc's move); Focus
-  // Next Part runs from the palette or a menu.
   TerminalSessionTestAccess::ClearSentBytes(session);
   Expect(SendKeyDown(shell, SDLK_F6, SDL_KMOD_NONE), "F6 in the terminal is handled");
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[17~", "F6 reaches the program");
@@ -210,7 +201,7 @@ void TestWorkspaceShellTerminalFocusModeTracksPanelFocus() {
   for (int step = 0; step < 3; ++step) {
     Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::FocusNextPart, {}),
            "Focus Next Part cycles the focus targets");
-    WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);  // the frame's focus sync
+    WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
   }
   Expect(WorkspaceShellTestAccess::FocusIsPanel(shell), "three steps return to the terminal panel");
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[O\x1b[I",
@@ -251,9 +242,6 @@ void TestWorkspaceShellFocusedTerminalParticipatesInCaretBlinking() {
 }
 
 void TestWorkspaceShellCaretBlinkFreezesAfterIdleStop() {
-  // Power-saving contract: after ~8s of caret-blink-resetting inactivity, the
-  // shell stops emitting blink wake-ups and freezes the caret visible. The
-  // next ResetCaretBlink() resumes animation.
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
 
@@ -263,7 +251,6 @@ void TestWorkspaceShellCaretBlinkFreezesAfterIdleStop() {
   Expect(WorkspaceShellTestAccess::NextCaretBlinkDelayMs(shell).has_value(),
          "blink wakes should be scheduled right after a reset");
 
-  // Simulate the idle-stop threshold elapsing.
   WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks() - 8000);
   Expect(!WorkspaceShellTestAccess::CaretBlinkAnimating(shell),
          "blink should freeze after the idle-stop threshold");
@@ -272,7 +259,6 @@ void TestWorkspaceShellCaretBlinkFreezesAfterIdleStop() {
   Expect(!WorkspaceShellTestAccess::NextCaretBlinkDelayMs(shell).has_value(),
          "no blink wakes should be scheduled while frozen");
 
-  // Resume: a fresh reset should re-arm blink wakes immediately.
   WorkspaceShellTestAccess::ResetCaretBlink(shell);
   Expect(WorkspaceShellTestAccess::CaretBlinkAnimating(shell),
          "blink should resume after reset");
@@ -281,9 +267,6 @@ void TestWorkspaceShellCaretBlinkFreezesAfterIdleStop() {
 }
 
 void TestWorkspaceShellScheduledWakeSkipsCaretAfterIdleStop() {
-  // The wake controller must not emit a caret-rect partial-redraw after the
-  // blink has frozen. Before idle-stop it should still emit one; after, it
-  // should be a no-op.
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -299,11 +282,6 @@ void TestWorkspaceShellScheduledWakeSkipsCaretAfterIdleStop() {
          "scheduled wake after blink freeze should not request any redraw");
 }
 
-// Soak bfa3565938ee (clip-discipline D3): the caret on a wide glyph covered one
-// cell, and its blink damaged one cell, while the glyph it draws over is two
-// wide -- the half past the damage kept the other blink phase in partial frames.
-// A caret on a wide glyph's lead cell covers both cells, for the paint and for
-// the blink's damage alike (both are TerminalCaretRectIn).
 void TestWorkspaceShellTerminalCaretCoversAWideGlyphWhole() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(1280, 720);
@@ -312,11 +290,9 @@ void TestWorkspaceShellTerminalCaretCoversAWideGlyphWhole() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
   TerminalSessionTestAccess::Reset(session, 24, 80);
-  // An emoji (two columns), then the cursor back onto its lead cell.
   TerminalSessionTestAccess::AppendOutput(session, "\xF0\x9F\x98\x86\x1b[2D");
   shell.Render(canvas.renderer(), 1280, 720);
   const std::optional<SDL_FRect> on_wide = shell.CurrentCaretDirtyRect();
-  // Past it, onto a blank cell.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[2C");
   shell.Render(canvas.renderer(), 1280, 720);
   const std::optional<SDL_FRect> on_narrow = shell.CurrentCaretDirtyRect();
@@ -341,9 +317,6 @@ void TestWorkspaceShellTerminalCaretDirtyRectTracksVisibleCursor() {
          "terminal caret dirty rects should have a visible size");
 }
 
-// A key sent to the terminal owes a frame and names no rect: what it changes --
-// its echo's row, the caret -- is derived at frame prep. It named the panel's
-// body, so every key repainted every row of the terminal, and the echo again.
 void TestWorkspaceShellTerminalKeysOweAFrame() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -525,17 +498,11 @@ void TestWorkspaceShellTerminalCaretBlinkRetainedRedrawPreservesGlyphEdges() {
 #endif
 }
 
-// DECSCNM (the `flash` visual bell) reverses the whole pane, the blank below the
-// text included, and a retained frame that arrives for something else (a caret
-// blink) paints it: the toggle changes no row, only the snapshot generation.
 void TestWorkspaceShellTerminalReverseVideoPaintsThePane() {
   EnsureDummySdlVideo();
   static constexpr int kWidth = 1280;
   static constexpr int kHeight = 720;
   WorkspaceShell shell;
-  // A solid caret: the retained paint and the full repaint must not straddle a
-  // blink, or the cursor cell differs between them (CI hardened run, 8x16 at the
-  // cursor after "$ "), as in the selection tests below.
   Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "editor.caret_blink.enabled", "false"),
          "the caret blink can be turned off");
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -556,7 +523,6 @@ void TestWorkspaceShellTerminalReverseVideoPaintsThePane() {
   };
   const SDL_Color normal = pixel();
 
-  // Any small damage outside the pane, as a caret blink elsewhere would be.
   workspace::RenderInvalidation unrelated;
   unrelated.rects.push_back(SDL_FRect{0.0f, 0.0f, 8.0f, 8.0f});
 
@@ -571,10 +537,6 @@ void TestWorkspaceShellTerminalReverseVideoPaintsThePane() {
   Expect(same(pixel(), normal), "the pane is back to its normal colour");
 }
 
-// The terminal's selection paints as a wash over each cell's own colours and,
-// on a row it continues past, across the row's line break to the pane's edge; at
-// half strength while the terminal does not have the keyboard. It used to paint
-// the hover tint in place of the cells' colours, stopping at each row's last cell.
 void TestWorkspaceShellTerminalSelectionWashesCellsAndLineBreaks() {
   EnsureDummySdlVideo();
   static constexpr int kWidth = 1280;
@@ -584,10 +546,8 @@ void TestWorkspaceShellTerminalSelectionWashesCellsAndLineBreaks() {
   WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
   auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
   TerminalSessionTestAccess::Reset(session, 24, 80);
-  // Two green cells, a blank, "ab"; then a second row.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[42m  \x1b[0m ab\r\nsecond row");
   WorkspaceShellTestAccess::SetFocusPanel(shell);
-  // A solid caret: see TerminalAlternateScreenDropsTheSelection.
   Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "editor.caret_blink.enabled", "false"),
          "the fixture turns caret blink off");
 
@@ -606,7 +566,6 @@ void TestWorkspaceShellTerminalSelectionWashesCellsAndLineBreaks() {
 
   workspace::RenderInvalidation unrelated;
   unrelated.rects.push_back(SDL_FRect{0.0f, 0.0f, 8.0f, 8.0f});
-  // Row 0 from column 0 to row 1 column 3, set with no damage of its own.
   WorkspaceShellTestAccess::SetActiveTerminalSelectionForTest(
       shell, workspace::TerminalSelectionPoint{.row = 0, .column = 0},
       workspace::TerminalSelectionPoint{.row = 1, .column = 3});
@@ -621,8 +580,6 @@ void TestWorkspaceShellTerminalSelectionWashesCellsAndLineBreaks() {
          "the row the selection continues past is washed to the pane's edge");
   Expect(same(pixel(1, 60), past_end), "the selection's last row stops at its end");
 
-  // Focus elsewhere: the kept selection paints weaker, and a frame painted for
-  // something else entirely shows it.
   WorkspaceShellTestAccess::SetFocusEditor(shell);
   const auto unfocused = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, unrelated);
   Expect(unfocused.count == 0, "the focus change repaints the selection: " + DescribePixelDiff(unfocused));
@@ -631,10 +588,6 @@ void TestWorkspaceShellTerminalSelectionWashesCellsAndLineBreaks() {
          "an unfocused terminal's selection is a weaker wash, still visible");
 }
 
-// A program entering the alternate screen (vim, less) takes the row space the
-// selection named: the selection is dropped, the next frame shows it gone, and
-// Ctrl+C reaches the program as an interrupt again instead of copying text that
-// is no longer on screen.
 void TestWorkspaceShellTerminalAlternateScreenDropsTheSelection() {
   EnsureDummySdlVideo();
   static constexpr int kWidth = 1280;
@@ -646,9 +599,6 @@ void TestWorkspaceShellTerminalAlternateScreenDropsTheSelection() {
   TerminalSessionTestAccess::Reset(session, 24, 80);
   TerminalSessionTestAccess::AppendOutput(session, "shell output\r\n$ ");
   WorkspaceShellTestAccess::SetFocusPanel(shell);
-  // A solid caret. The diffs below hand the shell an unrelated rect, not the blink
-  // timer's damage, so a 530 ms phase flip between two paints -- one slow frame
-  // under UBSan on CI -- showed up as a stale caret cell, not a selection.
   Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "editor.caret_blink.enabled", "false"),
          "the fixture turns caret blink off");
   SoftwareCanvas canvas(kWidth, kHeight);
@@ -673,7 +623,6 @@ void TestWorkspaceShellTerminalAlternateScreenDropsTheSelection() {
   Expect(TerminalSessionTestAccess::SentBytes(session) == std::string(1, '\x03'),
          "Ctrl+C interrupts the program instead of copying the old selection");
 
-  // And leaving it: a selection made in vim does not survive onto the shell's rows.
   WorkspaceShellTestAccess::SetActiveTerminalSelectionForTest(
       shell, workspace::TerminalSelectionPoint{.row = 0, .column = 0},
       workspace::TerminalSelectionPoint{.row = 0, .column = 3});
@@ -685,10 +634,6 @@ void TestWorkspaceShellTerminalAlternateScreenDropsTheSelection() {
          "leaving the alternate screen dropped vim's selection");
 }
 
-// The caret takes the program's DECSCUSR shape -- vim's insert mode, zsh and
-// readline vi modes switch to a bar -- and a steady shape does not blink. The
-// panel parsed the sequence and drew a blinking block whatever was asked. A shape
-// change in the same cell is repainted by the next frame, whatever it was for.
 void TestWorkspaceShellTerminalCursorTakesTheProgramsShape() {
   EnsureDummySdlVideo();
   static constexpr int kWidth = 1280;
@@ -723,7 +668,7 @@ void TestWorkspaceShellTerminalCursorTakesTheProgramsShape() {
 
   workspace::RenderInvalidation unrelated;
   unrelated.rects.push_back(SDL_FRect{0.0f, 0.0f, 8.0f, 8.0f});
-  TerminalSessionTestAccess::AppendOutput(session, "\x1b[5 q");  // blinking bar
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[5 q");
   auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, unrelated, visible_phase);
   Expect(diff.count == 0, "the switch to a bar is painted by the next frame: " + DescribePixelDiff(diff));
   Expect(same(pixel(0.05f, 0.5f), caret), "a bar at the cell's left edge");
@@ -732,13 +677,13 @@ void TestWorkspaceShellTerminalCursorTakesTheProgramsShape() {
   Expect(diff.count == 0, "the blink is repainted: " + DescribePixelDiff(diff));
   Expect(same(pixel(0.05f, 0.5f), blank), "a blinking bar blinks");
 
-  TerminalSessionTestAccess::AppendOutput(session, "\x1b[4 q");  // steady underline
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[4 q");
   diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, unrelated, hidden_phase);
   Expect(diff.count == 0, "the switch to an underline is painted: " + DescribePixelDiff(diff));
   Expect(same(pixel(0.5f, 0.97f), caret), "a steady underline shows in the blink's hidden phase");
   Expect(same(pixel(0.5f, 0.4f), blank), "an underline only along the bottom");
 
-  TerminalSessionTestAccess::AppendOutput(session, "\x1b[0 q");  // the default again
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[0 q");
   diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, unrelated, visible_phase);
   Expect(diff.count == 0, "back to the default block: " + DescribePixelDiff(diff));
   Expect(same(pixel(0.75f, 0.5f), caret), "the default is a block");
@@ -800,10 +745,6 @@ void TestWorkspaceShellCopyLastTerminalCommandIncludesOutput() {
          "copy last terminal command should include the submitted command and rendered output");
 }
 
-// TD-2026-07-17A-068: pending_input (host-side copy-last-command capture, never sent to
-// the PTY) must be bounded so repeated pastes/programmatic input before a newline cannot
-// grow it without limit. Once the budget is hit further bytes are dropped and the
-// truncation flag is set; command execution is unaffected.
 void TestWorkspaceShellTerminalPendingInputIsCapped() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -811,13 +752,10 @@ void TestWorkspaceShellTerminalPendingInputIsCapped() {
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
   const std::size_t cap = microide::workspace::TerminalPaneState::kMaxPendingInputBytes;
-  // Multi-byte UTF-8 so a naive byte-cut could split a codepoint; the cap must back off
-  // to a codepoint boundary.
   std::string chunk;
   for (int i = 0; i < 4096; ++i) {
-    chunk += "\xC3\xA9";  // 'é'
+    chunk += "\xC3\xA9";
   }
-  // Push well past the cap across many appends (simulating repeated pastes).
   for (int i = 0; i < 400; ++i) {
     WorkspaceShellTestAccess::AppendTerminalPendingInput(shell, chunk);
   }
@@ -828,7 +766,6 @@ void TestWorkspaceShellTerminalPendingInputIsCapped() {
   Expect(size % 2 == 0,
          "the truncation must land on a UTF-8 codepoint boundary (2-byte 'é' units)");
 
-  // Submitting clears the capture and the flag so the next command starts clean.
   WorkspaceShellTestAccess::SubmitTerminalPendingInput(shell);
   Expect(WorkspaceShellTestAccess::ActiveTerminalPendingInputSize(shell) == 0,
          "submit clears the pending-input capture");
@@ -836,9 +773,6 @@ void TestWorkspaceShellTerminalPendingInputIsCapped() {
          "submit resets the truncation flag");
 }
 
-// Copy Last Command enablement uses the cheap HasLastTerminalCommand() predicate, not the
-// full transcript build (TD-2026-07-17A-065). Disabled before any command, enabled after —
-// and the predicate must agree with the expensive builder returning a value.
 void TestWorkspaceShellCopyLastTerminalCommandEnablementUsesCheapPredicate() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1038,10 +972,6 @@ void TestWorkspaceShellTerminalPasteActionCapsClipboardBytes() {
          "terminal paste cap should preserve the retained payload bytes");
 }
 
-// Regression: the cap lives in TerminalSession::PasteText itself, so the direct
-// paste path (middle-click paste calls session.PasteText without the workspace
-// clamp) is also bounded — a huge clipboard cannot allocate a huge formatted
-// buffer and block the backend write.
 void TestWorkspaceShellTerminalDirectPasteIsCapped() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1107,14 +1037,11 @@ void TestWorkspaceShellTerminalTabsOverflowReachableViaHeaderWheel() {
   for (int i = 0; i < 8; ++i) {
     WorkspaceShellTestAccess::AddTerminalTab(shell);
     TerminalSessionTestAccess::Reset(WorkspaceShellTestAccess::ActiveTerminalSession(shell), 24, 80);
-    // `+=`, not chained `operator+`: see ThemeTests' palette-parity helper for
-    // the GCC 13 -Warray-bounds false positive the concatenation form triggers.
     std::string launch_label = "terminal-session-";
     launch_label += std::to_string(i);
     TerminalSessionTestAccess::SetLaunchLabel(
         WorkspaceShellTestAccess::ActiveTerminalSession(shell), std::move(launch_label));
   }
-  // Narrow window so the eight terminal tabs cannot all fit in the strip.
   WorkspaceShellTestAccess::SetWindowSize(shell, 520, 600);
 
   const auto initial_titles = WorkspaceShellTestAccess::BottomPanelTabDisplayTitles(shell);
@@ -1133,9 +1060,6 @@ void TestWorkspaceShellTerminalTabsOverflowReachableViaHeaderWheel() {
          "scrolling the bottom-panel strip should reveal previously hidden terminal tabs");
 }
 
-// Shift+PageUp/PageDown page through the transcript (VS Code and every Linux
-// terminal); they used to reach the shell as shifted PageUp/PageDown, leaving the
-// terminal with no keyboard scrollback. Plain PageUp still goes to the shell.
 void TestWorkspaceShellTerminalShiftPageKeysScrollTheTranscript() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1198,11 +1122,6 @@ void TestWorkspaceShellBottomPanelWheelScrollsTranscript() {
          "scrolling the panel must not pull keyboard focus out of the editor");
 }
 
-// Ctrl+Shift+C is copy on every Linux terminal. With nothing selected it used to
-// fall through to the control-byte path and send ^C, so the copy reflex from
-// gnome-terminal interrupted whatever the shell was running. It now copies the
-// selection when there is one and does nothing otherwise; plain Ctrl+C without a
-// selection still reaches the shell as an interrupt.
 void TestWorkspaceShellTerminalCtrlShiftCNeverInterrupts() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1235,25 +1154,17 @@ void TestWorkspaceShellTerminalCtrlShiftCNeverInterrupts() {
   Expect(clipboard == "select", "Ctrl+Shift+C copies the selection: [" + clipboard + "]");
   Expect(TerminalSessionTestAccess::SentBytes(session).empty(), "and still sends nothing");
 
-  // Escape clears the selection AND reaches the program: it used to stop at the
-  // selection, so a word double-clicked in vim left vim in insert mode and the
-  // `:w` typed next went into the buffer instead of saving it.
   WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE);
   Expect(!WorkspaceShellTestAccess::TerminalHasSelection(shell), "Escape cleared the selection");
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b",
          "and the program got the Escape: [" + TerminalSessionTestAccess::SentBytes(session) + "]");
   TerminalSessionTestAccess::ClearSentBytes(session);
-  // Plain Ctrl+C with no selection is the interrupt the shell expects.
   Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_C, SDL_KMOD_CTRL), "Ctrl+C is handled");
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x03",
          "plain Ctrl+C without a selection reaches the shell as ^C");
 }
 
 
-// Ctrl+/ with the terminal focused must reach the shell as US (0x1f): Emacs's
-// C-/ undo and readline bindings depend on it. The chord is only bound in the
-// EDITOR context (toggle comment), so the terminal is free to forward it; it
-// used to be swallowed by the Ctrl+<letter>-only forwarding filter.
 void TestWorkspaceShellTerminalCtrlSlashReachesTheShell() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1273,12 +1184,6 @@ void TestWorkspaceShellTerminalCtrlSlashReachesTheShell() {
          "Ctrl+2 reaches the shell as NUL");
 }
 
-// A focused terminal owns the keyboard (VS Code's commandsToSkipShell model):
-// Global bindings the shell has a use for -- Ctrl+O open, Ctrl+S save, Ctrl+N
-// new tab, Ctrl+B sidebar, Ctrl+P Go to File, Ctrl+J the panel, Ctrl+Q quit,
-// Ctrl+F find -- reach the PTY as control bytes, so nano's ^O "Write Out",
-// readline's ^P and Claude Code's ^J newline work. Only the reserved chords
-// (IsTerminalReservedChord: Ctrl+Shift+<key>, Ctrl+`) still dispatch.
 void TestWorkspaceShellTerminalOwnsGlobalControlChords() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1326,9 +1231,6 @@ void TestWorkspaceShellTerminalOwnsGlobalControlChords() {
                  WorkspaceShell::OverlayMode::CommandPalette,
          "Ctrl+Shift+P still opens the command palette from the terminal");
 
-  // Shift+PageUp pages the panel's scrollback on the primary screen; on the
-  // alternate screen there is none, and the key is the full-screen program's
-  // (less, a TUI's history) -- it used to be eaten for a pan that moved nothing.
   Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Escape closes the palette");
   WorkspaceShellTestAccess::SetFocusPanel(shell);
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049h");
@@ -1339,10 +1241,6 @@ void TestWorkspaceShellTerminalOwnsGlobalControlChords() {
          "and reaches the program: [" + TerminalSessionTestAccess::SentBytes(session) + "]");
 }
 
-// `terminal.commands_to_skip_shell` reaches the dispatch: handing Ctrl+P back to
-// the shell sends ^P, and listing new-tab makes Ctrl+N skip it. (Not open-file:
-// its Ctrl+O opens the real native file dialog, which a test must never do and
-// which leaks inside SDL's portal code under LeakSanitizer.)
 void TestWorkspaceShellTerminalSkipShellSettingEditsTheSet() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1392,10 +1290,6 @@ void TestWorkspaceShellTerminalDragSelectsTranscriptText() {
          "terminal drag selection should capture the selected transcript text");
 }
 
-// A host terminal's gap rule on screen fetches the lines it withheld, and the view
-// and the selection follow the rows the fill moves: a selection from above the
-// rule to below it copied the rule's "N lines not transferred", where the host had
-// the text all along (TD-2026-10-08-326).
 void TestWorkspaceShellTerminalGapOnScreenFillsAndTheSelectionFollows() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -1412,9 +1306,8 @@ void TestWorkspaceShellTerminalGapOnScreenFillsAndTheSelectionFollows() {
   for (int i = 0; i < 300; ++i) {
     mirror.Write("flood " + std::to_string(i) + "\r\n");
   }
-  Expect(mirror.Sync(/*budget=*/0), "the flood is withheld behind a rule");
+  Expect(mirror.Sync(0), "the flood is withheld behind a rule");
   mirror.Write("below the gap\r\n");
-  // Enough after it that a view at the tail does not show the rule.
   for (int i = 0; i < 100; ++i) {
     mirror.Write("tail " + std::to_string(i) + "\r\n");
   }
@@ -1436,8 +1329,6 @@ void TestWorkspaceShellTerminalGapOnScreenFillsAndTheSelectionFollows() {
   if (!kept.has_value() || !below.has_value()) {
     return;
   }
-  // A first frame, as the pane has before anyone selects in it: it observes the
-  // mirror's trim total (which a host mirror starts high, see kRowBase).
   SoftwareCanvas canvas(1280, 720);
   shell.Render(canvas.renderer(), 1280, 720);
   (void)shell.ConsumePendingRenderInvalidation();
@@ -1448,7 +1339,6 @@ void TestWorkspaceShellTerminalGapOnScreenFillsAndTheSelectionFollows() {
              std::string::npos,
          "before the fill the selection runs across the rule");
 
-  // The view shows the rule: frame prep asks for its lines, the next frame rebases.
   WorkspaceShellTestAccess::SetActiveTerminalFollowTail(shell, false);
   WorkspaceShellTestAccess::SetActiveTerminalScrollRow(shell, static_cast<int>(*kept));
   for (int frame = 0; frame < 4; ++frame) {
@@ -1468,9 +1358,6 @@ void TestWorkspaceShellTerminalGapOnScreenFillsAndTheSelectionFollows() {
          "a view anchored above the gap stays where it was");
 }
 
-// The ui query's `terminal` geometry is the one the mouse path resolves against:
-// a drag between the points it gives for (row 0, col 0) and (row 0, col 6) selects
-// those six cells (QA terminal-clipboard drives the terminal this way).
 void TestWorkspaceShellUiTerminalGeometryResolvesCells() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1496,10 +1383,6 @@ void TestWorkspaceShellUiTerminalGeometryResolvesCells() {
              WorkspaceShellTestAccess::ActiveTerminalSelectedText(shell) + "'");
 }
 
-// TD-2026-08-13-205: the terminal was the fourth text surface to drag a selection
-// and the only one that both refused to track a pointer held outside its panel and
-// never autoscrolled. Holding past the bottom edge must keep scrolling the
-// transcript on the idle wake, exactly as the editor / compare / merge panes do.
 void TestWorkspaceShellTerminalDragAutoscrollsPastTheEdge() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1517,7 +1400,6 @@ void TestWorkspaceShellTerminalDragAutoscrollsPastTheEdge() {
   Expect(SendMouseDown(shell, start.x, start.y, SDL_BUTTON_LEFT),
          "pressing inside the terminal panel should start transcript selection");
 
-  // Well below the panel: the old handler refused this outright.
   const float below_y = panel_rect.y + panel_rect.h + 200.0f;
   Expect(SendMouseMotion(shell, start.x, below_y, SDL_BUTTON_LMASK),
          "dragging below the terminal panel should still be handled");
@@ -1539,12 +1421,6 @@ void TestWorkspaceShellTerminalDragAutoscrollsPastTheEdge() {
          "releasing the button disarms the autoscroll");
 }
 
-// An autoscroll belongs to the drag that armed it. The wake stepped whichever
-// surface it found first: once the terminal's drag ended without a release --
-// Select All mid-drag ends it -- the terminal arm no longer matched, the wake fell
-// through to the active editor and scrolled IT, a tick every 40 ms, to the end of
-// the document, with no button down and the monkey waiting for idle (QA lane,
-// seed 1: 267 editor frames back to back).
 void TestWorkspaceShellTerminalAutoscrollNeverScrollsTheEditor() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -1588,9 +1464,6 @@ void TestWorkspaceShellTerminalAutoscrollNeverScrollsTheEditor() {
              std::to_string(WorkspaceShellTestAccess::ActiveEditor(shell).scroll_line()) + ")");
 }
 
-// Double-click selects the word under the pointer and triple-click the whole row, the
-// same gestures the editor surface answers. The terminal used to offer drag-select
-// only, so the two text surfaces in one window disagreed about what a click means.
 void TestWorkspaceShellTerminalDoubleClickSelectsWordTripleClickSelectsLine() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1599,8 +1472,6 @@ void TestWorkspaceShellTerminalDoubleClickSelectsWordTripleClickSelectsLine() {
   TerminalSessionTestAccess::AppendOutput(session, "warn src/foo/bar.cpp:42 done");
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
-  // Column 8 is inside "src/foo/bar.cpp:42" — the path separators and the ':' line
-  // suffix are word characters, so the whole reference comes out as one token.
   const SDL_FPoint inside_path = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 8);
   Expect(SendMouseDown(shell, inside_path.x, inside_path.y, SDL_BUTTON_LEFT, 2),
          "double-clicking inside the terminal should be handled");
@@ -1615,8 +1486,6 @@ void TestWorkspaceShellTerminalDoubleClickSelectsWordTripleClickSelectsLine() {
              "warn src/foo/bar.cpp:42 done",
          "triple-click should select the whole row without its trailing blanks");
 
-  // A double-click on blank space leaves the empty caret-style selection alone rather
-  // than selecting the run of spaces.
   const SDL_FPoint blank = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 60);
   Expect(SendMouseDown(shell, blank.x, blank.y, SDL_BUTTON_LEFT, 2),
          "double-clicking blank terminal space should be handled");
@@ -1624,10 +1493,6 @@ void TestWorkspaceShellTerminalDoubleClickSelectsWordTripleClickSelectsLine() {
          "double-clicking blank space should not select anything");
 }
 
-// Dragging after a double click extends by whole words and keeps the clicked
-// one, after a triple click by whole rows, and Shift+click extends the selection
-// there is. The drag used to move the head cell by cell from the word's start,
-// so dragging back from a double-clicked word dropped the word.
 void TestWorkspaceShellTerminalMultiClickDragsAndShiftClickExtend() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1640,7 +1505,6 @@ void TestWorkspaceShellTerminalMultiClickDragsAndShiftClickExtend() {
   };
   const auto selected = [&]() { return WorkspaceShellTestAccess::ActiveTerminalSelectedText(shell); };
 
-  // Double-click "three", drag back into "one".
   Expect(SendMouseDown(shell, at(0, 9).x, at(0, 9).y, SDL_BUTTON_LEFT, 2), "double-click 'three'");
   Expect(selected() == "three", "the word: [" + selected() + "]");
   Expect(SendMouseMotion(shell, at(0, 1).x, at(0, 1).y, SDL_BUTTON_LMASK), "drag back");
@@ -1649,7 +1513,6 @@ void TestWorkspaceShellTerminalMultiClickDragsAndShiftClickExtend() {
   Expect(selected() == "three four", "forward by words: [" + selected() + "]");
   Expect(SendMouseUp(shell, at(0, 15).x, at(0, 15).y, SDL_BUTTON_LEFT), "release");
 
-  // Shift+click on the next row extends that word selection by words.
   {
     ScopedHeldModifiers held(shell, SDL_KMOD_SHIFT);
     Expect(SendMouseDown(shell, at(1, 2).x, at(1, 2).y, SDL_BUTTON_LEFT), "Shift+click");
@@ -1657,13 +1520,11 @@ void TestWorkspaceShellTerminalMultiClickDragsAndShiftClickExtend() {
   }
   Expect(selected() == "three four\nsecond", "Shift+click extends by words: [" + selected() + "]");
 
-  // Triple-click row 1, drag down into row 2: both rows whole.
   Expect(SendMouseDown(shell, at(1, 3).x, at(1, 3).y, SDL_BUTTON_LEFT, 3), "triple-click row 1");
   Expect(SendMouseMotion(shell, at(2, 1).x, at(2, 1).y, SDL_BUTTON_LMASK), "drag down");
   Expect(SendMouseUp(shell, at(2, 1).x, at(2, 1).y, SDL_BUTTON_LEFT), "release");
   Expect(selected() == "second row\nthird row", "a row drag takes rows whole: [" + selected() + "]");
 
-  // A plain click then Shift+click: a cell selection between the two.
   Expect(SendMouseDown(shell, at(0, 4).x, at(0, 4).y, SDL_BUTTON_LEFT), "click");
   Expect(SendMouseUp(shell, at(0, 4).x, at(0, 4).y, SDL_BUTTON_LEFT), "release");
   {
@@ -1674,11 +1535,6 @@ void TestWorkspaceShellTerminalMultiClickDragsAndShiftClickExtend() {
   Expect(selected() == "two", "click, Shift+click selects between them: [" + selected() + "]");
 }
 
-// Ctrl+Shift+A selects the whole transcript -- every scrollback row, up to the
-// last row with text, not the blank grid below the prompt -- and the copy reads
-// it in chunks: 700 rows is several of them, and the text must come out whole and
-// in order across their seams, with a soft-wrapped line straddling one kept
-// unbroken.
 void TestWorkspaceShellTerminalSelectAllCopiesTheWholeTranscript() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1689,7 +1545,7 @@ void TestWorkspaceShellTerminalSelectAllCopiesTheWholeTranscript() {
   for (int line = 0; line < 700; ++line) {
     std::string text = "line " + std::to_string(line);
     if (line == 255) {
-      text += std::string(60, 'w');  // wraps across rows 255/256 and the chunk seam
+      text += std::string(60, 'w');
     }
     output += text + "\r\n";
     expected += text + "\n";
@@ -1779,16 +1635,6 @@ void TestWorkspaceShellTerminalLeftClickOpensUrls() {
          "opening a terminal URL should not start a text selection");
 }
 
-// Regression: URL hit-testing maps the clicked grid column to a byte offset in the
-// line text before matching, so a multibyte glyph before the URL no longer desyncs
-// the detection. Previously TerminalUrlAtColumn compared a grid column directly
-// against a byte offset, so an accented/wide glyph ahead of the link shifted the
-// match and a click on the URL start missed.
-
-// A `path:line:col` in terminal output (a compiler error, a grep hit) is a link:
-// clicking it opens the file in the editor at that line and column, as VS Code's
-// terminal link provider does. Only paths that exist link; a plain word or a
-// missing file is not one. The terminal used to link URLs only.
 void TestWorkspaceShellTerminalFileReferenceClickOpensTheFile() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1816,13 +1662,10 @@ void TestWorkspaceShellTerminalFileReferenceClickOpensTheFile() {
   const auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
   Expect(viewport.path().lexically_normal() == source.lexically_normal(),
          "the referenced file opens in the editor: " + viewport.path().string());
-  // Column 7 (1-based, in characters) on "int é = y;" is the 'y': byte 7 because é
-  // is two bytes.
   Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 7,
          "the caret lands on the referenced line and character column");
   Expect(WorkspaceShellTestAccess::FocusIsEditor(shell), "the editor takes focus");
 
-  // A word that is not a path, and a path that does not exist, are not links.
   TerminalSessionTestAccess::Reset(session, 24, 80);
   TerminalSessionTestAccess::AppendOutput(session, "error nope/missing.cpp:3:1 done");
   const SDL_FPoint word = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 2);
@@ -1833,15 +1676,6 @@ void TestWorkspaceShellTerminalFileReferenceClickOpensTheFile() {
          "a path that does not exist is not a link");
 }
 
-// A link under the pointer is underlined, as VS Code's terminal does: the whole
-// link (a URL in the text, or an OSC 8 run), and only while the pointer is on it.
-// A program that owns the mouse (Claude Code's fullscreen TUI: DECSET 1003 +
-// SGR) gets the clicks, so the pane shows the arrow, not the I-beam -- and the
-// hand over a control it lit under the resting pointer, the only sign of a
-// button such a program gives (it sends no OSC 22). The bytes are Claude Code's
-// own grey / hovered paints of a collapsed tool group. Shift is selection, so it
-// shows the I-beam. And the shape follows the program's repaint with no further
-// pointer move: the frame after the output re-resolves it.
 void TestWorkspaceShellTerminalMouseOwnerShowsAHandOnLitControls() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -1891,9 +1725,6 @@ void TestWorkspaceShellTerminalMouseOwnerShowsAHandOnLitControls() {
   (void)shell.HandleEvent(shift);
   Expect(WorkspaceShellTestAccess::CachedCursorIsPointer(shell), "and letting go gives the hand back");
 
-  // A program that NAMES its pointer (OSC 22, TD-2026-11-02-428 item 1) gets it
-  // exactly, over the whole pane, in place of the inference above -- Shift still
-  // selects.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b]22;wait\x07");
   Expect(WorkspaceShellTestAccess::CursorKindAtIs(shell, plain.x, plain.y, microide::workspace::CursorKind::Wait) &&
              WorkspaceShellTestAccess::CursorKindAtIs(shell, digit.x, digit.y, microide::workspace::CursorKind::Wait),
@@ -1904,10 +1735,6 @@ void TestWorkspaceShellTerminalMouseOwnerShowsAHandOnLitControls() {
   Expect(WorkspaceShellTestAccess::CursorKindAtIsText(shell, plain.x, plain.y), "Shift still selects");
 }
 
-// Shift+drag selects text past a program that owns the mouse, as in every Linux
-// terminal (and as Claude Code's fullscreen mode tells its users to) -- the
-// panel had no way to select a word of such a program's output. The program is
-// sent nothing for the gesture, even when Shift is let go before the release.
 void TestWorkspaceShellTerminalShiftDragSelectsPastAMouseOwner() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -1969,8 +1796,6 @@ void TestWorkspaceShellTerminalLinkUnderlinesOnHover() {
   Expect(!WorkspaceShellTestAccess::TerminalHoveredLink(shell).has_value(), "and none off a link");
 }
 
-// The hovered link is underlined in its own colour: a blue `ls --color` path got a
-// white underline (the theme's text colour), whatever the comment over it said.
 void TestWorkspaceShellTerminalLinkUnderlineTakesTheLinksColour() {
   EnsureDummySdlVideo();
   static constexpr int kWidth = 1280;
@@ -2023,10 +1848,6 @@ void TestWorkspaceShellTerminalLinkUnderlineTakesTheLinksColour() {
   Expect(changed > 20, "the hover drew an underline (" + std::to_string(changed) + " pixels)");
 }
 
-// A link the terminal soft-wraps is one link on both rows (TD-2026-10-29-422 item
-// 4): the detector reads the logical line, so pointing at the part past the wrap
-// resolves the whole target and the underline spans the wrap. Before, the first
-// row held a truncated URL and the second row was no link at all.
 void TestWorkspaceShellTerminalWrappedLinkIsOneLink() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path();
@@ -2044,7 +1865,6 @@ void TestWorkspaceShellTerminalWrappedLinkIsOneLink() {
            what);
   };
 
-  // A URL: "see " then 27 characters, wrapped at 20 columns.
   TerminalSessionTestAccess::Reset(session, 24, 20);
   TerminalSessionTestAccess::AppendOutput(session, "see https://example.com/abc/def end");
   for (const auto& [row, column] : {std::pair<std::size_t, std::size_t>{0, 6}, {1, 3}}) {
@@ -2060,7 +1880,6 @@ void TestWorkspaceShellTerminalWrappedLinkIsOneLink() {
   Expect(!WorkspaceShellTestAccess::TerminalLinkAtPoint(shell, after.x, after.y).has_value(),
          "the word after the wrapped URL is not part of it");
 
-  // A file reference wrapped at 10 columns.
   TerminalSessionTestAccess::Reset(session, 24, 10);
   TerminalSessionTestAccess::AppendOutput(session, "at src/main.cpp:2 x");
   const SDL_FPoint file = WorkspaceShellTestAccess::TerminalCellPoint(shell, 1, 2);
@@ -2071,7 +1890,6 @@ void TestWorkspaceShellTerminalWrappedLinkIsOneLink() {
   expect_span(file_link.has_value() ? std::optional(file_link->span) : std::nullopt, 0, 3, 1, 7,
               "and spans the wrap");
 
-  // An OSC 8 run the terminal wrapped is one link too.
   TerminalSessionTestAccess::Reset(session, 24, 20);
   TerminalSessionTestAccess::AppendOutput(
       session, "\x1b]8;;https://example.com/g\x1b\\abcdefghijklmnopqrstuvwxy\x1b]8;;\x1b\\ z");
@@ -2082,17 +1900,12 @@ void TestWorkspaceShellTerminalWrappedLinkIsOneLink() {
               "the OSC 8 run's span crosses the wrap");
 }
 
-// A wrapped link whose first rows are scrolled above the window, or whose last
-// rows are below it, is still the whole link: the join used to stop at the visible
-// snapshot's edge and resolve only the part on screen (TD-2026-10-29-425 item 4).
 void TestWorkspaceShellTerminalWrappedLinkPastTheWindowIsWhole() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
   auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
-  // 50 characters wrapped at 20 columns: rows 0-2. With the window starting at
-  // row 1, row 0 is above it.
   const std::string url = "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   TerminalSessionTestAccess::Reset(session, 24, 20);
   std::string output = url + "\r\n";
@@ -2110,7 +1923,6 @@ void TestWorkspaceShellTerminalWrappedLinkPastTheWindowIsWhole() {
              whole->span.end_row == 2 && whole->span.end_column == 10,
          "and its span starts above the window");
 
-  // The same link with its last row below the window's bottom.
   const std::size_t visible = WorkspaceShellTestAccess::TerminalVisibleRowCount(shell);
   TerminalSessionTestAccess::Reset(session, 24, 20);
   output.clear();
@@ -2130,10 +1942,6 @@ void TestWorkspaceShellTerminalWrappedLinkPastTheWindowIsWhole() {
          "a link whose last row is below the window resolves whole");
 }
 
-// OSC 8: `ls --hyperlink`, gcc and Claude Code print a link whose TEXT is not a
-// URL (a file name, "docs"). The cell carries the target, so clicking the text
-// opens it — a web link externally, a file link in the editor — as VS Code's
-// terminal does.
 void TestWorkspaceShellTerminalOsc8LinkClickOpensItsTarget() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path source = temp_dir.path() / "notes.txt";
@@ -2175,9 +1983,6 @@ void TestWorkspaceShellTerminalUrlHitTestHonorsMultibytePrefix() {
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
   auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
   TerminalSessionTestAccess::Reset(session, 24, 80);
-  // "é" is one column but two UTF-8 bytes, so the URL's byte offset (3) is one
-  // greater than its grid column (2). Clicking the URL's first grid column must
-  // still resolve the link.
   TerminalSessionTestAccess::AppendOutput(session, "\xc3\xa9 https://example.com/x");
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
@@ -2187,7 +1992,6 @@ void TestWorkspaceShellTerminalUrlHitTestHonorsMultibytePrefix() {
     return true;
   });
 
-  // Grid column 2 is the 'h' of the URL (é at 0, space at 1).
   const SDL_FPoint point = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 2);
   Expect(SendMouseDown(shell, point.x, point.y, SDL_BUTTON_LEFT),
          "left-clicking a terminal URL after a multibyte glyph should be handled");
@@ -2195,9 +1999,6 @@ void TestWorkspaceShellTerminalUrlHitTestHonorsMultibytePrefix() {
          "URL hit-testing must map the grid column to a byte offset before matching");
 }
 
-// A closing bracket at the end of a URL is prose punctuation only when the URL has
-// no opener for it: a Wikipedia-style `.../Foo_(bar)` keeps its `)`, while the `)`
-// that closes a parenthesised link and a trailing `.` still come off (VS Code).
 void TestWorkspaceShellTerminalUrlKeepsBalancedClosingBracket() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -2218,17 +2019,12 @@ void TestWorkspaceShellTerminalUrlKeepsBalancedClosingBracket() {
   Expect(opened_url == "https://en.wikipedia.org/wiki/Foo_(bar)",
          "the balanced ) stays and the trailing . goes: " + opened_url);
 
-  // "https://en.wikipedia.org/wiki/Foo_(bar). (" is 42 columns; the second URL starts at 42.
   const SDL_FPoint second = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 42);
   Expect(SendMouseDown(shell, second.x, second.y, SDL_BUTTON_LEFT), "clicking the second URL is handled");
   Expect(opened_url == "https://example.com/x",
          "the ) that closes the parenthesised link is stripped: " + opened_url);
 }
 
-// TD-2026-07-17A-027: hover cursor-kind resolution reuses the render frame's cached
-// visible-line snapshot instead of re-snapshotting per pointer move. After a render
-// populates the snapshot, hovering a URL cell must still resolve to the Pointer
-// cursor, and a non-URL cell to the Text cursor.
 void TestWorkspaceShellTerminalUrlHoverUsesRenderedSnapshot() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -2237,24 +2033,17 @@ void TestWorkspaceShellTerminalUrlHoverUsesRenderedSnapshot() {
   TerminalSessionTestAccess::AppendOutput(session, "see https://example.com/x done");
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
-  // Render the terminal panel so the visible-line snapshot cache is populated; the
-  // hover path then reuses it rather than taking a fresh session snapshot.
   SoftwareCanvas canvas(1280, 720);
   shell.Render(canvas.renderer(), 1280, 720);
 
-  // Column 4 is the 'h' of the URL ("see " is columns 0-3).
   const SDL_FPoint url_point = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 4);
   Expect(WorkspaceShellTestAccess::CursorKindAtIsPointer(shell, url_point.x, url_point.y),
          "hovering a terminal URL cell resolves to the Pointer cursor via the cached snapshot");
-  // Column 0 ('s' of "see") is plain text, not a link.
   const SDL_FPoint text_point = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 0);
   Expect(WorkspaceShellTestAccess::CursorKindAtIsText(shell, text_point.x, text_point.y),
          "hovering a non-URL terminal cell resolves to the Text cursor");
 }
 
-// Regression: URL schemes are case-insensitive, so an uppercase or mixed-case
-// scheme (`HTTPS://`) must still be detected. Previously the scheme match was a
-// literal case-sensitive find and only lowercase schemes were recognized.
 void TestWorkspaceShellTerminalUrlHitTestHonorsUppercaseScheme() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -2269,12 +2058,9 @@ void TestWorkspaceShellTerminalUrlHitTestHonorsUppercaseScheme() {
     return true;
   });
 
-  // Grid column 3 is the 'H' of the URL ("go " is columns 0-2).
   const SDL_FPoint point = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 3);
   Expect(SendMouseDown(shell, point.x, point.y, SDL_BUTTON_LEFT),
          "left-clicking an uppercase-scheme terminal URL should be handled");
-  // The path casing is preserved from the original text; only scheme matching
-  // is case-insensitive.
   Expect(opened_url == "HTTPS://Example.COM/Path",
          "uppercase-scheme URLs must be detected with original casing preserved");
 }
@@ -2319,8 +2105,6 @@ void TestWorkspaceShellTerminalExitMarkerSurvivesOpenEscape() {
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
   auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
   TerminalSessionTestAccess::Reset(session, 24, 80);
-  // The child emits an OSC that is never terminated (no ST/BEL) and then dies,
-  // leaving the parser stuck in the OSC string-payload state across the read.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b]0;my title");
   TerminalSessionTestAccess::EmitProcessExitMarker(session);
   Expect(TerminalScreenText(session).find("[process exited]") != std::string::npos,
@@ -2340,9 +2124,6 @@ void TestWorkspaceShellTerminalExitMarkerDisplaysAfterCleanOutput() {
          "exit marker should display in the normal (no open escape) case");
 }
 
-// An exited terminal tab must remain open (retained) after the session update
-// loop so the `[process exited]` marker and prior output stay inspectable, rather
-// than being reaped in the same update that records the marker. TD-2026-07-17A-130.
 void TestWorkspaceShellExitedTerminalTabIsRetained() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -2351,7 +2132,6 @@ void TestWorkspaceShellExitedTerminalTabIsRetained() {
   TerminalSessionTestAccess::SetRunning(session, true);
   TerminalSessionTestAccess::AppendOutput(session, "hi\r\n");
 
-  // The child process exits: session reports !running() and appends the marker.
   TerminalSessionTestAccess::EmitProcessExitMarker(session);
   TerminalSessionTestAccess::SetRunning(session, false);
 
@@ -2364,11 +2144,6 @@ void TestWorkspaceShellExitedTerminalTabIsRetained() {
          "the retained tab still shows the exit marker after the update loop");
 }
 
-// Terminal selection copy must use the same cell-to-text rules as whole-line
-// copy: empty cells render as a single space (so internal spacing survives) and
-// the trailing spacer of a double-width glyph is skipped (so no phantom space is
-// copied). These cases assert selection extraction matches a whole-line slice of
-// the same span.
 microide::terminal::TerminalCell MakeAsciiCell(char c) {
   microide::terminal::TerminalCell cell;
   cell.SetAscii(c);
@@ -2385,13 +2160,12 @@ void TestWorkspaceShellSelectionPreservesInternalSpaces() {
   using microide::workspace::TerminalSelectionBounds;
   using microide::workspace::TerminalSelectionPoint;
 
-  // "A  B": two empty cells stand in for the internal spaces.
   microide::terminal::TerminalLine line;
   line.cells = {MakeAsciiCell('A'), MakeEmptyCell(), MakeEmptyCell(), MakeAsciiCell('B')};
   const std::vector<microide::terminal::TerminalLine> lines = {line};
 
   const std::string whole_line =
-      TerminalLineSliceText(line, 0, line.cells.size(), /*trim_trailing=*/false);
+      TerminalLineSliceText(line, 0, line.cells.size(), false);
   Expect(whole_line == "A  B", "whole-line copy should render empty cells as spaces");
 
   const TerminalSelectionBounds selection{
@@ -2402,9 +2176,6 @@ void TestWorkspaceShellSelectionPreservesInternalSpaces() {
          "selection copy should preserve internal spaces exactly like whole-line copy");
 }
 
-// Rows are stored at the full terminal width, so a multi-row selection covers each
-// row's padding. A copy drops that padding (as xterm and VS Code do) but keeps blanks
-// inside a soft-wrapped line and blanks that sit before a glyph.
 void TestWorkspaceShellSelectionCopyDropsRowPaddingButNotWrappedBlanks() {
   using microide::workspace::ExtractTerminalSelectionText;
   using microide::workspace::TerminalSelectionBounds;
@@ -2419,7 +2190,7 @@ void TestWorkspaceShellSelectionCopyDropsRowPaddingButNotWrappedBlanks() {
   };
   const std::vector<microide::terminal::TerminalLine> lines = {
       padded_row("ab", 8, false),
-      padded_row("cd  ", 8, false),   // continued by the next row: its blanks are real
+      padded_row("cd  ", 8, false),
       padded_row("ef", 8, true),
       padded_row(" g h", 8, false),
   };
@@ -2431,14 +2202,12 @@ void TestWorkspaceShellSelectionCopyDropsRowPaddingButNotWrappedBlanks() {
   Expect(copied == "ab\ncd      ef\n g h",
          "row padding is dropped, wrapped blanks and leading blanks kept: [" + copied + "]");
 
-  // A selection ending inside a row's padding is trimmed to the glyphs too.
   const TerminalSelectionBounds into_padding{
       .start = TerminalSelectionPoint{.row = 0, .column = 0},
       .end = TerminalSelectionPoint{.row = 0, .column = 6},
   };
   Expect(ExtractTerminalSelectionText(lines, into_padding) == "ab",
          "a selection that ends in the padding copies only the glyphs");
-  // Blanks BEFORE a glyph within the selection are text, not padding.
   const TerminalSelectionBounds before_glyph{
       .start = TerminalSelectionPoint{.row = 3, .column = 0},
       .end = TerminalSelectionPoint{.row = 3, .column = 3},
@@ -2453,10 +2222,8 @@ void TestWorkspaceShellSelectionSkipsWideTrailingSpacer() {
   using microide::workspace::TerminalSelectionBounds;
   using microide::workspace::TerminalSelectionPoint;
 
-  // A CJK wide glyph occupies a lead cell plus a trailing spacer; the spacer
-  // here even carries a stray space to prove the skip is attribute-driven.
   microide::terminal::TerminalCell lead;
-  lead.SetUtf8("\xE4\xB8\xAD");  // U+4E2D "中"
+  lead.SetUtf8("\xE4\xB8\xAD");
   microide::terminal::TerminalCell trailing;
   trailing.SetAscii(' ');
   trailing.style.set(microide::terminal::cell_attr::kWideTrailing, true);
@@ -2466,7 +2233,7 @@ void TestWorkspaceShellSelectionSkipsWideTrailingSpacer() {
   const std::vector<microide::terminal::TerminalLine> lines = {line};
 
   const std::string whole_line =
-      TerminalLineSliceText(line, 0, line.cells.size(), /*trim_trailing=*/false);
+      TerminalLineSliceText(line, 0, line.cells.size(), false);
   Expect(whole_line == "\xE4\xB8\xAD"
                        "X",
          "whole-line copy should skip the wide-trailing spacer");
@@ -2479,12 +2246,9 @@ void TestWorkspaceShellSelectionSkipsWideTrailingSpacer() {
          "selection copy should skip the wide-trailing spacer exactly like whole-line copy");
 }
 
-}  // namespace
+}
 
 
-// Ctrl+F in a focused terminal opens the find bar rather than sending ^F to the
-// shell, which is what VSCode does and the only reason the bar is reachable
-// without the palette.
 void TestWorkspaceShellTerminalCtrlFOpensFindBar() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -2503,8 +2267,6 @@ void TestWorkspaceShellTerminalCtrlFOpensFindBar() {
          "Ctrl+F must not also reach the shell as a control byte");
 }
 
-// Typing a query scans the scrollback, and the first result lands on the newest
-// hit because terminal output is read from the bottom.
 void TestWorkspaceShellTerminalFindSelectsNewestMatchFirst() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -2526,7 +2288,6 @@ void TestWorkspaceShellTerminalFindSelectsNewestMatchFirst() {
          "the query text must never reach the PTY");
 }
 
-// Shift+Enter walks back up the history, Enter forward, and both wrap.
 void TestWorkspaceShellTerminalFindNavigationWrapsAndReveals() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -2584,8 +2345,6 @@ void TestWorkspaceShellTerminalFindTogglesNarrowMatches() {
          "whole-word matching should drop the substring hit");
 }
 
-// Escape closes the bar and hands the keyboard back, so the next keystroke drives
-// the shell again.
 void TestWorkspaceShellTerminalFindEscapeReturnsKeyboardToTerminal() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -2609,9 +2368,6 @@ void TestWorkspaceShellTerminalFindEscapeReturnsKeyboardToTerminal() {
          "Ctrl+A should reach the shell as a control byte once the bar is closed");
 }
 
-// New output must extend the match set in place: the incremental rescan only
-// re-walks the visible grid, so a bug there shows up as dropped or duplicated
-// scrollback hits.
 void TestWorkspaceShellTerminalFindTracksStreamingOutput() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -2640,8 +2396,6 @@ void TestWorkspaceShellTerminalFindTracksStreamingOutput() {
 }
 
 
-// The bar floats over a terminal that may itself carry a selection, so the
-// clipboard shortcuts have to resolve against the focused field, not the panel.
 void TestWorkspaceShellTerminalFindClipboardShortcutsTargetTheQuery() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -2669,10 +2423,6 @@ void TestWorkspaceShellTerminalFindClipboardShortcutsTargetTheQuery() {
          "neither shortcut should reach the shell as a control byte");
 }
 
-// Clicking a `path:line:col` row in the Output panel (a find-references or
-// diagnostics entry) opens the file at that position. The column is a 1-based
-// CHARACTER column, so a multibyte character before it must not land the caret
-// short -- it used to be applied as a byte offset.
 void TestWorkspaceShellOutputReferenceClickUsesCharacterColumns() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2694,10 +2444,6 @@ void TestWorkspaceShellOutputReferenceClickUsesCharacterColumns() {
          "column 3 is the \"1\": byte offset 3 after the two-byte letter, not byte 2");
 }
 
-// The bottom panel is one of the four surfaces in the Ctrl+Tab ring, but only its
-// terminal content ever answered a key. With an Output channel showing, every
-// navigation key fell through to the editor behind the panel and scrolled *that*,
-// leaving a focused, visibly-scrollable surface with no keyboard at all.
 void TestWorkspaceShellOutputPanelIsKeyboardNavigable() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -2732,9 +2478,6 @@ void TestWorkspaceShellOutputPanelIsKeyboardNavigable() {
          "Home should land back on the first line of output");
 }
 
-// Clicking the channel body focuses the panel, the way clicking a terminal or a
-// plugin surface already did. Output was the one content kind whose body could not
-// take focus, so its keyboard was unreachable without Ctrl+Tab.
 void TestWorkspaceShellOutputPanelBodyClickFocusesThePanel() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -2748,10 +2491,6 @@ void TestWorkspaceShellOutputPanelBodyClickFocusesThePanel() {
          "clicking the output panel body should focus the panel");
 }
 
-// Editor tabs close from the File menu, a context menu, Ctrl+W and the palette;
-// project tabs close from their context menu. Terminal tabs could only be closed
-// with the mouse — the ✕ or a middle click — with no command, no menu item and so
-// no keyboard route at all.
 void TestWorkspaceShellTerminalClosesFromTheCommandLine() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -2769,8 +2508,6 @@ void TestWorkspaceShellTerminalClosesFromTheCommandLine() {
   Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 0,
          "term-close should close the last terminal");
 
-  // With nothing left to close the action reports rather than silently doing
-  // nothing, and the menu/palette entry greys out.
   Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "term-close"),
          "term-close should reject when there is no terminal");
   Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, WorkspaceShell::ActionId::TermClose),
@@ -2779,16 +2516,10 @@ void TestWorkspaceShellTerminalClosesFromTheCommandLine() {
 
 namespace {
 
-// ---------------------------------------------------------------------------
-// Terminal panes, the maximized panel and the panel verbs (TerminalPanelService).
-
 struct SplitTerminalFixture {
   TemporaryDirectory temp_dir;
   std::filesystem::path root;
   WorkspaceShell shell;
-  // Frame prep (the grid fit, the maximize-restore rule, the activity-dot clear)
-  // runs only under a real renderer; RenderFrame's null renderer stops at the
-  // guard every surface opens with.
   SoftwareCanvas canvas{1280, 720};
 
   SplitTerminalFixture() : root(temp_dir.path() / "project") {
@@ -2803,10 +2534,6 @@ struct SplitTerminalFixture {
   void PaintFrame() { WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer()); }
 };
 
-// Soak c0c5719bdbce: term-pane-left with the bottom panel hidden moved the
-// keyboard to the panel and left it hidden -- focus on nothing on screen, so
-// every key went to a terminal no one could see. Moving to a pane shows it, as
-// switching terminal tabs does.
 void TestWorkspaceShellTerminalPaneFocusShowsAHiddenPanel() {
   SplitTerminalFixture fixture;
   WorkspaceShell& shell = fixture.shell;
@@ -2827,7 +2554,6 @@ void TestWorkspaceShellTerminalPaneFocusShowsAHiddenPanel() {
 void TestWorkspaceShellTerminalSplitAddsPaneRightOfTheActiveOne() {
   SplitTerminalFixture fixture;
   WorkspaceShell& shell = fixture.shell;
-  // One frame before the split fits the lone pane to the whole body.
   fixture.PaintFrame();
   const std::size_t full_columns = WorkspaceShellTestAccess::ActiveTerminalSession(shell).columns();
   Expect(full_columns > 0, "the single pane is gridded to the panel body");
@@ -2851,7 +2577,6 @@ void TestWorkspaceShellTerminalSplitAddsPaneRightOfTheActiveOne() {
              std::abs(rects.panes[1].x + rects.panes[1].w - (body.x + body.w)) < 1e-3f,
          "the panes tile the panel body left to right");
 
-  // The keyboard reaches only the active pane.
   TerminalSessionTestAccess::ClearSentBytes(WorkspaceShellTestAccess::TerminalPaneSession(shell, 0));
   TerminalSessionTestAccess::ClearSentBytes(WorkspaceShellTestAccess::TerminalPaneSession(shell, 1));
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "Enter is handled by the terminal");
@@ -2862,7 +2587,6 @@ void TestWorkspaceShellTerminalSplitAddsPaneRightOfTheActiveOne() {
              .empty(),
          "the other pane receives nothing");
 
-  // A painted frame grids every pane to its own slice.
   fixture.PaintFrame();
   const std::size_t left_columns = WorkspaceShellTestAccess::TerminalPaneSession(shell, 0).columns();
   const std::size_t right_columns = WorkspaceShellTestAccess::TerminalPaneSession(shell, 1).columns();
@@ -2891,16 +2615,12 @@ void TestWorkspaceShellTerminalPaneClickActivatesAndWheelScrollsUnderThePointer(
   Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 0,
          "pressing in another pane makes it the active one");
 
-  // Fill the (now inactive) right pane with more lines than fit, then wheel over it.
   auto& right_session = WorkspaceShellTestAccess::TerminalPaneSession(shell, 1);
   TerminalSessionTestAccess::Reset(right_session, 8, 40);
   for (int i = 0; i < 60; ++i) {
     TerminalSessionTestAccess::AppendOutput(right_session, "line\r\n");
   }
   Expect(WorkspaceShellTestAccess::TerminalPaneFollowTail(shell, 1), "the pane follows its tail");
-  // The press above anchored a selection in the left pane, which (as in every
-  // terminal) stops it following its tail; what matters here is that the wheel
-  // over the RIGHT pane leaves the left pane's scroll exactly as it was.
   const bool left_follow_before = WorkspaceShellTestAccess::TerminalPaneFollowTail(shell, 0);
   const int left_scroll_before = WorkspaceShellTestAccess::ActiveTerminalScrollRow(shell);
   Expect(SendMouseWheel(shell, right.x + right.w * 0.5f, right.y + right.h * 0.5f, 1),
@@ -2914,9 +2634,6 @@ void TestWorkspaceShellTerminalPaneClickActivatesAndWheelScrollsUnderThePointer(
          "scrolling is not focusing");
 }
 
-// A link in an INACTIVE pane hovers and underlines too (VS Code's split
-// terminals); moving onto another pane's text clears it. A right-click acts on
-// the pane under the pointer, so it activates that pane first.
 void TestWorkspaceShellTerminalInactivePaneLinkHoversAndRightClickActivates() {
   SplitTerminalFixture fixture;
   WorkspaceShell& shell = fixture.shell;
@@ -2974,7 +2691,7 @@ void TestWorkspaceShellTerminalPaneDividerDragResizesAndDoubleClickResets() {
 
   const SDL_FRect moved_divider = moved.dividers[0].rect;
   Expect(SendMouseDown(shell, moved_divider.x + moved_divider.w * 0.5f,
-                       moved_divider.y + moved_divider.h * 0.5f, SDL_BUTTON_LEFT, /*clicks=*/2),
+                       moved_divider.y + moved_divider.h * 0.5f, SDL_BUTTON_LEFT, 2),
          "a double-click on the divider is handled");
   const std::vector<float> reset = WorkspaceShellTestAccess::TerminalPaneWeights(shell);
   Expect(std::abs(reset[0] - 0.5f) < 1e-5f, "double-click restores the even split");
@@ -3017,8 +2734,6 @@ void TestWorkspaceShellTerminalPaneFocusKeysFallThroughWithOnePane() {
   auto& right_pane = WorkspaceShellTestAccess::TerminalPaneSession(shell, 1);
   TerminalSessionTestAccess::ClearSentBytes(left_pane);
   TerminalSessionTestAccess::ClearSentBytes(right_pane);
-  // Alt+Left/Right are a shell's word motion (zsh, fish, Claude Code's prompt):
-  // they reach the program even beside another pane.
   Expect(SendKeyDown(shell, SDLK_LEFT, SDL_KMOD_ALT), "Alt+Left is handled with two panes");
   Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 1 &&
              TerminalSessionTestAccess::SentBytes(right_pane) == "\x1b[1;3D",
@@ -3061,9 +2776,6 @@ void TestWorkspaceShellPanelMaximizeTakesTheWindowAndRestoresOnEditorFocus() {
          "the panel fills everything below the project strip");
   Expect(WorkspaceShellTestAccess::BottomPanelHeight(shell) == 156.0f,
          "the stored panel height is untouched, so restoring is exact");
-  // Regression (found by a headless screenshot): the editor strip collapsed to
-  // zero height but its tabs kept a 22 px floor, so they painted over the panel
-  // header and stayed clickable there.
   const SDL_FRect maximized_tab = WorkspaceShellTestAccess::GroupEditorTabRect(shell, 0, 0);
   Expect(maximized_tab.w == 0.0f && maximized_tab.h == 0.0f,
          "a maximized panel leaves the editor strip with no tabs to paint or hit");
@@ -3071,7 +2783,6 @@ void TestWorkspaceShellPanelMaximizeTakesTheWindowAndRestoresOnEditorFocus() {
   Expect(WorkspaceShellTestAccess::PanelMaximized(shell),
          "a frame with the panel focused keeps it maximized");
 
-  // The toggle restores.
   Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::PanelToggleMaximized,
                                                  {}),
          "Restore is accepted");
@@ -3079,19 +2790,12 @@ void TestWorkspaceShellPanelMaximizeTakesTheWindowAndRestoresOnEditorFocus() {
              WorkspaceShellTestAccess::CurrentLayout(shell) == before,
          "restoring returns the exact previous layout");
 
-  // State that ARRIVES with the keyboard in the editor -- a session restore, a
-  // project switched back to, a tab hydrated on load, set before any frame saw
-  // the panel maximized -- keeps the panel maximized and hands the keyboard to
-  // it, the one thing on screen (TD-2026-11-01-427 item 3: the frame sync was
-  // level-triggered and restored the panel every such time).
   WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::PanelToggleMaximized, {});
   WorkspaceShellTestAccess::SetFocusEditor(shell);
   fixture.PaintFrame();
   Expect(WorkspaceShellTestAccess::PanelMaximized(shell) && WorkspaceShellTestAccess::FocusIsPanel(shell),
          "focus that arrived with the state is a baseline: still maximized, the keyboard on the panel");
 
-  // Focusing the editor after that restores: immersive mode never traps a file
-  // the user just opened from a terminal link.
   WorkspaceShellTestAccess::SetFocusEditor(shell);
   fixture.PaintFrame();
   Expect(!WorkspaceShellTestAccess::PanelMaximized(shell),
@@ -3099,9 +2803,6 @@ void TestWorkspaceShellPanelMaximizeTakesTheWindowAndRestoresOnEditorFocus() {
   Expect(WorkspaceShellTestAccess::CurrentLayout(shell).editor_area.h > 0.0f,
          "the editor column is back");
 
-  // So does an overlay that belongs to the editor (TD-2026-10-22-379): Find drew
-  // the editor's find widget over the maximized panel's tab strip, at a buffer
-  // nobody could see. A quick-open modal leaves the panel maximized.
   WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::PanelToggleMaximized, {});
   fixture.PaintFrame();
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "command-palette"), "the palette opens");
@@ -3116,7 +2817,6 @@ void TestWorkspaceShellPanelMaximizeTakesTheWindowAndRestoresOnEditorFocus() {
          "the editor's find widget restores the panel, so it is drawn over its editor");
   (void)SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE);
 
-  // The header button is the mouse way in and out.
   const SDL_FRect button = WorkspaceShellTestAccess::BottomPanelMaximizeButtonRect(shell);
   Expect(SendMouseDown(shell, button.x + button.w * 0.5f, button.y + button.h * 0.5f, SDL_BUTTON_LEFT),
          "the header button takes the press");
@@ -3135,17 +2835,14 @@ void TestWorkspaceShellTerminalToggleAndPanelToggleKeys() {
   Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Terminal,
          "fixture shows a terminal");
 
-  // Ctrl+` from a focused terminal hides the panel and hands focus back.
   Expect(SendKeyDown(shell, SDLK_GRAVE, SDL_KMOD_CTRL), "Ctrl+` is handled");
   Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::None,
          "Ctrl+` on a focused terminal hides the panel");
   Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 1, "the terminal survives hidden");
-  // Ctrl+` again brings the same terminal back, focused.
   Expect(SendKeyDown(shell, SDLK_GRAVE, SDL_KMOD_CTRL), "Ctrl+` is handled again");
   Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Terminal &&
              WorkspaceShellTestAccess::TerminalTabCount(shell) == 1,
          "Ctrl+` shows the existing terminal instead of opening another");
-  // From the editor Ctrl+` focuses the terminal rather than hiding it.
   WorkspaceShellTestAccess::SetFocusEditor(shell);
   Expect(SendKeyDown(shell, SDLK_GRAVE, SDL_KMOD_CTRL), "Ctrl+` from the editor is handled");
   Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Terminal,
@@ -3156,15 +2853,12 @@ void TestWorkspaceShellTerminalToggleAndPanelToggleKeys() {
              "\r",
          "the terminal has the keyboard after Ctrl+`");
 
-  // Ctrl+J in a focused terminal is the program's: Claude Code's newline, a
-  // shell's accept-line. It used to toggle the panel out from under it.
   TerminalSessionTestAccess::ClearSentBytes(WorkspaceShellTestAccess::ActiveTerminalSession(shell));
   Expect(SendKeyDown(shell, SDLK_J, SDL_KMOD_CTRL), "Ctrl+J in the terminal is handled");
   Expect(TerminalSessionTestAccess::SentBytes(WorkspaceShellTestAccess::ActiveTerminalSession(shell)) == "\n",
          "Ctrl+J reaches the program as LF");
   Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Terminal,
          "and the panel stays up");
-  // Everywhere else Ctrl+J toggles the panel and remembers its content.
   WorkspaceShellTestAccess::SetFocusEditor(shell);
   Expect(SendKeyDown(shell, SDLK_J, SDL_KMOD_CTRL), "Ctrl+J is handled");
   Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::None,
@@ -3174,12 +2868,10 @@ void TestWorkspaceShellTerminalToggleAndPanelToggleKeys() {
          "Ctrl+J brings the terminal content back");
   WorkspaceShellTestAccess::SetFocusPanel(shell);
 
-  // Ctrl+Shift+` opens a new terminal tab.
   Expect(SendKeyDown(shell, SDLK_GRAVE, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)),
          "Ctrl+Shift+` is handled");
   Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 2, "Ctrl+Shift+` opens a terminal");
 
-  // Ctrl+PageUp/PageDown walk the terminal tabs while the terminal has focus.
   Expect(WorkspaceShellTestAccess::ActiveTerminalTabIndex(shell) == 1, "the new tab is active");
   Expect(SendKeyDown(shell, SDLK_PAGEDOWN, SDL_KMOD_CTRL), "Ctrl+PageDown is handled");
   Expect(WorkspaceShellTestAccess::ActiveTerminalTabIndex(shell) == 0, "next wraps to the first tab");
@@ -3194,7 +2886,6 @@ void TestWorkspaceShellTerminalActivityDotMarksBackgroundOutput() {
   TerminalSessionTestAccess::Reset(WorkspaceShellTestAccess::ActiveTerminalSession(shell), 24, 80);
   Expect(WorkspaceShellTestAccess::ActiveTerminalTabIndex(shell) == 1, "second tab active");
 
-  // Output lands in the background tab and in the visible one.
   auto& background = WorkspaceShellTestAccess::TerminalTabSession(shell, 0);
   auto& foreground = WorkspaceShellTestAccess::TerminalTabSession(shell, 1);
   TerminalSessionTestAccess::AppendOutput(background, "done\r\n");
@@ -3207,14 +2898,11 @@ void TestWorkspaceShellTerminalActivityDotMarksBackgroundOutput() {
   Expect(!WorkspaceShellTestAccess::TerminalTabHasUnseenOutput(shell, 1),
          "output in the tab on screen is seen as it arrives");
 
-  // Showing the tab clears it on the next frame.
   Expect(WorkspaceShellTestAccess::ActivateTerminalTab(shell, 0), "activate the background tab");
   fixture.PaintFrame();
   Expect(!WorkspaceShellTestAccess::TerminalTabHasUnseenOutput(shell, 0),
          "the dot clears once the tab is shown");
 
-  // Output behind a hidden panel counts as unseen too. (Ctrl+`, not Ctrl+J: a
-  // focused terminal keeps Ctrl+J for its program.)
   SendKeyDown(shell, SDLK_GRAVE, SDL_KMOD_CTRL);
   Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::None,
          "panel hidden");
@@ -3224,10 +2912,6 @@ void TestWorkspaceShellTerminalActivityDotMarksBackgroundOutput() {
          "output behind a hidden panel is unseen");
 }
 
-// A program ringing the bell (BEL) in a background terminal marks its tab — a
-// build finishing, a prompt waiting for input — and showing the tab clears it.
-// A bell rung in the tab on screen marks nothing, then or later. Carried for a
-// host terminal by the frame's kBell (TerminalHost/BellReachesTheClientOnce).
 void TestWorkspaceShellTerminalBellMarksABackgroundTab() {
   SplitTerminalFixture fixture;
   WorkspaceShell& shell = fixture.shell;
@@ -3246,8 +2930,6 @@ void TestWorkspaceShellTerminalBellMarksABackgroundTab() {
   Expect(WorkspaceShellTestAccess::ActivateTerminalTab(shell, 0), "activate the background tab");
   fixture.PaintFrame();
   Expect(!WorkspaceShellTestAccess::TerminalTabHasUnseenBell(shell, 0), "showing it clears the mark");
-  // The foreground bell was consumed when it rang: switching away does not
-  // surface it later.
   Expect(WorkspaceShellTestAccess::ActivateTerminalTab(shell, 1), "back to the other tab");
   WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
   Expect(!WorkspaceShellTestAccess::TerminalTabHasUnseenBell(shell, 0) &&
@@ -3255,9 +2937,6 @@ void TestWorkspaceShellTerminalBellMarksABackgroundTab() {
          "no stale bell resurfaces");
 }
 
-// A program in a background terminal asking for attention with a desktop
-// notification (Claude Code's "needs your permission", OSC 9) gets a toast and
-// the tab's bell mark; one in the terminal on screen is already being read.
 void TestWorkspaceShellTerminalNotificationToastsFromABackgroundTab() {
   SplitTerminalFixture fixture;
   WorkspaceShell& shell = fixture.shell;
@@ -3279,11 +2958,6 @@ void TestWorkspaceShellTerminalNotificationToastsFromABackgroundTab() {
   Expect(WorkspaceShellTestAccess::TerminalTabHasUnseenBell(shell, 0), "and marks its tab");
 }
 
-// With the window unfocused the user is in another application: nothing inside
-// the window reaches them, and the terminal on screen got neither toast nor mark.
-// The alert now flags the window and posts the notification to the desktop
-// (decision: TerminalAttention/*); a bell flags without posting, a second
-// notification inside the spacing is not posted, and the setting turns it off.
 void TestWorkspaceShellTerminalAlertReachesPastAnUnfocusedWindow() {
   SplitTerminalFixture fixture;
   WorkspaceShell& shell = fixture.shell;
@@ -3321,10 +2995,6 @@ void TestWorkspaceShellTerminalAlertReachesPastAnUnfocusedWindow() {
   Expect(interaction.window_flags_requested == 3, "off, nothing leaves the window");
 }
 
-// The same from a terminal in a BACKGROUND PROJECT: it surfaced only once that
-// project came back to the front (TD-2026-11-01-427 item 2) -- an agent asking
-// for input in project A said nothing while the user worked in project B. The
-// toast names the project, and the terminal's tab carries the mark back.
 void TestWorkspaceShellTerminalNotificationToastsFromABackgroundProject() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path alpha = temp_dir.path() / "alpha";
@@ -3349,8 +3019,6 @@ void TestWorkspaceShellTerminalNotificationToastsFromABackgroundProject() {
   }
   Expect(!toast.empty(), "a background project's terminal notification toasts at once");
   Expect(toast.find("alpha") != std::string::npos, "and names the project it came from: " + toast);
-  // The project's own tab carries the mark while it is in the background
-  // (TD-2026-11-02-428 item 3: only its terminal tab did, unseen until switched to).
   Expect(WorkspaceShellTestAccess::ProjectTabDisplayTitle(shell, 0) == "alpha \xe2\x80\xa2",
          "alpha's project tab is marked: " + WorkspaceShellTestAccess::ProjectTabDisplayTitle(shell, 0));
   Expect(WorkspaceShellTestAccess::ProjectTabTooltipLabel(shell, 0).find("A terminal printed or rang") !=
@@ -3365,12 +3033,6 @@ void TestWorkspaceShellTerminalNotificationToastsFromABackgroundProject() {
          "its terminal tab carries the mark back to the front");
 }
 
-// Several agents, several terminals, several projects: Go to Next Terminal Alert
-// (`term-next-alert`, Ctrl+Shift+N) brings forward the next terminal that RANG or
-// notified with nobody looking -- the tabs after the active one first, then the
-// other projects', then round again -- so the one waiting for input is a
-// keystroke away rather than a hunt through dots. Output alone is not an alert:
-// a working agent prints all the time.
 void TestWorkspaceShellNextTerminalAlertCrossesTabsAndProjects() {
   EnsureDummySdlVideo();
   TemporaryDirectory temp_dir;
@@ -3400,7 +3062,6 @@ void TestWorkspaceShellNextTerminalAlertCrossesTabsAndProjects() {
              !WorkspaceShellTestAccess::ExecuteCommandLine(shell, "term-next-alert"),
          "with nothing waiting the command is dimmed and says so");
 
-  // Output alone does not count.
   TerminalSessionTestAccess::AppendOutput(WorkspaceShellTestAccess::TerminalTabSession(shell, 0), "working...\r\n");
   TerminalSessionTestAccess::MarkOutputArrived(WorkspaceShellTestAccess::TerminalTabSession(shell, 0));
   WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
@@ -3408,7 +3069,6 @@ void TestWorkspaceShellNextTerminalAlertCrossesTabsAndProjects() {
              !WorkspaceShellTestAccess::IsActionEnabled(shell, next),
          "a terminal that merely printed is not waiting for anyone");
 
-  // Within a project: the tabs after the active one come first, then round.
   ring(0);
   ring(2);
   Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, next), "two terminals rang");
@@ -3423,8 +3083,6 @@ void TestWorkspaceShellNextTerminalAlertCrossesTabsAndProjects() {
   paint();
   Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, next), "and nothing is left");
 
-  // Across projects: alpha's terminal rings while beta is in front, with the
-  // panel hidden and the keyboard in the editor.
   auto& agent = WorkspaceShellTestAccess::TerminalTabSession(shell, 1);
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, beta), "project beta opens in front");
   TerminalSessionTestAccess::AppendOutput(agent, "\x1b]9;needs your input\x07");
@@ -3441,10 +3099,6 @@ void TestWorkspaceShellNextTerminalAlertCrossesTabsAndProjects() {
   Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, next), "and its mark is cleared by being seen");
 }
 
-// A file dropped onto a running terminal is typed into it (shell-quoted), as in
-// gnome-terminal and VS Code -- how a screenshot reaches Claude Code's prompt.
-// It used to open in an editor tab whatever was under the pointer. Off the
-// terminal a drop still opens the file.
 void TestWorkspaceShellFileDroppedOnTheTerminalTypesItsPath() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3472,10 +3126,6 @@ void TestWorkspaceShellFileDroppedOnTheTerminalTypesItsPath() {
   Expect(WorkspaceShellTestAccess::FocusIsPanel(shell), "and the keyboard, to go on typing");
 }
 
-// A screenshot on the clipboard pasted into a terminal: there is no text to
-// paste, and nothing happened. The image is saved as a file and its path typed,
-// as a dropped file's is -- how it gets into an agent's prompt. Text on the
-// clipboard still pastes as text, and bytes that are not a PNG paste nothing.
 void TestWorkspaceShellImagePastedIntoTheTerminalTypesItsPath() {
   TemporaryDirectory temp_dir;
   const ScopedEnvVar state_home("XDG_STATE_HOME", (temp_dir.path() / "state").string());
@@ -3519,10 +3169,6 @@ void TestWorkspaceShellImagePastedIntoTheTerminalTypesItsPath() {
   Expect(TerminalSessionTestAccess::SentBytes(session).empty(), "and types nothing");
 }
 
-// The place an agent is told to look at: the caret's line or the selection's
-// lines as `path:line[-line]`, copied, or typed into the running terminal with
-// the keyboard following it there. A selection that ends at the start of a line
-// does not count that line; a file outside the project is named absolutely.
 void TestWorkspaceShellReferenceNamesTheCaretOrSelectionLines() {
   using ActionId = WorkspaceShell::ActionId;
   TemporaryDirectory temp_dir;
@@ -3589,7 +3235,6 @@ void TestWorkspaceShellTerminalRelaunchRestartsAnExitedPane() {
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\r",
          "Enter in a live pane goes to the shell");
 
-  // The process dies (the ssh link dropped).
   TerminalSessionTestAccess::AppendOutput(session, "connection closed\r\n");
   TerminalSessionTestAccess::EmitProcessExitMarker(session);
   TerminalSessionTestAccess::SetRunning(session, false);
@@ -3605,16 +3250,12 @@ void TestWorkspaceShellTerminalRelaunchRestartsAnExitedPane() {
   Expect(WorkspaceShellTestAccess::ActiveTerminalPaneLaunchDirectory(shell) == root.lexically_normal(),
          "the relaunch keeps the recorded directory");
 
-  // The menu verb does the same for an exited pane.
   TerminalSessionTestAccess::SetRunning(session, false);
   Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalRelaunch, {}),
          "Relaunch Terminal is accepted for an exited pane");
   Expect(session.running(), "the menu verb relaunches too");
 }
 
-// A fresh project opens its terminal in the panel but leaves the keyboard in the
-// editor, as VS Code does (TD-2026-10-16-348): the first keystroke of a session
-// used to go to the shell.
 void TestWorkspaceShellProjectOpensWithTheKeyboardInTheEditor() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3625,7 +3266,7 @@ void TestWorkspaceShellProjectOpensWithTheKeyboardInTheEditor() {
   Expect(WorkspaceShellTestAccess::FocusIsEditor(shell), "but the keyboard starts in the editor");
 }
 
-}  // namespace
+}
 
 void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/TerminalSplitAddsPaneRightOfTheActiveOne",
@@ -3831,4 +3472,4 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalFindClipboardShortcutsTargetTheQuery);
 }
 
-}  // namespace microide::tests
+}

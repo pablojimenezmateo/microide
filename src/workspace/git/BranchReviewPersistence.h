@@ -19,7 +19,7 @@ struct PersistedBranchReviewHunkIdentity {
 
 struct PersistedBranchReviewFileEntry {
   std::filesystem::path path;
-  std::uint64_t reviewed_diff_fingerprint = 0;  // see compare::BranchReviewFileReviewEntry
+  std::uint64_t reviewed_diff_fingerprint = 0;
   std::uint64_t reviewed_at_unix_ms = 0;
 };
 
@@ -52,4 +52,4 @@ struct PersistedBranchReviewState {
   std::vector<PersistedBranchReviewTarget> targets;
 };
 
-}  // namespace microide::workspace
+}

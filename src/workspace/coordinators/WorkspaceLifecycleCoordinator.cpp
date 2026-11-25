@@ -56,10 +56,6 @@ bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root)
     util::StartupTrace::Scope restore_config_scope("WorkspaceShell::RestoreUserConfig");
     operations_.restore_user_config();
   }
-  // Before the session restore opens a project: what opening does reads settings --
-  // a remote project reconnects with remote.ssh_command -- and an override applied
-  // only afterwards (Application re-applies them once the window is up, over the
-  // project settings the open reloads) reached that reconnect too late.
   util::InvokeIfSet(operations_.apply_startup_setting_overrides);
   {
     util::StartupTrace::Scope refresh_colors_scope(
@@ -83,10 +79,6 @@ bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root)
     return true;
   }
 
-  // `microide notes.txt`: a path that names a regular file is not a project
-  // root -- the tree and the index refused it and the whole launch failed with
-  // "Workspace initialization failed". Open its directory as the project and
-  // the file itself as the first tab, which is what `code notes.txt` does.
   std::filesystem::path root = project_root;
   std::optional<std::filesystem::path> file_to_open;
   {
@@ -102,11 +94,6 @@ bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root)
   }
 
   util::StartupTrace::Scope open_project_scope("WorkspaceShell::OpenProjectTab");
-  // `microide <project>` opens THAT project instead of the saved workspace, but
-  // with its own saved config and tabs, as `code <folder>` reopens the folder's
-  // editors. Skipping it here too dropped the project's settings (project-scoped
-  // Word Wrap, tab size, ...) along with its tabs on every explicit launch (QA
-  // flow session-restore).
   const bool restore_persistence = operations_.restore_project_persistence
                                        ? operations_.restore_project_persistence()
                                        : !operations_.skip_workspace_session_restore();
@@ -126,33 +113,14 @@ void LifecycleCoordinator::Shutdown() {
   util::InvokeIfSet(operations_.await_host_terminal_opens);
   operations_.release_host_terminals();
   operations_.persist_active_project();
-  // Inactive projects are already durably persisted the moment they are switched
-  // away from (PersistActiveEntry writes config+session before the state is moved
-  // into the catalog entry). Re-persisting them here would re-hydrate and re-write
-  // identical data for every inactive project, so it is omitted -- except for the
-  // one thing that changes in a project while it is inactive: a host terminal
-  // whose connection came up in the background.
   operations_.record_inactive_host_terminals();
   operations_.save_workspace_session();
   operations_.flush_recents();
-  // Land every state write the saves above only QUEUED. This has to come after
-  // all of them, and it has to be here rather than in a destructor: the process
-  // exits via quick_exit() right after Shutdown() returns, so nothing downstream
-  // of this point runs.
   operations_.flush_persisted_state();
-  // Same reason: a remote mirror's sync state is saved lazily by its engine, and
-  // pulled files no save recorded come back as conflicts on the next start.
   operations_.persist_remote_mirrors();
   operations_.shutdown_project_search_runtime();
-  // Stop the control listener and remove the discovery descriptor. Cheap (the
-  // I/O thread wakes via its self-pipe, so the join returns immediately) and off
-  // the visible path — the window is already destroyed before Shutdown() runs.
   operations_.stop_control_channel();
   operations_.stop_debug_sessions();
-  // Local terminal teardown and cursor cleanup are intentionally skipped here:
-  // the process exits via quick_exit() immediately after, and a local shell ends
-  // with its pty. Host terminals were let go of above, explicitly. A debug adapter does not take its debuggee with it on a
-  // closed pipe -- hence stop_debug_sessions above.
 }
 
 void LifecycleCoordinator::RequestQuit() {
@@ -181,12 +149,6 @@ void WorkspaceShell::ResetLifecycleStartupState() {
 }
 
 void WorkspaceShell::RegisterLifecycleWakeEvents() {
-  // app::RegisterSdlWakeChannel already maps SDL's (Uint32)-1 exhaustion sentinel onto
-  // channel 0 ("waking disabled"), so every caller here reads one value instead of
-  // repeating the sentinel check. A failed allocation is recorded once: the worker still
-  // runs but has no wake to drain its ready state, and CurrentIdleWaitState then falls
-  // back to a bounded poll so pending work is not stranded until unrelated input
-  // arrives. (TD-2026-07-16-56.)
   bool any_registration_failed = false;
   const auto register_wake = [&](const char* name) -> util::WakeChannel {
     const util::WakeChannel channel = app::RegisterSdlWakeChannel(name);
@@ -196,9 +158,6 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
     return channel;
   };
 
-  // Dedicated neutral wake for background-task completion: a registered channel is
-  // claimed by no dispatch branch, so it reaches the neutral default rather than
-  // aliasing whichever subsystem registered first (project search today).
   util::SetBackgroundTaskWakeChannel(register_wake("background-task"));
 
   plugin_runtime_.SetWakeChannel(register_wake("plugin-runtime"));
@@ -207,17 +166,10 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   git_blame_service_.SetWakeChannel(git_blame_event_type_);
 
   git_sidebar_event_type_ = register_wake("git-sidebar");
-  // Reuse the git-sidebar wake for commit completions: a commit result is
-  // marshaled back to the main thread and drained in ConsumeGitSidebarRefresh
-  // (a successful commit refreshes the sidebar anyway).
   commit_workflow_service_.SetCompletionWakeEvent(git_sidebar_event_type_);
-  // Same wake channel: every git write operation ends in a git refresh anyway.
   git_operation_service_.SetCompletionWakeEvent(git_sidebar_event_type_);
-  // The async compare/ref picker marshals its git result back through the same
-  // wake (drained alongside the sidebar refresh in ConsumeGitSidebarRefresh).
   compare_picker_mailbox_.SetWakeChannel(git_sidebar_event_type_);
   InitializeCommitWorkflowService();
-  // The patch apply's post-apply shell work rides the same wake and drain.
   patch_apply_service_.SetCompletionWakeEvent(git_sidebar_event_type_);
   editor_blame_overlay_service_.SetProjectLauncherSource(
       [this]() { return &context_.current_project_state.launcher(); });
@@ -264,14 +216,7 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   terminal_event_type_ = register_wake("terminal");
 
   project_file_event_type_ = register_wake("project-files");
-  // Off-thread forced-rescan and project-replace-all results wake and drain on the
-  // same project-file path.
-  // The deferred save's formatter completion rides the project-file wake: it ends
-  // in a write, a directory-tree refresh and a git refresh, which is exactly what
-  // that channel already drains.
   save_formatter_service_.SetWakeChannel(project_file_event_type_);
-  // An asynchronous open ends in a hydrated tab, a title/tree refresh and an
-  // LSP didOpen — the same wake this channel already drains for the save.
   file_read_service_.SetWakeChannel(project_file_event_type_);
   file_index_refresh_mailbox_.SetWakeChannel(project_file_event_type_);
   project_replace_mailbox_.SetWakeChannel(project_file_event_type_);
@@ -297,34 +242,19 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
 
   plugin_thread_event_type_ = register_wake("plugin-thread");
   plugin_runtime_.SetPluginThreadEventType(plugin_thread_event_type_);
-  // Hand the host the worker so every plugin Lua call routes off the UI thread.
-  // The worker itself stays unspawned until the first Reload that loads a plugin.
   plugin_runtime_.Host().SetWorker(&plugin_runtime_.Thread());
 
-  // A decoded plugin raster wakes the loop with its size, so the surface is laid
-  // out and painted at it without waiting for unrelated input (TD-2026-07-16-39).
   surface_texture_cache_.SetWakeChannel(register_wake("surface-textures"));
 
   highlight_prefetch_event_type_ = register_wake("highlight-prefetch");
-  // The worker fires this from its own thread once a result is queued; the wake
-  // only nudges the main loop to drain (the event carries no payload).
   highlight_prefetch_service_.SetWakeCallback([event_type = highlight_prefetch_event_type_]() {
-    // Checked push: the prefetched highlights are already queued in the service, so a
-    // rejected push latches the shared "wake owed" bit for the idle-poll fallback
-    // rather than hiding already-computed highlights until unrelated input.
     util::PushWake(event_type);
   });
 
-  // Control channel. Always allocate the wake event + bind it so the marshaling
-  // path is ready; only the socket listener is gated on `control.enabled`, which
-  // is what lets the channel be toggled on at runtime without a restart.
   control_event_type_ = register_wake("control");
   control_channel_service_.SetWakeChannel(control_event_type_);
   MaybeStartControlChannel();
 
-  // Record whether any wake channel failed to register so the idle-wait falls back to a
-  // bounded poll (rather than blocking forever) for the affected subsystems' ready
-  // state. (TD-2026-07-16-56.)
   util::SetWakeRegistrationDegraded(any_registration_failed);
 }
 
@@ -348,8 +278,6 @@ LifecycleCoordinator& WorkspaceShell::MakeLifecycleCoordinator() {
           },
           .skip_workspace_session_restore =
               [this]() {
-                // Startup flags (safe mode / --no-restore) or the user setting can
-                // each suppress session restore on launch.
                 return startup_options_.skip_workspace_session_restore() ||
                        !SettingFlagEnabled(GetSettingValue("session.restore_on_launch"), true);
               },
@@ -377,10 +305,6 @@ LifecycleCoordinator& WorkspaceShell::MakeLifecycleCoordinator() {
               },
           .await_host_terminal_opens =
               [this]() {
-                // The answer lands on the connection's own thread and sets the
-                // handle there: nothing on this thread needs to run for it. A
-                // second covers a slow link's round trip; a host that does not
-                // answer by then gets the pane recorded as it is.
                 const auto in_flight = [this]() {
                   if (TerminalPanelService::HasHostOpenInFlight(context_.current_project_state)) {
                     return true;
@@ -440,7 +364,6 @@ LifecycleCoordinator& WorkspaceShell::MakeLifecycleCoordinator() {
           .stop_debug_sessions =
               [this]() {
                 debug_service_.StopAllDebugging();
-                // Projects switched away from keep their own sessions.
                 for (const auto& entry : context_.project_catalog.entries) {
                   if (entry != nullptr && entry->dap_manager != nullptr) {
                     entry->dap_manager->ShutdownAll();
@@ -456,19 +379,14 @@ bool WorkspaceShell::Initialize(const std::filesystem::path& project_root) {
 }
 
 void WorkspaceShell::Shutdown() {
-  // Before the coordinator tears anything down: a read still running would post a
-  // completion into a shell that is dismantling the state it applies to.
   file_read_service_.CancelAllAndFlush();
   MakeLifecycleCoordinator().Shutdown();
 }
 
 void WorkspaceShell::RequestQuit(bool forced) {
   SettleTabIoBeforeTeardown(save_formatter_service_, file_read_service_);
-  // A quit nobody can answer a prompt for (SIGTERM at logout): the unsaved-changes
-  // prompt goes, and the buffers it asked about are kept the way a window close
-  // keeps them -- in the session the shutdown writes, restored on the next start.
   if (forced && context_.prompts.dirty_visible) {
-    DismissDirtyPrompt(/*restore_focus=*/false);
+    DismissDirtyPrompt(false);
   }
   MakeLifecycleCoordinator().RequestQuit();
 }
@@ -477,4 +395,4 @@ bool WorkspaceShell::ConsumeQuitRequested() {
   return MakeLifecycleCoordinator().ConsumeQuitRequested();
 }
 
-}  // namespace microide::workspace
+}

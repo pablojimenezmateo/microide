@@ -20,11 +20,8 @@ bool ParseField(std::string_view text, T* out) {
   return error == std::errc() && end == text.data() + text.size();
 }
 
-// /proc/<pid>/stat into `buffer`; the line is a few hundred bytes (comm is at most
-// 16), so one read takes it whole. 0 when the process went between the readdir
-// and the open, which is ordinary.
 std::size_t ReadStat(const char* name, char* buffer, std::size_t size) {
-  char path[300];  // a d_name is at most 255 bytes
+  char path[300];
   std::snprintf(path, sizeof(path), "/proc/%s/stat", name);
   const int fd = ::open(path, O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
@@ -38,21 +35,17 @@ std::size_t ReadStat(const char* name, char* buffer, std::size_t size) {
   return got > 0 ? static_cast<std::size_t>(got) : 0;
 }
 
-// Whether this kernel lists a task's children (/proc/<pid>/task/<tid>/children,
-// CONFIG_PROC_CHILDREN): what lets a sample read only the trees it reports on.
 bool KernelListsChildren() {
   static const bool lists = ::access("/proc/thread-self/children", R_OK) == 0;
   return lists;
 }
 
-// Every child of `pid`, from each of its threads' children files (a child belongs
-// to the thread that forked it), appended to `out`.
 void AppendChildren(int pid, std::vector<int>& out) {
   char path[64];
   std::snprintf(path, sizeof(path), "/proc/%d/task", pid);
   DIR* tasks = ::opendir(path);
   if (tasks == nullptr) {
-    return;  // gone since its parent listed it
+    return;
   }
   std::string text;
   char buffer[4096];
@@ -91,14 +84,10 @@ void AppendChildren(int pid, std::vector<int>& out) {
   ::closedir(tasks);
 }
 
-// The stat lines Measure needs: each root and, for a tree root, everything under
-// it -- found down the children files rather than by reading every process on the
-// box (a busy build host has thousands; microide's trees, tens).
 std::vector<ProcessActivity::Stat> ReadTrees(std::span<const ProcessActivity::Root> roots) {
   std::vector<ProcessActivity::Stat> table;
-  // pid -> whether its children were listed already.
   std::unordered_map<int, bool> seen;
-  std::vector<std::pair<int, bool>> pending;  // pid, list its children
+  std::vector<std::pair<int, bool>> pending;
   for (const ProcessActivity::Root& root : roots) {
     if (root.pid > 0) {
       pending.emplace_back(root.pid, root.subtree);
@@ -119,7 +108,7 @@ std::vector<ProcessActivity::Stat> ReadTrees(std::span<const ProcessActivity::Ro
           stat.has_value()) {
         table.push_back(*stat);
       } else {
-        continue;  // gone: nothing under it to list either
+        continue;
       }
     }
     if (!expand || it->second) {
@@ -135,11 +124,9 @@ std::vector<ProcessActivity::Stat> ReadTrees(std::span<const ProcessActivity::Ro
   return table;
 }
 
-}  // namespace
+}
 
 std::optional<ProcessActivity::Stat> ProcessActivity::ParseStat(std::string_view line) {
-  // "pid (comm) state ppid ...": comm may hold spaces and parentheses, so the
-  // fields start after the LAST ')'.
   const std::size_t open = line.find(" (");
   const std::size_t close = line.rfind(')');
   if (open == std::string_view::npos || close == std::string_view::npos || close < open) {
@@ -149,7 +136,6 @@ std::optional<ProcessActivity::Stat> ProcessActivity::ParseStat(std::string_view
   if (!ParseField(line.substr(0, open), &stat.pid) || stat.pid <= 0) {
     return std::nullopt;
   }
-  // Fields 3.. (1-based, as proc(5) numbers them) split on single spaces.
   std::string_view rest = line.substr(close + 1);
   std::uint64_t utime = 0;
   std::uint64_t stime = 0;
@@ -231,7 +217,7 @@ std::string ProcessActivity::ForegroundCommand(int shell_pid) {
   }
   ssize_t got = 0;
   do {
-    got = ::read(fd, buffer, 64);  // comm is at most 16 bytes
+    got = ::read(fd, buffer, 64);
   } while (got < 0 && errno == EINTR);
   ::close(fd);
   std::string command(buffer, got > 0 ? static_cast<std::size_t>(got) : 0);
@@ -246,12 +232,11 @@ std::vector<ProcessActivity::Stat> ProcessActivity::ReadTable(std::span<const Ro
   if (KernelListsChildren()) {
     table = ReadTrees(roots);
   } else if (DIR* proc = ::opendir("/proc"); proc != nullptr) {
-    // No children files: one walk of every process, the trees built from ppid.
     table.reserve(512);
     char buffer[1024];
     while (const dirent* entry = ::readdir(proc)) {
       if (entry->d_name[0] < '1' || entry->d_name[0] > '9') {
-        continue;  // ".", "self", "sys", ...: not a process
+        continue;
       }
       const std::size_t got = ReadStat(entry->d_name, buffer, sizeof(buffer));
       if (const std::optional<Stat> stat = ParseStat(std::string_view(buffer, got)); stat.has_value()) {
@@ -275,8 +260,6 @@ std::vector<ProcessActivity::Figures> ProcessActivity::Measure(std::span<const S
                                                                std::chrono::steady_clock::time_point now,
                                                                std::int64_t ticks_per_second,
                                                                std::int64_t page_bytes) {
-  // Children by parent: indices into `table` sorted by ppid, so a pid's children
-  // are one equal_range.
   std::vector<std::size_t> by_parent(table.size());
   for (std::size_t i = 0; i < table.size(); ++i) {
     by_parent[i] = i;
@@ -292,7 +275,6 @@ std::vector<ProcessActivity::Figures> ProcessActivity::Measure(std::span<const S
     const auto it = by_pid.find(pid);
     return it != by_pid.end() ? &table[it->second] : nullptr;
   };
-  // Which root's walk last visited each entry (r + 1): one array for every walk.
   std::vector<std::size_t> visited(table.size(), 0);
 
   std::vector<Figures> figures(roots.size());
@@ -309,8 +291,6 @@ std::vector<ProcessActivity::Figures> ProcessActivity::Measure(std::span<const S
     std::uint64_t ticks = root.subtree ? top->ticks : top->own_ticks;
     std::int64_t pages = top->rss_pages;
     if (root.subtree) {
-      // Bounded by the table: a parent loop (impossible, but this is parsed text)
-      // cannot spin, since every entry is visited at most once per root.
       pending.assign(1, static_cast<std::size_t>(top - table.data()));
       visited[pending.front()] = r + 1;
       while (!pending.empty()) {
@@ -334,18 +314,14 @@ std::vector<ProcessActivity::Figures> ProcessActivity::Measure(std::span<const S
     if (const auto it = previous_.find(key);
         it != previous_.end() && it->second.start_time == top->start_time && now > it->second.at) {
       const double seconds = std::chrono::duration<double>(now - it->second.at).count();
-      // A child reaped by something outside the tree takes its ticks with it, so
-      // the sum can step back: that reads as idle, never as a negative share.
       const std::uint64_t spent = ticks > it->second.ticks ? ticks - it->second.ticks : 0;
       const double permille = static_cast<double>(spent) / static_cast<double>(ticks_per_second) / seconds * 1000.0;
       figures[r].cpu_permille = static_cast<std::int32_t>(std::min(permille + 0.5, 1e9));
     }
     next[key] = Previous{.start_time = top->start_time, .ticks = ticks, .at = now};
   }
-  // Only what this sample asked for is kept: a pid that is gone, or that no row
-  // names any more, is dropped rather than accumulated for the server's lifetime.
   previous_ = std::move(next);
   return figures;
 }
 
-}  // namespace microide::server
+}

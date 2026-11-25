@@ -95,7 +95,7 @@ std::optional<std::size_t> FindSequence(const HaystackRange& haystack, std::size
   return std::nullopt;
 }
 
-}  // namespace
+}
 
 std::vector<MergeTrackedConflict> BuildMergeTrackedConflicts(const compare::MergeModel& model) {
   std::vector<MergeTrackedConflict> conflicts;
@@ -171,10 +171,6 @@ std::vector<MergeTrackedConflict> BuildMergeTrackedConflictsForResult(
         hunk.choice = choice_hints[conflict_index];
         committed_lines = conflict_line_hints[conflict_index];
         valid = true;
-        // A hint is a real committed span, so it is valid geometry — but only
-        // "resolved" if the parser said so. An untouched raw block reports
-        // resolved=0 and must stay a pending conflict (default true keeps back-compat
-        // for callers that pass no resolved_hints).
         resolved = conflict_index >= resolved_hints.size() || resolved_hints[conflict_index] != 0;
       } else {
         committed_lines = compare::MergeChoiceLines(hunk, hunk.choice);
@@ -184,9 +180,6 @@ std::vector<MergeTrackedConflict> BuildMergeTrackedConflictsForResult(
             continue;
           }
           if (!post_context.empty()) {
-            // Compared straight against the model's views. This used to copy the
-            // post-context into an owned vector purely to bridge the two types --
-            // once per candidate choice per conflict.
             const bool immediate_context_matches =
                 MatchesLineSegment(result_lines, result_line + candidate_lines.size(), post_context);
             const bool later_context_exists =
@@ -200,12 +193,6 @@ std::vector<MergeTrackedConflict> BuildMergeTrackedConflictsForResult(
           valid = true;
           break;
         }
-        // Fall back to anchoring the committed span on the next base context. Guard
-        // on a NON-EMPTY post_context: FindSequence returns `start` for an empty
-        // needle, so an empty post_context (last conflict, or adjacent conflicts with
-        // no base between them) would otherwise match at result_line and produce a
-        // zero-length span that gets marked resolved — dropping the user's manual
-        // edit from conflict tracking. With no anchor we leave it unresolved instead.
         if (!valid && !post_context.empty()) {
           if (const auto next_context = FindSequence(result_lines, result_line, post_context);
               next_context.has_value()) {
@@ -216,7 +203,6 @@ std::vector<MergeTrackedConflict> BuildMergeTrackedConflictsForResult(
             valid = true;
           }
         }
-        // Inferred spans (no hint) are resolved exactly when we could pin them down.
         resolved = valid;
       }
 
@@ -248,8 +234,6 @@ std::vector<MergeTrackedConflict> BuildMergeTrackedConflictsForResult(
 
 std::optional<std::size_t> FindMergeTrackedConflictAtSourceLine(const MergeTabState& merge_tab, std::size_t line,
                                                                 bool incoming) {
-  // `line` is an on-screen row from a hit test, so it resolves against the
-  // row-space projection of the conflicts.
   return microide::workspace::FindMergeTrackedConflictAtSourceLine(MergeVisualConflicts(merge_tab), line, incoming);
 }
 
@@ -257,4 +241,4 @@ std::optional<std::size_t> FindMergeTrackedConflictAtResultLine(const MergeTabSt
   return microide::workspace::FindMergeTrackedConflictAtResultLine(MergeVisualConflicts(merge_tab), line);
 }
 
-}  // namespace microide::workspace
+}

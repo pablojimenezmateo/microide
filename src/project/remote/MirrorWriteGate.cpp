@@ -13,10 +13,6 @@ namespace microide::project::remote {
 
 namespace {
 
-// `path`'s real place under `tree`, every link on the way resolved -- the final
-// component's chain (util::ResolveSymlinkTarget, as the atomic save resolves it)
-// and any folder link before it (weakly_canonical) -- as a tree-relative path;
-// nullopt when it is outside the tree.
 std::optional<std::string> RealTreeRelative(const std::filesystem::path& tree, const std::filesystem::path& path) {
   std::error_code path_error;
   std::error_code tree_error;
@@ -32,7 +28,7 @@ std::optional<std::string> RealTreeRelative(const std::filesystem::path& tree, c
   return text;
 }
 
-}  // namespace
+}
 
 std::optional<std::string> MirrorWriteGate::MirrorRelative(const std::filesystem::path& path) const {
   const std::filesystem::path relative = path.lexically_normal().lexically_relative(store_.tree());
@@ -50,8 +46,6 @@ std::optional<std::string> MirrorWriteGate::HostRelative(const std::filesystem::
   }
   std::error_code parent_error;
   std::error_code tree_error;
-  // weakly_canonical resolves the links of the part that exists and keeps the
-  // rest as written: a folder an earlier op of the same batch creates is no link.
   const std::filesystem::path real_parent = std::filesystem::weakly_canonical(normal.parent_path(), parent_error);
   const std::filesystem::path real_tree = std::filesystem::weakly_canonical(store_.tree(), tree_error);
   if (parent_error || tree_error) {
@@ -78,8 +72,6 @@ FileWriteGate::Result MirrorWriteGate::WriteText(const std::filesystem::path& pa
                                                  std::string_view text, Signature signature,
                                                  util::WriteTarget target) {
   if (UnsyncableTarget(path).has_value()) {
-    // Written here, it would never reach the host: refused, as a rename to such a
-    // name is (ApplyTreeOps).
     Result refused;
     refused.error = std::make_error_code(std::errc::invalid_argument);
     return refused;
@@ -88,22 +80,10 @@ FileWriteGate::Result MirrorWriteGate::WriteText(const std::filesystem::path& pa
   if (!relative.has_value()) {
     return LocalFileWriteGate().WriteText(path, text, signature, target);
   }
-  // Where the bytes land: a save through a link writes the file the link names
-  // (the atomic write resolves the chain the same way, so the link survives), and
-  // that path is the one that changed. Journaling the link's own path pushed the
-  // link path, which the host refuses -- a link is there -- and never sent the
-  // file that changed (the QA monkey's remote job: soak 517966306bfc). The same
-  // for a folder link on the way: `d/loop/new.txt` with `d/loop -> .` is
-  // `d/new.txt`, and the host refuses a path through a link (soak 4399652f0e70).
-  // A link out of the tree names a file no host path is: written, not synced.
   const std::optional<std::string> written = RealTreeRelative(store_.tree(), path);
   Result result;
   {
     std::lock_guard path_lock(store_.PathLock(written.value_or(*relative)));
-    // The temporary in meta/staging, not beside the file: a crash between writing
-    // it and renaming it into place must not leave it in the tree, where nothing
-    // would ever remove it (the fault matrix's disk axis found one). Open sweeps
-    // staging.
     result = WriteTextLocally(path, text, signature, target, store_.staging());
   }
   if (result.ok && written.has_value()) {
@@ -114,8 +94,6 @@ FileWriteGate::Result MirrorWriteGate::WriteText(const std::filesystem::path& pa
 
 namespace {
 
-// A Copy's new tree, replayed to the host: its folders created, its files pushed
-// as local writes.
 void ReplayCopiedTree(const MirrorWriteGate& gate, MirrorSyncEngine& engine, const std::filesystem::path& root,
                       std::vector<MirrorSyncEngine::LocalTreeOp>& replay) {
   using Kind = MirrorSyncEngine::LocalTreeOp::Kind;
@@ -143,14 +121,9 @@ void ReplayCopiedTree(const MirrorWriteGate& gate, MirrorSyncEngine& engine, con
   }
 }
 
-}  // namespace
+}
 
 FileWriteGate::TreeResult MirrorWriteGate::ApplyTreeOps(std::span<const TreeOp> ops) {
-  // A target inside the tree under a name the host cannot be sent is refused
-  // before anything is applied. A rename to one read as a move out of the
-  // project: the host deleted the folder while the mirror kept it under its new
-  // name, which never synced (the QA monkey's remote job: soak f3ad7063ff9a, a
-  // folder renamed to text with a backslash in it).
   for (std::size_t index = 0; index < ops.size(); ++index) {
     const TreeOp& op = ops[index];
     const bool to_new_path = op.kind == TreeOp::Kind::Rename || op.kind == TreeOp::Kind::Copy;
@@ -165,11 +138,6 @@ FileWriteGate::TreeResult MirrorWriteGate::ApplyTreeOps(std::span<const TreeOp> 
       return refused;
     }
   }
-  // Each op is replayed by the path the host knows its node by, read before the
-  // ops change the tree: an op through a folder link -- `d/loop/sub` with
-  // `d/loop -> .` -- was replayed as typed, the host refused the path through the
-  // link, and the folder (and every file later saved into it) stayed only in the
-  // mirror (the QA monkey's remote job: soak 9e0fe5eaa149, 367234368d0e).
   std::vector<std::optional<std::string>> host_from(ops.size());
   std::vector<std::optional<std::string>> host_to(ops.size());
   for (std::size_t index = 0; index < ops.size(); ++index) {
@@ -180,7 +148,7 @@ FileWriteGate::TreeResult MirrorWriteGate::ApplyTreeOps(std::span<const TreeOp> 
   }
   TreeResult result = LocalFileWriteGate().ApplyTreeOps(ops);
   if (!result.ok) {
-    return result;  // all or nothing: undone locally, so nothing to replay
+    return result;
   }
   std::vector<MirrorSyncEngine::LocalTreeOp> replay;
   for (std::size_t index = 0; index < ops.size(); ++index) {
@@ -201,18 +169,14 @@ FileWriteGate::TreeResult MirrorWriteGate::ApplyTreeOps(std::span<const TreeOp> 
         if (const std::optional<std::string>& to = host_to[index]) {
           replay.push_back({Kind::Rename, *from, *to});
         } else {
-          replay.push_back({Kind::Delete, *from, {}});  // moved out of the project
+          replay.push_back({Kind::Delete, *from, {}});
         }
         break;
       case TreeOp::Kind::Delete:
       case TreeOp::Kind::Trash:
-        // The host has no desktop trash to restore from; the local trash keeps the
-        // user's copy, and the host's goes.
         replay.push_back({Kind::Delete, *from, {}});
         break;
       case TreeOp::Kind::Copy:
-        // The copy is new local content: its folders are created on the host and
-        // its files pushed like any written file.
         ReplayCopiedTree(*this, engine_, op.new_path, replay);
         break;
     }
@@ -227,4 +191,4 @@ void MirrorWriteGate::DisposeStaged(std::span<const std::filesystem::path> stage
   LocalFileWriteGate().DisposeStaged(staged);
 }
 
-}  // namespace microide::project::remote
+}

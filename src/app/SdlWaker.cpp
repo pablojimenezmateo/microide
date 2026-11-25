@@ -22,28 +22,17 @@ namespace microide::app {
 
 namespace {
 
-// How long a pushed wake gets before the relay calls it lost: well past a delivered
-// wake's latency, small next to a human's.
 constexpr std::chrono::milliseconds kLostWakeDelay{10};
 
 std::atomic<std::uint32_t> g_nudge_type{0};
 
-// The relay's second, SDL-independent half: a signal that interrupts the main
-// thread's blocking wait. SDL's own wake -- a ClientMessage through its X request
-// connection -- is lost in the soak's busy cells, the nudge's included: every
-// late wait the app logged ended by its timeout with the nudge sent (soak
-// 049ca74b0cee, 3 s control answers). SDL's X11 and Wayland waits poll with
-// SDL_IOR_NO_RETRY so that a signal ends them; the loop then pumps and finds the
-// queued event. SA_RESTART keeps any other system call the signal might land in
-// (the loop left its wait just after the relay looked) running as before; the
-// poll family is never restarted, which is the point.
-const int kWakeSignal = SIGRTMIN + 7;  // + 6 is the stall watchdog's (CrashDiagnostics.h)
+const int kWakeSignal = SIGRTMIN + 7;
 std::atomic<bool> g_interrupt_ready{false};
 pthread_t g_main_thread{};
 
 void InstallWakeSignal() {
   struct sigaction action {};
-  action.sa_handler = [](int) {};  // only interrupts
+  action.sa_handler = [](int) {};
   sigemptyset(&action.sa_mask);
   action.sa_flags = SA_RESTART;
   if (::sigaction(kWakeSignal, &action, nullptr) == 0) {
@@ -52,7 +41,6 @@ void InstallWakeSignal() {
   }
 }
 
-// Process-lifetime: producers push from their own threads until exit.
 LostWakeRelay& Relay() {
   static LostWakeRelay relay(kLostWakeDelay, [] {
     if (const std::uint32_t type = g_nudge_type.load(std::memory_order_acquire); type != 0) {
@@ -67,11 +55,11 @@ LostWakeRelay& Relay() {
   return relay;
 }
 
-}  // namespace
+}
 
 void InstallSdlWaker() {
   g_nudge_type.store(RegisterSdlWakeChannel("wake-nudge"), std::memory_order_release);
-  InstallWakeSignal();  // InstallSdlWaker runs on the main thread, before any producer
+  InstallWakeSignal();
   (void)Relay();
   util::SetWakePusher([](util::WakeChannel channel) {
     SDL_Event event{};
@@ -100,23 +88,19 @@ bool IsSdlWakeNudge(std::uint32_t event_type) {
 
 void InstallSdlLogSink() {
   util::SetLogSink([](std::string_view message) {
-    // %s with an explicit copy: SDL_Log takes a NUL-terminated format argument and
-    // the view is not guaranteed to be one.
     SDL_Log("%s", std::string(message).c_str());
   });
 }
 
 namespace {
 
-// Registered wake channels' names, by event type. Written once each at startup on
-// the main thread, before any producer runs; read by the main loop's trace.
 std::mutex g_channel_names_mutex;
 std::unordered_map<std::uint32_t, const char*>& ChannelNames() {
   static std::unordered_map<std::uint32_t, const char*> names;
   return names;
 }
 
-}  // namespace
+}
 
 std::string SdlEventName(std::uint32_t event_type) {
   {
@@ -136,9 +120,7 @@ std::uint32_t RegisterSdlWakeChannel(const char* name) {
     std::scoped_lock lock(g_channel_names_mutex);
     ChannelNames()[type] = name;
   }
-  // SDL returns (Uint32)-1 when the custom-event range is exhausted. Map that onto
-  // the "waking disabled" channel so no producer ever pushes onto event id 0xFFFFFFFF.
   return type == static_cast<Uint32>(-1) ? 0u : static_cast<std::uint32_t>(type);
 }
 
-}  // namespace microide::app
+}

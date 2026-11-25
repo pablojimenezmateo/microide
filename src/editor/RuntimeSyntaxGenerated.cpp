@@ -1,4 +1,3 @@
-// Generated standalone snapshot of runtime syntax rules.
 #include "editor/RuntimeSyntaxData.h"
 
 namespace microide::editor::runtime_syntax {
@@ -3622,4 +3621,4 @@ const GeneratedDefinitionData kGeneratedDefinitions[] = {
 
 const std::size_t kGeneratedDefinitionCount = sizeof(kGeneratedDefinitions) / sizeof(kGeneratedDefinitions[0]);
 
-}  // namespace microide::editor::runtime_syntax
+}

@@ -15,14 +15,11 @@ namespace microide::project::remote {
 
 std::filesystem::path MirrorObjects::PathOf(const util::ContentHash& hash) const {
   const std::string hex = hash.Hex();
-  // Fanned out by the first byte, as git does: no directory of 50,000 entries.
   return directory_ / hex.substr(0, 2) / hex;
 }
 
 namespace {
 
-// temp + rename, no fsync: a reader never sees a half-written object, and a torn
-// one after a crash fails Get's hash check.
 void WriteUnflushed(const std::filesystem::path& path, std::string_view bytes) {
   const std::string temp = path.string() + ".tmp";
   const int fd = ::open(temp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
@@ -49,7 +46,7 @@ void WriteUnflushed(const std::filesystem::path& path, std::string_view bytes) {
   util::CrashPoint("objects.renamed", path.native());
 }
 
-}  // namespace
+}
 
 void MirrorObjects::Put(const util::ContentHash& hash, std::string_view bytes) {
   if (bytes.size() > kMaxObjectBytes) {
@@ -59,14 +56,10 @@ void MirrorObjects::Put(const util::ContentHash& hash, std::string_view bytes) {
   std::lock_guard lock(mutex_);
   std::error_code error;
   if (std::filesystem::exists(path, error)) {
-    // Content-addressed: the same bytes. Touch it, so the sweep sees it as recent.
     std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now(), error);
     return;
   }
   std::filesystem::create_directories(path.parent_path(), error);
-  // A failed write only means a later transfer: the store is a cache. Not flushed:
-  // Get re-hashes every object and discards one a crash tore, so a flush per pulled
-  // file (it was one, beside the tree's) bought nothing (TD-2026-10-14-340).
   WriteUnflushed(path, bytes);
 }
 
@@ -79,7 +72,7 @@ std::optional<std::string> MirrorObjects::Get(const util::ContentHash& hash) {
   if (util::HashContent(*bytes) != hash) {
     std::lock_guard lock(mutex_);
     std::error_code error;
-    std::filesystem::remove(path, error);  // damaged on disk: never served
+    std::filesystem::remove(path, error);
     return std::nullopt;
   }
   return bytes;
@@ -127,4 +120,4 @@ MirrorObjects::SweepResult MirrorObjects::Sweep(const std::unordered_set<std::st
   return result;
 }
 
-}  // namespace microide::project::remote
+}

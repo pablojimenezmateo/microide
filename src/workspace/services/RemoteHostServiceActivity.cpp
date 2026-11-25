@@ -1,5 +1,3 @@
-// RemoteHostService's Host view (remote-host-activity D4-D6): what a connected
-// host runs for microide, pushed by the host while the view is on screen.
 #include "workspace/services/RemoteHostService.h"
 
 #include <algorithm>
@@ -34,7 +32,7 @@ const remote::ServerProcess* FindProcess(const remote::ServerStatus& status, std
   return it != status.processes->end() ? &*it : nullptr;
 }
 
-}  // namespace
+}
 
 std::shared_ptr<remote::RemoteServerClient> RemoteHostService::ConnectedClient(std::string_view host) const {
   const remote::RemoteHostSession* session = SessionFor(host);
@@ -49,7 +47,6 @@ bool RemoteHostService::ShowHost(std::string_view host) {
   if (SessionFor(host) == nullptr) {
     return false;
   }
-  // Beside other hosts, its group is opened; alone, it is all there is.
   if (host_view_.collapsed.erase(HostGroupRowId(host)) > 0) {
     BuildHostRows();
   }
@@ -64,7 +61,7 @@ void RemoteHostService::SetHostViewVisible(bool visible, const std::filesystem::
   }
   host_view_.visible = visible;
   if (visible) {
-    BuildHostRows();  // each host's last status, if this window has one
+    BuildHostRows();
   }
   UpdateActivitySubscription();
 }
@@ -85,9 +82,6 @@ void RemoteHostService::RestoreCollapsedHostGroups(const std::vector<std::string
 }
 
 void RemoteHostService::UpdateActivitySubscription() {
-  // Every host with an open project, while the view is on screen: subscribed
-  // through the connection that should carry it, unsubscribed from one that
-  // should not.
   std::map<std::string, std::shared_ptr<remote::RemoteServerClient>, std::less<>> wanted;
   if (host_view_.visible) {
     for (std::string& host : OpenHosts()) {
@@ -96,14 +90,11 @@ void RemoteHostService::UpdateActivitySubscription() {
       }
     }
   }
-  // Both on the host-job queue, in order: an unsubscribe sent straight away could
-  // overtake a subscribe still queued behind a slow job, leaving a hidden view
-  // subscribed for good.
   for (auto it = host_view_.subscriptions.begin(); it != host_view_.subscriptions.end();) {
     std::shared_ptr<remote::RemoteServerClient> current = it->second.client.lock();
     const auto keep = wanted.find(it->first);
     if (keep != wanted.end() && keep->second == current) {
-      wanted.erase(keep);  // as it should be
+      wanted.erase(keep);
       ++it;
       continue;
     }
@@ -119,19 +110,13 @@ void RemoteHostService::UpdateActivitySubscription() {
       std::string error;
       std::optional<remote::ServerStatus> status = client->SubscribeActivity(
           [this, host, generation](const remote::ServerStatus& pushed) {
-            // Only the latest matters by the time the UI thread runs.
             mailbox_.PostLatest("remote-activity:" + host,
                                 [this, host, generation, pushed]() { OnHostActivity(host, generation, pushed); });
           },
           &error);
       if (!status.has_value() && client->connected()) {
-        // A server older than activity/subscribe: one plain status, and the view
-        // stays as that says, with its figures not reported. Not an error.
         status = client->Status(&error);
       }
-      // Under the pushes' key: a push queued before this answer runs in the
-      // answer's place otherwise, and the older answer would then overwrite it
-      // (see MainThreadMailbox::PostLatest). Only the newest state runs.
       mailbox_.PostLatest("remote-activity:" + host,
                           [this, host, generation, status = std::move(status)]() mutable {
                             OnHostActivity(host, generation, std::move(status));
@@ -173,7 +158,6 @@ void RemoteHostService::BuildHostRows() {
       input.status = &it->second;
     }
     if (several) {
-      // The host's own group: its connection, and what it runs once it said.
       std::string id = HostGroupRowId(host);
       const bool collapsed = host_view_.collapsed.count(id) > 0;
       std::string detail = input.connection_state;
@@ -224,7 +208,7 @@ std::pair<std::string, std::string_view> RemoteHostService::HostOfRow(std::strin
   }
   std::string host(row->host);
   if (!id.starts_with('@')) {
-    host = SoleHost();  // an unprefixed id: the view shows one host
+    host = SoleHost();
   } else {
     const std::size_t space = id.find(' ');
     id = space == std::string_view::npos ? std::string_view() : id.substr(space + 1);
@@ -241,7 +225,6 @@ std::optional<RemoteHostService::RowCommand> RemoteHostService::HostRowOpenComma
   const std::string host = QuoteCommandArg(view_host);
   switch (row->kind) {
     case HostRowId::Kind::Terminal:
-      // Focuses the tab that holds it, else attaches it in a new one.
       return RowCommand{.command_line = "remote-attach-terminals " + host + " " + std::to_string(row->handle)};
     case HostRowId::Kind::Server:
       return RowCommand{.command_line = "remote-stop-server " + host,
@@ -251,7 +234,7 @@ std::optional<RemoteHostService::RowCommand> RemoteHostService::HostRowOpenComma
     case HostRowId::Kind::Host:
     case HostRowId::Kind::Workspace:
     case HostRowId::Kind::Process:
-      return std::nullopt;  // the row is information
+      return std::nullopt;
   }
   return std::nullopt;
 }
@@ -269,14 +252,11 @@ std::optional<RemoteHostService::RowCommand> RemoteHostService::HostRowEndComman
     if (terminal == nullptr) {
       return std::nullopt;
     }
-    // term/close from a connection that is not attached leaves a terminal someone
-    // else is using alone, by design (tmux's detach): say so rather than appear to
-    // have ended it.
     const std::shared_ptr<remote::RemoteServerClient> client = ConnectedClient(view_host);
     const bool here = client != nullptr && operations_.host_terminal_tab &&
                       operations_.host_terminal_tab(
                           terminal::HostIdentity{.epoch = client->hello().daemon_epoch, .handle = terminal->handle},
-                          /*focus=*/false);
+                          false);
     if (!terminal->exited && terminal->clients > (here ? 1u : 0u)) {
       return RowCommand{.refusal = "Terminal #" + std::to_string(terminal->handle) + " on " + view_host +
                                    " is open in another window; close it there"};
@@ -319,4 +299,4 @@ bool RemoteHostService::EndHostProcess(std::string_view host, std::uint64_t hand
   return true;
 }
 
-}  // namespace microide::workspace
+}

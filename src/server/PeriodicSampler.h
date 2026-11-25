@@ -12,13 +12,8 @@
 
 namespace microide::server {
 
-// Runs `sample` every `interval` on its own thread until destroyed (which joins
-// it, so `sample` may use whatever outlives the sampler). For host state nothing
-// notifies about: a repository moved by a commit outside the server, a port a
-// host program started listening on.
 class PeriodicSampler {
  public:
-  // `name`: the thread's (util::NameCurrentThread).
   PeriodicSampler(std::string_view name, std::chrono::milliseconds interval, std::function<void()> sample)
       : sample_(std::move(sample)) {
     thread_ = std::thread([this, interval, name = std::string(name)]() {
@@ -53,7 +48,7 @@ class PeriodicSampler {
   std::mutex mutex_;
   std::condition_variable cv_;
   bool stop_ = false;
-  std::thread thread_;  // last
+  std::thread thread_;
 };
 
-}  // namespace microide::server
+}

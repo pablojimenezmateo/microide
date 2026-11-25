@@ -11,27 +11,23 @@ namespace microide::editor {
 
 namespace {
 
-// Breakpoints are kept sorted by line: the first one at or after `line`.
 template <typename Breakpoints>
 auto LowerBoundLine(Breakpoints& breakpoints, std::size_t line) {
   return std::lower_bound(breakpoints.begin(), breakpoints.end(), line,
                           [](const Breakpoint& bp, std::size_t value) { return bp.line < value; });
 }
 
-// The breakpoint on exactly `line`, or end().
 template <typename Breakpoints>
 auto FindLine(Breakpoints& breakpoints, std::size_t line) {
   const auto it = LowerBoundLine(breakpoints, line);
   return it != breakpoints.end() && it->line == line ? it : breakpoints.end();
 }
 
-}  // namespace
+}
 
 std::string BreakpointStore::PathKey(const std::filesystem::path& path) {
   std::string scratch;
   const std::string_view key = PathKeyView(path, scratch);
-  // The scratch already holds the answer whenever normalization ran; otherwise
-  // the view is into the path and this is the one copy the caller asked for.
   return scratch.empty() ? std::string(key) : std::move(scratch);
 }
 
@@ -40,9 +36,6 @@ std::string_view BreakpointStore::PathKeyView(const std::filesystem::path& path,
   if (path.empty()) {
     return {};
   }
-  // `lexically_normal()` is ~12 allocations (a fresh path plus a component list
-  // holding a string per component) and is a no-op for a path whose text is
-  // already normal — which is every path the editor opened a file with.
   if (!util::PathTextNeedsNormalizing(path.native())) {
     return path.native();
   }
@@ -139,9 +132,6 @@ Breakpoint* BreakpointStore::MutableBreakpoint(const std::filesystem::path& path
 void BreakpointStore::SetOptionalField(const std::filesystem::path& path, std::size_t line,
                                        std::optional<std::string> Breakpoint::*field,
                                        std::optional<std::string> value) {
-  // Clearing a field on a line with no breakpoint is a no-op: don't let
-  // MutableBreakpoint materialize a phantom breakpoint that then trips the
-  // equality guard below and returns without bumping the revision.
   if (!value.has_value() && !HasBreakpoint(path, line)) {
     return;
   }
@@ -224,9 +214,7 @@ std::vector<BreakpointStore::FileBreakpoints> BreakpointStore::SnapshotAll() con
   for (const auto& [key, entry] : by_path_) {
     files.push_back(FileBreakpoints{.path = entry.path, .breakpoints = entry.breakpoints});
   }
-  // Deterministic order for callers/tests.
   std::sort(files.begin(), files.end(), [](const FileBreakpoints& lhs, const FileBreakpoints& rhs) {
-    // native() is a const reference; avoids per-comparison string allocations.
     return lhs.path.native() < rhs.path.native();
   });
   return files;
@@ -241,7 +229,6 @@ void BreakpointStore::FillSortedFileViews(std::vector<FileBreakpointsView>* out)
   for (const auto& [key, entry] : by_path_) {
     out->push_back(FileBreakpointsView{.path = &entry.path, .breakpoints = entry.breakpoints});
   }
-  // Same ordering rule as SnapshotAll, so the two agree on what "first file" means.
   std::sort(out->begin(), out->end(),
             [](const FileBreakpointsView& lhs, const FileBreakpointsView& rhs) {
               return lhs.path->native() < rhs.path->native();
@@ -256,17 +243,12 @@ void BreakpointStore::ApplyVerification(const std::filesystem::path& path,
   }
   for (const VerifiedBreakpoint& result : results) {
     if (result.line <= 0) {
-      continue;  // nothing to match on
+      continue;
     }
-    // Match by the requested line, not by array index: the user may have toggled
-    // another breakpoint in this file while the response was in flight, so the
-    // current store order need not align with the request order. Breakpoints are
-    // kept sorted by line, so binary-search each result instead of a linear scan —
-    // a file with thousands of breakpoints otherwise pays O(n*results) here.
     const std::size_t line = static_cast<std::size_t>(result.line - 1);
     const auto it = FindLine(*breakpoints, line);
     if (it == breakpoints->end()) {
-      continue;  // line was removed while the response was in flight
+      continue;
     }
     it->verified = result.verified;
     it->adapter_id = result.id;
@@ -290,11 +272,6 @@ void BreakpointStore::ApplyBreakpointEvent(const std::filesystem::path& path,
     }
     if (target == nullptr && result.line > 0) {
       const std::size_t line = static_cast<std::size_t>(result.line - 1);
-      // The line fallback exists solely for the pre-binding window, where a line
-      // breakpoint has not yet been assigned its adapter id. Restrict it to
-      // still-unbound breakpoints (adapter_id == 0): once a breakpoint has an id it
-      // is matched by id above, so an event carrying a FOREIGN id (e.g. a function
-      // breakpoint that resolved to this same source line) must not clobber it here.
       const auto it = std::find_if(breakpoints.begin(), breakpoints.end(),
                                    [line](const Breakpoint& bp) {
                                      return bp.line == line && bp.adapter_id == 0;
@@ -321,7 +298,6 @@ void BreakpointStore::ApplyBreakpointEvent(const std::filesystem::path& path,
       changed = apply_in(*breakpoints);
     }
   } else {
-    // No source path on the event: locate the breakpoint by adapter id anywhere.
     for (auto& [key, entry] : by_path_) {
       if (apply_in(entry.breakpoints)) {
         changed = true;
@@ -358,7 +334,6 @@ bool BreakpointStore::ShiftForAppliedEdit(const std::filesystem::path& path,
   if (entry_it == by_path_.end() || entry_it->second.breakpoints.empty()) {
     return false;
   }
-  // Normalize the pre-edit range (start <= end) exactly like the diagnostics shift.
   TextPosition before_start = edit.range_before.start;
   TextPosition before_end = edit.range_before.end;
   if (before_end.line < before_start.line ||
@@ -371,7 +346,7 @@ bool BreakpointStore::ShiftForAppliedEdit(const std::filesystem::path& path,
       std::count(edit.replacement_text.begin(), edit.replacement_text.end(), '\n'));
   const std::size_t new_end_line = s + newline_count;
   if (s == e && new_end_line == e) {
-    return false;  // in-line edit with no net line change: nothing moves.
+    return false;
   }
   const std::ptrdiff_t delta =
       static_cast<std::ptrdiff_t>(new_end_line) - static_cast<std::ptrdiff_t>(e);
@@ -382,12 +357,12 @@ bool BreakpointStore::ShiftForAppliedEdit(const std::filesystem::path& path,
     const std::size_t line = bp.line;
     std::size_t next = line;
     if (line <= s) {
-      next = line;  // at or above the edit's first line: unchanged
+      next = line;
     } else if (line > e) {
       const std::ptrdiff_t shifted = static_cast<std::ptrdiff_t>(line) + delta;
       next = shifted < 0 ? 0 : static_cast<std::size_t>(shifted);
     } else {
-      next = new_end_line;  // inside the replaced span: slide to its last line
+      next = new_end_line;
     }
     if (next != line) {
       bp.line = next;
@@ -397,8 +372,6 @@ bool BreakpointStore::ShiftForAppliedEdit(const std::filesystem::path& path,
   if (!changed) {
     return false;
   }
-  // A shift can collide two breakpoints onto one line; keep the first so the
-  // sorted-unique-by-line invariant the rest of the store relies on still holds.
   std::stable_sort(breakpoints.begin(), breakpoints.end(),
                    [](const Breakpoint& a, const Breakpoint& b) { return a.line < b.line; });
   breakpoints.erase(
@@ -419,7 +392,6 @@ void BreakpointStore::ReplaceAll(std::vector<FileBreakpoints> files) {
     }
     std::sort(file.breakpoints.begin(), file.breakpoints.end(),
               [](const Breakpoint& lhs, const Breakpoint& rhs) { return lhs.line < rhs.line; });
-    // Drop any persisted transient state defensively.
     for (Breakpoint& bp : file.breakpoints) {
       bp.verified = false;
       bp.adapter_id = 0;
@@ -430,4 +402,4 @@ void BreakpointStore::ReplaceAll(std::vector<FileBreakpoints> files) {
   revision_.Bump();
 }
 
-}  // namespace microide::editor
+}

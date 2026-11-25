@@ -1,15 +1,3 @@
-// The local save fault matrix (safety-plan W5): a SIGKILL at every durable-write
-// step of util::WriteTextFileAtomically -- the path every editor save, session and
-// user-config write takes -- leaves the target holding its old bytes or its new
-// ones, never a mix, a truncation or nothing.
-//
-// The write runs in a helper (this binary re-executed with --local-write-fault-
-// client, as MirrorFaultMatrixTests does), which first counts the util::CrashPoint
-// steps an undisturbed write passes and then, one run per step, SIGKILLs itself at
-// that step. A killed write may leave its hidden staging temporary behind: the
-// project scan sweeps those once their writer is gone (9ca11c328), so only the
-// target's bytes are judged here.
-
 #include "TestSupport.h"
 
 #include <fcntl.h>
@@ -41,7 +29,7 @@ constexpr std::string_view kHelperFlag = "--local-write-fault-client";
 std::atomic<std::size_t> g_steps{0};
 std::atomic<std::size_t> g_kill_at{std::numeric_limits<std::size_t>::max()};
 
-void KillAtStep(const char* /*site*/, std::string_view /*what*/) {
+void KillAtStep(const char* , std::string_view ) {
   if (g_steps.fetch_add(1) == g_kill_at.load()) {
     ::raise(SIGKILL);
   }
@@ -60,8 +48,6 @@ struct HelperRun {
   std::size_t steps = 0;
 };
 
-// Runs the helper: write `content_file`'s bytes to `target` (mode create|replace),
-// SIGKILLed at step `kill_at` (max: never). The helper prints its step count.
 HelperRun RunHelper(const std::filesystem::path& target, const std::filesystem::path& content_file,
                     std::string_view mode, std::size_t kill_at) {
   int out[2];
@@ -100,7 +86,7 @@ HelperRun RunHelper(const std::filesystem::path& target, const std::filesystem::
 
 struct Case {
   std::string name;
-  std::optional<std::string> old_content;  // nullopt: the target does not exist yet
+  std::optional<std::string> old_content;
   std::string new_content;
   bool through_symlink = false;
 };
@@ -166,7 +152,7 @@ void TestEveryCrashPointOfASaveLeavesTheOldOrTheNewFile() {
   }
 }
 
-}  // namespace
+}
 
 bool IsLocalWriteFaultClient(int argc, char** argv) { return argc > 1 && std::string_view(argv[1]) == kHelperFlag; }
 
@@ -197,4 +183,4 @@ void RegisterLocalWriteFaultMatrixTests(std::vector<TestCase>& tests) {
           TestEveryCrashPointOfASaveLeavesTheOldOrTheNewFile);
 }
 
-}  // namespace microide::tests
+}

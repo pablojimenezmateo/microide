@@ -26,8 +26,6 @@ std::vector<Frame> DecodeAll(FrameDecoder& decoder) {
   return frames;
 }
 
-// Every frame type survives a round trip with its lane, id and payload intact —
-// including an empty payload, a payload with NULs, and the largest id.
 void TestEveryFrameTypeRoundTrips() {
   const std::vector<FrameType> types = {FrameType::Request,   FrameType::Response,
                                         FrameType::Notification, FrameType::ProcStdin,
@@ -55,8 +53,6 @@ void TestEveryFrameTypeRoundTrips() {
          "nothing left over, no error");
 }
 
-// The stream arrives in whatever pieces the reads returned — here one byte at a
-// time — and decodes to the same frames.
 void TestByteAtATimeFeedingDecodesTheSameFrames() {
   std::string wire;
   for (int i = 0; i < 20; ++i) {
@@ -77,11 +73,9 @@ void TestByteAtATimeFeedingDecodesTheSameFrames() {
   }
 }
 
-// A multi-byte UTF-8 character split across two stdout frames reassembles exactly:
-// content frames carry bytes, so neither half is "repaired" into U+FFFD.
 void TestSplitUtf8ReassemblesAcrossContentFrames() {
-  const std::string text = "ok \xE2\x82\xAC done \xF0\x9F\x98\x80\n";  // € and 😀
-  const std::size_t cut = 4;  // inside the euro sign
+  const std::string text = "ok \xE2\x82\xAC done \xF0\x9F\x98\x80\n";
+  const std::size_t cut = 4;
   std::string wire;
   AppendFrame(wire, FrameType::ProcStdout, Lane::Interactive, 9, text.substr(0, cut));
   AppendFrame(wire, FrameType::ProcStdout, Lane::Interactive, 9, text.substr(cut, 10));
@@ -105,8 +99,6 @@ std::string Header(std::uint32_t length, std::uint16_t type, std::uint8_t lane, 
   return header;
 }
 
-// A header announcing more than the ceiling fails as soon as the header is in,
-// without waiting for — or buffering room for — the announced payload.
 void TestOversizedFrameFailsAtTheHeader() {
   FrameDecoder decoder;
   decoder.Feed(Header(kMaxFramePayloadBytes + 1, 1, 0, 1));
@@ -139,8 +131,6 @@ void TestUnknownTypeAndLaneFail() {
          "an unknown lane ends the stream");
 }
 
-// A truncated frame is not an error, just not a frame yet — the rest may still
-// arrive. The earlier complete frames are delivered.
 void TestTruncatedFrameWaitsForTheRest() {
   std::string wire;
   AppendFrame(wire, FrameType::Request, Lane::Interactive, 1, "{\"method\":\"a\"}");
@@ -155,7 +145,6 @@ void TestTruncatedFrameWaitsForTheRest() {
   Expect(second.size() == 1 && second[0].id == 2, "the rest completes the second frame");
 }
 
-// A long-lived stream does not keep every frame it ever decoded.
 void TestDecoderReclaimsConsumedBytes() {
   FrameDecoder decoder;
   std::string frame;
@@ -168,7 +157,7 @@ void TestDecoderReclaimsConsumedBytes() {
   Expect(decoder.buffered_bytes() == 0, "nothing retained");
 }
 
-}  // namespace
+}
 
 void RegisterRemoteFrameTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteFrame/EveryFrameTypeRoundTrips", TestEveryFrameTypeRoundTrips);
@@ -182,4 +171,4 @@ void RegisterRemoteFrameTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteFrame/DecoderReclaimsConsumedBytes", TestDecoderReclaimsConsumedBytes);
 }
 
-}  // namespace microide::tests
+}

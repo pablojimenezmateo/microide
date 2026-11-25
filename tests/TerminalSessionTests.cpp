@@ -65,18 +65,10 @@ void ResetAlternateScreenFixture(microide::terminal::TerminalSession& session) {
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049hA\nB\nC\nD");
 }
 
-// Real terminal traffic contains CSI sequences we do not implement. Capturing a
-// PTY running `ls --color`, `clear`, `tput smcup/rmcup` and a coloured `git
-// status` yields finals {t, m, H, J} plus private modes ?1049 and ?2004 — and `t`
-// (XTWINOPS window manipulation) is NOT in the dispatcher's handled set. An
-// unrecognised final must be CONSUMED, never echoed: printing `22;0t` into the
-// grid would corrupt every screen a title-setting prompt touches.
 void TestTerminalSessionSwallowsUnknownCsiFinals() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 16);
 
-  // The exact XTWINOPS pair a real `tput smcup`/title-setting prompt emits,
-  // wrapped in ordinary text so any leakage lands visibly on the row.
   TerminalSessionTestAccess::AppendOutput(session, "a\x1b[22;0tb\x1b[23;0tc");
 
   const auto lines = session.SnapshotLines();
@@ -113,25 +105,13 @@ void TestTerminalSessionReverseIndexScrollsTopMargin() {
   ExpectLineText(lines, 3, "C", "reverse index should discard the previous bottom-margin row");
 }
 
-// Regression: a shrink-resize must not strand the cursor above the visible
-// window. The primary buffer's viewport is the LAST `rows_` lines of the deque,
-// and the cursor is an absolute index into it — so a `clear` (ESC[H ESC[2J
-// ESC[3J) that lands while the session is still at its pre-layout height leaves
-// exactly `old_rows` lines with the cursor on the first, and the panel's real
-// (smaller) geometry then puts the viewport on the blank tail with the prompt
-// above it. Nothing scrolls it back: every subsequent line the shell prints goes
-// to a row that is still off-screen. That is a terminal blank for the rest of the
-// session, and it is what a `clear` in a startup rc did (visible in the shipped
-// docs/media stills, whose fixture rc clears).
 void TestTerminalSessionShrinkKeepsCursorOnScreenAfterClear() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 40);
 
-  // `clear` as ncurses emits it, then the prompt the shell writes straight after.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[H\x1b[2J\x1b[3Jdev$ ");
   Expect(session.LineCount() == 24, "clear should leave exactly one screen of lines");
 
-  // The panel's real geometry arrives: five rows, not twenty-four.
   session.Resize(5, 40);
 
   const auto lines = session.SnapshotLines();
@@ -148,7 +128,6 @@ void TestTerminalSessionShrinkKeepsCursorOnScreenAfterClear() {
   }
   Expect(prompt_visible, "the prompt written before the shrink should still be on screen");
 
-  // ...and output written after the shrink lands on screen too.
   TerminalSessionTestAccess::AppendOutput(session, "echo hi\r\nhi\r\ndev$ ");
   const auto after = session.SnapshotLines();
   const std::size_t after_top = after.size() > 5 ? after.size() - 5 : 0;
@@ -161,22 +140,14 @@ void TestTerminalSessionShrinkKeepsCursorOnScreenAfterClear() {
   Expect(echoed_visible, "output written after a shrink should be visible, not off-screen");
 }
 
-// Regression: Reverse Index (ESC M) on the PRIMARY buffer must floor at the
-// visible-screen top, not deque index 0. Before the fix it decremented the
-// absolute cursor row past the viewport into scrollback, and the next printed
-// glyph silently overwrote a history line the user was no longer looking at.
 void TestTerminalSessionPrimaryReverseIndexDoesNotClimbScrollback() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
 
-  // Build scrollback deeper than the 4-row viewport: 6 lines, so the visible top
-  // is absolute row 2 and rows 0-1 are history.
   TerminalSessionTestAccess::AppendOutput(session, "P0\nP1\nP2\nP3\nP4\nP5");
   const auto before = session.SnapshotLines();
   Expect(before.size() == 6, "primary buffer should accumulate scrollback beyond the viewport");
 
-  // Home to the visible top (CSI H floors at the visible top on the primary
-  // buffer), then Reverse Index, then print a marker glyph.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[H\x1bMX");
 
   const auto after = session.SnapshotLines();
@@ -217,20 +188,15 @@ void TestTerminalSessionAlternateScreenPreservesPrimaryScrollback() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
 
-  // Build a primary scrollback deeper than the viewport so the enter/exit path
-  // exercises a non-trivial line buffer (this is the buffer the move-based swap
-  // must hand back intact).
   TerminalSessionTestAccess::AppendOutput(session, "P0\nP1\nP2\nP3\nP4\nP5");
   const auto primary_before = session.SnapshotLines();
   Expect(primary_before.size() == 6,
          "primary screen should accumulate scrollback beyond the viewport");
 
-  // Enter the alternate screen (mode 1049 clears it) and draw distinct content.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049h\x1b[HALT");
   ExpectLineText(session.SnapshotLines(), 0, "ALT",
                  "alternate screen should show its own content after entering");
 
-  // Leaving the alternate screen must restore the primary scrollback verbatim.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049l");
   const auto primary_after = session.SnapshotLines();
   Expect(primary_after.size() == primary_before.size(),
@@ -248,14 +214,10 @@ void TestTerminalSessionAlternateScreenReentryPreservesAltContent() {
   TerminalSessionTestAccess::Reset(session, 4, 8);
   TerminalSessionTestAccess::AppendOutput(session, "primary");
 
-  // Enter the alternate screen without clearing (mode 1047) and draw content.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1047h\x1b[HALTX");
   ExpectLineText(session.SnapshotLines(), 0, "ALTX",
                  "alternate screen should hold drawn content");
 
-  // Leave and re-enter without clearing: prior alternate content must survive.
-  // The move-based swap empties the backing store on restore, so re-entry must
-  // not mistake that for an uninitialized screen and clear it.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1047l");
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1047h");
   ExpectLineText(session.SnapshotLines(), 0, "ALTX",
@@ -273,9 +235,6 @@ void TestTerminalSessionPasteUsesBracketedPasteWhenEnabled() {
          "terminal paste should wrap clipboard text when bracketed paste mode is enabled");
 }
 
-// A pasted line break is the Enter key, which is a carriage return on the wire
-// (what VTE and xterm.js send). `\r\n` collapses to one `\r`; a bare `\r` is
-// already right. Both with and without bracketed paste.
 void TestTerminalSessionPasteSendsLineBreaksAsCarriageReturns() {
   {
     microide::terminal::TerminalSession session;
@@ -294,8 +253,6 @@ void TestTerminalSessionPasteSendsLineBreaksAsCarriageReturns() {
   }
 }
 
-// A poisoned clipboard containing the bracketed-paste end marker must not be able
-// to close paste mode early and inject the trailing bytes as typed input.
 void TestTerminalSessionPasteStripsEmbeddedEndMarker() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -303,29 +260,21 @@ void TestTerminalSessionPasteStripsEmbeddedEndMarker() {
 
   session.PasteText("safe\x1b[201~rm -rf ~\n");
 
-  // The embedded end marker is dropped; the payload stays inside the paste guard.
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[200~saferm -rf ~\r\x1b[201~",
          "an embedded end marker must be stripped so paste mode can't be escaped");
 }
 
-// A single-pass deletion of the end marker is not closed under reconstitution:
-// deleting the middle marker in `ESC[` + `ESC[201~` + `201~payload` splices the
-// surrounding bytes into a fresh `ESC[201~`. The filter must reach a fixed point so
-// deletion-created markers are also removed and cannot escape paste mode.
 void TestTerminalSessionPasteNeutralizesReconstitutedEndMarker() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?2004h");
 
-  // Bytes: ESC [  <full end marker>  201~rm -rf ~\n
   session.PasteText("\x1b[\x1b[201~201~rm -rf ~\n");
 
   const std::string sent = TerminalSessionTestAccess::SentBytes(session);
-  // The only end marker present must be the trailing guard we appended; the body
-  // must contain no embedded ESC[201~ that could terminate paste mode early.
   Expect(sent == "\x1b[200~rm -rf ~\r\x1b[201~",
          "reconstituted end markers must be neutralized to a fixed point");
-  const std::string_view body_and_tail(sent.data() + 6, sent.size() - 6);  // skip ESC[200~
+  const std::string_view body_and_tail(sent.data() + 6, sent.size() - 6);
   Expect(body_and_tail.find("\x1b[201~") == body_and_tail.size() - 6,
          "the pasted body must contain no embedded end marker before the final guard");
 }
@@ -343,20 +292,12 @@ void TestTerminalSessionPasteFallsBackToRawBytesWhenDisabled() {
 
 using KeyPress = microide::terminal::TerminalSession::KeyPress;
 
-// A bare key press with no modifiers — the shape the shell sends for an arrow /
-// Home / End with nothing held.
 void SendUnmodified(microide::terminal::TerminalSession& session, KeyPress::Key key) {
   KeyPress press;
   press.key = key;
   Expect(session.SendKeyPress(press), "an unmodified functional key should encode to bytes");
 }
 
-// This file's encoder routes every text key through util::AppendUtf8 precisely so
-// a codepoint from SDL or a test seam can never send malformed bytes to the child.
-// The Ctrl branch was the exception: with no control mapping for the key it cast
-// the codepoint to a single char, truncating everything above U+007F -- Ctrl with
-// e-acute held became a lone 0xE9 byte, which is not valid UTF-8. xterm sends the
-// key's own characters when there is no control mapping.
 void TestTerminalSessionCtrlWithoutAControlMappingSendsTheKeysUtf8() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -364,13 +305,11 @@ void TestTerminalSessionCtrlWithoutAControlMappingSendsTheKeysUtf8() {
   KeyPress press;
   press.key = KeyPress::Key::Char;
   press.ctrl = true;
-  press.codepoint = U'\u00e9';  // e-acute: no control mapping
+  press.codepoint = U'\u00e9';
   Expect(session.SendKeyPress(press), "Ctrl with an unmapped key still encodes to bytes");
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\xc3\xa9",
          "an unmapped Ctrl key sends the key's own UTF-8, not its truncated low byte");
 
-  // The mapped rows are unchanged: Ctrl+A is still SOH, and Ctrl with an ASCII key
-  // that has no mapping still sends that character.
   TerminalSessionTestAccess::Reset(session, 24, 80);
   press.codepoint = U'a';
   Expect(session.SendKeyPress(press), "Ctrl+A encodes");
@@ -385,10 +324,6 @@ void TestTerminalSessionApplicationCursorKeysModeUsesSs3Sequences() {
   TerminalSessionTestAccess::Reset(session, 24, 80);
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1h");
 
-  // Drive the SAME entry point the shell uses (SendKeyPress). These assertions
-  // previously went through SendKey/FormatTerminalKeyBytes, a legacy encoder no
-  // production path called — so a DECCKM regression in the live encoder could not
-  // have failed them.
   SendUnmodified(session, KeyPress::Key::Up);
   SendUnmodified(session, KeyPress::Key::Home);
   SendUnmodified(session, KeyPress::Key::End);
@@ -485,13 +420,6 @@ void TestTerminalSessionTracksSoftWrappedRowsSeparatelyFromHardNewlines() {
          "rows reached by autowrap should be marked as wrapped continuations");
 }
 
-// Regression: every range-snapshot entry point used clear()+assign(), which
-// destroys each TerminalLine already in the destination — freeing its `cells`
-// vector — and copy-constructs a fresh one. The terminal render path re-snapshots
-// the visible range on every frame whose generation changed, and mouse-wheel
-// scrolling re-snapshots it per tick for hover resolution, so that was one
-// allocation AND one free per visible row per event. Reusing the destination rows'
-// buffers is observable as pointer stability of `cells.data()`.
 void TestTerminalSnapshotRangeReusesDestinationCellBuffers() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 16);
@@ -508,8 +436,6 @@ void TestTerminalSnapshotRangeReusesDestinationCellBuffers() {
     first_pass.push_back(line.cells.data());
   }
 
-  // Re-snapshot the same row count after new output. A fresh generation forces the
-  // copy; the destination rows must keep the buffers they already own.
   for (int round = 0; round < 4; ++round) {
     TerminalSessionTestAccess::AppendOutput(session, "more-content\r\n");
     Expect(session.SnapshotLineRangeIfChanged(0, 4, snapshot.generation - 1, &snapshot),
@@ -521,7 +447,6 @@ void TestTerminalSnapshotRangeReusesDestinationCellBuffers() {
     }
   }
 
-  // And the content is still correct — reuse must not leave stale trailing cells.
   session.SnapshotLineRangeInto(0, 4, snapshot.lines);
   Expect(snapshot.lines.size() == 4, "the reusing overload copies the same row count");
   for (const auto& line : snapshot.lines) {
@@ -637,11 +562,6 @@ void TestTerminalSessionIgnoresCharsetDesignationEscapes() {
                  "charset designation escapes should not leak trailing selector bytes");
 }
 
-// A designation is `<designator> I... F`: zero or more intermediates (0x20..0x2F)
-// then one final (0x30..0x7E). The parser consumed exactly one byte after the
-// designator, so a real multi-byte designation left its final to be printed as
-// text (2026-07-10 pass). `ESC ( " ?` is DEC Supplemental Graphic; `ESC ( % 5` is
-// DEC Supplemental Graphic via a 96-character set.
 void TestTerminalSessionConsumesMultiByteCharsetDesignations() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -653,17 +573,10 @@ void TestTerminalSessionConsumesMultiByteCharsetDesignations() {
                  "a multi-byte charset designation must be consumed whole, final byte included");
 }
 
-// A combining mark is zero-width, so it attaches to the previously written cell
-// instead of taking a column. After a DOUBLE-width base glyph the cursor sits two
-// columns on, and the cell immediately behind it is the wide-trailing spacer --
-// which holds no bytes, so every mark following a wide glyph was dropped
-// (2026-07-10 pass). It belongs to the lead cell one column further back.
 void TestTerminalSessionCombiningMarkAttachesToAWideBaseGlyph() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
 
-  // U+4E00 (double-width) followed by U+0301 COMBINING ACUTE ACCENT, then a
-  // narrow base with the same mark as the control -- that one always worked.
   TerminalSessionTestAccess::AppendOutput(session, "\xe4\xb8\x80\xcc\x81" "e\xcc\x81");
 
   const auto lines = session.SnapshotLines();
@@ -673,10 +586,6 @@ void TestTerminalSessionCombiningMarkAttachesToAWideBaseGlyph() {
          "the mark must not consume a column of its own");
 }
 
-// DECSTBM homes the cursor. With origin mode already on, "home" is the top MARGIN,
-// not the top of the screen -- the same rebasing every other addressing command
-// does under DECOM (2026-07-10 pass; the ordering that exposes it is `?6h` BEFORE
-// `r`, since the existing coverage sets the region first).
 void TestTerminalSessionDecstbmHomesToTheMarginUnderOriginMode() {
   microide::terminal::TerminalSession session;
   ResetAlternateScreenFixture(session);
@@ -736,8 +645,6 @@ void TestTerminalSessionOsc52ClipboardBellQueuesClipboardText() {
          "queued clipboard text should be consumed only once");
 }
 
-// BEL outside an escape sequence rings the bell once; the BEL that terminates an
-// OSC (a title, a clipboard write) is a terminator, not a bell.
 void TestTerminalSessionBellIsConsumedOnceAndNotFromAnOscTerminator() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -761,15 +668,10 @@ void TestTerminalSessionOsc52ClipboardStQueuesClipboardText() {
          "OSC 52 sequences terminated by ST should queue decoded clipboard text");
 }
 
-// Regression: an OSC 52 clipboard write that overruns the escape-sequence buffer
-// is dropped, but the drop must be observable (ConsumeOversizedOsc52Dropped) so the
-// host can tell the user instead of failing silently.
 void TestTerminalSessionOsc52OversizedPayloadIsFlagged() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  // A base64 body far beyond the 8 KiB escape-sequence cap, never terminated by
-  // BEL/ST — the parser abandons it at the cap.
   std::string huge = "\x1b]52;c;";
   huge.append(20000, 'A');
   TerminalSessionTestAccess::AppendOutput(session, huge);
@@ -854,7 +756,6 @@ void TestTerminalSessionAllocatesTwoColumnsForWideGlyphs() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  // U+6211 (CJK, double-width) followed by an ASCII letter.
   TerminalSessionTestAccess::AppendOutput(session, "\xE6\x88\x91" "A");
 
   const auto lines = session.SnapshotLines();
@@ -875,7 +776,6 @@ void TestTerminalSessionAttachesCombiningMarksToBaseCell() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  // 'e' + U+0301 COMBINING ACUTE ACCENT (CC 81).
   TerminalSessionTestAccess::AppendOutput(session, "e\xCC\x81X");
 
   const auto lines = session.SnapshotLines();
@@ -891,35 +791,26 @@ void TestTerminalSessionReportsWorkingDirectoryAndColors() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  // An empty host names the local machine; the percent-decoded path is recorded.
   TerminalSessionTestAccess::AppendOutput(session,
                                           "\x1b]7;file:///home/user/proj%20x\x07");
   Expect(session.reported_working_directory() == std::filesystem::path("/home/user/proj x"),
          "OSC 7 should record the percent-decoded working directory");
 
-  // `localhost` is also local.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b]7;file://localhost/tmp/local\x07");
   Expect(session.reported_working_directory() == std::filesystem::path("/tmp/local"),
          "OSC 7 with a localhost host should be treated as local");
 
-  // A remote (SSH) host's report must be REJECTED, not treated as a local cwd —
-  // the previous local value is retained.
   TerminalSessionTestAccess::AppendOutput(session,
                                           "\x1b]7;file://some-remote-box/remote/path\x07");
   Expect(session.reported_working_directory() == std::filesystem::path("/tmp/local"),
          "OSC 7 from a non-local host must be ignored, keeping the last local cwd");
 
-  // OSC 11 background query must receive an rgb: reply terminated by ST.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b]11;?\x1b\\");
   const std::string sent = TerminalSessionTestAccess::SentBytes(session);
   Expect(sent.rfind("\x1b]11;rgb:", 0) == 0 && sent.find("\x1b\\") != std::string::npos,
          "OSC 11 background query should be answered with an rgb: color reply");
 }
 
-// What modern TUIs (Claude Code, neovim, helix) ask the terminal at startup, and
-// what they must be told. Found by recording Claude Code's startup inside
-// microide: it sends XTVERSION, the kitty keyboard query and DA1, and enables
-// mode 2031 to follow the colour scheme.
 void TestTerminalSessionAnswersModernTuiQueries() {
   using microide::terminal::TerminalSession;
   using microide::util::Rgba8;
@@ -931,21 +822,18 @@ void TestTerminalSessionAnswersModernTuiQueries() {
     return TerminalSessionTestAccess::SentBytes(session);
   };
 
-  // XTVERSION names the terminal (TERM only says xterm-256color).
   const std::string version = reply_to("\x1b[>0q");
   Expect(version.rfind("\x1bP>|microide ", 0) == 0 &&
              version.size() > 2 && version.substr(version.size() - 2) == "\x1b\\",
          "XTVERSION is answered with DCS > | name version ST: " + version);
   Expect(reply_to("\x1b[>q").rfind("\x1bP>|microide ", 0) == 0, "with the parameter omitted too");
 
-  // OSC 10/11 report what the host paints, not a fixed dark palette.
   session.SetDefaultColors(Rgba8{0x20, 0x20, 0x20, 0xff}, Rgba8{0xff, 0xff, 0xff, 0xff});
   Expect(reply_to("\x1b]11;?\x1b\\") == "\x1b]11;rgb:ffff/ffff/ffff\x1b\\",
          "OSC 11 reports the host's (light) background: " + reply_to("\x1b]11;?\x1b\\"));
   Expect(reply_to("\x1b]10;?\x07") == "\x1b]10;rgb:2020/2020/2020\x1b\\",
          "OSC 10 reports the host's foreground");
 
-  // Mode 2031: queried, enabled, then told when the scheme flips — once per flip.
   Expect(reply_to("\x1b[?2031$p") == "\x1b[?2031;2$y", "2031 is a known mode, reset");
   Expect(reply_to("\x1b[?996n") == "\x1b[?997;2n", "a white background is light");
   Expect(reply_to("\x1b[?2031h").empty(), "enabling reports nothing by itself");
@@ -965,9 +853,6 @@ void TestTerminalSessionAnswersModernTuiQueries() {
          "and an unsubscribed program is not told");
 }
 
-// Desktop notifications from a program: OSC 9 (iTerm2) and OSC 777 notify
-// (urxvt/Ghostty). OSC 9 with a numbered subcommand is ConEmu's family — 9;4 is
-// a progress bar — and must not be shown as a message.
 void TestTerminalSessionQueuesDesktopNotifications() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -990,10 +875,6 @@ void TestTerminalSessionQueuesDesktopNotifications() {
   Expect(!session.ConsumeNotification().has_value(), "nothing else queues one");
 }
 
-// OSC 8 hyperlinks (what `ls --hyperlink`, gcc, rg and Claude Code print): the
-// pen's link is stamped on the glyphs written while it is open and on nothing
-// else — not on an erase, and not after the closing OSC 8 ;;. Identical URIs
-// share an id, and a `file://` link for this machine keeps only its path.
 void TestTerminalSessionStampsOsc8LinksOnGlyphs() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 40);
@@ -1037,12 +918,6 @@ void TestTerminalSessionStampsOsc8LinksOnGlyphs() {
          "another machine's file link is kept verbatim");
 }
 
-// Recycling: a full table frees only the ids no buffer still shows.
-// SGR 58/59 (the underline colour) and the `4:n` underline shapes used to be
-// parsed and dropped: a language-server-aware TUI's curly red diagnostic
-// underline drew as a plain line in the text's colour. The colour does not fit
-// the cell, so it rides the cell's extra id with the OSC 8 link; the shape fits
-// the style's free bits.
 void TestTerminalSessionKeepsUnderlineShapesAndColours() {
   using microide::terminal::TerminalColor;
   using microide::terminal::TerminalUnderlineVariant;
@@ -1055,7 +930,6 @@ void TestTerminalSessionKeepsUnderlineShapesAndColours() {
       "\x1b]8;;https://x.example\x07\x1b[4m\x1b[58;2;1;2;3mH\x1b[59mI\x1b]8;;\x07"
       "\x1b[58;2;9;9;9m\x1b" "7\x1b[0mJ\x1b" "8K\x1b[21mL");
   const auto lines = session.SnapshotLines();
-  // DECRC also restores the column, so K is written over J.
   Expect(!lines.empty() && lines[0].cells.size() == 11 && lines[0].cells[9].ascii_character() == 'K',
          "the line was written, K over J");
   if (lines.empty() || lines[0].cells.size() != 11) {
@@ -1090,7 +964,6 @@ void TestTerminalSessionKeepsUnderlineShapesAndColours() {
   Expect(c[10].style.double_underline() && color_of(10) == color_of(9),
          "21 is double and keeps the colour");
 
-  // The snapshot paint reads carries the colours its underlined cells name.
   microide::terminal::TerminalLineRangeSnapshot snapshot;
   Expect(session.SnapshotLineRangeIfChanged(0, 4, 0, &snapshot), "a snapshot is taken");
   Expect(microide::terminal::FindUnderlineColor(snapshot.underline_colors, c[0].extra) == red &&
@@ -1130,11 +1003,6 @@ void TestTerminalCellExtraTableRecyclesOnlyDeadIds() {
   Expect(table.full() && table.Intern("https://overflow", {}) == 0, "a full table refuses");
 }
 
-// A real modern TUI's frame, replayed: Claude Code 2.1.294's folder-trust dialog
-// as it wrote it to a 40x120 pty (tests/fixtures/terminal). It positions every
-// word with CHA, draws in truecolor, moves the cursor back up into the dialog,
-// and ends with XTVERSION, the kitty keyboard query and DA1 — each of which
-// must be answered, or it waits on them.
 void TestTerminalSessionReplaysClaudeCodeTrustDialog() {
   std::ifstream in(std::filesystem::path(MICROIDE_TEST_SOURCE_DIR) / "fixtures" / "terminal" /
                        "claude-code-2.1.294-trust-dialog.raw",
@@ -1206,8 +1074,6 @@ void TestTerminalSessionEncodesModifiedAndFunctionKeys() {
   ctrl_a.ctrl = true;
   Expect(sent_after(ctrl_a) == std::string(1, '\x01'),
          "Ctrl+A should send the C0 control byte 0x01 in legacy mode");
-  // The xterm digit/punctuation row: Ctrl+/ is US (Emacs C-/ undo), Ctrl+2 is NUL,
-  // Ctrl+6 is RS, Ctrl+8 is DEL. These used to pass the printable byte through.
   const auto ctrl_char = [&](char32_t cp) {
     KeyPress press;
     press.key = KeyPress::Key::Char;
@@ -1220,8 +1086,6 @@ void TestTerminalSessionEncodesModifiedAndFunctionKeys() {
   Expect(ctrl_char(U'6') == std::string(1, '\x1e'), "Ctrl+6 should send RS (0x1e)");
   Expect(ctrl_char(U'8') == std::string(1, '\x7f'), "Ctrl+8 should send DEL");
 
-  // Regression: Meta+Ctrl must prefix the control byte with ESC so M-C-<key>
-  // chords reach TUI apps; the ESC was previously dropped in legacy mode.
   KeyPress ctrl_alt_a;
   ctrl_alt_a.key = KeyPress::Key::Char;
   ctrl_alt_a.codepoint = 'a';
@@ -1236,9 +1100,6 @@ void TestTerminalSessionEncodesModifiedAndFunctionKeys() {
   Expect(sent_after(ctrl_backspace) == std::string(1, '\x08'),
          "Ctrl+Backspace should send BS (0x08) in legacy mode");
 
-  // Regression: Meta+Ctrl+Backspace must prefix the Ctrl-Backspace byte with ESC,
-  // mirroring the Meta+Ctrl+Char case, so M-C-Backspace chords reach TUI apps
-  // instead of being indistinguishable from plain Ctrl+Backspace.
   KeyPress ctrl_alt_backspace = ctrl_backspace;
   ctrl_alt_backspace.alt = true;
   Expect(sent_after(ctrl_alt_backspace) == std::string("\x1b\x08", 2),
@@ -1250,12 +1111,10 @@ void TestTerminalSessionAppliesKittyKeyboardProtocol() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  // Query before any negotiation reports flags = 0.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?u");
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[?0u",
          "a Kitty keyboard query should report zero flags before negotiation");
 
-  // Enable disambiguation (flag 1) via the set form, then Ctrl+A becomes CSI-u.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[=1;1u");
   KeyPress ctrl_a;
   ctrl_a.key = KeyPress::Key::Char;
@@ -1264,16 +1123,12 @@ void TestTerminalSessionAppliesKittyKeyboardProtocol() {
   session.SendKeyPress(ctrl_a);
   Expect(TerminalSessionTestAccess::SentBytes(session).find("\x1b[97;5u") != std::string::npos,
          "with Kitty disambiguation, Ctrl+A should be CSI 97;5 u");
-  // A bare Esc is what the protocol disambiguates: it must never be a raw 0x1b
-  // (apps would wait out an escape timeout to tell it from an alt/CSI prefix).
   TerminalSessionTestAccess::ClearSentBytes(session);
   KeyPress escape;
   escape.key = KeyPress::Key::Escape;
   session.SendKeyPress(escape);
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[27u",
          "with Kitty disambiguation, a bare Esc should be CSI 27 u");
-  // Shift alone on a text key still produces text; only ctrl/alt/super move it
-  // onto CSI u (shift+alt included).
   TerminalSessionTestAccess::ClearSentBytes(session);
   KeyPress shift_a;
   shift_a.key = KeyPress::Key::Char;
@@ -1288,11 +1143,10 @@ void TestTerminalSessionAppliesKittyKeyboardProtocol() {
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[97;4u",
          "with Kitty disambiguation, Shift+Alt+A should be CSI 97;4 u");
 
-  // Shift+Enter is unrepresentable in legacy mode but disambiguated under Kitty.
   TerminalSessionTestAccess::SetRunning(session, false);
   microide::terminal::TerminalSession session2;
   TerminalSessionTestAccess::Reset(session2, 24, 80);
-  TerminalSessionTestAccess::AppendOutput(session2, "\x1b[>1u");  // push flags = 1
+  TerminalSessionTestAccess::AppendOutput(session2, "\x1b[>1u");
   KeyPress shift_enter;
   shift_enter.key = KeyPress::Key::Enter;
   shift_enter.shift = true;
@@ -1300,31 +1154,25 @@ void TestTerminalSessionAppliesKittyKeyboardProtocol() {
   Expect(TerminalSessionTestAccess::SentBytes(session2) == "\x1b[13;2u",
          "Shift+Enter under Kitty should send CSI 13;2 u");
 
-  // Popping the stack returns to legacy mode (flags 0): Shift+Enter -> CR.
-  TerminalSessionTestAccess::AppendOutput(session2, "\x1b[<1u");  // pop
+  TerminalSessionTestAccess::AppendOutput(session2, "\x1b[<1u");
   TerminalSessionTestAccess::AppendOutput(session2, "\x1b[?u");
   Expect(TerminalSessionTestAccess::SentBytes(session2).ends_with("\x1b[?0u"),
          "popping the Kitty stack should restore zero flags");
 }
 
-// TD-2026-07-16-55: a huge Kitty pop count (CSI < 65535 u) must clear the stack and
-// reset flags in O(stack depth), not iterate the 65535 numeric parameter. Behavior is
-// verified via the resulting flags; the loop is now bounded by the 16-entry stack.
 void TestTerminalSessionKittyHugePopIsBoundedByStackDepth() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  // Push two flag states, then pop with a hostile huge count.
-  TerminalSessionTestAccess::AppendOutput(session, "\x1b[>1u");  // push, flags = 1
-  TerminalSessionTestAccess::AppendOutput(session, "\x1b[>3u");  // push, flags = 3
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[>1u");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[>3u");
   Expect(TerminalSessionTestAccess::KittyKeyboardFlags(session) == 3,
          "two pushes leave the latest flags active");
 
-  TerminalSessionTestAccess::AppendOutput(session, "\x1b[<65535u");  // pop far past depth
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[<65535u");
   Expect(TerminalSessionTestAccess::KittyKeyboardFlags(session) == 0,
          "a huge pop drains the whole stack and resets flags to 0");
 
-  // A subsequent huge pop on the already-empty stack is a no-op that stays at 0.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[<65535u");
   Expect(TerminalSessionTestAccess::KittyKeyboardFlags(session) == 0,
          "popping an empty stack with a huge count stays at flags 0");
@@ -1344,10 +1192,6 @@ void TestTerminalSessionTracksSynchronizedOutputMode() {
          "DEC mode 2026 reset should close the synchronized-output frame");
 }
 
-// One read of a TUI that redraws per keystroke can hold the end of one
-// synchronized frame and the start of the next. The finished frame must wake the
-// frame loop; deciding on the mode at the read's end suppressed it, and the screen
-// stayed one keystroke behind until more output came (Claude Code's input box).
 void TestTerminalSessionAFrameClosedInAReadWakesEvenWhenTheNextOneOpened() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 20);
@@ -1367,10 +1211,10 @@ void TestTerminalSessionAnswersDecrqmQueries() {
   TerminalSessionTestAccess::Reset(session, 24, 80);
   TerminalSessionTestAccess::SetRunning(session, true);
 
-  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?2004h");      // enable bracketed paste
-  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?2004$p");     // DECRQM query
-  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?2026$p");     // DECRQM query (reset)
-  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?9999$p");     // unknown mode
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?2004h");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?2004$p");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?2026$p");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?9999$p");
 
   const std::string sent = TerminalSessionTestAccess::SentBytes(session);
   Expect(sent.find("\x1b[?2004;1$y") != std::string::npos,
@@ -1385,11 +1229,11 @@ void TestTerminalSessionTracksCursorShape() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  TerminalSessionTestAccess::AppendOutput(session, "\x1b[5 q");  // steady... blinking bar
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[5 q");
   Expect(session.cursor_shape() == microide::terminal::TerminalSession::CursorShape::Bar &&
              session.cursor_blinking(),
          "DECSCUSR 5 should select a blinking bar cursor");
-  TerminalSessionTestAccess::AppendOutput(session, "\x1b[2 q");  // steady block
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[2 q");
   Expect(session.cursor_shape() == microide::terminal::TerminalSession::CursorShape::Block &&
              !session.cursor_blinking(),
          "DECSCUSR 2 should select a steady block cursor");
@@ -1398,14 +1242,13 @@ void TestTerminalSessionTracksCursorShape() {
 void TestTerminalSessionHonorsCustomTabStops() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
-  // Establish the default 8-column grid, then clear all and set a stop at col 3.
   session.Resize(24, 80);
   TerminalSessionTestAccess::SetCursorPosition(session, 0, 0);
-  TerminalSessionTestAccess::AppendOutput(session, "\x1b[3g");  // clear all tab stops
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[3g");
   TerminalSessionTestAccess::SetCursorPosition(session, 0, 3);
-  TerminalSessionTestAccess::AppendOutput(session, "\x1bH");    // HTS at column 3
+  TerminalSessionTestAccess::AppendOutput(session, "\x1bH");
   TerminalSessionTestAccess::SetCursorPosition(session, 0, 0);
-  TerminalSessionTestAccess::AppendOutput(session, "\t");       // tab from col 0
+  TerminalSessionTestAccess::AppendOutput(session, "\t");
   Expect(session.cursor_column() == 3,
          "a tab should advance to the next custom tab stop");
 }
@@ -1414,7 +1257,6 @@ void TestTerminalSessionTracksExtendedSgrAttributes() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  // dim + italic + underline + strikethrough, then a reset clears them all.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[2;3;4;9mA\x1b[0mB");
 
   const auto lines = session.SnapshotLines();
@@ -1432,8 +1274,6 @@ void TestTerminalSessionParsesColonTruecolorAndUnderlineStyles() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  // Colon-form direct color (38:2:r:g:b), colon-form double underline (4:2),
-  // and an underline color (58) that must be consumed without corrupting state.
   TerminalSessionTestAccess::AppendOutput(
       session, "\x1b[38:2:10:20:30;4:2;58:5:9mZ");
 
@@ -1468,23 +1308,17 @@ void TestTerminalSessionCoalescesWakeEventsUntilConsumed() {
          "terminal sessions should allow another wake request after the UI consumes the prior one");
 }
 
-// TD-2026-07-17-087: when the terminal's wake push is rejected by the loop, the
-// producer must latch the process-wide owed-wake bit so the idle-wait poll
-// self-heals, instead of only clearing its local coalescing flag and stranding
-// ready terminal state until unrelated input.
 void TestTerminalSessionRejectedWakeLatchesOwedBit() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
   session.SetWakeChannel(4242);
 
-  // Force every wake push to fail, and clear any pre-existing owed state.
   microide::util::SetWakePusherForTesting([](microide::util::WakeChannel) { return false; });
   (void)microide::util::ConsumeOwedWake();
 
   TerminalSessionTestAccess::PushWakeEvent(session);
 
   const bool owed = microide::util::HasOwedWake();
-  // Restore the default pusher before asserting so a failure cannot leak the hook.
   microide::util::SetWakePusherForTesting(nullptr);
   (void)microide::util::ConsumeOwedWake();
 
@@ -1492,7 +1326,6 @@ void TestTerminalSessionRejectedWakeLatchesOwedBit() {
 }
 
 void TestTerminalSessionStopEscalatesToKillForStubbornChild() {
-  // Cursor/agent sandboxes and some CI containers block fork(); skip instead of failing.
   if (!ForkAvailableForTerminalTests()) {
     return;
   }
@@ -1603,9 +1436,6 @@ void TestTerminalMouseEncodingUsesExactByteSequences() {
   Expect(bytes == "\x1b[<6;7;5M",
          "SGR mouse encoding should include button code, column, row, and trailing M");
 
-  // SGR (1006) release must PRESERVE the button number in Pb and signal release
-  // via the trailing 'm' — unlike the legacy encoding, it must not collapse to the
-  // ambiguous button-3 code. Left release stays button 0; the 'm' distinguishes it.
   request.mouse_sgr_ext_mode = true;
   request.button = TerminalMouseButton::Left;
   request.pressed = false;
@@ -1617,9 +1447,6 @@ void TestTerminalMouseEncodingUsesExactByteSequences() {
   Expect(bytes == "\x1b[<0;7;5m",
          "SGR mouse release must keep the real button (0) and use trailing m, not code 3");
 
-  // Legacy (non-SGR) encoding cannot represent coordinates past cell 222 (223 + 33
-  // overflows a single byte). A click beyond that range must be DROPPED, not
-  // clamped to the edge cell where the app would see a phantom click.
   {
     TerminalMouseEncodeRequest big{
         .tracking_mode = TerminalMouseTrackingMode::Normal,
@@ -1638,14 +1465,12 @@ void TestTerminalMouseEncodingUsesExactByteSequences() {
            "legacy mouse encoding should drop clicks beyond column 222");
     Expect(dropped.empty(), "dropped legacy mouse event must not emit bytes");
 
-    // The last encodable cell (222, 0-based) still encodes; 223 drops.
     big.column = 222;
     Expect(EncodeTerminalMouseEvent(big, dropped),
            "legacy mouse encoding should still encode column 222");
     big.column = 223;
     Expect(!EncodeTerminalMouseEvent(big, dropped),
            "legacy mouse encoding should drop column 223");
-    // SGR mode has no such limit.
     big.mouse_sgr_ext_mode = true;
     big.column = 250;
     Expect(EncodeTerminalMouseEvent(big, dropped),
@@ -1717,8 +1542,6 @@ void TestTerminalSessionMalformedEscapeLeavesPlainText() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  // 'g' is not a recognized escape final (unlike P/X/^/_ which start string
-  // payloads), so it is consumed as a no-op and following text prints normally.
   TerminalSessionTestAccess::AppendOutput(session, "A\x1bgBC");
 
   ExpectLineText(session.SnapshotLines(), 0, "ABC",
@@ -1726,15 +1549,11 @@ void TestTerminalSessionMalformedEscapeLeavesPlainText() {
 }
 
 void TestTerminalSessionStringPayloadsDoNotLeakToGrid() {
-  // DCS (ESC P), SOS (ESC X), PM (ESC ^), and APC (ESC _) carry string payloads
-  // terminated by ST (ESC \) or BEL. Their payloads must be discarded, not
-  // printed. Real programs emit these for Sixel, Kitty graphics, tmux
-  // passthrough, DECRQSS, etc.
   const std::array<std::string, 4> sequences = {
-      std::string("A\x1bPq#0;2;0;0;0\x1b\\B"),   // DCS ... ST
-      std::string("A\x1bX hidden sos \x1b\\B"),    // SOS ... ST
-      std::string("A\x1b^ private message \x1b\\B"),  // PM ... ST
-      std::string("A\x1b_Gi=1,a=q\x07""B"),        // APC ... BEL terminator
+      std::string("A\x1bPq#0;2;0;0;0\x1b\\B"),
+      std::string("A\x1bX hidden sos \x1b\\B"),
+      std::string("A\x1b^ private message \x1b\\B"),
+      std::string("A\x1b_Gi=1,a=q\x07""B"),
   };
   for (const std::string& sequence : sequences) {
     microide::terminal::TerminalSession session;
@@ -1749,10 +1568,8 @@ void TestTerminalSessionUnterminatedEscapeRecovers() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  // An unterminated OSC longer than the internal cap must abandon the sequence
-  // and let later text render rather than swallowing output forever.
   std::string output = "A\x1b]0;";
-  output.append(20000, 'x');  // never sends ST/BEL; exceeds kMaxEscapeSequenceLength
+  output.append(20000, 'x');
   TerminalSessionTestAccess::AppendOutput(session, output);
   TerminalSessionTestAccess::AppendOutput(session, "DONE");
 
@@ -1772,10 +1589,8 @@ void TestTerminalSessionOverflowCsiParamDoesNotCrash() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  // A parameter that overflows int must clamp instead of invoking std::atoi UB.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[99999999999;99999999999HX");
   const auto lines = session.SnapshotLines();
-  // Cursor was clamped into range, so the 'X' lands somewhere on the grid.
   bool found_x = false;
   for (const microide::terminal::TerminalLine& line : lines) {
     if (LineText(line).find('X') != std::string::npos) {
@@ -1786,15 +1601,10 @@ void TestTerminalSessionOverflowCsiParamDoesNotCrash() {
   Expect(found_x, "an overflowing CSI parameter should clamp and still render following text");
 }
 
-// Resilience: ECH (`CSI Ps X`) with a large parameter must not grow the row far
-// past the terminal width. Before the clamp, `CSI 65535 X` resized a row to
-// ~65535 cells, and repeated across the scrollback that is a huge memory
-// amplification driven purely by terminal output.
 void TestTerminalSessionEraseCharsClampsToWidth() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  // Home the cursor, then erase a pathologically large character count.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;1H\x1b[65535X");
   const auto lines = session.SnapshotLines();
   Expect(!lines.empty(), "session should retain rows after ECH");
@@ -1802,9 +1612,6 @@ void TestTerminalSessionEraseCharsClampsToWidth() {
          "CSI Ps X must clamp the erased range to the terminal width, not balloon the row");
 }
 
-// Resilience: ICH (`CSI Ps @`) inserts blank cells before the row is resized back
-// to the terminal width, so a huge parameter must be clamped or it churns a
-// 65535-cell insert/memmove per escape.
 void TestTerminalSessionInsertCharsClampsToWidth() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -1816,9 +1623,6 @@ void TestTerminalSessionInsertCharsClampsToWidth() {
          "CSI Ps @ must clamp the inserted cell count to the terminal width");
 }
 
-// Resilience: CHT/CBT (`CSI Ps I` / `CSI Ps Z`) used to loop once per parameter
-// even after the cursor had saturated at the terminal edge. Clamp the repeated
-// tab-stop walk to the screen width.
 void TestTerminalSessionTabulationClampsToWidth() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -1832,14 +1636,9 @@ void TestTerminalSessionTabulationClampsToWidth() {
          "CSI Ps Z should saturate at column zero without work proportional to Ps");
 }
 
-// HT (`\t`) is pure cursor motion: it must move to the next tab stop WITHOUT
-// blanking the cells it passes over. Regression for the fix that replaced the
-// per-column `PutGlyphLocked(" ")` fill with a cursor move.
 void TestTerminalSessionTabDoesNotOverwriteCells() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
-  // Default tab stops at 8,16,... . Fill cols 0..9, CR to col 0, tab to col 8,
-  // then write 'X' at the tab stop. `ABCDEFGHIJ\r\tX` must yield `ABCDEFGHXJ`.
   TerminalSessionTestAccess::AppendOutput(session, "ABCDEFGHIJ\r\tX");
   const auto lines = session.SnapshotLines();
   Expect(!lines.empty() && lines[0].cells.size() >= 10,
@@ -1860,14 +1659,9 @@ void TestTerminalSessionTabDoesNotOverwriteCells() {
          "the cell beyond the tab stop is untouched");
 }
 
-// ED 3 (`CSI 3J`, "Erase Saved Lines") must clear the scrollback and LEAVE the
-// visible screen intact. Regression for the fix that stopped mode 3 from falling
-// through to the ED-0 path, which erased from the cursor to the end of display.
 void TestTerminalSessionEraseSavedLinesKeepsVisibleScreen() {
   microide::terminal::TerminalSession session;
-  TerminalSessionTestAccess::Reset(session, 3, 20);  // 3-row visible screen
-  // Six CRLF-separated lines into a 3-row terminal builds three lines of
-  // scrollback (L0..L2) above the visible screen (L3..L5).
+  TerminalSessionTestAccess::Reset(session, 3, 20);
   TerminalSessionTestAccess::AppendOutput(session, "L0\r\nL1\r\nL2\r\nL3\r\nL4\r\nL5");
   const auto before = session.SnapshotLines();
   Expect(before.size() > 3,
@@ -1877,7 +1671,6 @@ void TestTerminalSessionEraseSavedLinesKeepsVisibleScreen() {
   const auto after = session.SnapshotLines();
   Expect(after.size() == 3,
          "CSI 3J must trim the deque to the visible screen height (scrollback gone)");
-  // The visible screen (L3..L5) must survive unharmed: 3J erases only scrollback.
   Expect(after.front().cells.size() >= 2 && after.front().cells[0].ascii_character() == 'L' &&
              after.front().cells[1].ascii_character() == '3',
          "3J must preserve the first visible line ('L3')");
@@ -1886,50 +1679,30 @@ void TestTerminalSessionEraseSavedLinesKeepsVisibleScreen() {
          "3J must preserve the last visible line ('L5')");
 }
 
-// ED 3 front-trims the scrollback deque, so — exactly like the natural
-// TrimScrollbackLocked path — it must add the trimmed count to ScrollbackTrimTotal().
-// The workspace rebases its absolute scroll/selection mirrors purely from the delta of
-// that counter; an untracked trim strands those rows `trim_count` too high after a
-// modern `clear` (which emits ED2 then ED3). Regression for that desync.
 void TestTerminalSessionEraseSavedLinesAccountsScrollbackTrim() {
   microide::terminal::TerminalSession session;
-  TerminalSessionTestAccess::Reset(session, 3, 20);  // 3-row visible screen
+  TerminalSessionTestAccess::Reset(session, 3, 20);
   TerminalSessionTestAccess::AppendOutput(session, "L0\r\nL1\r\nL2\r\nL3\r\nL4\r\nL5");
   Expect(session.ScrollbackTrimTotal() == 0,
          "no natural scrollback trim should have occurred within the default cap yet");
 
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[3J");
-  // 6 deque rows minus the 3 visible rows == 3 trimmed off the front.
   Expect(session.ScrollbackTrimTotal() == 3,
          "ED3 must account its front-trim in ScrollbackTrimTotal so workspace mirrors rebase");
 }
 
-// The private DECXCPR reply (`CSI ? 6 n`) must report the row relative to the visible
-// screen, mirroring the public CPR (`CSI 6 n`) path: on the primary buffer cursor_row_
-// is an absolute deque index that includes scrollback, so a raw cursor_row_+1 grossly
-// overstates the row once scrollback exists. Regression for the missed `?6n` variant.
 void TestTerminalSessionPrivateCursorPositionReportIsScreenRelative() {
   microide::terminal::TerminalSession session;
-  TerminalSessionTestAccess::Reset(session, 3, 20);  // 3-row visible screen
-  // Six lines into a 3-row terminal builds three scrollback rows; the cursor lands on
-  // the last visible row (absolute row 5, screen-relative row 2 => reported row 3) at
-  // column 2 after "L5" (reported column 3).
+  TerminalSessionTestAccess::Reset(session, 3, 20);
   TerminalSessionTestAccess::AppendOutput(session, "L0\r\nL1\r\nL2\r\nL3\r\nL4\r\nL5\x1b[?6n");
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[?3;3R",
          "DECXCPR (?6n) must report the screen-relative row, not the absolute deque row");
 }
 
-// A hard newline (LF) that lands on a pre-existing row must not relabel that row's
-// soft-wrap flag. Regression for AdvanceCursorRowLocked unconditionally stamping
-// wrapped_from_previous=false onto an existing wrapped continuation reached via
-// cursor-up + LF, which corrupted reflow / selection-by-logical-line.
 void TestTerminalSessionHardNewlineOntoExistingRowKeepsWrapFlag() {
   microide::terminal::TerminalSession session;
-  TerminalSessionTestAccess::Reset(session, 3, 4);  // 4-column screen forces a soft wrap
+  TerminalSessionTestAccess::Reset(session, 3, 4);
 
-  // "ABCDE" wraps: row0="ABCD", row1="E" (wrapped_from_previous=true), cursor at row1.
-  // CUU moves the cursor up to row0; LF then advances it back down onto the existing
-  // row1 — which must retain its wrapped continuation flag.
   TerminalSessionTestAccess::AppendOutput(session, "ABCDE\x1b[A\n");
   const auto lines = session.SnapshotLines();
   Expect(lines.size() >= 2, "soft-wrap fixture should preserve the wrapped second row");
@@ -1937,23 +1710,16 @@ void TestTerminalSessionHardNewlineOntoExistingRowKeepsWrapFlag() {
          "a hard LF onto an existing wrapped row must not clear its soft-wrap flag");
 }
 
-// IL/DL outside the vertical scroll margins must be a no-op on the alternate
-// screen (DEC STD 070). Regression for the fall-through that ran the primary-screen
-// insert, growing the fixed-height alt grid past rows_ and eventually trimming real
-// content off the top.
 void TestTerminalSessionInsertLineOutsideRegionIsNoOpOnAltScreen() {
   microide::terminal::TerminalSession session;
-  ResetAlternateScreenFixture(session);  // 4-row alt grid: A,B,C,D
+  ResetAlternateScreenFixture(session);
 
-  // Scroll region rows 2..3 (1-based) => 0-based [1,2]; put the cursor on row 0
-  // (above the region), then issue IL. It must do nothing.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[2;3r\x1b[1;1H\x1b[L");
   auto lines = session.SnapshotLines();
   Expect(lines.size() == 4, "IL above the scroll margins must not grow the alt grid");
   ExpectLineText(lines, 0, "A", "IL outside the region must leave row 0 untouched");
   ExpectLineText(lines, 3, "D", "IL outside the region must leave the bottom row untouched");
 
-  // Same for DL below the region: cursor on row 3 (below [1,2]) then DL.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[4;1H\x1b[M");
   lines = session.SnapshotLines();
   Expect(lines.size() == 4, "DL below the scroll margins must not shrink/resize the alt grid");
@@ -1961,39 +1727,26 @@ void TestTerminalSessionInsertLineOutsideRegionIsNoOpOnAltScreen() {
   ExpectLineText(lines, 3, "D", "DL outside the region must leave the bottom row untouched");
 }
 
-// DSR/CPR (`CSI 6n`) at the pending-wrap (LCF) column, where cursor_column_ ==
-// columns_, must report the last on-screen column, never one past the right edge.
 void TestTerminalSessionReportsPendingWrapColumnClamped() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  // Move to the last column (80, 1-based) and print a glyph; without autowrap
-  // advancing the row this leaves the cursor in the pending-wrap state at col 80.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;80HX\x1b[6n");
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[1;80R",
          "CPR at the pending-wrap column must report column 80, not 81");
 }
 
-// HTS-set custom tab stops must survive a resize (xterm behaviour); only the
-// newly-exposed columns get the default every-8 stops. Regression for the resize
-// path unconditionally rebuilding the tab-stop table.
 void TestTerminalSessionResizePreservesCustomTabStops() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  // Set a custom tab stop at column 3 (1-based col 4) via HTS (ESC H), which is not
-  // a default every-8 stop.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;4H\x1bH");
   session.Resize(24, 100);
-  // From column 0 the next tab must still land on the custom stop at column 3.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;1H\t");
   Expect(session.cursor_column() == 3,
          "a resize must preserve custom HTS tab stops, not reset to every-8");
 }
 
-// Resilience: IL (`CSI Ps L`) inserts blank lines; a huge parameter must not
-// transiently balloon the line deque to tens of thousands of entries before the
-// scrollback trim.
 void TestTerminalSessionInsertLinesClampsToHeight() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -2004,12 +1757,6 @@ void TestTerminalSessionInsertLinesClampsToHeight() {
          "CSI Ps L must clamp the inserted line count to the screen height, not 65535");
 }
 
-// A hostile program can emit additive cursor-down escapes (`CSI B` / `CSI E`) in
-// the primary screen; without a clamp each `\x1b[65535B` grows `cursor_row_` and
-// resizes the line deque to tens of millions of entries before the end-of-chunk
-// scrollback trim — an OOM/crash on the reader thread. The post-append line count
-// can't observe the transient balloon (trim collapses it), so assert on the
-// scrollback-lines-allocated perf counter instead.
 void TestTerminalSessionCursorDownClampsPrimaryScreen() {
   microide::util::ResetPerformanceCounters();
   microide::terminal::TerminalSession session;
@@ -2018,8 +1765,6 @@ void TestTerminalSessionCursorDownClampsPrimaryScreen() {
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[65535B");
   const std::uint64_t allocated = microide::util::ReadPerformanceCounter(
       microide::util::PerfCounterId::TerminalScrollbackLinesAllocated);
-  // With the clamp, growth is bounded to ~max_scrollback_lines_ + rows_ (~2024);
-  // without it, one escape would allocate 65536 lines. Use a generous ceiling.
   Expect(allocated < 10000,
          "CSI B cursor-down must clamp cursor_row_ to the scrollback ceiling, "
          "not balloon the line deque to the escape parameter");
@@ -2074,15 +1819,10 @@ void TestTerminalSessionOutputParserIgnoresIncompleteEscapes() {
                  "completed CSI sequences should apply styling without losing buffered text");
 }
 
-// Regression: Background Color Erase. A whole-screen erase with a non-default
-// background must paint the blanked rows with that background, matching the
-// erase-in-line path. Previously EraseInDisplay reset rows to empty cells, so
-// `\x1b[44m\x1b[2J` (blue background, clear screen) lost the background.
 void TestTerminalSessionEraseDisplayAppliesBackgroundColorErase() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
 
-  // SGR 44 = blue background, then ED 2 (clear entire display).
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[44m\x1b[2J");
 
   const auto lines = session.SnapshotLines();
@@ -2099,15 +1839,10 @@ void TestTerminalSessionEraseDisplayAppliesBackgroundColorErase() {
          "background on the erased rows (BCE)");
 }
 
-// Regression: a scroll-region scroll (SU/SD/IL/DL) under a non-default background
-// must paint the freed rows with that background, matching xterm/VTE and the
-// ED/EL erase paths. Previously ScrollRegionUp/DownLocked reset freed rows to
-// empty default cells, so `\x1b[44m\x1b[S` lost the background on the freed row.
 void TestTerminalSessionScrollRegionAppliesBackgroundColorErase() {
   microide::terminal::TerminalSession session;
   ResetAlternateScreenFixture(session);
 
-  // SGR 44 = blue background, then SU (scroll whole screen up one row).
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[44m\x1b[S");
 
   const auto lines = session.SnapshotLines();
@@ -2124,36 +1859,27 @@ void TestTerminalSessionScrollRegionAppliesBackgroundColorErase() {
          "row with that background (BCE)");
 }
 
-// Regression: IND (ESC D) moves down one row PRESERVING the column; only NEL
-// (ESC E) resets to column 0. IND is not subject to ONLCR, so a program using it
-// to move down while holding its column must land at that column.
 void TestTerminalSessionIndexPreservesColumn() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
 
-  TerminalSessionTestAccess::AppendOutput(session, "abc");  // row 0, column 3
+  TerminalSessionTestAccess::AppendOutput(session, "abc");
   Expect(session.cursor_row() == 0 && session.cursor_column() == 3,
          "cursor should sit at column 3 after printing 'abc'");
 
-  // NB: octal \033 (not \x1b) — a \x hex escape is greedy and would fold the
-  // following 'D'/'E' hex digit into a single out-of-range escape.
-  TerminalSessionTestAccess::AppendOutput(session, "\033D");  // IND
+  TerminalSessionTestAccess::AppendOutput(session, "\033D");
   Expect(session.cursor_row() == 1 && session.cursor_column() == 3,
          "IND (ESC D) must move down one row and preserve the column");
 
-  TerminalSessionTestAccess::AppendOutput(session, "\033E");  // NEL
+  TerminalSessionTestAccess::AppendOutput(session, "\033E");
   Expect(session.cursor_row() == 2 && session.cursor_column() == 0,
          "NEL (ESC E) must move down and reset the column to 0");
 }
 
-// Regression: an ESC (not forming ST) inside an unterminated OSC string must
-// terminate the string AND restart escape parsing, so a following real sequence
-// runs instead of being swallowed into the OSC payload.
 void TestTerminalSessionEscInsideOscRestartsSequence() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
   TerminalSessionTestAccess::AppendOutput(session, "HELLO");
-  // OSC set-title WITHOUT a terminator, immediately followed by a clear-screen.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b]0;title\x1b[2J");
 
   const auto lines = session.SnapshotLines();
@@ -2167,24 +1893,19 @@ void TestTerminalSessionEscInsideOscRestartsSequence() {
          "OSC payload and the following CSI must not leak as literal text");
 }
 
-// Regression: restarting a session in place must reset all negotiated protocol
-// state, so a reused session never inherits a prior shell's Kitty-keyboard flags,
-// synchronized-output mode, cursor shape, reported cwd, or custom tab stops.
 void TestTerminalSessionRestartResetsNegotiatedState() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  // Negotiate protocol state a real shell might set.
-  TerminalSessionTestAccess::AppendOutput(session, "\x1b[>5u");     // push Kitty flags = 5
-  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?2026h");  // synchronized output on
-  TerminalSessionTestAccess::AppendOutput(session, "\x1b[3g");      // clear then set a tab stop
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[>5u");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?2026h");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[3g");
   TerminalSessionTestAccess::AppendOutput(session, "\x1bH");
   Expect(TerminalSessionTestAccess::KittyKeyboardFlags(session) == 5,
          "kitty keyboard flags should be negotiated before restart");
   Expect(TerminalSessionTestAccess::SynchronizedOutput(session),
          "synchronized output should be enabled before restart");
 
-  // Restart in place (test seam routes through Stop()'s reset).
   session.StartPlaceholderForTesting(std::filesystem::path("/tmp"), "");
 
   Expect(TerminalSessionTestAccess::KittyKeyboardFlags(session) == 0,
@@ -2195,15 +1916,10 @@ void TestTerminalSessionRestartResetsNegotiatedState() {
          "restart must clear custom tab stops");
 }
 
-// Regression: an ESC appearing mid-CSI must cancel the current sequence and start
-// a fresh one. `\x1b[\x1b[2J` must run the second CSI (clear screen), not swallow
-// the ESC as a parameter and dispatch a corrupt sequence that prints "2J".
 void TestTerminalSessionEscInsideCsiAbortsSequence() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
 
-  // Put some text on screen, then send an aborted CSI immediately followed by a
-  // real clear-screen. The clear must take effect and no literal "2J" may appear.
   TerminalSessionTestAccess::AppendOutput(session, "HELLO");
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[\x1b[2J");
 
@@ -2219,27 +1935,16 @@ void TestTerminalSessionEscInsideCsiAbortsSequence() {
 }
 
 void TestTerminalCellIsTriviallyCopyableAndCompact() {
-  // 2026-05-15 perf deep-dive round 2 Finding 8: TerminalCell must use inline UTF-8 storage so
-  // scrollback snapshots/trims become bulk memcpys instead of per-cell std::string moves, and the
-  // per-cell footprint stays small for large terminals.
   using microide::terminal::TerminalCell;
   static_assert(std::is_trivially_copyable_v<TerminalCell>,
                 "TerminalCell must be trivially copyable to support bulk snapshot copies");
-  // 5 bytes inline + 1 length byte + TerminalStyle (~24 bytes for two optional SDL_Color +
-  // two bools). Cap at 64 to leave headroom for alignment.
   static_assert(sizeof(TerminalCell) <= 64,
                 "TerminalCell footprint regressed; inline storage and trivial copyability are the "
                 "point of Finding 8");
-  // The inline width is load-bearing, and the exact figure is what makes it free:
-  // `length` + TerminalStyle pad the struct to 18 bytes at 4 OR 5 inline bytes, so
-  // the fifth (which is what lets a 3-byte double-width base carry a 2-byte
-  // combining mark) costs nothing. A sixth would cost two bytes per cell, on every
-  // cell of every scrollback line — decide that deliberately, not by drift.
   static_assert(sizeof(TerminalCell) == 18,
                 "TerminalCell grew past the free padding; widening inline storage now costs "
                 "memory on every scrollback cell");
 
-  // Functional invariants of the inline storage.
   TerminalCell ascii;
   ascii.SetAscii('Q');
   Expect(ascii.length == 1 && ascii.bytes[0] == 'Q',
@@ -2250,7 +1955,7 @@ void TestTerminalCellIsTriviallyCopyableAndCompact() {
          "ascii_character must mirror the stored ASCII byte");
 
   TerminalCell utf8;
-  utf8.SetUtf8("\xE2\x9C\x93");  // ✓ (3-byte UTF-8)
+  utf8.SetUtf8("\xE2\x9C\x93");
   Expect(utf8.length == 3,
          "SetUtf8 should record the full byte count of a multi-byte glyph");
   Expect(utf8.DisplayText() == std::string_view("\xE2\x9C\x93", 3),
@@ -2263,16 +1968,12 @@ void TestTerminalCellIsTriviallyCopyableAndCompact() {
          "default-constructed cell is empty and reports an empty DisplayText");
 }
 
-// Overwriting either half of a double-width glyph must clear the orphaned half so
-// the renderer never sees a lead without its spacer (overlap) or a spacer without
-// its lead (stale gap).
 void TestTerminalSessionOverwritingWideGlyphClearsStalePair() {
   {
-    // Overwrite the LEAD: the trailing spacer must be blanked, not left dangling.
     microide::terminal::TerminalSession session;
     TerminalSessionTestAccess::Reset(session, 4, 8);
-    TerminalSessionTestAccess::AppendOutput(session, "\xE6\x88\x91");  // wide lead + spacer
-    TerminalSessionTestAccess::AppendOutput(session, "\rA");           // CR to col 0, write 'A'
+    TerminalSessionTestAccess::AppendOutput(session, "\xE6\x88\x91");
+    TerminalSessionTestAccess::AppendOutput(session, "\rA");
     const auto lines = session.SnapshotLines();
     Expect(lines[0].cells[0].ascii_character() == 'A' && !lines[0].cells[0].style.wide_trailing(),
            "the overwriting narrow glyph should replace the wide lead");
@@ -2280,11 +1981,10 @@ void TestTerminalSessionOverwritingWideGlyphClearsStalePair() {
            "the orphaned trailing spacer must be blanked, not left as a wide-trailing cell");
   }
   {
-    // Overwrite the SPACER: the lead must be blanked so it no longer paints wide.
     microide::terminal::TerminalSession session;
     TerminalSessionTestAccess::Reset(session, 4, 8);
-    TerminalSessionTestAccess::AppendOutput(session, "\xE6\x88\x91");   // wide lead at col 0
-    TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;2HB");     // move to col 1, write 'B'
+    TerminalSessionTestAccess::AppendOutput(session, "\xE6\x88\x91");
+    TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;2HB");
     const auto lines = session.SnapshotLines();
     Expect(lines[0].cells[1].ascii_character() == 'B',
            "the overwriting glyph should land on the former spacer column");
@@ -2293,8 +1993,6 @@ void TestTerminalSessionOverwritingWideGlyphClearsStalePair() {
   }
 }
 
-// DEL (0x7f) in the output stream is ignored (ECMA-48 / xterm / VTE); it must not
-// perform a destructive delete-and-shift of the display.
 void TestTerminalSessionIgnoresDelInOutputStream() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
@@ -2304,26 +2002,16 @@ void TestTerminalSessionIgnoresDelInOutputStream() {
   Expect(session.cursor_column() == 3, "DEL must not move the cursor");
 }
 
-// A tab at the pending-wrap column (cursor_column_ == columns_) must not move the
-// cursor backward to the last column.
 void TestTerminalSessionTabAtPendingWrapDoesNotMoveBackward() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
-  TerminalSessionTestAccess::AppendOutput(session, "abcdefgh");  // fills all 8 cols -> pending wrap
+  TerminalSessionTestAccess::AppendOutput(session, "abcdefgh");
   Expect(session.cursor_column() == 8, "precondition: cursor is at the pending-wrap column");
   TerminalSessionTestAccess::AppendOutput(session, "\t");
   Expect(session.cursor_column() == 8, "a tab at pending-wrap must not snap the cursor backward");
 }
 
-// At the pending-wrap column (a glyph just filled the last column) every
-// operation but the next glyph sees the cursor ON the last column, as in xterm
-// and xterm.js: CUB 1 lands on the second-to-last column, EL erases the last
-// glyph, DCH deletes it, backspace steps to the second-to-last column, and a
-// saved cursor restores onto the last column. Each was one column off before
-// (found against pyte), which is where readline and zsh redraw at the margin.
 void TestTerminalSessionPendingWrapColumnActsAsLastColumn() {
-  // An erased cell is a blank cell, not a shorter line: compare without the
-  // trailing blanks.
   const auto trimmed_row = [](const microide::terminal::TerminalSession& session) {
     std::string text = LineText(session.SnapshotLines()[0]);
     while (!text.empty() && text.back() == ' ') {
@@ -2380,29 +2068,23 @@ void TestTerminalSessionPendingWrapColumnActsAsLastColumn() {
   }
 }
 
-// EL 2 (CSI 2K) at the pending-wrap column must not grow the line one cell past
-// the right margin.
 void TestTerminalSessionEraseWholeLineDoesNotOvergrowAtPendingWrap() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
-  TerminalSessionTestAccess::AppendOutput(session, "abcdefgh");  // pending wrap at column 8
+  TerminalSessionTestAccess::AppendOutput(session, "abcdefgh");
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[2K");
   const auto lines = session.SnapshotLines();
   Expect(lines[0].cells.size() == 8,
          "erase-whole-line must span exactly the terminal width, not columns_ + 1");
 }
 
-// ED 2 (`CSI 2J`) on the primary screen must erase the visible screen in place and
-// PRESERVE scrollback — exactly what `clear`/`tput clear` (`ESC[H ESC[2J`) sends.
-// Regression for the collapse that replaced the whole deque, silently destroying all
-// history above the viewport.
 void TestTerminalSessionClearPreservesScrollback() {
   microide::terminal::TerminalSession session;
-  TerminalSessionTestAccess::Reset(session, 3, 20);  // 3-row visible screen
+  TerminalSessionTestAccess::Reset(session, 3, 20);
   TerminalSessionTestAccess::AppendOutput(session, "L0\r\nL1\r\nL2\r\nL3\r\nL4\r\nL5");
   Expect(session.SnapshotLines().size() > 3, "six lines into a 3-row screen builds scrollback");
 
-  TerminalSessionTestAccess::AppendOutput(session, "\x1b[H\x1b[2J");  // `clear`
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[H\x1b[2J");
   const auto after = session.SnapshotLines();
   Expect(after.size() >= 6, "2J must keep the scrollback deque, not collapse it to the screen");
   ExpectLineText(after, 0, "L0", "2J must preserve the first scrollback line");
@@ -2412,15 +2094,12 @@ void TestTerminalSessionClearPreservesScrollback() {
   Expect(LineText(after[after.size() - 3]).empty(), "2J must blank the whole visible screen");
 }
 
-// CSI H (CUP home) on the primary screen must target the top-left of the VISIBLE
-// screen, not absolute deque row 0 (which is scrollback). Regression for the
-// viewport-relative primary-addressing rework that ED 2 depends on.
 void TestTerminalSessionPrimaryCupIsViewportRelative() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 3, 20);
   TerminalSessionTestAccess::AppendOutput(session, "L0\r\nL1\r\nL2\r\nL3\r\nL4\r\nL5");
 
-  TerminalSessionTestAccess::AppendOutput(session, "\x1b[HX");  // home, then write X
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[HX");
   const auto after = session.SnapshotLines();
   ExpectLineText(after, 0, "L0", "CUP home must not reach into scrollback");
   Expect(after.size() >= 3, "the deque must stay intact");
@@ -2428,28 +2107,21 @@ void TestTerminalSessionPrimaryCupIsViewportRelative() {
                  "CUP home targets the visible-screen top (overwrites L3's first cell -> X3)");
 }
 
-// EL 1 (`CSI 1K`, erase to start of line) at the pending-wrap column
-// (cursor_column_ == columns_) must clamp its erase end to the width, mirroring the
-// EL 2 fix, or it grows the row one cell past the right margin.
 void TestTerminalSessionEraseToLineStartDoesNotOvergrowAtPendingWrap() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
-  TerminalSessionTestAccess::AppendOutput(session, "abcdefgh");  // pending wrap at column 8
+  TerminalSessionTestAccess::AppendOutput(session, "abcdefgh");
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[1K");
   const auto lines = session.SnapshotLines();
   Expect(lines[0].cells.size() == 8,
          "erase-to-line-start must not grow the row to columns_ + 1 at the pending-wrap column");
 }
 
-// A scroll region that spanned the full screen must re-expand to the new height when
-// the terminal grows, or LF-driven scrolling stays frozen at the old height.
 void TestTerminalSessionScrollRegionReexpandsOnGrow() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
-  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049h");  // alt screen, full-screen region
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049h");
   session.Resize(8, 8);
-  // Fill all 8 rows; if the region were still capped at row 3, rows 5..8 would never
-  // receive scrolled output.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[H");
   for (int i = 0; i < 8; ++i) {
     TerminalSessionTestAccess::AppendOutput(session, i == 0 ? "r0" : "\r\nr");
@@ -2461,17 +2133,10 @@ void TestTerminalSessionScrollRegionReexpandsOnGrow() {
                  "CUP to the new last row must address a real row after the region re-expands");
 }
 
-// Regression: a soft wrap at the right margin onto a row that ALREADY EXISTS
-// (cursor moved up mid-screen, then a long line printed that wraps down) must mark
-// the continuation row as wrapped_from_previous. Stamping only freshly-created
-// rows split the wrapped logical line in two for reflow / command capture.
 void TestTerminalSessionSoftWrapOntoExistingRowMarksContinuation() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 4);
-  // Three hard-started rows on the primary screen.
   TerminalSessionTestAccess::AppendOutput(session, "a\r\nb\r\nc");
-  // Move to the top row, then print a line longer than the width so it soft-wraps
-  // onto the (pre-existing) second row.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;1Hwxyz1");
 
   const auto lines = session.SnapshotLines();
@@ -2480,32 +2145,24 @@ void TestTerminalSessionSoftWrapOntoExistingRowMarksContinuation() {
          "a soft wrap onto a pre-existing row must mark it as a continuation");
 }
 
-// Guard the deliberate inverse: a HARD line feed landing on a pre-existing row
-// that is itself a soft-wrap continuation must NOT relabel it as a hard boundary.
 void TestTerminalSessionHardLineFeedDoesNotRelabelWrappedRow() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 2);
-  // "abc" at width 2: "ab" on row 0, "c" soft-wraps to a fresh row 1 (continuation).
   TerminalSessionTestAccess::AppendOutput(session, "abc");
   {
     const auto lines = session.SnapshotLines();
     Expect(lines.size() >= 2 && lines[1].wrapped_from_previous,
            "the wrapped row should start as a continuation");
   }
-  // Move to the top row and emit a hard line feed onto the existing continuation.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;1H\n");
   const auto lines = session.SnapshotLines();
   Expect(lines.size() >= 2 && lines[1].wrapped_from_previous,
          "a hard LF onto an existing wrapped row must not relabel it as a hard start");
 }
 
-// Regression: a well-formed-length but invalid UTF-8 scalar (overlong form,
-// surrogate) must be stored as U+FFFD, not as the raw invalid bytes.
 void TestTerminalSessionInvalidUtf8StoredAsReplacementChar() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 2, 8);
-  // E0 80 80 is an overlong encoding of U+0000 (3-byte length, valid continuation
-  // bytes, invalid scalar).
   TerminalSessionTestAccess::AppendOutput(session, "\xE0\x80\x80");
   {
     const auto lines = session.SnapshotLines();
@@ -2513,30 +2170,22 @@ void TestTerminalSessionInvalidUtf8StoredAsReplacementChar() {
     Expect(lines[0].cells[0].DisplayText() == "\xEF\xBF\xBD",
            "an invalid scalar must be stored as the replacement character, not raw bytes");
   }
-  // A genuinely valid multibyte glyph must still round-trip unchanged.
   TerminalSessionTestAccess::Reset(session, 2, 8);
-  TerminalSessionTestAccess::AppendOutput(session, "\xC3\xA9");  // U+00E9 'é'
+  TerminalSessionTestAccess::AppendOutput(session, "\xC3\xA9");
   const auto lines = session.SnapshotLines();
   Expect(!lines.empty() && !lines[0].cells.empty() &&
              lines[0].cells[0].DisplayText() == "\xC3\xA9",
          "a valid multibyte glyph must be stored unchanged");
 }
 
-}  // namespace
+}
 
-// Regression: CUU (`CSI A`) / CPL (`CSI F`) must clamp at the TOP OF THE VISIBLE
-// SCREEN, not the top of the scrollback deque. On the primary buffer cursor_row_
-// is absolute, so a bare `ESC[<N>A` ("go to top of screen") used to climb above
-// the visible rows into history and overwrite it.
 void TestTerminalSessionCursorUpClampsToVisibleScreenTop() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 3, 8);
-  // Six lines with a 3-row viewport => visible screen is L3/L4/L5, scrollback L0-L2.
   TerminalSessionTestAccess::AppendOutput(session, "L0\nL1\nL2\nL3\nL4\nL5");
   Expect(session.cursor_row() == 5, "cursor should sit on the last written primary row");
 
-  // CR to column 0, then cursor up 4 and write X. The floor is the visible-screen
-  // top (row 3), so X lands on L3 — never on the L1 scrollback line.
   TerminalSessionTestAccess::AppendOutput(session, "\r\x1b[4AX");
   const auto lines = session.SnapshotLines();
   Expect(lines.size() == 6, "primary scrollback must be preserved across the cursor move");
@@ -2544,11 +2193,6 @@ void TestTerminalSessionCursorUpClampsToVisibleScreenTop() {
   ExpectLineText(lines, 3, "X3", "CUU clamps at the visible-screen top");
 }
 
-// Regression: VT (0x0B) and FF (0x0C) index like IND (ESC D) — move down one row
-// PRESERVING the column, not resetting to column 0 like LF. VT/FF are never
-// ONLCR-translated, so `a\vb\fc` must staircase (b under the char after a, c
-// under the char after b). Previously they routed through the LF path and zeroed
-// the column, landing b and c at column 0.
 void TestTerminalSessionVerticalTabAndFormFeedIndexLikeLineFeed() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
@@ -2557,23 +2201,17 @@ void TestTerminalSessionVerticalTabAndFormFeedIndexLikeLineFeed() {
   const auto lines = session.SnapshotLines();
   Expect(lines.size() == 3, "VT and FF should each open a new row like an index");
   ExpectLineText(lines, 0, "a", "content before VT stays on the first row");
-  // 'a' advanced the cursor to column 1, so VT indexes down to (row 1, column 1).
   Expect(lines[1].cells.size() >= 2 && lines[1].cells[1].ascii_character() == 'b',
          "VT indexes down preserving the column (b staircases to column 1)");
   Expect(lines[1].cells[0].ascii_character() != 'b',
          "VT must not reset the column to 0");
-  // 'b' advanced the cursor to column 2, so FF indexes down to (row 2, column 2).
   Expect(lines[2].cells.size() >= 3 && lines[2].cells[2].ascii_character() == 'c',
          "FF indexes down preserving the column (c staircases to column 2)");
 }
 
-// Regression: DECSC (ESC 7) saves the SGR graphic rendition and DECRC (ESC 8)
-// restores it, not just the cursor position. Previously the style leaked past the
-// restore.
 void TestTerminalSessionSaveRestoreCursorRestoresGraphicRendition() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
-  // DECSC, set red foreground, print RED, DECRC, print X at the restored origin.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b""7\x1b[31mRED\x1b""8X");
 
   const auto lines = session.SnapshotLines();
@@ -2584,12 +2222,6 @@ void TestTerminalSessionSaveRestoreCursorRestoresGraphicRendition() {
          "DECRC should restore the default graphic rendition saved by DECSC");
 }
 
-// DECSC saves the cursor's row on the SCREEN, as xterm does: output that scrolls
-// the primary screen between the save and the restore leaves the restored cursor
-// on the same screen row, never in scrollback. The row was an absolute deque
-// index, so `ESC 7`, five lines, `ESC 8 X` overwrote a line the user had scrolled
-// past. SCOSC/SCORC (`CSI s` / `CSI u`) behave the same, and like DECSC they
-// save the rendition too (xterm's CASE_ANSI_SC is CursorSave).
 void TestTerminalSessionSavedCursorRowIsScreenRelative() {
   for (const auto& [save, restore] : {std::pair<std::string_view, std::string_view>{"\x1b""7", "\x1b""8"},
                                       {"\x1b[s", "\x1b[u"}}) {
@@ -2598,7 +2230,6 @@ void TestTerminalSessionSavedCursorRowIsScreenRelative() {
     TerminalSessionTestAccess::AppendOutput(
         session, std::string(save) + "\x1b[31ma\r\nb\r\nc\r\nd\r\ne" + std::string(restore) + "X");
     const auto lines = session.SnapshotLines();
-    // a, b in scrollback; the screen is c, d, e.
     Expect(lines.size() == 5, "five lines, two of them scrollback");
     Expect(lines.size() == 5 && lines[0].cells.size() > 0 && lines[0].cells[0].ascii_character() == 'a',
            "the scrollback line the cursor was saved on is untouched");
@@ -2607,10 +2238,9 @@ void TestTerminalSessionSavedCursorRowIsScreenRelative() {
     Expect(lines.size() == 5 && lines[2].cells.size() > 0 && !lines[2].cells[0].style.foreground.has_value(),
            "and restores the saved rendition");
   }
-  // A scrollback trim between the save and the restore does not move it either.
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 3, 8);
-  std::string output = "\r\n\r\n\x1b""7";  // saved on the screen's bottom row
+  std::string output = "\r\n\r\n\x1b""7";
   for (int i = 0; i < 4000; ++i) {
     output += "\r\nline";
   }
@@ -2621,12 +2251,9 @@ void TestTerminalSessionSavedCursorRowIsScreenRelative() {
          "after the scrollback was trimmed the restore is still the screen's bottom row");
 }
 
-// Erasing or deleting half of a wide glyph takes the whole glyph (xterm). EL,
-// ECH and DCH left the other half: a lead whose spacer was erased still painted
-// two columns over the erased cell, and a spacer whose lead went was a gap.
 void TestTerminalSessionEraseAndDeleteTakeAWideGlyphWhole() {
   microide::terminal::TerminalSession session;
-  const std::string text = "ab\xe4\xb8\xad" "cd";  // the wide glyph is columns 2-3
+  const std::string text = "ab\xe4\xb8\xad" "cd";
   TerminalSessionTestAccess::Reset(session, 3, 8);
   TerminalSessionTestAccess::AppendOutput(session, text + "\x1b[1;4H\x1b[K");
   Expect(LineText(session.SnapshotLines()[0]).rfind("ab ", 0) == 0 &&
@@ -2639,8 +2266,6 @@ void TestTerminalSessionEraseAndDeleteTakeAWideGlyphWhole() {
   TerminalSessionTestAccess::AppendOutput(session, text + "\x1b[1;4H\x1b[P");
   ExpectLineText(session.SnapshotLines(), 0, "ab cd", "DCH of the spacer blanks the lead");
 
-  // DCH under a background colour fills what it vacates at the right margin with
-  // that background (bce), as ECH and EL already did.
   TerminalSessionTestAccess::Reset(session, 3, 8);
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[44mabcdefgh\x1b[1;2H\x1b[2P");
   const auto lines = session.SnapshotLines();
@@ -2650,14 +2275,9 @@ void TestTerminalSessionEraseAndDeleteTakeAWideGlyphWhole() {
   ExpectLineText(lines, 0, "adefgh  ", "and the rest shifts left");
 }
 
-// DEC Special Graphics. ncurses draws every box with it under TERM=xterm-256color,
-// UTF-8 locale or not: smacs is `ESC ( 0`, then `lqqk` for a box's top. The
-// designation was parsed and dropped, so every border in dialog, mc or tig read
-// as a row of letters. SO/SI shift G1 in and out, and DECSC saves the sets.
 void TestTerminalSessionDecSpecialGraphicsDrawsBoxes() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 12);
-  // Exactly the bytes python's curses box() emitted for the top-left corner.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b(0lqqk\x1b(Bok\r\n\x1b(0x\x1b(B x");
   auto lines = session.SnapshotLines();
   ExpectLineText(lines, 0, "\u250c\u2500\u2500\u2510ok", "the box's top draws, and ESC ( B is ASCII again");
@@ -2676,11 +2296,6 @@ void TestTerminalSessionDecSpecialGraphicsDrawsBoxes() {
   ExpectLineText(session.SnapshotLines(), 0, "ABC", "bytes outside the graphics range stay as they are");
 }
 
-// SU / SD (terminfo's indn / rin) on the primary screen with no custom region,
-// and DECSTR (is2 / rs2, which `reset` and `tput init` send). The scrolls were
-// no-ops there, so a program that scrolled the screen with them redrew over rows
-// that never moved; DECSTR was ignored, leaving insert mode, origin mode, the
-// graphics set and the margins in place after a `reset`.
 void TestTerminalSessionPrimaryScrollsAndSoftReset() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 3, 8);
@@ -2707,10 +2322,6 @@ void TestTerminalSessionPrimaryScrollsAndSoftReset() {
   Expect(TerminalSessionTestAccess::ScrollRegionBottom(session) == 3, "and the full-screen margins");
 }
 
-// RIS (`ESC c`) is the first thing terminfo's rs1 sends, so `reset` relies on it,
-// and it was dropped: the alternate screen, the modes, the margins and the
-// rendition a crashed full-screen program left behind all survived a `reset`.
-// DECSCNM (`CSI ? 5 h`, the `flash` visual bell) was not tracked at all.
 void TestTerminalSessionFullResetAndReverseVideo() {
   microide::terminal::TerminalSession session;
   const auto reply_to = [&](std::string_view query) {
@@ -2745,11 +2356,6 @@ void TestTerminalSessionFullResetAndReverseVideo() {
          "and the rendition is the default");
 }
 
-// REP (`CSI Ps b`) and IRM (`CSI 4 h` / `CSI 4 l`) are in the xterm-256color
-// terminfo entry this terminal sets TERM to (rep, smir/rmir), so ncurses uses
-// them: a run of one character comes as the character and a repeat count. Both
-// were ignored, so the run was one character long and the rest of the row
-// shifted left; an IRM insert overwrote instead.
 void TestTerminalSessionRepeatAndInsertModeFromTheAdvertisedTerminfo() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 3, 12);
@@ -2765,7 +2371,6 @@ void TestTerminalSessionRepeatAndInsertModeFromTheAdvertisedTerminfo() {
   TerminalSessionTestAccess::AppendOutput(session, "x\x1b[2147483647b");
   Expect(session.SnapshotLines().size() <= 4, "a huge count is bounded by the screen");
 
-  // Written a row at a time, a repeat wraps exactly where glyph-by-glyph would.
   TerminalSessionTestAccess::Reset(session, 4, 4);
   TerminalSessionTestAccess::AppendOutput(session, "ab\x1b[8bZ");
   auto wrapped = session.SnapshotLines();
@@ -2782,22 +2387,14 @@ void TestTerminalSessionRepeatAndInsertModeFromTheAdvertisedTerminfo() {
   TerminalSessionTestAccess::AppendOutput(session, "abcdef\r\x1b[4hX");
   ExpectLineText(session.SnapshotLines(), 0, "Xabcde", "what an insert pushes past the margin is lost");
 
-  // An insert that pushes a wide glyph's spacer past the margin leaves no half
-  // pair: the lead goes too (ICH and IRM share the insert).
   TerminalSessionTestAccess::Reset(session, 3, 6);
   TerminalSessionTestAccess::AppendOutput(session, "abcd\xe4\xb8\xad\r\x1b[@");
   ExpectLineText(session.SnapshotLines(), 0, " abcd ", "the wide glyph whose spacer left is blanked");
 }
 
-// Origin mode (DECOM) applies on the primary screen as on the alternate one, as
-// in xterm: CUP counts from the scroll region's top and stays inside it, DECSTBM
-// homes there, and CPR reports relative to it. On the primary buffer all three
-// ignored it, so a program that set a region and DECOM drew its first row at
-// the screen's top, over whatever was above the region.
 void TestTerminalSessionOriginModeAppliesOnThePrimaryScreen() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 5, 8);
-  // Two lines of scrollback first, so the primary screen's top is not row 0.
   TerminalSessionTestAccess::AppendOutput(session, "s0\r\ns1\r\n0\r\n1\r\n2\r\n3\r\n4");
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[2;4r\x1b[?6hA\x1b[9;1HB");
   auto lines = session.SnapshotLines();
@@ -2813,10 +2410,6 @@ void TestTerminalSessionOriginModeAppliesOnThePrimaryScreen() {
   ExpectLineText(lines, 2, "C", "with DECOM reset CUP counts from the screen's top again");
 }
 
-// A cursor move stops at the visible screen's bottom row. The ceiling was the
-// deque's size after the end-of-chunk trim, so in one chunk carrying more lines
-// than the scrollback holds (`cat big.log; clear`) a CUP to the screen's top
-// landed far up in history; and CUD on the bottom row grew the deque, scrolling.
 void TestTerminalSessionCursorMovesStopAtTheScreensBottomRow() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 3, 8);
@@ -2839,17 +2432,11 @@ void TestTerminalSessionCursorMovesStopAtTheScreensBottomRow() {
          "it stays on the bottom row");
 }
 
-// Regression: toggling DECOM (origin mode, `CSI ?6h`/`CSI ?6l`) on the primary buffer
-// homes the cursor to the VISIBLE-screen top, not absolute row 0 in scrollback. The
-// old code passed a screen-relative 0 as an absolute deque index, so a bare
-// `CSI ?6l` (which programs commonly emit) jumped into history and overwrote it.
 void TestTerminalSessionOriginModeToggleHomesToVisibleScreenTop() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 3, 8);
   TerminalSessionTestAccess::AppendOutput(session, "L0\nL1\nL2\nL3\nL4\nL5");
 
-  // Reset origin mode, then write X. X must land on the visible-screen top (L3),
-  // never on the L0 scrollback line.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?6lX");
   const auto lines = session.SnapshotLines();
   Expect(lines.size() == 6, "primary scrollback must be preserved across the origin-mode toggle");
@@ -2857,16 +2444,12 @@ void TestTerminalSessionOriginModeToggleHomesToVisibleScreenTop() {
   ExpectLineText(lines, 3, "X3", "origin-mode home lands at the visible-screen top");
 }
 
-// Regression: TrimScrollbackLocked exposes a monotonic count of front lines dropped so
-// the workspace-side absolute-row mirrors (scroll position, selection, last-command row)
-// can rebase and track the same content instead of jumping forward by the trim batch.
 void TestTerminalSessionScrollbackTrimTotalTracksDroppedLines() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
-  session.SetMaxScrollbackLines(200);  // clamped floor is 200
+  session.SetMaxScrollbackLines(200);
   Expect(session.ScrollbackTrimTotal() == 0, "no trim before the cap is exceeded");
 
-  // Emit well past the coalesced trim high-watermark (cap + cap/4 == 251).
   std::string output;
   const int kLines = 300;
   for (int i = 0; i < kLines; ++i) {
@@ -2876,29 +2459,16 @@ void TestTerminalSessionScrollbackTrimTotalTracksDroppedLines() {
 
   const std::uint64_t trimmed = session.ScrollbackTrimTotal();
   Expect(trimmed > 0, "exceeding the scrollback cap should trim front lines");
-  // After trimming, the deque is capped and the trim count accounts for the difference
-  // between everything written and what survives.
   Expect(session.LineCount() <= 251, "trimmed deque should collapse toward the cap");
   Expect(trimmed == static_cast<std::uint64_t>(kLines + 1) - session.LineCount(),
          "trim total should equal written lines minus surviving lines");
 }
 
-// Regression (TD-2026-08-14-231): a trimmed scrollback line's cell buffer backs
-// the line that replaces it, instead of being freed while the next line allocates
-// an identical one.
-//
-// Asserted through the pool's own occupancy and the cells' ADDRESSES, not through
-// an allocation count: a counter would also go green if the allocator merely
-// handed the same block back, and the point is that no allocation happens at all.
 void TestTerminalSessionRecyclesTrimmedLineBuffers() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 80);
-  session.SetMaxScrollbackLines(200);  // clamped floor is 200
+  session.SetMaxScrollbackLines(200);
 
-  // Chunked exactly as a PTY delivers: the end-of-chunk trim is what fills the
-  // pool, so a single giant write would never exercise this (which is why
-  // `terminal_scroll_long_output` did not, and `terminal_stream_chunked_output`
-  // now does).
   const auto feed_chunk = [&](int first, int count) {
     std::string output;
     for (int i = first; i < first + count; ++i) {
@@ -2909,14 +2479,11 @@ void TestTerminalSessionRecyclesTrimmedLineBuffers() {
     TerminalSessionTestAccess::AppendOutput(session, output);
   };
 
-  feed_chunk(0, 300);  // past the coalesced high-watermark: one trim, pool fills
+  feed_chunk(0, 300);
   Expect(session.ScrollbackTrimTotal() > 0, "the first chunk trims");
   const std::size_t pooled = TerminalSessionTestAccess::LineBufferPoolSize(session);
   Expect(pooled > 0, "a trim hands its lines' cell buffers to the pool");
 
-  // A second chunk small enough to stay under the coalesced high-watermark, so it
-  // creates lines WITHOUT triggering another trim: every one of them must come out
-  // of the pool, which is only visible as the pool shrinking by exactly that many.
   const int kSecondChunkLines = 20;
   feed_chunk(300, kSecondChunkLines);
   Expect(session.LineCount() < 251, "the second chunk stays under the trim watermark");
@@ -2924,8 +2491,6 @@ void TestTerminalSessionRecyclesTrimmedLineBuffers() {
              pooled - static_cast<std::size_t>(kSecondChunkLines),
          "the lines created after a trim drain the pool rather than allocating");
 
-  // Content is the real contract; recycling must be invisible. The last line
-  // written is the one just above the cursor's own (fresh) line.
   const std::vector<microide::terminal::TerminalLine> lines = session.SnapshotLines();
   Expect(!lines.empty(), "the session still has lines");
   const auto text_of = [](const microide::terminal::TerminalLine& line) {
@@ -2943,8 +2508,6 @@ void TestTerminalSessionRecyclesTrimmedLineBuffers() {
     if (text_of(line) == "recycled scrollback line 319") {
       found_last = true;
     }
-    // A recycled buffer that kept stale cells would show up as a line carrying
-    // text from BOTH chunks; every line must be exactly one of them or blank.
     const std::string text = text_of(line);
     Expect(text.empty() || text.rfind("recycled scrollback line ", 0) == 0,
            "a recycled buffer never leaks the previous line's cells");
@@ -2952,18 +2515,11 @@ void TestTerminalSessionRecyclesTrimmedLineBuffers() {
   Expect(found_last, "the most recent line is present and intact");
 }
 
-// DECSTBM (CSI r) requires the top margin to be strictly above the bottom.
-// A one-line region (top == bottom) is invalid and must leave the region
-// unchanged. We reveal the effective scroll-region top with origin mode: with
-// origin mode on, CUP row 1 homes to the region top, so writing there shows
-// where the top margin actually is.
 void TestTerminalSessionDecstbmIgnoresEqualMargins() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 6, 8);
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049hA\nB\nC\nD\nE\nF");
 
-  // CSI 5;5 r would set a one-line region at index 4; it must be ignored so the
-  // region stays full-screen (top index 0).
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[5;5r\x1b[?6h\x1b[1;1HZ");
 
   const auto lines = session.SnapshotLines();
@@ -2978,8 +2534,6 @@ void TestTerminalSessionDecstbmIgnoresInvertedMargins() {
   TerminalSessionTestAccess::Reset(session, 8, 8);
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049hA\nB\nC\nD\nE\nF\nG\nH");
 
-  // CSI 8;3 r inverts the margins (top index 7 below bottom index 2); it must be
-  // ignored, leaving the full-screen region with its top at row 0.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[8;3r\x1b[?6h\x1b[1;1HZ");
 
   const auto lines = session.SnapshotLines();
@@ -2994,8 +2548,6 @@ void TestTerminalSessionDecstbmFullScreenResetsRegion() {
   TerminalSessionTestAccess::Reset(session, 6, 8);
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049hA\nB\nC\nD\nE\nF");
 
-  // Establish a genuine narrower region, then the no-argument CSI r must reset it
-  // to a valid full-screen region (top index 0 < bottom index 5).
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[3;5r\x1b[r\x1b[?6h\x1b[1;1HZ");
 
   const auto lines = session.SnapshotLines();
@@ -3005,16 +2557,9 @@ void TestTerminalSessionDecstbmFullScreenResetsRegion() {
                  "full-screen CSI r must not leave the previous narrower region's top in effect");
 }
 
-// Regression: an ESC appearing where a charset-designation final byte is expected
-// (`ESC ( <ESC>...`) cancels the designation and starts a fresh escape, so the
-// following CSI executes. Previously the ESC was consumed as the G0 final and the
-// CSI's leading bytes printed as literal text.
 void TestTerminalSessionCharsetDesignationAbortsOnEmbeddedEscape() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
-  // X, then a truncated G0 designation immediately followed by a real SGR + glyph:
-  // ESC ( <ESC>[31m Y. With the abort, Y prints at column 1 in red; without it the
-  // "[31m" bytes print as text.
   TerminalSessionTestAccess::AppendOutput(session, "X\x1b(\x1b[31mY");
 
   const auto lines = session.SnapshotLines();
@@ -3028,16 +2573,10 @@ void TestTerminalSessionCharsetDesignationAbortsOnEmbeddedEscape() {
          "text before the designation keeps the default color");
 }
 
-// Regression: on the alternate screen with a custom DECSTBM region that does not
-// reach the physical bottom, an index/LF with the cursor BELOW the region at the
-// last physical row must NOT scroll. Previously it scrolled the whole screen,
-// corrupting a header/status-split layout.
 void TestTerminalSessionAltScreenLineFeedBelowRegionDoesNotScroll() {
   microide::terminal::TerminalSession session;
-  ResetAlternateScreenFixture(session);  // rows: A B C D
+  ResetAlternateScreenFixture(session);
 
-  // Region = top two rows only; move to the last physical row (below the region),
-  // write a status marker there, then LF.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;2r\x1b[4;1HZ\n");
 
   const auto lines = session.SnapshotLines();
@@ -3048,19 +2587,12 @@ void TestTerminalSessionAltScreenLineFeedBelowRegionDoesNotScroll() {
   ExpectLineText(lines, 3, "Z", "the status row stays put; LF at the bottom does not scroll");
 }
 
-// Regression: a child that exits while on the alternate screen restores the
-// primary buffer before emitting the `[process exited]` marker (matching
-// xterm/VTE), instead of appending the marker onto the alt grid and evicting the
-// still-visible alternate rows from the top.
 void TestTerminalSessionProcessExitMarkerLeavesAlternateScreen() {
   microide::terminal::TerminalSession session;
-  ResetAlternateScreenFixture(session);  // alternate screen shows A B C D
+  ResetAlternateScreenFixture(session);
   TerminalSessionTestAccess::EmitProcessExitMarker(session);
 
   const auto lines = session.SnapshotLines();
-  // Concatenate without row separators: the marker text ("[process exited]", 16
-  // chars) wraps across the 8-column fixture, so it is contiguous only when the
-  // rows are joined directly.
   std::string joined;
   for (const auto& line : lines) {
     joined += LineText(line);
@@ -3072,14 +2604,9 @@ void TestTerminalSessionProcessExitMarkerLeavesAlternateScreen() {
          "appending the marker onto (and evicting) the alt grid");
 }
 
-// Regression: a basic SGR foreground (30..37) brightens with the bold flag
-// regardless of order (`\e[1m\e[31m` == `\e[31m\e[1m`), and SGR 22 reverts it to
-// the dark shade. Previously the RGB was baked from the bold flag at set-time, so
-// `\e[31m\e[1m` stayed dark and `\e[1;31m\e[22m` stayed bright.
 void TestTerminalSessionBasicForegroundBrightnessTracksBold() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
-  // A: bold then red. B: red then bold. C: bold+red then SGR22. D: plain red.
   TerminalSessionTestAccess::AppendOutput(
       session, "\x1b[1m\x1b[31mA\x1b[0m\x1b[31m\x1b[1mB\x1b[0m\x1b[1;31m\x1b[22mC\x1b[0m\x1b[31mD");
 
@@ -3097,24 +2624,16 @@ void TestTerminalSessionBasicForegroundBrightnessTracksBold() {
   Expect(same(color_of(2), color_of(3)),
          "SGR 22 reverts a bold-brightened basic foreground to the plain (dark) shade");
   Expect(!same(color_of(0), color_of(3)), "bright red must differ from dark red");
-  // The SGR path must resolve through the ONE shared palette, not a table of its
-  // own. This is what the old render-vs-terminal "parity" test meant to check; it
-  // could not, because the terminal entry point was a forwarder to the render one.
   Expect(color_of(3) == microide::util::BasicAnsiColor(1, false),
          "a plain SGR 31 foreground is exactly the shared palette's dark red");
   Expect(color_of(0) == microide::util::BasicAnsiColor(1, true),
          "a bold SGR 31 foreground is exactly the shared palette's bright red");
 }
 
-// Regression: DECSTBM is honored on the PRIMARY buffer (not just the alt screen).
-// A bottom-status-line program that stays off the alternate screen previously had
-// its LF scroll the whole screen; now a custom region scrolls only within itself,
-// leaving rows above and below untouched.
 void TestTerminalSessionPrimaryScreenScrollRegionScrollsOnlyRegion() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
   TerminalSessionTestAccess::AppendOutput(session, "L0\nL1\nL2\nL3");
-  // Region = rows 1..2 (CSI 2;3r). Position at the region bottom (row 2), LF.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[2;3r\x1b[3;1H\n");
 
   const auto lines = session.SnapshotLines();
@@ -3125,14 +2644,9 @@ void TestTerminalSessionPrimaryScreenScrollRegionScrollsOnlyRegion() {
   ExpectLineText(lines, 3, "L3", "rows below the region are untouched");
 }
 
-// Regression: CSI r with a bottom margin past the screen height clamps to the last
-// row (xterm/VTE) instead of discarding the whole command.
 void TestTerminalSessionDecstbmClampsOutOfRangeBottom() {
   microide::terminal::TerminalSession session;
-  ResetAlternateScreenFixture(session);  // rows A B C D
-  // Bottom margin 99 > 4: clamp to row 3, region = rows 1..3. Scroll at the bottom
-  // must keep row 0 (A). If the command were discarded, the region would be the
-  // full screen and A would scroll away.
+  ResetAlternateScreenFixture(session);
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[2;99r\x1b[4;1H\n");
 
   const auto lines = session.SnapshotLines();
@@ -3140,14 +2654,9 @@ void TestTerminalSessionDecstbmClampsOutOfRangeBottom() {
   ExpectLineText(lines, 1, "C", "the clamped region scrolled its body up");
 }
 
-// Regression: a C0 control embedded mid-CSI (here LF) is executed immediately and
-// the control sequence then continues. Previously it was buffered as a parameter
-// byte, so the cursor did not move and the dispatch was corrupted.
 void TestTerminalSessionC0ControlExecutesMidCsi() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
-  // A, then ESC[ opens a CSI, a LF is executed mid-sequence, 'm' closes the (empty)
-  // SGR, then B prints on the new row.
   TerminalSessionTestAccess::AppendOutput(session, "A\x1b[\nmB");
 
   const auto lines = session.SnapshotLines();
@@ -3156,9 +2665,6 @@ void TestTerminalSessionC0ControlExecutesMidCsi() {
   ExpectLineText(lines, 1, "B", "the mid-CSI line feed moved the cursor down before B printed");
 }
 
-// A C0 control executed mid-CSI does exactly what it does in the ground state: the
-// two places used to hold separate copies of the C0 switch, and the mid-CSI one had
-// lost the backspace's pending-wrap clamp and SO/SI (ExecuteC0Locked is the one copy).
 void TestTerminalSessionMidCsiC0MatchesGroundState() {
   const auto text_after = [](std::string_view output) {
     microide::terminal::TerminalSession session;
@@ -3167,24 +2673,13 @@ void TestTerminalSessionMidCsiC0MatchesGroundState() {
     const auto lines = session.SnapshotLines();
     return lines.empty() ? std::string() : LineText(lines.front());
   };
-  // Eight glyphs leave the wrap pending; a backspace from there lands on the
-  // second-to-last column, so X overwrites G.
   Expect(text_after("ABCDEFGH\bX") == "ABCDEFXH", "ground: a backspace from the pending wrap clamps first");
   Expect(text_after("ABCDEFGH\x1b[\bmX") == "ABCDEFXH", "mid-CSI: the same backspace clamps the same way");
-  // G1 designated as DEC special graphics; SO shifts it into GL, so 'q' draws a line.
   const std::string ground = text_after("\x1b)0\x0eq");
   Expect(ground != "q", "ground: SO shifts G1's line drawing in");
   Expect(text_after("\x1b)0\x1b[\x0emq") == ground, "mid-CSI: SO shifts it in as well");
 }
 
-// Regression: a full-window scroll region saved before a grow-resize follows the
-// new height when the screen is restored, instead of staying frozen at the old
-// height (ClampScrollRegionLocked only ever shrinks the bottom margin).
-// Regression: Start() reseeds the 24x80 default geometry, and the scroll region's
-// bottom margin is derived from rows_. Resetting the region before that reseed
-// left it sized to the OUTGOING height, so a restarted terminal that had been
-// resized larger believed it had a custom DECSTBM region on a 24-row screen —
-// which diverts the newline path away from accumulating scrollback.
 void TestTerminalSessionRestartResetsScrollRegionToDefaultHeight() {
   microide::terminal::TerminalSession session;
   session.StartPlaceholderForTesting(std::filesystem::path("/tmp"), "");
@@ -3201,8 +2696,6 @@ void TestTerminalSessionRestartResetsScrollRegionToDefaultHeight() {
 void TestTerminalSessionResizeReexpandsSavedScrollRegion() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
-  // Enter the alt screen (saves the primary buffer's full-window region 0..3),
-  // grow to 6 rows, then leave the alt screen (restores the primary region).
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049h");
   session.Resize(6, 8);
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049l");
@@ -3210,36 +2703,23 @@ void TestTerminalSessionResizeReexpandsSavedScrollRegion() {
          "the restored primary region re-expands to the new full height (row 5)");
 }
 
-// TD-2026-07-17-067: a state-restore path that copies an oversized saved cursor
-// row into cursor_row_ must not resize the line deque past the scrollback budget.
-// EnsureCursorLineExistsLocked now clamps at max_scrollback_lines_ + rows_, so the
-// restore allocates a bounded number of lines rather than tens of millions.
 void TestTerminalSessionRestoreClampsOversizedCursorRow() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
   session.SetMaxScrollbackLines(2000);
 
-  // A saved primary cursor row far beyond any legitimate scrollback position.
   const std::size_t restored_line_count =
       TerminalSessionTestAccess::RestoreWithSavedPrimaryCursorRow(session, 50'000'000);
 
-  // The cap is max_scrollback_lines_ + rows_ (+1 for the row itself). 2000 + 24 + 1.
   Expect(restored_line_count <= 2000 + 24 + 1,
          "restore of an oversized cursor row must stay within the scrollback+visible budget");
   Expect(session.cursor_row() <= 2000 + 24,
          "the restored cursor row must be clamped to the scrollback ceiling");
 }
 
-// AppendOutputLocked takes a bulk fast path for runs of plain printable ASCII
-// (PutAsciiRunLocked) instead of dispatching every byte through PutGlyphLocked.
-// The fast path must be indistinguishable from the per-byte path at every seam:
-// the right margin, the wrap it defers, the boundaries where a run meets a
-// control byte / escape / multi-byte glyph, and the wide-glyph pairs it lands on.
 void TestTerminalSessionAsciiRunFastPathMatchesPerByte() {
   microide::terminal::TerminalSession session;
 
-  // 1. A run that exactly fills the line must NOT wrap yet — the wrap is
-  //    deferred to the next write, matching the per-byte path.
   TerminalSessionTestAccess::Reset(session, 4, 8);
   TerminalSessionTestAccess::AppendOutput(session, "ABCDEFGH");
   auto lines = session.SnapshotLines();
@@ -3247,13 +2727,11 @@ void TestTerminalSessionAsciiRunFastPathMatchesPerByte() {
   Expect(session.cursor_row() == 0, "a run filling the line must not wrap yet");
   Expect(session.cursor_column() == 8, "the cursor rests at the right margin");
 
-  // 2. The next byte performs the deferred wrap.
   TerminalSessionTestAccess::AppendOutput(session, "IJ");
   lines = session.SnapshotLines();
   ExpectLineText(lines, 0, "ABCDEFGH", "the filled line is untouched by the wrap");
   ExpectLineText(lines, 1, "IJ", "the deferred wrap continues on the next row");
 
-  // 3. A single run longer than the line wraps at exactly the same columns.
   TerminalSessionTestAccess::Reset(session, 4, 8);
   TerminalSessionTestAccess::AppendOutput(session, "ABCDEFGHIJKLMNOPQRST");
   lines = session.SnapshotLines();
@@ -3261,21 +2739,16 @@ void TestTerminalSessionAsciiRunFastPathMatchesPerByte() {
   ExpectLineText(lines, 1, "IJKLMNOP", "an over-long run keeps wrapping");
   ExpectLineText(lines, 2, "QRST", "the remainder lands on the third row");
 
-  // 4. Run boundaries: control bytes, escapes, and multi-byte glyphs must all
-  //    interrupt the run and be handled by the per-byte parser exactly as before.
   TerminalSessionTestAccess::Reset(session, 4, 20);
   TerminalSessionTestAccess::AppendOutput(session, "ab\tcd\r\nef\x1b[1mgh");
   lines = session.SnapshotLines();
   ExpectLineText(lines, 0, "ab      cd", "a tab inside a run still moves to the tab stop");
   ExpectLineText(lines, 1, "efgh", "an SGR escape splits a run without losing bytes");
 
-  // 5. A run landing on a wide glyph must break the pair the same way a
-  //    per-byte write does — both when it overwrites the lead and when it
-  //    overwrites the trailing spacer.
   TerminalSessionTestAccess::Reset(session, 4, 20);
-  TerminalSessionTestAccess::AppendOutput(session, "\xE6\x97\xA5\xE6\x9C\xAC ok");  // 日本 ok
+  TerminalSessionTestAccess::AppendOutput(session, "\xE6\x97\xA5\xE6\x9C\xAC ok");
   TerminalSessionTestAccess::AppendOutput(session, "\r");
-  TerminalSessionTestAccess::AppendOutput(session, "xy");  // overwrites the first wide lead+spacer
+  TerminalSessionTestAccess::AppendOutput(session, "xy");
   lines = session.SnapshotLines();
   Expect(LineText(lines[0]).rfind("xy", 0) == 0,
          "a run overwriting a wide glyph writes its own bytes at the start");
@@ -3283,14 +2756,11 @@ void TestTerminalSessionAsciiRunFastPathMatchesPerByte() {
              LineText(lines[0]).find("\xE6\x9C\xAC") != std::string::npos,
          "the untouched second wide glyph survives; the overwritten one leaves no half-pair");
 
-  // 6. DEL (0x7F) is not run content: it must stay a no-op, not print.
   TerminalSessionTestAccess::Reset(session, 4, 20);
   TerminalSessionTestAccess::AppendOutput(session, "ab\x7f" "cd");
   lines = session.SnapshotLines();
   ExpectLineText(lines, 0, "abcd", "DEL inside a run is ignored, not printed");
 
-  // 7. The run must be split across AppendOutput calls without artifacts — the
-  //    PTY delivers arbitrary chunk boundaries.
   TerminalSessionTestAccess::Reset(session, 4, 20);
   for (const char c : std::string("chunked output")) {
     TerminalSessionTestAccess::AppendOutput(session, std::string_view(&c, 1));
@@ -3300,11 +2770,6 @@ void TestTerminalSessionAsciiRunFastPathMatchesPerByte() {
                  "byte-at-a-time delivery must produce the same row as one bulk write");
 }
 
-// Random escape streams replayed against the screen and cursor pyte (a Python
-// VT emulator) produced for them; tools/gen-terminal-reference.py regenerates
-// the fixture and documents which sequences it steers around. Every case that
-// disagrees is printed with its input so the divergence can be judged against
-// xterm rather than against pyte alone.
 void TestTerminalSessionScreenAgreesWithPyteReference() {
   const std::string fixture = ReadFile(FixturePath("terminal/pyte-reference.txt"));
   Expect(!fixture.empty(), "the pyte reference fixture should be present");
@@ -3406,16 +2871,11 @@ void TestTerminalSessionScreenAgreesWithPyteReference() {
              std::to_string(cases.size()) + " cases differ:" + report);
 }
 
-// A double-width glyph on a terminal narrower than two columns has nowhere to
-// put its second column, and wrapping does not help -- the next row is exactly
-// as narrow. It must degrade to a single cell, not run the cursor and the line
-// past the right margin. A one-column panel is reachable by dragging the divider
-// and a CJK prompt puts a wide glyph there on the first keystroke.
 void TestWideGlyphOnANarrowScreenStaysInsideTheMargin() {
   for (const std::size_t columns : {std::size_t{1}, std::size_t{2}}) {
     microide::terminal::TerminalSession session;
     TerminalSessionTestAccess::Reset(session, 3, columns);
-    TerminalSessionTestAccess::AppendOutput(session, "\xe6\x97\xa5");  // U+65E5, width 2
+    TerminalSessionTestAccess::AppendOutput(session, "\xe6\x97\xa5");
 
     Expect(session.cursor_column() <= columns,
            "the cursor must stay within the screen on a " + std::to_string(columns) +
@@ -3430,7 +2890,6 @@ void TestWideGlyphOnANarrowScreenStaysInsideTheMargin() {
            "the cursor row must name a line that exists");
   }
 
-  // Repeated wide glyphs must not walk the cursor further out with each one.
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 3, 1);
   for (int i = 0; i < 8; ++i) {
@@ -3731,4 +3190,4 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionStopEscalatesToKillForStubbornChild);
 }
 
-}  // namespace microide::tests
+}

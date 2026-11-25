@@ -36,10 +36,6 @@ void WorkspaceShell::ShowDirtyPromptForProject(std::size_t index) {
     return;
   }
 
-  // The empty-check and count span ALL editor groups: a project whose only unsaved
-  // buffer lives in the non-focused split group must still prompt (else closing it
-  // would silently discard that buffer). ConfirmCloseProject re-derives the full
-  // all-groups set to save, so the focused-group `dirty_tabs` payload is display-only.
   const std::size_t dirty_count = DirtyEditorGroupTabsForProject(index).size();
   if (dirty_count == 0) {
     CloseProject(index);
@@ -51,10 +47,6 @@ void WorkspaceShell::ShowDirtyPromptForProject(std::size_t index) {
 }
 
 void WorkspaceShell::ShowDirtyPromptForQuit() {
-  // Count unsaved buffers across ALL editor groups so a tab dirtied only in the
-  // non-focused split group is included (VSCode "Save All"). The dirty_tabs payload
-  // stays focused-group: it is display-only, and ConfirmQuit re-derives the
-  // all-groups set per project to actually save.
   std::size_t dirty_count = DirtyEditorGroupTabs().size();
   for (std::size_t i = 0; i < context_.project_catalog.entries.size(); ++i) {
     if (HasActiveProjectCatalogEntry() && i == context_.project_catalog.active_index) {
@@ -151,10 +143,6 @@ std::string WorkspaceShell::DirtyPromptMessage() const {
                      " affected dirty editors before " + action + label + "?";
   }
 
-  // Resolve the tab's stable id (TD-2026-07-17-024) so the label stays correct even
-  // if tabs shifted while the prompt was up -- in whatever group holds it, not the
-  // focused one: the focus can move under the prompt (soak 6d33d9fa57bc). Fall back
-  // to the stored index only for an id-less prompt.
   std::string label = "this tab";
   const std::uint64_t tab_id = context_.prompts.dirty.tab_id;
   if (tab_id != 0) {
@@ -188,9 +176,6 @@ void WorkspaceShell::DismissPromptSurface(bool restore_focus) {
 
 namespace {
 
-// A command prompt's title: its command's label without the menu's "Remote: "
-// group prefix or its trailing "…". `command_line` is a command name, or a whole
-// line whose first word is one.
 std::string_view PromptCommandTitle(std::string_view command_line) {
   const ActionSpec* spec = FindWorkspaceActionByCommand(command_line.substr(0, command_line.find(' ')));
   if (spec == nullptr || spec->label.empty()) {
@@ -206,7 +191,7 @@ std::string_view PromptCommandTitle(std::string_view command_line) {
   return label;
 }
 
-}  // namespace
+}
 
 std::string_view WorkspaceShell::PromptSurfaceTitle() const {
   switch (context_.prompts.surface.action) {
@@ -286,7 +271,6 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
     case PromptSurfaceState::Action::DiscardGitChanges:
       return "Discard all tracked, untracked, and conflicted changes in " + ProjectLabel() + "?";
     case PromptSurfaceState::Action::DiscardGitEntry:
-      // Composed when the prompt opened, from the row it was opened for.
       return context_.prompts.surface.detail.empty()
                  ? "Discard changes for the selected Git sidebar row?"
                  : context_.prompts.surface.detail;
@@ -328,7 +312,6 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
     case PromptSurfaceState::Action::ReviewComment:
       return context_.prompts.surface.detail;
     case PromptSurfaceState::Action::CommandArguments: {
-      // The usage after the command's name: what to type.
       const ActionSpec* spec = FindWorkspaceActionByCommand(context_.prompts.surface.command_name);
       std::string_view usage = spec != nullptr ? spec->command_usage : std::string_view{};
       if (const std::size_t space = usage.find(' '); space != std::string_view::npos) {
@@ -403,7 +386,6 @@ std::array<std::string_view, 2> WorkspaceShell::PromptSurfaceActionLabels() cons
     case PromptSurfaceState::Action::ReviewComment:
       return {"Save", "Cancel"};
     case PromptSurfaceState::Action::ConfirmCommand: {
-      // The command's verb: "End Host Process" -> "End".
       const std::string_view title = PromptCommandTitle(context_.prompts.surface.command_name);
       return {title.substr(0, title.find(' ')), "Cancel"};
     }
@@ -448,13 +430,6 @@ void WorkspaceShell::CloseOpenTabsForPath(const std::filesystem::path& path) {
 }
 
 void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
-  // A focused/clicked Cancel button (selected_button == 1) means the user DECLINED. The
-  // special-cased actions below were dispatched WITHOUT consulting the selected button,
-  // so clicking Cancel (or pressing Enter on a focused Cancel) ran the confirm action —
-  // destructive for commit amend/no-verify, rename-save, and rename-symbol. Decline each
-  // of the shell's own prompt actions here (running its cancel cleanup) before any branch
-  // can execute; non-shell actions (DiscardPatchPreview, file ops) fall through to the
-  // delegate PathMutationCoordinator, which already handles its own Cancel.
   if (context_.prompts.surface_visible && context_.prompts.surface.selected_button == 1) {
     using Action = PromptSurfaceState::Action;
     switch (context_.prompts.surface.action) {
@@ -489,7 +464,7 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
         FocusBackTo(context_.current_project_state, FocusTarget::Sidebar);
         return;
       default:
-        break;  // delegate handles its own Cancel (DiscardPatchPreview, file ops)
+        break;
     }
   }
   if (context_.prompts.surface_visible &&
@@ -497,9 +472,6 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     const std::string url = context_.prompts.surface.detail;
     const bool opened = !url.empty() && OpenExternalUrl(url);
     (void)opened;
-    // Always restore focus to the surface that owned it before the prompt; the
-    // success branch previously passed `!opened` (== false), stranding keyboard
-    // focus on the dismissed prompt and leaving input dead until the next click.
     MakePromptSurfaceService().DismissPromptSurface(true);
     return;
   }
@@ -573,8 +545,6 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
   }
   if (context_.prompts.surface_visible &&
       context_.prompts.surface.action == PromptSurfaceState::Action::SaveAs) {
-    // Commit "Save As": the typed path goes through `save <path>` so the prompt
-    // and the command line resolve and refuse the same way.
     const std::string typed = context_.prompts.surface.input.text();
     MakePromptSurfaceService().DismissPromptSurface(true);
     if (!typed.empty()) {
@@ -594,9 +564,6 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
   if (context_.prompts.surface_visible &&
       (context_.prompts.surface.action == PromptSurfaceState::Action::CommandArguments ||
        context_.prompts.surface.action == PromptSurfaceState::Action::ConfirmCommand)) {
-    // The typed arguments after the command's name (or the confirmed line as it
-    // was built), parsed as the command line parses them (quotes group words), so
-    // the prompt and the palette's command line run and refuse alike.
     const bool confirmed = context_.prompts.surface.action == PromptSurfaceState::Action::ConfirmCommand;
     if (confirmed && resolution == DirtyPathResolution::Discard) {
       MakePromptSurfaceService().DismissPromptSurface(true);
@@ -615,15 +582,12 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
   }
   if (context_.prompts.surface_visible &&
       context_.prompts.surface.action == PromptSurfaceState::Action::ReviewComment) {
-    // Read before the dismiss: the prompt pins where the comment goes.
     MakeCompareReviewService().CommitCommentPrompt();
     MakePromptSurfaceService().DismissPromptSurface(true);
     return;
   }
   if (context_.prompts.surface_visible &&
       context_.prompts.surface.action == PromptSurfaceState::Action::GoToLine) {
-    // Commit "Go to Line": reuse the ActionId::Goto path so the typed
-    // line[:column] shares the same parsing/clamping as the `goto` command.
     const std::string spec = context_.prompts.surface.input.text();
     MakePromptSurfaceService().DismissPromptSurface(true);
     if (!spec.empty()) {
@@ -633,12 +597,10 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
   }
   if (context_.prompts.surface_visible &&
       context_.prompts.surface.action == PromptSurfaceState::Action::RenameSymbol) {
-    // Commit "Rename Symbol": hand the typed name to the LSP rename path, which
-    // renames the symbol at the (still-current) cursor across open buffers.
     const std::string new_name = context_.prompts.surface.input.text();
     MakePromptSurfaceService().DismissPromptSurface(true);
     if (!new_name.empty()) {
-      (void)assist_service_.refactor().RenameSymbol(new_name, nullptr);  // failures are logged
+      (void)assist_service_.refactor().RenameSymbol(new_name, nullptr);
     }
     return;
   }
@@ -649,8 +611,6 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
 
 void WorkspaceShell::OpenBreakpointContextMenu(const std::filesystem::path& path, std::size_t line,
                                                const SDL_FRect& anchor_rect) {
-  // MATLAB-style: the gutter menu acts on an existing breakpoint only. Right-click
-  // on a bare line is inert (left-click still sets a plain breakpoint).
   const editor::Breakpoint* existing = nullptr;
   if (const std::vector<editor::Breakpoint>* bps =
           context_.current_project_state.breakpoint_store.FindByPath(path);
@@ -676,7 +636,6 @@ void WorkspaceShell::EditBreakpointModifierFromMenu(ActionId id) {
   if (path.empty()) {
     return;
   }
-  // Seed the prompt with the current field value, if a breakpoint exists.
   const editor::Breakpoint* existing = nullptr;
   if (const std::vector<editor::Breakpoint>* bps =
           context_.current_project_state.breakpoint_store.FindByPath(path);
@@ -761,7 +720,6 @@ void WorkspaceShell::BreakpointQuickActionFromMenu(ActionId id) {
       store.ToggleEnabled(path, line);
       break;
     case ActionId::DebugBreakpointClearCondition:
-      // Clears only the condition; hit-count / log-message modifiers are kept.
       store.SetCondition(path, line, std::nullopt);
       break;
     default:
@@ -780,8 +738,6 @@ void WorkspaceShell::OpenWatchExpressionPrompt(std::optional<std::size_t> index)
     action = PromptSurfaceState::Action::EditWatchExpression;
     seed = expressions[*index];
   }
-  // The watch list has no associated path; reuse the prompt's root path so the
-  // surface still resolves a sensible label, and carry the index in target_line.
   MakePromptSurfaceService().OpenPromptSurface(action, PromptSurfaceState::Kind::TextInput,
                                                context_.current_project_state.root, std::move(seed));
   context_.prompts.surface.target_line = index.value_or(0);
@@ -794,16 +750,14 @@ void WorkspaceShell::CommitWatchExpressionPrompt() {
   const std::size_t index = context_.prompts.surface.target_line;
   MakePromptSurfaceService().DismissPromptSurface(true);
   if (editing) {
-    debug_service_.EditWatch(index, text);  // empty text removes the expression
+    debug_service_.EditWatch(index, text);
   } else if (!text.empty()) {
     debug_service_.AddWatch(text);
   }
-  RequestPreparedFrame();  // the Watch list is the debug dock's (it named the bottom panel)
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::OpenDebugReplPrompt() {
-  // The REPL has no associated path; reuse the project root so the surface still
-  // resolves a sensible label.
   MakePromptSurfaceService().OpenPromptSurface(PromptSurfaceState::Action::EvaluateReplInput,
                                                PromptSurfaceState::Kind::TextInput,
                                                context_.current_project_state.root, std::string{});
@@ -813,13 +767,10 @@ void WorkspaceShell::CommitDebugReplPrompt() {
   const std::string text = context_.prompts.surface.input.text();
   MakePromptSurfaceService().DismissPromptSurface(true);
   if (text.empty()) {
-    // Empty input closes the REPL loop rather than evaluating nothing.
     return;
   }
   debug_service_.EvaluateRepl(text);
-  // Re-open the prompt so the user can keep evaluating without re-triggering the
-  // command (REPL-like). A no-active-session evaluate is a no-op in the service.
   OpenDebugReplPrompt();
 }
 
-}  // namespace microide::workspace
+}

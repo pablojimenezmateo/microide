@@ -44,8 +44,6 @@ void RunCompareTabLoad(const CompareTabLoadRequest& request, std::string right_b
   result.right_ok = true;
   result.built_options.right_exists = right_exists;
 
-  // The same serialize the derived-state refresh does before a rebuild, so the
-  // model is byte-for-byte the one a synchronous open would have built.
   compare::BuildCompareModelInto(
       result.model, result.left,
       compare::MakeCompareText(result.right.SerializeDocumentText(result.right.line_ending())),
@@ -76,10 +74,6 @@ void MarkCompareModelBuilt(CompareTabState& compare_tab, const compare::CompareB
   compare_tab.derived_ignore_whitespace = built.ignore_whitespace;
   compare_tab.derived_syntax = built.syntax;
   compare_tab.derived_fingerprint_valid = true;
-  // Each side's line -> row, for the token windows (addressed by line). The
-  // model was replaced, so the windows no longer describe it until re-pointed.
-  // Sized once, to the side's last line (its lines ascend down the rows), so a
-  // build allocates at most the two tables and a rebuild of the same size nothing.
   const auto index_side = [&](std::vector<std::uint32_t>& line_rows, int compare::CompareRow::* line) {
     const std::vector<compare::CompareRow>& rows = compare_tab.model.rows;
     std::size_t line_count = 0;
@@ -102,4 +96,4 @@ void MarkCompareModelBuilt(CompareTabState& compare_tab, const compare::CompareB
   compare_tab.token_windows_stale = true;
 }
 
-}  // namespace microide::workspace
+}

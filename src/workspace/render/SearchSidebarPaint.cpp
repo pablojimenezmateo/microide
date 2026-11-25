@@ -11,12 +11,6 @@
 #include "workspace/render/SearchSidebarPaint.h"
 #include "workspace/render/SingleLineViewMetrics.h"
 
-// The sidebar's Search panel. Prep lays it out into the frame's snapshot
-// (PrepareSearchSidebarFrame), copies the text it shows and derives its damage
-// from it; paint draws the snapshot only. A row repaints when what it shows
-// changes, whoever changed it: a batch of hits from the search's workers, the
-// selection a key moved, the pointer.
-
 namespace microide::workspace {
 
 using namespace detail;
@@ -34,7 +28,6 @@ std::uint64_t ButtonKey(const SearchSidebarButtonPaint& button, std::uint64_t st
                    (button.enabled ? 1u : 0u) | (button.hovered ? 2u : 0u) | (button.active ? 4u : 0u));
 }
 
-// Everything PaintRow reads of a row.
 std::uint64_t RowKey(const SearchSidebarRowPaint& row, std::uint64_t style) {
   std::uint64_t key = MixRowKeyText(MixRowKeyRect(style, row.rect), row.text);
   key = MixRowKey(key, (row.file ? 1u : 0u) | (row.selected ? 2u : 0u) | (row.hovered ? 4u : 0u));
@@ -45,8 +38,6 @@ std::uint64_t ScrollbarKey(const PanelScrollbarPaint& bar, std::uint64_t style) 
   return MixRowKey(MixRowKeyRect(MixRowKeyRect(style, bar.track), bar.thumb), bar.active ? 1u : 2u);
 }
 
-// Where a field's text starts under its frame's top (the text-input pass puts
-// the focused field's caret and selection on the same line).
 constexpr float kFieldTextTop = 3.0f;
 
 std::size_t DecimalDigits(std::size_t value) {
@@ -58,8 +49,6 @@ std::size_t DecimalDigits(std::size_t value) {
   return digits;
 }
 
-// One visible line of the list: a file's header (the path of the result that
-// follows it) or a match. Null when the map names a result that is not there.
 struct RowSource {
   const project::ProjectSearchResult* result = nullptr;
   bool file = false;
@@ -81,8 +70,6 @@ RowSource SourceOfLine(const SearchSidebarInputs& inputs, std::size_t line) {
 void PaintField(SDL_Renderer* renderer, const SearchSidebarFieldPaint& field, const render::Theme& theme,
                 const render::TextRenderer& tr) {
   DrawTextFieldFrame(renderer, theme, field.rect, field.focused);
-  // The tail of its value that fits, as every unfocused single-line field draws
-  // (the focused one's text arrives already cut to its caret's window).
   const float available = std::max(1.0f, field.rect.w - 12.0f);
   if (field.text.empty()) {
     return;
@@ -105,9 +92,6 @@ void PaintRow(SDL_Renderer* renderer, const SearchSidebarRowPaint& row, const re
   }
   const bool emphasized = row.selected || row.hovered;
   DrawSelectableRowBackground(renderer, theme, rect, theme.surface_background, emphasized, row.selected);
-  // The matched span inside the preview, in the editor's search-match colour.
-  // Positions assume the monospace sidebar font; a non-ASCII preview degrades to
-  // a slight horizontal offset.
   if (row.match_length > 0) {
     const float char_width = std::max(1.0f, tr.CharWidth());
     const float text_x = rect.x + 6.0f;
@@ -125,7 +109,7 @@ void PaintRow(SDL_Renderer* renderer, const SearchSidebarRowPaint& row, const re
                       tr.TruncateToWidthEphemeralView(row.text, rect.w - 12.0f));
 }
 
-}  // namespace
+}
 
 void PrepareSearchSidebarFrame(PreparedFrameState& frame, const SearchSidebarInputs& inputs) {
   PreparedFrameState::SearchSidebarPaint& panel = frame.search_sidebar;
@@ -140,8 +124,6 @@ void PrepareSearchSidebarFrame(PreparedFrameState& frame, const SearchSidebarInp
   panel.placeholder_error = false;
   panel.scrollbar.reset();
   panel.text.clear();
-  // Every frame, shown or not: a panel that is not shown has no units, so the
-  // frame that hides it repaints where its rows were.
   std::vector<DerivedDamage::Unit>& units = frame.derived_damage.Begin(DerivedSurface::SidebarSearch);
   if (inputs.visible) {
     panel.visible = true;
@@ -154,8 +136,6 @@ void PrepareSearchSidebarFrame(PreparedFrameState& frame, const SearchSidebarInp
             : 0;
     const bool empty = inputs.line_map.empty();
 
-    // The panel owns the text it paints. Reserved whole first: the views taken
-    // below are into `panel.text`, which must not grow under them.
     std::size_t text_size = inputs.status.size() + (empty ? inputs.empty_text.size() : 0);
     for (const SearchSidebarFieldInputs& field : inputs.fields) {
       text_size += field.text.size();
@@ -213,7 +193,6 @@ void PrepareSearchSidebarFrame(PreparedFrameState& frame, const SearchSidebarInp
       if (source.file) {
         row.text = own(source.result->relative_path_string);
       } else {
-        // "line:col  preview", the match's place counted from the label's start.
         const std::size_t at = panel.text.size();
         append_number(source.result->line + 1);
         panel.text.append(":");
@@ -245,7 +224,6 @@ void PrepareSearchSidebarFrame(PreparedFrameState& frame, const SearchSidebarInp
           PanelScrollbarPaint{.track = geometry->track, .thumb = geometry->thumb, .active = inputs.scrollbar_active};
     }
 
-    // What the panel draws with besides each element's own values.
     const std::uint64_t style = PaintFingerprint()
                                     .Add(theme.surface_background)
                                     .Add(theme.surface_raised)
@@ -265,7 +243,6 @@ void PrepareSearchSidebarFrame(PreparedFrameState& frame, const SearchSidebarInp
       units.push_back(
           DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(inputs.renderer, rect), .fingerprint = fingerprint});
     };
-    // The fixed pieces first, each in its own slot whatever the list holds.
     for (std::size_t index = 0; index < panel.fields.size(); ++index) {
       unit(panel.fields[index].bounds, FieldKey(panel.fields[index], inputs.fields[index].caret_key, style));
     }
@@ -328,4 +305,4 @@ void PaintSearchSidebar(SDL_Renderer* renderer, const PreparedFrameState& frame,
   }
 }
 
-}  // namespace microide::workspace
+}

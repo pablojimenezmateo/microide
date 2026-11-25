@@ -1,7 +1,3 @@
-// The `surface` query: everything a person can reach, enumerated from the app's own
-// registries, so the QA monkey's coverage is measured against an inventory that
-// cannot drift from the code (dev-docs/project/safety-plan.md W1.7).
-
 #include <array>
 #include <string>
 #include <string_view>
@@ -18,8 +14,6 @@ namespace microide::workspace {
 
 namespace {
 
-// The kinds named by the `ui` query. Listed by hand: an enum has no iteration,
-// and these change rarely; ControlUiQuery's name functions are the spelling.
 constexpr std::array kOverlayModes = {OverlayMode::FileFinder,     OverlayMode::BufferSearch,
                                       OverlayMode::BufferReplace,  OverlayMode::ProjectSearch,
                                       OverlayMode::CommitPicker,   OverlayMode::QuickPick,
@@ -41,8 +35,6 @@ util::JsonValue MenuItems(std::span<const MenuItemSpec> items) {
     if (item.separator) {
       continue;
     }
-    // A row with no label of its own paints its action's (the menu registry's
-    // MenuItem(ActionId) form), and runs its action's command.
     const ActionSpec* spec = FindWorkspaceActionSpec(item.action);
     const std::string_view label = !item.label.empty() ? item.label : spec != nullptr ? spec->label : "";
     const std::string_view command =
@@ -73,13 +65,10 @@ util::JsonValue Strings(auto&& values) {
   return util::JsonValue(std::move(out));
 }
 
-}  // namespace
+}
 
 util::JsonValue ControlChannelService::BuildSurface() const {
   util::JsonObject object;
-  // Each answer is a named local: a range-for over `BuildCommands().AsArray()`
-  // iterates a temporary destroyed before the loop body runs (no C++23
-  // lifetime extension under -std=c++20).
   const util::JsonValue command_rows = BuildCommands();
   util::JsonArray commands;
   for (const util::JsonValue& command : command_rows.AsArray()) {
@@ -128,13 +117,10 @@ util::JsonValue ControlChannelService::BuildSurface() const {
   }
   object["panelContents"] = util::JsonValue(std::move(panel_contents));
   object["tabKinds"] = Strings(std::array<std::string_view, 3>{"editor", "compare", "merge"});
-  // The names ControlUiFocusName gives FocusTarget's values. "terminal" was listed
-  // and is not one -- a focused terminal is the panel -- so the inventory held an
-  // item no run could ever reach.
   object["focusTargets"] =
       Strings(std::array<std::string_view, 5>{"editor", "sidebar", "panel", "overlay", "debug-pane"});
   object["queries"] = Strings(ControlQueryVerbs());
   return util::JsonValue(std::move(object));
 }
 
-}  // namespace microide::workspace
+}

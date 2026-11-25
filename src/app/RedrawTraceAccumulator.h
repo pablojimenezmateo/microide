@@ -7,7 +7,6 @@
 
 namespace microide::app {
 
-// Per-frame render statistics handed to the trace accumulator.
 struct RedrawFrameStats {
   bool full_redraw_requested = false;
   bool full_redraw = false;
@@ -17,40 +16,23 @@ struct RedrawFrameStats {
   std::uint64_t frame_index = 0;
   const char* reason = nullptr;
   Uint64 elapsed_ns = 0;
-  // The union of the requested dirty rects (logical pixels; empty for a full
-  // frame). Logged with each verbose frame so a frame nobody asked for names the
-  // surface that keeps asking (soak a64655101a5a: 60 scheduled partial frames a
-  // second on an idle app, and the log said only "dirty=1").
   SDL_FRect dirty_bounds{};
-  // The last event that asked for this frame (an event-* reason), 0 for none:
-  // logged by name (SdlEventName), so an idle app repainting at 60 fps says which
-  // wake channel or input keeps asking (soak a64655101a5a).
   std::uint32_t event_type = 0;
 };
 
-// Accumulates redraw timing/coverage statistics and logs a rolling summary
-// every `kLogInterval` frames when tracing is enabled (MICROIDE_TRACE_REDRAW).
-// Verbose mode additionally logs every individual frame. This is pure
-// bookkeeping extracted from Application so it can be unit-tested without SDL
-// rendering.
 class RedrawTraceAccumulator {
  public:
   static constexpr Uint64 kLogInterval = 120;
 
   RedrawTraceAccumulator() = default;
 
-  // Reconfigure tracing flags (typically read from PerformanceTrace at startup).
   void Configure(bool enabled, bool verbose);
 
   bool enabled() const { return enabled_; }
   bool verbose() const { return verbose_; }
 
-  // Record one rendered frame: emits the verbose per-frame line when verbose
-  // tracing is on, accumulates totals, and flushes a summary + resets once
-  // `kLogInterval` frames have been seen.
   void Record(const RedrawFrameStats& stats);
 
-  // Test accessors for the rolling counters (since the last flush).
   Uint64 frames() const { return frames_; }
   Uint64 full_frames() const { return full_frames_; }
   Uint64 partial_frames() const { return partial_frames_; }
@@ -72,4 +54,4 @@ class RedrawTraceAccumulator {
   const char* last_reason_ = nullptr;
 };
 
-}  // namespace microide::app
+}

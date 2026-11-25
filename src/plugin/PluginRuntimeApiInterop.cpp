@@ -14,28 +14,17 @@
 namespace microide::plugin::runtime_api_interop {
 namespace {
 
-// Reads a 1-based position field; 0 means "absent" (callers treat 0 as unset).
-// Read through `double` (lua_Number), not `float`: a 24-bit float mantissa rounds
-// line/column indices at or above 2^24 to the wrong row, landing edits/cursors on
-// the wrong line in very large buffers. Accepts both Lua integer and float subtypes.
 std::size_t ReadIndexField(lua_State* state, int table_index, const char* field) {
   lua_interop::GetFieldProtected(state, table_index, field);
   const double value = lua_isnumber(state, -1) ? lua_tonumber(state, -1) : 0.0;
   lua_pop(state, 1);
-  // Reject non-finite values (`inf`/NaN) and anything below 1 — casting a
-  // non-finite double to size_t is undefined behavior. Clamp absurdly large
-  // finite values so the double→size_t cast stays in range. A fractional value
-  // truncates toward zero (its long-standing behavior).
   if (!std::isfinite(value) || value < 1.0) {
     return 0;
   }
-  constexpr double kMaxIndex = 1e15;  // beyond any real document, safely < 2^53
+  constexpr double kMaxIndex = 1e15;
   return static_cast<std::size_t>(value < kMaxIndex ? value : kMaxIndex);
 }
 
-// Resolves an optional `path` field on the spec table at index 1 against the
-// project root. An absent/empty path leaves the request targeting the active
-// editable buffer.
 void ReadOptionalPathField(lua_State* state,
                            const std::filesystem::path& current_project_root,
                            std::filesystem::path* out_path) {
@@ -52,9 +41,6 @@ void ReadOptionalPathField(lua_State* state,
   ReadOptionalPathField(state, current_project_root, &request->path);
 }
 
-// Invokes the host edit callback and pushes the Lua result tuple. `request` must
-// be destructed by the caller's enclosing scope before this returns to keep the
-// (potentially OOM-raising) Lua pushes free of live C++ locals.
 int PushEditResult(lua_State* state, bool applied, const char* fail_message) {
   if (applied) {
     lua_pushboolean(state, 1);
@@ -65,12 +51,7 @@ int PushEditResult(lua_State* state, bool applied, const char* fail_message) {
   return 2;
 }
 
-}  // namespace
-
-// These delegating functions are called by the thin wrappers in
-// PluginHostLuaApi.inc. They never longjmp (no luaL_error / luaL_check): on any
-// error they push the message and return lua_error_util::kPendingError, and the
-// wrapper raises after its own locals destruct. See src/plugin/LuaError.h.
+}
 
 int LuaDiagnosticsPublish(lua_State* state,
                           const runtime_types::PluginInstance* plugin,
@@ -224,18 +205,10 @@ int LuaEditorApplyEdits(lua_State* state,
 
     lua_interop::GetFieldProtected(state, 1, "edits");
     if (lua_type(state, -1) == LUA_TTABLE) {
-      // Cap the harvested edit count so a plugin returning a huge (or
-      // sparse-border-overstated) array cannot grow an unbounded host vector on
-      // this directly plugin-invokable runtime path (mirrors the provider-query
-      // harvest clamps).
       constexpr lua_Integer kMaxApplyEdits = 100000;
       const lua_Integer raw_count = static_cast<lua_Integer>(lua_rawlen(state, -1));
       if (raw_count > kMaxApplyEdits) {
-        // Fail closed rather than silently truncating to the cap: applying only a
-        // prefix of a formatter/refactor's edit set would corrupt the buffer worse
-        // than rejecting the whole request. `request` (with its edit vector)
-        // destructs on this normal return; PushEditResult only pushes Lua values.
-        lua_pop(state, 1);  // edits table
+        lua_pop(state, 1);
         return PushEditResult(state, false,
                               "editor.apply_edits exceeds the maximum edit count");
       }
@@ -249,11 +222,6 @@ int LuaEditorApplyEdits(lua_State* state,
           edit.end_line = ReadIndexField(state, edit_index, "end_line");
           edit.end_column = ReadIndexField(state, edit_index, "end_col");
           lua_interop::ReadStringField(state, edit_index, "text", &edit.text);
-          // ReadIndexField yields 0 for any coordinate that was not a finite,
-          // in-range 1-based index (fractional-below-1, negative, inf/NaN). Such
-          // an edit is malformed; drop it rather than let a 0 clamp to a wild
-          // insertion at the buffer start. If every edit is dropped the apply
-          // resolves to "no edits" and is reported as failed to the plugin.
           if (edit.start_line == 0 || edit.start_column == 0 || edit.end_line == 0 ||
               edit.end_column == 0) {
             lua_pop(state, 1);
@@ -264,7 +232,7 @@ int LuaEditorApplyEdits(lua_State* state,
         lua_pop(state, 1);
       }
     }
-    lua_pop(state, 1);  // edits
+    lua_pop(state, 1);
 
     lua_interop::GetFieldProtected(state, 1, "cursor");
     if (lua_type(state, -1) == LUA_TTABLE) {
@@ -273,7 +241,7 @@ int LuaEditorApplyEdits(lua_State* state,
       request.cursor_column = ReadIndexField(state, cursor_index, "col");
       request.has_cursor = request.cursor_line >= 1;
     }
-    lua_pop(state, 1);  // cursor
+    lua_pop(state, 1);
 
     lua_interop::GetFieldProtected(state, 1, "selection");
     if (lua_type(state, -1) == LUA_TTABLE) {
@@ -285,7 +253,7 @@ int LuaEditorApplyEdits(lua_State* state,
       request.has_selection =
           request.selection_start_line >= 1 && request.selection_end_line >= 1;
     }
-    lua_pop(state, 1);  // selection
+    lua_pop(state, 1);
 
     if (request.edits.empty() && !request.has_cursor && !request.has_selection) {
       fail_message = "editor.apply_edits requires edits, cursor, or selection";
@@ -312,9 +280,6 @@ int LuaEditorSetCursor(lua_State* state,
     ReadOptionalPathField(state, current_project_root, &request);
     request.cursor_line = ReadIndexField(state, 1, "line");
     request.cursor_column = ReadIndexField(state, 1, "col");
-    // Require BOTH a 1-based line and column. A missing/zero column would otherwise
-    // be accepted and silently clamped to column 0 by the host, instead of failing
-    // closed like a malformed apply_edits entry (TD-2026-07-17A-087).
     request.has_cursor = request.cursor_line >= 1 && request.cursor_column >= 1;
     if (request.has_cursor) {
       applied = callbacks.apply_workspace_edit(plugin->id, request);
@@ -341,9 +306,6 @@ int LuaEditorSetSelection(lua_State* state,
     request.selection_start_column = ReadIndexField(state, 1, "start_col");
     request.selection_end_line = ReadIndexField(state, 1, "end_line");
     request.selection_end_column = ReadIndexField(state, 1, "end_col");
-    // Require all four 1-based endpoints. Missing/zero columns would otherwise be
-    // accepted and silently clamped to column 0 rather than failing closed like a
-    // malformed apply_edits entry (TD-2026-07-17A-087).
     request.has_selection =
         request.selection_start_line >= 1 && request.selection_start_column >= 1 &&
         request.selection_end_line >= 1 && request.selection_end_column >= 1;
@@ -375,7 +337,7 @@ int LuaEditorSetGhostText(lua_State* state,
       request.anchor_line = ReadIndexField(state, anchor_index, "line");
       request.anchor_column = ReadIndexField(state, anchor_index, "col");
     }
-    lua_pop(state, 1);  // anchor
+    lua_pop(state, 1);
     lua_interop::ReadStringField(state, 1, "text", &request.text);
     if (!request.text.empty()) {
       callbacks.publish_ghost_text(plugin->id, request);
@@ -387,7 +349,7 @@ int LuaEditorSetGhostText(lua_State* state,
 
 int LuaEditorClearGhostText(lua_State* state,
                             const runtime_types::PluginInstance* plugin,
-                            const std::filesystem::path& /*current_project_root*/,
+                            const std::filesystem::path& ,
                             const PluginHost::Callbacks& callbacks) {
   if (plugin == nullptr || !callbacks.clear_ghost_text) {
     return PushEditResult(state, false, "editor.clear_ghost_text unavailable");
@@ -396,6 +358,6 @@ int LuaEditorClearGhostText(lua_State* state,
   return PushEditResult(state, true, nullptr);
 }
 
-}  // namespace microide::plugin::runtime_api_interop
+}
 
 #endif

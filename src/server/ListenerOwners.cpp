@@ -12,9 +12,6 @@
 namespace microide::server {
 namespace {
 
-// The socket inodes `pid` holds open: its /proc/<pid>/fd links that read
-// `socket:[N]`. Another user's process (or one gone since it was listed) has
-// none to read.
 template <typename Visit>
 void ForEachSocketInode(int pid, Visit&& visit) {
   char path[64];
@@ -23,7 +20,7 @@ void ForEachSocketInode(int pid, Visit&& visit) {
   if (fds == nullptr) {
     return;
   }
-  char link[64 + sizeof(dirent::d_name)];  // "/proc/<pid>/fd/" + any entry name
+  char link[64 + sizeof(dirent::d_name)];
   char target[64];
   while (const dirent* entry = ::readdir(fds)) {
     if (entry->d_name[0] < '0' || entry->d_name[0] > '9') {
@@ -48,12 +45,10 @@ void ForEachSocketInode(int pid, Visit&& visit) {
   ::closedir(fds);
 }
 
-}  // namespace
+}
 
 int OwningRootIndex(int pid, const std::unordered_map<int, int>& parents,
                     const std::unordered_map<int, std::size_t>& root_index) {
-  // Deeper than any real chain (shell -> make -> sh -> node ...), and a bound on
-  // a cycle a torn read could produce.
   constexpr int kMaxDepth = 64;
   for (int depth = 0; depth < kMaxDepth && pid > 0; ++depth) {
     if (const auto root = root_index.find(pid); root != root_index.end()) {
@@ -97,7 +92,7 @@ std::map<std::uint16_t, std::string> AttributeListeners(std::span<const Listener
   for (const ProcessActivity::Stat& stat : table) {
     const int index = OwningRootIndex(stat.pid, parents, root_index);
     if (index < 0) {
-      continue;  // the fallback table holds the whole box; most of it is not ours
+      continue;
     }
     ForEachSocketInode(stat.pid, [&](std::uint64_t inode) {
       if (const auto port = port_of_inode.find(inode); port != port_of_inode.end()) {
@@ -108,4 +103,4 @@ std::map<std::uint16_t, std::string> AttributeListeners(std::span<const Listener
   return owners;
 }
 
-}  // namespace microide::server
+}

@@ -21,11 +21,6 @@ bool ParseLineColumnSpec(std::string_view location,
   }
 
   const std::size_t colon = location.find(':');
-  // ParseInt64 (std::from_chars) rejects a leading '+', so `jump +2` -- the
-  // natural spelling of a relative jump forward, and the form `tabswitch +n`
-  // and `tabmove +n` already take -- parsed as nothing and the jump went
-  // nowhere while the command reported success (found by the QA commands-args
-  // flow). A bare "+" still fails: nothing follows it.
   std::string_view line_text = location.substr(0, colon);
   if (!line_text.empty() && line_text.front() == '+') {
     line_text.remove_prefix(1);
@@ -71,7 +66,7 @@ std::optional<std::size_t> ParseClampedSizeArgument(const std::string& text,
   return std::clamp(*parsed, minimum, maximum);
 }
 
-}  // namespace
+}
 
 std::filesystem::path NormalizeCommandPath(const std::filesystem::path& project_root,
                                            std::filesystem::path path) {
@@ -195,9 +190,6 @@ std::optional<TabMoveRequest> BuildTabMoveRequest(const std::vector<std::string>
   }
   const std::string& raw = args[0];
   const bool relative = raw.front() == '+' || raw.front() == '-';
-  // ParseInt (std::from_chars) rejects a leading '+', so the relative-forward form
-  // "+N" must have its sign stripped before parsing; "-N" parses directly as a
-  // negative offset and "N" as an absolute slot.
   const std::optional<int> slot =
       raw.front() == '+' ? util::ParseInt(std::string_view(raw).substr(1)) : ParseIntArgument(raw);
   if (!slot.has_value()) {
@@ -311,4 +303,4 @@ FocusRequest BuildFocusRequest(const std::vector<std::string>& args) {
   return FocusRequest{.target = FocusRequestTarget::Unknown, .raw_target = target};
 }
 
-}  // namespace microide::workspace
+}

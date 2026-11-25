@@ -8,8 +8,6 @@ namespace {
 bool PredictableChar(const TerminalKeyPress& key) {
   return key.key == TerminalKeyPress::Key::Char && !key.ctrl && !key.alt && !key.super &&
          key.codepoint >= 0x20 && key.codepoint != 0x7f && key.codepoint <= 0x10ffff &&
-         // Wide and combining glyphs would need the width tables; a narrow glyph
-         // is the case that matters (typing at a prompt).
          key.codepoint < 0x1100;
 }
 
@@ -39,7 +37,7 @@ bool BlankCell(const TerminalCell& cell) {
   return cell.length == 0 || (cell.length == 1 && cell.bytes[0] == ' ');
 }
 
-}  // namespace
+}
 
 bool TerminalPredictionOverlay::drawing() const {
   switch (mode_) {
@@ -68,8 +66,6 @@ bool TerminalPredictionOverlay::Typed(const TerminalInputEvent& event, View view
   const bool insert = key && PredictableChar(event.key);
   const bool erase = key && PredictableErase(event.key);
   if (!insert && !erase) {
-    // Enter, an arrow, a paste, a click: where the cursor goes next is the
-    // program's business.
     blocked_until_ = event.seq;
     return false;
   }
@@ -102,7 +98,7 @@ bool TerminalPredictionOverlay::Judge(std::uint64_t echo_ack, View view) {
     pending_.pop_front();
     if (!prediction.placed || prediction.row_from_end == 0 ||
         prediction.row_from_end > view.lines.size()) {
-      continue;  // never drawn, or its row is gone: nothing to judge against
+      continue;
     }
     const TerminalLine& line = view.lines[view.lines.size() - prediction.row_from_end];
     const TerminalCell shown =
@@ -114,8 +110,6 @@ bool TerminalPredictionOverlay::Judge(std::uint64_t echo_ack, View view) {
       suppressed_ = false;
       continue;
     }
-    // The program did not echo what we drew (a password prompt, a key bound to
-    // something else): nothing pending can be trusted either.
     pending_.clear();
     suppressed_ = true;
     break;
@@ -142,7 +136,7 @@ bool TerminalPredictionOverlay::Place(View view) {
       }
       --column;
     } else if (column + 1 >= view.columns) {
-      break;  // the right margin: where the glyph lands is the program's wrap
+      break;
     }
     prediction.column = column;
     prediction.row_from_end = view.lines.size() - row;
@@ -166,8 +160,6 @@ bool TerminalPredictionOverlay::Place(View view) {
     if (line.cells.size() <= prediction.column) {
       line.cells.resize(prediction.column + 1);
     }
-    // In the cell's own colours; a pending glyph is underlined, an erase is
-    // simply blank.
     TerminalCell& cell = line.cells[prediction.column];
     const TerminalStyle style = cell.style;
     cell = prediction.erase ? TerminalCell{} : prediction.glyph;
@@ -179,4 +171,4 @@ bool TerminalPredictionOverlay::Place(View view) {
   return true;
 }
 
-}  // namespace microide::terminal
+}

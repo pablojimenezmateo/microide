@@ -13,15 +13,6 @@ namespace microide::workspace {
 
 namespace {
 
-// The four keys every overlay list answers identically, mapped to the row delta they
-// move by. Anything else is not list navigation and belongs to the mode (or, for the
-// query-backed overlays, to the text field underneath).
-//
-// Home/End are deliberately absent: in the overlays that carry a query field they move
-// the *text caret*, exactly as they do in VS Code's quick input, so Ctrl-less Home in
-// the command palette jumps to the start of the command being typed instead of to the
-// first result. Only the two field-less popups (completion, code actions) map them to
-// first/last row.
 std::optional<int> ListNavigationDelta(SDL_Keycode key) {
   switch (key) {
     case SDLK_UP:
@@ -37,7 +28,7 @@ std::optional<int> ListNavigationDelta(SDL_Keycode key) {
   }
 }
 
-}  // namespace
+}
 
 void KeyInputCoordinator::MoveOverlayListSelection(std::size_t& selected_index,
                                                    std::size_t item_count,
@@ -51,20 +42,12 @@ void KeyInputCoordinator::MoveOverlayListSelection(std::size_t& selected_index,
   }
 }
 
-// Match navigation and the option chords behave identically in the find widget
-// and the find-and-replace widget. They used to be two copies of the same switch
-// arms, so a fix to one silently left the other behind. Anything not handled here
-// falls through to the focused single-line field, which is also the correct
-// behavior for a plain `c`/`w`/`r`.
 bool KeyInputCoordinator::HandleSharedBufferSearchKey(const SDL_KeyboardEvent& event,
                                                       SDL_Keymod modifiers) {
   if (const auto delta = ListNavigationDelta(event.key); delta.has_value()) {
     operations_.move_buffer_search_selection(*delta);
     return true;
   }
-  // Ctrl+H from the find field shows the replace row and focuses it, keeping the
-  // query (VS Code's startFindReplaceAction); in the replace widget it is the
-  // jump to the replace field.
   if (event.key == SDLK_H && NormalizedKeyModifiers(modifiers) == SDL_KMOD_CTRL) {
     if (state_.overlay.mode == OverlayMode::BufferSearch) {
       operations_.execute_action(ActionId::ReplaceInBuffer, {}, ActionSource::Shortcut);
@@ -72,11 +55,6 @@ bool KeyInputCoordinator::HandleSharedBufferSearchKey(const SDL_KeyboardEvent& e
     state_.overlay.buffer_search_field = BufferSearchField::Replace;
     return true;
   }
-  // Alt+Enter selects every match the widget counts -- with its case, whole-word
-  // and regex options, which is what sets it apart from Ctrl+Shift+L's word
-  // scan -- and gives the editor the keyboard so the next keystroke edits them
-  // all (VS Code's editor.action.selectAllMatches). The current match stays the
-  // primary, so the view does not jump.
   if ((event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER) &&
       NormalizedKeyModifiers(modifiers) == SDL_KMOD_ALT) {
     const auto& buffer_search = state_.overlay.workflow.buffer_search;
@@ -89,7 +67,7 @@ bool KeyInputCoordinator::HandleSharedBufferSearchKey(const SDL_KeyboardEvent& e
     const std::size_t primary = std::min(buffer_search.selected_index, buffer_search.matches.size() - 1);
     const editor::SelectionRange& current = buffer_search.matches[primary];
     viewport->MoveCursorTo(current.start.line, current.start.column);
-    viewport->MoveCursorTo(current.end.line, current.end.column, /*extend_selection=*/true);
+    viewport->MoveCursorTo(current.end.line, current.end.column, true);
     std::vector<editor::SelectionRange> others;
     others.reserve(buffer_search.matches.size() - 1);
     for (std::size_t i = 0; i < buffer_search.matches.size(); ++i) {
@@ -103,10 +81,6 @@ bool KeyInputCoordinator::HandleSharedBufferSearchKey(const SDL_KeyboardEvent& e
     operations_.request_frame();
     return true;
   }
-  // Alt+C / Alt+W / Alt+R / Alt+L toggle match case, whole word, regex and Find
-  // in Selection — VSCode's find-widget chords, one per button, in button order.
-  // A plain letter still types into the focused field via the default text-input
-  // path.
   if ((modifiers & SDL_KMOD_ALT) != 0) {
     const std::optional<BufferFindToggle> toggle =
         event.key == SDLK_C   ? std::optional(BufferFindToggle::MatchCase)
@@ -146,9 +120,6 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
   if (state_.overlay.mode == OverlayMode::BufferSearch) {
     switch (event.key) {
       case SDLK_ESCAPE:
-        // Non-modal find: Esc closes the floating widget and returns focus to the
-        // editor. Route through the canonical dismissal so fold-reveal cleanup and
-        // cursor-kind invalidation happen.
         operations_.dismiss_overlay(true);
         return true;
       case SDLK_RETURN:
@@ -156,8 +127,6 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
         if ((modifiers & SDL_KMOD_ALT) != 0) {
           return HandleSharedBufferSearchKey(event, modifiers);
         }
-        // Enter cycles to the next match (Shift+Enter to the previous) and keeps
-        // the widget open, VSCode-style, instead of jumping + dismissing.
         operations_.move_buffer_search_selection((modifiers & SDL_KMOD_SHIFT) ? -1 : 1);
         return true;
       default:
@@ -168,9 +137,6 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
   if (state_.overlay.mode == OverlayMode::BufferReplace) {
     switch (event.key) {
       case SDLK_ESCAPE:
-        // Route through the canonical dismissal so fold-reveal cleanup, cursor-kind
-        // invalidation, and focus restoration all happen (a bare visible=false here
-        // left temporarily-expanded folds open and the cursor kind stale).
         operations_.dismiss_overlay(true);
         return true;
       case SDLK_TAB:
@@ -187,10 +153,6 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
         if (modifiers & SDL_KMOD_CTRL) {
           operations_.replace_all_buffer_search_matches();
         } else if (state_.overlay.buffer_search_field == BufferSearchField::Search) {
-          // Enter in the FIND field steps through the matches, exactly as in the
-          // find-only widget (and VS Code); only the replace field's Enter edits.
-          // Replacing from the find field turned "type a query, Enter to look at
-          // the next hit" into an edit with whatever the replace box held.
           operations_.move_buffer_search_selection((modifiers & SDL_KMOD_SHIFT) ? -1 : 1);
         } else {
           operations_.replace_current_buffer_search_match();
@@ -228,7 +190,6 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
       return true;
     }
     if (event.key == SDLK_TAB) {
-      // The palette query doubles as a command line; Tab completes the active token.
       operations_.complete_command_palette_query();
       return true;
     }
@@ -259,10 +220,6 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
 
   if (state_.overlay.mode == OverlayMode::Completion ||
       state_.overlay.mode == OverlayMode::CodeActions) {
-    // Completion and code-actions are the same list widget over different item vectors;
-    // bind the active list once and drive it through the shared clamped-move helper.
-    // These two carry no query field, so they are the only overlays where Home/End
-    // address the list rather than a text caret.
     const bool is_completion = state_.overlay.mode == OverlayMode::Completion;
     const std::size_t item_count = is_completion
                                        ? state_.overlay.workflow.completion.VisibleCount()
@@ -292,16 +249,10 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
     if (!is_completion) {
       return false;
     }
-    // Tab accepts, as Enter does (VS Code's default); without this it would
-    // reach the editor below and insert a tab under the open list.
     if (event.key == SDLK_TAB && (modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT)) == 0) {
       operations_.activate_overlay_selection();
       return true;
     }
-    // The completion list never owns the caret: every other key -- Backspace,
-    // Delete, Left/Right, word motions -- belongs to the editor underneath, and
-    // the list follows what it did (narrows, or closes once the caret leaves the
-    // word). Typed characters take the same route through the text-input event.
     bool handled = false;
     if (operations_.active_tab_is_compare()) {
       handled = HandleCompareKeyDown(event, modifiers);
@@ -317,7 +268,6 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
     return handled;
   }
 
-  // File finder (the default overlay list).
   if (is_enter) {
     operations_.activate_overlay_selection();
     return true;
@@ -329,4 +279,4 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
   return operations_.text_input_handle_single_line_key_down(event, modifiers);
 }
 
-}  // namespace microide::workspace
+}

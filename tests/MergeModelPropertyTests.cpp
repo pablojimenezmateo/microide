@@ -1,15 +1,3 @@
-// Randomized property tests for the three-way merge model.
-//
-// The strong oracle here is the round trip: a merge whose every hunk chooses one
-// side must reproduce that side's file byte for byte. The hunks are the only
-// places the three files disagree, so choosing "incoming" everywhere IS the
-// incoming file -- and anything that drops, duplicates, or misorders a run
-// breaks that identity on some input even when the hand-written fixtures pass.
-//
-// The second property is the pair of decision trees MergeChoiceLineViews,
-// MergeChoiceLines and MergeChoiceLineCount form. They were once byte-identical
-// copies kept in sync by hand; they must still agree for every choice.
-
 #include "TestSupport.h"
 
 #include <cstdint>
@@ -67,8 +55,6 @@ std::vector<std::string> BuildLines(Rng& rng, std::size_t count) {
   return lines;
 }
 
-// Edit `base` the way one branch would: a few scattered deletes, replacements
-// and insertions, leaving long shared runs so the aligner has real anchors.
 std::vector<std::string> BranchOf(Rng& rng, const std::vector<std::string>& base) {
   const std::vector<std::string>& pool = LinePool();
   std::vector<std::string> out;
@@ -89,7 +75,6 @@ std::vector<std::string> BranchOf(Rng& rng, const std::vector<std::string>& base
 
 std::string Seed(std::uint64_t seed) { return " [seed=" + std::to_string(seed) + "]"; }
 
-// Choosing one side in every hunk must reproduce that side's file exactly.
 void ExpectChoosingOneSideReproducesIt(MergeModel model,
                                        MergeChoice choice,
                                        const std::string& expected,
@@ -103,8 +88,6 @@ void ExpectChoosingOneSideReproducesIt(MergeModel model,
 }
 
 void TestMergeChoosingOneSideEverywhereReproducesThatFile() {
-  // Guard against the corpus going vacuous: if a future generator change stopped
-  // producing three-way disagreement, every assertion below would hold trivially.
   std::size_t total_hunks = 0;
   std::size_t conflict_hunks = 0;
   for (std::uint64_t seed = 1; seed <= 400; ++seed) {
@@ -129,8 +112,6 @@ void TestMergeChoosingOneSideEverywhereReproducesThatFile() {
          "the corpus must reach real conflicts, saw " + std::to_string(conflict_hunks));
 }
 
-// MergeChoiceLineViews / MergeChoiceLines / MergeChoiceLineCount are three views
-// of one decision. They must agree for every hunk and every choice.
 void TestMergeChoiceViewsCountAndLinesAgree() {
   const MergeChoice choices[] = {
       MergeChoice::Base,  MergeChoice::Incoming,          MergeChoice::Current,
@@ -163,12 +144,6 @@ void TestMergeChoiceViewsCountAndLinesAgree() {
   }
 }
 
-// The Both* choices concatenate the two sides in the order their name states --
-// but they first collapse the degenerate cases, exactly as VS Code's "Accept
-// Both Changes" does: a side that still equals base contributed nothing, so
-// "both" is just the other side, and two identical sides are one copy. Assert
-// the collapse rules and the ordering separately, because getting the collapse
-// wrong duplicates a run into the resolved file.
 void TestMergeBothChoicesConcatenateInTheNamedOrder() {
   for (std::uint64_t seed = 1; seed <= 300; ++seed) {
     Rng rng(seed ^ 0xB07Full);
@@ -187,7 +162,6 @@ void TestMergeBothChoicesConcatenateInTheNamedOrder() {
       const bool incoming_unchanged = hunk.incoming_lines == hunk.base_lines;
       const bool current_unchanged = hunk.current_lines == hunk.base_lines;
       if (sides_agree || incoming_unchanged || current_unchanged) {
-        // One side only: whichever actually carries the change.
         const auto& expected = (sides_agree || current_unchanged) && !incoming_unchanged
                                    ? hunk.incoming_lines
                                    : hunk.current_lines;
@@ -218,9 +192,6 @@ void TestMergeBothChoicesConcatenateInTheNamedOrder() {
   }
 }
 
-// Display rows are what the merge pane paints and navigates. Line numbers must
-// increase down each of the three columns, and a row's hunk id must be one the
-// display model actually lists.
 void TestMergeDisplayRowsAreOrderedAndPointAtRealHunks() {
   for (std::uint64_t seed = 1; seed <= 300; ++seed) {
     Rng rng(seed ^ 0xD15Aull);
@@ -263,7 +234,6 @@ void TestMergeDisplayRowsAreOrderedAndPointAtRealHunks() {
   }
 }
 
-// A merge of three identical files has nothing to resolve.
 void TestIdenticalSidesProduceNoHunks() {
   for (std::uint64_t seed = 1; seed <= 150; ++seed) {
     Rng rng(seed ^ 0x1DE0ull);
@@ -275,7 +245,7 @@ void TestIdenticalSidesProduceNoHunks() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterMergeModelPropertyTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MergeModelProperty/ChoosingOneSideEverywhereReproducesThatFile",
@@ -290,4 +260,4 @@ void RegisterMergeModelPropertyTests(std::vector<TestCase>& tests) {
           TestIdenticalSidesProduceNoHunks);
 }
 
-}  // namespace microide::tests
+}

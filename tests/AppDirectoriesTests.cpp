@@ -60,7 +60,7 @@ void TestAppDirectoriesFallBackToHomeRoots() {
          "cache directory resolution should fall back to the HOME-based path");
 }
 
-}  // namespace
+}
 
 void RegisterAppDirectoriesTests(std::vector<TestCase>& tests) {
   AddTest(tests, "AppDirectories/PreferExplicitEnvironmentRoots",
@@ -69,4 +69,4 @@ void RegisterAppDirectoriesTests(std::vector<TestCase>& tests) {
           TestAppDirectoriesFallBackToHomeRoots);
 }
 
-}  // namespace microide::tests
+}

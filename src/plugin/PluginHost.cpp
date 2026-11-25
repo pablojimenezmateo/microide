@@ -3,8 +3,6 @@
 
 namespace microide::plugin {
 
-// Single definition of the shared per-thread execution context declared
-// extern in PluginHostInternal.h.
 thread_local PluginExecContext g_exec;
 
 PluginHost::PluginHost() : impl_(std::make_unique<Impl>()) {}

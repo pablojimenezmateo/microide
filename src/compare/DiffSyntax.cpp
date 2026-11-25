@@ -25,11 +25,6 @@ bool IsWordByte(unsigned char byte) {
          (byte >= '0' && byte <= '9') || byte == '_' || byte == '$' || byte >= 0x80;
 }
 
-// The end of the word token at `column`: ASCII word bytes and non-ASCII
-// identifier code points (`café`, `変数`); `column` itself when none starts
-// there. A non-ASCII symbol is not a word: every byte >= 0x80 counted as one, so
-// `—the` was a single token and a whitespace-only edit after an em dash marked
-// `— the` novel (soak 96055d2c8eec).
 std::size_t WordTokenEnd(std::string_view text, std::size_t column) {
   while (column < text.size()) {
     const auto byte = static_cast<unsigned char>(text[column]);
@@ -58,20 +53,8 @@ bool StartsWithAt(std::string_view line, std::size_t column, std::string_view pr
          line.compare(column, prefix.size(), prefix) == 0;
 }
 
-// Lexes consecutive lines into tokens. Multi-line tokens (block comments,
-// backtick, triple-quoted and raw strings, here-documents) are only formed when
-// the lines are contiguous in memory -- they are whenever they come from one
-// buffer, which is every production caller -- because the token's text is one
-// view over them.
-//
-// Two modes over the same recognisers, so they cannot disagree on where a
-// multi-line token ends: with a token vector it lexes everything; without one
-// (ScanDiffLexState) it only follows what can span lines and steps over the rest
-// a byte -- or a word -- at a time.
 class Lexer {
  public:
-  // `stop_line`: lexing stops before it; the lines from it on are only read to
-  // find where a token that started above ends (the scan's look-ahead).
   Lexer(std::span<const std::string_view> lines, const DiffSyntax& syntax,
         std::vector<DiffToken>* tokens, std::vector<std::uint32_t>* delimiter_of,
         std::size_t stop_line)
@@ -93,8 +76,6 @@ class Lexer {
     }
   }
 
-  // Lexes the lines before the stop line, the first from `entry`; the state the
-  // stop line starts in.
   DiffLexState Run(const DiffLexState& entry) {
     Position at;
     if (stop_line_ > 0 && !entry.code()) {
@@ -120,8 +101,6 @@ class Lexer {
     }
   }
 
-  // Whether line `line + 1` starts right after line `line` ends, separated
-  // only by its line terminator.
   bool ContiguousWithNext(std::uint32_t line) const {
     if (line + 1 >= lines_.size()) {
       return false;
@@ -131,8 +110,6 @@ class Lexer {
     return next > end && next - end <= 2;
   }
 
-  // Searches for `close` from `from`, crossing line boundaries while the lines
-  // stay contiguous. With `escapes`, a backslash skips the byte after it.
   bool FindClose(Position from, std::string_view close, bool escapes, Position& end) const {
     std::uint32_t line = from.line;
     std::size_t column = from.column;
@@ -157,8 +134,6 @@ class Lexer {
     }
   }
 
-  // A here-document's body: from the start of line `from`, through the line
-  // that is the word alone (after the indentation its form strips).
   bool FindHeredocEnd(std::uint32_t from, const DiffLexState& state, Position& end) const {
     for (std::uint32_t line = from;; ++line) {
       std::string_view text = lines_[line];
@@ -177,7 +152,6 @@ class Lexer {
     }
   }
 
-  // The end of the region: where an unterminated multi-line token stops.
   Position RegionEnd(std::uint32_t from_line) const {
     std::uint32_t line = from_line;
     while (ContiguousWithNext(line)) {
@@ -204,9 +178,6 @@ class Lexer {
     delimiter_of_->push_back(delimiter);
   }
 
-  // The rest of a multi-line token in `state`, whose text starts at `begin`
-  // and whose body is searched from `body`. An unterminated one runs to the
-  // region's end, and when that is the last line the region ends inside it.
   void ContinueToken(Position& at, Position body, const DiffLexState& state, DiffTokenKind kind) {
     const Position begin = at;
     Position end;
@@ -252,15 +223,14 @@ class Lexer {
     }
     NoteCrossing(begin, end, state);
     if (!closed && end.line + 1 == stop_line_ && stop_line_ == lines_.size()) {
-      end_state_ = state;  // runs off the end of everything: still open there
+      end_state_ = state;
     }
     if (end.line != begin.line || end.column != begin.column) {
-      Emit(begin, end, kind);  // an empty here-document body is no token
+      Emit(begin, end, kind);
     }
     at = end;
   }
 
-  // A token running into the stop line is what that line starts inside.
   void NoteCrossing(Position begin, Position end, const DiffLexState& state) {
     if (begin.line < stop_line_ &&
         (end.line > stop_line_ || (end.line == stop_line_ && end.column > 0))) {
@@ -290,8 +260,6 @@ class Lexer {
     return false;
   }
 
-  // Raw strings and here-documents. Only at the start of a word: `fooR"x"` is
-  // a word and a string, not a raw string.
   bool TryRawString(Position& at) {
     if (syntax_.raw_strings == 0) {
       return false;
@@ -310,7 +278,6 @@ class Lexer {
         }
       }
       if (StartsWithAt(text, r, "R\"")) {
-        // d-chars: at most 16, none of space, parentheses, backslash or quote.
         std::size_t open = r + 2;
         while (open < text.size() && open - (r + 2) <= 16 && text[open] != '(' &&
                text[open] != ')' && text[open] != '\\' && text[open] != ' ' && text[open] != '"') {
@@ -378,8 +345,6 @@ class Lexer {
       if (!starts_like_word) {
         return false;
       }
-      // The marker is a token of its line; the body opens on the next one and
-      // is read when this line is done (the rest of it is still code).
       const Position marker_end_at{at.line, marker_end};
       Emit(at, marker_end_at, DiffTokenKind::String);
       pending_heredoc_ = DiffLexState{.kind = DiffLexState::Kind::Heredoc,
@@ -407,22 +372,19 @@ class Lexer {
                     DiffTokenKind::String);
       return true;
     }
-    // An apostrophe inside a word ("don't") is not a quote.
     if (quote == '\'' && column > 0 && IsWordByte(static_cast<unsigned char>(text[column - 1]))) {
       return false;
     }
     if (quote == '`') {
-      // A backtick string may span lines, but only a closed one is a string.
       Position end;
       if (!FindClose(Position{line, column + 1}, "`", true, end)) {
-        return false;  // lexed as punctuation by the caller
+        return false;
       }
       NoteCrossing(at, end, DiffLexState{.kind = DiffLexState::Kind::BacktickString});
       Emit(at, end, DiffTokenKind::String);
       at = end;
       return true;
     }
-    // Single-line: search this line only.
     std::size_t scan = column + 1;
     while (scan < text.size()) {
       if (text[scan] == '\\') {
@@ -437,7 +399,7 @@ class Lexer {
       }
       ++scan;
     }
-    return false;  // lexed as punctuation by the caller
+    return false;
   }
 
   bool TryDelimiter(Position& at) {
@@ -462,7 +424,6 @@ class Lexer {
     return false;
   }
 
-  // Whether a token other than punctuation begins at `column`.
   bool StartsOtherToken(std::string_view text, std::size_t column) const {
     const auto byte = static_cast<unsigned char>(text[column]);
     if (IsWordByte(byte) || IsSpaceByte(byte) ||
@@ -490,7 +451,6 @@ class Lexer {
     return false;
   }
 
-  // A here-document whose marker this line held: its body is the next lines.
   void FinishLine(Position& at, std::uint32_t line) {
     if (pending_heredoc_.code()) {
       return;
@@ -498,7 +458,7 @@ class Lexer {
     const DiffLexState heredoc = pending_heredoc_;
     pending_heredoc_ = {};
     if (line + 1 == stop_line_) {
-      end_state_ = heredoc;  // the body starts on the stop line
+      end_state_ = heredoc;
       return;
     }
     if (!ContiguousWithNext(line)) {
@@ -506,14 +466,11 @@ class Lexer {
     }
     at = Position{line + 1, 0};
     ContinueToken(at, at, heredoc, DiffTokenKind::String);
-    // The body's last line is the word alone: lexing resumes after it.
     if (at.column == lines_[at.line].size()) {
       at = Position{at.line + 1, 0};
     }
   }
 
-  // Lexes from `at` to the end of its line, or further when a multi-line
-  // token carries it onto a later line; leaves `at` where lexing resumes.
   void LexFrom(Position& at) {
     const std::uint32_t line = at.line;
     const std::string_view text = lines_[line];
@@ -526,7 +483,7 @@ class Lexer {
         continue;
       }
       if (scanning && !IsWordByte(byte) && !interesting_[byte]) {
-        ++column;  // nothing that can span a line starts here
+        ++column;
         continue;
       }
       if (TryComment(at) || TryRawString(at) || TryString(at) || (!scanning && TryDelimiter(at))) {
@@ -538,9 +495,6 @@ class Lexer {
         Emit(Position{line, start}, Position{line, column}, DiffTokenKind::Word);
         continue;
       }
-      // A run of operator bytes is one atom (`->`, `+=`, `!==`), except that a
-      // separator stands alone so a list's commas line up one to one. A non-ASCII
-      // symbol (an em dash, a curly quote) is one atom of its whole scalar.
       if (byte >= 0x80) {
         column += std::max<std::size_t>(1, util::Utf8SequenceLength(text, column));
         if (!scanning) {
@@ -563,9 +517,6 @@ class Lexer {
     if (at.line == line) {
       FinishLine(at, line);
     } else {
-      // A multi-line token carried lexing off the marker's line: a region that
-      // starts inside that token could not know a here-document was pending, so
-      // neither does this (no real code puts a marker before one).
       pending_heredoc_ = {};
     }
     if (at.line == line) {
@@ -583,8 +534,6 @@ class Lexer {
   DiffLexState end_state_;
 };
 
-// How far down the open-delimiter stack a close delimiter looks for its
-// partner. Bounded so a region of unbalanced closes stays linear.
 constexpr std::size_t kMaxDelimiterRecovery = 16;
 
 struct TreeBuildScratch {
@@ -603,8 +552,6 @@ TreeBuildScratch& BuildScratch() {
   return scratch;
 }
 
-// Word-at-a-time (the standard library's string hash), not a byte loop: every
-// token of both sides of every hunk is hashed once per refinement.
 std::uint64_t AtomHash(const DiffToken& token) {
   return std::hash<std::string_view>{}(token.text) * 0x9E3779B97F4A7C15ULL +
          static_cast<std::uint64_t>(token.kind);
@@ -615,12 +562,9 @@ std::uint64_t Combine(std::uint64_t hash, std::uint64_t value) {
   return hash;
 }
 
-}  // namespace
+}
 
 void DiffContentInterner::Reset() {
-  // Clear only the buckets this comparison used: the table keeps the size the
-  // largest comparison grew it to, and one refinement resets it per hunk, so
-  // refilling all of it made every small hunk pay for the largest.
   const std::size_t mask = buckets_.size() - 1;
   for (const Entry& entry : entries_) {
     buckets_[entry.hash & mask] = kNoDiffNode;
@@ -718,8 +662,6 @@ void BuildDiffSyntaxTree(std::span<const std::string_view> lines,
   }
   (void)Lexer(lines, syntax, &tree.tokens, &scratch.delimiter_of, lines.size()).Run(entry);
 
-  // Pair delimiters. A close looks a bounded way down the stack for its open;
-  // opens it skips over, and closes with no open, are not delimiters after all.
   std::vector<std::uint32_t>& partner = scratch.partner;
   partner.assign(tree.tokens.size(), kNoDiffNode);
   std::vector<std::uint32_t>& stack = scratch.open_stack;
@@ -754,7 +696,7 @@ void BuildDiffSyntaxTree(std::span<const std::string_view> lines,
   tree.nodes.reserve(tree.tokens.size());
   std::vector<TreeBuildScratch::Frame>& frames = scratch.frames;
   frames.clear();
-  frames.push_back({});  // the root level
+  frames.push_back({});
   const auto link = [&](std::uint32_t node_index) {
     TreeBuildScratch::Frame& frame = frames.back();
     DiffSyntaxNode& node = tree.nodes[node_index];
@@ -796,7 +738,6 @@ void BuildDiffSyntaxTree(std::span<const std::string_view> lines,
       tree.nodes[node_index].content_id = interner.Intern(tree, node_index);
     }
   }
-  // Do not keep a huge region's working arrays alive for the next one.
   constexpr std::size_t kRetainTokens = 1u << 16;
   if (partner.capacity() > kRetainTokens) {
     std::vector<std::uint32_t>().swap(scratch.delimiter_of);
@@ -804,4 +745,4 @@ void BuildDiffSyntaxTree(std::span<const std::string_view> lines,
   }
 }
 
-}  // namespace microide::compare
+}

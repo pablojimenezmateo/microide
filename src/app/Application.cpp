@@ -46,7 +46,6 @@ namespace microide::app {
 
 namespace {
 
-// A window event the application consumed itself, with the whole frame to redraw.
 workspace::WorkspaceShell::EventResult HandledWithFullRedraw() {
   return workspace::WorkspaceShell::EventResult{
       .handled = true,
@@ -56,13 +55,6 @@ workspace::WorkspaceShell::EventResult HandledWithFullRedraw() {
 
 constexpr int kInitialWindowWidth = 1440;
 constexpr int kInitialWindowHeight = 900;
-// The smallest window the workbench is laid out for is util::kMinimumLayoutWidth
-// x kMinimumLayoutHeight LAYOUT units (VS Code's floor is 400x270; ours holds the
-// menu bar, a tab strip, an editor, a panel and the status bar without overflow).
-// The window manager enforces it through the size hints SDL sets, re-set when
-// ui.scale changes how many window units a layout unit is; below it the chrome
-// was laid out off the window -- the overflow menu at a negative x, status
-// segments past the edge (QA monkey: tiny resizes, then ui.scale 3).
 constexpr std::size_t kRenderPerfPartialClipWarnThreshold = 8;
 
 bool EventUsesRenderCoordinates(Uint32 event_type) {
@@ -110,10 +102,6 @@ std::optional<workspace::WorkspaceShell::WindowPresentationState> CaptureWindowP
       util::ComputeWindowPresentation(pixel_width, pixel_height,
                                       SDL_GetWindowDisplayScale(window), ui_scale);
   const SDL_WindowFlags flags = SDL_GetWindowFlags(window);
-  // The render scale is exact (app/RenderPresentation.h): window coordinates are
-  // layout units times the scale over the window's pixel density, with no
-  // letterbox offset. ui.scale and the display's density both live in it; the
-  // control channel's `ui` query reports it.
   int window_width = 0;
   int window_height = 0;
   SDL_GetWindowSize(window, &window_width, &window_height);
@@ -148,11 +136,6 @@ void SyncWindowState(SDL_Window* window) {
   }
 }
 
-// Give the window its own icon so it shows correctly in the taskbar / window
-// list regardless of how the app was launched (bare run, no .desktop registered,
-// non-NixOS Nix store, etc.). The bundled PNG is resolved via the same asset
-// search as fonts/themes, decoded with the shared raster decoder, and handed to
-// SDL. Best-effort: any failure leaves the platform default icon in place.
 void SetWindowIconFromAssets(SDL_Window* window) {
   if (window == nullptr) {
     return;
@@ -179,8 +162,6 @@ void SetWindowIconFromAssets(SDL_Window* window) {
     return;
   }
 
-  // SDL_SetWindowIcon copies the surface contents, so the borrowed pixel buffer
-  // and the surface wrapper only need to outlive this call.
   SDL_Surface* icon =
       SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_RGBA32, rgba.data(), width * 4);
   if (icon == nullptr) {
@@ -191,16 +172,8 @@ void SetWindowIconFromAssets(SDL_Window* window) {
 }
 
 
-// The cold-start control spec at `spec_path`, parsed; an invalid spec (logged) when
-// the file is not a regular file, is over the cap, or cannot be read.
 workspace::ControlSpec ReadControlSpecFile(const std::filesystem::path& spec_path) {
-  // Bound the slurp like the control-channel descriptor reads: a spec file is
-  // operator-supplied, but capping it keeps the cold-start path from OOMing on a
-  // mistakenly-huge path. Mirrors ControlChannelService's kMaxDescriptorFileBytes.
-  constexpr std::uintmax_t kMaxControlSpecBytes = 1u << 20;  // 1 MiB
-  // Require a regular file. A FIFO, device, or procfs node reports no usable size
-  // (or a wrong one) and would drop us into an unbounded/blocking slurp; only a
-  // real file is a valid cold-start spec.
+  constexpr std::uintmax_t kMaxControlSpecBytes = 1u << 20;
   std::error_code status_ec;
   const std::filesystem::file_status status = std::filesystem::status(spec_path, status_ec);
   if (status_ec || !std::filesystem::is_regular_file(status)) {
@@ -221,9 +194,6 @@ workspace::ControlSpec ReadControlSpecFile(const std::filesystem::path& spec_pat
     SDL_Log("could not read control spec: %s", spec_path.string().c_str());
     return {};
   }
-  // Read at most cap+1 bytes so the actual read is bounded even if the file grew
-  // past the pre-check (TOCTOU): an unbounded iterator slurp would defeat the size
-  // cap. Crossing cap+1 means the file is over the limit — reject.
   std::string json(static_cast<std::size_t>(kMaxControlSpecBytes) + 1, '\0');
   in.read(json.data(), static_cast<std::streamsize>(json.size()));
   json.resize(static_cast<std::size_t>(in.gcount()));
@@ -238,11 +208,6 @@ workspace::ControlSpec ReadControlSpecFile(const std::filesystem::path& spec_pat
   return spec;
 }
 
-// The launching shell's working directory, or empty when it cannot be resolved.
-// Non-throwing: the directory may be deleted, permission-revoked, or hit
-// ELOOP/overlong resolution, and the throwing overload would terminate the process
-// before WorkspaceShell::Initialize could open an empty project. An unresolvable
-// cwd degrades to an empty initial project (as safe mode). (TD-2026-07-16-41.)
 std::filesystem::path CurrentDirectoryOrEmpty() {
   std::error_code cwd_ec;
   std::filesystem::path cwd = std::filesystem::current_path(cwd_ec);
@@ -255,26 +220,16 @@ std::filesystem::path CurrentDirectoryOrEmpty() {
 }
 
 
-// What the main loop owes the screen: the damage it has gathered from events and
-// wakes since the last render, and the reason the trace reports for it.
 struct PendingRedraw {
   bool full = true;
   std::vector<SDL_FRect> rects;
-  // A re-present with no damage (an event-time cursor change; see
-  // RenderInvalidation::present). Any render presents too, so it only drives a
-  // frame of its own when nothing else is owed.
   bool present = false;
-  // A frame owed whose damage frame prep derives (RenderInvalidation::frame). Any
-  // render prepares a frame too, so it only drives one of its own when nothing
-  // else is owed.
   bool frame = false;
   const char* reason = "startup";
 
   bool DamageOwed() const { return full || !rects.empty(); }
   bool FrameOwed() const { return DamageOwed() || frame; }
 
-  // How a handler's redraw request landed: a full redraw, damage added to a
-  // partial one, or damage already covered by a full redraw owed.
   enum class Absorbed { Full, Partial, Covered };
   Absorbed Absorb(const workspace::RenderInvalidation& redraw) {
     present = present || redraw.present;
@@ -292,7 +247,7 @@ struct PendingRedraw {
   }
 };
 
-}  // namespace
+}
 
 Application::Application(AppStartupOptions startup_options)
     : startup_options_(std::move(startup_options)) {}
@@ -307,13 +262,9 @@ int Application::Run() {
   }
 
   running_ = true;
-  // MICROIDE_TRACE_STALL_MS: a loop turn that runs that long prints where the
-  // main thread is (platform/CrashDiagnostics.h). Off unless asked.
   (void)platform::StartStallWatchdogFromEnvironment();
   PendingRedraw pending;
   bool window_shown = false;
-  // A timed wait an event cut short keeps its deadline (OwedWakeDeadline): past it,
-  // the scheduled wake runs whether or not the next wait times out.
   std::optional<Uint64> owed_wake_deadline;
   const auto apply_scheduled_wake = [&] {
     owed_wake_deadline.reset();
@@ -326,12 +277,6 @@ int Application::Run() {
       pending.reason = "scheduled-partial";
     } else if (absorbed == PendingRedraw::Absorbed::Full) {
       pending.reason = "scheduled-full";
-      // A full-redraw repaints the whole scene, so any cursor surface may have
-      // moved underneath a stationary pointer (tree refresh, plugin/outline
-      // population, asset reload). These EventResult literals bypass the
-      // Request* helpers, so bump the cursor hit-generation here — the single
-      // universal seam where async full redraws are applied — so the next
-      // frame's UpdateMouseCursor re-runs the hit-test instead of skipping it.
       workspace_shell_.InvalidateCursorKindFingerprint();
     }
   };
@@ -344,18 +289,6 @@ int Application::Run() {
       pending.present = false;
       pending.frame = false;
 
-      // Map the window exactly once, as soon as a real frame has been painted.
-      // The window was created hidden, so this is its first and only map: it
-      // appears already borderless and already drawn, with no black flash or
-      // borderless remap. The present above may be dropped while hidden, so
-      // re-blit the retained scene texture to the freshly-mapped window (a cheap
-      // texture copy, not a second full render).
-      //
-      // This has to come BEFORE the settle branch below, not after it. A restored
-      // terminal tab is re-gridded on the first prepared frame, which owes two
-      // follow-up repaints — and each `continue` skipped this block, so the window
-      // the user is waiting for stayed unmapped for two more vsync intervals while
-      // the app repainted a panel nobody could see yet.
       if (!window_shown && first_render_complete_ && window_ != nullptr) {
         SDL_ShowWindow(window_);
         if (scene_texture_.valid()) {
@@ -365,17 +298,6 @@ int Application::Run() {
       }
 
       if (was_first_frame) {
-        // Drop the settle repaints the FIRST frame scheduled, rather than paying
-        // two more vsync intervals for them before the app quiesces.
-        //
-        // They come from the terminal reflow: a restored terminal tab is re-gridded
-        // during the first prepared frame, and a reflow owes two follow-up repaints
-        // so a terminal the user is watching catches up with the PTY. On the first
-        // frame there is nothing to catch up with — the frame being presented is
-        // itself the first thing on screen and already paints the new grid, and the
-        // PTY was spawned moments ago, so its output arrives on the terminal wake
-        // with a repaint of its own. Every later reflow (a divider drag, a font
-        // change) still gets both.
         while (workspace_shell_.ConsumePostRenderRedrawRequest().has_value()) {
         }
       } else if (auto settle = workspace_shell_.ConsumePostRenderRedrawRequest();
@@ -389,15 +311,10 @@ int Application::Run() {
       pending.rects.clear();
       pending.reason = "event";
 
-      // After a frame settles, ask the background worker to tokenize a band
-      // around the (possibly newly scrolled) editor viewport so later frames
-      // hit the highlight cache instead of tokenizing on the render path.
       workspace_shell_.RequestActiveHighlightPrefetch();
     } else if (pending.frame) {
       pending.frame = false;
-      // Presents when it paints, so a re-present owed alongside is paid by it --
-      // or, when prep damaged nothing, by the branch below on the next turn.
-      Render({}, "prepared", /*prepared_only=*/true);
+      Render({}, "prepared", true);
     } else if (pending.present) {
       pending.present = false;
       if (scene_texture_.valid()) {
@@ -452,8 +369,6 @@ int Application::Run() {
       }
     }
     owed_wake_deadline = OwedWakeDeadline(owed_wake_deadline, idle_wait, wait_started_ms, has_event);
-    // A lost-wake relay nudge only woke the loop; the event it re-delivered is
-    // next in the queue.
     if (has_event && IsSdlWakeNudge(event.type)) {
       continue;
     }
@@ -466,16 +381,8 @@ int Application::Run() {
       continue;
     }
 
-    // Bound how many events one drain processes before yielding to a pending redraw
-    // (see EventDrainBudget.h) so a sustained event flood can't starve the frame.
     int events_processed = 0;
     do {
-      // Coalesce consecutive mouse-motion events to the latest position.
-      // High-poll-rate mice can fire many motion events per frame; processing
-      // each one runs the full hover/cursor/selection pipeline only to be
-      // obsoleted by the next motion. We only collapse when the next event in
-      // the queue is also a motion (same window) to preserve ordering relative
-      // to keyboard/button events. No handler reads motion.xrel/yrel.
       if (event.type == SDL_EVENT_MOUSE_MOTION) {
         SDL_Event next;
         while (SDL_PeepEvents(&next, 1, SDL_PEEKEVENT, SDL_EVENT_FIRST,
@@ -490,18 +397,12 @@ int Application::Run() {
       if (result.handled) {
         pending.reason = result.redraw.full ? "event-full" : "event-partial";
         if (pending.Absorb(result.redraw) == PendingRedraw::Absorbed::Full) {
-          // See the scheduled-wake path above: a full redraw can reshuffle cursor
-          // surfaces under a still pointer, and the EventResult literals that drive
-          // it (file/plugin reloads, window show/expose) skip the Request* bump.
           workspace_shell_.InvalidateCursorKindFingerprint();
         }
         if (result.redraw.full || !result.redraw.rects.empty()) {
           frame_event_type_ = event.type;
         }
       }
-      // Once a redraw is pending, yield to render after the drain budget so a
-      // sustained event flood cannot starve the frame. Remaining queued events are
-      // handled on the next iteration (after a render).
       ++events_processed;
       if (ShouldYieldEventDrain(events_processed, pending.FrameOwed())) {
         break;
@@ -520,25 +421,10 @@ bool Application::Initialize() {
   util::StartupTrace::Reset();
   util::StartupTrace::Scope trace_scope("Application::Initialize");
 
-  // Build the built-in syntax registry off-thread, starting now. It is ~4 ms of
-  // pure CPU (161 definitions, their detection regexes, the rule tables) that
-  // WorkspaceShell::Initialize otherwise pays inline, and everything between
-  // here and there — SDL_Init, window creation, renderer creation — is the shell
-  // thread waiting on the display server rather than computing. Nothing depends
-  // on this call: EnsureInitialized() joins the thread if it is still running.
   editor::runtime_syntax::WarmInBackground();
 
-  // Deliver the mouse click that activates an unfocused window to the app
-  // instead of swallowing it. SDL's default ("0") eats the focusing click, so a
-  // click on a background microide only raised the window and the button under
-  // the pointer never fired — the user had to click twice. "1" gives the
-  // click-through behavior every modern editor (VSCode included) has: one click
-  // both focuses the window and activates what was clicked.
   SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
 
-  // SDL's own SIGINT/SIGTERM handlers raise SDL_EVENT_QUIT, which the shell ignores
-  // while an unsaved-changes prompt is open (and SIGHUP had no handler at all): ours
-  // force the quit instead (TerminationSignalWatcher).
   if (startup_options_.handle_termination_signals) {
     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
   }
@@ -557,28 +443,9 @@ bool Application::Initialize() {
     }
   }
 
-  // Bind the kernel's wake path to SDL's event queue. Producers (terminal, git
-  // blame, search, control channel, plugin worker, background-task counter) name
-  // only util::WakeChannel, so this is the single place the wake path knows SDL.
-  // Installed right after SDL_Init and before any producer thread starts: until
-  // it is installed every push fails and latches the shared owed bit, which the
-  // idle poll covers, so the ordering is a quality-of-service matter, not a
-  // correctness one.
   InstallSdlWaker();
   InstallSdlLogSink();
 
-  // Create the window hidden so all chrome setup (borderless, hit test) happens
-  // before it is ever mapped, and so the first frame the user sees is the real,
-  // fully-painted UI. Showing it later (after the first render, in Run()) maps
-  // the window exactly once and avoids the black-flash + borderless-remap
-  // "double popup" that toggling decorations on an already-mapped window caused.
-  //
-  // BORDERLESS is a creation flag rather than a later SDL_SetWindowBordered
-  // call: on Wayland the decoration is a compositor-side object, so asking for
-  // one and then retracting it builds and tears down libdecor state, and the
-  // SDL_SyncWindow that has to follow a state change is a blocking round-trip
-  // to the display server. Asking for the shape we want up front means there is
-  // no state change to sync (measured: 10.4 ms of WindowChromeSetup -> ~0).
   const SDL_WindowFlags window_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
                                        SDL_WINDOW_HIDDEN | SDL_WINDOW_BORDERLESS;
 
@@ -603,10 +470,6 @@ bool Application::Initialize() {
     SetWindowIconFromAssets(window_);
   }
 
-  // Probe (read-only) whether the per-plugin kernel confinement layers are actually usable on this
-  // host. The confinement in SubprocessSandbox is fail-open and applied in a forked child, so a
-  // missing/old kernel silently degrades to just the in-process capability gate. Logging it here and
-  // surfacing it on the control `status` query makes that degradation observable instead of silent.
   {
     const platform::SandboxSupport sandbox = platform::ProbeSandboxSupport();
     SDL_Log("microide sandbox: landlock=%s (abi=%d) seccomp=%s -> kernel confinement %s",
@@ -616,33 +479,12 @@ bool Application::Initialize() {
     workspace_shell_.SetSandboxSupport(sandbox);
   }
 
-  // The workspace comes up BEFORE the renderer, and the ordering is the point.
-  // `SDL_CreateRenderer` is 60-90 ms on a Wayland/Mesa session and almost none of
-  // it is our CPU: it is the dlopen chain for the GL stack (35 libraries, libLLVM
-  // and libicudata among them) plus DRM ioctls and display-server round trips. The
-  // shell thread is idle for all of it.
-  //
-  // `WorkspaceShell::Initialize` is ~4 ms of shell-thread work that STARTS the
-  // expensive background work of opening a project — the file-index/watcher tree
-  // walk, the git refreshes, plugin load. Running it first hands those threads the
-  // renderer-creation window to work in, so "the project is ready" arrives that
-  // much sooner. Nothing in it touches the renderer; the shell is only handed one
-  // at frame time (`PrepareFrameOnce`).
-  //
-  // What stays after the renderer: the control channel (its `status` query reports
-  // the render backend, so the handshake must not precede knowing it) and anything
-  // that answers for the window.
   workspace::ControlSpec control_spec;
   {
-    // Parse a cold-start control spec (if any) up front: its `project` selects
-    // the project to open, overriding the positional path / cwd.
     if (startup_options_.control_spec_path.has_value()) {
       control_spec = ReadControlSpecFile(*startup_options_.control_spec_path);
     }
 
-    // The explicit project (spec `project` wins over the positional path) makes
-    // the named project win over a saved session via skip-restore; leave it unset
-    // for the cwd fallback so a bare launch still restores the previous session.
     std::optional<std::filesystem::path> explicit_project;
     if (control_spec.valid && control_spec.project.has_value()) {
       explicit_project = *control_spec.project;
@@ -666,7 +508,7 @@ bool Application::Initialize() {
     util::StartupTrace::Scope workspace_init_scope("WorkspaceShell::Initialize");
     if (!workspace_shell_.Initialize(initial_project)) {
       SDL_Log("Workspace initialization failed");
-      DestroySdlResources();  // release the window (the renderer does not exist yet)
+      DestroySdlResources();
       return false;
     }
   }
@@ -677,16 +519,12 @@ bool Application::Initialize() {
   }
   if (renderer_ == nullptr) {
     SDL_Log("SDL_CreateRenderer failed: %s", SDL_GetError());
-    DestroySdlResources();  // release the already-created window before failing
+    DestroySdlResources();
     return false;
   }
 
   SDL_SetRenderVSync(renderer_, 1);
 
-  // Record + report which SDL backend we actually got. The batched-text path is
-  // GPU-only (it regresses on the software renderer), so this gate is what makes
-  // that path safe to enable, and the log line confirms GPU vs software at
-  // runtime / in CI without a profiler.
   {
     const std::string_view driver = render::RendererDriverName(renderer_);
     const bool is_gpu = render::RendererIsGpu(renderer_);
@@ -695,8 +533,6 @@ bool Application::Initialize() {
     workspace_shell_.SetRenderBackendInfo(std::string(driver), is_gpu);
   }
 
-  // Force-start the channel first (so the `ready` handshake leads the JSONL
-  // stream), then apply transient `--set` overrides, then the cold-start spec.
   workspace_shell_.ForceStartControlChannel();
   workspace_shell_.ApplyStartupSettingOverrides();
   if (control_spec.valid) {
@@ -707,11 +543,6 @@ bool Application::Initialize() {
 
   {
     util::StartupTrace::Scope window_chrome_scope("WindowChromeSetup");
-    // The window was created BORDERLESS, so the only thing left is the drag/resize
-    // hit test that replaces the decorations we declined. If the platform cannot
-    // give us one, hand the borders back — a borderless window with no hit test
-    // cannot be moved or resized at all — and sync that state change, which is the
-    // only path here that has one to sync.
     if (!SDL_SetWindowHitTest(window_, &Application::WindowHitTestCallback, this)) {
       SDL_Log("SDL_SetWindowHitTest failed: %s", SDL_GetError());
       SDL_SetWindowBordered(window_, true);
@@ -760,10 +591,6 @@ void Application::DestroySdlResources() {
 }
 
 void Application::Shutdown() {
-  // Release SDL resources even when initialization did not complete: a failed
-  // Initialize() (renderer/workspace init failure after the window was created) leaves
-  // window_/renderer_ non-null, and the old `!initialized_` early-return leaked them.
-  // (TD-2026-07-16-42.)
   if (!initialized_) {
     DestroySdlResources();
     return;
@@ -771,35 +598,19 @@ void Application::Shutdown() {
 
   workspace_shell_.SetDialogWindow(nullptr);
 
-  // Destroy the window and renderer immediately so the app disappears from the
-  // screen before any blocking workspace shutdown work (persisting state, waiting
-  // for terminal processes to exit, etc.).
   DestroySdlResources();
 
   workspace_shell_.Shutdown();
 
-  // Emit the opt-in perf readouts here rather than from an exit hook: the
-  // shutdown path below ends in std::quick_exit, which runs neither atexit
-  // handlers nor static destructors.
   util::PerformanceTrace::DumpSummaryOnce();
   util::StartupTrace::DumpSummaryOnce();
   util::DumpPerformanceCountersOnce();
 
-  // Reset lifecycle state so the destructor and any second Shutdown() are clean
-  // no-ops, and so an in-process Initialize()/Shutdown() cycle (headless tests)
-  // rebuilds presentation state instead of trusting the prior renderer's cache.
   initialized_ = false;
   first_render_complete_ = false;
   presentation_state_dirty_ = true;
 
-  // All user state has been saved. Exit immediately rather than waiting for
-  // destructor chains (terminal sessions, background thread joins, etc.).
-  // The OS reclaims all child processes and resources. Tests disable this so
-  // they can drive Initialize()/Shutdown() and verify clean teardown under
-  // sanitizers.
   if (startup_options_.quick_exit_on_shutdown) {
-    // quick_exit runs no exit handler, which is where a source-coverage build
-    // writes its counters (a no-op in any other build).
     (void)util::FlushCoverageProfile();
     std::quick_exit(0);
   }
@@ -807,10 +618,8 @@ void Application::Shutdown() {
 
 workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event& event) {
   if (termination_event_type_ != 0 && event.type == termination_event_type_) {
-    // Nobody is there to answer a prompt: quit the way a window close does, every
-    // session and unsaved buffer persisted for the next start (hot exit).
     SDL_Log("microide: signal %d received; saving the session and quitting", static_cast<int>(event.user.code));
-    workspace_shell_.RequestQuit(/*forced=*/true);
+    workspace_shell_.RequestQuit(true);
     if (workspace_shell_.ConsumeQuitRequested()) {
       running_ = false;
     }
@@ -831,18 +640,6 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
     case SDL_EVENT_WINDOW_EXPOSED:
       presentation_state_dirty_ = true;
       UpdateRendererPresentation();
-      // An expose damaged the WINDOW, not the scene. Every frame — full or
-      // partial — ends by blitting the whole retained scene texture to the
-      // window and presenting it, so re-presenting repairs the damage exactly;
-      // re-running the workspace render would recompute pixel-identical content.
-      // That mattered on the startup path, where mapping the window (deliberately
-      // after the first frame, so it appears already drawn) fired SHOWN and cost a
-      // second full render of the frame just painted.
-      //
-      // The 1x1 damage rect is the cheapest way to make Render() run and present;
-      // its size is irrelevant because the blit is whole (same reasoning as
-      // RequestCursorPresent). With no retained scene to present, fall through to
-      // a real full redraw.
       if (scene_texture_.valid()) {
         return workspace::WorkspaceShell::EventResult{
             .handled = true,
@@ -854,8 +651,6 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
       }
       return HandledWithFullRedraw();
     case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
-      // Unlike an expose, this changes what the scene should CONTAIN (every glyph
-      // is re-rasterized at the new scale), so it keeps the full redraw.
       presentation_state_dirty_ = true;
       UpdateRendererPresentation();
       return HandledWithFullRedraw();
@@ -866,17 +661,9 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
       presentation_state_dirty_ = true;
       scene_texture_.NoteResizeEvent(SDL_GetTicksNS());
       UpdateRendererPresentation();
-      // A compositor-driven resize/restore/maximize can leave the displayed cursor
-      // stale (e.g. the resize cursor lingering over a border) and may suppress the
-      // motion events that keep the pointer position fresh; reseed from the live
-      // pointer and force the next update to re-apply at that position.
       ReseedPointerAndForceCursorReassert();
       return HandledWithFullRedraw();
     case SDL_EVENT_WINDOW_MOVED:
-      // Interactive title-bar moves (SDL_HITTEST_DRAGGABLE) let the window manager
-      // paint its own move/grab cursor without telling SDL. On release the pointer
-      // can sit stationary over the title bar, so reseed the live position and force
-      // a reassert, scheduling a frame to consume it (geometry size is unchanged).
       ReseedPointerAndForceCursorReassert();
       return HandledWithFullRedraw();
     default:
@@ -937,13 +724,6 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason,
   }
 
   const Uint64 render_start = SDL_GetTicksNS();
-  // The scene texture is ensured BEFORE the full-vs-partial decision, because
-  // `Ensure` can invalidate the texture it keeps: a UI-scale change moves the
-  // logical grid without moving the drawable, so the texture is remapped rather
-  // than reallocated and what it holds was laid out for the old grid. Deciding
-  // from a validity read taken before that would let a zoom-out frame re-present
-  // a screenful of stale, wrongly-scaled content around whatever clip it
-  // repainted.
   bool scene_texture_ready = false;
   {
     util::PerformanceTrace::Scope scene_texture_scope("Application::EnsureSceneTexture");
@@ -957,24 +737,16 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason,
     util::PerformanceTrace::Scope prepare_scope("Application::WorkspacePrepareFrame");
     frame_token = workspace_shell_.PrepareFrameOnce(renderer_, width, height);
   }
-  // Damage requested while PREPARING this frame belongs to this frame: preparing
-  // drains completions and settles state (a status-bar value that moved with the
-  // caret, a file read that landed), and painting that state without its rect
-  // left the old pixels up for a frame -- the status bar's Ln/Col trailed every
-  // caret move by one frame (found by the QA redraw verifier). A full frame covers
-  // it already.
   if (const workspace::RenderInvalidation prepared =
           workspace_shell_.ConsumePendingRenderInvalidation();
       prepared_only && scene_texture_ready && scene_texture_.valid()) {
-    // A frame owed with no damage named: what prep damaged is the frame, and when
-    // it damaged nothing there is nothing to paint or present.
     if (!prepared.full && prepared.rects.empty()) {
       return;
     }
     full_redraw_requested = prepared.full;
     dirty_rects.assign(prepared.rects.begin(), prepared.rects.end());
   } else if (prepared_only) {
-    dirty_rects.clear();  // no retained scene to paint over: a full frame
+    dirty_rects.clear();
   } else if (!dirty_rects.empty()) {
     if (prepared.full) {
       dirty_rects.clear();
@@ -984,8 +756,6 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason,
   }
 
   const std::size_t dirty_rect_count = dirty_rects.size();
-  // Padded a logical pixel at a fractional presentation scale: SDL scales a clip
-  // to device pixels by its origin and width, not out to its far edge.
   const auto presentation = workspace_shell_.CurrentWindowPresentationState();
   const render::TextClipPadding clip_padding = PadClipForPresentationScale(
       workspace_shell_.PartialRedrawClipPadding(), presentation ? presentation->scale_x : 1.0f,
@@ -1002,13 +772,9 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason,
   const bool full_redraw = dirty_rects.empty() || !scene_texture_.valid() || promote_partial_to_full;
   std::size_t rendered_clip_count = 0;
 #if !defined(NDEBUG)
-  // Armed in every build with assertions (the default build, the QA lanes, the
-  // soak), not only ASan, which was the one lane that ran it (validation-traps:
-  // every timing guard and sanitizer branch).
   SDL_assert(frame_token.valid() &&
              "Application::WorkspaceRenderClip requires PrepareFrameOnce() in current frame");
 #endif
-  // Without a usable scene texture the whole window is drawn straight to it.
   const auto render_fallback_full = [&]() {
     {
       util::PerformanceTrace::Scope fallback_scope("Application::WorkspaceRender(fallback-full)");
@@ -1034,9 +800,6 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason,
       workspace_shell_.OnFramePresented();
       return;
     }
-    // The scene texture is a device-pixel target with its own view; give that
-    // view the window's logical presentation so everything below draws in the
-    // same coordinates it would on the window.
     scene_texture_.ApplyRenderTargetPresentation(renderer_);
 
     if (full_redraw) {
@@ -1052,16 +815,12 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason,
       workspace_shell_.RenderClip(frame_token, renderer_, width, height);
     } else {
       bool rendered_partial = false;
-      // ScopeLabel keeps the descriptive label off the render hot path: building
-      // it every partial frame would heap-allocate for nothing.
       util::PerformanceTrace::ScopeLabel partial_loop_label(
           "Application::WorkspaceRender(partial-loop)");
       partial_loop_label.Field("clips", static_cast<long long>(merged_clip_count));
       partial_loop_label.Field("dirty", static_cast<long long>(dirty_rect_count));
       util::PerformanceTrace::Scope partial_loop_scope(partial_loop_label.View());
       for (const SDL_Rect& merged_clip : dirty_region_analysis.merged_clip_rects) {
-        // On whole device pixels, as every surface's own clip is: the two then
-        // intersect exactly at a fractional scale (TD-2026-10-22-376).
         const SDL_Rect clip_rect = render::AlignClipToDevicePixels(renderer_, merged_clip);
         SDL_SetRenderClipRect(renderer_, &clip_rect);
         util::PerformanceTrace::Scope partial_scope(
@@ -1095,9 +854,6 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason,
                             .scale = RenderPresentationOf(*presentation).scale_x},
           [&] { workspace_shell_.RenderClip(frame_token, renderer_, width, height); });
     }
-    // A draw outside its element (render::PaintElement), named where it happened:
-    // the cause of a stale clip-edge frame, whether or not this frame showed one
-    // (clip-discipline D5). Recording is on exactly when the verifier is.
     if (redraw_verifier_.enabled()) {
       for (const render::PaintOverrun& overrun : render::TakePaintOverruns()) {
         SDL_Log("QA-OVERRUN frame=%llu element=%s rect=%d,%d,%d,%d draw=%d,%d,%d,%d logical=%.3f,%.3f,%.3f,%.3f "
@@ -1157,8 +913,6 @@ void Application::ApplyMinimumWindowSize(SDL_FPoint window_per_unit) {
   if (!SDL_SetWindowMinimumSize(window_, minimum.width, minimum.height)) {
     SDL_Log("SDL_SetWindowMinimumSize failed: %s", SDL_GetError());
   }
-  // A window already smaller than the new floor (ui.scale raised) grows to it: a
-  // window manager applies a size hint only to the next resize.
   int width = 0;
   int height = 0;
   SDL_GetWindowSize(window_, &width, &height);
@@ -1172,11 +926,6 @@ bool Application::UpdateRendererPresentation(int* logical_width, int* logical_he
     return false;
   }
 
-  // Fast path: when no window event has invalidated the cached presentation,
-  // skip the SDL_GetRenderOutputSize / SDL_GetWindowDisplayScale queries plus
-  // SDL_SetRenderLogicalPresentation reapply. They are individually cheap but
-  // run every frame of the render loop, so caching saves measurable time on
-  // steady-state full-redraw frames.
   const float current_ui_scale = workspace_shell_.UiScale();
   const auto cached = workspace_shell_.CurrentWindowPresentationState();
   if (CanReuseCachedPresentationState(presentation_state_dirty_, cached, last_presented_ui_scale_,
@@ -1281,4 +1030,4 @@ SDL_HitTestResult SDLCALL Application::WindowHitTestCallback(SDL_Window* window,
   return static_cast<Application*>(data)->WindowHitTest(*area);
 }
 
-}  // namespace microide::app
+}

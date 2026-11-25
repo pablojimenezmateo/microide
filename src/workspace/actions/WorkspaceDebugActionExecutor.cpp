@@ -14,9 +14,6 @@ namespace microide::workspace {
 
 namespace {
 
-// Parse a `<file> <line>` breakpoint-command target. `line` is 1-based on the
-// wire and returned 0-based to match the BreakpointStore. Relative paths
-// resolve against the project root. Returns nullopt with *error on bad input.
 std::optional<std::pair<std::filesystem::path, std::size_t>> ParseBreakpointTarget(
     const std::filesystem::path& project_root, const std::vector<std::string>& args, std::string* error) {
   if (args.size() < 2) {
@@ -35,18 +32,14 @@ std::optional<std::pair<std::filesystem::path, std::size_t>> ParseBreakpointTarg
   return std::make_pair(path.lexically_normal(), *line - 1);
 }
 
-}  // namespace
+}
 
-// The debugger's actions: launching and stepping sessions, the debug pane's views and
-// watches, and breakpoints of every kind.
 ActionCoordinator::DispatchResult ActionCoordinator::ExecuteDebug(ActionId id, const std::vector<std::string>& args,
                                                                   ActionSource source,
                                                                   std::string* rejection_feedback) {
   const auto reject = RejectInto(rejection_feedback);
   switch (id) {
     case ActionId::DebugToggleEnabled:
-      // The master toggle is intentionally ungated: it flips `debug.enabled`
-      // itself and reports the new state via a toast.
       context_.ToggleDebuggerEnabled();
       return DispatchResult::Handled;
     case ActionId::DebugContinue:
@@ -93,9 +86,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteDebug(ActionId id, c
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");
       }
-      // The session drops the request for an adapter that cannot run backwards;
-      // say so instead of answering "ok" for a step that never happened (the
-      // toolbar and menus already hide it for such an adapter).
       if (!context_.debug().SupportsStepBack()) {
         return reject(
             "Reverse Continue needs a debug session whose adapter can run backwards "
@@ -107,9 +97,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteDebug(ActionId id, c
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");
       }
-      // The session drops the request for an adapter that cannot run backwards;
-      // say so instead of answering "ok" for a step that never happened (the
-      // toolbar and menus already hide it for such an adapter).
       if (!context_.debug().SupportsStepBack()) {
         return reject(
             "Step Back needs a debug session whose adapter can run backwards "
@@ -130,7 +117,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteDebug(ActionId id, c
       if (context_.debug().SessionCount() < 2) {
         return reject("Need at least two debug sessions to switch");
       }
-      // No arg → cycle to the next session; an arg is a 1-based session index.
       int index = -1;
       if (!args.empty()) {
         if (const std::optional<int> parsed = util::ParseInt(args[0]); parsed.has_value()) {
@@ -188,8 +174,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteDebug(ActionId id, c
       return DispatchResult::Handled;
     case ActionId::DebugCopyValue:
     case ActionId::DebugAddToWatch: {
-      // Context-menu only, like the breakpoint items: both act on the row the menu
-      // was opened over, which the pane selects before opening it.
       if (source != ActionSource::ContextMenu || !context_.DebuggerEnabled()) {
         return DispatchResult::Unhandled;
       }
@@ -217,7 +201,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteDebug(ActionId id, c
     case ActionId::DebugBreakpointClearCondition:
     case ActionId::DebugBreakpointToggleEnabled:
     case ActionId::DebugBreakpointRemove:
-      // Context-menu only: the breakpoint gutter menu supplies the target line.
       if (source != ActionSource::ContextMenu || !context_.DebuggerEnabled()) {
         return DispatchResult::Unhandled;
       }
@@ -237,8 +220,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteDebug(ActionId id, c
       if (viewport == nullptr || viewport->path().empty()) {
         return reject("No active file");
       }
-      // Same store call as the gutter click, on the caret's line (0-based store
-      // coordinates), then the adapter learns about the change the same way.
       const std::filesystem::path path = viewport->path();
       context_.MutableBreakpointStore().Toggle(path, viewport->cursor_line());
       context_.ResendBreakpoints(path);
@@ -319,8 +300,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteDebug(ActionId id, c
       }
       editor::BreakpointStore& store = context_.MutableBreakpointStore();
       if (args.empty()) {
-        // Clear everything, then push an empty set to each previously-affected
-        // file so a live session drops them too.
         const std::vector<editor::BreakpointStore::FileBreakpoints> files = store.SnapshotAll();
         store.Clear();
         for (const editor::BreakpointStore::FileBreakpoints& file : files) {
@@ -384,8 +363,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteDebug(ActionId id, c
         return reject("breakpoint-exception-condition: a filter id is required");
       }
       const std::string expr = JoinCommandArguments(args, 1);
-      // An unknown filter, or a condition on one that takes none, answered "ok"
-      // for a condition that was never set.
       if (const std::string error = context_.debug().SetExceptionFilterCondition(
               args[0], expr.empty() ? std::nullopt : std::optional<std::string>(expr));
           !error.empty()) {
@@ -408,7 +385,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteDebug(ActionId id, c
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");
       }
-      // debug-run [--type <adapter>] <program> [args...]
       std::size_t index = 0;
       std::string type;
       if (index < args.size() && args[index] == "--type") {
@@ -434,4 +410,4 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteDebug(ActionId id, c
   }
 }
 
-}  // namespace microide::workspace
+}

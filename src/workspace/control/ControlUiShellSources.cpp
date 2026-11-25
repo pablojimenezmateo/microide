@@ -1,8 +1,3 @@
-// WorkspaceShell::MakeControlUiOperations: the shell's side of the `ui` control
-// query (control/ControlUiQuery.h). It lives with the control channel rather than
-// in a WorkspaceShell*.cpp companion because what it does is answer the query --
-// every element source asks the geometry the matching mouse path hit-tests and
-// reports it by name -- and it grows with every surface a QA driver must reach.
 #include "workspace/render/CompareReviewControls.h"
 #include "workspace/shell/WorkspaceShell.h"
 
@@ -44,8 +39,6 @@ namespace {
 
 bool UiRectHasArea(const SDL_FRect& rect) { return rect.w > 0.0f && rect.h > 0.0f; }
 
-// A tab strip's overflow chips ("<3", "5>"), `<strip>/more-left|right`, while
-// they hide tabs: clickable, so a driver and the cursor sweep can reach them.
 void AddOverflowChips(ControlUiElements& out, const std::string& strip,
                       const TabStripOverflowControls& overflow) {
   if (overflow.hidden_left > 0) {
@@ -56,8 +49,6 @@ void AddOverflowChips(ControlUiElements& out, const std::string& strip,
   }
 }
 
-// The text field the open overlay types into, per mode (the editor the overlay
-// view model draws its query row from); null for the caret-anchored lists.
 const editor::SingleLineEditor* OverlayQueryEditor(const ProjectWorkspaceState& state) {
   const auto& workflow = state.overlay.workflow;
   switch (state.overlay.mode) {
@@ -74,7 +65,6 @@ const editor::SingleLineEditor* OverlayQueryEditor(const ProjectWorkspaceState& 
   return nullptr;
 }
 
-// The debug toolbar button's locator (`button:debug-toolbar/<id>`).
 std::string_view DebugToolbarButtonId(DebugToolbarButton button) {
   switch (button) {
     case DebugToolbarButton::ContinuePause: return "continue";
@@ -90,7 +80,6 @@ std::string_view DebugToolbarButtonId(DebugToolbarButton button) {
   return "unknown";
 }
 
-// A value-tree row as the pane draws it: name, then value, then type.
 std::string DebugValueRowLabel(const DebugVariableRowView& row) {
   std::string label = row.display_name;
   if (!row.display_value.empty()) {
@@ -104,14 +93,8 @@ std::string DebugValueRowLabel(const DebugVariableRowView& row) {
   return label;
 }
 
-}  // namespace
+}
 
-// The `ui` control query's view of the window (control/ControlUiQuery.h). Every
-// element source asks the geometry the matching mouse path hit-tests -- the menu
-// bar and popup rows, the tab strips, the sidebar header and list layouts, the
-// bottom-panel header, the status-bar segment walk, the banner and toast buttons --
-// so a reported rect is where a click lands. Read-only: nothing here requests a
-// redraw or changes state.
 ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
   using namespace control_ui_kind;
   const auto cursor_name = [](CursorKind kind) { return CursorKindName(kind); };
@@ -123,9 +106,6 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
       .window_per_unit = [this]() { return window_presentation_.window_per_unit; },
       .cursor_at = cursor_at,
       .pointer_cursor =
-          // The shape the window SHOWS, not one resolved afresh: a shape that
-          // should change without a pointer move (a program lighting a control
-          // under it) is only right if the shell re-resolved it.
       [this, cursor_name]() -> std::string_view {
         return last_mouse_position_valid_ ? cursor_name(cursor_kind_) : std::string_view{};
       },
@@ -142,7 +122,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             const auto items = MenuItems(id);
             locator += '/';
             if (index < items.size()) {
-              locator += MenuItemLabel(items[index], /*with_reason=*/false);
+              locator += MenuItemLabel(items[index], false);
             }
             return locator;
           },
@@ -176,11 +156,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                     out.back().menu = std::string(menu->label);
                   }
                 });
-            // Plugin status items (drawn in the breadcrumb row, right-aligned):
-            // `status:plugin/<plugin>/<item>`, the item's text as label, enabled when
-            // a click runs a command.
             for (const VisibleStatusItem& item : ComputeVisibleStatusItems(layout.breadcrumb)) {
-              // Registry ids are qualified with the plugin id; the name carries it once.
               std::string_view id = item.item.id;
               if (const std::string prefix = item.item.plugin_id + "."; id.starts_with(prefix)) {
                 id.remove_prefix(prefix.size());
@@ -196,10 +172,6 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
       .fields = [this](const WorkspaceLayout& layout, ControlUiElements& out) { ControlUiFields(layout, out); },
       .debug = [this](const WorkspaceLayout& layout, ControlUiElements& out) { ControlUiDebug(layout, out); },
       .details = [this](const WorkspaceLayout& layout, util::JsonObject& root) { ControlUiDetails(layout, root); },
-      // `action-counts`: every command that ran since startup with its count, by
-      // the name `actions.last` uses (the command name, else the palette label),
-      // and the plugin commands by theirs. tools/qa's suite unions these into its
-      // command-coverage ledger.
       .action_counts =
           [this]() {
             const WorkspaceActionContext::ActionReceipt& receipt =
@@ -237,10 +209,6 @@ void WorkspaceShell::ControlUiMenus(const WorkspaceLayout& layout, ControlUiElem
     AddControlUiElement(out, kMenu, name, item.rect, name);
     out.back().active = menus.menu_bar_open && menus.active_menu_id == item.id;
   }
-  // The chevron that stands in for the menus the bar could not fit (all of
-  // them in compact mode): a driver walking "every menu" in a layout with
-  // no `menu:` elements must find the door to them here, or it sweeps
-  // nothing and reports green.
   if (const auto chevron = MenuOverflowChevronRect(layout.menu_bar); chevron.has_value()) {
     AddControlUiElement(out, kButton, "menu-bar/more", *chevron);
     out.back().active = menus.overflow_popup_open;
@@ -257,9 +225,7 @@ void WorkspaceShell::ControlUiMenus(const WorkspaceLayout& layout, ControlUiElem
       if (row.separator) {
         continue;
       }
-      // The row's name, not what it paints: a dimmed row's reason is not
-      // part of its identity.
-      const std::string label(MenuItemLabel(items[row.index], /*with_reason=*/false));
+      const std::string label(MenuItemLabel(items[row.index], false));
       AddControlUiElement(out, kMenuItem, owner + "/" + label, row.rect, label);
       out.back().enabled = row.enabled;
       out.back().active = row.hovered;
@@ -336,8 +302,6 @@ void WorkspaceShell::ControlUiTabs(const WorkspaceLayout& layout, ControlUiEleme
   for (std::size_t i = 0; i < groups.dividers.size(); ++i) {
     AddControlUiElement(out, kDivider, "editor/" + std::to_string(i), groups.dividers[i].rect);
   }
-  // Each text pane's scrollbars, from the metrics its paint sizes them
-  // with (the band the last frame painted included).
   const bool line_numbers = SettingFlagEnabled(GetSettingValue("editor.line_numbers"), true);
   for (const EditorPaneLayout& pane : ComputeEditorPaneLayouts(layout)) {
     const editor::TextViewport* viewport = ViewportForPane(pane);
@@ -378,15 +342,11 @@ void WorkspaceShell::ControlUiSidebar(const WorkspaceLayout& layout, ControlUiEl
     out.back().enabled = state.directory_tree.CanCollapseAll();
     AddControlUiElement(out, kButton, "sidebar/Refresh", TreeSidebarRefreshButtonRect(layout.sidebar));
   }
-  // The list layout and the row label per view, as the sidebar mouse
-  // coordinator's CurrentListLayout picks them.
   ScrollableListLayout list;
   std::size_t count = 0;
   std::size_t selected = 0;
   std::function<std::string(std::size_t)> label;
-  std::function<std::string(std::size_t)> shown;  // the painted text, when it differs
-  // Whether a click acts on the row, when not every row does (a git view's
-  // section headers and "No outgoing files" take none).
+  std::function<std::string(std::size_t)> shown;
   std::function<bool(std::size_t)> clickable;
   if (mode == SidebarMode::Search) {
     const std::vector<int> line_map = BuildProjectSearchLineMap();
@@ -405,8 +365,6 @@ void WorkspaceShell::ControlUiSidebar(const WorkspaceLayout& layout, ControlUiEl
                  ? search.results[static_cast<std::size_t>(line_map[next])].relative_path_string
                  : std::string{};
     };
-    // A hit's row as painted is its matched line (what typing in the list
-    // navigates by); a file header's is its path.
     shown = [line_map, &search, label](std::size_t index) -> std::string {
       const int result = line_map[index];
       return result >= 0 ? search.results[static_cast<std::size_t>(result)].preview : label(index);
@@ -415,11 +373,6 @@ void WorkspaceShell::ControlUiSidebar(const WorkspaceLayout& layout, ControlUiEl
     const std::vector<GitSidebarLine>& lines = BuildGitSidebarLines();
     count = lines.size();
     list = ComputeGitSidebarListLayout(layout.sidebar, count);
-    // The selection is an ENTRY index (what the keys move and the
-    // actions act on); the rows are lines, with headers and directories
-    // among them. Report the line that holds the selected entry, as the
-    // paint highlights it -- reporting the entry index as a line index
-    // named the row above the real one (QA git-view-keys).
     selected = std::numeric_limits<std::size_t>::max();
     for (std::size_t i = 0; i < lines.size(); ++i) {
       if (lines[i].kind == GitSidebarLine::Kind::Entry &&
@@ -429,8 +382,6 @@ void WorkspaceShell::ControlUiSidebar(const WorkspaceLayout& layout, ControlUiEl
       }
     }
     label = [&lines](std::size_t index) { return lines[index].label; };
-    // The row as painted, its review marker included ("[R] r1.txt"); the
-    // name stays the bare label so a locator survives marking.
     shown = [&lines](std::size_t index) {
       return lines[index].display_label.empty() ? lines[index].label : lines[index].display_label;
     };
@@ -444,7 +395,6 @@ void WorkspaceShell::ControlUiSidebar(const WorkspaceLayout& layout, ControlUiEl
     list = ComputeProblemsSidebarListLayout(layout.sidebar, count);
     selected = state.sidebar.problems.selected_index;
     label = [&entries](std::size_t index) { return entries[index].primary_label; };
-    // The row as painted: the message, then its location column.
     shown = [&entries](std::size_t index) { return entries[index].primary_label + "  " + entries[index].detail_label; };
   } else if (mode == SidebarMode::Tests) {
     const auto& entries = state.sidebar.tests.entries;
@@ -452,7 +402,6 @@ void WorkspaceShell::ControlUiSidebar(const WorkspaceLayout& layout, ControlUiEl
     list = ComputeTestsSidebarListLayout(layout.sidebar, count);
     selected = state.sidebar.tests.selected_index;
     label = [&entries](std::size_t index) { return entries[index].label; };
-    // The row as painted: the name, then its status and location column.
     shown = [&entries](std::size_t index) { return entries[index].label + "  " + entries[index].detail_label; };
   } else if (UsesPluginItemSurface(mode)) {
     const auto& items = state.sidebar.plugin.items;
@@ -460,7 +409,6 @@ void WorkspaceShell::ControlUiSidebar(const WorkspaceLayout& layout, ControlUiEl
     list = ComputePluginSidebarListLayout(layout.sidebar, count);
     selected = state.sidebar.plugin.selected_index;
     label = [&items](std::size_t index) { return items[index].label; };
-    // The row as painted: the label, then its detail (the Host view's figures).
     shown = [&items](std::size_t index) {
       return items[index].detail.empty() ? items[index].label : items[index].label + "  " + items[index].detail;
     };
@@ -472,8 +420,6 @@ void WorkspaceShell::ControlUiSidebar(const WorkspaceLayout& layout, ControlUiEl
     label = [&entries](std::size_t index) { return entries[index].label; };
   }
   const std::string view = state.sidebar.view_id + "/";
-  // `visible_rows` is how many rows FIT; the rows on screen stop at the
-  // last item.
   for (int visible = 0; visible < list.visible_rows; ++visible) {
     const std::size_t index = static_cast<std::size_t>(list.scroll_row + visible);
     if (index >= count) {
@@ -515,7 +461,6 @@ void WorkspaceShell::ControlUiPanel(const WorkspaceLayout& layout, ControlUiElem
   AddOverflowChips(out, "panel-tabs",
                    tab_strip_service_.ComputeBottomPanelTabOverflowControls(
                        context_.current_project_state, header, mode, panel_tabs, output_channels_.Channels()));
-  // The terminal's find bar, as its paint and click path lay it out.
   if (terminal_find_service_.visible() && prepare_cached_bottom_panel_vm_.has_value() &&
       prepare_cached_bottom_panel_vm_->find_visible) {
     const FindWidgetLayout& fw = prepare_cached_bottom_panel_vm_->find.fw;
@@ -530,8 +475,6 @@ void WorkspaceShell::ControlUiPanel(const WorkspaceLayout& layout, ControlUiElem
   if (context_.current_project_state.panel.content == PanelContentKind::Terminal) {
     AddControlUiElement(out, kButton, "panel/new-terminal",
                         tab_strip_service_.BottomPanelTerminalNewTabRect(mode, header));
-    // The dividers between a split terminal's panes, by the boundary
-    // they move (the same index the pane layout and the drag use).
     if (const auto* tab = context_.current_project_state.active_terminal_tab(); tab != nullptr) {
       for (const TerminalPaneDividerRect& divider : tab->PaneRects(BottomPanelContentRect(layout)).dividers) {
         AddControlUiElement(out, kDivider, "terminal/" + std::to_string(divider.boundary), divider.rect);
@@ -539,9 +482,6 @@ void WorkspaceShell::ControlUiPanel(const WorkspaceLayout& layout, ControlUiElem
     }
   }
   AddControlUiElement(out, kButton, "panel/maximize", tab_strip_service_.BottomPanelMaximizeButtonRect(mode, header));
-  // The body's scrollbars, as the panel's paint and its drag size them:
-  // each terminal pane's scrollback, the Output channel's lines, a plugin
-  // surface's pixels.
   const ProjectWorkspaceState& ps = context_.current_project_state;
   if (ps.panel.content == PanelContentKind::Terminal) {
     if (const TerminalTabState* tab = ps.active_terminal_tab(); tab != nullptr) {
@@ -579,8 +519,6 @@ void WorkspaceShell::ControlUiPanel(const WorkspaceLayout& layout, ControlUiElem
 
 void WorkspaceShell::ControlUiButtons(const WorkspaceLayout& layout, ControlUiElements& out) {
   using namespace control_ui_kind;
-  // A plugin surface in the panel: its hit regions (`surface/<command>`),
-  // where a click runs the command, cut to the body that shows them.
   if (const auto& panel = context_.current_project_state.panel;
       BottomPanelVisible() && panel.content == PanelContentKind::PluginSurface) {
     const auto* presentation = context_.current_project_state.plugin_presentation_if_present();
@@ -597,8 +535,6 @@ void WorkspaceShell::ControlUiButtons(const WorkspaceLayout& layout, ControlUiEl
       }
     }
   }
-  // Each pane's clickable code lenses (`lens/<title>`), from the layout
-  // the click hit-tests. A lens shows only on a clean buffer.
   if (const editor::PluginDecorationStore* store =
           RenderViewModelBuilder(context_).BuildHoverTargets().decoration_store;
       store != nullptr && ActiveTabIsEditor()) {
@@ -637,12 +573,6 @@ void WorkspaceShell::ControlUiButtons(const WorkspaceLayout& layout, ControlUiEl
       AddControlUiElement(out, kButton, "banner/dismiss", buttons.dismiss);
     }
   }
-  // The merge editor's buttons, from the geometry its mouse path tests:
-  // the toolbar, and each visible conflict's accept buttons (shown while
-  // the pointer is over that conflict, which hovering the button does).
-  // Not while the editor column is collapsed (the panel maximized): the
-  // surface has no height and nothing of it is drawn, so naming its
-  // buttons put them over the panel's tabs (soak 8864c9127fb2).
   if (MergeTabState* merge_tab = ActiveTabIsMerge() ? ActiveMergeTab() : nullptr;
       merge_tab != nullptr && ActiveTabSurface(layout).w > 0.0f && ActiveTabSurface(layout).h > 0.0f) {
     const SDL_FRect surface_rect = ActiveTabSurface(layout);
@@ -652,7 +582,7 @@ void WorkspaceShell::ControlUiButtons(const WorkspaceLayout& layout, ControlUiEl
          {std::tuple{"merge/prev", toolbar.prev_rect, "Previous"}, std::tuple{"merge/next", toolbar.next_rect, "Next"},
           std::tuple{"merge/open", toolbar.open_rect, "Open Result"},
           std::tuple{"merge/save", toolbar.save_rect, "Save"}}) {
-      if (UiRectHasArea(rect)) {  // a narrow pane lays out only what fits
+      if (UiRectHasArea(rect)) {
         AddControlUiElement(out, kButton, name, rect, label);
       }
     }
@@ -681,9 +611,6 @@ void WorkspaceShell::ControlUiButtons(const WorkspaceLayout& layout, ControlUiEl
     constexpr std::array<compare::MergeChoice, 4> kResultChoices = {
         compare::MergeChoice::Base, compare::MergeChoice::Incoming, compare::MergeChoice::Current,
         compare::MergeChoice::Both};
-    // A button is named when hovering its centre resolves to it -- the
-    // question the click path asks -- so a conflict out of sight, whose
-    // rects clamp to a pane's edge, has none.
     const auto resolves_to = [&](const SDL_FRect& rect, std::size_t conflict_index, MergeHoverState::Kind kind,
                                  compare::MergeChoice choice) {
       const auto hover =
@@ -714,9 +641,6 @@ void WorkspaceShell::ControlUiButtons(const WorkspaceLayout& layout, ControlUiEl
       }
     }
   }
-  // The compare surface: its divider, and each collapsed-context block's
-  // buttons, numbered top to bottom on screen and resolved through the
-  // helpers the click and the cursor shape use.
   if (CompareTabState* compare_tab = ActiveTabIsCompare() ? ActiveCompareTab() : nullptr; compare_tab != nullptr) {
     const SDL_FRect surface_rect = ActiveTabSurface(layout);
     const CompareSurfaceLayout surface = ComputeCompareSurfaceLayout(surface_rect, *compare_tab);
@@ -728,9 +652,6 @@ void WorkspaceShell::ControlUiButtons(const WorkspaceLayout& layout, ControlUiEl
     if (compare_scroll.horizontal_scrollbar.has_value()) {
       AddControlUiScrollbar(out, "compare/h", *compare_scroll.horizontal_scrollbar);
     }
-    // The header's buttons, and on a review each hunk's review buttons
-    // (on its first row while they show) and each note row's: by hunk
-    // number ("file" for the file's note), laid out as paint lays them.
     const CompareControlGeometry controls = MakeCompareControlGeometry(surface_rect, surface);
     const CompareHeaderButtonRects header =
         BuildCompareHeaderButtonRects(editor_text_renderer_, controls, *compare_tab);
@@ -786,9 +707,6 @@ void WorkspaceShell::ControlUiButtons(const WorkspaceLayout& layout, ControlUiEl
       const CollapsedContextActionRects rects = BuildCollapsedContextActionRects(
           editor_text_renderer_, hit->block_rect, hit->row->previous_hunk_index >= 0, hit->row->next_hunk_index >= 0);
       const std::string prefix = "compare/context-" + std::to_string(block++) + "/";
-      // What is on the surface, as paint clips it: a block in the last,
-      // partly visible row reported its buttons past the window's edge
-      // (QA monkey, commands profile, seed 85).
       const auto on_surface = [&](const SDL_FRect& rect) -> std::optional<SDL_FRect> {
         SDL_FRect visible{};
         if (!SDL_GetRectIntersectionFloat(&rect, &surface_rect, &visible)) {
@@ -801,9 +719,6 @@ void WorkspaceShell::ControlUiButtons(const WorkspaceLayout& layout, ControlUiEl
           AddControlUiElement(out, kButton, prefix + "previous", *visible);
         }
       }
-      // Labelled with the count the row shows: a partial reveal keeps the
-      // block where it was (the view scrolls with it), so the count is
-      // what tells a reveal happened.
       if (const auto visible = on_surface(rects.all_rect)) {
         AddControlUiElement(out, kButton, prefix + "all", *visible, std::to_string(hit->row->collapsed_line_count));
       }
@@ -817,8 +732,6 @@ void WorkspaceShell::ControlUiButtons(const WorkspaceLayout& layout, ControlUiEl
   const NotificationsViewModel toasts =
       RenderViewModelBuilder(context_).BuildNotifications(notification_service_, layout.status_bar, text_renderer_);
   for (const NotificationEntryViewModel& entry : toasts.entries) {
-    // The card itself (a click dismisses it), by its index in the
-    // `notifications` query, with its message as the label.
     AddControlUiElement(out, kNotification, std::to_string(entry.index), entry.layout.rect, std::string(entry.message));
     out.back().active = entry.focused;
     for (const NotificationButtonViewModel& button : entry.buttons) {
@@ -858,8 +771,6 @@ void WorkspaceShell::ControlUiOverlay(const WorkspaceLayout& layout, ControlUiEl
     AddControlUiElement(out, kButton, "find/close", fw.close_button);
     return;
   }
-  // The list overlays: one row per visible entry, named by its primary
-  // text (as painted, so a long label is the truncated one).
   for (std::size_t i = 0; i < vm.rows.size(); ++i) {
     const std::size_t index = static_cast<std::size_t>(vm.list_layout.scroll_row) + i;
     const std::string label(vm.rows[i].primary);
@@ -917,15 +828,11 @@ void WorkspaceShell::ControlUiDialogs(const WorkspaceLayout& layout, ControlUiEl
     out.back().selected = category.selected;
   }
   const auto has_area = [](const SDL_FRect& rect) { return rect.w > 0.0f && rect.h > 0.0f; };
-  // The rows the pane shows, not the category's whole list: a driver
-  // reading "the first row" after a wheel must see it move.
   for (const SettingsRowViewModel& row : vm.rows) {
     if (!SettingsRowShownIn(vm.right_pane_rect, row.row_rect)) {
       continue;
     }
     const std::string id(row.id);
-    // The row's label is its current value as shown: the checkbox state,
-    // or the stepper/segmented/text value.
     std::string value = row.control.kind == SettingsControlKind::Checkbox
                             ? std::string(row.control.checkbox_on ? "on" : "off")
                             : std::string(row.control.display_value);
@@ -951,9 +858,6 @@ void WorkspaceShell::ControlUiDialogs(const WorkspaceLayout& layout, ControlUiEl
   if (vm.category_scrollbar.has_value()) {
     AddControlUiScrollbar(out, "settings/categories", *vm.category_scrollbar);
   }
-  // The font picker's rows while a font row is being edited: the same
-  // overlay-row kind as every other list a person picks from, `selected`
-  // on the highlighted one.
   if (vm.value_picker.visible) {
     for (const SettingsPickerItemViewModel& item : vm.value_picker.items) {
       if (!has_area(item.rect)) {
@@ -981,7 +885,6 @@ void WorkspaceShell::ControlUiFields(const WorkspaceLayout& layout, ControlUiEle
       if (slots[i].rect.w <= 0.0f) {
         continue;
       }
-      // The field being edited shows its live edit buffer.
       const bool editing = search.editing && search.edit_field == slots[i].field;
       AddControlUiElement(out, kField, "search/" + std::string(kNames[i]), slots[i].rect,
                           editing ? search.edit_buffer.text() : committed[i]->text());
@@ -998,9 +901,6 @@ void WorkspaceShell::ControlUiFields(const WorkspaceLayout& layout, ControlUiEle
     return;
   }
   const SDL_FRect sidebar = layout.sidebar;
-  // The branch and Sync buttons' labels are the ones the render draws
-  // (the branch name; Sync with its behind/ahead counts), from the same
-  // revision-exact memo.
   const GitSidebarViewModel& git_vm =
       CachedGitSidebarPresentation(context_.current_project_state.sidebar.git, context_.current_project_state.root,
                                    context_.current_project_state.branch_review)
@@ -1014,7 +914,6 @@ void WorkspaceShell::ControlUiFields(const WorkspaceLayout& layout, ControlUiEle
   AddControlUiElement(out, kButton, "git/branch", git_sidebar_header::BranchButtonRect(sidebar),
                       git_vm.branch_button_label);
   AddControlUiElement(out, kButton, "git/sync", git_sidebar_header::SyncButtonRect(sidebar), git_vm.sync_button_label);
-  // The Outgoing section's base dropdown (Auto, the previous commit, a ref).
   if (const auto outgoing_base = GitSidebarOutgoingBaseButtonRect(sidebar); outgoing_base.has_value()) {
     AddControlUiElement(out, kButton, "git/outgoing-base", *outgoing_base);
   }
@@ -1024,8 +923,6 @@ void WorkspaceShell::ControlUiFields(const WorkspaceLayout& layout, ControlUiEle
     out.back().enabled = git_vm.commit_ready;
     return;
   }
-  // The commit panel's rects are the ones its render cached (they sit
-  // under a content-sized summary, so they are not a pure layout).
   AddControlUiElement(out, kField, "git/subject", workflow.subject_field_rect, workflow.subject.text());
   out.back().active = workflow.focus_field == CommitWorkflowFocusField::Subject;
   AddControlUiElement(out, kField, "git/body", workflow.body_field_rect, workflow.BodyText());
@@ -1036,8 +933,6 @@ void WorkspaceShell::ControlUiFields(const WorkspaceLayout& layout, ControlUiEle
 void WorkspaceShell::ControlUiDebug(const WorkspaceLayout& layout, ControlUiElements& out) {
   using namespace control_ui_kind;
   const ProjectWorkspaceState& ps = context_.current_project_state;
-  // The floating toolbar: the layout and enablement its click handler
-  // (HandleDebugToolbarButtonDown) uses.
   if (DebugToolbarVisible()) {
     const DebugToolbarLayout tb =
         ComputeDebugToolbarLayout(ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout), debug_service_.SupportsStepBack());
@@ -1060,8 +955,6 @@ void WorkspaceShell::ControlUiDebug(const WorkspaceLayout& layout, ControlUiElem
     AddControlUiElement(out, kDebugTab, tab.id, tab.rect, std::string(tab.label));
     out.back().active = tab.mode == ps.debug_pane.mode;
   }
-  // The visible rows, each with the band DebugPaneRowAtPoint maps a click
-  // in to that row (`debug-row:<mode>/<index>`, index into the mode's rows).
   const DebugPaneSurfaceSpec* spec = FindDebugPaneSurface(ps.debug_pane.mode);
   const std::string mode_id = spec != nullptr ? std::string(spec->id) : "debug";
   const std::size_t count = DebugPaneActiveRowCount();
@@ -1131,13 +1024,7 @@ void WorkspaceShell::ControlUiDebug(const WorkspaceLayout& layout, ControlUiElem
 
 void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonObject& root) {
   const ProjectWorkspaceState& state = context_.current_project_state;
-  // As the last prepared frame composed it (the platform window's too).
   root["windowTitle"] = util::JsonValue(frame_state_.window_title);
-  // Settled: no git refresh running or kept by the pacer, the snapshot not
-  // stale and the last one applied. The git view's rows move when a refresh
-  // lands, so a driver clicks them only once this holds -- a row read just
-  // before an outside commit's refresh landed was clicked after it, on the
-  // folder row that had moved under it (QA branch-review, Wayland).
   util::JsonObject git;
   git["settled"] =
       util::JsonValue(!state.sidebar.git.refreshing && !automatic_git_refresh_pacer_.pending() &&
@@ -1157,17 +1044,12 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
                                                                                              : "launch-config"));
     }
     overlay["selected"] = util::JsonValue(static_cast<std::int64_t>(OverlaySelectedIndex()));
-    // The card's title where it says what the pick is for (a quick pick's,
-    // the file finder's when Compare Files… opened it).
     if (state.overlay.mode == OverlayMode::QuickPick) {
       overlay["title"] = util::JsonValue(state.overlay.workflow.quick_pick.title);
     } else if (state.overlay.mode == OverlayMode::FileFinder &&
                !state.overlay.workflow.file_finder_compare_title.empty()) {
       overlay["title"] = util::JsonValue(state.overlay.workflow.file_finder_compare_title);
     }
-    // What the file finder ranks over: an empty or stale index reads the
-    // same as "No matching files" on screen. CI's big-repo flow timed
-    // out on Go to File with nothing to say which (qa-asan, twice).
     if (state.overlay.mode == OverlayMode::FileFinder) {
       util::JsonObject index;
       index["files"] = util::JsonValue(static_cast<std::int64_t>(state.file_finder.indexed_file_count()));
@@ -1181,8 +1063,6 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
     if (const editor::SingleLineEditor* query = OverlayQueryEditor(state); query != nullptr) {
       overlay["query"] = util::JsonValue(query->text());
     }
-    // Find in Selection's scope, 1-based like `editor` positions: what a
-    // driver counts the matches inside.
     if (const auto& scope = state.overlay.workflow.buffer_search.scope;
         scope.has_value() &&
         (state.overlay.mode == OverlayMode::BufferSearch || state.overlay.mode == OverlayMode::BufferReplace)) {
@@ -1222,7 +1102,6 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
     switch (hover->kind) {
       case EditorHoverTarget::Kind::Blame:
         kind = "blame";
-        // The card's lines as drawn: author, date, the commit's summary.
         if (const editor::EditorBlameLine* blame = editor_blame_overlay_service_.VisibleLine(hover->blame_line_index);
             blame != nullptr) {
           text = blame->author + "\n" + blame->date + "\n" + blame->summary;
@@ -1231,7 +1110,6 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
       case EditorHoverTarget::Kind::Diagnostic:
         kind = "diagnostic";
         text = hover->diagnostic.has_value() ? hover->diagnostic->message : std::string{};
-        // The symbol's hover drawn under the problem, as in the card.
         if (hover->plugin_hover.has_value()) {
           for (const std::string* block : {&hover->plugin_hover->title, &hover->plugin_hover->content}) {
             if (!block->empty()) {
@@ -1259,8 +1137,6 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
       rect.push_back(util::JsonValue(static_cast<std::int64_t>(v)));
     }
     entry["rect"] = util::JsonValue(std::move(rect));
-    // The card's button (Copy SHA on blame, Quick Fix on a diagnostic),
-    // where a click on it lands.
     if (hover->primary_action_rect.has_value()) {
       util::JsonObject action;
       action["label"] =
@@ -1277,14 +1153,11 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
   }
   popups["signatureHelp"] = active_signature_help_.has_value() ? util::JsonValue(active_signature_help_->signature)
                                                                : util::JsonValue(nullptr);
-  // The block under it, which leads with the active parameter.
   popups["signatureHelpDetail"] = active_signature_help_.has_value()
                                       ? util::JsonValue(active_signature_help_->documentation)
                                       : util::JsonValue(nullptr);
   root["popups"] = util::JsonValue(std::move(popups));
 
-  // The last action a key, menu row, palette entry or command ran
-  // (ActionCoordinator's receipt), by command name.
   {
     const WorkspaceActionContext::ActionReceipt& receipt = MakeActionContext().LastActionReceipt();
     util::JsonObject actions;
@@ -1319,11 +1192,6 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
     root["actions"] = util::JsonValue(std::move(actions));
   }
 
-  // Per editor pane: the text geometry a click is resolved against
-  // (EditorMouseCoordinator's fast pointer metrics), and which buffer
-  // line each visible row shows, so a driver can click a line and column
-  // or a fold marker without knowing the font. Inline insets (plugin
-  // surfaces, code lens, ghost text) are not modelled.
   util::JsonArray editors;
   const bool line_numbers = SettingFlagEnabled(GetSettingValue("editor.line_numbers"), true);
   for (const EditorPaneLayout& pane : ComputeEditorPaneLayouts(layout)) {
@@ -1331,7 +1199,6 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
     if (viewport == nullptr || viewport->is_placeholder()) {
       continue;
     }
-    // The band the last frame painted, as a hover resolves it.
     const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
         editor_text_renderer_, *viewport, pane.rect, viewport->sticky_band_rows(), line_numbers);
     const auto num = [](float v) { return util::JsonValue(static_cast<double>(v)); };
@@ -1354,10 +1221,6 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
     entry["scrollColumn"] = util::JsonValue(static_cast<std::int64_t>(viewport->horizontal_scroll()));
     util::JsonArray rows;
     const std::size_t visual_count = viewport->visual_line_count();
-    // Where each row is drawn, inset gaps (a code lens above its line, an
-    // inline surface, a multi-line suggestion) included: a driver clicks
-    // by these, and `first_line_y + i * line_height` put every row past a
-    // gap on the row above it.
     std::vector<float> row_tops;
     VisibleRowTops(
         context_.current_project_state, *viewport, metrics, [this](std::string_view id) { return GetSettingValue(id); },
@@ -1377,10 +1240,6 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
   }
   root["editors"] = util::JsonValue(std::move(editors));
 
-  // The active terminal pane's text geometry, as its mouse path resolves
-  // a point (CellInPaneLayout): row r of the transcript (0-based, the
-  // `terminal-output` line) sits at firstLineY + (r - firstRow) *
-  // lineHeight, column c at textX + c * charWidth.
   if (const TerminalPaneState* pane = ActiveTerminalPane(); pane != nullptr && BottomPanelVisible()) {
     const auto panel_layout = ComputeBottomPanelLogLayout(layout, pane->session.LineCount());
     const auto num = [](float v) { return util::JsonValue(static_cast<double>(v)); };
@@ -1399,9 +1258,6 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
     terminal["visibleRows"] = util::JsonValue(static_cast<std::int64_t>(std::max(0, panel_layout.scroll.visible_rows)));
     root["terminal"] = util::JsonValue(std::move(terminal));
   }
-  // The output channel on show, the same way: entry r sits at
-  // firstLineY + (r - firstRow) * lineHeight (the click's
-  // BottomPanelLineIndexAtPoint), so a driver can click a `path:line`.
   if (BottomPanelVisible() && context_.current_project_state.panel.content == PanelContentKind::Output) {
     const auto* entries = OutputChannelEntries(context_.current_project_state.panel.output.channel_id);
     const std::size_t count = entries != nullptr ? entries->size() : 0;
@@ -1418,4 +1274,4 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
   }
 }
 
-}  // namespace microide::workspace
+}

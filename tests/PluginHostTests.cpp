@@ -147,10 +147,6 @@ return ide.plugin({
              host.CommandNames().end(),
          "plugin host should expose secondary user-scope plugin commands");
 
-  // HasCommand backs the O(log n), allocation-free plugin-command menu enablement
-  // path (TD-2026-07-17A-011). It must agree with the published command-name view:
-  // true for a registered command, false for an unknown one, and (unlike a linear
-  // scan of CommandNames) it takes a string_view without materializing a std::string.
   Expect(host.HasCommand("global.echo"),
          "HasCommand should find a registered plugin command");
   Expect(host.HasCommand("secondary.open-readme"),
@@ -205,10 +201,6 @@ return ide.plugin({
          "shutdown should run each plugin's shutdown hook");
 }
 
-// A plugin that logs in a tight loop must not grow the host-owned message history
-// without bound: RecordMessage/RecordError trim to PluginHost::kMaxRecordedLogEntries
-// even though the visible panel is capped separately (TD-2026-07-17A-020). The most
-// recent messages are retained (front-trimmed), so the last logged line survives.
 void TestPluginHostCapsRecordedLogHistory() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -219,7 +211,6 @@ void TestPluginHostCapsRecordedLogHistory() {
   const std::filesystem::path project_root = temp_dir.path() / "project";
   WriteFile(project_root / "README.md", "log flood fixture\n");
 
-  // Log well past the cap during setup so the trim path is exercised.
   const std::size_t flood = PluginHost::kMaxRecordedLogEntries + 500;
   WritePluginInit(
       global_plugins, "flood-sample",
@@ -244,7 +235,6 @@ return ide.plugin({
          "recorded message history must stay within the cap under a logging flood");
   Expect(host.Messages().size() >= PluginHost::kMaxRecordedLogEntries * 3 / 4,
          "the cap should retain a healthy recent window, not collapse to near-empty");
-  // Front-trimming keeps the most recent entries: the final logged line survives.
   Expect(!host.Messages().empty() &&
              host.Messages().back() == "flood.sample: m" + std::to_string(flood),
          "the most recent log line must be retained after trimming");
@@ -494,12 +484,6 @@ return ide.plugin({
          "duplicate plugin ids should also be forwarded to the host error sink");
 }
 
-// A plugin whose setup() registers a runtime provider and THEN errors must have
-// that provider torn down before its lua_State is destroyed. Otherwise the
-// completion_runtimes vector retains an entry pointing at freed Lua state, and the
-// next QueryCompletions dereferences it (use-after-free). Setup-failure cleanup
-// resolves the plugin by pointer (it is not yet in `plugins`), so the provider is
-// removed. A completion query for the provider's language must safely return empty.
 void TestPluginHostSetupFailureTearsDownRegisteredProviders() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -538,20 +522,12 @@ return ide.plugin({
   Expect(host.LoadedPluginCount() == 0,
          "a failed-setup plugin must not remain loaded");
 
-  // The provider registered before the error must have been torn down; querying it
-  // must not touch the destroyed lua_State and must return no candidates.
   std::string runtime_error;
   const auto completions = host.QueryCompletions("todo", source, 1, 0, "", &runtime_error);
   Expect(completions.empty(),
          "a failed-setup plugin's provider must be removed, not left dangling");
 }
 
-// Regression: both plugin register paths must enforce the same per-kind contribution
-// ceiling. registry_interop (commands/sidebars/hovers/...) always gated on this helper;
-// the parallel contribution_interop path (completions/code-actions/providers/snippets/
-// ...) previously push_back'd uncapped, so a setup() loop calling a register verb
-// millions of times ballooned host RSS (each entry is a host-side C++ struct + strings
-// + a luaL_ref the Lua memory cap does not count). Both paths now share this helper.
 void TestPluginContributionLimitHelperBoundsEachKind() {
   std::string error;
   std::vector<int> below(microide::plugin::kMaxPluginContributionsPerKind - 1);
@@ -568,9 +544,6 @@ void TestPluginContributionLimitHelperBoundsEachKind() {
   Expect(!microide::plugin::ContributionLimitReached<std::vector<int>>(nullptr, nullptr),
          "a null container is treated as not-at-cap");
 
-  // Status items carry a tighter, refresh-budget-derived cap (TD-2026-07-17-019):
-  // the vector is re-resolved + sorted on the main thread per ctx.status.update,
-  // so its ceiling is measured against that budget, not the generic memory bound.
   static_assert(microide::plugin::kMaxPluginStatusItems <
                 microide::plugin::kMaxPluginContributionsPerKind);
   std::vector<int> status_below(microide::plugin::kMaxPluginStatusItems - 1);
@@ -583,14 +556,6 @@ void TestPluginContributionLimitHelperBoundsEachKind() {
          "a status container at the status cap must refuse further contributions");
 }
 
-// Regression (UAF): QueryCompletions iterates the live completion_runtimes vector by
-// reference across each provider's PCall. The synchronous query used to run with
-// allow_registration=true, so a provider that called ctx.completion.add inside its
-// provide() callback would push_back into the vector mid-iteration, reallocate it, and
-// dangle the loop's `provider` reference. The blocking path now runs with
-// allow_registration=false (matching the async/detached paths): a registration attempt
-// during the query is rejected, the vector is never mutated, and the query returns empty
-// with the rejection surfaced instead of corrupting the runtime vector.
 void TestPluginHostQueryRejectsMidQueryRegistration() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -752,19 +717,15 @@ void TestPluginHostWatchdogAbortsRunawayCall() {
       microide::plugin::LuaRuntime::Create(&create_error);
   Expect(runtime != nullptr, "LuaRuntime should be creatable for the watchdog test");
 
-  // Trip the watchdog quickly so the test stays fast; production uses a generous
-  // default hang guard.
   runtime->set_call_budget(std::chrono::milliseconds(20));
   lua_State* state = runtime->state();
 
-  // A finite, well-behaved call must still succeed under the watchdog.
   Expect(luaL_loadstring(state, "local x = 0 for i = 1, 1000 do x = x + i end return x") == LUA_OK,
          "finite chunk should compile");
   std::string ok_error;
   Expect(runtime->PCall(0, 1, &ok_error), "finite chunk should complete within the budget");
   lua_settop(state, 0);
 
-  // A runaway loop must be aborted, not hang the (UI) thread forever.
   Expect(luaL_loadstring(state, "while true do end") == LUA_OK, "infinite chunk should compile");
   std::string runaway_error;
   const auto started = std::chrono::steady_clock::now();
@@ -779,11 +740,6 @@ void TestPluginHostWatchdogAbortsRunawayCall() {
 #endif
 }
 
-// Soak 7ff52075dc30: a plugin's pattern match is one call into C, so the
-// watchdog's count hook never fired inside it -- `([%w_:~]+)%s*%b()` on a long
-// line backtracks quadratically (the QA test provider on a 300 000-character
-// line: minutes) while the UI thread waited for the plugin worker. The sandbox's
-// pattern functions check the same deadline themselves.
 void TestPluginHostWatchdogAbortsARunawayPatternMatch() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -817,8 +773,6 @@ void TestPluginHostWatchdogAbortsARunawayPatternMatch() {
 #endif
 }
 
-// The budgeted pattern functions are Lua's own: every case answers what the
-// stock string library answers, errors included.
 void TestPluginHostPatternFunctionsMatchLua() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -843,7 +797,7 @@ void TestPluginHostPatternFunctionsMatchLua() {
       got += (i > 1 ? "|" : "");
       got += lua_isnil(state, i) ? std::string("nil") : std::string(luaL_tolstring(state, i, nullptr));
       if (!lua_isnil(state, i)) {
-        lua_pop(state, 1);  // luaL_tolstring's copy
+        lua_pop(state, 1);
       }
     }
     lua_settop(state, 0);
@@ -908,8 +862,6 @@ void TestPluginHostPatternFunctionsMatchLua() {
 #endif
 }
 
-// A plugin that allocates without bound must hit the per-state memory ceiling and
-// fail with a recoverable Lua memory error, rather than OOMing the whole host.
 void TestPluginHostMemoryBudgetAbortsRunawayAllocation() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -919,13 +871,9 @@ void TestPluginHostMemoryBudgetAbortsRunawayAllocation() {
       microide::plugin::LuaRuntime::Create(&create_error);
   Expect(runtime != nullptr, "LuaRuntime should be creatable for the memory-budget test");
 
-  // Give the call ample time so the memory ceiling — not the watchdog — is what
-  // stops it.
   runtime->set_call_budget(std::chrono::seconds(30));
   lua_State* state = runtime->state();
 
-  // A single ~300 MiB allocation exceeds the per-state budget (256 MiB) and must
-  // be denied, surfacing as a Lua "not enough memory" error.
   Expect(luaL_loadstring(state,
                          "local s = string.rep('x', 300 * 1024 * 1024) return #s") == LUA_OK,
          "allocation chunk should compile");
@@ -937,8 +885,6 @@ void TestPluginHostMemoryBudgetAbortsRunawayAllocation() {
   Expect(alloc_error.find("memory") != std::string::npos,
          "the failure should be reported as a Lua memory error");
 
-  // The runtime must stay usable after a rejected allocation (the state was
-  // unwound cleanly, and the denied bytes were never charged to the budget).
   Expect(luaL_loadstring(state, "return 1 + 1") == LUA_OK, "recovery chunk should compile");
   std::string recover_error;
   Expect(runtime->PCall(0, 1, &recover_error),
@@ -1342,9 +1288,6 @@ return ide.plugin({
          "missing hover results should leave the output empty");
 }
 
-// TD-2026-07-17-018: a plugin hover that returns a huge title/content must be capped on
-// a UTF-8 boundary before the host measures/lays it out, so an oversized string cannot
-// stall the hover popup. The cap matches the LSP hover ceiling (32 KiB).
 void TestPluginHostHoverResultIsByteCapped() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1390,9 +1333,6 @@ return ide.plugin({
          "oversized hover content should be capped at the hover byte ceiling");
 }
 
-// TD-2026-07-17-018: an oversized plugin diagnostic message must be byte-capped on a
-// UTF-8 boundary before it reaches the store (Problems list + inline + hover all measure
-// the full string).
 void TestPluginHostDiagnosticMessageIsByteCapped() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1582,13 +1522,6 @@ return ide.plugin({
          "test execution should preserve the returned test result fields");
 }
 
-// A malicious/buggy plugin can return a provider result table carrying a
-// metatable whose __index always yields a non-nil value and whose __len reports
-// a huge length. The harvest runs after PCall has disarmed the count-hook
-// watchdog, so the old metamethod-invoking lua_geti scan over an unbounded
-// for(;;) would loop forever on the worker thread (or longjmp past native
-// frames). The harvest must read the raw array spine (lua_rawlen + lua_rawgeti)
-// so it stays bounded and ignores the metatable entirely.
 void TestPluginHostProviderQueryBoundsAdversarialMetatable() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1653,10 +1586,6 @@ return ide.plugin({
          "code action harvest must return the real entry, not a metatable phantom");
 }
 
-// A provider can return a genuinely large (or sparse-border-overstated) array whose
-// lua_rawlen is huge; without a max-count clamp the harvest grows an unbounded host
-// vector / spins the worker thread. Every sibling harvester clamps this — the code
-// action `arguments` inner loop must too (kMaxCodeActionArguments == 256).
 void TestPluginHostProviderQueryClampsHugeArrayHarvest() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1700,11 +1629,6 @@ return ide.plugin({
          "code action arguments harvest must clamp to kMaxCodeActionArguments (256)");
 }
 
-// The document-symbol harvest bounds its iteration count with lua_rawlen; entries
-// that lack a "name" never bump the accepted-node counter, so the harvest must
-// clamp the raw iteration count too (kMaxSymbolNodes == 8192) or a huge array of
-// unnamed/invalid entries would spin the worker thread. A provider returning far
-// more valid symbols than the cap must be bounded to exactly kMaxSymbolNodes.
 void TestPluginHostDocumentSymbolHarvestClampsHugeArray() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1794,10 +1718,6 @@ return ide.plugin({
          "auth providers should be registered with plugin-prefixed ids");
 }
 
-// Regression: the scm/auth shorthand and the save-participant parser used raising
-// luaL_check* calls that could longjmp over live C++ std::string locals (UB + heap
-// leak). Bad arguments must now surface as a clean setup error, never crash, and
-// register nothing. The ASAN run additionally proves no allocation leaks here.
 void TestPluginHostShorthandRejectsBadArgsWithoutLongjmp() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1836,7 +1756,6 @@ void TestPluginHostShorthandRejectsBadArgsWithoutLongjmp() {
     PluginHost host;
     host.SetCallbacks(MakePluginHostCallbacks());
 
-    // Must not crash; a bad-argument shorthand is a setup failure, not a load.
     Expect(!host.Reload(project_root),
            "a shorthand registration with bad arguments should fail plugin setup");
     bool matched = false;
@@ -1851,7 +1770,6 @@ void TestPluginHostShorthandRejectsBadArgsWithoutLongjmp() {
            "a rejected shorthand registration must not contribute a provider");
   }
 
-  // Sanity: the well-formed shorthand still registers after the fixes.
   {
     TemporaryDirectory temp_dir;
     const std::filesystem::path config_home = temp_dir.path() / "config";
@@ -1984,10 +1902,6 @@ return ide.plugin({
          "a language_ids array should be preserved in order for one shared server");
 }
 
-// TD-2026-07-17-078: a command array with an oversized argv token must be rejected
-// at the plugin boundary. ReadStringArrayField now caps per-item (64 KiB) and
-// aggregate (8 MiB) copied bytes, so a single enormous string fails the whole
-// command and the server is not registered.
 void TestPluginHostRejectsOversizedCommandArgv() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2020,9 +1934,6 @@ return ide.plugin({
   }
 }
 
-// Regression: a language-server registration whose language_ids array contains an
-// empty/whitespace entry must be rejected, not seed a "" key into the activation
-// table.
 void TestPluginHostLspRegistrationRejectsEmptyLanguageId() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2047,8 +1958,6 @@ return ide.plugin({
   PluginHost host;
   host.SetCallbacks(MakePluginHostCallbacks());
   host.Reload(project_root);
-  // The empty-language-id server must be rejected — it never enters the registry
-  // (whether the reject surfaces as a setup error or a skipped contribution).
   for (const auto& server : host.ContributedLanguageServers()) {
     Expect(server.id != "badlsp.bad",
            "a language server with an empty language id must not be registered");
@@ -2116,7 +2025,6 @@ void TestPluginHostDebugAdapterRequiresProcessExec() {
   const std::filesystem::path project_root = temp_dir.path() / "project";
   WriteFile(project_root / "README.md", "debug adapter capability fixture\n");
 
-  // No capabilities.process.exec: ctx.debug.add must be rejected like ctx.lsp.add.
   WritePluginInit(
       global_plugins, "phase1-debug-nocap",
       R"(local ide = require("microide")
@@ -2223,10 +2131,6 @@ return ide.plugin({
          "ctx.debug.addConfig without capabilities.process.exec should register nothing");
 }
 
-// A tool's sha256 is the only integrity check the downloader performs, so an empty /
-// short / non-hex value must be rejected at registration. Each ctx.tools.add is
-// wrapped in pcall so a rejected (raised) registration does not abort setup(); only
-// valid 64-hex registrations should be contributed. Regression for inventory J22.
 void TestPluginHostToolRegistrationValidatesSha256() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2314,10 +2218,6 @@ return ide.plugin({
   Expect(tools[0].label == "first", "the first registration with a given id wins");
 }
 
-// The O(1) duplicate-id index (TD-2026-07-17-077) is a second source of truth
-// beside the contribution vectors; a teardown must reset it or a reload's
-// re-registration of the same id would be wrongly rejected as a duplicate. Drive
-// two reloads of a plugin that registers a tool id and assert it survives both.
 void TestPluginHostContributionIdIndexResetsAcrossReload() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2352,9 +2252,6 @@ return ide.plugin({
   Expect(host.ContributedTools().size() == 1,
          "first reload registers the tool once (duplicate rejected)");
 
-  // A second reload tears down the first reload's contributions and re-runs setup.
-  // If the id index were not reset on teardown, "only" would still be present and
-  // the re-registration would be rejected, leaving zero tools.
   host.Reload(project_root);
   Expect(host.ContributedTools().size() == 1,
          "the tool re-registers after a reload (id index reset on teardown)");
@@ -2362,10 +2259,6 @@ return ide.plugin({
          "the surviving tool is the valid first registration");
 }
 
-// TD-2026-10-19-365: the server is resolved where and when it starts -- the
-// project's node_modules copy first, then PATH -- and with neither the command says
-// what to install. It used to be decided at plugin load against whichever project
-// was open, and to end in `npx --yes`, which downloads and runs a package.
 void TestRepoTypescriptLspPluginResolvesItsServerPerProject() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2398,8 +2291,6 @@ void TestRepoTypescriptLspPluginResolvesItsServerPerProject() {
     Expect(arg.find("npx") == std::string::npos, "nothing is fetched from the network: " + arg);
   }
 
-  // Run the command as the host would for each project: ${workspaceFolder} is that
-  // project, and PATH holds no typescript-language-server.
   const auto run_for = [&](const std::filesystem::path& root) {
     std::vector<std::string> argv = {"env", "PATH=/usr/bin:/bin"};
     const std::vector<std::string> command =
@@ -2459,11 +2350,6 @@ void TestPluginHostRunAsyncInvokesCallbackSynchronously() {
   WriteFile(project_root / "README.md", "async fixture\n");
   WriteFile(source, "console.log('hello');\n");
 
-  // run_async now runs on the plugin worker thread, where blocking on the
-  // subprocess never stalls the UI, and invokes its callback synchronously on that
-  // same thread (the lua_State's owner). The legacy detached-thread + UI-thread
-  // callback machinery is gone, so the callback has already fired by the time the
-  // triggering event returns.
   WritePluginInit(
       global_plugins, "async-run",
       R"(local ide = require("microide")
@@ -2488,8 +2374,6 @@ return ide.plugin({
   host.SetCallbacks(MakePluginHostCallbacks());
 
   Expect(host.Reload(project_root), "async fixture should load");
-  // No worker is wired in this harness, so the event runs inline; the callback has
-  // therefore already fired once OnBufferOpen returns.
   host.OnBufferOpen(source);
   Expect(std::any_of(host.Messages().begin(), host.Messages().end(),
                      [](const std::string& entry) {
@@ -2498,20 +2382,11 @@ return ide.plugin({
          "run_async should invoke its callback synchronously with the subprocess result");
   Expect(host.Errors().empty(), "a successful run_async callback should not surface errors");
 
-  // Reloading and shutting down after a synchronous run_async must stay clean.
   Expect(host.Reload(project_root), "reload after run_async should succeed");
   host.Shutdown();
   Expect(host.Errors().empty(), "reload/shutdown after run_async should not surface errors");
 }
 
-// Regression for the run_async callback inheriting the enclosing call's already
-// spent watchdog deadline. run_async deliberately blocks the worker on the
-// subprocess; that block can outlast the outer call's 750ms budget. Before the
-// fix the callback ran under a bare lua_pcall that kept the outer (now expired)
-// deadline armed, so the watchdog aborted the callback the moment its first
-// instruction batch tripped the count hook. The callback below loops past the
-// 100k-instruction hook batch precisely so the hook fires and checks the
-// deadline — a trivial callback would never trip it and would hide the bug.
 void TestPluginHostRunAsyncCallbackOutlivesOuterWatchdog() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2524,9 +2399,6 @@ void TestPluginHostRunAsyncCallbackOutlivesOuterWatchdog() {
   WriteFile(project_root / "README.md", "slow async fixture\n");
   WriteFile(source, "console.log('hello');\n");
 
-  // The subprocess sleeps a full second — comfortably past the 750ms call budget
-  // — then the callback does real work (>100k Lua instructions) so the watchdog
-  // count hook actually fires inside it.
   WritePluginInit(
       global_plugins, "slow-async-run",
       R"(local ide = require("microide")
@@ -2552,8 +2424,6 @@ return ide.plugin({
   host.SetCallbacks(MakePluginHostCallbacks());
 
   Expect(host.Reload(project_root), "slow async fixture should load");
-  // No worker is wired in this harness, so the buffer-open event (and thus the
-  // run_async call + callback) runs inline under the lifecycle PCall watchdog.
   host.OnBufferOpen(source);
   Expect(std::any_of(host.Messages().begin(), host.Messages().end(),
                      [](const std::string& entry) {
@@ -2567,13 +2437,6 @@ return ide.plugin({
   host.Shutdown();
 }
 
-// Exercises the process.run argument-validation error paths. These raise a Lua
-// error from inside a C function that has already built std::vector/std::string
-// locals; raising Lua errors is a C longjmp, so the fix defers the raise until
-// those locals have destructed (see src/plugin/LuaError.h). The test asserts the
-// error message is preserved AND that a subsequent valid call still works, which
-// would fail if the deferred-raise restructure left the Lua stack desynchronized.
-// Under the ASAN preset it also proves the longjmp no longer leaks the locals.
 void TestPluginHostProcessRunReportsArgumentErrorsWithoutCorruptingState() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2680,15 +2543,9 @@ return ide.plugin({
   Expect(command_error.find("process env exceeds the maximum total size") != std::string::npos,
          "an over-size env table should report the byte-cap error");
 
-  // The remaining cases exercise the other delegating wrappers (diagnostics /
-  // files / workspace), whose null-host ternary fallbacks previously materialized
-  // a std::filesystem::path or Callbacks temporary that the inner longjmp leaked.
   command_error.clear();
   Expect(!host.ExecuteCommand("diag.bad-path", {}, &command_error),
          "diagnostics.publish with a non-string path should fail the command");
-  // TD-2026-07-16-69: a diagnostic line beyond the host coordinate range must be
-  // rejected at the plugin boundary, not stored as a valid range (which would wrap the
-  // overview-ruler int narrowing and navigate Problems activation to EOF).
   command_error.clear();
   Expect(!host.ExecuteCommand("diag.huge-line", {}, &command_error),
          "diagnostics.publish with an out-of-range line should fail the command");
@@ -2701,11 +2558,6 @@ return ide.plugin({
   Expect(!host.ExecuteCommand("ws.bad-line", {}, &command_error),
          "workspace.open_file with a non-numeric line should fail the command");
 
-  // TD-2026-07-17-001: diagnostics.clear / decorations.clear validated their path
-  // argument with luaL_checkstring while a std::optional<std::filesystem::path>
-  // local was live, so bad input longjmped over its destructor. A table/number
-  // argument must now fail cleanly, a nil/absent argument must still succeed, and
-  // the host must survive both (proven by the proc.ok success below).
   command_error.clear();
   Expect(!host.ExecuteCommand("diag.clear-bad", {}, &command_error),
          "diagnostics.clear with a table argument should fail the command without crashing");
@@ -2728,11 +2580,6 @@ return ide.plugin({
          "the Lua stack must remain intact across deferred-raise error paths");
 }
 
-// A decoration line/column is stored 0-based as (value - 1) in a uint32, so the
-// largest representable 1-based input is UINT32_MAX + 1 (== 2^32). ReadOneBasedField
-// used to validate only `> 0`, letting 2^32 + 1 wrap to 0 and silently mislocate the
-// decoration. Exercise both the boundary (accepted) and the first over-range value
-// (rejected with the positive-integer message, and nothing published).
 void TestPluginDecorationRejectsLineBeyondUint32Range() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2748,7 +2595,6 @@ void TestPluginDecorationRejectsLineBeyondUint32Range() {
                                       microide::editor::PluginDecorationData) { published = true; };
   const std::filesystem::path project_root = "/tmp/decoration-range";
 
-  // 2^32 + 1: one past the largest representable 1-based line -> must be rejected.
   Expect(luaL_dostring(state, "return { text_styles = { { line = 4294967297, start_col = 1, "
                               "end_col = 2 } } }") == LUA_OK,
          "the out-of-range decoration table should evaluate");
@@ -2762,7 +2608,6 @@ void TestPluginDecorationRejectsLineBeyondUint32Range() {
   Expect(!published, "a rejected decoration set must not publish");
   lua_pop(state, 1);
 
-  // 2^32 (== UINT32_MAX + 1): the largest representable 1-based line -> accepted.
   Expect(luaL_dostring(state, "return { text_styles = { { line = 4294967296, start_col = 1, "
                               "end_col = 2 } } }") == LUA_OK,
          "the boundary decoration table should evaluate");
@@ -2775,9 +2620,6 @@ void TestPluginDecorationRejectsLineBeyondUint32Range() {
   lua_pop(state, 1);
 }
 
-// Regression: a text-style decoration with start_col > end_col is an inverted
-// (negative-width) range; downstream render/merge assumes start <= end. It must be
-// rejected at parse time, not published.
 void TestPluginDecorationRejectsInvertedColumnRange() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2806,7 +2648,6 @@ void TestPluginDecorationRejectsInvertedColumnRange() {
   Expect(!published, "a rejected inverted-range decoration set must not publish");
   lua_pop(state, 1);
 
-  // Sanity: an equal start/end (single-column span) is still accepted.
   published = false;
   Expect(luaL_dostring(state, "return { text_styles = { { line = 1, start_col = 3, "
                               "end_col = 3 } } }") == LUA_OK,
@@ -2819,14 +2660,6 @@ void TestPluginDecorationRejectsInvertedColumnRange() {
   lua_pop(state, 1);
 }
 
-// A Lua error raised with no protected frame above it (e.g. a raising metamethod
-// during post-PCall result harvesting on the worker) must not reach the C build's
-// default panic, which calls abort() and takes down the editor. The installed
-// lua_atpanic handler converts it to a catchable LuaPanicError instead.
-// GetFieldProtected is the single sanctioned field-fetch: it must catch a plugin's
-// raising __index metamethod (so it cannot longjmp over live C++ locals — the hard
-// invariant), still resolve benign __index defaults (VSCode/JS prototype parity), and
-// read metatable-free tables on the allocation-free fast path.
 void TestGetFieldProtectedCatchesRaisingIndexMetamethod() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2836,7 +2669,6 @@ void TestGetFieldProtectedCatchesRaisingIndexMetamethod() {
   Expect(runtime != nullptr, "lua runtime should create");
   lua_State* state = runtime->state();
 
-  // Hostile: any absent-field read invokes a raising __index.
   Expect(luaL_dostring(state,
                        "return setmetatable({}, { __index = function(_, k) "
                        "error('hostile __index: ' .. tostring(k)) end })") == LUA_OK,
@@ -2855,7 +2687,6 @@ void TestGetFieldProtectedCatchesRaisingIndexMetamethod() {
   Expect(lua_isnil(state, -1), "a raising field read is reported as an absent (nil) field");
   lua_pop(state, 1);
 
-  // Benign __index defaults still resolve.
   Expect(luaL_dostring(state,
                        "return setmetatable({}, { __index = { message = 'defaulted' } })") == LUA_OK,
          "benign-default table chunk should evaluate");
@@ -2865,7 +2696,6 @@ void TestGetFieldProtectedCatchesRaisingIndexMetamethod() {
          "a benign __index default must still resolve through GetFieldProtected");
   lua_pop(state, 1);
 
-  // Metatable-free fast path reads the direct value / nil for absent.
   Expect(luaL_dostring(state, "return { message = 'direct' }") == LUA_OK,
          "plain table chunk should evaluate");
   const int plain_index = lua_gettop(state);
@@ -2877,9 +2707,6 @@ void TestGetFieldProtectedCatchesRaisingIndexMetamethod() {
   Expect(lua_isnil(state, -1), "an absent field on a plain table reads as nil");
   lua_pop(state, 1);
 
-  // A non-table base with no metatable (number/boolean/nil) must NOT raise: indexing
-  // it would longjmp over the caller's live C++ locals. It reports the field as nil.
-  // This is the class of argument passed by e.g. `ctx.completion.add(42)`.
   lua_pushinteger(state, 42);
   const int number_index = lua_gettop(state);
   const int top_before_number = lua_gettop(state);
@@ -2893,7 +2720,7 @@ void TestGetFieldProtectedCatchesRaisingIndexMetamethod() {
   Expect(lua_gettop(state) == top_before_number + 1,
          "GetFieldProtected must leave exactly one value on the stack for a non-table base");
   Expect(lua_isnil(state, -1), "a field read on a non-table base reads as nil");
-  lua_pop(state, 2);  // the nil result + the number base
+  lua_pop(state, 2);
 
   lua_pushboolean(state, 1);
   const int bool_index = lua_gettop(state);
@@ -2904,11 +2731,6 @@ void TestGetFieldProtectedCatchesRaisingIndexMetamethod() {
   runtime.reset();
 }
 
-// End-to-end: harvesting a diagnostics list whose entry carries a raising __index must
-// fail cleanly rather than longjmp over the live std::vector<Diagnostic> in
-// PublishDiagnostics. A valid entry precedes the hostile one so the harvest vector
-// genuinely holds a live std::string when the raise fires (ASAN would catch a skipped
-// destructor / leak if the read were unprotected).
 void TestPublishDiagnosticsSurvivesHostileIndexMetamethod() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2955,8 +2777,6 @@ void TestLuaRuntimePanicThrowsInsteadOfAbort() {
   Expect(luaL_loadstring(state, "error('unprotected boom')") == LUA_OK, "chunk should load");
   bool threw_panic = false;
   try {
-    // Unprotected call (lua_call, NOT lua_pcall): with no error-jump frame the
-    // raise reaches the panic handler.
     lua_call(state, 0, 0);
   } catch (const microide::plugin::LuaPanicError& error) {
     threw_panic = true;
@@ -2965,13 +2785,9 @@ void TestLuaRuntimePanicThrowsInsteadOfAbort() {
   }
   Expect(threw_panic,
          "an unprotected Lua error must throw LuaPanicError rather than abort() the process");
-  // The state is now unusable per the Lua contract; drop it without further calls.
   runtime.reset();
 }
 
-// Locks the batched ordered-view rebuild: registration only flips a dirty bit, so a
-// plugin registering several commands out of order must still expose a single fully
-// sorted, deduplicated CommandNames() view after load, merged across plugins.
 void TestPluginHostBatchedCommandRegistrationSortsOnce() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3020,13 +2836,9 @@ return ide.plugin({
   Expect(std::is_sorted(names.begin(), names.end()),
          "command names view must remain sorted after lazy rebuild");
 
-  // A second read without intervening registration must return the identical view
-  // (the dirty flag is cleared after the first rebuild).
   Expect(host.CommandNames() == expected, "repeated reads must return a stable sorted view");
 }
 
-// A plugin command that returns a string should surface it as host feedback; one
-// that returns nothing leaves feedback empty (the host then synthesizes a default).
 void TestPluginHostCommandReturnsFeedback() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3069,7 +2881,6 @@ return ide.plugin({
   Expect(feedback.empty(), "a command returning nothing should leave feedback empty");
 }
 
-// microide.notify(level, message) should route to the host show_notification callback.
 void TestPluginHostNotifyInvokesCallback() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3106,8 +2917,6 @@ return ide.plugin({
          "ctx.notify should forward the level and message verbatim");
 }
 
-// A disabled plugin id should skip setup (no commands) but still be listed as disabled,
-// and re-enabling it should load it on the next reload.
 void TestPluginHostDisabledPluginsSkipSetupButRemainListed() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3162,9 +2971,6 @@ return ide.plugin({
          "re-enabled plugin's command should register after reload");
 }
 
-// Default-posture plugin (no capabilities declared): filesystem access is project-scoped and
-// process execution is denied. Reads/writes inside the project succeed; absolute paths and `..`
-// escapes are refused (falsy result + a denial diagnostic), and process.run raises.
 void TestPluginHostFilesystemSandbox() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3231,9 +3037,6 @@ return ide.plugin({
          "the process denial should name the missing capability");
 }
 
-// Process capability gate: with process.exec granted and an allowlist, allowed binaries run while
-// disallowed ones are refused. A spawnable contribution (formatter) declared without process.exec
-// is rejected at registration. A data-scope plugin can write into ctx.workspace.data_dir().
 void TestPluginHostProcessAndContributionCapabilities() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3245,7 +3048,6 @@ void TestPluginHostProcessAndContributionCapabilities() {
   const std::filesystem::path project_root = temp_dir.path() / "project";
   WriteFile(project_root / "README.md", "capability fixture\n");
 
-  // process.exec with an allowlist of {"true"}: "true" runs, "false" is refused by the allowlist.
   WritePluginInit(
       global_plugins, "proc-grant",
       R"(local ide = require("microide")
@@ -3263,7 +3065,6 @@ return ide.plugin({
 })
 )");
 
-  // Formatter contribution without process.exec must be rejected at registration.
   WritePluginInit(
       global_plugins, "fmt-nogrant",
       R"(local ide = require("microide")
@@ -3280,7 +3081,6 @@ return ide.plugin({
 })
 )");
 
-  // Data-scope plugin writes into its sandboxed data dir via ctx.workspace.data_dir().
   WritePluginInit(
       global_plugins, "data-writer",
       R"(local ide = require("microide")
@@ -3303,8 +3103,6 @@ return ide.plugin({
   ScopedEnvVar data_env("XDG_DATA_HOME", data_home.string());
   PluginHost host;
   host.SetCallbacks(MakePluginHostCallbacks());
-  // Reload returns false here precisely because the fmt.nogrant plugin's setup is rejected; the
-  // other (valid) plugins still load, which the assertions below confirm.
   Expect(!host.Reload(project_root),
          "reload should report the rejected-formatter error while loading the valid plugins");
 
@@ -3325,7 +3123,6 @@ return ide.plugin({
     return false;
   };
 
-  // Deferred contribution gate: the formatter declared without process.exec is rejected.
   Expect(host.ContributedFormatters().empty(),
          "a formatter declared without process.exec must not register");
   Expect(has_error("process.exec"), "the rejected formatter should report the missing capability");
@@ -3348,10 +3145,6 @@ return ide.plugin({
   Expect(has_message("data-read:scratch"), "reading back from the data dir should return the content");
 }
 
-// TD-2026-07-17A-039: the plugin filesystem helpers gained explicit byte ceilings so a
-// capable plugin cannot duplicate a very large file in host memory (read) or push a very
-// large atomic write (write). Normal small reads/writes still work; over-budget calls fail
-// soft (nil / false) without creating the file.
 void TestPluginHostFilesystemByteCaps() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3361,7 +3154,6 @@ void TestPluginHostFilesystemByteCaps() {
   const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
   const std::filesystem::path project_root = temp_dir.path() / "project";
   WriteFile(project_root / "small.txt", "hello");
-  // A file just over the 16 MiB plugin read budget.
   WriteFile(project_root / "big.txt", std::string(17u * 1024 * 1024, 'a'));
 
   WritePluginInit(
@@ -3405,9 +3197,6 @@ return ide.plugin({
          "a refused over-budget write must not create the file");
 }
 
-// A contributed language server should carry a resolved kernel-confinement descriptor: enabled,
-// with the project root among its write roots, and network blocked unless the plugin declared it.
-// This locks the registration-time wiring that threads the sandbox down to AsyncSubprocess::Start.
 void TestPluginHostLanguageServerSandboxResolved() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3455,13 +3244,6 @@ return ide.plugin({
          "the project root should be readable inside the server sandbox");
 }
 
-// Wires a real PluginThread so plugin Lua runs off the calling thread, then proves
-// the routing: a reactive event is dispatched to the worker (not run inline), its
-// host mutations (status.update + log) are deferred to the mailbox rather than
-// applied on the worker, and a blocking round-trip preserves the synchronous API.
-// Run under TSAN this is the load-bearing check that the worker never touches a
-// registry the calling thread reads — the adversarial render-path read below races
-// the in-flight event on purpose.
 void TestPluginHostRoutesEventsThroughWorkerThread() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3496,7 +3278,7 @@ return ide.plugin({
   host.SetCallbacks(MakePluginHostCallbacks());
 
   plugin::PluginThread thread;
-  thread.SetWakeChannel(0);  // No SDL loop in this test; we drain the mailbox by hand.
+  thread.SetWakeChannel(0);
   host.SetWorker(&thread);
 
   Expect(host.Reload(project_root), "worker routing fixture should load");
@@ -3508,18 +3290,11 @@ return ide.plugin({
   }
   Expect(has_idle, "setup should register the status item via the round-trip");
 
-  // Fire-and-forget: this must post to the worker and return without running Lua
-  // on this thread. The worker may now be executing on_cursor_move concurrently.
   host.OnCursorMove(source, 7, 3);
 
-  // Adversarial race: read the render-path status view + revision while the event
-  // is in flight. Safe only because the event defers its status mutation instead of
-  // touching the registry on the worker. TSAN fails here if that contract breaks.
   (void)host.ContributedStatusItems();
   (void)host.StatusItemsRevision();
 
-  // A blocking round-trip runs strictly after the queued event (FIFO on one worker),
-  // so once it returns the event has completed and its deferred actions are queued.
   std::string error_message;
   std::string feedback;
   host.ExecuteCommand("worker.noop", {}, &error_message, &feedback);
@@ -3537,18 +3312,11 @@ return ide.plugin({
          "the worker's ctx.log should be delivered through the mailbox drain");
   Expect(host.Errors().empty(), "routing an event through the worker should not surface errors");
 
-  // Mirror the production teardown order: join the worker, drop the host's pointer,
-  // then tear the host down inline.
   thread.Shutdown();
   host.SetWorker(nullptr);
   host.Shutdown();
 }
 
-// TD-2026-07-17A-108: WorkspacePluginRuntime::ReloadAsync must run the runtime-syntax
-// discovery/stat/read/parse on the plugin worker (off the UI thread) and only swap the
-// built definitions into the global registry on the main thread. Wires a real worker,
-// drives the async reload to completion by draining the mailbox, and proves the load ran
-// off-thread AND the changed definition reached the (main-thread-owned) registry.
 void TestWorkspacePluginRuntimeLoadsSyntaxOffTheMainThread() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3576,20 +3344,17 @@ return ide.plugin({ id = "syntax" })
 
   workspace::WorkspacePluginRuntime runtime;
   runtime.Host().SetCallbacks(MakePluginHostCallbacks());
-  runtime.Thread().SetWakeChannel(0);  // No SDL loop; we drain the mailbox by hand.
+  runtime.Thread().SetWakeChannel(0);
   runtime.Host().SetWorker(&runtime.Thread());
 
   bool done = false;
   bool clean = false;
   runtime.ReloadAsync(project_root, microide::plugin::PluginHost::ProjectLocality{},
-                      /*reload_syntax_definitions=*/true, [&](bool ok) {
+                      true, [&](bool ok) {
     clean = ok;
     done = true;
   });
 
-  // Pump the worker<->main round-trips: host reload (worker) -> completion (main) ->
-  // syntax load (worker) -> publish + on_complete (main). Draining the mailbox runs the
-  // main-thread halves; the worker runs its halves on its own thread in between.
   WaitUntil([&done]() { return done; }, std::chrono::seconds(5), std::chrono::milliseconds(1),
             [&runtime]() { runtime.DrainPluginThreadActions(); });
   Expect(done, "the async syntax reload should complete within the deadline");
@@ -3603,22 +3368,13 @@ return ide.plugin({ id = "syntax" })
   Expect(std::any_of(changed.begin(), changed.end(),
                      [](std::string_view language) { return language == "offthreadtodo"; }),
          "the changed-language set should include the newly loaded filetype");
-  // The publish step swapped the built registry on the main thread, so detection sees it.
   Expect(editor::runtime_syntax::DetectFiletype(notes) == "offthreadtodo",
          "the off-thread reload must publish the definition onto the main-thread registry");
 
-  runtime.Shutdown();  // join the worker before teardown
-  // Restore the global registry to built-ins so this test does not leak plugin syntax
-  // definitions into later tests sharing the process-wide registry.
+  runtime.Shutdown();
   editor::runtime_syntax::ReloadDefinitions({}, nullptr);
 }
 
-// A workspace edit deferred from the worker (a reactive editor event calling
-// ctx.editor.apply_edits) must carry the capturing snapshot's staleness guard:
-// the active buffer path and its content revision at capture time. The host uses
-// that stamp on the UI-thread drain to drop an edit whose coordinates were
-// computed against a buffer the user has since typed into. Direct (synchronous)
-// edits leave the guard unset and always apply.
 void TestPluginHostDeferredWorkspaceEditCarriesStalenessGuard() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3649,7 +3405,6 @@ return ide.plugin({
 
   ScopedPluginConfigHomeEnv config_env(config_home);
 
-  // The active buffer the snapshot captures, with a known content revision.
   const std::filesystem::path active_path = source.lexically_normal();
   constexpr std::uint64_t kCapturedRevision = 4242;
   plugin::PluginHost::WorkspaceEditRequest received;
@@ -3675,16 +3430,13 @@ return ide.plugin({
   host.SetCallbacks(std::move(callbacks));
 
   plugin::PluginThread thread;
-  thread.SetWakeChannel(0);  // No SDL loop in this test; we drain the mailbox by hand.
+  thread.SetWakeChannel(0);
   host.SetWorker(&thread);
 
   Expect(host.Reload(project_root), "edit-guard fixture should load");
 
-  // Reactive event runs on the worker (direct=false); its apply_edits defers to the
-  // mailbox stamped with the snapshot guard.
   host.OnCursorMove(source, 7, 3);
 
-  // Blocking round-trip flushes the FIFO worker, so the deferred edit is now queued.
   std::string error_message;
   std::string feedback;
   host.ExecuteCommand("edit.guard.noop", {}, &error_message, &feedback);
@@ -3703,9 +3455,6 @@ return ide.plugin({
   host.Shutdown();
 }
 
-// QueryCompletionsAsync must dispatch to the worker and deliver its result on the
-// UI-thread mailbox drain — never synchronously and never on the worker. Verified
-// under TSAN: the produce step runs on the worker, the deliver step on this thread.
 void TestPluginHostQueryCompletionsAsyncDeliversThroughWorker() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3749,16 +3498,13 @@ return ide.plugin({
   bool delivered = false;
   host.QueryCompletionsAsync(
       "javascript", source, 1, 1, "",
-      [&](std::vector<PluginHost::CompletionCandidate> items, std::string /*error*/) {
+      [&](std::vector<PluginHost::CompletionCandidate> items, std::string ) {
         delivered_items = std::move(items);
         delivered = true;
       });
   Expect(!delivered,
          "with a worker wired the completion result must not be delivered synchronously");
 
-  // A blocking round-trip runs after the queued async query (FIFO), so the query
-  // has completed once it returns; its result now sits in the mailbox, undelivered
-  // until the drain.
   std::string error_message;
   std::string feedback;
   host.ExecuteCommand("async.complete.noop", {}, &error_message, &feedback);
@@ -3775,11 +3521,6 @@ return ide.plugin({
   host.Shutdown();
 }
 
-// TD-2026-10-21-374: a provider's buffer table carries the buffer's live text --
-// unsaved edits included -- as buffer:text() / buffer:line(n) / buffer:line_count(),
-// so its answer is about the lines the host's positions describe, not the file on
-// disk. The host is asked for the text only when a provider of the query's kind
-// serves the language.
 void TestPluginHostProvidersReadTheLiveBufferText() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3864,8 +3605,6 @@ return ide.plugin({
          "with no definition provider the host is not asked to copy the buffer");
 }
 
-// QueryHoverAsync dispatches to the worker and delivers on the UI-thread drain.
-// Verified under TSAN.
 void TestPluginHostQueryHoverAsyncDeliversThroughWorker() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3928,16 +3667,6 @@ return ide.plugin({
   host.Shutdown();
 }
 
-// TD-2026-08-06-159: with no hover provider registered, QueryHoverAsync must
-// answer "no" on the calling thread without resolving a path or dispatching to the
-// worker. Editor hover resolution runs on every painted frame the pointer spends
-// over text, and during a scroll the cell under a stationary pointer changes every
-// frame — so a dispatch here is a per-frame worker round trip whose only possible
-// answer is the one already known.
-//
-// "Did not dispatch" is pinned by the same signal the test above uses in reverse:
-// synchronous delivery is only possible on the non-dispatching path, and the
-// worker's main-thread queue must have nothing in it afterwards.
 void TestPluginHostQueryHoverAsyncSkipsWorkerWithNoProvider() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3950,9 +3679,6 @@ void TestPluginHostQueryHoverAsyncSkipsWorkerWithNoProvider() {
   WriteFile(project_root / "README.md", "no hover fixture\n");
   WriteFile(source, "x\n");
 
-  // A plugin that registers a command but NO hover provider: the host is live and
-  // enabled, so a fast-reject here is about hover specifically, not about the
-  // runtime being off.
   WritePluginInit(global_plugins, "no-hover",
                   R"(local ide = require("microide")
 return ide.plugin({
@@ -3995,9 +3721,6 @@ return ide.plugin({
   host.Shutdown();
 }
 
-// ExecuteCommandAsync resolves "handled" synchronously (HasCommand) but runs the
-// handler on the worker and delivers its outcome on the UI-thread drain. Verified
-// under TSAN.
 void TestPluginHostExecuteCommandAsyncDeliversThroughWorker() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4038,14 +3761,13 @@ return ide.plugin({
   bool ran = false;
   std::string feedback;
   host.ExecuteCommandAsync("async.cmd.run", {"x"},
-                           [&](bool command_ran, std::string /*error*/, std::string command_feedback) {
+                           [&](bool command_ran, std::string , std::string command_feedback) {
                              ran = command_ran;
                              feedback = std::move(command_feedback);
                              delivered = true;
                            });
   Expect(!delivered, "the command outcome must not be delivered synchronously with a worker wired");
 
-  // Quiesce the worker with a blocking round-trip (FIFO), then drain.
   std::string error_message;
   std::string round_trip_feedback;
   host.ExecuteCommand("async.cmd.noop", {}, &error_message, &round_trip_feedback);
@@ -4058,11 +3780,6 @@ return ide.plugin({
   host.Shutdown();
 }
 
-// ReloadAsync must run the plugin load on the worker WITHOUT blocking the UI thread,
-// then publish the rebuilt contribution snapshot and fire on_complete on the mailbox
-// drain. Until the drain, the UI keeps reading the previous (empty) published view.
-// Under TSAN this is the load-bearing check that a detached reload mutates the live
-// registries on the worker while the calling thread reads only the published snapshot.
 void TestPluginHostReloadAsyncPublishesOnDrain() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4091,7 +3808,7 @@ return ide.plugin({
   PluginHost host;
   host.SetCallbacks(MakePluginHostCallbacks());
   plugin::PluginThread thread;
-  thread.SetWakeChannel(0);  // No SDL loop; drain the mailbox by hand.
+  thread.SetWakeChannel(0);
   host.SetWorker(&thread);
 
   bool completed = false;
@@ -4107,8 +3824,6 @@ return ide.plugin({
          "status items must not be visible before the snapshot publishes");
   Expect(thread.started(), "loading a plugin should lazily spawn the worker");
 
-  // A blocking round-trip runs strictly after the queued reload (FIFO on one worker),
-  // so once it returns the reload has finished and posted its completion to the mailbox.
   std::string error_message;
   std::string feedback;
   host.ExecuteCommand("async.reload.noop", {}, &error_message, &feedback);
@@ -4128,10 +3843,6 @@ return ide.plugin({
   host.Shutdown();
 }
 
-// The save path is the one deliberate bounded synchronous round-trip onto the
-// worker. This proves both halves of Phase 5: the worker actually transforms the
-// text when it finishes in time, and a worker that cannot answer within the
-// deadline never wedges the save -- it proceeds untransformed and warns.
 void TestPluginHostSaveParticipantsBoundedRoundTrip() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4169,11 +3880,10 @@ return ide.plugin({
   PluginHost host;
   host.SetCallbacks(std::move(callbacks));
   plugin::PluginThread thread;
-  thread.SetWakeChannel(0);  // No SDL loop; drive the worker by hand.
+  thread.SetWakeChannel(0);
   host.SetWorker(&thread);
   Expect(host.Reload(project_root), "save participant plugin should reload through the worker");
 
-  // Happy path: the worker answers within the deadline and the transform lands.
   std::string text = "alpha\n";
   std::string error_message;
   Expect(host.RunSaveParticipants(source, &text, &error_message),
@@ -4182,8 +3892,6 @@ return ide.plugin({
   Expect(text == "ALPHA\n", "the worker-run participant should transform the saved text");
   Expect(!warned, "a save that completes in time must not warn");
 
-  // Timeout path: occupy the worker with a job that blocks until released, so the
-  // save's queue-jumping job cannot run within the (shortened) deadline.
   auto started = std::make_shared<std::promise<void>>();
   auto release = std::make_shared<std::promise<void>>();
   std::future<void> started_future = started->get_future();
@@ -4192,7 +3900,7 @@ return ide.plugin({
     started->set_value();
     release_future.wait();
   });
-  started_future.wait();  // The worker is now parked inside the blocking job.
+  started_future.wait();
 
   host.SetSaveParticipantDeadlineForTesting(std::chrono::milliseconds(100));
   std::string blocked_text = "alpha\n";
@@ -4203,16 +3911,12 @@ return ide.plugin({
   Expect(error_message.empty(), "a timeout is not a participant failure, so no error is set");
   Expect(warned && warn_level == "warning", "a timed-out save should surface a warning toast");
 
-  release->set_value();  // Let the worker drain the blocking job before shutdown.
+  release->set_value();
   thread.Shutdown();
   host.SetWorker(nullptr);
   host.Shutdown();
 }
 
-// TD-2026-10-06-318. A plugin's operations follow the project for a path IN the
-// project tree and stay local for the plugin's own data directory. The project's
-// locality here is a recording gate and a scripted launcher; in a remote project
-// they are the mirror gate and the host's launcher.
 class RecordingWriteGate final : public microide::project::FileWriteGate {
  public:
   std::vector<std::filesystem::path> writes;
@@ -4285,14 +3989,8 @@ return ide.plugin({
 #endif
 }
 
-}  // namespace
+}
 
-// Regression for the buffer-lifecycle interest gate: open/save/close events must
-// short-circuit before CaptureSnapshot + worker-task dispatch when no loaded
-// plugin subscribes, and the interest flags must reflect exactly which callbacks
-// are declared. buffer_open/buffer_save are deliberately excluded from any() --
-// only the per-keystroke tracker consults any(); lifecycle events dispatch
-// directly from OnBuffer{Open,Save,Close}.
 void TestPluginHostBufferLifecycleInterestGate() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4305,7 +4003,6 @@ void TestPluginHostBufferLifecycleInterestGate() {
   WriteFile(project_root / "README.md", "interest gate fixture\n");
   WriteFile(source, "int main() { return 0; }\n");
 
-  // Subscribes ONLY to on_buffer_save -- no open/close/change callbacks.
   WritePluginInit(
       global_plugins, "save-only",
       R"(local ide = require("microide")
@@ -4327,13 +4024,11 @@ return ide.plugin({
   Expect(!interest.any(),
          "lifecycle-only interest stays out of any() (per-keystroke tracker gate)");
 
-  // Open with no open-subscriber must not dispatch (no message emitted).
   const std::size_t messages_after_reload = host.Messages().size();
   host.OnBufferOpen(source);
   Expect(host.Messages().size() == messages_after_reload,
          "OnBufferOpen must not dispatch when no plugin subscribes to buffer_open");
 
-  // Save still dispatches to its subscriber (gate must not over-suppress).
   host.OnBufferSave(source);
   Expect(std::any_of(host.Messages().begin(), host.Messages().end(),
                      [](const std::string& entry) {
@@ -4342,10 +4037,6 @@ return ide.plugin({
          "OnBufferSave must dispatch to a buffer_save subscriber");
 }
 
-// TD-2026-07-17A-077: OnCursorMove / OnSelectionChange must honor the published
-// interest mask before capturing a snapshot and posting worker work. A plugin that
-// subscribes to on_cursor_move only sets the cursor_move interest (not selection_change),
-// so a cursor move dispatches while a selection change is gated out.
 void TestPluginHostCursorSelectionInterestGate() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4377,13 +4068,11 @@ return ide.plugin({
          "no on_selection_change leaves selection_change interest clear");
   Expect(!interest.buffer_change, "no on_buffer_change leaves buffer_change interest clear");
 
-  // A selection change with no subscriber must not dispatch (gated out before snapshot).
   const std::size_t before = host.Messages().size();
   host.OnSelectionChange(source, true, 1, 1, 1, 4);
   Expect(host.Messages().size() == before,
          "OnSelectionChange must not dispatch when no plugin subscribes");
 
-  // A cursor move with a subscriber still dispatches (the gate must not over-suppress).
   host.OnCursorMove(source, 1, 1);
   Expect(std::any_of(host.Messages().begin(), host.Messages().end(),
                      [](const std::string& entry) {
@@ -4402,10 +4091,6 @@ void TestPluginHostThemeRegisterRejectsNonTableWithoutCrash() {
   const std::filesystem::path project_root = temp_dir.path() / "project";
   WriteFile(project_root / "README.md", "theme fixture\n");
 
-  // setup() passes a non-table to ctx.themes.add. This used to reach an internal
-  // luaL_checktype that longjmps over the caller's live std::string error_message
-  // (invariant violation / UB). The non-raising type check must instead surface a
-  // clean error and leave the host usable.
   WritePluginInit(global_plugins, "bad-theme", R"(local ide = require("microide")
 return ide.plugin({
   id = "badtheme.sample",
@@ -4422,7 +4107,6 @@ return ide.plugin({
   callbacks.error_sink = [&](const std::string& error) { sink_errors.push_back(error); };
   host.SetCallbacks(std::move(callbacks));
 
-  // Must not crash; the malformed theme must not be registered.
   host.Reload(project_root);
   Expect(host.ContributedThemes().empty(),
          "a non-table theme argument must not register a theme");
@@ -4433,9 +4117,6 @@ return ide.plugin({
   Expect(mentions_table, "the rejection should surface a clear 'expects a table' error");
 }
 
-// TD-2026-07-17A-047: one failing completion provider must not suppress every other
-// provider's results. A first provider whose provide() errors is skipped and the second
-// provider's candidates still reach the caller.
 void TestPluginHostCompletionProviderFailureKeepsOthers() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4482,10 +4163,6 @@ return ide.plugin({
          "the failing provider should be recorded in the aggregated warning");
 }
 
-// TD-2026-07-17A-046: per-provider result caps are an input guard, not the final
-// product size. Two completion providers each returning 15000 candidates must not
-// sum to 30000 host candidates — the per-query aggregate ceiling (20000) bounds the
-// harvested total across all matching providers.
 void TestPluginHostCompletionAggregateBudgetAcrossProviders() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4523,14 +4200,10 @@ return ide.plugin({
 
   std::string runtime_error;
   const auto completions = host.QueryCompletions("todo", source, 1, 0, "", &runtime_error);
-  // First provider fills 15000; the second is capped to the remaining 5000.
   Expect(completions.size() == 20000,
          "the per-query aggregate ceiling bounds the total across providers (15000+5000)");
 }
 
-// TD-2026-07-17A-080: a scalar string field carrying an embedded NUL is rejected (not
-// truncated), so a completion whose label is "x\0y" is dropped while a clean sibling
-// candidate is kept.
 void TestPluginHostCompletionLabelWithNulIsRejected() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4575,8 +4248,6 @@ return ide.plugin({
          "the NUL-free sibling candidate must still be returned");
 }
 
-// TD-2026-07-17A-049: a broken hover provider must not mask later ordered providers. The
-// first provider errors; QueryHover keeps scanning and returns the second provider's hover.
 void TestPluginHostHoverProviderFailureFallsThrough() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4618,8 +4289,6 @@ return ide.plugin({
          "the healthy provider's hover must be returned after the earlier failure");
 }
 
-// TD-2026-07-17A-126: an env key containing '=' is rejected at the plugin/process
-// boundary rather than being split by the child into an unintended variable name.
 void TestPluginHostProcessEnvKeyWithEqualsRejected() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4803,4 +4472,4 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostCursorSelectionInterestGate);
 }
 
-}  // namespace microide::tests
+}

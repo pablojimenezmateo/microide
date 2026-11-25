@@ -17,7 +17,7 @@ bool SameColor(const SDL_Color& a, const SDL_Color& b) {
   return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
 }
 
-}  // namespace
+}
 
 SDL_FRect LaneRect(const SDL_FRect& track, float min_x) {
   const float x = std::max(min_x, track.x - kLaneGap - kLaneWidth);
@@ -94,7 +94,6 @@ void ReduceMarkersInto(const SDL_FRect& inner_lane, std::size_t total_rows,
   }
   constexpr int kMinPx = static_cast<int>(kMinMarkerHeight);
 
-  // 0 is the empty sentinel; each occupied bucket stores (packed_priority_color + 1).
   bucket_scratch.assign(static_cast<std::size_t>(height_px), 0u);
   palette_scratch.clear();
 
@@ -118,21 +117,16 @@ void ReduceMarkersInto(const SDL_FRect& inner_lane, std::size_t total_rows,
     int py0 = static_cast<int>(std::floor(top_px));
     int py1 = static_cast<int>(std::ceil(bottom_px));
     if (py1 < py0 + kMinPx) {
-      py1 = py0 + kMinPx;  // keep a lone row visible
+      py1 = py0 + kMinPx;
     }
     py0 = std::clamp(py0, 0, height_px - 1);
     py1 = std::clamp(py1, py0 + 1, height_px);
     if (py1 == height_px && py1 - py0 < kMinPx) {
-      py0 = std::max(0, height_px - kMinPx);  // shift up so the min height still fits
+      py0 = std::max(0, height_px - kMinPx);
     }
 
     const int ci = color_index(input.color);
     const std::uint32_t priority = static_cast<std::uint32_t>(std::max(0, input.priority));
-    // Pack priority (for the winner comparison) above the color index (only for color
-    // recovery in the coalescing pass). The winner is chosen on priority ALONE: a strictly
-    // higher priority overwrites, and equal priorities keep the first writer. This makes a
-    // contested pixel resolve by (priority, input order) deterministically — never by the
-    // incidental palette insertion order that a full-packed-value compare would leak.
     const std::uint32_t stored =
         ((priority << 16) | static_cast<std::uint32_t>(ci)) + 1u;
     for (int py = py0; py < py1; ++py) {
@@ -194,10 +188,6 @@ void DrawLane(SDL_Renderer* renderer, const render::Theme& theme, const SDL_FRec
 }
 
 std::uint64_t ThemeMarkerToken(const render::Theme& theme) {
-  // FNV-1a over the colors that overview markers resolve from, across all three surfaces
-  // (compare/merge diff colors, editor diagnostics + search, and the caret). The lane
-  // chrome (surface_raised/border) is drawn live every frame so it needs no token, but
-  // including the marker set here is enough to invalidate every baked-in color on a switch.
   const SDL_Color colors[] = {
       theme.diff_added,        theme.diff_deleted,       theme.diff_modified,
       theme.diff_moved,
@@ -215,4 +205,4 @@ std::uint64_t ThemeMarkerToken(const render::Theme& theme) {
   return hash;
 }
 
-}  // namespace microide::workspace::overview
+}

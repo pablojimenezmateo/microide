@@ -2,11 +2,6 @@
 
 namespace microide::workspace {
 
-// Keybinding dispatch: which context a key is pressed in, which resolved binding
-// it runs (and the gates that refuse a matching one), and the two-step chords.
-// tests/KeybindingReachabilityTests.cpp presses every built-in binding from every
-// focus target against these rules.
-
 bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
                                               SDL_Keymod modifiers,
                                               bool active_merge_tab) {
@@ -60,10 +55,6 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
     return false;
   }
 
-  // Text shortcuts that act on the focused editor's buffer, whatever context a
-  // user's keybindings file gives them. Workbench commands (close tab, find in
-  // files) are not here: listing them made a Global rebinding of Ctrl+W or
-  // Ctrl+Shift+F still dead outside the editor.
   const bool editor_shortcut =
       binding->action == ActionId::SelectAll || binding->action == ActionId::Undo ||
       binding->action == ActionId::Redo || binding->action == ActionId::CopySelection ||
@@ -75,9 +66,6 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
     return false;
   }
 
-  // The find/replace widget is non-modal: while it floats and the editor holds
-  // focus, editor shortcuts (Ctrl+F to re-focus the widget, Undo, Copy, …) must
-  // still fire. Only a genuinely modal overlay blocks them.
   const bool modal_overlay_visible = state_.overlay.visible &&
                                      state_.overlay.mode != OverlayMode::BufferSearch &&
                                      state_.overlay.mode != OverlayMode::BufferReplace;
@@ -129,12 +117,6 @@ bool KeyInputCoordinator::DispatchResolvedKeybinding(const ResolvedKeybinding& b
   return operations_.execute_action(binding.action, binding.args, source);
 }
 
-// Two-step chords (Ctrl+K Ctrl+O): bindings with a leader key
-// (KeybindingSpec::leader_key). The leader works wherever its chords' bindings are
-// active, as in VS Code -- Ctrl+K Ctrl+<arrow> moves between editor panes from the
-// tree too -- but not under an overlay or in a focused terminal, which owns Ctrl+K.
-// Answers whether the key was taken, or nullopt when it is not part of a chord and
-// dispatch goes on (a second key that completes no chord dispatches as itself).
 std::optional<bool> KeyInputCoordinator::HandleKeyChord(const SDL_KeyboardEvent& event,
                                                         SDL_Keymod modifiers,
                                                         KeybindingContext key_ctx) {
@@ -142,9 +124,6 @@ std::optional<bool> KeyInputCoordinator::HandleKeyChord(const SDL_KeyboardEvent&
   const bool chord_allowed = !state_.overlay.visible && key_ctx != KeybindingContext::Terminal;
   std::optional<ProjectSurfaceState::PendingChord>& pending = state_.surface.pending_chord;
 
-  // A modifier pressed on its own is not the chord's second key: Ctrl+K, let go of
-  // Ctrl, Ctrl+Left is how the chord is often typed, and the fresh Ctrl press used
-  // to cancel it (VS Code ignores modifier-only presses while a chord is pending).
   const bool modifier_only = event.key == SDLK_LCTRL || event.key == SDLK_RCTRL ||
                              event.key == SDLK_LSHIFT || event.key == SDLK_RSHIFT ||
                              event.key == SDLK_LALT || event.key == SDLK_RALT ||
@@ -163,14 +142,11 @@ std::optional<bool> KeyInputCoordinator::HandleKeyChord(const SDL_KeyboardEvent&
     if (binding == nullptr) {
       return std::nullopt;
     }
-    // A printable second key without Ctrl/Alt (Ctrl+K S) also arrives as TEXT,
-    // which would land in the buffer: swallow it.
     const bool typed = (NormalizedKeyModifiers(modifiers) & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
                        event.key >= 0x20 && event.key < 0x7F;
     if (typed && operations_.set_swallow_next_text_input) {
       operations_.set_swallow_next_text_input(true);
     }
-    // Taken whether or not the action could run: it reports why it did not.
     (void)DispatchResolvedKeybinding(*binding, ActionSource::Shortcut);
     return true;
   }
@@ -182,4 +158,4 @@ std::optional<bool> KeyInputCoordinator::HandleKeyChord(const SDL_KeyboardEvent&
   return std::nullopt;
 }
 
-}  // namespace microide::workspace
+}

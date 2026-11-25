@@ -55,24 +55,6 @@ PersistedRecordReadResult ReadRecordOrFail(const std::filesystem::path& path,
   return *result;
 }
 
-// Property: the primitive codec round-trips exactly, and a truncated buffer is
-// always rejected rather than partly believed.
-//
-// The tests around this one drive whole records through the file layer (header,
-// CRC, backup, crash-recovery). The layer UNDER that — the little-endian
-// primitives every persisted struct is built from — is only ever exercised
-// through whichever fields the higher-level records happen to use, so a type or
-// an input shape no current record contains has no coverage at all. That matters
-// most for the shapes a hand-rolled codec gets wrong: a string with an embedded
-// NUL, a non-UTF-8 byte, a length that is exactly the remaining buffer, a
-// negative integer, ±0.0.
-//
-// Two properties over a randomized value sequence:
-//   * every value reads back identical, in order; and
-//   * for EVERY truncation of the buffer, the same read sequence fails — a codec
-//     that forgets one bounds check reads a value out of bytes that are not there
-//     and silently returns a wrong one, which is the failure this exists to catch.
-
 struct PersistedValue {
   enum class Kind { U8, U16, U32, I32, I64, U64, F32, Bool, String, Path } kind;
   std::uint64_t integer = 0;
@@ -85,11 +67,11 @@ std::string GeneratePersistedString(std::size_t choice, std::size_t length) {
   switch (choice % 7) {
     case 0: return {};
     case 1: return "plain";
-    case 2: return std::string("embedded\0null", 13);   // NUL is content, not a terminator
-    case 3: return "\xff\xfe invalid utf8 \x80";        // arbitrary bytes must survive
-    case 4: return "\xc3\xa9\xe4\xb8\xad\xf0\x9f\x98\x80";  // é 中 emoji
-    case 5: return std::string(length % 300, 'x');      // spans the length-prefix path
-    default: return "a/b\\c:d";                          // separator-ish, for paths
+    case 2: return std::string("embedded\0null", 13);
+    case 3: return "\xff\xfe invalid utf8 \x80";
+    case 4: return "\xc3\xa9\xe4\xb8\xad\xf0\x9f\x98\x80";
+    case 5: return std::string(length % 300, 'x');
+    default: return "a/b\\c:d";
   }
 }
 
@@ -152,8 +134,6 @@ void WritePersistedValues(microide::persistence::PrimitiveWriter& writer,
   }
 }
 
-// Reads the sequence back. `strict` compares every value; without it the caller
-// only cares whether the whole sequence could be read at all.
 bool ReadPersistedValues(std::span<const std::byte> bytes,
                          const std::vector<PersistedValue>& values,
                          bool strict) {
@@ -199,8 +179,6 @@ bool ReadPersistedValues(std::span<const std::byte> bytes,
       case PersistedValue::Kind::F32: {
         float read = 0.0f;
         if (!reader.ReadF32(&read)) return false;
-        // Bit-exact: -0.0 and 0.0 compare equal as floats, and this codec must
-        // preserve the sign of zero like every other bit.
         if (strict && std::memcmp(&read, &value.real, sizeof(float)) != 0) return false;
         break;
       }
@@ -237,14 +215,12 @@ void TestPrimitiveCodecRoundTripsAndRejectsTruncation() {
     bool ok = true;
     WritePersistedValues(writer, values, &ok);
     Expect(ok, "writing generated primitives must succeed");
-    Expect(ReadPersistedValues(bytes, values, /*strict=*/true),
+    Expect(ReadPersistedValues(bytes, values, true),
            "every primitive must read back exactly as written");
 
-    // Every strict prefix must be rejected. A missing bounds check shows up here
-    // as a read that succeeds off the end of the buffer.
     for (std::size_t length = 0; length < bytes.size(); ++length) {
       Expect(!ReadPersistedValues(std::span<const std::byte>(bytes.data(), length), values,
-                                  /*strict=*/false),
+                                  false),
              "a truncated buffer must be rejected, never partly believed");
       ++truncations_checked;
     }
@@ -318,12 +294,8 @@ void TestPersistedRecordReaderFallsBackToBackupOnCorruption() {
          "recovery should return the last valid backup body");
 }
 
-// A failed write says at which stage and why. The write queue logs both, and
-// "could not write <path>" alone gave soak c47c6a1f54cf nothing to tell a full
-// disk from a directory that was not there.
 void TestPersistedRecordWriterReportsTheStageAndTheCauseOfAFailure() {
   TemporaryDirectory temp_dir;
-  // A regular file where the state directory should be: create_directories fails.
   WriteFile(temp_dir.path() / "state", "not a directory");
   const std::filesystem::path path = temp_dir.path() / "state" / "session";
 
@@ -421,13 +393,10 @@ void TestPersistedRecordReaderRejectsUnsupportedVersionEvenWithValidCrc() {
 }
 
 void TestPrimitiveReaderSanitizesNonFiniteF32() {
-  // A forged file can encode NaN/Inf in an F32 field. std::clamp(NaN, lo, hi)
-  // returns NaN, which later reaches static_cast<int>(NaN) in layout math (UB).
-  // ReadF32 must neutralize non-finite payloads at the source.
   const std::uint32_t kNonFinite[] = {
-      0x7FC00000u,  // quiet NaN
-      0x7F800000u,  // +Inf
-      0xFF800000u,  // -Inf
+      0x7FC00000u,
+      0x7F800000u,
+      0xFF800000u,
   };
   for (const std::uint32_t bits : kNonFinite) {
     std::vector<std::byte> payload;
@@ -439,7 +408,6 @@ void TestPrimitiveReaderSanitizesNonFiniteF32() {
     Expect(std::isfinite(value), "ReadF32 must sanitize NaN/Inf to a finite value");
   }
 
-  // A finite value round-trips unchanged.
   std::vector<std::byte> finite_payload;
   microide::persistence::PrimitiveWriter finite_writer(&finite_payload);
   Expect(finite_writer.WriteF32(288.0f), "finite F32 should encode");
@@ -449,10 +417,6 @@ void TestPrimitiveReaderSanitizesNonFiniteF32() {
   Expect(finite_value == 288.0f, "finite F32 must round-trip unchanged");
 }
 
-// Clearing persisted state by removing only the primary file lets it resurrect from
-// the backup on the next read. Removing BOTH primary and backup (what
-// PersistenceService::DeleteState does) prevents the resurrection — the mechanism
-// behind the cleared-debug-state fix.
 void TestRemovingOnlyPrimaryResurrectsFromBackup() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "state" / "debug.bin";
@@ -465,23 +429,16 @@ void TestRemovingOnlyPrimaryResurrectsFromBackup() {
   const std::filesystem::path backup = PersistedRecordWriter::BackupPathFor(path);
   Expect(std::filesystem::exists(backup), "backup exists after the second write");
 
-  // Buggy clear: remove only the primary. The reader falls back to the backup.
   std::error_code ec;
   std::filesystem::remove(path, ec);
   Expect(PersistedRecordReader::ReadFile(path).has_value(),
          "removing only the primary resurrects state from the backup");
 
-  // Correct clear (DeleteState): remove both. Now the read finds nothing.
   std::filesystem::remove(backup, ec);
   Expect(!PersistedRecordReader::ReadFile(path).has_value(),
          "removing both primary and backup fully clears the state");
 }
 
-// Regression: a genuine stat failure on the primary file (here ELOOP from a
-// symlink cycle) must surface as ReadFailed, not NotFound. std::filesystem::exists
-// returns false *and sets the error code* on such failures; the reader used to
-// test !exists() first and report NotFound, letting a transient I/O error look
-// like "no persisted state" — which a later save would overwrite with defaults.
 void TestPersistedRecordReaderReportsReadFailureOnStatError() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path loopa = temp_dir.path() / "loopa";
@@ -492,7 +449,6 @@ void TestPersistedRecordReaderReportsReadFailureOnStatError() {
   std::filesystem::create_directory_symlink(loopa, loopb, ec);
   Expect(!ec, "loop symlink 'loopb' should be created");
 
-  // Reading through the cycle stats with ELOOP for both primary and backup paths.
   PersistedRecordReaderError error = PersistedRecordReaderError::None;
   const auto result = PersistedRecordReader::ReadFile(loopa / "state.bin", &error);
   Expect(!result.has_value(), "reading through a symlink cycle should not succeed");
@@ -500,18 +456,10 @@ void TestPersistedRecordReaderReportsReadFailureOnStatError() {
          "a stat failure must be reported as ReadFailed, not NotFound");
 }
 
-// I16 regression: a readable but stale `.bak` must not silently mask a primary
-// UnsupportedVersion. Falling back would let the next save overwrite newer state
-// with older data and hide the version mismatch. The reader now refuses the
-// fallback for UnsupportedVersion (surfacing the mismatch) unless the caller opts
-// into an explicit downgrade-recovery path, and it always surfaces the primary
-// failure + backup usage through the result.
 void TestPersistedRecordReaderRefusesBackupForUnsupportedVersion() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "state" / "project.state.bin";
 
-  // A valid backup (v1) with a valid current-format primary (v2), then overwrite
-  // the primary with a CRC-valid but future-version record.
   PersistedRecordWriterError write_error = PersistedRecordWriterError::None;
   Expect(PersistedRecordWriter::WriteFile(path, BytesFromText("known-good"), 3u, &write_error),
          "initial write should succeed");
@@ -525,24 +473,21 @@ void TestPersistedRecordReaderRefusesBackupForUnsupportedVersion() {
                                                          &future_primary),
          "future-version primary should build");
   Expect(future_primary.size() > 8, "primary file should include a version field");
-  future_primary[4] = std::byte{0x02};  // bump the format version out of range
+  future_primary[4] = std::byte{0x02};
   future_primary[5] = std::byte{0x00};
   future_primary[6] = std::byte{0x00};
   future_primary[7] = std::byte{0x00};
   WriteFile(path, TextFromBytes(future_primary));
 
-  // Default: fallback refused, the version mismatch surfaces, no value returned.
   PersistedRecordReaderError error = PersistedRecordReaderError::None;
   const auto refused = PersistedRecordReader::ReadFile(path, &error);
   Expect(!refused.has_value(), "an unsupported-version primary must not fall back by default");
   Expect(error == PersistedRecordReaderError::UnsupportedVersion,
          "a refused fallback should surface the version mismatch reason");
 
-  // Opt-in downgrade recovery: the backup is used, and the result carries both the
-  // used_backup flag and the primary failure that triggered recovery.
   PersistedRecordReaderError recovery_error = PersistedRecordReaderError::None;
   const auto recovered =
-      PersistedRecordReader::ReadFile(path, &recovery_error, /*allow_backup_for_unsupported_version=*/true);
+      PersistedRecordReader::ReadFile(path, &recovery_error, true);
   Expect(recovered.has_value(), "explicit downgrade recovery should read the backup");
   Expect(recovery_error == PersistedRecordReaderError::None,
          "a successful downgrade recovery reports None as the overall status");
@@ -553,9 +498,6 @@ void TestPersistedRecordReaderRefusesBackupForUnsupportedVersion() {
          "downgrade recovery should return the backup body");
 }
 
-// I16 regression: a parse-failure primary with a valid backup still recovers, but
-// the result must now surface that recovery happened (used_backup) and why
-// (primary_error), so operators do not lose the signal.
 void TestPersistedRecordReaderSurfacesBackupUsageOnParseFailure() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "state" / "user.config.bin";
@@ -577,14 +519,9 @@ void TestPersistedRecordReaderSurfacesBackupUsageOnParseFailure() {
   Expect(TextFromBytes(recovered->body) == "known-good", "recovery should return the backup body");
 }
 
-// Regression (header-first bounded read): a large file with a bad magic must be
-// rejected on the fixed 16-byte prefix, before the body is read into memory. We
-// can't probe the allocation directly here, but we lock the behavioral contract
-// that a large non-record file is rejected as ParseFailed.
 void TestPersistedRecordReaderRejectsLargeBadMagicOnHeader() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "state" / "session.workspace.bin";
-  // 4 MiB of a byte that is NOT the 'M' of the magic → header check fails fast.
   WriteFile(path, std::string(4u * 1024 * 1024, 'Z'));
 
   PersistedRecordReaderError error = PersistedRecordReaderError::None;
@@ -594,20 +531,17 @@ void TestPersistedRecordReaderRejectsLargeBadMagicOnHeader() {
          "a bad magic must be reported as a parse failure via the header path");
 }
 
-// Regression: a large file with a VALID magic but unsupported version is rejected
-// as UnsupportedVersion from the header prefix (so no backup fallback), without
-// reading the whole body.
 void TestPersistedRecordReaderRejectsLargeUnsupportedVersionOnHeader() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "state" / "session.workspace.bin";
 
   std::string content;
-  content.append("MIDE");                    // valid magic
-  content.push_back(static_cast<char>(99));  // version = 99 (LE), unsupported
+  content.append("MIDE");
+  content.push_back(static_cast<char>(99));
   content.append(3, '\0');
-  content.append(4, '\0');                    // capability flags
-  content.append(4, '\0');                    // crc32c placeholder
-  content.append(2u * 1024 * 1024, 'x');      // oversized body
+  content.append(4, '\0');
+  content.append(4, '\0');
+  content.append(2u * 1024 * 1024, 'x');
   WriteFile(path, content);
 
   PersistedRecordReaderError error = PersistedRecordReaderError::None;
@@ -617,15 +551,11 @@ void TestPersistedRecordReaderRejectsLargeUnsupportedVersionOnHeader() {
          "an unsupported version must be reported from the header, blocking backup fallback");
 }
 
-}  // namespace
+}
 
-// TD-2026-07-17-073: a persisted path swapped for a directory/FIFO/device must be
-// classified as a read failure (not opened, not NotFound). The reader now proves
-// the path is a regular file before opening it.
 void TestPersistedRecordReaderRejectsNonRegularPath() {
   TemporaryDirectory temp_dir;
 
-  // Directory case (all platforms).
   const std::filesystem::path dir_path = temp_dir.path() / "state_dir";
   std::error_code ec;
   std::filesystem::create_directory(dir_path, ec);
@@ -647,10 +577,6 @@ void TestPersistedRecordReaderRejectsNonRegularPath() {
   }
 }
 
-// TD-2026-07-17A-127: writing a persisted-state record through a symlinked path must
-// update the link's target and preserve the link, not rotate the link node to `.bak`
-// and publish a fresh regular file at the link path (which breaks user-managed
-// config/session symlinks).
 void TestPersistedRecordWriterPreservesSymlinkedTarget() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path target = temp_dir.path() / "real" / "session.bin";
@@ -667,7 +593,6 @@ void TestPersistedRecordWriterPreservesSymlinkedTarget() {
   Expect(std::filesystem::is_symlink(std::filesystem::symlink_status(link_path)),
          "the link path is a symlink before the write");
 
-  // Write THROUGH the symlink.
   Expect(PersistedRecordWriter::WriteFile(link_path, BytesFromText("v2"), 2u, &write_error),
          "writing through the symlink should succeed");
 
@@ -720,4 +645,4 @@ void RegisterPersistedRecordIoTests(std::vector<TestCase>& tests) {
           TestPrimitiveCodecRoundTripsAndRejectsTruncation);
 }
 
-}  // namespace microide::tests
+}

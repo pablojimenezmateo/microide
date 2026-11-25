@@ -8,7 +8,6 @@
 namespace microide::tests {
 namespace {
 
-// A source file of `lines` distinct lines, like the ones agents rewrite.
 std::string SourceFile(std::size_t lines) {
   std::string text;
   for (std::size_t i = 0; i < lines; ++i) {
@@ -18,8 +17,6 @@ std::string SourceFile(std::size_t lines) {
   return text;
 }
 
-// The case deltas exist for: one function rewritten in a ~200 KiB file costs a
-// handful of bytes on the wire, and the other side gets the exact bytes back.
 void TestZstdDeltaOfAOneFunctionEditIsSmall() {
   const std::string base = SourceFile(4000);
   std::string target = base;
@@ -36,7 +33,6 @@ void TestZstdDeltaOfAOneFunctionEditIsSmall() {
   Expect(back.has_value() && *back == target, "the target comes back byte for byte");
 }
 
-// What a delta must never do is be applied as if it were something else.
 void TestZstdApplyDeltaRefusesWhatItCannotTrust() {
   const std::string base = SourceFile(200);
   const std::string target = base + "int added(void);\n";
@@ -57,11 +53,11 @@ void TestZstdApplyDeltaRefusesWhatItCannotTrust() {
          "an empty base is plain compression");
 }
 
-}  // namespace
+}
 
 void RegisterZstdTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Zstd/DeltaOfAOneFunctionEditIsSmall", TestZstdDeltaOfAOneFunctionEditIsSmall);
   AddTest(tests, "Zstd/ApplyDeltaRefusesWhatItCannotTrust", TestZstdApplyDeltaRefusesWhatItCannotTrust);
 }
 
-}  // namespace microide::tests
+}

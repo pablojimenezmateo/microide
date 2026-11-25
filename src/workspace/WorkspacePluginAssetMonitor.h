@@ -34,4 +34,4 @@ class WorkspacePluginAssetMonitor {
   platform::FileTreeWatcher watcher_;
 };
 
-}  // namespace microide::workspace
+}

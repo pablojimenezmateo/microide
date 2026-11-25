@@ -27,11 +27,6 @@ using microide::editor::ParseSnippetBody;
 using microide::editor::TextViewport;
 using microide::util::IsValidUtf8;
 
-// Property sweep over bodies built from the grammar's own tokens, so most of them
-// reach deep into the parser rather than failing on the first byte: whatever the
-// body, every occurrence lies inside the expansion, on a UTF-8 boundary, and inside
-// the placeholder it names as its parent; and expanding it into a buffer never
-// fails to leave valid text behind.
 void TestSnippetParseHoldsItsInvariantsOnRandomBodies() {
   static constexpr std::string_view kTokens[] = {
       "$", "{", "}", "0", "1", "2", "12", ":", "|", ",", "\\", "/", "a", " ", "\xc3\xa9",
@@ -109,16 +104,6 @@ void TestSnippetSimpleExpansion() {
   Expect(session.active, "placeholder session should be active before final stop");
 }
 
-// A snippet expansion CONSUMES the pre-expansion multi-cursor state. That is a
-// deliberate divergence from VS Code, which expands at every cursor, and the
-// engine says why: every placeholder is a LINE:COLUMN range, and the expansion
-// (plus every later field edit) shifts the buffer, so secondary carets saved
-// before it would navigate to coordinates that had become somebody else's.
-//
-// Both halves of that contract were untested -- no snippet test had ever placed a
-// second caret. The failure half matters more than it looks: it is an explicit
-// recovery path, and if it ever stopped restoring, a refused expansion would
-// silently destroy the user's caret set while changing nothing else.
 void TestSnippetExpansionConsumesTheCaretSetAndRestoresItOnRefusal() {
   {
     TextViewport viewport;
@@ -142,10 +127,6 @@ void TestSnippetExpansionConsumesTheCaretSetAndRestoresItOnRefusal() {
     Expect(session.active, "the placeholder session is live");
   }
   {
-    // Refused expansion: a read-only buffer declines the edit, so the caret set
-    // must come back. (This used to be reached through a no-op -- an empty body at
-    // a zero-width trigger -- which is not a refusal; see
-    // TestSnippetExpansionThatReproducesTheTriggerIsAnExpansion.)
     TextViewport viewport;
     viewport.LoadContent("aa\nbb\ncc\n", "/tmp/snippet-refused.cpp");
     viewport.SetReadOnly(true);
@@ -171,11 +152,6 @@ void TestSnippetExpansionConsumesTheCaretSetAndRestoresItOnRefusal() {
   }
 }
 
-// A body whose expansion is exactly the text it replaces -- a server's `WORD$0`
-// or `${1:WORD}` accepted over a WORD typed in full -- is a no-op edit, which
-// ReplaceRange reports as false. The expansion read that as a refusal, and the
-// completion path then fell back to inserting the raw body: `WORD$0` landed in
-// the buffer as text.
 void TestSnippetExpansionThatReproducesTheTriggerIsAnExpansion() {
   for (const std::string_view body : {std::string_view("WORD$0"), std::string_view("${1:WORD}")}) {
     TextViewport viewport;
@@ -188,7 +164,6 @@ void TestSnippetExpansionThatReproducesTheTriggerIsAnExpansion() {
     Expect(viewport.lines()[0] == "WORD", "and leaves the buffer reading as the expansion");
   }
   {
-    // With a placeholder, the session runs over the text already in place.
     TextViewport viewport;
     viewport.LoadContent("WORD\n", "/tmp/snippet-noop-placeholder.cpp");
     SnippetSessionState session;
@@ -243,9 +218,6 @@ void TestSnippetMultiOccurrenceLinkedTabMultiKeystroke() {
          "multi-tab1 expansion");
   Expect(viewport.lines()[0] == "x y", "both placeholders expand in place of trigger");
 
-  // Three successive mirrored keystrokes. After the first edit the right-hand
-  // placeholder shifts right; if its recorded range is not advanced, the second
-  // and third edits land at the wrong column.
   viewport.ClearSelection();
   viewport.MoveCursorTo(0, 1);
   Expect(SnippetTryInsertText(viewport, session, "!"), "first mirrored keystroke");
@@ -255,11 +227,6 @@ void TestSnippetMultiOccurrenceLinkedTabMultiKeystroke() {
          "successive linked edits must keep mirroring at the correct column in every occurrence");
 }
 
-// TD-2026-08-06-159: the batched mirror shift keeps its per-line prefix sums in
-// ONE sorted vector rather than a hash map per line, so a snippet whose mirrors
-// and other tab stops span several lines is the case that says whether the
-// line-boundary handling is right — a lookup that walks past its own line's run
-// would apply another line's accumulated shift.
 void TestSnippetMirrorShiftAcrossLines() {
   TextViewport viewport;
   viewport.LoadContent("--", "/tmp/snippet-lines.cpp");
@@ -267,8 +234,6 @@ void TestSnippetMirrorShiftAcrossLines() {
   SnippetSessionState session;
   viewport.BeginUndoGroup();
   SelectionRange trigger{{0, 0}, {0, 2}};
-  // Tab 1 has two mirrors on line 0 and two on line 2; tab 2 sits after a mirror
-  // on each of those lines, so both must follow their OWN line's shift.
   Expect(ExpandSnippetAtSelection(viewport, session, trigger,
                                   "$1 $1 ${2:a}\nplain\n$1 $1 ${3:b}$0"),
          "a multi-line snippet with mirrors on two lines should expand");
@@ -281,8 +246,6 @@ void TestSnippetMirrorShiftAcrossLines() {
   Expect(viewport.lines()[2] == "XY XY b", "both line-2 mirrors take the text");
   Expect(viewport.lines()[1] == "plain", "the untouched line between them is unchanged");
 
-  // Each downstream tab stop moved by its own line's total (two mirrors x 2 chars),
-  // not by the sum across both lines.
   Expect(session.ranges_by_tab[2].size() == 1u && session.ranges_by_tab[2][0].start.line == 0u &&
              session.ranges_by_tab[2][0].start.column == 6u,
          "tab 2 follows line 0's shift only");
@@ -290,7 +253,6 @@ void TestSnippetMirrorShiftAcrossLines() {
              session.ranges_by_tab[3][0].start.column == 6u,
          "tab 3 follows line 2's shift only");
 
-  // A second keystroke lands at the shifted columns in all four mirrors.
   Expect(SnippetTryInsertText(viewport, session, "Z"), "second mirrored keystroke");
   Expect(viewport.lines()[0] == "XYZ XYZ a" && viewport.lines()[2] == "XYZ XYZ b",
          "successive edits keep mirroring at the correct column on both lines");
@@ -346,11 +308,6 @@ void TestSnippetEngineIgnoresInsertWhenSessionInactive() {
          "workspace toggle / no session)");
 }
 
-// Focusing a placeholder selects its default text, and a keystroke REPLACES the
-// selection — VS Code's behaviour, and the whole point of a default: `foo(${1:int
-// x})` is typed over, not appended to. The engine used to insert at the caret
-// (the selection's end) and then re-select the whole field after every keystroke,
-// so "int x" became "int xy" and the field stayed selected as you typed.
 void TestSnippetTypingReplacesSelectedDefault() {
   TextViewport viewport;
   viewport.LoadContent("", "/tmp/snippet.cpp");
@@ -370,7 +327,6 @@ void TestSnippetTypingReplacesSelectedDefault() {
              session.ranges_by_tab[1][1].end.column == 9u,
          "the second mirror's range follows the replacement and the append");
 
-  // A selection inside the field is replaced too; Backspace and Delete remove it.
   viewport.MoveCursorTo(0, 0, false);
   viewport.MoveCursorTo(0, 2, true);
   Expect(SnippetTryBackspace(viewport, session), "backspace over a field selection");
@@ -383,14 +339,10 @@ void TestSnippetTypingReplacesSelectedDefault() {
   Expect(viewport.cursor_column() == 0u, "the caret lands at the removed span's start");
   Expect(session.active, "the session survives the edits");
 
-  // Backspace with the caret at the field's start is not a field edit.
   Expect(!SnippetTryBackspace(viewport, session),
          "backspace at the field's start falls back to an ordinary backspace");
 }
 
-// VS Code's text escapes apply everywhere, not only inside a default: `\$`,
-// `\}` and `\\` are one literal byte. `\$HOME` used to expand to a backslash
-// and a dollar.
 void TestSnippetParseTopLevelEscapes() {
   const auto parsed = ParseSnippetBody("echo \\$HOME \\\\ \\} $1");
   Expect(parsed.expanded == "echo $HOME \\ } ", "top-level escapes yield the literal byte");
@@ -400,10 +352,6 @@ void TestSnippetParseTopLevelEscapes() {
   Expect(other.expanded == "a\\nb", "any other backslash pair stays two literal bytes");
 }
 
-// A placeholder's default may hold placeholders (`${1:foo ${2:bar}}`): the text
-// is the flattened default, the inner stop records the outer as its parent, and
-// the outer's range spans the whole default. This used to stop at the first
-// `}` and leave `${2:bar}` as literal text.
 void TestSnippetParseNestedPlaceholders() {
   const auto parsed = ParseSnippetBody("${1:foo ${2:bar} baz}$0");
   Expect(parsed.expanded == "foo bar baz", "nested defaults flatten");
@@ -425,11 +373,6 @@ void TestSnippetParseNestedPlaceholders() {
          "nesting chains");
 }
 
-// `$VAR` / `${VAR}` / `${VAR:default}` resolve through the caller's resolver: a
-// set variable inserts its value (and steps over any default), an empty one
-// inserts the default, and an unknown one inserts its name (or its default) as
-// a placeholder numbered after the last numeric stop — the same name always
-// maps to the same stop. Transforms are stepped over untransformed.
 void TestSnippetParseVariables() {
   const auto resolve = [](std::string_view name) -> std::optional<std::string> {
     if (name == "FILE") return std::string("main.cpp");
@@ -460,8 +403,6 @@ void TestSnippetParseVariables() {
          "a transformed tab stop is a plain zero-width stop");
 }
 
-// The editor's resolver: file variables from the viewport path, the comment
-// tokens from the language contract, an empty selection so its default applies.
 void TestSnippetEditorVariables() {
   TextViewport viewport;
   viewport.LoadContent("int x;", "/tmp/proj/main.cpp");
@@ -498,9 +439,6 @@ void TestSnippetEditorVariables() {
   Expect(viewport.lines()[0] == "int x; // todo", "variables resolve through the editor");
 }
 
-// Nested placeholders in a live session. Typing into the INNER grows the outer
-// around it; typing over the OUTER discards the inner (its text is gone), and
-// the navigation order forgets it.
 void TestSnippetNestedPlaceholderSession() {
   {
     TextViewport viewport;
@@ -548,10 +486,6 @@ void TestSnippetParseFallbackLeavesDollarLiteral() {
   Expect(parsed.occurrences.empty(), "no tab stops for invalid placeholder");
 }
 
-// Editing one tab stop must shift the recorded ranges of OTHER tab stops that sit
-// later on the same line. Regression for the bug where only the *current* tab's
-// ranges were shifted, so a second tab stop's stored column went stale and
-// FocusTabStop later jumped to the wrong position.
 void TestSnippetCrossTabShiftOnInsert() {
   TextViewport viewport;
   viewport.LoadContent("--", "/tmp/snippet.cpp");
@@ -566,8 +500,6 @@ void TestSnippetCrossTabShiftOnInsert() {
              session.ranges_by_tab[2][0].start.column == 2u,
          "tab 2 starts at column 2 before tab 1 is edited");
 
-  // Collapse the focus selection onto the field's end so the keystroke appends
-  // (a keystroke over the selected default replaces it).
   viewport.ClearSelection();
   viewport.MoveCursorTo(0, 1);
   Expect(SnippetTryInsertText(viewport, session, "ndex"), "grow $1 from 'i' to 'index'");
@@ -589,7 +521,6 @@ void TestSnippetCrossTabShiftOnBackspace() {
   Expect(viewport.lines()[0] == "index n", "placeholders expand to 'index n'");
   Expect(session.ranges_by_tab[2][0].start.column == 6u, "tab 2 starts at column 6");
 
-  // Caret collapsed at the end of $1 ('index'); backspace removes the trailing 'x'.
   viewport.ClearSelection();
   viewport.MoveCursorTo(0, 5);
   Expect(SnippetTryBackspace(viewport, session), "backspace inside $1 should delete one char");
@@ -610,7 +541,6 @@ void TestSnippetCrossTabShiftOnChoice() {
   Expect(viewport.lines()[0] == "short x", "first choice fills $1: 'short x'");
   Expect(session.ranges_by_tab[2][0].start.column == 6u, "tab 2 starts at column 6");
 
-  // Cycling the choice grows $1 from 'short' (5) to 'longer' (6).
   Expect(SnippetNavigateTab(viewport, session, false), "cycling the choice should apply 'longer'");
   Expect(viewport.lines()[0] == "longer x", "second choice grows $1: 'longer x'");
   Expect(session.ranges_by_tab[2][0].start.column == 7u,
@@ -626,7 +556,6 @@ void TestSnippetLoneCarriageReturnBodyPositions() {
   SelectionRange trigger{{0, 0}, {0, 2}};
   Expect(ExpandSnippetAtSelection(viewport, session, trigger, "${1:a}\r${2:b}$0"),
          "snippet body with a lone CR should expand");
-  // ReplaceRange normalizes the lone CR to a newline, so the body spans two lines.
   Expect(viewport.lines().size() == 2 && viewport.lines()[0] == "a" && viewport.lines()[1] == "b",
          "a lone CR should split the inserted text into two lines");
   Expect(session.ranges_by_tab[2].size() == 1u &&
@@ -635,10 +564,6 @@ void TestSnippetLoneCarriageReturnBodyPositions() {
          "tab 2 must map onto the normalized second line, not a stale column on line 0");
 }
 
-// Backspace inside a mirrored placeholder that holds a multi-byte code point (é)
-// must delete the WHOLE code point in every mirror, never a single byte. The old
-// code deleted exactly one byte and decremented end.column by 1, splitting the
-// two-byte 'é' and corrupting the buffer / desyncing the mirrors.
 void TestSnippetUtf8BackspaceDeletesWholeCodepoint() {
   TextViewport viewport;
   viewport.LoadContent("--", "/tmp/snippet.cpp");
@@ -652,8 +577,6 @@ void TestSnippetUtf8BackspaceDeletesWholeCodepoint() {
   Expect(IsValidUtf8(viewport.lines()[0]), "expanded buffer is valid UTF-8");
   Expect(session.ranges_by_tab[1].size() == 2u, "two mirrored placeholders");
 
-  // Caret sits at the end of the first 'é' (byte column 2). Backspace must remove
-  // both bytes of the code point across BOTH mirrors.
   Expect(SnippetTryBackspace(viewport, session), "backspace inside mirrored 'é'");
   Expect(viewport.lines()[0] == "-",
          "backspace deletes the whole 'é' from every mirror, leaving just '-'");
@@ -663,8 +586,6 @@ void TestSnippetUtf8BackspaceDeletesWholeCodepoint() {
          "both mirrors collapse to empty and stay column-consistent (no half-byte residue)");
 }
 
-// Delete-forward on a multi-byte code point at the caret must likewise remove the
-// whole code point in every mirror, leaving trailing placeholder text intact.
 void TestSnippetUtf8DeleteForwardDeletesWholeCodepoint() {
   TextViewport viewport;
   viewport.LoadContent("--", "/tmp/snippet.cpp");
@@ -676,8 +597,6 @@ void TestSnippetUtf8DeleteForwardDeletesWholeCodepoint() {
          "mirrored placeholder 'éz' should expand");
   Expect(viewport.lines()[0] == "\xC3\xA9z-\xC3\xA9z", "expands to 'éz-éz'");
 
-  // Put the caret at the start of the first placeholder so delete-forward targets
-  // the leading 'é'.
   viewport.MoveCursorTo(0, 0);
   Expect(SnippetTryDeleteForward(viewport, session), "delete-forward on leading 'é'");
   Expect(viewport.lines()[0] == "z-z",
@@ -689,9 +608,6 @@ void TestSnippetUtf8DeleteForwardDeletesWholeCodepoint() {
          "second mirror stays consistent and holds 'z'");
 }
 
-// A multi-line paste inside a placeholder must not use the single-line mirror fast
-// path: the engine declines (returns false) so the host does a normal insert and
-// following tab stops keep their line/column ranges rather than going stale.
 void TestSnippetMultiLineInsertDeclinesFastPath() {
   TextViewport viewport;
   viewport.LoadContent("--", "/tmp/snippet.cpp");
@@ -704,10 +620,6 @@ void TestSnippetMultiLineInsertDeclinesFastPath() {
   Expect(viewport.lines()[0] == "i n", "placeholders expand to 'i n'");
   Expect(session.ranges_by_tab[2][0].start.column == 2u, "tab 2 starts at column 2");
 
-  // A payload with a newline must be declined by the snippet fast path (no double
-  // insert — the host performs the real insert), and the linked-edit session must
-  // be ended so it cannot retain ranges computed for the pre-newline document and
-  // later navigate/mirror against stale line/column positions.
   Expect(!SnippetTryInsertText(viewport, session, "x\ny"),
          "multi-line insert must decline the mirror fast path");
   Expect(viewport.lines().size() == 1 && viewport.lines()[0] == "i n",
@@ -716,10 +628,6 @@ void TestSnippetMultiLineInsertDeclinesFastPath() {
          "the snippet session must be dropped on a multi-line insert, not left with stale ranges");
 }
 
-// Pre-expansion secondary carets are consumed by the snippet, not restored at
-// stale offsets on commit. Restoring the saved pre-snippet positions after the
-// replacement (and field edits) shifted the buffer would leave carets at wrong
-// locations; the sanctioned behavior is to discard them.
 void TestSnippetDiscardsPreExpansionSecondaryCarets() {
   TextViewport viewport;
   viewport.LoadContent("word\nsecond", "/tmp/snippet.cpp");
@@ -729,7 +637,7 @@ void TestSnippetDiscardsPreExpansionSecondaryCarets() {
 
   SnippetSessionState session;
   viewport.BeginUndoGroup();
-  SelectionRange trigger{{0, 0}, {0, 4}};  // replace "word"
+  SelectionRange trigger{{0, 0}, {0, 4}};
   Expect(ExpandSnippetAtSelection(viewport, session, trigger, "${1:x}$0"),
          "snippet expands over the trigger");
   CommitSnippetSession(viewport, session);
@@ -738,10 +646,6 @@ void TestSnippetDiscardsPreExpansionSecondaryCarets() {
          "pre-expansion secondary carets are discarded on commit, not restored at stale offsets");
 }
 
-// Regression: a bare `$N` tab stop must read ALL consecutive digits, so `$10` is
-// tab stop 10 (VSCode) rather than tab stop 1 followed by a literal '0'. Before
-// the fix only the braced `${N}` form parsed multi-digit ids; the bare form read
-// a single digit and leaked the remaining digits into the expanded text.
 void TestSnippetParseBareTabStopReadsAllDigits() {
   const auto parsed = ParseSnippetBody("a$10b");
   Expect(parsed.expanded == "ab",
@@ -749,23 +653,18 @@ void TestSnippetParseBareTabStopReadsAllDigits() {
   Expect(parsed.occurrences.size() == 1 && parsed.occurrences.front().tab_stop == 10,
          "a bare $10 is tab stop 10, matching the braced ${10} form and VSCode");
 
-  // A bare final stop `$0` still resolves, and `$2$10` yields two distinct stops
-  // (2 and 10), not (2, 1, 0).
   const auto two = ParseSnippetBody("$2$10");
   Expect(two.occurrences.size() == 2 && two.occurrences[0].tab_stop == 2 &&
              two.occurrences[1].tab_stop == 10,
          "adjacent bare tab stops each consume their own full digit run");
 }
 
-// A snippet body with an enormous tab-stop id must not signed-overflow the id
-// accumulator; the parse fails cleanly to an empty result.
 void TestSnippetParseRejectsHugeTabId() {
   const auto parsed = ParseSnippetBody("${999999999:x}");
   Expect(parsed.occurrences.empty() && parsed.expanded.empty(),
          "an out-of-range tab-stop id is rejected without overflow");
 }
 
-// Thousands of placeholders exceed the occurrence cap and are rejected cleanly.
 void TestSnippetParseRejectsTooManyPlaceholders() {
   std::string body;
   for (int i = 0; i < 5000; ++i) {
@@ -776,7 +675,6 @@ void TestSnippetParseRejectsTooManyPlaceholders() {
          "a body past the placeholder cap is rejected without unbounded growth");
 }
 
-// Hundreds of choices in one placeholder exceed the per-placeholder choice cap.
 void TestSnippetParseRejectsTooManyChoices() {
   std::string body = "${1:|";
   for (int i = 0; i < 400; ++i) {
@@ -788,10 +686,6 @@ void TestSnippetParseRejectsTooManyChoices() {
          "a placeholder past the choice cap is rejected without unbounded growth");
 }
 
-// Regression: a choice value containing a newline is single-line-unsafe (cycling
-// to it via ApplyChoiceForTab records an off-line range and orphans the wrapped
-// text on the next cycle). The parser must reject such a snippet outright so the
-// corrupting multi-line choice never enters a session.
 void TestSnippetParseRejectsNewlineInChoice() {
   const auto lf = ParseSnippetBody("${1:|a,b\nc|}$0");
   Expect(lf.occurrences.empty() && lf.expanded.empty(),
@@ -799,25 +693,18 @@ void TestSnippetParseRejectsNewlineInChoice() {
   const auto cr = ParseSnippetBody("${1:|a,b\rc|}$0");
   Expect(cr.occurrences.empty() && cr.expanded.empty(),
          "a choice containing a carriage return must be rejected");
-  // A normal single-line choice still parses.
   const auto ok = ParseSnippetBody("${1:|aa,bb|}$0");
   Expect(!ok.occurrences.empty(), "a single-line choice must still parse");
 }
 
-// Regression: VSCode-style escapes inside a placeholder must insert the literal
-// delimiter instead of terminating early. Previously the parser walked to the
-// first raw `}`, `,`, or `|`, truncating any default/choice that contained one.
 void TestSnippetParseHonorsEscapedDelimiters() {
-  // Escaped brace in default text: `${1:a\}b}` -> default "a}b".
   const auto brace = ParseSnippetBody("${1:a\\}b}");
   Expect(brace.occurrences.size() == 1 && brace.expanded == "a}b",
          "an escaped } in default text is literal, not a terminator");
 
-  // Escaped dollar in default text: `${1:price \$5}` -> "price $5".
   const auto dollar = ParseSnippetBody("${1:price \\$5}");
   Expect(dollar.expanded == "price $5", "an escaped $ is literal in default text");
 
-  // Escaped comma inside a choice yields the two options "a,b" and "c".
   const auto choice = ParseSnippetBody("${1:|a\\,b,c|}");
   Expect(choice.occurrences.size() == 1 && choice.occurrences[0].choices.size() == 2 &&
              choice.occurrences[0].choices[0] == "a,b" &&
@@ -825,12 +712,6 @@ void TestSnippetParseHonorsEscapedDelimiters() {
          "an escaped comma stays inside the choice value");
 }
 
-// The batched mirror shift (TD-2026-07-17A-060: O(mirrors * placeholders) ->
-// O(mirrors + placeholders) per keystroke) must reproduce the old per-edit
-// ShiftPlaceholdersAtOrAfter result exactly at scale. Expand a snippet with many
-// mirrors of one tab on a single line, plus a trailing distinct tab stop, then
-// type into the linked tab: every mirror must grow in place and the trailing tab
-// stop's recorded start must shift by the aggregate of all mirror insertions.
 void TestSnippetManyMirrorBatchedShift() {
   TextViewport viewport;
   viewport.LoadContent("--", "/tmp/snippet-many-mirror.cpp");
@@ -841,9 +722,9 @@ void TestSnippetManyMirrorBatchedShift() {
   constexpr int kMirrors = 200;
   std::string body;
   for (int i = 0; i < kMirrors; ++i) {
-    body += "${1:a}";  // each mirror expands to a single 'a' at columns 0..N-1
+    body += "${1:a}";
   }
-  body += "${2:z}$0";  // a distinct tab stop right after the mirrors
+  body += "${2:z}$0";
 
   SelectionRange trigger{{0, 0}, {0, 2}};
   Expect(ExpandSnippetAtSelection(viewport, session, trigger, body),
@@ -853,15 +734,11 @@ void TestSnippetManyMirrorBatchedShift() {
   Expect(session.ranges_by_tab[2][0].start.column == static_cast<std::size_t>(kMirrors),
          "tab 2 starts right after the N single-char mirrors");
 
-  // Tab 1's first occurrence is focused with its default 'a' selected. Typing
-  // "bb" replaces the 'a' in every mirror; each mirror grows by 1 and tab 2
-  // shifts by N.
   Expect(SnippetTryInsertText(viewport, session, "bb"),
          "typing into the linked tab should edit every mirror");
 
   bool mirrors_ok = true;
   for (int i = 0; i < kMirrors; ++i) {
-    // Mirror i now occupies [2i, 2i+2] holding "bb".
     const SelectionRange& r = session.ranges_by_tab[1][static_cast<std::size_t>(i)];
     if (r.start.column != static_cast<std::size_t>(2 * i) ||
         r.end.column != static_cast<std::size_t>(2 * i + 2)) {
@@ -877,7 +754,7 @@ void TestSnippetManyMirrorBatchedShift() {
          "the line holds N 'bb' mirrors plus the single-char tab 2");
 }
 
-}  // namespace
+}
 
 void RegisterEditorSnippetTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorSnippet/TypingReplacesSelectedDefault",
@@ -932,4 +809,4 @@ void RegisterEditorSnippetTests(std::vector<TestCase>& tests) {
           TestSnippetParseRejectsTooManyChoices);
 }
 
-}  // namespace microide::tests
+}

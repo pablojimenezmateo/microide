@@ -94,7 +94,6 @@ std::size_t WorkspaceActionContext::ActiveProjectIndex() const {
 }
 
 std::optional<TerminalAlertTarget> WorkspaceActionContext::NextTerminalAlert() const {
-  // The active project's live state is `state_`; its catalog entry is the stored one.
   std::vector<const ProjectWorkspaceState*> projects;
   projects.reserve(project_catalog_.entries.size());
   for (std::size_t i = 0; i < project_catalog_.entries.size(); ++i) {
@@ -134,17 +133,10 @@ SidebarMode WorkspaceActionContext::ActiveSidebarMode() const {
 }
 
 void WorkspaceActionContext::ShowSidebarSurface() {
-  // Bringing the sidebar back moves the whole editor column: that is the
-  // coordinator's toggle (layout change, window repaint), not a flag flip, which
-  // left the editor painted where it used to be.
   if (!state_.sidebar.visible) {
     services_.sidebar.Toggle();
     return;
   }
-  // Already shown -- or flagged shown but collapsed under a maximized panel, which
-  // frame prep restores once focus is elsewhere (SyncPanelMaximizedWithFocus).
-  // Moving the keyboard asked for no frame, so nothing restored it: the keys went
-  // to a sidebar nobody could see (QA monkey, seed 44 at 600 steps).
   if (state_.surface.focus != FocusTarget::Sidebar) {
     state_.surface.focus = FocusTarget::Sidebar;
     util::InvokeIfSet(operations_.request_window_redraw);
@@ -302,7 +294,7 @@ std::string WorkspaceActionContext::PasteTreeClipboard(const std::filesystem::pa
   std::string refusal = operations_.paste_tree_path ? operations_.paste_tree_path(clipboard.path, clipboard.cut, directory)
                                                     : std::string("Paste is unavailable");
   if (refusal.empty() && clipboard.cut) {
-    state_.sidebar.tree_clipboard.reset();  // a cut moves once; a copy pastes again
+    state_.sidebar.tree_clipboard.reset();
   }
   return refusal;
 }
@@ -317,8 +309,6 @@ bool WorkspaceActionContext::OpenExternalUrl(std::string_view url) const {
 }
 
 bool WorkspaceActionContext::WriteClipboardText(std::string_view text) const {
-  // Zero-copy for the common in-budget case; only an over-budget export materializes a
-  // clamped copy (TD-2026-07-17A-119).
   if (text.size() <= kMaxClipboardExportBytes) {
     return !text.empty() && services_.clipboard.Write(text);
   }
@@ -389,7 +379,6 @@ std::string WorkspaceActionContext::OpenFolderPick(const std::filesystem::path& 
   if (!std::filesystem::is_directory(folder, error)) {
     return folder.filename().string() + " is not a folder";
   }
-  // Folders first, then files, each by name -- the tree's order.
   std::vector<std::filesystem::path> folders;
   std::vector<std::filesystem::path> files;
   constexpr std::size_t kMaxEntries = 2000;
@@ -453,7 +442,7 @@ bool WorkspaceActionContext::SetActiveLineEnding(util::LineEnding ending) {
     return false;
   }
   if (viewport->SetLineEnding(ending)) {
-    operations_.request_window_redraw();  // the tab's dirty mark and the status bar
+    operations_.request_window_redraw();
   }
   return true;
 }
@@ -484,8 +473,6 @@ bool WorkspaceActionContext::OpenIndentationPick() {
 bool WorkspaceActionContext::OpenArgumentPicker(ActionId id) {
   switch (id) {
     case ActionId::RemoteUnforwardPort: {
-      // Stop Forwarding a Port…: the ports forwarded now, where a prompt would ask
-      // for a number the user has to go and look up.
       RemoteHostService* hosts = RemoteHosts();
       if (hosts == nullptr) {
         return false;
@@ -502,9 +489,6 @@ bool WorkspaceActionContext::OpenArgumentPicker(ActionId id) {
       return true;
     }
     case ActionId::RemoteRemoveMirror: {
-      // Remove Mirror…: the closed remote projects whose mirror is on disk. An
-      // open project's mirror is not offered: closing it is what runs the dirty
-      // prompt, and RemoveMirror refuses one still open.
       RemoteHostService* hosts = RemoteHosts();
       if (hosts == nullptr) {
         return false;
@@ -526,8 +510,6 @@ bool WorkspaceActionContext::OpenArgumentPicker(ActionId id) {
                                       .primary_label = channel.label,
                                       .secondary_label = channel.id});
       }
-      // Open even with none yet: the pick says so, where a prompt would ask for a
-      // channel name nobody could know.
       services_.quick_pick.Open(QuickPickService::CommandChoices("Show Output Channel", "channels", std::move(items)));
       return true;
     }
@@ -551,8 +533,6 @@ bool WorkspaceActionContext::OpenArgumentPicker(ActionId id) {
       return true;
     }
     case ActionId::CompareFiles: {
-      // VS Code's Compare Active File With…: the file finder, and the file picked
-      // is compared with the active one.
       const editor::TextViewport* viewport =
           services_.editor_tabs.ActiveEditorViewport();
       if (viewport == nullptr || viewport->path().empty() || !HasProjectRoot()) {
@@ -571,9 +551,6 @@ bool WorkspaceActionContext::OpenArgumentPicker(ActionId id) {
     case ActionId::BreakpointCondition:
     case ActionId::BreakpointHitCondition:
     case ActionId::BreakpointLogMessage: {
-      // `<file> <line> ...`: the prompt holds the active file and the caret's line,
-      // so Enter acts there (VS Code's breakpoint commands act on the caret) and a
-      // condition or message is typed after them.
       const editor::TextViewport* viewport =
           services_.editor_tabs.ActiveEditorViewport();
       const ActionSpec* spec = FindWorkspaceActionSpec(id);
@@ -600,8 +577,6 @@ bool WorkspaceActionContext::OpenOptionalArgumentPicker(ActionId id) {
     case ActionId::RemoteStopServer:
     case ActionId::RemoteReconnect:
     case ActionId::RemoteDisconnect: {
-      // A host verb run bare acts on the only host; with several it would guess
-      // (or, for Disconnect, take them all), so the menu asks which.
       const ActionSpec* spec = FindWorkspaceActionSpec(id);
       if (spec == nullptr) {
         return false;
@@ -630,7 +605,6 @@ bool WorkspaceActionContext::OpenFileHistoryPick(
   for (const project::remote::FileVersionHistory::Version& version : versions) {
     const std::uint64_t age = now > version.replaced_at ? now - version.replaced_at : 0;
     items.push_back(QuickPickItem{
-        // Twelve hex digits name one of sixteen versions with room to spare.
         .value = "remote-file-history " + version.hash.Hex().substr(0, 12),
         .primary_label = project::remote::FormatLocalTime(version.replaced_at),
         .secondary_label = "replaced " + project::remote::FormatAge(std::chrono::seconds(age)) + " ago"});
@@ -647,7 +621,6 @@ bool WorkspaceActionContext::OpenWorktreePick() {
   QuickPickState pick = QuickPickService::CommandChoices("Switch Worktree", "worktrees", {});
   pick.loading = true;
   services_.quick_pick.Open(std::move(pick));
-  // Git names the trees as its own machine does: a host's are opened on the host.
   std::string open_command = "project-open";
   std::string target_prefix;
   std::string current_root = state_.root.string();
@@ -666,13 +639,13 @@ bool WorkspaceActionContext::OpenWorktreePick() {
       [this, opened = services_.quick_pick.open_count(), worktrees, open_command = std::move(open_command),
        target_prefix = std::move(target_prefix), current_root = std::move(current_root)]() {
         if (services_.quick_pick.open_count() != opened) {
-          return;  // another pick opened since: these rows are not its
+          return;
         }
         if (worktrees->empty()) {
           services_.quick_pick.Fail(QuickPickKind::RunCommand, "No working trees: not a git repository");
           return;
         }
-        (void)services_.quick_pick.DeliverItems(  // false: the pick was dismissed meanwhile
+        (void)services_.quick_pick.DeliverItems(
             QuickPickKind::RunCommand,
             BuildWorktreePickItems(*worktrees, current_root, open_command, target_prefix));
       });
@@ -689,18 +662,17 @@ bool WorkspaceActionContext::OpenCommitPick() {
   auto commits = std::make_shared<std::vector<project::GitCommitEntry>>();
   operations_.run_off_shell_thread(
       [root = state_.root, launcher = &state_.launcher(), commits]() {
-        // What a pick can show and a person scan; an older commit is named.
         *commits = project::CollectGitRecentCommits(root, *launcher, 100);
       },
       [this, opened = services_.quick_pick.open_count(), commits]() {
         if (services_.quick_pick.open_count() != opened) {
-          return;  // another pick opened since: these rows are not its
+          return;
         }
         if (commits->empty()) {
           services_.quick_pick.Fail(QuickPickKind::RunCommand, "No commits: not a git repository, or no commit yet");
           return;
         }
-        (void)services_.quick_pick.DeliverItems(  // false: the pick was dismissed meanwhile
+        (void)services_.quick_pick.DeliverItems(
             QuickPickKind::RunCommand, BuildCommitPickItems(*commits));
       });
   return true;
@@ -773,7 +745,7 @@ void WorkspaceActionContext::ApplyProjectSearchViewCommand(ActionId id) {
     case ActionId::ProjectSearchToggleDetails:
       search.scope_expanded = !search.scope_expanded;
       operations_.request_window_redraw();
-      return;  // the fields change, the results do not
+      return;
     default:
       break;
   }
@@ -854,9 +826,6 @@ bool WorkspaceActionContext::StepDiagnostic(int delta, std::string* error_messag
   const auto before = [](const editor::TextPosition& a, const editor::TextPosition& b) {
     return a.line < b.line || (a.line == b.line && a.column < b.column);
   };
-  // Strictly after (or before) the caret, else wrap to the first (or last): a
-  // linear scan over an already-small per-file list, so no sort is needed and a
-  // diagnostic AT the caret is stepped past rather than re-selected.
   const editor::PublishedDiagnostic* target = nullptr;
   const editor::PublishedDiagnostic* wrap = nullptr;
   for (const editor::PublishedDiagnostic& diagnostic : *diagnostics) {
@@ -901,13 +870,10 @@ void WorkspaceActionContext::NotifyDiagnostic(const editor::PublishedDiagnostic&
 }
 
 std::optional<editor::PublishedDiagnostic> WorkspaceActionContext::ProblemInFiles(int delta) {
-  // Sorted by path, then position (DiagnosticsStore::SortDiagnostics).
   std::vector<editor::PublishedDiagnostic> all = state_.diagnostics_store.SnapshotAll();
   if (all.empty()) {
     return std::nullopt;
   }
-  // Where the caret is, in the store's own spelling of the active file's path (a
-  // server's URI and the tab's path need not be byte-identical).
   const editor::TextViewport* viewport = operations_.active_navigable_viewport();
   std::filesystem::path here_path;
   editor::TextPosition here{};
@@ -948,14 +914,6 @@ void WorkspaceActionContext::StepBufferSearch(int delta) {
                            (state_.overlay.mode == OverlayMode::BufferSearch ||
                             state_.overlay.mode == OverlayMode::BufferReplace);
   if (!widget_open) {
-    // The match set is stale once the widget closed (edits, caret moves), so
-    // rebuild it: the refresh selects the first match at or after the caret. If
-    // the caret is not sitting on that match, "next" IS that match; only a caret
-    // already on it (the usual F3 run) steps past it. "Previous" from between
-    // matches is the one before it, which the wrapping step below yields.
-    // Revealing a match selects it (VS Code's find), so "on it" is where the
-    // selection starts -- or the caret, with nothing selected -- taken BEFORE the
-    // refresh, which itself reveals (and so selects) its pick.
     const editor::TextViewport* viewport = services_.editor_tabs.ActiveEditorViewport();
     std::optional<editor::TextPosition> caret_before;
     if (viewport != nullptr) {
@@ -980,9 +938,6 @@ void WorkspaceActionContext::StepBufferSearch(int delta) {
 
 void WorkspaceActionContext::OpenBufferSearch(std::string query) {
   operations_.open_buffer_search();
-  // Only an explicit query (e.g. a `:search foo` command) overrides the term the
-  // widget opened with. The bare Ctrl+F shortcut passes no query and must keep
-  // open_buffer_search's behaviour (seed from selection, else reuse the last term).
   if (!query.empty()) {
     state_.overlay.workflow.buffer_search.query.SetText(std::move(query));
     operations_.refresh_buffer_search();
@@ -1042,14 +997,13 @@ std::optional<CompareInput> WorkspaceActionContext::ResolveCurrentCompareInput(
     if (from_file != nullptr) {
       *from_file = true;
     }
-    auto input = ReadFileCompareInput(path, /*editable=*/true);
+    auto input = ReadFileCompareInput(path, true);
     if (!input.has_value()) {
       return fail("Cannot compare (unreadable or binary file): " + path.string());
     }
     return input;
   };
 
-  // A context-menu invocation acts on the file targeted in the tree.
   if (source == ActionSource::ContextMenu) {
     const std::filesystem::path path =
         operations_.resolve_tree_action_path ? operations_.resolve_tree_action_path(source)
@@ -1060,9 +1014,6 @@ std::optional<CompareInput> WorkspaceActionContext::ResolveCurrentCompareInput(
     return read_file(path);
   }
 
-  // Otherwise prefer the active editor buffer — its live, possibly-unsaved text.
-  // Not the welcome page a group with no tab shows: that is not a buffer (it
-  // was diffed as "Untitled").
   {
     if (editor::TextViewport* viewport = services_.editor_tabs.ActiveEditorViewport();
         viewport != nullptr && !viewport->is_placeholder()) {
@@ -1079,7 +1030,6 @@ std::optional<CompareInput> WorkspaceActionContext::ResolveCurrentCompareInput(
     }
   }
 
-  // Fall back to a file resolved from the tree selection.
   const std::filesystem::path path = ResolveComparePath({}, source);
   if (!path.empty()) {
     return read_file(path);
@@ -1089,11 +1039,11 @@ std::optional<CompareInput> WorkspaceActionContext::ResolveCurrentCompareInput(
 
 std::string WorkspaceActionContext::CompareFiles(const std::filesystem::path& left_path,
                                                  const std::filesystem::path& right_path) {
-  auto left = ReadFileCompareInput(left_path, /*editable=*/false);
+  auto left = ReadFileCompareInput(left_path, false);
   if (!left.has_value()) {
     return "Cannot read left file: " + left_path.string();
   }
-  auto right = ReadFileCompareInput(right_path, /*editable=*/true);
+  auto right = ReadFileCompareInput(right_path, true);
   if (!right.has_value()) {
     return "Cannot read right file: " + right_path.string();
   }
@@ -1124,8 +1074,6 @@ std::string WorkspaceActionContext::CompareWithSelected(ActionSource source) {
     return "Nothing selected — use 'Select for Compare' first";
   }
   CompareInput stashed = *state_.compare_selection;
-  // Re-read a file source so the compare reflects edits made since it was
-  // selected; keep the captured snapshot if the file has since vanished.
   if (state_.compare_selection_from_file && !stashed.path.empty()) {
     if (auto fresh = ReadFileCompareInput(stashed.path, stashed.editable); fresh.has_value()) {
       fresh->label = stashed.label;
@@ -1230,10 +1178,8 @@ ReviewOpenOutcome FinishReviewOutcome(ProjectWorkspaceState& state,
                                       const WorkspaceActionContext::Operations& operations,
                                       ReviewOpenOutcome outcome) {
   if (outcome.pending) {
-    return outcome;  // reported, feedback included, when the git work lands
+    return outcome;
   }
-  // Always surface the summary as command feedback so the control channel
-  // reports it (as feedback on success, as error on failure).
   state.panel.feedback.text = outcome.message;
   if (operations.notify && !outcome.message.empty()) {
     operations.notify(outcome.ok ? NotificationService::Tone::Info
@@ -1243,7 +1189,7 @@ ReviewOpenOutcome FinishReviewOutcome(ProjectWorkspaceState& state,
   return outcome;
 }
 
-}  // namespace
+}
 
 ReviewOpenOutcome WorkspaceActionContext::ReviewConflicts() {
   if (!operations_.open_conflict_review) {
@@ -1282,18 +1228,6 @@ ReviewOpenOutcome WorkspaceActionContext::ReviewCommit(const std::string& ref) {
 
 bool WorkspaceActionContext::OpenPath(const std::filesystem::path& path,
                                       std::string* error_message) {
-  // Reports whether the file ACTUALLY opened. `operations_.open_file` returns
-  // void — it is the fire-and-forget entry the mouse/menu surfaces use — so this
-  // answered `true` unconditionally and an open that did not happen came back as
-  // silence: `ActionId::Open` reported success, the editor stayed on the
-  // previously active tab, and the caller's next edit and save landed in a
-  // DIFFERENT file. Reachable without a fuzzer: fill an editor group to
-  // `kMaxOpenTabsPerGroup`, then `open` anything.
-  //
-  // `WorkspaceShell::OpenFile` is literally `(void)OpenFileInNewTab(path)`, so
-  // routing through the result-returning sibling is the same work with its answer
-  // kept. `OpenFileAtLocation` already refuses to move a caret after exactly this
-  // failure; it was only the plain open that stayed quiet about it.
   if (!operations_.open_file_in_new_tab) {
     operations_.open_file(path);
     return true;
@@ -1398,8 +1332,6 @@ void WorkspaceActionContext::ResetCaretBlink() {
 bool WorkspaceActionContext::SplitEditorGroup(EditorSplitOrientation orientation,
                                               const std::filesystem::path& path,
                                               std::string* error_message) {
-  // The split clones the active tab, which only an editor tab can do; say which
-  // rule refused rather than "Failed to split".
   const char* refusal = ActiveTabIsCompare() || ActiveTabIsMerge()
                             ? "A diff or merge tab cannot be split: split from an editor tab"
                         : state_.editor_split.full() ? "No room for another editor group"
@@ -1408,11 +1340,6 @@ bool WorkspaceActionContext::SplitEditorGroup(EditorSplitOrientation orientation
     return util::Fail(error_message, refusal);
   }
   const bool open_path = !path.empty();
-  // A split always carves a NEW group holding a clone of the source tab, so
-  // replacing that clone's view is safe: it shares the source buffer and no
-  // distinct edits are lost. Open the file first so a failure aborts before
-  // mutating the group layout. A path already open in some pane resolves to a
-  // view of THAT buffer, not a second copy read from disk.
   editor::TextViewport opened_view;
   if (open_path && !operations_.open_editor_view_for_path(path, opened_view)) {
     return util::Fail(error_message, "Failed to open file: " + path.string());
@@ -1467,9 +1394,6 @@ bool WorkspaceActionContext::ExecuteLineNavigation(const LineNavigationRequest& 
     line = from_end >= line_count ? 0 : line_count - from_end;
   }
 
-  // `line:col` names a 1-based CHARACTER column (VS Code's Ctrl+G), not a byte:
-  // convert through the target line so a multibyte character before the target
-  // does not land the caret short of it.
   line = std::min(line, line_count - 1);
   std::size_t byte_column = 0;
   if (request.column > 0 && line < viewport->line_count()) {
@@ -1490,9 +1414,6 @@ bool WorkspaceActionContext::RevealPathAtLine(const std::filesystem::path& path,
   }
   const std::size_t line =
       request.requested_line > 0 ? static_cast<std::size_t>(request.requested_line - 1) : 0;
-  // A large file opens off the shell thread; until it lands the tab's viewport is
-  // a read-only placeholder. The load applies the tab's restored view state, so
-  // record the target there and let the completion place it.
   if (TabEntry::EditorTabState* editor_tab =
           services_.editor_tabs.ActiveEditorTab();
       editor_tab != nullptr && editor_tab->content_pending()) {
@@ -1503,7 +1424,7 @@ bool WorkspaceActionContext::RevealPathAtLine(const std::filesystem::path& path,
     state_.surface.focus = FocusTarget::Editor;
     return true;
   }
-  if (!ExecuteLineNavigation(request, /*relative=*/false)) {
+  if (!ExecuteLineNavigation(request, false)) {
     return util::Fail(error_message, "Cannot place the caret in " + path.string());
   }
   if (editor::TextViewport* viewport = operations_.active_navigable_viewport();
@@ -1536,8 +1457,6 @@ void WorkspaceActionContext::SelectAll() {
     return;
   }
   if (services_.text_input.HasActiveSingleLineTextSurface()) {
-    // Active single-line field (possibly empty): consume the shortcut. Falling
-    // through would Select-All the background editor and steal focus to it.
     return;
   }
   if (auto* viewport = operations_.active_navigable_viewport(); viewport != nullptr) {
@@ -1549,11 +1468,6 @@ void WorkspaceActionContext::SelectAll() {
   }
 }
 
-// Undo and Redo differ in exactly two things: which viewport call they make, and
-// the perf-trace name. Everything else — the merge selection capture, the
-// fold-model rescan, the compare/merge bookkeeping and the five redraw requests —
-// has to stay identical between them, and used to be two 55-line copies, so a fix
-// to one silently left the other behind.
 void WorkspaceActionContext::ApplyUndoRedo(bool redo) {
   util::PerformanceTrace::Scope perf_scope(redo ? "WorkspaceActionContext::Redo"
                                                 : "WorkspaceActionContext::Undo");
@@ -1572,10 +1486,6 @@ void WorkspaceActionContext::ApplyUndoRedo(bool redo) {
                                              : "WorkspaceActionContext::Undo::ViewportUndo");
     changed = redo ? viewport->Redo() : viewport->Undo();
   }
-  // An undo that rewinds past a snippet insertion leaves the session's mirror
-  // positions pointing at text that is gone. Redo cannot reach an active session
-  // (the undo that made redo possible already dropped it), and clearing an
-  // inactive one is a no-op, so this runs unconditionally rather than only on undo.
   if (changed) {
     assist().snippets().ClearAfterUndo();
   }
@@ -1583,11 +1493,6 @@ void WorkspaceActionContext::ApplyUndoRedo(bool redo) {
     return;
   }
 
-  // Undo/redo mutate the document like any other edit, so the fold model must be
-  // recomputed. The content_revision fingerprint alone does not force a rescan
-  // once a file is fully resolved, so mark the fold model dirty explicitly
-  // (mirroring NotifyEditorViewportChanged); otherwise restored/removed folds go
-  // stale — a phantom fold marker can hide an arbitrary line range.
   if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
     editor_tab->folding_model->MarkDirty();
   }
@@ -1597,32 +1502,24 @@ void WorkspaceActionContext::ApplyUndoRedo(bool redo) {
     operations_.update_merge_tracking_after_viewport_edit(*merge_tab);
   }
   operations_.reset_caret_blink();
-  operations_.note_active_editable_edit();  // asks for the frame too
+  operations_.note_active_editable_edit();
 }
 
-void WorkspaceActionContext::Undo() { ApplyUndoRedo(/*redo=*/false); }
+void WorkspaceActionContext::Undo() { ApplyUndoRedo(false); }
 
-void WorkspaceActionContext::Redo() { ApplyUndoRedo(/*redo=*/true); }
+void WorkspaceActionContext::Redo() { ApplyUndoRedo(true); }
 
 std::string WorkspaceActionContext::CopySelectionText(bool* whole_line) const {
   if (whole_line != nullptr) {
     *whole_line = false;
   }
-  // A focused single-line field owns the keystroke even when the panel holds
-  // focus: the terminal find bar floats over a terminal that may itself have a
-  // selection, and Ctrl+C there must copy the query, not the transcript.
   if (services_.text_input.HasActiveSingleLineTextSurface()) {
-    // A single-line field owns the keystroke. Return its selection (empty when
-    // nothing is selected -> the caller skips the clipboard write) instead of
-    // falling through to the background editor and copying its current line.
     return services_.text_input.SelectedTextAtActiveSingleLineSurface();
   }
   if (state_.surface.focus == FocusTarget::Panel && TerminalPanelService::HasSelection(state_)) {
     return TerminalPanelService::SelectedText(state_);
   }
   if (const auto* viewport = operations_.active_navigable_viewport(); viewport != nullptr) {
-    // VSCode multi-caret copy: each caret's selection joined by newline, so a
-    // Ctrl-D multi-select copies every occurrence, not just the primary.
     if (viewport->has_multiple_carets()) {
       if (std::optional<std::string> multi = viewport->MultiCaretSelectedText();
           multi.has_value()) {
@@ -1635,10 +1532,6 @@ std::string WorkspaceActionContext::CopySelectionText(bool* whole_line) const {
     if (whole_line != nullptr) {
       *whole_line = true;
     }
-    // Several BARE carets: every caret's line, not just the primary's. The
-    // aggregate above only fires when every caret has a non-empty selection, so
-    // without this a multi-caret line copy silently took one line -- and the cut
-    // that shares this fallback deleted all of them.
     if (std::optional<std::string> lines = viewport->MultiCaretLineTextForClipboard();
         lines.has_value()) {
       return *std::move(lines);
@@ -1675,7 +1568,6 @@ std::optional<std::string> WorkspaceActionContext::ActiveEditorReference(bool fo
       range.has_value() && viewport->has_selection()) {
     first_line = range->start.line;
     last_line = range->end.line;
-    // A selection that ends at the start of a line does not cover that line.
     if (range->end.column == 0 && last_line > first_line) {
       --last_line;
     }
@@ -1702,23 +1594,12 @@ void WorkspaceActionContext::CutSelection() {
     return;
   }
   if (services_.text_input.HasActiveSingleLineTextSurface()) {
-    // Active single-line field with nothing selected: consume the shortcut.
-    // Falling through would DeleteCurrentLine() on the background editor -- an
-    // out-of-nowhere data-loss edit behind the focused input surface.
     return;
   }
   if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
-    // VSCode multi-caret cut: aggregate every caret's selection for the clipboard
-    // and delete them all in one undo step. Falls back to primary selection / line.
     const std::optional<std::string> multi_text =
         viewport->has_multiple_carets() ? viewport->MultiCaretSelectedText() : std::nullopt;
     const bool has_selection = viewport->has_selection();
-    // With nothing selected the delete below is DeleteCurrentLine(), which
-    // removes every caret's line -- so the capture has to be every caret's line
-    // too. Taking CurrentLineTextForClipboard() here (the primary's line alone)
-    // destroyed the other carets' lines without ever putting them on the
-    // clipboard, which is exactly what the budget guard below exists to prevent
-    // and could not see.
     const std::optional<std::string> multi_line_text =
         (!multi_text.has_value() && !has_selection) ? viewport->MultiCaretLineTextForClipboard()
                                                     : std::nullopt;
@@ -1729,9 +1610,6 @@ void WorkspaceActionContext::CutSelection() {
                              : (multi_line_text.has_value()
                                     ? *multi_line_text
                                     : viewport->CurrentLineTextForClipboard()));
-    // TD-2026-07-17A-119: never delete a selection we cannot fully capture to the
-    // clipboard — truncating the copy and then deleting the whole selection would lose
-    // data. Refuse an over-budget cut (leave the buffer intact) and notify.
     if (text.size() > kMaxClipboardExportBytes) {
       if (operations_.notify) {
         operations_.notify(NotificationService::Tone::Warning,
@@ -1741,8 +1619,6 @@ void WorkspaceActionContext::CutSelection() {
     }
     if (!text.empty() && services_.clipboard.Write(text)) {
       operations_.write_primary_selection_text(text);
-      // A cut with nothing selected takes the whole line, and pasting it back
-      // elsewhere puts it on its own line (see PasteClipboard).
       RememberLineClipboardCopy(text, !multi_text.has_value() && !has_selection);
       if (multi_text.has_value()) {
         viewport->DeleteMultiCaretSelections();
@@ -1761,15 +1637,6 @@ void WorkspaceActionContext::PasteClipboard() {
   if (!clipboard_text.has_value()) {
     return;
   }
-  // VS Code's emptySelectionClipboard rule: the clipboard still holds exactly
-  // the whole line an empty-selection copy or cut put there, and the paste
-  // target is a single caret with nothing selected, so the line goes in ABOVE
-  // the caret's line -- not into the middle of it -- and the caret stays where it
-  // was in its own line, now one line further down (VS Code's
-  // ReplaceCommandThatPreservesSelection). Anything typed, another
-  // copy, or a paste into a terminal / single-line field takes the ordinary
-  // path; the marker only ever matches its own text, so a clipboard written by
-  // another application never triggers it.
   const bool line_paste =
       !project_catalog_.line_clipboard_text.empty() &&
       *clipboard_text == project_catalog_.line_clipboard_text &&
@@ -1787,7 +1654,7 @@ void WorkspaceActionContext::PasteClipboard() {
       viewport->MoveCursorTo(viewport->cursor_line(), 0);
     }
   }
-  InsertTextIntoActiveSurface(std::move(*clipboard_text), /*distribute_across_carets=*/true);
+  InsertTextIntoActiveSurface(std::move(*clipboard_text), true);
   if (line_target != nullptr && line_target == operations_.active_editable_viewport() &&
       !line_target->has_multiple_carets()) {
     line_target->MoveCursorTo(line_target->cursor_line(), line_target_column);
@@ -1812,11 +1679,6 @@ void WorkspaceActionContext::InsertText(std::string text) {
 
 void WorkspaceActionContext::InsertTextIntoActiveSurface(std::string text,
                                                          bool distribute_across_carets) {
-  // Cap a pathologically large insertion before it is normalized, line-split
-  // (one std::string per line), inserted, and stored in the undo history. A
-  // multi-hundred-MB paste or `type` payload would otherwise amplify into a
-  // multi-GB transient and undo entry -> OOM from a single gesture. 64 MiB is
-  // far beyond any interactive paste or typed argument.
   constexpr std::size_t kMaxInsertBytes = 64u << 20;
   if (text.size() > kMaxInsertBytes) {
     text.resize(util::PreviousUtf8Boundary(text, kMaxInsertBytes));
@@ -1911,8 +1773,6 @@ bool WorkspaceActionContext::ApplyColorscheme(std::string_view name) {
   if (!services_.persistence.ApplyColorscheme(name, true, true)) {
     return false;
   }
-  // A theme change repaints with new colors but does not change geometry; the
-  // window redraw is what makes it visible (the shell otherwise idles on events).
   RequestLiveConfigRedraw();
   return true;
 }
@@ -1923,10 +1783,6 @@ std::string_view WorkspaceActionContext::CurrentColorschemeName() const {
 
 void WorkspaceActionContext::SetActiveBufferOwnIndent(std::optional<bool> soft_tabs,
                                                       std::optional<std::size_t> width) {
-  // An indentation command is about the buffer in front of the user (VS Code's
-  // "Indent Using Spaces" changes the active editor): record it as that buffer's
-  // own indentation, so it takes effect there even where detection had read
-  // something else, and survives the next preference apply.
   editor::TextViewport* viewport = ActiveEditableViewport();
   if (viewport == nullptr) {
     return;
@@ -1943,16 +1799,10 @@ void WorkspaceActionContext::SetActiveBufferOwnIndent(std::optional<bool> soft_t
 
 void WorkspaceActionContext::SetTabSize(std::size_t value) {
   SetActiveBufferOwnIndent(std::nullopt, value);
-  // Route through the setting chokepoint so the project layer (not just the
-  // materialized editor_preferences cache) records the override, keeping the
-  // layered "set as default" model consistent with the Settings overlay.
   if (operations_.set_setting_value) {
     operations_.set_setting_value("editor.tab_size", std::to_string(value));
     return;
   }
-  // Fallback for contexts without the setting chokepoint: record the override in the
-  // project layer too, so SaveConfigState (which persists state.settings, not the
-  // editor_preferences cache) does not drop the change on the next launch.
   settings_layer::Upsert(state_.settings, "editor.tab_size", std::to_string(value));
   state_.editor_preferences.tab_size = value;
   operations_.apply_editor_preferences_to_all_tabs();
@@ -2009,8 +1859,6 @@ void WorkspaceActionContext::SetSoftWrap(bool enabled) {
     operations_.apply_editor_preferences_to_all_tabs();
     services_.persistence.SaveConfigState();
   }
-  // Wrap toggling reflows every visual row: the pane key folds the wrap, so the
-  // frame repaints them all.
   operations_.request_frame();
 }
 
@@ -2040,14 +1888,14 @@ void WorkspaceActionContext::RefreshActiveCompareAfterViewportEdit() {
   }
   util::PerformanceTrace::Scope scope("WorkspaceActionContext::RefreshActiveCompareAfterViewportEdit");
   operations_.refresh_compare_tab_derived_state(*compare_tab);
-  operations_.sync_compare_selection_from_viewport(*compare_tab, /*reveal_selection=*/true);
+  operations_.sync_compare_selection_from_viewport(*compare_tab, true);
 }
 
 void WorkspaceActionContext::FinishClipboardEdit() {
   RefreshActiveCompareAfterViewportEdit();
   RetrackActiveMergeAfterViewportEdit();
   operations_.reset_caret_blink();
-  operations_.note_active_editable_edit();  // asks for the frame too
+  operations_.note_active_editable_edit();
 }
 
 void WorkspaceActionContext::RetrackActiveMergeAfterViewportEdit() {
@@ -2066,24 +1914,7 @@ void WorkspaceActionContext::NotifyEditorViewportChanged(bool last_change) {
     if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
       editor_tab->folding_model->MarkDirty();
     }
-    // The active editable viewport is the compare tab's right pane when a compare
-    // tab is focused, and the compare surface paints its RIGHT TEXT from the diff
-    // model -- not from the viewport. Without this refresh every edit action that
-    // is not cut / paste / undo (move-line, copy-line, insert-line, comment
-    // toggle, join, sort, format, snippet insert...) mutated the buffer and left
-    // the surface showing the pre-edit text until some unrelated event happened to
-    // refresh it. Three action sites had grown their own copy of this; they now
-    // route here, so a new edit action cannot forget it.
-    //
     RefreshActiveCompareAfterViewportEdit();
-    // The merge result pane's equivalent. It used to need the selection and caret
-    // from BEFORE the edit, so it could not live here and stayed at the handful of
-    // sites that captured them -- which meant the whole shaping block (move-line,
-    // copy-line, delete-line, insert-line, indent, comment toggle, sort) mutated
-    // the result buffer and left the conflict spans pointing at the lines they
-    // used to be on. The next accept then overwrote text that was no longer the
-    // conflict. It reads the viewport's own applied-edit span now, so it belongs
-    // wherever an edit is announced.
     RetrackActiveMergeAfterViewportEdit();
   }
   operations_.reset_caret_blink();
@@ -2128,12 +1959,11 @@ void WorkspaceActionContext::ToggleEditorEssentialsCapability(ActionId id) {
   }
 
   const bool currently_enabled =
-      SettingFlagEnabled(operations_.get_setting_value(key), /*default_value=*/true);
+      SettingFlagEnabled(operations_.get_setting_value(key), true);
   const bool next_enabled = !currently_enabled;
   if (!operations_.set_setting_value(key, next_enabled ? "true" : "false")) {
     return;
   }
-  // The settings a pane paints with are in its key (the rest change no pixel).
   operations_.request_frame();
 }
 
@@ -2160,4 +1990,4 @@ bool WorkspaceActionContext::Focus(FocusRequestTarget target) {
   return false;
 }
 
-}  // namespace microide::workspace
+}

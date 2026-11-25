@@ -1,14 +1,3 @@
-// Highlight cache for TextViewport. Holds per-line token caches, end-of-line
-// SyntaxState snapshots, and the checkpoint chain that lets us resume
-// highlighting after a jump without replaying from line 0. Split out of
-// TextViewport.cpp so the cache surface can be inspected without the rest of
-// the editor core.
-//
-// These methods are still members of the `TextViewport` class — see
-// editor/TextViewport.h for the declarations. The checkpoint spacing constant
-// `kHighlightCheckpointInterval` is shared with TextViewport.cpp via
-// editor/TextViewportInternal.h so InvalidateDerivedCaches stays in lockstep.
-
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/TextViewport.h"
 #include "editor/TextViewportInternal.h"
@@ -26,35 +15,14 @@ namespace {
 
 constexpr std::size_t kHighlightCacheLimit = 256;
 
-// Upper bound on how many lines a *synchronous* highlight-state replay may
-// advance in one call. A deep cold jump (session restore scrolled deep into a
-// large file) previously replayed from the nearest valid checkpoint all the way
-// to the visible line on the main thread — hundreds of ms to seconds. We cap the
-// synchronous work to keep the frame interactive; the remainder is filled
-// off-thread via the checkpoint backfill. Sized comfortably above a screenful
-// (and the look-ahead prefetch window) so ordinary scrolling never trips the
-// backfill path, but far below a large file so a deep jump defers, not freezes.
 constexpr std::size_t kMaxSyncHighlightReplayLines = 512;
 
-// Max lines copied into a single off-thread checkpoint-backfill request. Deep
-// gaps converge across several repaints (each install lets the next synchronous
-// replay resume deeper), bounding both the per-request copy and worker burst.
 constexpr std::size_t kCheckpointBackfillChunkLines = 16384;
 
 bool IsCachedHighlightState(const SyntaxState& state) {
   return state.definition_id != 0;
 }
 
-// The line's bytes, or an empty view when it is too long to tokenize.
-//
-// `runtime_syntax::HighlightLine`/`AdvanceState` treat "empty" and "past
-// kMaxHighlightLineBytes" through the SAME branch -- no tokens, region stack
-// carried forward -- so handing them an empty view for an over-cap line is exactly
-// what they would have done with its bytes. The difference is that nobody reads
-// those bytes: on a piece-tree source `LineView` materializes any line that spans
-// pieces, so a file with no line breaks in it copied megabytes per token-cache
-// miss only for the guard to throw it away (TD-2026-08-05-133), which is the same
-// shape as the fold bracket scan's cap.
 std::string_view TokenizableLineView(const TextBuffer& lines, std::size_t line_index) {
   if (lines.LineLength(line_index) > runtime_syntax::kMaxHighlightLineBytes) {
     return {};
@@ -62,7 +30,7 @@ std::string_view TokenizableLineView(const TextBuffer& lines, std::size_t line_i
   return lines.LineView(line_index);
 }
 
-}  // namespace
+}
 
 void TextViewport::DropHighlightTokenCache() const {
   ++highlight_cache_generation_;
@@ -73,14 +41,6 @@ void TextViewport::StaleHighlightTokensFrom(std::size_t start_line) const {
     DropHighlightTokenCache();
     return;
   }
-  // Generation 0 is never current (the counter starts at 1), so this stales the
-  // suffix while leaving both the token buffers and the eviction order intact.
-  // `highlight_cache_order_` must stay 1:1 with the map -- eviction pops its
-  // front and erases that key -- which is the reason the entries are not removed
-  // from either container here.
-  // An entry current before the edit is marked as staled BY it (the current
-  // generation with kStaleByLastEdit set), so SettleHighlightAfterLastEdit can
-  // tell it from one stale for longer; either is a miss.
   for (auto& [line, entry] : highlight_cache_) {
     if (line >= start_line) {
       entry.generation = entry.generation == highlight_cache_generation_
@@ -113,28 +73,20 @@ void TextViewport::SettleHighlightAfterLastEdit() const {
   carry.settled = true;
   if (carry.content_revision != document_->content_revision ||
       highlight_state_syntax_revision_ != document_->syntax_revision) {
-    return;  // edited again, or restyled: the snapshot describes nothing current
+    return;
   }
   if (LastEditChangedCarriedSyntaxState(carry.line)) {
     return;
   }
-  // The carry is unchanged and stored, so the frontier reached the edit's last
-  // line: every state past it is the one it was before the edit.
   const std::size_t states_before = std::min(carry.states_valid_through_before, line_highlight_states_.size());
   if (line_highlight_states_valid_through_ == carry.line + 1 && states_before > line_highlight_states_valid_through_) {
     line_highlight_states_valid_through_ = states_before;
   }
-  // Checkpoint i is the state before line i * interval, the end state of the line
-  // above it: unchanged unless that line is one of the edit's own lines above its
-  // last (whose carry the check above found unchanged). Restored only when no
-  // checkpoint falls inside the edit -- a one-line edit, nearly always.
   const std::size_t interval = detail::kHighlightCheckpointInterval;
-  const std::size_t first_inside = carry.first_line / interval + 1;  // smallest i with i*interval > first_line
+  const std::size_t first_inside = carry.first_line / interval + 1;
   const bool checkpoint_inside_edit = first_inside * interval <= carry.line;
   const std::size_t checkpoints_before =
       std::min(carry.checkpoints_valid_through_before, highlight_checkpoints_.size());
-  // Every checkpoint below `first_inside` precedes the edit, and none at or past
-  // it is inside it: the whole chain as it was before is current.
   if (!checkpoint_inside_edit && checkpoints_before > highlight_checkpoints_valid_through_) {
     highlight_checkpoints_valid_through_ = checkpoints_before;
   }
@@ -180,26 +132,10 @@ const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
   util::AddPerformanceCounter(util::PerfCounterId::EditorHighlightCacheForcedMisses);
   const SyntaxState previous_state = HighlightStateBeforeLine(line_index);
   const bool exact = last_highlight_state_exact_;
-  // Retokenize straight into whatever buffer this line's (stale) entry already
-  // owns. In the steady state -- typing, with the same lines on screen either
-  // side of the edit -- that takes the per-line cost of a repaint to zero
-  // allocations.
-  //
-  // Evict BEFORE taking the slot reference: erasing while holding a reference
-  // into the same map is how this would go wrong, and the eviction can only pick
-  // a line other than this one (which is not in the map yet on the new-entry
-  // path, and is refreshed in place on the stale path).
   const bool slot_is_new = highlight_cache_.find(line_index) == highlight_cache_.end();
   HighlightCacheEntry* recycled_slot = nullptr;
   if (slot_is_new && highlight_cache_.size() >= kHighlightCacheLimit &&
       !highlight_cache_order_.empty()) {
-    // Re-key the evicted node onto this line rather than erasing it and letting
-    // the insert below allocate a replacement. The node and the token vector it
-    // owns are precisely what that pair of calls would free and then re-allocate,
-    // and a scroll misses on every newly visible line — so at the cache cap this
-    // was two allocations per line per painted frame, the two biggest sites of
-    // every scroll phase in the perf suite (TD-2026-08-14-219). `assign` in
-    // HighlightLineInto then reuses the carried buffer's capacity.
     auto node = highlight_cache_.extract(highlight_cache_order_.front());
     highlight_cache_order_.pop_front();
     util::AddPerformanceCounter(util::PerfCounterId::EditorHighlightCacheEvictions);
@@ -223,10 +159,6 @@ const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
   if (slot_is_new) {
     highlight_cache_order_.push_back(line_index);
   }
-  // Only record the per-line end state (and advance the validity frontier) when
-  // the resume state was exact. An approximate deep-jump result must not be
-  // promoted to authoritative; the off-thread backfill makes a later repaint
-  // exact (and clears this token-cache entry so it is recomputed).
   if (exact) {
     StoreLineHighlightState(line_index, end_state);
   }
@@ -256,7 +188,6 @@ void TextViewport::AppendCachedHighlightedLines(std::vector<std::size_t>& out) c
   const std::size_t first = out.size();
   out.reserve(first + highlight_cache_.size());
   for (const auto& [line, entry] : highlight_cache_) {
-    // Stale entries still hold their buffer but are not cached data.
     if (entry.generation == highlight_cache_generation_) {
       out.push_back(line);
     }
@@ -269,24 +200,14 @@ void TextViewport::EnsureInitialHighlightState() const {
     initial_highlight_state_.reset();
     return;
   }
-  // Keyed on the syntax revision: a language set by hand (or a syntax reload)
-  // changes the definition the whole buffer starts in.
   if (initial_highlight_state_.has_value() && highlight_state_syntax_revision_ == document_->syntax_revision) {
     return;
   }
-  // Build the trace label only when tracing is on and only past the early-outs
-  // above -- this is reached from every EnsureHighlightCaches, so an
-  // unconditional std::string here was a heap allocation on every highlight
-  // query.
   util::PerformanceTrace::ScopeLabel perf_label("TextViewport::EnsureInitialHighlightState");
   if (!document_->path.empty()) {
     perf_label.Field("path", document_->path);
   }
   util::PerformanceTrace::Scope perf_scope(perf_label.View());
-  // Pass the live buffer directly: InitialState only inspects a bounded head, so
-  // this never materializes the whole document (the previous Snapshot() copied
-  // the entire file -- megabytes, one alloc per line -- just to read 64 lines,
-  // and left that copy resident in the buffer's snapshot cache).
   initial_highlight_state_ =
       document_->language_override.empty()
           ? SyntaxHighlighter::InitialState(document_->path, document_->lines)
@@ -294,13 +215,6 @@ void TextViewport::EnsureInitialHighlightState() const {
 }
 
 void TextViewport::StoreLineHighlightState(std::size_t line, const SyntaxState& state) const {
-  // The frontier is contiguous from 0 (see the invariant on
-  // line_highlight_states_valid_through_), so a state for a line ABOVE it is one
-  // no reader will trust: every read is gated on `line < valid_through`, and the
-  // frontier advances one line at a time. Such a write is dropped rather than
-  // stored, which is what lets the vector grow with the frontier instead of
-  // being sized to the document. Storage past the frontier (from before an
-  // edit) is reused rather than freed, so retyping does not reallocate.
   if (line < line_highlight_states_valid_through_) {
     line_highlight_states_[line] = state;
     return;
@@ -312,9 +226,6 @@ void TextViewport::StoreLineHighlightState(std::size_t line, const SyntaxState& 
     line_highlight_states_[line] = state;
   } else {
     if (line_highlight_states_.capacity() == 0) {
-      // One reservation, not ~log2(lines) regrowths: a reservation is address
-      // space, not resident memory, and unlike the resize this replaced it
-      // writes nothing. Capped so a huge file reserves a window, then grows.
       constexpr std::size_t kInitialReserveLines = 64 * 1024;
       line_highlight_states_.reserve(std::min(document_->lines.size(), kInitialReserveLines));
     }
@@ -332,30 +243,13 @@ void TextViewport::EnsureHighlightCaches() const {
   EnsureInitialHighlightState();
   if (highlight_state_content_revision_ != document_->content_revision ||
       highlight_state_syntax_revision_ != document_->syntax_revision) {
-    // Lazy invalidation: leave the existing buffer in place and just reset
-    // the validity cursors. Readers gate on the cursor (see
-    // CachedHighlightStateAt / CachedHighlightCheckpointAt). The previous
-    // implementation called `assign(size, SyntaxState{})` here, which was a
-    // full O(N) wipe on every layout-revision bump.
     line_highlight_states_valid_through_ = 0;
     highlight_checkpoints_valid_through_ = 0;
     pending_checkpoint_backfill_target_line_ = 0;
     highlight_state_content_revision_ = document_->content_revision;
     highlight_state_syntax_revision_ = document_->syntax_revision;
-    // The per-line token cache is NOT cursor-gated -- HighlightedLineTokens does a
-    // bare highlight_cache_.find() with no revision check -- so it must be dropped
-    // here too, or a revision bump that this viewport did not itself apply (e.g. a
-    // sibling split pane edited the shared document, or a plugin syntax reload)
-    // keeps serving pre-edit colors until LRU eviction. Mirrors the chain-advance
-    // clear in InstallHighlightCheckpoints and the SyntaxConfig invalidation path.
     DropHighlightTokenCache();
   }
-  // `line_highlight_states_` is NOT sized to the document here: it grows with
-  // the frontier (StoreLineHighlightState). Sizing it up front value-initialised
-  // 40 bytes per line on the first paint — a 32 MB fill, ~12 ms, on the shell
-  // thread for an 800k-line file the moment its off-thread open landed
-  // (TD-2026-09-29-317) — for entries no reader trusts until the frontier
-  // reaches them. Only a shrink can strand the frontier past the end.
   line_highlight_states_valid_through_ =
       std::min(line_highlight_states_valid_through_, document_->lines.size());
   const std::size_t checkpoint_count =
@@ -398,9 +292,6 @@ void TextViewport::EnsureHighlightCheckpoint(std::size_t checkpoint_index) const
   std::size_t line = previous_checkpoint * detail::kHighlightCheckpointInterval;
   std::size_t target_line =
       std::min(document_->lines.size(), checkpoint_index * detail::kHighlightCheckpointInterval);
-  // Bound the synchronous replay so a deep cold jump never blocks the frame. If
-  // we cap short, the requested checkpoint stays invalid; the caller resumes
-  // from the deepest checkpoint we did reach and records a backfill target.
   if (target_line - line > kMaxSyncHighlightReplayLines) {
     target_line = line + kMaxSyncHighlightReplayLines;
     pending_checkpoint_backfill_target_line_ =
@@ -464,13 +355,8 @@ HighlightPrefetchRequest TextViewport::BuildHighlightPrefetchRequest(std::size_t
       start_line >= document_->lines.size() || count == 0) {
     return request;
   }
-  // Resume state for the first snapshot line, computed against the (main-thread)
-  // checkpoint chain so the worker need not replay from line 0.
   request.start_state = HighlightStateBeforeLine(start_line);
   const std::size_t end = std::min(document_->lines.size(), start_line + count);
-  // Copy once via SliceLines (matching the checkpoint-backfill path) instead of
-  // operator[] per line, which materializes each string into TextBuffer's
-  // line_cache_ and then copies it again into the request.
   request.lines = document_->lines.SliceLines(start_line, end);
   return request;
 }
@@ -479,8 +365,6 @@ void TextViewport::InstallPrefetchedHighlights(HighlightPrefetchResult result) {
   if (!syntax_highlighting_enabled() || document_->lines.empty()) {
     return;
   }
-  // Discard stale results: the document changed (or syntax config changed)
-  // since the snapshot was taken, so the precomputed tokens no longer apply.
   if (result.content_revision != document_->content_revision ||
       result.syntax_revision != document_->syntax_revision) {
     return;
@@ -492,24 +376,13 @@ void TextViewport::InstallPrefetchedHighlights(HighlightPrefetchResult result) {
     if (line >= document_->lines.size()) {
       break;
     }
-    // content_revision bumps on any edit, so a matching revision means every
-    // snapshot line is still current; just fold the precomputed data in.
-    // Contiguous-only (see StoreLineHighlightState). Besides preventing a frontier
-    // jump over a stale gap, this also stops a deep-jump prefetch (whose
-    // start_line sits far above the frontier, and whose end_states derive from an
-    // approximate resume state) from promoting those approximate states to
-    // authoritative — such a batch never installs contiguously from the frontier.
     if (offset < result.end_states.size()) {
       StoreLineHighlightState(line, result.end_states[offset]);
     }
-    // A CURRENT entry is authoritative; leave it alone. A stale one is a buffer
-    // to overwrite, and an absent one is a new entry to order and cap.
     if (CurrentHighlightCacheEntry(line) != nullptr) {
       continue;
     }
     const bool slot_is_new = highlight_cache_.find(line) == highlight_cache_.end();
-    // Same node re-key as the on-demand miss above: evict first so the node this
-    // line needs is the one the cap is about to release (TD-2026-08-14-219).
     HighlightCacheEntry* recycled_slot = nullptr;
     if (slot_is_new && highlight_cache_.size() >= kHighlightCacheLimit &&
         !highlight_cache_order_.empty()) {
@@ -539,11 +412,9 @@ bool TextViewport::LastEditChangedCarriedSyntaxState(std::size_t line) const {
   if (!edit_carry_before_.has_value() || edit_carry_before_->line != line) {
     return true;
   }
-  // Tokenizing the line is what the repaint does next anyway: the entry it leaves
-  // in the token cache is the one the frame reads.
   (void)HighlightedLineTokens(line);
   if (line >= line_highlight_states_valid_through_) {
-    return true;  // resumed from an approximate state: not stored, not known
+    return true;
   }
   return line_highlight_states_[line] != edit_carry_before_->before;
 }
@@ -558,8 +429,6 @@ SyntaxState TextViewport::HighlightStateBeforeLine(std::size_t line_index) const
 
   const std::size_t checkpoint_index = line_index / detail::kHighlightCheckpointInterval;
 
-  // Find the deepest already-valid checkpoint at/below the target WITHOUT forcing
-  // a replay. This is the cheap resume point and the gate for the deep-jump case.
   auto deepest_valid_checkpoint = [&]() {
     std::size_t cp = std::min(checkpoint_index, highlight_checkpoints_valid_through_ == 0
                                                     ? std::size_t{0}
@@ -570,11 +439,6 @@ SyntaxState TextViewport::HighlightStateBeforeLine(std::size_t line_index) const
     return cp;
   };
 
-  // Deep cold jump: the exact state is more than one cap away from any valid
-  // checkpoint. Do NOT replay (replaying a capped chunk here is wasted work that
-  // every visible line would repeat). Return the nearest checkpoint's state as an
-  // approximation, mark it inexact, and arm the off-thread backfill. A later
-  // repaint, after the chain catches up, takes the exact path below.
   if (line_index - deepest_valid_checkpoint() * detail::kHighlightCheckpointInterval >
       kMaxSyncHighlightReplayLines) {
     pending_checkpoint_backfill_target_line_ =
@@ -584,8 +448,6 @@ SyntaxState TextViewport::HighlightStateBeforeLine(std::size_t line_index) const
     return cp == 0 ? *initial_highlight_state_ : highlight_checkpoints_[cp];
   }
 
-  // Exact path: build the checkpoint just below line_index (a bounded replay,
-  // since the gap is within the cap), then replay the short remainder.
   EnsureHighlightCheckpoint(checkpoint_index);
   std::size_t usable_checkpoint = deepest_valid_checkpoint();
   std::size_t line = usable_checkpoint * detail::kHighlightCheckpointInterval;
@@ -624,7 +486,6 @@ std::optional<HighlightCheckpointRequest> TextViewport::TakeHighlightCheckpointB
   const std::size_t target_line =
       std::min(pending_checkpoint_backfill_target_line_, document_->lines.size());
 
-  // Resume from the deepest valid checkpoint so the install folds in contiguously.
   std::size_t checkpoint =
       highlight_checkpoints_valid_through_ == 0 ? 0 : highlight_checkpoints_valid_through_ - 1;
   while (checkpoint > 0 && !IsCachedHighlightState(highlight_checkpoints_[checkpoint])) {
@@ -632,7 +493,6 @@ std::optional<HighlightCheckpointRequest> TextViewport::TakeHighlightCheckpointB
   }
   const std::size_t first_line = checkpoint * interval;
   if (first_line >= target_line) {
-    // The chain already reached the target (e.g. a prior chunk caught us up).
     pending_checkpoint_backfill_target_line_ = 0;
     return std::nullopt;
   }
@@ -649,8 +509,6 @@ std::optional<HighlightCheckpointRequest> TextViewport::TakeHighlightCheckpointB
       checkpoint == 0 ? *initial_highlight_state_ : highlight_checkpoints_[checkpoint];
   request.checkpoint_interval = interval;
   request.lines = document_->lines.SliceLines(first_line, end_line);
-  // Clear the pending flag; if this chunk does not reach the target, the next
-  // repaint's bounded replay re-detects the shortfall and re-arms it.
   pending_checkpoint_backfill_target_line_ = 0;
   return request;
 }
@@ -659,7 +517,6 @@ void TextViewport::InstallHighlightCheckpoints(const HighlightCheckpointResult& 
   if (!syntax_highlighting_enabled() || document_->lines.empty()) {
     return;
   }
-  // Drop stale results: the document or syntax config moved on since the snapshot.
   if (result.content_revision != document_->content_revision ||
       result.syntax_revision != document_->syntax_revision) {
     return;
@@ -672,17 +529,10 @@ void TextViewport::InstallHighlightCheckpoints(const HighlightCheckpointResult& 
       break;
     }
     highlight_checkpoints_[idx] = result.checkpoint_states[offset];
-    // valid_through is a contiguous-from-front cursor: only extend it when this
-    // index sits exactly at the frontier (the request resumed from the deepest
-    // valid checkpoint, so the common case advances it contiguously).
     if (idx == highlight_checkpoints_valid_through_) {
       highlight_checkpoints_valid_through_ = idx + 1;
     }
   }
-  // If the chain advanced, drop the (small, LRU-bounded) token cache so any
-  // approximate deep-jump tokens are recomputed from the now-exact resume state
-  // on the next repaint. Cheap (<= kHighlightCacheLimit entries) and only happens
-  // while a deep-jump backfill is converging.
   if (highlight_checkpoints_valid_through_ != previous_valid_through) {
     DropHighlightTokenCache();
   }
@@ -693,19 +543,13 @@ TextViewportDerivedCacheBytes TextViewport::DerivedCacheBytes() const {
   out.layout_cache = layout_cache_.ApproximateResidentBytes();
 
   out.highlight_tokens = highlight_cache_.bucket_count() * sizeof(void*);
-  // Counts stale entries too: their buffers are still resident, which is exactly
-  // what this number is for.
   for (const auto& [line, entry] : highlight_cache_) {
     out.highlight_tokens +=
         sizeof(std::size_t) + sizeof(HighlightCacheEntry) + sizeof(void*) * 2;
     out.highlight_tokens += entry.tokens.capacity() * sizeof(SyntaxTokenKind);
   }
-  // The FIFO that keys the LRU. libstdc++ deques allocate in 512-byte chunks.
   out.highlight_tokens += ((highlight_cache_order_.size() * sizeof(std::size_t) + 511) / 512) * 512;
 
-  // Sized to the DOCUMENT, not to a window: this is the per-tab cost that grows
-  // with file size rather than with what is on screen, and on the 50k-line
-  // fixture it is the largest single entry here.
   out.highlight_states = line_highlight_states_.capacity() * sizeof(SyntaxState);
   out.highlight_states += highlight_checkpoints_.capacity() * sizeof(SyntaxState);
 
@@ -718,4 +562,4 @@ TextViewportDerivedCacheBytes TextViewport::DerivedCacheBytes() const {
   return out;
 }
 
-}  // namespace microide::editor
+}

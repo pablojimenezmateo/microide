@@ -1,14 +1,3 @@
-// Stress probe for SDL's lost cross-thread wake (TD-2026-11-07-433): a producer
-// pushes an event at a random moment while the main thread sits in SDL_WaitEvent
-// with a real window, and waits for the main thread to see it. A push that is not
-// seen in 2 s is a lost wake. Run with and without the app's LostWakeRelay:
-//
-//   g++ -std=c++20 -O2 -Isrc tools/qa/stress/sdl_wake_race.cpp src/app/LostWakeRelay.cpp \
-//       -o build/sdl_wake_race $(pkg-config --cflags --libs sdl3) -lpthread
-//   SDL_VIDEO_DRIVER=wayland build/sdl_wake_race <use_relay 0|1> <rounds>
-//
-// On SDL 3.4.2 under headless weston with 12 copies running: 4 lost wakes in
-// 240k rounds without the relay, none with it.
 #include <SDL3/SDL.h>
 #include <atomic>
 #include <chrono>

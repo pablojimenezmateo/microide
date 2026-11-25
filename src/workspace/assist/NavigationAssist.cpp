@@ -16,35 +16,20 @@ namespace microide::workspace {
 
 namespace {
 
-// A reference/workspace-symbol result shows a 3-line snippet (the hit line +/- 1).
-// Files at or below this size are read+split once and cached so many references
-// into the same file amortize to one read; larger files use the bounded
-// line-window reader instead so a hit inside a huge generated file never
-// materializes (or retains) the whole file on the shell thread. 256 KiB covers
-// essentially every hand-written source file.
 constexpr std::uintmax_t kReferenceSnippetWholeReadBytes = 256ull * 1024;
 
-// Byte budget for the bounded line-window reader used on large files: it streams
-// at most this many bytes looking for the snippet's last line, then gives up
-// (showing just the file:line:col header). Bounds the shell-thread scan for a
-// deep hit without ever slurping a multi-hundred-MB blob.
 constexpr std::uintmax_t kReferenceSnippetScanBytes = 2ull * 1024 * 1024;
 
 constexpr const char* kDefinitionChannel = "lsp.definition";
 constexpr const char* kDefinitionTitle = "LSP Definition";
 
-}  // namespace
+}
 
 bool NavigationAssist::GoToDefinition(std::string* error_message) {
-  // The server is authoritative for its language: navigation waits for its answer
-  // and uses the plugin result only if the server comes back empty, so a slower LSP
-  // reply can't be pre-empted by a stale plugin hit.
   return QueryLocations(LocationQuery::Definition, error_message);
 }
 
 bool NavigationAssist::FindReferences(std::string* error_message) {
-  // The de-duplicated union renders once both sources have resolved (LSP-first for
-  // served languages); a single output-channel rebuild avoids mid-flight flicker.
   return QueryLocations(LocationQuery::References, error_message);
 }
 
@@ -55,8 +40,6 @@ bool NavigationAssist::QueryLocations(LocationQuery query, std::string* error_me
     return false;
   }
 
-  // Query the plugin provider and the language server CONCURRENTLY (mirrors
-  // completion / code actions); `Settle` decides once the answers are in.
   const bool references = query == LocationQuery::References;
   const std::string language_id = viewport->language_id();
   const std::filesystem::path request_path = viewport->path();
@@ -79,8 +62,6 @@ bool NavigationAssist::QueryLocations(LocationQuery query, std::string* error_me
   if (client != nullptr) {
     host_.ops().ensure_lsp_document_open(*viewport, *client, language_id);
     host_.ops().begin_tracked_lsp_request();
-    // Recorded on the merge so the response's columns can be read back in the
-    // same units the request was phrased in.
     merge->lsp_encoding = LspEncodingForClient(*client);
     auto on_lsp = [this, request_path, merge,
                    settle](LspResult<std::vector<LspClient::Location>> locations) {
@@ -106,7 +87,7 @@ bool NavigationAssist::QueryLocations(LocationQuery query, std::string* error_me
 
   auto on_plugin = [request_path, merge, settle](
                        std::vector<plugin::PluginHost::LocationResult> locations,
-                       std::string /*provider_error*/) {
+                       std::string ) {
     merge->sources.plugin_pending = false;
     merge->plugin_locations = std::move(locations);
     settle(merge, request_path);
@@ -128,9 +109,6 @@ void NavigationAssist::ResolveDefinition(const std::shared_ptr<Merge>& merge,
   }
   if (merge->generation != navigation_generation_ ||
       host_.IsStale(request_path)) {
-    // The buffer switched, or a newer navigation superseded this one, since the
-    // request; abandon without navigating a different file/caret or emitting a
-    // spurious "no definition" message.
     return;
   }
   const assist_merge::NavChoice choice = assist_merge::ChooseNavigation(
@@ -142,9 +120,6 @@ void NavigationAssist::ResolveDefinition(const std::shared_ptr<Merge>& merge,
       return;
     case assist_merge::NavChoice::None: {
       merge->acted = true;
-      // Both sources ended up empty. If the language server never actually answered
-      // (timeout / gone / protocol error), don't claim "No definition found" for a
-      // request it never resolved.
       const char* message = merge->sources.lsp_failed
                                 ? "Language server did not respond (no definition resolved)"
                                 : "No definition found";
@@ -168,7 +143,6 @@ void NavigationAssist::NavigateToLspLocation(const LspClient::Location& location
   if (!path.has_value()) {
     return;
   }
-  // `this` is the shell's own member, alive as long as any completion.
   OpenThen(*path, [this, location, encoding]() {
     if (editor::TextViewport* active = host_.ops().active_editor_viewport(); active != nullptr) {
       const std::size_t target_line =
@@ -198,9 +172,6 @@ bool NavigationAssist::GoToLspNavigation(LspNavigationKind kind, std::string* er
   if (viewport == nullptr) {
     return false;
   }
-  // typeDefinition / implementation / declaration are LSP-only (no plugin provider
-  // counterpart), so this is a single-source navigation: fire the server request and
-  // jump to the first location. PrepareLspRequest records the unavailable message.
   LspClient* client = host_.PrepareLspRequest(*viewport, error_message);
   if (client == nullptr) {
     return false;
@@ -257,7 +228,7 @@ bool NavigationAssist::GoToDeclaration(std::string* error_message) {
 void NavigationAssist::PublishReferences(const std::shared_ptr<Merge>& merge,
                                           const std::filesystem::path& request_path) {
   if (merge->acted || merge->sources.AnyPending()) {
-    return;  // render exactly once, after both sources resolve
+    return;
   }
   merge->acted = true;
   if (merge->generation != references_generation_ ||
@@ -265,11 +236,6 @@ void NavigationAssist::PublishReferences(const std::shared_ptr<Merge>& merge,
     return;
   }
 
-  // Normalize both sources to (path, 1-based line, column-in-source-units). The
-  // column is resolved to a character column by the emitter, which is the one
-  // place that reads the target line anyway; the union key below therefore
-  // compares raw units, which coincide across sources on an ASCII line (the
-  // only case where a plugin and a server can both report the same location).
   struct RefTarget {
     std::filesystem::path path;
     std::size_t line = 0;
@@ -301,8 +267,6 @@ void NavigationAssist::PublishReferences(const std::shared_ptr<Merge>& merge,
   const auto& secondary = merge->sources.lsp_authoritative ? plugin_targets : lsp_targets;
   const std::vector<RefTarget> merged =
       assist_merge::RankedUnion(primary, secondary, [](const RefTarget& target) {
-        // Both sources count bytes on an ASCII line (a utf-8 server everywhere),
-        // which is the only case where the two can name one location.
         const std::size_t units =
             target.column.units == ReferenceColumn::Units::LspCodeUnit0Based
                 ? target.column.value + 1
@@ -313,7 +277,6 @@ void NavigationAssist::PublishReferences(const std::shared_ptr<Merge>& merge,
 
   host_.output().Clear("lsp.references");
   if (merged.empty()) {
-    // Distinguish an authoritative empty result from an LSP that never answered.
     host_.output().AppendLine(
         "lsp.references", "LSP References",
         merge->sources.lsp_failed ? "Language server did not respond (no references resolved)"
@@ -341,8 +304,6 @@ bool NavigationAssist::ShowCallHierarchy(bool incoming, std::string* error_messa
   static constexpr const char* kChannelId = "lsp.callHierarchy";
   const char* const title = incoming ? "Incoming Calls" : "Outgoing Calls";
   if (!client->SupportsCallHierarchy()) {
-    // Say so instead of letting the short-circuited request read as "no callers":
-    // a missing provider is a property of the server, not of the code.
     host_.ops().finish_tracked_lsp_request();
     host_.output().Clear(kChannelId);
     host_.output().AppendLine(kChannelId, title,
@@ -355,8 +316,6 @@ bool NavigationAssist::ShowCallHierarchy(bool incoming, std::string* error_messa
   host_.output().Clear(kChannelId);
   host_.output().AppendLine(kChannelId, title, "Resolving call hierarchy…");
 
-  // Both hops report through here so "the server never answered" and "the server
-  // says there are none" stay distinguishable at every step of the chain.
   const auto finish_empty = [this, title](const char* message) {
     host_.output().Clear(kChannelId);
     host_.output().AppendLine(kChannelId, title, message);
@@ -382,8 +341,6 @@ bool NavigationAssist::ShowCallHierarchy(bool incoming, std::string* error_messa
           finish_empty("No callable symbol at the cursor");
           return;
         }
-        // prepareCallHierarchy may resolve to several items (overloads); the first
-        // is the server's best match, which is what VS Code walks by default.
         const LspClient::CallHierarchyItem& root = items->front();
         std::string root_label = root.name;
         if (!root.detail.empty()) {
@@ -423,8 +380,6 @@ bool NavigationAssist::ShowCallHierarchy(bool incoming, std::string* error_messa
             host_.output().AppendLine(kChannelId, title, header);
             const bool last = i + 1 >= calls->size();
             if (incoming && !call.call_ranges.empty()) {
-              // Incoming: the interesting positions are the call sites inside the
-              // caller, so list each one rather than the caller's declaration.
               for (std::size_t r = 0; r < call.call_ranges.size(); ++r) {
                 const LspClient::Range& range = call.call_ranges[r];
                 EmitReferenceEntry(
@@ -435,8 +390,6 @@ bool NavigationAssist::ShowCallHierarchy(bool incoming, std::string* error_messa
               }
               continue;
             }
-            // Outgoing (and callers whose call sites the server omitted): navigate
-            // to the symbol's own name.
             EmitReferenceEntry(
                 kChannelId, title, *path,
                 static_cast<std::size_t>(std::max(call.item.selection_range.start.line, 0)) + 1,
@@ -461,8 +414,6 @@ bool NavigationAssist::QueryWorkspaceSymbols(const std::string& query, Workspace
   if (viewport == nullptr) {
     return false;
   }
-  // workspace/symbol is project-wide; ask the active buffer's server (the project
-  // it belongs to). PrepareLspRequest resolves the client + begins the tracked req.
   LspClient* client = host_.PrepareLspRequest(*viewport, error_message);
   if (client == nullptr) {
     return false;
@@ -473,8 +424,6 @@ bool NavigationAssist::QueryWorkspaceSymbols(const std::string& query, Workspace
       query, [this, request_generation, deliver = std::move(deliver)](
                  LspResult<std::vector<LspClient::WorkspaceSymbol>> symbols) {
         host_.ops().finish_tracked_lsp_request();
-        // A superseded query's answer must not replace the newer one's
-        // (TD-2026-07-17A-034): the pick re-asks on every keystroke.
         if (request_generation != workspace_symbol_generation_) {
           return;
         }
@@ -515,7 +464,6 @@ void NavigationAssist::NavigateToPluginLocation(const plugin::PluginHost::Locati
   }
   OpenThen(location.path, [this, location]() {
     if (editor::TextViewport* active = host_.ops().active_editor_viewport(); active != nullptr) {
-      // Provider line/column are 1-based; the viewport caret is 0-based.
       active->JumpCursorTo(location.line > 0 ? location.line - 1 : 0,
                            location.column > 0 ? location.column - 1 : 0);
       host_.ops().reset_caret_blink();
@@ -532,12 +480,6 @@ void NavigationAssist::EmitReferenceEntry(
   const std::size_t first_line = target_line > 1 ? target_line - 1 : 1;
   const std::size_t last_line = target_line + 1;
 
-  // The context block: up to three (line number, text) rows around the target.
-  // Gathered before anything is emitted because the header's column is derived
-  // from the target row's text -- a server's `character` is a byte offset under
-  // utf-8 and a UTF-16 unit count otherwise, and printing either raw named the
-  // wrong character on any non-ASCII line (and the Output click handler, which
-  // reads the printed number as a character column, then jumped past it).
   struct SnippetRow {
     std::size_t number = 0;
     std::string_view text;
@@ -550,10 +492,7 @@ void NavigationAssist::EmitReferenceEntry(
     }
   };
 
-  // 1. When the reference lands in the file that is already open as the active
-  //    editor buffer, read the snippet straight from the live document via a
-  //    zero-copy LineSpan — no file I/O and no whole-file line vector.
-  std::vector<std::string> window;  // owns the bounded-window fallback lines
+  std::vector<std::string> window;
   const std::filesystem::path normalized_path = path.lexically_normal();
   if (const editor::TextViewport* viewport = host_.ops().active_editable_viewport();
       viewport != nullptr && util::SameAsNormalizedPath(viewport->path(), normalized_path)) {
@@ -563,12 +502,6 @@ void NavigationAssist::EmitReferenceEntry(
       push_row(line_number, lines[line_number - 1]);
     }
   } else {
-    // 2. On disk. Small files are read+split once and cached, so many references
-    //    into the same file share one read; large files use a bounded line-window
-    //    reader that streams only up to the snippet's last line and never
-    //    materializes (or caches) the whole file. This bounds both the shell-thread
-    //    time and the retained memory for a reference set that spans huge generated
-    //    files.
     const std::vector<std::string>* file_lines = nullptr;
     const auto cache_it = file_line_cache.find(path);
     if (cache_it != file_line_cache.end()) {
@@ -597,9 +530,6 @@ void NavigationAssist::EmitReferenceEntry(
     }
   }
 
-  // The 1-based character column the header prints, mapped through the target
-  // row when it was read (an unreadable target keeps the raw units -- there is
-  // nothing to map by).
   const bool lsp_units = column.units == ReferenceColumn::Units::LspCodeUnit0Based;
   std::size_t display_column = lsp_units ? column.value + 1 : column.value;
   for (std::size_t i = 0; i < row_count; ++i) {
@@ -622,7 +552,7 @@ void NavigationAssist::EmitReferenceEntry(
       channel_id, channel_title,
       label + ":" + std::to_string(line) + ":" + std::to_string(display_column));
   if (row_count == 0) {
-    return;  // unreadable target: header only, as before
+    return;
   }
   for (std::size_t i = 0; i < row_count; ++i) {
     host_.output().AppendLine(
@@ -635,4 +565,4 @@ void NavigationAssist::EmitReferenceEntry(
   }
 }
 
-}  // namespace microide::workspace
+}

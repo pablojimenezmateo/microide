@@ -36,14 +36,9 @@ constexpr std::size_t kMaxArgs = 4096;
 constexpr std::size_t kMaxArgvBytes = 1024 * 1024;
 constexpr std::size_t kMaxEnv = 256;
 constexpr std::size_t kChunkBytes = 64 * 1024;
-// After the process exits, how long its pipes may stay open (a grandchild holding
-// stdout) before the exit is reported anyway.
 constexpr auto kExitDrainGrace = std::chrono::seconds(5);
 
 #if defined(SYS_pidfd_open)
-// A descriptor that turns readable when `pid` exits. Close-on-exec by definition
-// (pidfd_open(2) always sets it), so no spawned process inherits it. -1 on a
-// kernel older than 5.3, and the loop falls back to polling for the exit.
 int OpenPidFd(int pid) {
   return static_cast<int>(::syscall(SYS_pidfd_open, pid, 0));
 }
@@ -53,7 +48,6 @@ int OpenPidFd(int) {
 }
 #endif
 
-// How long a terminated process gets between SIGTERM and SIGKILL.
 constexpr auto kKillGrace = std::chrono::seconds(2);
 
 bool ValidEnvName(std::string_view name) {
@@ -67,12 +61,6 @@ bool ValidEnvName(std::string_view name) {
 
 using util::SetNonBlocking;
 
-// Resolve argv[0] through PATH in the parent: the child of a multi-threaded process
-// may only call async-signal-safe functions, and execve is one; execvp is not.
-// A relative PATH entry (an empty one is ".") is the CHILD's: it is resolved
-// against `cwd`, the absolute directory the child runs in, as a shell there would
-// -- resolving it here read the server's own directory ("/" for the daemon). A
-// name with a slash is left as given: the child's chdir resolves it.
 std::string ResolveExecutable(
     const std::string& name,
     const std::vector<std::pair<std::string, std::optional<std::string>>>& env,
@@ -111,10 +99,10 @@ std::string ResolveExecutable(
     }
     start = end + 1;
   }
-  return name;  // execve fails with ENOENT; the child exits 127 like a shell would
+  return name;
 }
 
-}  // namespace
+}
 
 ProcessTable::ProcessTable(Sink sink, Limits limits) : sink_(std::move(sink)), limits_(limits) {
   wake_.Open();
@@ -207,8 +195,6 @@ ProcessTable::SpawnResult ProcessTable::Spawn(std::uint64_t connection, SpawnReq
       return SpawnResult{.error = "too many processes on this server"};
     }
   }
-  // Everything the child needs is built before fork: after it, only
-  // async-signal-safe calls.
   const std::string executable = ResolveExecutable(request.argv.front(), request.env, request.cwd);
   std::vector<char*> argv;
   for (std::string& arg : request.argv) {
@@ -251,7 +237,7 @@ ProcessTable::SpawnResult ProcessTable::Spawn(std::uint64_t connection, SpawnReq
   const char* cwd = request.cwd.empty() ? nullptr : request.cwd.c_str();
   const pid_t pid = platform::ForkWithSignalsBlocked();
   if (pid == 0) {
-    ::setpgid(0, 0);  // its own group: a signal reaches its children too
+    ::setpgid(0, 0);
     ::dup2(in_pipe[0], 0);
     ::dup2(out_pipe[1], 1);
     ::dup2(err_pipe[1], 2);
@@ -263,10 +249,6 @@ ProcessTable::SpawnResult ProcessTable::Spawn(std::uint64_t connection, SpawnReq
     ::execve(executable.c_str(), argv.data(), envp.data());
     ::_exit(errno == ENOENT ? 127 : 126);
   }
-  // The parent makes the group too (as shells do): every signal goes to the group
-  // (kill(-pid)), and one sent before the child reached its own setpgid would name
-  // a group that does not exist yet and be lost. After the child's exec this fails
-  // with EACCES, harmlessly: the child made the group itself by then.
   if (pid > 0) {
     ::setpgid(pid, pid);
   }
@@ -315,8 +297,6 @@ bool ProcessTable::WriteStdin(std::uint64_t handle, std::string_view bytes) {
   if (it == processes_.end() || it->second->stdin_fd < 0) {
     return false;
   }
-  // Blocking-ish write of a frame's worth (<= 64 KiB). The pipe is non-blocking; a
-  // full pipe waits briefly for the process to read rather than dropping input.
   std::size_t offset = 0;
   while (offset < bytes.size()) {
     const ssize_t n = ::write(it->second->stdin_fd, bytes.data() + offset, bytes.size() - offset);
@@ -367,7 +347,6 @@ bool ProcessTable::End(std::uint64_t handle) {
       return false;
     }
     Process& process = *it->second;
-    // Not kept any more: the loop forgets an exited, unkept process nobody holds.
     process.keep_on_detach = false;
     process.detached_at.reset();
     if (!process.exited && !process.kill_at.has_value()) {
@@ -389,7 +368,6 @@ void ProcessTable::Ack(std::uint64_t handle, std::uint64_t stdout_offset,
     }
     for (auto [stream, offset] : {std::pair{&it->second->out, stdout_offset},
                                   std::pair{&it->second->err, stderr_offset}}) {
-      // Only what was actually sent can be acknowledged; a lying ack is clamped.
       const std::uint64_t acked = std::min(offset, stream->sent);
       if (acked > stream->base) {
         stream->pending.erase(0, static_cast<std::size_t>(acked - stream->base));
@@ -456,13 +434,10 @@ void ProcessTable::Detach(std::uint64_t connection) {
       }
       process->connection = 0;
       process->detached_at = std::chrono::steady_clock::now();
-      // Unacknowledged output is resent from the reattaching client's offset.
       process->out.sent = process->out.base;
       process->err.sent = process->err.base;
       if (!process->keep_on_detach && !process->exited) {
         ::kill(-process->pid, SIGTERM);
-        // SIGKILL after a grace period, from the table's loop — never from a timer
-        // that could outlive the process and signal a reused group id.
         process->kill_at = std::chrono::steady_clock::now() + kKillGrace;
       }
     }
@@ -595,17 +570,14 @@ void ProcessTable::Reap() {
 void ProcessTable::Run() {
   std::vector<Outgoing> outgoing;
   std::vector<pollfd> fds;
-  std::vector<std::pair<std::uint64_t, bool>> owners;  // handle, is_stderr
+  std::vector<std::pair<std::uint64_t, bool>> owners;
   while (!stop_.load(std::memory_order_acquire)) {
     fds.clear();
     owners.clear();
     fds.push_back(pollfd{wake_.read_fd(), POLLIN, 0});
-    // Exits announce themselves through their pid fds, placed right after the wake
-    // fd; nothing is read from them -- the next pass's Reap collects the status.
     std::size_t exit_fds = 0;
-    bool any_unwatched = false;  // running with no pid fd: its exit must be polled for
+    bool any_unwatched = false;
     std::optional<std::chrono::steady_clock::time_point> next_kill;
-    // The earliest drain deadline of an exited process whose pipes are still open.
     std::optional<std::chrono::steady_clock::time_point> next_drain;
     {
       std::lock_guard lock(mutex_);
@@ -613,7 +585,6 @@ void ProcessTable::Run() {
       const auto now = std::chrono::steady_clock::now();
       for (auto it = processes_.begin(); it != processes_.end();) {
         Process& process = *it->second;
-        // A kept process nobody came back for: from here on it is an unkept one.
         if (process.keep_on_detach && process.connection == 0 && process.detached_at.has_value()) {
           const auto expires = *process.detached_at + limits_.keep_grace;
           if (now >= expires) {
@@ -646,7 +617,6 @@ void ProcessTable::Run() {
           if (!process.exited_at.has_value()) {
             process.exited_at = now;
           }
-          // A grandchild holding the pipes open must not hold the exit back forever.
           const auto drained_by = *process.exited_at + kExitDrainGrace;
           const bool open = process.out.fd >= 0 || process.err.fd >= 0;
           if (open && now >= drained_by) {
@@ -662,7 +632,6 @@ void ProcessTable::Run() {
           }
         }
         Pump(process, outgoing);
-        // Nobody will ever collect an exited, unkept process whose client is gone.
         if (process.exited && process.connection == 0 && !process.keep_on_detach) {
           for (int fd : {process.stdin_fd, process.out.fd, process.err.fd}) {
             if (fd >= 0) {
@@ -682,12 +651,6 @@ void ProcessTable::Run() {
       }
     }
     Flush(outgoing);
-    // Where a running process has no pid fd, re-check for its exit every 50 ms. With
-    // one, an exit wakes the loop itself: polling for it cost every remote process
-    // (a git the sidebar runs, a formatter) up to 50 ms after its output -- a round
-    // trip on a 50 ms link (measured on worky, 2026-10-15).
-    // An exited process's pipes are drained by their own readiness; only the grace
-    // deadline of one still open needs a timer. Nothing exited and open: block.
     int timeout_ms = any_unwatched ? 50 : -1;
     for (const auto& deadline : {next_kill, next_drain}) {
       if (!deadline.has_value()) {
@@ -730,4 +693,4 @@ void ProcessTable::Run() {
   }
 }
 
-}  // namespace microide::server
+}

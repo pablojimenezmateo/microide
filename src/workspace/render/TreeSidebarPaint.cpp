@@ -11,28 +11,17 @@
 #include "workspace/render/EditorRowUnits.h"
 #include "workspace/render/TreeSidebarPaint.h"
 
-// The sidebar's file tree. Prep lays it out into the frame's snapshot
-// (PrepareTreeSidebarFrame) and derives its damage from it; paint draws the
-// snapshot only. A row repaints when what it shows changes, whoever changed it: a
-// file watcher's batch, a git status refresh landing off the shell thread, a tab
-// activated in the editor selecting its file here.
-
 namespace microide::workspace {
 
 using namespace detail;
 
 namespace {
 
-// The keys fold through the row-key step the editor's rows use (one multiply a
-// value, eight bytes of text a multiply): the tree's visible rows are keyed on
-// every prepared frame.
-
 std::uint64_t ButtonKey(const TreeSidebarButtonPaint& button, std::uint64_t style) {
   return MixRowKey(MixRowKeyText(MixRowKeyRect(style, button.rect), button.label),
                    (button.enabled ? 1u : 0u) | (button.hovered ? 2u : 0u));
 }
 
-// Everything PaintTreeRow reads of a row.
 std::uint64_t RowKey(const TreeSidebarRowPaint& row, std::uint64_t style) {
   std::uint64_t key = MixRowKeyText(MixRowKeyRect(style, row.rect), row.label);
   key = MixRowKey(key, RowKeyFloatBits(row.indent));
@@ -53,9 +42,6 @@ std::uint64_t ScrollbarKey(const PanelScrollbarPaint& bar, std::uint64_t style) 
 void PaintTreeRow(SDL_Renderer* renderer, const TreeSidebarRowPaint& row, const render::Theme& theme,
                   const render::TextRenderer& tr) {
   const SDL_FRect& rect = row.rect;
-  // Hover lifts only the row background (the accent strip and the brighter text
-  // stay reserved for the actual selection), so the tree reads as "this is what
-  // I'd click" without masquerading as selected.
   const bool emphasized = row.selected || row.hovered;
   const SDL_Color background = emphasized ? theme.row_highlight : theme.surface_background;
   DrawSelectableRowBackground(renderer, theme, rect, theme.surface_background, emphasized, row.selected);
@@ -65,25 +51,17 @@ void PaintTreeRow(SDL_Renderer* renderer, const TreeSidebarRowPaint& row, const 
   const float label_x = tree_x + kWorkspaceSidebarTreeChevronSlotWidth + 4.0f;
   const char git_marker = GitMarker(row.git_status);
   const bool has_git_marker = git_marker != ' ';
-  // A single-char view into the local `git_marker` storage; allocation-free per row.
   const std::string_view git_marker_text = has_git_marker ? std::string_view(&git_marker, 1) : std::string_view{};
   const float marker_width = has_git_marker ? tr.MeasureWidth(git_marker_text) : 0.0f;
-  // The file tree keeps the status marker at the RIGHT edge: a leading badge would
-  // shove directory names out of alignment with their chevrons, which reads badly.
-  // Source Control (a flat per-file list) uses the leading badge instead.
   const float marker_x = right - marker_width - 8.0f;
   const float label_width =
       has_git_marker ? std::max(0.0f, marker_x - label_x - 8.0f) : std::max(0.0f, right - label_x - 8.0f);
 
-  // Nothing of a row indented past its own right edge is drawn: past it, the
-  // row's repaint never reaches.
   if (label_x <= right) {
     if (row.is_directory) {
       DrawChevron(renderer, tree_x, rect.y + rect.h * 0.5f, row.expanded,
                   row.selected ? theme.text_primary : theme.text_muted);
     } else if (row.has_icon) {
-      // Files have no chevron, so the chevron slot holds the type icon. Selected
-      // rows tint it to the foreground so it stays legible on the highlight.
       editor::GutterIconRegistry::Draw(renderer, row.icon_shape, row.selected ? theme.text_primary : row.icon_color,
                                        tree_x, rect.y, kWorkspaceSidebarTreeChevronSlotWidth, rect.h);
     }
@@ -101,7 +79,7 @@ void PaintTreeRow(SDL_Renderer* renderer, const TreeSidebarRowPaint& row, const 
   }
 }
 
-}  // namespace
+}
 
 void PrepareTreeSidebarFrame(PreparedFrameState& frame, const TreeSidebarInputs& inputs) {
   PreparedFrameState::TreeSidebarPaint& tree = frame.tree_sidebar;
@@ -109,8 +87,6 @@ void PrepareTreeSidebarFrame(PreparedFrameState& frame, const TreeSidebarInputs&
   tree.buttons = {};
   tree.rows.clear();
   tree.scrollbar.reset();
-  // Every frame, shown or not: a tree that is not shown has no units, so the
-  // frame that hides it repaints where its rows were.
   std::vector<DerivedDamage::Unit>& units = frame.derived_damage.Begin(DerivedSurface::SidebarTree);
   if (inputs.visible) {
     tree.visible = true;
@@ -159,10 +135,6 @@ void PrepareTreeSidebarFrame(PreparedFrameState& frame, const TreeSidebarInputs&
           PanelScrollbarPaint{.track = geometry->track, .thumb = geometry->thumb, .active = inputs.scrollbar_active};
     }
 
-    // What the tree draws with besides each row's own values: the sidebar's fills
-    // (its background, the highlight of a hovered or selected row, the selection's
-    // accent strip), the text inks, the buttons' and the scrollbar's, and the text
-    // metrics. A row's git marker folds its own resolved colour.
     const std::uint64_t style = PaintFingerprint()
                                     .Add(theme.surface_background)
                                     .Add(theme.surface_raised)
@@ -183,8 +155,6 @@ void PrepareTreeSidebarFrame(PreparedFrameState& frame, const TreeSidebarInputs&
     for (const TreeSidebarButtonPaint& painted : tree.buttons) {
       unit(painted.rect, ButtonKey(painted, style));
     }
-    // The scrollbar before the rows: it is one unit whether the tree has three
-    // rows or three hundred, so it keeps its place in the table as rows come and go.
     unit(tree.scrollbar.has_value() ? tree.scrollbar->track : SDL_FRect{},
          tree.scrollbar.has_value() ? ScrollbarKey(*tree.scrollbar, style) : 0);
     for (const TreeSidebarRowPaint& row : tree.rows) {
@@ -218,4 +188,4 @@ void PaintTreeSidebar(SDL_Renderer* renderer, const PreparedFrameState& frame, c
   }
 }
 
-}  // namespace microide::workspace
+}

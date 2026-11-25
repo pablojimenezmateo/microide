@@ -12,81 +12,33 @@
 
 namespace microide::project::remote {
 
-// Confined reads, writes and tree operations under a root, with a three-valued
-// precondition (dev-docs/design/remote-projects.md § 6.3). Both ends use them: the
-// server applies a client's writes to the host's tree, and the client materializes
-// pulls into its mirror — where a pull written under `expect = base` cannot
-// overwrite a local edit, by construction. Every path is relative to the workspace root and is resolved one
-// component at a time with O_NOFOLLOW, so no parent component — a symlink an agent
-// planted, or a path with `..` — can lead a write out of the root.
-//
-// Stateless and blocking: callers run them on a worker, never a UI or I/O thread.
-
 struct FileOpResult {
   enum class Status {
     Ok,
-    Conflict,  // the precondition did not hold; `current` says what is there
-    Error,     // `error` says why (unsafe path, I/O failure, a link in the way)
+    Conflict,
+    Error,
   };
   Status status = Status::Error;
-  // Ok: the hash of what the path now holds (a write) or held (a read).
-  // Conflict: what is there now, or nullopt when nothing is.
   std::optional<util::ContentHash> current;
   std::string error;
-  // Error only: the path itself refuses the operation as it stands on the host --
-  // not a regular file there, permission, a read-only filesystem, a parent that is
-  // not a directory. Retrying is pointless until something there changes; a disk
-  // that is full, or an I/O error, is not this.
   bool blocked = false;
   bool ok() const { return status == Status::Ok; }
 };
 
-// Read `path` in chunks, handing each to `sink`, and report the hash of exactly
-// the bytes handed over. The final component may be a link (an out-of-root link is
-// shipped as the file it names); parents may not. Over `max_bytes` is an error
-// before any byte is read.
 FileOpResult ReadTreeFile(const std::filesystem::path& root, std::string_view path,
                                std::uint64_t max_bytes,
                                const std::function<void(std::string_view chunk)>& sink);
 
-// Read an ABSOLUTE path anywhere the user can read, following links (file/read: a
-// system header, a file in an ignored directory). Regular files only; over
-// `max_bytes` is an error; a missing file reads as a conflict with nothing there.
 FileOpResult ReadHostFile(std::string_view path, std::uint64_t max_bytes,
                           const std::function<void(std::string_view chunk)>& sink);
 
-// Whether a tree write is flushed before it is renamed into place. Synced is the
-// default and what every user save and host write gets. Deferred is for the
-// mirror's PULLS only: the bytes are the host's and can be fetched again, and the
-// engine calls SyncTreeFilesystem once before it persists any state that records
-// them -- one flush per batch instead of one per file, which was a third of a
-// 4,521-file first sync (TD-2026-10-14-340).
 enum class Durability { Synced, Deferred };
 
-// Flush every pending write on the filesystem holding `root` (syncfs). False when
-// it could not; the caller then must not persist state that relies on the writes.
 bool SyncTreeFilesystem(const std::filesystem::path& root);
 
-// The temporary a tree write makes beside its target ("." + name +
-// ".microide-<pid>-<n>.tmp"), and the pid of the process that made it. Never
-// content: the server's manifest skips these names, so a write in progress -- or
-// one a SIGKILL interrupted -- is not listed and pulled into every mirror as a
-// file nobody made.
 std::optional<std::int64_t> TreeWriteTemporaryOwner(std::string_view name);
-// A temporary (above) whose writer is no longer running on this machine: what a
-// crash mid-write left, safe to remove.
 bool TreeWriteTemporaryIsAbandoned(std::string_view name);
 
-// Replace `path`'s content with `content` if `expect` holds: a temp file beside it,
-// fsynced (unless `durability` is Deferred), then renamed into place (RENAME_NOREPLACE for Absent). Missing parent
-// directories are created. `mode` (permission bits) applies when given; otherwise an
-// existing file keeps its mode and a new one gets 0644. A symlink at `path` is
-// refused rather than replaced.
-// `mtime_ns`, when given, is the written file's modification time (a pull keeps the
-// host's, which is what lets the mirror's recorded stat vouch for it at once).
-// `staging`, when given, is a directory on the tree's filesystem the temp file is
-// made in instead (the mirror's meta/staging): a crash mid-write then leaves
-// nothing in the tree.
 FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view path,
                                 std::string_view content, const Precondition& expect,
                                 std::optional<std::uint32_t> mode,
@@ -94,9 +46,6 @@ FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view p
                                 Durability durability = Durability::Synced,
                                 const std::filesystem::path& staging = {});
 
-// WriteTreeFile with the bytes copied from `source` (a fetched object staged
-// outside the tree, already verified to hash to `hash`) — for files too large to
-// hold in memory. Same precondition, temp file, fsync and rename.
 FileOpResult CopyFileIntoTree(const std::filesystem::path& root, std::string_view path,
                               const std::filesystem::path& source, const util::ContentHash& hash,
                               const Precondition& expect, std::optional<std::uint32_t> mode,
@@ -104,27 +53,18 @@ FileOpResult CopyFileIntoTree(const std::filesystem::path& root, std::string_vie
                               Durability durability = Durability::Synced,
                               const std::filesystem::path& staging = {});
 
-// Make `path` a symlink to `target`. Replaces only a link (never a file or a
-// directory: those are content); creates missing parents.
 FileOpResult MakeTreeSymlink(const std::filesystem::path& root, std::string_view path,
                              std::string_view target);
 
 FileOpResult MakeTreeDirectory(const std::filesystem::path& root, std::string_view path);
-// `expect` applies to `from`; `to` must not exist (RENAME_NOREPLACE).
 FileOpResult RenameTreeEntry(const std::filesystem::path& root, std::string_view from,
                                   std::string_view to, const Precondition& expect);
-// A file (under `expect`) or an empty directory (`expect` must be Any).
 FileOpResult DeleteTreeEntry(const std::filesystem::path& root, std::string_view path,
                                   const Precondition& expect);
-// DeleteTreeEntry that can be undone: the entry is renamed to `aside` (an absolute
-// path outside the tree, on its filesystem, that must not exist) rather than
-// unlinked. `*moved` says whether there was anything to move.
 FileOpResult SetAsideTreeEntry(const std::filesystem::path& root, std::string_view path,
                                const Precondition& expect, const std::filesystem::path& aside,
                                bool* moved);
-// Put what SetAsideTreeEntry moved to `aside` back at `path`, which must not exist
-// (RENAME_NOREPLACE); missing parents are created.
 FileOpResult RestoreTreeEntry(const std::filesystem::path& root, std::string_view path,
                               const std::filesystem::path& aside);
 
-}  // namespace microide::project::remote
+}

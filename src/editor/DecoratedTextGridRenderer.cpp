@@ -19,9 +19,6 @@ bool SameColor(SDL_Color a, SDL_Color b) noexcept {
   return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
 }
 
-// Effective plugin foreground for a source byte column, if any text-style
-// decoration recolors it. Overrides for a line are few; a linear scan keeps the
-// hot path branch-light and allocation-free.
 std::optional<SDL_Color> OverrideForegroundAt(std::span<const TextStyleDecoration> overrides,
                                               std::size_t source_byte_column) {
   for (const TextStyleDecoration& ts : overrides) {
@@ -38,7 +35,7 @@ std::optional<SDL_Color> OverrideForegroundAt(std::span<const TextStyleDecoratio
   return std::nullopt;
 }
 
-}  // namespace
+}
 
 VisibleTextWindow SliceVisibleColumns(std::string_view text,
                                       std::size_t start_column,
@@ -106,9 +103,6 @@ void AppendVisibleSyntaxTextRuns(DecoratedTextRow& row,
     }
     return SyntaxTokenKind::Plain;
   };
-  // Effective color = plugin foreground override when present, else the syntax
-  // token color. Segmenting by effective color folds recolor and highlighting
-  // into the existing run-coalescing pass with no extra draw calls.
   const auto effective_color_at = [&](std::size_t byte_offset) -> SDL_Color {
     if (!foreground_overrides.empty()) {
       if (const auto color = OverrideForegroundAt(foreground_overrides,
@@ -121,9 +115,6 @@ void AppendVisibleSyntaxTextRuns(DecoratedTextRow& row,
 
   float segment_x = x;
   std::size_t segment_start = 0;
-  // Carry the color of the boundary that ends one run into the next run's start,
-  // so the (linear-scan) effective_color_at is evaluated once per byte offset
-  // instead of twice at every color-run boundary.
   SDL_Color color = effective_color_at(0);
   while (segment_start < window.text.size()) {
     std::size_t segment_end = segment_start;
@@ -191,16 +182,8 @@ void AppendLayoutSyntaxTextRuns(DecoratedTextRow& row,
   const bool has_inlay = !inlay.empty();
 
   std::size_t segment_start = 0;
-  // Carry the color across a run boundary that ended on a color change, so
-  // effective_color_at is evaluated once per cell instead of twice at each
-  // boundary. A boundary forced by `split_limit` (an inlay anchor, not a color
-  // change) leaves `carried` false and the next run recomputes its start color.
   SDL_Color color = effective_color_at(0);
   while (segment_start < visible_cells) {
-    // A mid-line inlay hint inserts phantom cells before its anchor, so a run must
-    // never span an anchor (the cells after it shift further right). Cap the run at
-    // the next anchor strictly after segment_start; the next run picks up there
-    // with the larger displacement.
     const std::size_t split_limit =
         has_inlay ? inlay.NextAnchorAtOrAfter(segment_start + 1)
                   : std::numeric_limits<std::size_t>::max();
@@ -248,14 +231,10 @@ void AppendInlayHintRuns(DecoratedTextRow& row,
                          std::span<const InlayCellSpan> spans,
                          SDL_Color fallback_color) {
   (void)text_renderer;
-  // Walk the sorted spans left-to-right, tracking the running display column so
-  // stacked hints at the same anchor lay out consecutively. Each hint occupies
-  // display cells [disp_col, disp_col + cell_width) — the phantom region reserved
-  // before its anchor's real glyph.
-  std::size_t real_col = 0;   // row-local visual column
-  std::size_t disp_col = 0;   // display column of the real glyph at real_col
+  std::size_t real_col = 0;
+  std::size_t disp_col = 0;
   for (const InlayCellSpan& span : spans) {
-    disp_col += span.anchor_visual_column - real_col;  // 1:1 gap up to the anchor
+    disp_col += span.anchor_visual_column - real_col;
     real_col = span.anchor_visual_column;
     if (span.source_index >= inline_texts.size()) {
       disp_col += span.cell_width;
@@ -272,17 +251,12 @@ void AppendInlayHintRuns(DecoratedTextRow& row,
     }
     const SDL_Color fg = inl.color.a != 0 ? inl.color : fallback_color;
     row.runs.push_back(DecoratedTextRun{.x = hint_left, .y = y, .color = fg, .text = inl.text});
-    disp_col += span.cell_width;  // consume the phantom cells
+    disp_col += span.cell_width;
   }
 }
 
 namespace {
 
-// Flush a contiguous run of same-color fill rects in a single
-// SDL_RenderFillRects call. SDL3's internal batcher already coalesces
-// fills, but it does so per (renderer, draw color) state — every
-// SDL_SetRenderDrawColor flips the active state, which causes the batcher
-// to flush. Grouping by color before drawing minimizes those flushes.
 void FlushFillRun(SDL_Renderer* renderer,
                   SDL_Color color,
                   std::vector<SDL_FRect>& batch) {
@@ -294,11 +268,6 @@ void FlushFillRun(SDL_Renderer* renderer,
   batch.clear();
 }
 
-// Paint a list of items as color-batched fills: consecutive items sharing a
-// color coalesce into one SDL_RenderFillRects call (see FlushFillRun). `project`
-// maps each item to its (rect, color); items with a non-positive rect are
-// skipped. Order is preserved so earlier items draw under later ones when colors
-// differ. Reuses `batch` (caller's persistent scratch) — allocation-free.
 template <class Item, class Project>
 void RenderColorBatchedFills(SDL_Renderer* renderer,
                              std::vector<SDL_FRect>& batch,
@@ -322,7 +291,7 @@ void RenderColorBatchedFills(SDL_Renderer* renderer,
   FlushFillRun(renderer, active_color, batch);
 }
 
-}  // namespace
+}
 
 void DecoratedTextGridRenderer::RenderRow(SDL_Renderer* renderer,
                                           const render::TextRenderer& text_renderer,
@@ -331,10 +300,6 @@ void DecoratedTextGridRenderer::RenderRow(SDL_Renderer* renderer,
     return;
   }
 
-  // Coalesce contiguous fills that share a color into one SDL_RenderFillRects
-  // call. The fill_batch_ scratch keeps the rectangles flat for SDL3 to
-  // consume. Order is preserved relative to the input so painters layered
-  // earlier still draw under painters layered later when colors differ.
   std::vector<SDL_FRect>& batch = fill_batch_scratch_;
   RenderColorBatchedFills<DecoratedTextFill>(
       renderer, batch, row.fills,
@@ -342,20 +307,10 @@ void DecoratedTextGridRenderer::RenderRow(SDL_Renderer* renderer,
         return std::pair<SDL_FRect, SDL_Color>{fill.rect, fill.color};
       });
 
-  // Hand the row's runs straight to DrawRuns (DecoratedTextRun *is* render::TextRun,
-  // so there is no conversion). On the GPU atlas backend this is one
-  // SDL_RenderGeometry submission for the whole row (per-vertex colour), avoiding
-  // per-run composite uploads on cache-thrashing scroll and per-run batcher-state
-  // flapping against the fills above / underlines below. On other backends it is
-  // exactly the prior per-run DrawString loop (DrawRuns skips empty runs).
   if (!row.runs.empty()) {
     text_renderer.DrawRuns(renderer, row.runs.data(), row.runs.size());
   }
 
-  // Underlines are dimmed copies of the diagnostic palette. Their dim_alpha
-  // depends only on the source color's alpha channel, so all underlines that
-  // share a source color end up with the same final color and can also be
-  // batched.
   RenderColorBatchedFills<DecoratedUnderline>(
       renderer, batch, row.underlines,
       [](const DecoratedUnderline& underline) {
@@ -367,4 +322,4 @@ void DecoratedTextGridRenderer::RenderRow(SDL_Renderer* renderer,
       });
 }
 
-}  // namespace microide::editor
+}

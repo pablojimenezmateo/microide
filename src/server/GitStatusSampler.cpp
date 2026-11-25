@@ -17,25 +17,16 @@
 namespace microide::server {
 namespace {
 
-// A file the fingerprint compares changes by being written in place, created, or
-// renamed over (git's lockfile protocol: `HEAD.lock` -> `HEAD`); its directory
-// going away ends the watch (IN_IGNORED follows).
 constexpr std::uint32_t kWatchMask = IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO |
                                      IN_CLOSE_WRITE | IN_DELETE_SELF | IN_MOVE_SELF | IN_ONLYDIR;
-// A commit writes the index, COMMIT_EDITMSG and the ref within milliseconds: one
-// sample once the burst goes quiet, not one per file.
 constexpr int kSettleMs = 20;
 constexpr int kMaxSettleMs = 250;
 
-// The watches the thread holds: wd -> directory, and which one is the project root
-// (whose entries matter only when the entry is `.git`).
 struct Watches {
   int inotify = -1;
   std::map<int, std::filesystem::path> by_wd;
   int root_wd = -1;
 
-  // True when it watches a directory it did not before: what happened in it
-  // before the watch existed produced no event, so the caller samples again.
   bool Update(const std::vector<std::filesystem::path>& wanted) {
     if (inotify < 0) {
       return false;
@@ -51,29 +42,25 @@ struct Watches {
     root_wd = -1;
     bool added = false;
     for (std::size_t i = 0; i < wanted.size(); ++i) {
-      // The same wd again for a directory already watched. One that does not exist
-      // (a ref directory before its first branch) is left to the next sample.
       const int wd = ::inotify_add_watch(inotify, wanted[i].c_str(), kWatchMask);
       if (wd < 0) {
         continue;
       }
       added = by_wd.insert_or_assign(wd, wanted[i]).second || added;
       if (i == 0) {
-        root_wd = wd;  // WatchedDirectories lists the root first
+        root_wd = wd;
       }
     }
     return added;
   }
 
-  // Reads every queued event. True when one of them can have changed what a sample
-  // compares.
   bool Drain() {
     bool relevant = false;
     alignas(inotify_event) char buffer[4096];
     for (;;) {
       const ssize_t length = ::read(inotify, buffer, sizeof(buffer));
       if (length <= 0) {
-        return relevant;  // EAGAIN: drained
+        return relevant;
       }
       for (ssize_t at = 0; at < length;) {
         const auto* event = reinterpret_cast<const inotify_event*>(buffer + at);
@@ -89,7 +76,6 @@ struct Watches {
           relevant = true;
           continue;
         }
-        // In the root, only `.git` itself appearing, going or being replaced.
         const std::string_view name =
             event->len > 0 ? std::string_view(event->name) : std::string_view();
         relevant = relevant || name == ".git";
@@ -98,8 +84,6 @@ struct Watches {
   }
 };
 
-// Waits on the stop pipe and, when it is open, the inotify descriptor. Returns the
-// poll result; `stop_ready`/`events_ready` say which fired.
 int WaitFor(int stop_fd, int inotify, int timeout_ms, bool* stop_ready, bool* events_ready) {
   pollfd fds[2] = {{.fd = stop_fd, .events = POLLIN, .revents = 0},
                    {.fd = inotify, .events = POLLIN, .revents = 0}};
@@ -109,13 +93,13 @@ int WaitFor(int stop_fd, int inotify, int timeout_ms, bool* stop_ready, bool* ev
   return ready;
 }
 
-}  // namespace
+}
 
 GitStatusSampler::GitStatusSampler(std::filesystem::path root,
                                    std::chrono::milliseconds safety_interval,
                                    std::function<void()> changed)
     : changed_(std::move(changed)) {
-  tracker_.SetProjectRoot(root);  // reads the baseline
+  tracker_.SetProjectRoot(root);
   stop_.Open();
   thread_ = std::thread([this, safety_interval]() {
     util::NameCurrentThread("srv-git");
@@ -141,12 +125,6 @@ void GitStatusSampler::Run(std::chrono::milliseconds safety_interval) {
   const util::UniqueFd inotify(::inotify_init1(IN_CLOEXEC | IN_NONBLOCK));
   Watches watches{.inotify = inotify.Get()};
   watches.Update(tracker_.WatchedDirectories());
-  // The baseline was read in the constructor, on the caller's thread, and these
-  // watches only exist now: what changed in between -- `git init` right after the
-  // sampler started -- made no event, and nothing else would sample before the
-  // safety interval (an hour, on a server). Sample once over the armed watches,
-  // as below for a directory watched late (RemoteServer/
-  // TheGitSamplerSleepsUntilTheRepositoryMoves, 1 in 64 under load).
   Sample();
   for (int round = 0; round < 4 && watches.Update(tracker_.WatchedDirectories()); ++round) {
     Sample();
@@ -165,11 +143,9 @@ void GitStatusSampler::Run(std::chrono::milliseconds safety_interval) {
     if (ready < 0 && errno == EINTR) {
       continue;
     }
-    // The safety interval (or a poll error, which must not spin) samples anyway.
     bool relevant = ready <= 0;
     if (events_ready) {
       relevant = watches.Drain() || relevant;
-      // Let the burst finish, then sample once.
       for (int waited = 0; relevant && waited < kMaxSettleMs; waited += kSettleMs) {
         if (WaitFor(stop_.read_fd(), watches.inotify, kSettleMs, &stop_ready, &events_ready) <= 0 ||
             stop_ready) {
@@ -182,15 +158,10 @@ void GitStatusSampler::Run(std::chrono::milliseconds safety_interval) {
       continue;
     }
     Sample();
-    // A checkout moves the branch ref's directory; `.git` may have appeared. A
-    // directory watched only now may have changed between the sample and the
-    // watch -- `git init` writes HEAD just after making .git -- and that made no
-    // event: sample again until the watch set holds still (bounded: each round
-    // only adds directories that exist).
     for (int round = 0; round < 4 && watches.Update(tracker_.WatchedDirectories()); ++round) {
       Sample();
     }
   }
 }
 
-}  // namespace microide::server
+}

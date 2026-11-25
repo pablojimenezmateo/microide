@@ -17,21 +17,13 @@ namespace microide::project::remote {
 class RemoteConnection;
 class RemoteServerClient;
 
-// The client's end of the workspace half of the protocol (dev-docs/design/
-// remote-projects.md § 6.2-6.4): the tree a connection's hello named as its root.
-// A thin, stateless facade over the host's CURRENT connection (a reconnect
-// replaces the client underneath, as for the launcher); the mirror engine owns
-// what it does with the answers. Every call fails fast with "not connected" while
-// there is no client.
 class RemoteWorkspace {
  public:
-  // Ceiling on decoded rows: the most remote.max_manifest_files can ask a server
-  // for. A server streaming more is broken or hostile, and the connection is failed.
   static constexpr std::size_t kMaxManifestRows = static_cast<std::size_t>(kMaxManifestFilesCeiling);
 
   struct Manifest {
     std::uint64_t id = 0;
-    std::vector<ManifestRow> rows;  // sorted by path, unique (the server's order)
+    std::vector<ManifestRow> rows;
     bool git = false;
   };
   using ManifestDone = std::function<void(std::optional<Manifest> manifest, std::string error)>;
@@ -39,121 +31,65 @@ class RemoteWorkspace {
   explicit RemoteWorkspace(std::shared_ptr<RemoteConnection> connection)
       : connection_(std::move(connection)) {}
 
-  // tree/manifest. `done` runs once on the connection's I/O thread. Returns the
-  // request id (cancellable through the peer), 0 when it could not be sent — then
-  // `done` has already run with the error.
   std::uint64_t FetchManifest(ManifestDone done);
-  // Blocking form, for a worker thread or a test; never the I/O thread.
   std::optional<Manifest> FetchManifestSync(std::string* error,
                                             std::chrono::milliseconds timeout = std::chrono::seconds(120));
 
-  // watch/subscribe: from the next manifest on, every change to the host's content
-  // set arrives through `on_delta` (I/O thread), against what this connection was
-  // last sent. Subscribe BEFORE fetching the manifest. False with *error when the
-  // server refused; *native says whether the host notifies or polls.
   struct WatchDelta {
     std::uint64_t manifest_id = 0;
     std::vector<std::string> deleted;
     std::vector<ManifestRow> rows;
-    // A watch/moved event, not a batch (no rows): the host repository's HEAD
-    // moved -- a checkout or a reset, whose deletes are git's, not a vanished root's.
     bool repository_moved = false;
   };
-  // git/subscribe on the current connection: `changed` runs on its I/O thread
-  // after every pushed git status (RemoteServerClient::SubscribeGitStatus).
   bool SubscribeGitStatus(std::function<void()> changed, std::string* error);
   bool SubscribeWatch(std::function<void(WatchDelta delta)> on_delta, bool* native,
                       std::string* error);
 
-  // object/fetch: the current bytes at each path, and the hash of exactly those
-  // bytes (verified here, not taken on trust). `lane` is Interactive for a file the
-  // user is waiting on, Bulk for backfill.
   struct FetchedObject {
     std::string path;
-    std::optional<util::ContentHash> hash;  // set when the read succeeded
-    bool missing = false;                   // nothing at the path on the host
+    std::optional<util::ContentHash> hash;
+    bool missing = false;
     std::string error;
     std::string content;
-    // FetchObjectToFile: the bytes are in this staging file, verified, not in `content`.
     std::filesystem::path staged_file;
-    // A delta answer (remote-projects.md § 6.2): `content` is a zstd frame against
-    // this base, and `hash` is the host's CLAIM for the result — unverified until
-    // the caller, which holds the base, applies it (util::ZstdApplyDelta).
     std::optional<util::ContentHash> delta_base;
   };
-  // The largest object one fetch may stream (FetchObjectToFile); object/fetch
-  // without a byte limit (and file/read) stops at kMaxBufferedObjectBytes, the most
-  // one answer holds in memory. Both sides read these: the server serves no more,
-  // and the client fails a stream that sends more rather than buffering it.
   static constexpr std::uint64_t kMaxStreamedObjectBytes = 16ull * 1024 * 1024 * 1024;
   static constexpr std::uint64_t kMaxBufferedObjectBytes = 64ull * 1024 * 1024;
   using FetchDone =
       std::function<void(std::optional<std::vector<FetchedObject>> objects, std::string error)>;
-  // `bases[i]`, when set, is the version of paths[i] this side holds: the host may
-  // answer with a delta against it (FetchedObject::delta_base).
   std::uint64_t FetchObjects(std::vector<std::string> paths, Lane lane, FetchDone done,
                              std::uint64_t max_bytes = 0,
                              std::vector<std::optional<util::ContentHash>> bases = {});
-  // object/fetch of ONE path written straight to `staging` (created 0600 or
-  // truncated) and hashed as it arrives: a file too large to hold in memory.
-  // `done` runs once, on the I/O thread, with `staged_file` set when the bytes landed
-  // and match their hash (the staging file is then the caller's to move or delete).
   std::uint64_t FetchObjectToFile(std::string path, std::filesystem::path staging, Lane lane,
                                   std::function<void(FetchedObject object, std::string error)> done);
-  // file/read: one ABSOLUTE host path outside the content set, read-only (a system
-  // header a language server names). `done` gets one FetchedObject, as above.
   std::uint64_t ReadHostFile(std::string host_path, FetchDone done);
   std::optional<std::vector<FetchedObject>> FetchObjectsSync(
       std::vector<std::string> paths, Lane lane, std::string* error,
       std::chrono::milliseconds timeout = std::chrono::seconds(120));
 
-  // file/write and fs/op: compare-and-swap against `expect` (§ 6.3).
   struct WriteResult {
     enum class Status {
-      Ok,        // hash: what the path holds now (file/write)
-      Conflict,  // hash: what is there instead, nullopt when nothing is
-      Error,     // error says why; nothing changed on the host
+      Ok,
+      Conflict,
+      Error,
     };
     Status status = Status::Error;
     std::optional<util::ContentHash> hash;
     std::string error;
-    // The request never got an answer (no connection, or it closed): nothing is
-    // known about the host, and the operation is worth retrying on the next one.
     bool unreachable = false;
-    // Unreachable AFTER the request went out (the link closed, or the wait timed
-    // out, before the answer came): the host may have applied it. False when it was
-    // never sent (no connection).
     bool may_have_applied = false;
-    // Error only: the host says the path itself refuses the write as it stands
-    // (kErrorPathRefused) -- nothing a retry changes until the host does.
     bool blocked = false;
-    // The host's newest manifest id once the write was done (0 from a server that
-    // does not say): a watch row in a manifest at or below it predates the write.
     std::uint64_t manifest_id = 0;
   };
   using WriteDone = std::function<void(WriteResult result)>;
   std::uint64_t WriteFile(std::string path, std::string_view content, const Precondition& expect,
                           std::optional<std::uint32_t> mode, Lane lane, WriteDone done);
-  // file/upload: `content` as `name` in the host's private uploads directory, for
-  // a program there to read. `done` (the connection's thread) gets its absolute
-  // host path, or nullopt and why -- a server without the "upload" capability says
-  // so here, before anything is sent.
   using UploadDone = std::function<void(std::optional<std::string> host_path, std::string error)>;
   void UploadFile(std::string name, std::string_view content, UploadDone done);
-  // state/put and state/get: a small text left with the workspace on the host
-  // for the next client (a session moving between machines). `done` runs on the
-  // peer's thread. Put: "" on success, else why not. Get: the text, nullopt and
-  // "" when the host holds none, nullopt and why when it could not be asked (not
-  // connected, or a server too old to keep one).
   using StatePutDone = std::function<void(std::string error)>;
   using StateGetDone = std::function<void(std::optional<std::string> text, std::string error)>;
   void PutState(std::string key, std::string text, StatePutDone done);
-  // term/edit-done: the tab on the file a host program ran its $EDITOR on
-  // (TerminalHostFrame::edit, `token` of server process `epoch`) closed with
-  // `text` saved; no text leaves the file as it is. `done` (the peer's thread):
-  // true when the program took it, false when it no longer waits (Ctrl+C, or
-  // another server process answers), nullopt when the host could not be asked --
-  // to be sent again once the connection is back, since the program still waits.
   using EditDone = std::function<void(std::optional<bool> delivered)>;
   void FinishTerminalEdit(std::string_view epoch, std::uint64_t token, std::optional<std::string> text,
                           EditDone done);
@@ -170,9 +106,6 @@ class RemoteWorkspace {
 
  private:
   std::shared_ptr<RemoteServerClient> Client() const;
-  // object/fetch and file/read share the streaming and the checking. `object_limit`
-  // is the most bytes any one object may stream: what the request let the server
-  // send. A server that sends more is failed, not buffered.
   std::uint64_t StreamObjects(std::string_view method, util::JsonValue params,
                               std::vector<std::string> names, Lane lane, FetchDone done,
                               std::uint64_t object_limit,
@@ -181,4 +114,4 @@ class RemoteWorkspace {
   std::shared_ptr<RemoteConnection> connection_;
 };
 
-}  // namespace microide::project::remote
+}

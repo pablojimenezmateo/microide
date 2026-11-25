@@ -45,8 +45,6 @@ namespace {
 #endif
 constexpr const char* kTerminalProgramVersion = MICROIDE_VERSION;
 
-// Variables a terminal emulator sets to say what it is. Inherited from the
-// terminal microide was started from, they describe a different terminal.
 bool IsTerminalIdentityEntry(std::string_view entry) {
   static constexpr std::string_view kKeys[] = {
       "TERM=", "COLORTERM=", "TERM_PROGRAM=", "TERM_PROGRAM_VERSION=", "VTE_VERSION=",
@@ -61,7 +59,6 @@ bool IsTerminalIdentityEntry(std::string_view entry) {
   return false;
 }
 
-// Whether `overrides` sets the key of `entry` (`KEY=...`).
 bool OverridesEntry(const std::vector<std::string>& overrides, std::string_view entry) {
   const std::size_t equals = entry.find('=');
   if (equals == std::string_view::npos) {
@@ -89,18 +86,6 @@ class PosixTerminalBackend final : public TerminalBackend {
     winsize window_size{};
     window_size.ws_row = static_cast<unsigned short>(std::min<std::size_t>(request.rows, 65535));
     window_size.ws_col = static_cast<unsigned short>(std::min<std::size_t>(request.columns, 65535));
-    // Both PTY ends are opened close-on-exec ON THE CREATING CALL. Without it, any
-    // unrelated child forked by another thread (Subprocess/AsyncSubprocess on the
-    // background executor) inherits copies of the master and slave: the leaked
-    // slave keeps the master from ever seeing EOF/POLLHUP when the shell exits
-    // (the reader poll() hangs and on_exit never fires), and the master leaks into
-    // every such subprocess, pinning the PTY device open past terminal teardown.
-    // `openpty` has no CLOEXEC flag, so it used to be followed by two fcntl(F_SETFD)
-    // calls -- and a fork on another thread in that window inherited both ends
-    // anyway (the invariant every other descriptor-creating site in the tree
-    // already follows). posix_openpt + open(O_CLOEXEC) close the window. The shell
-    // child re-opens its std fds via dup2(slave_fd, 0/1/2) below, which clears
-    // CLOEXEC on those duplicates, so the shell keeps working.
     int master_fd = -1;
     int slave_fd = -1;
     const auto pty_failure = [&]() {
@@ -127,18 +112,11 @@ class PosixTerminalBackend final : public TerminalBackend {
     if (slave_fd < 0) {
       return pty_failure();
     }
-    // openpty took the initial size as an argument; set it the same way Resize does.
     (void)ioctl(master_fd, TIOCSWINSZ, &window_size);
 
-    // Resolve the launch argv in the PARENT, for the same reason the environment is
-    // built here: everything between fork() and exec() must be async-signal-safe, and
-    // building strings is not.
     const std::string program =
         request.shell.empty() ? DefaultShellPath() : request.shell.front();
     const std::string shell_name = ShellProgramName(program);
-    // How the command attaches to the shell is BuildTerminalArgv's call, not this
-    // function's: it is a decision about the setting's meaning, and keeping it here
-    // is what let the `-i` fix land on the interactive path only.
     std::vector<std::string> argv_storage = BuildTerminalArgv(request.shell, request.command);
     std::vector<char*> argv_pointers;
     argv_pointers.reserve(argv_storage.size() + 1);
@@ -147,13 +125,6 @@ class PosixTerminalBackend final : public TerminalBackend {
     }
     argv_pointers.push_back(nullptr);
 
-    // Build the child environment in the PARENT: setenv() after fork() is not
-    // async-signal-safe (it allocates and takes the environ lock), so a fork racing
-    // another thread — this app always has file-watcher and background-executor
-    // threads live — could deadlock the child before exec, leaving the terminal
-    // silently dead. The child only assigns `environ` to this array (a single
-    // pointer store). `env_storage`/`env_pointers` live on this stack frame across
-    // the fork so the child's copy stays valid through exec. Mirrors Subprocess.cpp.
     std::vector<std::string> env_storage;
     for (char** entry = environ; entry != nullptr && *entry != nullptr; ++entry) {
       const std::string_view text(*entry);
@@ -163,18 +134,9 @@ class PosixTerminalBackend final : public TerminalBackend {
       env_storage.emplace_back(*entry);
     }
     env_storage.emplace_back("TERM=xterm-256color");
-    // Advertise 24-bit color so applications enable truecolor output.
     env_storage.emplace_back("COLORTERM=truecolor");
-    // Say which terminal this is, as every emulator does -- and not the one the
-    // editor was launched from: a VTE_VERSION or TERM_PROGRAM=vscode inherited
-    // from the launching terminal claimed features of THAT terminal.
     env_storage.emplace_back("TERM_PROGRAM=microide");
     env_storage.emplace_back(std::string("TERM_PROGRAM_VERSION=") + kTerminalProgramVersion);
-    // This terminal renders and opens OSC 8 hyperlinks. Tools built on the
-    // supports-hyperlinks convention (Claude Code, gh, npm's ink apps) only emit
-    // them for terminals on their list; FORCE_HYPERLINK is how a terminal not on
-    // it says so. Without links, a URL such a tool hard-wraps into rows of its own
-    // layout cannot be clicked as one.
     env_storage.emplace_back("FORCE_HYPERLINK=1");
     for (const std::string& entry : request.environment) {
       env_storage.push_back(entry);
@@ -210,43 +172,23 @@ class PosixTerminalBackend final : public TerminalBackend {
         close(slave_fd);
       }
 
-      // Only chdir when a directory was requested; an empty path would make chdir
-      // fail and _exit(127), silently killing the shell (matches Subprocess.cpp).
       if (!request.working_directory.empty() &&
           chdir(request.working_directory.c_str()) != 0) {
         _exit(127);
       }
-      // Async-signal-safe pointer store instead of setenv(); the array was built in
-      // the parent above.
       environ = env_pointers.data();
       RestoreDefaultSignalsInChild();
       RestoreInheritedOpenFileLimitInChild();
-      // execvp, not execl: a PATH search is what makes `terminal.shell = "bash"`
-      // (or `"ssh"`) work at all, and the argv already carries whatever the user
-      // wrote. Both the program and the argv strings were built in the parent.
       execvp(program.c_str(), argv_pointers.data());
       _exit(127);
     }
 
     close(slave_fd);
 
-    // Make the master non-blocking so Write() never parks the calling (UI or
-    // reader) thread inside write(): a child that stops draining its stdin (a
-    // pager paused on a huge paste, a frozen program) would otherwise fill the
-    // PTY input buffer and block whoever writes to it — historically the shell
-    // thread on paste/keystroke, freezing the whole app. Reads stay gated by
-    // poll(POLLIN) so a non-blocking read only yields the already-ready bytes.
     util::SetNonBlocking(master_fd);
 
-    // Self-pipe used to wake the reader's poll() on shutdown (and now to nudge
-    // it to drain freshly-buffered output) without closing master_fd out from
-    // under it (closing an fd another thread is polling is a data race and risks
-    // fd-number reuse). O_NONBLOCK on both ends so a wake never blocks the
-    // producer and the reader can drain all pending wake bytes without parking.
-    // CLOEXEC both wake-pipe ends: they must not leak into subprocesses forked
-    // by other threads while the terminal is live (same hazard as the PTY fds).
     int wake_pipe[2] = {-1, -1};
-    if (!util::MakeCloexecPipe(wake_pipe, /*nonblocking=*/true)) {
+    if (!util::MakeCloexecPipe(wake_pipe, true)) {
       close(master_fd);
       RequestTerminalChildShutdown(child_pid);
       return TerminalStartResult{
@@ -267,7 +209,7 @@ class PosixTerminalBackend final : public TerminalBackend {
     stop_requested_ = false;
     reader_thread_ =
         std::thread(&PosixTerminalBackend::ReaderMain, this, master_fd, wake_pipe[0], child_pid);
-    TraceTerminalLife("start", static_cast<int>(child_pid), /*with_stack=*/true);
+    TraceTerminalLife("start", static_cast<int>(child_pid), true);
 
     return TerminalStartResult{
         .started = true,
@@ -286,12 +228,9 @@ class PosixTerminalBackend final : public TerminalBackend {
     stop_requested_.store(true, std::memory_order_release);
     child_pid_ = -1;
     if (child_pid > 0) {
-      TraceTerminalLife("stop", child_pid, /*with_stack=*/false);
+      TraceTerminalLife("stop", child_pid, false);
     }
 
-    // Wake the reader's poll() via the self-pipe, then reap the child, then
-    // join. Only once the reader has fully stopped touching master_fd is it
-    // safe to close it.
     if (wake_write_fd >= 0) {
       const char byte = 1;
       ssize_t result = 0;
@@ -317,8 +256,6 @@ class PosixTerminalBackend final : public TerminalBackend {
     wake_read_fd_ = -1;
     wake_write_fd_.store(-1, std::memory_order_release);
 
-    // The reader has joined and the master is closed, so no thread can touch the
-    // write buffer anymore; drop any input the stopped child never drained.
     {
       std::lock_guard<std::mutex> lock(write_mutex_);
       pending_write_.clear();
@@ -346,14 +283,6 @@ class PosixTerminalBackend final : public TerminalBackend {
       return;
     }
 
-    // Never write to the PTY here: buffer the bytes and let the reader thread
-    // (the sole writer, so output bytes never interleave) drain them when the
-    // master reports POLLOUT. This keeps every caller — the UI thread on
-    // keystroke/paste, the reader thread on a query reply — off the blocking
-    // write() path entirely. Bound the buffer so a permanently-stuck child can
-    // not grow it without limit; align the cap with the session paste cap so a
-    // legitimate large paste to a draining child is never truncated (only a
-    // child that refuses to read past 64 MiB drops the tail).
     {
       std::lock_guard<std::mutex> lock(write_mutex_);
       const std::size_t live = pending_write_.size() - pending_write_offset_;
@@ -396,8 +325,6 @@ class PosixTerminalBackend final : public TerminalBackend {
                  .revents = 0},
           pollfd{.fd = wake_fd, .events = POLLIN, .revents = 0},
       };
-      // No timeout: the wake pipe interrupts the poll on shutdown (and whenever
-      // a producer buffers output), so the reader never busy-polls while idle.
       const int ready = poll(pfds.data(), 2, -1);
       if (ready < 0) {
         if (errno == EINTR) {
@@ -408,10 +335,6 @@ class PosixTerminalBackend final : public TerminalBackend {
       if (ready == 0) {
         continue;
       }
-      // Wake pipe readable: drain every pending wake byte (the pipe is
-      // non-blocking, so the drain loop ends on EAGAIN), then re-check for
-      // shutdown. A wake means either Stop() (stop_requested_ set) or a
-      // producer appended output to drain via POLLOUT below.
       if ((pfds[1].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
         std::array<char, 256> drain{};
         while (read(wake_fd, drain.data(), drain.size()) > 0) {
@@ -423,7 +346,6 @@ class PosixTerminalBackend final : public TerminalBackend {
       if ((pfds[0].revents & (POLLERR | POLLNVAL)) != 0) {
         break;
       }
-      // Flush buffered input to the child while the master accepts writes.
       if ((pfds[0].revents & POLLOUT) != 0) {
         DrainPendingWrite(master_fd);
       }
@@ -431,8 +353,6 @@ class PosixTerminalBackend final : public TerminalBackend {
         continue;
       }
       const bool hangup = (pfds[0].revents & POLLHUP) != 0;
-      // Set before the read takes the bytes out of the pty's count and cleared
-      // once they are delivered, so HasUnreadOutput sees them throughout.
       delivering_.store(true, std::memory_order_release);
       const ssize_t count = read(master_fd, buffer.data(), buffer.size());
       if (count > 0 && callbacks_.on_output) {
@@ -446,9 +366,6 @@ class PosixTerminalBackend final : public TerminalBackend {
         continue;
       }
       if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-        // Non-blocking master with nothing ready: a spurious POLLIN, or a
-        // hangup whose buffered data is already drained. Break on hangup so we
-        // do not spin re-polling a POLLHUP that never yields more bytes.
         if (hangup) {
           break;
         }
@@ -457,28 +374,16 @@ class PosixTerminalBackend final : public TerminalBackend {
       break;
     }
 
-    // Reap only on a natural exit. When Stop() drives shutdown it sets
-    // stop_requested_ (release) before waking us and then reaps the child itself
-    // via RequestTerminalChildShutdown; reaping here too would run a second reaper
-    // on the same pid concurrently. On the wake-pipe path an acquire load observes
-    // Stop()'s store, but the natural-EOF path is unblocked by master_fd (POLLHUP),
-    // NOT the wake pipe, so there is no synchronization edge with a concurrent
-    // Stop(). A *blocking* waitpid here would then race Stop()'s reap and, if the
-    // pid is recycled by another of the app's forks in between, block on that
-    // unrelated child until it exits — hanging Stop()'s join. Use a bounded
-    // non-blocking reap instead: it collects the (already-dead) child in the
-    // common case and can never latch onto a reused pid.
     if (!stop_requested_.load(std::memory_order_acquire)) {
       int status = 0;
       for (int attempt = 0; attempt < 100; ++attempt) {
         const pid_t reaped = waitpid(child_pid, &status, WNOHANG);
         if (reaped == child_pid || (reaped < 0 && errno != EINTR)) {
-          break;  // reaped, or already gone (ECHILD) — either way done
+          break;
         }
         if (stop_requested_.load(std::memory_order_acquire)) {
-          break;  // Stop() has taken ownership of reaping
+          break;
         }
-        // reaped == 0: exit not yet visible; pause briefly (1ms) and retry.
         struct pollfd none {};
         poll(&none, 0, 1);
       }
@@ -490,9 +395,6 @@ class PosixTerminalBackend final : public TerminalBackend {
     }
   }
 
-  // Non-blocking, best-effort nudge so a producer thread's Write() wakes the
-  // reader's poll() to drain the freshly-buffered output. A full wake pipe
-  // (EAGAIN) already has a byte pending, so the reader will still wake.
   void WakeReader() {
     const int fd = wake_write_fd_.load(std::memory_order_acquire);
     if (fd < 0) {
@@ -505,10 +407,6 @@ class PosixTerminalBackend final : public TerminalBackend {
     } while (result < 0 && errno == EINTR);
   }
 
-  // Runs only on the reader thread (the sole writer to master_fd, so buffered
-  // input bytes never interleave with each other). The master is non-blocking,
-  // so each write() returns immediately: a partial write leaves the remainder
-  // for the next POLLOUT.
   void DrainPendingWrite(int master_fd) {
     std::lock_guard<std::mutex> lock(write_mutex_);
     while (pending_write_offset_ < pending_write_.size()) {
@@ -523,10 +421,8 @@ class PosixTerminalBackend final : public TerminalBackend {
         continue;
       }
       if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-        break;  // master full; the next POLLOUT resumes the drain
+        break;
       }
-      // Hard write error (child gone / EIO): drop the buffer so the reader can
-      // not spin re-arming POLLOUT on a dead master.
       pending_write_.clear();
       pending_write_offset_ = 0;
       return;
@@ -535,16 +431,11 @@ class PosixTerminalBackend final : public TerminalBackend {
       pending_write_.clear();
       pending_write_offset_ = 0;
     } else if (pending_write_offset_ >= (std::size_t{1} << 16)) {
-      // Reclaim the consumed prefix once it grows past 64 KiB so a slow-draining
-      // child does not keep an ever-growing already-sent head in memory.
       pending_write_.erase(0, pending_write_offset_);
       pending_write_offset_ = 0;
     }
   }
 
-  // Aligned with the session-level paste cap so a legitimate large paste to a
-  // draining child is buffered in full; only a child that refuses to read this
-  // much drops the tail.
   static constexpr std::size_t kMaxPendingWriteBytes = 64u << 20;
 
   TerminalBackendCallbacks callbacks_;
@@ -555,16 +446,16 @@ class PosixTerminalBackend final : public TerminalBackend {
   int child_pid_ = -1;
   std::atomic<bool> running_{false};
   std::atomic<bool> stop_requested_{false};
-  std::atomic<bool> delivering_{false};  // the reader is inside on_output
+  std::atomic<bool> delivering_{false};
   std::mutex write_mutex_;
   std::string pending_write_;
   std::size_t pending_write_offset_ = 0;
 };
 
-}  // namespace
+}
 
 std::unique_ptr<TerminalBackend> CreateTerminalBackend() {
   return std::make_unique<PosixTerminalBackend>();
 }
 
-}  // namespace microide::platform
+}

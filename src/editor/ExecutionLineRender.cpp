@@ -9,10 +9,8 @@
 
 namespace microide::editor {
 
-SDL_FRect ExecutionLineGutterMarkerRect(float gutter_x, float y, float /*gutter_width*/,
+SDL_FRect ExecutionLineGutterMarkerRect(float gutter_x, float y, float ,
                                         float line_height) {
-  // Match the breakpoint dot's footprint so the arrow overlays it cleanly when a
-  // session stops on a breakpoint, staying within the reserved marker strip.
   const float side = std::clamp(line_height * 0.55f, 6.0f, kGutterMarkerMaxExtent);
   const float x = gutter_x + kGutterMarkerInset;
   const float top = y + std::max(0.0f, (line_height - side) * 0.5f);
@@ -28,9 +26,6 @@ void DrawExecutionLineGutterMarker(SDL_Renderer* renderer, const render::Theme& 
   const SDL_Color color = theme.debug_execution_arrow;
   render::SetDrawColor(renderer, color);
 
-  // Right-pointing isosceles triangle filled as horizontal spans. The triangle
-  // occupies the middle ~60% of the bounds height; its tip is at the right edge,
-  // its base on the left. Width shrinks linearly toward the tip.
   const float tip_x = bounds.x + bounds.w;
   const float base_x = bounds.x + bounds.w * 0.18f;
   const float half_h = bounds.h * 0.32f;
@@ -44,7 +39,6 @@ void DrawExecutionLineGutterMarker(SDL_Renderer* renderer, const render::Theme& 
     if (std::fabs(dy) > half_h) {
       continue;
     }
-    // Fraction from base (0) to tip (1) for this scanline's distance from center.
     const float t = half_h > 0.0f ? std::fabs(dy) / half_h : 0.0f;
     const float right = tip_x - (tip_x - base_x) * t;
     if (right <= base_x) {
@@ -57,4 +51,4 @@ void DrawExecutionLineGutterMarker(SDL_Renderer* renderer, const render::Theme& 
   }
 }
 
-}  // namespace microide::editor
+}

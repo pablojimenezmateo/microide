@@ -21,16 +21,6 @@ const std::string& WorkspaceShell::BreadcrumbLabel() const {
   return BreadcrumbLabel(context_.current_project_state.clamped_focused_group_index());
 }
 
-// By reference, not by value: the memo below already avoids REBUILDING the label,
-// but returning it by value copied it on every hit — and the callers are the
-// window-chrome paint, so that was an allocation per painted frame for a string
-// that had not changed (and one more on a miss, since the builder's local was
-// copied into the cache and then returned).
-//
-// Per GROUP, because the band is per pane: each top-row pane of a split carries
-// its own breadcrumb over its own column, and one shared memo would rebuild the
-// string every time the paint moved from one pane to the next. One slot per pane;
-// idle slots hold no string.
 const std::string& WorkspaceShell::BreadcrumbLabel(std::size_t group_index) const {
   static const std::filesystem::path kEmptyPath;
   const std::vector<EditorGroup>& groups = context_.current_project_state.editor_groups;
@@ -38,8 +28,6 @@ const std::string& WorkspaceShell::BreadcrumbLabel(std::size_t group_index) cons
                                ? group_index
                                : context_.current_project_state.clamped_focused_group_index();
   BreadcrumbLabelCache& cache = breadcrumb_label_cache_[std::min(slot, kMaxEditorGroups - 1)];
-  // Resolve the label inputs (mode, path, secondary labels) by reference so a cache
-  // hit compares without allocating; only a genuine input change rebuilds the string.
   int mode = 0;
   bool placeholder = false;
   const std::filesystem::path* path = &kEmptyPath;
@@ -51,7 +39,6 @@ const std::string& WorkspaceShell::BreadcrumbLabel(std::size_t group_index) cons
                                : nullptr;
   if (active != nullptr && active->kind == TabEntry::Kind::Compare) {
     if (!active->compare.has_value()) {
-      // No inputs to memo against, so mark the memo stale and lend the fallback.
       cache.valid = false;
       cache.label = "compare";
       return cache.label;
@@ -94,8 +81,6 @@ const std::string& WorkspaceShell::BreadcrumbLabel(std::size_t group_index) cons
       cache.label = BuildMergeBreadcrumbLabel(root, *path, left, right);
       break;
     default:
-      // A remote project's copy of a host file outside the project lives in a
-      // cache; the path bar names the host's file, as go to definition did.
       cache.label = context_.current_project_state.launcher().DisplayPathOf(*path);
       if (cache.label.empty()) {
         cache.label = BuildEditorBreadcrumbLabel(root, *path, placeholder);
@@ -119,15 +104,13 @@ std::string WorkspaceShell::ProjectLabel() const {
 
 namespace {
 
-// The catalog entry of a project that is not the one in front; nullptr for the
-// front project (whose own terminal tabs show their marks) and out of range.
 const ProjectWorkspaceState* BackgroundProjectEntry(const WorkspaceContext& context, std::size_t index) {
   const bool front = !context.current_project_state.root.empty() && index == context.project_catalog.active_index;
   return front || index >= context.project_catalog.entries.size() ? nullptr
                                                                   : context.project_catalog.entries[index].get();
 }
 
-}  // namespace
+}
 
 std::string WorkspaceShell::ProjectTabDisplayTitle(std::size_t index) const {
   if (index >= context_.project_catalog.entries.size()) {
@@ -135,13 +118,7 @@ std::string WorkspaceShell::ProjectTabDisplayTitle(std::size_t index) const {
   }
   const project::ProjectId& id = context_.ProjectCatalogId(index);
   const std::string label = id.empty() ? "Welcome" : id.Label();
-  // The PREDICATE, not the list. This runs once per project tab per painted
-  // frame, and DirtyEditorTabIndicesForProject reserves a vector sized to the
-  // tab count before it finds out whether anything is dirty -- so the common
-  // "nothing dirty" answer cost a heap allocation per tab per frame.
   std::string title = HasDirtyEditorTabForProject(index) ? "*" + label : label;
-  // A project in the background whose terminal printed or rang meanwhile: the
-  // mark its terminal tab carries, carried up to where the user can see it.
   if (const ProjectWorkspaceState* project = BackgroundProjectEntry(context_, index);
       project != nullptr && TerminalPanelService::HasUnseenTerminalActivity(*project)) {
     title += " \xe2\x80\xa2";
@@ -153,9 +130,6 @@ std::string WorkspaceShell::ProjectTabTooltipLabel(std::size_t index) const {
   if (index >= context_.project_catalog.entries.size()) {
     return {};
   }
-  // The full name: the path, or `host:/path` -- a remote project's mirror path is
-  // never shown. Location() skips `lexically_normal()` for an already-normal path
-  // (catalog roots are normalized on the way in; TD-2026-08-10-174).
   const project::ProjectId& id = context_.ProjectCatalogId(index);
   std::string label = id.empty() ? "Welcome" : id.Location();
   if (const ProjectWorkspaceState* project = BackgroundProjectEntry(context_, index);
@@ -167,10 +141,7 @@ std::string WorkspaceShell::ProjectTabTooltipLabel(std::size_t index) const {
 
 SDL_FRect WorkspaceShell::ComputeCaretAnchoredOverlayRect(const SDL_FRect& editor_area,
                                                           const SDL_FRect& caret_anchor) const {
-  // Compact list popup placed next to the caret rather than a centered modal. Sized to the
-  // visible row count and clamped inside the editor area, flipping above the caret when there
-  // is not enough room below.
-  constexpr float kRowStep = 22.0f;       // must match ComputeOverlayListLayout's row_step
+  constexpr float kRowStep = 22.0f;
   constexpr float kListBottomPadding = 16.0f;
   constexpr float kMaxVisibleRows = 9.0f;
   constexpr float kMargin = 4.0f;
@@ -200,11 +171,7 @@ SDL_FRect WorkspaceShell::ComputeCaretAnchoredOverlayRect(const SDL_FRect& edito
 }
 
 SDL_FRect WorkspaceShell::ComputeCenteredMenuOverlayRect(const SDL_FRect& editor_area) const {
-  // Compact centered menu sized to the visible row count (matches the row metrics
-  // ComputeCaretAnchoredOverlayRect uses), but horizontally centered and pinned to
-  // a fixed vertical fraction — the canonical modal placement, without the
-  // finder-sized footprint that would dwarf a two-or-three-item action list.
-  constexpr float kRowStep = 22.0f;  // must match ComputeOverlayListLayout's row_step
+  constexpr float kRowStep = 22.0f;
   constexpr float kListBottomPadding = 16.0f;
   constexpr float kMaxVisibleRows = 9.0f;
   constexpr float kVerticalFrac = 0.30f;
@@ -222,10 +189,6 @@ SDL_FRect WorkspaceShell::ComputeCenteredMenuOverlayRect(const SDL_FRect& editor
 }
 
 SDL_FRect WorkspaceShell::FindWidgetAnchorRect(const SDL_FRect& fallback) const {
-  // The find/replace widget floats over the editor text region (below the
-  // breadcrumb). Fall back to the supplied rect only if the surface is unavailable.
-  // The focused pane's surface: in a split, the column put the widget over
-  // whichever pane sits top-right, not the buffer it searches (TD-2026-11-11-439).
   if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
     if (const SDL_FRect surface = ActiveTabSurface(*layout); surface.w > 0.0f && surface.h > 0.0f) {
       return surface;
@@ -239,22 +202,13 @@ SDL_FRect WorkspaceShell::ComputeOverlayRect(const SDL_FRect& editor_area) const
   if (overlay.mode == OverlayMode::Completion && overlay.caret_anchor.has_value()) {
     return ComputeCaretAnchoredOverlayRect(editor_area, *overlay.caret_anchor);
   }
-  // Code actions are a centered, content-sized menu — the canonical modal look.
   if (overlay.mode == OverlayMode::CodeActions) {
     return ComputeCenteredMenuOverlayRect(editor_area);
   }
-  // Local file search is a compact non-modal widget pinned to the top-right of the
-  // editor *text* area (editor_surface, below the breadcrumb) — VSCode-style, not a
-  // centered modal. Anchoring to editor_surface (not editor_area) keeps it clear of
-  // the breadcrumb so editor redraws fully cover it. The same helper drives the
-  // renderer, field hit-test, redraw region, and reveal so they stay aligned.
   if (overlay.mode == OverlayMode::BufferSearch || overlay.mode == OverlayMode::BufferReplace) {
     return ComputeFindWidgetRect(FindWidgetAnchorRect(editor_area),
                                  overlay.mode == OverlayMode::BufferReplace);
   }
-  // Every quick-open modal (file finder, project search, command palette, commit
-  // and launch pickers) shares one card so the surface does not resize and shift
-  // as the user flips between them.
   const auto layout = CurrentWorkspaceLayout();
   return ComputeQuickOpenOverlaySurfaceRect(editor_area, layout.has_value() ? layout->full : editor_area);
 }
@@ -274,9 +228,6 @@ void WorkspaceShell::RefreshStatusBar() {
   status_bar_model_service_.Refresh(
       status_bar_service_,
       StatusBarModelService::Operations{
-          // Both through the project's metadata source: the LOCAL one is never
-          // Unknown (`.git` is there or it is not), a remote one is Unknown until
-          // the host's first git/metadata lands (TD-2026-10-06-319).
           .git_availability =
               [this](const std::filesystem::path& project_root) {
                 return project::GitMetadataFor(context_.current_project_state.launcher())
@@ -300,23 +251,11 @@ void WorkspaceShell::RefreshStatusBar() {
 }
 
 const editor::TextViewport* WorkspaceShell::StatusBarSourceViewport() const {
-  // The bar describes whatever the caret is actually in. On a merge tab that is
-  // the result buffer and on a compare tab the editable right side — reading the
-  // group's active *editor* viewport instead left the previously open file's
-  // language and indent on the bar while a merge of a .cpp was on screen (the
-  // media stills showed "markdown  Tabs: 4" over a C++ three-way merge). The
-  // compare tab's read-only left side has no navigable viewport, so fall back
-  // rather than blanking the bar there.
   if (const editor::TextViewport* navigable = ActiveNavigableViewport(); navigable != nullptr) {
     return navigable->is_placeholder() ? nullptr : navigable;
   }
-  // With no tab open the group resolves to its welcome surface's built-in
-  // placeholder buffer; describing that put "unknown  Tabs: 4  UTF-8 · LF" on
-  // the bar over an empty editor area. VS Code shows none of those segments
-  // with no editor open. `is_placeholder()` is cleared by every real-content
-  // path, `SetUntitledBuffer` included, so Ctrl+N keeps its segments.
   const editor::TextViewport* active = ActiveEditorViewport();
   return active != nullptr && !active->is_placeholder() ? active : nullptr;
 }
 
-}  // namespace microide::workspace
+}

@@ -33,7 +33,7 @@ util::JsonValue FoldJson(const editor::FoldRange& range) {
   return util::JsonValue(std::move(pair));
 }
 
-}  // namespace
+}
 
 util::JsonValue BuildControlBufferJson(const editor::TextViewport* viewport, const char* kind,
                                        const ControlBufferQueryOptions& options) {
@@ -55,8 +55,6 @@ util::JsonValue BuildControlBufferJson(const editor::TextViewport* viewport, con
   object["scrollLine"] = OneBased(viewport->scroll_line());
   object["visibleCount"] = Int(viewport->visible_lines());
 
-  // The text, joined with '\n' (the buffer's own line ending is a save-time
-  // property; `editor`/status report it).
   const editor::TextBuffer& lines = viewport->lines();
   std::size_t bytes = 0;
   for (std::size_t i = 0; i < lines.LineCount() && bytes <= options.max_text_bytes; ++i) {
@@ -76,7 +74,6 @@ util::JsonValue BuildControlBufferJson(const editor::TextViewport* viewport, con
     object["text"] = util::JsonValue(std::move(text));
   }
 
-  // Every caret, primary first, then the secondaries in document order.
   util::JsonArray cursors;
   cursors.push_back(CaretJson(editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()},
                               viewport->has_selection() ? viewport->selection_anchor()
@@ -113,4 +110,4 @@ util::JsonValue BuildControlBufferJson(const editor::TextViewport* viewport, con
   return util::JsonValue(std::move(object));
 }
 
-}  // namespace microide::workspace
+}

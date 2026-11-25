@@ -15,9 +15,6 @@ namespace {
 
 std::atomic_bool g_native_dialogs_disabled{false};
 
-// Every native dialog launches through here: `show` is the SDL_Show*Dialog call.
-// Returns why it did not open (SDL's error, or the test-mode refusal); empty
-// when it did.
 template <typename Show>
 std::string ShowNativeDialog(Show&& show) {
   if (g_native_dialogs_disabled.load(std::memory_order_relaxed)) {
@@ -28,14 +25,6 @@ std::string ShowNativeDialog(Show&& show) {
   return SDL_GetError();
 }
 
-// Decode SDL's file-dialog callback arguments into the outcome fields every
-// pending-result type shares. SDL signals three distinct things through one
-// callback: a null list is a failure (reason in SDL_GetError), an empty list is
-// the user cancelling, and anything else is a selection.
-//
-// The three dialogs (project folder, Open File…, font file) each decoded this by
-// hand. Getting the null-vs-empty distinction backwards would report a cancel as
-// an error or, worse, treat a failure as a silent no-op.
 template <typename Pending>
 void DecodeDialogFilelist(Pending& pending, const char* const* filelist) {
   pending.ready = true;
@@ -48,14 +37,6 @@ void DecodeDialogFilelist(Pending& pending, const char* const* filelist) {
   }
 }
 
-// Publish a decoded result to the shell thread: store it under the dialog's own
-// mutex, then wake.
-//
-// The wake is a *checked* push. The result is already stored by the time it
-// runs, so a rejected push latches the shared "wake owed" bit for the idle-poll
-// fallback rather than leaving the dialog active with its result unapplied. All
-// three dialogs share one wake event and each consumer is an idempotent no-op
-// when its own result is not ready.
 template <typename DialogState, typename Pending>
 void LatchDialogResult(DialogState& state, Pending pending, Uint32 wake_event) {
   {
@@ -65,11 +46,6 @@ void LatchDialogResult(DialogState& state, Pending pending, Uint32 wake_event) {
   util::PushWake(wake_event);
 }
 
-// The launch half of the folder and file pickers. Refuses a second picker while
-// one is open, opens at the project root (else the process working directory --
-// the pickers are reachable from the cold-start welcome screen too), and goes
-// through the test-seam launcher when one is installed. `show(default_location)`
-// is the SDL_Show*Dialog call, given the location as SDL takes it (null for none).
 template <typename Show>
 ProjectOpenPickerResult LaunchNativePicker(WorkspaceShell& shell, NativePickerState& state,
                                            const std::filesystem::path& project_root,
@@ -109,8 +85,6 @@ ProjectOpenPickerResult LaunchNativePicker(WorkspaceShell& shell, NativePickerSt
   return ProjectOpenPickerResult::Launched;
 }
 
-// The shell-thread half: takes a latched result and ends the picker. The path the
-// user chose, or nullopt when there is no result yet, it failed, or it was cancelled.
 std::optional<std::filesystem::path> TakeNativePickerSelection(NativePickerState& state) {
   PendingDialogResult pending;
   {
@@ -128,7 +102,7 @@ std::optional<std::filesystem::path> TakeNativePickerSelection(NativePickerState
   return std::move(pending.selected_path);
 }
 
-}  // namespace
+}
 
 ProjectOpenPickerResult WorkspaceShell::OpenNativeProjectPicker(
     std::string* error_message) {
@@ -142,7 +116,7 @@ ProjectOpenPickerResult WorkspaceShell::OpenNativeProjectPicker(
 
 void SDLCALL WorkspaceShell::OnProjectOpenDialogComplete(void* userdata,
                                                          const char* const* filelist,
-                                                         int /*filter*/) {
+                                                         int ) {
   auto* shell = static_cast<WorkspaceShell*>(userdata);
   if (shell == nullptr) {
     return;
@@ -165,14 +139,14 @@ ProjectOpenPickerResult WorkspaceShell::OpenNativeFilePicker(
       *this, open_file_dialog_state_, context_.current_project_state.root,
       "File picker already open", error_message, [&](const char* default_location) {
         SDL_ShowOpenFileDialog(&WorkspaceShell::OnOpenFileDialogComplete, this, dialog_window_,
-                               /*filters=*/nullptr, /*nfilters=*/0, default_location,
-                               /*allow_many=*/false);
+                               nullptr, 0, default_location,
+                               false);
       });
 }
 
 void SDLCALL WorkspaceShell::OnOpenFileDialogComplete(void* userdata,
                                                       const char* const* filelist,
-                                                      int /*filter*/) {
+                                                      int ) {
   auto* shell = static_cast<WorkspaceShell*>(userdata);
   if (shell == nullptr) {
     return;
@@ -210,7 +184,7 @@ void WorkspaceShell::OpenNativeFontFilePicker(std::string setting_id) {
   const std::string dialog_error = ShowNativeDialog([&] {
     SDL_ShowOpenFileDialog(&WorkspaceShell::OnFontFileDialogComplete, this, dialog_window_,
                            kFontFilters, static_cast<int>(std::size(kFontFilters)),
-                           /*default_location=*/nullptr, /*allow_many=*/false);
+                           nullptr, false);
   });
   if (!dialog_error.empty()) {
     font_file_dialog_state_.active = false;
@@ -218,14 +192,12 @@ void WorkspaceShell::OpenNativeFontFilePicker(std::string setting_id) {
 }
 
 void SDLCALL WorkspaceShell::OnFontFileDialogComplete(void* userdata, const char* const* filelist,
-                                                      int /*filter*/) {
+                                                      int ) {
   auto* shell = static_cast<WorkspaceShell*>(userdata);
   if (shell == nullptr) {
     return;
   }
   PendingFontFileDialogResult pending;
-  // Echo the setting row that launched the picker so the consumer knows which
-  // font-family field to write back to.
   pending.target_setting_id = shell->font_file_dialog_state_.target_setting_id;
   DecodeDialogFilelist(pending, filelist);
   LatchDialogResult(shell->font_file_dialog_state_, std::move(pending),
@@ -244,7 +216,6 @@ void WorkspaceShell::ConsumePendingFontFileDialogResult() {
   }
 
   font_file_dialog_state_.active = false;
-  // Whatever the outcome, close any open picker/value edit so focus never strands.
   CancelSettingValueEdit();
   if (!pending.error_message.empty() || pending.cancelled ||
       pending.selected_path.empty() || pending.target_setting_id.empty()) {
@@ -264,4 +235,4 @@ bool NativeDialogsDisabledForTesting() {
   return g_native_dialogs_disabled.load(std::memory_order_relaxed);
 }
 
-}  // namespace microide::workspace
+}

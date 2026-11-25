@@ -46,14 +46,6 @@ microide::editor::FoldingModel::ComputeOptions DefaultFoldOptions() {
   return options;
 }
 
-// TD-2026-08-06-159: the view-model builder must read lines through the piece
-// tree's zero-copy `LineView`, never through the copying `operator[]` accessor.
-//
-// TextRenderer/EditorViewRendererReadsLinesWithoutMaterializingThem already pins
-// this for `EditorViewRenderer::Render`, which is why nobody noticed that the
-// whitespace-glyph collector — a per-visible-row loop in the BUILDER, one layer
-// up — was doing exactly what that test forbids: two allocations per visible row
-// per painted frame, and a retained second copy of every line ever scrolled past.
 void TestEditorViewModelBuilderReadsLinesWithoutMaterializingThem() {
   microide::workspace::WorkspaceContext ctx;
   microide::workspace::RenderViewModelBuilder builder(ctx);
@@ -70,16 +62,14 @@ void TestEditorViewModelBuilderReadsLinesWithoutMaterializingThem() {
   viewport.SetViewportSize(20, 80);
 
   microide::editor::EditorViewModel vm;
-  // Every feature that walks lines, on: whitespace glyphs, occurrence highlight,
-  // sticky scroll. Scroll across the document exactly as a wheel scroll does.
   for (std::size_t top = 0; top < 300; top += 20) {
     viewport.SetScrollLine(top);
-    builder.BuildEditorViewModelInto(vm, viewport, /*visible_rows=*/20, /*folding_model=*/nullptr,
-                                     /*occurrences_highlight_enabled=*/true,
-                                     /*occurrences_case_sensitive=*/false,
-                                     /*sticky_scroll_enabled=*/true,
-                                     /*sticky_max_depth=*/3,
-                                     /*render_whitespace_enabled=*/true);
+    builder.BuildEditorViewModelInto(vm, viewport, 20, nullptr,
+                                     true,
+                                     false,
+                                     true,
+                                     3,
+                                     true);
   }
 
   Expect(!vm.whitespace_glyph_runs.empty(),
@@ -93,9 +83,6 @@ void TestEditorViewModelBuilderReadsLinesWithoutMaterializingThem() {
 }
 
 void TestWhitespaceRowOffsetsIndexFlatGlyphRuns() {
-  // 2026-05-15 perf deep-dive round 2 Finding 2: whitespace_row_offsets must be a CSR-style index
-  // into whitespace_glyph_runs so the per-row paint loop can iterate only its row's runs instead
-  // of filtering the flat vector.
   microide::workspace::WorkspaceContext ctx;
   microide::workspace::RenderViewModelBuilder builder(ctx);
   microide::workspace::RenderViewModelBuilder::ResetOccurrenceCachesForTesting();
@@ -108,12 +95,12 @@ void TestWhitespaceRowOffsetsIndexFlatGlyphRuns() {
   viewport.SetScrollLine(0);
 
   microide::editor::EditorViewModel vm;
-  builder.BuildEditorViewModelInto(vm, viewport, /*visible_rows=*/4, /*folding_model=*/nullptr,
-                                    /*occurrences_highlight_enabled=*/false,
-                                    /*occurrences_case_sensitive=*/false,
-                                    /*sticky_scroll_enabled=*/false,
-                                    /*sticky_max_depth=*/3,
-                                    /*render_whitespace_enabled=*/true);
+  builder.BuildEditorViewModelInto(vm, viewport, 4, nullptr,
+                                    false,
+                                    false,
+                                    false,
+                                    3,
+                                    true);
 
   Expect(vm.whitespace_row_offsets.size() == 5,
          "whitespace_row_offsets must have visible_rows+1 entries (CSR layout)");
@@ -121,15 +108,12 @@ void TestWhitespaceRowOffsetsIndexFlatGlyphRuns() {
          "whitespace_row_offsets starts at zero");
   Expect(vm.whitespace_row_offsets.back() == vm.whitespace_glyph_runs.size(),
          "whitespace_row_offsets last entry must equal the flat run count");
-  // Monotonic non-decreasing offsets.
   for (std::size_t r = 0; r + 1 < vm.whitespace_row_offsets.size(); ++r) {
     Expect(vm.whitespace_row_offsets[r] <= vm.whitespace_row_offsets[r + 1],
            "whitespace_row_offsets must be monotonic non-decreasing");
   }
-  // Row 3 ("plain") has no whitespace, so its slice must be empty.
   Expect(vm.whitespace_row_offsets[3] == vm.whitespace_row_offsets[4],
          "row with no whitespace produces an empty CSR slice");
-  // Row 0 starts with four spaces, so its slice must be non-empty.
   Expect(vm.whitespace_row_offsets[1] > vm.whitespace_row_offsets[0],
          "row with leading spaces should produce whitespace glyph runs");
 }
@@ -167,16 +151,14 @@ void TestEditorViewModelIntoPreservesVectorCapacitiesAcrossStableFrames() {
   microide::editor::EditorViewModel vm;
   builder.BuildEditorViewModelInto(
       vm, viewport, 24, &model,
-      /*occurrences_highlight_enabled=*/true,
-      /*occurrences_case_sensitive=*/false,
-      /*sticky_scroll_enabled=*/true,
-      /*sticky_max_depth=*/3,
-      /*render_whitespace_enabled=*/true);
+      true,
+      false,
+      true,
+      3,
+      true);
 
   const std::size_t cap_fold = vm.fold_gutter_marks.capacity();
   const std::size_t cap_ws = vm.whitespace_glyph_runs.capacity();
-  // sticky_lines / occurrence_ranges are spans into thread_local builder caches; verify the span
-  // identity (data pointer) is preserved on cache hits so no copy happens per frame.
   const std::size_t* sticky_data_first = vm.sticky_lines.data();
   const microide::editor::OccurrenceRange* occ_data_first = vm.occurrence_ranges.data();
 
@@ -185,11 +167,11 @@ void TestEditorViewModelIntoPreservesVectorCapacitiesAcrossStableFrames() {
 
   builder.BuildEditorViewModelInto(
       vm, viewport, 24, &model,
-      /*occurrences_highlight_enabled=*/true,
-      /*occurrences_case_sensitive=*/false,
-      /*sticky_scroll_enabled=*/true,
-      /*sticky_max_depth=*/3,
-      /*render_whitespace_enabled=*/true);
+      true,
+      false,
+      true,
+      3,
+      true);
 
   Expect(vm.fold_gutter_marks.capacity() == cap_fold,
          "fold_gutter_marks should retain capacity on a stable second frame");
@@ -201,15 +183,14 @@ void TestEditorViewModelIntoPreservesVectorCapacitiesAcrossStableFrames() {
          "whitespace_glyph_runs should retain capacity on a stable second frame");
 
 #if MICROIDE_PERF_HARNESS_BUILD
-  // First warmed build above; measure only the steady-state frame.
   const microide::tests::perf::AllocationSnapshot before = microide::tests::perf::Allocations::Snapshot();
   builder.BuildEditorViewModelInto(
       vm, viewport, 24, &model,
-      /*occurrences_highlight_enabled=*/true,
-      /*occurrences_case_sensitive=*/false,
-      /*sticky_scroll_enabled=*/true,
-      /*sticky_max_depth=*/3,
-      /*render_whitespace_enabled=*/true);
+      true,
+      false,
+      true,
+      3,
+      true);
   const microide::tests::perf::AllocationDelta delta =
       microide::tests::perf::Allocations::DeltaSince(before);
   Expect(delta.allocations == 0 && delta.bytes_allocated == 0,
@@ -218,7 +199,6 @@ void TestEditorViewModelIntoPreservesVectorCapacitiesAcrossStableFrames() {
 }
 
 void TestPerFrameCacheInvalidationKeysModelAndBuilder() {
-  // --- FoldingModel service fingerprint: layout_revision, tab_size, language_id ---
   {
     microide::editor::FoldingModel model;
     microide::editor::FoldingModel::Fingerprint fp_in{};
@@ -228,8 +208,6 @@ void TestPerFrameCacheInvalidationKeysModelAndBuilder() {
     model.SetFingerprint(fp_in);
     const std::vector<std::string> one_line = {"x;"};
     Expect(model.Compute(one_line, DefaultFoldOptions()), "fold model should accept trivial buffer");
-    // `Compute` does not clear `dirty_`; the workspace marks the model fresh for its fingerprint
-    // after a successful service refresh — mirror that so `IsFresh` is meaningful.
     model.SetFingerprint(fp_in);
     Expect(model.IsFresh(fp_in), "model should match the fingerprint it was refreshed under");
     microide::editor::FoldingModel::Fingerprint fp_layout = fp_in;
@@ -244,8 +222,6 @@ void TestPerFrameCacheInvalidationKeysModelAndBuilder() {
     Expect(!model.IsFresh(fp_lang), "fold model IsFresh should fail when language_id changes");
   }
 
-  // --- Occurrence seed: content_revision invalidates seed detection,
-  //     syntax_revision does NOT (the seed is built from buffer bytes only).
   {
     microide::workspace::WorkspaceContext ctx;
     microide::workspace::RenderViewModelBuilder builder(ctx);
@@ -255,27 +231,20 @@ void TestPerFrameCacheInvalidationKeysModelAndBuilder() {
     viewport.MoveCursorTo(0, 0, false);
     viewport.SetViewportSize(4, 80);
     (void)builder.BuildEditorViewModel(viewport, 4, nullptr, true, false);
-    // SyntaxConfig bump: seed cache survives.
     viewport.InvalidateSyntaxHighlighting();
     (void)builder.BuildEditorViewModel(viewport, 4, nullptr, true, false);
     Expect(microide::workspace::RenderViewModelBuilder::OccurrenceSeedCacheMissesForTesting() == 1,
            "SyntaxConfig bump must not invalidate the content-keyed occurrence seed cache");
-    // ContentEdit while typing: occurrence highlighting is suppressed for the
-    // edit-driven caret (the seed would otherwise chase the growing word prefix),
-    // so the builder does NOT re-run seed detection and the miss count is unchanged.
     viewport.InsertCharacter('x');
     (void)builder.BuildEditorViewModel(viewport, 4, nullptr, true, false);
     Expect(microide::workspace::RenderViewModelBuilder::OccurrenceSeedCacheMissesForTesting() == 1,
            "an active text edit must suppress occurrence seed work");
-    // A deliberate navigation re-syncs the caret and re-runs seed detection, which
-    // drops the now-stale content-keyed seed cache (buffer bytes changed).
     viewport.MoveCursorTo(0, 0, false);
     (void)builder.BuildEditorViewModel(viewport, 4, nullptr, true, false);
     Expect(microide::workspace::RenderViewModelBuilder::OccurrenceSeedCacheMissesForTesting() == 2,
            "navigation after an edit must invalidate the content-keyed occurrence seed cache");
   }
 
-  // --- Sticky scroll builder cache: fold model revision ---
   {
     microide::workspace::WorkspaceContext ctx;
     microide::workspace::RenderViewModelBuilder builder(ctx);
@@ -339,13 +308,13 @@ void TestIndentGuideRunsPreserveCapacityAcrossStableRenders() {
 
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
                   std::nullopt, std::nullopt, {}, nullptr, false,
-                  /*indent_guides_enabled=*/true, false, &model);
+                  true, false, &model);
   const std::size_t cap = renderer.last_indent_guide_runs().capacity();
   Expect(!renderer.last_indent_guide_runs().empty(),
          "first frame should populate indent guide runs");
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
                   std::nullopt, std::nullopt, {}, nullptr, false,
-                  /*indent_guides_enabled=*/true, false, &model);
+                  true, false, &model);
   Expect(renderer.indent_guides_cache_hits() == 1,
          "second unchanged frame should hit the indent-guides cache");
   Expect(renderer.last_indent_guide_runs().capacity() == cap,
@@ -353,7 +322,6 @@ void TestIndentGuideRunsPreserveCapacityAcrossStableRenders() {
 }
 
 void TestPerFrameCacheInvalidationKeysRenderPaths() {
-  // --- Bracket match: viewport + content_revision + primary caret (see EditorViewRenderer) ---
   {
     EnsureDummySdlVideo();
     SoftwareCanvas canvas(200, 120);
@@ -366,27 +334,23 @@ void TestPerFrameCacheInvalidationKeysRenderPaths() {
     microide::editor::EditorViewRenderer renderer;
     renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
                     std::nullopt, std::nullopt, {}, nullptr,
-                    /*bracket_match_highlight_enabled=*/true);
+                    true);
     Expect(renderer.bracket_match_cache_misses() == 1,
            "bracket-match cache should miss on first frame");
-    // SyntaxConfig bump: bracket-match cache survives — bracket positions
-    // depend on buffer bytes, not on theme / syntax contract.
     viewport.InvalidateSyntaxHighlighting();
     renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
                     std::nullopt, std::nullopt, {}, nullptr,
-                    /*bracket_match_highlight_enabled=*/true);
+                    true);
     Expect(renderer.bracket_match_cache_misses() == 1,
            "SyntaxConfig bump must not invalidate the content-keyed bracket-match cache");
-    // ContentEdit bump: bytes changed, cache must miss.
     viewport.InsertCharacter('z');
     renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
                     std::nullopt, std::nullopt, {}, nullptr,
-                    /*bracket_match_highlight_enabled=*/true);
+                    true);
     Expect(renderer.bracket_match_cache_misses() == 2,
            "ContentEdit must invalidate the bracket-match cache");
   }
 
-  // --- Indent guides: fold revision (and layout scroll geometry) ---
   {
     EnsureDummySdlVideo();
     SoftwareCanvas canvas(220, 140);
@@ -449,9 +413,9 @@ void TestRendererCachesReuseWarmEntriesAcrossViewportSwitches() {
                                         microide::editor::FoldingModel& model) {
     renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
                     std::nullopt, std::nullopt, {}, nullptr,
-                    /*bracket_match_highlight_enabled=*/true,
-                    /*indent_guides_enabled=*/true,
-                    /*render_whitespace_enabled=*/false, &model);
+                    true,
+                    true,
+                    false, &model);
   };
 
   render_with_features(viewport_a, model_a);
@@ -465,28 +429,11 @@ void TestRendererCachesReuseWarmEntriesAcrossViewportSwitches() {
          "alternating warmed viewports should hit the indent-guides cache after warm-up");
 }
 
-// The row's match-fill loops narrow their span list by the row's visible SOURCE
-// window, not just by line. Narrowing by line alone is not narrowing at all when
-// the document is one line -- every match in the file lands on the one row, and
-// each was resolved and clipped individually before being discarded.
-//
-// The risk is the opposite failure: dropping a span that should have painted.
-// Pinned two ways, because either alone is vacuous. A differential against a
-// control that cannot narrow on its left edge -- the same bytes rendered from
-// column 0 -- catches an asymmetric bound. A positive count of painted highlight
-// pixels catches a bound that is wrong in the SAME way on both sides, which the
-// differential cannot see because both renders lose the same fills.
-//
-// Both fill sources get this: the explicit match list (regex / whole-buffer find)
-// and the occurrence highlight, which is the one the perf scenario actually hit.
 void TestRowMatchFillsSurviveHorizontalScrollNarrowing() {
   EnsureDummySdlVideo();
   microide::render::TextRenderer text_renderer;
   microide::render::Theme theme = microide::render::MakeDefaultTheme();
 
-  // 40 records of 12 bytes; "MMMM" is the match token at the start of each. The
-  // spaces matter: the occurrence highlight seeds on the WORD under the caret, so
-  // a record with no separators would make the whole line one word.
   constexpr std::size_t kRecordCount = 40;
   const std::string record = "MMMM abcdef ";
   std::string line;
@@ -501,14 +448,9 @@ void TestRowMatchFillsSurviveHorizontalScrollNarrowing() {
         .end = {0, start + 4},
     });
   }
-  // Land the scroll inside a match (record 8 spans [96, 108), its token [96, 100))
-  // so a match straddles the left edge -- the case a naive column bound gets wrong.
   constexpr std::size_t kScroll = 98;
   const SDL_FRect rect{0.0f, 0.0f, 400.0f, 60.0f};
 
-  // Highlight fills are drawn with alpha and then overpainted by glyphs, so there
-  // is no exact color to look for. The robust question is "did the matches change
-  // anything HERE?", answered against the same render with no matches at all.
   const auto count_differing_pixels = [&](const SoftwareCanvas& a, const SoftwareCanvas& b,
                                           int x_lo, int x_hi) {
     std::size_t differing = 0;
@@ -524,25 +466,16 @@ void TestRowMatchFillsSurviveHorizontalScrollNarrowing() {
     return differing;
   };
 
-  // Where a source column lands on screen. The row is plain ASCII, so its visual
-  // column IS its byte column, and the geometry is the renderer's own -- computed
-  // here rather than reused from it, so this side of the check does not go through
-  // the narrowing being tested.
   const float char_width = text_renderer.CharWidth();
 
-  // --- explicit match list (regex / whole-buffer find) ---------------------
   {
     SoftwareCanvas scrolled_canvas(400, 60);
     SoftwareCanvas control_canvas(400, 60);
     microide::editor::TextViewport scrolled;
     scrolled.LoadContent(line + "\n", "/tmp/row-fill-scrolled.txt");
     scrolled.SetViewportSize(3, 20);
-    // Plain ASCII, so the visual scroll offset IS the byte offset.
     scrolled.SetHorizontalScroll(kScroll);
 
-    // Control: the same bytes rendered from column 0 of their own line -- same text
-    // at the same screen position, but its left edge is the line's start, so
-    // nothing can be narrowed away on that side.
     microide::editor::TextViewport control;
     control.LoadContent(line.substr(kScroll) + "\n", "/tmp/row-fill-control.txt");
     control.SetViewportSize(3, 20);
@@ -562,29 +495,23 @@ void TestRowMatchFillsSurviveHorizontalScrollNarrowing() {
     microide::editor::EditorViewRenderer scrolled_renderer;
     microide::editor::EditorViewRenderer control_renderer;
     scrolled_renderer.Render(scrolled_canvas.renderer(), text_renderer, theme, scrolled, rect,
-                             /*draw_caret=*/false, "", std::nullopt, std::nullopt, {}, nullptr,
+                             false, "", std::nullopt, std::nullopt, {}, nullptr,
                              false, false, false, nullptr, nullptr, nullptr,
-                             /*show_line_numbers=*/false, all_matches);
+                             false, all_matches);
     control_renderer.Render(control_canvas.renderer(), text_renderer, theme, control, rect,
-                            /*draw_caret=*/false, "", std::nullopt, std::nullopt, {}, nullptr,
+                            false, "", std::nullopt, std::nullopt, {}, nullptr,
                             false, false, false, nullptr, nullptr, nullptr,
-                            /*show_line_numbers=*/false, control_matches);
+                            false, control_matches);
 
-    // Same viewport and scroll, no matches: anything the match list paints shows up
-    // as a difference against this.
     SoftwareCanvas bare_canvas(400, 60);
     microide::editor::EditorViewRenderer bare_renderer;
     bare_renderer.Render(bare_canvas.renderer(), text_renderer, theme, scrolled, rect,
-                         /*draw_caret=*/false, "", std::nullopt, std::nullopt, {}, nullptr, false,
-                         false, false, nullptr, nullptr, nullptr, /*show_line_numbers=*/false, {});
+                         false, "", std::nullopt, std::nullopt, {}, nullptr, false,
+                         false, false, nullptr, nullptr, nullptr, false, {});
 
-    // EVERY match the window can show must have painted, checked cell by cell.
-    // A differential against another scrolled render cannot see a bound that is
-    // wrong the same way on both sides -- both would lose the same fills -- so this
-    // is the check that has to be independent of the code under test.
     const microide::editor::EditorViewMetrics metrics =
         microide::editor::EditorViewRenderer::ComputeMetrics(text_renderer, scrolled, rect, 0,
-                                                             /*show_line_numbers=*/false);
+                                                             false);
     std::size_t checked = 0;
     for (const auto& match : all_matches) {
       const std::size_t window_end = kScroll + metrics.visible_columns;
@@ -611,7 +538,6 @@ void TestRowMatchFillsSurviveHorizontalScrollNarrowing() {
                std::to_string(differing) + " pixels differ)");
   }
 
-  // --- literal search query (the Ctrl+F scan cache) ------------------------
   {
     SoftwareCanvas canvas(400, 60);
     SoftwareCanvas bare_canvas(400, 60);
@@ -623,15 +549,15 @@ void TestRowMatchFillsSurviveHorizontalScrollNarrowing() {
     microide::editor::EditorViewRenderer renderer;
     microide::editor::EditorViewRenderer bare_renderer;
     renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect,
-                    /*draw_caret=*/false, "mmmm", std::nullopt, std::nullopt, {}, nullptr, false,
-                    false, false, nullptr, nullptr, nullptr, /*show_line_numbers=*/false);
+                    false, "mmmm", std::nullopt, std::nullopt, {}, nullptr, false,
+                    false, false, nullptr, nullptr, nullptr, false);
     bare_renderer.Render(bare_canvas.renderer(), text_renderer, theme, viewport, rect,
-                         /*draw_caret=*/false, "", std::nullopt, std::nullopt, {}, nullptr, false,
-                         false, false, nullptr, nullptr, nullptr, /*show_line_numbers=*/false);
+                         false, "", std::nullopt, std::nullopt, {}, nullptr, false,
+                         false, false, nullptr, nullptr, nullptr, false);
 
     const microide::editor::EditorViewMetrics metrics =
         microide::editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, rect, 0,
-                                                             /*show_line_numbers=*/false);
+                                                             false);
     std::size_t checked = 0;
     for (const auto& match : all_matches) {
       const std::size_t window_end = kScroll + metrics.visible_columns;
@@ -652,7 +578,6 @@ void TestRowMatchFillsSurviveHorizontalScrollNarrowing() {
                std::to_string(checked) + ")");
   }
 
-  // --- occurrence highlight (the caret's word) -----------------------------
   {
     microide::workspace::WorkspaceContext ctx;
     microide::workspace::RenderViewModelBuilder builder(ctx);
@@ -661,30 +586,21 @@ void TestRowMatchFillsSurviveHorizontalScrollNarrowing() {
     SoftwareCanvas canvas(400, 60);
     microide::editor::TextViewport viewport;
     viewport.LoadContent(line + "\n", "/tmp/row-fill-occurrences.txt");
-    // Size the viewport from the render metrics BEFORE building, exactly as
-    // RenderActiveWorkspaceSurface does. The occurrence scan is bounded by
-    // `viewport.visible_columns()` and the paint clips to the same value, so the
-    // two agree only if the size is applied first -- building against a stale size
-    // would scan a narrower window than the row paints.
     const microide::editor::EditorViewMetrics build_metrics =
         microide::editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, rect, 0,
-                                                             /*show_line_numbers=*/false);
+                                                             false);
     viewport.SetViewportSize(build_metrics.visible_rows, build_metrics.visible_columns);
-    // Caret inside the "MMMM" of record 9, which is inside the scrolled window, so
-    // the seed occurrence and its siblings all land on the row.
     viewport.MoveCursorTo(0, 9 * record.size() + 1, false);
     viewport.SetHorizontalScroll(kScroll);
 
     microide::editor::EditorViewModel vm;
     builder.BuildEditorViewModelInto(vm, viewport, build_metrics.visible_rows,
-                                     /*folding_model=*/nullptr,
-                                     /*occurrences_highlight_enabled=*/true,
-                                     /*occurrences_case_sensitive=*/true,
-                                     /*sticky_scroll_enabled=*/false,
-                                     /*sticky_max_depth=*/3,
-                                     /*render_whitespace_enabled=*/false);
-    // The scan is itself bounded to the columns the row can paint, so this is the
-    // count the window can show -- not the 40 in the file.
+                                     nullptr,
+                                     true,
+                                     true,
+                                     false,
+                                     3,
+                                     false);
     Expect(vm.occurrence_ranges.size() >= 3,
            "the fixture must produce several in-window occurrences for this to test anything (got " +
                std::to_string(vm.occurrence_ranges.size()) + ")");
@@ -693,18 +609,18 @@ void TestRowMatchFillsSurviveHorizontalScrollNarrowing() {
 
     microide::editor::EditorViewRenderer renderer;
     renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect,
-                    /*draw_caret=*/false, "", std::nullopt, std::nullopt, {}, &vm, false, false,
-                    false, nullptr, nullptr, nullptr, /*show_line_numbers=*/false);
+                    false, "", std::nullopt, std::nullopt, {}, &vm, false, false,
+                    false, nullptr, nullptr, nullptr, false);
 
     SoftwareCanvas bare_canvas(400, 60);
     microide::editor::EditorViewModel bare_vm;
     microide::editor::EditorViewRenderer bare_renderer;
     bare_renderer.Render(bare_canvas.renderer(), text_renderer, theme, viewport, rect,
-                         /*draw_caret=*/false, "", std::nullopt, std::nullopt, {}, &bare_vm, false,
-                         false, false, nullptr, nullptr, nullptr, /*show_line_numbers=*/false);
+                         false, "", std::nullopt, std::nullopt, {}, &bare_vm, false,
+                         false, false, nullptr, nullptr, nullptr, false);
     const microide::editor::EditorViewMetrics metrics =
         microide::editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, rect, 0,
-                                                             /*show_line_numbers=*/false);
+                                                             false);
     std::size_t checked = 0;
     for (const auto& occurrence : vm.occurrence_ranges) {
       const std::size_t window_end = kScroll + metrics.visible_columns;
@@ -725,9 +641,9 @@ void TestRowMatchFillsSurviveHorizontalScrollNarrowing() {
                std::to_string(checked) + ")");
   }
 }
-#endif  // MICROIDE_HAS_SDL3_TTF
+#endif
 
-}  // namespace
+}
 
 void RegisterEditorRenderViewModelAllocationTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorRenderViewModel/BuilderReadsLinesWithoutMaterializingThem",
@@ -750,4 +666,4 @@ void RegisterEditorRenderViewModelAllocationTests(std::vector<TestCase>& tests) 
 #endif
 }
 
-}  // namespace microide::tests
+}

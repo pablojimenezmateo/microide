@@ -31,12 +31,9 @@ namespace microide::editor {
 struct EditorViewMetrics {
   float gutter_width = 56.0f;
   float text_x = 0.0f;
-  /// Y offset of optional sticky-scroll band (pane top inset).
   float sticky_band_top_y = 0.0f;
-  /// First document row paints at this Y (below any sticky-scroll band rows).
   float first_line_y = 0.0f;
   float line_height = 14.0f;
-  /// Number of reserved sticky band rows (not additional document rows).
   std::size_t sticky_scroll_rows = 0;
   std::size_t visible_rows = 1;
   std::size_t visible_columns = 8;
@@ -73,17 +70,6 @@ class EditorViewRenderer {
                                           std::size_t sticky_scroll_rows = 0,
                                           bool show_line_numbers = true);
 
-  // Sizes `viewport` to `rect` with its sticky band, and returns the metrics.
-  // `band_rows_at_scroll(viewport)` names the band at the viewport's current
-  // scroll; which lines pin depends on the scroll, and the scroll's clamp on
-  // the band, so this settles the two: the band at the scroll, the size with
-  // it, the scroll the caller left re-clamped to that size, until the band no
-  // longer changes. The scroll is never clamped against a band-less size the
-  // pane does not have: at the end of a document that clamp is one row short,
-  // and a caret on the last line was scrolled out of view by every frame after
-  // the keystroke that revealed it (QA monkey, CI seed 4). The scroll can still
-  // move, where the caller's has no consistent sizing; a caller that painted
-  // damage computed at the old scroll repaints the pane then.
   template <typename BandRowsAtScroll>
   static EditorViewMetrics SizeViewportWithStickyBand(const render::TextRenderer& text_renderer,
                                                       TextViewport& viewport,
@@ -109,21 +95,9 @@ class EditorViewRenderer {
               const WelcomeViewModel* welcome_view = nullptr,
               const FileDecorations* plugin_decorations = nullptr,
               bool show_line_numbers = true,
-              // Precomputed match highlight spans (regex / whole-buffer find). Each
-              // span is SINGLE-LINE (multi-line matches are pre-split by the caller)
-              // and the set is sorted by (start.line, start.column). When non-empty
-              // these drive the match highlight instead of the literal `search_query`
-              // scan, so regex and multi-line matches highlight correctly.
               std::span<const SelectionRange> explicit_search_matches = {},
-              // Find in Selection's scope, shaded under the matches.
               const std::optional<SelectionRange>& find_scope = std::nullopt) const;
 
-  // Test/diagnostic accessors for the bracket-match cache. The cache is keyed
-  // on (viewport, content_revision, primary_caret_line, primary_caret_column)
-  // and reused across consecutive frames when nothing actionable changes.
-  // The bracket pair at the viewport's caret, through the same cache Render reads:
-  // frame prep asks first, to repaint the lines a pair left or reached, and the
-  // paint then hits the cache.
   std::optional<BracketMatchPair> BracketMatch(const TextViewport& viewport) const;
   const std::optional<BracketMatchPair>& last_bracket_match_pair() const {
     return last_bracket_match_pair_;
@@ -131,11 +105,6 @@ class EditorViewRenderer {
   std::size_t bracket_match_cache_hits() const { return bracket_match_cache_hits_; }
   std::size_t bracket_match_cache_misses() const { return bracket_match_cache_misses_; }
 
-  // Test/diagnostic accessors for the indent-guides cache. Cache is keyed on
-  // (viewport, content_revision, layout_shape_revision, scroll_line,
-  //  visible_rows_count, indent_width, caret_line, fold_revision,
-  //  folding_model revision for active emphasis) and reused across
-  // consecutive frames when nothing changes.
   const std::vector<IndentGuideRun>& last_indent_guide_runs() const {
     return indent_guides_cache_last_runs_ != nullptr ? *indent_guides_cache_last_runs_
                                                      : indent_guides_cache_empty_runs_;
@@ -145,7 +114,6 @@ class EditorViewRenderer {
   const std::vector<FoldGutterMark>& last_fold_gutter_marks() const { return last_fold_gutter_marks_; }
 
  private:
-  // The frame-level inputs Render's passes share.
   struct FramePaint {
     SDL_Renderer* renderer = nullptr;
     const render::TextRenderer& text_renderer;
@@ -164,9 +132,6 @@ class EditorViewRenderer {
       const FoldingModel* folding_model) const;
   void RenderStickyRows(const FramePaint& frame, std::span<const std::size_t> sticky_lines) const;
 
-  // Borrowed lookup key: the per-row paint loop probes the cache with the
-  // frame's lowered-query string_view, so a cache hit allocates nothing. The
-  // owning std::string is materialized only when a miss inserts (see CacheKey).
   struct SearchMatchCacheKeyView {
     const TextViewport* viewport = nullptr;
     std::uint64_t content_revision = 0;
@@ -236,8 +201,6 @@ class EditorViewRenderer {
 
   struct BracketMatchCacheEntry {
     const TextViewport* viewport = nullptr;
-    // Bracket positions depend on bytes only, not on theme, layout shape, or
-    // overlay state — keyed on content_revision exclusively.
     std::uint64_t content_revision = 0;
     std::size_t caret_line = 0;
     std::size_t caret_column = 0;
@@ -251,8 +214,6 @@ class EditorViewRenderer {
 
   struct IndentGuidesCacheEntry {
     const TextViewport* viewport = nullptr;
-    // Indent guides depend on the bytes of each line (content) and on
-    // indent-width / tab-size geometry (layout shape).
     std::uint64_t content_revision = 0;
     std::uint64_t layout_shape_revision = 0;
     std::size_t fold_revision = 0;
@@ -272,32 +233,16 @@ class EditorViewRenderer {
 
   mutable std::vector<FoldGutterMark> last_fold_gutter_marks_;
 
-  // Scratch buffers reused across rows and frames so the editor render hot
-  // path does not allocate (and free) three std::vector instances per visible
-  // row per frame. Cleared between rows; capacity persists across frames.
   mutable DecoratedTextRow scratch_row_;
   mutable DecoratedTextRow sticky_scratch_row_;
-  // Source-column fills (search / occurrence / selection / bracket) and
-  // pre-positioned fills (indent guides / whitespace) marshalled per row and
-  // fed to BuildDecoratedRow. Reused across rows so the hot path stays
-  // allocation-free.
   mutable std::vector<RowFillSpan> column_fill_scratch_;
   mutable std::vector<DecoratedTextFill> prepositioned_fill_scratch_;
-  // End-of-line inline-text / code-lens segments laid out per logical line and
-  // drawn after the decorated row. Reused across rows so the hot path stays
-  // allocation-free; the geometry matches WorkspaceShell's click hit-test, which
-  // calls the same BuildEolDecorationSegments helper.
   mutable std::vector<EolDecorationSegment> eol_decoration_scratch_;
   mutable std::vector<InlayCellSpan> inlay_span_scratch_;
   mutable std::vector<std::size_t> visible_rows_for_guides_scratch_;
   mutable std::string lowered_search_query_scratch_;
   mutable std::string lowered_line_scratch_;
 
-  // Deferred gutter line numbers: collected during the row loop and flushed once
-  // through TextRenderer::DrawEphemeralRuns after it, so neither renderer builds
-  // and uploads a composite texture per scrolled line number. `text` is a short
-  // digit string (SSO -> no heap). Drawn last in the gutter, preserving the prior
-  // numbers-over-markers z-order.
   struct GutterNumber {
     float x = 0.0f;
     float y = 0.0f;
@@ -316,21 +261,12 @@ EditorViewMetrics EditorViewRenderer::SizeViewportWithStickyBand(const render::T
                                                                  BandRowsAtScroll&& band_rows_at_scroll) {
   const std::size_t columns_before = viewport.visible_columns();
   const std::size_t scroll_before = viewport.scroll_line();
-  // The band-less size first: it sets the wrap width, which the visual rows --
-  // and so the line at the top -- depend on.
   EditorViewMetrics metrics = ComputeMetrics(text_renderer, viewport, rect, 0, show_line_numbers);
   viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-  // A wrap-width change re-anchored the scroll to the same logical line; the
-  // caller's visual row means another line now.
   const std::size_t wanted_scroll =
       viewport.soft_wrap() && viewport.visible_columns() != columns_before ? viewport.scroll_line() : scroll_before;
   std::size_t wanted = wanted_scroll;
   std::size_t band = band_rows_at_scroll(static_cast<const TextViewport&>(viewport));
-  // Settles on a scroll whose own band's clamp allows it. Not every scroll has
-  // one: at the end of a document, a scroll whose top line leaves a fold has no
-  // band, and the taller view that gives clamps the scroll back into the fold.
-  // The wanted scroll only falls, so this ends: once a clamp no longer moves it,
-  // the band at it is the band sized for, within two passes.
   for (int pass = 0; pass < 8; ++pass) {
     metrics = ComputeMetrics(text_renderer, viewport, rect, band, show_line_numbers);
     viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
@@ -346,4 +282,4 @@ EditorViewMetrics EditorViewRenderer::SizeViewportWithStickyBand(const render::T
   return metrics;
 }
 
-}  // namespace microide::editor
+}

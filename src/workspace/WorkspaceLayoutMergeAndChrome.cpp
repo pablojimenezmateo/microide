@@ -15,7 +15,7 @@ namespace {
 constexpr float kScrollbarThickness = kWorkspaceScrollbarThickness;
 constexpr float kScrollbarInset = kWorkspaceScrollbarInset;
 
-}  // namespace
+}
 float ComputeChromeButtonWidth(float measured_label_width) {
   return std::clamp(measured_label_width + 18.0f, 64.0f, 160.0f);
 }
@@ -45,10 +45,6 @@ void ComputeVisibleStripLayoutsInto(std::vector<StripSlotLayout>& out,
     });
     x += width + gap;
   }
-  // A strip narrower than its first item still shows that item, cut to the room
-  // there is. Placing nothing made an editor group with a file open in it show
-  // the empty strip's "Welcome" placeholder (a split pane squeezed by its divider),
-  // as VS Code never does: it keeps the active tab, truncated.
   if (out.empty() && max_x > start_x) {
     out.push_back(StripSlotLayout{
         .index = clamped_first,
@@ -81,7 +77,6 @@ std::size_t EnsureVisibleStripIndex(const std::vector<float>& widths,
   const std::size_t clamped_active = std::min(active_index, widths.size() - 1);
   const std::size_t clamped_first = std::min(current_first_index, widths.size() - 1);
 
-  // Check visibility inline without allocating a StripSlotLayout vector.
   {
     float x = start_x;
     for (std::size_t i = clamped_first; i < widths.size(); ++i) {
@@ -119,8 +114,6 @@ void BuildChromeTabRenderItemsInto(std::vector<ChromeTabRenderItem>& out,
                                    std::span<const std::string> tooltip_labels,
                                    float close_button_size,
                                    float close_button_right_inset) {
-  // resize, not clear+push_back: the elements that survive keep their two string
-  // buffers, and `assign` below refills them in place.
   out.resize(slots.size());
   for (std::size_t i = 0; i < slots.size(); ++i) {
     const StripSlotLayout& slot = slots[i];
@@ -130,8 +123,6 @@ void BuildChromeTabRenderItemsInto(std::vector<ChromeTabRenderItem>& out,
     ChromeTabRenderItem& item = out[i];
     item.index = model_index;
     item.rect = rect;
-    // Never larger than the tab: a tab on a squeezed strip is shorter than the
-    // button, which then hung below the strip.
     const float close_size = std::min(close_button_size, std::max(0.0f, rect.h));
     item.close_rect = MakeRect(rect.x + rect.w - close_button_right_inset - close_size,
                                rect.y + std::floor((rect.h - close_size) * 0.5f), close_size,
@@ -199,9 +190,6 @@ std::optional<SDL_FRect> ComputeVisibleLineRangeRect(const SDL_FRect& viewport_r
       layout.first_line_y + static_cast<float>(rect_start - layout.scroll_line) * layout.line_height;
   const float h =
       static_cast<float>(std::min(rect_end, visible_end_line) - rect_start) * layout.line_height;
-  // The diff surfaces paint their row bands one pixel above the nominal text grid
-  // (see WorkspaceShellRenderCompare/Merge), so this returns the band as painted.
-  // Redraw callers wrap it in DirtyRectWithHalo; paint callers use it as-is.
   return MakeRect(viewport_rect.x, y - 1.0f, viewport_rect.w, h);
 }
 
@@ -219,9 +207,6 @@ SDL_FRect ComputeMergeSourceActionButtonRect(float pane_x,
             static_cast<float>(static_cast<long long>(end_line) - scroll_row) * line_height + 2.0f;
   y = std::min(y, content_bottom - button_height - 4.0f);
   const float x = pane_x + gutter_width;
-  // No room in a narrow pane: not laid out, rather than run over the next pane
-  // or past the window (soak a67e96e83bf3). Paint, hover and the QA source all
-  // skip an empty rect.
   if (x + button_width > pane_right) {
     return MakeRect(x, y, 0.0f, 0.0f);
   }
@@ -237,18 +222,13 @@ std::array<SDL_FRect, 4> ComputeMergeResultActionButtonRects(
     float button_height,
     float button_gap,
     float pane_right) {
-  // Flow the buttons left to right inside the Result pane, wrapping onto a new
-  // row where the next one does not fit: one row ran into the Local pane, and
-  // at 1280x900 the pane is already narrower than the row (soak 4e21043cd592).
-  // A button wider than the pane itself is not laid out (an empty rect, which
-  // paint, hover and the QA source skip). Offsets first, relative to the block.
   std::array<SDL_FRect, 4> rects{};
   float x = start_x;
   float row = 0.0f;
   bool row_empty = true;
   for (std::size_t i = 0; i < rects.size(); ++i) {
     if (start_x + widths[i] > pane_right) {
-      continue;  // wider than the pane: left out
+      continue;
     }
     if (!row_empty && x + widths[i] > pane_right) {
       x = start_x;
@@ -282,10 +262,6 @@ std::optional<std::size_t> FindMergeTrackedConflictAtSourceLine(
     const auto& conflict = conflicts[i];
     const std::size_t start = incoming ? conflict.incoming_start_line : conflict.current_start_line;
     const std::size_t raw_end = incoming ? conflict.incoming_end_line : conflict.current_end_line;
-    // Normalize zero-length source spans (pure insertion/deletion conflicts where
-    // start == end and the side contributes no source lines) exactly the way the
-    // result-side lookup does, so a zero-height span still owns its anchor row for
-    // hover, tint, and accept-button hit-testing instead of matching nothing.
     const std::size_t end = std::max(raw_end, start + std::size_t{1});
     if (line >= start && line < end) {
       return i;
@@ -319,9 +295,6 @@ std::optional<MergeHoverState> ClassifyMergeHoverState(
       continue;
     }
 
-    // Source-pane accept buttons anchor to the SOURCE pane's own scroll, not the
-    // result pane's. When a source pane is longer than the result the result scroll
-    // clamps lower, so using it here would drift the button off its rendered row.
     if (MergeRowsOnScreen(conflict.incoming_start_line, conflict.incoming_end_line,
                           interaction.incoming.scroll_line, interaction.incoming.visible_rows) &&
         Contains(ComputeMergeSourceActionButtonRect(surface.left_x, surface.gutter_width,
@@ -361,7 +334,7 @@ std::optional<MergeHoverState> ClassifyMergeHoverState(
         interaction.result.rect, interaction.result.lines, conflict.start_line,
         std::max(conflict.end_line, conflict.start_line + std::size_t{1}));
     if (!conflict_rect.has_value()) {
-      continue;  // out of sight in the result: its buttons would fall at the pane's top
+      continue;
     }
     const auto action_rects = ComputeMergeResultActionButtonRects(
         surface.center_x + surface.gutter_width, surface.rows_y, interaction.content_bottom,
@@ -436,4 +409,4 @@ std::optional<MergeHoverState> ClassifyMergeHoverState(
   return std::nullopt;
 }
 
-}  // namespace microide::workspace
+}

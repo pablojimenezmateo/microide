@@ -22,9 +22,6 @@ namespace microide::workspace {
 
 namespace {
 
-// Returns the selected entry of a flat sidebar list, or nullptr when the index
-// is out of range (which also covers an empty list). Collapses the repeated
-// `entries.empty() || selected_index >= entries.size()` guard at the open sites.
 template <typename Vec>
 const typename Vec::value_type* SelectedListEntry(const Vec& entries, std::size_t selected_index) {
   if (selected_index >= entries.size()) {
@@ -33,17 +30,6 @@ const typename Vec::value_type* SelectedListEntry(const Vec& entries, std::size_
   return &entries[selected_index];
 }
 
-// Removes the directories a trashed untracked file leaves behind, walking up from
-// its parent and stopping at the first directory that still holds something (or at
-// the project root, which is never touched).
-//
-// Git tracks files, not directories, so after "Discard All" trashes every untracked
-// file the folders that only existed to hold them stay on disk: the source-control
-// view goes empty and reports success while the file tree still shows
-// `openspec/changes/<change>/specs/...`. `git clean -fd` — the path we deliberately
-// do NOT take, because it destroys the files instead of trashing them — would have
-// removed them. A directory holding anything else (an ignored build artifact, say)
-// is not empty and is left alone.
 void PruneEmptyDirectoriesBelow(project::FileWriteGate& gate,
                                 const std::filesystem::path& root,
                                 std::filesystem::path directory) {
@@ -54,9 +40,6 @@ void PruneEmptyDirectoriesBelow(project::FileWriteGate& gate,
     if (!std::filesystem::is_directory(directory, error) || error) {
       return;
     }
-    // A NON-recursive delete is an rmdir: the kernel refuses a directory that is
-    // not empty, so the emptiness here is decided atomically rather than by a
-    // check something else could race.
     if (!gate.ApplyTreeOp({.kind = project::FileWriteGate::TreeOp::Kind::Delete,
                            .path = directory,
                            .recursive = false})
@@ -67,7 +50,7 @@ void PruneEmptyDirectoriesBelow(project::FileWriteGate& gate,
   }
 }
 
-}  // namespace
+}
 
 bool SidebarCoordinator::OpenEditorFileFromSidebar(
     const std::filesystem::path& path, std::optional<std::pair<std::size_t, std::size_t>> caret) {
@@ -180,17 +163,12 @@ bool SidebarCoordinator::TypeNavigateGit(char typed, std::uint64_t now_ns) {
 }
 
 void SidebarCoordinator::MoveGitSelection(int delta) {
-  // Selection is a flat index into git.entries, but the rendered list is a
-  // collapsible tree: entries hidden under a collapsed directory must be skipped,
-  // or arrow keys walk invisible rows and the highlight appears to vanish. Step
-  // through the VISIBLE entry rows of the current line model instead.
   auto& git = state_.sidebar.git;
   if (git.entries.empty() || delta == 0) {
     return;
   }
   const std::vector<std::size_t> visible = VisibleGitEntries();
   if (visible.empty()) {
-    // No tree model available (or nothing visible): fall back to the flat clamp.
     if (MoveSelectionIndex(git.entries, &git.selected_index, delta)) {
       RevealSelectedGitLine();
     }
@@ -210,17 +188,11 @@ void SidebarCoordinator::MoveGitSelection(int delta) {
     next_pos = static_cast<std::size_t>(
         std::clamp<long long>(moved, 0, static_cast<long long>(visible.size()) - 1));
   } else {
-    // Selected entry is currently hidden: land on the first visible entry in the
-    // direction of travel.
     next_pos = delta > 0 ? 0 : visible.size() - 1;
   }
   const bool moved = visible[next_pos] != git.selected_index;
   git.selected_index = visible[next_pos];
   if (delta < 0 && next_pos == 0) {
-    // Home (or Up) onto the first entry shows the top of the list -- the section
-    // header and the folder rows above that entry -- as VS Code's lists do, even
-    // when the selection was already there: revealing only the entry's own row
-    // left "Changes (300)" scrolled out with nothing that brought it back.
     state_.sidebar.scroll_row = 0;
     return;
   }
@@ -375,7 +347,6 @@ bool SidebarCoordinator::OpenTestItem() {
   if (entry == nullptr || entry->file.empty()) {
     return false;
   }
-  // Tests only carry a line when discovered with one; jump only then.
   std::optional<std::pair<std::size_t, std::size_t>> caret;
   if (entry->line > 0) {
     caret = std::pair<std::size_t, std::size_t>{static_cast<std::size_t>(entry->line - 1), 0};
@@ -401,14 +372,9 @@ bool SidebarCoordinator::OpenPluginItem() {
   const plugin::PluginHost::SidebarItem& item = *selected;
 
   if (const SidebarMode mode = ActiveSidebarMode(); IsHostOwnedItemView(mode)) {
-    // Keep sidebar focus, as the outline does: arrow keys walk the rows and each
-    // Enter acts on the next one.
     return operations_.open_host_view_row && operations_.open_host_view_row(mode, item);
   }
 
-  // Outline rows reuse this storage but the host owns navigation: jump the active
-  // editor to the symbol's location instead of invoking a plugin confirm callback.
-  // Keep sidebar focus so arrow keys keep browsing the outline (VS Code-style).
   if (ActiveSidebarMode() == SidebarMode::Outline) {
     if (item.path.empty() || !operations_.open_file) {
       return false;
@@ -445,11 +411,8 @@ bool SidebarCoordinator::TogglePluginItem() {
   if (selected == nullptr || !selected->collapsible) {
     return false;
   }
-  // Snapshot the item by value: re-snapshotting below rebuilds the items vector,
-  // invalidating any reference into it.
   const plugin::PluginHost::SidebarItem item = *selected;
   if (const SidebarMode mode = ActiveSidebarMode(); IsHostOwnedItemView(mode)) {
-    // The host owns these groups' expanded state, as a plugin owns its own.
     if (!operations_.toggle_host_view_row || !operations_.toggle_host_view_row(mode, item)) {
       return false;
     }
@@ -466,8 +429,6 @@ bool SidebarCoordinator::TogglePluginItem() {
     }
     return false;
   }
-  // The plugin owns its expand/collapse state; re-snapshot to pull the reshaped
-  // (visible) row set. RefreshPlugin re-clamps the selection and requests redraw.
   RefreshPlugin();
   return true;
 }
@@ -479,7 +440,6 @@ bool SidebarCoordinator::EndPluginItem() {
   if (selected == nullptr || !IsHostOwnedItemView(mode) || !operations_.end_host_view_row) {
     return false;
   }
-  // By value: ending a row may refresh the rows under it.
   const plugin::PluginHost::SidebarItem item = *selected;
   return operations_.end_host_view_row(mode, item);
 }
@@ -538,9 +498,6 @@ void SidebarCoordinator::OpenDiscardGitEntryPrompt(const std::size_t entry_index
   if (entry == nullptr) {
     return;
   }
-  // The question is composed now: a git refresh before the confirm can put another
-  // file at `entry_index`, and the prompt must keep naming the one the confirm checks
-  // for (soak 5ec45751b332).
   operations_.open_prompt_surface(PromptSurfaceState::Action::DiscardGitEntry,
                                   PromptSurfaceState::Kind::Confirm, entry->path,
                                   std::to_string(entry_index),
@@ -560,13 +517,6 @@ bool SidebarCoordinator::DiscardAllGitEntries() {
       continue;
     }
     affected_paths.emplace_back(entry.path);
-    // Files with no committed content to restore are the ones DiscardAll would
-    // permanently delete: untracked files (removed by `git clean`) and staged NEW
-    // files (status Added — after `reset HEAD` they become untracked and are
-    // clean-deleted too). Trash them instead (recoverable), mirroring the
-    // single-file untracked-discard policy, and tell DiscardAll to skip its clean.
-    // Modified/Deleted tracked files keep their HEAD content and are restored, not
-    // trashed.
     if (entry.section == GitSidebarEntry::Section::Untracked ||
         entry.status == project::GitFileStatus::Added) {
       untracked_paths.emplace_back(entry.path);
@@ -576,12 +526,6 @@ bool SidebarCoordinator::DiscardAllGitEntries() {
   affected_paths.erase(std::unique(affected_paths.begin(), affected_paths.end()),
                        affected_paths.end());
 
-  // Unsaved work is only at risk in a tab for a file this discard actually rewrites
-  // (a dirty tab is never reloaded from disk — see ReconcileOpenTabsAfterPathDiscard,
-  // which reloads CLEAN tabs only). Asking about the project ROOT instead blocked the
-  // whole operation on any dirty buffer anywhere in the project, including files git
-  // does not even report as changed — and then dropped the label on the floor, so the
-  // confirm prompt closed and absolutely nothing happened or was said.
   std::string blocking_label;
   for (const auto& path : affected_paths) {
     if (!operations_.has_dirty_editor_tabs_for_path(path, &blocking_label)) {
@@ -596,9 +540,6 @@ bool SidebarCoordinator::DiscardAllGitEntries() {
 
   std::size_t trash_failures = 0;
   for (const auto& untracked : untracked_paths) {
-    // Best-effort: a failed trash must not abort the tracked discard, and it must
-    // not be silently `git clean`-deleted either — the file simply stays untracked
-    // and the count below tells the user which half of the operation fell short.
     if (!state_.write_gate()
              .ApplyTreeOp({.kind = project::FileWriteGate::TreeOp::Kind::Trash, .path = untracked})
              .ok) {
@@ -606,14 +547,12 @@ bool SidebarCoordinator::DiscardAllGitEntries() {
     }
   }
 
-  if (!project::GitDiscardAll(project_root_, state_.launcher(), /*remove_untracked=*/false)) {
+  if (!project::GitDiscardAll(project_root_, state_.launcher(), false)) {
     ReportGitMessage(NotificationService::Tone::Error,
                      "Failed to discard all changes (see git output)");
     return false;
   }
 
-  // After the restore has recreated every deleted tracked file, the only directories
-  // still empty are the ones the trashed untracked files left behind.
   for (const auto& untracked : untracked_paths) {
     PruneEmptyDirectoriesBelow(state_.write_gate(), project_root_, untracked.parent_path());
   }
@@ -682,14 +621,6 @@ bool SidebarCoordinator::DiscardGitEntry(const std::size_t entry_index,
   if (!IsGitWorkflowSection(entry->section)) {
     return false;
   }
-  // A confirm prompt captures the entry index, but an async git-status refresh can
-  // reorder/shrink the entries before the user confirms. Re-validate that the index
-  // still points at the exact path they confirmed, so a discard (which destroys
-  // working-tree changes) never lands on a different file that slid into the slot.
-  // `entry->path` is already normalized generic text — a normalized root joined to
-  // the normalized relative text git reported — and `expected_path` is that same
-  // text round-tripped through the prompt surface. So compare the text, and pay a
-  // normalization only for a spelling that actually needs one.
   if (expected_path.has_value()) {
     std::string expected = expected_path->generic_string();
     if (util::PathTextNeedsNormalizing(expected)) {
@@ -708,23 +639,12 @@ bool SidebarCoordinator::DiscardGitEntry(const std::size_t entry_index,
                          : "Save or close dirty tabs before discarding " + blocking_label);
     return false;
   }
-  // An untracked file has no committed content to restore — "discarding" it deletes a
-  // file the user created. The confirm prompt promises "Existing file-operation policy
-  // applies (trash when configured)", and the file tree's Delete honors exactly that, so
-  // route untracked discard through the same TrashPath (recoverable when trash is on).
-  // GitDiscardPath's untracked branch runs `git clean -fd`, which permanently destroys
-  // the file despite the prompt — a silent data-loss contract violation. Tracked-path
-  // discard stays a git restore.
-  // A staged NEW file (status Added, not a rename destination) has no committed
-  // content to restore either: GitDiscardPath would `git clean -f` it, which is the
-  // same permanent deletion, behind the same prompt. Unstage it and trash the file
-  // like the untracked row it becomes -- the policy DiscardAll already applies.
   const bool staged_new_file = entry->status == project::GitFileStatus::Added &&
                                !entry->is_staged_rename;
   if (entry->section == GitSidebarEntry::Section::Untracked || staged_new_file) {
     if (staged_new_file &&
         !project::GitUnstagePath(project_root_, state_.launcher(), entry->path,
-                                /*may_be_staged_rename=*/false)) {
+                                false)) {
       ReportGitOperationFailure("discard", *entry);
       return false;
     }
@@ -754,4 +674,4 @@ void SidebarCoordinator::ReconcileOpenTabsAfterPathDiscard(const std::filesystem
   operations_.close_open_tabs_for_path(normalized_path);
 }
 
-}  // namespace microide::workspace
+}

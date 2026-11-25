@@ -23,24 +23,6 @@ using microide::workspace::SerializeControlResponse;
 using microide::workspace::SerializeControlResponseWithin;
 using microide::util::JsonValue;
 
-// Property: a response always survives its own wire format, and no input line
-// can make the parser lie or throw.
-//
-// The control channel is the surface an external tool — an LLM driver, a script
-// — talks to, so its inputs are the least trusted in the app and its outputs are
-// the ones a machine parses. Two properties cover the ways that goes wrong:
-//
-//   * ROUND TRIP. A serialized response must parse back as JSON and carry the
-//     same id / ok / feedback / error / result. Feedback and error are built
-//     from arbitrary product text — file paths, git output, error messages — so
-//     they routinely contain quotes, backslashes, newlines, control bytes and
-//     raw UTF-8. Any of those escaped wrongly produces a line the client cannot
-//     parse, or worse, one that parses into something else.
-//   * TOTALITY. `ParseControlRequest` is documented to never throw and to report
-//     malformed input as {valid=false}. Feed it structurally hostile lines and
-//     require exactly that: it returns, and a request it calls valid really does
-//     carry exactly one of command/query.
-
 std::string ControlRoundTripBody(std::size_t choice) {
   static const char* const kBodies[] = {
       "",
@@ -90,8 +72,6 @@ void TestControlResponseSurvivesItsOwnWireFormat() {
     if (response.id.has_value()) {
       Expect(value["id"].AsInt(*response.id + 1) == *response.id, "id must survive");
     }
-    // feedback/error are only emitted when non-empty; when emitted they must be
-    // byte-identical, which is what the escaping has to get right.
     if (!response.feedback.empty()) {
       Expect(value["feedback"].AsString() == response.feedback,
              "feedback must survive the round trip byte for byte");
@@ -107,7 +87,7 @@ void TestControlRequestParserIsTotal() {
   static const char* const kHostileLines[] = {
       "", " ", "\n", "{", "}", "[]", "null", "true", "42", "\"string\"",
       "{}", "{\"id\":1}", "{\"command\":\"\"}", "{\"query\":\"\"}",
-      "{\"command\":\"open\",\"query\":\"tabs\"}",           // both set
+      "{\"command\":\"open\",\"query\":\"tabs\"}",
       "{\"command\":null}", "{\"query\":null}", "{\"id\":null,\"command\":\"open\"}",
       "{\"id\":\"not-a-number\",\"command\":\"open\"}",
       "{\"id\":9223372036854775807,\"command\":\"open\"}",
@@ -115,13 +95,13 @@ void TestControlRequestParserIsTotal() {
       "{\"id\":1.5,\"command\":\"open\"}",
       "{\"command\":123}", "{\"command\":[\"open\"]}", "{\"command\":{\"a\":1}}",
       "{\"command\":\"open \\u0000 nul\"}",
-      "{\"command\":\"\\ud800\"}",                            // lone surrogate
+      "{\"command\":\"\\ud800\"}",
       "{\"args\":{\"a\":1},\"query\":\"tabs\"}",
       "{\"query\":\"tabs\",\"args\":[1,2,3]}",
       "{\"query\":\"tabs\",\"args\":\"not-an-object\"}",
       "  {\"command\":\"open\"}  ",
       "{\"command\":\"open\"}trailing",
-      "{\"command\":\"open\"}\n{\"command\":\"save\"}",       // two objects on a line
+      "{\"command\":\"open\"}\n{\"command\":\"save\"}",
   };
   for (const char* line : kHostileLines) {
     const ControlRequest request = ParseControlRequest(line);
@@ -134,8 +114,6 @@ void TestControlRequestParserIsTotal() {
            "a valid request carries exactly one of command / query");
   }
 
-  // And over generated junk, including embedded NULs and arbitrary bytes: the
-  // contract is that it returns at all.
   std::uint64_t seed = 0x629A292A367CD507ULL;
   const auto next = [&seed]() {
     seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
@@ -197,10 +175,6 @@ void TestSerializeResponseRoundTrips() {
   Expect(line.find('\n') == std::string::npos, "serialized response must be a single line");
 }
 
-// A reply the channel cannot carry is answered with an error under the same id.
-// The socket layer used to drop it and shed the client as "not reading" -- and
-// every reconnect's next `ui` the same way -- so the client saw only a broken pipe
-// (soak 1d64e3925f2b: a `ui` reply of 9.9 MB against the 8 MiB write cap).
 void TestOversizedResponseBecomesAnErrorReply() {
   ControlResponse response;
   response.id = 9800;
@@ -231,8 +205,6 @@ void TestHelpTextListsVerbsAndSpecKeys() {
   }
 }
 
-// The runbook the agent reads must lead with control-send and never resurrect the
-// broken `set-setting debug.enabled true` prelude or socat guidance.
 void TestHelpTextLeadsWithControlSend() {
   const std::string help = ControlChannelHelpText();
   Expect(help.find("control-send") != std::string::npos,
@@ -245,8 +217,6 @@ void TestHelpTextLeadsWithControlSend() {
          "the debug.enabled prelude is obsolete now that the channel auto-enables");
 }
 
-// The committed man page is generated from RenderManPage(); fail if it was edited
-// by hand or left stale so the shipped docs cannot drift from the implementation.
 void TestManPageMatchesGenerator() {
   const std::filesystem::path repo_root =
       std::filesystem::path(MICROIDE_TEST_SOURCE_DIR).parent_path();
@@ -257,8 +227,6 @@ void TestManPageMatchesGenerator() {
          "docs/microide.1 is stale -- run tools/gen-man.sh to regenerate it");
 }
 
-// Negative guard: the docs an agent might read must not carry the broken socat
-// recipe, and must point at control-send instead.
 void TestDocsHaveNoSocatRecipe() {
   const std::filesystem::path repo_root =
       std::filesystem::path(MICROIDE_TEST_SOURCE_DIR).parent_path();
@@ -274,7 +242,7 @@ void TestDocsHaveNoSocatRecipe() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterControlProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlProtocol/ParseCommandRequest", TestParseCommandRequest);
@@ -293,4 +261,4 @@ void RegisterControlProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlProtocol/RequestParserIsTotal", TestControlRequestParserIsTotal);
 }
 
-}  // namespace microide::tests
+}

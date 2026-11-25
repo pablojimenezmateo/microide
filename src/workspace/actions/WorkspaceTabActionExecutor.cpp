@@ -19,21 +19,18 @@
 namespace microide::workspace {
 
 namespace {
-// The review marks and notes reported success on any other tab and did nothing.
 constexpr std::string_view kNotABranchReview =
     "Not a review: open a file from the git view's Outgoing list, or review-branch <ref>";
-}  // namespace
+}
 
 namespace {
 
-// `open`/`tab` create a buffer for a path that is not there yet; anything that
-// exists (a file, or a directory the open will refuse) takes the normal route.
 bool PathExistsForOpen(const std::filesystem::path& path) {
   std::error_code error;
   return std::filesystem::exists(path, error);
 }
 
-}  // namespace
+}
 
 ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
                                                                 const std::vector<std::string>& args,
@@ -54,7 +51,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       const std::optional<OpenPathRequest> path_request =
           BuildOpenPathRequest({args[0]}, context_.ProjectRoot());
       const std::optional<LineNavigationRequest> line_request =
-          BuildLineNavigationRequest({args[1]}, /*allow_zero_line=*/false);
+          BuildLineNavigationRequest({args[1]}, false);
       if (!path_request.has_value() || !line_request.has_value() ||
           line_request->requested_line <= 0) {
         return reject("reveal requires <path> <line[:col]> with a positive line");
@@ -69,10 +66,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       if (args.empty()) {
         return reject("tab-to-group requires <group> [slot]");
       }
-      // Groups count from 1, as Ctrl+1/Ctrl+2 and `focus-group <n>` do. This
-      // took a 0-based index while its sibling took a 1-based one, so the number
-      // a person had just typed into focus-group named a different pane here
-      // (found by the QA commands-args flow).
       const std::optional<std::size_t> group = util::ParseSize(args[0]);
       std::optional<std::size_t> slot;
       if (args.size() > 1) {
@@ -117,12 +110,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       {
         const TabPathsRequest request = BuildTabPathsRequest(args, context_.ProjectRoot());
         if (request.open_untitled) {
-          // Reported, like the path branch below already reports its own failure.
-          // `OpenUntitled` refuses past `kMaxOpenTabsPerGroup`, and swallowing that
-          // told the caller a fresh empty buffer was now active when the previously
-          // active tab still was — so the next keystroke typed into someone else's
-          // file. The per-group ceiling is the only reachable cause here: the empty
-          // root is rejected above.
           if (!context_.OpenUntitledTab()) {
             return reject("Cannot open a new tab: this editor group already holds " +
                           std::to_string(kMaxOpenTabsPerGroup) + " tabs");
@@ -181,9 +168,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       if (!closed.has_value()) {
         return reject("No recently closed editor");
       }
-      // The editor comes back as it was closed -- caret, selection, scroll and
-      // folds -- through the deferred-tab hydration a restored session uses, also
-      // when the read lands later (a large file loads off the shell thread).
       return context_.editor_tabs().ReopenEditor(std::move(*closed)) ? DispatchResult::Handled
                                                        : DispatchResult::Rejected;
     }
@@ -198,7 +182,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       if (!target.has_value()) {
         return reject(back ? "Nothing to go back to" : "Nothing to go forward to");
       }
-      // `reveal` reopens a file closed since, and places the caret.
       return Execute(ActionId::Reveal,
                      {target->path.string(),
                       std::to_string(target->line + 1) + ":" + std::to_string(target->column + 1)},
@@ -207,8 +190,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
                  : DispatchResult::Rejected;
     }
     case ActionId::SaveAs: {
-      // VS Code's Ctrl+Shift+S: `save-as <path>` saves there; bare, it asks,
-      // starting from the file's own project-relative path.
       if (!args.empty()) {
         return Execute(ActionId::Save, args, source) ? DispatchResult::Handled
                                                     : DispatchResult::Rejected;
@@ -230,10 +211,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::RevertFile: {
-      // VS Code's File: Revert File -- throw the unsaved changes away and take
-      // the file as it is on disk. One undoable edit, so Ctrl+Z brings them back;
-      // Reload from Disk, which swaps the buffer, refuses a dirty one for that
-      // reason.
       const editor::TextViewport* viewport = context_.ActiveEditableViewport();
       if (viewport == nullptr || viewport->path().empty()) {
         return reject("Revert File needs a file on disk");
@@ -245,14 +222,10 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       if (!context_.RevertActiveFile()) {
         return reject("Revert File: could not read " + name);
       }
-      context_.NotifyEditorViewportChanged(/*last_change=*/true);
+      context_.NotifyEditorViewportChanged(true);
       return DispatchResult::Handled;
     }
     case ActionId::SaveAll: {
-      // VS Code's File > Save All (Ctrl+K S): every unsaved file in every group,
-      // each through the same deferred save as its own Ctrl+S (formatter, save
-      // participants, the changed-on-disk refusal). An untitled buffer has no
-      // name to save under and is left for its Save As, said in the notice.
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
@@ -280,8 +253,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
-      // A dirty buffer is not reloaded (the reload would throw the edits away);
-      // the menu row used to do nothing and say nothing about it.
       if (!context_.ReopenActiveTab()) {
         return reject("Reload from Disk needs a saved file: the buffer has unsaved changes, "
                       "or is not a file on disk");
@@ -292,7 +263,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
         return reject("No active project");
       }
       if (!args.empty()) {
-        // `save <path>`: Save As, and the way an untitled buffer gets its name.
         std::string error_message;
         const std::filesystem::path target =
             NormalizeCommandPath(context_.ProjectRoot(),
@@ -304,27 +274,17 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       }
       if (auto* viewport = context_.ActiveEditableViewport();
           viewport != nullptr && viewport->path().empty()) {
-        // An untitled buffer has nowhere to go: a keystroke or menu opens the
-        // Save As prompt (VS Code); the command line is told what to type so a
-        // headless driver is not left waiting on a prompt it cannot see.
         if (source == ActionSource::Command) {
           return reject("Untitled buffer: save <path> names the file");
         }
         context_.OpenSaveAsPrompt();
         return DispatchResult::Handled;
       }
-      // Deferred: this is the save the user is sitting in front of, and the
-      // formatter behind it is a subprocess. It reports success optimistically —
-      // a write that fails after the formatter returns surfaces as a notification,
-      // the same way a failed formatter already does.
       if (context_.SaveTabDeferred(context_.ActiveTabIndex())) {
         if (source == ActionSource::Shortcut) {
           context_.ResetCaretBlink();
         }
       } else {
-        // The common refusal: the file changed on disk (an agent, a pull from the
-        // host) since this buffer last read or wrote it. Say so, and where the
-        // choice is, as VS Code's "the content of the file is newer" does.
         if (const editor::TextViewport* viewport = context_.ActiveEditableViewport();
             viewport != nullptr && !viewport->path().empty() &&
             viewport->SaveWouldOverwriteUnseenDisk()) {
@@ -343,8 +303,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       const EditorSplitOrientation orientation = id == ActionId::SplitEditorDown
                                                      ? EditorSplitOrientation::Horizontal
                                                      : EditorSplitOrientation::Vertical;
-      // Tree context-menu split: open the right-clicked file into the new group.
-      // (Editor tab/body menus dispatch with ActionSource::Menu and skip this.)
       if (source == ActionSource::ContextMenu) {
         const std::filesystem::path tree_path = context_.ResolveTreeActionPath(source);
         if (!tree_path.empty()) {
@@ -377,9 +335,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       context_.FocusOtherGroup();
       return DispatchResult::Handled;
     case ActionId::FocusEditorGroup: {
-      // VS Code's Ctrl+1..8: focus group N (1-based, layout order); the group one
-      // past the last is created by splitting right, so Ctrl+2 from a single
-      // editor opens the side-by-side one.
       const std::optional<std::size_t> n = args.empty() ? std::nullopt : util::ParseSize(args[0]);
       if (!n.has_value() || *n == 0) {
         return reject("focus-group expects a group number from 1");
@@ -488,9 +443,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
-      // A context menu supplies its own row's path (the editor tab menu leaves it
-      // empty and falls back to the active tab), so the same item can reveal a
-      // search hit, a problem or a test from the sidebar list it was opened on.
       std::filesystem::path path = context_.RowContextMenuPath();
       if (path.empty()) {
         path = context_.ActiveTabPath();
@@ -498,8 +450,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       if (path.empty()) {
         return reject("Nothing to reveal");
       }
-      // Full VSCode-style reveal: open the sidebar on the Tree view (switching from
-      // Search/Git if needed), then force-expand ancestors + select + scroll to the file.
       context_.ShowSidebarView(SidebarViewInfo{.id = "tree",
                                                .label = "Tree",
                                                .mode = SidebarMode::Tree},
@@ -515,8 +465,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       const GitRangeVerb verb = id == ActionId::GitStageSelectedRanges     ? GitRangeVerb::Stage
                                 : id == ActionId::GitUnstageSelectedRanges ? GitRangeVerb::Unstage
                                                                            : GitRangeVerb::Revert;
-      // The patch service reports what it could not apply (no change at the caret,
-      // a target that cannot take the patch) on the feedback line itself.
       if (!context_.ApplyGitSelectedRanges(verb)) {
         return reject("Open a diff (from the git view) to stage, unstage or revert its changes");
       }
@@ -569,8 +517,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
     }
     case ActionId::CopyBranchReviewNotes:
     case ActionId::TerminalInsertBranchReviewNotes: {
-      // A path narrows it to a file or directory: typed, or the git view row the
-      // menu was opened on.
       const std::filesystem::path scope =
           args.empty() ? context_.ReviewCommentMenuScope() : std::filesystem::path(args.front());
       std::string notes = context_.ReviewComments(scope);
@@ -582,8 +528,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
         context_.WriteClipboardText(notes);
         return DispatchResult::Handled;
       }
-      // As a paste, so a program that brackets pastes (an agent's prompt) takes
-      // the lines as one block instead of running the first.
       if (!context_.TypeIntoActiveTerminal(std::move(notes))) {
         return reject("No terminal is running to take the notes");
       }
@@ -609,23 +553,13 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
   }
 }
 
-ActionCoordinator::DispatchResult ActionCoordinator::ExecuteOpen(ActionId /*id*/, const std::vector<std::string>& args,
+ActionCoordinator::DispatchResult ActionCoordinator::ExecuteOpen(ActionId , const std::vector<std::string>& args,
                                                                  ActionSource source, std::string* rejection_feedback) {
   const auto reject = RejectInto(rejection_feedback);
   const std::optional<OpenPathRequest> request = context_.HasProjectRoot()
                                                      ? BuildOpenPathRequest(args, context_.ProjectRoot())
                                                      : BuildOpenPathRequest(args, std::filesystem::path{});
   if (!request.has_value()) {
-    // Bare `open` from a UI surface (File > Open File…, Ctrl+O, the welcome
-    // screen's Open File action) means "ask me for a path" — the same contract
-    // `project-open` has always had. It used to reject with "open requires a
-    // path", so the menu entry, its ellipsis and the welcome button were all
-    // dead ends.
-    //
-    // A *typed* `open` keeps rejecting: the user is already at a command line
-    // with the path in reach, and popping a native dialog out of a text command
-    // would be both surprising and untestable (the headless control channel
-    // drives this same path).
     if (source == ActionSource::Command) {
       return reject("open requires a path");
     }
@@ -634,8 +568,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteOpen(ActionId /*id*/
       case ProjectOpenPickerResult::AlreadyOpen:
         return DispatchResult::Handled;
       case ProjectOpenPickerResult::Unavailable:
-        // No native picker: seed the command palette with the verb so the user
-        // only types the path, mirroring the project-open fallback.
         context_.OpenCommandPalette("open ");
         return DispatchResult::Handled;
     }
@@ -644,8 +576,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteOpen(ActionId /*id*/
   if (!context_.HasProjectRoot()) {
     return reject("No active project");
   }
-  // A typed path that does not exist yet opens as an empty buffer bound to
-  // it (`code new.txt`); the file is created on save.
   if (!PathExistsForOpen(request->path)) {
     if (!context_.editor_tabs().OpenNewBufferInNewTab(request->path)) {
       return reject("Cannot open " + request->path.string());
@@ -659,4 +589,4 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteOpen(ActionId /*id*/
   return DispatchResult::Handled;
 }
 
-}  // namespace microide::workspace
+}

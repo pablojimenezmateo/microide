@@ -28,8 +28,6 @@ bool SettingEnabled(const ActionAvailability::Operations& operations,
   return SettingFlagEnabled(operations.get_setting_value(id), default_value);
 }
 
-// An LSP feature is available only when both the master switch (`lsp.enabled`) and
-// the feature's own toggle are on. Absent getter (headless setups) => available.
 bool LspFeatureAvailable(const ActionAvailability::Operations& operations,
                          std::string_view feature_id) {
   if (!operations.get_setting_value) {
@@ -38,7 +36,7 @@ bool LspFeatureAvailable(const ActionAvailability::Operations& operations,
   return LspFeatureEnabled(operations.get_setting_value, feature_id);
 }
 
-}  // namespace
+}
 
 ActionAvailability::ActionAvailability(const WorkspaceContext& context,
                                        const DebugService& debug, Operations operations)
@@ -49,10 +47,6 @@ TreeContextTargetKind ActionAvailability::ActiveTreeTargetKind() const {
                                                     : operations_.selected_tree_target_kind();
 }
 
-// One exhaustive switch over every ActionId, with no `default:` -- deliberately:
-// -Wswitch (an error in the clang lane) makes each new action take a position on
-// whether it is available. Splitting it into per-family functions would need a
-// `default:` in each and lose that.
 bool ActionAvailability::IsEnabled(ActionId id) const {
   const editor::TextViewport* active_viewport = operations_.active_navigable_viewport();
   const editor::TextViewport* active_editable_viewport = operations_.active_editable_viewport();
@@ -65,13 +59,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return active_viewport != nullptr && operations_.active_code_actions_available() &&
              LspFeatureAvailable(operations_, "lsp.code_actions.enabled");
     case ActionId::FormatDocument:
-      // LSP-only action; offered whenever a saved editable buffer is active and the
-      // feature is enabled. The executor reports "no language server" on invocation.
       return active_editable_viewport != nullptr && !active_editable_viewport->path().empty() &&
              LspFeatureAvailable(operations_, "lsp.formatting.enabled");
     case ActionId::FormatJson:
-      // Self-contained (no language server); available for any editable buffer,
-      // including untitled ones. A path argument can still target another file.
       return active_editable_viewport != nullptr;
     case ActionId::RenameSymbol:
       return active_editable_viewport != nullptr && !active_editable_viewport->path().empty() &&
@@ -79,8 +69,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::GoToTypeDefinition:
     case ActionId::GoToImplementation:
     case ActionId::GoToDeclaration:
-      // Extended LSP navigation; offered when a saved editable buffer is active. The
-      // executor reports "no language server" as feedback on invocation.
       return active_editable_viewport != nullptr && !active_editable_viewport->path().empty() &&
              LspFeatureAvailable(operations_, "lsp.navigation.enabled");
     case ActionId::WorkspaceSymbol:
@@ -97,33 +85,23 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return active_viewport != nullptr && operations_.active_references_available() &&
              LspFeatureAvailable(operations_, "lsp.find_references.enabled");
     case ActionId::CallHierarchy:
-      // The last LSP action with no availability rule at all: it fell through the
-      // switch to the trailing `return true`, so it read as enabled with no editor
-      // open. Gated like RenameSymbol, which is what its executor already requires.
       return active_editable_viewport != nullptr && !active_editable_viewport->path().empty() &&
              LspFeatureAvailable(operations_, "lsp.call_hierarchy.enabled");
     case ActionId::FindNext:
     case ActionId::FindPrevious:
-      // Steps the buffer find term, or opens the widget when there is none: any
-      // open editor qualifies.
       return active_viewport != nullptr;
     case ActionId::GoToNextProblemInFiles:
     case ActionId::GoToPreviousProblemInFiles:
       return !context_.current_project_state.root.empty();
-    case ActionId::GoToSymbolInEditor:  // the executor says when there are none
+    case ActionId::GoToSymbolInEditor:
     case ActionId::LanguageMode:
     case ActionId::GoToNextDiagnostic:
     case ActionId::GoToPreviousDiagnostic:
-      // Diagnostics come from servers and plugins alike; the executor reports an
-      // empty file. Any open file qualifies.
       return active_viewport != nullptr;
     case ActionId::GoToDefinition:
       return active_viewport != nullptr && operations_.active_definition_available() &&
              LspFeatureAvailable(operations_, "lsp.goto_definition.enabled");
     case ActionId::SignatureHelp:
-      // Offered when an editor is focused and the feature is enabled; the provider
-      // query (and its graceful "no signature help available" reject) runs on
-      // invocation.
       return active_viewport != nullptr &&
              LspFeatureAvailable(operations_, "lsp.signature_help.enabled");
       return active_viewport != nullptr;
@@ -132,13 +110,11 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ToggleColorTheme:
     case ActionId::Files:
     case ActionId::OpenCommandPalette:
-    case ActionId::FocusNotifications:  // rejects with a message when there are none
-    case ActionId::NotificationAction:  // rejects naming the row/action it cannot find
-    case ActionId::BannerAction:        // rejects when the active tab shows no such button
-    case ActionId::ShowOutput:          // rejects naming a channel that does not exist
+    case ActionId::FocusNotifications:
+    case ActionId::NotificationAction:
+    case ActionId::BannerAction:
+    case ActionId::ShowOutput:
     case ActionId::RemoteOpenFolder:
-    // Row- and notification-driven, with arguments naming what they act on: each
-    // rejects naming the host, path or handle it cannot find.
     case ActionId::RemoteResolveConflict:
     case ActionId::RemoteResolveAllConflicts:
     case ActionId::RemoteBlockedSave:
@@ -146,14 +122,14 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::RemoteCloseHostTerminals:
     case ActionId::RemoteCopyCommand:
     case ActionId::RemoteClearHostChanges:
-    case ActionId::RemoteOpenOfferedSession:  // rejects when no machine left anything
-    case ActionId::RemoteApplyHeldDeletes:  // rejects outside a remote project
-    case ActionId::OpenUrl:                 // rejects a URL the opener will not take
-    case ActionId::CancelSaveWait:      // rejects when nothing with that id is waiting
+    case ActionId::RemoteOpenOfferedSession:
+    case ActionId::RemoteApplyHeldDeletes:
+    case ActionId::OpenUrl:
+    case ActionId::CancelSaveWait:
     case ActionId::OpenHelpAbout:
     case ActionId::OpenKeyboardShortcuts:
     case ActionId::OpenSettings:
-    case ActionId::SetSetting:  // deterministic setting write; never gated
+    case ActionId::SetSetting:
     case ActionId::PluginsReload:
     case ActionId::ProjectOpen:
     case ActionId::Quit:
@@ -163,16 +139,11 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::SidebarToggle:
       return true;
     case ActionId::DebugToggleEnabled:
-      // The master enable/disable toggle is itself never gated — it must work
-      // precisely when the debugger is off so the user can turn it on.
       return true;
     case ActionId::StartDebugging:
     case ActionId::StopDebugging:
-      // Gated on the master debugger toggle; the executor reports adapter/
-      // session preconditions as command feedback.
       return SettingEnabled(operations_, "debug.enabled", false);
     case ActionId::DebugStartOrContinue:
-      // Starts when idle, continues when stopped; nothing to do while running.
       return SettingEnabled(operations_, "debug.enabled", false) &&
              !(debug_.IsSessionActive() &&
                !(debug_.SessionState() == DebugSession::State::Stopped));
@@ -180,41 +151,32 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::DebugStepOver:
     case ActionId::DebugStepIn:
     case ActionId::DebugStepOut:
-      // Resume/step are valid only while the session is paused.
       return SettingEnabled(operations_, "debug.enabled", false) &&
              debug_.IsSessionActive() &&
              debug_.SessionState() == DebugSession::State::Stopped;
     case ActionId::DebugReverseContinue:
     case ActionId::DebugStepBack:
-      // Reverse execution: paused session AND a recording adapter that advertises
-      // `supportsStepBack` (so these stay hidden/greyed for ordinary adapters).
       return SettingEnabled(operations_, "debug.enabled", false) &&
              debug_.IsSessionActive() &&
              debug_.SessionState() == DebugSession::State::Stopped &&
              debug_.SupportsStepBack();
     case ActionId::DebugPause:
-      // Pause is valid only while the session is running (active, not stopped).
       return SettingEnabled(operations_, "debug.enabled", false) &&
              debug_.IsSessionActive() &&
              !(debug_.SessionState() == DebugSession::State::Stopped);
     case ActionId::DebugRestart:
-      // Restart is valid whenever a session is active (running or stopped).
       return SettingEnabled(operations_, "debug.enabled", false) &&
              debug_.IsSessionActive();
     case ActionId::DebugSwitchSession:
-      // Switching only makes sense with more than one live session.
       return SettingEnabled(operations_, "debug.enabled", false) &&
              debug_.SessionCount() > 1;
     case ActionId::DebugStopAllSessions:
-      // Stopping everything only makes sense with at least one live session.
       return SettingEnabled(operations_, "debug.enabled", false) &&
              debug_.IsSessionActive();
     case ActionId::DebugConsoleRepl:
-      // REPL evaluation needs a live session (frame 0 when running).
       return SettingEnabled(operations_, "debug.enabled", false) &&
              debug_.IsSessionActive();
     case ActionId::PickLaunchConfig:
-      // The picker is useful whenever the debugger is enabled (it can launch).
       return SettingEnabled(operations_, "debug.enabled", false);
     case ActionId::DebugBreakpointEditCondition:
     case ActionId::DebugBreakpointEditHitCondition:
@@ -222,13 +184,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::DebugBreakpointClearCondition:
     case ActionId::DebugBreakpointToggleEnabled:
     case ActionId::DebugBreakpointRemove:
-      // Breakpoint-gutter context-menu items; the menu only opens when the
-      // debugger is enabled, and editing works with or without a live session.
       return SettingEnabled(operations_, "debug.enabled", false);
     case ActionId::GitAcceptCurrent:
     case ActionId::GitAcceptIncoming: {
-      // A target without an argument: a merge tab on screen, or a conflict row
-      // selected in the git sidebar (the row's context menu acts on it).
       const ProjectWorkspaceState& state = context_.current_project_state;
       const auto& git = state.sidebar.git;
       const EditorGroup& group = state.focused_group();
@@ -239,8 +197,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::GitOpenFileEntry:
     case ActionId::GitStageToggleEntry:
     case ActionId::GitDiscardEntry: {
-      // Git sidebar entry context-menu items; gate on the selected entry's
-      // action availability (e.g. Discard is disabled for the Outgoing section).
       const auto& git = context_.current_project_state.sidebar.git;
       if (git.selected_index >= git.entries.size()) {
         return false;
@@ -259,7 +215,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return availability.discard;
     }
     case ActionId::BreakpointToggle:
-      // The caret-line toggle needs a saved editable buffer to put the breakpoint in.
       return SettingEnabled(operations_, "debug.enabled", false) &&
              active_editable_viewport != nullptr && !active_editable_viewport->path().empty();
     case ActionId::BreakpointSet:
@@ -277,7 +232,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::BreakpointExceptionCondition:
     case ActionId::DebugLaunch:
     case ActionId::DebugRun:
-      // Headless breakpoint/launch control; valid whenever the debugger is on.
       return SettingEnabled(operations_, "debug.enabled", false);
     case ActionId::DebugPaneToggle:
     case ActionId::DebugPaneShowCallStack:
@@ -285,15 +239,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::DebugPaneShowWatch:
     case ActionId::DebugPaneShowBreakpoints:
     case ActionId::DebugShowOutput:
-      // Right-side debug pane + bottom-panel debug output: available whenever the
-      // debugger is enabled (the breakpoints/watch surfaces are useful before a
-      // session starts; Show Output no-ops gracefully without a live session).
       return SettingEnabled(operations_, "debug.enabled", false);
     case ActionId::DebugCopyValue:
     case ActionId::DebugAddToWatch: {
-      // Row menu items on the pane's two value surfaces. Enabled only when the
-      // selected row actually carries the thing the item copies/watches, so the
-      // menu never offers a no-op on a scope header or a "show more…" row.
       if (!SettingEnabled(operations_, "debug.enabled", false)) {
         return false;
       }
@@ -320,13 +268,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::CloseAllTabs:
       return !context_.current_project_state.focused_group().open_tabs.empty();
     case ActionId::RevertFile:
-      // A file on disk with unsaved changes: there is something to revert TO and
-      // something to revert.
       return !context_.current_project_state.root.empty() && active_editable_viewport != nullptr &&
              !active_editable_viewport->path().empty() && active_editable_viewport->dirty();
     case ActionId::SaveAll:
-      // Offered while something in the project is unsaved (VS Code greys it out
-      // otherwise too).
       for (const EditorGroup& group : context_.current_project_state.editor_groups) {
         for (const TabEntry& tab : group.open_tabs) {
           if (TabCoordinator::TabStateIsDirty(tab)) {
@@ -350,13 +294,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return !context_.current_project_state.root.empty() &&
              ActiveTreeTargetKind() == TreeContextTargetKind::File;
     case ActionId::CompareFiles:
-      // Diffs two arbitrary paths (or files picked interactively); works even
-      // with no project open, so it is always available.
       return true;
     case ActionId::SelectForCompare:
     case ActionId::CompareWithClipboard:
-      // Need a resolvable "current side": an active editor buffer (not the
-      // welcome page of a group with no tab), or a file targeted in the tree.
       return (active_viewport != nullptr && !active_viewport->is_placeholder()) ||
              ActiveTreeTargetKind() == TreeContextTargetKind::File;
     case ActionId::CompareWithSelected:
@@ -393,9 +333,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     }
     case ActionId::Compare:
     case ActionId::GitRefresh:
-    // Git write actions gate on "a project is open", exactly as GitRefresh does;
-    // the executor reports "not a git repository" precisely on invocation rather
-    // than the command silently vanishing from the palette in a non-git project.
     case ActionId::GitSwitchBranch:
     case ActionId::GitWorktrees:
     case ActionId::GitCommits:
@@ -432,12 +369,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::Reveal:
       return !context_.current_project_state.root.empty();
     case ActionId::RemoteOpenLocalTerminal:
-      // In a local project Terminal > New is already local: dimmed, not a duplicate.
       return context_.current_project_state.id.IsRemote();
-    // The Remote menu's verbs (remote-menu D3): dimmed, never hidden, while there
-    // is nothing for them to act on, so the menu keeps its shape.
     case ActionId::RemoteShowStatus:
-    case ActionId::RemoteEndHostProcess:  // a process lives on a connected host
+    case ActionId::RemoteEndHostProcess:
     case ActionId::RemoteShowLog:
     case ActionId::RemoteStopServer:
     case ActionId::RemoteDisconnect:
@@ -456,7 +390,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::RemoteShowConflicts:
       return context_.current_project_state.id.IsRemote();
     case ActionId::RemoteRemoveMirror: {
-      // A closed remote project's mirror (an open one's goes with its close).
       const RemoteHostService* hosts = operations_.remote_hosts ? operations_.remote_hosts() : nullptr;
       return hosts != nullptr ? hosts->HasRemovableMirror()
                               : operations_.has_remote_recent && operations_.has_remote_recent();
@@ -474,7 +407,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::TerminalPrev:
       return context_.current_project_state.terminal_tabs.size() > 1;
     case ActionId::TerminalNextAlert: {
-      // Asked per painted menu row: a walk over the tabs, no string and no lock.
       const auto rang = [](const ProjectWorkspaceState& state) {
         return std::ranges::any_of(state.terminal_tabs,
                                    [](const auto& tab) { return tab != nullptr && tab->has_unseen_bell; });
@@ -488,8 +420,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return rang(context_.current_project_state);
     }
     case ActionId::TerminalRelaunch:
-      // Only a pane the host launched and whose process has since gone can be
-      // brought back; a live shell has nothing to relaunch.
       return active_terminal_pane != nullptr && !active_terminal_pane->session.running() &&
              !active_terminal_pane->session.host_pending() &&
              !active_terminal_pane->launch_working_directory.empty();
@@ -521,12 +451,8 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return active_viewport != nullptr || IsSingleLineTextInputSurface(text_input_surface);
     case ActionId::PressKey:
     case ActionId::Pointer:
-      // `key <chord>` goes wherever a real keystroke would; `pointer` wherever a
-      // real click would.
       return true;
     case ActionId::InsertText:
-      // `type <text>` targets the active editable viewport or a text-input
-      // surface, same as a paste.
       [[fallthrough]];
     case ActionId::PasteClipboard:
       return active_editable_viewport != nullptr ||
@@ -545,23 +471,15 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::SaveAs:
       return !context_.current_project_state.root.empty() && active_editable_viewport != nullptr;
     case ActionId::ReopenClosedEditor:
-      // Offered while this project has closed an editor (a file deleted since is
-      // skipped when it runs).
       return !context_.current_project_state.root.empty() &&
              !context_.current_project_state.recently_closed_editors.empty();
     case ActionId::Jump:
     case ActionId::ReplaceInBuffer:
     case ActionId::Reopen:
     case ActionId::Search:
-      // These act on the active editor's buffer, however many panes there are.
-      // They shared the splits' rule below, so a full editor area disabled them
-      // too: Ctrl+F and Ctrl+H resolved to nothing with eight panes open.
       return operations_.active_tab_is_editor();
     case ActionId::SplitEditorRight:
     case ActionId::SplitEditorDown:
-      // Available with an editor to split from, until the editor area is full.
-      // Gates the tab/tree context menus and the split-right/split-down palette
-      // entries alike.
       return operations_.active_tab_is_editor() &&
              operations_.editor_group_count() < kMaxEditorGroups;
     case ActionId::FocusOtherGroup:
@@ -574,7 +492,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::MoveEditorGroupUp:
     case ActionId::MoveEditorGroupDown:
     case ActionId::CloseGroup:
-      // Group focus/close only make sense once a second group exists.
       return operations_.editor_group_count() > 1;
     case ActionId::Save:
       return operations_.active_tab_is_editor() || operations_.active_tab_is_merge() ||
@@ -592,8 +509,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return !operations_.resolve_tree_action_path(ActionSource::ContextMenu).empty() ||
              !operations_.active_tab_path().empty();
     case ActionId::RevealInFileTree:
-      // Acts on the row a context menu named, else the active editor tab; either
-      // way it needs a project root to reveal within.
       return !context_.current_project_state.root.empty() &&
              ((context_.menu_state.tree_context_menu.open && !context_.menu_state.tree_context_menu.path.empty()) ||
               !operations_.active_tab_path().empty());
@@ -635,8 +550,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ColumnSelectDown:
     case ActionId::ColumnSelectLeft:
     case ActionId::ColumnSelectRight:
-      // No settings gate: column selection is caret movement, not a shaping edit,
-      // so it follows the plain "is there something to move a caret in" rule.
       return active_editable_viewport != nullptr;
     case ActionId::MoveLineUp:
     case ActionId::MoveLineDown:
@@ -661,9 +574,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::AddCursorAtAllMatches:
       return active_editable_viewport != nullptr &&
              SettingEnabled(operations_, "editor.multicursor.add_at_match.enabled", true);
-    // Deliberately NOT gated on `add_at_match.enabled`: that setting is about
-    // seeding cursors from a SEARCH, which these do not do. They need only an
-    // editable buffer, as VS Code's do.
     case ActionId::AddCursorAbove:
     case ActionId::AddCursorBelow:
     case ActionId::AddCursorsToLineEnds:
@@ -706,8 +616,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     }
     case ActionId::CopyBranchReviewNotes:
     case ActionId::TerminalInsertBranchReviewNotes: {
-      // Whatever is in front: the review is the active diff's, or the one touched
-      // last (CompareReviewService::ExportTarget).
       if (id == ActionId::TerminalInsertBranchReviewNotes &&
           context_.current_project_state.active_terminal_pane() == nullptr) {
         return false;
@@ -727,8 +635,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::UnfoldAll:
       return active_viewport != nullptr &&
              SettingEnabled(operations_, "editor.fold.enabled", true);
-    // Editor-essentials capability toggles: always available; flipping them
-    // requires no surrounding context.
     case ActionId::ToggleEditorFolding:
     case ActionId::ToggleEditorStickyScroll:
     case ActionId::ToggleEditorIndentGuides:
@@ -782,4 +688,4 @@ std::string_view ActionAvailability::DisabledReason(ActionId id) const {
   return reason.empty() || IsEnabled(id) ? std::string_view() : reason;
 }
 
-}  // namespace microide::workspace
+}

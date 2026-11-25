@@ -35,9 +35,6 @@ void Expect(bool condition, std::string_view message) {
 
 namespace {
 
-// The build defines MICROIDE_TEST_SANITIZER_BUILD for any -fsanitize= flags
-// (CMakeLists.txt: no compiler names UBSan with a macro); the macros below cover a
-// build that sets the flags some other way.
 #if defined(MICROIDE_TEST_SANITIZER_BUILD)
 #elif defined(__SANITIZE_THREAD__) || defined(__SANITIZE_ADDRESS__)
 #define MICROIDE_TEST_SANITIZER_BUILD 1
@@ -47,31 +44,13 @@ namespace {
 #endif
 #endif
 
-// A sanitizer build runs the code under test several times slower — TSAN
-// instruments every memory access and serializes through its shadow state — and
-// many of these waits are on a real subprocess (a mock DAP adapter, git, a
-// language server) with the sharded suite running several of them at once. A
-// deadline chosen for an uninstrumented run then measures the sanitizer rather
-// than the product. Stretch every deadline here instead of tuning them one at a
-// time — a wait returns the moment its predicate holds, so a higher ceiling costs
-// a passing run nothing, and only a genuinely stuck test pays the extra seconds.
-//
-// This multiplier is NOT a fix for a subprocess wait, and the comment here used
-// to claim it was: it named
-// `DebugService/SessionResolvesStackOnStopAndStepsResume` as the case it
-// resolved, and that test then timed out again behind the 4x on a loaded runner.
-// Scaling a guessed budget by a constant produces a bigger guess. A wait whose
-// duration is a property of the MACHINE rather than of the product needs no
-// budget at all — see `PollUntil` in DebugServiceTests.cpp, which is bounded by a
-// hang ceiling and the per-test watchdog instead. Reach for that shape rather
-// than raising this number again.
 #if defined(MICROIDE_TEST_SANITIZER_BUILD)
 constexpr int kWaitTimeoutScale = 4;
 #else
 constexpr int kWaitTimeoutScale = 1;
 #endif
 
-}  // namespace
+}
 
 bool IsSanitizerBuild() { return kWaitTimeoutScale != 1; }
 
@@ -83,8 +62,6 @@ bool MachineIsOversubscribed() {
 
 namespace {
 
-// The cumulative microseconds with some task stalled waiting for a CPU, or
-// nullopt where the kernel has no PSI (not Linux, or built without it).
 std::optional<std::uint64_t> CpuStallTotalMicros() {
   std::ifstream pressure("/proc/pressure/cpu");
   std::string line;
@@ -103,7 +80,7 @@ std::optional<std::uint64_t> CpuStallTotalMicros() {
 
 constexpr double kStarvedFraction = 0.10;
 
-}  // namespace
+}
 
 TimingWindow::TimingWindow() : start_(std::chrono::steady_clock::now()) {
   if (const auto total = CpuStallTotalMicros(); total.has_value()) {
@@ -160,9 +137,6 @@ bool WaitUntil(const std::function<bool()>& predicate,
     }
     std::this_thread::sleep_for(poll_interval);
   }
-  // One last drain + check after the deadline: work posted just before the
-  // deadline can still be pending, and every hand-rolled loop this replaces did
-  // the same final check.
   if (pump) {
     pump();
   }
@@ -294,12 +268,6 @@ namespace {
 
 constexpr std::string_view kTemporaryPrefix = "microide-tests-";
 
-// A test process killed mid-test (a ctest timeout, a sanitizer abort, a Ctrl-C)
-// never runs its TemporaryDirectory destructors, and its trees stayed in /tmp --
-// a tmpfs shared with every other tool -- for good: 93 of them on one machine. The
-// name carries the owner's pid ("microide-tests-p<pid>-..."), and the first
-// temporary directory a test process makes removes those whose owner is gone;
-// one named before the pid was (no "p") once it is an hour old.
 void ReapOrphanedTemporaryDirectories(const std::filesystem::path& base) {
   const auto now = std::filesystem::file_time_type::clock::now();
   std::error_code walk;
@@ -326,7 +294,7 @@ void ReapOrphanedTemporaryDirectories(const std::filesystem::path& base) {
   }
 }
 
-}  // namespace
+}
 
 TemporaryDirectory::TemporaryDirectory() {
   static std::atomic<unsigned long long> counter{0};
@@ -373,4 +341,4 @@ void ScopedEnvVar::Set(const std::string& value) {
   setenv(name_.c_str(), value.c_str(), 1);
 }
 
-}  // namespace microide::tests
+}

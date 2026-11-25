@@ -48,7 +48,7 @@ std::string BranchLabelFromState(const project::GitRepositoryState& state) {
   return "HEAD";
 }
 
-}  // namespace
+}
 
 GitRepositoryService::GitRepositoryService(project::ProjectBackgroundExecutor& background_executor)
     : background_executor_(background_executor) {}
@@ -58,17 +58,6 @@ void GitRepositoryService::SetWakeCallbacks(WakeCallbacks callbacks) {
 }
 
 void GitRepositoryService::Reset() {
-  // TD-2026-07-17-093: do NOT cancel the shared project background executor here.
-  // That queue is also used by commit workflow, patch apply, project-file-monitor
-  // arming, project-state refresh, and raster decode; a git-state reset must not
-  // discard their queued work. Git-result correctness is already guaranteed by
-  // generation gating — every posted refresh carries `request.generation`, and its
-  // completion discards itself when `request.generation != refresh_generation_`.
-  // Bumping the generation below (via the reset to 0; subsequent refreshes do
-  // `++refresh_generation_`) supersedes any in-flight git refresh. The lifecycle
-  // reset path (WorkspaceShell::ResetProjectScopedState) still cancels the shared
-  // executor itself, before calling this — that is the correct owner of queue-wide
-  // cancellation, not this leaf git service.
   std::lock_guard lock(mutex_);
   current_state_ = {};
   pending_sidebar_snapshot_.reset();
@@ -110,9 +99,6 @@ void GitRepositoryService::MarkStale() {
 
 bool GitRepositoryService::IsGitRepoValid(const std::filesystem::path& project_root,
                                           const platform::ProcessLauncher& launcher) {
-  // The source directly, not through a GitRepository: constructing one copies the
-  // path and runs lexically_normal() on it (~12 allocations), and the status bar
-  // calls this once per painted frame for any project with no git snapshot yet.
   return project::GitMetadataFor(launcher).IsRepository(project_root);
 }
 
@@ -123,12 +109,6 @@ void GitRepositoryService::SetRepositoryStateProviderForTesting(
 
 project::GitRepositoryState GitRepositoryService::BuildRepositoryState(
     const RefreshRequest& request) const {
-  // Test seam: substitute the injected producer for the `git status` subprocess.
-  // The provider is set-once on the main thread before any refresh is dispatched;
-  // this read runs on the worker (or the synchronous test path) with the executor
-  // queue's mutex providing the happens-before edge. Stamp the request generation
-  // so downstream staleness checks stay authoritative regardless of what the fake
-  // returns.
   if (repository_state_provider_for_testing_) {
     project::GitRepositoryState state =
         repository_state_provider_for_testing_(request.project_root, request.generation);
@@ -233,12 +213,6 @@ void GitRepositoryService::HandleSupersededRefresh() {
       deferred_follow_up = *deferred_refresh_;
       deferred_refresh_.reset();
       follow_up_refresh_pending_ = false;
-      // A fresh generation, as PublishSnapshot's follow-up takes. The parked
-      // request was copied before RequestRefresh stamped it, so running it under
-      // its own (zero) generation made it supersede itself: nothing published,
-      // `refreshing` stuck true, and the sidebar read "Open a Git repository"
-      // until the next unrelated refresh -- every time Refresh was pressed while
-      // the refresh that showing the view started was still running.
       deferred_follow_up->generation = ++refresh_generation_;
       refresh_in_flight_ = true;
       current_state_.refreshing = true;
@@ -256,11 +230,6 @@ void GitRepositoryService::PublishSnapshot(GitSidebarState::RefreshSnapshot snap
   {
     std::lock_guard lock(mutex_);
     if (generation != refresh_generation_) {
-      // Superseded between the pre-publish generation re-check and here. Route
-      // through the shared superseded-exit path (below, outside the lock) so
-      // refresh_in_flight_ is cleared, the background-task counter is balanced,
-      // and any deferred follow-up still runs. Returning here directly (the old
-      // behavior) leaked the counter and froze the refresh state machine.
       superseded = true;
     } else {
       pending_sidebar_snapshot_ = std::move(snapshot);
@@ -299,18 +268,10 @@ void GitRepositoryService::PublishSnapshot(GitSidebarState::RefreshSnapshot snap
 }
 
 void GitRepositoryService::ScheduleRefresh(RefreshRequest request) {
-  // The global background-task counter is owned by ProjectBackgroundExecutor's
-  // queue hooks (on_enqueue/on_complete), which balance it exactly once per job
-  // on every exit path — run, cancel-skip, PostLatest dedup-drop, shutdown-drain.
-  // The service adds no manual counting of its own (it would double-count).
   background_executor_.PostLatest(
       "git-repository-refresh",
       [this, request = std::move(request)]() mutable {
         project::GitRepositoryState repository_state = BuildRepositoryState(request);
-        // Best-effort early-out: skip building a snapshot that a newer refresh
-        // has already superseded. Read the generation under the lock — every
-        // other access is mutex-guarded, so an unlocked read here is a data race
-        // (PublishSnapshot still re-checks authoritatively under the lock).
         bool superseded = false;
         {
           std::lock_guard lock(mutex_);
@@ -323,13 +284,6 @@ void GitRepositoryService::ScheduleRefresh(RefreshRequest request) {
 
         GitSidebarState::RefreshSnapshot snapshot =
             BuildSidebarSnapshot(repository_state, request);
-        // Publish the state by MOVE, after the snapshot that reads it is built.
-        // This used to deep-copy the whole state — entries plus the tree-status
-        // map — under the lock, before the snapshot build, which is one full copy
-        // of every path in the repository per refresh (TD-2026-08-06-159). A
-        // refresh superseded between the two checks now leaves `current_state_`
-        // on the older value instead of installing a state that is already stale,
-        // and the follow-up refresh overwrites it either way.
         {
           std::lock_guard lock(mutex_);
           if (request.generation != refresh_generation_) {
@@ -439,13 +393,6 @@ void GitRepositoryService::RunRefreshSynchronouslyForTesting(
     current_state_.refreshing = true;
   }
 
-  // The outgoing-base memo (below) is lock-free only because BuildSidebarSnapshot is
-  // confined to the single background-executor worker. This synchronous test path runs
-  // BuildSidebarSnapshot on the CALLING thread, so it would race a still-in-flight
-  // async refresh's BuildSidebarSnapshot on the worker. Drain the executor first (with
-  // mutex_ NOT held — the worker takes mutex_ to finish) so no worker job is touching
-  // the memo/current_state_ while we build synchronously. The follow-up state was
-  // cleared under the lock above, so a completing worker won't re-post a job.
   background_executor_.Drain();
 
   project::GitRepositoryState repository_state = BuildRepositoryState(request);
@@ -454,9 +401,6 @@ void GitRepositoryService::RunRefreshSynchronouslyForTesting(
     std::lock_guard lock(mutex_);
     current_state_ = std::move(repository_state);
   }
-  // This synchronous test path bypasses ProjectBackgroundExecutor entirely, so it
-  // is counter-neutral: it neither enqueues a job nor manually touches the global
-  // background-task counter.
   PublishSnapshot(std::move(snapshot), request.generation);
 }
 
@@ -488,4 +432,4 @@ bool GitRepositoryService::ConsumePendingSidebarSnapshot(
   return true;
 }
 
-}  // namespace microide::workspace
+}

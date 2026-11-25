@@ -17,17 +17,12 @@ bool SameColor(SDL_Color a, SDL_Color b) {
 
 enum class Emphasis : std::uint8_t { None, FindMatch, FindCurrent, Selection };
 
-// The column whose emphasis a cell shows: a double-width glyph's trailing half
-// shows its lead's, so the glyph is emphasized whole -- and exactly when the copy
-// takes it, which keys on the lead (TerminalLineSliceText skips the trailing half).
 std::size_t EmphasisColumn(const terminal::TerminalLine& line, std::size_t column) {
   return column > 0 && column < line.cells.size() && line.cells[column].style.wide_trailing()
              ? column - 1
              : column;
 }
 
-// An explicit selection outranks a find hit: the user made it, and it is what
-// they are about to copy.
 Emphasis EmphasisAt(const TerminalRowEmphasis& emphasis, std::size_t column) {
   if (column >= emphasis.selection_begin && column < emphasis.selection_end) {
     return Emphasis::Selection;
@@ -69,7 +64,7 @@ SDL_Color LegibleOn(SDL_Color foreground, SDL_Color background, TerminalRowPaint
   return entry.result;
 }
 
-}  // namespace
+}
 
 SDL_Color InactiveTerminalSelection(SDL_Color selection) {
   selection.a = static_cast<Uint8>(selection.a / 2);
@@ -95,15 +90,12 @@ SDL_FRect TerminalCursorShapeRect(SDL_FRect cell, terminal::TerminalCursorShape 
 
 TerminalCellColors ResolveTerminalCellColors(const terminal::TerminalStyle& style,
                                              const TerminalPaintPalette& palette) {
-  // The terminal model carries util::Rgba8 (it is kernel code and names no SDL
-  // type); this is that boundary.
   TerminalCellColors colors{
       .foreground = style.foreground.has_value() ? render::ToSdlColor(*style.foreground)
                                                  : palette.foreground,
       .background = style.background.has_value() ? render::ToSdlColor(*style.background)
                                                  : palette.background,
   };
-  // DECSCNM reverses the whole screen, an explicitly inverse cell included.
   if (style.inverse() != palette.reverse_video) {
     std::swap(colors.foreground, colors.background);
   }
@@ -145,7 +137,6 @@ void PlanTerminalRow(const terminal::TerminalLine& line,
   const std::size_t visible = std::min(line.cells.size(), columns);
   const SDL_Color base = palette.base();
 
-  // 1) Every visible cell's final colours, once.
   std::vector<TerminalCellColors>& cells = plan.scratch.cells;
   cells.resize(visible);
   for (std::size_t column = 0; column < visible; ++column) {
@@ -160,7 +151,6 @@ void PlanTerminalRow(const terminal::TerminalLine& line,
     cells[column] = colors;
   }
 
-  // 2) Background fills, run-length coalesced; the base colour is already there.
   for (std::size_t column = 0; column < visible;) {
     const SDL_Color color = cells[column].background;
     std::size_t end = column + 1;
@@ -172,7 +162,6 @@ void PlanTerminalRow(const terminal::TerminalLine& line,
     }
     column = end;
   }
-  // The selected line break: wash the blank past the row's last cell.
   if (emphasis.selection_runs_past_row) {
     const std::size_t begin = std::max(visible, emphasis.selection_begin);
     if (begin < columns) {
@@ -186,9 +175,6 @@ void PlanTerminalRow(const terminal::TerminalLine& line,
     }
   }
 
-  // 3) Glyph runs. A wide glyph sits on its own grid column, so it ends a run and
-  // its trailing half (no glyph of its own) is skipped; a run of blanks draws
-  // nothing.
   const auto is_wide_lead = [&](std::size_t column) {
     return column + 1 < line.cells.size() && line.cells[column + 1].style.wide_trailing();
   };
@@ -221,17 +207,11 @@ void PlanTerminalRow(const terminal::TerminalLine& line,
       visible_text = visible_text || glyph != " ";
       plan.text.append(glyph);
     }
-    // Trailing blanks draw nothing; leading ones place the text and stay.
     bool blank_after = false;
     while (plan.text.size() > offset && plan.text.back() == ' ') {
       plan.text.pop_back();
       blank_after = true;
     }
-    // Except one after a symbol: a fallback font draws many one-cell symbols
-    // wider than the cell (⏺, ✳), and the text backend lets that ink run into
-    // blank cells of the same string only -- never past its end. A symbol in a
-    // colour of its own (Claude Code's `⏺`) is a run of one, so without the
-    // blank after it the circle was sheared off at its cell edge.
     if (!blank_after && end < visible && !line.cells[end].style.wide_trailing()) {
       const std::string_view next = line.cells[end].DisplayText();
       blank_after = next.empty() || next == " ";
@@ -253,11 +233,6 @@ void PlanTerminalRow(const terminal::TerminalLine& line,
     column = end;
   }
 
-  // 4) Underline / double underline / strikethrough, coalesced over (bits,
-  // underline shape, both colours). A wide glyph's trailing half carries its
-  // lead's style and extra, so the stroke spans both columns. An underline takes
-  // the cell's SGR 58 colour when it has one; hidden text's underline stays
-  // hidden, like its glyphs.
   constexpr std::uint16_t kUnderlines =
       terminal::cell_attr::kUnderline | terminal::cell_attr::kDoubleUnderline;
   constexpr std::uint16_t kDecorationMask = kUnderlines | terminal::cell_attr::kStrikethrough;
@@ -303,4 +278,4 @@ void PlanTerminalRow(const terminal::TerminalLine& line,
   }
 }
 
-}  // namespace microide::workspace
+}

@@ -7,17 +7,10 @@ namespace microide::editor {
 WelcomeLayout ComputeWelcomeLayout(const SDL_FRect& rect, const WelcomeViewModel& model,
                                    float line_height) {
   WelcomeLayout layout;
-  // Every region at once: the buttons (Retry, the two open-folder ones, the
-  // project home's three) and a row per recent. Growing on demand reallocated as
-  // the welcome page gained buttons -- this runs on every painted frame of it.
   layout.hit_regions.reserve(6 + model.recent_projects.size() + model.recent_files.size());
 
   const float row_step = line_height + 8.0f;
 
-  // Bold hero card: fill the editor surface with a tight margin so the card and
-  // the editor frame read as one panel instead of a small box floating inside a
-  // larger one. Width is capped only to avoid an absurdly stretched card on very
-  // wide monitors, in which case it re-centers.
   const float margin = 16.0f;
   const float avail_w = rect.w - margin * 2.0f;
   const float card_w = std::max(360.0f, std::min(avail_w, 1400.0f));
@@ -31,8 +24,6 @@ WelcomeLayout ComputeWelcomeLayout(const SDL_FRect& rect, const WelcomeViewModel
   layout.header = SDL_FRect{layout.card.x, layout.card.y, layout.card.w, header_h};
 
   const float button_h = line_height + 12.0f;
-  // The remote status block: the heading, one row of stages, the failure's detail,
-  // and Retry, each a line; the panels move down under it.
   float block_h = 0.0f;
   if (model.kind == WelcomeKind::ProjectHome && !model.remote.empty()) {
     const float lines = 2.0f + (model.remote.detail.empty() ? 0.0f : 1.0f);
@@ -67,9 +58,6 @@ WelcomeLayout ComputeWelcomeLayout(const SDL_FRect& rect, const WelcomeViewModel
   const float rows_bottom = layout.recents_panel.y + layout.recents_panel.h;
   const float button_w = std::min(360.0f, row_w);
 
-  // A primary-action button slot at `button_y`; returns the Y below it. Each button is a
-  // dedicated slot (not derived from the recent-row cursor) so it can never overlap the
-  // list or its empty-state caption. The renderer and hit-test share these rects.
   const auto push_button = [&](float button_y, WelcomeHitRegion::Kind kind) {
     layout.hit_regions.push_back(WelcomeHitRegion{
         .rect = SDL_FRect{row_x, button_y, button_w, button_h},
@@ -78,8 +66,6 @@ WelcomeLayout ComputeWelcomeLayout(const SDL_FRect& rect, const WelcomeViewModel
     });
   };
 
-  // Lay out the recent-row list (or its empty-state slot) starting at `rows_top`, emitting
-  // a hit region of `kind` per entry that fits. Records `recents_rows_top` for the renderer.
   const auto push_recent_rows = [&](float rows_top, WelcomeHitRegion::Kind kind,
                                     std::size_t count) {
     layout.recents_rows_top = rows_top;
@@ -98,8 +84,6 @@ WelcomeLayout ComputeWelcomeLayout(const SDL_FRect& rect, const WelcomeViewModel
   };
 
   if (model.kind == WelcomeKind::ProjectHome) {
-    // Left column flows top-down: an "Actions" caption, three primary-action buttons,
-    // a "Recent files" caption, then the recent-file rows (or an empty-state).
     float button_y = layout.recents_panel.y + line_height + 8.0f;
     push_button(button_y, WelcomeHitRegion::Kind::NewFile);
     button_y += button_h + 8.0f;
@@ -114,8 +98,6 @@ WelcomeLayout ComputeWelcomeLayout(const SDL_FRect& rect, const WelcomeViewModel
     return layout;
   }
 
-  // NoProject: "Start" caption, the open-folder and open-remote-folder buttons, a
-  // "Recent" caption, recent rows.
   float button_y = layout.recents_panel.y + line_height + 8.0f;
   layout.open_folder_rect = SDL_FRect{row_x, button_y, button_w, button_h};
   push_button(button_y, WelcomeHitRegion::Kind::OpenFolder);
@@ -129,4 +111,4 @@ WelcomeLayout ComputeWelcomeLayout(const SDL_FRect& rect, const WelcomeViewModel
   return layout;
 }
 
-}  // namespace microide::editor
+}

@@ -14,4 +14,4 @@ void DispatchProjectOpenCallbacks(
         call_project_callback);
 #endif
 
-}  // namespace microide::plugin::project_lifecycle_interop
+}

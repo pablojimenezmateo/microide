@@ -7,8 +7,6 @@ namespace microide::project {
 PendingPaths::PendingPaths(std::vector<std::string> files) : files_(std::move(files)) {
   std::sort(files_.begin(), files_.end());
   files_.erase(std::unique(files_.begin(), files_.end()), files_.end());
-  // Bytewise order keeps everything under one "dir/name/" prefix contiguous, so a
-  // directory's repeated child is always the one just appended.
   for (const std::string& file : files_) {
     const std::string_view path(file);
     std::size_t start = 0;
@@ -17,7 +15,7 @@ PendingPaths::PendingPaths(std::vector<std::string> files) : files_(std::move(fi
       const bool is_directory = slash != std::string_view::npos;
       const std::string_view name = path.substr(start, is_directory ? slash - start : std::string_view::npos);
       if (name.empty()) {
-        break;  // "a//b" or a trailing slash: not a path a manifest lists
+        break;
       }
       const std::string_view directory = path.substr(0, start == 0 ? 0 : start - 1);
       auto it = children_.find(directory);
@@ -43,4 +41,4 @@ std::span<const PendingPaths::Child> PendingPaths::ChildrenOf(std::string_view d
   return it->second;
 }
 
-}  // namespace microide::project
+}

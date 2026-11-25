@@ -17,13 +17,8 @@ int ModifierParam(const TerminalSession::KeyPress& press) {
          (press.super ? 8 : 0);
 }
 
-// util::AppendUtf8 is the single UTF-8 encoder (it applies the same
-// surrogate/out-of-range folding to U+FFFD this file used to duplicate), so an
-// invalid codepoint from SDL or a test seam can never send malformed bytes to
-// the child.
 using util::AppendUtf8;
 
-// CSI-u functional encoding: ESC [ <codepoint> [; <mod>] u
 std::string CsiU(char32_t codepoint, int modifier_param) {
   std::string out = "\x1b[";
   out += std::to_string(static_cast<unsigned long>(codepoint));
@@ -35,26 +30,13 @@ std::string CsiU(char32_t codepoint, int modifier_param) {
   return out;
 }
 
-// Control byte for a Ctrl+<key> combination (legacy encoding), or nullopt when
-// the key has no control mapping. The digit and punctuation rows follow xterm:
-// each key yields the control byte of the C0-mapped symbol on the same key
-// (Ctrl+2 = Ctrl+@ = NUL, Ctrl+6 = Ctrl+^ = RS, Ctrl+/ = Ctrl+_ = US,
-// Ctrl+8 = DEL), which is what Emacs's C-/ (undo), readline and tmux bindings
-// expect.
-//
-// Returning an optional rather than falling back to `char(codepoint)` is what
-// keeps the file's own rule -- never send malformed bytes to the child. That cast
-// truncates every codepoint above U+007F to its low byte, so Ctrl+e-acute became a
-// lone 0xE9: not valid UTF-8, and not the characters any layout's user typed.
-// xterm sends the key's own characters when it has no control mapping, which is
-// what the caller now does.
 std::optional<char> ControlByte(char32_t codepoint) {
   char32_t upper = (codepoint >= 'a' && codepoint <= 'z') ? codepoint - 32 : codepoint;
   if (upper >= 0x40 && upper <= 0x5F) {
     return static_cast<char>(upper & 0x1F);
   }
   switch (upper) {
-    case 0x20:  // Ctrl+Space / Ctrl+@
+    case 0x20:
     case '2':
       return '\0';
     case '3':
@@ -77,7 +59,7 @@ std::optional<char> ControlByte(char32_t codepoint) {
   }
 }
 
-}  // namespace
+}
 
 std::string FormatTerminalKeyPress(bool application_cursor_keys_mode,
                                    std::uint8_t kitty_flags,
@@ -86,13 +68,8 @@ std::string FormatTerminalKeyPress(bool application_cursor_keys_mode,
   const bool has_mod = mod > 1;
   const bool kitty = kitty_flags != 0;
   const bool report_all = (kitty_flags & 0x08u) != 0;
-  // Kitty "disambiguate" (any flag set) moves Esc, alt+key, ctrl+key and
-  // shift+alt+key onto CSI u; a text key with ONLY shift keeps producing text
-  // ("A"), and Enter/Tab/Backspace keep their legacy bytes until modified (spec:
-  // sw.kovidgoyal.net/kitty/keyboard-protocol, "Disambiguate escape codes").
   const bool kitty_non_shift_mod = press.ctrl || press.alt || press.super;
 
-  // Functional keys that use a trailing letter (CSI <letter> / SS3 <letter>).
   const auto letter_key = [&](char final) -> std::string {
     if (has_mod) {
       return std::string("\x1b[1;") + std::to_string(mod) + final;
@@ -102,7 +79,6 @@ std::string FormatTerminalKeyPress(bool application_cursor_keys_mode,
     }
     return std::string("\x1b[") + final;
   };
-  // Keypad/editing keys that use a numeric prefix and trailing '~'.
   const auto tilde_key = [&](int number) -> std::string {
     std::string out = "\x1b[";
     out += std::to_string(number);
@@ -113,7 +89,6 @@ std::string FormatTerminalKeyPress(bool application_cursor_keys_mode,
     out += '~';
     return out;
   };
-  // F1-F4 use SS3 P/Q/R/S, or CSI 1;mod letter when modified.
   const auto function_letter = [&](char final) -> std::string {
     if (has_mod) {
       return std::string("\x1b[1;") + std::to_string(mod) + final;
@@ -176,7 +151,7 @@ std::string FormatTerminalKeyPress(bool application_cursor_keys_mode,
         return CsiU(9, mod);
       }
       if (press.shift) {
-        return "\x1b[Z";  // CBT — backward tab.
+        return "\x1b[Z";
       }
       return press.alt ? std::string("\x1b\t") : std::string("\t");
     case Key::Backspace:
@@ -184,16 +159,10 @@ std::string FormatTerminalKeyPress(bool application_cursor_keys_mode,
         return CsiU(127, mod);
       }
       if (press.ctrl) {
-        // Meta+Ctrl+Backspace: prefix the Ctrl-Backspace byte (0x08) with ESC so
-        // apps binding M-C-Backspace (Emacs, readline) see both modifiers, mirroring
-        // the Char + Escape cases. Dropping the ESC here made M-C-Backspace
-        // indistinguishable from plain Ctrl+Backspace.
         return press.alt ? std::string("\x1b\x08", 2) : std::string(1, '\x08');
       }
       return press.alt ? std::string("\x1b\x7f") : std::string("\x7f");
     case Key::Escape:
-      // A bare ESC is the ambiguity the protocol exists to remove (is it the key
-      // or the start of an alt/CSI sequence?), so under Kitty it is always CSI 27 u.
       if (kitty) {
         return CsiU(27, mod);
       }
@@ -203,16 +172,11 @@ std::string FormatTerminalKeyPress(bool application_cursor_keys_mode,
       if (cp == 0) {
         return {};
       }
-      // Under Kitty, modified printable keys (and everything when "report all"
-      // is set) are disambiguated as CSI-u over the base codepoint.
       if (kitty && (kitty_non_shift_mod || report_all)) {
         char32_t base = (cp >= 'A' && cp <= 'Z') ? cp + 32 : cp;
         return CsiU(base, mod);
       }
       if (press.ctrl) {
-        // Meta+Ctrl: xterm prefixes the control byte with ESC (Alt/Meta) so apps
-        // that bind M-C-<key> (Emacs, tmux, readline) see both modifiers. Dropping
-        // the ESC here made those chords indistinguishable from plain Ctrl.
         std::string out;
         if (press.alt) {
           out = "\x1b";
@@ -276,4 +240,4 @@ bool EncodeTerminalSessionMouseEvent(bool mouse_tracking_any,
       out_bytes);
 }
 
-}  // namespace microide::terminal
+}

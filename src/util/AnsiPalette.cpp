@@ -13,7 +13,7 @@ constexpr Rgba8 MakeColor(std::uint8_t r, std::uint8_t g, std::uint8_t b,
   return Rgba8{r, g, b, a};
 }
 
-}  // namespace
+}
 
 Rgba8 BasicAnsiColor(int index, bool bright) {
   static constexpr std::array<Rgba8, 8> kNormal = {
@@ -33,9 +33,6 @@ Rgba8 BasicAnsiColor(int index, bool bright) {
 }
 
 Rgba8 Ansi256Color(int index) {
-  // The 256-colour palette is only defined for 0..255. Out-of-range indices
-  // (e.g. an over-large theme token or an SGR 38;5;N with N > 255) would otherwise
-  // fall through to the unclamped grayscale ramp and wrap via uint8 truncation.
   if (index < 0 || index > 255) {
     return BasicAnsiColor(0, false);
   }
@@ -57,4 +54,4 @@ Rgba8 Ansi256Color(int index) {
   return MakeColor(gray, gray, gray);
 }
 
-}  // namespace microide::util
+}

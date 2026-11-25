@@ -11,42 +11,20 @@
 
 namespace microide::project {
 
-// This is the ONE patch formatter in the tree. A second, display-only exporter
-// used to live in `compare/ComparePatchExport.h` and emitted fake `@@ hunk N @@`
-// headers with no real unified line ranges, no /dev/null headers, no mode lines
-// and no no-final-newline markers -- so the text the compare surface put on the
-// clipboard could not be fed back to `git apply`, while the staging path's text
-// could. Copy, stage and discard all route here now. Extend this generator
-// rather than adding a lighter one beside it.
-
 struct PatchGenerationOptions {
   std::size_t context_lines = 3;
-  // Upper bound on the generated patch text. A whole-file or huge-selection patch
-  // copy/stage would otherwise allocate an arbitrarily large string on the UI/apply
-  // path; over budget, generation returns nullopt (surfaced as "no patch") instead
-  // of building it. 0 disables the budget. TD-2026-07-17A-099.
-  std::size_t max_patch_bytes = 64u * 1024 * 1024;  // 64 MiB
+  std::size_t max_patch_bytes = 64u * 1024 * 1024;
 };
 
-// The PatchChangeSpan that model rows [first_row, last_row] of a HEAD-vs-
-// working-tree model describe.
 PatchChangeSpan ChangeSpanForRows(const compare::CompareModel& model,
                                   std::size_t first_row,
                                   std::size_t last_row);
 
-// The patch git needs to bring `current_text` (the index) to the state where
-// `span` — a change between `head_text` and `worktree_text` — is applied
-// (`stage`) or reverted (`unstage`). Empty when the change is already in that
-// state; nullopt when the span's lines are no longer intact in `current_text`
-// (partially staged, or edited since), which the caller reports.
 struct StagingPatchOutcome {
   std::optional<std::string> patch;
   bool already_applied = false;
   bool span_not_intact = false;
 };
-// `head_exists`/`index_exists`/`worktree_exists`: whether the file exists on
-// each side (an absent side reads as "" but is a creation/deletion, not an
-// empty file — see CompareBuildOptions).
 StagingPatchOutcome BuildStagingPatch(std::string_view head_text,
                                       std::string_view current_index_text,
                                       std::string_view worktree_text,
@@ -78,4 +56,4 @@ std::optional<PatchLineSelection> PatchLineSelectionFromModelRows(
 bool PatchLineSelectionHasChanges(const compare::CompareModel& model,
                                   const PatchLineSelection& selection);
 
-}  // namespace microide::project
+}

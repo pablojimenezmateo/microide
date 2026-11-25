@@ -24,15 +24,11 @@ void MainThreadMailbox::PostWithoutWake(Action action) {
 }
 
 void MainThreadMailbox::PostLatest(std::string key, Action action) {
-  // Counted here too, not only in PostWithoutWake: PostLatest has its own body
-  // and does not route through it, so a service that posts exclusively through
-  // the coalescing path would read as an idle mailbox.
   AddPerformanceCounter(PerfCounterId::MainThreadMailboxPosts);
   {
     std::lock_guard lock(mutex_);
     if (const auto it = keyed_index_.find(key);
         it != keyed_index_.end() && it->second < actions_.size()) {
-      // Replace the superseded closure in place (its captured payload is dropped).
       AddPerformanceCounter(PerfCounterId::MainThreadMailboxPostsCoalesced);
       actions_[it->second] = std::move(action);
     } else {
@@ -49,16 +45,10 @@ bool MainThreadMailbox::PushWake() const {
   if (wake == 0) {
     return false;
   }
-  // DeliverWake, not PushWake: the mailbox latches and retries its OWN undelivered
-  // wake below (RetryWakeIfPending), so it does not also need the shared owed bit.
   if (DeliverWake(wake)) {
-    // A delivered wake supersedes any earlier failure: the loop will drain.
     wake_delivery_failed_.store(false, std::memory_order_release);
     return true;
   }
-  // Push rejected (full queue). Keep the queued actions and latch the undelivered
-  // wake so the scheduled poll retries — silently losing the only wake would strand
-  // LSP replies / plugin completions / commit results until unrelated input.
   if (PendingCount() > 0) {
     wake_delivery_failed_.store(true, std::memory_order_release);
   }
@@ -71,16 +61,13 @@ bool MainThreadMailbox::RetryWakeIfPending() const {
     return false;
   }
   if (!wake_delivery_failed_.load(std::memory_order_acquire)) {
-    return false;  // nothing owed
+    return false;
   }
-  PushWake();  // clears the bit on success, re-latches on repeat failure
+  PushWake();
   return wake_delivery_failed_.load(std::memory_order_acquire);
 }
 
 int MainThreadMailbox::Drain() {
-  // Runs on the shell thread inside the event loop, so a background service that
-  // posts per-item instead of per-batch turns into main-thread cost. The
-  // posts/drains ratio is the tell.
   PerformanceTrace::Scope perf_scope("util::MainThreadMailbox::Drain");
   AddPerformanceCounter(PerfCounterId::MainThreadMailboxDrains);
   std::vector<Action> actions;
@@ -90,7 +77,6 @@ int MainThreadMailbox::Drain() {
     keyed_index_.clear();
     queued_.store(0, std::memory_order_release);
   }
-  // The drain satisfies whatever wake was owed.
   wake_delivery_failed_.store(false, std::memory_order_release);
   for (auto& action : actions) {
     if (action) {
@@ -108,4 +94,4 @@ void MainThreadMailbox::Clear() {
   wake_delivery_failed_.store(false, std::memory_order_release);
 }
 
-}  // namespace microide::util
+}

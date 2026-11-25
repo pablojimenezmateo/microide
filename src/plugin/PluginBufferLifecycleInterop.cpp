@@ -18,4 +18,4 @@ void DispatchBufferCallbacks(
 }
 #endif
 
-}  // namespace microide::plugin::buffer_lifecycle_interop
+}

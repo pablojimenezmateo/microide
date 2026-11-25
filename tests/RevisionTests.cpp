@@ -26,11 +26,11 @@ void TestRevisionWrapsPastZero() {
   Expect(revision.value() == 7, "reset sets the value");
 }
 
-}  // namespace
+}
 
 void RegisterRevisionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Revision/StartsUnseenAndCounts", TestRevisionStartsUnseenAndCounts);
   AddTest(tests, "Revision/WrapsPastZero", TestRevisionWrapsPastZero);
 }
 
-}  // namespace microide::tests
+}

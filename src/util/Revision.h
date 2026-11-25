@@ -4,8 +4,6 @@
 
 namespace microide::util {
 
-// A change counter that never returns to 0 once bumped, so 0 stays free to mean
-// "never seen" in a cache that records the revision it was built at.
 class Revision {
  public:
   constexpr Revision() = default;
@@ -23,4 +21,4 @@ class Revision {
   std::uint64_t value_ = 0;
 };
 
-}  // namespace microide::util
+}

@@ -35,11 +35,6 @@ RuleResult CheckPluginTranslationUnitSize(const std::filesystem::path& repo_root
 }
 
 RuleResult CheckSinglePluginReloadPerActivation(const std::filesystem::path& repo_root) {
-  // The reactivation branch of ProjectCatalogService::ActivateProjectState SHALL NOT
-  // call reload_plugins_for_current_project / ReloadPluginsForCurrentProject. The
-  // first-activation branch routes through initialize_current_project, which already
-  // performs exactly one reload internally. Reintroducing a direct call here would
-  // restore the back-to-back reload regression the change was created to fix.
   RuleResult result;
   result.label = "single plugin reload per ActivateProjectState";
   result.hard_fail = true;
@@ -55,7 +50,6 @@ RuleResult CheckSinglePluginReloadPerActivation(const std::filesystem::path& rep
     return result;
   }
   const std::size_t body_start = static_cast<std::size_t>(match.position()) + match.length() - 1;
-  // Walk braces to find the matching close.
   std::size_t depth = 0;
   std::size_t body_end = text.size();
   for (std::size_t i = body_start; i < text.size(); ++i) {
@@ -188,15 +182,6 @@ RuleResult CheckNoProjectLocalPluginDiscovery(const std::filesystem::path& repo_
 }
 
 RuleResult CheckPluginLuaErrorDoesNotLongjmpOverCppLocals(const std::filesystem::path& repo_root) {
-  // Raising a Lua error is a C longjmp (the project links the C build of Lua), so
-  // `luaL_error` skips the destructors of any C++ automatic objects still alive on
-  // the stack — undefined behaviour and a leak whenever a std::string/std::vector
-  // local exists. All Lua-error raising in src/plugin must instead copy the message
-  // via lua_error_util::PushMessage and then `lua_error(state)` only after those
-  // locals have gone out of scope (see src/plugin/LuaError.h). Argument-entry
-  // validation that longjmps before any C++ local is constructed (luaL_checktype,
-  // luaL_checkstring, luaL_argerror) stays allowed; only luaL_error is banned
-  // because it is the one routinely reached after objects are built.
   RuleResult result;
   result.label = "plugin Lua errors do not longjmp over C++ locals";
   result.hard_fail = true;
@@ -223,21 +208,6 @@ RuleResult CheckPluginLuaErrorDoesNotLongjmpOverCppLocals(const std::filesystem:
 }
 
 RuleResult CheckPluginFieldReadsAreMetamethodProtected(const std::filesystem::path& repo_root) {
-  // Companion to the luaL_error rule, from the read-in direction. A plugin controls
-  // the tables the host harvests and can install a raising __index metamethod
-  // (setmetatable+error are in the exposed base lib). The metamethod-capable field
-  // reads lua_getfield / lua_gettable / lua_geti would then longjmp (Lua links as C)
-  // to the enclosing lua_pcall, skipping the destructors of any C++ locals alive in
-  // the harvest loop (std::vector / std::string / std::filesystem::path) — the same
-  // UB + leak the luaL_error rule guards against. All field reads in src/plugin must
-  // instead go through lua_interop::GetFieldProtected, which runs the lookup inside a
-  // nested lua_pcall. Indexed sequence reads already use the raw, metamethod-free
-  // lua_rawgeti (allowed). PluginLuaInterop.cpp is exempt: it defines
-  // GetFieldProtected + its GetFieldTrampoline, the sanctioned site. So is
-  // LuaBudgetedPatterns.cpp, the port of Lua's own string-pattern functions:
-  // string.gsub with a table replacement indexes it with __index honoured, as
-  // Lua does, and the TU holds no C++ object with a destructor for a raise to
-  // skip (tools/audit-lua-longjmp.py checks exactly that on the AST).
   RuleResult result;
   result.label = "plugin field reads are metamethod-protected (no raw lua_getfield/gettable/geti)";
   result.hard_fail = true;
@@ -255,10 +225,10 @@ RuleResult CheckPluginFieldReadsAreMetamethodProtected(const std::filesystem::pa
       continue;
     }
     if (entry.path().filename() == "PluginLuaInterop.cpp") {
-      continue;  // sanctioned home of GetFieldProtected / GetFieldTrampoline
+      continue;
     }
     if (entry.path().filename() == "LuaBudgetedPatterns.cpp") {
-      continue;  // Lua's lstrlib, ported: gsub's table lookup is Lua semantics
+      continue;
     }
     const std::string text = ReadText(entry.path());
     AppendCodeMaskRegexViolations(
@@ -271,16 +241,6 @@ RuleResult CheckPluginFieldReadsAreMetamethodProtected(const std::filesystem::pa
 }
 
 RuleResult CheckLuaStaysBehindPluginBoundary(const std::filesystem::path& repo_root) {
-  // TD-2026-07-16-22: the plugin runtime's Lua coupling must not leak past the
-  // src/plugin boundary. Production code outside src/plugin must not name
-  // lua_State, must not include a Lua header, and must not include a plugin
-  // header that (transitively through other plugin headers) exposes either —
-  // the outward-facing surfaces (PluginHost.h, PluginThread.h, ...) stay
-  // Lua-free at the type level so the whole Lua dependency remains an
-  // implementation detail of the plugin subsystem. One sanctioned exemption:
-  // src/editor/SyntaxDefinitionLoader.cpp runs syntax-definition files in its
-  // own throwaway sandboxed lua_State, deliberately independent of the plugin
-  // runtime (it may also reuse plugin/LuaErrorMessage.h for error strings).
   RuleResult result;
   result.label = "lua_State stays behind the src/plugin boundary";
   result.hard_fail = true;
@@ -304,9 +264,6 @@ RuleResult CheckLuaStaysBehindPluginBoundary(const std::filesystem::path& repo_r
     return false;
   };
 
-  // Pass 1: per plugin header, record direct Lua exposure (code positions only —
-  // the PluginThread.h threading contract legitimately discusses lua_State in
-  // comments) and the plugin headers it includes.
   std::map<std::string, bool> direct_exposure;
   std::map<std::string, std::vector<std::string>> header_includes;
   const std::filesystem::path plugin_dir = src_dir / "plugin";
@@ -335,9 +292,7 @@ RuleResult CheckLuaStaysBehindPluginBoundary(const std::filesystem::path& repo_r
       }
     }
   }
-  // Transitive closure with memoization (unknown headers count as exposing, so
-  // a typo'd or unreadable include fails loudly instead of passing vacuously).
-  std::map<std::string, int> exposure_memo;  // -1 in progress, 0 no, 1 yes
+  std::map<std::string, int> exposure_memo;
   const std::function<bool(const std::string&)> exposes = [&](const std::string& key) -> bool {
     const auto direct = direct_exposure.find(key);
     if (direct == direct_exposure.end()) {
@@ -356,7 +311,7 @@ RuleResult CheckLuaStaysBehindPluginBoundary(const std::filesystem::path& repo_r
     if (includes != header_includes.end()) {
       for (const std::string& next : includes->second) {
         if (exposure_memo.count(next) && exposure_memo[next] == -1) {
-          continue;  // include cycle: already being evaluated
+          continue;
         }
         if (exposes(next)) {
           exposed = true;
@@ -368,7 +323,6 @@ RuleResult CheckLuaStaysBehindPluginBoundary(const std::filesystem::path& repo_r
     return exposed;
   };
 
-  // Pass 2: production files outside src/plugin.
   for (const auto& entry : std::filesystem::recursive_directory_iterator(src_dir)) {
     if (!entry.is_regular_file()) {
       continue;
@@ -382,7 +336,7 @@ RuleResult CheckLuaStaysBehindPluginBoundary(const std::filesystem::path& repo_r
       continue;
     }
     if (generic.ends_with("src/editor/SyntaxDefinitionLoader.cpp")) {
-      continue;  // sanctioned self-contained syntax sandbox
+      continue;
     }
     const std::string text = ReadText(entry.path());
     AppendCodeMaskRegexViolations(
@@ -415,15 +369,6 @@ RuleResult CheckLuaStaysBehindPluginBoundary(const std::filesystem::path& repo_r
 }
 
 RuleResult CheckCoreIsNetworkFree(const std::filesystem::path& repo_root) {
-  // Hard product guarantee: the microide core binary makes no network calls and
-  // links no networking client libraries. Plugins may reach the network in their
-  // own sandboxed subprocess (declared `network` capability); the host only ever
-  // decodes/caches/blits the plugin's local output (e.g. the Phase E raster path
-  // accepts plugin-supplied bytes, never a URL). This bans the unambiguous
-  // HTTP/TLS/DNS client tokens. It deliberately does NOT ban socket()/connect()/
-  // AF_INET, which have legitimate non-network uses here: the control channel
-  // speaks AF_UNIX (local IPC) and the subprocess sandbox names AF_INET only to
-  // BLOCK it in its seccomp filter.
   RuleResult result;
   result.label = "core binary is network-free";
   result.hard_fail = true;
@@ -452,23 +397,6 @@ RuleResult CheckCoreIsNetworkFree(const std::filesystem::path& repo_root) {
 }
 
 RuleResult CheckNoUnwiredMcpScaffolding(const std::filesystem::path& repo_root) {
-  // Two contribution stubs have now been deleted for the same reason: each was a
-  // complete-looking struct + parser + Register* that duplicated the shape of the
-  // live contribution/query/teardown machinery, but was never wired into the Lua
-  // API registry or host storage — so no plugin could reach it and nothing could
-  // read it. They cost real maintenance (every plugin-wide sweep audited them)
-  // while being unreachable at runtime.
-  //
-  //  * MCP tools: ContributedMcpTool, McpToolRuntime, McpToolRegistration,
-  //    ParseMcpToolRegistration, RegisterMcpTool, InvokeMcpTool.
-  //  * AI providers / external agents: ContributedAiProvider,
-  //    ContributedExternalAgent, AiProviderRegistration, ExternalAgentRegistration,
-  //    ParseAiProviderRegistration, ParseExternalAgentRegistration,
-  //    RegisterAiProvider, RegisterExternalAgent.
-  //
-  // This guards against silently re-adding either. A real feature in these areas
-  // is new work — Lua-API registry verb, host runtime storage, teardown wiring,
-  // and a consumer — not a resurrection of the stub.
   RuleResult result;
   result.label = "no unwired contribution scaffolding in src/plugin";
   result.hard_fail = true;
@@ -522,4 +450,4 @@ std::vector<RuleResult> RunPluginArchitectureRules(const std::filesystem::path& 
   return results;
 }
 
-}  // namespace microide::tests::architecture
+}

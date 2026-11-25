@@ -1,12 +1,3 @@
-// Keyboard column (box) selection — VSCode's Ctrl+Shift+Alt+Arrow.
-//
-// Mouse box selection (Shift+Alt+drag) already worked and TextViewport::SetBoxSelection
-// already handled per-line clamping and the caret-span cap. The keyboard half did not
-// exist, so a rectangular selection was unreachable without a pointer.
-//
-// Two layers here: the arrow arithmetic (StepColumnSelection, pure) and the carets it
-// produces once fed through the viewport.
-
 #include "TestSupport.h"
 
 #include "WorkspaceShellEventHelpers.h"
@@ -29,16 +20,14 @@ using ShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
 constexpr std::size_t kNoColumnLimit = 1000;
 
-// Ragged on purpose: a box over lines of differing length is the case that
-// distinguishes a virtual column from a clamped one.
 TextViewport MakeRaggedViewport() {
   TextViewport viewport;
   viewport.LoadContent(
-      "alpha bravo charlie\n"  // 19
-      "de\n"                   // 2
-      "\n"                     // 0
-      "foxtrot golf hotel\n"   // 18
-      "ix",                    // 2
+      "alpha bravo charlie\n"
+      "de\n"
+      "\n"
+      "foxtrot golf hotel\n"
+      "ix",
       "/tmp/column-selection-fixture.txt");
   return viewport;
 }
@@ -53,9 +42,6 @@ void TestFirstStepAnchorsAtTheCaret() {
          "the cursor should have moved one line down from the caret");
 }
 
-// Once active the gesture must ignore the live caret: SetBoxSelection moves the
-// primary caret to a clamped column, and re-reading it as the anchor would make the
-// box collapse as soon as it crossed a short line.
 void TestSubsequentStepsIgnoreTheLiveCaret() {
   ColumnSelectionState state{.active = true,
                              .anchor = TextPosition{1, 8},
@@ -86,40 +72,30 @@ void TestHorizontalMotionSaturatesAtColumnZeroAndTheLongestLine() {
                  .cursor.column == 0,
          "Left at column 0 should stay at column 0 rather than underflow");
 
-  // The cap is what stops Right running forever over a document of short lines.
   ColumnSelectionState at_limit{.active = true, .anchor = {}, .cursor = TextPosition{1, 19}};
-  Expect(StepColumnSelection(at_limit, ColumnSelectDirection::Right, {}, 5, /*max_column=*/19)
+  Expect(StepColumnSelection(at_limit, ColumnSelectDirection::Right, {}, 5, 19)
                  .cursor.column == 19,
          "Right should not grow the virtual column past the longest line in the box");
 }
 
-// `max_column` is the width of the span the box covers RIGHT NOW, and that span
-// shrinks when the moving corner walks back toward the anchor. Right must still
-// be a no-op there -- clamping the virtual column TO the narrower span makes a
-// Right press collapse the box, which is the opposite of what the key does.
 void TestRightDoesNotDragTheVirtualColumnBackWhenTheSpanShrinks() {
-  // The box was widened over a long line; the corner has since stepped back up
-  // onto short lines, so the span it covers is only 4 cells wide.
   ColumnSelectionState wide{.active = true,
                             .anchor = TextPosition{0, 0},
                             .cursor = TextPosition{0, 30}};
   const ColumnSelectionState after =
-      StepColumnSelection(wide, ColumnSelectDirection::Right, {}, 5, /*max_column=*/4);
+      StepColumnSelection(wide, ColumnSelectDirection::Right, {}, 5, 4);
   Expect(after.cursor.column == 30,
          "Right over a span narrower than the virtual column should leave it alone, got " +
              std::to_string(after.cursor.column));
 
-  // And it still grows normally while there is room, from the same state shape.
   ColumnSelectionState room{.active = true,
                             .anchor = TextPosition{0, 0},
                             .cursor = TextPosition{0, 30}};
-  Expect(StepColumnSelection(room, ColumnSelectDirection::Right, {}, 5, /*max_column=*/40)
+  Expect(StepColumnSelection(room, ColumnSelectDirection::Right, {}, 5, 40)
                  .cursor.column == 31,
          "Right below the span width should still step one cell");
 }
 
-// The virtual column is the whole point: crossing a two-character line must not
-// permanently narrow the box.
 void TestVirtualColumnSurvivesShortLines() {
   ColumnSelectionState state{.active = true,
                              .anchor = TextPosition{0, 15},
@@ -143,8 +119,6 @@ void TestMaxVisualWidthInSpanFindsTheLongestLine() {
   Expect(viewport.MaxVisualWidthInSpan(0, 99) == 19, "an out-of-range span should be clamped");
 }
 
-// End to end: the stepped state fed through SetBoxSelection must produce one caret
-// per spanned line, with short lines collapsing instead of dropping out.
 void TestSteppedStateProducesOneCaretPerSpannedLine() {
   TextViewport viewport = MakeRaggedViewport();
   viewport.MoveCursorTo(0, 6, false);
@@ -158,12 +132,10 @@ void TestSteppedStateProducesOneCaretPerSpannedLine() {
   viewport.SetBoxSelection(state.anchor, state.cursor);
 
   Expect(state.cursor.line == 3, "three Down steps from line 0 should land on line 3");
-  // Four lines spanned, one of which holds the primary caret.
   Expect(viewport.secondary_carets().size() == 3,
          "a four-line box should leave three secondary carets plus the primary");
   Expect(viewport.cursor_line() == 3, "the primary caret should sit on the moving corner");
 
-  // The empty line 2 has nowhere to put column 6; it must still carry a caret, at 0.
   bool saw_empty_line_caret = false;
   for (const TextPosition& caret : viewport.secondary_carets()) {
     if (caret.line == 2) {
@@ -190,18 +162,6 @@ void TestViewportStoresAndClearsColumnSelection() {
 }
 
 
-// The chord must actually reach the action through the keybinding registry.
-//
-// The first version of this feature hardcoded Ctrl+Shift+Alt+Arrow in the key
-// coordinator instead of registering it. Everything above still passed, the README
-// documented the shortcut, and the app's own keyboard-shortcuts overlay did not know
-// it existed and it could not be rebound. Unit-testing the state machine cannot
-// catch that; only driving a real key event can.
-// TD-2026-08-13-207: the ColumnSelect* actions resolve through
-// ActiveEditableViewport(), which is the compare right pane on a compare tab — so
-// the box gesture was reachable there while nothing ended it, and the next chord
-// extended a stale box instead of re-anchoring. Same contract as the editor's,
-// asserted on the surface that lacked it.
 void TestColumnSelectGestureEndsOnACompareTabToo() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "repo";
@@ -263,22 +223,17 @@ void TestColumnSelectChordDispatchesThroughTheRegistry() {
   Expect(viewport.has_multiple_carets(),
          "a two-line box should place a secondary caret");
 
-  // A second step extends rather than re-anchoring.
   Expect(SendKeyDown(shell, SDLK_DOWN, chord), "the second chord press should be handled");
   Expect(viewport.column_selection().anchor.line == 0,
          "the anchor must stay put across steps");
   Expect(viewport.column_selection().cursor.line == 2,
          "the second step should extend the box, not restart it");
 
-  // Any other editor key ends the gesture so the next chord re-anchors.
   Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE), "a plain Down should be handled");
   Expect(!viewport.column_selection().active,
          "ordinary caret movement must end the column-selection gesture");
 }
 
-// The same defect driven through the real chord, because `max_column` is not a
-// constant: the action recomputes it from the span the box covers at that
-// moment, so the shrink is produced by the gesture itself rather than handed in.
 void TestColumnSelectRightKeepsTheWidthAfterSteppingBackOffTheLongLine() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "project";
@@ -295,10 +250,8 @@ void TestColumnSelectRightKeepsTheWidthAfterSteppingBackOffTheLongLine() {
 
   const SDL_Keymod chord =
       static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT | SDL_KMOD_ALT);
-  // Down onto the long line, so the box's span is wide...
   Expect(SendKeyDown(shell, SDLK_DOWN, chord) && SendKeyDown(shell, SDLK_DOWN, chord),
          "two Down chords should be handled");
-  // ...widen it well past the two short lines...
   for (int i = 0; i < 10; ++i) {
     Expect(SendKeyDown(shell, SDLK_RIGHT, chord), "a Right chord should be handled");
   }
@@ -306,34 +259,18 @@ void TestColumnSelectRightKeepsTheWidthAfterSteppingBackOffTheLongLine() {
          "ten Right chords over the long line should reach column 10, got " +
              std::to_string(viewport.column_selection().cursor.column));
 
-  // ...then step the moving corner back up, so the span it covers is 2 cells wide.
   Expect(SendKeyDown(shell, SDLK_UP, chord) && SendKeyDown(shell, SDLK_UP, chord),
          "two Up chords should be handled");
   Expect(viewport.column_selection().cursor.column == 10,
          "Up must keep the virtual column, got " +
              std::to_string(viewport.column_selection().cursor.column));
 
-  // Right here used to clamp the virtual column TO the now-narrow span, so the
-  // box collapsed from ten cells to two on a key that only ever widens it.
   Expect(SendKeyDown(shell, SDLK_RIGHT, chord), "the Right chord should be handled");
   Expect(viewport.column_selection().cursor.column == 10,
          "Right over a span narrower than the virtual column must not narrow the box, got " +
              std::to_string(viewport.column_selection().cursor.column));
 }
 
-// A column-select gesture is anchored to where the caret WAS, so any caret
-// placement that is not the gesture's own ends it -- PlacePrimaryCaret says so
-// and clears it there, which covers keys, the mouse, goto and the control
-// channel. It does NOT cover an edit made somewhere else entirely: the other
-// pane of a split, a disk reload, a formatter, a plugin. Those move the lines
-// the corners name without ever placing this viewport's caret, and the action
-// executor reads `column_selection()` BEFORE it touches the viewport, so the
-// next chord extended a box from corners the document no longer has.
-//
-// Note what this test does NOT do: use pane B in between. An earlier version
-// stepped the caret first and passed against the unfixed code, because the
-// ordinary PlacePrimaryCaret rule cleared the gesture on the way -- it was
-// testing that rule, not this one.
 void TestColumnSelectGestureEndsWhenSomebodyElseEditsTheBuffer() {
   microide::editor::TextViewport pane_a;
   pane_a.SetViewportSize(20, 200);
@@ -346,16 +283,13 @@ void TestColumnSelectGestureEndsWhenSomebodyElseEditsTheBuffer() {
       .active = true, .anchor = TextPosition{4, 2}, .cursor = TextPosition{4, 4}});
   Expect(pane_b.column_selection().active, "the gesture is armed on pane B");
 
-  // A second chord press must still EXTEND: the gesture's own step never edits,
-  // so nothing has gone stale yet.
   pane_b.SetColumnSelection(ColumnSelectionState{
       .active = true, .anchor = TextPosition{4, 2}, .cursor = TextPosition{4, 5}});
   Expect(pane_b.column_selection().active && pane_b.column_selection().cursor.column == 5,
          "a held chord keeps extending its own box");
 
-  // Pane A deletes the lines the gesture is anchored on.
   pane_a.MoveCursorTo(0, 0);
-  pane_a.MoveCursorTo(3, 0, /*extend_selection=*/true);
+  pane_a.MoveCursorTo(3, 0, true);
   pane_a.Backspace();
 
   Expect(!pane_b.column_selection().active,
@@ -363,7 +297,7 @@ void TestColumnSelectGestureEndsWhenSomebodyElseEditsTheBuffer() {
          "instead of extending a box from corners that are gone");
 }
 
-}  // namespace
+}
 
 void RegisterColumnSelectionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ColumnSelection/GestureEndsWhenSomebodyElseEditsTheBuffer",
@@ -392,4 +326,4 @@ void RegisterColumnSelectionTests(std::vector<TestCase>& tests) {
           TestColumnSelectGestureEndsOnACompareTabToo);
 }
 
-}  // namespace microide::tests
+}

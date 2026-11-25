@@ -7,8 +7,6 @@ void EditorNavigationHistory::Observe(const std::filesystem::path& path, std::si
   if (!entries_.empty()) {
     Entry& current = entries_[cursor_];
     const std::size_t distance = line > current.line ? line - current.line : current.line - line;
-    // native(), not path ==: the component-wise compare is the slow one, and this
-    // runs every frame.
     if (current.path->native() == path.native() && distance <= kSignificantLines) {
       current.line = line;
       current.column = column;
@@ -36,4 +34,4 @@ std::shared_ptr<const std::filesystem::path> EditorNavigationHistory::SharedPath
   return std::make_shared<const std::filesystem::path>(path);
 }
 
-}  // namespace microide::workspace
+}

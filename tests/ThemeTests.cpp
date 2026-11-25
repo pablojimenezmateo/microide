@@ -111,9 +111,6 @@ void ExpectReadableDecorationUnderlays(const render::Theme& theme, std::string_v
                         active_occurrence, 2.9f);
   ExpectContrastAtLeast(prefix + " comments over selection", theme.syntax_comment, selection, 2.9f);
 
-  // selection_strong is the opaque highlight used on solid panels (e.g. the
-  // Settings overlay), so nothing behind it may ghost through and primary text
-  // must stay readable on top of it.
   Expect(theme.selection_strong.a == 0xff, prefix + " selection_strong is opaque");
   ExpectContrastAtLeast(prefix + " primary text over selection_strong", theme.text_primary,
                         theme.selection_strong, 4.5f);
@@ -157,10 +154,6 @@ void ExpectClassicDarkThemeAssetLoads() {
                         4.5f);
 }
 
-// Menus, quick-open overlays and other floating surfaces repaint on their own (a
-// hover moves, a caret blinks) without repainting what lies beneath them -- exact
-// only over an opaque fill. A translucent overlay background re-blended over its
-// own retained pixels on every such repaint (found by the QA redraw verifier).
 void ExpectOverlayBackgroundsAreOpaque() {
   Expect(render::MakeDefaultTheme().overlay_background.a == SDL_ALPHA_OPAQUE,
          "the default theme's overlay background should be opaque");
@@ -180,16 +173,12 @@ void ExpectOverlayBackgroundsAreOpaque() {
 void ExpectAnsi256ColorClampsOutOfRangeIndices() {
   using microide::util::Ansi256Color;
   const util::Rgba8 fallback = Ansi256Color(-1);
-  // Regression: indices above 255 used to fall through the grayscale ramp with no
-  // upper bound and wrap via Uint8 truncation (e.g. 257 -> near-black, 256 ->
-  // near-white). They must now resolve to the same out-of-range fallback as < 0.
   Expect(Ansi256Color(256) == fallback,
          "index 256 is out of range and must not wrap into the grayscale ramp");
   Expect(Ansi256Color(300) == fallback,
          "index 300 is out of range and must clamp to the fallback colour");
   Expect(Ansi256Color(1'000'000) == fallback,
          "a very large index must clamp rather than overflow the ramp math");
-  // The last valid grayscale index (255) stays a bright gray, distinct from fallback.
   const util::Rgba8 last_gray = Ansi256Color(255);
   Expect(last_gray.r == 238 && last_gray.g == 238 && last_gray.b == 238,
          "index 255 remains the top of the grayscale ramp (0xEE)");
@@ -199,16 +188,12 @@ void ExpectParseThemeColorRejectsOutOfRangeNumericTokens() {
   const auto same = [](SDL_Color a, util::Rgba8 b) {
     return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
   };
-  // 0..255 name a real palette entry and parse to that colour.
   const auto zero = render::ParseThemeColor("0");
   Expect(zero.has_value() && same(*zero, util::Ansi256Color(0)),
          "numeric token 0 resolves to palette index 0");
   const auto max = render::ParseThemeColor("255");
   Expect(max.has_value() && same(*max, util::Ansi256Color(255)),
          "numeric token 255 resolves to palette index 255");
-  // Regression: out-of-range or overflowing numeric tokens used to silently
-  // collapse to black inside Ansi256Color. They must now report as unset so the
-  // caller treats the group as default rather than mis-rendering it.
   Expect(!render::ParseThemeColor("256").has_value(),
          "numeric token 256 is out of range and must be rejected");
   Expect(!render::ParseThemeColor("99999999999999999999").has_value(),
@@ -216,8 +201,6 @@ void ExpectParseThemeColorRejectsOutOfRangeNumericTokens() {
 }
 
 void ExpectSelfIncludingThemeLoadsWithoutRecursion() {
-  // A colorscheme that includes itself must terminate via the include-cycle
-  // guard rather than recursing forever, and still apply its own color-links.
   const std::filesystem::path dir =
       std::filesystem::temp_directory_path() / "microide_theme_cycle_test";
   std::error_code ec;
@@ -244,8 +227,6 @@ void ExpectSelfIncludingThemeLoadsWithoutRecursion() {
 }
 
 void ExpectDeepThemeIncludeChainIsBounded() {
-  // A long acyclic include chain must fail cleanly at the depth cap rather than
-  // recursing unbounded. Build chain0 -> chain1 -> ... -> chain30.
   const std::filesystem::path dir =
       std::filesystem::temp_directory_path() / "microide_theme_depth_test";
   std::error_code ec;
@@ -257,7 +238,6 @@ void ExpectDeepThemeIncludeChainIsBounded() {
     out << "include \"chain" << (i + 1) << "\"\n";
     out << "color-link default \"#ffffff,#101010\"\n";
   }
-  // The final file terminates the chain.
   { std::ofstream out(dir / "chain30.microide"); out << "color-link default \"#ffffff,#101010\"\n"; }
 
   render::Theme theme;
@@ -270,11 +250,6 @@ void ExpectDeepThemeIncludeChainIsBounded() {
          "the failure should name the include-depth limit: " + error);
 }
 
-// A colorscheme is NAMED, never pathed. `theme_directory / name` replaces the whole
-// path when `name` is absolute, and `..` walks out of the directory, so an
-// `include` in a shared or downloaded `.microide` file could read any `*.microide`
-// on the filesystem — outside this function's stated contract, and outside what the
-// include-cycle guard (which keys on the file stem) can reason about.
 void ExpectThemeIncludesCannotEscapeTheThemeDirectory() {
   const std::filesystem::path root =
       std::filesystem::temp_directory_path() / "microide_theme_escape_test";
@@ -303,14 +278,12 @@ void ExpectThemeIncludesCannotEscapeTheThemeDirectory() {
   std::string error;
   Expect(!load("relative", &error), "a `..` include must not resolve outside the directory");
   Expect(!load("absolute", &error), "an absolute include must not resolve outside the directory");
-  // And a plain name still loads, so the guard did not just break includes.
   Expect(load("plain", &error), "an ordinary named colorscheme must still load");
 
   std::filesystem::remove_all(root, ec);
 }
 
 void ExpectBuiltinLightThemeIsSelectableAndReadable() {
-  // The built-in light theme resolves by name without any bundled assets.
   microide::render::Theme theme;
   std::string resolved_name;
   std::string error;
@@ -318,7 +291,6 @@ void ExpectBuiltinLightThemeIsSelectableAndReadable() {
   Expect(loaded, "the built-in light theme should load: " + error);
   Expect(resolved_name == "light", "light colorscheme should resolve to its own name");
 
-  // It must actually be light: a bright editor background and dark primary text.
   const auto brightness = [](SDL_Color c) {
     return static_cast<int>(c.r) + static_cast<int>(c.g) + static_cast<int>(c.b);
   };
@@ -327,7 +299,6 @@ void ExpectBuiltinLightThemeIsSelectableAndReadable() {
   ExpectContrastAtLeast("light theme primary text", theme.text_primary, theme.editor_background,
                         4.5f);
 
-  // Both built-in themes are always offered, even with no theme directory.
   const std::vector<std::string> names = microide::render::ListAvailableThemeNames({});
   Expect(std::find(names.begin(), names.end(), "light") != names.end(),
          "the light theme should appear in the available colorscheme list");
@@ -335,8 +306,6 @@ void ExpectBuiltinLightThemeIsSelectableAndReadable() {
          "the default theme should appear in the available colorscheme list");
 }
 
-// TD-2026-07-16-64: an oversized colorscheme file must be rejected before it is parsed
-// line by line, leaving the current theme unchanged, rather than stalling the UI thread.
 void ExpectOversizedColorschemeFileIsRejected() {
   const std::filesystem::path dir =
       std::filesystem::temp_directory_path() / "microide_theme_oversize_test";
@@ -348,7 +317,6 @@ void ExpectOversizedColorschemeFileIsRejected() {
   {
     std::ofstream out(dir / "huge.microide");
     out << "color-link default \"#ffffff,#101010\"\n";
-    // One >4 MiB comment line pushes the file past the per-file byte budget.
     out << "# " << std::string(5u * 1024 * 1024, 'x') << "\n";
   }
 
@@ -362,9 +330,6 @@ void ExpectOversizedColorschemeFileIsRejected() {
          "the failure should name the file-size budget: " + error);
 }
 
-// The colorscheme picker is rebuilt on every project switch, so the catalog memoizes
-// the directory walk. It must still see a theme that appears afterwards: the memo is
-// keyed on the directory's own mtime, which an added/removed entry moves.
 void ExpectThemeNameCatalogSeesDirectoryChanges() {
   const std::filesystem::path dir =
       std::filesystem::temp_directory_path() / "microide_theme_catalog_test";
@@ -392,8 +357,6 @@ void ExpectThemeNameCatalogSeesDirectoryChanges() {
            "the catalog should agree with the one-shot listing");
   }
 
-  // A second call with nothing changed answers from the memo, and must answer
-  // the same thing.
   Expect(contains(catalog.Names(dir), "first"), "a memoized answer should be unchanged");
 
   write_theme("second");
@@ -408,14 +371,13 @@ void ExpectThemeNameCatalogSeesDirectoryChanges() {
   Expect(!contains(catalog.Names(dir), "first"),
          "a removed theme should drop out of the next listing");
 
-  // A different requested directory must not be answered from the cached one.
   Expect(!contains(catalog.Names({}), "second"),
          "switching the requested directory should rescan rather than reuse the memo");
 
   std::filesystem::remove_all(dir, ec);
 }
 
-}  // namespace
+}
 
 void RegisterThemeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Theme oversized colorscheme file is rejected",
@@ -443,4 +405,4 @@ void RegisterThemeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Theme overlay backgrounds are opaque", ExpectOverlayBackgroundsAreOpaque);
 }
 
-}  // namespace microide::tests
+}

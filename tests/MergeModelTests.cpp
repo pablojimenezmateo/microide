@@ -25,9 +25,6 @@ using microide::compare::MergeResultLines;
 using microide::compare::MergeResultText;
 
 void TestMergeDisplayModelSkipsZeroRowDeletionHunks() {
-  // Both sides delete the same middle line — an auto-resolved deletion whose
-  // selected lines are all empty (row_count == 0). The display hunk must not be
-  // recorded with an inverted end_row < start_row range.
   auto model = BuildMergeModel("a\nb\nc\n", "a\nc\n", "a\nc\n");
   const auto display = BuildMergeDisplayModel(model);
   for (const auto& hunk : display.hunks) {
@@ -36,7 +33,6 @@ void TestMergeDisplayModelSkipsZeroRowDeletionHunks() {
     Expect(hunk.start_row >= 0 && hunk.end_row < static_cast<int>(display.rows.size()),
            "display hunk row range stays within the row list");
   }
-  // The resolved result still drops the deleted line.
   const auto result = MergeResultLines(model);
   Expect(result.size() == 3, "both-sides deletion resolves to a\\nc\\n plus trailing empty");
   Expect(result[0] == "a" && result[1] == "c", "the shared deletion is applied");
@@ -105,8 +101,6 @@ void TestMergeBothChoiceConcatenatesConflictInsertions() {
   model.hunks.front().choice = MergeChoice::Both;
   const auto lines = MergeChoiceLines(model.hunks.front(), model.hunks.front().choice);
   Expect(lines.size() == 2, "both choice should keep both insertion blocks");
-  // Current first, then incoming: the file's own conflict-marker order and VS
-  // Code's "Accept Both Changes". The explicit incoming-first variant is separate.
   Expect(lines[0] == "current", "both choice should keep current lines first");
   Expect(lines[1] == "incoming", "both choice should append incoming lines");
   const auto incoming_first =
@@ -116,11 +110,6 @@ void TestMergeBothChoiceConcatenatesConflictInsertions() {
          "the explicit incoming-first variant still orders incoming first");
 }
 
-// Two changes that touch — no unchanged base line between them — are ONE
-// conflict, as `git merge-file` reports them (an insertion at either boundary
-// of the other side's replacement, two deletions that meet). This test used to
-// pin the opposite: two clean hunks, applied independently, for a case git
-// refuses to merge. Checked against git over 500 random three-way merges.
 void TestMergeTouchingChangesAreOneConflict() {
   const auto model = BuildMergeModel("alpha\nbeta\ngamma\n", "alpha\ninserted\nbeta\ngamma\n",
                                      "alpha\nbeta-current\ngamma\n");
@@ -143,19 +132,10 @@ void TestMergeTouchingChangesAreOneConflict() {
   Expect(BootstrapMergeResultText(apart) == "alpha\nbeta-current\nmid\ninserted\ngamma\n",
          "and the clean merge is git's");
 
-  // Two sides deleting one of two identical trailing blank lines is one change
-  // made twice, not two deletions: the result keeps the other blank line.
   const auto twice = BuildMergeModel("a\n\n\n", "a\n\n", "a\n\n");
   Expect(BootstrapMergeResultText(twice) == "a\n\n", "the same deletion on both sides applies once");
 }
 
-// The model's verdicts against `git merge-file` over random three-way edits.
-// Every line is unique, so the two diffs cannot legitimately align an edit
-// differently (with repeated lines they can, and then the two tools disagree
-// on a few merges in a thousand without either being wrong); with that removed
-// the agreement is exact: a conflict where git reports one, a clean merge with
-// git's text where it does not. This is what caught the touching-changes rule
-// (175 of 500 merges git refused were auto-merged) and the phantom alignment.
 void TestMergeRandomTriplesAgreeWithGitMergeFile() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path dir = temp_dir.path();
@@ -244,8 +224,6 @@ void TestMergeChoiceLabels() {
          "both merge choice label should match");
 }
 
-// The session restore reads hunk choices back through ParseMergeChoice, so every
-// label must parse to the choice that wrote it.
 void TestMergeChoiceLabelsRoundTrip() {
   for (const MergeChoice choice :
        {MergeChoice::Base, MergeChoice::Incoming, MergeChoice::Current, MergeChoice::Both,
@@ -260,25 +238,12 @@ void TestMergeChoiceLabelsRoundTrip() {
 }
 
 void TestBootstrapMergeResultTextUsesOneTimeChoices() {
-  // An unchanged line separates the two sides' edits; adjacent edits are one
-  // conflict, as in git (see TestMergeTouchingChangesAreOneConflict).
   const auto model = BuildMergeModel("zero\nsame\nmid\nlast\n", "zero\nincoming\nmid\nlast\n",
                                      "zero\nsame\nmid\ncurrent\n");
   Expect(BootstrapMergeResultText(model) == "zero\nincoming\nmid\ncurrent\n",
          "bootstrap merge result should apply only the initial per-hunk choices");
 }
 
-// A MergeModel's line vectors — its own and every hunk's — are `string_view`s
-// into three shared source buffers rather than owned strings (TD-2026-08-15-246).
-// The whole safety argument is that the buffers are `shared_ptr<const string>`,
-// so the string OBJECT's address is fixed and a copy or move of the model cannot
-// relocate the bytes. That argument is worth a test, because the failure mode is
-// a use-after-free that reads plausibly for short lines and only bites on long
-// ones (or the other way round, depending on the small-string buffer).
-//
-// The inputs here are deliberately BOTH shorter and longer than a small-string
-// buffer, so a model that had held plain `std::string` members would dangle on at
-// least one of them.
 void TestMergeModelLinesSurviveCopyAndMove() {
   const std::string short_base = "a\nb\n";
   const std::string long_incoming =
@@ -304,25 +269,19 @@ void TestMergeModelLinesSurviveCopyAndMove() {
   MergeModel built = BuildMergeModel(short_base, long_incoming, long_current);
   check(built, "as built");
 
-  // Move: the source buffers move as shared_ptrs, so the strings themselves do
-  // not move at all.
   const MergeModel moved = std::move(built);
   check(moved, "after move");
 
-  // Copy: the copy shares the same buffers, so its views point at the same bytes.
   const MergeModel copied = moved;
   check(copied, "after copy");
 
-  // And the copy outliving its source is the case a plain member would break.
   {
     MergeModel scoped = BuildMergeModel(short_base, long_incoming, long_current);
     const MergeModel survivor = std::move(scoped);
-    scoped = MergeModel{};  // drop the source's own references
+    scoped = MergeModel{};
     check(survivor, "after the source model was reset");
   }
 
-  // The result text must agree with the lines the views report, which is what
-  // proves the views are not merely non-crashing but correct.
   Expect(MergeResultText(copied) == MergeResultText(moved),
          "a copied model must produce the same result text as its source");
 }
@@ -342,7 +301,6 @@ void TestMergeLargeInputsUseSharedFallbackDiff() {
   for (int line = 0; line < 900; ++line) {
     const std::string text = "line " + std::to_string(line) + "\n";
     base += text;
-    // Two lines apart: adjacent edits are one conflict, as in git.
     incoming += line == 450 ? "line 450 incoming\n" : text;
     current += line == 452 ? "line 452 current\n" : text;
   }
@@ -355,10 +313,8 @@ void TestMergeLargeInputsUseSharedFallbackDiff() {
          "large merge inputs should keep both sides' independent edits");
 }
 
-}  // namespace
+}
 
-// The hover-preview overlay caches its choice lines on the tab (keyed by
-// conflict/choice/model revision) so it no longer reallocates them every frame.
 void TestEnsureMergePreviewLinesCachesByKey() {
   using microide::workspace::EnsureMergePreviewLines;
   using microide::workspace::MergeTabState;
@@ -408,12 +364,10 @@ void TestEnsureMergePreviewLinesCachesByKey() {
          "an invalid conflict returns an empty span");
 }
 
-// The preview now renders through the tab-aware layout path, so a leading tab
-// expands to tab_size columns instead of the single column a codepoint slice gave.
 void TestMergePreviewLayoutIsTabAware() {
   const editor::LayoutLine layout =
-      editor::TextLayout::BuildVisibleLine("\tabc", /*horizontal_scroll=*/0,
-                                           /*visible_columns=*/8, /*tab_size=*/4);
+      editor::TextLayout::BuildVisibleLine("\tabc", 0,
+                                           8, 4);
   Expect(layout.visual_columns >= 4 + 3,
          "a leading tab must expand to tab_size visual columns plus the trailing glyphs");
 }
@@ -445,4 +399,4 @@ void RegisterMergeModelTests(std::vector<TestCase>& tests) {
           TestMergeDisplayModelSkipsZeroRowDeletionHunks);
 }
 
-}  // namespace microide::tests
+}

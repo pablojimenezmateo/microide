@@ -29,8 +29,6 @@
 #include "workspace/PluginRasterSize.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
-// WorkspaceShell's constructor lives here, so this TU must see the complete type
-// of everything the shell holds by unique_ptr.
 #include "workspace/coordinators/WorkspaceKeyInputCoordinator.h"
 #include "workspace/coordinators/WorkspaceChromeMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceEditorMouseCoordinator.h"
@@ -57,9 +55,6 @@ namespace microide::workspace {
 
 namespace {
 
-// True when the live editor no longer matches the suggestion's anchor. Cheap
-// integer/identity checks first; the path normalize is the last resort so the
-// common "user typed / moved" case never allocates.
 bool GhostTextStale(
     const editor::TextViewport* viewport,
     const ProjectWorkspaceState::PluginEditorPresentation::GhostText& ghost) {
@@ -74,7 +69,6 @@ bool GhostTextStale(
   return !util::SamePathNormalized(viewport->path(), ghost.path);
 }
 
-// Drop the live suggestion and release the bundle if it drained empty.
 void ResetGhostText(ProjectWorkspaceState& state) {
   state.plugin_presentation->ghost_text.reset();
   state.MaybeReleasePluginPresentation();
@@ -82,11 +76,6 @@ void ResetGhostText(ProjectWorkspaceState& state) {
 
 template <typename Callback>
 void ForEachOpenEditableBuffer(const ProjectWorkspaceState& state, Callback&& callback) {
-  // Iterate every editor group, not just the focused one: on session restore of a
-  // split, each background group's active tab is eager-hydrated but its document
-  // would otherwise never receive didOpen / OnBufferOpen (no diagnostics/semantic
-  // tokens until the user focuses that pane). The sole caller dedups by path, so a
-  // buffer shared across splits is still opened once.
   for (const auto& group : state.editor_groups) {
     for (const auto& tab : group.open_tabs) {
       if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
@@ -117,27 +106,12 @@ void ForEachOpenEditableBuffer(const ProjectWorkspaceState& state, Callback&& ca
   }
 }
 
-}  // namespace
+}
 
-// WorkspaceShell's CONSTRUCTOR, in the plugin TU. Not an accident and not a good
-// home: a constructor that builds `unique_ptr` members needs their complete
-// types, and this is the only shell TU that already includes every coordinator
-// header. `WorkspaceShell.cpp`, where the destructor is and where a reader
-// looks, is within a handful of code lines of its cap and the companion-TU count
-// is at its own, so there is nowhere better to put it today. The destructor
-// carries the matching pointer (TD-2026-09-13-293b).
 WorkspaceShell::WorkspaceShell() {
-  // Bind the settings store to the layered backing vectors. The user layer is
-  // stable for the shell's lifetime; the project layer is re-bound whenever the
-  // active project state is moved (RebindProjectState / reset).
   settings_store_.BindUserLayer(&context_.user_settings);
   settings_store_.BindActiveProject(&context_.current_project_state.settings);
-  // Load the persisted recent-projects/files MRU so the welcome surface and the
-  // empty file finder can surface them immediately on first paint.
   recents_service_.Configure(persistence_service_);
-  // Bound here rather than on the SDL window-init path: git write actions are
-  // reachable from the control channel and headless dispatch, where that path never
-  // runs, and unbound callbacks would silently swallow every operation's result.
   InitializeGitOperationService();
   virtual_document_registry_.SetOnChange(
       [this](const std::string& uri) { ReloadVirtualDocumentTabs(uri); });
@@ -179,10 +153,6 @@ void WorkspaceShell::RebuildPhase3Registries(bool reconcile_language_servers) {
     save_participant_registry_.Register(
         SaveParticipantSpec{.id = participant.id, .plugin_id = participant.plugin_id});
   }
-  // The eighth sibling, and the one that used to be missing: without this the
-  // read side (open-in-tab, reload-on-change, read-only enforcement, the
-  // `open_file` virtual:// branch) was complete and unreachable, because the
-  // registry's only writer was the test backdoor (TD-2026-07-27-001).
   virtual_document_registry_.Clear();
   for (const auto& document : host.ContributedVirtualDocuments()) {
     virtual_document_registry_.Register(VirtualDocumentSpec{
@@ -208,10 +178,6 @@ void WorkspaceShell::RebuildPhase3Registries(bool reconcile_language_servers) {
         .language_id = code_action.language_id,
     });
   }
-  // Skipped on project reactivation: the host has no contributed servers there
-  // (it was torn down on switch-away and intentionally not reloaded), so an empty
-  // contributed set would make BeginShutdownServersNotIn tear down the project's
-  // persisted, warm language servers. See RefreshPluginSurfacesForReactivation.
   if (reconcile_language_servers) {
     for (const auto& language_server : host.ContributedLanguageServers()) {
       if (language_server.command.empty() || language_server.language_ids.empty()) {
@@ -231,13 +197,6 @@ void WorkspaceShell::RebuildPhase3Registries(bool reconcile_language_servers) {
       std::vector<std::string> command = std::move(plan.command);
       CurrentLspManager().RegisterServer(language_server.language_ids,
                                          context_.current_project_state.launcher(), command,
-                                         // Percent-encode the rootUri the same way
-                                         // document URIs are (FileUriForPath); a raw
-                                         // "file://" + path is a malformed URI for a
-                                         // root with a space/#/non-ASCII byte, so the
-                                         // server would see opened documents as
-                                         // outside its workspace (breaking symbols,
-                                         // cross-file nav, rename) or reject init.
                                          FileUriForPath(context_.current_project_state.root),
                                          context_.current_project_state.root.generic_string(),
                                          language_server.eager_start,
@@ -246,10 +205,6 @@ void WorkspaceShell::RebuildPhase3Registries(bool reconcile_language_servers) {
     }
     CurrentLspManager().BeginShutdownServersNotIn(active_language_servers);
 
-    // Debug adapters are reconciled on the same gate: their definitions are
-    // cheap (no process spawns until a session starts), but RetainAdaptersIn
-    // must not run with an empty contributed set on reactivation, or it would
-    // drop a reactivated project's adapters.
     std::unordered_set<std::string> active_debug_adapter_types;
     for (const auto& adapter : host.ContributedDebugAdapters()) {
       if (adapter.command.empty() || adapter.type.empty()) {
@@ -264,10 +219,6 @@ void WorkspaceShell::RebuildPhase3Registries(bool reconcile_language_servers) {
     }
     CurrentDapManager().RetainAdaptersIn(active_debug_adapter_types);
 
-    // Reconcile plugin-contributed launch configs into the project. Persistence
-    // restores configs before plugins reload (a fallback); once plugins are up,
-    // the live contributed set is authoritative. The user's selected index is
-    // preserved (clamped) so a re-reconcile does not reset the chosen config.
     auto& project_state = context_.current_project_state;
     const std::size_t previous_selected = project_state.selected_launch_config_index;
     project_state.launch_configs.clear();
@@ -303,9 +254,6 @@ void WorkspaceShell::RebuildPhase3Registries(bool reconcile_language_servers) {
     });
   }
 
-  // Plugin-contributed language metadata can change auto-close/surround/indent
-  // behavior. Re-apply editor preferences so every open viewport receives the
-  // refreshed contract and current toggle settings.
   ApplyEditorPreferencesToAllTabs();
 }
 
@@ -336,18 +284,11 @@ void WorkspaceShell::RebuildPresentationRegistries() {
   const auto& host = plugin_runtime_.Host();
   theme_registry_.Rebuild(host);
   file_icon_registry_.Rebuild(host);
-  // Keep the colorscheme picker in sync with newly (un)contributed plugin themes.
   auto& coordinator = MakePersistenceCoordinator();
   coordinator.RefreshAvailableColorschemeNames();
-  // If the active colorscheme is a plugin theme, re-apply it so its (possibly
-  // changed) colours take effect after the reload. Built-in/filesystem schemes
-  // are unaffected by plugin reloads, so only re-apply when ours is contributed.
   const std::string& active = context_.current_project_state.active_colorscheme_name;
   if (theme_registry_.Contains(active)) {
-    coordinator.ApplyColorscheme(active, /*persist=*/false, /*log_feedback=*/false);
-    // The theme's colours may have changed, and not every pixel is a derived
-    // unit keyed on them (the chrome bands' fills are not): the window. This
-    // named the editor surface and the menu bar.
+    coordinator.ApplyColorscheme(active, false, false);
     RequestPreparedFrame();
   }
 }
@@ -359,12 +300,7 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(PluginReloadRequest request)
   if (startup_options_.plugins_disabled()) {
     request.syntax_definitions = false;
   }
-  // Apply the user's per-plugin disable set before reloading so disabled plugins skip setup.
   plugin_runtime_.Host().SetDisabledPlugins(context_.disabled_plugin_ids);
-  // The reload runs the plugin Lua off the UI thread. The post-reload consumption
-  // (registry rebuilds, sidebar/syntax refresh, redraws) must run only after the
-  // rebuilt contribution snapshot is published, so it lives in the completion. With no
-  // worker wired the completion fires inline and the whole flow stays synchronous.
   const std::uint64_t generation = reload_plugins_invocation_count_;
   const std::filesystem::path project_root = context_.current_project_state.root;
   const auto plugin_error_count = [this]() {
@@ -377,21 +313,11 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(PluginReloadRequest request)
       context_.current_project_state.locality,
       request.syntax_definitions,
       [this, request, generation, project_root, errors_before, plugin_error_count](bool clean_reload) {
-        // Drop a stale completion. Two independent guards:
-        //  - generation: a newer reload superseded this one (its completion rebuilds).
-        //  - project_root: the active project changed between dispatch and completion.
-        //    A warm reactivation switches projects WITHOUT bumping the generation
-        //    counter, so the counter alone would let a previous project's late reload
-        //    publish its registries/sidebars/diagnostics into the now-active project.
         if (generation != reload_plugins_invocation_count_ ||
             project_root != context_.current_project_state.root) {
           return;
         }
         ConsumeReloadResult(request, clean_reload);
-        // A plugin that failed to load said so only in the Plugin Errors channel
-        // unless the user had asked for the reload: at startup, a project switch or
-        // a plugin file changing on disk it failed in silence (QA plugin-errors).
-        // VS Code raises an error notification when an extension fails to activate.
         if (const std::size_t errors_after = plugin_error_count();
             !request.announce && errors_after > errors_before) {
           const std::vector<std::string>* entries = OutputChannelEntries("plugins.error");
@@ -409,8 +335,6 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(PluginReloadRequest request)
           });
         }
       });
-  // Reload dispatched. Callers ignore the return; the real result is delivered to the
-  // completion above.
   return true;
 }
 
@@ -425,9 +349,6 @@ void WorkspaceShell::ConsumeReloadResult(PluginReloadRequest request, bool clean
     RebuildPresentationRegistries();
     RefreshPluginEditorEventInterest();
   }
-  // A plugin keybinding on a chord another binding holds is not registered (Help
-  // and Settings never advertise a key that cannot fire), and the plugin's author
-  // is told which binding has it (TD-2026-10-20-369).
   if (const auto& contributed = plugin_runtime_.Host().ContributedKeybindings(); !contributed.empty()) {
     for (const ShadowedKeybinding& shadowed : ShadowedContributedKeybindings(
              contributed, context_.disabled_keybinding_ids,
@@ -476,18 +397,11 @@ void WorkspaceShell::ConsumeReloadResult(PluginReloadRequest request, bool clean
     util::PerformanceTrace::Scope perf_open_buffers_scope(
         "WorkspaceShell::ReloadPluginsForCurrentProject::NotifyPluginsAboutOpenBuffers");
     NotifyPluginsAboutOpenBuffers(request.replay_buffer_opens, request.open_lsp_documents);
-    // The reload ran off the UI thread, so a file can have become the active
-    // editor before the servers it contributes were registered: its open found no
-    // server, and the status read "Starting…" with nothing ever started (QA
-    // lsp-csharp: `project-open` then `open`). A server becoming available for the
-    // active editor is the moment activating it would have engaged one.
     if (const editor::TextViewport* active = ActiveEditableViewport();
         active != nullptr && !active->path().empty()) {
       NotifyLspBufferOpen(active->path());
     }
   }
-  // What a reload changes on screen outside the editor -- status items, the
-  // sidebar's views, the menus' rows -- is derived at frame prep.
   RequestPreparedFrame();
   {
     util::StartupTrace::Scope editor_redraw_scope("RequestEditorSurfaceRedraw");
@@ -496,11 +410,9 @@ void WorkspaceShell::ConsumeReloadResult(PluginReloadRequest request, bool clean
     RequestPreparedFrame();
   }
   if (request.announce) {
-    // The user asked for this reload: its own summary, now that it has landed.
     std::string summary = PluginRuntimeReloadSummary();
     context_.current_project_state.panel.feedback.text = summary;
     if (!summary.empty()) {
-      // Heuristic: surface failures/warnings as Warning, otherwise Info.
       const bool looks_problematic =
           summary.find("error") != std::string::npos || summary.find("fail") != std::string::npos ||
           summary.find("warn") != std::string::npos;
@@ -513,16 +425,7 @@ void WorkspaceShell::ConsumeReloadResult(PluginReloadRequest request, bool clean
 void WorkspaceShell::RefreshPluginSurfacesForReactivation() {
   util::PerformanceTrace::Scope perf_scope(
       "WorkspaceShell::RefreshPluginSurfacesForReactivation");
-  // Reactivating an already-initialised project deliberately does NOT reload the
-  // plugin host (kept fast/warm by 8136af6e). The shared host was torn down on
-  // switch-away, so it has no contributed language servers right now. The
-  // project's own LspManager, however, was moved into the catalog with its warm
-  // servers intact and moved back here. Reconciling the LSP registry against the
-  // empty host would make BeginShutdownServersNotIn({}) shut down and erase those
-  // warm servers -> "No LSP server". Skip LSP reconciliation so the persisted
-  // servers survive untouched. The shell-global registries (formatters,
-  // completions, etc.) still rebuild to clear the previous project's leftovers.
-  RebuildPhase3Registries(/*reconcile_language_servers=*/false);
+  RebuildPhase3Registries(false);
   RebuildPhase4Registries();
   RebuildPresentationRegistries();
   RefreshPluginEditorEventInterest();
@@ -581,8 +484,6 @@ void WorkspaceShell::InvalidateRuntimeSyntaxStateCaches(
       if (language.empty() || !changed_language_set.contains(language)) {
         continue;
       }
-      // The language's rules changed: the panes' syntax states are those of the
-      // old ones, whatever the refresh finds to rebuild. From the top (frame prep).
       tab.compare->token_windows_stale = true;
       RefreshCompareTabDerivedState(*tab.compare);
       continue;
@@ -649,16 +550,6 @@ void WorkspaceShell::NotifyPluginBufferOpen(const std::filesystem::path& path) {
 }
 
 void WorkspaceShell::NotifyLspBufferOpen(const std::filesystem::path& path) {
-  // Engage the language server the moment a document becomes the active editor —
-  // start a lazily-registered server, send `textDocument/didOpen`, and request
-  // semantic tokens/diagnostics. Without this the LSP only woke on the first
-  // *edit* or an explicit action (go-to-definition/hover), so a freshly opened OR
-  // session-restored file left the status stuck at "LSP: Starting..." (lazy
-  // server never started) or painted no diagnostics/semantic colors (server up
-  // but the doc was never opened) until the user interacted. Called from both the
-  // manual-open path (NotifyPluginBufferOpen) and tab activation/restore, so a
-  // file that was already open at startup engages the LSP too. EnsureLspDocumentOpen
-  // is idempotent (HasOpenDocument), so re-activations are cheap no-ops.
   const std::filesystem::path normalized_path = util::NormalizedPath(path);
   if (normalized_path.empty()) {
     return;
@@ -687,9 +578,6 @@ void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
   if (viewport == nullptr || !util::SameAsNormalizedPath(viewport->path(), normalized_path)) {
     return;
   }
-  // Copied, not bound by reference: this is held across EnsureLspDocumentOpen and
-  // the callback install below, and language_id() hands back a reference into a
-  // memo that any intervening re-resolve on this viewport would overwrite.
   const std::string language_id = viewport->language_id();
   if (language_id.empty()) {
     return;
@@ -701,10 +589,6 @@ void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
   client->SetDiagnosticsCallback(
       [this, project_root = util::NormalizedPath(context_.current_project_state.root), client](
           std::string uri, std::vector<LspClient::Diagnostic> diagnostics) {
-        // Resolve the active project at dispatch time and drop the publish if the
-        // active project changed since this callback was installed. A raw
-        // &current_project_state capture would otherwise publish diagnostics from an
-        // old server into whatever project happens to be current now.
         ProjectWorkspaceState& current = context_.current_project_state;
         if (!util::SameAsNormalizedPath(current.root, project_root)) {
           return;
@@ -713,21 +597,9 @@ void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
                               std::move(diagnostics));
       });
   EnsureLspDocumentOpen(*viewport, *client, language_id);
-  // Must match the percent-encoded URI the document was opened under
-  // (EnsureLspDocumentOpen -> FileUriForPath); a hand-built "file://" + raw path
-  // desyncs for any path with a space/non-ASCII/reserved byte, so the server sees
-  // didSave for a URI it never opened.
   client->DidSave(FileUriForPath(normalized_path));
-  // The buffer is now clean, so the semantic-token overlay becomes render-visible
-  // again. Re-request it for the saved content: an edit-then-undo-then-save
-  // sequence cleared the overlay on each edit, and semantic tokens are pull-based
-  // (the server never pushes them), so without this the identifiers would keep the
-  // lexical-only colors until the next unrelated re-request.
   lsp_service_.RequestLspSemanticTokens(*viewport, *client);
-  // Inlay hints are equally pull-based; re-request for the saved content so they
-  // reappear after the edit path cleared them.
   lsp_service_.RequestLspInlayHints(*viewport, *client);
-  // Code lenses are pull-based too; re-request for the saved content.
   lsp_service_.RequestLspCodeLenses(*viewport, *client);
 }
 
@@ -736,25 +608,16 @@ void WorkspaceShell::NotifyLspBufferClose(const std::filesystem::path& path) {
   if (normalized_path.empty()) {
     return;
   }
-  // Reactive on_buffer_close fires here (the single buffer-close chokepoint),
-  // before the LSP/decoration teardown below.
   if (plugin_runtime_.enabled()) {
     plugin_runtime_.Host().OnBufferClose(normalized_path);
   }
-  // Semantic-token decorations are published into the plugin-presentation store
-  // under "lsp:semantic". Drop them up front, independent of whether an LSP
-  // client is still running, so the store does not accumulate stale entries
-  // across open/close churn and can release back to its zero-cost (null) state.
   auto& state = context_.current_project_state;
   if (auto* pres = state.plugin_presentation.get(); pres != nullptr) {
     if (pres->decorations.ClearOwnerFile("lsp:semantic", normalized_path)) {
       state.MaybeReleasePluginPresentation();
-      RequestPreparedFrame();  // rows and gaps key on it
+      RequestPreparedFrame();
     }
   }
-  // Percent-encoded to match the open URI (FileUriForPath); a raw "file://" +
-  // path never matches HasOpenDocument for special-char paths, so didClose would
-  // be skipped and the server would leak the document (and its diagnostics).
   const std::string uri = FileUriForPath(normalized_path);
   lsp_service_.ForgetDocument(uri);
   if (CurrentLspManager().CloseDocumentEverywhere(uri) == 0) {
@@ -762,15 +625,12 @@ void WorkspaceShell::NotifyLspBufferClose(const std::filesystem::path& path) {
   }
   state.diagnostics_store.ClearOwnerFile("lsp", normalized_path);
   RefreshProblemsSidebar();
-  RequestPreparedFrame();  // rows and gaps key on it
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::ActivatePluginSurfacePreview(std::string_view owner,
                                                   std::string_view surface_id,
                                                   editor::SurfacePreviewSlot slot) {
-  // v1 routes both Bottom and Side preview requests to the bottom panel (a
-  // dedicated side preview pane is a later increment); the surface renders the
-  // same way regardless of slot.
   if (slot == editor::SurfacePreviewSlot::None) {
     return;
   }
@@ -807,10 +667,6 @@ std::vector<LspClient::Diagnostic> WorkspaceShell::CollectLspContextDiagnostics(
     return 1;
   };
 
-  // Bound the context payload: the merged per-file diagnostic view has no aggregate
-  // owner cap, so select overlapping diagnostics through the capped store helper
-  // before copying/serializing (TD-2026-07-17A-056). 32 is ample context for a code
-  // action; a densely-annotated line no longer materializes a huge request payload.
   constexpr std::size_t kMaxContextDiagnostics = 32;
   const editor::SelectionRange want = editor::TextViewport::NormalizeRange(range);
   const std::vector<editor::PublishedDiagnostic> selected =
@@ -833,12 +689,9 @@ std::vector<LspClient::Diagnostic> WorkspaceShell::CollectLspContextDiagnostics(
 
 void WorkspaceShell::PublishPluginGhostText(
     std::string_view owner, const plugin::PluginHost::GhostTextRequest& request) {
-  // Gate at publish so disabling the feature costs nothing (no state allocated).
   if (!SettingFlagEnabled(GetSettingValue("plugins.ghost_text"), false)) {
     return;
   }
-  // Ghost text only renders on the focused editable buffer. An empty path targets
-  // it; a named path must match it (we never decorate a background buffer).
   editor::TextViewport* viewport = ActiveEditableViewport();
   if (viewport == nullptr) {
     return;
@@ -847,9 +700,6 @@ void WorkspaceShell::PublishPluginGhostText(
   if (!request.path.empty() && !util::SameAsNormalizedPath(request.path, path)) {
     return;
   }
-  // Resolve the anchor (1-based; 0 => the live caret) and reject anything that no
-  // longer sits at the caret — the user moved between the debounced request and
-  // the plugin's reply, so the suggestion is stale.
   const std::size_t anchor_line =
       request.anchor_line >= 1 ? request.anchor_line - 1 : viewport->cursor_line();
   const std::size_t anchor_column =
@@ -864,8 +714,6 @@ void WorkspaceShell::PublishPluginGhostText(
   ghost.anchor_line = anchor_line;
   ghost.anchor_column = anchor_column;
   ghost.content_revision = viewport->content_revision();
-  // Split once on '\n' into [tail, below...]. A trailing '\n' yields an empty last
-  // row, which renders (correctly) as a blank dimmed line.
   std::size_t start = 0;
   while (true) {
     const std::size_t nl = request.text.find('\n', start);
@@ -876,7 +724,7 @@ void WorkspaceShell::PublishPluginGhostText(
     ghost.lines.emplace_back(request.text.substr(start, nl - start));
     start = nl + 1;
   }
-  RequestPreparedFrame();  // rows and gaps key on it
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::ClearPluginGhostText(std::string_view owner) {
@@ -886,14 +734,14 @@ void WorkspaceShell::ClearPluginGhostText(std::string_view owner) {
     return;
   }
   ResetGhostText(state);
-  RequestPreparedFrame();  // rows and gaps key on it
+  RequestPreparedFrame();
 }
 
 bool WorkspaceShell::AcceptGhostText() {
   auto& state = context_.current_project_state;
   const auto* ghost = state.ghost_text_if_present();
   if (ghost == nullptr) {
-    return false;  // No suggestion: let Tab fall through to snippet/indent.
+    return false;
   }
   editor::TextViewport* viewport = ActiveEditableViewport();
   if (GhostTextStale(viewport, *ghost)) {
@@ -909,10 +757,10 @@ bool WorkspaceShell::AcceptGhostText() {
   }
   ResetGhostText(state);
   viewport->BeginUndoGroup();
-  viewport->InsertText(text, /*record_undo=*/true);
+  viewport->InsertText(text, true);
   viewport->EndUndoGroup();
   ResetCaretBlink();
-  NoteActiveEditableEdit();  // an edit: LSP sync, search, breakpoints, the frame
+  NoteActiveEditableEdit();
   return true;
 }
 
@@ -922,26 +770,24 @@ void WorkspaceShell::DismissGhostText() {
     return;
   }
   ResetGhostText(state);
-  RequestPreparedFrame();  // rows and gaps key on it
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::InvalidateGhostTextIfStale() {
   auto& state = context_.current_project_state;
   const auto* ghost = state.ghost_text_if_present();
   if (ghost == nullptr) {
-    return;  // Zero-cost when no suggestion is live.
+    return;
   }
   if (GhostTextStale(ActiveEditableViewport(), *ghost)) {
     ResetGhostText(state);
-    RequestPreparedFrame();  // rows and gaps key on it
+    RequestPreparedFrame();
   }
 }
 
 namespace {
-// Trailing debounce for reactive editor events: a plugin sees one coalesced
-// event ~150 ms after typing / caret motion settles, never on the hot path.
 constexpr std::uint32_t kPluginEditorEventDebounceMs = 150;
-}  // namespace
+}
 
 void WorkspaceShell::RefreshPluginEditorEventInterest() {
   if (!plugin_runtime_.enabled()) {
@@ -954,8 +800,6 @@ void WorkspaceShell::RefreshPluginEditorEventInterest() {
 }
 
 void WorkspaceShell::SamplePluginEditorEvents() {
-  // Zero-cost gate: when no loaded plugin subscribes, this returns before
-  // touching the viewport, so typing pays only one predicate.
   if (!plugin_editor_event_tracker_.interest().any()) {
     return;
   }
@@ -1022,4 +866,4 @@ void WorkspaceShell::SyncPluginSurfacePreviewClosed() {
   }
 }
 
-}  // namespace microide::workspace
+}

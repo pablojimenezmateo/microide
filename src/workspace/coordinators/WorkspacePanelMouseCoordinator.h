@@ -27,9 +27,6 @@ class PanelMouseCoordinator {
     std::function<std::optional<std::string>()> read_primary_selection_text;
     std::function<void()> clear_terminal_selection;
     std::function<void(std::string_view)> append_terminal_pending_input;
-    // Hands a left press to the terminal find bar. Returns true when the bar took
-    // it (a button or its chrome); a press anywhere else blurs the bar so the
-    // keyboard goes back to the terminal, exactly like the in-file find widget.
     std::function<bool(float, float)> terminal_find_mouse_down;
     std::function<std::optional<TerminalLinkHit>(float, float)> terminal_link_at_point;
     std::function<bool(std::string_view)> open_external_url;
@@ -47,17 +44,8 @@ class PanelMouseCoordinator {
     std::function<std::optional<SDL_FRect>()> current_window_rect;
     std::function<float(float, float)> clamp_bottom_panel_height;
     std::function<void()> sync_primary_selection_with_terminal_selection;
-    // The debug pane's callbacks used to live here too, back when this
-    // coordinator owned the Variables/Watch/Call Stack/Breakpoints hit testing.
-    // That moved to DebugPaneMouseCoordinator, which declares and uses its own
-    // copies; these were left behind, wired to live lambdas and never called.
-    // Plugin surface preview (TD-2026-07-16-60/61): resolve the active preview's
-    // content (null when none), and dispatch a hit-region command through the
-    // host's validated command runner (the same path code-lens clicks use).
     std::function<const editor::SurfaceContent*()> active_plugin_surface;
     std::function<void(const std::string&)> execute_command;
-    // Terminal panes (TerminalPanelService): the pane under a point, the divider
-    // under a point, and the divider edits a drag performs.
     std::function<TerminalPaneState*(const WorkspaceLayout&, float, float)> terminal_pane_at;
     std::function<bool(const WorkspaceLayout&, float, float)> activate_terminal_pane_at;
     std::function<std::optional<TerminalPaneDividerRect>(const WorkspaceLayout&, float, float)>
@@ -80,23 +68,13 @@ class PanelMouseCoordinator {
                    const WorkspaceLayout& layout,
                    int vertical_ticks);
 
-  // The bottom panel's scroll model, shared by the wheel and the keyboard.
-  // `row_delta` counts text rows toward the end of the content; the plugin-surface
-  // preview scrolls by pixels and converts. Both clamp, so passing ScrollSpanRows()
-  // reliably lands on either end — which is what Home/End do.
   void ScrollPanelRows(const WorkspaceLayout& layout, int row_delta);
   int ScrollSpanRows(const WorkspaceLayout& layout);
 
  private:
-  // Pixel height of one scroll row, used to convert the shared row delta for the
-  // pixel-scrolled plugin surface preview.
   float PanelPixelsPerScrollRow(const WorkspaceLayout& layout);
   bool HandleMouseCaptureButton(const SDL_Event& event, bool pressed);
   bool ProgramOwnsPointer(const TerminalPaneState& pane) const;
-  // Active terminal tab when the bottom panel is showing a terminal, else null.
-  // Consolidates the "panel is a terminal AND a live tab exists" guard and routes
-  // it through the bounds-checked ProjectWorkspaceState::active_terminal_pane()
-  // accessor so no caller indexes terminal_tabs by a possibly-stale index.
   TerminalPaneState* ActivePanelTerminalPane();
 
   ProjectWorkspaceState& state_;
@@ -104,4 +82,4 @@ class PanelMouseCoordinator {
   Operations operations_;
 };
 
-}  // namespace microide::workspace
+}

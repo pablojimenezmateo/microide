@@ -17,9 +17,6 @@ using protocol_numeric::JsonIntInRange;
 
 LspClient::Position ParsePosition(const JsonValue& value) {
   LspClient::Position position;
-  // Clamp out-of-int-range positions deterministically rather than relying on the
-  // implementation-defined narrowing of an out-of-range int64 (a hostile server
-  // could otherwise wrap a huge line/character into a small/negative coordinate).
   position.line = JsonIntInRange(value["line"]);
   position.character = JsonIntInRange(value["character"]);
   return position;
@@ -37,7 +34,6 @@ LspClient::Range ParseRange(const JsonValue& value) {
 
 LspClient::Location ParseLocation(const JsonValue& value) {
   LspClient::Location location;
-  // LocationLink uses targetUri/targetRange; Location uses uri/range.
   if (value.HasKey("targetUri")) {
     location.uri = value["targetUri"].AsString();
     location.range = ParseRange(value.HasKey("targetSelectionRange")
@@ -50,15 +46,9 @@ LspClient::Location ParseLocation(const JsonValue& value) {
   return location;
 }
 
-// Cap the number of entries materialized from a server array. LSP messages are
-// bounded to 64 MiB (kMaxLspMessageBytes), but a minimal location/diagnostic/
-// symbol object is only a few dozen bytes of JSON, so a hostile/buggy server can
-// still pack ~1M entries into one message — each materialized into strings +
-// ranges and built into a picker/outline on the UI thread. These caps sit far
-// above any usable list; past them the extra entries are dropped, not parsed.
 constexpr std::size_t kMaxLspLocations = 50000;
-constexpr std::size_t kMaxLspDiagnostics = 10000;  // matches DiagnosticsStore cap
-constexpr std::size_t kMaxLspSymbolNodes = 100000;  // total across the symbol tree
+constexpr std::size_t kMaxLspDiagnostics = 10000;
+constexpr std::size_t kMaxLspSymbolNodes = 100000;
 
 std::vector<LspClient::Location> ParseLocations(const JsonValue& result) {
   std::vector<LspClient::Location> locations;
@@ -79,16 +69,10 @@ LspClient::Diagnostic ParseDiagnostic(const JsonValue& value) {
   LspClient::Diagnostic diagnostic;
   diagnostic.range = ParseRange(value["range"]);
   diagnostic.message = value["message"].AsString();
-  // Clamp to the LSP severity domain (1=Error … 4=Hint). Out-of-spec values
-  // (0, 99, INT_MAX) must not slip through to severity filters or "most severe"
-  // status logic where they would misclassify; anything invalid defaults to Error.
   {
     const int raw = JsonIntInRange(value["severity"], 1);
     diagnostic.severity = (raw >= 1 && raw <= 4) ? raw : 1;
   }
-  // LSP `Diagnostic.code` is `integer | string`. Many servers (TypeScript's 2304,
-  // and most compiler-backed servers) report a numeric code; AsString() yields ""
-  // for those, silently dropping the code from the UI. Capture the int form too.
   const JsonValue& code = value["code"];
   diagnostic.code = code.IsInt() ? std::to_string(code.AsInt()) : code.AsString();
   return diagnostic;
@@ -108,15 +92,8 @@ std::vector<LspClient::Diagnostic> ParseDiagnostics(const JsonValue& array) {
   return diagnostics;
 }
 
-// Bound recursion over the server-supplied `children` tree: a hostile/buggy
-// server could otherwise nest it deeply enough to overflow the stack. Past the
-// cap, keep the symbol but drop its deeper descendants (an outline that deep is
-// unusable anyway).
 constexpr int kMaxDocumentSymbolDepth = 64;
 
-// `remaining` is a shared total-node budget: a server can stay under the depth
-// cap yet pack millions of siblings/children into the tree, so bound the total
-// count of materialized nodes across the whole recursion, not just the depth.
 static LspClient::DocumentSymbol ParseDocumentSymbolAtDepth(const JsonValue& value, int depth,
                                                             std::size_t& remaining) {
   LspClient::DocumentSymbol symbol;
@@ -124,7 +101,6 @@ static LspClient::DocumentSymbol ParseDocumentSymbolAtDepth(const JsonValue& val
   symbol.detail = value["detail"].AsString();
   symbol.kind = JsonIntInRange(value["kind"], 1);
   if (value.HasKey("location")) {
-    // SymbolInformation shape.
     symbol.range = ParseRange(value["location"]["range"]);
     symbol.selection_range = symbol.range;
   } else {
@@ -135,13 +111,6 @@ static LspClient::DocumentSymbol ParseDocumentSymbolAtDepth(const JsonValue& val
   if (depth >= kMaxDocumentSymbolDepth) {
     return symbol;
   }
-  // Reserve to the child count the budget actually permits. Growing this vector
-  // geometrically reallocates AND move-constructs every DocumentSymbol already in
-  // it -- two strings and a vector apiece -- so a 3-child node cost three
-  // allocations instead of one and a 15-child node cost five. On the outline
-  // fixture that is 1,500 allocations per parse where 480 do the job, and the
-  // reserve is still bounded by `remaining`, so a hostile child count cannot use
-  // it to pre-allocate past the node budget.
   const auto& children = value["children"].AsArray();
   symbol.children.reserve(std::min(children.size(), remaining));
   for (const auto& child : children) {
@@ -165,8 +134,6 @@ std::vector<LspClient::WorkspaceSymbol> ParseWorkspaceSymbols(const JsonValue& r
     return symbols;
   }
   const auto& items = result.AsArray();
-  // Reuse the location cap: each symbol materializes strings + a location, and the
-  // host builds a navigable list from them on the UI thread.
   const std::size_t count = std::min(items.size(), kMaxLspLocations);
   symbols.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
@@ -241,9 +208,6 @@ LspClient::WorkspaceEdit ParseWorkspaceEdit(const JsonValue& edit, std::size_t m
   }
   if (edit.HasKey("documentChanges") && edit["documentChanges"].IsArray()) {
     for (const auto& doc_change : edit["documentChanges"].AsArray()) {
-      // Resource op shape: { kind: "create"|"rename"|"delete", uri/oldUri/newUri,
-      // options? }. Kept in array order; the op count shares the file cap so a
-      // hostile server cannot force an unbounded op list.
       if (doc_change.HasKey("kind") && doc_change["kind"].IsString()) {
         if (out.resource_ops.size() >= max_files) {
           continue;
@@ -262,7 +226,7 @@ LspClient::WorkspaceEdit ParseWorkspaceEdit(const JsonValue& edit, std::size_t m
           op.kind = LspClient::WorkspaceEdit::ResourceOp::Kind::Delete;
           op.uri = doc_change["uri"].AsString();
         } else {
-          continue;  // unknown kind: ignore rather than misapply
+          continue;
         }
         op.overwrite = options["overwrite"].AsBool(false);
         op.ignore_if_exists = options["ignoreIfExists"].AsBool(false);
@@ -271,11 +235,8 @@ LspClient::WorkspaceEdit ParseWorkspaceEdit(const JsonValue& edit, std::size_t m
         if (op.uri.empty() ||
             (op.kind == LspClient::WorkspaceEdit::ResourceOp::Kind::Rename &&
              op.new_uri.empty())) {
-          continue;  // malformed op: no usable target
+          continue;
         }
-        // The host applies all resource ops before any text edit, so text edits
-        // already accumulated under the pre-rename URI must follow the file to
-        // its new name (the wire order applied them before the rename ran).
         if (op.kind == LspClient::WorkspaceEdit::ResourceOp::Kind::Rename &&
             op.uri != op.new_uri) {
           const auto old_bucket = out.changes.find(op.uri);
@@ -291,19 +252,13 @@ LspClient::WorkspaceEdit ParseWorkspaceEdit(const JsonValue& edit, std::size_t m
         continue;
       }
       if (total_edits >= max_edits_total) {
-        continue;  // text-edit budget spent; still collect later resource ops
+        continue;
       }
-      // TextDocumentEdit shape: { textDocument: { uri, version? }, edits: [...] }.
       if (!doc_change.HasKey("edits") || !doc_change["edits"].IsArray()) {
         continue;
       }
       const JsonValue& text_document = doc_change["textDocument"];
       const std::string& uri = text_document["uri"].AsString();
-      // OptionalVersionedTextDocumentIdentifier: a non-null integer version pins
-      // the edit to that document snapshot (accept a float-echoed integer, matching
-      // the diagnostics version gate). Keyed by the URI as sent — never remapped.
-      // Bounded by the file cap: empty-edit entries bypass the edit budget, so a
-      // hostile server could otherwise materialize an unbounded version map.
       const JsonValue& version = text_document["version"];
       if ((version.IsInt() || version.IsDouble()) &&
           (out.expected_versions.size() < max_files ||
@@ -319,21 +274,19 @@ LspClient::WorkspaceEdit ParseWorkspaceEdit(const JsonValue& edit, std::size_t m
 LspClient::PrepareRename ParsePrepareRename(const JsonValue& result) {
   LspClient::PrepareRename out;
   if (result.IsNull()) {
-    return out;  // server says this position is not renameable
+    return out;
   }
   if (result.HasKey("defaultBehavior")) {
     out.can_rename = result["defaultBehavior"].AsBool(false);
     return out;
   }
   if (result.HasKey("range")) {
-    // { range: Range, placeholder: string }
     out.can_rename = true;
     out.range = ParseRange(result["range"]);
     out.placeholder = result["placeholder"].AsString();
     return out;
   }
   if (result.HasKey("start") && result.HasKey("end")) {
-    // A bare Range (no placeholder; the caller keeps its heuristic seed).
     out.can_rename = true;
     out.range = ParseRange(result);
     return out;
@@ -342,9 +295,6 @@ LspClient::PrepareRename ParsePrepareRename(const JsonValue& result) {
 }
 
 namespace {
-// A field carried as either a bare string or an object with a `value` string:
-// covers both `documentation` (MarkupContent {kind, value}) and a MarkedString
-// hover element ({language, value}).
 std::string StringOrValueField(const JsonValue& value) {
   if (value.IsString()) {
     return value.AsString();
@@ -355,12 +305,10 @@ std::string StringOrValueField(const JsonValue& value) {
   return {};
 }
 
-// Truncate `text` to at most `max_bytes` without splitting a UTF-8 code point.
-// Thin alias over the shared primitive so the hover/label harvest reads locally.
 inline void TruncateUtf8InPlace(std::string& text, std::size_t max_bytes) {
   util::TruncateUtf8ToByteBudget(text, max_bytes);
 }
-}  // namespace
+}
 
 LspClient::SignatureHelp ParseSignatureHelp(const JsonValue& result) {
   LspClient::SignatureHelp help;
@@ -369,8 +317,6 @@ LspClient::SignatureHelp ParseSignatureHelp(const JsonValue& result) {
   }
   help.active_signature = JsonIntInRange(result["activeSignature"], 0);
   help.active_parameter = JsonIntInRange(result["activeParameter"], 0);
-  // Bound the materialized signature/parameter counts (hostile-server backstop,
-  // mirrors the other request caps). A usable overload menu never approaches these.
   constexpr std::size_t kMaxSignatures = 64;
   constexpr std::size_t kMaxParameters = 512;
   const auto& signatures = result["signatures"].AsArray();
@@ -392,10 +338,6 @@ LspClient::SignatureHelp ParseSignatureHelp(const JsonValue& result) {
         LspClient::SignatureParameter out_parameter;
         const JsonValue& label = parameter["label"];
         if (label.IsArray()) {
-          // `[start, end]` are UTF-16 code-unit offsets into the signature label
-          // (LSP §SignatureInformation). Convert them to UTF-8 byte offsets before
-          // slicing — treating them as bytes corrupted the active-parameter
-          // highlight for any non-ASCII label (e.g. `f(é, β)`). Exact for ASCII.
           const auto& bounds = label.AsArray();
           if (bounds.size() == 2) {
             const std::int64_t start = bounds[0].AsInt(0);
@@ -425,13 +367,6 @@ LspClient::SignatureHelp ParseSignatureHelp(const JsonValue& result) {
   return help;
 }
 
-// Hover text is markdown (MarkupContent kind "markdown", and a bare MarkedString
-// is markdown by definition), and every real server wraps the signature in a
-// fenced code block: "```cpp\nint foo(int x)\n```\nReturns x.". The popup has no
-// markdown renderer, so the fence lines were painted verbatim -- "```cpp int
-// foo(int x) ``` Returns x." on one wrapped line. Drop the fence lines and keep
-// what they enclosed; a fence line is one whose trimmed form starts with ``` or
-// ~~~ (the info string after it is the language tag, not content).
 std::string StripMarkdownFences(std::string text) {
   if (text.find("```") == std::string::npos && text.find("~~~") == std::string::npos) {
     return text;
@@ -450,8 +385,6 @@ std::string StripMarkdownFences(std::string text) {
     const bool fence = trimmed.starts_with("```") || trimmed.starts_with("~~~");
     if (!fence) {
       if (!out.empty() || start > 0) {
-        // Keep the line structure of what survives, without a leading break
-        // where the opening fence used to be.
         if (!out.empty()) out.push_back('\n');
       }
       out.append(line);
@@ -467,9 +400,6 @@ std::string StripMarkdownFences(std::string text) {
 std::string HoverMarkdownToText(std::string_view markdown) {
   std::string out;
   out.reserve(markdown.size());
-  // Inside a fenced block (``` or ~~~): its lines are code and pass verbatim; the
-  // fence lines themselves go. Fences used to be stripped before this ran, so the
-  // emphasis pass below ate `**kwargs` and `__init__` out of every code block.
   std::string_view open_fence;
   std::size_t start = 0;
   while (start <= markdown.size()) {
@@ -502,7 +432,7 @@ std::string HoverMarkdownToText(std::string_view markdown) {
       continue;
     }
     while (!line.empty() && (line.back() == ' ' || line.back() == '\r' || line.back() == '\t')) {
-      line.remove_suffix(1);  // a trailing "  " hard break is the newline itself
+      line.remove_suffix(1);
     }
     std::string_view body = line;
     while (!body.empty() && body.front() == ' ') {
@@ -512,9 +442,8 @@ std::string HoverMarkdownToText(std::string_view markdown) {
                       body.find_first_not_of(body.front()) == std::string_view::npos &&
                       (body.front() == '-' || body.front() == '*' || body.front() == '_');
     if (rule) {
-      out += '\n';  // a paragraph break where the rule was
+      out += '\n';
     } else {
-      // ATX heading: up to six '#' then a space.
       std::size_t hashes = 0;
       while (hashes < body.size() && hashes < 6 && body[hashes] == '#') {
         ++hashes;
@@ -530,10 +459,6 @@ std::string HoverMarkdownToText(std::string_view markdown) {
           continue;
         }
         if (c == '`') {
-          // A code span (CommonMark): a run of N backticks up to the next run of
-          // exactly N. Its content is literal -- no escapes, no emphasis -- and
-          // loses one space each side when it has one on both and is not all
-          // spaces. With no closing run the backticks are text.
           std::size_t run = 1;
           while (i + run < line.size() && line[i + run] == '`') {
             ++run;
@@ -569,7 +494,7 @@ std::string HoverMarkdownToText(std::string_view markdown) {
           continue;
         }
         if ((c == '*' || c == '_') && i + 1 < line.size() && line[i + 1] == c) {
-          ++i;  // strong emphasis markers
+          ++i;
           continue;
         }
         out += c;
@@ -581,7 +506,6 @@ std::string HoverMarkdownToText(std::string_view markdown) {
     out += '\n';
     start = end + 1;
   }
-  // One blank line between paragraphs however many the rules and breaks made.
   std::string folded;
   folded.reserve(out.size());
   for (const char c : out) {
@@ -594,8 +518,6 @@ std::string HoverMarkdownToText(std::string_view markdown) {
   while (!folded.empty() && folded.back() == '\n') {
     folded.pop_back();
   }
-  // Nor before the first: tsserver's hovers open with a blank line, which the fence
-  // stripper this replaced happened to drop.
   folded.erase(0, folded.find_first_not_of('\n') == std::string::npos ? folded.size()
                                                                       : folded.find_first_not_of('\n'));
   return folded;
@@ -604,12 +526,6 @@ std::string HoverMarkdownToText(std::string_view markdown) {
 std::string ParseHoverContents(const JsonValue& hover_result) {
   constexpr std::size_t kMaxHoverBytes = 32 * 1024;
   static constexpr char kTruncationMarker[] = "\n\n… (truncated)";
-  // Cap ANY single hover string on a UTF-8 boundary with a visible marker. A bare
-  // string or `MarkupContent { value }` was previously returned in full, so a
-  // server could push a tens-of-MiB hover payload (inside the 64 MiB frame cap)
-  // onto the callback/render path. The array shape already caps below.
-  // Fences stay for HoverMarkdownToText, which keeps what they enclose verbatim;
-  // a code (non-markdown) value never had any to drop.
   const auto cap_string = [&](std::string s) {
     if (s.size() > kMaxHoverBytes) {
       TruncateUtf8InPlace(s, kMaxHoverBytes);
@@ -622,20 +538,11 @@ std::string ParseHoverContents(const JsonValue& hover_result) {
     return {};
   }
   const JsonValue& contents = hover_result["contents"];
-  // MarkupContent ({kind, value}) and the object form of MarkedString ({language,
-  // value}) both carry a "value" — take it directly.
   if (contents.HasKey("value")) {
-    // MarkupContent says which it is; a {language, value} MarkedString is code.
     const bool markdown = contents["kind"].AsString() == "markdown";
     std::string value = cap_string(contents["value"].AsString());
     return markdown ? HoverMarkdownToText(value) : value;
   }
-  // MarkedString[]: join each element's text with a blank line between blocks.
-  // Bound both the element count and the accumulated byte size so a hostile server
-  // cannot force a near-64 MiB concatenation on the callback path before the UI
-  // truncates it. The hover popup only displays a few KiB; cap comfortably above
-  // that and stop early, truncating the final piece on a UTF-8 boundary with an
-  // explicit marker so the user sees the content was clipped.
   if (contents.IsArray()) {
     constexpr std::size_t kMaxHoverElements = 128;
     std::string out;
@@ -646,7 +553,6 @@ std::string ParseHoverContents(const JsonValue& hover_result) {
         truncated = true;
         break;
       }
-      // A string element is markdown; a {language, value} one is code.
       const std::string piece = element.IsString()
                                     ? HoverMarkdownToText(element.AsString())
                                     : StripMarkdownFences(StringOrValueField(element));
@@ -669,7 +575,6 @@ std::string ParseHoverContents(const JsonValue& hover_result) {
     }
     return out;
   }
-  // Bare MarkedString: markdown by definition.
   if (contents.IsString()) {
     return HoverMarkdownToText(cap_string(contents.AsString()));
   }
@@ -687,14 +592,8 @@ std::vector<LspClient::SemanticToken> ParseSemanticTokensData(const JsonValue& r
     return tokens;
   }
   const auto& ints = data.AsArray();
-  const std::size_t groups = ints.size() / 5;  // 5 ints per token; trailing partial ignored
+  const std::size_t groups = ints.size() / 5;
   tokens.reserve(std::min(groups, max_tokens));
-  // Accumulate the delta-encoded positions in 64-bit, but with SATURATING adds:
-  // AsInt() clamps to [INT64_MIN, INT64_MAX], and a dropped out-of-range token still
-  // leaves the accumulator huge, so a plain `line += delta` can execute signed int64
-  // overflow (UB) — e.g. two groups whose deltaLine is INT64_MAX each, or a same-line
-  // run of huge positive deltaStart. Saturating at the int64 bounds keeps the later
-  // `> INT_MAX` drop decision correct without ever overflowing.
   const auto sat_add = [](std::int64_t a, std::int64_t b) -> std::int64_t {
     if (b > 0 && a > std::numeric_limits<std::int64_t>::max() - b) {
       return std::numeric_limits<std::int64_t>::max();
@@ -720,7 +619,7 @@ std::vector<LspClient::SemanticToken> ParseSemanticTokensData(const JsonValue& r
     static constexpr std::int64_t kMaxCoord = std::numeric_limits<int>::max();
     if (length <= 0 || length > kMaxCoord || line < 0 || line > kMaxCoord ||
         start_char < 0 || start_char > kMaxCoord) {
-      continue;  // skip degenerate/out-of-range tokens but keep decoding the rest
+      continue;
     }
     tokens.push_back(LspClient::SemanticToken{.line = static_cast<int>(line),
                                               .start_char = static_cast<int>(start_char),
@@ -735,9 +634,6 @@ std::vector<LspClient::InlayHint> ParseInlayHints(const JsonValue& result, std::
   if (!result.IsArray()) {
     return hints;
   }
-  // Cap the label a single hint can carry: inlay labels are short annotations
-  // (": i32", "name:"), so a huge one is a hostile/degenerate response we clamp
-  // rather than materialize and try to render mid-line.
   constexpr std::size_t kMaxLabelBytes = 512;
   const auto& array = result.AsArray();
   const std::size_t count = std::min(array.size(), max_hints);
@@ -749,8 +645,6 @@ std::vector<LspClient::InlayHint> ParseInlayHints(const JsonValue& result, std::
     }
     LspClient::InlayHint hint;
     hint.position = ParsePosition(entry["position"]);
-    // label is either a plain string or an InlayHintLabelPart[]; flatten parts by
-    // concatenating each part's `value`.
     const JsonValue& label = entry["label"];
     if (label.IsString()) {
       hint.label = label.AsString();
@@ -762,12 +656,9 @@ std::vector<LspClient::InlayHint> ParseInlayHints(const JsonValue& result, std::
         hint.label += part["value"].AsString();
       }
     }
-    // Truncate on a UTF-8 boundary (not a raw byte resize) so a non-ASCII label
-    // whose cap falls mid-sequence does not leave a split code point that renders
-    // as a replacement glyph and breaks downstream width/codepoint iteration.
     TruncateUtf8InPlace(hint.label, kMaxLabelBytes);
     if (hint.label.empty()) {
-      continue;  // nothing to render
+      continue;
     }
     hint.kind = JsonIntInRange(entry["kind"], 0);
     hint.padding_left = entry["paddingLeft"].AsBool(false);
@@ -793,15 +684,12 @@ std::vector<LspClient::DocumentHighlight> ParseDocumentHighlights(const JsonValu
     }
     LspClient::DocumentHighlight highlight;
     highlight.range = ParseRange(entry["range"]);
-    // `kind` is optional; the spec's default is Text(1). Clamp out-of-vocabulary
-    // values to Text rather than dropping the highlight — the range is still the
-    // server's authoritative answer, only its read/write tint is unknown.
     const int kind = JsonIntInRange(entry["kind"], 1);
     highlight.kind = (kind >= 1 && kind <= 3) ? kind : 1;
     if (highlight.range.end.line < highlight.range.start.line ||
         (highlight.range.end.line == highlight.range.start.line &&
          highlight.range.end.character <= highlight.range.start.character)) {
-      continue;  // empty or inverted range paints nothing
+      continue;
     }
     highlights.push_back(highlight);
   }
@@ -809,8 +697,6 @@ std::vector<LspClient::DocumentHighlight> ParseDocumentHighlights(const JsonValu
 }
 
 LspClient::CodeLens ParseCodeLens(const JsonValue& value) {
-  // Cap the title: a lens is a one-line annotation rendered inside the editor row,
-  // so a huge one is a degenerate response we clamp rather than try to lay out.
   constexpr std::size_t kMaxTitleBytes = 256;
   LspClient::CodeLens lens;
   if (!value.IsObject()) {
@@ -823,8 +709,6 @@ LspClient::CodeLens ParseCodeLens(const JsonValue& value) {
     TruncateUtf8InPlace(lens.title, kMaxTitleBytes);
     lens.command = command["command"].AsString();
     if (const JsonValue& args = command["arguments"]; args.IsArray()) {
-      // Bound the argument list: these are forwarded verbatim to
-      // workspace/executeCommand, so they are retained until the lens is replaced.
       constexpr std::size_t kMaxArguments = 64;
       const auto& array = args.AsArray();
       const std::size_t count = std::min(array.size(), kMaxArguments);
@@ -832,8 +716,6 @@ LspClient::CodeLens ParseCodeLens(const JsonValue& value) {
     }
   }
   if (lens.title.empty()) {
-    // Keep the lens object verbatim for codeLens/resolve: servers stash private
-    // correlation state in `data` and reject anything we rebuild ourselves.
     lens.unresolved = value;
   }
   return lens;
@@ -853,7 +735,6 @@ std::vector<LspClient::CodeLens> ParseCodeLenses(const JsonValue& result,
     if (lens.range.start.line < 0) {
       continue;
     }
-    // A lens with neither a title nor anything to resolve from paints nothing.
     if (lens.title.empty() && lens.unresolved.IsNull()) {
       continue;
     }
@@ -864,8 +745,6 @@ std::vector<LspClient::CodeLens> ParseCodeLenses(const JsonValue& result,
 
 namespace {
 LspClient::CallHierarchyItem ParseCallHierarchyItem(const JsonValue& value) {
-  // Names and details are rendered as one channel line each; clamp both so a
-  // degenerate response cannot force an unbounded main-thread allocation.
   constexpr std::size_t kMaxNameBytes = 512;
   LspClient::CallHierarchyItem item;
   if (!value.IsObject()) {
@@ -883,7 +762,7 @@ LspClient::CallHierarchyItem ParseCallHierarchyItem(const JsonValue& value) {
   item.raw = value;
   return item;
 }
-}  // namespace
+}
 
 std::vector<LspClient::CallHierarchyItem> ParseCallHierarchyItems(const JsonValue& result,
                                                                   std::size_t max_items) {
@@ -897,7 +776,7 @@ std::vector<LspClient::CallHierarchyItem> ParseCallHierarchyItems(const JsonValu
   for (std::size_t i = 0; i < count; ++i) {
     LspClient::CallHierarchyItem item = ParseCallHierarchyItem(array[i]);
     if (item.uri.empty()) {
-      continue;  // nothing to navigate to
+      continue;
     }
     items.push_back(std::move(item));
   }
@@ -911,8 +790,6 @@ std::vector<LspClient::CallHierarchyCall> ParseCallHierarchyCalls(const JsonValu
   if (!result.IsArray()) {
     return calls;
   }
-  // The two directions differ only in which key holds the other end of the edge:
-  // incoming calls name it `from` (the caller), outgoing calls `to` (the callee).
   const char* const item_key = incoming ? "from" : "to";
   const auto& array = result.AsArray();
   const std::size_t count = std::min(array.size(), max_calls);
@@ -927,8 +804,6 @@ std::vector<LspClient::CallHierarchyCall> ParseCallHierarchyCalls(const JsonValu
     if (call.item.uri.empty()) {
       continue;
     }
-    // `fromRanges` is the call-site list in BOTH directions (it always names ranges
-    // in the caller's file), so it is read from the same key either way.
     if (const JsonValue& ranges = entry["fromRanges"]; ranges.IsArray()) {
       constexpr std::size_t kMaxCallRanges = 1024;
       const auto& range_array = ranges.AsArray();
@@ -982,4 +857,4 @@ JsonValue MakeTextDocumentPositionParams(const std::string& uri,
   return JsonValue(std::move(params));
 }
 
-}  // namespace microide::workspace::lsp_protocol
+}

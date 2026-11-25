@@ -11,16 +11,10 @@
 namespace microide::workspace {
 
 namespace {
-// Per-channel retained-entry ceiling. A long-running debug/LSP session or a
-// hostile adapter would otherwise grow entries/parsed_entries without bound.
 constexpr std::size_t kMaxChannelEntries = 100000;
 
-// Per-line and per-channel byte ceilings. The entry cap alone still allows a
-// stream of large-but-valid adapter/plugin output lines to retain many GiB over
-// time. Keep the newest output, truncate individual pathological lines, and
-// coalesce byte-budget trims the same way as entry-count trims.
-constexpr std::size_t kMaxChannelLineBytes = 1u << 20;      // 1 MiB
-constexpr std::size_t kMaxChannelRetainedBytes = 16u << 20;  // 16 MiB
+constexpr std::size_t kMaxChannelLineBytes = 1u << 20;
+constexpr std::size_t kMaxChannelRetainedBytes = 16u << 20;
 
 void TruncateOutputLine(std::string& line) {
   if (line.size() <= kMaxChannelLineBytes) {
@@ -30,7 +24,7 @@ void TruncateOutputLine(std::string& line) {
   line.resize(kMaxChannelLineBytes - kSuffix.size());
   line.append(kSuffix);
 }
-}  // namespace
+}
 
 std::optional<OutputReference> ParseOutputReference(std::string_view text) {
   const std::size_t column_delimiter = text.rfind(':');
@@ -48,9 +42,6 @@ std::optional<OutputReference> ParseOutputReference(std::string_view text) {
   const std::string_view column_text = text.substr(column_delimiter + 1);
   const auto parsed_line = util::ParseSize(line_text);
   const auto parsed_column = util::ParseSize(column_text);
-  // OutputReference documents both line and column as 1-based, so a zero in
-  // either field is malformed and must be rejected (not silently accepted as
-  // column 0).
   if (path_text.empty() || !parsed_line.has_value() || !parsed_column.has_value() ||
       *parsed_line == 0 || *parsed_column == 0) {
     return std::nullopt;
@@ -114,18 +105,11 @@ WorkspaceOutputChannels::ParsedEntry BuildParsedEntry(
   return parsed;
 }
 
-// Owned bytes a ParsedEntry adds ON TOP of its raw `entries[i]` line: the
-// context-snippet `prefix`/`code` are separate heap copies of (part of) the line,
-// so they must count toward the channel's retained-byte budget or a stream of
-// compiler-style context snippets exceeds the intended cap by the duplicated text.
-// (The lazily-built `highlighted_code` cache is not counted — it is at most one per
-// parsed entry and is trimmed in lockstep with entries, so it stays bounded by the
-// entry count that the budget already governs.)
 std::size_t ParsedEntryOwnedBytes(const WorkspaceOutputChannels::ParsedEntry& parsed) {
   return parsed.prefix.size() + parsed.code.size();
 }
 
-}  // namespace
+}
 
 void WorkspaceOutputChannels::TouchChannel(Channel& channel) {
   channel.last_touch = ++touch_counter_;
@@ -135,8 +119,6 @@ void WorkspaceOutputChannels::EvictLeastRecentlyUsedChannelIfNeeded(std::string_
   if (channels_.size() <= kMaxOutputChannels) {
     return;
   }
-  // Evict the least-recently-touched channel other than the one just created/appended, so
-  // the active/most-recent-failed consoles survive (TD-2026-07-17A-116).
   auto victim = channels_.end();
   for (auto it = channels_.begin(); it != channels_.end(); ++it) {
     if (it->first == keep_id) {
@@ -162,11 +144,6 @@ void WorkspaceOutputChannels::EnsureChannel(std::string_view id, std::string_vie
   channel.label = std::string(label);
   auto [it, inserted] = channels_.try_emplace(std::string(id), std::move(channel));
   TouchChannel(it->second);
-  // Only invalidate channel *metadata* views when the channel set or a label actually
-  // changed. A chatty stream calls EnsureChannel on every AppendLine; marking dirty
-  // unconditionally forced the bottom-panel/tab computation to rebuild the whole
-  // channel-info vector per line even though only row content changed
-  // (TD-2026-07-17A-085). Entry-content revisions are tracked separately by AppendLine.
   if (inserted) {
     MarkDirty();
     EvictLeastRecentlyUsedChannelIfNeeded(id);
@@ -185,7 +162,6 @@ void WorkspaceOutputChannels::AppendLine(std::string_view id, std::string_view l
   auto& channel = channels_.find(id)->second;
   TruncateOutputLine(line);
   ParsedEntry parsed = BuildParsedEntry(line, &channel.current_reference_path);
-  // Charge both the raw line and the parsed entry's owned duplicate text.
   channel.retained_bytes += line.size() + ParsedEntryOwnedBytes(parsed);
   if (channel.entries.empty()) {
     channel.first_serial = next_entry_serial_;
@@ -194,12 +170,6 @@ void WorkspaceOutputChannels::AppendLine(std::string_view id, std::string_view l
   channel.entries.push_back(std::move(line));
   next_entry_serial_ = std::max(next_entry_serial_, channel.first_serial + channel.entries.size());
 
-  // Bound retained history: a chatty or hostile LSP / debug adapter / plugin can
-  // stream output forever, and each entry retains a heap string plus a parsed
-  // cache. Drop oldest, coalesced (only trim once 25 % over the cap, then down to
-  // the cap) so the common append stays O(1) rather than erase-front per line.
-  // entries and parsed_entries are kept in lockstep — renderers index them by the
-  // same position, so both are trimmed together.
   const std::size_t entry_high_watermark = kMaxChannelEntries + kMaxChannelEntries / 4;
   const std::size_t byte_high_watermark =
       kMaxChannelRetainedBytes + kMaxChannelRetainedBytes / 4;
@@ -337,4 +307,4 @@ void WorkspaceOutputChannels::MarkDirty() {
   channel_infos_dirty_ = true;
 }
 
-}  // namespace microide::workspace
+}

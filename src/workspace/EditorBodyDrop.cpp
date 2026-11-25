@@ -6,12 +6,9 @@ namespace microide::workspace {
 
 namespace {
 
-// How much of a pane's width/height at each edge reads as "split here" rather
-// than "move into this pane". VS Code uses roughly a fifth; below that the centre
-// target gets hard to hit on a narrow pane.
 constexpr float kBodyDropEdgeFraction = 0.2f;
 
-}  // namespace
+}
 
 EditorBodyDrop EditorBodyDropAt(const SDL_FRect& pane, float x, float y, bool can_split) {
   EditorBodyDrop drop{.zone = EditorBodyDropZone::Center, .region = pane};
@@ -40,4 +37,4 @@ EditorBodyDrop EditorBodyDropAt(const SDL_FRect& pane, float x, float y, bool ca
   return {EditorBodyDropZone::Bottom, SDL_FRect{pane.x, pane.y + pane.h - half_h, pane.w, half_h}};
 }
 
-}  // namespace microide::workspace
+}

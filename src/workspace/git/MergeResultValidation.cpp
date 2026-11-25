@@ -14,22 +14,7 @@ bool ResolvedResultShouldExist(const MergeTabState& merge_tab) {
   if (!merge_tab.file_conflict.requires_existence_choice) {
     return true;
   }
-  // Existence-choice conflict: an empty serialized result means the user accepted
-  // the deletion, so the file should not exist. Non-empty content means keep it.
-  // Check emptiness against the live LineSpan without serializing/materializing:
-  // SerializeLines is empty iff there are no lines or a single empty line (any
-  // second line contributes a separator, and a non-empty first line contributes
-  // content).
-  // By REFERENCE. `lines()` returns `const TextBuffer&`, so `const auto` copied the
-  // whole document -- piece tree, buffers and line cache -- to ask whether it holds
-  // a single empty line; on a large merge that is the entire result buffer duplicated
-  // per Mark Resolved. Every other caller in the tree binds it as `const TextBuffer&`.
   const editor::TextBuffer& lines = merge_tab.result_viewport.lines();
-  // `LineView`, not `operator[]`: the compatibility accessor materializes a heap copy
-  // of the line into the buffer's line cache and keeps it until the next mutation
-  // (TextBuffer counts them in `materialized_line_count`). The by-value binding above
-  // hid that -- it landed on a throwaway copy -- so fixing only the binding would have
-  // traded a whole-buffer copy for a per-line one on the real buffer.
   const bool result_empty =
       lines.size() == 0 || (lines.size() == 1 && lines.LineView(0).empty());
   return !result_empty;
@@ -59,9 +44,6 @@ MergeResultState ComputeMergeResultState(const MergeTabState& merge_tab,
   if (!metadata.text_hunks_available) {
     return MergeResultState::Invalid;
   }
-  // Scan the live buffer directly for conflict markers (no Snapshot/serialize),
-  // once per content revision: the merge header's key and its paint both ask on
-  // every frame the tab is in front, and the scan is the whole result.
   const editor::TextViewport& result = merge_tab.result_viewport;
   if (!merge_tab.marker_scan_valid || merge_tab.marker_scan_document != result.document_identity() ||
       merge_tab.marker_scan_revision != result.content_revision()) {
@@ -80,10 +62,10 @@ bool MergeResultChangedOnDisk(const MergeTabState& merge_tab) {
   const std::optional<std::uint64_t> disk_tick = util::FileModificationTick(merge_tab.output_path);
   if (!disk_tick.has_value() || !merge_tab.disk_result_tick.has_value() ||
       *disk_tick == *merge_tab.disk_result_tick) {
-    return false;  // the cheap test answered it
+    return false;
   }
   if (!merge_tab.persisted_output_baseline.has_value()) {
-    return true;  // nothing recorded to compare against; fail closed
+    return true;
   }
   const std::optional<std::string> on_disk = util::ReadTextFile(merge_tab.output_path);
   return !on_disk.has_value() || *on_disk != *merge_tab.persisted_output_baseline;
@@ -100,8 +82,6 @@ MergeValidationResult ValidateMergeResult(const MergeValidationRequest& request)
     };
   }
 
-  // One pass over the live buffer yields both "markers still present" and the first
-  // marker line — no double Snapshot(), no whole-document serialize (TD-2026-07-17A-009).
   const util::ConflictMarkerScan conflicts =
       util::ScanConflictMarkers(merge_tab.result_viewport.lines());
   if (conflicts.complete && !request.allow_conflict_marker_override) {
@@ -174,4 +154,4 @@ MergeValidationResult ValidateMergeResult(const MergeValidationRequest& request)
   };
 }
 
-}  // namespace microide::workspace
+}

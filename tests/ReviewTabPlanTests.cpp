@@ -79,7 +79,7 @@ void TestReviewPlanEmptyInputsProduceEmptyPlan() {
          "empty inputs yield an empty plan");
 }
 
-}  // namespace
+}
 
 void RegisterReviewTabPlanTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ReviewTabPlan/OpensAllNewTargets", TestReviewPlanOpensAllNewTargets);
@@ -93,4 +93,4 @@ void RegisterReviewTabPlanTests(std::vector<TestCase>& tests) {
           TestReviewPlanEmptyInputsProduceEmptyPlan);
 }
 
-}  // namespace microide::tests
+}

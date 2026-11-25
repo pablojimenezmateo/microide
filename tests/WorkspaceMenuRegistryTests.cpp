@@ -43,10 +43,6 @@ std::vector<std::string_view> TopLevelLabels() {
   return labels;
 }
 
-// The label the shell paints: a menu item's own override, or the command registry's
-// title for its action. Most items carry no override precisely so that the menu and the
-// command palette cannot name one command two ways, so asserting on item.label alone
-// would only see the handful that do.
 std::string_view ResolvedMenuItemLabel(const MenuItemSpec& item) {
   if (!item.label.empty()) {
     return item.label;
@@ -98,12 +94,9 @@ void TestMenuRegistryExpandedMenusExposeExpectedEntries() {
          "File menu should expose Open File");
   Expect(MenuContainsLabel(MenuId::File, "Open Folder…"),
          "File menu should expose Open Folder");
-  // The remote verbs live in the Remote menu, once: File no longer carries a
-  // "Remote: Open Folder on Host…" twin (the welcome page keeps its button).
   Expect(!MenuContainsAction(MenuId::File, ActionId::RemoteOpenFolder),
          "File menu should not also list Open Folder on Host");
   {
-    // In a remote project New Terminal runs on the host; its local twin sits under it.
     const auto* terminal = FindWorkspaceMenuSpec(MenuId::Terminal);
     Expect(terminal != nullptr && terminal->items.size() > 1 && terminal->items[0].action == ActionId::Term &&
                terminal->items[1].action == ActionId::RemoteOpenLocalTerminal &&
@@ -151,21 +144,17 @@ void TestMenuRegistryDebugMenuLeadsWithEnableToggle() {
   Expect(first.checkable, "Debug toggle should be a checkable item");
   Expect(spec->items.size() > 1 && spec->items[1].separator,
          "a separator should follow the Debug enable toggle");
-  // The toggle must resolve to a registered command so it is reachable from the
-  // palette and dispatches correctly.
   Expect(FindWorkspaceActionSpec(ActionId::DebugToggleEnabled) != nullptr,
          "the Debug enable toggle should resolve to a registered command spec");
 }
 
-// Every actionable menu item must resolve to a live command spec. This guards
-// against future rewrites leaving a menu entry pointing at a removed ActionId.
 void TestMenuRegistryEveryItemIsWired() {
   const auto check_item = [](const MenuItemSpec& item) {
     if (item.separator || item.submenu != MenuId::None) {
       return;
     }
     if (!item.command_name.empty()) {
-      return;  // Plugin-contributed / command-name driven items dispatch by name.
+      return;
     }
     Expect(FindWorkspaceActionSpec(item.action) != nullptr,
            "every menu item action should resolve to a registered command spec");
@@ -191,9 +180,6 @@ void TestMenuRegistryEveryItemIsWired() {
 }
 
 void TestMenuRegistrySplitItemsPresentInTabAndTreeMenus() {
-  // The editor tab strip and project-tree file rows both expose Split Right /
-  // Split Down. They route through the same SplitEditorRight/SplitEditorDown
-  // actions; availability (greyed once a split exists) is asserted elsewhere.
   Expect(MenuContainsAction(MenuId::EditorTabContext, ActionId::SplitEditorRight),
          "editor tab context menu should expose Split Right");
   Expect(MenuContainsAction(MenuId::EditorTabContext, ActionId::SplitEditorDown),
@@ -205,17 +191,11 @@ void TestMenuRegistrySplitItemsPresentInTabAndTreeMenus() {
 }
 
 void TestMenuRegistryEditorTabContextExposesRevealInFileTree() {
-  // Right-clicking an editor tab offers an in-app "Reveal in File Tree" jump to the
-  // sidebar tree (distinct from the OS-level "Show in File Explorer").
   Expect(MenuContainsAction(MenuId::EditorTabContext, ActionId::RevealInFileTree),
          "editor tab context menu should expose Reveal in File Tree");
 }
 
 void TestMenuRegistryProjectTabContextExposesCopyAbsolutePathNotTreeRoot() {
-  // The project tab context menu owns project-level lifecycle: it exposes both
-  // Close Project and a dedicated Copy Absolute Path (copies the project root via
-  // ExecuteProject, not the active editor file). The project-tree root no longer
-  // duplicates Close Project.
   Expect(MenuContainsAction(MenuId::ProjectTabContext, ActionId::ProjectClose),
          "project tab context menu should keep Close Project");
   Expect(MenuContainsAction(MenuId::ProjectTabContext, ActionId::ProjectCopyAbsolutePath),
@@ -250,9 +230,6 @@ const MenuItemSpec* LastActionableItem(MenuId id) {
   return nullptr;
 }
 
-// Closing a tab/project is destructive and the context menu pre-highlights its
-// first enabled item, so copy-path must lead and the close actions must trail.
-// This locks in that intent against an accidental future reorder.
 void TestMenuRegistryTabContextMenusLeadWithCopyAndTrailWithClose() {
   const MenuItemSpec* editor_first = FirstActionableItem(MenuId::EditorTabContext);
   const MenuItemSpec* editor_last = LastActionableItem(MenuId::EditorTabContext);
@@ -269,20 +246,7 @@ void TestMenuRegistryTabContextMenusLeadWithCopyAndTrailWithClose() {
          "project tab context menu should trail with Close Project");
 }
 
-// Every MenuId must have a MenuSpec behind it.
-//
-// MenuId::Project had none: it was a menu-bar top-level id (IsMenuBarTopLevelMenu
-// did not exclude it) that FindWorkspaceMenuSpec resolved to nullptr, so the
-// popup renderer early-returned and the menu simply did not exist. Nothing
-// reported it -- the id had no producer either, so it was unreachable rather
-// than broken, but it sized `kMenuSlotCount`'s two per-menu arrays and it was one
-// stray `open_anchored_menu` call away from an empty popup on screen.
-//
-// Iterating the enum rather than the table is the point: a table-driven check
-// can only confirm what is already there.
 void TestMenuRegistryEveryMenuIdHasASpec() {
-  // The enum is contiguous from None to kMenuIdCount, which every per-menu table
-  // is sized from, so if the count is wrong this misses a menu or reads past one.
   int checked = 0;
   for (int raw = static_cast<int>(MenuId::None) + 1; raw < static_cast<int>(microide::workspace::kMenuIdCount);
        ++raw) {
@@ -296,9 +260,6 @@ void TestMenuRegistryEveryMenuIdHasASpec() {
          "listed twice would otherwise hide a missing one");
 }
 
-// The Remote menu (remote-menu D1): every remote verb that needs no typed argument,
-// in the designed order and groups, labelled without the "Remote: " prefix the
-// palette keeps -- in a menu named Remote the prefix only repeats the menu.
 void TestMenuRegistryRemoteMenuHoldsTheRemoteVerbs() {
   const auto* spec = FindWorkspaceMenuSpec(MenuId::Remote);
   Expect(spec != nullptr && spec->label == "Remote", "the Remote menu should exist");
@@ -348,7 +309,6 @@ void TestMenuRegistryRemoteMenuHoldsTheRemoteVerbs() {
            "the palette label keeps the Remote: prefix (typing \"remote\" finds it): " +
                std::string(action != nullptr ? action->label : std::string_view("?")));
   }
-  // Between Git and Terminal on the bar.
   const auto labels = TopLevelLabels();
   const auto git = std::find(labels.begin(), labels.end(), "Git");
   Expect(git != labels.end() && git + 1 != labels.end() && *(git + 1) == "Remote" && git + 2 != labels.end() &&
@@ -356,8 +316,6 @@ void TestMenuRegistryRemoteMenuHoldsTheRemoteVerbs() {
          "the Remote menu should sit between Git and Terminal");
 }
 
-// ParseMenuId reads the bar's own table: every bar menu by its label in any case,
-// nothing else (a context menu is not a contribution target).
 void TestMenuRegistryParseMenuIdNamesEveryBarMenu() {
   using microide::workspace::IsMenuBarTopLevelMenu;
   using microide::workspace::ParseMenuId;
@@ -378,7 +336,7 @@ void TestMenuRegistryParseMenuIdNamesEveryBarMenu() {
   Expect(ParseMenuId("") == MenuId::None, "an empty name should name nothing");
 }
 
-}  // namespace
+}
 
 void RegisterWorkspaceMenuRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceMenuRegistry/EveryMenuIdHasASpec",
@@ -403,4 +361,4 @@ void RegisterWorkspaceMenuRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceMenuRegistry/ParseMenuIdNamesEveryBarMenu", TestMenuRegistryParseMenuIdNamesEveryBarMenu);
 }
 
-}  // namespace microide::tests
+}

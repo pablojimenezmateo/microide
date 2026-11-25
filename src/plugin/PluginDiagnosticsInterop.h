@@ -28,4 +28,4 @@ bool ClearDiagnostics(std::string_view plugin_id,
                       std::string* error_message);
 #endif
 
-}  // namespace microide::plugin::diagnostics_interop
+}

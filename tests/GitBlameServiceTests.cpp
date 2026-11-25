@@ -73,10 +73,6 @@ void TestGitBlameIncrementalParserHandlesRepeatedCommitsAndBoundary() {
 }
 
 void TestGitBlameIncrementalParserAcceptsSha256ObjectIds() {
-  // Regression: a SHA-256 repo (extensions.objectFormat=sha256) emits 64-char
-  // object ids in blame-incremental headers. The header detector previously
-  // hardcoded 40 hex chars, so every header was rejected and blame produced
-  // zero attributions.
   const std::string sha256(64, 'a');
   const std::string output =
       sha256 + " 1 1 2\n"
@@ -93,7 +89,6 @@ void TestGitBlameIncrementalParserAcceptsSha256ObjectIds() {
          "SHA-256 entry should carry its author metadata");
   Expect(attributions[0].line_count == 2, "SHA-256 entry should keep its line count");
 
-  // A malformed 50-char hex run (neither 40 nor 64) must still be rejected.
   const std::string bad = std::string(50, 'a') + " 1 1 1\nfilename main.cpp\n";
   Expect(ParseGitBlameIncrementalOutput(bad).empty(),
          "a non-40/64 hex run should not be treated as a commit header");
@@ -174,13 +169,6 @@ void TestGitBlameServiceSuppressesDirtyAndUntrackedFiles() {
   Expect(untracked_snapshot.lines.empty(), "untracked files should not publish blame text");
 }
 
-// The inline-blame overlay calls Request() from the render path, i.e. once per
-// frame for as long as the caret sits in a file. The re-validation throttle used
-// to require an ELIGIBLE cache, so a file blame can never answer for -- untracked,
-// unborn HEAD, ignored -- missed it every time and re-spawned `git rev-parse`
-// (plus `ls-files`/`status` once HEAD resolves) on every one of those frames. A
-// 3-iteration compare-scroll perf run measured 68 git spawns for an answer that
-// never changed.
 void TestGitBlameServiceThrottlesRevalidationForIneligibleFiles() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -203,29 +191,20 @@ void TestGitBlameServiceThrottlesRevalidationForIneligibleFiles() {
     };
   };
 
-  // Settle once so the ineligible verdict is cached, then measure.
   const auto settled = WaitForSnapshot(service, make_request(0));
   Expect(!settled.eligible && !settled.loading,
          "an untracked file should settle as ineligible before the throttle is measured");
 
-  // Scroll: every frame asks about a different visible window, which mints a
-  // different request key, so the in-flight dedup does not cover it. That is
-  // exactly the shape the render path produces, and the shape that used to
-  // re-spawn git per frame.
   const std::uint64_t probes_before =
       util::ReadPerformanceCounter(util::PerfCounterId::GitBlameValidationProbes);
   for (std::size_t frame = 1; frame <= 30; ++frame) {
     service.Request(make_request(frame * 400));
-    // Pace like a redraw loop: without this the executor's keyed coalescing
-    // absorbs the burst and hides the per-frame probe the throttle exists to
-    // stop. The whole loop stays well inside one validation interval.
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
   }
   service.Stop();
   const std::uint64_t probes_after =
       util::ReadPerformanceCounter(util::PerfCounterId::GitBlameValidationProbes);
 
-  // Without the throttle this loop measured 31 probes -- one per paced frame.
   Expect(probes_after - probes_before <= 1,
          "scrolling a settled-ineligible file must not re-spawn git per frame");
 }
@@ -333,10 +312,6 @@ void TestGitBlameServiceInvalidateDropsStaleCache() {
          "invalidated blame snapshot should reflect the new commit metadata");
 }
 
-// Invalidation is called for every path a watcher batch reports, and used to
-// insert a generation per path whether or not blame had ever been asked for it:
-// a 4,780-file first remote sync left ~1 MB of them, and nothing but Clear()
-// removed one. Only a file blame was requested for is tracked now.
 void TestGitBlameServiceInvalidateTracksOnlyRequestedFiles() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -354,8 +329,6 @@ void TestGitBlameServiceInvalidateTracksOnlyRequestedFiles() {
       .total_line_count = 3,
       .dirty = false,
   };
-  // Blame for one file first: the service builds its state on the first request,
-  // and an invalidation before that is a no-op that would make this vacuous.
   const auto snapshot = WaitForSnapshot(service, request);
   Expect(snapshot.eligible && snapshot.lines.size() == 1, "the requested file loads");
 
@@ -591,19 +564,9 @@ void TestGitBlameServiceLatestRequestSupersedesPendingWindow() {
          "latest blame request should complete after superseding an older pending window");
   Expect(!latest_snapshot.lines.empty() && latest_snapshot.lines.front().line >= 500,
          "latest blame snapshot should keep the most recent requested window");
-  // A superseded window's blame is still *banked*. Attributions are a pure
-  // function of (file, head_id, stamp, line range) -- the viewport is not an
-  // input -- so the only thing that can invalidate them is a generation change
-  // (Invalidate/Clear, covered by their own tests). Throwing them away instead
-  // meant a viewport that kept moving never wrote a cache entry at all, so the
-  // re-validation throttle had nothing to hit and every frame re-spawned the
-  // probe chain.
   Expect(!early_snapshot.lines.empty(),
          "a superseded window's completed blame should still land in the cache");
 
-  // ...and the point of banking it: the early window is now answered from cache
-  // without touching git again. Before the fix this re-probed, which is the
-  // whole spawn storm in miniature.
   const std::uint64_t probes_before =
       util::ReadPerformanceCounter(util::PerfCounterId::GitBlameValidationProbes);
   service.Request(early_request);
@@ -616,10 +579,6 @@ void TestGitBlameServiceLatestRequestSupersedesPendingWindow() {
 }
 
 
-// TD-2026-10-16-345: a finished blame is NOT visible until the main thread applies
-// it. The worker used to write straight into the cache Snapshot reads, so a
-// partial frame painted while a result landed read the new blame in one clip and
-// the old in another.
 void TestGitBlameServiceResultsWaitForApply() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -638,8 +597,6 @@ void TestGitBlameServiceResultsWaitForApply() {
       .dirty = false,
   };
   service.Request(request);
-  // Wait for the worker to have finished everything this request starts: the
-  // verdict and the span, queued, with nothing still running.
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   while (std::chrono::steady_clock::now() < deadline &&
          !(GitBlameServiceTestAccess::HasReadyResults(service) &&
@@ -661,7 +618,7 @@ void TestGitBlameServiceResultsWaitForApply() {
   service.Stop();
 }
 
-}  // namespace
+}
 
 void RegisterGitBlameServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GitBlame/IncrementalParserAcceptsSha256ObjectIds",
@@ -691,4 +648,4 @@ void RegisterGitBlameServiceTests(std::vector<TestCase>& tests) {
           TestGitBlameServiceLatestRequestSupersedesPendingWindow);
 }
 
-}  // namespace microide::tests
+}

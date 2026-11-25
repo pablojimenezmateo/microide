@@ -12,23 +12,9 @@
 
 namespace microide::compare {
 
-// Every path stored inside a BranchReviewTargetState — file-entry paths, hunk
-// identity paths, note paths — is normalized through this on the way in, by the
-// service's mutators and by the persistence bridge. That invariant is what lets
-// the query scans compare paths as plain strings instead of re-normalizing both
-// sides of every comparison (~12 allocations a call, in loops that run per
-// reviewed-hunk entry per hunk per row). A new ingress point must normalize here.
-//
-// The key is `path` relative to the review target's repository root when it lies
-// inside it, lexically normal either way: the diff marks with its absolute path and
-// the git view queries with git's relative one, and with two keys a mark landed
-// where the view never looked.
 std::filesystem::path NormalizeReviewPath(const std::filesystem::path& repository_root,
                                           const std::filesystem::path& path);
 
-// Debug-only guard for the invariant above: a path that reaches a comparison
-// un-normalized would silently compare unequal to its own stored form, which
-// reads as "this hunk was never reviewed" rather than as a crash.
 #ifdef NDEBUG
 #define MICROIDE_ASSERT_NORMALIZED_REVIEW_PATH(path) ((void)0)
 #else
@@ -48,14 +34,10 @@ enum class BranchReviewNoteScope {
   Hunk,
 };
 
-// One hunk's resolved review presentation, as produced for a whole file at once
-// by BranchReviewStateService::ResolveHunkMarkers.
 struct BranchReviewHunkMarker {
   BranchReviewMarkerStatus status = BranchReviewMarkerStatus::Unreviewed;
   bool has_note = false;
-  // The note's text when `has_note`: the diff shows it under its hunk.
   std::string note_text;
-  // The hunk's content changed since the note was written on it.
   bool note_outdated = false;
 };
 
@@ -72,11 +54,6 @@ struct BranchReviewHunkIdentity {
 
 struct BranchReviewFileReviewEntry {
   std::filesystem::path path;
-  // DiffContentFingerprint of the file's diff when it was marked, or 0 when the
-  // mark was made without the diff at hand. A diff whose fingerprint differs shows
-  // the file as changed since reviewed. (It held the git view's snapshot counter,
-  // which counts refreshes within one session: any refresh made a mark stale and a
-  // restart orphaned it.)
   std::uint64_t reviewed_diff_fingerprint = 0;
   std::uint64_t reviewed_at_unix_ms = 0;
 };
@@ -102,14 +79,8 @@ struct BranchReviewTargetState {
   std::uint64_t last_accessed_unix_ms = 0;
 };
 
-// Static label text; a view because it used to return a fresh std::string per
-// hunk per marker pass.
 std::string_view BranchReviewMarkerLabel(BranchReviewMarkerStatus status);
 
-// The path-free half of a hunk identity — everything that is a function of the
-// compare model alone. A whole-file resolve computes one per hunk and matches it
-// against the stored entries whose path it has already checked once, instead of
-// building a full identity (which copies the path) per hunk per entry.
 struct BranchReviewHunkContentKey {
   int old_start = 0;
   int old_count = 0;
@@ -121,8 +92,6 @@ struct BranchReviewHunkContentKey {
 BranchReviewHunkContentKey ComputeBranchReviewHunkContentKey(const CompareModel& model,
                                                              const CompareHunk& hunk);
 
-// One value for a file's diff: its hunks' content hashes folded in order. Two
-// diffs with the same changed text agree whatever the line numbers.
 std::uint64_t DiffContentFingerprint(const CompareModel& model);
 
 BranchReviewHunkIdentity ComputeBranchReviewHunkIdentity(const CompareModel& model,
@@ -132,4 +101,4 @@ BranchReviewHunkIdentity ComputeBranchReviewHunkIdentity(const CompareModel& mod
                                                          const CompareHunk& hunk,
                                                          const std::filesystem::path& path);
 
-}  // namespace microide::compare
+}

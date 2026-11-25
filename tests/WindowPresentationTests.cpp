@@ -41,12 +41,6 @@ void TestWindowPresentationSanitizesInvalidScales() {
          "invalid scales should fall back to 1x vertical presentation scale");
 }
 
-// A window that is not a whole number of units at the scale keeps the exact
-// scale, its units rounded up to cover it. Stretched to 819 units, a 1024-pixel
-// window at 1.25 drew at 1.2503, where no whole number of units is a whole number
-// of device pixels and a surface's clip could not be aligned to a partial frame's
-// (QA monkey, qa lane seed 1: the sidebar's text one device column into the
-// editor in partial frames only).
 void TestWindowPresentationKeepsTheExactScaleAtAnyWindowSize() {
   const auto presentation = ComputeWindowPresentation(1024, 899, 1.0f, 1.25f);
   Expect(presentation.presentation_scale_x == 1.25f && presentation.presentation_scale_y == 1.25f,
@@ -60,9 +54,6 @@ void TestWindowPresentationKeepsTheExactScaleAtAnyWindowSize() {
          "a window that is a whole number of units is that many");
 }
 
-// The window's minimum keeps the layout's floor at any ui.scale: at scale 3 a
-// 640x400 window is a 213x133 layout, where the QA monkey found the chrome laid
-// out off the window and over itself. Capped to the usable display area.
 void TestMinimumWindowSizeKeepsTheLayoutFloorAtAnyScale() {
   using microide::util::MinimumWindowSize;
   using microide::util::WindowSize;
@@ -78,7 +69,7 @@ void TestMinimumWindowSizeKeepsTheLayoutFloorAtAnyScale() {
   Expect(sane.width == 640 && sane.height == 400, "an invalid factor falls back to 1");
 }
 
-}  // namespace
+}
 
 void RegisterWindowPresentationTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WindowPresentation/UsesDisplayScaleForLogicalSize",
@@ -93,4 +84,4 @@ void RegisterWindowPresentationTests(std::vector<TestCase>& tests) {
           TestMinimumWindowSizeKeepsTheLayoutFloorAtAnyScale);
 }
 
-}  // namespace microide::tests
+}

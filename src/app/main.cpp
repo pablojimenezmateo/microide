@@ -24,28 +24,14 @@
 #endif
 
 int main(int argc, char** argv) {
-  // This is the shell / event-loop thread: the one whose stalls the user feels.
-  // Perf summaries split self time on this boundary, because a background tree
-  // walk that costs more CPU than a render stall still costs zero frames.
   microide::util::MarkTracingMainThread();
-  // Before any descriptor exists: a closed 0/1/2 would be handed to the first pipe.
   microide::util::EnsureStandardDescriptorsOpen();
-  // Before any thread: every terminal, server and watched directory spends
-  // descriptors, and the inherited 1024 ran out (platform/OpenFileLimit.h).
   microide::platform::RaiseOpenFileLimit();
 
-  // Writing to a subprocess/terminal/LSP pipe whose reader has died must surface as
-  // EPIPE, not kill the editor. Install this before any I/O can occur.
   microide::platform::IgnoreBrokenPipeSignal();
-  // A crash says where: the crashing thread's backtrace on stderr, then the
-  // signal's own death (platform/CrashDiagnostics.h).
   microide::platform::InstallCrashBacktraceHandler();
-  // QA's handle on the durable-write boundaries: counted, and armed to kill the
-  // process at one, only when MICROIDE_QA_CRASH_POINTS asks (util/CrashPointControl.h).
   (void)microide::util::CrashPointControl::InstallFromEnvironment();
-  // The QA driver's stall evidence: lets the driver's gdb attach (a no-op unless asked).
   microide::platform::AllowParentToTraceWhenAskedByQa();
-  // Before any thread: Xlib's text conversions (the window title) follow it.
   (void)microide::platform::UseUtf8CharacterLocale();
 
   if (argc >= 2) {
@@ -106,8 +92,6 @@ int main(int argc, char** argv) {
     return parsed.exit_code;
   }
 
-  // Enable the DAP/debug tracer before any window or debug session exists so the
-  // initialize handshake is captured from the very first message.
   if (parsed.options.dap_log_path.has_value()) {
     microide::util::DebugTrace::EnableToFile(*parsed.options.dap_log_path);
     std::cerr << "DAP trace \xE2\x86\x92 " << parsed.options.dap_log_path->string() << '\n';

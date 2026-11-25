@@ -14,9 +14,6 @@ namespace {
 
 using microide::project::IgnoreMatcher;
 
-// Behavior-preservation coverage for the string_view / precomputed base_prefix
-// refactor of IgnoreMatcher::Rule::Matches: a nested .gitignore must apply only
-// under its own directory, while a root rule applies everywhere.
 void TestIgnoreMatcherNestedGitignoreBasePrefix() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -25,8 +22,8 @@ void TestIgnoreMatcherNestedGitignoreBasePrefix() {
   WriteFile(root / "sub" / ".gitignore", "ignored_here.txt\n");
 
   IgnoreMatcher matcher;
-  matcher.SetRoot(root);                               // loads root/.gitignore
-  matcher.LoadIgnoreFile(root / "sub" / ".gitignore");  // base directory = "sub"
+  matcher.SetRoot(root);
+  matcher.LoadIgnoreFile(root / "sub" / ".gitignore");
 
   Expect(matcher.Ignored("debug.log", false), "root rule should ignore *.log anywhere");
   Expect(matcher.Ignored("sub/debug.log", false), "root rule should also match nested *.log");
@@ -37,11 +34,6 @@ void TestIgnoreMatcherNestedGitignoreBasePrefix() {
   Expect(!matcher.Ignored("sub/keep.txt", false), "unmatched files should not be ignored");
 }
 
-// TD-2026-07-17A-055: a directory's matcher inherits its ancestors as a shared,
-// immutable parent layer (not a full copy of the rule set) via MakeChild. The
-// parent-then-local evaluation must be byte-identical to the old flattened
-// last-match-wins matcher, including negations that cross layer boundaries and a
-// multi-level ancestor chain.
 void TestIgnoreMatcherParentLinkedLayersMatchFlattened() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -50,7 +42,6 @@ void TestIgnoreMatcherParentLinkedLayersMatchFlattened() {
   WriteFile(root / "sub" / ".gitignore", "!important.log\nlocal.tmp\n");
   WriteFile(root / "sub" / "deep" / ".gitignore", "*.bin\n");
 
-  // Parent-linked chain: root -> sub -> sub/deep, each holding only its own rules.
   auto root_matcher = std::make_shared<IgnoreMatcher>();
   root_matcher->SetRoot(root);
   std::shared_ptr<IgnoreMatcher> sub_matcher = IgnoreMatcher::MakeChild(root_matcher);
@@ -58,7 +49,6 @@ void TestIgnoreMatcherParentLinkedLayersMatchFlattened() {
   std::shared_ptr<IgnoreMatcher> deep_matcher = IgnoreMatcher::MakeChild(sub_matcher);
   deep_matcher->LoadIgnoreFile(root / "sub" / "deep" / ".gitignore");
 
-  // Old flattened equivalent: one matcher with every ancestor's rules loaded in order.
   IgnoreMatcher flat;
   flat.SetRoot(root);
   flat.LoadIgnoreFile(root / "sub" / ".gitignore");
@@ -79,7 +69,6 @@ void TestIgnoreMatcherParentLinkedLayersMatchFlattened() {
            "parent-linked layers must decide identically to the flattened matcher");
   }
 
-  // Spot-check the load-bearing semantics directly (not just parity):
   Expect(deep_matcher->Ignored("sub/debug.log", false),
          "an inherited root rule still ignores a nested match");
   Expect(!deep_matcher->Ignored("sub/important.log", false),
@@ -88,7 +77,6 @@ void TestIgnoreMatcherParentLinkedLayersMatchFlattened() {
          "the deepest layer's own rule applies under its base directory");
   Expect(!deep_matcher->Ignored("x.bin", false),
          "the deepest layer's rule must not apply outside its base directory");
-  // The intermediate matcher does not see the grandchild's rules.
   Expect(!sub_matcher->Ignored("sub/deep/x.bin", false),
          "an ancestor matcher must not see a descendant layer's rules");
 }
@@ -109,13 +97,6 @@ void TestIgnoreMatcherNegationAndDirectoryRules() {
   Expect(!matcher.Ignored("keep.tmp", false), "a later negation should un-ignore the file");
 }
 
-// git's verdict for a path inside a directory: the directory's own verdict wins
-// (gitignore(5): a parent's exclusion cannot be undone for its children), and a
-// slash-free rule names the ENTRY, not its ancestors. The old form tested a
-// basename rule against every path component, so `!a?` re-included `ab/a` by
-// matching the parent `ab`, and a directory-only `build/` never reached
-// `build/x.o` because the file's type was checked first. Found against
-// `git check-ignore` over generated rule sets.
 void TestIgnoreMatcherAncestorVerdictWinsAndNamesMatchTheEntry() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -124,13 +105,10 @@ void TestIgnoreMatcherAncestorVerdictWinsAndNamesMatchTheEntry() {
   IgnoreMatcher matcher;
   matcher.SetRoot(root);
 
-  // `?` ignores the one-letter entry `a`; `!a?` names two-letter entries and must
-  // not re-include `a` for sitting under `ab`.
   Expect(matcher.Ignored("ab", true) == false, "`!a?` re-includes the two-letter directory");
   Expect(matcher.Ignored("ab/a", true), "`?` ignores ab/a; the parent's `!a?` does not reach it");
   Expect(matcher.Ignored("ab/a/x.txt", false), "everything under an ignored directory is ignored");
 
-  // A directory-only rule reaches the files beneath the directory it names.
   Expect(matcher.Ignored("build", true), "`build/` ignores the directory");
   Expect(!matcher.Ignored("build", false), "`build/` does not ignore a file named build");
   Expect(matcher.Ignored("build/x.o", false), "a file under `build/` is ignored");
@@ -139,8 +117,6 @@ void TestIgnoreMatcherAncestorVerdictWinsAndNamesMatchTheEntry() {
   Expect(matcher.Ignored("out/keep.txt", false),
          "the same holds for a slash-free `out` rule on the parent");
 
-  // The entry-only form is for callers that pruned ignored directories: it
-  // answers for the entry alone and never walks ancestors.
   Expect(!matcher.IgnoredEntryNormalized("build/x.o", false),
          "the entry form does not apply the parent's verdict");
   Expect(!matcher.IgnoredEntryNormalized("ab/a/x.txt", false),
@@ -148,10 +124,6 @@ void TestIgnoreMatcherAncestorVerdictWinsAndNamesMatchTheEntry() {
   Expect(matcher.IgnoredEntryNormalized("ab/a", true), "the entry form still matches the entry");
 }
 
-// git compares a pattern's literal prefix first and runs wildmatch over the
-// remainders, so a `**` that directly follows the prefix is a leading `**` to
-// wildmatch and crosses directories: `x**/b` ignores `x.o/foo/b`. A `**` behind a
-// wildcard (`x[a]**/b`) stays a plain `*`. Found against `git check-ignore`.
 void TestIgnoreMatcherLiteralPrefixPromotesTheDoubleStarLikeGit() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -168,8 +140,6 @@ void TestIgnoreMatcherLiteralPrefixPromotesTheDoubleStarLikeGit() {
   Expect(matcher.Ignored("xaq/d", false), "and still matches within the segment");
 }
 
-// The prefix strip can leave an EMPTY remainder: `a**/*` against the directory
-// `a` hands wildmatch `**/*` and "", which git accepts, so `a` is ignored.
 void TestIgnoreMatcherLiteralPrefixConsumingTheWholePathStillMatches() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -182,9 +152,6 @@ void TestIgnoreMatcherLiteralPrefixConsumingTheWholePathStillMatches() {
   Expect(matcher.Ignored("ab/c", false), "and everything it names outright");
 }
 
-// `dir/**` also grays the directory itself (a deliberate display choice, see
-// Rule::Matches), but a negated `!dir/**` must not: git's rule never matches the
-// directory, so `*.c/` followed by `!*.c/**` leaves `x.c` ignored.
 void TestIgnoreMatcherNegatedDoubleStarDoesNotReincludeTheDirectory() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -207,7 +174,6 @@ void TestIgnoreMatcherDefaultRulesGrayVcsAndBuildDirs() {
   matcher.SetRoot(root);
   matcher.AddDefaultRules();
 
-  // VCS metadata + build-output dirs are ignored as directories, at any depth.
   Expect(matcher.Ignored(".svn", true), "default rules should ignore .svn/");
   Expect(matcher.Ignored(".git", true), "default rules should ignore .git/");
   Expect(matcher.Ignored("builds", true), "default rules should ignore builds/");
@@ -218,7 +184,6 @@ void TestIgnoreMatcherDefaultRulesGrayVcsAndBuildDirs() {
   Expect(matcher.Ignored("cmake-build-debug", true),
          "glob default rule should match cmake-build-* dirs");
 
-  // Directory-only: a like-named regular file is not ignored, and real source is untouched.
   Expect(!matcher.Ignored("builds", false), "a file named 'builds' should not be ignored");
   Expect(!matcher.Ignored("src/main.cpp", false), "ordinary source must not be ignored");
 }
@@ -231,25 +196,20 @@ void TestIgnoreMatcherExcludeGlobsAndReinclude() {
   IgnoreMatcher matcher;
   matcher.SetRoot(root);
   matcher.AddDefaultRules();
-  // A user exclude adds a custom dir; a later "!build/" re-includes a default-ignored one.
   matcher.AddExcludeGlobs({"vendored/", "!build/"});
 
   Expect(matcher.Ignored("vendored", true), "a user exclude glob should ignore its directory");
   Expect(!matcher.Ignored("build", true),
          "a trailing !build/ exclude should re-include the default-ignored build dir");
-  // The default .svn ignore still applies (not re-included).
   Expect(matcher.Ignored(".svn", true), "unrelated defaults remain in effect");
 }
 
-}  // namespace
+}
 
 void TestIgnoreMatcherDoubleStarCrossesDirectories() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
   std::filesystem::create_directories(root);
-  // `**/build` must match build at any depth (git semantics), including the repo
-  // root; a nested `a/**/b` must match across zero or more directories; `logs/**`
-  // must match everything under logs. A single '*' must still stay in one segment.
   WriteFile(root / ".gitignore",
             "**/build\nsrc/**/generated\nlogs/**\ndocs/*.md\n");
 
@@ -282,11 +242,6 @@ void TestIgnoreMatcherDoubleStarCrossesDirectories() {
          "a single '*' must not cross a '/' boundary");
 }
 
-// A pattern with a slash at the beginning or middle is anchored to the .gitignore's
-// directory (gitignore(5)); only a slash-free pattern floats and matches by basename
-// at any depth. Regression for the bug where a leading '/' was stripped without
-// recording anchoring (so `/build` matched at every depth) and where mid-slash
-// patterns were floated across path suffixes (so `a/b` matched `x/a/b`).
 void TestIgnoreMatcherAnchoredPatternsDoNotFloat() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -296,28 +251,21 @@ void TestIgnoreMatcherAnchoredPatternsDoNotFloat() {
   IgnoreMatcher matcher;
   matcher.SetRoot(root);
 
-  // Leading-slash pattern: anchored to the root only.
   Expect(matcher.Ignored("build", true), "/build should ignore the root build directory");
   Expect(!matcher.Ignored("src/build", true),
          "/build is anchored: it must NOT match a nested build directory");
   Expect(!matcher.Ignored("packages/x/build", true),
          "/build must not match a deeply nested build directory");
 
-  // Mid-slash pattern: anchored, must not float across suffixes.
   Expect(matcher.Ignored("a/b", true), "a/b should match at the anchored location");
   Expect(!matcher.Ignored("x/a/b", true),
          "a/b is anchored: it must NOT float to match x/a/b");
 
-  // A slash-free pattern still floats by basename at any depth (unchanged behavior).
   Expect(matcher.Ignored("node_modules", true), "node_modules matches at the root");
   Expect(matcher.Ignored("src/node_modules", true),
          "a slash-free pattern still matches by basename at any depth");
 }
 
-// Regression: a `**/` segment followed later by another wildcard segment (`*`/`?`)
-// must still cross directory boundaries. The single-star backtrack model let the
-// trailing non-crossing `*` clobber the `**` restart point, so `**/*.ext` degraded
-// to matching at the top level only. git matches all of these across directories.
 void TestIgnoreMatcherDoubleStarBeforeWildcardCrossesDirectories() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -327,43 +275,29 @@ void TestIgnoreMatcherDoubleStarBeforeWildcardCrossesDirectories() {
   IgnoreMatcher matcher;
   matcher.SetRoot(root);
 
-  // A '**' bounded by literals on both sides that also precedes a trailing wildcard
-  // must re-extend across directories even when an earlier literal ('b/') matched at a
-  // false position. git ignores all three of these for `a/**/b/*.md`.
   Expect(matcher.Ignored("a/b/direct.md", false), "a/**/b/*.md matches with zero middle dirs");
   Expect(matcher.Ignored("a/q/b/n.md", false), "a/**/b/*.md matches with one middle dir");
   Expect(matcher.Ignored("a/q/b/w/b/n.md", false),
          "a/**/b/*.md must re-extend '**' past a false 'b/' match");
 
-  // `**/*.txt` matches a matching file at any depth, including the root.
   Expect(matcher.Ignored("b.txt", false), "**/*.txt should match a root .txt file");
   Expect(matcher.Ignored("a/b.txt", false), "**/*.txt should match a depth-1 .txt file");
   Expect(matcher.Ignored("a/c/b.txt", false), "**/*.txt should match a deeply nested .txt file");
   Expect(!matcher.Ignored("a/b.md", false), "**/*.txt must not match a non-.txt file");
 
-  // `src/**/*.cpp` descends through directories under src.
   Expect(matcher.Ignored("src/x.cpp", false), "src/**/*.cpp should match a direct child");
   Expect(matcher.Ignored("src/a/b/x.cpp", false),
          "src/**/*.cpp should match a deeply nested child");
   Expect(!matcher.Ignored("lib/a/x.cpp", false),
          "src/**/*.cpp must not match a different top segment");
 
-  // A multi-dot suffix wildcard still crosses directories.
   Expect(matcher.Ignored("dist/app.min.js", false), "**/*.min.js should match under a directory");
 }
 
-// gitignore(5) escapes: "\#literal"/"\!literal" are literal patterns (not a comment or
-// negation), and a backslash-escaped trailing space is preserved as part of the name.
-// Regression for inventory I10 (trimming/escape handling ran in the wrong order).
 void TestIgnoreMatcherHonorsGitignoreEscapes() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
   std::filesystem::create_directories(root);
-  // Lines (raw bytes on disk):
-  //   \#foo        -> ignore a file literally named "#foo"
-  //   \!bar        -> ignore a file literally named "!bar"
-  //   trailer\     -> ignore "trailer " (escaped trailing space kept)
-  //   plain        -> ignore "plain" (an unescaped trailing space is trimmed)
   WriteFile(root / ".gitignore", "\\#foo\n\\!bar\ntrailer\\ \nplain \n");
 
   IgnoreMatcher matcher;
@@ -388,16 +322,10 @@ void TestIgnoreMatcherHonorsGitignoreEscapes() {
          "the trimmed pattern must not match a trailing-space name 'plain '");
 }
 
-// A '[' character class matches a single char; an UNTERMINATED '[' (no closing
-// ']') is an ordinary literal per POSIX fnmatch / gitignore. Before the fix the
-// unterminated case failed to match, so a file literally named "weird[name" was
-// never ignored by a "weird[name" pattern.
 void TestIgnoreMatcherHonorsCharacterClasses() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
   std::filesystem::create_directories(root);
-  //   file[0-9].log -> a real character class (matches one digit)
-  //   weird[name    -> an unterminated '[' is a literal '['
   WriteFile(root / ".gitignore", "file[0-9].log\nweird[name\n");
 
   IgnoreMatcher matcher;
@@ -413,19 +341,6 @@ void TestIgnoreMatcherHonorsCharacterClasses() {
          "the literal '[' pattern must not match as if '[' were a class");
 }
 
-// A rule's pattern is classified once at parse time into an exact / suffix /
-// prefix / general shape so the per-entry test is a compare rather than a run
-// through the backtracking glob matcher (that classification is what took the
-// project walk's ignore filter from 6.9 us to 1.6 us per entry). The whole risk of
-// that optimization is a shape that decides something GlobMatches would not, and
-// it is silent: the tree just quietly gains or loses files.
-//
-// So sweep a pattern corpus against a path corpus and require the matcher to agree
-// with GlobMatches applied the long way round, for every pair. The corpus keeps to
-// patterns whose parse is trivially reproducible here (no '!', no leading or
-// trailing '/', no backslash escapes) — the escape and character-class cases have
-// their own dedicated tests above, which is where a hand-written expectation is
-// worth more than a differential.
 void TestIgnoreMatcherShapeClassificationMatchesGlob() {
   static constexpr std::string_view kPatterns[] = {
       "node_modules", "build", "*.pyc",    "*",       "*~",     "cmake-build-*",
@@ -455,10 +370,6 @@ void TestIgnoreMatcherShapeClassificationMatchesGlob() {
       "editor.swp~",
       "x",
       "deep/nested/tree/with/many/components/leaf.txt",
-      // A component that is EXACTLY the literal a shape compares against. These
-      // are the pairs that separate "ends_with" from "ends_with and is longer",
-      // "starts_with" from "starts_with and is longer", and an exact compare from
-      // a prefix compare — a corpus without them cannot see those mistakes.
       ".pyc",
       "src/.pyc",
       "~",
@@ -482,9 +393,6 @@ void TestIgnoreMatcherShapeClassificationMatchesGlob() {
     IgnoreMatcher matcher;
     matcher.SetRoot(root);
 
-    // The pre-classification shape of Rule::Matches, spelled out: a pattern with a
-    // separator is anchored to the whole relative path, one without it floats and
-    // is tried against each path component.
     const bool anchored = pattern.find('/') != std::string_view::npos;
     for (const std::string_view path : kPaths) {
       bool expected = false;
@@ -548,4 +456,4 @@ void RegisterIgnoreMatcherTests(std::vector<TestCase>& tests) {
           TestIgnoreMatcherDoubleStarCrossesDirectories);
 }
 
-}  // namespace microide::tests
+}

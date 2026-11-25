@@ -20,58 +20,34 @@ struct GitSidebarEntryTextModel {
   std::string secondary_label;
 };
 
-// Flatten the git view model into the render-ready `GitSidebarLine` rows the shell
-// stores and the render TU draws, so the render path, hit-testing and selection
-// all share one build. (It used to build an identical `GitSidebarLineSpec` list
-// first and copy every row, strings included, into a line.)
 std::vector<GitSidebarLine> BuildGitSidebarLines(
     const GitSidebarViewModel& view_model,
     const std::unordered_set<std::string>* collapsed_directory_keys = nullptr);
-// A directory line's path, relative to the repository (the line's key carries
-// it); empty for any other line.
 std::string_view GitSidebarDirectoryPath(const GitSidebarLine& line);
 
 std::optional<std::size_t> FindSelectedGitSidebarLineIndex(
     const std::vector<GitSidebarLine>& lines,
     std::size_t selected_entry_index);
-// `relative_path` is the normalized generic ('/'-separated) text a GitSidebarEntry
-// carries, not a filesystem path.
 GitSidebarEntryTextModel BuildGitSidebarEntryTextModel(std::string_view relative_path,
                                                        bool staged);
 
-// The git view model plus its flattened rows, built together from one walk of state.
 struct GitSidebarPresentation {
   GitSidebarViewModel view_model;
   std::vector<GitSidebarLine> lines;
 };
 
-// Revision-exact memo shared by the render path (PrepareFrameOnce) and hit-testing.
-// Rebuilds only when a captured key of every git-state / branch-review input that
-// the view model or lines depend on changes; pure hover/scroll repaints (no git
-// state change) reuse the prior build. The key is compared field-by-field (never
-// hashed), so it can never false-hit and show stale git status. The returned
-// reference is valid until the next call on the same thread.
 const GitSidebarPresentation& CachedGitSidebarPresentation(
     const GitSidebarState& git,
     const std::filesystem::path& root,
     const compare::BranchReviewStateService& branch_review);
 
-// The same memo, held: a rebuild REPLACES the cached presentation rather than
-// mutating it, so whoever holds this keeps the build it took. The frame's sidebar
-// view model holds one, so every render of a frame -- its partial clips and the
-// redraw verifier's full reference -- paints one git snapshot, whatever rebuilds
-// the memo in between (hit-testing, a control query). Through the reference above
-// a mid-frame rebuild changed what the frame's second render read, and the
-// verifier compared two frames (soak eab90dac1acf).
 std::shared_ptr<const GitSidebarPresentation> SharedGitSidebarPresentation(
     const GitSidebarState& git,
     const std::filesystem::path& root,
     const compare::BranchReviewStateService& branch_review);
 
-// Testing hooks: reset the thread-local cache and read hit/miss counters so tests
-// can assert unchanged state hits and every relevant mutation misses.
 void ResetGitSidebarPresentationCacheForTesting();
 std::uint64_t GitSidebarPresentationCacheHitsForTesting();
 std::uint64_t GitSidebarPresentationCacheMissesForTesting();
 
-}  // namespace microide::workspace
+}

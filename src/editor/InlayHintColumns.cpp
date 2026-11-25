@@ -9,15 +9,8 @@
 namespace microide::editor {
 
 namespace {
-// TD-2026-07-17-070: inlay hints are external plugin/LSP data. A per-hint cell
-// width and per-line total that grow without a cap can wrap std::size_t or make
-// the phantom-cell displacement far larger than any viewport can use, corrupting
-// hit-testing / display-column mapping. No single legitimate hint spans more than
-// a few dozen cells; 64K is a generous ceiling that never clips a real hint while
-// bounding a hostile one, and saturating totals guarantee the displacement math
-// stays monotonic even under thousands of maxed-out hints.
-constexpr std::size_t kMaxInlayHintCells = 1u << 16;  // 65536 cells per hint
-}  // namespace
+constexpr std::size_t kMaxInlayHintCells = 1u << 16;
+}
 
 std::size_t InlayHintCellWidth(const render::TextRenderer& text_renderer, std::string_view text,
                                float char_width) {
@@ -51,19 +44,12 @@ void BuildInlayRowSpans(std::span<const InlineTextDecoration> inline_texts,
   for (std::size_t i = 0; i < inline_texts.size(); ++i) {
     const InlineTextDecoration& inl = inline_texts[i];
     if (inl.anchor_column == kInlineTextEndOfLine) {
-      continue;  // end-of-line virtual text is handled by BuildEolDecorationSegments
+      continue;
     }
     const std::size_t width = InlayHintCellWidth(text_renderer, inl.text, char_width);
-    total = util::SaturatingAdd(total, width);  // every mid-line hint shifts the end-of-line anchor
-    // Same source->visual mapper the row-decoration builder uses, so a hint's phantom cells anchor
-    // on exactly the visual column its annotated glyph renders at.
+    total = util::SaturatingAdd(total, width);
     const std::size_t vcol = TextLayout::ResolveVisualColumn(layout, visual_map, row_visual_start,
                                                              row_visual_end, inl.anchor_column);
-    // Drop hints whose anchor lands outside the visible window: those scrolled off
-    // the left contribute no visible shift (their displacement cancels in the
-    // display origin), and those off the right shift nothing on screen. The
-    // clipped mapper returns < row_visual_start / > row_visual_end sentinels for
-    // exactly those cases.
     if (vcol < row_visual_start || vcol > row_visual_end) {
       continue;
     }
@@ -71,10 +57,6 @@ void BuildInlayRowSpans(std::span<const InlineTextDecoration> inline_texts,
                                       .cell_width = width,
                                       .source_index = i});
   }
-  // inline_texts arrives sorted by anchor_column (the store sorts by
-  // (line, anchor_column)); source order maps monotonically to visual order, so
-  // out_spans is already sorted by anchor_visual_column. stable_sort guards
-  // against an unsorted slice while keeping same-column hints in publish order.
   std::stable_sort(out_spans.begin(), out_spans.end(),
                    [](const InlayCellSpan& a, const InlayCellSpan& b) {
                      return a.anchor_visual_column < b.anchor_visual_column;
@@ -92,9 +74,6 @@ std::size_t RealVisualColumnForDisplayColumn(
   if (inline_texts.empty() || display_visual_column < row_visual_start) {
     return display_visual_column;
   }
-  // Reused per-thread scratch: BuildInlayRowSpans clears it, and the span-based
-  // InlayRowDisplacement below only references it within this call. Avoids a heap
-  // allocation on every column mapping (hover/hit-testing can run this per frame).
   thread_local std::vector<InlayCellSpan> spans;
   BuildInlayRowSpans(inline_texts, layout, visual_map, row_visual_start, row_visual_end,
                      text_renderer, char_width, spans, nullptr);
@@ -110,7 +89,7 @@ std::size_t InlayRowDisplacement::CellsInsertedBefore(std::size_t visual_column)
   std::size_t sum = 0;
   for (const InlayCellSpan& span : spans_) {
     if (span.anchor_visual_column > visual_column) {
-      break;  // spans are sorted; the rest anchor further right
+      break;
     }
     sum = util::SaturatingAdd(sum, span.cell_width);
   }
@@ -135,26 +114,21 @@ std::size_t InlayRowDisplacement::NextAnchorAtOrAfter(std::size_t visual_column)
 }
 
 std::size_t InlayRowDisplacement::VisualColumnForDisplayColumn(std::size_t display_column) const {
-  // Walk the row left-to-right. Real columns [v, anchor) map 1:1 to display
-  // columns [disp, disp + (anchor - v)); each hint then inserts `cell_width`
-  // phantom display cells before its anchor's real glyph. A display column inside
-  // a phantom region resolves to the hint's anchor (cursor lands before the
-  // annotated glyph).
-  std::size_t v = 0;      // real visual column
-  std::size_t disp = 0;   // display column of the real glyph at v
+  std::size_t v = 0;
+  std::size_t disp = 0;
   for (const InlayCellSpan& span : spans_) {
-    const std::size_t gap = span.anchor_visual_column - v;  // 1:1 run before the anchor
+    const std::size_t gap = span.anchor_visual_column - v;
     if (display_column < disp + gap) {
       return v + (display_column - disp);
     }
     v = span.anchor_visual_column;
     disp += gap;
     if (display_column < disp + span.cell_width) {
-      return v;  // inside the hint's phantom cells -> snap to the anchor
+      return v;
     }
-    disp += span.cell_width;  // step past the phantom cells
+    disp += span.cell_width;
   }
-  return v + (display_column - disp);  // 1:1 tail past the last hint
+  return v + (display_column - disp);
 }
 
-}  // namespace microide::editor
+}

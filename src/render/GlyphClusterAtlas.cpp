@@ -11,7 +11,7 @@ namespace microide::render {
 
 namespace {
 constexpr SDL_Color kWhite{255, 255, 255, 255};
-}  // namespace
+}
 
 std::unique_ptr<GlyphClusterAtlas> GlyphClusterAtlas::Build(TTF_Font* font,
                                                             SDL_PixelFormat surface_format,
@@ -22,10 +22,6 @@ std::unique_ptr<GlyphClusterAtlas> GlyphClusterAtlas::Build(TTF_Font* font,
   }
   auto atlas = std::unique_ptr<GlyphClusterAtlas>(new GlyphClusterAtlas());
   atlas->font_ = font;
-  // Coverage IS the alpha channel: an alpha-less surface turns every glyph into
-  // an opaque rectangle (see GlyphSurfaceFormat.h). The caller already picks an
-  // alpha-capable format; enforce it here too, because this class cannot
-  // function without one.
   atlas->format_ = EnsureAlphaCapableFormat(surface_format);
   atlas->font_height_px_ = font_height_px;
   atlas->slot_width_px_ = slot_width_px;
@@ -56,15 +52,11 @@ bool GlyphClusterAtlas::EnsureCapacityFor(std::size_t slot_index) {
   if (grown == nullptr) {
     return false;
   }
-  // Fully transparent; lazy rasters supply coverage as clusters are first used.
   if (!SDL_FillSurfaceRect(grown, nullptr, 0)) {
     SDL_DestroySurface(grown);
     return false;
   }
   if (atlas_ != nullptr) {
-    // Straight copy, not a blend: the strip holds premultiplied-free coverage and
-    // default blending against a zero-alpha destination would thin every glyph
-    // already in it.
     SDL_SetSurfaceBlendMode(atlas_, SDL_BLENDMODE_NONE);
     SDL_Rect src{0, 0, atlas_->w, atlas_->h};
     SDL_Rect dst{0, 0, atlas_->w, atlas_->h};
@@ -87,10 +79,6 @@ bool GlyphClusterAtlas::IsPureCoverage(const SDL_Surface* glyph) {
   if (details == nullptr || details->bytes_per_pixel != 4 || details->Amask == 0) {
     return false;
   }
-  // A pure-coverage raster of white text is (255, 255, 255, coverage) at every
-  // pixel that carries any coverage at all. An emoji font's colour bitmap is not,
-  // and tinting it would replace the artwork with a flat silhouette — so the one
-  // scan here is what keeps the tint substitution an identity.
   const std::uint32_t rgb_mask = details->Rmask | details->Gmask | details->Bmask;
   const auto* pixels = static_cast<const std::uint8_t*>(glyph->pixels);
   for (int y = 0; y < glyph->h; ++y) {
@@ -113,8 +101,6 @@ const GlyphClusterAtlas::Slot* GlyphClusterAtlas::EnsureFilled(std::string_view 
   if (atlas_ == nullptr || cluster.empty()) {
     return nullptr;
   }
-  // `find` before the insert: a hit is the overwhelmingly common case and must
-  // not pay for materializing a key string.
   if (const auto it = slots_.find(cluster); it != slots_.end()) {
     return it->second.cacheable ? &it->second : nullptr;
   }
@@ -131,9 +117,6 @@ const GlyphClusterAtlas::Slot* GlyphClusterAtlas::EnsureFilled(std::string_view 
     SDL_SetSurfaceBlendMode(glyph, SDL_BLENDMODE_NONE);
     const int w = std::min(glyph->w, slot_width_px_);
     const int h = std::min(glyph->h, font_height_px_);
-    // Clip on the SOURCE rect: SDL_BlitSurface takes the size from the source and
-    // ignores dstrect's, so a glyph wider than its slot would otherwise paint over
-    // the start of the next one (the bug AsciiGlyphAtlas shipped with).
     SDL_Rect src{0, 0, w, h};
     SDL_Rect dst{slot.x, 0, w, h};
     if (w > 0 && h > 0 && SDL_BlitSurface(glyph, &src, atlas_, &dst)) {
@@ -146,9 +129,6 @@ const GlyphClusterAtlas::Slot* GlyphClusterAtlas::EnsureFilled(std::string_view 
     SDL_DestroySurface(glyph);
   }
 
-  // Record the failure too. A colour glyph or an unrenderable cluster must be
-  // remembered, or every occurrence of it re-rasterizes and re-scans — which is
-  // the cost this class exists to remove, paid twice.
   const auto [it, inserted] = slots_.emplace(std::string(cluster), slot);
   if (!inserted || !it->second.cacheable) {
     return nullptr;
@@ -165,8 +145,6 @@ bool GlyphClusterAtlas::BlitInto(SDL_Surface* dst, int dst_x, int span_px,
   if (slot == nullptr) {
     return false;
   }
-  // Clip to the cluster's own cells, exactly as the direct path does, so a glyph
-  // a fallback font draws wider than its cells cannot paint over its neighbour.
   const int width = std::min(slot->w, span_px);
   if (width <= 0) {
     return false;
@@ -182,6 +160,6 @@ bool GlyphClusterAtlas::BlitInto(SDL_Surface* dst, int dst_x, int span_px,
   return SDL_BlitSurface(atlas_, &src, dst, &dst_rect);
 }
 
-}  // namespace microide::render
+}
 
-#endif  // MICROIDE_HAS_SDL3_TTF
+#endif

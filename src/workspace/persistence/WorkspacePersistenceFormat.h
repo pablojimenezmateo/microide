@@ -23,70 +23,40 @@
 
 namespace microide::workspace {
 
-// Decode caps for a session's view state: a corrupt or hostile record keeps at
-// most this many closed editors and collapsed folds per editor.
 inline constexpr std::size_t kMaxPersistedClosedEditors = 64;
 inline constexpr std::size_t kMaxPersistedCollapsedFolds = 100'000;
-// One span per conflict, and a merge has at most one conflict per hunk: the
-// hunk-choice cap.
 inline constexpr std::size_t kMaxPersistedMergeConflictSpans = 200'000;
 
-// One conflict of a merge result whose text the record carries (a typed result,
-// staged for crash safety): where the tab tracked it in that text. The text and
-// the spans move together -- a line typed above a conflict moves it -- so they are
-// persisted together; a restore that took the text alone would place every later
-// conflict by the choices, on the wrong lines.
 struct PersistedMergeConflictSpan {
   std::size_t hunk_index = 0;
   std::size_t start_line = 0;
   std::size_t end_line = 0;
-  std::string last_choice;  // compare::MergeChoiceLabel
+  std::string last_choice;
   bool valid = true;
   bool resolved = false;
 };
 
 struct PersistedEditorTabState {
   std::string kind = "editor";
-  // Single editor view (the in-tab split model was removed: each tab owns exactly
-  // one viewport). These fields are empty/default for compare and merge tabs.
   std::filesystem::path path;
   std::size_t cursor_line = 0;
   std::size_t cursor_column = 0;
   std::size_t scroll_line = 0;
   std::size_t horizontal_scroll = 0;
-  // The opener lines of the editor's collapsed folds (DeferredTabHandle's).
   std::vector<std::size_t> collapsed_fold_openers;
   bool dirty_snapshot = false;
   editor::TextViewport::LineEnding line_ending = editor::TextViewport::LineEnding::LF;
-  // A dirty snapshot of a file that opened with a UTF-8 BOM: the buffer lines
-  // hold the text after the mark, and the restored viewport writes it back.
   bool utf8_bom = false;
-  // An untitled buffer's number (its "Untitled-N"), so a restore gives it back the
-  // name it had: numbered afresh, an Untitled-3 after an empty, unpersisted
-  // Untitled-2 came back as Untitled-2 (soak d36a78ef295c). 0: a file, or an
-  // older session (the restore numbers those).
   std::uint32_t untitled_number = 0;
-  // A dirty snapshot's baseline: the file on disk as the buffer last saw it (its
-  // viewport's disk signature). Restored with the snapshot so a save after a crash
-  // still refuses to overwrite a file someone changed while microide was down --
-  // without it the restored buffer had no baseline, and a save wrote over the
-  // change without a word. nullopt: an older session, or no snapshot.
   struct DiskBaseline {
     bool exists = false;
     std::uint64_t mtime_ticks = 0;
     std::uint64_t size = 0;
-    // The content hash the buffer had for that file (util::QuickContentHash), and
-    // that function's value for a fixed probe when it was written: a restore trusts
-    // the hash only under the same function, so a `touch` while microide was down
-    // is told from a real edit (TD-2026-11-02-429 item 2). nullopt: none was known.
     std::optional<std::uint64_t> content_hash;
     std::uint64_t hash_probe = 0;
     friend bool operator==(const DiskBaseline&, const DiskBaseline&) = default;
   };
   std::optional<DiskBaseline> disk_baseline;
-  // The unsaved buffer (a dirty snapshot). Shared with the live piece tree on
-  // the way out -- the crash-safety flush hands it to the persistence worker
-  // without copying the text on the shell thread -- and owned on the way in.
   editor::DocumentSnapshot buffer;
   std::filesystem::path compare_path;
   std::filesystem::path compare_left_path;
@@ -111,13 +81,12 @@ struct PersistedEditorTabState {
   float merge_left_divider_fraction = kWorkspaceDefaultMergeLeftDividerFraction;
   float merge_right_divider_fraction = kWorkspaceDefaultMergeRightDividerFraction;
   std::vector<std::string> merge_hunk_choices;
-  // With a dirty snapshot of a merge's result: its conflicts, in order.
   std::vector<PersistedMergeConflictSpan> merge_conflict_spans;
 };
 
 struct PersistedUserConfigState {
   float ui_scale = 1.0f;
-  std::vector<std::pair<std::string, std::string>> settings;  // id → serialised value
+  std::vector<std::pair<std::string, std::string>> settings;
   std::vector<std::string> disabled_keybinding_ids;
   std::vector<std::string> disabled_plugin_ids;
 };
@@ -131,15 +100,12 @@ struct PersistedSidebarViewPolicy {
 struct PersistedProjectConfigState {
   std::string colorscheme_name = "default";
   std::optional<SDL_Color> project_base_color;
-  std::vector<std::pair<std::string, std::string>> settings;  // id → serialised value
+  std::vector<std::pair<std::string, std::string>> settings;
   std::vector<PersistedSidebarViewPolicy> sidebar_policies;
   std::optional<PersistedCommitDraftState> commit_draft;
   PersistedBranchReviewState branch_review;
 };
 
-// One editor group: its own tab list and the index of its active tab. The editor
-// area holds up to `kMaxEditorGroups` of these (VS Code-style splits live above
-// tabs); `PersistedProjectSessionState::split_tree` says how they are arranged.
 struct PersistedEditorGroupState {
   std::vector<PersistedEditorTabState> tabs;
   std::size_t active_tab_index = 0;
@@ -150,73 +116,42 @@ struct PersistedProjectSessionState {
   float sidebar_width = kWorkspaceDefaultSidebarWidth;
   float bottom_panel_height = kWorkspaceDefaultBottomPanelHeight;
   OutgoingBaseChoice outgoing_base_choice;
-  // Editor groups, in visual order; decode caps them at `kMaxEditorGroups`.
-  // `split_tree` is the pre-order encoding of how they are arranged (see
-  // EditorSplitTree::Flatten). An empty tree, or one whose leaf count does not
-  // match `groups`, restores as an even side-by-side row.
   std::vector<PersistedEditorGroupState> groups;
   std::size_t focused_group_index = 0;
   EditorSplitTreeRecord split_tree;
-  // Right-side debug pane (visibility / width / active surface). Only restored
-  // when `debug.enabled` is on. `right_pane_mode` is a DebugPaneMode cast to u8.
   bool right_pane_visible = false;
   float right_pane_width = 288.0f;
   std::uint8_t right_pane_mode = 0;
-  // File-tree / sidebar restore (additive; empty/default on old records). Tree
-  // paths are relative to the project root. `sidebar_view_id` is the active
-  // sidebar view (e.g. "tree", "search", "git"); empty means "leave default".
   std::vector<std::string> expanded_tree_paths;
   std::vector<std::string> collapsed_tree_paths;
-  std::string selected_tree_path;  // relative to root; empty if none
+  std::string selected_tree_path;
   int sidebar_scroll_row = 0;
   std::string sidebar_view_id;
-  // The bottom panel (additive): maximized, and the terminal layout to revive.
   bool panel_maximized = false;
   TerminalLayoutRecord terminal_layout;
-  // Recently closed editors, oldest first (additive): an editor record each, of
-  // which only `path` (absolute) and the view fields are written.
   std::vector<PersistedEditorTabState> closed_editors;
 };
 
-// The open projects, in tab order, as identities (project::ProjectId records).
-// `project_roots` is the legacy form: each project's I/O root under the path tag.
-// The writer emits it beside `projects` for one release window, so an older build
-// of the same major version still restores the session; a reader uses it only for
-// a file with no identity records at all (one written before them), resolving
-// each path as a typed one is (project::ResolveProjectId). `active_project_index`
-// indexes whichever list the reader uses: the writer keeps them parallel.
 struct PersistedWorkspaceSessionState {
   std::vector<project::ProjectId> projects;
   std::vector<std::filesystem::path> project_roots;
   std::size_t active_project_index = 0;
-  // The Host view's collapsed groups, by row id (RemoteHostService): the view spans
-  // projects, so it is the workspace's.
   std::vector<std::string> host_view_collapsed;
 };
 
-// Most-recently-used projects and files, surfaced on the welcome surface and in
-// the file finder. Newest-first; bounded by the RecentsService on insert. Each
-// recent file carries the project root it was opened under so the finder can show
-// only the active project's recents.
 struct PersistedRecentFile {
   std::filesystem::path path;
   std::filesystem::path project_root;
 };
 
-// `recent_projects` are identities, newest first; `recent_project_roots` is their
-// legacy path form, with the same dual-write rule as PersistedWorkspaceSessionState.
 struct PersistedMruState {
   std::vector<project::ProjectId> recent_projects;
   std::vector<std::filesystem::path> recent_project_roots;
   std::vector<PersistedRecentFile> recent_files;
 };
 
-// Per-project debug state: breakpoints (keyed by file) plus launch configs.
-// `arguments_json` holds the launch config's verbatim `arguments` serialized as
-// JSON text so this format carries no util::JsonValue dependency; the coordinator
-// (de)serializes it. Transient adapter verification is never persisted.
 struct PersistedBreakpoint {
-  std::size_t line = 0;  // 0-based buffer line index
+  std::size_t line = 0;
   bool enabled = true;
   std::optional<std::string> condition;
   std::optional<std::string> hit_condition;
@@ -228,8 +163,6 @@ struct PersistedFileBreakpoints {
   std::vector<PersistedBreakpoint> breakpoints;
 };
 
-// Function (symbol) breakpoint (additive; empty on old records). No file/line —
-// the adapter resolves `name`.
 struct PersistedFunctionBreakpoint {
   std::string name;
   bool enabled = true;
@@ -241,23 +174,17 @@ struct PersistedLaunchConfig {
   std::string name;
   std::string type;
   std::string request = "launch";
-  std::string arguments_json;  // serialized launch/attach `arguments`, or empty
+  std::string arguments_json;
 };
 
 struct PersistedDebugState {
   std::vector<PersistedFileBreakpoints> files;
   std::vector<PersistedLaunchConfig> launch_configs;
   std::size_t selected_launch_config_index = 0;
-  std::vector<std::string> watch_expressions;  // Phase 6 (additive; empty on old records)
-  // Phase 7 (additive; empty/false on old records): the user's enabled
-  // exception-breakpoint filter ids, and whether adapter defaults have been
-  // seeded once (so "all filters off" persists rather than re-seeding).
+  std::vector<std::string> watch_expressions;
   std::vector<std::string> enabled_exception_filters;
   bool exception_filters_seeded = false;
-  // Function (symbol) breakpoints (additive; empty on old records).
   std::vector<PersistedFunctionBreakpoint> function_breakpoints;
-  // Per-filter exception conditions (additive; empty on old records). Ordered map
-  // for deterministic encoding. filterId -> condition expression.
   std::map<std::string, std::string> exception_filter_conditions;
 };
 
@@ -282,4 +209,4 @@ bool DecodeDebugStateRecord(std::span<const std::byte> input, PersistedDebugStat
 bool EncodeMruRecord(const PersistedMruState& state, std::vector<std::byte>* out);
 bool DecodeMruRecord(std::span<const std::byte> input, PersistedMruState* state);
 
-}  // namespace microide::workspace
+}

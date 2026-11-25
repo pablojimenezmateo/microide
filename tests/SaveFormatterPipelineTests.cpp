@@ -22,9 +22,6 @@ namespace {
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
-// A formatter is any program that reads the buffer on stdin and writes the formatted
-// text on stdout — so `sed` is a perfectly good one, and it needs no plugin, no node
-// and no network. `tr` and `false` cover the other two outcomes.
 std::vector<std::string> UppercasingFormatter() {
   return {"sed", "s/hello/HELLO/"};
 }
@@ -41,8 +38,6 @@ std::filesystem::path OpenOneFileProject(WorkspaceShell& shell,
   return file;
 }
 
-// The headline: an interactive save hands the formatter to a worker and returns. The
-// file is written when the formatter comes back, with its output applied.
 void TestDeferredSaveAppliesTheFormatterWhenItReturns() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -54,8 +49,6 @@ void TestDeferredSaveAppliesTheFormatterWhenItReturns() {
 
   Expect(WorkspaceShellTestAccess::SaveTabDeferred(shell, 0),
          "a deferred save reports that it started");
-  // Nothing has been written yet: that is the whole point, and asserting it is what
-  // stops this from silently becoming a synchronous save again.
   Expect(ReadFile(file) == "hello world\n",
          "a deferred save must not have written before its formatter returned");
 
@@ -68,9 +61,6 @@ void TestDeferredSaveAppliesTheFormatterWhenItReturns() {
          "the buffer is clean once the deferred save has written");
 }
 
-// A compare tab's editable right side is the same file and the same Ctrl+S, so it
-// saves the same way: the formatter runs off the shell thread and the completion
-// finds the compare tab by its run id (TD-2026-09-28-304). It used to block.
 void TestACompareTabSaveDefersItsFormatter() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -80,7 +70,7 @@ void TestACompareTabSaveDefersItsFormatter() {
   WriteFile(file, "hello world\n");
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   std::optional<microide::workspace::CompareInput> right =
-      microide::workspace::ReadFileCompareInput(file, /*editable=*/true);
+      microide::workspace::ReadFileCompareInput(file, true);
   Expect(right.has_value(), "the file reads as a compare side");
   Expect(WorkspaceShellTestAccess::OpenPlainComparison(
              shell, microide::workspace::CompareInput{.content = "old\n", .label = "old"},
@@ -103,9 +93,6 @@ void TestACompareTabSaveDefersItsFormatter() {
          "and the right side is clean");
 }
 
-// The revision guard. A formatter's answer is about the buffer as it was when the run
-// started; applying it over an edit the user made meanwhile would silently undo that
-// edit. The buffer as it stands is what gets written instead.
 void TestDeferredSaveDropsTheFormatterWhenTheBufferChanged() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -116,7 +103,6 @@ void TestDeferredSaveDropsTheFormatterWhenTheBufferChanged() {
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
 
   Expect(WorkspaceShellTestAccess::SaveTabDeferred(shell, 0), "the deferred save started");
-  // The user keeps typing while the formatter runs.
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("y");
 
   WorkspaceShellTestAccess::FlushPendingSaveFormatters(shell);
@@ -129,8 +115,6 @@ void TestDeferredSaveDropsTheFormatterWhenTheBufferChanged() {
          "the save still completes; only the formatter's answer is dropped");
 }
 
-// A formatter that fails must not cost the user their save. The file is written
-// unformatted and the failure is surfaced, which is what the inline path did too.
 void TestDeferredSaveStillWritesWhenTheFormatterFails() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -150,11 +134,6 @@ void TestDeferredSaveStillWritesWhenTheFormatterFails() {
          "a failed formatter must not leave the tab dirty");
 }
 
-// What the formatter actually said. The subprocess layer captured stderr all
-// along and the save pipeline dropped it, so a failing formatter produced
-// "Formatter 'x' failed; saved unformatted" and nothing else — no exit status,
-// no parse error, no line number. For a formatter that fails on ONE file and not
-// the others, that text is the only thing that answers why.
 void TestAFailingFormatterReportsWhatItSaid() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -168,12 +147,9 @@ void TestAFailingFormatterReportsWhatItSaid() {
   WorkspaceShellTestAccess::FlushPendingSaveFormatters(shell);
   WorkspaceShellTestAccess::DrainSaveFormatterCompletions(shell);
 
-  // Still saved, unformatted — the existing contract, unchanged.
   Expect(ReadFile(file) == "xhello world\n",
          "a failed formatter still saves the buffer, got: " + ReadFile(file));
 
-  // The toast carries the first line, because a toast that says only "failed"
-  // sends the user looking for a panel they have no reason to know exists.
   bool toast_names_the_error = false;
   for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
     if (row.message.find("SyntaxError: unexpected token on line 3") != std::string::npos) {
@@ -183,7 +159,6 @@ void TestAFailingFormatterReportsWhatItSaid() {
   Expect(toast_names_the_error,
          "the warning must say what the formatter said, not just that it failed");
 
-  // And the whole of it is in a channel the user can scroll.
   const std::vector<std::string>* entries =
       WorkspaceShellTestAccess::OutputChannelEntries(shell, "formatter");
   Expect(entries != nullptr && !entries->empty(),
@@ -196,7 +171,6 @@ void TestAFailingFormatterReportsWhatItSaid() {
   }
   Expect(channel_has_the_error, "the channel holds the formatter's stderr");
 
-  // And the toast says where: a "Show Output" button that opens that channel.
   const auto& rows = WorkspaceShellTestAccess::ActiveNotifications(shell);
   std::size_t row_index = rows.size();
   for (std::size_t i = 0; i < rows.size(); ++i) {
@@ -216,8 +190,6 @@ void TestAFailingFormatterReportsWhatItSaid() {
          "show-output refuses a channel that does not exist");
 }
 
-// Closing a tab must not drop a save that is still formatting. The flush is what
-// makes that true, and without it the write never happens at all.
 void TestClosingATabFlushesItsDeferredSave() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -234,11 +206,6 @@ void TestClosingATabFlushesItsDeferredSave() {
          "closing the tab must let the in-flight save finish first, got: " + ReadFile(file));
 }
 
-// The close prompt's Save. It used to save in SaveMode::Blocking and WAIT, so
-// choosing Save on one dirty JS file froze the window for as long as node took to
-// start (TD-2026-09-28-304). It defers now — but the CLOSE has to wait for the
-// write even though the shell thread does not, because closing before the write
-// lands would discard exactly the edits the user just asked to keep.
 void TestSaveThenCloseWaitsForTheWriteWithoutBlocking() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -252,9 +219,6 @@ void TestSaveThenCloseWaitsForTheWriteWithoutBlocking() {
 
   Expect(WorkspaceShellTestAccess::SaveThenCloseTab(shell, 0),
          "save-then-close reports that it started");
-  // Both halves of the point, and both must be asserted: the shell thread came
-  // back (we are here) with nothing written, AND the tab is still open, because
-  // closing it now would drop the edits.
   Expect(ReadFile(file) == "hello world\n",
          "save-then-close must not have written before the formatter returned");
   Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 1,
@@ -269,9 +233,6 @@ void TestSaveThenCloseWaitsForTheWriteWithoutBlocking() {
          "and only then does the tab close");
 }
 
-// With no formatter there is nothing to defer, so save-then-close is the same
-// immediate close it always was — no lingering tab waiting for a completion that
-// will never come.
 void TestSaveThenCloseIsImmediateWithoutAFormatter() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -285,12 +246,6 @@ void TestSaveThenCloseIsImmediateWithoutAFormatter() {
          "and the tab is already closed");
 }
 
-// The invariant every exit path quietly depends on. A deferred save has not
-// written yet, so the buffer MUST still report dirty until it does — that is what
-// makes quit, close-project and switch-project prompt over it instead of walking
-// past a buffer whose write is still in flight. Nothing states this at the sites
-// that rely on it, so it is pinned here: a deferral that cleared the dirty flag
-// early would turn every one of those prompts into silent data loss.
 void TestADeferredSaveLeavesTheBufferDirtyUntilItWrites() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -304,9 +259,6 @@ void TestADeferredSaveLeavesTheBufferDirtyUntilItWrites() {
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
          "a deferred save has not written, so the buffer is still dirty and every "
          "exit path still prompts over it");
-  // The property that actually matters, end to end: asking to quit while the
-  // write is in flight still raises the unsaved-changes prompt rather than
-  // walking past a buffer whose save has not landed.
   WorkspaceShellTestAccess::ShowDirtyPromptForQuit(shell);
   Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
          "quitting mid-deferral must still prompt over the unwritten buffer");
@@ -317,10 +269,6 @@ void TestADeferredSaveLeavesTheBufferDirtyUntilItWrites() {
          "and only once the write lands is it clean");
 }
 
-// Close All over several dirty buffers. It used to run every formatter inline
-// and wait for all of them, so closing a handful of JS files froze the window
-// once per file (TD-2026-09-28-304). Each tab now closes when its OWN write
-// lands.
 void TestCloseAllDirtyTabsDefersEveryFormatter() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -344,10 +292,8 @@ void TestCloseAllDirtyTabsDefersEveryFormatter() {
   Expect(WorkspaceShellTestAccess::ExecuteCloseAllTabs(shell), "Close All runs");
   Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
          "two dirty buffers raise the unsaved-changes prompt");
-  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);  // Save
+  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);
 
-  // Neither write has happened and neither tab has closed: both formatters are
-  // on the worker and the shell thread came back without waiting for either.
   Expect(ReadFile(first) == "hello one\n" && ReadFile(second) == "hello two\n",
          "no file is written before its formatter returns");
   Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 2,
@@ -364,8 +310,6 @@ void TestCloseAllDirtyTabsDefersEveryFormatter() {
          "and both tabs are closed once their writes land");
 }
 
-// A blocking save is what every caller that acts on completion still gets: the file
-// is on disk by the time it returns, formatter and all.
 void TestBlockingSaveWritesFormattedBeforeItReturns() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -381,7 +325,6 @@ void TestBlockingSaveWritesFormattedBeforeItReturns() {
              ReadFile(file));
 }
 
-// Two dirty buffers with a formatter, in a real project tab.
 struct TwoDirtyFormattedFiles {
   std::filesystem::path root;
   std::filesystem::path first;
@@ -417,15 +360,13 @@ const microide::workspace::NotificationService::Notification* RowWithKey(
   return nullptr;
 }
 
-// Quit with Save All no longer runs the formatters on the shell thread: it waits
-// behind a progress row with a Cancel button, and quits once the last write lands.
 void TestQuitWaitsForFormatterSavesBehindAProgressRow() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
   const TwoDirtyFormattedFiles files = OpenTwoDirtyFormattedFiles(shell, temp_dir);
 
   WorkspaceShellTestAccess::ShowDirtyPromptForQuit(shell);
-  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);  // Save All
+  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);
 
   Expect(ReadFile(files.first) == "hello one\n" && ReadFile(files.second) == "hello two\n",
          "nothing is written before the formatters return: the shell thread came back");
@@ -446,8 +387,6 @@ void TestQuitWaitsForFormatterSavesBehindAProgressRow() {
   Expect(RowWithKey(shell, "save.wait.quit") == nullptr, "the progress row is gone");
 }
 
-// Cancel aborts the quit: the application stays, the buffers whose saves had not
-// landed stay open and dirty, and the abandoned writes never happen.
 void TestCancellingTheQuitLeavesBuffersDirty() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -471,17 +410,7 @@ void TestCancellingTheQuitLeavesBuffersDirty() {
          "the buffers are still open and dirty");
 }
 
-// Closing a project waits the same way, and the project's state is not torn down
-// before its last write lands.
-// The service torn down while a run is still on its worker -- a shell destroyed
-// mid-format. The executor was declared before the mailbox, so the mailbox went
-// first and the finishing run posted into freed memory (ASan, in the teardown of a
-// test that failed while a close waited on its save). The worker is joined before
-// anything it writes is destroyed.
 void TestServiceDestroyedMidRunJoinsItsWorker() {
-  // Heap-owned, as the shell owns it, and with a completion already queued: the
-  // mailbox holds heap storage, so a post into it after its destruction is a
-  // heap-use-after-free ASan reports, not a write into a dead stack frame.
   auto service = std::make_unique<workspace::SaveFormatterService>();
   const auto quick = []() {
     workspace::SaveFormatterService::Request request;
@@ -509,7 +438,7 @@ void TestServiceDestroyedMidRunJoinsItsWorker() {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   Expect(started.load(), "the second run should be on the worker before the service goes");
-  service.reset();  // the run is still sleeping on the worker
+  service.reset();
   Expect(true, "the teardown joins the worker before its mailbox goes (ASan checks the rest)");
 }
 
@@ -527,9 +456,6 @@ void TestCloseProjectWaitsForItsWrites() {
          "the project stays open while its formatters run");
   Expect(RowWithKey(shell, "save.wait.close-project") != nullptr,
          "behind a progress row with Cancel");
-  // QA save-wait (the stranded-focus oracle): the prompt closed, and keyboard
-  // focus stayed on it -- every key went nowhere while the close waited, and after
-  // a Cancel too. It goes back to where it was.
   Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
          "focus goes back to the editor while the close waits, not to the closed prompt");
 
@@ -542,8 +468,6 @@ void TestCloseProjectWaitsForItsWrites() {
          "and then the project closes");
 }
 
-// A rename waiting on a save that the external-change guard refuses is cancelled:
-// the file is not renamed, and a notification says why.
 void TestARefusedSaveCancelsTheRename() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -557,8 +481,6 @@ void TestARefusedSaveCancelsTheRename() {
   Expect(std::filesystem::exists(files.second) && !std::filesystem::exists(renamed),
          "the rename waits for its write");
 
-  // Someone else writes the file while its formatter runs: the save must not
-  // clobber it, so it is refused — and the rename with it.
   WriteFile(files.second, "changed on disk by someone else, longer than before\n");
   WorkspaceShellTestAccess::FlushPendingSaveFormatters(shell);
   Expect(WorkspaceShellTestAccess::HasExternalChangeBanner(shell, files.second),
@@ -576,11 +498,6 @@ void TestARefusedSaveCancelsTheRename() {
   Expect(told, "a notification says the rename was not applied");
 }
 
-// The file changes on disk while its formatter runs. Applying the formatter's
-// output used to re-stat the file and adopt what it found as the new conflict
-// baseline, so the save right after it overwrote the other writer's bytes without
-// a word. The baseline is the one the buffer was loaded against; the save is
-// refused and the external-change banner raised.
 void TestAnExternalChangeDuringFormattingIsNotOverwritten() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -602,9 +519,6 @@ void TestAnExternalChangeDuringFormattingIsNotOverwritten() {
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "the buffer keeps its edits");
 }
 
-// Same hole on the blocking path, where the conflict check runs BEFORE the
-// formatter: a formatter that is itself the other writer (it rewrites the file
-// while it runs) must not have its write clobbered by the save it was part of.
 void TestAnExternalChangeDuringABlockingFormatIsNotOverwritten() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -619,7 +533,7 @@ void TestAnExternalChangeDuringABlockingFormatIsNotOverwritten() {
          "the bytes written while the formatter ran survive, got: " + ReadFile(file));
 }
 
-}  // namespace
+}
 
 void RegisterSaveFormatterPipelineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SaveFormatterPipeline/CloseAllDirtyTabsDefersEveryFormatter",
@@ -660,4 +574,4 @@ void RegisterSaveFormatterPipelineTests(std::vector<TestCase>& tests) {
           TestBlockingSaveWritesFormattedBeforeItReturns);
 }
 
-}  // namespace microide::tests
+}

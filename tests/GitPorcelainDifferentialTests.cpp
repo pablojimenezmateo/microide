@@ -1,17 +1,3 @@
-// Differential tests for the two git status parsers, against real `git` output.
-//
-// microide parses `git status` two ways: porcelain v1 (GitPorcelainParser, the
-// GitRepository path) and porcelain v2 (GitPorcelainV2Parser, the background
-// refresh that feeds the sidebar). They read different wire formats and were
-// written separately, but they must classify the same repository identically --
-// a divergence means the sidebar badge and whatever GitRepository answers
-// disagree about the same file.
-//
-// The fixtures here are built by running actual git, not by hand-writing wire
-// records, because the interesting cases are precisely the ones whose exact
-// bytes are hard to guess: a rename git decided to call a rename, a path git
-// chose to C-quote, a delete staged on one side and re-created on the other.
-
 #include "TestSupport.h"
 
 #include <algorithm>
@@ -57,8 +43,6 @@ std::string StatusName(GitFileStatus status) {
   return "?";
 }
 
-// Build one repository holding every status shape at once, including paths git
-// has to C-quote on the v1 wire.
 void BuildRichRepository(const std::filesystem::path& repo) {
   InitializeGitRepo(repo);
   const auto write = [&](const std::string& name, const std::string& body) {
@@ -79,13 +63,11 @@ void BuildRichRepository(const std::filesystem::path& repo) {
   write("nested/deeper/inner.txt", "deep\n");
   CommitAll(repo, "base", "rich repo base");
 
-  // Worktree-only changes.
   write("modified.txt", "one\ntwo\n");
   write("with space.txt", "spaced\nmore\n");
   write("naïve-ünïcode.txt", "unicode\nmore\n");
   std::filesystem::remove(repo / "deleted.txt");
 
-  // Staged changes.
   write("staged-modify.txt", "one\ntwo\n");
   RequireGitCommandSuccess(repo, {"add", "staged-modify.txt"}, "stage a modify");
   RequireGitCommandSuccess(repo, {"rm", "--quiet", "staged-delete.txt"}, "stage a delete");
@@ -93,19 +75,16 @@ void BuildRichRepository(const std::filesystem::path& repo) {
   write("added.txt", "brand new\n");
   RequireGitCommandSuccess(repo, {"add", "added.txt"}, "stage an add");
 
-  // Staged AND further dirty in the worktree.
   write("both-staged-and-dirty.txt", "one\ntwo\n");
   RequireGitCommandSuccess(repo, {"add", "both-staged-and-dirty.txt"}, "stage the first edit");
   write("both-staged-and-dirty.txt", "one\ntwo\nthree\n");
 
-  // Untracked, including one inside a new directory and one needing quoting.
   write("untracked.txt", "new\n");
   std::filesystem::create_directories(repo / "untracked-dir");
   write("untracked-dir/inside.txt", "new\n");
   write("untracked with space.txt", "new\n");
 }
 
-// Leave the repository in a real merge conflict.
 void BuildConflictedRepository(const std::filesystem::path& repo) {
   InitializeGitRepo(repo);
   WriteFile(repo / "conflict.txt", "base\n");
@@ -123,12 +102,9 @@ void BuildConflictedRepository(const std::filesystem::path& repo) {
   WriteFile(repo / "also-conflict.txt", "main\n");
   CommitAll(repo, "main", "main edit");
 
-  // Expected to fail -- that is the point.
   RunGitCommand(repo, {"merge", "feature"});
 }
 
-// v1 gives a path -> status map directly; reduce v2's entry list to the same
-// shape so the two can be compared as sets.
 std::map<std::string, GitFileStatus> V2StatusByPath(const GitRepositoryState& state) {
   std::map<std::string, GitFileStatus> out;
   for (const GitRepositoryEntry& entry : state.entries) {
@@ -179,8 +155,6 @@ void ExpectParsersAgree(const std::filesystem::path& repo,
   const auto v1 = V1StatusByPath(GitPorcelainParser::ParseWorkingTreeEntries(v1_output));
   const auto v2 = V2StatusByPath(GitPorcelainV2Parser::Parse(v2_output, repo, 1, 0));
 
-  // A floor, not just non-emptiness: two parsers that both found nothing agree
-  // perfectly and prove nothing.
   Expect(v1.size() >= minimum_entries,
          std::string(label) + ": the v1 parser found only " + std::to_string(v1.size()) +
              " entries, expected at least " + std::to_string(minimum_entries));
@@ -198,9 +172,6 @@ void TestPorcelainParsersAgreeOnARichWorkingTree() {
   BuildRichRepository(repo);
   ExpectParsersAgree(repo, "rich working tree", 12);
 
-  // Agreement alone would also be satisfied by both parsers being wrong the same
-  // way, so pin what the answer actually is. These are what `git status` reports
-  // for the repository BuildRichRepository constructs.
   const std::string v2_output = RunGitCapture(
       repo, {"status", "--porcelain=v2", "-z", "--branch", "--renames", "--untracked-files=all"});
   const auto actual = V2StatusByPath(GitPorcelainV2Parser::Parse(v2_output, repo, 1, 0));
@@ -209,8 +180,6 @@ void TestPorcelainParsersAgreeOnARichWorkingTree() {
       {"staged-modify.txt", GitFileStatus::Modified},
       {"deleted.txt", GitFileStatus::Deleted},
       {"staged-delete.txt", GitFileStatus::Deleted},
-      // A rename has no state of its own in this taxonomy -- the precedence
-      // table maps R alongside M, and `old_path` is what carries the origin.
       {"rename-target.txt", GitFileStatus::Modified},
       {"added.txt", GitFileStatus::Added},
       {"both-staged-and-dirty.txt", GitFileStatus::Modified},
@@ -227,7 +196,6 @@ void TestPorcelainParsersAgreeOnARichWorkingTree() {
            "'" + path + "' should be " + StatusName(status) + ", parsed as " +
                StatusName(it->second));
   }
-  // Files nothing touched must not appear at all.
   for (const char* path : {"unchanged.txt", "nested/deeper/inner.txt", "with\"quote.txt"}) {
     Expect(actual.find(path) == actual.end(),
            std::string("'") + path + "' was not changed and must not be reported");
@@ -240,8 +208,6 @@ void TestPorcelainParsersAgreeOnAConflictedMerge() {
   BuildConflictedRepository(repo);
   ExpectParsersAgree(repo, "conflicted merge", 2);
 
-  // And the conflicts must actually be reported as conflicts by both, or the
-  // agreement above is agreement on the wrong answer.
   const std::string v2_output = RunGitCapture(
       repo, {"status", "--porcelain=v2", "-z", "--branch", "--renames", "--untracked-files=all"});
   const auto state = GitPorcelainV2Parser::Parse(v2_output, repo, 1, 0);
@@ -254,8 +220,6 @@ void TestPorcelainParsersAgreeOnAConflictedMerge() {
              std::to_string(conflicted));
 }
 
-// The staged-and-further-dirty case is the one the commit surface warns about,
-// and only v2 carries the bits for it. Assert them directly.
 void TestPorcelainV2ReportsStagedAndWorktreeDirtySeparately() {
   TemporaryDirectory temp;
   const std::filesystem::path repo = temp.path() / "bits";
@@ -286,8 +250,6 @@ void TestPorcelainV2ReportsStagedAndWorktreeDirtySeparately() {
   Expect(!worktree_only->staged && worktree_only->worktree_dirty,
          "a file edited but not staged is worktree-dirty and not staged");
 
-  // A rename must carry where it came from, or the compare pane opens the wrong
-  // left side.
   const GitRepositoryEntry* renamed = find("rename-target.txt");
   Expect(renamed != nullptr, "the renamed file should appear under its new name");
   Expect(renamed->old_path.has_value() &&
@@ -295,9 +257,6 @@ void TestPorcelainV2ReportsStagedAndWorktreeDirtySeparately() {
          "a staged rename must carry its origin path");
 }
 
-// The v1 wire C-quotes any path with a space, a quote, a backslash or a
-// non-ASCII byte. Both parsers must land on the same unquoted text, or the two
-// halves of the app index the same file under two different keys.
 void TestBothParsersUnquoteAwkwardPathsIdentically() {
   TemporaryDirectory temp;
   const std::filesystem::path repo = temp.path() / "quoted";
@@ -318,7 +277,7 @@ void TestBothParsersUnquoteAwkwardPathsIdentically() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterGitPorcelainDifferentialTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GitPorcelainDifferential/ParsersAgreeOnARichWorkingTree",
@@ -331,4 +290,4 @@ void RegisterGitPorcelainDifferentialTests(std::vector<TestCase>& tests) {
           TestBothParsersUnquoteAwkwardPathsIdentically);
 }
 
-}  // namespace microide::tests
+}

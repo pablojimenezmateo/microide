@@ -25,4 +25,4 @@ GitMergeConflictFixture CreateBinaryConflictRepo();
 GitMergeConflictFixture CreateCrlfConflictRepo();
 GitMergeConflictFixture CreateLargeConflictRepo(std::size_t conflict_blocks);
 
-}  // namespace microide::tests
+}

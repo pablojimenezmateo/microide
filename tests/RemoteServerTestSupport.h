@@ -32,20 +32,6 @@ inline bool ProcessIsAlive(pid_t pid) {
   return pid > 0 && (::kill(pid, 0) == 0 || errno == EPERM);
 }
 
-// SIGKILL every process whose command line or environment names something under
-// `fixture_root` — the server started there (a plain socket dir or a fake host's
-// home), anything still holding one of its paths, and what a host terminal ran:
-// a program started in one names nothing of the fixture on its command line,
-// but its HOME is the fake host's (a `yes` from a terminal test ran for five
-// days at a full core after its fixture was gone). Linux reads /proc; elsewhere
-// the `stop` the caller already sent is all there is.
-//
-// Runs from destructors, against processes that exit while it reads them, so it
-// must not throw: a /proc read of a process that has just gone fails with ESRCH,
-// and libstdc++'s filebuf THROWS on a read error -- an istreambuf_iterator over
-// it has no sentry to catch that, so it escaped ~ShortServerDir as std::terminate
-// (a TSan run, RemoteTerminal/ScrollingUpFetchesOlderHostHistory). Plain read(2)
-// and the error_code forms of the directory walk instead.
 inline std::string ReadProcFile(const std::filesystem::path& path) {
   std::string text;
   const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
@@ -70,7 +56,7 @@ inline void KillProcessesUnder(const std::filesystem::path& fixture_root) {
     }
     const pid_t pid = static_cast<pid_t>(std::atoi(name.c_str()));
     if (pid == ::getpid()) {
-      continue;  // the test itself: a variable it set may name the fixture
+      continue;
     }
     if (ReadProcFile(it->path() / "cmdline").find(needle) != std::string::npos ||
         ReadProcFile(it->path() / "environ").find(needle) != std::string::npos) {
@@ -79,13 +65,6 @@ inline void KillProcessesUnder(const std::filesystem::path& fixture_root) {
   }
 }
 
-// A fixture whose test process was KILLED (a ctest timeout, a sanitizer abort, a
-// Ctrl-C) never ran its destructor, and its server owns a live host process or
-// terminal — by design not idle — so it lived forever (TD-2026-10-08-332). Each
-// fixture records its test's pid; the first fixture in every test process
-// reaps the directories whose owner is gone, so a crashed run is cleaned by the
-// next one. A directory with no owner file predates the record and is reaped
-// once it is an hour old: no test runs that long.
 inline void ReapOrphanedFixtures() {
   std::error_code ec;
   const std::filesystem::path tmp = std::filesystem::temp_directory_path(ec);
@@ -93,7 +72,7 @@ inline void ReapOrphanedFixtures() {
     return;
   }
   const auto now = std::filesystem::file_time_type::clock::now();
-  std::error_code walk;  // the walk's own: an entry's failure below must not end it
+  std::error_code walk;
   for (std::filesystem::directory_iterator it(tmp, walk), end; !walk && it != end; it.increment(walk)) {
     const std::filesystem::directory_entry& entry = *it;
     const std::string name = entry.path().filename().string();
@@ -116,12 +95,8 @@ inline void ReapOrphanedFixtures() {
   }
 }
 
-}  // namespace server_fixture_detail
+}
 
-// A socket directory for a real microide-server daemon. Short on purpose: the
-// AF_UNIX path limit makes the usual long temp paths unusable for a socket. The
-// destructor stops the daemon and removes the tree, so a failed test leaks
-// neither.
 class ShortServerDir {
  public:
   ShortServerDir() {
@@ -135,15 +110,11 @@ class ShortServerDir {
     std::ofstream(path_.parent_path() / server_fixture_detail::kOwnerFile) << ::getpid();
   }
   ~ShortServerDir() {
-    // A test failing (Expect throws) takes the server's log with it unless it is
-    // printed here: the evidence a once-in-a-while failure needs, which a rerun
-    // that passes cannot give back (TD-2026-10-27-406).
     if (std::uncaught_exceptions() > uncaught_at_start_) {
       DumpServerLogTail();
     }
     platform::RunSubprocess({MICROIDE_SERVER_BINARY, "stop", "--socket-dir", path_.string()},
                             platform::SubprocessOptions{.timeout_ms = 10000});
-    // `stop` asks; a server wedged on a live child may not answer in time.
     server_fixture_detail::KillProcessesUnder(path_.parent_path());
     std::error_code ec;
     std::filesystem::remove_all(path_.parent_path(), ec);
@@ -151,9 +122,7 @@ class ShortServerDir {
   ShortServerDir(const ShortServerDir&) = delete;
   ShortServerDir& operator=(const ShortServerDir&) = delete;
 
-  // The socket directory (not yet created; the server creates it 0700).
   const std::filesystem::path& path() const { return path_; }
-  // Scratch space beside it, removed with it.
   std::filesystem::path scratch() const { return path_.parent_path(); }
 
  private:
@@ -185,26 +154,16 @@ inline void StartServer(const ShortServerDir& dir, std::vector<std::string> extr
   Expect(started.success(), "the server starts: " + started.stderr_text);
 }
 
-// A "host" for the connection-lifecycle tests: tests/fixtures/remote/fake-ssh,
-// which runs the remote command on this machine with HOME pointed at a private
-// directory, plus the server that ends up running there — stopped when the test
-// ends.
 struct FakeSshHost {
   ShortServerDir dir;
   std::filesystem::path home = dir.scratch() / "h";
-  // Where a session starts when it is not $HOME (empty: $HOME), as sshd starts one
-  // in the passwd home whatever $HOME says.
   std::filesystem::path login_dir;
-  // Seconds the ssh master takes to come up ("" = at once): a project that stays
-  // Connecting for a while.
   std::string master_delay;
   std::filesystem::path shim = std::filesystem::path(MICROIDE_TEST_SOURCE_DIR) / "fixtures" /
                                "remote" / "fake-ssh";
 
   FakeSshHost() {
     std::filesystem::create_directories(home);
-    // The server refuses a socket directory under anything group-writable; a
-    // real home is not, whatever this machine's umask made the fixture.
     std::filesystem::permissions(home, std::filesystem::perms::owner_all);
   }
   ~FakeSshHost() {
@@ -215,10 +174,8 @@ struct FakeSshHost {
   FakeSshHost(const FakeSshHost&) = delete;
   FakeSshHost& operator=(const FakeSshHost&) = delete;
 
-  // The socket directory of the server the host's sessions start.
   std::filesystem::path server_dir() const { return home / ".local/state/microide/server"; }
 
-  // The `remote.ssh_command` that reaches it, as argv.
   std::vector<std::string> SshArgv(bool needs_auth = false) const {
     std::vector<std::string> argv = {"env", "FAKE_SSH_HOME=" + home.string()};
     if (!login_dir.empty()) {
@@ -235,5 +192,5 @@ struct FakeSshHost {
   }
 };
 
-}  // namespace microide::tests
+}
 

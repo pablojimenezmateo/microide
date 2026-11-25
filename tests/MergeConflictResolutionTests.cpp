@@ -33,10 +33,6 @@ using microide::workspace::ValidateMergeResult;
 using microide::workspace::CompareInteractionCoordinator;
 using microide::workspace::ProjectWorkspaceState;
 
-// Builds a delete-resolution merge tab (existence-choice conflict emptied to signal
-// deletion) whose working file exists on disk, plus the minimal Operations wiring the
-// delete branch of MarkMergeResolved touches. `stage_ok` decides whether the injected
-// git stage succeeds.
 struct DeleteResolutionHarness {
   ProjectWorkspaceState state;
   MergeTabState merge_tab;
@@ -51,8 +47,6 @@ struct DeleteResolutionHarness {
   }
 };
 
-// A delete-conflict resolution whose git staging fails must NOT lose the working file:
-// the removal is rolled back with the original bytes and the tab stays unresolved.
 void TestDeleteConflictStageFailureRestoresFile() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path result_path = temp_dir.path() / "conflicted.txt";
@@ -66,7 +60,7 @@ void TestDeleteConflictStageFailureRestoresFile() {
   harness.merge_tab.output_path = result_path;
 
   CompareInteractionCoordinator coordinator(harness.state,
-                                            harness.MakeOperations(/*stage_ok=*/false));
+                                            harness.MakeOperations(false));
   coordinator.MarkMergeResolved();
 
   Expect(std::filesystem::exists(result_path),
@@ -77,7 +71,6 @@ void TestDeleteConflictStageFailureRestoresFile() {
          "a failed stage must leave the delete conflict unresolved");
 }
 
-// The success path still deletes and stages the file and marks the tab resolved.
 void TestDeleteConflictStageSuccessRemovesFile() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path result_path = temp_dir.path() / "conflicted.txt";
@@ -90,7 +83,7 @@ void TestDeleteConflictStageSuccessRemovesFile() {
   harness.merge_tab.output_path = result_path;
 
   CompareInteractionCoordinator coordinator(harness.state,
-                                            harness.MakeOperations(/*stage_ok=*/true));
+                                            harness.MakeOperations(true));
   coordinator.MarkMergeResolved();
 
   Expect(!std::filesystem::exists(result_path),
@@ -112,10 +105,6 @@ void TestBothModifiedClassification() {
          "both-modified fixture should classify as both modified");
 }
 
-// A conflicted gitlink is not a text merge — there is nothing to three-way — but
-// git reports it with the same `u UU` codes as a content conflict, so it used to
-// classify as BothModified and the merge surface offered hunks for what is really
-// a commit pointer. The porcelain v2 `<sub>` field is the discriminator.
 void TestSubmoduleConflictClassification() {
   project::GitRepositoryEntry entry;
   entry.kind = project::GitRepositoryEntryKind::Unmerged;
@@ -138,11 +127,6 @@ void TestSubmoduleConflictClassification() {
          "a submodule conflict must not offer text hunks");
 }
 
-// git's D/F conflict. git does NOT report the colliding path: it leaves the
-// directory in place and moves the file side aside, so the unmerged record names
-// `thing~file-side` while `thing` is the directory. The refresh probe sets this
-// flag; see GitRepositoryService/RefreshMarksFileDirectoryConflict for the
-// end-to-end case against real git.
 void TestFileDirectoryConflictClassification() {
   project::GitRepositoryEntry entry;
   entry.kind = project::GitRepositoryEntryKind::Unmerged;
@@ -164,8 +148,6 @@ void TestFileDirectoryConflictClassification() {
   Expect(!metadata.text_hunks_available,
          "a file/directory conflict must not offer text hunks");
 
-  // A submodule checkout is also a directory; the more specific (and more
-  // actionable) submodule message must win.
   entry.submodule = true;
   const auto submodule_wins = ClassifyMergeFileConflict(MergeConflictClassificationInput{
       .repository_entry = &entry,
@@ -179,7 +161,6 @@ void TestFileDirectoryConflictClassification() {
   Expect(submodule_wins.kind == MergeFileConflictKind::Submodule,
          "a submodule outranks file/directory — its checkout is a directory too");
 
-  // A conflicted path that is an ordinary file is unaffected.
   entry.submodule = false;
   entry.path_is_directory = false;
   const auto ordinary = ClassifyMergeFileConflict(MergeConflictClassificationInput{
@@ -209,9 +190,6 @@ void TestBothAddedClassification() {
 }
 
 void TestSingleSideAddWithoutBaseIsNotDelete() {
-  // No base means a side that has the file *added* it; the existence-fallback used
-  // to mislabel these as deletes (offering a spurious existence choice) because it
-  // ignored base_exists.
   const auto us = ClassifyMergeFileConflict(MergeConflictClassificationInput{
       .base_exists = false,
       .incoming_exists = false,
@@ -276,9 +254,6 @@ void TestBinaryClassification() {
 }
 
 void TestBothDeletedClassification() {
-  // base present, both sides absent: a real git "DD" conflict. The existence
-  // fallback used to omit this combination and leave the kind Unknown, which
-  // wrongly offered a text-hunk view and suppressed the keep/delete choice.
   const auto metadata = ClassifyMergeFileConflict(MergeConflictClassificationInput{
       .base_exists = true,
       .incoming_exists = false,
@@ -295,9 +270,6 @@ void TestBothDeletedClassification() {
 }
 
 void TestBinaryDoesNotClobberExistenceChoice() {
-  // A delete/modify conflict whose surviving side is binary must keep its
-  // existence-choice kind; the unconditional binary override used to overwrite it
-  // with Binary, stripping the keep-vs-delete decision the user needs.
   std::string binary(8, '\0');
   const auto them = ClassifyMergeFileConflict(MergeConflictClassificationInput{
       .base_exists = true,
@@ -327,15 +299,6 @@ void TestBothMergeOrders() {
          "both-incoming-first should place incoming lines before current lines");
 }
 
-// The merge RESULT pane is an editable TextViewport like the compare pane, so it
-// answers the multi-caret verbs -- and nothing tested that either. The coupling
-// worth checking is validation: ValidateMergeResult scans the live buffer in one
-// LineSpan walk for a COMPLETE conflict block, and a multi-caret edit changes
-// several disjoint regions at once, which is the shape a scan that caches or
-// short-circuits per region gets wrong.
-//
-// The gesture here is the realistic one: three carets on the three marker lines
-// of a conflict, delete-line at each, markers gone in one step.
 void TestMultiCaretEditInTheResultPaneIsValidated() {
   MergeTabState merge_tab;
   merge_tab.result_viewport.LoadContent(
@@ -343,11 +306,6 @@ void TestMultiCaretEditInTheResultPaneIsValidated() {
       merge_tab.result_line_ending);
   merge_tab.result_viewport.SetDirty(false);
 
-  // Asserting on the ISSUE, not on `ok`: overall validity also depends on the
-  // result existing on disk and on the save state, neither of which this test is
-  // about. Validation reports the FIRST blocking issue and `Unsaved` precedes
-  // `ConflictMarkers`, so the dirty flag is cleared before each read -- the
-  // fixture beside this one does the same after its LoadContent.
   auto& viewport = merge_tab.result_viewport;
   const auto marker_issue = [&]() {
     viewport.SetDirty(false);
@@ -361,7 +319,6 @@ void TestMultiCaretEditInTheResultPaneIsValidated() {
   Expect(marker_issue() == MergeValidationIssue::ConflictMarkers,
          "the fixture starts with a complete conflict block, or this proves nothing");
 
-  // Three carets, one on each marker line (1, 3, 5), then delete-line.
   const std::size_t lines_before = viewport.line_count();
   viewport.MoveCursorTo(1, 0);
   viewport.AddSecondaryCaret(3, 0);
@@ -379,8 +336,6 @@ void TestMultiCaretEditInTheResultPaneIsValidated() {
   Expect(marker_issue() != MergeValidationIssue::ConflictMarkers,
          "the scan sees the resolved buffer, not the one it was built for");
 
-  // And one undo puts the whole conflict back -- a per-site undo would restore
-  // one marker line and leave the block incomplete, which reads as resolved.
   Expect(viewport.Undo(), "the multi-caret delete undoes as one step");
   Expect(viewport.line_count() == lines_before,
          "all three lines come back together, got " + std::to_string(viewport.line_count()) +
@@ -401,20 +356,10 @@ void TestValidationBlocksConflictMarkers() {
   });
   Expect(!validation.ok && validation.issue == MergeValidationIssue::ConflictMarkers,
          "validation should block conflict markers");
-  // The reported marker line is the first `<<<<<<<` line (index 1 here). This exercises
-  // the single-pass LineSpan scan that replaced serialize + a second Snapshot()
-  // (TD-2026-07-17A-009): the "markers present" verdict and the marker line index now
-  // come from one walk of the live buffer.
   Expect(validation.marker_line == std::optional<std::size_t>(1),
          "validation should report the first conflict-marker line");
 }
 
-// The single-pass conflict scanner and the text test agree with the merge editor's
-// parser of git's output: a marker is a LINE, anchored at its start. `complete`
-// needs a start, a separator and an end line; `first_marker_line` is the first
-// start line. A banner comment of '=' and markers quoted mid-line -- in a comment,
-// a test fixture, this repository's own sources -- are not a conflict: the
-// substring test made such a resolved file read "Conflict markers remain" forever.
 void TestScanConflictMarkersMatchesLegacyBehavior() {
   using microide::util::ConflictMarkerScan;
   using microide::util::ContainsCompleteConflictMarkers;
@@ -427,12 +372,10 @@ void TestScanConflictMarkersMatchesLegacyBehavior() {
   Expect(complete.first_marker_line == std::optional<std::size_t>(1),
          "first anchored `<<<<<<<` is line 1");
 
-  // Only two of the three: not a complete conflict.
   const std::vector<std::string> partial = {"<<<<<<< HEAD", "side", "======="};
   Expect(!ScanConflictMarkers(partial).complete,
          "a missing `>>>>>>>` line should not read as complete");
 
-  // Mid-line sigils and a banner are text, not markers.
   const std::vector<std::string> quoted = {"// the merge refuses a '<<<<<<<' left behind",
                                            "// ===========================================",
                                            "expect(text.contains(\">>>>>>> branch\"));"};
@@ -443,7 +386,6 @@ void TestScanConflictMarkersMatchesLegacyBehavior() {
   Expect(!ContainsCompleteConflictMarkers("// <<<<<<< ours\n// =======\n// >>>>>>> theirs\n"),
          "the text test agrees: commented-out markers are not a conflict");
 
-  // As git writes them in a CRLF file, and with a larger merge.conflictMarkerSize.
   Expect(ContainsCompleteConflictMarkers("<<<<<<< HEAD\r\na\r\n=======\r\nb\r\n>>>>>>> x\r\n"),
          "a CRLF conflict is one");
   Expect(ScanConflictMarkers(std::vector<std::string>{"<<<<<<<<<< HEAD", "a", "==========", "b",
@@ -479,26 +421,18 @@ void TestCrlfHeavyClassification() {
          "crlf-only differences should classify as line-ending-heavy");
 }
 
-// "Sides differ only by line endings" is the label a user reads before deciding it
-// is safe to take one side whole, so it must not appear when a side rewrote real
-// content. It used to: one side normalizing away was enough (2026-07-10 pass).
 void TestLineEndingHeavyRequiresBothSidesToBeEndingOnly() {
   const auto one_sided = ClassifyMergeFileConflict(MergeConflictClassificationInput{
       .base_exists = true,
       .incoming_exists = true,
       .current_exists = true,
       .base_content = "alpha\nbeta\n",
-      // Incoming only rewrote the endings...
       .incoming_content = "alpha\r\nbeta\r\n",
-      // ...while current made a genuine content change.
       .current_content = "alpha\nBETA CHANGED\n",
   });
   Expect(one_sided.kind == MergeFileConflictKind::BothModified,
          "a real content change on one side is not a line-ending conflict");
 
-  // Both sides made the SAME content change and disagree only on endings: that is
-  // still purely an ending conflict, and the old predicate missed it because it
-  // required both raw sides to be non-normalized.
   const auto agreeing_sides = ClassifyMergeFileConflict(MergeConflictClassificationInput{
       .base_exists = true,
       .incoming_exists = true,
@@ -513,17 +447,6 @@ void TestLineEndingHeavyRequiresBothSidesToBeEndingOnly() {
          "the summary must not claim whitespace detection the classifier does not do");
 }
 
-// Mark Resolved saves the result (bumping the file mtime) and then validates it.
-// Regression: the resolver must refresh disk_result_tick to the saved file's mtime
-// so its own write is not flagged as an external modification, which previously
-// rejected every Mark Resolved and never staged the file.
-// Regression: the staleness check compared only the modification tick, and a moved
-// tick is not a changed file. A `touch`, a tool that rewrote the output with
-// identical bytes, or a `git checkout` restoring it all move it — and every one of
-// those BLOCKED Mark Resolved with "refresh the resolver before marking resolved",
-// which throws away a resolution over a file that never changed. The merge tab
-// already holds the exact text it last wrote, so the confirmation is an exact
-// comparison rather than a heuristic.
 void TestIdenticalRewriteDoesNotBlockMarkResolved() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path result_path = temp_dir.path() / "resolved.txt";
@@ -535,7 +458,6 @@ void TestIdenticalRewriteDoesNotBlockMarkResolved() {
   merge_tab.result_viewport.SetDirty(false);
   merge_tab.output_path = result_path;
   merge_tab.persisted_output_baseline = resolved;
-  // A tick that disagrees with the file, as a touch or an identical rewrite leaves it.
   merge_tab.disk_result_tick = 1;
 
   const MergeValidationResult result = ValidateMergeResult(MergeValidationRequest{
@@ -547,8 +469,6 @@ void TestIdenticalRewriteDoesNotBlockMarkResolved() {
          "a moved tick over byte-identical content must not block Mark Resolved");
 }
 
-// The other half: a real external edit must still block. Without it the fix above
-// could pass by never flagging anything.
 void TestRealExternalEditStillBlocksMarkResolved() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path result_path = temp_dir.path() / "resolved.txt";
@@ -562,7 +482,6 @@ void TestRealExternalEditStillBlocksMarkResolved() {
   merge_tab.persisted_output_baseline = resolved;
   merge_tab.disk_result_tick = 1;
 
-  // Someone else really did change it.
   WriteFile(result_path, "clean resolved content\nedited by something else\n");
 
   const MergeValidationResult result = ValidateMergeResult(MergeValidationRequest{
@@ -584,7 +503,6 @@ void TestMarkResolvedRefreshesDiskTick() {
                                         merge_tab.result_line_ending);
   merge_tab.result_viewport.SetDirty(false);
   merge_tab.output_path = result_path;
-  // Stale open-time tick, as if the resolver's own save had since rewritten the file.
   merge_tab.disk_result_tick = 1;
 
   const MergeValidationResult stale = ValidateMergeResult(MergeValidationRequest{
@@ -595,7 +513,6 @@ void TestMarkResolvedRefreshesDiskTick() {
   Expect(!stale.ok && stale.issue == MergeValidationIssue::ExternalModification,
          "a disk tick disagreeing with the file mtime flags external modification");
 
-  // Refresh the tick to the file's current mtime (what Mark Resolved now does).
   merge_tab.disk_result_tick = microide::util::FileModificationTick(result_path);
   const MergeValidationResult refreshed = ValidateMergeResult(MergeValidationRequest{
       .merge_tab = merge_tab,
@@ -605,33 +522,20 @@ void TestMarkResolvedRefreshesDiskTick() {
   Expect(refreshed.ok, "after refreshing the disk tick, validation accepts the saved result");
 }
 
-// A modify/delete conflict resolves to deletion when the user reduces the result to
-// empty content. ResolvedResultShouldExist must derive this from the serialized
-// content, not from result_viewport.lines().empty() (always false), so the delete
-// path is reachable and ValidateMergeResult accepts a non-existent file.
 void TestDeleteConflictResolvesByDeletion() {
   MergeTabState merge_tab;
   merge_tab.file_conflict.requires_existence_choice = true;
 
-  // Non-empty content: keep the file.
   merge_tab.result_viewport.LoadContent("kept content\n", {}, merge_tab.result_line_ending);
   Expect(microide::workspace::ResolvedResultShouldExist(merge_tab),
          "a non-empty existence-choice result should keep the file");
 
-  // Empty content: accept the deletion. lines() is still non-empty ({\"\"}) here, so
-  // this specifically exercises the serialized-content path.
   merge_tab.result_viewport.LoadContent("", {}, merge_tab.result_line_ending);
   Expect(!merge_tab.result_viewport.lines().empty(),
          "an emptied buffer is normalized to one line (why lines().empty() cannot signal delete)");
   Expect(!microide::workspace::ResolvedResultShouldExist(merge_tab),
          "an empty existence-choice result should resolve to deletion");
 
-  // The emptiness test reads the buffer by REFERENCE and through `LineView`, so it
-  // neither copies the document nor leaves a materialized line behind. `operator[]`
-  // would put a heap copy of line 0 in the buffer's line cache and keep it until the
-  // next mutation; `materialized_line_count()` is what makes that observable.
-  // A ONE-line buffer, deliberately: the size()==1 arm is the only one that reads
-  // line 0, so a multi-line fixture short-circuits past the accessor under test.
   merge_tab.result_viewport.LoadContent("kept content", {}, merge_tab.result_line_ending);
   Expect(merge_tab.result_viewport.lines().size() == 1,
          "the fixture must reach the single-line arm that reads line 0");
@@ -642,8 +546,6 @@ void TestDeleteConflictResolvesByDeletion() {
   Expect(merge_tab.result_viewport.lines().materialized_line_count() == 0,
          "the existence check must not materialize a line copy into the result buffer");
 
-  // With result_should_exist=false and no file on disk, validation must pass (the
-  // delete path removes the file before staging).
   merge_tab.result_viewport.SetDirty(false);
   merge_tab.output_path = std::filesystem::temp_directory_path() / "microide-merge-deleted-xyz.txt";
   std::error_code ec;
@@ -656,16 +558,12 @@ void TestDeleteConflictResolvesByDeletion() {
   Expect(validation.ok,
          "a delete resolution validates when the file is absent and result_should_exist is false");
 
-  // An ordinary conflict always expects the file to exist.
   MergeTabState ordinary;
   ordinary.result_viewport.LoadContent("", {}, ordinary.result_line_ending);
   Expect(microide::workspace::ResolvedResultShouldExist(ordinary),
          "a non-existence-choice conflict always expects the file to exist");
 }
 
-// After the app's own Save, the file-change watcher can flag external_result_stale.
-// The tick re-sync must clear that flag, otherwise the boolean guard short-circuits
-// before the (now matching) tick comparison and rejects Mark Resolved forever.
 void TestExternalStaleClearedAfterSelfSave() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path result_path = temp_dir.path() / "resolved.txt";
@@ -676,35 +574,21 @@ void TestExternalStaleClearedAfterSelfSave() {
   merge_tab.result_viewport.SetDirty(false);
   merge_tab.output_path = result_path;
   merge_tab.disk_result_tick = microide::util::FileModificationTick(result_path);
-  merge_tab.external_result_stale = true;  // as the watcher would set after our own save
+  merge_tab.external_result_stale = true;
 
   const MergeValidationResult stale = ValidateMergeResult(MergeValidationRequest{
       .merge_tab = merge_tab, .project_root = {}, .result_should_exist = true});
   Expect(!stale.ok && stale.issue == MergeValidationIssue::ExternalModification,
          "the latched external-stale flag blocks Mark Resolved");
 
-  // The save path / MarkMergeResolved tick re-sync clears the flag.
   merge_tab.external_result_stale = false;
   const MergeValidationResult cleared = ValidateMergeResult(MergeValidationRequest{
       .merge_tab = merge_tab, .project_root = {}, .result_should_exist = true});
   Expect(cleared.ok, "clearing external_result_stale after reconciling the tick unblocks Mark Resolved");
 }
 
-}  // namespace
+}
 
-// Accepting a side has to tell the result pane how wide the text it just accepted
-// is: `max_visual_columns` is what sizes the pane's horizontal scroll extent and
-// decides whether its scrollbar appears at all.
-//
-// It was told nothing. The coordinator moved the replacement lines into
-// `ReplaceLines` and then handed the moved-from vector to the width update, which
-// on libstdc++ is empty — so the update raised a monotonic maximum by zero, every
-// time, and accepting a side wider than anything already measured left the pane
-// unable to scroll right far enough to see it (TD-2026-09-20-299).
-//
-// The assertion is on what the coordinator HANDS the width hook, not on a width
-// this test recomputes: a second copy of the width rule here would be a second
-// thing to keep in step with the first.
 void TestAcceptingASideReportsTheAcceptedLines() {
   const std::string wide(400, 'x');
   const std::string base = "shared\nshort\ntail\n";
@@ -759,11 +643,6 @@ void TestAcceptingASideReportsTheAcceptedLines() {
   Expect(saw_wide, "the reported lines must include the wide line that was accepted");
 }
 
-// The result's state is asked on every frame a merge is in front (the header's
-// key at prep, then its paint), and for a clean, unresolved result the answer
-// needs the whole buffer scanned for conflict markers. The scan is memoized on
-// the result's document and content revision: the state must still follow every
-// way the content changes -- an edit, an undo, a reload into the same viewport.
 void TestMergeResultStateFollowsTheResultsContent() {
   using microide::workspace::ComputeMergeResultState;
   using microide::workspace::MergeResultState;
@@ -772,24 +651,21 @@ void TestMergeResultStateFollowsTheResultsContent() {
   merge_tab.file_conflict.text_hunks_available = true;
   merge_tab.result_viewport.LoadContent(conflicted, {}, merge_tab.result_line_ending);
   const auto state = [&] {
-    merge_tab.result_viewport.SetDirty(false);  // a dirty result answers Dirty before it is scanned
+    merge_tab.result_viewport.SetDirty(false);
     return ComputeMergeResultState(merge_tab, merge_tab.file_conflict);
   };
   Expect(state() == MergeResultState::Invalid, "a result holding conflict markers is invalid");
   Expect(state() == MergeResultState::Invalid, "and still is when asked again");
-  // The markers edited away, in place.
   Expect(merge_tab.result_viewport.ReplaceLines(1, 6, {"mine"}), "the conflict is replaced by one side");
   Expect(state() == MergeResultState::Saved, "a result edited free of markers is saved");
   Expect(merge_tab.result_viewport.Undo(), "the edit undoes");
   Expect(state() == MergeResultState::Invalid, "the markers back, the result is invalid again");
   Expect(merge_tab.result_viewport.Redo(), "the edit redoes");
   Expect(state() == MergeResultState::Saved, "and saved again");
-  // Other content loaded into the same viewport.
   merge_tab.result_viewport.LoadContent(conflicted, {}, merge_tab.result_line_ending);
   Expect(state() == MergeResultState::Invalid, "a reloaded result is scanned afresh");
   merge_tab.result_viewport.LoadContent("one\ntwo\n", {}, merge_tab.result_line_ending);
   Expect(state() == MergeResultState::Saved, "and again when the reload has no markers");
-  // The states that outrank the scan are unaffected by what it remembered.
   merge_tab.marked_resolved = true;
   Expect(state() == MergeResultState::Resolved, "a result marked resolved is resolved");
   merge_tab.marked_resolved = false;
@@ -843,4 +719,4 @@ void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests) {
           TestLineEndingHeavyRequiresBothSidesToBeEndingOnly);
 }
 
-}  // namespace microide::tests
+}

@@ -14,9 +14,6 @@ enum class CompareReviewMode {
   Commit,
   Branch,
   Conflict,
-  // A non-git ("plain") comparison: two arbitrary sides (file/buffer/clipboard)
-  // with no repository backing. Sticky — never re-inferred from refs — so the
-  // git review metadata, staging, and branch-review machinery stay disabled.
   Plain,
 };
 
@@ -45,8 +42,6 @@ struct CompareSemanticFileMetadata {
   std::string old_submodule_oid;
   std::string new_submodule_oid;
 
-  // Lets a caller ask "did the classification actually move?" so downstream work
-  // keyed on it (the compare presentation model) can be skipped when it did not.
   bool operator==(const CompareSemanticFileMetadata&) const = default;
 };
 
@@ -55,9 +50,6 @@ struct BranchReviewTargetIdentity {
   std::string base_commit;
   std::string head_commit;
   std::string merge_base_commit;
-  // The git snapshot the target was resolved at: informational, NOT identity. It
-  // counts refreshes within a session, so comparing it orphaned every mark on the
-  // next refresh and on every restart.
   std::uint64_t snapshot_generation = 0;
 
   bool operator==(const BranchReviewTargetIdentity& other) const;
@@ -70,27 +62,14 @@ struct DiffSyntax;
 
 struct CompareBuildOptions {
   bool ignore_whitespace = false;
-  // Refine every hunk structurally (novel-token spans, token-anchored row
-  // alignment). Off for callers that only need the hunks themselves — the patch
-  // generator — where it would be pure cost.
   bool refine_hunks = true;
-  // The lexical rules of the file's language for the structural refinement.
-  // Null reads as GenericDiffSyntax(). Shared and immutable: one per language.
   std::shared_ptr<const DiffSyntax> syntax;
-  // Whether each side's file exists at all. A side that does not is a whole-file
-  // creation/deletion, and its patch header says so (`/dev/null`); an EXISTING
-  // empty file is an ordinary edit of zero lines. The two read alike as text —
-  // both are "" — so a caller that knows says so here; unset infers "absent"
-  // from emptiness, which is what every caller did before and what an emptied
-  // file staged as a deletion came from.
   std::optional<bool> left_exists;
   std::optional<bool> right_exists;
 };
 
 std::string CompareReviewModeLabel(CompareReviewMode mode);
 std::string WorkingTreeStagingViewLabel(WorkingTreeStagingView view);
-// The inverses of the two labels above, for restoring a persisted session. An
-// unknown label reads as the default (WorkingTree / Combined).
 CompareReviewMode ParseCompareReviewMode(std::string_view label);
 WorkingTreeStagingView ParseWorkingTreeStagingView(std::string_view label);
 CompareReviewMode InferCompareReviewMode(std::string_view left_ref,
@@ -105,4 +84,4 @@ BranchReviewTargetIdentity MakeBranchReviewTargetIdentity(
     std::string_view merge_base_commit,
     std::uint64_t snapshot_generation);
 
-}  // namespace microide::compare
+}

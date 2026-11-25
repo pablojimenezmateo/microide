@@ -9,28 +9,14 @@ namespace microide::editor {
 
 namespace {
 
-// Offset of the first byte in `text` that is not a plain, single-cell ASCII
-// character — that is, the first tab (which expands to a stop) or the first
-// byte >= 0x80 (which begins a multi-byte code point). Returns `text.size()`
-// when the whole span is plain ASCII.
-//
-// Every byte before that offset contributes exactly one visual column, so the
-// prefix needs no UTF-8 decoding and no per-character tab arithmetic at all.
-// Source lines are overwhelmingly that shape, and the width of every line in a
-// buffer is computed on open (`TextLayoutCache::MaxVisualColumns`), so this is
-// the difference between a byte scan and 50k decoder loops on a large file.
 std::size_t FirstNonPlainAsciiByte(std::string_view text) {
   return util::FirstNonAsciiOrByte(text, '\t');
 }
 
-}  // namespace
+}
 
 TextLayout::LineVisualColumnMap::LineVisualColumnMap(std::string_view line,
                                                      std::size_t tab_size) {
-  // One entry per code point, not per byte. Reserving line.size()+1 is exact for
-  // ASCII but over-reserves ~2-3x on long multibyte lines; cap the hint so a
-  // pathological (e.g. hundreds of KiB) line built transiently on a hover path
-  // cannot reserve far beyond what it needs. Growth past the cap is amortized.
   const std::size_t reserve_hint = std::min<std::size_t>(line.size() + 1, 4096);
   boundaries_.reserve(reserve_hint);
   visuals_.reserve(reserve_hint);
@@ -52,8 +38,6 @@ std::size_t TextLayout::LineVisualColumnMap::VisualColumnFor(std::size_t text_co
   if (text_column >= boundaries_.back()) {
     return line_visual_width_;
   }
-  // First boundary >= text_column; round-down to its predecessor in the same code-point so
-  // mid-codepoint queries map to the start of the code point (matching ClampTextColumn).
   auto it = std::lower_bound(boundaries_.begin(), boundaries_.end(), text_column);
   std::size_t index = static_cast<std::size_t>(it - boundaries_.begin());
   if (it == boundaries_.end() || *it > text_column) {
@@ -73,8 +57,6 @@ std::size_t TextLayout::VisualColumnForTextColumn(std::string_view line,
                                                   std::size_t text_column,
                                                   std::size_t tab_size) {
   const std::size_t clamped_column = ClampTextColumn(line, text_column);
-  // The plain-ASCII prefix is 1 byte = 1 column, so start the decoding loop at
-  // the first byte that can break that (see FirstNonPlainAsciiByte).
   const std::size_t plain_prefix = FirstNonPlainAsciiByte(line.substr(0, clamped_column));
   std::size_t visual_column = plain_prefix;
   for (std::size_t i = plain_prefix; i < clamped_column;) {
@@ -85,7 +67,6 @@ std::size_t TextLayout::VisualColumnForTextColumn(std::string_view line,
 
 std::size_t TextLayout::AdvanceVisualColumnsOver(std::size_t visual_column, std::string_view text,
                                                  std::size_t tab_size) {
-  // Same plain-ASCII shortcut as VisualColumnForTextColumn: one byte, one column.
   const std::size_t plain_prefix = FirstNonPlainAsciiByte(text);
   visual_column += plain_prefix;
   for (std::size_t i = plain_prefix; i < text.size();) {
@@ -103,13 +84,9 @@ std::size_t TextLayout::TextColumnForVisualColumn(std::string_view line,
     const std::size_t next_visual =
         AdvanceVisualColumnAt(current_visual, line, i, tab_size, &next_text);
     if (next_visual == current_visual) {
-      // A combining mark (or a mark with nothing to combine with): no cell of
-      // its own, so no position to land on. It rides with the code point before.
       i = next_text;
       continue;
     }
-    // The cluster ends after any zero-width marks that follow, so a hit on the
-    // right half of `e` + U+0301 lands after the mark, never between them.
     std::size_t cluster_end = next_text;
     while (cluster_end < line.size()) {
       std::size_t after_mark = cluster_end;
@@ -134,28 +111,6 @@ std::size_t TextLayout::ClampTextColumn(std::string_view line, std::size_t text_
     return line.size();
   }
 
-  // Round down to the start of the code point containing `clamped_column` by
-  // stepping back over continuation bytes -- at most three, because UTF-8 is
-  // self-synchronizing: a lead byte and a continuation byte are distinguishable
-  // from the byte alone.
-  //
-  // This used to re-tile the line from byte 0, one sequence at a time, which made
-  // an O(1) question cost O(column). Nothing notices on a 40-character line. On a
-  // file with no line breaks in it -- a minified bundle -- the caret sits a
-  // megabyte into "the line", and this ran FOUR times per keystroke: twice
-  // clamping the edit range's endpoints, once inside VisualColumnForTextColumn for
-  // the caret's preferred column, and once inside PreviousTextColumn for a
-  // backspace. It was the single largest remaining cost on the edit path after
-  // the copies were removed (TD-2026-08-05-131), at ~1.2 ms a call.
-  //
-  // It agrees with that tiling on ANY bytes, malformed included: a byte that is
-  // not a continuation byte always starts a unit (no multi-byte unit contains one
-  // past its lead), so the nearest such byte behind the column is the only lead
-  // that can cover it, and does exactly when its forward length reaches past the
-  // column. A continuation byte no lead claims is a one-byte unit of its own. The
-  // "valid clamp" this used to settle for on malformed bytes put the caret's
-  // boundary one byte early after \x7F\x80 -- the status bar said Col 117 with
-  // the caret 118 in (soak 5a2cb8ba7f6b).
   std::size_t column = clamped_column;
   const std::size_t floor = column >= 3 ? column - 3 : 0;
   while (column > floor && util::IsUtf8ContinuationByte(static_cast<unsigned char>(line[column]))) {
@@ -170,10 +125,6 @@ std::size_t TextLayout::PreviousTextColumn(std::string_view line, std::size_t te
     return 0;
   }
 
-  // The unit that ends at `clamped_column` (a tiling boundary): the nearest
-  // non-continuation byte behind it when that lead's sequence ends exactly
-  // there, else the single byte before it -- the same tiling as above, so a
-  // backspace after a stray continuation byte deletes that byte alone.
   std::size_t pos = clamped_column - 1;
   const std::size_t floor = clamped_column >= 4 ? clamped_column - 4 : 0;
   while (pos > floor && util::IsUtf8ContinuationByte(static_cast<unsigned char>(line[pos]))) {
@@ -192,9 +143,6 @@ std::size_t TextLayout::NextTextColumn(std::string_view line, std::size_t text_c
 }
 
 LineLayoutFacts TextLayout::MeasureLineFacts(std::string_view line, std::size_t tab_size) {
-  // Leading tabs first: a tab-indented file's lines all start with them, and
-  // measuring those byte by byte made the table build walk the whole file. After
-  // the run, plain ASCII is one cell per byte and the width is arithmetic.
   const std::size_t leading_tabs = util::LeadingByteRun(line, '\t');
   const std::size_t plain_prefix =
       leading_tabs + FirstNonPlainAsciiByte(line.substr(leading_tabs));
@@ -227,13 +175,6 @@ void TextLayout::BuildVisibleLineInto(std::string_view line,
                                       std::size_t tab_size,
                                       LayoutLine& result,
                                       LineLayoutFacts facts) {
-  // Whole-line form: derive the width and the walk start here (both need bytes
-  // this form has and the window form does not), then share one loop.
-  // Measuring the line here is an O(line) walk for one number, and it happens
-  // per BUILT ROW -- so a caller that renders many rows of one long line (soft
-  // wrap does exactly that) walks the whole line once per visible row unless it
-  // supplies the width it already knows. Counted because nothing else
-  // distinguishes "the row build" from "measuring the line the row is in".
   if (!facts.known) {
     util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthMeasureBytes, line.size());
   }
@@ -245,18 +186,6 @@ void TextLayout::BuildVisibleLineInto(std::string_view line,
     if (facts.known && facts.plain_ascii) {
       start_byte = probe;
     } else {
-      // Reach the first visible cell without decoding what precedes it. Every byte
-      // before the line's first tab-or-multibyte byte occupies exactly one visual
-      // column, so within that prefix byte offset == visual column and the walk can
-      // start at the scroll offset outright. A caller that already knows the whole
-      // line is plain ASCII (`facts.plain_ascii`) skips even the scan.
-      //
-      // This is exact for every line, not a fast path for a special case: the walk
-      // simply starts at the first byte where visual column can stop tracking byte
-      // offset. On an ordinary line the two forms do the same negligible work; on a
-      // line with no newlines in it and the caret a megabyte in, this replaces ~1M
-      // decoder iterations per rendered row with a word-at-a-time scan, or with
-      // nothing at all when the width cache has the line's facts.
       start_byte = FirstNonPlainAsciiByte(line.substr(0, probe));
       util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutPrefixBytesScanned,
                                   start_byte);
@@ -279,8 +208,6 @@ void TextLayout::BuildVisibleLineWindowInto(const VisibleLineWindow& window,
                                             std::size_t tab_size,
                                             LayoutLine& result,
                                             LineLayoutFacts facts) {
-  // `clear()` keeps each buffer's capacity, which is the whole point: a caller
-  // recycling an evicted cache entry must not pay three allocations to refill it.
   result.text.clear();
   result.source_columns.clear();
   result.text_offsets.clear();
@@ -292,23 +219,13 @@ void TextLayout::BuildVisibleLineWindowInto(const VisibleLineWindow& window,
     return;
   }
 
-  // The append loop emits at most `visible_columns` cells (it breaks once a cell
-  // reaches the right edge), so a single up-front reserve eliminates the
-  // incremental reallocations on this per-frame soft-wrap path. `text` may still
-  // grow for multibyte-heavy lines, but the common ASCII case stays alloc-free.
   result.text_offsets.reserve(visible_columns);
   result.source_columns.reserve(visible_columns);
   result.text.reserve(visible_columns);
 
   const std::string_view bytes = window.bytes;
   const std::size_t base = window.start_byte;
-  // `start_byte` sits inside the line's plain-ASCII prefix by construction, so the
-  // visual column there equals the byte column -- which is what makes starting the
-  // walk mid-line exact rather than approximate.
   std::size_t visual_column = base;
-  // Where the bytes of the last glyph that got a cell end in `text`, and the
-  // index of that cell -- so a zero-width mark can join its base glyph's bytes
-  // (a wide glyph's trailing cell sits after them and is bumped along).
   std::size_t last_glyph_next_byte = std::string_view::npos;
   std::size_t last_glyph_text_end = 0;
   std::size_t last_glyph_cell = 0;
@@ -320,9 +237,6 @@ void TextLayout::BuildVisibleLineWindowInto(const VisibleLineWindow& window,
     const std::size_t width = next_visual - visual_column;
 
     if (width == 0) {
-      // A combining mark: no cell of its own. It is drawn with the glyph before
-      // it, so its bytes join that glyph's cell -- when that glyph is on this
-      // row; a mark whose base is scrolled off, or one with no base, is dropped.
       if (last_glyph_next_byte == j) {
         const std::size_t mark_bytes = next_text - j;
         result.text.insert(last_glyph_text_end, bytes, j, mark_bytes);
@@ -353,13 +267,8 @@ void TextLayout::BuildVisibleLineWindowInto(const VisibleLineWindow& window,
         last_glyph_text_end = result.text.size();
         last_glyph_cell = result.text_offsets.size() - 1;
       } else if (absolute_cell == horizontal_scroll) {
-        // The trailing cell of a wide glyph whose lead cell is scrolled off:
-        // a blank keeps the grid aligned where half a glyph cannot be drawn.
         result.text.push_back(' ');
       }
-      // Otherwise a wide glyph's trailing cell: no text of its own, the lead
-      // cell's glyph spans it. Its offset equals the next cell's, so a run that
-      // covers it adds nothing.
       result.source_columns.push_back(base + j);
     }
 
@@ -375,27 +284,15 @@ std::size_t TextLayout::VisualColumnFromLayoutClipped(const LayoutLine& layout,
                                                        std::size_t row_start_visual,
                                                        std::size_t row_end_visual,
                                                        std::size_t source_column) {
-  // Empty layout: any source column is "off-row". A sentinel beyond row_end_visual lets std::min
-  // clip the decoration correctly.
   if (layout.source_columns.empty()) {
     return row_end_visual + 1;
   }
-  // lower_bound returns the first cell whose source byte is >= source_column. That cell's visual
-  // column is `row_start_visual + cell_index`.
   const auto& sc = layout.source_columns;
   const auto it = std::lower_bound(sc.begin(), sc.end(), source_column);
   if (it == sc.end()) {
-    // source_column is past the last visible source byte. The "natural" visual column for that
-    // position is the cell immediately after the last visible cell — i.e.
-    // `row_start_visual + source_columns.size()`. That value:
-    //   - equals row_end_visual when the row is filled, giving a correct clip;
-    //   - equals "just past the end of a short line" when the line is shorter than the row, giving
-    //     a correct end-of-line decoration boundary;
-    //   - is always >= the legacy walk result for in-window source columns.
     return row_start_visual + sc.size();
   }
   if (it == sc.begin() && *it > source_column) {
-    // source_column precedes the leftmost visible source byte → before the row's left edge.
     return row_start_visual > 0 ? row_start_visual - 1 : 0;
   }
   const std::size_t cell_index = static_cast<std::size_t>(it - sc.begin());
@@ -421,9 +318,6 @@ TextLayout::ByteRange TextLayout::IdentifierRangeAt(std::string_view line,
   if (text_column >= line.size()) {
     return {};
   }
-  // Codepoint-aware (util::Utf8IdentifierRun*): `größe`, `naïve` or `変数` are
-  // one hover target. The old byte-wise [A-Za-z0-9_] scan rejected every
-  // non-ASCII byte, so a hover over such a name found no identifier at all.
   const std::size_t hit = util::Utf8CodepointStartAt(line, text_column);
   std::size_t length = 0;
   if (!util::Utf8IdentifierCodepointAt(line, hit, &length)) {
@@ -432,18 +326,12 @@ TextLayout::ByteRange TextLayout::IdentifierRangeAt(std::string_view line,
   std::size_t start = util::Utf8IdentifierRunStart(line, hit);
   const std::size_t end = util::Utf8IdentifierRunEnd(line, hit);
 
-  // Extend the range leftward across member-access operators (`.` and `->`) so a
-  // hover on the trailing member of `foo.bar` / `ptr->field` / `a.b.c` evaluates the
-  // whole chain rather than just the bare word. Only a `.` or `->` immediately
-  // preceding the current start, and itself immediately preceded by identifier
-  // content, is absorbed; anything else (whitespace, a stray `>`, a second `.`)
-  // terminates the walk so the boundary stays deterministic.
   for (;;) {
     std::size_t op_start = start;
     if (start >= 2 && line[start - 1] == '>' && line[start - 2] == '-') {
-      op_start = start - 2;  // "->"
+      op_start = start - 2;
     } else if (start >= 1 && line[start - 1] == '.') {
-      op_start = start - 1;  // "."
+      op_start = start - 1;
     } else {
       break;
     }
@@ -456,4 +344,4 @@ TextLayout::ByteRange TextLayout::IdentifierRangeAt(std::string_view line,
   return {start, end};
 }
 
-}  // namespace microide::editor
+}

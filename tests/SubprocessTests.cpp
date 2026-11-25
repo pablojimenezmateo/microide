@@ -39,10 +39,6 @@ using microide::platform::RunSubprocess;
 using microide::platform::SubprocessEnvironmentOverride;
 using microide::platform::SubprocessOptions;
 
-// A contributed language server installed per user must be able to exec itself and
-// read its runtime: the PATH directories under HOME, the prefix a <prefix>/bin sits
-// in (nvm's bin links into its lib), and the toolchain roots -- and nothing that
-// grants HOME itself, ~/.local's user data or a directory outside HOME.
 void TestAllowUserToolchainsGrantsPerUserInstallsOnly() {
   platform::SubprocessSandbox sandbox;
   const std::filesystem::path home = "/home/qa";
@@ -197,10 +193,6 @@ void TestSubprocessAppliesEnvironmentOverrides() {
   Expect(unset_result.stdout_text == "unset",
          "subprocess execution should allow removing inherited environment variables");
 
-  // Passthrough: when any override is present the child environment is rebuilt from
-  // the current environ (BuildChildEnvironment) in the parent before fork. An
-  // UNRELATED inherited variable must survive that rebuild — a regression here would
-  // silently drop the entire inherited environment from the child.
   const auto passthrough_result = RunSubprocess(
       {"sh", "-c", "printf '%s' \"$MICROIDE_SUBPROCESS_TEST_ENV\""},
       SubprocessOptions{
@@ -249,45 +241,33 @@ void TestSubprocessWithoutExplicitStdinDoesNotInheritParentStdin() {
 }
 
 void TestAsyncSubprocessMovedFromAccessorsDoNotCrash() {
-  // Regression: pid()/exit_code()/stdout_fd() used to lock impl_->state_mutex
-  // before the null check, so calling them on a moved-from object (impl_ ==
-  // nullptr) dereferenced null. They must now return safe defaults.
   microide::platform::AsyncSubprocess process;
   Expect(process.Start({"cat"}), "moved-from fixture should start a process");
   microide::platform::AsyncSubprocess moved(std::move(process));
-  // `process` is now moved-from (impl_ == nullptr); accessors must not crash.
   Expect(process.pid() == -1, "moved-from pid() should return -1, not crash");
   Expect(!process.exit_code().has_value(),
          "moved-from exit_code() should return nullopt, not crash");
   Expect(process.stdout_fd() == -1, "moved-from stdout_fd() should return -1, not crash");
-  // The live object still works.
   Expect(moved.pid() > 0, "the moved-to object retains a valid pid");
   moved.Shutdown();
 }
 
-// Finish lets a child that ends on stdin EOF read what was written last. A relay
-// (`microide-server attach`, ssh) is exactly that child: the remote client's
-// teardown flushed its final frames into the relay's stdin and then Shutdown sent
-// SIGTERM at once, killing a relay that had not been scheduled to read them yet --
-// a typed line or a term/close never reached the host (TD-2026-10-28-413). Here
-// the child reads only after 300 ms, which Shutdown never waited for.
 void TestAsyncSubprocessFinishLetsTheChildReadWhatWasWrittenLast() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path out = temp_dir.path() / "got";
   microide::platform::AsyncSubprocess process;
   Expect(process.Start({"sh", "-c", "sleep 0.3; cat > '" + out.string() + "'"}), "the child starts");
   Expect(process.Write("the last frame\n"), "the write lands in the pipe");
-  process.Finish(/*grace_ms=*/5000, /*kill_timeout_ms=*/2000);
+  process.Finish(5000, 2000);
   Expect(!process.IsRunning(), "and the child is gone");
   std::ifstream in(out);
   const std::string got((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
   Expect(got == "the last frame\n", "what was written last was read: '" + got + "'");
 
-  // A child that does not end on EOF is still ended, after the grace.
   microide::platform::AsyncSubprocess stuck;
   Expect(stuck.Start({"sh", "-c", "trap '' HUP; sleep 30"}), "the stuck child starts");
   const auto start = std::chrono::steady_clock::now();
-  stuck.Finish(/*grace_ms=*/100, /*kill_timeout_ms=*/2000);
+  stuck.Finish(100, 2000);
   Expect(!stuck.IsRunning(), "a child that ignores EOF is ended");
   Expect(std::chrono::steady_clock::now() - start < std::chrono::seconds(5), "within the bounds");
 }
@@ -315,8 +295,6 @@ void TestAsyncSubprocessReadTimeoutDoesNotBlockConcurrentWrite() {
     }
   });
 
-  // Wait for the reader to actually enter its loop (so a Read is in flight)
-  // rather than guessing with a fixed sleep, then time a concurrent write.
   const auto reader_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   while (!reader_running.load(std::memory_order_acquire) &&
          std::chrono::steady_clock::now() < reader_deadline) {
@@ -363,14 +341,11 @@ void TestAsyncSubprocessReadTimeoutDoesNotBlockConcurrentWrite() {
          "async subprocess concurrency fixture should echo the written payload");
 }
 
-// Regression: writing to a pipe whose read end has closed must return EPIPE rather
-// than raise SIGPIPE and terminate the process. Simply reaching the assertions
-// proves the signal was ignored (otherwise the test binary would have been killed).
 void TestIgnoreBrokenPipeSignalPreventsCrash() {
   microide::platform::IgnoreBrokenPipeSignal();
   int fds[2] = {-1, -1};
   Expect(::pipe(fds) == 0, "pipe() should succeed");
-  ::close(fds[0]);  // close the read end so the next write breaks the pipe
+  ::close(fds[0]);
   errno = 0;
   const char byte = 'x';
   const ssize_t written = ::write(fds[1], &byte, 1);
@@ -380,11 +355,6 @@ void TestIgnoreBrokenPipeSignalPreventsCrash() {
   Expect(saved_errno == EPIPE, "write to a broken pipe should report EPIPE, not crash");
 }
 
-// The editor ignores SIGPIPE for itself, and an ignored disposition survives
-// exec, so every child used to inherit it: `yes | head` reported "Broken pipe"
-// and exited 1 where it should die quietly of the signal (141), and a shell
-// cannot reset a signal that was ignored when it started. The probe prints the
-// exit status of a `yes` whose reader went away.
 constexpr const char* kSigpipeProbe =
     "( yes 2>/dev/null; echo yes-exit=$? >&2 ) | head -c 1 >/dev/null";
 
@@ -407,9 +377,6 @@ void TestSubprocessChildGetsDefaultSigpipe() {
 void TestAsyncSubprocessChildGetsDefaultSigpipe() {
   microide::platform::IgnoreBrokenPipeSignal();
   microide::platform::AsyncSubprocess process;
-  // stderr is not captured by the async transport; route the marker to the
-  // outer shell's stdout through a saved descriptor (the subshell's own stdout
-  // is the pipe `head` drops).
   Expect(process.Start({"sh", "-c", "exec 3>&1; ( yes 2>/dev/null; echo yes-exit=$? >&3 ) | "
                                     "head -c 1 >/dev/null; echo done"}),
          "async subprocess SIGPIPE probe should start");
@@ -431,8 +398,6 @@ void TestAsyncSubprocessChildGetsDefaultSigpipe() {
 }
 
 #if MICROIDE_HAS_BACKTRACE && !MICROIDE_SANITIZER_OWNS_SIGNALS
-// Runs `body` in a forked child whose stderr is a pipe; returns what it wrote
-// there and how it ended (waitpid's status).
 template <typename Body>
 std::string StderrOfForkedChild(Body body, int* status) {
   int fds[2] = {-1, -1};
@@ -472,13 +437,7 @@ std::size_t CountOf(std::string_view text, std::string_view needle) {
   return count;
 }
 
-// A crash says where. The soak's `std::clamp` assertion abort (707c77a79c1d) left
-// the assertion's text and an exit status of -6: no stack, no replay, and one
-// signature for every crash of an unsanitized build. The handler prints the
-// crashing thread's return addresses and the process still dies of its signal.
 void TestCrashBacktraceIsPrintedAndTheSignalStillKills() {
-  // The unwinder is loaded in the parent: the child of a threaded process must
-  // not be the first to load it.
   void* warm[1];
   (void)::backtrace(warm, 1);
   int status = 0;
@@ -494,12 +453,9 @@ void TestCrashBacktraceIsPrintedAndTheSignalStillKills() {
          "the crash is announced with its signal, got: " + output);
   Expect(output.find("microide crash: end of backtrace") != std::string::npos,
          "the backtrace is closed, got: " + output);
-  // Frames are `module(+0xoffset) [0xaddress]`, which addr2line resolves.
   Expect(CountOf(output, "[0x") >= 3, "the backtrace has frames, got: " + output);
 }
 
-// A loop turn that outruns MICROIDE_TRACE_STALL_MS prints where the main thread
-// is and, when it ends, how long it took; the loop's blocking wait is idleness.
 void TestStallWatchdogReportsABusyTurnAndNotAnIdleWait() {
   void* warm[1];
   (void)::backtrace(warm, 1);
@@ -532,21 +488,13 @@ void TestStallWatchdogReportsABusyTurnAndNotAnIdleWait() {
   Expect(output.find("microide stall: ended after ") != std::string::npos,
          "the turn's end says how long it took, got: " + output);
 }
-#endif  // MICROIDE_HAS_BACKTRACE && !MICROIDE_SANITIZER_OWNS_SIGNALS
+#endif
 
-// A source-coverage build writes its counters where the app really ends (it
-// leaves through quick_exit, which runs no exit handler); any other build has no
-// such runtime and the flush is a no-op that says so.
 void TestCoverageProfileFlushMatchesTheBuild() {
   Expect(microide::util::FlushCoverageProfile() == microide::util::CoverageProfileInstrumented(),
          "the flush writes exactly when the build carries the coverage runtime");
 }
 
-// QA's handle on the crash points: every pass counted by site and by the file it
-// acted on, and one rule armed to stall the process at a pass or kill it there.
-// The soak's lost-buffer findings came from kills that fell between two disk
-// writes and no replay ever killed there again; a rule kills at the same
-// boundary every time.
 void TestCrashPointControlCountsPassesAndFiresItsRule() {
   using microide::util::CrashPoint;
   using microide::util::CrashPointControl;
@@ -580,7 +528,6 @@ void TestCrashPointControlCountsPassesAndFiresItsRule() {
   Expect(!CrashPointControl::Arm("kill:test.site-a#0", &error), "a kill needs a pass to fire at");
   Expect(!CrashPointControl::Arm("kill:", &error), "a rule names a site");
 
-  // A delay at the second pass of one file's boundary, and at no other.
   Expect(CrashPointControl::Arm("delay=120:test.site-a@session#2", &error), "a delay rule arms: " + error);
   const auto timed = [](const char* where, std::string_view detail) {
     const auto began = std::chrono::steady_clock::now();
@@ -599,7 +546,6 @@ void TestCrashPointControlCountsPassesAndFiresItsRule() {
   Expect(timed("test.site-a", "/state/projects/p/session") < std::chrono::milliseconds(60),
          "and fires once");
 
-  // A kill: the process says where and dies of SIGKILL there.
   int fds[2] = {-1, -1};
   Expect(::pipe2(fds, O_CLOEXEC) == 0, "pipe2 should succeed");
   const pid_t child = ::fork();
@@ -629,12 +575,6 @@ void TestCrashPointControlCountsPassesAndFiresItsRule() {
   microide::util::SetCrashPointHook(nullptr);
 }
 
-// The editor raises its own soft RLIMIT_NOFILE to the hard limit: the inherited
-// 1024 ran out under a session of terminals and the session save was the first
-// write to fail (soak c47c6a1f54cf). Its children start with the limit it
-// inherited, so a program that still uses select() is not handed descriptors its
-// fd_set cannot hold. Scoped: the test process's limit and the remembered value
-// are put back however the test ends.
 class ScopedOpenFileLimit {
  public:
   explicit ScopedOpenFileLimit(rlim_t soft) {
@@ -661,7 +601,7 @@ void TestOpenFileLimitIsRaisedForTheEditorAndRestoredForItsChildren() {
   rlimit hard{};
   getrlimit(RLIMIT_NOFILE, &hard);
   if (hard.rlim_max <= 300) {
-    return;  // nothing to raise on this host
+    return;
   }
   ScopedOpenFileLimit scoped(300);
   microide::platform::RaiseOpenFileLimit();
@@ -699,14 +639,6 @@ void TestOpenFileLimitIsRaisedForTheEditorAndRestoredForItsChildren() {
          "an async child starts with the inherited soft limit, got: " + output);
 }
 
-// The editor may START with signals ignored: a background job of a
-// non-interactive shell begins with SIGINT and SIGQUIT ignored, and an ignored
-// disposition survives exec. The coverage lane runs the suite that way, and the
-// debugger's Pause -- a SIGINT to the program gdb is still starting -- stopped
-// nothing there; Ctrl+C in the integrated terminal reached no program either.
-// Every child starts with every signal at its default. The probe is `grep`
-// itself, not a shell, so nothing between the spawn and /proc/self/status can
-// change the mask. SigIgn is hex, bit (signo - 1).
 class ScopedIgnoredInterrupts {
  public:
   ScopedIgnoredInterrupts() {
@@ -728,7 +660,6 @@ class ScopedIgnoredInterrupts {
   struct sigaction saved_quit_{};
 };
 
-// The SigIgn mask in a /proc/<pid>/status excerpt, or nullopt.
 std::optional<unsigned long long> IgnoredSignalMask(std::string_view status_output) {
   const auto at = status_output.find("SigIgn:");
   if (at == std::string_view::npos) {
@@ -782,15 +713,8 @@ void TestAsyncSubprocessChildDoesNotInheritIgnoredInterrupts() {
          "an async child must not inherit an ignored SIGINT/SIGQUIT, got: " + output);
 }
 
-// Regression: a child that echoes a payload larger than the kernel pipe buffer
-// would deadlock if the parent wrote all of stdin before draining stdout — the
-// child blocks on write(stdout) while the parent blocks on write(stdin). The
-// pump must interleave the two directions. A hang here (caught by the ctest
-// timeout) is the failure mode; completing with the echoed payload is the pass.
 void TestSubprocessLargeStdinDoesNotDeadlock() {
   microide::platform::IgnoreBrokenPipeSignal();
-  // 4 MiB dwarfs the ~64 KiB default pipe buffer on Linux, so both directions
-  // must make progress concurrently for `cat` to finish.
   std::string payload;
   payload.reserve(4u * 1024u * 1024u);
   for (std::size_t i = 0; i < 4u * 1024u * 1024u; ++i) {
@@ -813,9 +737,6 @@ void TestSubprocessLargeStdinDoesNotDeadlock() {
   Expect(result.stderr_text.empty(), "large-stdin cat should not write to stderr");
 }
 
-// A formatter that hangs (or runs pathologically long) must not freeze the
-// synchronous save path forever. A finite timeout_ms kills the child and reports
-// timed_out with a non-zero exit code.
 void TestSubprocessTimeoutKillsHungChild() {
   const auto start = std::chrono::steady_clock::now();
   const auto result = RunSubprocess({"sleep", "30"}, SubprocessOptions{
@@ -835,12 +756,8 @@ void TestSubprocessTimeoutKillsHungChild() {
          "timeout should return promptly after the deadline, not wait for the child to exit");
 }
 
-// A child that CLOSES its stdout/stderr and then hangs must still be bounded by
-// timeout_ms. Draining the pipes returns as soon as they close, so the timeout has
-// to be enforced against process exit, not just against the pipes going quiet.
 void TestSubprocessTimeoutKillsChildThatClosedStdioThenHung() {
   const auto start = std::chrono::steady_clock::now();
-  // Close fds 1 and 2, then sleep far past the timeout with no output at all.
   const auto result = RunSubprocess({"sh", "-c", "exec 1>&- 2>&-; sleep 30"},
                                     SubprocessOptions{
                                         .cwd = {},
@@ -859,14 +776,9 @@ void TestSubprocessTimeoutKillsChildThatClosedStdioThenHung() {
          "the timeout must fire promptly, not block on the closed-stdio child forever");
 }
 
-// A child that floods stdout without end must not grow the capture buffer until
-// the host OOMs. The capture ceiling truncates the stream, marks the result
-// truncated, and tears the child down promptly instead of reading forever.
 void TestSubprocessCaptureCapTruncatesFirehose() {
   microide::platform::IgnoreBrokenPipeSignal();
   const auto start = std::chrono::steady_clock::now();
-  // `yes` streams "y\n" indefinitely; without a cap this call would never return
-  // and would exhaust memory.
   const auto result = RunSubprocess({"yes"}, SubprocessOptions{
                                                  .cwd = {},
                                                  .stdin_text = {},
@@ -878,7 +790,6 @@ void TestSubprocessCaptureCapTruncatesFirehose() {
   const auto elapsed =
       std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
   Expect(result.truncated, "an endless firehose child should report truncated capture");
-  // Bounded at the ceiling (128 MiB): well above 64 MiB, never gigabytes.
   Expect(result.stdout_text.size() >= 64ull * 1024 * 1024,
          "capture should fill up to the ceiling before truncating");
   Expect(result.stdout_text.size() <= 129ull * 1024 * 1024,
@@ -886,8 +797,6 @@ void TestSubprocessCaptureCapTruncatesFirehose() {
   Expect(elapsed.count() < 15000, "a firehose child should be torn down promptly, not read forever");
 }
 
-// A finite timeout must not falsely trip on a command that finishes well within
-// it: the bound only catches genuine hangs.
 void TestSubprocessTimeoutDoesNotTripFastCommand() {
   const auto result = RunSubprocess({"cat"}, SubprocessOptions{
                                                  .cwd = {},
@@ -904,12 +813,6 @@ void TestSubprocessTimeoutDoesNotTripFastCommand() {
          "a timed run should still capture stdout when it completes in time");
 }
 
-// The probe is parent-side and read-only, so it is safe to call from the test process. We assert
-// internal consistency rather than concrete availability: CI kernels vary (Landlock/seccomp may be
-// absent), so the only invariants we can guarantee are that a layer can never be reported "runtime
-// available" without also being "compiled in", and that the ABI/flag pair agrees. This also pins the
-// must-not-confine-the-host contract: calling the probe here would break every later test in this
-// binary if it accidentally restricted the process.
 void TestSandboxProbeReportsConsistentSupport() {
   const microide::platform::SandboxSupport support = microide::platform::ProbeSandboxSupport();
 
@@ -927,7 +830,6 @@ void TestSandboxProbeReportsConsistentSupport() {
   Expect(support.fully_active() == expected_active,
          "fully_active() must reflect the per-layer availability flags");
 
-  // A second probe must agree: the query has no side effects on the host process.
   const microide::platform::SandboxSupport again = microide::platform::ProbeSandboxSupport();
   Expect(again.landlock_runtime_available == support.landlock_runtime_available &&
              again.landlock_abi == support.landlock_abi &&
@@ -935,15 +837,10 @@ void TestSandboxProbeReportsConsistentSupport() {
          "repeated sandbox probes must be stable (no host-process side effects)");
 }
 
-// A `read_files` entry grants that one file and nothing beside it -- the shape the
-// plugin sandbox uses for ~/.gitconfig. The fixture lives under the build tree,
-// not /tmp: every sandboxed child may read /tmp, so a probe there proves nothing.
 void TestSandboxReadFilesGrantsOnlyThatFile() {
   if (!microide::platform::ProbeSandboxSupport().landlock_runtime_available) {
-    return;  // the layer is fail-open on kernels without Landlock
+    return;
   }
-  // Under the build tree -- unless that is under /tmp (a worktree there), where
-  // the probe would prove nothing; the user's cache is closed to the child too.
   std::filesystem::path base = std::filesystem::current_path();
   if (const char* home = std::getenv("HOME"); base.string().starts_with("/tmp/") && home != nullptr) {
     base = std::filesystem::path(home) / ".cache";
@@ -972,10 +869,6 @@ void TestSandboxReadFilesGrantsOnlyThatFile() {
          "its neighbour in the same directory is not: the grant is the file, not the directory");
 }
 
-// A process started with its stdin closed handed descriptor 0 to its first pipe; a
-// child's dup2(pipe, 0) was then a no-op that left the pipe close-on-exec, and the
-// child (a language server) ran with no stdin. main() reopens the closed standard
-// descriptors first. Run in a forked child: the test process's own fd 0 stays put.
 void TestAClosedStdinIsReopenedBeforeTheFirstPipe() {
   const pid_t child = ::fork();
   Expect(child >= 0, "fork");
@@ -983,7 +876,7 @@ void TestAClosedStdinIsReopenedBeforeTheFirstPipe() {
     ::close(STDIN_FILENO);
     util::EnsureStandardDescriptorsOpen();
     if (::fcntl(STDIN_FILENO, F_GETFD) != 0) {
-      ::_exit(3);  // closed, or close-on-exec: a spawned program would lose it
+      ::_exit(3);
     }
     platform::AsyncSubprocess cat;
     if (!cat.Start({"cat"}, "")) {
@@ -1011,12 +904,6 @@ void TestAClosedStdinIsReopenedBeforeTheFirstPipe() {
 }
 
 
-// Soak 7ab9a5476905: `term` then ctrl+c quit the editor. The Ctrl+C reached the
-// terminal's child before it had reset its signals, ran the editor's own SIGINT
-// handler there, and that handler wrote into the self-pipe the child had
-// inherited -- so the PARENT saw "signal 2" and quit. A child forked with
-// ForkWithSignalsBlocked runs no handler of the parent's: a signal it gets
-// before RestoreDefaultSignalsInChild takes its default action after it.
 int g_child_signal_pipe = -1;
 
 void WriteMarkOnSignal(int) {
@@ -1024,8 +911,6 @@ void WriteMarkOnSignal(int) {
   (void)!::write(g_child_signal_pipe, &mark, 1);
 }
 
-// Forks with `fork_fn`, raises SIGUSR1 in the child before the reset, then
-// resets and exits 0. Returns whether the parent's handler ran (in the child).
 template <typename ForkFn>
 bool ParentHandlerRanInChild(ForkFn fork_fn, int* child_status) {
   int fds[2] = {-1, -1};
@@ -1054,9 +939,6 @@ bool ParentHandlerRanInChild(ForkFn fork_fn, int* child_status) {
 
 void TestAForkedChildRunsNoHandlerOfTheParents() {
   int status = 0;
-  // The negative control: a plain fork runs the parent's handler in the child.
-  // Not under TSan, which defers an asynchronous handler to its own safe points,
-  // so the reset in the child gets there first.
   bool under_tsan = false;
 #if defined(__SANITIZE_THREAD__)
   under_tsan = true;
@@ -1079,7 +961,7 @@ void TestAForkedChildRunsNoHandlerOfTheParents() {
          "the parent's mask is restored after the fork");
 }
 
-}  // namespace
+}
 
 void RegisterSubprocessTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Subprocess/AForkedChildRunsNoHandlerOfTheParents", TestAForkedChildRunsNoHandlerOfTheParents);
@@ -1134,4 +1016,4 @@ void RegisterSubprocessTests(std::vector<TestCase>& tests) {
           TestSubprocessTimeoutDoesNotTripFastCommand);
 }
 
-}  // namespace microide::tests
+}

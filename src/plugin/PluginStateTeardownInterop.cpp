@@ -44,21 +44,19 @@ void DestroyPluginState(runtime_types::PluginInstance* plugin) {
 
 namespace {
 
-// Drop every entry `plugin_id` contributed.
 template <typename Contribution>
 void EraseOwnedBy(std::vector<Contribution>& contributions, const std::string& plugin_id) {
   std::erase_if(contributions,
                 [&](const Contribution& entry) { return entry.plugin_id == plugin_id; });
 }
 
-// Release a registry reference that may be unset. luaL_unref does not raise.
 void UnrefIfSet(lua_State* state, int ref) {
   if (ref != LUA_NOREF && ref != LUA_REFNIL) {
     luaL_unref(state, LUA_REGISTRYINDEX, ref);
   }
 }
 
-}  // namespace
+}
 
 void UnregisterContributionsForState(lua_State* state, const runtime_types::PluginInstance* plugin,
                                      const ContributionLists& lists) {
@@ -106,9 +104,6 @@ void UnregisterContributionsForState(lua_State* state, const runtime_types::Plug
   EraseOwnedBy(*lists.status_item_order, plugin_id);
   EraseOwnedBy(*lists.formatters, plugin_id);
   EraseOwnedBy(*lists.save_participants, plugin_id);
-  // An unloaded plugin's virtual documents go with it: the consumer side treats a
-  // URI as an identity, so leaving them would keep serving content whose owner is
-  // gone (and a reload would then register duplicates).
   EraseOwnedBy(*lists.virtual_documents, plugin_id);
   std::erase_if(*lists.save_participant_runtimes, [&](const auto& entry) {
     if (entry.plugin_id != plugin_id) {
@@ -192,6 +187,6 @@ void UnregisterContributionsForState(lua_State* state, const runtime_types::Plug
                           lists.file_icon_themes->end());
 }
 
-}  // namespace microide::plugin::state_teardown_interop
+}
 
 #endif

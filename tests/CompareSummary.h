@@ -1,13 +1,5 @@
 #pragma once
 
-// Row-kind tally for a CompareModel, shared by the tests that assert what a diff
-// produced.
-//
-// CompareModelTests and GitServiceTests each grew a byte-identical private copy
-// of this -- the drift shape tools/clone-scan.py exists to find: two files
-// counting the same four row kinds, and nothing stopping one of them from being
-// taught about a fifth.
-
 #include <cstddef>
 
 #include "compare/CompareModel.h"
@@ -21,8 +13,6 @@ struct CompareSummary {
   int modified = 0;
 };
 
-// No `default:` on purpose: a new CompareRowKind must fail to compile here
-// rather than be silently counted as nothing by both callers.
 inline CompareSummary Summarize(const microide::compare::CompareModel& model) {
   CompareSummary summary;
   for (const auto& row : model.rows) {
@@ -44,4 +34,4 @@ inline CompareSummary Summarize(const microide::compare::CompareModel& model) {
   return summary;
 }
 
-}  // namespace microide::tests
+}

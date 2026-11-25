@@ -33,23 +33,9 @@ std::string HashToHex(std::uint64_t value) {
   return hex;
 }
 
-}  // namespace
+}
 
 std::string ProjectStateDirectoryName(const std::filesystem::path& project_root) {
-  // Memoized because it is a PURE function of `project_root` and an expensive
-  // one: `lexically_normal()` alone is ~12 allocations (it walks the path into a
-  // component list and rebuilds it), on top of `filename()`, two `.string()`
-  // materializations, the sanitize buffer and the two concatenation temporaries.
-  //
-  // It sits under `ProjectStateDirectory`, which every config/session save
-  // resolves from scratch, so a settings change paid the whole thing per save --
-  // 288 allocations across the two `settings_change_many_tabs` phases, the
-  // largest single site in both (TD-2026-08-30-271).
-  //
-  // A ring rather than one slot: multi-project sessions alternate between roots
-  // (and `ControlChannelService` asks about a second one), so a single slot would
-  // thrash. `thread_local` rather than a mutex — the callers are the shell thread
-  // and the control thread, and the answer is small enough to compute twice.
   struct Memo {
     std::filesystem::path root;
     std::string name;
@@ -167,8 +153,6 @@ std::string BuildEditorBreadcrumbLabel(const std::filesystem::path& project_root
 
 namespace {
 
-// "<path>  |  <from> -> <to>": the path when it is known, the sides when they are,
-// and `fallback` when neither is.
 std::string BuildTwoSideBreadcrumbLabel(const std::filesystem::path& project_root,
                                         const std::filesystem::path& path, std::string_view from,
                                         std::string_view to, std::string_view fallback) {
@@ -186,7 +170,7 @@ std::string BuildTwoSideBreadcrumbLabel(const std::filesystem::path& project_roo
   return label;
 }
 
-}  // namespace
+}
 
 std::string BuildCompareBreadcrumbLabel(const std::filesystem::path& project_root,
                                         const std::filesystem::path& path,
@@ -205,7 +189,6 @@ std::string BuildMergeBreadcrumbLabel(const std::filesystem::path& project_root,
 
 SDL_Color DefaultProjectBaseColor(const std::filesystem::path& project_root) {
   static constexpr std::array<SDL_Color, 10> kPalette = {
-      // Matplotlib qualitative "Accent" base colors.
       SDL_Color{0x7f, 0xc9, 0x7f, 0xff},
       SDL_Color{0xbe, 0xae, 0xd4, 0xff},
       SDL_Color{0xfd, 0xc0, 0x86, 0xff},
@@ -214,14 +197,9 @@ SDL_Color DefaultProjectBaseColor(const std::filesystem::path& project_root) {
       SDL_Color{0xf0, 0x02, 0x7f, 0xff},
       SDL_Color{0xbf, 0x5b, 0x17, 0xff},
       SDL_Color{0x66, 0x66, 0x66, 0xff},
-      // Accent-derived variants so we keep 10 distinct project accents.
       SDL_Color{0x5a, 0x90, 0xca, 0xff},
       SDL_Color{0xd8, 0x4d, 0xa0, 0xff},
   };
-  // Catalog roots are normalized on the way in, so `lexically_normal()` here was
-  // ~12 allocations producing the string it was handed — once per project tab per
-  // painted frame for any project with no explicit base color (TD-2026-08-10-174,
-  // same shape as the tooltip path). Only pay it when the text actually needs it.
   const std::uint64_t hash = util::PathTextNeedsNormalizing(project_root.native())
                                  ? StablePathHash(project_root.lexically_normal().string())
                                  : StablePathHash(project_root.native());
@@ -257,4 +235,4 @@ void ApplyProjectAccent(render::Theme& theme, SDL_Color accent) {
       SDL_Color{search_match_active.r, search_match_active.g, search_match_active.b, 0xa0};
 }
 
-}  // namespace microide::workspace
+}

@@ -106,10 +106,6 @@ void TestWorkspaceSharedParseCommandLineIncompleteState() {
   Expect(quoted.open_quote == '"', "unterminated quote should be reported");
 }
 
-// QuoteCommandArg and ParseCommandLine are a pair: the control spec, completion
-// and every generated command line rely on any argument surviving the round
-// trip. Random arguments over the characters the quoting has to defend against
-// (both quote kinds, backslash, blanks, control bytes, non-ASCII, empty).
 void TestWorkspaceSharedQuoteCommandArgRoundTripsRandomArguments() {
   std::uint64_t state = 0x5eed5eed5eed5eedULL;
   const auto next = [&](std::size_t bound) {
@@ -153,11 +149,7 @@ void TestWorkspaceSharedQuoteCommandArgRoundTripsRandomArguments() {
   }
 }
 
-// Regression: ParseCommandLine bounds a pasted-huge command — the scanned length
-// and the token count are capped so it cannot allocate/drive completion without
-// limit on the UI thread.
 void TestWorkspaceSharedParseCommandLineBoundsHugeInput() {
-  // Far more space-separated tokens than the 4096 cap.
   std::string many;
   for (int i = 0; i < 10000; ++i) {
     many += "t ";
@@ -165,15 +157,11 @@ void TestWorkspaceSharedParseCommandLineBoundsHugeInput() {
   const auto parsed = ParseCommandLine(many);
   Expect(parsed.tokens.size() <= 4096, "token count is capped");
 
-  // A megabyte single token is clamped to the scanned-length ceiling.
   const auto huge = ParseCommandLine(std::string(1024 * 1024, 'x'));
   Expect(huge.tokens.size() == 1 && huge.tokens.front().text.size() <= 64 * 1024,
          "an over-long token is truncated to the scanned-length cap");
 }
 
-// Regression: CompletePath bounds candidate collection so completing a directory
-// with a huge number of entries cannot build and sort an unbounded list on the UI
-// thread.
 void TestWorkspaceSharedCompletePathIsBounded() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "many";
@@ -181,22 +169,17 @@ void TestWorkspaceSharedCompletePathIsBounded() {
   for (int i = 0; i < 2100; ++i) {
     WriteFile(root / ("f" + std::to_string(i) + ".txt"), "x");
   }
-  const auto candidates = microide::workspace::CompletePath(root, "", /*directories_only=*/false);
+  const auto candidates = microide::workspace::CompletePath(root, "", false);
   Expect(candidates.size() <= 2000, "path completion caps the candidate count, got " +
                                         std::to_string(candidates.size()));
   Expect(!candidates.empty(), "path completion still returns candidates up to the cap");
 }
 
-// TD-2026-07-16-51: CompletePath must not throw when the search directory vanishes
-// during iteration — it advances with the non-throwing increment(ec) and returns the
-// candidates gathered so far. We can't force a mid-iteration removal deterministically,
-// but a vanished search directory (constructor error) must return empty, not throw.
 void TestWorkspaceSharedCompletePathVanishedDirectoryReturnsEmpty() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "gone";
-  // Never created: the directory_iterator constructor fails; must return no matches.
   const auto candidates =
-      microide::workspace::CompletePath(root, "sub/", /*directories_only=*/false);
+      microide::workspace::CompletePath(root, "sub/", false);
   Expect(candidates.empty(),
          "completing under a non-existent directory returns empty, not a thrown exception");
 }
@@ -285,7 +268,6 @@ void TestWorkspaceSharedAtomicTextWrite() {
   Expect(!std::filesystem::exists(nested.string() + ".tmp"),
          "atomic text writer should not leave a sibling temp file behind");
 
-  // StatFileSignature should report the durable file's identity and track size.
   const microide::util::FileSignature sig = microide::util::StatFileSignature(nested);
   Expect(sig.exists && !sig.error, "signature of a written file should exist without error");
   Expect(sig.size == std::string("second\n").size(),
@@ -322,9 +304,6 @@ void TestWorkspaceOutputChannelsParseAndCacheContextSnippets() {
          "clearing a channel should drop cached parsed snippet metadata");
 }
 
-// TD-2026-07-17A-017: ResolvedReferencePath resolves a parsed reference against the
-// project root and normalizes it, caching per entry so the output panel render does
-// not re-run lexically_normal() for every visible reference row each paint.
 void TestWorkspaceOutputChannelsResolvedReferencePathCaches() {
   WorkspaceOutputChannels channels;
   channels.AppendLine("build", "Build", "src/../src/main.cpp:12:3");
@@ -334,36 +313,25 @@ void TestWorkspaceOutputChannelsResolvedReferencePathCaches() {
       channels.ResolvedReferencePath("build", 0, root_a);
   Expect(resolved == std::filesystem::path("/home/proj/src/main.cpp"),
          "a relative reference resolves against the project root and normalizes");
-  // Second call with the same root reuses the cached, normalized path object.
   Expect(&channels.ResolvedReferencePath("build", 0, root_a) == &resolved,
          "an unchanged root reuses the cached resolved path");
 
-  // A different root re-resolves.
   const std::filesystem::path& other =
       channels.ResolvedReferencePath("build", 0, "/other/root");
   Expect(other == std::filesystem::path("/other/root/src/main.cpp"),
          "changing the project root re-resolves the reference");
 
-  // A missing entry yields an empty path rather than crashing.
   Expect(channels.ResolvedReferencePath("build", 99, root_a).empty(),
          "an out-of-range index resolves to an empty path");
 }
 
-// RemoveChannel drops a channel entirely (Phase 10 debug-console cleanup): the
-// channel disappears from Channels()/Entries() while siblings are untouched.
-// TD-2026-07-17A-085: appending to an existing channel must not invalidate the
-// channel-metadata view. The Channels() list is a cache rebuilt only when the dirty
-// flag is set; appending many lines keeps its cached identity, while a real
-// label/insert/remove change still refreshes it.
 void TestWorkspaceOutputChannelsAppendKeepsMetadataCacheStable() {
   WorkspaceOutputChannels channels;
   channels.AppendLine("build", "Build", "first");
-  // Prime the cache.
   const std::vector<WorkspaceOutputChannels::ChannelInfo>& first = channels.Channels();
   Expect(first.size() == 1 && first.front().label == "Build", "one channel with its label");
   const void* cached_data = first.data();
 
-  // Many content appends with the SAME id/label must not rebuild the metadata cache.
   for (int i = 0; i < 50; ++i) {
     channels.AppendLine("build", "Build", "line");
   }
@@ -372,7 +340,6 @@ void TestWorkspaceOutputChannelsAppendKeepsMetadataCacheStable() {
          "same-id/label appends must not rebuild the channel-metadata cache");
   Expect(after.size() == 1, "still exactly one channel");
 
-  // A genuine label change still refreshes the metadata view.
   channels.AppendLine("build", "Build (2 errors)", "line");
   Expect(channels.Channels().front().label == "Build (2 errors)",
          "a changed label still refreshes the channel-metadata cache");
@@ -391,13 +358,10 @@ void TestWorkspaceOutputChannelsRemoveChannel() {
              channels.Channels().front().id == "debug.console.2",
          "removal drops only the named channel and refreshes the channel list");
 
-  channels.RemoveChannel("debug.console.1");  // idempotent / unknown id is a no-op
+  channels.RemoveChannel("debug.console.1");
   Expect(channels.Channels().size() == 1, "removing an unknown channel is a no-op");
 }
 
-// A chatty or hostile LSP / debug adapter / plugin can stream output forever;
-// each entry retains a heap string plus a parsed cache, so the per-channel
-// entry vectors must be bounded (drop-oldest) instead of growing without limit.
 void TestWorkspaceOutputChannelsCapsEntries() {
   WorkspaceOutputChannels channels;
   constexpr std::size_t kFlood = 200000;
@@ -406,11 +370,8 @@ void TestWorkspaceOutputChannelsCapsEntries() {
   }
   const std::vector<std::string>* entries = channels.Entries("lsp.log");
   Expect(entries != nullptr, "flooded channel still exists");
-  // Cap is 100000; the coalesced trim allows up to +25% headroom before trimming.
   Expect(entries->size() <= 125001,
          "output channel entries must be bounded, not grow with a flood");
-  // parsed_entries are trimmed in lockstep: the last-appended entry is still
-  // readable at the final index.
   Expect(channels.ParsedEntryAt("lsp.log", entries->size() - 1) != nullptr,
          "the newest parsed entry stays indexable after trimming");
 }
@@ -446,9 +407,6 @@ void TestWorkspaceOutputChannelsCapRetainedBytes() {
          "byte-budget trimming should keep parsed entries in lockstep");
 }
 
-// OutputReference documents both line and column as 1-based, so ParseOutputReference
-// must reject a zero in EITHER field. The parser previously guarded only line == 0,
-// silently accepting a bogus ":<line>:0" column.
 void TestWorkspaceOutputReferenceRejectsZeroLineOrColumn() {
   using microide::workspace::ParseOutputReference;
 
@@ -479,7 +437,6 @@ void TestWorkspaceSharedCommandCompletionHelpers() {
   Expect(JoinCommandArguments({"cmd", "left", "right value"}, 1) == "left right value",
          "joined command arguments should preserve argument order");
 
-  // Tab in the host prompt.
   using microide::workspace::CompleteRemoteHostText;
   const std::vector<std::string> hosts = {"worky", "work-gpu", "build-box"};
   Expect(CompleteRemoteHostText("b", hosts) == std::optional<std::string>("build-box:"),
@@ -499,9 +456,6 @@ void TestWorkspaceSharedCommandCompletionHelpers() {
              !CompleteRemoteHostText("zz", hosts).has_value() &&
              !CompleteRemoteHostText("w", {}).has_value(),
          "past the ':', no match, or no hosts: nothing");
-  // `term bash -c "echo hi; sleep 1"` is parsed again by the shell: the quoted
-  // argument must stay one word, or bash ran `echo` with $0 = `hi;` and printed
-  // a blank line. Bare words and operators are left alone, so a typed pipe pipes.
   Expect(JoinShellCommandArguments({"term", "bash", "-c", "echo hi; sleep 1"}, 1) ==
              "bash -c 'echo hi; sleep 1'",
          "a spaced argument is re-quoted");
@@ -511,16 +465,9 @@ void TestWorkspaceSharedCommandCompletionHelpers() {
          "a quote inside and an empty argument survive");
 }
 
-// Command-line completion pulls plugin command names by reference from the host-owned
-// vector (TD-2026-07-17A-012): the operation returns `const std::vector<std::string>&`,
-// so opening/completing the command line no longer copies the whole plugin registry. A
-// plugin-only command prefix still completes, proving the reference-returned names take
-// part in the merged candidate set.
 void TestCommandLineCompletionIncludesPluginCommandsByReference() {
   microide::workspace::ProjectWorkspaceState state;
   std::vector<std::string> colorschemes;
-  // Stable, host-owned command vector; the operation hands back a reference to it (never
-  // a copy). A distinctive name avoids colliding with any built-in command verb.
   const std::vector<std::string> plugin_commands = {"zzsampleplugincommand"};
 
   microide::workspace::CommandLineCoordinator::Operations ops;
@@ -562,8 +509,6 @@ void TestWorkspaceMenuRegistry() {
   Expect(view->label == "View", "view menu should preserve its label");
   Expect(std::find_if(view->items.begin(), view->items.end(),
                       [](const auto& item) {
-                        // No label override: the item inherits "Word Wrap" from the
-                        // command registry, so the menu and the palette cannot drift.
                         return item.action == ActionId::Wrap && item.checkable &&
                                item.label.empty();
                       }) != view->items.end(),
@@ -595,8 +540,6 @@ void TestWorkspaceMenuRegistryLspAvailabilityLabels() {
   using Snapshot = microide::workspace::LspClient::ReadinessSnapshot;
   using State = Snapshot::State;
 
-  // `message` now carries only detail beyond the state's own name (a server progress
-  // title, a startup error); the displayed word comes from LspReadinessWord.
   const Snapshot starting{
       .state = State::Starting,
       .message = {},
@@ -639,8 +582,6 @@ void TestWorkspaceMenuRegistryLspAvailabilityLabels() {
                                   scratch) == "Find References (LSP: Failed)",
          "menu registry should explain failed LSP state in disabled labels");
 
-  // The menu suffix and the status bar must name the state with the same word; they
-  // used to keep two vocabularies ("LSP starting..." vs "Starting...").
   std::string word_scratch;
   Expect(microide::workspace::LspReadinessText(indexing, word_scratch) == "Indexing 42…" &&
              microide::workspace::LspReadinessText(starting, word_scratch) == "Starting…" &&
@@ -668,7 +609,6 @@ void TestWorkspaceSidebarRegistry() {
          "sidebar registry should preserve built-in view declaration ordering");
 
   const auto view_ids = SidebarViewIds(plugin_host);
-  // Alphabetical order: conflicts, git, host, host-changes, outline, problems, search, tests, tree
   Expect(view_ids.size() == 9 && view_ids[0] == "conflicts" && view_ids[1] == "git" && view_ids[2] == "host" &&
              view_ids[3] == "host-changes" && view_ids[4] == "outline" && view_ids[5] == "problems" &&
              view_ids[6] == "search" && view_ids[7] == "tests" && view_ids[8] == "tree",
@@ -709,11 +649,6 @@ void TestWorkspaceSharedPathMutationHelpers() {
   Expect(!PathEqualsOrWithin(std::filesystem::path("/tmp/other/file.cpp"), root),
          "path helper should reject unrelated paths");
 
-  // Lexical semantics (must not touch the filesystem or depend on cwd): empty
-  // inputs are never "within", `.`/`..` segments resolve without I/O, and a
-  // candidate that escapes the root via `..` is rejected. These guard the
-  // consolidation onto util::PathEqualsOrWithin, which replaced per-store copies
-  // that used std::filesystem::relative (a cwd-dependent syscall).
   Expect(!PathEqualsOrWithin(std::filesystem::path{}, root),
          "empty candidate should never be within a root");
   Expect(!PathEqualsOrWithin(nested, std::filesystem::path{}),
@@ -725,11 +660,6 @@ void TestWorkspaceSharedPathMutationHelpers() {
   Expect(PathEqualsOrWithin(std::filesystem::path("a/b/c.cpp"), std::filesystem::path("a/b")),
          "relative (non-absolute) paths should resolve lexically without cwd");
 
-  // NormalizedPathEqualsOrWithin is the allocation-free variant used by the
-  // per-entry project traversal filter. It must agree with the general helper on
-  // every already-normalized input — including the sibling-prefix trap ("/tmp/pro"
-  // is a string prefix of "/tmp/project" but not a parent of it) and a "." root,
-  // whose members are spelled without any "./" prefix once normalized.
   {
     using microide::util::NormalizedPathEqualsOrWithin;
     const auto same = [](const std::filesystem::path& c, const std::filesystem::path& r) {
@@ -758,11 +688,6 @@ void TestWorkspaceSharedPathMutationHelpers() {
            "a '/' root contains every absolute path");
   }
 
-  // SameAsNormalizedPath is the scan-shaped identity test: the reference has been
-  // normalized once outside the loop, so a mismatch between two already-normal
-  // paths must cost nothing. It has to agree with SamePathNormalized on every
-  // input whose reference IS normalized — the whole point is that it is cheaper,
-  // not that it answers differently.
   {
     using microide::util::SameAsNormalizedPath;
     using microide::util::SamePathNormalized;
@@ -787,11 +712,6 @@ void TestWorkspaceSharedPathMutationHelpers() {
     }
   }
 
-  // NormalizedRelativeView and NormalizedParentDirectoryView replace
-  // lexically_relative() and parent_path() on the per-filesystem-entry traversal
-  // path (TD-2026-08-10-174), so they are checked against exactly those two, on
-  // the inputs the walk produces. A wrong relative here does not merely cost
-  // speed: it is the text every .gitignore rule is matched against.
   {
     using microide::util::NormalizedParentDirectoryView;
     using microide::util::NormalizedRelativeView;
@@ -827,10 +747,6 @@ void TestWorkspaceSharedPathMutationHelpers() {
                  "': got '" + std::string(NormalizedParentDirectoryView(path.native())) +
                  "', want '" + path.parent_path().string() + "'");
     }
-    // The ancestor walk in ProjectTraversalFilter::Includes trims a relative path
-    // with this until it empties. It must terminate, and it must yield the same
-    // sequence parent_path() does — an ancestor skipped here is an ignored
-    // directory whose contents stop being pruned.
     std::string_view walked = "a/b/c/d.txt";
     std::filesystem::path reference("a/b/c/d.txt");
     for (int step = 0; step < 8; ++step) {
@@ -845,13 +761,6 @@ void TestWorkspaceSharedPathMutationHelpers() {
     Expect(walked.empty(), "the view-based ancestor walk must terminate");
   }
 
-  // PathTextNeedsNormalizing is the allocation-free "would lexically_normal()
-  // change this?" scan that lets a per-entry loop spend one string instead of one
-  // path (TD-2026-08-06-159). It is only useful if it never says "no" to a path
-  // that lexically_normal() WOULD change, so the check below is against
-  // lexically_normal() itself, over every shape the git and sidebar paths take.
-  // Saying "yes" to an already-normal path is merely a missed optimization; saying
-  // "no" to a non-normal one is a correctness bug, and this catches it.
   {
     using microide::util::PathTextNeedsNormalizing;
     const std::vector<std::string> shapes = {
@@ -876,11 +785,6 @@ void TestWorkspaceSharedPathMutationHelpers() {
            "an ordinary relative path is recognized as already normal");
   }
 
-  // NormalizedPath / NormalizedPathView are the guarded forms of
-  // lexically_normal() (TD-2026-08-10-174). Two claims to pin: the ANSWER must
-  // equal lexically_normal() for every shape, and the already-normal case must
-  // not allocate a new path at all -- which is observable as the view form
-  // handing back a reference to its own INPUT.
   {
     using microide::util::NormalizedPath;
     using microide::util::NormalizedPathView;
@@ -898,21 +802,12 @@ void TestWorkspaceSharedPathMutationHelpers() {
       Expect(viewed.native() == path.lexically_normal().native(),
              "NormalizedPathView must answer exactly what lexically_normal() answers: '" + shape +
                  "'");
-      // A reference to the input, not to scratch, is the observable form of "this
-      // did not allocate", and it must track the SCAN, not lexically_normal()'s
-      // answer: the scan is allowed to say "needs normalizing" for a path that
-      // normalizes to itself ("../a"), which costs an allocation but never a
-      // wrong answer. Saying "already normal" for a path that does change would
-      // be the correctness bug, and the equality below is what catches it.
       Expect(microide::util::PathTextNeedsNormalizing(path.native()) == (&viewed != &path),
              "NormalizedPathView must hand back the INPUT exactly when the scan says the path "
              "is already normal: '" + shape + "'");
     }
   }
 
-  // PathEqualsOrWithinNormalized is the same guard applied to the containment
-  // test, so a caller stops building a whole path as an ARGUMENT that the test
-  // then rejects.
   {
     using microide::util::PathEqualsOrWithin;
     using microide::util::PathEqualsOrWithinNormalized;
@@ -938,9 +833,6 @@ void TestWorkspaceSharedPathMutationHelpers() {
              std::filesystem::path("/tmp/project/manual"),
          "path prefix replacement should replace exact-prefix paths");
 
-  // RelativePathWithin backs display labels (e.g. review-session summaries): it is a
-  // purely lexical relative-string that must never call std::filesystem::relative
-  // (which stats/canonicalizes and can fail on deleted paths/symlinks/dead mounts).
   Expect(RelativePathWithin(nested, root) == std::optional<std::string>("src/main.cpp"),
          "relative-within should return the forward-slashed nested suffix");
   Expect(RelativePathWithin(root / "src/./main.cpp", root) ==
@@ -954,7 +846,6 @@ void TestWorkspaceSharedPathMutationHelpers() {
          "relative-within should reject an empty candidate");
   Expect(RelativePathWithin(nested, std::filesystem::path{}) == std::nullopt,
          "relative-within should reject an empty root");
-  // A path pointing at a non-existent file still yields a label (no filesystem probe).
   Expect(RelativePathWithin(root / "deleted/gone.cpp", root) ==
              std::optional<std::string>("deleted/gone.cpp"),
          "relative-within should label a non-existent path without touching disk");
@@ -1050,7 +941,7 @@ void TestWorkspaceReadmeCommandDocsStayInSync() {
          "README command docs should stay aligned with the action table");
 }
 
-}  // namespace
+}
 
 void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/ParseCommandLine", TestWorkspaceSharedParseCommandLine);
@@ -1104,4 +995,4 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
           TestWorkspaceReadmeCommandDocsStayInSync);
 }
 
-}  // namespace microide::tests
+}

@@ -69,19 +69,14 @@ void TestPreviewSurfacesSortedAndToggle() {
   Expect(store.PreviewSurfaces().size() == 1, "the withdrawn surface drops out of the tab list");
 }
 
-// TD-2026-07-16-62: a user-dismissed preview must stay closed across a plugin republish
-// of the same (owner, surface_id) that still requests a preview slot — until the user
-// re-opens it or the surface is removed.
 void TestDismissedPreviewIsStickyAcrossRepublish() {
   PluginSurfaceStore store;
   store.ReplaceForOwnerSurface("p", "s", RasterSurface(1, SurfacePreviewSlot::Bottom));
   Expect(store.PreviewSurfaces().size() == 1, "surface starts as a preview");
 
-  // User closes the preview.
   Expect(store.SetPreviewSlot("p", "s", SurfacePreviewSlot::None), "dismissal reports a change");
   Expect(store.PreviewSurfaces().empty(), "dismissed surface leaves the preview list");
 
-  // Plugin republishes the SAME surface still requesting a Bottom preview.
   store.ReplaceForOwnerSurface("p", "s", RasterSurface(2, SurfacePreviewSlot::Bottom));
   Expect(store.PreviewSurfaces().empty(),
          "a republish must not silently reopen a user-dismissed preview");
@@ -89,7 +84,6 @@ void TestDismissedPreviewIsStickyAcrossRepublish() {
   Expect(content != nullptr && content->preview == SurfacePreviewSlot::None,
          "the stored preview slot stays None while dismissed");
 
-  // The user re-opens it: the override clears and future republishes honor the plugin.
   Expect(store.SetPreviewSlot("p", "s", SurfacePreviewSlot::Bottom), "re-open reports a change");
   store.ReplaceForOwnerSurface("p", "s", RasterSurface(3, SurfacePreviewSlot::Bottom));
   Expect(store.PreviewSurfaces().size() == 1,
@@ -120,10 +114,6 @@ void TestRevisionBumps() {
   Expect(store.revision() != before, "a publish bumps the revision");
 }
 
-// A hostile plugin publishing a fresh surface_id in a loop must not grow the
-// store without bound (host-side heap OOM outside the Lua memory cap, plus an
-// O(surfaces) RebuildAnchorIndex on every publish → O(N^2) UI-thread hang).
-// New ids past the per-owner cap are refused; existing ids keep updating.
 void TestPerOwnerSurfaceCountIsBounded() {
   PluginSurfaceStore store;
   bool refused_a_new_id = false;
@@ -136,18 +126,14 @@ void TestPerOwnerSurfaceCountIsBounded() {
     }
   }
   Expect(refused_a_new_id, "a fresh surface_id past the per-owner cap must be refused");
-  // Updating an already-stored id still works at the cap.
   Expect(store.Find("plug", "s0") != nullptr, "an early surface stays stored at the cap");
   Expect(store.ReplaceForOwnerSurface("plug", "s0",
                                       RasterSurface(999999, SurfacePreviewSlot::None)),
          "updating an existing surface still works at the cap");
 }
 
-}  // namespace
+}
 
-// Regression: a rename retargets anchored surfaces so they follow the file, and a
-// delete drops them — mirroring PluginDecorationStore, which previously left plugin
-// surfaces stranded on the old path after a rename/delete.
 void TestRetargetAndClearPathPrefix() {
   PluginSurfaceStore store;
   SurfaceContent a = RasterSurface(1, SurfacePreviewSlot::None);
@@ -168,8 +154,6 @@ void TestRetargetAndClearPathPrefix() {
          "the deleted path has no anchored surfaces");
 }
 
-// TD-2026-07-16-39: a raster's decoded size replaces the declared one in every
-// surface showing that image, in place (the anchor index keeps pointing at it).
 void TestApplyRasterSizeLaysEveryShowingSurfaceOut() {
   PluginSurfaceStore store;
   SurfaceContent undeclared = RasterSurface(5, SurfacePreviewSlot::None);
@@ -216,4 +200,4 @@ void RegisterPluginSurfaceStoreTests(std::vector<TestCase>& tests) {
           TestApplyRasterSizeLaysEveryShowingSurfaceOut);
 }
 
-}  // namespace microide::tests
+}

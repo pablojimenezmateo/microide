@@ -27,4 +27,4 @@ bool QueryHover(
     std::string* error_message);
 #endif
 
-}  // namespace microide::plugin::hover_query_interop
+}

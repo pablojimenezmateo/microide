@@ -13,10 +13,6 @@ namespace microide::compare {
 namespace {
 
 bool PathsEqual(const std::filesystem::path& left, const std::filesystem::path& right) {
-  // Both sides are normalized already — see NormalizeReviewPath's contract — so
-  // this is a string compare. It used to call lexically_normal() on BOTH sides on
-  // every comparison, which is ~12 allocations a call inside loops that run per
-  // reviewed-hunk entry per hunk per row: 79% of a branch-review marker pass.
   MICROIDE_ASSERT_NORMALIZED_REVIEW_PATH(left);
   MICROIDE_ASSERT_NORMALIZED_REVIEW_PATH(right);
   return left.native() == right.native();
@@ -29,10 +25,6 @@ bool HunkIdentitiesEqual(const BranchReviewHunkIdentity& left,
          left.new_count == right.new_count && left.content_hash == right.content_hash;
 }
 
-// A hunk's position in the diff — the pair both the "same hunk, new content" and
-// the exact-match tests key on. Hunks own disjoint line ranges, so within one
-// model this is unique; a pure insertion has old_start 0 and a pure deletion
-// new_start 0, and those still differ in the other half.
 std::uint64_t HunkPositionKey(const int old_start, const int new_start) {
   return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(old_start)) << 32) |
          static_cast<std::uint64_t>(static_cast<std::uint32_t>(new_start));
@@ -45,15 +37,11 @@ bool ContentKeysEqual(const BranchReviewHunkContentKey& key,
          key.content_hash == identity.content_hash;
 }
 
-// The model's hunks, indexed by position, computed once per query instead of once
-// per (stored entry x hunk) pair.
 struct ModelHunkIndex {
   std::vector<BranchReviewHunkContentKey> keys;
   std::unordered_map<std::uint64_t, std::size_t> by_position;
 };
 
-// A file marked with its diff at hand, looked at with a diff whose changed text
-// differs. Without either fingerprint nothing says it moved.
 bool FileDiffMoved(const BranchReviewFileReviewEntry& entry, const CompareModel* model) {
   return model != nullptr && entry.reviewed_diff_fingerprint != 0 &&
          entry.reviewed_diff_fingerprint != DiffContentFingerprint(*model);
@@ -65,8 +53,6 @@ ModelHunkIndex BuildModelHunkIndex(const CompareModel& model) {
   index.by_position.reserve(model.hunks.size());
   for (std::size_t hunk_index = 0; hunk_index < model.hunks.size(); ++hunk_index) {
     index.keys.push_back(ComputeBranchReviewHunkContentKey(model, model.hunks[hunk_index]));
-    // First wins, matching the linear scan this replaced, which returned on its
-    // first positional match.
     index.by_position.emplace(HunkPositionKey(index.keys.back().old_start,
                                               index.keys.back().new_start),
                               hunk_index);
@@ -74,10 +60,6 @@ ModelHunkIndex BuildModelHunkIndex(const CompareModel& model) {
   return index;
 }
 
-// Where a hunk note shows in the model: on the hunk at its position (outdated
-// when that hunk's content is no longer what the note was written on), else on a
-// hunk with the same content somewhere else -- an edit above it moved the lines --
-// else nowhere (the change is gone).
 struct NotePlacement {
   std::size_t hunk = 0;
   bool outdated = false;
@@ -103,9 +85,6 @@ bool IsHunkNoteOf(const BranchReviewNote& note, const std::filesystem::path& nor
          PathsEqual(note.path, normalized_path) && PathsEqual(note.hunk_identity->path, normalized_path);
 }
 
-// Does any reviewed-hunk entry for this file sit at a model hunk's position with
-// different content? That is what demotes a reviewed FILE to "changed since
-// reviewed". Walks the entry list once against the prebuilt model index.
 bool AnyReviewedHunkContentMoved(const BranchReviewTargetState& target_state,
                                  const std::filesystem::path& normalized_path,
                                  const ModelHunkIndex& index) {
@@ -125,9 +104,6 @@ bool AnyReviewedHunkContentMoved(const BranchReviewTargetState& target_state,
   return false;
 }
 
-// `identity` with its path in the form the store keys hunks by. Built field by
-// field rather than copied and patched: a copy would allocate the original path
-// only to overwrite it, once per hunk the review touches.
 BranchReviewHunkIdentity WithNormalizedPath(const std::filesystem::path& repository_root,
                                             const BranchReviewHunkIdentity& identity) {
   return BranchReviewHunkIdentity{
@@ -140,7 +116,7 @@ BranchReviewHunkIdentity WithNormalizedPath(const std::filesystem::path& reposit
   };
 }
 
-}  // namespace
+}
 
 std::uint64_t BranchReviewStateService::NowUnixMs() {
   return static_cast<std::uint64_t>(
@@ -151,8 +127,6 @@ std::uint64_t BranchReviewStateService::NowUnixMs() {
 
 BranchReviewTargetState* BranchReviewStateService::FindOrCreateTarget(
     const BranchReviewTargetIdentity& target) {
-  // Mutation entry point for every Mark*/Note operation. Bump the revision here so
-  // cache consumers rebuild; over-bumping on a no-op re-mark is harmless.
   ++revision_;
   for (BranchReviewTargetState& existing : targets_) {
     if (existing.target == target) {
@@ -195,10 +169,6 @@ void BranchReviewStateService::TouchTarget(BranchReviewTargetState& target_state
 }
 
 void BranchReviewStateService::PruneTarget(BranchReviewTargetState& target_state) {
-  // Prune by RECENCY, not insertion order. Re-reviewing a file/hunk or editing a
-  // note refreshes its timestamp without moving it in the vector; pruning the
-  // front (oldest-inserted) would drop a recently-touched entry that happened to
-  // be inserted early. Stable-sort newest-first, then drop the tail past the cap.
   const auto prune = [](auto& entries, std::size_t cap, auto timestamp_of) {
     if (entries.size() <= cap) {
       return;
@@ -212,10 +182,6 @@ void BranchReviewStateService::PruneTarget(BranchReviewTargetState& target_state
   prune(target_state.notes, kMaxNotesPerTarget,
         [](const BranchReviewNote& e) { return e.updated_at_unix_ms; });
 
-  // Hunk entries: the ones of a file that is marked whole go first. Losing one
-  // of those costs nothing while the file stands as reviewed (the hunk falls back
-  // to the file's mark); losing a hunk marked on its own unmarks it. Marking one
-  // large file reviewed therefore never takes another file's marks.
   auto& hunks = target_state.reviewed_hunks;
   if (hunks.size() <= kMaxHunkEntriesPerTarget) {
     return;
@@ -262,8 +228,6 @@ void BranchReviewStateService::MarkFileReviewed(const BranchReviewTargetIdentity
 
 void BranchReviewStateService::MarkFileUnreviewed(const BranchReviewTargetIdentity& target,
                                                   const std::filesystem::path& path) {
-  // Find-only: unreviewing a file for an unknown target must not create empty
-  // state or bump the revision. Only a real removal bumps the revision.
   BranchReviewTargetState* target_state = FindMutableTarget(target);
   if (target_state == nullptr) {
     return;
@@ -305,7 +269,6 @@ void BranchReviewStateService::MarkHunkReviewed(const BranchReviewTargetIdentity
 
 void BranchReviewStateService::MarkHunkUnreviewed(const BranchReviewTargetIdentity& target,
                                                   const BranchReviewHunkIdentity& identity) {
-  // Find-only: unreviewing a hunk for an unknown target is a clean no-op.
   BranchReviewTargetState* target_state = FindMutableTarget(target);
   if (target_state == nullptr) {
     return;
@@ -367,7 +330,6 @@ void BranchReviewStateService::DeleteNote(const BranchReviewTargetIdentity& targ
                                           const BranchReviewNoteScope scope,
                                           const std::filesystem::path& path,
                                           const std::optional<BranchReviewHunkIdentity>& hunk_identity) {
-  // Find-only: deleting a note for an unknown target is a clean no-op.
   BranchReviewTargetState* target_state = FindMutableTarget(target);
   if (target_state == nullptr) {
     return;
@@ -398,11 +360,6 @@ void BranchReviewStateService::DeleteNote(const BranchReviewTargetIdentity& targ
 
 void BranchReviewStateService::ClearTarget(const BranchReviewTargetIdentity& target) {
   ++revision_;
-  // Emptied, not forgotten: a remote project's review state is merged between
-  // the user's machines, the copy of a target changed last winning
-  // (workspace/persistence/RoamingReview.h). A target that was simply gone here
-  // would come back, marks and all, from the machine that still held it; emptied
-  // at this time it is the newer copy. It ages out like any other target.
   if (BranchReviewTargetState* existing = FindMutableTarget(target)) {
     existing->reviewed_files.clear();
     existing->reviewed_hunks.clear();
@@ -415,10 +372,6 @@ void BranchReviewStateService::PruneForRepository(
     const std::filesystem::path& repository_root,
     const BranchReviewTargetIdentity* active_target) {
   ++revision_;
-  // Normalize the query once and reject a mismatching target with a string
-  // compare: every stored repository_root arrived normalized, so re-normalizing
-  // one per target (twice -- the partition and the erase both scanned) spent ~12
-  // allocations apiece to confirm what the text already said (TD-2026-08-10-174).
   std::filesystem::path normalized_storage;
   const std::filesystem::path& normalized_root =
       util::PathTextNeedsNormalizing(repository_root.native())
@@ -493,7 +446,7 @@ void BranchReviewStateService::SetHunkReviewed(const BranchReviewTargetIdentity&
   MarkHunkReviewed(target, identity);
   const BranchReviewStateQueryInput query{.target = target, .path = path, .model = &model};
   if (FileStatus(query) == BranchReviewMarkerStatus::Reviewed) {
-    return;  // marked whole already
+    return;
   }
   std::vector<BranchReviewHunkMarker> markers;
   ResolveHunkMarkers(query, &markers);
@@ -515,8 +468,6 @@ void BranchReviewStateService::SetFileReviewed(const BranchReviewTargetIdentity&
     return;
   }
   const std::filesystem::path normalized = NormalizeReviewPath(target.repository_root, path);
-  // The file's hunk entries are replaced wholesale: one pass out, one pass in,
-  // one prune -- not a resolve of the whole file per hunk.
   const std::size_t removed = std::erase_if(target_state->reviewed_hunks, [&](const BranchReviewHunkReviewEntry& entry) {
     return PathsEqual(entry.identity.path, normalized);
   });
@@ -535,7 +486,7 @@ void BranchReviewStateService::SetFileReviewed(const BranchReviewTargetIdentity&
         .reviewed_at_unix_ms = now,
     });
   }
-  MarkFileReviewed(target, path, DiffContentFingerprint(model));  // prunes
+  MarkFileReviewed(target, path, DiffContentFingerprint(model));
 }
 
 BranchReviewMarkerStatus BranchReviewStateService::FileStatus(
@@ -560,10 +511,6 @@ BranchReviewMarkerStatus BranchReviewStateService::FileStatus(
   }
   if (input.model != nullptr &&
       AnyReviewedHunkContentMoved(*target_state, normalized, BuildModelHunkIndex(*input.model))) {
-    // Was a nested walk that recomputed every model hunk's identity — content hash
-    // and all — once per reviewed-hunk entry: O(entries x hunks) hashes of the
-    // whole file's changed text, per call, on a path that is itself called per
-    // hunk by HunkStatus's fallback.
     return BranchReviewMarkerStatus::ChangedSinceReviewed;
   }
   return BranchReviewMarkerStatus::Reviewed;
@@ -590,8 +537,6 @@ void BranchReviewStateService::ResolveHunkMarkers(
   const std::filesystem::path normalized = NormalizeReviewPath(input.target.repository_root, input.path);
   const ModelHunkIndex index = BuildModelHunkIndex(*input.model);
 
-  // Pass 1 — each hunk's own reviewed entry, if it has one. First entry at a
-  // position wins, matching the per-hunk scan this replaced.
   std::vector<bool> has_own_entry(out->size(), false);
   for (const BranchReviewHunkReviewEntry& entry : target_state->reviewed_hunks) {
     if (!PathsEqual(entry.identity.path, normalized)) {
@@ -608,8 +553,6 @@ void BranchReviewStateService::ResolveHunkMarkers(
                                     : BranchReviewMarkerStatus::ChangedSinceReviewed;
   }
 
-  // Pass 2 — the file-level fallback for every hunk without its own entry. It is
-  // the same answer for all of them, so resolve it once.
   const bool needs_file_fallback =
       std::find(has_own_entry.begin(), has_own_entry.end(), false) != has_own_entry.end();
   if (needs_file_fallback) {
@@ -636,9 +579,6 @@ void BranchReviewStateService::ResolveHunkMarkers(
     }
   }
 
-  // Pass 3 — hunk-scoped notes, each on the hunk PlaceNote finds for it. One
-  // note a hunk: a second that lands on the same hunk, and one whose change is
-  // gone, are `detached` -- still the file's, still shown and exported.
   for (const BranchReviewNote& note : target_state->notes) {
     if (!IsHunkNoteOf(note, normalized)) {
       continue;
@@ -663,7 +603,6 @@ const BranchReviewNote* BranchReviewStateService::NoteOnHunk(const BranchReviewS
   }
   const std::filesystem::path normalized = NormalizeReviewPath(input.target.repository_root, input.path);
   const ModelHunkIndex index = BuildModelHunkIndex(*input.model);
-  // The first note placed on the hunk, as ResolveHunkMarkers shows it.
   for (const BranchReviewNote& note : target_state->notes) {
     if (!IsHunkNoteOf(note, normalized)) {
       continue;
@@ -709,9 +648,6 @@ bool BranchReviewStateService::HasNote(const BranchReviewStateQueryInput& input,
 
 namespace {
 
-// Whether a note on `path` falls under `scope`: the file itself, or a file below
-// the directory it names. Both are repository-relative and normalized; an empty
-// scope is the whole review.
 bool NoteInScope(const std::filesystem::path& path, const std::filesystem::path& scope) {
   if (scope.empty() || scope == ".") {
     return true;
@@ -724,7 +660,7 @@ bool NoteInScope(const std::filesystem::path& path, const std::filesystem::path&
   return note.starts_with(prefix) && (note.size() == prefix.size() || note[prefix.size()] == '/');
 }
 
-}  // namespace
+}
 
 std::size_t BranchReviewStateService::NoteCount(const BranchReviewTargetIdentity& target,
                                                 const std::filesystem::path& scope) const {
@@ -760,8 +696,6 @@ std::string BranchReviewStateService::NotesAsReferences(const BranchReviewTarget
     return {};
   }
   const std::filesystem::path normalized_scope = NormalizeReviewPath(target.repository_root, scope);
-  // Where a note points: 0 for a file's, else its hunk's first line (the new
-  // file's, or the old file's for a hunk that only removes).
   const auto line_of = [](const BranchReviewNote& note) {
     if (note.scope != BranchReviewNoteScope::Hunk || !note.hunk_identity.has_value()) {
       return 0;
@@ -800,7 +734,6 @@ std::string BranchReviewStateService::NotesAsReferences(const BranchReviewTarget
       }
     }
     text += ": ";
-    // One line a note, whatever it was typed as.
     for (const char c : note->text) {
       text.push_back(c == '\n' || c == '\r' ? ' ' : c);
     }
@@ -837,4 +770,4 @@ std::optional<std::string> BranchReviewStateService::NoteText(
   return std::nullopt;
 }
 
-}  // namespace microide::compare
+}

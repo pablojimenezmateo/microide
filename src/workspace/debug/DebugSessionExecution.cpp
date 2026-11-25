@@ -1,7 +1,3 @@
-// DebugSession execution-control commands (resume / step / pause / restart),
-// split out of DebugSession.cpp to keep that translation unit within the debug
-// subsystem's per-TU code-line budget. These methods drive state transitions on
-// the shared DebugSession and are a cohesive cluster.
 #include "workspace/debug/DebugSession.h"
 
 #include "platform/HostPlatform.h"
@@ -18,32 +14,22 @@ void DebugSession::SendResumeRequest(const char* command) {
   if (state_ != State::Stopped) {
     return;
   }
-  // If the adapter REJECTS the resume (invalid state / unsupported step), undo the
-  // optimistic clear below and restore the stopped view — otherwise the UI shows
-  // Running while the target is still stopped. The `state_ == Running` guard means
-  // a real `stopped`/`continued` event that already moved us on is not clobbered.
   auto on_response = [this](const dap_protocol::DapResponse& response) {
     if (response.success || state_ != State::Running) {
       return;
     }
     SetState(State::Stopped);
-    RequestStackTrace(last_stop_);  // re-project execution line + Call Stack + scopes
+    RequestStackTrace(last_stop_);
   };
   if (stopped_thread_id_.has_value()) {
     client_->SendRequestAsync(command, dap_protocol::MakeThreadIdArguments(*stopped_thread_id_), on_response);
   } else {
-    // A `stopped` with no threadId whose threads query has not landed yet: resolve
-    // a thread and resume it rather than sending threadId:0 (which DAP rejects /
-    // misroutes). `command` is a string literal, safe to capture by value.
     RequestThreads([this, command, on_response](std::vector<dap_protocol::DapThread> threads) {
       if (!threads.empty()) {
         client_->SendRequestAsync(command, dap_protocol::MakeThreadIdArguments(threads.front().id), on_response);
       }
     });
   }
-  // Optimistically resume so the UI clears immediately. This synchronous Running
-  // flip is load-bearing: the stale-stack-drop guard relies on it. A rejected
-  // resume is undone by `on_response` above.
   util::InvokeIfSet(callbacks_.on_resumed);
   SetState(State::Running);
 }
@@ -76,23 +62,15 @@ void DebugSession::Pause() {
   if (state_ != State::Running || !client_->IsInitialized()) {
     return;
   }
-  // A `pause` behind a configurationDone gdb 15 has not answered is never answered.
   if (InterruptGdbStillStartingProgram()) {
     return;
   }
-  // `pause` requires a threadId. When running there is no stopped thread: pause
-  // the first one the adapter announced. Asking for the thread list now is the
-  // fallback only: on gdb 15 a request sent while it is still starting the program
-  // waits behind configurationDone (above), so the `threads` round trip timed out
-  // and `pause` was never sent (QA dbg-pause).
   if (!known_thread_ids_.empty()) {
     client_->SendRequestAsync("pause", dap_protocol::MakeThreadIdArguments(known_thread_ids_.front()), {});
     return;
   }
   pause_pending_ = true;
   RequestThreads([this](std::vector<dap_protocol::DapThread> threads) {
-    // The target may have stopped, terminated, or another action may have run
-    // before this threads response landed — only send `pause` if still Running.
     if (state_ != State::Running || threads.empty() || !pause_pending_) {
       return;
     }
@@ -105,24 +83,18 @@ void DebugSession::Restart() {
   if (!client_->IsInitialized() || !client_->Capabilities().supports_restart_request) {
     return;
   }
-  // A re-emitted `initialized` (some adapters send one on restart) must re-install
-  // breakpoints and re-finalize, so re-arm the configurationDone guard.
   configuration_done_sent_ = false;
   configuration_done_answered_ = false;
-  // A restarted program's threads are announced afresh.
   known_thread_ids_.clear();
-  // The DAP `restart` request optionally carries the original launch/attach
-  // arguments under `arguments`; pass them through when we have them.
   util::JsonObject args;
   if (!config_.arguments.IsNull()) {
     args["arguments"] = config_.arguments;
   }
   client_->SendRequestAsync("restart", util::JsonValue(std::move(args)), {});
-  // Optimistically clear the current stop; the adapter re-runs and stops again.
   if (state_ == State::Stopped) {
     util::InvokeIfSet(callbacks_.on_resumed);
     SetState(State::Running);
   }
 }
 
-}  // namespace microide::workspace
+}

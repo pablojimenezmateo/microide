@@ -13,8 +13,6 @@ namespace microide::workspace {
 
 namespace {
 
-// "LSP startup failed for <id>[: <detail>]" when the language has a configured
-// server that did not come up; empty when it has none.
 std::string LspStartupFailure(const LspManager& manager, const std::string& language_id) {
   if (language_id.empty() || !manager.HasServer(language_id)) {
     return {};
@@ -24,7 +22,7 @@ std::string LspStartupFailure(const LspManager& manager, const std::string& lang
                         : "LSP startup failed for " + language_id + ": " + detail;
 }
 
-}  // namespace
+}
 
 void AssistHost::Configure(WorkspaceContext& context,
                            WorkspacePluginRuntime& plugin_runtime,
@@ -46,7 +44,7 @@ bool AssistHost::IsStale(const std::filesystem::path& request_path) const {
 
 bool AssistHost::SnippetsEnabled() const {
   return SettingFlagEnabled(operations_.get_setting_value("editor.snippets.enabled"),
-                            /*default_value=*/true);
+                            true);
 }
 
 editor::TextViewport* AssistHost::RequireActiveEditableViewport(std::string* error_message) const {
@@ -78,8 +76,6 @@ LspClient* AssistHost::PrepareLspRequest(editor::TextViewport& viewport,
 
 void AssistHost::MaybeLogLspUnavailable(const std::string& language_id,
                                         bool lsp_authoritative) const {
-  // A server served the buffer, or the language has none configured: not a
-  // failure worth logging on every request.
   if (lsp_authoritative) {
     return;
   }
@@ -135,20 +131,6 @@ std::string_view LineViewAt(const editor::TextViewport& viewport, std::size_t in
 }
 
 editor::SelectionRange CompletionReplacementRange(const editor::TextViewport& viewport) {
-  // Only walk back over the trailing identifier token. `.`/`/`/`-` are token
-  // SEPARATORS, not word chars: including them made a member completion (obj.|)
-  // or path completion (a/b|) replace the whole chain, dropping the qualifier.
-  // The LSP path prefers the server's textEdit range anyway; this heuristic only
-  // covers plugin completions and LSP items without a textEdit. Codepoint-aware:
-  // a byte-wise ASCII walk stopped inside `größe|`, so accepting `größe_total`
-  // produced `größgröße_total`.
-  //
-  // Quick suggestions ask this on every word character typed, and the whole line
-  // is not needed -- only the run ending at the caret. Reading the line would
-  // materialize it when it spans pieces (any edited line): on a minified file,
-  // the file, per keystroke (editor_typing_minified_line, +14% against v2.12.0).
-  // A window before the caret, widened while the run reaches its start (within a
-  // codepoint of it, so a window opening mid-character cannot cut the walk short).
   const std::size_t line_index = viewport.cursor_line();
   if (line_index >= viewport.lines().size()) {
     const editor::TextPosition caret{line_index, viewport.cursor_column()};
@@ -186,6 +168,6 @@ CodeActionEdit ToCodeActionEdit(const std::filesystem::path& path,
   };
 }
 
-}  // namespace assist
+}
 
-}  // namespace microide::workspace
+}

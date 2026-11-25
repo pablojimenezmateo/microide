@@ -11,7 +11,7 @@ namespace {
 constexpr std::size_t kMaxStep = 8;
 
 struct LeadingWhitespace {
-  std::size_t length = 0;  // bytes before the first non-blank byte
+  std::size_t length = 0;
   std::size_t spaces = 0;
   std::size_t tabs = 0;
   bool has_content = false;
@@ -38,8 +38,6 @@ struct SpacesDiff {
   bool looks_like_alignment = false;
 };
 
-// VS Code's spacesDiff: the change in indentation between two content lines,
-// measured past their common leading prefix.
 SpacesDiff ComputeSpacesDiff(std::string_view a, std::size_t a_length, std::string_view b,
                              std::size_t b_length) {
   SpacesDiff out;
@@ -58,14 +56,12 @@ SpacesDiff ComputeSpacesDiff(std::string_view a, std::size_t a_length, std::stri
     (b[j] == ' ' ? b_spaces : b_tabs)++;
   }
   if ((a_spaces > 0 && a_tabs > 0) || (b_spaces > 0 && b_tabs > 0)) {
-    return out;  // mixed run: no evidence
+    return out;
   }
   const std::size_t tabs_diff = a_tabs > b_tabs ? a_tabs - b_tabs : b_tabs - a_tabs;
   const std::size_t spaces_diff = a_spaces > b_spaces ? a_spaces - b_spaces : b_spaces - a_spaces;
   if (tabs_diff == 0) {
     out.spaces_diff = spaces_diff;
-    // `foo(a,` followed by a line whose content starts under `a`: alignment,
-    // not an indentation step.
     if (spaces_diff > 0 && b_spaces >= 1 && b_spaces - 1 < a.size() && b_spaces < b.size() &&
         b[b_spaces] != ' ' && a[b_spaces - 1] == ' ' && a.back() == ',') {
       out.looks_like_alignment = true;
@@ -78,7 +74,7 @@ SpacesDiff ComputeSpacesDiff(std::string_view a, std::size_t a_length, std::stri
   return out;
 }
 
-}  // namespace
+}
 
 IndentDetection DetectIndent(LineSpan lines, std::size_t max_inspect_lines) {
   IndentDetection out;
@@ -95,7 +91,7 @@ IndentDetection DetectIndent(LineSpan lines, std::size_t max_inspect_lines) {
     const std::string_view line = lines[line_index];
     const LeadingWhitespace leading = ScanLeading(line);
     if (!leading.has_content) {
-      continue;  // blank lines carry no indentation and do not break a run
+      continue;
     }
     ++inspected;
     if (leading.tabs > 0) {
@@ -105,7 +101,7 @@ IndentDetection DetectIndent(LineSpan lines, std::size_t max_inspect_lines) {
     }
     const SpacesDiff diff = ComputeSpacesDiff(previous, previous_length, line, leading.length);
     if (diff.looks_like_alignment) {
-      continue;  // the aligned line is not the next line's predecessor either
+      continue;
     }
     if (diff.spaces_diff <= kMaxStep) {
       step_hits[diff.spaces_diff]++;
@@ -119,7 +115,7 @@ IndentDetection DetectIndent(LineSpan lines, std::size_t max_inspect_lines) {
     out.soft_tabs = tab_lines < space_lines;
   }
   if (tab_lines > space_lines) {
-    return out;  // a tab file's step is the caller's tab size
+    return out;
   }
 
   std::size_t best_hits = 0;
@@ -139,4 +135,4 @@ IndentDetection DetectIndent(LineSpan lines, std::size_t max_inspect_lines) {
   return out;
 }
 
-}  // namespace microide::editor
+}

@@ -12,10 +12,6 @@
 
 namespace microide::project {
 
-// PatternCache: process-wide LRU cache of PCRE2 compiled patterns (max 64 entries).
-// Thread-safe with std::mutex.
-// Key: (pattern_string, flags uint32_t)
-// Value: CompiledRegex (shared_ptr to pcre2_code, including JIT if available)
 class PatternCache {
  public:
   static constexpr std::size_t kMaxEntries = 64;
@@ -37,12 +33,9 @@ class PatternCache {
     }
   };
 
-  // Returns a cached CompiledRegex for the given pattern+options, or compiles and caches it.
-  // Thread-safe.
   util::CompiledRegex Get(std::string_view pattern, uint32_t options,
                           std::string error_prefix = {});
 
-  // Returns the number of cached entries. Thread-safe.
   std::size_t Size() const;
 
  private:
@@ -56,7 +49,6 @@ class PatternCache {
   std::unordered_map<Key, std::list<Entry>::iterator, KeyHash> map_;
 };
 
-// Process-wide singleton pattern cache for search operations.
 PatternCache& GlobalPatternCache();
 
-}  // namespace microide::project
+}

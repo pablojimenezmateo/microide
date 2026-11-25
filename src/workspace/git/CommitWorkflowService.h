@@ -22,48 +22,25 @@ class GitRepositoryService;
 class CommitWorkflowService {
  public:
   struct Callbacks {
-    // The ACTIVE project's launcher: where this project's `git commit` and the
-    // staged-diff pre-checks run (TD-2026-09-22-301). Unset or null means the
-    // process-wide local one.
     std::function<const platform::ProcessLauncher*()> project_launcher;
     std::function<void()> request_git_refresh;
     std::function<void(std::string_view channel_id, std::string_view label, std::string line)>
         append_output;
     std::function<void(std::string_view)> show_output_panel;
     std::function<void(std::string_view)> set_command_feedback;
-    // Post a transient toast for the commit outcome. This is the ONLY visible
-    // channel for a UI-driven commit: `set_command_feedback` writes
-    // `panel.feedback.text`, which nothing paints — only the command palette and
-    // the control channel read it back — so a refusal reported through that alone
-    // reads as the Commit button doing nothing.
     std::function<void(NotificationService::Tone, std::string)> notify;
     std::function<void()> persist_commit_draft;
-    // The committed project's draft, which is `state` -- not necessarily the
-    // project in front (see is_in_front).
     std::function<void(CommitWorkflowState& state)> clear_persisted_commit_draft;
     std::function<std::optional<PersistedCommitDraftState>()> load_persisted_commit_draft;
     std::function<void(const std::filesystem::path& path, std::string_view left_ref,
                        std::string_view left_label)>
         open_staged_diff;
     std::function<void(project::CommitOperationKind)> open_commit_confirmation;
-    // Ask the user to acknowledge the non-blocking pre-check warnings listed in the
-    // argument. Accepting routes back through ConfirmPendingOperation, which records
-    // the acknowledgements and dispatches the parked operation.
     std::function<void(std::string)> open_commit_warning_confirmation;
     std::function<void()> request_commit_workflow_redraw;
-    // A commit's hooks can run long enough for the user to switch projects, and
-    // the callbacks above that name no state act on the project in FRONT. So the
-    // completion asks whether its repository is still in front; when it is not,
-    // the toast names the project, the output panel, the feedback line and the
-    // refresh are skipped, and `defer_to_project` has that project catch up when
-    // it is next activated. Unset = always in front.
     std::function<bool(const std::filesystem::path& project_root)> is_in_front;
     std::function<std::string(const std::filesystem::path& project_root)> project_label;
     std::function<void(const std::filesystem::path& project_root)> defer_to_project;
-    // The front project's root, captured at dispatch, and the commit workflow of
-    // the open project with that root (null once it is closed): how a completion
-    // finds the state that dispatched it after a project switch moved it. Unset =
-    // the state stays where it was dispatched from (a single-project host).
     std::function<std::filesystem::path()> front_project_root;
     std::function<CommitWorkflowState*(const std::filesystem::path& project_root)> state_for_project;
   };
@@ -73,30 +50,15 @@ class CommitWorkflowService {
 
   void SetCallbacks(Callbacks callbacks);
 
-  // The commit runs on a background thread; its result must be published to the
-  // shared CommitWorkflowState on the main (render) thread. SetCompletionWakeEvent
-  // wires the mailbox that carries the completion closure back, and
-  // DrainCompletions runs any queued completion on the main thread. The shell
-  // reuses the git-sidebar wake event (a successful commit refreshes git anyway)
-  // and drains here before rebuilding the sidebar.
   void SetCompletionWakeEvent(std::uint32_t event_type);
   void DrainCompletions();
 
-  // Test seam: number of commit completions queued for the main thread but not
-  // yet drained (lets a test wait for the worker to finish without cancelling it).
   int PendingCompletionCount() const { return completion_mailbox_.PendingCount(); }
 
   void Open(CommitWorkflowState& state);
   void Close(CommitWorkflowState& state);
-  // `run_blocking_conflict_scan` gates the full `git diff --cached` conflict-marker
-  // scan. Interactive refreshes (open, per-keystroke draft edits) pass false to keep
-  // the shell thread responsive; only the pre-dispatch refresh in RequestCommit pays
-  // for the unbounded scan, which still blocks the commit if it fires.
   void RefreshDerivedState(CommitWorkflowState& state, bool run_blocking_conflict_scan = false);
 
-  // The project's launcher, or the process-wide local one when no callback is
-  // wired. Every git this service runs — the staged summary, the pre-checks and
-  // the commit itself — goes through it (TD-2026-09-22-301).
   const platform::ProcessLauncher& ProjectLauncher() const;
   void OnDraftEdited(CommitWorkflowState& state);
   bool RequestCommit(CommitWorkflowState& state, project::CommitOperationKind operation);
@@ -106,39 +68,14 @@ class CommitWorkflowService {
   void RestorePersistedDraft(CommitWorkflowState& state,
                              const PersistedCommitDraftState& persisted);
 
-  // Invalidates the in-flight operation identified by `generation`, so its queued
-  // completion is dropped instead of publishing into a destroyed state. Called from
-  // ~CommitWorkflowState; a no-op if that operation was already superseded or
-  // published. The generation guard in the completion already handled the
-  // "a newer commit was dispatched" case — this covers the "the target went away"
-  // case, which is a project tab closing while its commit runs.
   void AbandonOperation(std::uint64_t generation);
 
-  // A successful commit marks the repository stale and asks for a refresh, then
-  // reports plain success — the refresh runs long after and its outcome used to
-  // reach the user only as the git sidebar's "Git refresh failed: …" banner, so
-  // `CommitOperationResultCategory::RefreshFailedAfterSuccess` had two live
-  // display branches and no producer (TD-2026-07-26-003). The shell calls this
-  // with every consumed refresh snapshot; when the snapshot is the one a commit
-  // was waiting on and it failed, a follow-up warning toast is posted.
-  //
-  // Follow-up, not replacement: the commit really did succeed and saying so
-  // promptly matters more than waiting out a refresh that may take seconds. A
-  // newer commit disarms the watch, so the operation in front of the user always
-  // owns the feedback.
-  //
-  // It also answers a commit that was waiting for this refresh (see
-  // RequestCommit): the commit's checks are evaluated again, now against it.
   void NoteGitRefreshOutcome(CommitWorkflowState& state, std::uint64_t snapshot_generation,
                              std::string_view refresh_error);
 
  private:
-  // `may_wait_for_refresh`: a request made while the repository snapshot is stale
-  // or refreshing asks for a refresh and is evaluated when it lands, once.
   bool RequestCommitImpl(CommitWorkflowState& state, project::CommitOperationKind operation,
                          bool may_wait_for_refresh);
-  // Reports a refusal on both channels: command feedback (palette / control channel)
-  // and a toast, which is all a user who pressed the Commit button ever sees.
   void ReportRefusal(std::string message) const;
   void DispatchCommit(CommitWorkflowState& state, project::CommitOperationKind operation);
   void PublishResult(CommitWorkflowState& state, const std::filesystem::path& project_root,
@@ -151,23 +88,10 @@ class CommitWorkflowService {
   Callbacks callbacks_;
   mutable std::mutex mutex_;
   std::uint64_t operation_generation_ = 0;
-  // 0 = not watching. Otherwise the lowest refresh generation whose snapshot can
-  // be the post-commit refresh (see NoteGitRefreshOutcome). It is "current + 1"
-  // rather than the generation the request produced because the request can be
-  // throttled or folded into an already-deferred refresh, in which case the
-  // commit's changes are picked up by a later generation than the call returned.
   std::uint64_t post_commit_refresh_watch_ = 0;
-  // A commit requested while the repository snapshot was stale: its checks ("untracked
-  // files are not included", conflicts, a branch behind) read that snapshot, so the
-  // request waits for the refresh it asked for (0 = none waiting; same "current + 1"
-  // floor as above). A file un-staged outside the app the moment before Commit was
-  // otherwise committed past without the untracked-files question.
   std::uint64_t pre_commit_refresh_watch_ = 0;
   project::CommitOperationKind commit_waiting_for_refresh_ = project::CommitOperationKind::Create;
-  // Background-thread commit result -> main-thread PublishResult marshaling. Keeps
-  // all mutation of CommitWorkflowState (subject/body viewports, status message)
-  // on the render thread; the worker only produces the CommitOperationResult.
   util::MainThreadMailbox completion_mailbox_;
 };
 
-}  // namespace microide::workspace
+}

@@ -35,14 +35,12 @@ void HighlightPrefetchService::PostLatestAndCollect(const char* key_prefix, Requ
 }
 
 void HighlightPrefetchService::Request(HighlightPrefetchRequest request) {
-  // A newer viewport position supersedes an unstarted prefetch for the same buffer.
   PostLatestAndCollect("highlight-prefetch:", std::move(request),
                        [](const HighlightPrefetchRequest& req) { return ComputeHighlightPrefetch(req); },
                        results_mutex_, results_);
 }
 
 void HighlightPrefetchService::RequestCheckpoints(HighlightCheckpointRequest request) {
-  // A newer backfill (deeper target or post-edit) supersedes an unstarted one.
   PostLatestAndCollect("highlight-checkpoints:", std::move(request),
                        [](const HighlightCheckpointRequest& req) { return ComputeHighlightCheckpoints(req); },
                        checkpoint_results_mutex_, checkpoint_results_);
@@ -52,11 +50,6 @@ void HighlightPrefetchService::PrewarmDefinition(std::uint32_t definition_id) {
   if (definition_id == 0) {
     return;
   }
-  // Single key: at most one prewarm compile is queued at a time. A rapid series
-  // of tab switches only keeps the latest pending; any filetype it supersedes is
-  // still compiled by that tab's own visible-band prefetch. The compile is
-  // idempotent, so a redundant post is cheap. No result is produced, so no wake
-  // is needed.
   executor_.PostLatest("syntax-prewarm",
                        [definition_id]() { runtime_syntax::CompileDefinition(definition_id); });
 }
@@ -86,4 +79,4 @@ std::vector<HighlightCheckpointResult> HighlightPrefetchService::DrainCheckpoint
 
 void HighlightPrefetchService::Shutdown() { executor_.Shutdown(); }
 
-}  // namespace microide::editor
+}

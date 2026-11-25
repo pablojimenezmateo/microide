@@ -23,10 +23,6 @@
 
 #include <unistd.h>
 
-// remote-terminal-restore end to end, over the fake ssh host: a remote project's
-// terminals exist from the moment it opens, survive quitting microide and closing
-// the project, come back as the same host shells on reopen (or fresh ones, said
-// so), and a host terminal no tab claims is offered.
 namespace microide::tests {
 namespace {
 
@@ -72,11 +68,6 @@ void PointAtFakeHost(WorkspaceShell& shell, const FakeSshHost& host) {
          "no automatic forwards");
 }
 
-// What the host's server lists, asked over a connection of the test's own (it
-// is attached to nothing, so it never counts as a terminal's client).
-// The host server's terminals, or nullopt when it did not answer (no socket yet, a
-// status that failed): "it listed nothing" and "it was not asked" are different
-// answers to a test waiting for a row.
 std::optional<std::vector<remote::ServerTerminal>> HostTerminalsIfAnswered(const FakeSshHost& host) {
   const int fd = platform::ConnectUnixSocket(remote::ServerSocketPath(host.server_dir()));
   if (fd < 0) {
@@ -117,8 +108,6 @@ const workspace::NotificationService::Notification* RowContaining(WorkspaceShell
   return nullptr;
 }
 
-// A client of the host's server that is not a window: what a crashed window, or
-// another machine's, leaves behind.
 std::shared_ptr<remote::RemoteServerClient> ConnectRawClient(const FakeSshHost& host,
                                                              const std::filesystem::path& root) {
   auto client = remote::RemoteServerClient::Create();
@@ -141,7 +130,6 @@ std::shared_ptr<remote::RemoteTerminalChannel> OpenRawHostTerminal(
   return channel;
 }
 
-// State and config homes of the test's own: sessions are written and read back.
 struct ScopedAppHomes {
   TemporaryDirectory dir;
   ScopedEnvVar state{"XDG_STATE_HOME", (dir.path() / "state").string()};
@@ -150,11 +138,6 @@ struct ScopedAppHomes {
 
 std::string Target(std::string_view name) { return "dev@" + std::string(name) + "-" + std::to_string(::getpid()); }
 
-// Gap 1 of the proposal: the project initializes while its link is still
-// connecting, and its terminal used to be dropped. Now it is a pending tab from
-// the moment the project opens, a `+` meanwhile adds another, typing into them is
-// dropped, and both become host shells once the link is Ready -- no tab added or
-// removed.
 void TestARemoteProjectOpensWithItsTerminal() {
   ScopedAppHomes homes;
   FakeSshHost host;
@@ -194,11 +177,6 @@ void TestARemoteProjectOpensWithItsTerminal() {
          "what was typed while pending never reached a shell");
 }
 
-// Quit and close-project DETACH (gap 3); reopening REATTACHES from the session's
-// recorded identity (gaps 2 and 4) -- the screen, what was printed meanwhile, the
-// rule -- and the host server restarting in between gives fresh shells, said so in
-// the host's row. Quit reaches an inactive project's terminals too, in this test
-// binary whose destructors run at quit (quick_exit is off here).
 void TestHostTerminalsSurviveQuitAndReattach() {
   ScopedAppHomes homes;
   FakeSshHost host;
@@ -227,8 +205,8 @@ void TestHostTerminalsSurviveQuitAndReattach() {
     kept = session.host_identity().handle;
     inactive = other.host_identity().handle;
     Expect(kept != 0 && inactive != 0 && kept != inactive, "two host terminals");
-    shell.Shutdown();  // quit
-  }  // and every destructor runs, as the shipping binary's quick_exit would not
+    shell.Shutdown();
+  }
   Expect(WaitUntil(
              [&] {
                const auto rows = HostTerminals(host);
@@ -255,11 +233,10 @@ void TestHostTerminalsSurviveQuitAndReattach() {
     Expect(PumpUntil(shell, [&] { return RowContaining(shell, "Reattached to " + target) != nullptr; },
                      std::chrono::seconds(10)),
            "one row says so");
-    // Close the project (not the app): its shell stays.
     WorkspaceShellTestAccess::CloseProject(shell, WorkspaceShellTestAccess::ActiveProjectIndex(shell));
     Expect(WaitUntil(
                [&] {
-                 const auto rows = HostTerminals(host);  // held: Listed points into it
+                 const auto rows = HostTerminals(host);
                  const auto* row = Listed(rows, kept);
                  return row != nullptr && row->clients == 0;
                },
@@ -267,8 +244,6 @@ void TestHostTerminalsSurviveQuitAndReattach() {
            "close-project leaves the shell running, attached to nobody");
   }
 
-  // The host server restarted between the quit and the reopen: the handles name
-  // nothing now. The tab starts fresh in its directory, and the row says why.
   Expect(platform::RunSubprocess({MICROIDE_SERVER_BINARY, "stop", "--socket-dir", host.server_dir().string()},
                                  platform::SubprocessOptions{.timeout_ms = 10000})
              .success(),
@@ -292,11 +267,6 @@ void TestHostTerminalsSurviveQuitAndReattach() {
   }
 }
 
-// TD-2026-10-27-400: a project switched away from while its connection was
-// still coming up saved a session with a PENDING pane (no identity); its shell
-// started afterwards, in the background. Quit re-records that project's terminal
-// layout, so the reopen reattaches the tab to that shell instead of starting a
-// fresh one beside it.
 void TestABackgroundStartedHostTerminalIsRecordedAtQuit() {
   ScopedAppHomes homes;
   FakeSshHost host;
@@ -319,13 +289,9 @@ void TestABackgroundStartedHostTerminalIsRecordedAtQuit() {
     Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, open_first),
            "switched away from while connecting: its session is written now, pending pane and all");
     TerminalSession& front = WorkspaceShellTestAccess::TerminalTabSession(shell, 0);
-    // Its handle, not only `running`: until term/open answers it is 0, and every
-    // host terminal would read as "not the front one".
     Expect(PumpUntil(shell, [&] { return front.running() && front.host_identity().handle != 0; }),
            "the front project's terminal starts");
     const std::uint64_t front_handle = front.host_identity().handle;
-    // What the host listed on the last poll that answered, how many did not, and
-    // what each pane shows, for a failure (TD-2026-10-28-414).
     std::string last_rows = " never answered";
     int unanswered = 0;
     Expect(PumpUntil(shell,
@@ -343,11 +309,6 @@ void TestABackgroundStartedHostTerminalIsRecordedAtQuit() {
                            background = row.handle;
                          }
                        }
-                       // And the CLIENT knows it: the host lists the shell as soon as
-                       // it opens, before its term/open reply reaches the background
-                       // pane -- a quit in that window recorded a pane with no
-                       // identity, and the reopen started a fresh shell (CI, once:
-                       // "naming the shell that started in the background").
                        const auto& tabs = WorkspaceShellTestAccess::ProjectState(shell, 0).terminal_tabs;
                        return background != 0 && !tabs.empty() && !tabs.front()->panes.empty() &&
                               tabs.front()->panes.front()->session.host_identity().handle == background;
@@ -359,7 +320,7 @@ void TestABackgroundStartedHostTerminalIsRecordedAtQuit() {
                     std::to_string(unanswered) + " polls unanswered); panes:" +
                     WorkspaceShellTestAccess::TerminalPanesSummary(shell);
            });
-    shell.Shutdown();  // quit
+    shell.Shutdown();
   }
   {
     WorkspaceShell shell;
@@ -374,12 +335,6 @@ void TestABackgroundStartedHostTerminalIsRecordedAtQuit() {
   }
 }
 
-// TD-2026-11-02-428 item 6: a host terminal whose term/open was still being
-// answered at quit was recorded with no identity. The host already ran its shell,
-// so the reopen started a fresh one beside it and offered the original as nobody's.
-// Quit now waits a bounded moment for the answer. The window is made exact here:
-// the host server is stopped while the open goes out and resumed after the quit
-// began.
 void TestAHostTerminalOpeningAtQuitIsRecorded() {
   ScopedAppHomes homes;
   FakeSshHost host;
@@ -409,7 +364,7 @@ void TestAHostTerminalOpeningAtQuitIsRecorded() {
     Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "term"), "a second terminal");
     TerminalSession& opening = WorkspaceShellTestAccess::TerminalTabSession(shell, 1);
     Expect(opening.running() && opening.host_identity().empty(), "its open is on the wire, unanswered");
-    shell.Shutdown();  // quit, inside the window
+    shell.Shutdown();
     resume.join();
     opened_at_quit = opening.host_identity().handle;
     Expect(opened_at_quit != 0, "the quit waited for its answer");
@@ -428,10 +383,6 @@ void TestAHostTerminalOpeningAtQuitIsRecorded() {
   }
 }
 
-// A file from outside the project dropped onto a HOST terminal (a screenshot for
-// an agent running on the host): its local path means nothing there, so it is
-// sent to the host first and the path it has THERE is typed (TD-2026-11-02-428
-// item 5; the local path used to be typed, and the agent could not open it).
 void TestAFileDroppedOnAHostTerminalIsSentAndItsHostPathTyped() {
   ScopedAppHomes homes;
   FakeSshHost host;
@@ -479,11 +430,6 @@ void TestAFileDroppedOnAHostTerminalIsSentAndItsHostPathTyped() {
   Expect(ScreenText(session).find(elsewhere.path().string()) == std::string::npos, "not the local path");
 }
 
-// TD-2026-10-28-414's one found path: a terminal opened while the link is down
-// waits for it, and the UI learns of the reconnect through a coalesced wake --
-// "Reconnecting" overwritten by "Ready" before the shell drained it. Waiting
-// terminals used to start only on the shell's "was not Ready, is Ready" edge,
-// which that wake never shows, so the terminal waited forever.
 void TestATerminalOpenedWhileTheLinkIsDownStartsAfterACoalescedReconnect() {
   ScopedAppHomes homes;
   FakeSshHost host;
@@ -501,7 +447,6 @@ void TestATerminalOpenedWhileTheLinkIsDownStartsAfterACoalescedReconnect() {
       &WorkspaceShellTestAccess::ProjectLauncher(shell));
   Expect(source != nullptr && source->Ready(), "a connected host terminal source");
 
-  // From here until the reconnect is complete the shell drains nothing.
   Expect(platform::RunSubprocess({MICROIDE_SERVER_BINARY, "stop", "--socket-dir", host.server_dir().string()},
                                  platform::SubprocessOptions{.timeout_ms = 10000})
              .success(),
@@ -518,12 +463,6 @@ void TestATerminalOpenedWhileTheLinkIsDownStartsAfterACoalescedReconnect() {
          [&] { return "the waiting terminal starts once the shell sees the link back:\n" + ScreenText(waiting); });
 }
 
-// The other side of the lifetime rule: a tab closed with its X ends its shell;
-// a shell the user ended (Ctrl+D) is closed at quit, not kept as a dead buffer
-// that holds the server; terminal.restore_sessions off closes at quit. A terminal
-// no tab claims (a crash, another client's detached one) is offered once per
-// connect, and Attach and Close act on it; one another client is attached to is
-// never offered.
 void TestHostTerminalLifetimeAndUnclaimedTerminals() {
   ScopedAppHomes homes;
   FakeSshHost host;
@@ -576,8 +515,6 @@ void TestHostTerminalLifetimeAndUnclaimedTerminals() {
   Expect(WaitUntil([&] { return Listed(HostTerminals(host), opted_out) == nullptr; }, std::chrono::seconds(10)),
          "opted out, quit closes the host terminal: nothing is left behind");
 
-  // A terminal left by a crash: opened and dropped by a client that recorded it
-  // nowhere. And one another client is still attached to.
   const auto open_raw = [&](const std::shared_ptr<remote::RemoteServerClient>& client, TerminalSession& session) {
     return OpenRawHostTerminal(client, root, session);
   };
@@ -613,8 +550,6 @@ void TestHostTerminalLifetimeAndUnclaimedTerminals() {
     return false;
   };
 
-  // Default (terminal.restore_sessions on): what nobody claims comes back on its
-  // own, in tabs of its own, without a button to press and without taking focus.
   {
     WorkspaceShell shell;
     PointAtFakeHost(shell, host);
@@ -642,11 +577,9 @@ void TestHostTerminalLifetimeAndUnclaimedTerminals() {
            [&] { return "showing its screen:\n" + ScreenText(adopted); });
     Expect(WorkspaceShellTestAccess::RemoteHosts(shell).StatusText().find("with no tab") == std::string::npos,
            "Show Status lists none left: " + WorkspaceShellTestAccess::RemoteHosts(shell).StatusText());
-    // Quit records them like any other tab: the next window reattaches them.
     shell.Shutdown();
   }
 
-  // Opted out of revival, they are offered instead: Attach and Close.
   WorkspaceShell shell;
   PointAtFakeHost(shell, host);
   Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "terminal.restore_sessions", "false"),
@@ -691,8 +624,6 @@ void TestHostTerminalLifetimeAndUnclaimedTerminals() {
   held.Stop();
 }
 
-// An unclaimed terminal of a project that is NOT the active one is adopted into
-// that project, where it belongs, and the window's focus stays where it was.
 void TestAnUnclaimedTerminalIsAdoptedByItsBackgroundProject() {
   ScopedAppHomes homes;
   FakeSshHost host;
@@ -704,7 +635,6 @@ void TestAnUnclaimedTerminalIsAdoptedByItsBackgroundProject() {
   const std::string open_front = "remote-open " + target + ":" + front_root.string();
   const std::string open_back = "remote-open " + target + ":" + back_root.string();
   {
-    // Starts the host's server, which outlives the window.
     WorkspaceShell shell;
     PointAtFakeHost(shell, host);
     Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, open_back), "the background project, once");
@@ -726,7 +656,6 @@ void TestAnUnclaimedTerminalIsAdoptedByItsBackgroundProject() {
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, open_back), "reopen the background project");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, open_front), "and switch away from it at once");
   const auto back_holds_orphan = [&] {
-    // The project opened first is catalog entry 0, and the background one.
     for (const auto& tab : WorkspaceShellTestAccess::ProjectState(shell, 0).terminal_tabs) {
       for (const auto& pane : tab->panes) {
         if (pane != nullptr && pane->session.host_identity().handle == orphan) {
@@ -749,9 +678,6 @@ void TestAnUnclaimedTerminalIsAdoptedByItsBackgroundProject() {
   Expect(Listed(HostTerminals(host), orphan) != nullptr, "quit detaches it, as any recorded terminal");
 }
 
-// A host terminal is recorded the way unsaved text is: once its handle arrives the
-// crash-safety session flush is armed, so a crash or a kill after it leaves a
-// session that names it -- not a terminal running on the host that no tab knows.
 void TestAHostTerminalArmsTheCrashSafetyFlush() {
   ScopedAppHomes homes;
   FakeSshHost host;
@@ -772,7 +698,6 @@ void TestAHostTerminalArmsTheCrashSafetyFlush() {
          "its handle arms the flush, with no buffer dirty");
   Expect(PumpUntil(shell,
                    [&] {
-                     // What the event loop runs when the idle wait's deadline passes.
                      (void)WorkspaceShellTestAccess::HandleScheduledWake(shell);
                      return !WorkspaceShellTestAccess::SessionFlushArmed(shell) &&
                             !WorkspaceShellTestAccess::CurrentProjectState(shell).host_terminals_unrecorded;
@@ -782,7 +707,7 @@ void TestAHostTerminalArmsTheCrashSafetyFlush() {
   shell.Shutdown();
 }
 
-}  // namespace
+}
 
 void RegisterRemoteTerminalRestoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteTerminalRestore/ARemoteProjectOpensWithItsTerminal", TestARemoteProjectOpensWithItsTerminal);
@@ -802,4 +727,4 @@ void RegisterRemoteTerminalRestoreTests(std::vector<TestCase>& tests) {
           TestAnUnclaimedTerminalIsAdoptedByItsBackgroundProject);
 }
 
-}  // namespace microide::tests
+}

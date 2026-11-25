@@ -54,4 +54,4 @@ struct WorkspaceShell::TestAccess {
 
 #endif
 
-}  // namespace microide::workspace
+}

@@ -1,11 +1,5 @@
 #pragma once
 
-// A host terminal and a client mirroring it, with the real frame builder, encoder
-// and decoder between them and a channel that answers term/scrollback from the
-// host -- the server and the link without the server or the link. Shared by the
-// kernel's TerminalHost tests and the shell tests that need a host terminal in a
-// pane (an external client session).
-
 #include "TestSupport.h"
 #include "TerminalSessionTestAccess.h"
 
@@ -41,8 +35,6 @@ class RecordingChannel final : public terminal::TerminalHostChannel {
   }
   void Close() override { closed = true; }
   void Detach() override { detached = true; }
-  // term/scrollback, answered synchronously from the host session, as the server
-  // does (CaptureHostHistory); unset, nothing is sent.
   bool FetchHistory(std::uint64_t before, std::size_t count, HistoryDone done) override {
     if (history_source == nullptr) {
       return false;
@@ -63,12 +55,9 @@ class RecordingChannel final : public terminal::TerminalHostChannel {
   bool detached = false;
 };
 
-// A host session, a client session in host mode, and the builder between them;
-// every Sync goes through the real encoder and decoder.
 struct Mirror {
   terminal::TerminalSession host;
   terminal::TerminalSession own_client;
-  // `own_client`, or a session the test owns elsewhere (a shell's terminal pane).
   terminal::TerminalSession& client;
   std::shared_ptr<RecordingChannel> channel = std::make_shared<RecordingChannel>();
   terminal::TerminalHostFrameBuilder builder;
@@ -100,7 +89,6 @@ struct Mirror {
     return decoded.has_value() && client.ApplyHostFrame(std::move(*decoded));
   }
 
-  // The client shows exactly what the host does: every line, the cursor and the modes.
   void ExpectSame(const std::string& what) {
     const std::vector<terminal::TerminalLine> host_lines = host.SnapshotLines();
     const std::vector<terminal::TerminalLine> client_lines = client.SnapshotLines();
@@ -121,4 +109,4 @@ struct Mirror {
   }
 };
 
-}  // namespace microide::tests
+}

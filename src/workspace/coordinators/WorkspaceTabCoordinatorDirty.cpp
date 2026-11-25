@@ -5,11 +5,6 @@
 
 namespace microide::workspace {
 
-// The coordinator's dirty-state queries. Split out of WorkspaceTabCoordinator.cpp
-// so that TU stays under the architecture lint's 900-line coordinator budget;
-// this is one coherent family (is this tab / this project / any group dirty?)
-// with no dependency on the coordinator's Operations hooks.
-
 bool TabCoordinator::TabStateIsDirty(const TabEntry& tab) {
   return TabEntryIsDirty(tab);
 }
@@ -23,8 +18,6 @@ bool TabCoordinator::CloseWouldDiscardEdits(std::size_t index) const {
     return false;
   }
   const TabEntry& closing = state_.focused_group().open_tabs[index];
-  // The document a tab is a view of. A merge result is its own synthesized text,
-  // so its edits are its own to lose.
   const editor::TextViewport* closing_view = LoadedBufferViewOf(closing);
   if (closing_view == nullptr) {
     return true;
@@ -58,10 +51,6 @@ bool TabCoordinator::HasDirtyTabForProject(std::size_t project_index) const {
 bool TabCoordinator::ProjectHasDirtyTab(const ProjectCatalogState& catalog,
                                         const ProjectWorkspaceState& current_project,
                                         std::size_t project_index) {
-  // The predicate the tab strip actually asks, answered without the list. Callers
-  // that only need "is anything dirty" were paying a reserve()d vector sized to
-  // the project's tab count, once per project tab per painted frame, and then
-  // asking it .empty().
   if (project_index >= catalog.entries.size()) {
     return false;
   }
@@ -103,8 +92,6 @@ std::vector<std::size_t> TabCoordinator::DirtyIndicesForProject(std::size_t proj
 
 namespace {
 
-// Shared all-groups dirty walk: emit a (group, tab) ref for every dirty tab in
-// every editor group of `project`, in group-then-tab order.
 std::vector<GroupTabRef> CollectDirtyGroupTabs(const ProjectWorkspaceState& project) {
   std::vector<GroupTabRef> dirty;
   for (std::size_t g = 0; g < project.editor_groups.size(); ++g) {
@@ -118,7 +105,7 @@ std::vector<GroupTabRef> CollectDirtyGroupTabs(const ProjectWorkspaceState& proj
   return dirty;
 }
 
-}  // namespace
+}
 
 std::vector<GroupTabRef> TabCoordinator::DirtyGroupTabs() const {
   return CollectDirtyGroupTabs(state_);
@@ -139,4 +126,4 @@ std::vector<GroupTabRef> TabCoordinator::DirtyGroupTabsForProject(std::size_t pr
 }
 
 
-}  // namespace microide::workspace
+}

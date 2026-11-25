@@ -30,7 +30,6 @@ struct Seen {
   int depth;
 };
 
-// Records every visit and leave, and descends everywhere unless told otherwise.
 class RecordingVisitor final : public TreeWalkVisitor {
  public:
   WalkAction Visit(const WalkEntry& entry) override {
@@ -84,7 +83,6 @@ void TestWalkVisitsEveryEntryPreOrderWithTypesAndDepths() {
   Expect(!status.root_unreadable && !status.incomplete && !status.stopped,
          "a readable tree walks completely");
 
-  // Every entry, compared with the standard iterator's view of the same tree.
   std::set<std::string> expected;
   for (auto it = std::filesystem::recursive_directory_iterator(root); it != decltype(it){}; ++it) {
     expected.insert(it->path().native());
@@ -151,7 +149,6 @@ void TestWalkPrunesStopsAndFollowsWhenAsked() {
   Expect(stopped.stopped && stopping.seen.back().path == (root / "keep" / "x.txt").native(),
          "Stop ends the walk at the entry that asked");
 
-  // A lambda visitor through the adapter.
   std::size_t files = 0;
   (void) WalkDirectoryTree(root, WalkOptions{}, [&files](const WalkEntry& entry) {
     files += entry.type == PathType::RegularFile ? 1 : 0;
@@ -175,7 +172,7 @@ void TestWalkReportsWhatItCouldNotRead() {
   const WalkStatus no_root = WalkDirectoryTree(root / "absent", WalkOptions{}, missing);
   Expect(no_root.root_unreadable && missing.seen.empty(), "a missing root is unreadable");
 
-  if (::geteuid() != 0) {  // root reads any directory
+  if (::geteuid() != 0) {
     WriteFile(root / "locked" / "secret.txt", "s");
     ::chmod((root / "locked").c_str(), 0);
     RecordingVisitor locked;
@@ -187,7 +184,7 @@ void TestWalkReportsWhatItCouldNotRead() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterDirectoryWalkTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DirectoryWalk/VisitsEveryEntryPreOrderWithTypesAndDepths",
@@ -196,4 +193,4 @@ void RegisterDirectoryWalkTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DirectoryWalk/ReportsWhatItCouldNotRead", TestWalkReportsWhatItCouldNotRead);
 }
 
-}  // namespace microide::tests
+}

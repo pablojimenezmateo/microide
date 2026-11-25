@@ -55,7 +55,7 @@ NotificationService::Tone ResultTone(project::CommitOperationResultCategory cate
   }
 }
 
-}  // namespace
+}
 
 CommitWorkflowService::CommitWorkflowService(
     project::ProjectBackgroundExecutor& background_executor,
@@ -97,10 +97,6 @@ const platform::ProcessLauncher& CommitWorkflowService::ProjectLauncher() const 
 void CommitWorkflowService::RefreshDerivedState(CommitWorkflowState& state,
                                                 const bool run_blocking_conflict_scan) {
   const project::GitRepositoryState repository_state = git_repository_service_.CurrentState();
-  // The staged summary depends only on the git index (which advances the git
-  // generation when it changes), not on the subject/body being typed. Rebuild the
-  // `git diff --cached --numstat` summary only when the generation moves so a
-  // field-switch / warning-ack refresh does not re-run the subprocess redundantly.
   if (state.staged_summary_generation != repository_state.generation) {
     state.staged_summary = project::BuildCommitStagedSummary(repository_state, ProjectLauncher());
     state.staged_summary_generation = repository_state.generation;
@@ -113,10 +109,6 @@ void CommitWorkflowService::RefreshDerivedState(CommitWorkflowState& state,
           std::to_string(state.staged_summary.deleted_lines);
     }
   }
-  // Pass the summary we just built so RunCommitPreChecks does not re-run the identical
-  // `git diff --cached --numstat` subprocess on the shell thread. The unbounded
-  // `git diff --cached` conflict-marker scan only runs when a commit is about to
-  // dispatch (run_blocking_conflict_scan); interactive refreshes skip it for speed.
   state.checks = project::RunCommitPreChecks(
       repository_state, ProjectLauncher(), state.subject.text(), state.BodyText(),
       state.acknowledged_warning_ids, &state.staged_summary, run_blocking_conflict_scan);
@@ -192,7 +184,7 @@ void CommitWorkflowService::ReportRefusal(std::string message) const {
 
 bool CommitWorkflowService::RequestCommit(CommitWorkflowState& state,
                                           const project::CommitOperationKind operation) {
-  return RequestCommitImpl(state, operation, /*may_wait_for_refresh=*/true);
+  return RequestCommitImpl(state, operation, true);
 }
 
 bool CommitWorkflowService::RequestCommitImpl(CommitWorkflowState& state,
@@ -201,10 +193,6 @@ bool CommitWorkflowService::RequestCommitImpl(CommitWorkflowState& state,
   if (!state.open || state.operation_in_flight) {
     return false;
   }
-  // The checks below read the repository snapshot. A stale one (the tree changed
-  // since: an outside `git reset`, a build writing files) would decide the
-  // untracked-files question and the conflict check on what the tree no longer
-  // holds, so ask for a refresh and come back when it lands.
   if (may_wait_for_refresh && callbacks_.request_git_refresh != nullptr &&
       (git_repository_service_.CurrentSummary().stale || git_repository_service_.IsRefreshing())) {
     {
@@ -215,28 +203,19 @@ bool CommitWorkflowService::RequestCommitImpl(CommitWorkflowState& state,
     callbacks_.request_git_refresh();
     return true;
   }
-  // Pre-dispatch refresh runs the full conflict-marker scan; a positive result is a
-  // blocking check that CanExecuteCommit rejects below.
-  RefreshDerivedState(state, /*run_blocking_conflict_scan=*/true);
-  // A Blocking check refuses outright, every time. Nothing acknowledges these.
+  RefreshDerivedState(state, true);
   for (const project::CommitPreCheck& check : state.checks) {
     if (check.severity == project::CommitPreCheckSeverity::Blocking) {
       ReportRefusal(check.message);
       return false;
     }
   }
-  // Nothing staged (or the surface is closed / already committing) is not a
-  // pre-check; it is simply not a commit.
   if (!state.open || state.operation_in_flight || state.staged_summary.file_count == 0) {
     if (state.staged_summary.file_count == 0) {
       ReportRefusal("Nothing staged");
     }
     return false;
   }
-  // Whatever is left is unacknowledged WARNINGS. These are advisory — "untracked
-  // files are not included", "branch is behind upstream" — and used to refuse the
-  // commit outright with no way forward, because AcknowledgeWarning had no caller.
-  // Ask once, then dispatch on confirmation.
   if (!CanExecuteCommit(state)) {
     std::string summary;
     for (const project::CommitPreCheck& check : state.checks) {
@@ -250,9 +229,6 @@ bool CommitWorkflowService::RequestCommitImpl(CommitWorkflowState& state,
       summary += check.message;
     }
     if (summary.empty()) {
-      // No warning explains the refusal, so surfacing a confirmation would be a
-      // dialog the user cannot act on. Refuse instead of prompting emptily — but
-      // say so, or the Commit button reads as dead.
       ReportRefusal("Commit is not available right now");
       return false;
     }
@@ -284,10 +260,6 @@ bool CommitWorkflowService::ConfirmPendingOperation(CommitWorkflowState& state) 
     return false;
   }
   if (state.pending_confirmation == CommitWorkflowPendingConfirmation::Warnings) {
-    // Record the acknowledgement for every warning currently outstanding, then run
-    // the operation the user originally asked for. The ids are stable per check kind
-    // (CheckId), so the re-run sees them acknowledged and proceeds; Open() and a
-    // successful commit both clear the set, so the next commit asks again.
     const project::CommitOperationKind operation = state.pending_operation;
     state.pending_confirmation = CommitWorkflowPendingConfirmation::None;
     for (const project::CommitPreCheck& check : state.checks) {
@@ -327,42 +299,23 @@ void CommitWorkflowService::DispatchCommit(CommitWorkflowState& state,
   {
     std::lock_guard lock(mutex_);
     captured_generation = ++operation_generation_;
-    // The operation in front of the user owns the feedback: drop any watch left
-    // over from a previous commit whose refresh has not landed yet.
     post_commit_refresh_watch_ = 0;
   }
-  // Let the state cancel this operation if it is destroyed before the completion
-  // is drained — a project tab closing mid-commit. Without it the completion below
-  // publishes into freed memory.
   state.in_flight_claim_ = CommitOperationClaim(this, captured_generation);
   std::filesystem::path project_root =
       callbacks_.front_project_root ? callbacks_.front_project_root() : std::filesystem::path();
-  // Durable: a project switch cancels the executor's backlog, and a write
-  // dropped there never completes -- the service stayed busy, refusing every git
-  // action after (WorkspaceShell/GitOperationFinishingInTheBackground...).
   background_executor_.PostDurable([this, &state, operation, subject, body, repository_generation,
                              captured_generation, project_root = std::move(project_root),
                              repository_root = repository_state.repository_root,
                              launcher = &ProjectLauncher()]() {
-    // Worker thread: only run the (possibly slow, hook-invoking) git commit and
-    // produce a result. Mutating CommitWorkflowState here would race the main
-    // thread, which reads state.subject/body/status_message while rendering the
-    // commit overlay. Marshal the state mutation back to the render thread.
     project::CommitOperationResult result =
         project::ExecuteGitCommit(repository_root, *launcher, subject, body, operation);
     completion_mailbox_.Post([this, &state, operation, repository_generation, captured_generation,
                               project_root, result = std::move(result)]() mutable {
       std::lock_guard completion_lock(mutex_);
       if (captured_generation != operation_generation_) {
-        // Superseded by a newer dispatch, or abandoned because the owning state was
-        // destroyed. Either way no state is touched — in the second case it no
-        // longer exists.
         return;
       }
-      // The dispatching state, found by its PROJECT: a switch moved it out of the
-      // address it was dispatched from, and that address now holds another
-      // project's draft. The claim moved with it, so holding it proves this is the
-      // one. Release rather than cancel — the operation finished.
       CommitWorkflowState* target =
           callbacks_.state_for_project ? callbacks_.state_for_project(project_root) : &state;
       if (target == nullptr || !target->in_flight_claim_.Holds(this, captured_generation)) {
@@ -376,9 +329,6 @@ void CommitWorkflowService::DispatchCommit(CommitWorkflowState& state,
 
 void CommitWorkflowService::AbandonOperation(const std::uint64_t generation) {
   std::lock_guard lock(mutex_);
-  // Only invalidate if this state's operation is still the current one. A state
-  // whose commit already published, or was superseded by another project's, must
-  // not cancel whatever is running now.
   if (generation != 0 && generation == operation_generation_) {
     ++operation_generation_;
   }
@@ -396,8 +346,6 @@ void CommitWorkflowService::PublishResult(CommitWorkflowState& state,
                                           const project::CommitOperationKind operation,
                                           const std::uint64_t repository_generation) {
   (void)operation;
-  // `state` is the committed project's own; what the callbacks without a state
-  // touch is the project in front, which may since be another one.
   const bool in_front = !callbacks_.is_in_front || callbacks_.is_in_front(project_root);
   state.operation_in_flight = false;
   state.last_result_category = result.category;
@@ -425,16 +373,9 @@ void CommitWorkflowService::PublishResult(CommitWorkflowState& state,
     if (!in_front) {
       util::InvokeIfSet(callbacks_.defer_to_project, project_root);
     } else if (callbacks_.request_git_refresh != nullptr) {
-      // Arm the watch BEFORE asking, so a refresh that is dispatched immediately
-      // is still >= the recorded floor. `+ 1` because the request may be
-      // throttled or folded into a deferred follow-up, in which case the commit's
-      // changes surface in a generation later than any this call mints.
       post_commit_refresh_watch_ = git_repository_service_.CurrentRefreshGeneration() + 1;
       callbacks_.request_git_refresh();
     }
-    // `repository_generation` is the snapshot the commit was composed against; the
-    // refresh correlation runs off the refresh generation instead, because that is
-    // what a published snapshot carries.
     (void)repository_generation;
     Close(state);
   }
@@ -454,9 +395,6 @@ void CommitWorkflowService::PublishResult(CommitWorkflowState& state,
 void CommitWorkflowService::NoteGitRefreshOutcome(CommitWorkflowState& state,
                                                   const std::uint64_t snapshot_generation,
                                                   const std::string_view refresh_error) {
-  // A commit waiting on this refresh is evaluated now, outside the lock below
-  // (RequestCommitImpl takes it), and only once: a refresh that leaves the
-  // snapshot stale does not hold the commit forever.
   std::optional<project::CommitOperationKind> waiting;
   {
     std::lock_guard lock(mutex_);
@@ -466,16 +404,12 @@ void CommitWorkflowService::NoteGitRefreshOutcome(CommitWorkflowState& state,
     }
   }
   if (waiting.has_value()) {
-    (void)RequestCommitImpl(state, *waiting, /*may_wait_for_refresh=*/false);
+    (void)RequestCommitImpl(state, *waiting, false);
   }
-  // Same locking shape as PublishResult: `callbacks_` is guarded by mutex_, and
-  // both run on the main thread, so the callbacks fire under the lock.
   std::lock_guard lock(mutex_);
   if (post_commit_refresh_watch_ == 0 || snapshot_generation < post_commit_refresh_watch_) {
     return;
   }
-  // This snapshot answers the commit's refresh either way; a later failure
-  // belongs to whatever caused it, not to the commit.
   post_commit_refresh_watch_ = 0;
   if (refresh_error.empty()) {
     return;
@@ -483,9 +417,6 @@ void CommitWorkflowService::NoteGitRefreshOutcome(CommitWorkflowState& state,
 
   project::CommitOperationResult result;
   result.category = project::CommitOperationResultCategory::RefreshFailedAfterSuccess;
-  // `detail` is left empty on purpose: that is what routes through the category's
-  // own branch in ResultFeedback rather than around it. The git text is appended
-  // after, since the canonical sentence alone does not say why.
   std::string message = ResultFeedback(result);
   message += ": ";
   message += refresh_error;
@@ -498,4 +429,4 @@ void CommitWorkflowService::NoteGitRefreshOutcome(CommitWorkflowState& state,
   }
 }
 
-}  // namespace microide::workspace
+}

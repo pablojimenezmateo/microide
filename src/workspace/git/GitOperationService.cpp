@@ -9,9 +9,6 @@ namespace {
 constexpr std::string_view kOutputChannelId = "git.operation";
 constexpr std::string_view kOutputChannelLabel = "Git";
 
-// An outcome the user should be nudged about vs. one that is simply informational.
-// NoUpstream is a Warning rather than an Error: it is the expected state of a
-// freshly created branch and the fix is one action away (publish).
 NotificationService::Tone ToneFor(const project::GitOperationOutcome outcome) {
   switch (outcome) {
     case project::GitOperationOutcome::Success:
@@ -27,16 +24,12 @@ NotificationService::Tone ToneFor(const project::GitOperationOutcome outcome) {
   }
 }
 
-// True when the operation may have moved HEAD, the index, or the working tree, so
-// the git sidebar and any clean open buffer must be re-read. Fetch only writes
-// remote-tracking refs, but the sidebar's ahead/behind counts are derived from
-// them, so it refreshes too — it just does not need a buffer reload.
 bool TouchesWorkingTree(const project::GitOperationOutcome outcome) {
   return outcome == project::GitOperationOutcome::Success ||
          outcome == project::GitOperationOutcome::Conflict;
 }
 
-}  // namespace
+}
 
 GitOperationService::GitOperationService(project::ProjectBackgroundExecutor& background_executor)
     : background_executor_(background_executor) {}
@@ -59,8 +52,6 @@ bool GitOperationService::Dispatch(const std::filesystem::path& repository_root,
   if (repository_root.empty()) {
     return false;
   }
-  // Reject rather than queue: two concurrent git writes would race the index lock,
-  // and the user could not tell which one produced the result they see.
   bool expected = false;
   if (!in_flight_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
     return false;
@@ -76,14 +67,9 @@ bool GitOperationService::Dispatch(const std::filesystem::path& repository_root,
     callbacks_.request_redraw();
   }
 
-  // Durable: a project switch cancels the executor's backlog, and a write
-  // dropped there never completes -- the service stayed busy, refusing every git
-  // action after (WorkspaceShell/GitOperationFinishingInTheBackground...).
   background_executor_.PostDurable([this, generation, repository_root, work = std::move(work),
                              success_message = std::move(success_message),
                              on_success = std::move(on_success)]() mutable {
-    // Worker thread: run git and produce a value. Every field the main thread will
-    // read is carried in the report; nothing here touches service state.
     project::GitOperationReport report = work();
     completion_mailbox_.Post([this, generation, repository_root = std::move(repository_root),
                               success_message = std::move(success_message), report = std::move(report),
@@ -102,28 +88,21 @@ void GitOperationService::Publish(const std::uint64_t generation,
   {
     std::lock_guard lock(mutex_);
     if (generation != operation_generation_) {
-      return;  // Superseded by a newer dispatch; drop the stale result.
+      return;
     }
   }
   status_message_.clear();
   in_flight_.store(false, std::memory_order_release);
-  // A project switch does NOT supersede the operation: the push still happened.
-  // It changes who the result is for (see Callbacks::is_in_front).
   const bool in_front = !callbacks_.is_in_front || callbacks_.is_in_front(repository_root);
 
   if (!report.output.empty() && callbacks_.append_output != nullptr) {
     callbacks_.append_output(kOutputChannelId, kOutputChannelLabel, report.output);
-    // Only surface the panel when something went wrong: a successful fetch/push
-    // prints progress chatter the user did not ask to look at. Not over another
-    // project: the toast says which one failed, and the channel holds the text.
     if (!report.success() && in_front && callbacks_.show_output_panel != nullptr) {
       callbacks_.show_output_panel(kOutputChannelId);
     }
   }
 
   if (callbacks_.notify != nullptr) {
-    // `detail` is empty exactly on a clean success, where the caller's specific
-    // "Switched to <branch>" reads far better than a generic acknowledgement.
     std::string message = report.detail.empty() ? std::move(success_message)
                                                 : std::move(report.detail);
     if (message.empty()) {
@@ -136,12 +115,11 @@ void GitOperationService::Publish(const std::uint64_t generation,
   }
 
   if (!in_front) {
-    // Its project catches up when activated: git state, the tree, clean buffers.
     if ((report.success() || TouchesWorkingTree(report.outcome)) && callbacks_.defer_to_project) {
       callbacks_.defer_to_project(repository_root);
     }
     if (callbacks_.request_redraw != nullptr) {
-      callbacks_.request_redraw();  // the status text cleared
+      callbacks_.request_redraw();
     }
     return;
   }
@@ -236,8 +214,6 @@ bool GitOperationService::Sync(const std::filesystem::path& repository_root) {
     }
     project::GitOperationReport push = project::RunGitRemoteOperation(
         repository_root, *launcher, project::GitRemoteOperationKind::Push);
-    // Keep both halves' output so the panel shows what the pull did even when the
-    // push is what failed.
     if (!pull.output.empty()) {
       if (!push.output.empty()) {
         push.output.insert(0, pull.output + "\n");
@@ -283,4 +259,4 @@ bool GitOperationService::ResolveConflict(const std::filesystem::path& repositor
                   std::move(resolved));
 }
 
-}  // namespace microide::workspace
+}

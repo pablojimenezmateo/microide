@@ -15,7 +15,6 @@ namespace {
 
 using microide::platform::OpenFileWatcher;
 
-// What the watcher reported, and a wait for one path to be among it.
 struct Reports {
   std::mutex mutex;
   std::condition_variable changed;
@@ -40,8 +39,6 @@ struct Reports {
   }
 };
 
-// The project watcher never looks inside `.git`; a document open there (HEAD,
-// COMMIT_EDITMSG) is reported by this one, including git's lock-and-rename write.
 void TestOpenFileWatcherReportsAnAtomicReplaceInsideGitMetadata() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path head = temp_dir.path() / "project" / ".git" / "HEAD";
@@ -59,7 +56,6 @@ void TestOpenFileWatcherReportsAnAtomicReplaceInsideGitMetadata() {
   Expect(!reports.Holds(other), "a file nobody has open is not");
 }
 
-// A document open through a symlink changes when its target is written.
 void TestOpenFileWatcherReportsASymlinkedFileUnderItsOpenPath() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path target = temp_dir.path() / "elsewhere" / "data.txt";
@@ -74,8 +70,6 @@ void TestOpenFileWatcherReportsASymlinkedFileUnderItsOpenPath() {
   Expect(reports.WaitFor(link), "the write to the target is reported as the link");
 }
 
-// A watched directory that goes takes its watch with it: its files are reported,
-// and the signature resets so the caller re-arms what comes back.
 void TestOpenFileWatcherReArmsAfterItsDirectoryGoes() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path file = temp_dir.path() / "tree" / "notes.txt";
@@ -100,12 +94,6 @@ void TestOpenFileWatcherReArmsAfterItsDirectoryGoes() {
   Expect(reports.WaitFor(file), "the recreated directory is watched again");
 }
 
-// Soak adbdbecb317b: `git stash -u` took the whole untracked folder an open file
-// lived in, the caller's re-arm came while it was still gone -- the watch failed
-// and the set read as armed all the same -- and `git stash pop` brought the
-// folder and the file back with nobody listening: the clean buffer kept text the
-// file no longer held. A missing directory is waited for from the nearest one
-// that exists, and what reappears is reported once it is watched again.
 void TestOpenFileWatcherWaitsForADirectoryThatIsGoneWhenArmed() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path file = temp_dir.path() / "tree" / "notes.txt";
@@ -119,9 +107,9 @@ void TestOpenFileWatcherWaitsForADirectoryThatIsGoneWhenArmed() {
     std::lock_guard lock(reports.mutex);
     reports.paths.clear();
   }
-  watcher.SetFiles(3, {file});  // the re-arm, while the directory is still gone
+  watcher.SetFiles(3, {file});
 
-  WriteFile(file, "two\n");  // the folder and its file come back, and nothing re-arms
+  WriteFile(file, "two\n");
   Expect(reports.WaitFor(file), "the file that came back is reported");
   {
     std::lock_guard lock(reports.mutex);
@@ -131,8 +119,6 @@ void TestOpenFileWatcherWaitsForADirectoryThatIsGoneWhenArmed() {
   Expect(reports.WaitFor(file), "and its directory is watched again");
 }
 
-// Two levels gone, coming back one at a time (a checkout makes the parent before
-// the child): the wait follows them down.
 void TestOpenFileWatcherFollowsADeepDirectoryBackDown() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path top = temp_dir.path() / "a";
@@ -151,7 +137,7 @@ void TestOpenFileWatcherFollowsADeepDirectoryBackDown() {
   Expect(reports.WaitFor(file), "the file is reported once its directory exists");
 }
 
-}  // namespace
+}
 
 void RegisterOpenFileWatcherTests(std::vector<TestCase>& tests) {
   AddTest(tests, "OpenFileWatcher/ReportsAnAtomicReplaceInsideGitMetadata",
@@ -166,4 +152,4 @@ void RegisterOpenFileWatcherTests(std::vector<TestCase>& tests) {
           TestOpenFileWatcherFollowsADeepDirectoryBackDown);
 }
 
-}  // namespace microide::tests
+}

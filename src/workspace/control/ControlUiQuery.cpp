@@ -15,8 +15,6 @@ util::JsonValue RectJson(const SDL_FRect& rect) {
   util::JsonArray array;
   array.reserve(4);
   for (const float value : {rect.x, rect.y, rect.w, rect.h}) {
-    // Whole pixels: every rect the layout produces is pixel-aligned, and a driver
-    // clicks integers.
     array.push_back(util::JsonValue(static_cast<std::int64_t>(value < 0.0f ? value - 0.5f
                                                                            : value + 0.5f)));
   }
@@ -29,7 +27,7 @@ util::JsonValue OptionalStringJson(const std::string& text) {
   return text.empty() ? util::JsonValue(nullptr) : util::JsonValue(text);
 }
 
-}  // namespace
+}
 
 void AddControlUiElement(ControlUiElements& out,
                          std::string_view kind,
@@ -105,8 +103,6 @@ util::JsonValue ControlUiQuery::Build(const WorkspaceContext& context, const Ope
   const std::optional<WorkspaceLayout> layout =
       operations.layout ? operations.layout() : std::nullopt;
   if (!layout.has_value()) {
-    // No window laid out yet (or no project): an empty answer, not an error, so a
-    // driver can poll for the first layout.
     object["elements"] = util::JsonValue(util::JsonArray{});
     return util::JsonValue(std::move(object));
   }
@@ -120,8 +116,6 @@ util::JsonValue ControlUiQuery::Build(const WorkspaceContext& context, const Ope
   scale.emplace_back(static_cast<double>(per_unit.x));
   scale.emplace_back(static_cast<double>(per_unit.y));
   window["scale"] = util::JsonValue(std::move(scale));
-  // Whether the window has the desktop's input focus, as the app last heard: a
-  // driver that takes it away waits on this before acting on "unfocused".
   window["focused"] = util::JsonValue(context.interaction_state.window_has_input_focus);
   object["window"] = util::JsonValue(std::move(window));
   object["focus"] = util::JsonValue(std::string(ControlUiFocusName(state.surface.focus)));
@@ -192,8 +186,6 @@ util::JsonValue ControlUiQuery::Build(const WorkspaceContext& context, const Ope
       (*source)(*layout, elements);
     }
   }
-  // The window's own resize handles are pure layout: the rects the divider drags
-  // hit-test (the *ResizeHitRect family).
   if (HasArea(layout->sidebar)) {
     AddControlUiElement(elements, control_ui_kind::kDivider, "sidebar",
                         SidebarResizeHitRect(*layout));
@@ -252,4 +244,4 @@ util::JsonValue ControlUiQuery::Build(const WorkspaceContext& context, const Ope
   return util::JsonValue(std::move(object));
 }
 
-}  // namespace microide::workspace
+}

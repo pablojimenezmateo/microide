@@ -17,8 +17,6 @@ std::size_t EntryContentBytes(const TextViewportUndoHistory::Entry& entry) {
   }
   std::size_t bytes = 0;
   const auto add_lines = [&bytes](const LineBlob& lines) {
-    // Content bytes plus one separator per line -- the same number the vector
-    // form summed, so the byte budget is unchanged by the storage change.
     bytes += lines.content_bytes() + lines.size();
   };
   add_lines(entry.before_lines);
@@ -30,14 +28,11 @@ std::size_t EntryContentBytes(const TextViewportUndoHistory::Entry& entry) {
   return bytes;
 }
 
-}  // namespace
+}
 
 void TextViewportUndoHistory::AppendUndoEntry(Entry entry) {
   entry.byte_size = EntryContentBytes(entry);
   if (entry.is_multi_range()) {
-    // What the entry holds vs what a single contiguous range would have held for
-    // the same edit — the span/edited ratio TD-2026-08-06-157 asked for, which
-    // nothing reported. `lines_spanned` counts both images, matching `lines_kept`.
     std::size_t kept = entry.before_lines.size() + entry.after_lines.size();
     std::size_t highest_before_end = entry.start_line + entry.before_lines.size();
     std::size_t highest_after_end = entry.start_line + entry.after_lines.size();
@@ -64,8 +59,6 @@ void TextViewportUndoHistory::EnforceHistoryBudget() {
   for (const Entry& entry : undo_stack_) {
     total += entry.byte_size;
   }
-  // Keep at least the most recent entry even if it alone exceeds the budget —
-  // dropping it would silently discard the just-made edit's undo.
   while (undo_stack_.size() > 1 && total > kMaxHistoryBytes) {
     total -= undo_stack_.front().byte_size;
     undo_stack_.pop_front();
@@ -90,18 +83,10 @@ void TextViewportUndoHistory::RecordEntry(Entry entry, CoalesceHint hint) {
     return;
   }
 
-  // A grouped edit owns its own aggregation; never coalesce across it. Each frame
-  // keeps a disjoint-range set (see UndoGroupFrame): contiguous children fold into
-  // one range, non-contiguous children accumulate as extra ranges. This keeps the
-  // wholly-contiguous fast path a single-element vector (matching the old single
-  // aggregate — `editor_shaping_multi_caret` stays one merge/deep-copy per child)
-  // while never materializing a whole-buffer snapshot for non-contiguous edits.
   active_run_kind_ = CoalesceKind::None;
   const std::size_t frame_count = group_stack_.size();
   for (std::size_t fi = 0; fi < frame_count; ++fi) {
     UndoGroupFrame& frame = group_stack_[fi];
-    // Only the innermost (last) frame may consume `entry` by move: outer frames
-    // are processed first and still read it; after the loop `entry` is dead.
     const bool can_move = (fi + 1 == frame_count);
     // NOLINTNEXTLINE(bugprone-use-after-move): moved on the last iteration only.
     MergeChildIntoDisjoint(frame.disjoint_entries, can_move ? std::move(entry) : entry);
@@ -114,9 +99,6 @@ void TextViewportUndoHistory::MergeChildIntoDisjoint(std::vector<Entry>& entries
   const std::ptrdiff_t delta = static_cast<std::ptrdiff_t>(next.after_lines.size()) -
                                static_cast<std::ptrdiff_t>(next.before_lines.size());
 
-  // Detect (in pre-shift coordinates) an existing range whose after-content wholly
-  // contains the child's replaced span — the child re-edited inside an earlier
-  // aggregate. TryMergeGroupEntry splices it in place; no new range is created.
   std::optional<std::size_t> container;
   for (std::size_t i = 0; i < entries.size(); ++i) {
     const std::size_t after_start = entries[i].start_line;
@@ -127,10 +109,6 @@ void TextViewportUndoHistory::MergeChildIntoDisjoint(std::vector<Entry>& entries
     }
   }
 
-  // The ranges the child's span reaches into without lying inside one: found in
-  // pre-shift coordinates, where they can be compared with the span. The shift
-  // below leaves their order and indices alone (they all start before the span's
-  // end, so none of them moves).
   std::size_t overlap_first = entries.size();
   std::size_t overlap_last = entries.size();
   if (!container.has_value()) {
@@ -145,9 +123,6 @@ void TextViewportUndoHistory::MergeChildIntoDisjoint(std::vector<Entry>& entries
     overlap_last = static_cast<std::size_t>(std::find_if_not(first, entries.end(), overlaps) - entries.begin());
   }
 
-  // Shift every range strictly below the child's replaced span into the post-edit
-  // coordinate frame. The container (start < child_before_end) is never in this set;
-  // a right neighbour that sat exactly at child_before_end shifts to abut the child.
   if (delta != 0) {
     for (Entry& e : entries) {
       if (e.start_line >= child_before_end) {
@@ -174,13 +149,6 @@ void TextViewportUndoHistory::MergeChildIntoDisjoint(std::vector<Entry>& entries
 void TextViewportUndoHistory::MergeChildOverRanges(std::vector<Entry>& entries,
                                                    std::size_t first_index,
                                                    std::size_t last_index, Entry next) {
-  // [first_index, last_index): the ranges the child's replaced span reaches into
-  // without lying inside one of them -- it re-edits lines an earlier child of the
-  // group already changed (a formatter's edit that joins a line it also edited
-  // further right, applied last-first). These used to be filed as a separate
-  // range beside the ones they overlap, so the group's images replayed both and a
-  // redo duplicated lines (soak 76e3925879dc, 822fc591ce19, d54631ea30df). They
-  // and the child become one range.
   const std::size_t child_start = next.start_line;
   const std::size_t child_end = child_start + next.before_lines.size();
   const auto first = entries.begin() + static_cast<std::ptrdiff_t>(first_index);
@@ -188,8 +156,6 @@ void TextViewportUndoHistory::MergeChildOverRanges(std::vector<Entry>& entries,
   const Entry& low = *first;
   const Entry& high = *(last - 1);
 
-  // Before the child, the buffer between the ranges is what it was when the group
-  // began, and the child's before-image holds it.
   LineBlob before;
   std::size_t at = std::min(child_start, low.start_line);
   for (auto it = first; it != last; ++it) {
@@ -203,8 +169,6 @@ void TextViewportUndoHistory::MergeChildOverRanges(std::vector<Entry>& entries,
     before.append(next.before_lines.SubRange(at - child_start, child_end - child_start));
   }
 
-  // After the child: whatever of the first and last ranges lies outside its span,
-  // around its own after-image.
   LineBlob after;
   if (low.start_line < child_start) {
     after.append(low.after_lines.SubRange(0, child_start - low.start_line));
@@ -236,31 +200,6 @@ void TextViewportUndoHistory::CoalesceAdjacentDisjoint(std::vector<Entry>& entri
     const std::size_t prev_after_end = entries[i].start_line + entries[i].after_lines.size();
     if (entries[i + 1].start_line == prev_after_end) {
       if (CanMergeGroupEntry(entries[i], entries[i + 1])) {
-        // Merge into whichever side already owns the bigger blob.
-        //
-        // The two directions produce the SAME entry — one appends the high side
-        // onto the low, the other prepends the low side onto the high — but they
-        // cost very differently, and the cheap one is not the one that was here.
-        // A multi-region shaping verb applies its regions HIGH-TO-LOW, because
-        // that is what keeps each region's line indices valid against the
-        // still-unedited buffer below it. Each child therefore arrives BELOW
-        // everything already accumulated, lands at index 0, and the merge
-        // appended the whole accumulated blob onto a one-line child: a fresh
-        // full-size buffer and a full-size copy, per child. Toggling a block
-        // comment at 1,201 cursors appended 244 MB in 2,400 calls, ~102 KB each,
-        // and that is O(regions^2) — at the 10,000-cursor cap it is ~17 GB
-        // (TD-2026-09-20-301).
-        //
-        // Prepending the child onto the accumulated blob instead reuses its
-        // buffer, and LineBlob keeps front slack for exactly this, so a prepend
-        // costs the child's size and nothing of the aggregate's: the group is
-        // linear in bytes as well as in allocations.
-        //
-        // The per-child view states are overwritten wholesale by
-        // FinishActiveGroup (`agg.before_state`/`after_state` come from the
-        // frame), so the direction cannot change what the group records — but
-        // this restores the one the unswapped call would have left anyway, so
-        // the change is a cost change and nothing else.
         const bool high_side_is_bigger =
             entries[i + 1].before_lines.content_bytes() +
                 entries[i + 1].after_lines.content_bytes() >
@@ -290,13 +229,11 @@ bool TextViewportUndoHistory::CanMergeInlineEntry(const Entry& aggregate, const 
   const std::size_t next_end = next_start + next.removed_text.size();
 
   if (next_start == aggregate_end || next_end == aggregate_start) {
-    return true;  // abuts on either side
+    return true;
   }
   if (next_start < aggregate_start || next_end > aggregate_end) {
     return false;
   }
-  // Contained: the bytes `next` claims to remove must be the ones the aggregate
-  // put there, or the two entries disagree about the line's content.
   return std::equal(
       next.removed_text.begin(), next.removed_text.end(),
       aggregate.inserted_text.begin() + static_cast<std::ptrdiff_t>(next_start - aggregate_start));
@@ -309,19 +246,13 @@ void TextViewportUndoHistory::MergeInlineEntryInto(Entry& aggregate, const Entry
   const std::size_t next_end = next_start + next.removed_text.size();
 
   if (next_start == aggregate_end) {
-    // Appends. In pre-run coordinates `next` removes the bytes immediately after
-    // what the aggregate removed, so both deltas simply concatenate.
     aggregate.removed_text.append(next.removed_text);
     aggregate.inserted_text.append(next.inserted_text);
   } else if (next_end == aggregate_start) {
-    // Prepends (a backspace run): `next` removes bytes that sit before the
-    // aggregate's edit point and are therefore already in pre-run coordinates.
     aggregate.start_column = next_start;
     aggregate.removed_text.insert(0, next.removed_text);
     aggregate.inserted_text.insert(0, next.inserted_text);
   } else {
-    // Contained: splice into the aggregate's inserted text; what the run removed
-    // from the ORIGINAL line is unchanged.
     aggregate.inserted_text.replace(next_start - aggregate_start, next.removed_text.size(),
                                     next.inserted_text);
   }
@@ -332,31 +263,20 @@ bool TextViewportUndoHistory::TryCoalesceWithTop(const Entry& next, CoalesceHint
   if (active_run_kind_ != hint.kind || undo_stack_.empty()) {
     return false;
   }
-  // Split before a new word: a non-space char immediately after a space ends
-  // the previous run (so "foo " and "bar" undo separately).
   if (!hint.changed_is_space && active_run_last_space_) {
     return false;
   }
-  // Replacing a selection is a discrete edit, not a continuation of typing.
   if (next.before_state.selection_anchor.has_value()) {
     return false;
   }
-  // The new edit must begin exactly where the run left off; any caret jump
-  // (arrow key, click, vertical move) breaks the run.
   Entry& top = undo_stack_.back();
   if (next.before_state.cursor_line != top.after_state.cursor_line ||
       next.before_state.cursor_column != top.after_state.cursor_column) {
     return false;
   }
-  // A run never mixes the two entry shapes. In practice it cannot want to: every
-  // edit that produces a line-form entry (newline, line join, multi-line paste)
-  // carries CoalesceKind::None and so ends the run before it gets here. Refusing
-  // the mix costs at most one extra undo step at a line boundary.
   if (top.is_inline != next.is_inline) {
     return false;
   }
-  // A multi-range entry continues a run only as the same multi-caret edit again
-  // (TD-2026-08-06-157 kept every other multi-range pair apart).
   if (top.is_multi_range() || next.is_multi_range()) {
     if (!CanMergeSameShapeMultiRange(top, next)) {
       return false;
@@ -371,7 +291,6 @@ bool TextViewportUndoHistory::TryCoalesceWithTop(const Entry& next, CoalesceHint
     if (!CanMergeInlineEntry(top, next)) {
       return false;
     }
-    // Only after_state advances; the run keeps its original start state.
     MergeInlineEntryInto(top, next);
     top.byte_size = EntryContentBytes(top);
     active_run_last_space_ = hint.changed_is_space;
@@ -381,9 +300,6 @@ bool TextViewportUndoHistory::TryCoalesceWithTop(const Entry& next, CoalesceHint
   if (!CanMergeGroupEntry(top, next)) {
     return false;
   }
-  // Preserve the run's original start state; advance its end to the new caret.
-  // `before_state` is read off `top` before it is consumed, since MergeGroupEntry
-  // takes the aggregate by value.
   const ViewState run_start_state = top.before_state;
   Entry merged = MergeGroupEntry(std::move(top), next);
   merged.before_state = run_start_state;
@@ -408,17 +324,7 @@ TextViewportUndoHistory::FinishActiveGroup(ViewState after_state) {
     return std::nullopt;
   }
 
-  // The frame already carries the edit as a disjoint set, and the entry now keeps
-  // it that way. This used to stitch the ranges into one contiguous replacement by
-  // re-reading every untouched gap line out of the buffer into BOTH images — so a
-  // group whose children sat far apart recorded, and retained, two copies of
-  // everything between them (TD-2026-08-06-157).
-  //
-  // The lowest range is the primary; its start_line is valid in both coordinate
-  // frames because nothing below it moves. Each higher range keeps the
-  // after-coordinate the frame maintained plus the before-coordinate derived by
-  // undoing the net line delta of every range below it.
-  Entry agg = std::move(parts.front());  // frame is local + popped; safe to move out
+  Entry agg = std::move(parts.front());
   agg.extra_parts.clear();
   if (parts.size() > 1) {
     agg.extra_parts.reserve(parts.size() - 1);
@@ -491,13 +397,6 @@ bool TextViewportUndoHistory::HasSavedPosition() const {
 }
 
 void TextViewportUndoHistory::MarkSaved() {
-  // Dirty is tracked per undo/redo position via the captured ViewState flags. The
-  // freshly-saved buffer is the one clean position; every OTHER reachable position
-  // (reached by undoing past the save, or redoing forward) now differs from disk,
-  // so its flag must read dirty. Blanket-mark everything dirty, then clear only the
-  // ViewState(s) that represent the current (saved) position: the top undo entry's
-  // after_state, and — if we saved while sitting above undone edits — the
-  // most-recently-undone redo entry's before_state.
   for (Entry& entry : undo_stack_) {
     entry.before_state.dirty = true;
     entry.after_state.dirty = true;
@@ -512,9 +411,6 @@ void TextViewportUndoHistory::MarkSaved() {
   if (!redo_stack_.empty()) {
     redo_stack_.back().before_state.dirty = false;
   }
-  // A subsequent contiguous edit must start a fresh undo entry rather than
-  // coalescing into the just-saved top entry (which would rewrite the saved
-  // position's after_state back to dirty).
   EndCoalesceRun();
 }
 
@@ -524,8 +420,6 @@ void TextViewportUndoHistory::Clear() {
   redo_stack_.clear();
   group_stack_.clear();
 }
-
-// Lifted verbatim from TextViewport::ApplyHistoryEntryToLines.
 
 void TextViewportUndoHistory::ApplyEntryToBuffer(TextBuffer& lines, const Entry& entry,
                                                  bool forward) {
@@ -538,10 +432,6 @@ void TextViewportUndoHistory::ApplyEntryToBuffer(TextBuffer& lines, const Entry&
     return;
   }
 
-  // A multi-range entry replaces several disjoint spans. Walk them highest-first
-  // (ForEachPartInApplyOrder) so each part's recorded index is still valid when it
-  // is reached: the parts still to come sit below and are unmoved by the ones
-  // already spliced (TD-2026-08-06-157).
   if (entry.is_multi_range()) {
     entry.ForEachPartInApplyOrder(
         forward, [&lines](std::size_t start, const LineBlob& removed,
@@ -558,14 +448,6 @@ void TextViewportUndoHistory::ApplyEntryToBuffer(TextBuffer& lines, const Entry&
   const std::size_t removed_count = forward ? entry.before_lines.size() : entry.after_lines.size();
   const auto& inserted_lines = forward ? entry.after_lines : entry.before_lines;
 
-  // One bulk splice, never a per-line loop. A same-count replacement used to be
-  // written line by line, which was the cheap form back when the document WAS a
-  // `std::vector<std::string>` and `SetLine` was an assignment. Against the piece
-  // tree it is the expensive form: `SetLine` is itself a `ReplaceLineRange`, so an
-  // N-line replacement paid N delete+insert splices, N joined-replacement string
-  // allocations, N revision bumps and N line-cache wipes to install what one
-  // splice installs. Toggle Comment over a 1,000-line selection was 1,000 of them
-  // (TD-2026-08-06-159).
   lines.ReplaceLineRange(start_line, removed_count, inserted_lines);
   if (lines.empty()) {
     lines.PushBackLine("");
@@ -574,7 +456,6 @@ void TextViewportUndoHistory::ApplyEntryToBuffer(TextBuffer& lines, const Entry&
 
 std::optional<AppliedEdit> TextViewportUndoHistory::BuildAppliedEdit(const Entry& entry,
                                                                      bool forward) {
-  // See BuildAppliedEditLineSpan: a multi-range entry has no single replaced range.
   if (entry.is_multi_range()) {
     return std::nullopt;
   }
@@ -584,9 +465,6 @@ std::optional<AppliedEdit> TextViewportUndoHistory::BuildAppliedEdit(const Entry
     if (removed.empty() && inserted.empty()) {
       return std::nullopt;
     }
-    // A coalesced run can leave shared bytes at either end (typing over what the
-    // run itself inserted), so trim to the true delta exactly as the line form
-    // does -- consumers shift markers by this range.
     const std::size_t max_common = std::min(removed.size(), inserted.size());
     std::size_t prefix = 0;
     while (prefix < max_common && removed[prefix] == inserted[prefix]) {
@@ -636,21 +514,8 @@ std::optional<AppliedEdit> TextViewportUndoHistory::BuildAppliedEdit(const Entry
     ++common_suffix;
   }
 
-  // Build the replacement text straight from the trimmed views. This used to
-  // deep-copy the whole after-lines vector and then erase the common prefix off
-  // the front line and the common suffix off the back one -- i.e. it copied
-  // everything the trim was about to throw away. For a one-character insert the
-  // result is one byte, and on a line with no newlines in it (a minified bundle)
-  // the copy was the whole document, per keystroke.
-  //
-  // The trims apply to the first and last lines respectively, and when there is
-  // only ONE line both apply to it. The loop below keeps that single-line case in
-  // the same code path rather than a special case: `first` trims the front,
-  // `last` trims the back, and for size()==1 the line is both.
   std::string replacement_text;
   {
-    // Content bytes plus the '\n' between each pair -- one read off the blob,
-    // where the vector form summed one string at a time.
     std::size_t total = after_lines.content_bytes() + after_lines.size() - 1;
     const std::size_t trimmed = common_prefix + common_suffix;
     replacement_text.reserve(total > trimmed ? total - trimmed : 0);
@@ -689,19 +554,13 @@ std::optional<AppliedEdit> TextViewportUndoHistory::BuildAppliedEdit(const Entry
 
 std::optional<AppliedEditLineSpan> TextViewportUndoHistory::BuildAppliedEditLineSpan(
     const Entry& entry, bool forward) {
-  // A multi-range entry is not one span. Publishing the union would drag markers
-  // on the untouched lines between its parts to the union's end, which is exactly
-  // the miscollapse ApplyMultiCaretEdit already refuses to publish for the same
-  // shape; leaving it empty makes single-range consumers (BreakpointStore, LSP
-  // diagnostic shifting) take their resync fallback instead (TD-2026-08-06-157).
   if (entry.is_multi_range()) {
     return std::nullopt;
   }
   if (entry.is_inline) {
     if (entry.removed_text == entry.inserted_text) {
-      return std::nullopt;  // no content change
+      return std::nullopt;
     }
-    // An in-line splice never changes the line count and touches exactly one line.
     return AppliedEditLineSpan{
         .old_start = entry.start_line,
         .old_end = entry.start_line + 1,
@@ -717,7 +576,7 @@ std::optional<AppliedEditLineSpan> TextViewportUndoHistory::BuildAppliedEditLine
     ++prefix;
   }
   if (prefix == before.size() && prefix == after.size()) {
-    return std::nullopt;  // no line-level change
+    return std::nullopt;
   }
 
   std::size_t suffix = 0;
@@ -752,8 +611,6 @@ TextViewportUndoHistory::Entry TextViewportUndoHistory::BuildEntryForDocumentCha
 
   Entry entry;
   entry.start_line = prefix;
-  // SubRange copies the trimmed byte span once each, where the vector form moved
-  // (before_end - prefix) + (after_end - prefix) individual strings.
   entry.before_lines = before_lines.SubRange(prefix, before_end);
   entry.after_lines = after_lines.SubRange(prefix, after_end);
   entry.before_state = before_state;
@@ -786,21 +643,13 @@ void TextViewportUndoHistory::MergeSameShapeMultiRange(Entry& top, const Entry& 
     top.extra_parts[i].after_start = next.extra_parts[i].after_start;
     top.extra_parts[i].after_lines = next.extra_parts[i].after_lines;
   }
-  // The run keeps its original start state; only its end advances.
   top.after_state = next.after_state;
 }
 
 bool TextViewportUndoHistory::CanMergeGroupEntry(const Entry& aggregate, const Entry& next) {
-  // Line-form only. Grouped children are widened before they reach a frame (see
-  // TextViewport::PushHistoryEntry), and the typing run dispatches inline pairs to
-  // CanMergeInlineEntry; anything else that lands here would splice line vectors
-  // that an inline entry does not have.
   if (aggregate.is_inline || next.is_inline) {
     return false;
   }
-  // Single-range only. A multi-range entry (TD-2026-08-06-157) describes several
-  // disjoint splices, and every index test below assumes exactly one; refusing the
-  // merge costs at most one extra undo step.
   if (aggregate.is_multi_range() || next.is_multi_range()) {
     return false;
   }
@@ -809,12 +658,9 @@ bool TextViewportUndoHistory::CanMergeGroupEntry(const Entry& aggregate, const E
   const std::size_t next_start = next.start_line;
   const std::size_t next_end = next.start_line + next.before_lines.size();
 
-  // Abutting on either side always merges.
   if (next_end == aggregate_after_start || next_start == aggregate_after_end) {
     return true;
   }
-  // Otherwise `next` must sit wholly inside the aggregate's after-image, and the
-  // lines it claims to replace must be the ones actually there.
   if (next_start < aggregate_after_start || next_end > aggregate_after_end) {
     return false;
   }
@@ -822,11 +668,6 @@ bool TextViewportUndoHistory::CanMergeGroupEntry(const Entry& aggregate, const E
   return aggregate.after_lines.range_equals(relative_start, next.before_lines);
 }
 
-// Precondition: CanMergeGroupEntry(aggregate, next). Split from the check so the
-// aggregate can be MOVED in rather than copied: this used to open with
-// `Entry merged = aggregate;`, a deep copy of both line vectors, paid even on the
-// two paths that then returned nullopt. Typing coalesces on every keystroke, so on
-// a file with no line breaks that was two whole-document copies per character.
 TextViewportUndoHistory::Entry TextViewportUndoHistory::MergeGroupEntry(Entry aggregate,
                                                                        const Entry& next) {
   const std::size_t aggregate_after_start = aggregate.start_line;
@@ -838,11 +679,6 @@ TextViewportUndoHistory::Entry TextViewportUndoHistory::MergeGroupEntry(Entry ag
   merged.after_state = next.after_state;
 
   if (next_end == aggregate_after_start) {
-    // `next` sits immediately BEFORE the aggregate, so it prepends. The previous
-    // form built this as `next.<lines>` copied, then appended the aggregate's --
-    // which read the aggregate after it had been consumed once this took it by
-    // value. Inserting at the front keeps the aggregate's vectors in place and
-    // copies only `next`, which is the smaller side by construction.
     merged.start_line = next.start_line;
     merged.before_lines.prepend(next.before_lines);
     merged.after_lines.prepend(next.after_lines);
@@ -855,8 +691,6 @@ TextViewportUndoHistory::Entry TextViewportUndoHistory::MergeGroupEntry(Entry ag
     return merged;
   }
 
-  // Contained: CanMergeGroupEntry already established the bounds and that the
-  // replaced lines match, so this is a straight splice.
   const std::size_t relative_start = next_start - aggregate_after_start;
   const std::size_t relative_end = relative_start + next.before_lines.size();
   merged.after_lines.replace_range(relative_start, relative_end, next.after_lines);
@@ -889,7 +723,7 @@ std::size_t EntryBytes(const TextViewportUndoHistory::Entry& entry) {
   return bytes;
 }
 
-}  // namespace
+}
 
 std::size_t TextViewportUndoHistory::ApproximateResidentBytes() const {
   std::size_t bytes = 0;
@@ -907,4 +741,4 @@ std::size_t TextViewportUndoHistory::ApproximateResidentBytes() const {
   return bytes;
 }
 
-}  // namespace microide::editor
+}

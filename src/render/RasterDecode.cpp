@@ -2,9 +2,6 @@
 
 #include <cstring>
 
-// stb_image is compiled into exactly this translation unit. PNG + JPEG only, no
-// stdio (we always decode from memory), no failure strings, with a dimension cap
-// enforced by the decoder in addition to our own check. Public-domain, vendored.
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_STDIO
 #define STBI_NO_FAILURE_STRINGS
@@ -29,7 +26,7 @@ bool DecodeRasterToRgba(std::span<const std::byte> bytes, std::vector<std::uint8
   int channels = 0;
   stbi_uc* pixels =
       stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(bytes.data()),
-                            static_cast<int>(bytes.size()), &w, &h, &channels, /*desired=*/4);
+                            static_cast<int>(bytes.size()), &w, &h, &channels, 4);
   if (pixels == nullptr) {
     return false;
   }
@@ -46,4 +43,4 @@ bool DecodeRasterToRgba(std::span<const std::byte> bytes, std::vector<std::uint8
   return true;
 }
 
-}  // namespace microide::render
+}

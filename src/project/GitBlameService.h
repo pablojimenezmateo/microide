@@ -30,12 +30,6 @@ struct GitBlameAttribution {
 std::vector<GitBlameAttribution> ParseGitBlameIncrementalOutput(std::string_view output);
 
 struct GitBlameRequest {
-  // Where this blame's git runs — the launcher of the project the file belongs
-  // to (TD-2026-09-22-301). Carried on the REQUEST, not held by the service: one
-  // service serves every project tab, and a request queued for one project must
-  // not run on another's launcher because the active tab changed underneath it.
-  // Must outlive the request (the local launcher is a function-local static; a
-  // remote one is owned by its project's connection).
   const platform::ProcessLauncher* launcher = &platform::LocalProcessLauncher();
   std::filesystem::path root;
   std::filesystem::path absolute_path;
@@ -43,12 +37,6 @@ struct GitBlameRequest {
   std::size_t visible_line_count = 0;
   std::size_t total_line_count = 0;
   bool dirty = false;
-  // Optional narrower window for the *returned* snapshot lines. The visible_*
-  // window still drives cache loading / prefetch (so scrolling stays warm); when
-  // result_line_count is non-zero the snapshot only materializes
-  // [result_start_line, result_start_line + result_line_count), intersected with
-  // the visible window. Inline blame consumes only the caret +/- a row, so this
-  // avoids copying (and discarding ~94% of) the whole visible window each frame.
   std::size_t result_start_line = 0;
   std::size_t result_line_count = 0;
 };
@@ -66,10 +54,6 @@ struct GitBlameLine {
 };
 
 struct GitBlameSnapshot {
-  // No `absolute_path` here. It was filled on every Snapshot() -- which is once
-  // per painted frame while inline blame is on -- with a `lexically_normal` copy
-  // of the request's path, and nothing in `src/` or `tests/` ever read it
-  // (TD-2026-08-14-223). The caller passed the path in; it does not need it back.
   std::size_t visible_start_line = 0;
   std::size_t visible_line_count = 0;
   bool eligible = false;
@@ -84,14 +68,7 @@ class GitBlameService {
 
   void SetWakeChannel(util::WakeChannel channel);
   void Request(const GitBlameRequest& request);
-  // What has been APPLIED, never what the worker produced since: a partial
-  // frame's clips all read the same blame (TD-2026-10-16-345).
   GitBlameSnapshot Snapshot(const GitBlameRequest& request) const;
-  // Makes the results the worker finished since the last call visible to
-  // Snapshot. Main thread, at a point that then repaints -- the blame wake's
-  // handler -- so blame changes between frames, never inside one, like every
-  // other async source's results. Returns whether anything it applied can
-  // change what Snapshot returns.
   bool ApplyReadyResults();
   void InvalidatePath(const std::filesystem::path& root,
                       const std::filesystem::path& absolute_path);
@@ -99,14 +76,9 @@ class GitBlameService {
   void Stop();
 
  private:
-  // Test seam: lets tests deterministically interpose before cache application.
-  // Always compiled; the hook defaults to empty so production is unaffected.
   void SetBeforeCacheApplyHook(std::function<void()> hook);
-  // Test seams: whether finished results wait for ApplyReadyResults, and whether
-  // no request is queued or running.
   bool HasReadyResults() const;
   bool WorkerIdle() const;
-  // How many files hold an invalidation generation.
   std::size_t TrackedFileCount() const;
 
   struct Impl;
@@ -115,4 +87,4 @@ class GitBlameService {
   friend struct ::microide::tests::GitBlameServiceTestAccess;
 };
 
-}  // namespace microide::project
+}

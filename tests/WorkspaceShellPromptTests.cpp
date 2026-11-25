@@ -37,10 +37,6 @@ std::optional<std::filesystem::path> FirstRegularFileIn(const std::filesystem::p
   return std::nullopt;
 }
 
-// The file tree's clipboard (TD-2026-10-18-359), by its keys: Ctrl+C then Ctrl+V
-// copies the selected entry into the selected folder -- as "name copy.ext" where
-// the name is taken -- and Ctrl+X then Ctrl+V moves it, through Rename's follow-up:
-// a dirty tab on the moved file follows it with its unsaved text.
 void TestWorkspaceShellTreeClipboardCopiesAndMoves() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -65,7 +61,6 @@ void TestWorkspaceShellTreeClipboardCopiesAndMoves() {
   Expect(press(SDLK_V), "a copy pastes again");
   Expect(ReadFile(root / "dest" / "notes.txt") == "base text\n", "pasting into a folder keeps the name");
 
-  // Cut a file open with unsaved edits, paste it into dest/sub.
   std::filesystem::create_directories(root / "dest" / "sub");
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, notes);
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("edited ");
@@ -89,9 +84,6 @@ void TestWorkspaceShellTreeClipboardCopiesAndMoves() {
          "a cut pastes once");
 }
 
-// A refused paste says so once. The coordinator toasted its refusal as an error
-// and the tree action's rejection toasted the same sentence as a warning, so a
-// Ctrl+V of a folder into itself stacked two identical rows.
 void TestWorkspaceShellARefusedTreePasteToastsOnce() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -160,14 +152,6 @@ void TestWorkspaceShellRenamePromptSavesDirtyTabs() {
          "rename save flow should clear the dirty flag after saving");
 }
 
-// Regression: the dirty prompt's "Save" used to call viewport->Save(microide::project::LocalFileWriteGate()) directly for an
-// EDITOR tab, while its own compare and merge branches went through the tab service.
-// Two things followed from that one bare call. It ran no save participants and no
-// format-on-save, so "Save" from the prompt did something different from Ctrl+S on the
-// same buffer; and — the one that loses work — it skipped the disk-conflict check, so
-// choosing Save overwrote a file that had changed on disk with no banner and no
-// warning. The external content is what this asserts on: the shape of the bug is data
-// loss, not a missing formatter.
 void TestWorkspaceShellDirtyPromptSaveRefusesToClobberAnExternalChange() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -180,8 +164,6 @@ void TestWorkspaceShellDirtyPromptSaveRefusesToClobberAnExternalChange() {
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("edited ");
 
-  // Someone else writes the file. A DIFFERENT length, so the signature differs whatever
-  // the filesystem's mtime granularity is and the test needs no sleep.
   const std::string external = "written by something else entirely\n";
   WriteFile(source, external);
 
@@ -190,7 +172,7 @@ void TestWorkspaceShellDirtyPromptSaveRefusesToClobberAnExternalChange() {
   Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
          "a dirty tab should raise the dirty confirmation");
 
-  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);  // 0 == Save
+  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);
 
   Expect(ReadFile(source) == external,
          "Save from the dirty prompt must not overwrite a file that changed on disk");
@@ -202,11 +184,6 @@ void TestWorkspaceShellDirtyPromptSaveRefusesToClobberAnExternalChange() {
          "the buffer keeps its unsaved edit so the user can still choose what to do");
 }
 
-// TD-2026-10-22-380: saving a read-only file is refused, as VS Code refuses it
-// (NoPermissions). The atomic save renamed a temporary file over it -- which needs
-// only the directory's permission -- and left a read-only file the editor had just
-// changed. The banner offers Overwrite (clears the read-only bit, then saves),
-// Save As and Keep, and the changed-on-disk Overwrite is no way around it.
 void TestWorkspaceShellSavingAReadOnlyFileAsksFirst() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -217,7 +194,7 @@ void TestWorkspaceShellSavingAReadOnlyFileAsksFirst() {
                                            std::filesystem::perms::group_read |
                                            std::filesystem::perms::others_read);
   if (!microide::project::LocalFileWriteGate().IsReadOnly(source)) {
-    return;  // root writes anything: there is no read-only file to refuse
+    return;
   }
 
   WorkspaceShell shell;
@@ -242,8 +219,6 @@ void TestWorkspaceShellSavingAReadOnlyFileAsksFirst() {
              WorkspaceShellTestAccess::EditorBannerCount(shell) == 0,
          "the buffer is saved and the banner gone");
 
-  // A read-only file that ALSO changed on disk: the changed-on-disk banner's
-  // Overwrite answers the conflict, not the permission.
   std::filesystem::permissions(source, std::filesystem::perms::owner_read);
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("again ");
   WorkspaceShellTestAccess::EditorBannerOverwrite(shell, source);
@@ -259,7 +234,6 @@ void TestWorkspaceShellSavingAReadOnlyFileAsksFirst() {
   std::filesystem::permissions(source, std::filesystem::perms::owner_all);
 }
 
-// Opening a path that is not a folder says which way it is not.
 void TestWorkspaceShellOpeningAMissingProjectSaysWhy() {
   TemporaryDirectory temp_dir;
   WriteFile(temp_dir.path() / "file.txt", "x\n");
@@ -272,8 +246,6 @@ void TestWorkspaceShellOpeningAMissingProjectSaysWhy() {
   Expect(!outcome.ok && outcome.error.ends_with(": it is a file, not a folder"), "a file: " + outcome.error);
 }
 
-// A save the file system refuses (here: a folder the user cannot write) says why
-// in its error row; it used to read "Failed to save notes.txt" and nothing more.
 void TestWorkspaceShellAFailedSaveSaysWhy() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -288,7 +260,7 @@ void TestWorkspaceShellAFailedSaveSaysWhy() {
   std::filesystem::permissions(folder, std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec);
   if (::access(folder.c_str(), W_OK) == 0) {
     std::filesystem::permissions(folder, std::filesystem::perms::owner_all);
-    return;  // root writes anything
+    return;
   }
   const auto outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "save");
   std::filesystem::permissions(folder, std::filesystem::perms::owner_all);
@@ -304,10 +276,6 @@ void TestWorkspaceShellAFailedSaveSaysWhy() {
          "the edit is kept, the file untouched");
 }
 
-// `banner-action` is the headless route to the changed-on-disk banner: a refused
-// `save` names the banner, and an agent driving the control channel has no pointer
-// to click its buttons with. It presses the active tab's banner exactly as a click
-// does, by label, case-insensitively, and rejects when there is nothing to press.
 void TestWorkspaceShellBannerActionCommandPressesTheActiveTabsBanner() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -374,7 +342,6 @@ void TestWorkspaceShellGoToLinePromptNavigatesActiveEditor() {
          "fixture project should open");
   WorkspaceShellTestAccess::OpenFile(shell, source);
 
-  // Ctrl+G opens the single-line Go to Line modal (not the command palette).
   Expect(SendKeyDown(shell, SDLK_G, SDL_KMOD_CTRL), "Ctrl+G should be handled");
   Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
          "Ctrl+G should open the Go to Line modal");
@@ -388,11 +355,6 @@ void TestWorkspaceShellGoToLinePromptNavigatesActiveEditor() {
          "Go to Line 4 should move the caret to zero-based line 3");
 }
 
-// Regression (destructive): the on-screen Cancel button (selected_button == 1) must
-// DECLINE a special-cased prompt action, not run it. ConfirmPromptSurface used to ignore
-// the selected button, so clicking Cancel executed the confirm action — Go to Line here
-// stands in for the destructive cases (commit amend, rename symbol). Cancelling must
-// dismiss WITHOUT navigating.
 void TestWorkspaceShellPromptCancelButtonDoesNotExecuteAction() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -409,8 +371,7 @@ void TestWorkspaceShellPromptCancelButtonDoesNotExecuteAction() {
          "Ctrl+G should open the Go to Line modal");
   WorkspaceShellTestAccess::SetPromptSurfaceInput(shell, "4");
 
-  // Confirm with the Cancel button (index 1) selected.
-  WorkspaceShellTestAccess::ConfirmPromptSurface(shell, /*selected_button=*/1);
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell, 1);
 
   Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
          "cancelling should dismiss the modal");
@@ -982,10 +943,6 @@ void TestWorkspaceShellCloseInactiveDirtyProjectPreservesOriginalActiveProject()
          "closing an inactive dirty project should save that project's dirty tabs first");
 }
 
-// Quit-with-save must persist dirty tabs across every project, including inactive
-// ones, while the optimized path skips switching into clean projects. This guards
-// the DirtyIndicesForProject-based skip in ConfirmQuit against wrongly dropping a
-// dirty inactive project (the one behavior the skip could regress).
 void TestWorkspaceShellQuitWithSavePersistsInactiveDirtyProject() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
@@ -1000,8 +957,6 @@ void TestWorkspaceShellQuitWithSavePersistsInactiveDirtyProject() {
          "first project should open");
   WorkspaceShellTestAccess::OpenFile(shell, file_a);
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("saved ");
-  // Open a second, clean project so project A becomes inactive+dirty and B is the
-  // active+clean project the quit path should not need to re-save.
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_b, false, false),
          "second project should open");
 
@@ -1023,9 +978,6 @@ void TestWorkspaceShellQuitWithSavePersistsInactiveDirtyProject() {
          "save-and-quit should set the pending quit request");
 }
 
-// Shared setup: open file_a in group 0, split, open file_b only in the new
-// (focused) group 1, dirty file_b there, then refocus group 0 so file_b is dirty
-// and open EXCLUSIVELY in the non-focused group. Returns with group 0 focused.
 void OpenFileDirtiedOnlyInNonFocusedGroup(WorkspaceShell& shell,
                                           const std::filesystem::path& root,
                                           const std::filesystem::path& file_a,
@@ -1047,7 +999,6 @@ void OpenFileDirtiedOnlyInNonFocusedGroup(WorkspaceShell& shell,
          "file_a should be clean in the focused group 0");
 }
 
-// Save-on-quit must flush a buffer dirtied only in the non-focused split group.
 void TestWorkspaceShellQuitWithSaveFlushesNonFocusedGroupDirtyTab() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1071,7 +1022,6 @@ void TestWorkspaceShellQuitWithSaveFlushesNonFocusedGroupDirtyTab() {
   Expect(shell.ConsumeQuitRequested(), "save-and-quit should set the pending quit request");
 }
 
-// The quit-prompt count must include a tab dirtied only in the non-focused group.
 void TestWorkspaceShellQuitPromptCountIncludesNonFocusedGroupDirtyTab() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1084,15 +1034,10 @@ void TestWorkspaceShellQuitPromptCountIncludesNonFocusedGroupDirtyTab() {
   OpenFileDirtiedOnlyInNonFocusedGroup(shell, root, file_a, file_b);
 
   WorkspaceShellTestAccess::ShowDirtyPromptForQuit(shell);
-  // Only file_b (non-focused group) is dirty; without the all-groups count this
-  // would be 0 because the focused group holds only the clean file_a.
   Expect(WorkspaceShellTestAccess::DirtyPromptCount(shell) == 1,
          "the quit-prompt count must include the non-focused split group's dirty tab");
 }
 
-// TD-2026-07-16-59: deleting a path whose only dirty buffer lives in a NON-FOCUSED
-// split must raise the dirty prompt (preflight), not silently proceed as if there were
-// no unsaved work. Before the fix the dirty scan only walked the focused group.
 void TestWorkspaceShellDeletePromptsForNonFocusedGroupDirtyTab() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1104,8 +1049,6 @@ void TestWorkspaceShellDeletePromptsForNonFocusedGroupDirtyTab() {
   WorkspaceShell shell;
   OpenFileDirtiedOnlyInNonFocusedGroup(shell, root, file_a, file_b);
 
-  // Delete file_b (dirty only in the non-focused group 1). Confirming the delete
-  // prompt must surface the dirty prompt instead of trashing unsaved work.
   WorkspaceShellTestAccess::PrepareDeletePrompt(shell, file_b);
   WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
   Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
@@ -1126,9 +1069,6 @@ void TestWorkspaceShellEditorBreadcrumbUsesRelativePathForLargeFixtures() {
          "editor breadcrumbs should no longer append a large-file mode marker");
 }
 
-// TD-2026-07-17A-023: the breadcrumb label is memoized across paints. Switching the
-// active editor tab changes the path input, so the cache must invalidate and report
-// the new file's relative path rather than the stale one.
 void TestWorkspaceShellBreadcrumbCacheInvalidatesOnTabSwitch() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1145,11 +1085,9 @@ void TestWorkspaceShellBreadcrumbCacheInvalidatesOnTabSwitch() {
   Expect(WorkspaceShellTestAccess::BreadcrumbLabel(shell) == "a/first.txt",
          "breadcrumb reflects the first opened file");
 
-  // A second call with no change returns the same (cached) label.
   Expect(WorkspaceShellTestAccess::BreadcrumbLabel(shell) == "a/first.txt",
          "an unchanged breadcrumb repaint reuses the cached label");
 
-  // Switching tabs changes the path input and must invalidate the cache.
   WorkspaceShellTestAccess::OpenFile(shell, second);
   Expect(WorkspaceShellTestAccess::BreadcrumbLabel(shell) == "b/second.txt",
          "switching the active tab rebuilds the breadcrumb, not served stale");
@@ -1177,7 +1115,6 @@ void TestWorkspaceShellRenamePromptMouseClickPositionsCaret() {
          "caret should default to end of text after PrepareRenamePrompt");
 
   const SDL_FRect input_rect = WorkspaceShellTestAccess::PromptSurfaceInputRect(shell);
-  // Click near the left edge of the input — caret should move to the start area.
   const float left_x = input_rect.x + 8.0f;
   const float mid_y = input_rect.y + input_rect.h * 0.5f;
   Expect(SendMouseDown(shell, left_x, mid_y, SDL_BUTTON_LEFT, 1),
@@ -1191,7 +1128,6 @@ void TestWorkspaceShellRenamePromptMouseClickPositionsCaret() {
   Expect(SendMouseUp(shell, left_x, mid_y, SDL_BUTTON_LEFT),
          "mouse-up after click in prompt input should be handled");
 
-  // Double-click selects a word.
   const float double_click_x = input_rect.x + 20.0f;
   Expect(SendMouseDown(shell, double_click_x, mid_y, SDL_BUTTON_LEFT, 2),
          "double-click in prompt input should be handled");
@@ -1200,7 +1136,6 @@ void TestWorkspaceShellRenamePromptMouseClickPositionsCaret() {
   Expect(SendMouseUp(shell, double_click_x, mid_y, SDL_BUTTON_LEFT),
          "mouse-up after double-click should be handled");
 
-  // Triple-click selects everything.
   Expect(SendMouseDown(shell, double_click_x, mid_y, SDL_BUTTON_LEFT, 3),
          "triple-click in prompt input should be handled");
   const auto triple_selection = WorkspaceShellTestAccess::PromptSurfaceInputSelection(shell);
@@ -1211,9 +1146,6 @@ void TestWorkspaceShellRenamePromptMouseClickPositionsCaret() {
          "mouse-up after triple-click should be handled");
 }
 
-// Phase 9 launch-config picker: opening seeds one row per launch config with
-// prebuilt name/type labels; the query filters case-insensitively across both
-// columns; confirming a match persists its index as the selected launch config.
 void TestWorkspaceShellLaunchConfigPicker() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1233,19 +1165,15 @@ void TestWorkspaceShellLaunchConfigPicker() {
   Expect(WorkspaceShellTestAccess::QuickPickMatchLabels(shell).size() == 3,
          "opening the picker should list every launch config");
 
-  // Filter by adapter type (secondary column) — matches both debugpy configs.
   WorkspaceShellTestAccess::SetLaunchConfigPickerQuery(shell, "debugpy");
   Expect(WorkspaceShellTestAccess::QuickPickMatchLabels(shell).size() == 2,
          "the query should filter across the type column");
 
-  // Filter by name (primary column, case-insensitive) down to one match.
   WorkspaceShellTestAccess::SetLaunchConfigPickerQuery(shell, "ATTACH");
   const auto labels = WorkspaceShellTestAccess::QuickPickMatchLabels(shell);
   Expect(labels.size() == 1 && labels[0] == "Attach to server",
          "the query should match the name column case-insensitively");
 
-  // Confirming the sole match persists its original config index (1) even though
-  // launching fails here (no adapter registered) — the selection is written first.
   WorkspaceShellTestAccess::SelectAndConfirmLaunchConfig(shell, 0);
   Expect(WorkspaceShellTestAccess::SelectedLaunchConfigIndex(shell) == 1,
          "confirming a filtered match persists the underlying launch-config index");
@@ -1263,8 +1191,6 @@ void TestWorkspaceShellClosingNonActiveDirtyTabDoesNotStrandFocus() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_a);
-  // Dirty tab 0 while it is active, then open (and switch to) tab 1 so tab 0 is a
-  // *non-active* dirty tab.
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("edited ");
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_b),
          "second tab should open");
@@ -1272,34 +1198,26 @@ void TestWorkspaceShellClosingNonActiveDirtyTabDoesNotStrandFocus() {
   Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 1, "tab 1 should be active");
   Expect(WorkspaceShellTestAccess::FocusIsEditor(shell), "editor should hold focus");
 
-  // Close the non-active dirty tab; the dirty prompt appears with focus on the
-  // overlay.
   WorkspaceShellTestAccess::RequestCloseTab(shell, 0);
   Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
          "closing a dirty tab should raise the dirty prompt");
   Expect(WorkspaceShellTestAccess::FocusIsOverlay(shell),
          "the dirty prompt should take focus while visible");
 
-  // Discard (Don't Save = action 1) and close the tab.
   WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 1);
 
   Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell),
          "confirming should dismiss the dirty prompt");
   Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 1,
          "the non-active tab should be closed");
-  // Regression: focus must not remain stranded on the now-hidden overlay handler,
-  // which would silently swallow every keystroke until the user clicked a surface.
   Expect(!WorkspaceShellTestAccess::FocusIsOverlay(shell),
          "closing a non-active dirty tab must not strand focus on the hidden overlay");
   Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
          "focus should return to the editor after the prompt closes");
 }
 
-}  // namespace
+}
 
-// Regression: renaming a file open in BOTH split groups must retarget the tab in the
-// non-focused group too. Otherwise it keeps the stale path and (with all-groups autosave)
-// writes the buffer back to the old path, resurrecting the pre-rename file.
 void TestWorkspaceShellRenameRetargetsAllEditorGroups() {
   using microide::workspace::EditorSplitOrientation;
   TemporaryDirectory temp_dir;
@@ -1311,7 +1229,6 @@ void TestWorkspaceShellRenameRetargetsAllEditorGroups() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
-  // Split (clones the active tab) so shared.txt is open in both groups, then focus back.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
              shell, microide::workspace::EditorSplitOrientation::Vertical),
          "split should create a second group showing the same file");
@@ -1329,9 +1246,6 @@ void TestWorkspaceShellRenameRetargetsAllEditorGroups() {
          "the NON-focused split group must also retarget (no stale old path)");
 }
 
-// Regression: deleting a file open in BOTH split groups must close the tab in the
-// non-focused group too (otherwise a dirty split view resurrects the deleted file on the
-// next autosave flush).
 void TestWorkspaceShellDeleteClosesTabInAllEditorGroups() {
   using microide::workspace::EditorSplitOrientation;
   TemporaryDirectory temp_dir;
@@ -1353,7 +1267,6 @@ void TestWorkspaceShellDeleteClosesTabInAllEditorGroups() {
   WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
 
   Expect(!std::filesystem::exists(source), "delete should remove the file");
-  // No surviving editor group may keep the deleted file open in any tab.
   const std::filesystem::path normalized = source.lexically_normal();
   for (std::size_t gi = 0; gi < WorkspaceShellTestAccess::EditorGroupCount(shell); ++gi) {
     for (const auto& path : WorkspaceShellTestAccess::GroupTabPaths(shell, gi)) {
@@ -1362,8 +1275,6 @@ void TestWorkspaceShellDeleteClosesTabInAllEditorGroups() {
   }
 }
 
-// Regression (TD-2026-07-17A-036): a compare tab living in a BACKGROUND split group must
-// be retargeted on a folder rename, not left to "self-heal" on the old/deleted path.
 void TestWorkspaceShellRenameRetargetsBackgroundCompareTab() {
   using microide::workspace::EditorSplitOrientation;
   TemporaryDirectory temp_dir;
@@ -1378,8 +1289,6 @@ void TestWorkspaceShellRenameRetargetsBackgroundCompareTab() {
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-  // Editor tab in group 0; split focuses the new group 1; open the comparison there so it
-  // ends up in the eventual BACKGROUND group after we refocus group 0.
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, scratch);
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
              shell, microide::workspace::EditorSplitOrientation::Vertical),
@@ -1408,8 +1317,6 @@ void TestWorkspaceShellRenameRetargetsBackgroundCompareTab() {
          "no background compare tab may keep the old pre-rename path");
 }
 
-// Regression (TD-2026-07-17A-036): a merge tab living in a BACKGROUND split group must be
-// retargeted on rename of its output path, mirroring the compare case above.
 void TestWorkspaceShellRenameRetargetsBackgroundMergeTab() {
   using microide::workspace::EditorSplitOrientation;
   TemporaryDirectory temp_dir;
@@ -1456,8 +1363,6 @@ void TestWorkspaceShellRenameRetargetsBackgroundMergeTab() {
          "no background merge tab may keep the old pre-rename output path");
 }
 
-// Regression (TD-2026-07-17A-036): deleting a folder must close compare AND merge tabs that
-// live in a BACKGROUND split group, not just the focused group.
 void TestWorkspaceShellDeleteClosesBackgroundCompareAndMergeTabs() {
   using microide::workspace::EditorSplitOrientation;
   TemporaryDirectory temp_dir;
@@ -1500,16 +1405,11 @@ void TestWorkspaceShellDeleteClosesBackgroundCompareAndMergeTabs() {
   }
 
   Expect(!std::filesystem::exists(work), "delete should remove the work folder");
-  // Only the unrelated scratch editor tab may survive in the background group.
   const auto group1_paths = WorkspaceShellTestAccess::GroupTabPaths(shell, 1);
   Expect(group1_paths.size() == 1 && group1_paths.front() == scratch.lexically_normal(),
          "delete must close the background compare and merge tabs, leaving only scratch");
 }
 
-// Closing one pane's view of a dirty buffer another pane still shows discards
-// nothing (the buffer lives on), so it must not prompt — VS Code closes such an
-// editor silently. Closing the LAST view still asks, including through
-// close-group, which used to drop the pane's tabs with no prompt at all.
 void TestWorkspaceShellClosingOneViewOfASharedDirtyBufferDoesNotPrompt() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1530,7 +1430,6 @@ void TestWorkspaceShellClosingOneViewOfASharedDirtyBufferDoesNotPrompt() {
   Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).dirty(),
          "both panes share the dirty buffer");
 
-  // Close the split's tab: the other pane keeps the buffer, so no prompt.
   WorkspaceShellTestAccess::RequestCloseTab(shell, 0);
   Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell),
          "closing one view of a shared dirty buffer must not prompt");
@@ -1539,7 +1438,6 @@ void TestWorkspaceShellClosingOneViewOfASharedDirtyBufferDoesNotPrompt() {
              WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).dirty(),
          "the surviving pane still holds the edit");
 
-  // close-group on a pane whose view is not the last one: no prompt either.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
              shell, microide::workspace::EditorSplitOrientation::Vertical),
          "split-right again");
@@ -1548,8 +1446,6 @@ void TestWorkspaceShellClosingOneViewOfASharedDirtyBufferDoesNotPrompt() {
          "closing a pane whose buffer another pane shows must not prompt");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 1, "back to one pane");
 
-  // close-group on a pane holding the ONLY view of a dirty buffer prompts, and
-  // Discard drops the pane without writing the file.
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "split-right beta.txt"),
          "split-right beta should succeed");
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("Y");
@@ -1562,16 +1458,12 @@ void TestWorkspaceShellClosingOneViewOfASharedDirtyBufferDoesNotPrompt() {
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 1, "Discard closes the pane");
   Expect(ReadFile(beta) == "beta\n", "Discard writes nothing");
 
-  // The last view of alpha, closed as a tab, still prompts.
   WorkspaceShellTestAccess::RequestCloseTab(shell, 0);
   Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
          "closing the last view of a dirty buffer prompts");
   WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 2);
 }
 
-// A drag across a prompt's field selects the text under it, and Shift+click
-// extends from the caret: both went through "anchor at the caret, then move",
-// which left no selection (found by the QA prompts-keyboard flow).
 void TestWorkspaceShellPromptFieldSelectsByDragAndShiftClick() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "proj";
@@ -1692,4 +1584,4 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellBannerActionCommandPressesTheActiveTabsBanner);
 }
 
-}  // namespace microide::tests
+}

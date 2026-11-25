@@ -235,4 +235,4 @@ bool ParseSnippetRegistration(lua_State* state,
                               std::string* error_message);
 #endif
 
-}  // namespace microide::plugin::registration_parsers
+}

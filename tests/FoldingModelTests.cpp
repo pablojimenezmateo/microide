@@ -43,9 +43,6 @@ std::string DescribeRanges(const std::vector<FoldRange>& ranges) {
   return out;
 }
 
-// Diff a resolved model against the cache-free oracle. Only ranges whose opener
-// falls inside `[first, last]` are comparable: outside its window the model
-// deliberately resolves nothing.
 void ExpectMatchesReference(const FoldingModel& model, const std::vector<std::string>& lines,
                             const FoldingModel::ComputeOptions& options,
                             const std::string& context) {
@@ -75,21 +72,14 @@ void ExpectMatchesReference(const FoldingModel& model, const std::vector<std::st
                    DescribeRanges(expected) + "\n  actual:   " + DescribeRanges(actual));
 }
 
-// Regression: `Refresh` early-returns via the workspace gate on `!dirty_`,
-// IGNORING the content revision. A document edit that moves a fold boundary
-// WITHOUT changing the line count (a formatter re-indent, a completion / code
-// action / plugin edit that re-nests brackets) leaves STALE fold ranges unless
-// the mutating path marks the model dirty. This documents why
-// WorkspaceEditService::ApplyLspEdit, the completion-accept path, and Undo/Redo must all call
-// MarkDirty().
 void TestFoldStaleWithoutMarkDirtyAfterSameLineCountEdit() {
   std::vector<std::string> lines = {
-      "void f() {",  // 0
-      "  if (x) {",  // 1  inner opener (structure A)
-      "    a;",      // 2
-      "  }",         // 3  inner closer (A)
-      "  b;",        // 4
-      "}",           // 5  outer closer
+      "void f() {",
+      "  if (x) {",
+      "    a;",
+      "  }",
+      "  b;",
+      "}",
   };
   const auto options = DefaultCStyleOptions();
   FoldingModel model;
@@ -97,25 +87,19 @@ void TestFoldStaleWithoutMarkDirtyAfterSameLineCountEdit() {
   Expect(Find(model.resolved_ranges(), 1).closer_line == 3,
          "structure A: the inner bracket fold opens at line 1 and closes at line 3");
 
-  // Mutate to structure B (SAME line count): the inner block slides down a line.
   lines = {
-      "void f() {",  // 0
-      "  b;",        // 1
-      "  if (x) {",  // 2  inner opener (structure B)
-      "    a;",      // 3
-      "  }",         // 4  inner closer (B)
-      "}",           // 5
+      "void f() {",
+      "  b;",
+      "  if (x) {",
+      "    a;",
+      "  }",
+      "}",
   };
-  // The workspace gate would skip this call entirely (fresh fingerprint, window
-  // already resolved). Emulate that: a refresh reporting NO edit reuses every
-  // cache, so the stale ranges survive -- the exact phantom-fold hazard the
-  // apply-path fixes guard against.
-  Expect(model.Refresh(lines, options, 0, FoldingModel::kAllLines, /*max_lines=*/0, LineEditSpan{}),
+  Expect(model.Refresh(lines, options, 0, FoldingModel::kAllLines, 0, LineEditSpan{}),
          "resolve returns after the same-line-count content change");
   Expect(Find(model.resolved_ranges(), 1).closer_line == 3,
          "without a reported edit the fold model is STALE: it still reports the pre-edit fold");
 
-  // A reported full rebuild rescans against the new content.
   model.MarkDirty();
   Expect(model.Compute(lines, options), "resolve after MarkDirty should finish");
   Expect(Find(model.resolved_ranges(), 1).closer_line == 0,
@@ -124,13 +108,6 @@ void TestFoldStaleWithoutMarkDirtyAfterSameLineCountEdit() {
          "after the rescan the inner fold reflects structure B (opens at 2, closes at 4)");
 }
 
-// Soak e041d436ae59 (terminate: std::length_error in vector::_M_fill_append, from
-// FoldingModel::SyncLineIndentCache at frame prep): an edit span that no longer
-// fits the document -- here "lines 6.. replaced by one line" against a document
-// that now has 5 lines -- resolved its current end (clamped to the document)
-// BELOW its begin, and `current_end - begin` wrapped to ~2^64 lines to insert. A
-// span the document contradicts is the case the cache already rebuilds for; the
-// check missed this side of it.
 void TestAnEditSpanTheDocumentContradictsRebuildsTheIndentCache() {
   std::vector<std::string> lines;
   for (int i = 0; i < 10; ++i) {
@@ -140,10 +117,10 @@ void TestAnEditSpanTheDocumentContradictsRebuildsTheIndentCache() {
   const FoldingModel::ComputeOptions options;
   Expect(model.Compute(lines, options), "the first resolve finishes");
 
-  lines.resize(5);  // the document shrank without that being what the span says
+  lines.resize(5);
   LineEditSpan span;
-  span.NoteSplice(/*start=*/6, /*removed=*/4, /*inserted=*/1);
-  Expect(model.Refresh(lines, options, 0, FoldingModel::kAllLines, /*max_lines=*/0, span),
+  span.NoteSplice(6, 4, 1);
+  Expect(model.Refresh(lines, options, 0, FoldingModel::kAllLines, 0, span),
          "a span the document contradicts is a rebuild, not a crash");
   model.MarkDirty();
   FoldingModel fresh;
@@ -202,7 +179,7 @@ void TestIndentFoldFallsBackWhenNoBrackets() {
       "next_thing()",
   };
   FoldingModel::ComputeOptions options = DefaultCStyleOptions();
-  options.bracket_pairs = {};  // language has no brackets (Python-ish)
+  options.bracket_pairs = {};
   FoldingModel model;
   Expect(model.Compute(lines, options),
          "indent compute should complete on small input");
@@ -215,27 +192,22 @@ void TestIndentFoldFallsBackWhenNoBrackets() {
   ExpectMatchesReference(model, lines, options, "indent-only block");
 }
 
-// An indent fold must still be emitted when the file is far larger than the
-// per-refresh budget. The emission pass previously shared the measurement loop's
-// budget counter, which the measurement loop always exhausted first, so every
-// indent fold was silently dropped on files whose scan window hit the budget --
-// indentation-only languages (Python/YAML) then showed no fold markers at all.
 void TestIndentFoldsEmittedWhenScanWindowReachesBudget() {
   std::vector<std::string> lines;
   lines.reserve(2100);
-  lines.push_back("if cond:");        // indent opener at line 0
-  lines.push_back("    body_one()");  // line 1
-  lines.push_back("    body_two()");  // line 2 (closer)
-  lines.push_back("next_thing()");    // line 3, dedent
+  lines.push_back("if cond:");
+  lines.push_back("    body_one()");
+  lines.push_back("    body_two()");
+  lines.push_back("next_thing()");
   for (int i = 0; i < 2096; ++i) {
-    lines.push_back("filler()");  // no folds, pushes line_count past the budget
+    lines.push_back("filler()");
   }
 
   FoldingModel::ComputeOptions options = DefaultCStyleOptions();
-  options.bracket_pairs = {};  // Python-ish: no bracket fold to mask the indent fold
+  options.bracket_pairs = {};
 
   FoldingModel model;
-  Expect(model.Refresh(lines, options, /*first_line=*/0, /*last_line=*/20, /*max_lines=*/2000),
+  Expect(model.Refresh(lines, options, 0, 20, 2000),
          "visible-range resolve should finish");
   const auto fold = model.FoldStartingAt(0);
   Expect(fold.has_value() && fold->closer_line == 2 && fold->source == FoldSource::Indent,
@@ -266,15 +238,13 @@ void TestBracketFoldSkipsStringAndCommentRegions() {
       "const char* s = \"{\";\n"
       "// }\n",
       "/tmp/fold-syntax.cpp");
-  // Prime the token cache so the folding model consumes the same syntax
-  // classification as the live viewport path.
   for (std::size_t line = 0; line < 5; ++line) {
     (void)viewport.HighlightedLineTokens(line);
   }
 
   FoldingModel model;
   Expect(model.Refresh(viewport.lines().Snapshot(), DefaultCStyleOptions(), 0,
-                       FoldingModel::kAllLines, /*max_lines=*/0, LineEditSpan::FullRebuild(),
+                       FoldingModel::kAllLines, 0, LineEditSpan::FullRebuild(),
                        &viewport),
          "syntax-aware fold compute should complete");
   Expect(model.resolved_ranges().size() == 1,
@@ -284,8 +254,6 @@ void TestBracketFoldSkipsStringAndCommentRegions() {
          "only the real function body braces should define the fold");
 }
 
-// A budget short of what the window needs must report the resolve as partial
-// rather than pretend the missing folds are absent.
 void TestBudgetedRefreshFlagsPartial() {
   std::vector<std::string> lines;
   lines.reserve(4000);
@@ -295,17 +263,14 @@ void TestBudgetedRefreshFlagsPartial() {
   }
   lines.push_back("}");
   FoldingModel model;
-  Expect(!model.Refresh(lines, DefaultCStyleOptions(), /*first_line=*/0, /*last_line=*/10,
-                        /*max_lines=*/10),
+  Expect(!model.Refresh(lines, DefaultCStyleOptions(), 0, 10,
+                        10),
          "a ten-line budget cannot resolve a fold closing 4000 lines below");
   Expect(!model.complete(), "partial resolve should report complete()==false");
   Expect(!model.IsWindowResolved(0, 10),
          "a partial resolve must not claim its window, or the gate never comes back");
 }
 
-// The budget doubles while the model is catching up, so a file far past the
-// per-refresh bound converges in a handful of refreshes rather than one per
-// budget's worth of lines.
 void TestBudgetedRefreshConvergesGeometrically() {
   std::vector<std::string> lines;
   lines.reserve(40002);
@@ -315,16 +280,14 @@ void TestBudgetedRefreshConvergesGeometrically() {
   }
   lines.push_back("}");
 
-  // A fold that OPENS inside the window and closes within the forward cap, so
-  // the assertion below is about the budget converging and not about the cap.
   lines[5] = "  void inner() {";
   lines[6000] = "  }";
 
   FoldingModel model;
   const auto options = DefaultCStyleOptions();
   int refreshes = 0;
-  while (!model.Refresh(lines, options, /*first_line=*/0, /*last_line=*/40,
-                        /*max_lines=*/2000, LineEditSpan{})) {
+  while (!model.Refresh(lines, options, 0, 40,
+                        2000, LineEditSpan{})) {
     ++refreshes;
     Expect(refreshes < 40, "budgeted refresh must converge");
   }
@@ -335,11 +298,6 @@ void TestBudgetedRefreshConvergesGeometrically() {
          "the resolve that completes must carry the folds inside its reach");
 }
 
-// Chasing a closer means reading every byte in between, so a construct spanning
-// more than `kMaxForwardResolveLines` is deliberately left unresolved rather than
-// making the first frame read the whole file. It must resolve once the viewport
-// is near enough -- and hitting the cap must NOT report a partial resolve, or the
-// refresh gate would redo the same bounded walk every frame.
 void TestForwardResolveCapDefersAVeryLongFold() {
   const std::size_t body = FoldingModel::kMaxForwardResolveLines * 2;
   std::vector<std::string> lines;
@@ -352,7 +310,7 @@ void TestForwardResolveCapDefersAVeryLongFold() {
 
   const auto options = DefaultCStyleOptions();
   FoldingModel model;
-  Expect(model.Refresh(lines, options, /*first_line=*/0, /*last_line=*/40, /*max_lines=*/0,
+  Expect(model.Refresh(lines, options, 0, 40, 0,
                        LineEditSpan{}),
          "hitting the forward cap is an answer, not a partial resolve");
   Expect(!model.FoldStartingAt(0).has_value(),
@@ -361,7 +319,7 @@ void TestForwardResolveCapDefersAVeryLongFold() {
          "and the gate must not keep asking for a window the cap already answered");
 
   const std::size_t near_closer = lines.size() - 40;
-  Expect(model.Refresh(lines, options, near_closer, lines.size() - 1, /*max_lines=*/0,
+  Expect(model.Refresh(lines, options, near_closer, lines.size() - 1, 0,
                        LineEditSpan{}),
          "a window near the closer should resolve");
   const auto fold = model.FoldStartingAt(0);
@@ -402,12 +360,6 @@ void TestIncrementalRefreshMatchesReference() {
   Expect(incremental.Compute(lines, options), "seed compute should complete");
   Expect(incremental.Collapse(0), "outer fold should accept collapse");
 
-  // Deliberately walks backwards at points so the edited block drops below the
-  // previous one, and repeats a line so the memoised prefix state is exercised
-  // on its hit path too. Each block spans five lines, so an edit at 5B+2 sits two
-  // brackets deep and one at 5B+4 sits one deep -- alternating between those
-  // depths is what makes a wrongly reused state produce different ranges rather
-  // than the same ones by luck.
   const std::vector<std::pair<std::size_t, std::string>> edits = {
       {42, "    body(); more();"},
       {42, "    body();"},
@@ -423,8 +375,8 @@ void TestIncrementalRefreshMatchesReference() {
   for (const auto& [line, text] : edits) {
     lines[line] = text;
     LineEditSpan edited;
-    edited.NoteSplice(/*start=*/line, /*removed=*/1, /*inserted=*/1);
-    incremental.Refresh(lines, options, 0, FoldingModel::kAllLines, /*max_lines=*/0, edited);
+    edited.NoteSplice(line, 1, 1);
+    incremental.Refresh(lines, options, 0, FoldingModel::kAllLines, 0, edited);
     ExpectMatchesReference(incremental, lines, options,
                            "after in-place edit at line " + std::to_string(line));
   }
@@ -432,10 +384,6 @@ void TestIncrementalRefreshMatchesReference() {
          "the collapsed fold must survive edits that do not touch it");
 }
 
-// Randomised splice fuzz over the block partition. Line-count-changing edits at
-// random places are exactly what makes a block partition drift out of sync with
-// the document, and a drifted partition produces WRONG folds rather than a
-// crash, so the oracle is the only thing that can see it.
 void TestRandomisedSplicesMatchReference() {
   std::mt19937 rng(20260804);
   std::vector<std::string> lines;
@@ -476,20 +424,11 @@ void TestRandomisedSplicesMatchReference() {
 
     LineEditSpan span;
     span.NoteSplice(start, removed, inserted);
-    model.Refresh(lines, options, 0, FoldingModel::kAllLines, /*max_lines=*/0, span);
+    model.Refresh(lines, options, 0, FoldingModel::kAllLines, 0, span);
     ExpectMatchesReference(model, lines, options, "randomised splice step " + std::to_string(step));
   }
 }
 
-// Lines deleted near the top of a file whose brackets are cached to its end.
-// The cache used to be cut back to the new line count BEFORE the deletion was
-// spliced out of it, which dropped the brackets of the document's last lines --
-// lines of later blocks, whose event totals the splice does not recompute -- and
-// the rescan of those lines then added them to the totals a second time. Every
-// block after one counted twice starts reading the flat event array too far in:
-// wrong folds below, and past the array's end an abort under the standard
-// library's bounds checks (soak fe3e0094d24a). Three blocks and a deletion longer
-// than the last one, so the cut reaches into the second block.
 void TestDeletingLinesAboveCachedBlocksKeepsTheirEventsInStep() {
   std::vector<std::string> lines;
   for (int function = 0; lines.size() < 2200; ++function) {
@@ -508,29 +447,24 @@ void TestDeletingLinesAboveCachedBlocksKeepsTheirEventsInStep() {
   lines.erase(lines.begin() + static_cast<std::ptrdiff_t>(start),
               lines.begin() + static_cast<std::ptrdiff_t>(start + removed));
   LineEditSpan span;
-  span.NoteSplice(start, removed, /*inserted=*/0);
-  Expect(model.Refresh(lines, options, 0, 40, /*max_lines=*/0, span),
+  span.NoteSplice(start, removed, 0);
+  Expect(model.Refresh(lines, options, 0, 40, 0, span),
          "the resolve after the deletion completes");
   ExpectMatchesReference(model, lines, options, "at the top, after deleting 200 lines there");
 
-  // The last block is reached through the totals of the two before it.
   const std::size_t top = lines.size() - 60;
-  Expect(model.Refresh(lines, options, top, lines.size() - 1, /*max_lines=*/0, LineEditSpan{}),
+  Expect(model.Refresh(lines, options, top, lines.size() - 1, 0, LineEditSpan{}),
          "the resolve at the end of the document completes");
   ExpectMatchesReference(model, lines, options, "in the last block, after deleting 200 lines above it");
 
-  // And an edit there is spliced at the right place in the event array.
   lines[top + 7] = "  while (y) { step(); }";
   LineEditSpan edited;
-  edited.NoteSplice(top + 7, /*removed=*/1, /*inserted=*/1);
-  Expect(model.Refresh(lines, options, top, lines.size() - 1, /*max_lines=*/0, edited),
+  edited.NoteSplice(top + 7, 1, 1);
+  Expect(model.Refresh(lines, options, top, lines.size() - 1, 0, edited),
          "the resolve after an edit in the last block completes");
   ExpectMatchesReference(model, lines, options, "after an edit in the last block");
 }
 
-// A windowed resolve must produce, for the lines it covers, exactly what a
-// whole-document resolve produces -- including the ancestors of its first line,
-// which are what sticky scroll paints.
 void TestWindowedResolveMatchesWholeDocumentInsideItsWindow() {
   std::vector<std::string> lines;
   lines.push_back("namespace outer {");
@@ -551,7 +485,7 @@ void TestWindowedResolveMatchesWholeDocumentInsideItsWindow() {
   for (std::size_t top : {std::size_t{0}, std::size_t{137}, std::size_t{900},
                           std::size_t{1500}, lines.size() - 5}) {
     const std::size_t bottom = std::min(top + 40, lines.size() - 1);
-    Expect(windowed.Refresh(lines, options, top, bottom, /*max_lines=*/0, LineEditSpan{}),
+    Expect(windowed.Refresh(lines, options, top, bottom, 0, LineEditSpan{}),
            "windowed resolve should complete");
     for (std::size_t line = top; line <= bottom; ++line) {
       const auto expected = whole.FoldStartingAt(line);
@@ -576,17 +510,13 @@ void TestWindowedResolveMatchesWholeDocumentInsideItsWindow() {
   }
 }
 
-// Regression: a collapsed fold survives a line-count-changing edit ABOVE it. The
-// old model matched previous collapsed openers by ABSOLUTE line, so inserting
-// lines above shifted the opener, failed the match, and dropped the collapse (the
-// fold visually re-expanded). The collapsed set now shifts by the edit delta.
 void TestCollapsedFoldSurvivesInsertionAbove() {
   std::vector<std::string> before = {
-      "void a() {",  // 0
-      "}",           // 1
-      "void b() {",  // 2  <- collapse this fold
-      "  body();",   // 3
-      "}",           // 4
+      "void a() {",
+      "}",
+      "void b() {",
+      "  body();",
+      "}",
   };
   FoldingModel model;
   Expect(model.Compute(before, DefaultCStyleOptions()), "initial compute should finish");
@@ -594,18 +524,18 @@ void TestCollapsedFoldSurvivesInsertionAbove() {
   Expect(model.IsCollapsedAtOpener(2), "the b() fold should be collapsed");
 
   std::vector<std::string> after = {
-      "// inserted 1",  // 0
-      "// inserted 2",  // 1
-      "void a() {",     // 2
-      "}",              // 3
-      "void b() {",     // 4  <- opener shifted down by 2
-      "  body();",      // 5
-      "}",              // 6
+      "// inserted 1",
+      "// inserted 2",
+      "void a() {",
+      "}",
+      "void b() {",
+      "  body();",
+      "}",
   };
   LineEditSpan inserted_at_top;
-  inserted_at_top.NoteSplice(/*start=*/0, /*removed=*/0, /*inserted=*/2);
+  inserted_at_top.NoteSplice(0, 0, 2);
   Expect(model.Refresh(after, DefaultCStyleOptions(), 0, FoldingModel::kAllLines,
-                       /*max_lines=*/0, inserted_at_top),
+                       0, inserted_at_top),
          "recompute after the insertion should finish");
   Expect(!model.IsCollapsedAtOpener(2), "nothing is collapsed at the old opener line any more");
   Expect(model.IsCollapsedAtOpener(4),
@@ -613,13 +543,11 @@ void TestCollapsedFoldSurvivesInsertionAbove() {
   Expect(model.IsLineHidden(5), "the shifted collapsed fold still hides its body");
 }
 
-// A collapsed fold the user dissolved (its opener line stopped opening anything)
-// must stop hiding rows once the resolve that covers it says so.
 void TestCollapsedFoldDroppedWhenTheEditDissolvesIt() {
   std::vector<std::string> lines = {
-      "void a() {",  // 0
-      "  body();",   // 1
-      "}",           // 2
+      "void a() {",
+      "  body();",
+      "}",
   };
   const auto options = DefaultCStyleOptions();
   FoldingModel model;
@@ -627,34 +555,26 @@ void TestCollapsedFoldDroppedWhenTheEditDissolvesIt() {
   Expect(model.Collapse(0), "the fold should collapse");
   Expect(model.IsLineHidden(1), "the collapsed fold hides its body");
 
-  // Losing the opener brace leaves an indent fold on the same line with a
-  // different extent. That fold still exists, so the collapse follows it to its
-  // new closer rather than being dropped (this is what VS Code does).
   lines[0] = "void a()";
   LineEditSpan edited;
-  edited.NoteSplice(/*start=*/0, /*removed=*/1, /*inserted=*/1);
-  Expect(model.Refresh(lines, options, 0, FoldingModel::kAllLines, /*max_lines=*/0, edited),
+  edited.NoteSplice(0, 1, 1);
+  Expect(model.Refresh(lines, options, 0, FoldingModel::kAllLines, 0, edited),
          "resolve after the brace-removing edit should finish");
   Expect(model.IsCollapsedAtOpener(0),
          "a fold that still opens on the same line keeps its collapse");
   Expect(model.collapsed_ranges()[0].closer_line == 1,
          "and the collapse adopts the fold's new extent instead of hiding stale rows");
 
-  // Emptying the line removes every fold that opened there. Now the collapse has
-  // nothing to attach to and must go, or it would keep hiding rows behind a fold
-  // that no longer exists.
   lines[0] = "";
   LineEditSpan blanked;
-  blanked.NoteSplice(/*start=*/0, /*removed=*/1, /*inserted=*/1);
-  Expect(model.Refresh(lines, options, 0, FoldingModel::kAllLines, /*max_lines=*/0, blanked),
+  blanked.NoteSplice(0, 1, 1);
+  Expect(model.Refresh(lines, options, 0, FoldingModel::kAllLines, 0, blanked),
          "resolve after the dissolving edit should finish");
   Expect(!model.has_any_collapsed_fold(),
          "a collapse whose fold no longer exists in the resolved window must be dropped");
   Expect(!model.IsLineHidden(1), "and nothing may stay hidden behind it");
 }
 
-// A collapsed fold outside the resolved window is NOT observable from there, so
-// it must be left alone rather than revalidated away.
 void TestCollapsedFoldOutsideWindowIsKept() {
   std::vector<std::string> lines;
   lines.push_back("void top() {");
@@ -668,8 +588,7 @@ void TestCollapsedFoldOutsideWindowIsKept() {
   Expect(model.Compute(lines, options), "initial compute should finish");
   Expect(model.Collapse(0), "the top fold should collapse");
 
-  // Resolve a window far below it.
-  Expect(model.Refresh(lines, options, 3500, 3540, /*max_lines=*/0, LineEditSpan{}),
+  Expect(model.Refresh(lines, options, 3500, 3540, 0, LineEditSpan{}),
          "a far window should resolve");
   Expect(model.IsCollapsedAtOpener(0),
          "a collapse outside the resolved window must survive the resolve");
@@ -682,41 +601,37 @@ void TestEnsureFoldsResolvesVisibleOpenerWithDistantCloser() {
   for (int i = 0; i < 5; ++i) {
     lines.push_back("// preamble");
   }
-  lines.push_back("void method() {");  // opener at line 5
+  lines.push_back("void method() {");
   for (int i = 0; i < 100; ++i) {
     lines.push_back("  step();");
   }
-  lines.push_back("}");  // closer at line 106
+  lines.push_back("}");
 
   FoldingModel model;
-  Expect(model.Refresh(lines, DefaultCStyleOptions(), /*first_line=*/0, /*last_line=*/20,
-                       /*max_lines=*/2000),
+  Expect(model.Refresh(lines, DefaultCStyleOptions(), 0, 20,
+                       2000),
          "visible-range resolve should finish");
   const auto fold = model.FoldStartingAt(5);
   Expect(fold.has_value() && fold->closer_line == 106 && fold->source == FoldSource::Bracket,
          "visible opener with closer far below the viewport must fold on the first frame");
 }
 
-// A closer far beyond the viewport is reached by walking BLOCK WORDS, not lines,
-// so it resolves on the first frame even on a large file. The old model deferred
-// it until the viewport scrolled near the closer.
 void TestDistantCloserResolvesWithoutScrollingToIt() {
   std::vector<std::string> lines;
   lines.reserve(6200);
-  lines.push_back("namespace n {");  // opener at line 0
+  lines.push_back("namespace n {");
   for (int i = 0; i < 6000; ++i) {
     lines.push_back("  int v = 0;");
   }
-  lines.push_back("}");  // closer at line 6001
+  lines.push_back("}");
   for (int i = 0; i < 100; ++i) {
     lines.push_back("// tail");
   }
 
   FoldingModel model;
   const auto options = DefaultCStyleOptions();
-  // Catch up from cold; the budget bounds the first frames, not the outcome.
   int guard = 0;
-  while (!model.Refresh(lines, options, /*first_line=*/0, /*last_line=*/20, /*max_lines=*/2000,
+  while (!model.Refresh(lines, options, 0, 20, 2000,
                         LineEditSpan{})) {
     Expect(++guard < 40, "budgeted refresh must converge");
   }
@@ -729,17 +644,17 @@ std::vector<std::string> BuildFixtureWithThreeDisjointFolds() {
   std::vector<std::string> lines;
   lines.reserve(2048);
   for (int i = 0; i < 100; ++i) lines.push_back("// pre filler");
-  lines.push_back("void before() {");      // 100
+  lines.push_back("void before() {");
   for (int i = 0; i < 30; ++i) lines.push_back("  before_body();");
-  lines.push_back("}");                    // 131
-  for (int i = 0; i < 500; ++i) lines.push_back("// mid filler");  // 132..631
-  lines.push_back("void inside() {");      // 632
+  lines.push_back("}");
+  for (int i = 0; i < 500; ++i) lines.push_back("// mid filler");
+  lines.push_back("void inside() {");
   for (int i = 0; i < 40; ++i) lines.push_back("  inside_body();");
-  lines.push_back("}");                    // 673
-  for (int i = 0; i < 500; ++i) lines.push_back("// gap filler");  // 674..1173
-  lines.push_back("void after() {");       // 1174
+  lines.push_back("}");
+  for (int i = 0; i < 500; ++i) lines.push_back("// gap filler");
+  lines.push_back("void after() {");
   for (int i = 0; i < 20; ++i) lines.push_back("  after_body();");
-  lines.push_back("}");                    // 1195
+  lines.push_back("}");
   for (int i = 0; i < 200; ++i) lines.push_back("// tail filler");
   return lines;
 }
@@ -752,7 +667,6 @@ void TestCollapsedFoldsBeforeAndAfterViewportDoNotHideViewportRows() {
   Expect(model.Collapse(100), "should collapse the before-viewport fold opener");
   Expect(model.Collapse(1174), "should collapse the after-viewport fold opener");
 
-  // Notional viewport spans lines 632..672 (the body of `inside()`).
   Expect(!model.IsLineHidden(632),
          "viewport opener line must not be hidden by an out-of-range collapsed fold");
   Expect(!model.IsLineHidden(650),
@@ -813,17 +727,17 @@ void TestIndexedLookupsRunAfterFoldToggleInvalidation() {
 
 void TestIndexedStickyScrollParentLookupAcrossNestedFolds() {
   std::vector<std::string> lines;
-  lines.push_back("void outer() {");          // 0
-  lines.push_back("  void mid_a() {");        // 1
+  lines.push_back("void outer() {");
+  lines.push_back("  void mid_a() {");
   for (int i = 0; i < 20; ++i) lines.push_back("    body();");
-  lines.push_back("  }");                     // 22
-  lines.push_back("  void mid_b() {");        // 23
+  lines.push_back("  }");
+  lines.push_back("  void mid_b() {");
   for (int i = 0; i < 10; ++i) lines.push_back("    deeper();");
-  lines.push_back("    void inner() {");      // 34
+  lines.push_back("    void inner() {");
   for (int i = 0; i < 10; ++i) lines.push_back("      leaf();");
-  lines.push_back("    }");                   // 45
-  lines.push_back("  }");                     // 46
-  lines.push_back("}");                       // 47
+  lines.push_back("    }");
+  lines.push_back("  }");
+  lines.push_back("}");
 
   FoldingModel model;
   Expect(model.Compute(lines, DefaultCStyleOptions()),
@@ -874,8 +788,6 @@ void TestIndexedFoldStartingAtAndIsCollapsedAtOpenerStaySynchronized() {
 }
 
 void TestHasAnyCollapsedFoldTracksCounter() {
-  // The wrapped-row layout build relies on this probe per edit; reverting to a
-  // linear scan would reintroduce per-edit O(fold_count) work.
   const std::vector<std::string> lines = {
       "void f() {",
       "  void g() {",
@@ -912,10 +824,6 @@ void TestHasAnyCollapsedFoldTracksCounter() {
   Expect(!model.has_any_collapsed_fold(), "Clear must reset the probe");
 }
 
-// The wrapped-row layout cache keys on `layout_revision()`, so it must move only
-// when the set of HIDDEN lines moves. A scroll that resolves a different window
-// bumps `revision()` and must not bump `layout_revision()`, or every scrolled
-// frame with a fold collapsed would rebuild the whole document's row table.
 void TestLayoutRevisionOnlyTracksTheCollapsedSet() {
   std::vector<std::string> lines;
   lines.push_back("void top() {");
@@ -930,33 +838,22 @@ void TestLayoutRevisionOnlyTracksTheCollapsedSet() {
 
   const std::size_t layout_before = model.layout_revision();
   const std::size_t revision_before = model.revision();
-  Expect(model.Refresh(lines, options, 1500, 1540, /*max_lines=*/0, LineEditSpan{}),
+  Expect(model.Refresh(lines, options, 1500, 1540, 0, LineEditSpan{}),
          "a scrolled resolve should complete");
   Expect(model.revision() != revision_before,
          "resolving a different window must bump the general revision");
   Expect(model.layout_revision() == layout_before,
          "resolving a different window must NOT bump the layout revision");
 
-  Expect(model.Refresh(lines, options, 0, 40, /*max_lines=*/0, LineEditSpan{}),
+  Expect(model.Refresh(lines, options, 0, 40, 0, LineEditSpan{}),
          "scrolling back should complete");
   Expect(model.Collapse(0), "collapse should succeed");
   Expect(model.layout_revision() != layout_before,
          "changing the collapsed set must bump the layout revision");
 }
 
-// TD-2026-08-05-132 item 3: a line past `kMaxBracketScanLineBytes` contributes no
-// brackets at all. The per-line bracket cache resyncs a whole line at a time, so
-// without the cap an edit anywhere inside a line with no newlines in it re-read a
-// megabyte and re-matched 200k events on every keystroke -- and past the
-// tokenization cap those events could not be filtered for string/comment context
-// anyway, so the folds they produced were arbitrary.
-//
-// Pinned at the boundary in both directions, and with a normal line in the same
-// document, because the cap is per line and must not take the document with it.
 void TestOverLongLineContributesNoBrackets() {
   FoldingModel::ComputeOptions options = DefaultCStyleOptions();
-  // Isolate the bracket source: an indent fold would otherwise answer for a line
-  // whose brackets were dropped and hide the thing being measured.
   options.use_indent_source = false;
 
   const auto document_with_opener_of_length = [](std::size_t bytes) {
@@ -987,20 +884,12 @@ void TestOverLongLineContributesNoBrackets() {
     Expect(!model.FoldStartingAt(0).has_value(),
            "one byte past the cap the line contributes no brackets: " +
                DescribeRanges(model.resolved_ranges()));
-    // The dropped `{` must not leave the walk with a phantom open bracket that
-    // swallows the closer of the ordinary fold below it.
     Expect(Find(model.resolved_ranges(), 3).closer_line == 5,
            "a normal line in the same document keeps folding: " +
                DescribeRanges(model.resolved_ranges()));
   }
 }
 
-// TD-2026-08-05-133: the cap above was applied correctly and still paid for the
-// line. `ScanLine(lines[i], out)` asked the LineSpan for the whole line, which on
-// a piece-tree source materializes a copy of any line that spans pieces -- i.e.
-// every line an in-line edit has touched -- and only then discarded it for being
-// over the cap. So the very lines the cap exists to skip were the expensive ones,
-// once per keystroke. Assert the work: the answer was already right.
 void TestOverLongLineIsSkippedWithoutReadingIt() {
   FoldingModel::ComputeOptions options = DefaultCStyleOptions();
   options.use_indent_source = false;
@@ -1009,8 +898,6 @@ void TestOverLongLineIsSkippedWithoutReadingIt() {
   std::string over_cap = "{";
   over_cap.append(FoldingModel::kMaxBracketScanLineBytes, 'x');
   buffer.ResetFromText(over_cap + "\n  body\n}\n");
-  // Split the over-cap line the way an in-line edit does, so reading it whole can
-  // only be served by a copy.
   buffer.ReplaceTextRange(0, over_cap.size() / 2, 0, over_cap.size() / 2, "MID");
 
   FoldingModel model;
@@ -1025,16 +912,12 @@ void TestOverLongLineIsSkippedWithoutReadingIt() {
   Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorFoldBracketLinesSkippedTooLong) > 0,
          "the skip counter must have moved -- otherwise the zero above proves nothing");
 
-  // Reachability control: reading the same line whole does copy it, so the
-  // assertion is about this code path and not about this fixture.
   (void)buffer.LineView(0);
   Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializedBytes) >
              FoldingModel::kMaxBracketScanLineBytes,
          "reading the spanning over-cap line whole still copies it (control)");
   util::ResetPerformanceCounters();
 
-  // The indent source is the other half of a refresh and it reads the same lines.
-  // It only needs the leading whitespace, so it must not read the line either.
   options.use_indent_source = true;
   FoldingModel indent_model;
   util::ResetPerformanceCounters();
@@ -1049,29 +932,10 @@ void TestOverLongLineIsSkippedWithoutReadingIt() {
   util::ResetPerformanceCounters();
 }
 
-// TD-2026-08-05-133: the indent scan now reads a line 256 bytes at a time instead
-// of asking for all of it, carrying the running visual column across chunks so a
-// tab still advances to the right stop. That carry is the only thing chunking can
-// break, and it only shows when an indent run crosses a chunk boundary -- so the
-// widths here are chosen to straddle it, with tabs on both sides.
-//
-// The reference computation in FoldingReference.h measures indents with its own
-// independent single-pass scan over the whole line, which is what makes this a
-// real differential rather than the chunked code checking itself.
 void TestDeepIndentCrossingTheScanChunkMatchesTheReference() {
   FoldingModel::ComputeOptions options = DefaultCStyleOptions();
-  options.bracket_pairs = {};  // isolate the indent source
+  options.bracket_pairs = {};
 
-  // The sharp case, constructed so a wrong carry changes the fold TREE and not
-  // just the numbers. Fold output only compares indents against each other, so a
-  // document whose lines all share one indent string survives any consistent
-  // mis-measurement -- which is how a first attempt at this test passed against a
-  // deliberately broken carry. Here two lines must come out ONE column apart:
-  //
-  //   tab_size 3, chunk 256. Line A is 257 spaces then a tab: 257 % 3 == 2, so the
-  //   tab advances one column, to 258. A scan that restarted its column at the
-  //   chunk boundary would see one space (column 1) then a tab and advance two, to
-  //   259 -- exactly line B's indent, making them siblings instead of nesting.
   {
     options.tab_size = 3;
     const std::vector<std::string> lines = {
@@ -1085,14 +949,8 @@ void TestDeepIndentCrossingTheScanChunkMatchesTheReference() {
     ExpectMatchesReference(model, lines, options, "one-column split across the scan chunk");
   }
 
-  // A tab size that does NOT divide the 256-byte chunk is load-bearing here. With
-  // 4 or 8 the boundary always lands on a tab stop, so a chunked scan that reset
-  // its column at each chunk would produce the right answer anyway and this test
-  // would pass while measuring nothing. 3 and 5 make the carry observable.
   for (const std::size_t tab_size : {std::size_t{3}, std::size_t{4}, std::size_t{5}}) {
     options.tab_size = tab_size;
-    // 256 is the chunk size. Straddle it from both sides, and put a tab before it
-    // too so the carried column at the boundary is not simply the byte count.
     for (const std::size_t leading : {std::size_t{250}, std::size_t{255}, std::size_t{256},
                                       std::size_t{257}, std::size_t{600}}) {
       for (const std::string_view tail : {"\t", "\t\t\t", " \t ", ""}) {
@@ -1101,7 +959,7 @@ void TestDeepIndentCrossingTheScanChunkMatchesTheReference() {
             "outer:",
             indent + "body",
             indent + "\tdeeper",
-            std::string(leading + 8, ' '),  // whitespace only, spans two chunks
+            std::string(leading + 8, ' '),
             indent + "body again",
             "next",
         };
@@ -1116,7 +974,7 @@ void TestDeepIndentCrossingTheScanChunkMatchesTheReference() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorFolding/Indent/DeepIndentCrossingTheScanChunkMatchesTheReference",
@@ -1182,4 +1040,4 @@ void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
           TestAnEditSpanTheDocumentContradictsRebuildsTheIndentCache);
 }
 
-}  // namespace microide::tests
+}

@@ -10,90 +10,41 @@
 
 namespace microide::editor {
 
-// Line-oriented document storage behind a stable interface.
-//
-// Phase 2 of the large-file overhaul introduced this seam; Phase 3 swaps the
-// underlying representation to a piece tree (see PieceTree) without touching the
-// edit engine, undo history, or the read-only consumers.
-//
-// Representation:
-//   * `tree_` is the authoritative store -- a piece tree over an immutable
-//     original buffer plus an append-only add buffer. Edits are O(log n) splices
-//     and never reshuffle line storage; there is no per-line heap allocation.
-//   * `LineView` reads a single line zero-copy (the common case) and is the
-//     accessor hot/per-line code must use.
-//
-// Compatibility accessors returning `const std::string&`:
-//   * `operator[]`, `front`, and `back` return a reference into a per-line
-//     materialization cache (`line_cache_`): the requested line is copied out of
-//     the tree once and memoized, so repeated access and `&buffer[i]` pointers
-//     stay valid. Only *accessed* lines are materialized -- never the whole
-//     document -- so the render path (which touches one viewport's worth of
-//     lines) does not pay an O(n) rebuild per frame or per keystroke. New
-//     per-line code should still prefer `LineView` (zero-copy view).
-//   * `Snapshot()` and the iterators return a lazily materialized whole-document
-//     `snapshot_` vector for inherently O(n) cold paths (serialize, persist,
-//     filetype detect, full-buffer search, range scans). Never call these on a
-//     hot/per-frame path.
-//   * Every reference returned by the above is invalidated by the next mutation
-//     -- the same contract `std::vector<std::string>` already imposed.
-//   * All mutation funnels through `ReplaceLineRange`, which maps directly onto a
-//     piece-tree offset-range splice; the convenience mutators wrap it.
 class TextBuffer {
  public:
-  // Iterates the materialized snapshot (yields `const std::string&`). Building
-  // the snapshot is O(n); prefer index + LineView in per-line code.
   using const_iterator = std::vector<std::string>::const_iterator;
 
   TextBuffer() = default;
   explicit TextBuffer(const std::vector<std::string>& lines) : tree_(lines) {}
 
-  // Replace the entire contents (used by load / ResetState).
   void Reset(const std::vector<std::string>& lines) {
     tree_.Reset(lines);
     InvalidateSnapshot();
   }
 
-  // Large-file load fast path: take ownership of canonical '\n'-joined `content`
-  // directly as the backing buffer (no per-line split/rejoin). `content` must
-  // not contain '\r'. See PieceTree::ResetFromText.
   void ResetFromText(std::string content) {
     tree_.ResetFromText(std::move(content));
     InvalidateSnapshot();
   }
 
-  // --- Read ---
   std::size_t LineCount() const noexcept { return tree_.LineCount(); }
   std::size_t size() const noexcept { return tree_.LineCount(); }
   bool empty() const noexcept { return tree_.Empty(); }
 
-  // Zero-copy view of line `index` (no trailing newline). `index` must be < size().
-  // Prefer this in hot/per-line code; it is the accessor the piece tree keeps.
   std::string_view LineView(std::size_t index) const { return tree_.LineView(index); }
   std::size_t LineLength(std::size_t index) const { return tree_.LineLength(index); }
 
-  // Bounded read of part of a line, zero-copy when the window lies inside one
-  // piece and otherwise copying only the window into `scratch`. Use this instead
-  // of `LineView(i).substr(...)` anywhere the caller wants a bounded slice: on a
-  // line that spans pieces (every edited line) `LineView` materializes the WHOLE
-  // line first. See PieceTree::LineWindow.
   std::string_view LineWindow(std::size_t index, std::size_t byte_start, std::size_t byte_len,
                               std::string& scratch) const {
     return tree_.LineWindow(index, byte_start, byte_len, scratch);
   }
 
-  // Per-line compatibility accessors (line-cache backed; see class comment).
-  // Materialize only the requested line, not the whole document.
   const std::string& operator[](std::size_t index) const { return LineRef(index); }
   const std::string& front() const { return LineRef(0); }
   const std::string& back() const { return LineRef(tree_.LineCount() - 1); }
-  // Iterators materialize the whole document (cold paths only).
   const_iterator begin() const { return Snapshot().begin(); }
   const_iterator end() const { return Snapshot().end(); }
 
-  // Copy lines [begin, end) into a fresh vector (undo before/after capture).
-  // Blob form of SliceLines: the lines of [begin, end) as one buffer plus a
-  // line-start table, which is 2 allocations instead of (end - begin).
   LineBlob SliceLinesBlob(std::size_t begin, std::size_t end) const {
     LineBlob out;
     tree_.AppendLines(begin, end, out);
@@ -102,36 +53,20 @@ class TextBuffer {
   std::vector<std::string> SliceLines(std::size_t begin, std::size_t end) const {
     return tree_.SliceLines(begin, end);
   }
-  // The same lines appended to a caller-owned vector, for a caller assembling a
-  // larger one (see PieceTree::AppendLines).
   void AppendLines(std::size_t begin, std::size_t end, std::vector<std::string>& out) const {
     tree_.AppendLines(begin, end, out);
   }
   void AppendLines(std::size_t begin, std::size_t end, LineBlob& out) const {
     tree_.AppendLines(begin, end, out);
   }
-  // Full materialized copy of the document.
   std::vector<std::string> ToVector() const { return tree_.ToVector(); }
 
-  // The whole document as one '\n'-joined string, appended to `out`.
-  //
-  // This is what the piece tree already stores, so it is a single tree walk with
-  // one memcpy per piece. Building the same string by looping LineView costs a
-  // pair of binary searches per line AND, on a heavily edited buffer, populates
-  // the piece tree's per-line materialization cache with a second full copy of
-  // the document that is retained until the next mutation.
   void AppendWholeText(std::string& out) const {
     tree_.AppendWholeText(out);
   }
 
-  // The document as it is now, sharing the piece tree's buffers: O(pieces), no
-  // text copied, readable on another thread while this buffer is edited. What a
-  // consumer that only reads the whole text -- the crash-safety flush, handing
-  // unsaved buffers to the persistence worker -- should take instead of Snapshot().
   DocumentSnapshot SnapshotDocument() const { return tree_.Snapshot(); }
 
-  // Whole-document bridge for inherently O(n) cold paths (see class comment).
-  // Prefer LineView for anything per-line or hot.
   const std::vector<std::string>& Snapshot() const {
     if (!snapshot_valid_) {
       ++s_snapshot_builds_;
@@ -141,44 +76,21 @@ class TextBuffer {
     return snapshot_;
   }
 
-  // Test-only: process-wide count of full-document Snapshot() materializations.
-  // Lets regression tests assert that hot edit paths (e.g. grouped/multi-caret
-  // undo) never fall back to whole-buffer copies. Cold-path increment only.
   static std::size_t snapshot_build_count() { return s_snapshot_builds_; }
   static void reset_snapshot_build_count() { s_snapshot_builds_ = 0; }
 
-  // Number of EXTRA line copies the `operator[]`/front/back compatibility
-  // accessors have forced. Each is a full heap copy of a line the piece tree
-  // already stores, retained until the next mutation — so a per-line hot path
-  // that reaches for `operator[]` instead of `LineView` quietly accumulates a
-  // second copy of every line it touches. Exposed so a test can pin "this render
-  // path stays zero-copy" rather than trusting the convention.
-  //
-  // A line that spans pieces is NOT counted: the tree had to materialize it for
-  // `LineView` anyway and `LineRef` aliases that copy rather than making a
-  // second one. Those are counted by `editor.line_materializations` instead;
-  // this number is specifically the compatibility accessors' own overhead.
   std::size_t materialized_line_count() const { return line_cache_.size(); }
 
-  // --- Mutate ---
-  // Universal primitive: erase `removed` lines starting at `start`, then insert
-  // `inserted` at `start`. Mirrors the undo-entry apply model.
   void ReplaceLineRange(std::size_t start, std::size_t removed,
                         const std::vector<std::string>& inserted) {
     tree_.ReplaceLineRange(start, removed, inserted);
     InvalidateSnapshot();
   }
-  // Blob form: one buffer plus a line-start table, which is what an undo entry
-  // stores and what the shaping ops build (TD-2026-08-11-182).
   void ReplaceLineRange(std::size_t start, std::size_t removed, const LineBlob& inserted) {
     tree_.ReplaceLineRange(start, removed, inserted);
     InvalidateSnapshot();
   }
 
-  // Column-scoped splice: replace the bytes between (start_line, start_column)
-  // and (end_line, end_column) with `text`. The primitive an in-line edit wants —
-  // it copies only `text`, where the line-shaped `ReplaceLineRange` copies the
-  // whole affected line twice (see PieceTree::ReplaceTextRange).
   void ReplaceTextRange(std::size_t start_line, std::size_t start_column,
                         std::size_t end_line, std::size_t end_column,
                         std::string_view text) {
@@ -186,9 +98,6 @@ class TextBuffer {
     InvalidateSnapshot();
   }
 
-  // Append the bytes in [(start_line, start_column), (end_line, end_column)) to
-  // `out`. O(range); never materializes a whole line the way LineView does for a
-  // line that spans pieces.
   void AppendTextRange(std::size_t start_line, std::size_t start_column,
                        std::size_t end_line, std::size_t end_column,
                        std::string& out) const {
@@ -213,21 +122,10 @@ class TextBuffer {
   }
 
  private:
-  // Memoized single-line materialization. unordered_map node values are
-  // reference-stable across inserts/rehashes, so `&LineRef(i)` stays valid until
-  // the next mutation clears the cache.
   const std::string& LineRef(std::size_t index) const {
     const auto it = line_cache_.find(index);
     if (it != line_cache_.end()) return it->second;
     const std::string_view view = tree_.LineView(index);
-    // A line that spans pieces -- every line an in-line edit has touched -- was
-    // just copied into the tree's own per-revision cache to produce that view.
-    // Copying it a SECOND time into `line_cache_` doubled the cost of every
-    // `operator[]` on an edited line, which on a file with no line breaks in it
-    // is megabytes per call (TD-2026-08-05-133). Alias the tree's copy instead:
-    // both are invalidated by the same mutation, so the reference contract is
-    // identical. The pointer test is what makes this exact -- it aliases only
-    // when the view genuinely IS that slot, never a view into a piece.
     if (const std::string* owned = tree_.LineOwnedIfMaterialized(index);
         owned != nullptr && owned->data() == view.data() && owned->size() == view.size()) {
       return *owned;
@@ -248,4 +146,4 @@ class TextBuffer {
   inline static std::size_t s_snapshot_builds_ = 0;
 };
 
-}  // namespace microide::editor
+}

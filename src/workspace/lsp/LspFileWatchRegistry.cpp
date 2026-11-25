@@ -25,7 +25,6 @@ int WatchKindMaskFor(LspFileChangeType change) {
   return 0;
 }
 
-// Normalize a path to the forward-slash, unrooted form GlobMatches expects.
 std::string NormalizeGlobText(const std::filesystem::path& path) {
   std::string text = path.generic_string();
   while (text.starts_with("./")) {
@@ -34,11 +33,6 @@ std::string NormalizeGlobText(const std::filesystem::path& path) {
   return text;
 }
 
-// Resolve a `globPattern` — either a plain string (relative to the workspace) or a
-// RelativePattern `{baseUri, pattern}` — into concrete patterns, appending each to
-// the relative or absolute bucket. Splitting the buckets here means the per-file
-// match loop never tests an absolute pattern against a relative path (or the
-// reverse), so the hot path does exactly one comparison per pattern.
 void AppendResolvedPatterns(const JsonValue& glob_pattern,
                             const std::filesystem::path& project_root,
                             std::vector<std::string>& relative_out,
@@ -54,7 +48,6 @@ void AppendResolvedPatterns(const JsonValue& glob_pattern,
       return;
     }
     pattern = pattern_value.AsString();
-    // `baseUri` is either a plain URI string or a WorkspaceFolder {uri, name}.
     const JsonValue& base_uri = glob_pattern["baseUri"];
     if (base_uri.IsString()) {
       if (auto decoded = PathFromFileUri(base_uri.AsString()); decoded.has_value()) {
@@ -73,9 +66,6 @@ void AppendResolvedPatterns(const JsonValue& glob_pattern,
     return;
   }
 
-  // A RelativePattern anchored inside the project collapses to a relative pattern
-  // (cheaper to match, and it keeps the common in-project case on the short
-  // string). One anchored outside it stays absolute.
   if (!base.empty()) {
     std::error_code error;
     const std::filesystem::path relative_base =
@@ -96,8 +86,6 @@ void AppendResolvedPatterns(const JsonValue& glob_pattern,
     return;
   }
 
-  // A bare pattern starting at the filesystem root is absolute; everything else is
-  // workspace-relative, which is the shape servers actually send ("**/*.rs").
   if (pattern.starts_with('/')) {
     project::ExpandGlobBraces(std::move(pattern), absolute_out);
   } else {
@@ -117,7 +105,7 @@ void TruncateToCap(std::vector<std::string>& relative_patterns,
   }
 }
 
-}  // namespace
+}
 
 bool LspFileWatchRegistry::Register(const util::JsonValue& registration,
                                     const std::filesystem::path& project_root) {
@@ -135,10 +123,6 @@ bool LspFileWatchRegistry::Register(const util::JsonValue& registration,
 
   Registration entry;
   entry.id = id;
-  // A registration carrying several watchers with different `kind` masks would
-  // need one entry per mask to stay exact. Servers register a single mask in
-  // practice, so we OR the masks and keep one entry: the cost of being wrong is
-  // an occasional extra notification, which is strictly better than dropping one.
   int kind_mask = 0;
   const util::JsonArray& watcher_array = watchers.AsArray();
   for (const JsonValue& watcher : watcher_array) {
@@ -157,8 +141,6 @@ bool LspFileWatchRegistry::Register(const util::JsonValue& registration,
   entry.kind = kind_mask == 0 ? kLspWatchKindAll : kind_mask;
   TruncateToCap(entry.relative_patterns, entry.absolute_patterns);
 
-  // Re-registering an existing id replaces it (the LSP spec has no "update", so a
-  // server that re-registers means to supersede).
   if (!entry.id.empty()) {
     Unregister(entry.id);
   }
@@ -177,9 +159,6 @@ bool LspFileWatchRegistry::WantsChange(std::string_view relative_path,
                                        std::string_view absolute_path,
                                        LspFileChangeType change) const {
   const int wanted = WatchKindMaskFor(change);
-  // Glob tests are the per-file cost of this feature and a branch switch is a
-  // burst of them, so count them: tests/changes is the ratio that says whether a
-  // server's registration is pathological long before it shows up as frame time.
   std::uint64_t glob_tests = 0;
   bool matched = false;
   for (const Registration& entry : registrations_) {
@@ -219,4 +198,4 @@ std::size_t LspFileWatchRegistry::PatternCountForTesting() const {
   return total;
 }
 
-}  // namespace microide::workspace
+}

@@ -43,7 +43,6 @@ PerformanceTrace::ScopeLabel& PerformanceTrace::ScopeLabel::FieldPath(
     return *this;
   }
   if constexpr (std::is_same_v<std::filesystem::path::value_type, char>) {
-    // POSIX: native() is the stored buffer, so this is a view, not a copy.
     return Field(key, std::string_view(value.native()));
   } else {
     const std::string text = value.string();
@@ -70,4 +69,4 @@ bool PerformanceTrace::FlagEnabled(const char* env_name) {
   return !IsFalseyToken(value);
 }
 
-}  // namespace microide::util
+}

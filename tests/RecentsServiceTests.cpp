@@ -18,15 +18,12 @@ using microide::project::ProjectId;
 
 ProjectId Local(const std::filesystem::path& root) { return ProjectId::ForLocal(root); }
 
-// Without Configure() the service is in-memory only (Save() no-ops), so these tests
-// exercise the MRU dedup/ordering/bounds logic without touching disk.
-
 void TestRecentsProjectsAreNewestFirstAndDeduped() {
   RecentsService recents;
   recents.RecordProjectOpen(Local("/a"));
   recents.RecordProjectOpen(Local("/b"));
   recents.RecordProjectOpen(Local("/c"));
-  recents.RecordProjectOpen(Local("/a"));  // re-open promotes to front, no duplicate
+  recents.RecordProjectOpen(Local("/a"));
 
   const auto& projects = recents.RecentProjects();
   Expect(projects.size() == 3, "re-opening a project should not duplicate it");
@@ -72,7 +69,7 @@ void TestRecentsFilesDedupeOnReopen() {
   RecentsService recents;
   recents.RecordFileOpen("/proj/a.cpp", "/proj");
   recents.RecordFileOpen("/proj/b.cpp", "/proj");
-  recents.RecordFileOpen("/proj/a.cpp", "/proj");  // promote, no duplicate
+  recents.RecordFileOpen("/proj/a.cpp", "/proj");
 
   const auto files = recents.RecentFilesFor("/proj", 10);
   Expect(files.size() == 2, "re-opening a file should not duplicate it");
@@ -80,11 +77,8 @@ void TestRecentsFilesDedupeOnReopen() {
          "re-opened file should move to the front");
 }
 
-}  // namespace
+}
 
-// TD-2026-07-17A-014: ExistingRecentProjects filters to on-disk paths and caches the
-// result against an MRU revision, so the welcome surface never re-stats per paint.
-// The cache must invalidate when the MRU changes.
 void TestRecentsExistingProjectsFilterAndCacheInvalidation() {
   TemporaryDirectory temp;
   std::filesystem::create_directories(temp.path() / "one");
@@ -95,26 +89,20 @@ void TestRecentsExistingProjectsFilterAndCacheInvalidation() {
 
   RecentsService recents;
   recents.RecordProjectOpen(Local(one));
-  recents.RecordProjectOpen(Local(missing));  // never created on disk
+  recents.RecordProjectOpen(Local(missing));
 
   const auto& existing = recents.ExistingRecentProjects();
   Expect(existing.size() == 1 && existing[0] == Local(one),
          "only on-disk recent projects are surfaced");
-  // Second call returns the same cached vector (same MRU revision).
   Expect(&recents.ExistingRecentProjects() == &existing,
          "an unchanged MRU reuses the cached validated list");
 
-  // Recording another project bumps the revision and re-validates.
   recents.RecordProjectOpen(Local(two));
   const auto& after = recents.ExistingRecentProjects();
   Expect(after.size() == 2, "recording a new project invalidates the validated cache");
   Expect(after[0] == Local(two), "the newest recorded project is first");
 }
 
-// The MRU coalesces its durable writes, so what lands on disk is no longer a
-// straight consequence of RecordFileOpen. Nothing covered the round trip at all
-// before -- every other test in this file skips Configure() and stays in memory --
-// so the coalescing had no way to be caught if it dropped writes.
 void TestRecentsSurviveFlushAndReload() {
   TemporaryDirectory temp_dir;
   ScopedEnvVar scoped_state("XDG_STATE_HOME", temp_dir.path().string());
@@ -140,9 +128,6 @@ void TestRecentsSurviveFlushAndReload() {
          "a flushed MRU should reload the recorded project");
 }
 
-// A burst of opens -- session restore, a multi-select open, arrowing through the
-// file finder -- must fold into one durable write, not one per file. Each write is
-// a temp+fsync+backup+rename on the shell thread.
 void TestRecentsBurstCoalescesIntoOneWrite() {
   TemporaryDirectory temp_dir;
   ScopedEnvVar scoped_state("XDG_STATE_HOME", temp_dir.path().string());
@@ -159,7 +144,6 @@ void TestRecentsBurstCoalescesIntoOneWrite() {
       microide::persistence::PersistedRecordWriter::WritesOnThisThread();
   Expect(after - before <= 1, "a burst of opens must not cost one durable write per file");
 
-  // Nothing is lost: the pending state still lands on flush.
   recents.FlushPendingSave();
   RecentsService reloaded;
   reloaded.Configure(persistence);
@@ -167,7 +151,6 @@ void TestRecentsBurstCoalescesIntoOneWrite() {
          "the coalesced burst must be fully persisted by the flush");
 }
 
-// Re-opening what is already newest is a no-op, and a no-op must not write.
 void TestRecentsReopeningNewestEntryDoesNotWrite() {
   TemporaryDirectory temp_dir;
   ScopedEnvVar scoped_state("XDG_STATE_HOME", temp_dir.path().string());
@@ -192,9 +175,6 @@ void TestRecentsReopeningNewestEntryDoesNotWrite() {
          "re-recording the entry that is already newest must not write");
 }
 
-// A file written before identity records names its recent projects by path; each
-// is named on load as a typed path is, so a mirror's own tree comes back as the
-// remote project it mirrors and a plain folder as a local one.
 void TestRecentsLegacyPathsResolveOnLoad() {
   TemporaryDirectory state_dir;
   TemporaryDirectory data_dir;
@@ -221,9 +201,6 @@ void TestRecentsLegacyPathsResolveOnLoad() {
   Expect(projects[0].Location() == "dev@box:/home/dev/app", "and is shown as host:/path");
 }
 
-// A remote project outlives its mirror: the entry is its host and folder, and
-// opening it makes the mirror again. A local folder that is gone stays hidden.
-// Forgetting a remote project (Remote: Remove Mirror) drops it and its files.
 void TestRecentsKeepARemoteProjectWhoseMirrorIsGone() {
   TemporaryDirectory temp;
   RecentsService recents;
@@ -241,8 +218,6 @@ void TestRecentsKeepARemoteProjectWhoseMirrorIsGone() {
          "forgetting it drops the project and its files");
 }
 
-// The new file still restores in an older build: each identity is written beside
-// its legacy path, in the same order.
 void TestRecentsDualWriteTheLegacyRoots() {
   TemporaryDirectory state_dir;
   ScopedEnvVar scoped_state("XDG_STATE_HOME", state_dir.path().string());
@@ -285,4 +260,4 @@ void RegisterRecentsServiceTests(std::vector<TestCase>& tests) {
           TestRecentsReopeningNewestEntryDoesNotWrite);
 }
 
-}  // namespace microide::tests
+}

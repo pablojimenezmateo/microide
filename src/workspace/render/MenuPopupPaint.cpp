@@ -8,19 +8,12 @@
 #include "workspace/render/EditorRowUnits.h"
 #include "workspace/render/MenuPopupPaint.h"
 
-// The open menus. A row repaints when what it shows changes, whoever changed it:
-// the pointer moving along the rows or leaving for a toast, the keyboard's active
-// row, a terminal's shell exiting under the open menu and enabling Relaunch. The
-// popup used to be one unit keyed on its rows' enabled and checked flags, with the
-// hover repainted by the menu's motion path and by a probe in the hover unit.
-
 namespace microide::workspace {
 
 using namespace detail;
 
 namespace {
 
-// Everything DrawMenuRow (or the separator's rule) reads of a row.
 std::uint64_t RowKey(const MenuPopupPaint& popup, const MenuRowPaint& row, std::uint64_t style) {
   std::uint64_t key = MixRowKeyRect(style, row.rect);
   key = MixRowKey(key, (row.enabled ? 1u : 0u) | (row.checked ? 2u : 0u) | (row.hovered ? 4u : 0u) |
@@ -28,7 +21,7 @@ std::uint64_t RowKey(const MenuPopupPaint& popup, const MenuRowPaint& row, std::
   return MixRowKeyText(MixRowKeyText(key, popup.Label(row)), popup.Accelerator(row));
 }
 
-}  // namespace
+}
 
 void CommitMenuPopupUnits(PreparedFrameState& frame, SDL_Renderer* renderer, const render::Theme& theme,
                           std::uint64_t text_metrics, const std::function<void(const SDL_FRect&)>& damage) {
@@ -48,7 +41,6 @@ void CommitMenuPopupUnits(PreparedFrameState& frame, SDL_Renderer* renderer, con
     const DerivedSurface surface = MenuPopupSurface(static_cast<MenuPopupSlot>(slot));
     std::vector<DerivedDamage::Unit>& units = frame.derived_damage.Begin(surface);
     if (popup.visible) {
-      // The card under the rows: its fill and outline.
       units.push_back(DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(renderer, popup.rect),
                                           .fingerprint = MixRowKeyRect(style, popup.rect)});
       for (const MenuRowPaint& row : popup.rows) {
@@ -84,4 +76,4 @@ void PaintMenuPopups(SDL_Renderer* renderer, const PreparedFrameState& frame, co
   }
 }
 
-}  // namespace microide::workspace
+}

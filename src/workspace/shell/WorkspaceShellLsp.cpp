@@ -22,24 +22,16 @@
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 #include "workspace/coordinators/WorkspaceSidebarCoordinator.h"
 
-// Thin forwarders to the host-owned protocol-client services so existing
-// render/menu/plugin call sites stay unchanged. The LSP glue lives in
-// LspService (src/workspace/LspService.*); the DAP glue lives in DebugService
-// (src/workspace/DebugService.*). Kept in one companion TU to respect the
-// WorkspaceShell*.cpp companion-count invariant — the behavior is on the
-// services, only these thin shells live here.
 namespace microide::workspace {
 
 namespace {
-// One console channel per debug session, keyed by session id. The label defaults
-// to the session name; a generic fallback covers an unnamed session.
 std::string DebugConsoleChannelId(int session_id) {
   return "debug.console." + std::to_string(session_id);
 }
 std::string DebugConsoleChannelLabel(const std::string& session_label) {
   return session_label.empty() ? std::string("Debug Console") : session_label;
 }
-}  // namespace
+}
 
 LspManager& WorkspaceShell::CurrentLspManager() { return lsp_service_.CurrentLspManager(); }
 
@@ -47,13 +39,10 @@ LspManager& WorkspaceShell::CurrentLspManager() { return lsp_service_.CurrentLsp
 void WorkspaceShell::ConsumeLspCallbacks() { lsp_service_.ConsumeLspCallbacks(); }
 
 const LspClient::ReadinessSnapshot& WorkspaceShell::MenuLspReadiness() const {
-  // Frame 0 is "no frame prepared yet", so it can never satisfy the memo: the
-  // menu paths run before the first paint in tests and from hit-tests between
-  // frames, and both must see a live value rather than a default-constructed one.
   const std::uint64_t frame_id = prepared_frame_id_;
   if (frame_id == 0 || frame_id != menu_lsp_readiness_frame_id_) {
     menu_lsp_readiness_ = const_cast<WorkspaceShell*>(this)->lsp_service_.ActiveLspReadinessSnapshot(
-        /*ensure_started=*/false);
+        false);
     menu_lsp_readiness_frame_id_ = frame_id;
   }
   return menu_lsp_readiness_;
@@ -92,8 +81,6 @@ void WorkspaceShell::EnsureLspDocumentOpen(const editor::TextViewport& viewport,
 
 namespace {
 
-// LSP SymbolKind index -> the lowercase kind label the outline sidebar shows (it
-// mirrors the strings plugin document-symbol providers return).
 std::string_view LspSymbolKindName(int kind) {
   switch (kind) {
     case 1: return "file";
@@ -126,17 +113,8 @@ std::string_view LspSymbolKindName(int kind) {
   }
 }
 
-// Presentation cap on adapted outline nodes. The protocol parser tolerates up to
-// kMaxLspSymbolNodes (100k) as a transport backstop, but the outline sidebar only
-// needs a human-navigable count; adapting AND flattening 100k nodes on the
-// main-thread request callback would spend a long frame allocating strings, mapping
-// columns, and building rows. Stop adapting past this budget and surface a marker.
 constexpr std::size_t kMaxOutlineSymbolNodes = 5000;
 
-// Siblings in document order, as VS Code's outline shows them by default. Servers
-// usually return them that way, but the protocol does not promise it and the
-// flat SymbolInformation shape in particular often arrives grouped by kind; a
-// stable sort keeps the server's order for symbols that start at one position.
 void SortOutlineSiblingsByPosition(std::vector<plugin::PluginHost::DocumentSymbolNode>& nodes) {
   std::stable_sort(nodes.begin(), nodes.end(),
                    [](const plugin::PluginHost::DocumentSymbolNode& lhs,
@@ -145,12 +123,6 @@ void SortOutlineSiblingsByPosition(std::vector<plugin::PluginHost::DocumentSymbo
                    });
 }
 
-// Adapt an LSP DocumentSymbol tree onto the plugin DocumentSymbolNode tree the
-// outline flatten path consumes. `line`/`column` become 1-based, and the column is
-// mapped from the server's position encoding to an editor byte column so the
-// outline navigates to the right spot on non-ASCII lines. `budget` bounds the total
-// adapted node count across the whole (recursive) tree; the caller consumes one for
-// this node before calling, and recursion stops adding children once it hits 0.
 plugin::PluginHost::DocumentSymbolNode AdaptLspDocumentSymbol(
     const LspClient::DocumentSymbol& symbol, const editor::TextViewport& viewport,
     lsp_encoding::PositionEncoding encoding, std::size_t& budget) {
@@ -174,14 +146,11 @@ plugin::PluginHost::DocumentSymbolNode AdaptLspDocumentSymbol(
   return node;
 }
 
-}  // namespace
+}
 
 void WorkspaceShell::QueryDocumentSymbols(const editor::TextViewport& viewport,
                                           DocumentSymbolsReady deliver) {
   std::filesystem::path path = viewport.path();
-  // The plugin provider first, off the shell thread; an empty answer falls back to
-  // the language server. Both land on a later drain: the buffer in front may be
-  // another one by then, which gets an empty answer.
   plugin_runtime_.Host().QueryDocumentSymbolsAsync(
       viewport.language_id(), path,
       [this, path, deliver = std::move(deliver)](
@@ -213,11 +182,6 @@ void WorkspaceShell::QueryLspDocumentSymbolsInto(const editor::TextViewport& vie
   EnsureLspDocumentOpen(viewport, *client, language_id);
   const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
   BeginTrackedLspRequest();
-  // The URI first, in its own statement: as a sibling argument of the lambda
-  // that MOVES request_path into its capture, the two evaluate in unspecified
-  // order -- GCC built the lambda first, so the request went out for "file://"
-  // (an empty path), clangd answered "unresolvable URI", and the outline never
-  // listed a symbol for any language server.
   std::string uri = FileUriForPath(request_path);
   client->RequestDocumentSymbolAsync(
       std::move(uri),
@@ -225,8 +189,6 @@ void WorkspaceShell::QueryLspDocumentSymbolsInto(const editor::TextViewport& vie
        encoding, apply](LspResult<std::vector<LspClient::DocumentSymbol>> symbols) {
         FinishTrackedLspRequest();
         editor::TextViewport* current = ActiveEditorViewport();
-        // Superseded (buffer/file switched): deliver empty; the receiver re-checks
-        // the path and leaves the newer view untouched.
         if (current == nullptr || current->path() != request_path) {
           apply(request_path, plugin_error, {});
           return;
@@ -246,9 +208,6 @@ void WorkspaceShell::QueryLspDocumentSymbolsInto(const editor::TextViewport& vie
           }
           SortOutlineSiblingsByPosition(nodes);
           if (truncated) {
-            // Surface a non-navigable marker row through the normal flatten path so
-            // the user knows the outline was capped rather than silently missing tail
-            // symbols. line/column stay 0 (unmapped) so it does not jump anywhere.
             plugin::PluginHost::DocumentSymbolNode marker;
             marker.name = "… (outline truncated)";
             nodes.push_back(std::move(marker));
@@ -268,8 +227,6 @@ void WorkspaceShell::SyncLspForActiveEditableLastChange() {
   lsp_service_.SyncLspForActiveEditableLastChange();
 }
 
-// ---- DAP forwarders (DebugService) ----------------------------------------
-
 DapManager& WorkspaceShell::CurrentDapManager() { return debug_service_.CurrentDapManager(); }
 
 
@@ -286,25 +243,14 @@ void WorkspaceShell::ConsumeControlCallbacks() {
 ControlChannelService::CommandOutcome WorkspaceShell::ExecuteControlCommand(
     const std::string& command_line) {
   ControlChannelService::CommandOutcome outcome;
-  // The shared panel feedback may still hold a message from a prior unrelated UI
-  // action, so clear it before dispatch: whatever it holds afterwards was produced
-  // by THIS command (ExecuteCommandLine itself wipes it before running any
-  // non-empty line). This used to diff the text against a pre-dispatch snapshot
-  // instead, which mistook a rejection that repeats the previous message — two
-  // `project-next` calls with one project open, or `format-document` after another
-  // "No active file" — for a stale line and answered "command failed".
   std::string& feedback = context_.current_project_state.panel.feedback.text;
   feedback.clear();
   outcome.ok = MakeCommandLineCoordinator().ExecuteCommandLine(command_line);
-  // As after an input event (HandleEvent): a modal overlay the command took the
-  // focus from ends (soak 7ab9a5476905: `open` under the palette).
   if (ModalOverlayLostFocus(context_.current_project_state)) {
     const FocusTarget kept = context_.current_project_state.surface.focus;
     DismissOverlay();
     context_.current_project_state.surface.focus = kept;
   }
-  // As after an input event (HandleEvent): a command may have shown or hidden the
-  // Host view, and its subscription follows.
   if (glue_->remote_host_service != nullptr) {
     glue_->remote_host_service->SetHostViewVisible(HostViewShown(context_.current_project_state.sidebar),
                                                    context_.current_project_state.root);
@@ -323,8 +269,6 @@ void WorkspaceShell::ApplyControlSpec(const ControlSpec& spec) {
   }
   const auto emit_applied = [this](const std::string& command,
                                    const ControlChannelService::CommandOutcome& outcome) {
-    // Surface one line per applied spec entry on the JSONL mirror so a headless
-    // driver can see exactly what succeeded / failed (no more silent swallow).
     util::JsonObject object;
     object["applied"] = util::JsonValue(command);
     object["ok"] = util::JsonValue(outcome.ok);
@@ -336,23 +280,17 @@ void WorkspaceShell::ApplyControlSpec(const ControlSpec& spec) {
   };
   const auto apply_setting = [&](const std::string& id, const std::string& value) {
     ControlChannelService::CommandOutcome outcome;
-    outcome.ok = SetSettingValue(id, value, /*persist=*/false);
+    outcome.ok = SetSettingValue(id, value, false);
     if (!outcome.ok) {
       outcome.error = "unknown setting or invalid value";
     }
     emit_applied("set-setting " + id + " " + value, outcome);
   };
 
-  // Spec `settings` apply transiently (never persisted) and first, so the spec can
-  // turn on control.enabled / debug.enabled through the chokepoint without
-  // clobbering the user's saved config.
   for (const auto& [id, value] : spec.settings) {
     apply_setting(id, value);
   }
 
-  // Auto-enable the debugger when the spec needs it but it is still off — removes
-  // the ordering trap where structured breakpoints/launch silently no-op. Emit an
-  // applied line for the headless mirror when it actually flips.
   if ((!spec.breakpoints.empty() || spec.launch.has_value() ||
        !spec.function_breakpoints.empty()) &&
       EnsureDebuggerEnabledTransiently()) {
@@ -372,39 +310,22 @@ bool WorkspaceShell::EnsureDebuggerEnabledTransiently() {
   if (DebugEnabled()) {
     return false;
   }
-  return SetSettingValue("debug.enabled", "true", /*persist=*/false);
+  return SetSettingValue("debug.enabled", "true", false);
 }
 
 void WorkspaceShell::ForceStartControlChannel() {
   if (!startup_options_.control_stdout) {
     return;
   }
-  // Bypass the `control.enabled` gate: turn on the stdout JSONL mirror and bind
-  // the socket directly. Start() emits the `ready` handshake line.
   control_channel_service_.SetStdoutMirror(true);
-  // Discarded, but not ignored: a refusal here means the user asked for headless
-  // control and has none, so the run is useless — and there is no recovery worth
-  // taking in this function. Start() logs the reason, and a driver notices the
-  // absent `ready` line (capture-media reports "control channel never came up").
   (void)control_channel_service_.Start(context_.current_project_state.root);
 }
 
 void WorkspaceShell::MaybeStartControlChannel() {
-  // Headless `--control` force-starts the channel independently of the
-  // `control.enabled` setting (see ForceStartControlChannel). A live settings
-  // change — e.g. the cold-start spec's `set-setting debug.enabled true` — must
-  // never tear that socket down: doing so strands the headless driver, which
-  // owns the channel lifecycle for the whole run. Leave it running.
   if (startup_options_.control_stdout) {
     return;
   }
   if (SettingFlagEnabled(GetSettingValue("control.enabled"))) {
-    // Discarded deliberately: there is nothing useful to do here with a refusal,
-    // and Start() now says WHY on its own (an over-long socket path, a bind or
-    // listen errno). It did not always — the bool was dropped here and nothing
-    // anywhere explained a channel that simply did not exist, which cost a real
-    // debugging session. The `(void)` is the record of that decision, so the
-    // next reader does not have to guess whether it was considered.
     (void)control_channel_service_.Start(context_.current_project_state.root);
   } else {
     control_channel_service_.Stop();
@@ -412,8 +333,6 @@ void WorkspaceShell::MaybeStartControlChannel() {
 }
 
 bool WorkspaceShell::StartDebugging(const LaunchConfig& config, const std::string& cwd) {
-  // DebugService surfaces the new session's console channel via the show_debug_console
-  // operation, so no separate ShowDebugConsole() call is needed here.
   return debug_service_.StartDebugging(config, cwd);
 }
 
@@ -423,9 +342,6 @@ std::string WorkspaceShell::StartDebuggingWithDefaultConfig() {
     return "no debug adapter is registered (a plugin must contribute one via ctx.debug.add)";
   }
 
-  // Prefer the project's selected launch config (persisted or plugin-contributed)
-  // when its adapter type is registered; otherwise fall back to launching the
-  // first registered adapter with empty arguments.
   LaunchConfig config;
   const auto& project_state = context_.current_project_state;
   const auto& configs = project_state.launch_configs;
@@ -493,8 +409,6 @@ std::string WorkspaceShell::StartAdHocDebug(const std::string& program,
     return "no debug adapter of type \"" + adapter_type + "\" is registered";
   }
 
-  // Resolve the program against the project root unless it is already absolute,
-  // so `debug-run ./build/app` works from a headless driver with no cwd context.
   const std::filesystem::path root = context_.current_project_state.root;
   std::filesystem::path program_path(program);
   if (!program_path.is_absolute()) {
@@ -525,9 +439,6 @@ std::string WorkspaceShell::StartAdHocDebug(const std::string& program,
 }
 
 void WorkspaceShell::StopDebugging() {
-  // Stops the active session. Only close the debug pane when this was the last
-  // live session; with others remaining, the pane stays (re-projected by the
-  // next-frame prune as the active session advances).
   const bool last_session = debug_service_.SessionCount() <= 1;
   debug_service_.StopDebugging();
   if (last_session) {
@@ -548,14 +459,7 @@ void WorkspaceShell::AppendDebugConsoleOutput(int session_id, const std::string&
                                               const dap_protocol::DapOutputEvent& output) {
   const std::string channel_id = DebugConsoleChannelId(session_id);
   const std::string channel_label = DebugConsoleChannelLabel(label);
-  // Split on newlines so each console line is its own channel entry. A trailing
-  // newline (common in adapter output) does not produce a spurious blank entry.
   const std::string& text = output.output;
-  // Cap lines materialized from a single output event. A DAP message body can be
-  // up to 64 MiB (WorkspaceDapClientInternal kMaxDapMessageBytes); one all-newline
-  // event would otherwise fan out into ~64 M AppendLine calls on the UI thread —
-  // a multi-second freeze (and heap churn) from one hostile message. The channel
-  // itself is also entry-capped, so lines beyond the cap would be trimmed anyway.
   constexpr std::size_t kMaxLinesPerOutputEvent = 100000;
   std::size_t start = 0;
   std::size_t emitted = 0;
@@ -578,29 +482,23 @@ void WorkspaceShell::ShowDebugConsole(int session_id, const std::string& label) 
   output_channels_.EnsureChannel(channel_id, channel_label);
   context_.current_project_state.panel.content = PanelContentKind::Output;
   context_.current_project_state.panel.output.channel_id = channel_id;
-  // The panel's header, the output's rows and the body under another kind of
-  // content are derived (and a panel this opens is a region that appears).
   RequestPreparedFrame();
 }
 
 void WorkspaceShell::ShowDebugOutput() {
   const int session_id = debug_service_.ActiveSessionId();
   if (session_id == 0) {
-    return;  // no active debug session — nothing to surface
+    return;
   }
-  // Reuse the auto-show recipe (open the channel tab + select it) and stick to the
-  // tail so the latest output is visible immediately.
   ShowDebugConsole(session_id, debug_service_.ActiveSessionLabel());
   context_.current_project_state.panel.output.follow_tail = true;
 }
 
 void WorkspaceShell::RemoveDebugConsole(int session_id) {
   const std::string channel_id = DebugConsoleChannelId(session_id);
-  // Close the tab first (advances the active output channel if this was it), then
-  // drop the channel's backing data.
   CloseOutputChannelTab(channel_id);
   output_channels_.RemoveChannel(channel_id);
-  RequestPreparedFrame();  // as ShowDebugConsole
+  RequestPreparedFrame();
 }
 
-}  // namespace microide::workspace
+}

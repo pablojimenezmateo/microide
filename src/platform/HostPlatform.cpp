@@ -23,7 +23,7 @@ void AllowParentToTraceWhenAskedByQa() {
 #if defined(__linux__)
   const char* asked = std::getenv("MICROIDE_QA_PARENT_MAY_TRACE");
   if (asked != nullptr && std::string_view(asked) == "1") {
-    (void)prctl(PR_SET_PTRACER, static_cast<unsigned long>(getppid()), 0, 0, 0);  // Best effort: a stall's backtraces.
+    (void)prctl(PR_SET_PTRACER, static_cast<unsigned long>(getppid()), 0, 0, 0);
   }
 #endif
 }
@@ -58,4 +58,4 @@ std::filesystem::path ProcessWorkingDirectory(int pid) {
   return {};
 }
 
-}  // namespace microide::platform
+}

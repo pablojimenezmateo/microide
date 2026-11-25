@@ -34,11 +34,6 @@ void CommandLineCoordinator::SetFeedback(std::string feedback) {
 
 bool CommandLineCoordinator::RejectAction(ActionSource source, std::string feedback) {
   if (source != ActionSource::Command) {
-    // A rejection WITH a sentence counts as handled from a shortcut, menu or
-    // button: the refusal is shown and the gesture is spent. A SILENT rejection
-    // is a decline — the verb had nothing to act on and says nothing — so a
-    // shortcut's key falls through to whatever is under it (a single-pane
-    // terminal keeps Alt+Left for its programs).
     return !feedback.empty();
   }
   SetFeedback(std::move(feedback));
@@ -63,10 +58,6 @@ void CommandLineCoordinator::CompleteInput(editor::SingleLineEditor& input) {
   const std::size_t replace_start = starts_new_token || parsed.tokens.empty()
                                         ? input.text().size()
                                         : parsed.tokens.back().start;
-  // Resolve the fallback root without the throwing current_path() overload: when no
-  // project is active (welcome surface) and the process cwd is gone/inaccessible, the
-  // throwing form would raise std::filesystem_error out of this UI-thread completion
-  // path. An unresolvable cwd degrades to an empty root (no path candidates).
   std::filesystem::path completion_root = state_.root;
   if (completion_root.empty()) {
     std::error_code cwd_ec;
@@ -128,7 +119,6 @@ void CommandLineCoordinator::CompleteInput(editor::SingleLineEditor& input) {
       candidates = CompletePath(completion_root, active_prefix, true);
     }
   } else if (command == "remote-open" && active_index == 1 && operations_.remote_hosts) {
-    // A host as `host:`, so the path follows with no space.
     const std::size_t at = active_prefix.find('@');
     const std::string user = at == std::string::npos ? std::string() : active_prefix.substr(0, at + 1);
     if (active_prefix.find(':') == std::string::npos) {
@@ -226,4 +216,4 @@ bool CommandLineCoordinator::ExecuteCommandLine(const std::string& command_line)
   return false;
 }
 
-}  // namespace microide::workspace
+}

@@ -23,4 +23,4 @@ class SingleLineKeyHandler {
                             const Clipboard& clipboard);
 };
 
-}  // namespace microide::editor
+}

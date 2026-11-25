@@ -3,8 +3,6 @@
 #include <algorithm>
 #include <memory>
 
-// The window-log bounds are in the static-linking section; the library is linked
-// statically (third_party/zstd), so its exact version is the one compiled here.
 #define ZSTD_STATIC_LINKING_ONLY
 #include <zstd.h>
 
@@ -18,8 +16,6 @@ struct DctxDeleter {
   void operator()(ZSTD_DCtx* context) const { ZSTD_freeDCtx(context); }
 };
 
-// The window must reach back over the whole base, or matches against its start
-// are out of range — the CLI's `--patch-from` sizes it the same way.
 int WindowLogFor(std::size_t bytes) {
   int log = ZSTD_WINDOWLOG_MIN;
   while (log < ZSTD_WINDOWLOG_MAX_64 && (std::size_t{1} << log) < bytes) {
@@ -28,7 +24,7 @@ int WindowLogFor(std::size_t bytes) {
   return log;
 }
 
-}  // namespace
+}
 
 std::optional<std::string> ZstdDelta(std::string_view base, std::string_view target) {
   const std::unique_ptr<ZSTD_CCtx, CctxDeleter> context(ZSTD_createCCtx());
@@ -41,8 +37,6 @@ std::optional<std::string> ZstdDelta(std::string_view base, std::string_view tar
       ZSTD_isError(ZSTD_CCtx_setParameter(cctx, ZSTD_c_windowLog, window)) ||
       ZSTD_isError(ZSTD_CCtx_setParameter(cctx, ZSTD_c_checksumFlag, 0)) ||
       ZSTD_isError(ZSTD_CCtx_setParameter(cctx, ZSTD_c_contentSizeFlag, 1)) ||
-      // Long-distance matching finds the base's copy of a block wherever it sits,
-      // which is the whole point for a file with an edit in the middle.
       (base.size() > (std::size_t{1} << 20) &&
        ZSTD_isError(ZSTD_CCtx_setParameter(cctx, ZSTD_c_enableLongDistanceMatching, 1))) ||
       ZSTD_isError(ZSTD_CCtx_refPrefix(cctx, base.data(), base.size()))) {
@@ -84,4 +78,4 @@ std::optional<std::string> ZstdApplyDelta(std::string_view base, std::string_vie
   return out;
 }
 
-}  // namespace microide::util
+}

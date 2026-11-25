@@ -11,7 +11,7 @@ void DebugTextBackend::DrawString(SDL_Renderer* renderer,
                                   float y,
                                   SDL_Color color,
                                   std::string_view text) {
-  (void) cache;  // SDL draws debug text directly; there is no composite to cache
+  (void) cache;
   if (renderer == nullptr || text.empty()) {
     return;
   }
@@ -21,4 +21,4 @@ void DebugTextBackend::DrawString(SDL_Renderer* renderer,
   SDL_RenderDebugText(renderer, x, y, owned_text.c_str());
 }
 
-}  // namespace microide::render
+}

@@ -10,8 +10,6 @@ namespace microide::render {
 
 namespace {
 
-// Decode encoded image bytes (PNG/JPEG) to RGBA8. Returns ok=false on any
-// failure (malformed, oversize, OOM) without producing a partial buffer.
 SurfaceTextureCache::Decoded DecodeEncoded(std::uint64_t hash,
                                            const std::vector<std::byte>& bytes) {
   SurfaceTextureCache::Decoded out;
@@ -21,7 +19,6 @@ SurfaceTextureCache::Decoded DecodeEncoded(std::uint64_t hash,
   return out;
 }
 
-// Validate (not decode) raw RGBA8 bytes whose dimensions the plugin declared.
 SurfaceTextureCache::Decoded WrapRgba8(std::uint64_t hash, std::vector<std::byte> bytes,
                                        int declared_w, int declared_h) {
   SurfaceTextureCache::Decoded out;
@@ -43,7 +40,7 @@ SurfaceTextureCache::Decoded WrapRgba8(std::uint64_t hash, std::vector<std::byte
   return out;
 }
 
-}  // namespace
+}
 
 SurfaceTextureCache::SurfaceTextureCache(project::ProjectBackgroundExecutor& executor,
                                          std::size_t vram_budget_bytes,
@@ -65,14 +62,9 @@ void SurfaceTextureCache::Request(std::uint64_t hash, RasterFormat format,
   }
   if (entries_.find(hash) != entries_.end() ||
       in_flight_or_failed_.find(hash) != in_flight_or_failed_.end()) {
-    return;  // already cached, decoding, or known-bad
+    return;
   }
 
-  // Charge the encoded bytes against the in-flight budget before posting. Over
-  // budget, drop the request outright (no in-flight marker, no post) as
-  // backpressure so a burst of distinct near-cap rasters cannot retain unbounded
-  // encoded payloads on the executor queue (TD-2026-07-17A-043). A later Request
-  // re-decodes once the backlog drains.
   const std::size_t encoded_size = bytes.size();
   {
     std::lock_guard<std::mutex> lock(sink_->mutex);
@@ -83,8 +75,6 @@ void SurfaceTextureCache::Request(std::uint64_t hash, RasterFormat format,
   }
   in_flight_or_failed_.emplace(hash, true);
 
-  // The worker captures a copy of the sink shared_ptr and the bytes by value, and
-  // never touches `this`, so the cache can outlive-or-predecease the task safely.
   std::shared_ptr<DecodeSink> sink = sink_;
   executor_.Post([sink = std::move(sink), hash, format, bytes = std::move(bytes), declared_w,
                   declared_h, encoded_size]() mutable {
@@ -94,17 +84,11 @@ void SurfaceTextureCache::Request(std::uint64_t hash, RasterFormat format,
     util::WakeChannel wake = 0;
     {
       std::lock_guard<std::mutex> lock(sink->mutex);
-      // The encoded bytes have been consumed by the decode; release the reservation.
       sink->in_flight_encoded_bytes -= encoded_size;
       if (decoded.ok) {
-        // The size is known now, whatever happens to the pixels below.
         sink->decoded_sizes.push_back(
             RasterSize{.hash = decoded.hash, .width = decoded.width, .height = decoded.height});
         wake = sink->wake_channel;
-        // TD-2026-07-17-092: bound the pre-upload decoded-buffer backlog. If this
-        // valid decode would push pending host memory over budget, drop its RGBA and
-        // hand Upload a lightweight "over budget" marker so the in-flight marker is
-        // released and the image can be re-decoded later when the sink has drained.
         const std::size_t decoded_bytes = decoded.rgba.size();
         if (decoded_bytes > sink->budget_bytes - sink->pending_bytes) {
           Decoded marker;
@@ -118,7 +102,6 @@ void SurfaceTextureCache::Request(std::uint64_t hash, RasterFormat format,
       }
       sink->ready.push_back(std::move(decoded));
     }
-    // Outside the lock: the wake reaches the shell thread, which takes the size.
     (void) util::PushWake(wake);
   });
 }
@@ -159,41 +142,26 @@ void SurfaceTextureCache::Upload(SDL_Renderer* renderer) {
   {
     std::lock_guard<std::mutex> lock(sink_->mutex);
     ready.swap(sink_->ready);
-    sink_->pending_bytes = 0;  // the whole backlog is now owned by `ready`
+    sink_->pending_bytes = 0;
   }
   if (ready.empty()) {
     return;
   }
   for (Decoded& decoded : ready) {
-    // Whatever becomes of it below, this decode is consumed: an uploaded entry
-    // answers DecodedSize from now on, and a dropped one no longer can.
     awaiting_upload_sizes_.erase(decoded.hash);
-    // The hash may have been Clear()'d while decoding; only honor still-pending
-    // requests. A failed decode drops the in-flight marker so we never retry, but
-    // keeps it in the map so a later identical Request short-circuits.
     const auto pending = in_flight_or_failed_.find(decoded.hash);
     if (pending == in_flight_or_failed_.end()) {
       continue;
     }
     if (decoded.dropped_over_budget) {
-      // Transient host-memory backpressure, NOT a decode failure: drop the marker
-      // so a later Request re-decodes when the pre-upload backlog has drained.
       in_flight_or_failed_.erase(pending);
       continue;
     }
     if (!decoded.ok) {
-      // Permanent failure: same content hash → correct never to retry. Keep the
-      // marker to short-circuit re-requests, but bound the retained-failure set so
-      // a plugin streaming distinct invalid hashes cannot grow it without limit
-      // (TD-2026-07-17-043).
       RetainBoundedFailureMarker(decoded.hash);
       continue;
     }
     if (renderer == nullptr) {
-      // Transient, NOT a decode failure: a valid image arrived without a live
-      // renderer (e.g. mid renderer re-create). Drop the marker so a later Upload
-      // with a renderer re-decodes and displays it, instead of permanently
-      // suppressing a good image until Clear().
       in_flight_or_failed_.erase(pending);
       continue;
     }
@@ -204,21 +172,10 @@ void SurfaceTextureCache::Upload(SDL_Renderer* renderer) {
             : SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
                                 decoded.width, decoded.height);
     if (texture == nullptr) {
-      // The bytes decoded fine; only texture creation failed. Treat a bounded
-      // number of failures as transient (a renderer re-create / momentary VRAM
-      // pressure) and drop the marker so a later Upload retries — mirroring the
-      // renderer==nullptr path above. Past the cap, keep the marker so a
-      // permanently un-creatable texture stops re-decoding every request.
       constexpr int kMaxTextureCreateRetries = 3;
       if (++texture_create_failures_[decoded.hash] < kMaxTextureCreateRetries) {
         in_flight_or_failed_.erase(pending);
       } else {
-        // Retries exhausted: this is now a permanent failure marker. Fold it into
-        // the same bounded FIFO as decode failures so a plugin publishing many
-        // distinct valid-but-uncreatable rasters (dimensions the decoder accepts
-        // but the renderer rejects) cannot retain unbounded in_flight_or_failed_ /
-        // texture_create_failures_ entries outside the VRAM budget and decode-failure
-        // FIFO (TD-2026-07-17A-118).
         RetainBoundedFailureMarker(decoded.hash);
       }
       continue;
@@ -255,7 +212,6 @@ const SurfaceTextureCache::Entry* SurfaceTextureCache::Lookup(std::uint64_t hash
   if (it == entries_.end()) {
     return nullptr;
   }
-  // Move to the front of the LRU list.
   const auto pos = lru_pos_.find(hash);
   if (pos != lru_pos_.end()) {
     lru_.erase(pos->second);
@@ -266,16 +222,10 @@ const SurfaceTextureCache::Entry* SurfaceTextureCache::Lookup(std::uint64_t hash
 }
 
 void SurfaceTextureCache::RetainBoundedFailureMarker(std::uint64_t hash) {
-  // Keep the marker in in_flight_or_failed_ to short-circuit re-requests, but bound
-  // the retained-failure set with an insertion-order FIFO: once it exceeds
-  // kMaxFailedHashes the oldest failure is forgotten (a later identical request may
-  // re-decode once, which is fine — the set stays bounded).
   failed_hash_order_.push_back(hash);
   while (failed_hash_order_.size() > kMaxFailedHashes) {
     const std::uint64_t oldest = failed_hash_order_.front();
     failed_hash_order_.pop_front();
-    // Only forget it if it is still a failure marker (not resurrected as a live
-    // entry or re-requested in-flight since).
     if (entries_.find(oldest) == entries_.end()) {
       in_flight_or_failed_.erase(oldest);
       texture_create_failures_.erase(oldest);
@@ -284,10 +234,6 @@ void SurfaceTextureCache::RetainBoundedFailureMarker(std::uint64_t hash) {
 }
 
 void SurfaceTextureCache::EvictToBudget() {
-  // Keep at least the newest entry (front of lru_) even if it alone exceeds the
-  // budget: otherwise a single over-budget texture is uploaded and immediately
-  // evicted every frame, so it never displays and perpetually re-decodes on the
-  // background executor. Mirrors the sibling text-texture cache's guard.
   while (lru_.size() > 1 && vram_bytes_ > vram_budget_bytes_) {
     const std::uint64_t victim = lru_.back();
     lru_.pop_back();
@@ -302,7 +248,6 @@ void SurfaceTextureCache::EvictToBudget() {
       entries_.erase(it);
       ++residency_generation_;
     }
-    // An evicted hash may be re-requested later; drop any stale marker so it can.
     in_flight_or_failed_.erase(victim);
   }
 }
@@ -326,4 +271,4 @@ void SurfaceTextureCache::Clear() {
   vram_bytes_ = 0;
 }
 
-}  // namespace microide::render
+}

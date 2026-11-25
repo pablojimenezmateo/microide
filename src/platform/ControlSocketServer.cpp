@@ -34,10 +34,6 @@
 
 namespace microide::platform {
 
-// Pure line scanner — defined outside the POSIX guard so it compiles (and is
-// unit-tested) on every platform. Rejects a complete over-cap line before it is
-// copied out, closing the hole where only the residual incomplete trailing line
-// was bounded.
 ControlRequestLineScan ScanControlRequestLines(std::string_view buffer,
                                                std::size_t max_line_bytes) {
   ControlRequestLineScan scan;
@@ -45,13 +41,11 @@ ControlRequestLineScan ScanControlRequestLines(std::string_view buffer,
   while (true) {
     const std::size_t newline = buffer.find('\n', start);
     if (newline == std::string_view::npos) {
-      break;  // only an incomplete trailing line remains; leave it unconsumed.
+      break;
     }
-    // Check the raw line length BEFORE materializing the substring so a hostile
-    // multi-megabyte newline-terminated request is never copied into the queue.
     if (newline - start > max_line_bytes) {
       scan.oversize_line = true;
-      break;  // stop before this line; caller sheds the connection.
+      break;
     }
     std::string_view line = buffer.substr(start, newline - start);
     if (!line.empty() && line.back() == '\r') {
@@ -68,61 +62,23 @@ ControlRequestLineScan ScanControlRequestLines(std::string_view buffer,
 
 namespace {
 
-// How long a half-closed connection is kept alive waiting for replies to the
-// requests it already sent. A client may legitimately close its write side
-// immediately after sending (socat, `echo | nc`), so we must flush pending
-// replies before reaping; this bounds the wait so a never-answered request can
-// never leak the fd forever.
 constexpr int kLingerGraceMs = 2000;
 
-// The shared ceiling (platform/ControlSocketLimits.h): the server enforces it by
-// shedding a peer that exceeds it, and the client refuses to frame past it.
 constexpr std::size_t kMaxRequestLineBytes = kMaxControlRequestLineBytes;
 
-// Upper bound on requests accepted from all connections but not yet drained by
-// the main thread. The main thread swaps the whole queue out on every control
-// wake, so this only fills if a client floods complete lines faster than the
-// host drains them; at the cap we shed the offending connection rather than let
-// the queue grow without limit.
 constexpr std::size_t kMaxInboundQueued = 4096;
 
-// Aggregate byte budget for the shared inbound queue. The count cap above alone
-// permits 4096 near-cap (~1 MiB) lines — gigabytes retained — before it trips.
-// This bounds total queued bytes so a burst of large-but-legal complete lines
-// cannot balloon host memory while the main thread catches up; a connection that
-// would push the queue past this budget is shed like a count-cap flood.
-constexpr std::size_t kMaxInboundQueuedBytes = 16u << 20;  // 16 MiB
+constexpr std::size_t kMaxInboundQueuedBytes = 16u << 20;
 
-// Bound idle connected clients. The control channel is intended for a handful of
-// local tools/watchers, not hundreds of persistent sockets; without a cap, a
-// local process can open idle AF_UNIX connections and grow the connection map
-// and poll set without sending a byte.
 constexpr std::size_t kMaxConnections = 128;
 
-// Upper bound on a single connection's pending write buffer. A client that stops
-// reading (or reads slowly) while the host keeps broadcasting — e.g. a chatty
-// debug session streaming stdout via EmitEvent/Broadcast — otherwise grows
-// write_buf without limit once the socket send buffer fills and every send()
-// returns EAGAIN. At the cap we shed the connection, mirroring the read side.
-// (ControlSocketServer::kMaxWriteBufferBytes, public so a caller sizes its lines.)
-
-// Threshold above which a fully-consumed write-buffer prefix is reclaimed with a
-// single erase during a partial-send stall, rather than left in place. Below it
-// the dead prefix is small enough that skipping the memmove is the better trade.
 constexpr std::size_t kWriteCompactThreshold = 64u << 10;
 
 using util::SetNonBlocking;
 
-}  // namespace
+}
 
 struct ControlSocketServer::Impl {
-  // The last socket path Start() refused as too long. Start() is called again on
-  // every live settings change, and the refusal is deterministic for a given
-  // path — so without this, one over-long $XDG_RUNTIME_DIR printed the same
-  // paragraph once per setting applied. A capture run wrote it eighteen times,
-  // which buries the real first occurrence rather than emphasising it. Keyed by
-  // path rather than latched, so a later project with a different (also too
-  // long) path still says so once.
   std::string last_refused_long_path;
 
   struct Connection {
@@ -130,28 +86,11 @@ struct ControlSocketServer::Impl {
     std::uint64_t id = 0;
     std::string read_buf;
     std::mutex out_mutex;
-    std::string write_buf;  // bytes pending write (already framed with '\n')
-    // Index of the first not-yet-sent byte in write_buf. Partial sends advance
-    // this instead of erasing from the front (which memmoves the whole pending
-    // remainder on every send). The consumed prefix [0, write_offset) is
-    // reclaimed lazily by CompactWriteBuffer only when it grows large or the
-    // buffer fully drains, so a slow reader receiving a chatty broadcast costs
-    // O(bytes) total rather than O(bytes * sends). Guarded by out_mutex.
-    // INVARIANT (relied on by the POLLOUT/write-pending checks below): outside
-    // FlushConnection, write_buf is non-empty iff write_offset < write_buf.size()
-    // — FlushConnection clears the buffer the moment it is fully drained.
+    std::string write_buf;
     std::size_t write_offset = 0;
 
-    // Requests accepted from this connection that have not yet been answered.
-    // Incremented on the I/O thread when a complete request line is queued
-    // (IngestReadBuffer), decremented on the main thread when its reply is
-    // queued (SendLine). The only field touched by both threads, hence atomic;
-    // read_closed / linger_deadline are I/O-thread-only.
     std::atomic<int> in_flight{0};
-    bool read_closed = false;  // peer closed its write side; flush then reap
-    // Set (release) by SendLine/Broadcast when write_buf would exceed
-    // kMaxWriteBufferBytes; the I/O thread observes it (acquire) and reaps the
-    // connection. A slow/stalled reader must not grow host memory without bound.
+    bool read_closed = false;
     std::atomic<bool> write_overflow{false};
     std::chrono::steady_clock::time_point linger_deadline{};
   };
@@ -171,15 +110,9 @@ struct ControlSocketServer::Impl {
 
   std::mutex inbound_mutex;
   std::vector<ControlInboundMessage> inbound;
-  // Aggregate bytes of the queued `inbound` line payloads (guarded by
-  // inbound_mutex). Reset to 0 when the main thread swaps the queue out in
-  // TakeInbound. Backs the kMaxInboundQueuedBytes budget.
   std::size_t inbound_bytes = 0;
 
   void PushWakeEvent() {
-    // Checked push: inbound control messages are already queued in shared state, so a
-    // rejected push must latch the shared "wake owed" bit (idle poll fallback) rather
-    // than leave control-send requests waiting for an unrelated event.
     util::PushWake(wake_channel.load(std::memory_order_acquire));
   }
 
@@ -198,14 +131,7 @@ struct ControlSocketServer::Impl {
     }
   }
 
-  // Split the connection's read buffer into complete lines, enqueue each as an
-  // inbound message, and request a main-thread wake. Runs on the I/O thread.
-  // Returns false when a complete line exceeds the per-request cap or the shared
-  // inbound queue is saturated (count OR aggregate bytes) — the caller sheds the
-  // connection; the buffer is still advanced past the lines it consumed.
   bool IngestReadBuffer(Connection& conn) {
-    // Reject over-cap complete lines BEFORE copying them out (the old code
-    // substr'd every complete line and only bounded the residual trailing one).
     ControlRequestLineScan scan =
         ScanControlRequestLines(conn.read_buf, kMaxRequestLineBytes);
     bool produced = false;
@@ -224,8 +150,6 @@ struct ControlSocketServer::Impl {
         produced = true;
       }
     }
-    // On overflow the connection is shed regardless, so discarding the whole
-    // consumed prefix (rather than preserving un-queued lines) is harmless.
     if (scan.consumed_bytes > 0) {
       conn.read_buf.erase(0, scan.consumed_bytes);
     }
@@ -235,12 +159,6 @@ struct ControlSocketServer::Impl {
     return !overflow;
   }
 
-  // Best-effort non-blocking flush of a connection's pending writes. Runs on the
-  // I/O thread. Returns false when the peer is gone.
-  // Reclaim the already-sent prefix [0, write_offset) from write_buf. Must be
-  // called under conn.out_mutex. Compacts only when the consumed prefix is large
-  // (absolute threshold or a majority of the buffer) so the common partial send
-  // stays O(1) instead of paying an O(pending) memmove every time.
   static void CompactWriteBuffer(Connection& conn) {
     if (conn.write_offset == 0) {
       return;
@@ -268,12 +186,11 @@ struct ControlSocketServer::Impl {
         continue;
       }
       if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-        CompactWriteBuffer(conn);  // reclaim consumed bytes while awaiting POLLOUT
-        return true;               // retry on next POLLOUT
+        CompactWriteBuffer(conn);
+        return true;
       }
-      return false;  // hard error / closed
+      return false;
     }
-    // Fully drained: restore the empty-iff-not-pending invariant.
     conn.write_buf.clear();
     conn.write_offset = 0;
     return true;
@@ -309,14 +226,9 @@ struct ControlSocketServer::Impl {
         break;
       }
       if (ready < 0) {
-        continue;  // EINTR or transient error; retry.
+        continue;
       }
       if (ready == 0) {
-        // On an idle wake (poll timeout) check the advertised socket still
-        // exists; some environments delete $XDG_RUNTIME_DIR contents while the
-        // process lives, silently severing the query path. Re-bind if so. Fall
-        // through so lingering half-closed connections are still swept (their
-        // revents are 0 on a timeout, which the loop below tolerates).
         MaybeRebindSocket();
       }
 
@@ -328,13 +240,9 @@ struct ControlSocketServer::Impl {
         AcceptPending();
       }
 
-      // Connection fds start at index 2, aligned with `snapshot`.
       for (std::size_t i = 0; i < snapshot.size(); ++i) {
         const short revents = fds[i + 2].revents;
         const std::shared_ptr<Connection>& conn = snapshot[i];
-        // Why the connection is shed, or null to keep it. Every shed is logged:
-        // a client only sees EPIPE, and a QA run whose channel went dead with the
-        // app still alive had nothing to say which of these it was.
         const char* drop_reason =
             (revents & (POLLERR | POLLNVAL)) != 0 ? "socket error" : nullptr;
         if (drop_reason == nullptr && (revents & POLLIN) != 0) {
@@ -346,21 +254,15 @@ struct ControlSocketServer::Impl {
               continue;
             }
             if (count == 0) {
-              conn->read_closed = true;  // peer closed its write side
+              conn->read_closed = true;
             } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
               drop_reason = "read error";
             }
             break;
           }
           if (!IngestReadBuffer(*conn)) {
-            // Inbound queue saturated: the peer is flooding requests faster than
-            // the host can drain them. Shed it rather than grow the queue.
             drop_reason = "request over the size cap or inbound queue full";
           }
-          // The residual buffer holds only the incomplete trailing line (every
-          // complete line was consumed above). If that single unterminated line
-          // has grown past the per-request ceiling, the peer is streaming bytes
-          // with no newline to exhaust memory — drop it.
           if (conn->read_buf.size() > kMaxRequestLineBytes) {
             drop_reason = "unterminated request over the size cap";
           }
@@ -368,12 +270,9 @@ struct ControlSocketServer::Impl {
         if ((revents & POLLHUP) != 0 && conn->read_buf.empty()) {
           conn->read_closed = true;
         }
-        // A stalled reader that overflowed its write buffer is shed here.
         if (drop_reason == nullptr && conn->write_overflow.load(std::memory_order_acquire)) {
           drop_reason = "client not reading: replies and events over the write buffer cap";
         }
-        // Always attempt to flush; send() on a non-writable socket is a cheap
-        // EAGAIN. A hard write error means the peer is gone for good.
         if (drop_reason == nullptr && !FlushConnection(*conn)) {
           drop_reason = "write error";
         }
@@ -383,21 +282,11 @@ struct ControlSocketServer::Impl {
           RemoveConnection(conn->id);
           continue;
         }
-        // Graceful lingering close: a peer that closed its write side still gets
-        // replies to requests it already sent. Reap once everything is flushed
-        // and answered, or when the bounded grace period expires.
         if (conn->read_closed) {
           if (conn->linger_deadline == std::chrono::steady_clock::time_point{}) {
             conn->linger_deadline = std::chrono::steady_clock::now() +
                                     std::chrono::milliseconds(kLingerGraceMs);
           }
-          // Sample in_flight BEFORE write_buf. SendLine appends the reply to
-          // write_buf and only THEN decrements in_flight (release), so observing
-          // in_flight <= 0 here (acquire) guarantees any just-queued reply is
-          // already visible to the write_buf read below. The reverse order has a
-          // TOCTOU hole: read empty write_buf, SendLine appends + decrements, read
-          // in_flight == 0 -> reap while a reply sits unsent (the client, which
-          // half-closed its write side, then sees EOF instead of its answer).
           const bool no_in_flight = conn->in_flight.load(std::memory_order_acquire) <= 0;
           bool write_pending = false;
           {
@@ -414,11 +303,6 @@ struct ControlSocketServer::Impl {
     }
   }
 
-  // Runs on the I/O thread (so listen_fd is mutated only here, between poll
-  // iterations — no cross-thread race; Stop() touches listen_fd only after the
-  // I/O thread joins). If the advertised socket file disappeared while we are
-  // still running, re-bind a fresh listener at the same path and swap listen_fd.
-  // Existing live connections keep their own fds and are unaffected.
   void MaybeRebindSocket() {
     if (!running.load(std::memory_order_acquire) || socket_path.empty()) {
       return;
@@ -426,19 +310,11 @@ struct ControlSocketServer::Impl {
     const std::string path_string = socket_path.string();
     struct stat st {};
     if (::stat(path_string.c_str(), &st) == 0) {
-      return;  // the socket file is still present
+      return;
     }
     if (path_string.size() + 1 > sizeof(sockaddr_un::sun_path)) {
       return;
     }
-    // The SAME hardening the initial bind gets. `ControlChannelService::Start`
-    // runs `EnsureSecurePrivateDirectory` over this directory before the first
-    // bind precisely because the `/tmp/microide` fallback has a world-writable
-    // parent — but a rebind recreates the directory from the I/O thread, where
-    // that caller is nowhere in sight, and `create_directories` grants whatever
-    // the umask allows and trusts a pre-existing leaf. Refuse to rebind rather
-    // than re-advertise a socket under a directory we have not re-verified is a
-    // real, owner-only, non-symlink directory we own.
     if (!EnsureSecurePrivateDirectory(socket_path.parent_path())) {
       return;
     }
@@ -466,19 +342,12 @@ struct ControlSocketServer::Impl {
       ::close(listen_fd);
     }
     listen_fd = fd;
-    // Signal the main thread to re-write the discovery descriptor (it vanished
-    // with the socket) on its next control drain.
     rebound.store(true, std::memory_order_release);
     PushWakeEvent();
   }
 
   void AcceptPending() {
     while (true) {
-      // CLOEXEC on every control-channel fd (listen socket, accepted client, wake pipe):
-      // without it these leak into every child forked while the channel is live (terminal
-      // shells, git, debug adapters), pinning client connections open past teardown and
-      // handing the child a stray control-socket handle. Matches the FileWatcher/Subprocess
-      // hardening.
       const int client_fd = ::accept4(listen_fd, nullptr, nullptr, SOCK_CLOEXEC);
       if (client_fd < 0) {
         break;
@@ -530,11 +399,6 @@ bool ControlSocketServer::Start(const std::filesystem::path& socket_path) {
 
   const std::string path_string = socket_path.string();
   if (path_string.size() + 1 > sizeof(sockaddr_un::sun_path)) {
-    // Say so. Every caller of Start() ignores the bool, so a silent refusal here
-    // is a control channel that simply does not exist with nothing anywhere to
-    // explain why — which is what a long $XDG_RUNTIME_DIR produces, and what cost
-    // a real debugging session. The limit is the address family's, not ours, so
-    // the message names it and the actual length rather than saying "failed".
     if (impl_->last_refused_long_path != path_string) {
       impl_->last_refused_long_path = path_string;
       util::Log("control channel: socket path is " + std::to_string(path_string.size()) +
@@ -547,8 +411,6 @@ bool ControlSocketServer::Start(const std::filesystem::path& socket_path) {
 
   std::error_code ec;
   std::filesystem::create_directories(socket_path.parent_path(), ec);
-  // Shared with the remote server: only a stale socket of our own is cleared, and
-  // the descriptor is close-on-exec, 0600 and non-blocking.
   std::string listen_error;
   const int fd = ListenUnixSocket(socket_path, &listen_error);
   if (fd < 0) {
@@ -556,7 +418,7 @@ bool ControlSocketServer::Start(const std::filesystem::path& socket_path) {
     return false;
   }
 
-  if (!util::MakeCloexecPipe(impl_->wake_pipe, /*nonblocking=*/true)) {
+  if (!util::MakeCloexecPipe(impl_->wake_pipe, true)) {
     ::close(fd);
     ::unlink(path_string.c_str());
     return false;
@@ -620,7 +482,7 @@ std::vector<ControlInboundMessage> ControlSocketServer::TakeInbound() {
   std::vector<ControlInboundMessage> taken;
   std::lock_guard<std::mutex> lock(impl_->inbound_mutex);
   taken.swap(impl_->inbound);
-  impl_->inbound_bytes = 0;  // the queue is now empty; reset the byte budget.
+  impl_->inbound_bytes = 0;
   return taken;
 }
 
@@ -638,19 +500,13 @@ void ControlSocketServer::SendLine(std::uint64_t connection_id, const std::strin
     std::lock_guard<std::mutex> lock(conn->out_mutex);
     const std::size_t pending = conn->write_buf.size() - conn->write_offset;
     if (pending + line.size() + 1 > ControlSocketServer::kMaxWriteBufferBytes) {
-      // Reader is stalled; shed rather than grow host memory without bound. Drop
-      // this reply and flag the connection for reap on the I/O thread.
       conn->write_overflow.store(true, std::memory_order_release);
     } else {
-      // Drop the already-sent prefix before appending so write_buf tracks the
-      // pending bytes and does not accumulate dead prefix under steady traffic.
       Impl::CompactWriteBuffer(*conn);
       conn->write_buf.append(line);
       conn->write_buf.push_back('\n');
     }
   }
-  // One reply per accepted request: balance the IngestReadBuffer increment so a
-  // half-closed connection can be reaped once its replies have all been queued.
   conn->in_flight.fetch_sub(1, std::memory_order_release);
   impl_->WakeIoThread();
 }
@@ -668,8 +524,6 @@ void ControlSocketServer::Broadcast(const std::string& line) {
     std::lock_guard<std::mutex> lock(conn->out_mutex);
     const std::size_t pending = conn->write_buf.size() - conn->write_offset;
     if (pending + line.size() + 1 > ControlSocketServer::kMaxWriteBufferBytes) {
-      // Slow/stalled reader: drop the event and flag for reap rather than grow
-      // host memory. A chatty debug session must not OOM the host on one client.
       conn->write_overflow.store(true, std::memory_order_release);
       continue;
     }
@@ -691,4 +545,4 @@ bool ControlSocketServer::ConsumeRebound() {
   return impl_->rebound.exchange(false, std::memory_order_acq_rel);
 }
 
-}  // namespace microide::platform
+}

@@ -14,10 +14,6 @@ bool StartsWith(std::string_view text, std::string_view prefix) {
 }
 
 std::string ToLower(std::string_view text) {
-  // UTF-8 case fold (length-preserving for the covered scripts) so buffer literal
-  // search matches the case-insensitive behavior of project search and ReplaceAll:
-  // café/CAFÉ, Δ/δ, etc. Byte offsets stay valid because the supported folds do not
-  // change byte length. (TD-2026-07-16-58.)
   return util::Utf8CaseFold(text);
 }
 
@@ -32,8 +28,6 @@ bool QuerySupportsLiteralReplace(std::string_view query) {
 }
 
 bool UsesCaseSensitiveLiteralMatch(std::string_view query) {
-  // Unicode-aware smart-case: any covered-script uppercase (not just ASCII) makes the
-  // query case-sensitive, matching project search. (TD-2026-07-16-58.)
   return util::Utf8QueryHasCaseVariation(query);
 }
 
@@ -85,17 +79,9 @@ std::size_t ReplaceLiteralMatchesInText(std::string& content,
 
 namespace {
 
-// Splits `content` into logical lines (on '\n'), invoking `on_line(line, cr, eol)`
-// for each: `line` is the match window (trailing '\r' removed), `cr` is "\r" when
-// one was stripped else "", and `eol` is "\n" for every line but a final one with
-// no trailing newline. Matches the project-search worker's getline framing.
 template <typename OnLine>
 void ForEachSearchLine(std::string_view content, OnLine&& on_line) {
   std::size_t line_start = 0;
-  // `<` (not `<=`) matches the search worker's getline framing: the final '\n' is
-  // the terminator of the preceding line, NOT the start of a phantom empty line.
-  // This keeps an empty-matching pattern (e.g. `^` or `x?`) from substituting on a
-  // trailing line the search never reported.
   while (line_start < content.size()) {
     const std::size_t newline = content.find('\n', line_start);
     const std::size_t line_end = (newline == std::string_view::npos) ? content.size() : newline;
@@ -114,7 +100,7 @@ void ForEachSearchLine(std::string_view content, OnLine&& on_line) {
   }
 }
 
-}  // namespace
+}
 
 std::optional<std::size_t> ReplaceRegexMatchesInText(std::string& content,
                                                      const util::CompiledRegex& pattern,
@@ -131,9 +117,6 @@ std::optional<std::size_t> ReplaceRegexMatchesInText(std::string& content,
     if (errored) {
       return;
     }
-    // SubstituteInto appends the substituted line (or, on a no-match line, the
-    // subject copied through unchanged) to `rebuilt`; on error it leaves `rebuilt`
-    // untouched and returns a negative rc.
     const int rc = pattern.SubstituteInto(line, replacement, rebuilt);
     if (rc < 0) {
       errored = true;
@@ -148,7 +131,7 @@ std::optional<std::size_t> ReplaceRegexMatchesInText(std::string& content,
     return std::nullopt;
   }
   if (replacements == 0) {
-    return std::size_t{0};  // Leave `content` byte-identical.
+    return std::size_t{0};
   }
   content = std::move(rebuilt);
   return replacements;
@@ -171,14 +154,9 @@ std::vector<editor::SelectionRange> FindRegexSearchMatches(const editor::TextBuf
     return matches;
   }
 
-  // Whole-buffer scan (not per-line) so a pattern can span line breaks — `\n`, `$`
-  // (with PCRE2_MULTILINE), or a multi-line construct like `foo\nbar`. Build the
-  // '\n'-joined content once (the buffer is internally CRLF-normalized) plus the
-  // byte offset of each line start, then map every match's byte span back to
-  // (line, column) positions. A match may span multiple lines.
   const std::size_t line_count = buffer.LineCount();
   if (line_count == 0) {
-    return matches;  // No lines -> no offsets to map against.
+    return matches;
   }
   std::vector<std::size_t> line_starts;
   line_starts.reserve(line_count);
@@ -186,7 +164,7 @@ std::vector<editor::SelectionRange> FindRegexSearchMatches(const editor::TextBuf
   {
     std::size_t total = 0;
     for (std::size_t i = 0; i < line_count; ++i) {
-      total += buffer.LineLength(i) + 1;  // + newline
+      total += buffer.LineLength(i) + 1;
     }
     content.reserve(total);
     for (std::size_t i = 0; i < line_count; ++i) {
@@ -198,16 +176,12 @@ std::vector<editor::SelectionRange> FindRegexSearchMatches(const editor::TextBuf
     }
   }
 
-  // Byte offset -> (line, column). `line_starts` is ascending, so the owning line is
-  // the last start <= offset.
   const auto to_position = [&](std::size_t offset) -> editor::TextPosition {
     const auto it = std::upper_bound(line_starts.begin(), line_starts.end(), offset);
     const std::size_t line = static_cast<std::size_t>(it - line_starts.begin()) - 1;
     return editor::TextPosition{line, offset - line_starts[line]};
   };
 
-  // A scope starts the scan at its start and ends it at its end; the pattern
-  // still sees the text around it (lookarounds, `^`).
   const auto to_offset = [&](const editor::TextPosition& position) -> std::size_t {
     if (position.line >= line_count) {
       return content.size();
@@ -221,9 +195,9 @@ std::vector<editor::SelectionRange> FindRegexSearchMatches(const editor::TextBuf
   const util::RegexSubject subject =
       util::IsAllAscii(content) ? util::RegexSubject::Ascii : util::RegexSubject::Unknown;
   while (util::FindNextRegexMatchInLine(pattern, content, &search_from, &match_data, &match_start,
-                                        &match_end, /*cancel=*/nullptr, subject)) {
+                                        &match_end, nullptr, subject)) {
     if (match_end > scope_end) {
-      break;  // matches come in order: none later fits either
+      break;
     }
     if (matches.size() >= kMaxBufferSearchMatches) {
       if (truncated != nullptr) {
@@ -231,9 +205,6 @@ std::vector<editor::SelectionRange> FindRegexSearchMatches(const editor::TextBuf
       }
       return matches;
     }
-    // Whole-word is a filter over the joined content, not a `\b`-wrapped pattern:
-    // the same predicate the literal path and the terminal find bar use, so one
-    // `ab` toggle means one thing everywhere.
     if (options.whole_word && !util::SearchMatchStandsAlone(content, match_start, match_end)) {
       continue;
     }
@@ -257,9 +228,6 @@ std::vector<editor::SelectionRange> SplitRegexMatchHighlightFragments(
     }
     for (std::size_t line = match.start.line; line <= match.end.line && line < line_count; ++line) {
       const std::size_t start_col = (line == match.start.line) ? match.start.column : 0;
-      // The trailing newline of every line but the match's last is part of the match.
-      // Encode it as one column past the content; the renderer draws a newline marker
-      // there so a `\n`-spanning match is visible at the line end.
       const std::size_t end_col =
           (line == match.end.line) ? match.end.column : buffer.LineLength(line) + 1;
       fragments.push_back(editor::SelectionRange{
@@ -282,8 +250,6 @@ std::optional<std::size_t> FindLiteralNeedleInLine(std::string_view haystack,
     const std::size_t position = haystack.find(needle, start_from);
     return position != std::string_view::npos ? std::optional{position} : std::nullopt;
   }
-  // Lower both sides once (ASCII fold) and reuse the linear find, instead of the
-  // previous O(haystack * needle) per-position re-lowering nested loop.
   thread_local std::string lowered_haystack;
   thread_local std::string lowered_needle;
   util::Utf8CaseFoldInto(haystack, lowered_haystack);
@@ -294,9 +260,6 @@ std::optional<std::size_t> FindLiteralNeedleInLine(std::string_view haystack,
 
 namespace {
 
-// Shared seed-relative next-match scan. `line_at(i)` yields line `i` as a
-// string_view; the same body serves the vector<string> and TextBuffer overloads.
-// Held line views stay valid for the duration: neither backing store mutates here.
 template <typename LineAt>
 std::optional<editor::TextPosition> FindNextLiteralMatchImpl(std::size_t line_count,
                                                              LineAt&& line_at,
@@ -358,7 +321,7 @@ std::optional<editor::TextPosition> FindNextLiteralMatchImpl(std::size_t line_co
   return std::nullopt;
 }
 
-}  // namespace
+}
 
 std::optional<editor::TextPosition> FindNextLiteralMatchAfterSeedWrapOnce(
     const std::vector<std::string>& lines,
@@ -386,10 +349,6 @@ std::optional<editor::TextPosition> FindNextLiteralMatchAfterSeedWrapOnce(
 
 namespace {
 
-// The one per-line scan every literal match set is built from. Appends the
-// non-overlapping occurrences of `needle` in `haystack` (already folded when the
-// search is case-insensitive) from `start_offset` on. Returns false once the
-// retained set hits its cap, which the caller reports as truncation.
 bool AppendLineLiteralMatches(std::size_t line_index,
                               std::string_view haystack,
                               std::size_t start_offset,
@@ -407,24 +366,15 @@ bool AppendLineLiteralMatches(std::size_t line_index,
       offset = haystack.find(needle, offset + 1);
       continue;
     }
-    // TD-2026-07-17A-029: cap the retained match set so a one-character query in a
-    // huge minified buffer cannot allocate millions of ranges. Navigation re-scans
-    // via FindNextLiteralMatchAfterSeedWrapOnce, so it stays correct past the cap.
     if (matches.size() >= kMaxBufferSearchMatches) {
       return false;
     }
     matches.push_back(match);
-    // Advance past the whole match so self-overlapping needles (e.g. "aa" in
-    // "aaaa") yield non-overlapping ranges, matching find-next/replace which
-    // advance by the needle length (see ReplaceLiteralMatchesInText).
     offset = haystack.find(needle, offset + needle.size());
   }
   return true;
 }
 
-// Shared all-occurrences case-insensitive scan. `line_at(i)` yields line `i` as a
-// string_view; the same body serves both the vector<string> and TextBuffer
-// overloads so the two cannot drift.
 template <typename LineAt>
 std::vector<editor::SelectionRange> FindLiteralMatchesImpl(std::size_t line_count,
                                                            LineAt&& line_at,
@@ -439,16 +389,12 @@ std::vector<editor::SelectionRange> FindLiteralMatchesImpl(std::size_t line_coun
     return matches;
   }
 
-  // Case-sensitive search compares the raw bytes; case-insensitive folds both
-  // sides. The fold is length-preserving, so match offsets are byte offsets into
-  // the raw line either way (which is what the whole-word check needs).
   std::string folded_query;
   if (!options.case_sensitive) {
     util::Utf8CaseFoldInto(query, folded_query);
   }
   const std::string_view needle = options.case_sensitive ? query : std::string_view(folded_query);
   std::string folded_line;
-  // A scope's lines only; a scope past the end reads nothing.
   const std::size_t first_line = options.scope.has_value() ? options.scope->start.line : 0;
   const std::size_t end_line =
       options.scope.has_value() ? std::min(line_count, options.scope->end.line + 1) : line_count;
@@ -470,7 +416,7 @@ std::vector<editor::SelectionRange> FindLiteralMatchesImpl(std::size_t line_coun
   return matches;
 }
 
-}  // namespace
+}
 
 std::vector<editor::SelectionRange> FindLiteralSearchMatches(
     const std::vector<std::string>& lines,
@@ -502,9 +448,6 @@ AddCursorMatchScan CollectAddCursorMatchRanges(const editor::TextBuffer& buffer,
   if (needle.empty()) {
     return scan;
   }
-  // Fold the needle once (case-insensitive). The fold is length-preserving, so
-  // the folded needle's byte length equals the raw needle's, keeping the end
-  // column correct.
   std::string lowered_needle;
   if (!case_sensitive) {
     util::Utf8CaseFoldInto(needle, lowered_needle);
@@ -515,14 +458,11 @@ AddCursorMatchScan CollectAddCursorMatchRanges(const editor::TextBuffer& buffer,
     const std::string_view raw = buffer.LineView(li);
     std::string_view haystack = raw;
     if (!case_sensitive) {
-      // Fold this line exactly ONCE, then reuse the folded buffer for every match
-      // on the line instead of re-folding per occurrence.
       util::Utf8CaseFoldInto(raw, lowered_line);
       haystack = lowered_line;
     }
     std::size_t offset = haystack.find(search_needle);
     while (offset != std::string_view::npos) {
-      // Skip the seeded span; the primary caret already covers it.
       if (!(li == seed_line && offset == seed_column)) {
         if (scan.ranges.size() >= max_matches) {
           scan.truncated = true;
@@ -543,10 +483,6 @@ bool QueryExtendsCaseInsensitive(std::string_view prefix, std::string_view query
   if (prefix.size() > query.size()) {
     return false;
   }
-  // Length-preserving UTF-8 fold: fold(prefix) must equal the fold of query's first
-  // prefix.size() bytes. Compare folded byte ranges so café extends CAFÉ. Malformed
-  // partial byte sequences at a boundary are folded verbatim identically on both
-  // sides, so the comparison stays consistent. (TD-2026-07-16-58.)
   return util::Utf8CaseFold(prefix) == util::Utf8CaseFold(query.substr(0, prefix.size()));
 }
 
@@ -558,22 +494,11 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
     bool* truncated) {
   std::vector<editor::SelectionRange> matches;
   if (truncated != nullptr) {
-    // `previous` is already a capped set (it fed back from FindLiteralSearchMatches),
-    // and the refined subset is never larger — so refine can only preserve, never
-    // introduce, truncation. Carry the prior state forward via the cap guard below.
     *truncated = false;
   }
   if (query.empty()) {
     return matches;
   }
-  // Whole-word search breaks the premise this whole path rests on. The reuse is
-  // sound because every occurrence of the longer query lies on a line that held
-  // an occurrence of its prefix -- true for a plain substring, false once a
-  // boundary test is applied: "alpha" stands alone on a line where "alph" never
-  // does, so the prefix scan returns nothing and the refine drops a match that is
-  // right there. Answer it with the cold scan rather than a wrong subset. The
-  // rule belongs here and not in the caller, because a caller that forgets it
-  // gets no error -- just silently missing matches.
   if (options.whole_word) {
     return FindLiteralSearchMatches(buffer, query, options, truncated);
   }
@@ -585,31 +510,8 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
   const std::string_view needle =
       options.case_sensitive ? query : std::string_view(folded_query);
   matches.reserve(previous.size());
-  // Every occurrence of the longer query starts at an occurrence of the prefix,
-  // and the prefix's FIRST occurrence on a line is always in `previous` — but the
-  // later ones are not: the cold scan advances past each hit by the needle length,
-  // so with "aa" over "aaab" the occurrence at column 1 was never recorded, and a
-  // refine that only re-checked the recorded columns lost the "aab" at column 1
-  // (the widget showed no match for text that was right there). So the unit of
-  // reuse is the LINE, not the hit: a line with no prefix hit cannot hold the
-  // longer query and is skipped without a read, and a line with one is rescanned
-  // by the cold scan's own loop from its first hit — equal to a fresh scan by
-  // construction, at the cost of touching only the lines that matched.
-  // The rescan below folds and re-reads every line that held a hit. For a query
-  // that matches most lines -- the find-as-you-type case this path exists for --
-  // that is a whole cold scan per keystroke. It is only NEEDED because the cold
-  // scan's advance-by-length de-overlap can skip a prefix occurrence, and it can
-  // only skip one that starts strictly inside another: that requires the prefix
-  // to have a proper border ("aa" recurs at offset 1 of itself, "perfocc" never
-  // does). With no border, `previous` holds EVERY occurrence of the prefix, so
-  // the longer query can only start at a recorded column and checking those
-  // columns is exact -- |previous| slice compares instead of a document rescan.
-  //
-  // The prefix is `query`'s own leading bytes (a refine's precondition is that
-  // the query extends it, and the fold is length-preserving), and its length is
-  // the width of any `previous` range.
   if (previous.empty()) {
-    return matches;  // nothing to refine from (the caller cold-scans instead)
+    return matches;
   }
   const std::size_t previous_needle_size =
       previous.front().end.column >= previous.front().start.column
@@ -617,7 +519,7 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
           : 0;
   const bool previous_can_self_overlap = [&] {
     if (previous_needle_size == 0 || previous_needle_size > needle.size()) {
-      return true;  // not the prefix we can reason about; take the safe path
+      return true;
     }
     const std::string_view prefix = needle.substr(0, previous_needle_size);
     for (std::size_t offset = 1; offset < prefix.size(); ++offset) {
@@ -628,8 +530,6 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
     return false;
   }();
   if (!previous_can_self_overlap && !options.whole_word) {
-    // Reproduce the cold scan's own de-overlap over the candidate columns: skip a
-    // candidate that would start inside the match just kept on the same line.
     std::size_t kept_line = std::numeric_limits<std::size_t>::max();
     std::size_t kept_end = 0;
     thread_local std::string folded_slice;
@@ -654,8 +554,6 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
       if (slice != needle) {
         continue;
       }
-      // The longer match can run past the scope's end where its prefix did not;
-      // the cold scan drops it the same way, without keeping it for de-overlap.
       const editor::SelectionRange longer{{line, column}, {line, column + needle.size()}};
       if (options.scope.has_value() && !editor::RangeContains(*options.scope, longer)) {
         continue;
@@ -674,9 +572,6 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
   }
 
   std::size_t last_line = std::numeric_limits<std::size_t>::max();
-  // Reused across calls, like `lowered_haystack` above: refine runs once per
-  // typed character, and a fresh string here allocated on every keystroke to
-  // fold a line the previous keystroke had already folded.
   thread_local std::string folded_line;
   for (const editor::SelectionRange& match : previous) {
     const std::size_t line = match.start.line;
@@ -686,7 +581,7 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
     last_line = line;
     const std::string_view text = buffer.LineView(line);
     if (match.start.column > text.size()) {
-      continue;  // a stale hit past the line's end can only drop, never invent
+      continue;
     }
     std::string_view haystack = text;
     if (!options.case_sensitive) {
@@ -704,4 +599,4 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
   return matches;
 }
 
-}  // namespace microide::workspace
+}

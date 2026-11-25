@@ -65,4 +65,4 @@ std::vector<std::string> DocumentSnapshot::ToLines() const {
   return lines;
 }
 
-}  // namespace microide::editor
+}

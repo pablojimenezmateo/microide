@@ -33,7 +33,7 @@ class LocalLauncher final : public ProcessLauncher {
   std::string_view description() const override { return "local"; }
 };
 
-}  // namespace
+}
 
 std::vector<std::string> ExpandWorkspaceFolder(std::vector<std::string> argv,
                                                const std::filesystem::path& project_root,
@@ -57,9 +57,6 @@ std::vector<std::string> FirstAvailableCommand(
   if (candidates.size() == 1) {
     return candidates.front();
   }
-  // $1 is the hint; the candidates follow, separated by kSeparator. Pass 1 finds
-  // the first candidate whose program exists; pass 2 rotates the positional
-  // parameters, keeping only that candidate's, and execs them.
   static constexpr std::string_view kSeparator = "--microide-or--";
   static constexpr std::string_view kScript = R"sh(hint=$1; shift
 exists() {
@@ -115,4 +112,4 @@ const ProcessLauncher& LocalProcessLauncher() {
   return launcher;
 }
 
-}  // namespace microide::platform
+}

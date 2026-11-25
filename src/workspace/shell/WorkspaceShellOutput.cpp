@@ -27,8 +27,6 @@ bool WorkspaceShell::MoveActiveOutputTabTo(std::size_t index) {
   if (active_id.empty()) {
     return false;
   }
-  // Dragging an output tab pins it: ensure the active channel is in the open
-  // list so reordering has a stable target, then move it within the list.
   if (std::find(tabs.begin(), tabs.end(), active_id) == tabs.end()) {
     tabs.push_back(active_id);
   }
@@ -65,4 +63,4 @@ void WorkspaceShell::CloseOutputChannelTab(std::string_view channel_id) {
   ClearBottomPanelContent(context_.current_project_state);
 }
 
-}  // namespace microide::workspace
+}

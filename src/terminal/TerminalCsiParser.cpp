@@ -5,10 +5,6 @@
 namespace microide::terminal {
 
 void ParseCsiParametersInto(std::string_view body, std::vector<int>& params) {
-  // Accumulate each decimal field inline (no per-field heap string); clamp during
-  // accumulation so a hostile long digit run can't overflow. Mirrors
-  // ParseSgrParametersInto but preserves the optional leading +/- sign that CSI
-  // numeric parameters may legally carry.
   constexpr int kMaxParam = 65535;
   params.clear();
   bool field_active = false;
@@ -37,8 +33,6 @@ void ParseCsiParametersInto(std::string_view body, std::vector<int>& params) {
     if (character >= '0' && character <= '9') {
       field_active = true;
       sign_allowed = false;
-      // Cap the running value so value*10 can never overflow int; downstream
-      // clamps further to screen/color ranges, so saturation is harmless.
       if (value < 100000) {
         value = value * 10 + (character - '0');
       }
@@ -64,8 +58,6 @@ int CsiParamOrDefault(const std::vector<int>& params, std::size_t index, int fal
 }
 
 void ParseSgrParametersInto(std::string_view body, std::vector<std::vector<int>>& groups) {
-  // SGR fields are unsigned decimal only (no signs), so accumulate the integer
-  // inline and clamp during accumulation to avoid overflow on hostile long runs.
   constexpr int kMaxParam = 65535;
   std::size_t group_count = 1;
   if (groups.empty()) {
@@ -92,16 +84,12 @@ void ParseSgrParametersInto(std::string_view body, std::vector<std::vector<int>>
       continue;
     }
     if (character >= '0' && character <= '9') {
-      // Cap the running value so value*10 can never overflow int; the exact
-      // saturated magnitude is irrelevant (downstream clamps to color ranges).
       if (value < 100000) {
         value = value * 10 + (character - '0');
       }
     }
   }
   flush_field();
-  // Drop any stale groups left over from a previous, longer sequence while
-  // keeping the outer vector's capacity (and the surviving inner vectors').
   groups.resize(group_count);
 }
 
@@ -111,4 +99,4 @@ std::vector<std::vector<int>> ParseSgrParameters(std::string_view body) {
   return groups;
 }
 
-}  // namespace microide::terminal
+}

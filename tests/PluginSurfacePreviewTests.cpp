@@ -18,9 +18,6 @@
 
 #include "WorkspaceShellEventHelpers.h"
 
-// Bottom-panel plugin surface preview interaction (TD-2026-07-16-60/61): host-
-// owned wheel/scrollbar scrolling of the preview content, and hit-region command
-// dispatch through the validated command runner.
 namespace microide::tests {
 namespace {
 
@@ -44,7 +41,6 @@ SurfaceContent TallSurface(float intrinsic_height) {
   return content;
 }
 
-// Publishes a tall preview surface and points the bottom panel at it.
 void ShowPreviewPanel(WorkspaceShell& shell, SurfaceContent content) {
   auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
   state.EnsurePluginPresentation().surfaces.ReplaceForOwnerSurface("plug", "chart",
@@ -67,17 +63,14 @@ void TestHitRegionMappingIsScrollAndPaddingAware() {
   const SDL_FRect body{100.0f, 400.0f, 300.0f, 150.0f};
   const float pad = kPluginSurfacePreviewPadding;
 
-  // Unscrolled: content y=100 sits below the 150px body — no hit at the top.
   Expect(FindPluginSurfacePreviewHitRegion(content, body, 0.0f, body.x + pad + 15.0f,
                                            body.y + pad + 5.0f) == nullptr,
          "a point above the region should not hit");
-  // Scrolled so content y=100 maps into view: hit resolves, last-published wins.
   const float scroll = 90.0f;
   const SurfaceHitRegion* hit = FindPluginSurfacePreviewHitRegion(
       content, body, scroll, body.x + pad + 15.0f, body.y + pad + (105.0f - scroll));
   Expect(hit != nullptr && hit->command == "second",
          "the topmost (last-published) overlapping region should win");
-  // Outside the region horizontally: no hit; the degenerate region never matches.
   Expect(FindPluginSurfacePreviewHitRegion(content, body, scroll, body.x + pad + 95.0f,
                                            body.y + pad + (105.0f - scroll)) == nullptr,
          "a point right of the region should not hit");
@@ -107,7 +100,6 @@ void TestWheelScrollsAndClampsPreview() {
   const int after_first = state.panel.surface_scroll_y;
   Expect(after_first > 0, "wheel down should scroll the preview content");
 
-  // A huge scroll clamps to the padded content overflow, and wheel-up returns to 0.
   Expect(SendMouseWheel(shell, in_x, in_y, -100000),
          "a large wheel should still be handled");
   const SurfaceContent* content =
@@ -121,10 +113,6 @@ void TestWheelScrollsAndClampsPreview() {
   Expect(state.panel.surface_scroll_y == 0, "wheel up should clamp back to zero");
 }
 
-// The preview is a focus target with a scrollbar and a wheel, but it answered no
-// key at all: arrowing in a focused panel scrolled the editor behind it. It now
-// shares the panel's row-based scroll model with the Output channel, converting
-// rows to the pixels this surface scrolls in.
 void TestKeyboardScrollsAndClampsPreview() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 900, 700);
@@ -156,10 +144,6 @@ void TestKeyboardScrollsAndClampsPreview() {
   Expect(state.panel.surface_scroll_y == 0, "Home should land back at the top");
 }
 
-// Keyboard focus leaves a panel the plugin's surface leaves: a plugin that
-// cleared the surface its focused preview showed (a reload, a tick that withdrew
-// it) hid the bottom panel with the keys still going to it (soak c0c5719bdbce,
-// "keyboard focus is on the panel, which is hidden").
 void TestFocusLeavesThePanelAWithdrawnSurfaceHid() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 900, 700);
@@ -184,8 +168,6 @@ void TestHitRegionClickDispatchesCommand() {
   const float body_y = layout.bottom_panel.y + kWorkspaceBottomPanelHeaderHeight;
   const float pad = kPluginSurfacePreviewPadding;
 
-  // Scroll the region into view, then click inside it: its command dispatches
-  // through the normal command path (observable as the sidebar toggling).
   state.panel.surface_scroll_y = 1490;
   const bool sidebar_before = state.sidebar.visible;
   const float click_x = layout.bottom_panel.x + pad + 20.0f;
@@ -198,7 +180,6 @@ void TestHitRegionClickDispatchesCommand() {
          "a preview click should focus the panel");
   SendMouseUp(shell, click_x, click_y, SDL_BUTTON_LEFT);
 
-  // A click outside every region focuses the panel but dispatches nothing.
   const bool sidebar_mid = state.sidebar.visible;
   Expect(SendMouseDown(shell, click_x, body_y + pad + 200.0f, SDL_BUTTON_LEFT),
          "a click off-region should still be handled by the panel");
@@ -206,8 +187,6 @@ void TestHitRegionClickDispatchesCommand() {
          "a click outside every hit region should not run a command");
   SendMouseUp(shell, click_x, body_y + pad + 200.0f, SDL_BUTTON_LEFT);
 
-  // An unscrolled click at the same panel point maps to different content
-  // coordinates and must miss the (scrolled-away) region.
   state.panel.surface_scroll_y = 0;
   Expect(SendMouseDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
          "an unscrolled click should be handled");
@@ -230,8 +209,6 @@ void TestScrollbarDragScrollsPreview() {
       body, microide::workspace::PluginSurfacePreviewContentHeight(*content), body.h, 0.0f);
   Expect(geometry.has_value(), "an overflowing preview should have a scrollbar");
 
-  // Grab the track below the thumb: the thumb centers on the pointer and the
-  // scroll lands strictly past the top.
   const float track_x = geometry->track.x + geometry->track.w * 0.5f;
   const float grab_y = geometry->track.y + geometry->track.h * 0.75f;
   Expect(SendMouseDown(shell, track_x, grab_y, SDL_BUTTON_LEFT),
@@ -239,8 +216,6 @@ void TestScrollbarDragScrollsPreview() {
   const int after_press = state.panel.surface_scroll_y;
   Expect(after_press > 0, "pressing the lower track should jump the scroll down");
 
-  // Dragging to the very bottom of the track clamps to max scroll; releasing
-  // ends the drag.
   Expect(SendMouseMotion(shell, track_x, geometry->track.y + geometry->track.h,
                          SDL_BUTTON_LMASK),
          "a scrollbar drag should be handled");
@@ -250,11 +225,6 @@ void TestScrollbarDragScrollsPreview() {
          "releasing the scrollbar should be handled");
 }
 
-// TD-2026-07-16-39: a PNG published without width/height (they are optional) was
-// laid out at 0x0 forever -- the preview could not scroll and an inline inset was
-// one pixel tall -- and nothing repainted the "Rendering…" placeholder when the
-// decode finished. The decode's wake now lays the surface out at the image's own
-// size and repaints it.
 void TestDecodedRasterIsLaidOutAtItsOwnSize() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 900, 700);
@@ -296,7 +266,6 @@ void TestDecodedRasterIsLaidOutAtItsOwnSize() {
   Expect(result.handled && result.redraw.HasAnyRedraw(),
          "the wake repaints the placeholder that was waiting for the image");
 
-  // A republish of the same bytes still declares nothing; the host keeps the size.
   SurfaceContent republished;
   republished.body = RasterHandle{.content_hash = kHash, .width = 0, .height = 0};
   workspace::ApplyKnownRasterSize(republished, cache);
@@ -304,12 +273,6 @@ void TestDecodedRasterIsLaidOutAtItsOwnSize() {
          "a republish of a decoded image takes its size before reaching the store");
 }
 
-// derived-damage: the panel's body is a unit keyed on what its surface holds, and
-// an image replacing its "Rendering…" placeholder changes neither the surface nor
-// (when the plugin declared the right size) its layout -- only which textures are
-// resident. The decode's wake owes a frame; the body repaints because its key
-// follows the texture cache's residency. A raster that declared its size keyed
-// nothing that moved, and kept its placeholder.
 void TestADecodedRasterReplacesItsPlaceholderFromAFrame() {
   EnsureDummySdlVideoInitialized();
   constexpr int kWidth = 900;
@@ -335,7 +298,6 @@ void TestADecodedRasterReplacesItsPlaceholderFromAFrame() {
   content.intrinsic_height = static_cast<float>(kTinyPngHeight);
   ShowPreviewPanel(shell, std::move(content));
   WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
-  // The placeholder on screen, then the decode.
   shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
   cache.Request(kHash, render::SurfaceTextureCache::RasterFormat::Png, TinyPng(), kTinyPngWidth,
@@ -356,7 +318,7 @@ void TestADecodedRasterReplacesItsPlaceholderFromAFrame() {
   Expect(diff.identical(), "the decoded image should replace its placeholder; " + DescribePixelDiff(diff));
 }
 
-}  // namespace
+}
 
 void RegisterPluginSurfacePreviewTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginSurfacePreview/HitRegionMappingIsScrollAndPaddingAware",
@@ -377,4 +339,4 @@ void RegisterPluginSurfacePreviewTests(std::vector<TestCase>& tests) {
           TestDecodedRasterIsLaidOutAtItsOwnSize);
 }
 
-}  // namespace microide::tests
+}

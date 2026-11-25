@@ -18,10 +18,6 @@ std::uint8_t ClampColorComponent(int value) {
   return static_cast<std::uint8_t>(std::clamp(value, 0, 255));
 }
 
-// Decode an extended SGR color (codes 38/48/58) from the parameter groups,
-// supporting both the legacy semicolon form (`38;5;n`, `38;2;r;g;b`) and the
-// ITU T.416 colon form (`38:5:n`, `38:2:r:g:b`, `38:2::r:g:b`). `gi` is advanced
-// past any trailing groups consumed by the legacy form.
 std::optional<util::Rgba8> ParseExtendedSgrColor(const std::vector<std::vector<int>>& groups,
                                                std::size_t& gi) {
   const std::vector<int>& leading = groups[gi];
@@ -57,13 +53,11 @@ std::optional<util::Rgba8> ParseExtendedSgrColor(const std::vector<std::vector<i
   return std::nullopt;
 }
 
-}  // namespace
+}
 
 bool detail::ApplySgrParameters(TerminalStyle& style, TerminalColor& underline_color,
                                 std::string_view body) {
   const TerminalColor underline_before = underline_color;
-  // Reused across SGR sequences on the reader thread so a colored-output burst
-  // does not churn the allocator with a fresh nested vector per escape.
   thread_local std::vector<std::vector<int>> groups;
   ParseSgrParametersInto(body, groups);
   for (std::size_t gi = 0; gi < groups.size(); ++gi) {
@@ -76,8 +70,6 @@ bool detail::ApplySgrParameters(TerminalStyle& style, TerminalColor& underline_c
         break;
       case 1:
         style.set(cell_attr::kBold, true);
-        // A basic (30..37) foreground brightens with bold; re-resolve it live so
-        // `\e[31m\e[1m` matches `\e[1m\e[31m` (both bright red).
         if (style.has_basic_foreground()) {
           style.foreground = util::BasicAnsiColor(style.basic_foreground_index(), true);
         }
@@ -89,10 +81,6 @@ bool detail::ApplySgrParameters(TerminalStyle& style, TerminalColor& underline_c
         style.set(cell_attr::kItalic, true);
         break;
       case 4: {
-        // `4` and `4:1` straight, `4:2` double, `4:3` curly, `4:4` dotted,
-        // `4:5` dashed (kitty's extension, which VTE, WezTerm, foot and
-        // xterm.js read the same way), `4:0` none. An unknown style is a plain
-        // underline, as in those terminals.
         const int shape = group.size() > 1 ? group[1] : 1;
         style.set(cell_attr::kUnderline, shape != 0 && shape != 2);
         style.set(cell_attr::kDoubleUnderline, shape == 2);
@@ -123,7 +111,6 @@ bool detail::ApplySgrParameters(TerminalStyle& style, TerminalColor& underline_c
       case 22:
         style.set(cell_attr::kBold, false);
         style.set(cell_attr::kDim, false);
-        // Revert a bold-brightened basic foreground back to its dark shade.
         if (style.has_basic_foreground()) {
           style.foreground = util::BasicAnsiColor(style.basic_foreground_index(), false);
         }
@@ -167,7 +154,6 @@ bool detail::ApplySgrParameters(TerminalStyle& style, TerminalColor& underline_c
         style.background.reset();
         break;
       case 58:
-        // The underline colour; without one an underline takes the text's.
         if (auto color = ParseExtendedSgrColor(groups, gi)) {
           underline_color = *color;
         }
@@ -177,24 +163,20 @@ bool detail::ApplySgrParameters(TerminalStyle& style, TerminalColor& underline_c
         break;
       default:
         if (code >= 30 && code <= 37) {
-          // Track the palette index so SGR 1/22 can re-resolve brightness later.
           style.set_basic_foreground(code - 30);
           style.foreground = util::BasicAnsiColor(code - 30, style.bold());
         } else if (code >= 40 && code <= 47) {
           style.background = util::BasicAnsiColor(code - 40, false);
         } else if (code >= 90 && code <= 97) {
-          // Explicit bright color: fixed brightness, not bold-tracked.
           style.clear_basic_foreground();
           style.foreground = util::BasicAnsiColor(code - 90, true);
         } else if (code >= 100 && code <= 107) {
           style.background = util::BasicAnsiColor(code - 100, true);
         }
-        // Codes 53/55 (overline) are accepted and ignored; they do not affect
-        // any tracked attribute.
         break;
     }
   }
   return underline_color != underline_before;
 }
 
-}  // namespace microide::terminal
+}

@@ -1,13 +1,3 @@
-// IME composition: the uncommitted text an input method shows before the user
-// accepts it.
-//
-// `active-work.md` § 4 lists IME hardening as open, and the composition path had
-// no tests at all. What matters about it is not the happy path but the ABANDONS:
-// the preview is state that lives outside the document, so every way of leaving
-// it -- opening a menu, moving focus to a surface that cannot show it, an empty
-// update from the IME -- has to clear it, or a stale preview is painted over
-// text it no longer belongs to.
-
 #include "TestSupport.h"
 #include "WorkspaceShellEventHelpers.h"
 
@@ -39,8 +29,6 @@ SDL_Event EditingEvent(const char* text, int start = 0, int length = 0) {
 
 SDL_Event InputEvent(const char* text) { return TextInputEvent(text); }
 
-// Opens a real editor tab, as the surrounding shell tests do: the composition
-// path only runs when a text-input surface is actually focused.
 struct EditorFixture {
   TemporaryDirectory temp;
   WorkspaceShell shell;
@@ -57,11 +45,10 @@ struct EditorFixture {
   editor::TextViewport& viewport() { return TestAccess::ActiveEditor(shell); }
 };
 
-// A composition update records the in-flight text against the surface showing it.
 void TestCompositionRecordsTheInFlightText() {
   EditorFixture fixture("ab\n");
   WorkspaceShell& shell = fixture.shell;
-  shell.HandleEvent(EditingEvent("\xe3\x81\x8b", 0, 1));  // "か", mid-composition
+  shell.HandleEvent(EditingEvent("\xe3\x81\x8b", 0, 1));
 
   const auto& composition = TestAccess::TextComposition(shell);
   Expect(composition.text == "\xe3\x81\x8b", "the in-flight text is recorded");
@@ -69,24 +56,19 @@ void TestCompositionRecordsTheInFlightText() {
          "the composition names the surface showing it");
 }
 
-// Committing clears the preview. Leaving it set would paint the uncommitted text
-// on top of the committed text it just became.
 void TestCommitClearsTheComposition() {
   EditorFixture fixture("ab\n");
   WorkspaceShell& shell = fixture.shell;
   shell.HandleEvent(EditingEvent("\xe3\x81\x8b", 0, 1));
   Expect(!TestAccess::TextComposition(shell).text.empty(), "composition is in flight");
 
-  shell.HandleEvent(InputEvent("\xe6\xbc\xa2"));  // the accepted "漢"
+  shell.HandleEvent(InputEvent("\xe6\xbc\xa2"));
   Expect(TestAccess::TextComposition(shell).text.empty(),
          "accepting the composition clears the preview");
-  // ...and the accepted text is actually in the buffer, so the assertion above
-  // cannot pass on an insert that silently did nothing.
   Expect(fixture.viewport().lines()[0].find("\xe6\xbc\xa2") != std::string::npos,
          "the accepted text reached the buffer, got: " + std::string(fixture.viewport().lines()[0]));
 }
 
-// An empty update is how an input method says "cancelled"; the preview has to go.
 void TestEmptyUpdateAbandonsTheComposition() {
   EditorFixture fixture("ab\n");
   WorkspaceShell& shell = fixture.shell;
@@ -98,22 +80,17 @@ void TestEmptyUpdateAbandonsTheComposition() {
          "an empty composition update abandons the preview");
 }
 
-// Composition survives its own updates: a multi-step conversion replaces the
-// preview rather than appending to it.
 void TestCompositionUpdateReplacesRatherThanAppends() {
   EditorFixture fixture("ab\n");
   WorkspaceShell& shell = fixture.shell;
   shell.HandleEvent(EditingEvent("\xe3\x81\x8b", 0, 1));
-  shell.HandleEvent(EditingEvent("\xe3\x81\x8b\xe3\x82\x93", 0, 2));  // "かん"
+  shell.HandleEvent(EditingEvent("\xe3\x81\x8b\xe3\x82\x93", 0, 2));
 
   Expect(TestAccess::TextComposition(shell).text == "\xe3\x81\x8b\xe3\x82\x93",
          "a later update replaces the preview, got: " +
              TestAccess::TextComposition(shell).text);
 }
 
-// The committed text goes in at EVERY caret, as ordinary typing does: an IME is
-// a text source like any other, and a multi-caret edit that only fed the primary
-// would silently drop the other carets.
 void TestCommitReachesEveryCaret() {
   EditorFixture fixture("ab\nab\n");
   WorkspaceShell& shell = fixture.shell;
@@ -122,7 +99,7 @@ void TestCommitReachesEveryCaret() {
   viewport->SetSecondaryCarets({{1, 1}});
 
   shell.HandleEvent(EditingEvent("\xe3\x81\x8b", 0, 1));
-  shell.HandleEvent(InputEvent("\xe6\xbc\xa2"));  // "漢"
+  shell.HandleEvent(InputEvent("\xe6\xbc\xa2"));
 
   Expect(viewport->lines()[0] == "a\xe6\xbc\xa2\x62" && viewport->lines()[1] == "a\xe6\xbc\xa2\x62",
          "the accepted text lands at both carets");
@@ -130,11 +107,6 @@ void TestCommitReachesEveryCaret() {
 }
 
 
-// While an input method is composing, the keys it uses to drive the conversion
-// belong to IT, not to the editor. Arrows pick a candidate, Enter accepts,
-// Escape cancels, Backspace edits the reading -- if the editor also acts on them
-// the caret walks away from the text being composed, or Enter splits the line
-// under the preview.
 void TestCompositionSwallowsItsConversionKeys() {
   EditorFixture fixture("ab\n");
   WorkspaceShell& shell = fixture.shell;
@@ -157,8 +129,6 @@ void TestCompositionSwallowsItsConversionKeys() {
          "the caret stays where the composition is anchored");
 }
 
-// A CHORD is not a conversion key: Ctrl+S during composition is still Save, and
-// swallowing it would make the app stop responding to shortcuts mid-word.
 void TestCompositionDoesNotSwallowChords() {
   EditorFixture fixture("ab\n");
   WorkspaceShell& shell = fixture.shell;
@@ -166,18 +136,12 @@ void TestCompositionDoesNotSwallowChords() {
   shell.HandleEvent(EditingEvent("\xe3\x81\x8b", 0, 1));
   Expect(!TestAccess::TextComposition(shell).text.empty(), "composition is in flight");
 
-  // The chord has to use a key that IS in the swallow list, or the test proves
-  // nothing about the modifier guard -- Ctrl+A passed even with the guard removed,
-  // because `A` is never swallowed anyway. Ctrl+Shift+Left is word-select-left,
-  // and `Left` is very much on the list.
   const auto chord = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT);
   shell.HandleEvent(KeyDownEvent(SDLK_LEFT, chord));
   Expect(fixture.viewport().has_selection(),
          "a modified conversion key still reaches the editor");
 }
 
-// With no composition in flight the same keys are ordinary editing keys again --
-// the guard is the composition, not the key.
 void TestConversionKeysWorkNormallyWithoutAComposition() {
   EditorFixture fixture("ab\n");
   WorkspaceShell& shell = fixture.shell;
@@ -188,7 +152,7 @@ void TestConversionKeysWorkNormallyWithoutAComposition() {
          "Enter splits the line when nothing is being composed");
 }
 
-}  // namespace
+}
 
 void RegisterImeCompositionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ImeComposition/RecordsTheInFlightText", TestCompositionRecordsTheInFlightText);
@@ -204,4 +168,4 @@ void RegisterImeCompositionTests(std::vector<TestCase>& tests) {
           TestConversionKeysWorkNormallyWithoutAComposition);
 }
 
-}  // namespace microide::tests
+}

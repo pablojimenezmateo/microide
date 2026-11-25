@@ -13,11 +13,6 @@ namespace microide::project {
 namespace {
 
 bool IsHexCommitPrefix(std::string_view line) {
-  // A blame-incremental header starts with the full object id followed by a
-  // space (or end-of-line): 40 hex chars in a SHA-1 repo, 64 in a SHA-256 repo
-  // (extensions.objectFormat=sha256). Match the whole leading hex run and accept
-  // either width rather than hardcoding 40, which silently rejected every header
-  // in a SHA-256 repo and produced no blame attributions at all.
   std::size_t hex_len = 0;
   while (hex_len < line.size()) {
     const char ch = line[hex_len];
@@ -41,7 +36,7 @@ struct CommitMetadata {
   bool boundary = false;
 };
 
-}  // namespace
+}
 
 std::vector<GitBlameAttribution> ParseGitBlameIncrementalOutput(std::string_view output) {
   std::unordered_map<std::string, CommitMetadata> commit_metadata;
@@ -81,13 +76,6 @@ std::vector<GitBlameAttribution> ParseGitBlameIncrementalOutput(std::string_view
         in_entry = false;
         continue;
       }
-      // Defense-in-depth: the caller always bounds the blame `-L` window (≤512
-      // lines), so git self-limits these fields. But they are attacker-tunable
-      // (a compromised/buggy git, or a future unbounded caller), and downstream
-      // GitBlameService inserts one map entry per line in [result_line,
-      // result_line + line_count). Clamp both the start line and the count so an
-      // absurd value cannot drive unbounded map growth (OOM) or wrap `result_line
-      // + offset` past SIZE_MAX. 1M is orders of magnitude past any real hunk.
       constexpr std::size_t kMaxAttributionLineCount = 1'000'000;
       current_result_line = std::min<std::size_t>(*parsed_result - 1, kMaxAttributionLineCount);
       current_line_count = std::min<std::size_t>(*parsed_count, kMaxAttributionLineCount);
@@ -130,10 +118,6 @@ std::vector<GitBlameAttribution> ParseGitBlameIncrementalOutput(std::string_view
           .boundary = current_metadata.boundary,
       });
       in_entry = false;
-      // Bound the total attribution count: per-entry counts are clamped above,
-      // but a hostile stream of many tiny entries could otherwise grow this
-      // vector without limit. The caller bounds the blame window to a few hundred
-      // lines, so a legitimate response never approaches this cap.
       constexpr std::size_t kMaxAttributions = 2'000'000;
       if (attributions.size() >= kMaxAttributions) {
         break;
@@ -145,4 +129,4 @@ std::vector<GitBlameAttribution> ParseGitBlameIncrementalOutput(std::string_view
   return attributions;
 }
 
-}  // namespace microide::project
+}

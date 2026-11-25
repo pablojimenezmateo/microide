@@ -21,7 +21,7 @@ constexpr std::uint32_t kK[64] = {
 
 inline std::uint32_t Rotr(std::uint32_t x, std::uint32_t n) { return (x >> n) | (x << (32 - n)); }
 
-}  // namespace
+}
 
 Sha256::Sha256() {
   state_[0] = 0x6a09e667;
@@ -81,7 +81,6 @@ void Sha256::Update(std::span<const std::byte> data) {
   std::size_t len = data.size();
   total_bits_ += static_cast<std::uint64_t>(len) * 8;
 
-  // Drain any buffered partial block first.
   if (buffer_len_ > 0) {
     while (len > 0 && buffer_len_ < 64) {
       buffer_[buffer_len_++] = *bytes++;
@@ -108,13 +107,9 @@ void Sha256::Update(std::string_view data) {
 }
 
 std::string Sha256::FinishHex() {
-  // Append the 0x80 padding byte, zero-pad to 56 mod 64, then the 64-bit big-endian
-  // length. total_bits_ was already accumulated in Update() BEFORE this padding.
   const std::uint64_t message_bits = total_bits_;
   std::uint8_t pad = 0x80;
   Update(std::span<const std::byte>(reinterpret_cast<const std::byte*>(&pad), 1));
-  // Update() bumped total_bits_ by 8 for the padding byte; the length we write must
-  // be the ORIGINAL message length, captured above.
   std::uint8_t zero = 0;
   while (buffer_len_ != 56) {
     Update(std::span<const std::byte>(reinterpret_cast<const std::byte*>(&zero), 1));
@@ -149,7 +144,6 @@ std::string Sha256Hex(std::string_view data) {
 }
 
 std::optional<std::string> Sha256FileHex(const std::filesystem::path& path) {
-  // Reject non-regular paths before opening (never block on a FIFO/device).
   std::error_code status_error;
   const std::filesystem::file_status status = std::filesystem::status(path, status_error);
   if (status_error || !std::filesystem::is_regular_file(status)) {
@@ -176,4 +170,4 @@ std::optional<std::string> Sha256FileHex(const std::filesystem::path& path) {
   return hasher.FinishHex();
 }
 
-}  // namespace microide::util
+}

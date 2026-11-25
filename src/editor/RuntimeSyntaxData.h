@@ -36,4 +36,4 @@ extern const std::size_t kGeneratedDefinitionCount;
 extern const GeneratedRuleData kGeneratedRules[];
 extern const std::size_t kGeneratedRuleCount;
 
-}  // namespace microide::editor::runtime_syntax
+}

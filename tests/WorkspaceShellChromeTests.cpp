@@ -58,7 +58,6 @@ void TestWorkspaceShellMenuBarOmitsRemovedMenus() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1920, 720);
 
-  // Sample full menu bar including overflow so the assertions work at any width.
   std::vector<std::string> labels = WorkspaceShellTestAccess::VisibleMenuBarLabels(shell);
   for (const std::string& overflow : WorkspaceShellTestAccess::OverflowMenuBarLabels(shell)) {
     labels.push_back(overflow);
@@ -71,23 +70,11 @@ void TestWorkspaceShellMenuBarOmitsRemovedMenus() {
          "menu bar should expose the Help top-level menu");
 }
 
-// TD-2026-08-06-149: laying out the menu bar returned three std::vectors, and a
-// single pointer motion over the bar re-ran it about ten times through three
-// independent chains (hit test, cursor kind, chrome redraw rect). That was 32 of
-// the 50 allocations per motion event, and it survived an earlier optimisation
-// pass on this very function — the pass fixed the width lookups and left the
-// vectors, because nothing was counting.
-//
-// The scenario gate (`menu_hover_switch`) measures the same thing end to end, but
-// only on a perf-harness build against a baseline that can drift. This is the
-// unit-level oracle: warm, then a hundred layouts must touch the heap zero times.
 void TestWorkspaceShellMenuBarLayoutIsAllocationFree() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
   const SDL_FRect menu_bar = WorkspaceShellTestAccess::MenuBarRect(shell);
-  // Warm the label-width cache and the font metrics behind it; the first layout
-  // after a metrics change legitimately measures.
   Expect(WorkspaceShellTestAccess::LayOutMenuBar(shell, menu_bar) > 0,
          "the menu bar should lay out to a non-empty set of items");
 
@@ -110,13 +97,9 @@ void TestWorkspaceShellMenuBarLayoutIsAllocationFree() {
          "a warm menu-bar layout must not touch the heap");
 #endif
   Expect(total > 0, "the layout results must be observed, not optimised away");
-  // The width cache is what keeps the layout cheap; if it stopped holding, the
-  // layout would still be allocation-free and quietly ten times slower.
   Expect(util::ReadPerformanceCounter(util::PerfCounterId::WorkspaceMenuBarLabelMeasures) ==
              measures_before,
          "a warm menu-bar layout must not re-measure any label width");
-  // Each iteration lays out the bar twice directly plus once inside the overflow
-  // pass; the point of the counter is that this rate is now visible at all.
   Expect(util::ReadPerformanceCounter(util::PerfCounterId::WorkspaceMenuBarLayouts) >
              layouts_before + 100,
          "workspace.menu_bar_layouts must count every layout, including nested ones");
@@ -142,10 +125,6 @@ void TestWorkspaceShellMenuBarShowsChevronWhenTruncated() {
   }
 }
 
-// Soak 0d4c9788e454 (and babc9f534d1c): the overflow popup kept the chevron's
-// rect from when it opened, so after the window shrank it still drew -- and took
-// clicks -- at the old window's right edge, outside the new one. It follows the
-// chevron, and closes with it once nothing overflows.
 void TestWorkspaceShellMenuOverflowPopupFollowsTheWindow() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
@@ -199,27 +178,13 @@ void TestWorkspaceShellCompactMenuOverflowButtonIsInteractive() {
 
   const auto popup = WorkspaceShellTestAccess::MenuOverflowPopupRect(shell);
   Expect(popup.has_value(), "open overflow menu should expose a popup rect");
-  // The popup's card and rows are derived units: opening it owes a frame, and
-  // frame prep repaints where it is (CompactMenuOverflowPaintsWhatAFullRepaintPaints
-  // holds each such frame against a full repaint).
   Expect(!result.redraw.full && result.redraw.frame,
          "opening the compact menu should owe a frame, not a full repaint");
 }
 
-// The compact layout's chevron and its popup, frame by frame against a full
-// repaint: the chevron's hover fill on the way in and out, the popup opening,
-// closing by Escape and by a press outside, and a row opening its menu. The
-// popup's pixels stayed behind on every close (the chrome redraw was computed
-// after the close, when the popup was no longer chrome) and the chevron's hover
-// fill was never repainted; both found by the QA menu-clicks sweep the day it
-// started walking the compact layout.
 void TestWorkspaceShellCompactMenuOverflowPaintsWhatAFullRepaintPaints() {
   constexpr int kWidth = 640;
   constexpr int kHeight = 480;
-  // With a focused editor: the caret's blink phase can flip in the very frame a
-  // popup closes, and that frame must paint the caret's column too (CI's
-  // runner, slower than a dev box, landed on that flip and found a 1x18 stale
-  // column after Escape).
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "proj";
   std::filesystem::create_directories(root);
@@ -258,9 +223,6 @@ void TestWorkspaceShellCompactMenuOverflowPaintsWhatAFullRepaintPaints() {
   Expect(WorkspaceShellTestAccess::MenuOverflowPopupOpen(shell), "the click opened the popup");
   check("Escape closing the popup", {KeyDownEvent(SDLK_ESCAPE)});
   Expect(!WorkspaceShellTestAccess::MenuOverflowPopupOpen(shell), "Escape closed the popup");
-  // The caret in its OFF phase while the popup is up, ON again as Escape closes
-  // it: the close frame has only the popup's rect to paint and must add the
-  // caret's column, or the column the full render paints stays blank.
   const auto caret_off = [&]() {
     WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks() - 600);
   };
@@ -322,10 +284,6 @@ void TestWorkspaceShellCompactMenuOverflowRowsOpenAnchoredMenus() {
          "compact File menu should render from its row anchor even though no File bar label is visible");
 }
 
-// The overflow popup was the one popup in the app the keyboard could not reach:
-// nothing in the key dispatch chain looked at `overflow_popup_open`, so while it
-// was up every key fell through to the surface underneath — Esc included, which
-// left no way to dismiss it but a click (TD-2026-09-19-296).
 void TestWorkspaceShellCompactMenuOverflowIsKeyboardNavigable() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 280, 720);
@@ -382,8 +340,6 @@ void TestWorkspaceShellCompactMenuOverflowEscapeClosesIt() {
          "closing the overflow popup should clear its highlighted row");
 }
 
-// A motion over the popup writes the same active index the keyboard does, so the
-// pointer and the keyboard can never highlight two different rows.
 void TestWorkspaceShellCompactMenuOverflowMotionTracksHoveredRow() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 280, 720);
@@ -435,16 +391,11 @@ void TestWorkspaceShellTitleBarDragRegionDoesNotFabricateMaximizeToggle() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1920, 720);
   WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
 
-  // Test point chosen to land past the expanded menu bar but before window-control buttons.
   const float empty_x = 1500.0f;
   Expect(shell.WindowHitTest(empty_x, 10.0f) == SDL_HITTEST_DRAGGABLE,
          "empty title-bar hit testing should hand borderless dragging back to the window manager");
   Expect(shell.WindowDragRegionContains(empty_x, 10.0f),
          "empty title-bar space should still be eligible for window dragging");
-  // Double-click-to-maximize was removed: on a draggable region SDL consumes the
-  // button events to drive a compositor move, so the app never sees the clicks.
-  // The Maximize chrome button is the supported affordance; a title-bar click
-  // must not fabricate a maximize toggle.
   Expect(SendMouseDown(shell, empty_x, 10.0f, SDL_BUTTON_LEFT, 2),
          "a title-bar background click should be consumed");
   Expect(shell.ConsumeWindowAction() == WorkspaceShell::WindowAction::None,
@@ -519,10 +470,6 @@ void TestWorkspaceShellMenuEventsOweAFrame() {
   click_event.button.x = file_rect->x + file_rect->w * 0.5f;
   click_event.button.y = file_rect->y + file_rect->h * 0.5f;
   const auto open_result = shell.HandleEvent(click_event);
-  // A menu's popup and the bar's items are derived units: opening one, and the
-  // pointer switching to another, owe a frame and name no rect of the chrome
-  // (QaFlowRegression/AMenuOpeningSwitchingAndClosingRepaintsItsBarItems holds
-  // the frames against a full repaint and measures them).
   Expect(open_result.handled, "opening a menu should be handled");
   Expect(!open_result.redraw.full && open_result.redraw.frame && open_result.redraw.rects.empty(),
          "opening a menu should owe a frame and name no rect");
@@ -571,17 +518,10 @@ void TestWorkspaceShellPopupRowHoverOwesAFrame() {
   motion_event.motion.y = second_item->y + second_item->h * 0.5f;
   const auto hover_result = shell.HandleEvent(motion_event);
   Expect(hover_result.handled, "hovering a popup row should be handled");
-  // The rows are derived units keyed on whether they are lit: the hover owes a
-  // frame and names no rect, and frame prep repaints the row left and the row
-  // taken (QaFlowRegression/AnOpenMenusRowsRepaintWhatChanged measures that).
   Expect(!hover_result.redraw.full && hover_result.redraw.frame && hover_result.redraw.rects.empty(),
          "popup row hover should owe a frame and name no rect of its own");
 }
 
-// A pointer move's repaint, as the app paints it: a frame painted first (the
-// derived surfaces compare with it), the motion handled, then what the frame it
-// owes repaints -- the event's own rects and what preparing the frame derives.
-// The hovered element, the tooltip and each surface's hover are derived units.
 struct HoverRepaint {
   bool handled = false;
   bool owes_frame = false;
@@ -630,8 +570,6 @@ void TestWorkspaceShellTreeSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
   Expect(SendMouseMotion(shell, mode_rect.x + mode_rect.w * 0.5f,
                          mode_rect.y + mode_rect.h * 0.5f, 0),
          "priming the sidebar mode hover should be handled");
-  // An icon-only mode tab shows a tooltip naming the view; moving off it has to
-  // repaint that card, which the mode-row tooltip used to be missing from.
   const auto departed_tooltip = WorkspaceShellTestAccess::HoveredTooltipRect(shell);
   Expect(departed_tooltip.has_value(),
          "an icon-only sidebar mode tab should name itself on hover");
@@ -713,18 +651,12 @@ void TestWorkspaceShellGitSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
          "git header hover should redraw the previously hovered control");
   Expect(AnyRectCovers(hover.damage.rects, top_action_rects[2]),
          "git header hover should redraw the newly hovered control");
-  // Arriving on Refresh has to paint its tooltip; the git sidebar tooltip used to
-  // be absent from motion change-detection, so the card only appeared if the
-  // sidebar happened to repaint for some other reason.
   const auto arrived_tooltip = WorkspaceShellTestAccess::HoveredTooltipRect(shell);
   Expect(arrived_tooltip.has_value(), "hovering git Refresh should resolve a tooltip");
   Expect(AnyRectCovers(hover.damage.rects, *arrived_tooltip),
          "arriving on git Refresh should repaint its tooltip card");
 }
 
-// The git header's four buttons had one tooltip between them (Refresh). The Sync
-// button's tooltip text WAS composed — on every git view-model rebuild — and no
-// surface ever consumed it, because no hover path asked for it (TD-2026-09-19-296).
 void TestWorkspaceShellGitSidebarHeaderButtonsHaveTooltips() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -746,9 +678,6 @@ void TestWorkspaceShellGitSidebarHeaderButtonsHaveTooltips() {
   Expect(sync.w > 0.0f, "git tooltip fixture should expose the Sync button");
   Expect(SendMouseMotion(shell, sync.x + sync.w * 0.5f, sync.y + sync.h * 0.5f, 0),
          "hovering the git Sync button should be handled");
-  // This fixture has no remote, so the tooltip is the no-upstream branch of
-  // BuildGitSyncButtonTooltip. Either branch is a non-empty sentence; what the
-  // regression is about is that SOMETHING resolves here at all.
   Expect(WorkspaceShellTestAccess::HoveredTooltipLabel(shell).find("upstream") !=
              std::string::npos,
          "hovering Sync with no upstream should say so");
@@ -872,12 +801,9 @@ void TestWorkspaceShellEditorCaretDirtyRectFollowsActiveCaret() {
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 2);
 
-  // An editor's caret is its rows' (EditorRowUnits fold the frame's draw-caret
-  // phase into the rows holding one): a blink names no rect, its wake asks for a
-  // frame. It used to name the whole pane, which every blink then repainted.
   Expect(!shell.CurrentCaretDirtyRect().has_value(), "a focused editor's blink names no rect of its own");
   WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks());
-  (void)shell.ConsumePendingRenderInvalidation();  // what opening the file asked for
+  (void)shell.ConsumePendingRenderInvalidation();
   const WorkspaceShell::EventResult wake = WorkspaceShellTestAccess::HandleScheduledWake(shell);
   Expect(wake.handled && wake.redraw.frame && !wake.redraw.full && wake.redraw.rects.empty(),
          "a focused editor's blink wake asks for a frame and names no rect");
@@ -895,7 +821,6 @@ void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
   WorkspaceShellTestAccess::OpenFile(shell, source);
   (void)shell.ConsumePendingRenderInvalidation();
 
-  // A frame painted first: the derived surfaces compare with it.
   SoftwareCanvas canvas{1280, 720};
   shell.Render(canvas.renderer(), 1280, 720);
   (void)shell.ConsumePendingRenderInvalidation();
@@ -904,7 +829,6 @@ void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
   const std::string text = "x";
   event.text.text = text.c_str();
   const auto result = shell.HandleEvent(event);
-  // What the frame repaints: the event's rects and what preparing it derives.
   const auto damage = FrameDamage(shell, canvas, 1280, 720, result.redraw);
   const SDL_FRect active_pane = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
   const auto edited_line_rect = WorkspaceShellTestAccess::ActiveEditorLineRangeRect(shell, 0, 1);
@@ -921,17 +845,10 @@ void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
     rects += " [" + std::to_string(static_cast<int>(r.x)) + "," + std::to_string(static_cast<int>(r.y)) +
              " " + std::to_string(static_cast<int>(r.w)) + "x" + std::to_string(static_cast<int>(r.h)) + "]";
   }
-  // Measured inside the pane: the project's background index and git refresh can
-  // land during the keystroke and repaint the sidebar, which is window-tall -- the
-  // one-in-ten failure of TD-2026-10-22-378 was that damage counted against the
-  // editor.
   Expect(InPaneDamageHeight(damage.rects, active_pane) < active_pane.h,
          "single-line editor typing should redraw less than the full active pane;" + rects);
 }
 
-// Every action not run from a context menu first closes the tree context menu.
-// With no such menu open that must damage nothing: it used to request the whole
-// chrome strip (menu bar and any open popup) twice per keystroke-bound action.
 void TestWorkspaceShellActionWithNoTreeMenuOpenLeavesTheChromeAlone() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -994,7 +911,6 @@ void TestWorkspaceShellWrappedTypingReturnsFocusedPaneInvalidation() {
   viewport.MoveCursorTo(0, viewport.lines().front().size());
   (void)shell.ConsumePendingRenderInvalidation();
 
-  // A frame painted first: the derived surfaces compare with it.
   SoftwareCanvas canvas{700, 720};
   shell.Render(canvas.renderer(), 700, 720);
   (void)shell.ConsumePendingRenderInvalidation();
@@ -1003,7 +919,6 @@ void TestWorkspaceShellWrappedTypingReturnsFocusedPaneInvalidation() {
   const std::string text = "!";
   event.text.text = text.c_str();
   const auto result = shell.HandleEvent(event);
-  // What the frame repaints: the event's rects and what preparing it derives.
   const auto damage = FrameDamage(shell, canvas, 700, 720, result.redraw);
   const SDL_FRect active_pane = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
 
@@ -1012,9 +927,6 @@ void TestWorkspaceShellWrappedTypingReturnsFocusedPaneInvalidation() {
          "wrapped typing should stay on the partial redraw path");
   Expect(AnyRectIntersects(damage.rects, active_pane),
          "wrapped typing redraws should include the active editor pane");
-  // The rows a reflow moved repaint by their keys (EditorRowUnits: each row's
-  // wrap-layout place is in its key); the randomized transitions of
-  // QaFlowRegression/EditorRowDamageFollowsEveryStateTransition check the pixels.
   const auto edited_row = WorkspaceShellTestAccess::ActiveEditorLineRangeRect(shell, 0, 1);
   Expect(edited_row.has_value() && AnyRectIntersects(damage.rects, *edited_row),
          "wrapped typing should repaint the edited line's rows");
@@ -1040,8 +952,6 @@ void TestWorkspaceShellCommandTextInputReturnsPartialCommandInvalidation() {
   const auto result = shell.HandleEvent(event);
 
   Expect(result.handled, "command palette typing should be handled");
-  // The overlay is derived (PrepareOverlayUnits): typing owes a frame, whose prep
-  // repaints the query field and the rows that changed. Never a full repaint.
   workspace::RenderInvalidation asked = result.redraw;
   asked.Merge(shell.ConsumePendingRenderInvalidation());
   Expect(!asked.full && (asked.frame || !asked.rects.empty()),
@@ -1065,11 +975,6 @@ void TestWorkspaceShellCommandPasteShortcutUsesSharedTextInputPath() {
          "Ctrl+V should route clipboard text through the shared command text-input path");
 }
 
-// An exact command name must win the palette however the registry happens to be
-// ordered. Without ranking the winner was simply whichever command the registry
-// listed first, so typing "open" selected "Open Merge Conflicts for Review" and
-// "search" selected "Search Workspace Symbols…" — both ahead of the command
-// actually carrying that name.
 void TestWorkspaceShellCommandPaletteRanksExactCommandNameFirst() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -1086,17 +991,11 @@ void TestWorkspaceShellCommandPaletteRanksExactCommandNameFirst() {
   Expect(WorkspaceShellTestAccess::CommandPaletteMatchLabelAt(shell, 0) == "Find in Buffer",
          "the command actually named 'search' should rank first");
 
-  // A partial query still ranks by name prefix before falling back to a match
-  // buried anywhere in the row.
   WorkspaceShellTestAccess::SetCommandPaletteQueryAndRefresh(shell, "goto-t");
   Expect(WorkspaceShellTestAccess::CommandPaletteMatchLabelAt(shell, 0) == "Go to Type Definition",
          "a command-name prefix should rank ahead of an incidental substring match");
 }
 
-// The palette matches each query word independently, in any order (VS Code's
-// command palette matches words, not one contiguous substring): `line move` finds
-// "Move Line Down" as well as `move line` does, and a query typed as one run still
-// ranks the row that carries it contiguously ahead of a scattered match.
 void TestWorkspaceShellCommandPaletteMatchesQueryWordsInAnyOrder() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -1191,9 +1090,6 @@ void TestWorkspaceShellSidebarModeTabsPresent() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, source);
 
-  // The header row exposes the three primary view tabs, laid out left-to-right, plus
-  // an overflow button for the builtin views that have no tab (Problems, Tests,
-  // Outline) and any plugin views.
   const SDL_FRect tree_tab = WorkspaceShellTestAccess::SidebarModeTabRect(shell, "tree");
   const SDL_FRect search_tab = WorkspaceShellTestAccess::SidebarModeTabRect(shell, "search");
   const SDL_FRect git_tab = WorkspaceShellTestAccess::SidebarModeTabRect(shell, "git");
@@ -1261,17 +1157,6 @@ void TestWorkspaceShellTabTooltipRendersAboveSidebar() {
   SDL_DestroySurface(pixels);
 }
 
-// A frame is painted into a retained, reused RGBA scene texture and then blitted
-// whole to the window, which is never cleared. That only works while the painted
-// frame is fully opaque: a translucent fill issued without arming SDL's (ambient)
-// draw blend mode overwrites its region instead of compositing, stamping its own
-// sub-255 alpha into the target — and the region then re-composites against the
-// previous present on every frame until it collapses to the fill colour. That is
-// what ate the editor behind an open modal (TD-2026-07-30-100): the backdrop is
-// alpha 0xaa, so within about a second the code being compared was a flat
-// rectangle. Assert the contract directly — over an open modal, with its
-// translucent backdrop, selection fill and card background all in play, every
-// pixel of the frame comes out opaque.
 void TestWorkspaceShellRenderedFrameIsFullyOpaque() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1315,9 +1200,6 @@ void TestWorkspaceShellRenderedFrameIsFullyOpaque() {
              " pixels were not, first at (" + std::to_string(first_bad_x) + "," +
              std::to_string(first_bad_y) + ") alpha=" + std::to_string(first_bad.a));
 
-  // ...and the backdrop must dim what is behind it rather than replace it: an
-  // overwriting fill lands on exactly the backdrop colour, a compositing one does
-  // not. Sample the editor area well below the modal card.
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
   const SDL_Color dimmed =
       canvas.PixelAt(static_cast<int>(layout.editor_surface.x + 8.0f),
@@ -1327,16 +1209,6 @@ void TestWorkspaceShellRenderedFrameIsFullyOpaque() {
          "the modal backdrop should dim the editor behind it, not overwrite it");
 }
 
-// The status bar is derived chrome: every value on it (cursor position, language,
-// indent, encoding, branch, diagnostics, LSP) is owned by some other surface. So
-// the event that changes one asks for the editor — or the sidebar, or nothing — to
-// be repainted, and on a partial-redraw frame the strip simply kept its old
-// pixels: moving the caret never updated "Ln 1, Col 1", and opening a second file
-// left the first one's language and indent on screen until an unrelated full
-// redraw happened along. It has to ask for itself, and only when it changed.
-// "Col" is the VISIBLE column, as in VS Code: a tab counts as its width and a
-// multibyte character as one. The raw byte offset put the caret at "Col 2" after
-// a tab and "Col 3" after a single accented letter.
 void TestWorkspaceShellStatusBarColumnIsTheVisibleColumn() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1350,22 +1222,20 @@ void TestWorkspaceShellStatusBarColumnIsTheVisibleColumn() {
   editor.SetTabSize(4);
   using microide::workspace::StatusBarSegmentId;
 
-  editor.MoveCursorTo(0, 1);  // after the tab
+  editor.MoveCursorTo(0, 1);
   WorkspaceShellTestAccess::RefreshStatusBar(shell);
   Expect(WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::LineColumn) ==
              "Ln 1, Col 5",
          "a tab counts as its width: " +
              WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::LineColumn));
 
-  editor.MoveCursorTo(1, 2);  // after the two-byte e-acute
+  editor.MoveCursorTo(1, 2);
   WorkspaceShellTestAccess::RefreshStatusBar(shell);
   Expect(WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::LineColumn) ==
              "Ln 2, Col 2",
          "a multibyte character counts as one column: " +
              WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::LineColumn));
 
-  // An edit that leaves the caret's byte column in place but changes the bytes
-  // before it still re-composes: replace the tab with a space.
   editor.MoveCursorTo(0, 1);
   editor.ReplaceRange(microide::editor::SelectionRange{{0, 0}, {0, 1}}, " ");
   editor.MoveCursorTo(0, 1);
@@ -1375,11 +1245,6 @@ void TestWorkspaceShellStatusBarColumnIsTheVisibleColumn() {
          "the column follows the bytes before the caret, not just the caret");
 }
 
-// With no tab open the group's active viewport is the welcome surface's built-in
-// placeholder buffer, and the bar described it: "unknown  Tabs: 4  UTF-8 · LF"
-// over an empty editor area. VS Code shows no editor segments with no editor open
-// — but an untitled buffer IS an editor, so Ctrl+N must keep them. A buffer whose
-// language is the fallback reads "Plain Text", not the internal id "unknown".
 void TestWorkspaceShellStatusBarHidesEditorSegmentsWithNoEditorOpen() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1431,27 +1296,20 @@ void TestWorkspaceShellStatusBarRepaintsWhenItsValuesChange() {
   Expect(layout.status_bar.w > 0.0f && layout.status_bar.h > 0.0f,
          "the status bar fixture needs a visible status bar");
 
-  // A frame that changes nothing must not drag the strip along: this is the whole
-  // reason the request is gated on the model rather than issued unconditionally.
   shell.Render(canvas.renderer(), 900, 600);
   const auto idle_redraw = shell.ConsumePendingRenderInvalidation();
   Expect(!AnyRectCovers(idle_redraw.rects, layout.status_bar),
          "an unchanged status bar should not ask to be repainted");
 
-  // Move the caret. The keystroke's own invalidation covers the editor; the frame
-  // it produces is what notices Ln/Col moved.
   const auto key_result = SendKeyDownResult(shell, SDLK_DOWN, SDL_KMOD_NONE);
   Expect(key_result.handled, "the fixture's caret move should be handled");
   Expect(!key_result.redraw.full && !AnyRectCovers(key_result.redraw.rects, layout.status_bar),
          "the fixture is only meaningful if the keystroke itself misses the strip");
 
   shell.Render(canvas.renderer(), 900, 600);
-  // ...and the loop must not block while that request is outstanding, or the strip
-  // would only catch up on the next unrelated input.
   Expect(shell.CurrentIdleWaitState().hint != WorkspaceShell::IdleHint::Idle,
          "the event loop must not block while a render-requested redraw is owed");
   const auto after_move = shell.ConsumePendingRenderInvalidation();
-  // Derived damage repaints the segment that changed, not the strip: Ln/Col.
   const std::optional<SDL_FRect> line_column =
       WorkspaceShellTestAccess::StatusBarSegmentRect(shell, microide::workspace::StatusBarSegmentId::LineColumn);
   Expect(line_column.has_value(), "the fixture shows an Ln/Col segment");
@@ -1461,13 +1319,6 @@ void TestWorkspaceShellStatusBarRepaintsWhenItsValuesChange() {
          "and only the segment that changed, not the whole strip");
 }
 
-// Settings and Help/About take the keyboard entirely, but they were the only two
-// modal surfaces in the shell that painted no backdrop — the editor behind them
-// stayed at full brightness, so neither read as modal while every quick-open
-// surface and both prompts dimmed. (Adding one was only safe once translucent
-// fills actually composited; before that a backdrop here would have stained the
-// editor the same way the compare picker's did.) Assert the pixel, and assert the
-// frame still comes out opaque with it.
 void TestWorkspaceShellSettingsAndHelpDimTheEditorBehindThem() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1487,7 +1338,6 @@ void TestWorkspaceShellSettingsAndHelpDimTheEditorBehindThem() {
     SoftwareCanvas canvas(900, 600);
     shell.Render(canvas.renderer(), 900, 600);
     const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
-    // A point inside the editor area but clear of the centered card.
     const int x = static_cast<int>(layout.editor_area.x + 4.0f);
     const int y = static_cast<int>(layout.editor_area.y + layout.editor_area.h - 6.0f);
     const SDL_Color before = canvas.PixelAt(x, y);
@@ -1507,7 +1357,6 @@ void TestWorkspaceShellSettingsAndHelpDimTheEditorBehindThem() {
     Expect(after.r != before.r || after.g != before.g || after.b != before.b,
            help_about ? "Help/About should dim the editor behind it"
                       : "Settings should dim the editor behind it");
-    // Dimming, not overwriting: the result is a mix, not the raw backdrop colour.
     Expect(!(after.r == theme.overlay_backdrop.r && after.g == theme.overlay_backdrop.g &&
              after.b == theme.overlay_backdrop.b),
            "the backdrop should composite over the editor, not replace it");
@@ -1517,10 +1366,6 @@ void TestWorkspaceShellSettingsAndHelpDimTheEditorBehindThem() {
   sample_editor_area(true);
 }
 
-// A dirty rect has to fully contain the content it stands for. All three
-// row-range builders (editor, compare, merge) nudged the top up by a pixel and
-// left the height alone, so the LAST pixel row of a partially repainted range was
-// never invalidated and kept whatever had been drawn there.
 void TestWorkspaceShellEditorLineRangeDirtyRectCoversItsLines() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1540,7 +1385,6 @@ void TestWorkspaceShellEditorLineRangeDirtyRectCoversItsLines() {
     const auto rect =
         WorkspaceShellTestAccess::ActiveEditorLineRangeRect(shell, start_line, start_line + span);
     Expect(rect.has_value(), "a visible line range should resolve a dirty rect");
-    // The rows the range names occupy [first_line_y + start*lh, + span*lh).
     const float content_top =
         metrics.first_line_y + static_cast<float>(start_line) * metrics.line_height;
     const float content_bottom = content_top + static_cast<float>(span) * metrics.line_height;
@@ -1566,16 +1410,12 @@ void TestWorkspaceShellFindWidgetHoverRepaintsTheCard() {
 
   const microide::workspace::FindWidgetLayout fw =
       WorkspaceShellTestAccess::FindWidgetControls(shell, false);
-  // Park the pointer inside the card but off every button, so the move below is a
-  // pure enter-a-button transition.
   Expect(SendMouseMotion(shell, fw.search_field.x + 4.0f,
                          fw.search_field.y + fw.search_field.h * 0.5f, 0),
          "priming the find widget hover should be handled");
 
   const HoverRepaint hover = PaintThenMovePointer(shell, fw.toggle_buttons[0].x + fw.toggle_buttons[0].w * 0.5f,
                                                   fw.toggle_buttons[0].y + fw.toggle_buttons[0].h * 0.5f);
-  // The buttons only started lifting under the pointer when the rest of the shell
-  // already did; without a frame the highlight would wait for an unrelated repaint.
   Expect(hover.handled && hover.owes_frame, "moving onto a find widget button should be handled and owe a frame");
   Expect(!hover.damage.full && !hover.damage.rects.empty(), "find widget hover should stay on a partial redraw path");
   Expect(AnyRectCovers(hover.damage.rects, fw.toggle_buttons[0]),
@@ -1594,9 +1434,6 @@ void TestWorkspaceShellStatusBarSegmentsExplainThemselvesOnHover() {
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::RefreshStatusBar(shell);
 
-  // Every status-bar segment carried a tooltip string that nothing ever drew, so
-  // the one row of chrome naming the language, indent, encoding and cursor
-  // position explained none of it.
   const auto line_col_rect =
       WorkspaceShellTestAccess::StatusBarSegmentRect(shell, microide::workspace::StatusBarSegmentId::LineColumn);
   Expect(line_col_rect.has_value(), "the status bar should place a line/column segment");
@@ -1608,17 +1445,12 @@ void TestWorkspaceShellStatusBarSegmentsExplainThemselvesOnHover() {
   const auto tooltip_rect = WorkspaceShellTestAccess::HoveredTooltipRect(shell);
   Expect(tooltip_rect.has_value(), "a status bar tooltip should resolve a card rect");
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
-  // The status bar sits on the window's bottom edge, so the shared placement rule
-  // has to flip the card above its anchor rather than off-screen.
   Expect(tooltip_rect->y + tooltip_rect->h <= layout.status_bar.y,
          "a status bar tooltip should flip above the bar instead of off-screen");
   Expect(tooltip_rect->y >= layout.full.y,
          "a flipped tooltip should stay inside the window");
 
 #if MICROIDE_HAS_SDL3_TTF
-  // ...and it actually paints. The status bar renders after the tooltip pass, so
-  // a card placed over the bar would be covered; the flip above has to hold in
-  // pixels, not just in geometry.
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(1280, 720);
   shell.Render(canvas.renderer(), 1280, 720);
@@ -1652,8 +1484,6 @@ void TestWorkspaceShellFindWidgetControlsNameThemselvesOnHover() {
   Expect(fw.toggle_count == microide::workspace::kBufferFindToggleCount,
          "the in-file find widget should expose all three option toggles");
 
-  // The find widget is five unlabelled or two-glyph buttons; none of them said
-  // what it was.
   const auto hover = [&](const SDL_FRect& rect) {
     (void)SendMouseMotion(shell, rect.x + rect.w * 0.5f, rect.y + rect.h * 0.5f, 0);
     return WorkspaceShellTestAccess::HoveredTooltipLabel(shell);
@@ -1683,9 +1513,6 @@ void TestWorkspaceShellTooltipCardIsAnchoredToItsControl() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, source);
 
-  // One placement rule for every tooltip: centered on the control it describes,
-  // not on the pointer, so the card holds still while the pointer moves within
-  // one button.
   const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
   (void)SendMouseMotion(shell, tab_rect.x + tab_rect.w * 0.25f,
                         tab_rect.y + tab_rect.h * 0.5f, 0);
@@ -1748,14 +1575,6 @@ void TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard() {
   SDL_DestroySurface(pixels);
 }
 
-// Opening a menu with a CLICK must leave the sidebar painted. The GUI QA driver's
-// first runs (tools/qa, 2026-10-15) showed the File menu open over a BLANK sidebar
-// column -- tree or search view, from a fresh instance -- with the content back
-// only once the menu closed; see TD-2026-10-15-343. The keyboard open path was
-// already pinned (the test above); this is the pointer path: the motion, press
-// and release each return their own redraw, folded as the app loop folds them,
-// painted clip by clip with the clip as the dirty hint, and compared with a full
-// repaint of the same state.
 void TestWorkspaceShellOpeningAMenuByClickKeepsTheSidebar() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -1788,7 +1607,6 @@ void TestWorkspaceShellOpeningAMenuByClickKeepsTheSidebar() {
   Expect(file_item.has_value(), "the File menu should be on the menu bar");
   const float x = file_item->x + file_item->w / 2.0f;
   const float y = file_item->y + file_item->h / 2.0f;
-  // The app loop folds each event's own redraw with whatever the shell queued.
   microide::workspace::RenderInvalidation invalidation;
   for (const SDL_Event& event : {MouseMotionEvent(x, y), MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
                                  MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)}) {
@@ -1812,10 +1630,6 @@ void TestWorkspaceShellOpeningAMenuByClickKeepsTheSidebar() {
              std::to_string(differences) + " pixels differ");
 }
 
-// A menu opened from the bar starts with its first enabled row as the ACTIVE
-// (keyboard) item, painted highlighted. The pointer entering another row repainted
-// the previously HOVERED row (none) and the new one, so the first row stayed
-// highlighted beside the hovered one. Found by the QA redraw verifier.
 void TestWorkspaceShellHoveringIntoAClickedMenuRepaintsItsFirstRow() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -1876,11 +1690,6 @@ void TestWorkspaceShellHoveringIntoAClickedMenuRepaintsItsFirstRow() {
                                std::to_string(differences) + " pixels differ");
 }
 
-// Find-in-files into the query field and back out, each frame equal to a full
-// repaint. The QA redraw verifier reported the query field stale after
-// ctrl+shift+f, Escape; the cause was frame prep syncing the active text-input
-// surface after building the view models (5f80d5ec): the frame that focused the
-// field drew it unfocused, and nothing repainted it until the next blink.
 void TestWorkspaceShellEscapeFromFindInFilesRepaintsTheField() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -1918,11 +1727,6 @@ void TestWorkspaceShellEscapeFromFindInFilesRepaintsTheField() {
                                  DescribePixelDiff(escape));
 }
 
-// A row under an open menu does not hover through it. The Edit menu drops over
-// the tree; with the pointer on one of its rows, the tree row beneath the pointer
-// painted its hover background wherever the menu did not cover it -- on full
-// frames only, since a hover move under a menu repaints just the popup rows. Found
-// by the QA redraw verifier (QA-STALE at the tree row's left edge, beside the menu).
 void TestWorkspaceShellRowUnderAnOpenMenuDoesNotHoverThroughIt() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -1968,7 +1772,6 @@ void TestWorkspaceShellRowUnderAnOpenMenuDoesNotHoverThroughIt() {
       WorkspaceShellTestAccess::PopupMenuItemRect(shell, WorkspaceShell::MenuId::Edit, "Paste");
   Expect(row.has_value(), "the Edit menu should list Paste");
   const SDL_FRect sidebar = WorkspaceShellTestAccess::CurrentLayout(shell).sidebar;
-  // On the menu row, over the tree.
   const float x = std::min(row->x + 40.0f, sidebar.x + sidebar.w - 10.0f);
   const float y = row->y + row->h / 2.0f;
   Expect(x > row->x && x < sidebar.x + sidebar.w, "the probe point should be over the menu and the tree");
@@ -1978,13 +1781,6 @@ void TestWorkspaceShellRowUnderAnOpenMenuDoesNotHoverThroughIt() {
                                 DescribePixelDiff(hover));
 }
 
-// A menu row drawn over the sidebar's view buttons runs when clicked. The chrome
-// press handler tested the view buttons before the open menu, so the press went to
-// the button beneath: with the project strip shown, File's fourth row (then Remote:
-// Open Folder on Host…) sat over the Search button, and clicking it switched the sidebar to Search
-// and left the menu open (reported from use as "nothing happens, and the mouse
-// interacts with the items below the menu"). The `ui` query's receipt names the row
-// the click ran, which is how tools/qa now checks every row of every menu.
 void TestWorkspaceShellMenuRowOverTheSidebarViewButtonsRunsTheRow() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2008,8 +1804,6 @@ void TestWorkspaceShellMenuRowOverTheSidebarViewButtonsRunsTheRow() {
   shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
 
-  // A dirty file, so the row that lies over the view buttons with the project strip
-  // shown -- Save -- is enabled and has something to do.
   WorkspaceShellTestAccess::OpenFile(shell, root / "alpha.cpp");
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("// edited\n");
   shell.Render(canvas.renderer(), kWidth, kHeight);
@@ -2021,9 +1815,6 @@ void TestWorkspaceShellMenuRowOverTheSidebarViewButtonsRunsTheRow() {
                                MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, file->x + 4.0f, file->y + 4.0f)});
   Expect(WorkspaceShellTestAccess::MenuBarOpen(shell), "clicking File should open it");
 
-  // Over another view's button where there is one, so a stolen press shows as a
-  // view switch as well as a menu left open. Whichever File row lies there (it was
-  // Remote: Open Folder on Host… until that moved to the Remote menu).
   const std::string view_before = WorkspaceShellTestAccess::SidebarViewId(shell);
   std::vector<std::string> views{"tree", "search", "git"};
   std::stable_partition(views.begin(), views.end(), [&](const std::string& v) { return v != view_before; });
@@ -2069,12 +1860,6 @@ void TestWorkspaceShellMenuRowOverTheSidebarViewButtonsRunsTheRow() {
   Expect(ui["menu"]["rowsRun"].AsInt() == 1, "one click should run one row");
 }
 
-// A field that loses the keyboard repaints its focus ring. Opening a menu takes the
-// keyboard from the Search view's query field: the frame took the caret off (it
-// tracks the caret region it painted) but left the field's focused border, since
-// nothing damaged the field. Menus that drop over the sidebar hid it by repainting
-// what they cover; Help's does not reach the sidebar. Found by `tools/qa/run.py
-// suite menu-clicks` (QA-STALE on the query field after every Help row).
 void TestWorkspaceShellMenuTakingTheKeyboardRepaintsTheFieldFocusRing() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2124,12 +1909,6 @@ void TestWorkspaceShellMenuTakingTheKeyboardRepaintsTheFieldFocusRing() {
                                 DescribePixelDiff(close));
 }
 
-// Opening a menu suspends the caret, and the frame that opens it takes the caret
-// off the screen. Each transition that moves the caret (focus elsewhere, a menu or
-// prompt suspending the blink) used to need its own damage request, and a menu
-// opened by click had none for the caret: the editor (or terminal) caret stayed on
-// screen beside the menu until something else repainted it. Found by the QA
-// redraw verifier (an 8x18 terminal caret in every frame of `suite menus`).
 void TestWorkspaceShellOpeningAMenuTakesTheCaretOffScreen() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2157,8 +1936,6 @@ void TestWorkspaceShellOpeningAMenuTakesTheCaretOffScreen() {
   SoftwareCanvas canvas(kWidth, kHeight);
   pin_caret();
   shell.Render(canvas.renderer(), kWidth, kHeight);
-  // The caret low in the editor, below anything the File menu's own repaint
-  // reaches (the menu bar and popup's bounding box).
   (void)DispatchEvents(shell, {KeyDownEvent(SDLK_END, SDL_KMOD_CTRL)});
   pin_caret();
   shell.Render(canvas.renderer(), kWidth, kHeight);
@@ -2180,10 +1957,6 @@ void TestWorkspaceShellOpeningAMenuTakesTheCaretOffScreen() {
                                DescribePixelDiff(open));
 }
 
-// An edit repaints every pane that shows the document. With a file split into
-// two panes, typing in one repainted only the focused pane, so the other pane kept
-// the old line until something else repainted it. VS Code updates both. Found by
-// the QA redraw verifier (tools/qa suite split-and-close).
 void TestWorkspaceShellEditRepaintsEveryPaneOfTheDocument() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2218,12 +1991,6 @@ void TestWorkspaceShellEditRepaintsEveryPaneOfTheDocument() {
                                 DescribePixelDiff(typed));
 }
 
-// One prepared frame paints one terminal. The session is written by its PTY
-// reader thread, and paint read it live (line count, lines, cursor -- three
-// separate locks) and even persisted the scroll mid-paint, so output landing
-// between two renders of one frame -- a partial frame's clips, or the QA redraw
-// verifier's reference -- painted different text and a different caret. Found by
-// the QA redraw verifier (a 16x18 caret cell stale behind each typed character).
 void TestWorkspaceShellTerminalIsFixedForAPreparedFrame() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2254,7 +2021,6 @@ void TestWorkspaceShellTerminalIsFixedForAPreparedFrame() {
   SDL_FlushRenderer(canvas.renderer());
   SDL_Surface* first = SDL_DuplicateSurface(canvas.surface());
 
-  // Output lands (the reader thread writes the session) before the frame's next render.
   TerminalSessionTestAccess::AppendOutput(session, "echo hello");
   shell.RenderClip(token, canvas.renderer(), kWidth, kHeight);
   SDL_FlushRenderer(canvas.renderer());
@@ -2264,12 +2030,6 @@ void TestWorkspaceShellTerminalIsFixedForAPreparedFrame() {
                                DescribePixelDiff(diff));
 }
 
-// A maximized panel paints the same frame whether or not a clip hint lets the
-// render skip the surfaces the panel replaced. The editor column collapses under a
-// maximized panel; a hinted pass skipped it, an unhinted full render painted it at
-// its collapsed rect anyway and left marks under the menu bar. Found by the QA
-// redraw verifier (tools/qa suite terminal: a 94x94 patch at the top-left on every
-// frame after Maximize).
 void TestWorkspaceShellMaximizedPanelPaintsNoHiddenSurface() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2304,12 +2064,6 @@ void TestWorkspaceShellMaximizedPanelPaintsNoHiddenSurface() {
                                DescribePixelDiff(diff));
 }
 
-// Clicking a status-bar segment that opens a modal (the indent segment opens
-// Settings) takes its hover and tooltip off the screen, and moving under the
-// modal shows none: a modal owns the pointer. The status bar painted hover and a
-// tooltip from the raw pointer under Settings, and the frame that opened Settings
-// left the segment's hover and tooltip behind. Found by the QA redraw verifier
-// (tools/qa suite chrome: the indent tooltip on screen after the pointer moved on).
 void TestWorkspaceShellAStatusSegmentModalOwnsThePointer() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2364,16 +2118,9 @@ void TestWorkspaceShellAStatusSegmentModalOwnsThePointer() {
        {MouseMotionEvent(encoding->x + encoding->w / 2.0f, encoding->y + encoding->h / 2.0f)});
 }
 
-// Opening Settings over a focused terminal takes the terminal's caret off the
-// screen (Settings owns the keyboard; its query field has its own static caret),
-// and typing into Settings leaves the terminal alone. Found by the QA monkey
-// (seed 1: the terminal caret differed under Settings while typing).
-// A breadcrumb click names the folder segment under it, or the file's own folder
-// for the file segment; off the text, nothing (TD-2026-10-18-361).
 void TestBreadcrumbFolderAtNamesTheSegmentUnderTheClick() {
   using microide::workspace::BreadcrumbFolderAt;
   const auto width = [](std::string_view text) { return static_cast<float>(text.size()) * 10.0f; };
-  // "src/ui/view.cpp" from x = 100: "src" spans 100..130, "ui" 140..160, the file after.
   Expect(BreadcrumbFolderAt("src/ui/view.cpp", 100.0f, 115.0f, width) == std::optional<std::string>("src"),
          "a click on src names src");
   Expect(BreadcrumbFolderAt("src/ui/view.cpp", 100.0f, 150.0f, width) == std::optional<std::string>("src/ui"),
@@ -2387,8 +2134,6 @@ void TestBreadcrumbFolderAtNamesTheSegmentUnderTheClick() {
          "off the text names nothing");
 }
 
-// The status bar's line-ending and indentation segments open their picks, and
-// the line ending changes as an edit; a breadcrumb click browses its folder.
 void TestWorkspaceShellChromeSegmentsAreInteractive() {
   EnsureDummySdlVideo();
   TemporaryDirectory temp_dir;
@@ -2437,11 +2182,10 @@ void TestWorkspaceShellChromeSegmentsAreInteractive() {
          "clicking it offers the indentation choices, not Settings");
   Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Escape closes it");
 
-  // The breadcrumb's file segment: the file's folder, as a pick.
   shell.Render(canvas.renderer(), 1280, 720);
   const auto rects = WorkspaceShellTestAccess::EditorGroupRectsFor(shell, WorkspaceShellTestAccess::CurrentLayout(shell));
   const SDL_FRect band = rects.groups[0].breadcrumb;
-  (void)SendMouseDown(shell, band.x + 14.0f, band.y + band.h / 2.0f, SDL_BUTTON_LEFT);  // on "src"
+  (void)SendMouseDown(shell, band.x + 14.0f, band.y + band.h / 2.0f, SDL_BUTTON_LEFT);
   const auto& browse = WorkspaceShellTestAccess::QuickPick(shell);
   Expect(WorkspaceShellTestAccess::OverlayVisible(shell) && browse.title == "src" &&
              std::any_of(browse.items.begin(), browse.items.end(),
@@ -2480,19 +2224,12 @@ void TestWorkspaceShellSettingsOverAFocusedTerminalHidesItsCaret() {
   (void)shell.ConsumePendingRenderInvalidation();
   Expect(WorkspaceShellTestAccess::CaretVisibleNow(shell), "the terminal caret should be showing");
 
-  // Settings opens over the focused terminal (from the palette or a menu: Ctrl+,
-  // is the terminal's own key now). The indent status segment used to be the way
-  // in; it opens the indentation pick now (TD-2026-10-18-361).
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "settings"), "the settings command runs");
   const auto open = PaintAndDiffWithFullRepaint(
       shell, canvas, kWidth, kHeight, shell.ConsumePendingRenderInvalidation(), pin_caret);
   Expect(WorkspaceShellTestAccess::SettingsOverlayVisible(shell), "Settings opens over the terminal");
   Expect(open.identical(), "opening Settings over a focused terminal should paint what a full "
                            "repaint paints; " + DescribePixelDiff(open));
-  // Nothing under the modal blinks: the terminal caret is off whatever the phase.
-  // (It used to keep blinking while the blink damage named the Settings field, so
-  // the frame that typed into Settings could paint the terminal caret's region
-  // from a different phase than the one on screen.)
   Expect(!WorkspaceShellTestAccess::ShouldBlinkCaret(shell),
          "no caret should blink under the Settings overlay");
   const auto typed = PaintAndDiffWithFullRepaint(
@@ -2501,10 +2238,6 @@ void TestWorkspaceShellSettingsOverAFocusedTerminalHidesItsCaret() {
                             "repaint paints; " + DescribePixelDiff(typed));
 }
 
-// A menu anchored on a button (the sidebar's "..." views menu) paints the button
-// pressed while it is open; closing the menu repaints the button. Closing
-// repainted the menu's own rect and the menu bar, and the button stayed pressed.
-// Found by the QA monkey (seed 2).
 void TestWorkspaceShellClosingAnAnchoredMenuReleasesItsButton() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2542,13 +2275,11 @@ void TestWorkspaceShellClosingAnAnchoredMenuReleasesItsButton() {
   Expect(WorkspaceShellTestAccess::MenuBarOpen(shell), "the click should open the views menu");
   Expect(open.identical(), "opening the views menu should paint what a full repaint paints; " +
                                DescribePixelDiff(open));
-  // Away from the button, so its own hover does not mask the pressed state.
   const auto away = PaintAndDiffWithFullRepaint(
       shell, canvas, kWidth, kHeight, DispatchEvents(shell, {MouseMotionEvent(700.0f, 400.0f)}),
       pin_caret);
   Expect(away.identical(), "moving off the menu should paint what a full repaint paints; " +
                                DescribePixelDiff(away));
-  // Closed by a click outside it, as a person closes a menu.
   const auto closed = PaintAndDiffWithFullRepaint(
       shell, canvas, kWidth, kHeight,
       DispatchEvents(shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, 700.0f, 400.0f),
@@ -2559,9 +2290,6 @@ void TestWorkspaceShellClosingAnAnchoredMenuReleasesItsButton() {
                                  DescribePixelDiff(closed));
 }
 
-// A modal opening under a hovered window-control button takes the hover off it.
-// The buttons lit up from the raw pointer, under modals too, and nothing repainted
-// them when the modal opened. Found by the QA monkey (seed 1, run-checks qa).
 void TestWorkspaceShellAModalReleasesAHoveredWindowControl() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2604,10 +2332,6 @@ void TestWorkspaceShellAModalReleasesAHoveredWindowControl() {
                                 DescribePixelDiff(modal));
 }
 
-// remote-menu D4: one more top-level menu either fits the bar or goes into the
-// overflow chevron, at every Normal-mode width; nothing is truncated or dropped,
-// and the order is the table's (the bar's prefix, then the chevron's rest). The
-// width from which every menu fits is pinned so the next menu knows the budget.
 void TestWorkspaceShellMenuBarFitsOrOverflowsNeverTruncates() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2625,8 +2349,7 @@ void TestWorkspaceShellMenuBarFitsOrOverflowsNeverTruncates() {
     }
   }
   int fits_from = -1;
-  float needed = 0.0f;  // the bar menus' extent from the bar's left edge, where all fit
-  // 720 is the default compact breakpoint: below it the bar is the hamburger.
+  float needed = 0.0f;
   for (int width = 720; width <= 1600; width += 4) {
     WorkspaceShellTestAccess::SetWindowSize(shell, width, 720);
     WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
@@ -2655,10 +2378,6 @@ void TestWorkspaceShellMenuBarFitsOrOverflowsNeverTruncates() {
       needed = right - bar.x;
     }
   }
-  // Every menu fits at the narrowest Normal width, so the chevron never shows
-  // outside Compact mode with the default breakpoint. The extent the menus need is
-  // pinned (Remote menu added, 2026-10-27): a new top-level menu moves it, and
-  // the budget left at 720px says whether it still fits there.
   constexpr int kMenusExtentPx = 628;
   Expect(fits_from == 720, "every bar menu should fit at the narrowest Normal width, fits from " +
                                std::to_string(fits_from));
@@ -2666,10 +2385,6 @@ void TestWorkspaceShellMenuBarFitsOrOverflowsNeverTruncates() {
          "the bar menus need " + std::to_string(needed) + "px, pinned at " + std::to_string(kMenusExtentPx));
 }
 
-// Left/Right walk the menu BAR. They walked every menu spec, so Right from Help
-// opened a context menu at the bar, and Right in the sidebar's views menu (anchored
-// on its button) switched to the git base menu with the button still painted
-// pressed. An anchored menu has no neighbours. Found by the QA monkey (seed 2).
 void TestWorkspaceShellMenuArrowsWalkOnlyTheMenuBar() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2709,10 +2424,6 @@ void TestWorkspaceShellMenuArrowsWalkOnlyTheMenuBar() {
          "Right in an anchored menu should stay in it");
 }
 
-// The bottom panel's header buttons repaint their hover. The maximize button lit
-// up from the pointer on full frames but nothing repainted it when the pointer
-// arrived: the hover tracking did not know the header buttons. Found by the QA
-// monkey (seed 2).
 void TestWorkspaceShellPanelHeaderButtonRepaintsItsHover() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2751,10 +2462,6 @@ void TestWorkspaceShellPanelHeaderButtonRepaintsItsHover() {
   }
 }
 
-// A remote project's tab says so: its host after the name, and its connection's
-// state as the tab's top-left corner, in the welcome page's stage colours. A local
-// project's tab has neither. The corner follows the state through the strip's
-// source cache, which must not hand back the old colour.
 void TestWorkspaceShellRemoteProjectTabShowsHostAndConnectionCorner() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2792,13 +2499,11 @@ void TestWorkspaceShellRemoteProjectTabShowsHostAndConnectionCorner() {
   const auto theme = microide::render::MakeDefaultTheme();
   const auto same = [](SDL_Color a, SDL_Color b) { return a.r == b.r && a.g == b.g && a.b == b.b; };
   SoftwareCanvas canvas(kWidth, kHeight);
-  // `row` counts down from the tab's top edge, one pixel in from its left.
   const auto pixel_of = [&](std::size_t index, int row) {
     shell.Render(canvas.renderer(), kWidth, kHeight);
     const SDL_FRect rect = WorkspaceShellTestAccess::ProjectTabRect(shell, index);
     return canvas.PixelAt(static_cast<int>(rect.x) + 1, static_cast<int>(rect.y) + row);
   };
-  // The active tab's top accent is 2 px: the flag hangs from it, never over it.
   const auto corner_of = [&](std::size_t index) { return pixel_of(index, 3); };
   Expect(same(corner_of(1), theme.diagnostic_error), "an offline project's corner is the error colour");
   Expect(!same(pixel_of(1, 0), theme.diagnostic_error) && !same(pixel_of(1, 1), theme.diagnostic_error),
@@ -2814,15 +2519,11 @@ void TestWorkspaceShellRemoteProjectTabShowsHostAndConnectionCorner() {
   Expect(same(corner_of(1), theme.diff_added),
          "once connected and synced, the same tab's corner turns to the done colour");
 
-  // Not the active tab: no accent, so the corner starts at the tab's own top edge.
   Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0), "switching to the local project");
   Expect(same(pixel_of(1, 0), theme.diff_added) && same(pixel_of(1, 1), theme.diff_added),
          "an inactive tab's corner starts at its top edge, with no gap above it");
 }
 
-// A Terminal panel with no terminal shows its New Terminal button. The button was
-// painted only beside a tab, so the empty panel -- whose hint says "use + on the
-// tab strip" -- had a clickable button nobody could see.
 void TestWorkspaceShellEmptyTerminalPanelShowsItsNewTerminalButton() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2849,7 +2550,6 @@ void TestWorkspaceShellEmptyTerminalPanelShowsItsNewTerminalButton() {
 
   const SDL_FRect button = WorkspaceShellTestAccess::BottomPanelTerminalNewTabRect(shell);
   Expect(button.w > 0.0f, "the empty Terminal panel should lay out its New Terminal button");
-  // The plus crosses the button's centre; two pixels down and right is off both arms.
   const int cx = static_cast<int>(std::floor(button.x + button.w * 0.5f));
   const int cy = static_cast<int>(std::floor(button.y + button.h * 0.5f));
   const SDL_Color glyph = canvas.PixelAt(cx, cy);
@@ -2858,9 +2558,6 @@ void TestWorkspaceShellEmptyTerminalPanelShowsItsNewTerminalButton() {
          "the empty Terminal panel should paint the + of its New Terminal button");
 }
 
-// Dragging a bottom-panel tab and dropping it repaints the strip: the drag ghost
-// is gone after the drop. Found by the QA monkey (seed 3: the dragged "bash" tab's
-// ghost stayed on the strip after the drop).
 void TestWorkspaceShellDroppingAPanelTabClearsItsGhost() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2908,11 +2605,9 @@ void TestWorkspaceShellDroppingAPanelTabClearsItsGhost() {
   }
   step("dropping the tab", {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x + 58.0f, y)});
 
-  // An editor-tab drag that starts while the dropped panel tab still glides home
-  // takes the slide slot; the panel strip must not keep its in-flight offset.
   WorkspaceShellTestAccess::OpenFileInNewTab(shell, root / "beta.cpp");
   pin_caret();
-  shell.Render(canvas.renderer(), kWidth, kHeight);  // the test-access open requests no damage
+  shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
   const SDL_FRect editor_tab = WorkspaceShellTestAccess::EditorTabRect(shell, 1);
   const float ex = editor_tab.x + editor_tab.w / 3.0f;
@@ -2926,9 +2621,6 @@ void TestWorkspaceShellDroppingAPanelTabClearsItsGhost() {
   step("dropping the editor tab", {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, ex - 40.0f, ey)});
 }
 
-// Closing Settings repaints the area it covered, whatever overlay is left. With
-// the find widget up, closing Settings repainted only the find widget, and the
-// dimmed Settings card stayed on screen. Found by the QA monkey (seed 1).
 void TestWorkspaceShellClosingSettingsOverTheFindWidgetRepaintsItsArea() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2964,9 +2656,6 @@ void TestWorkspaceShellClosingSettingsOverTheFindWidgetRepaintsItsArea() {
   step("closing Settings", DispatchEvents(shell, {KeyDownEvent(SDLK_ESCAPE)}));
 }
 
-// Dragging the sidebar divider and releasing it paints, at every step, what a full
-// repaint paints -- including the divider's own drag highlight, which must go when
-// the drag ends. Found by the QA monkey (seed 4: a 1-px column at the divider).
 void TestWorkspaceShellSidebarDividerDragPaintsCleanly() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3012,10 +2701,6 @@ void TestWorkspaceShellSidebarDividerDragPaintsCleanly() {
   step("moving away", {MouseMotionEvent(x + 300.0f, y)});
 }
 
-// Double-clicking the panel divider resets the panel height, which moves the
-// editor's bottom edge: the frame repaints both. It repainted only the new panel,
-// and the band between the old and new panel top kept the old header. Found by
-// the QA monkey (seed 5).
 void TestWorkspaceShellPanelDividerResetRepaintsTheLayout() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3055,10 +2740,6 @@ void TestWorkspaceShellPanelDividerResetRepaintsTheLayout() {
                                DescribePixelDiff(diff));
 }
 
-// A prompt opening over the command palette dims the whole window once more, so
-// the frame repaints the window, not just the dialog. Found by the QA monkey
-// (seeds 7 and 9: a Go to Line prompt over the palette, the unsaved-changes prompt
-// over a prompt).
 void TestWorkspaceShellAStackedModalRedimsTheWindow() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3087,10 +2768,8 @@ void TestWorkspaceShellAStackedModalRedimsTheWindow() {
   shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
 
-  // The palette's own command line opens Go to Line over it, as the monkey did.
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "goto"), "goto should run");
   Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell), "goto should open its prompt");
-  // Only the dialog's own damage, as a prompt opening asks for.
   microide::workspace::RenderInvalidation dialog_only;
   const SDL_FRect dialog = microide::workspace::ComputePromptSurfaceRect(
       WorkspaceShellTestAccess::CurrentLayout(shell).full);
@@ -3101,9 +2780,6 @@ void TestWorkspaceShellAStackedModalRedimsTheWindow() {
                                DescribePixelDiff(diff));
 }
 
-// A tab tooltip whose tab changed under a still pointer (a tab moved into the
-// slot) repaints with the new name. Found by the QA monkey (seed 5: the card still
-// named README.md over the taskflow tab).
 void TestWorkspaceShellTabTooltipFollowsATabMovedUnderThePointer() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3143,11 +2819,6 @@ void TestWorkspaceShellTabTooltipFollowsATabMovedUnderThePointer() {
                                 DescribePixelDiff(moved));
 }
 
-// A narrow source-control view keeps its labels inside it. "nothing staged",
-// beside the Commit button, was truncated to the sidebar's whole width though it
-// starts after the button, so it painted across the sidebar edge into the editor
-// -- on full frames; a sidebar repaint, clipped to the sidebar, did not. Found by
-// the QA monkey (seed 4).
 void TestWorkspaceShellNarrowGitViewKeepsItsLabelsInside() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3166,7 +2837,6 @@ void TestWorkspaceShellNarrowGitViewKeepsItsLabelsInside() {
          "the git fixture should open its project");
   WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
-  // Inline blame loads asynchronously and would land between the two paints.
   WorkspaceShellTestAccess::SetSettingValue(shell, "editor.blame.inline.enabled", "false");
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
   Expect(SettleGitSidebarRefresh(shell), "the git view should settle");
@@ -3178,18 +2848,12 @@ void TestWorkspaceShellNarrowGitViewKeepsItsLabelsInside() {
   pin_caret();
   shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
-  // An editor repaint paints over anything the sidebar spilled into it; a full
-  // repaint spills it again.
   microide::workspace::RenderInvalidation editor_only;
   editor_only.rects.push_back(WorkspaceShellTestAccess::CurrentLayout(shell).editor_surface);
   const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, editor_only, pin_caret);
   Expect(diff.identical(), "a narrow git view should paint inside itself; " + DescribePixelDiff(diff));
 }
 
-// A tree selection that moves with no repaint of its own -- activating a tab in the
-// other split pane selects its file in the tree, as VS Code's explorer follows the
-// active editor, and that path damaged only the panes -- is repainted by the next
-// frame, whatever it repaints. Found by the QA monkey (seed 5; replay-verified).
 void TestWorkspaceShellTreeFollowingTheActiveTabRepaints() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3224,10 +2888,6 @@ void TestWorkspaceShellTreeFollowingTheActiveTabRepaints() {
                                DescribePixelDiff(diff));
 }
 
-// The same for an editor split divider, whose highlight runs the full height of
-// the split -- through the panes' tab strips and breadcrumbs, not just their text
-// surfaces. The press damaged only the editor surface, so the highlight's top
-// stayed unlit (QA suite `dividers`).
 void TestWorkspaceShellEditorSplitDividerDragPaintsCleanly() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3277,11 +2937,6 @@ void TestWorkspaceShellEditorSplitDividerDragPaintsCleanly() {
   step("moving away", {MouseMotionEvent(x - 300.0f, y)});
 }
 
-// A split divider starts at the editor area's top, two pixels above the panes'
-// editor surfaces' chrome ends -- so a repaint of just a pane's tab strip (hovering
-// its first tab) reaches the divider's top rows, and it used to paint the frame
-// base there and skip the editor pass that draws the divider (QA monkey seeds 4
-// and 12: a 6x2 notch at the divider's top).
 void TestWorkspaceShellPaneTabStripRepaintKeepsTheSplitDivider() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3322,9 +2977,6 @@ void TestWorkspaceShellPaneTabStripRepaintKeepsTheSplitDivider() {
   step("leaving it", {MouseMotionEvent(tab.x + 4.0f, tab.y + tab.h + 200.0f)});
 }
 
-// `save <path>` names an untitled buffer, and its tab's title changes with it --
-// but only the dirty marker's tab was repainted, so the strip kept "*Untitled"
-// (QA monkey seed 11). A Save As whose write fails names nothing.
 void TestWorkspaceShellSaveAsRepaintsTheTabTitle() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3364,10 +3016,6 @@ void TestWorkspaceShellSaveAsRepaintsTheTabTitle() {
          "and leaves the buffer untitled, not named after a file that does not exist");
 }
 
-// A prompt opened over Settings (Ctrl+G) is the topmost modal and owns the
-// pointer: the Settings rows around it must not light up under it. The pointer
-// owner was picked Settings-first, so full frames hovered a Settings row the
-// partial ones never repainted (QA monkey seeds 14 and 15).
 void TestWorkspaceShellAPromptOverSettingsOwnsThePointer() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3392,7 +3040,6 @@ void TestWorkspaceShellAPromptOverSettingsOwnsThePointer() {
   shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
 
-  // Row 1: the selected row (0) never paints hover, so it could not show this.
   const SDL_FRect row = WorkspaceShellTestAccess::SettingsOverlayVisibleRowRect(shell, 1);
   Expect(row.w > 0.0f, "Settings should show a second row");
   const auto step = [&](std::string_view what, std::initializer_list<SDL_Event> events) {
@@ -3401,7 +3048,6 @@ void TestWorkspaceShellAPromptOverSettingsOwnsThePointer() {
     Expect(diff.identical(), std::string(what) + " should paint what a full repaint paints; " +
                                  DescribePixelDiff(diff));
   };
-  // From the Go menu, as the monkey did it (the keystroke goes to Settings).
   Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::Goto, {}),
          "Go to Line should run from the menu");
   {
@@ -3418,8 +3064,6 @@ void TestWorkspaceShellAPromptOverSettingsOwnsThePointer() {
   SDL_Surface* before = SDL_DuplicateSurface(canvas.surface());
   step("moving onto a Settings row outside the prompt", {MouseMotionEvent(x, y)});
   step("wheeling there", {MouseWheelEvent(x, y, -2.0f)});
-  // The canvas now holds a full repaint: under the prompt nothing may have lit up
-  // or moved.
   Expect(CountPixelDifferences(before, canvas.surface()) == 0,
          "a Settings row under a prompt must not hover or scroll");
   SDL_DestroySurface(before);
@@ -3427,10 +3071,6 @@ void TestWorkspaceShellAPromptOverSettingsOwnsThePointer() {
                           MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)});
 }
 
-// The Settings filter keeps its text inside the bar, scrolled to the caret, as
-// every single-line input does. Drawn whole, a long query ran out of the bar and
-// the card, over the pane beside the overlay that no Settings repaint covers (QA
-// monkey seed 4).
 void TestWorkspaceShellSettingsFilterTextStaysInItsBar() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3455,10 +3095,6 @@ void TestWorkspaceShellSettingsFilterTextStaysInItsBar() {
          "the shown query must fit inside the bar's insets, not run past it");
 }
 
-// The find widget's matches are painted in the editor only while the widget is
-// the overlay. Another overlay replacing it (a completion request from the
-// command line) took them off the editor without repainting it, so the match
-// boxes stayed on screen (QA monkey seed 11).
 void TestWorkspaceShellReplacingTheFindWidgetRepaintsItsMatches() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3491,11 +3127,6 @@ void TestWorkspaceShellReplacingTheFindWidgetRepaintsItsMatches() {
   step("the completion list replacing find", shell.ConsumePendingRenderInvalidation());
 }
 
-// The debug pane's divider belongs to the frame base, like the sidebar's and the
-// panel's. Drawn by the pane's own pass, it lay outside the pane's rect, so a
-// repaint that touched only the editor's last column (an editor row redraw)
-// skipped that pass and left the frame base's background in it (QA monkey seed
-// 13: a 1-px gap in the divider).
 void TestWorkspaceShellAnEditorRepaintKeepsTheDebugPaneDivider() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3523,8 +3154,6 @@ void TestWorkspaceShellAnEditorRepaintKeepsTheDebugPaneDivider() {
 
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
   Expect(layout.right_pane.w > 0.0f, "the debug pane should be laid out");
-  // A redraw whose clip -- grown by the partial-redraw padding -- ends exactly on
-  // the divider column, as the monkey's editor-row repaint did.
   const float divider_x = layout.right_pane.x - 1.0f;
   const float right_padding = shell.PartialRedrawClipPadding().right;
   microide::workspace::RenderInvalidation redraw;
@@ -3536,9 +3165,6 @@ void TestWorkspaceShellAnEditorRepaintKeepsTheDebugPaneDivider() {
          "an editor-width repaint should paint what a full repaint paints; " + DescribePixelDiff(diff));
 }
 
-// A save that writes at once (no formatter to wait for) clears the tab's dirty
-// marker, and the strip must be repainted for it: from the command line nothing
-// else asked, so "*README.md" stayed on screen (QA monkey seed 19).
 void TestWorkspaceShellASaveRepaintsTheDirtyMarker() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3570,10 +3196,6 @@ void TestWorkspaceShellASaveRepaintsTheDirtyMarker() {
   step("saving", shell.ConsumePendingRenderInvalidation());
 }
 
-// `sidebar-show` with no view brings a hidden sidebar back, which moves the whole
-// editor column. It set the visibility flag directly -- no layout change, no
-// repaint -- so only the focus ring's sidebar rect was painted and the editor kept
-// its old place under it (QA monkey seed 17).
 void TestWorkspaceShellSidebarShowRepaintsTheMovedEditor() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3605,9 +3227,6 @@ void TestWorkspaceShellSidebarShowRepaintsTheMovedEditor() {
          "showing the sidebar should paint what a full repaint paints; " + DescribePixelDiff(diff));
 }
 
-// The project tab's dirty marker follows its project's editor tabs: saving the
-// last dirty one clears it, and nothing repainted the project strip, so "*repo"
-// stayed on screen (remote QA suite, scenario B onward).
 void TestWorkspaceShellASaveRepaintsTheProjectTabsDirtyMarker() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3644,12 +3263,6 @@ void TestWorkspaceShellASaveRepaintsTheProjectTabsDirtyMarker() {
   step("saving", shell.ConsumePendingRenderInvalidation());
 }
 
-// Whatever moves the tree's rows -- a scroll, a rebuild after a watcher batch, an
-// expansion -- repaints the sidebar, even when it happens between frames with no
-// damage of its own and the next frame repaints only something else. The command
-// fuzzer (seeds 1-3, file churn on) caught frames that repainted just the menu bar
-// while the tree had scrolled or rebuilt under them; frame prep now keys the
-// sidebar's painted state on its scroll row and the tree's entries revision too.
 void TestWorkspaceShellATreeThatMovedRepaintsOnAnUnrelatedFrame() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3674,8 +3287,6 @@ void TestWorkspaceShellATreeThatMovedRepaintsOnAnUnrelatedFrame() {
   shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
 
-  // The tree scrolls with nothing asking for a repaint; the next frame's own
-  // damage is the menu bar only.
   WorkspaceShellTestAccess::SetSidebarScrollRow(shell, 20);
   microide::workspace::RenderInvalidation menu_bar_only;
   menu_bar_only.rects.push_back(WorkspaceShellTestAccess::CurrentLayout(shell).menu_bar);
@@ -3685,10 +3296,6 @@ void TestWorkspaceShellATreeThatMovedRepaintsOnAnUnrelatedFrame() {
                            "paints; " + DescribePixelDiff(diff));
 }
 
-// A split divider that moved between frames -- the split's shares changed with
-// nothing repainting the divider's full height -- repaints the editor area on the
-// next frame, whatever that frame's own damage is (QA monkey seed 21: a 1-px notch
-// where the divider meets the breadcrumb row).
 void TestWorkspaceShellASplitDividerThatMovedRepaintsOnAnUnrelatedFrame() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3725,8 +3332,6 @@ void TestWorkspaceShellASplitDividerThatMovedRepaintsOnAnUnrelatedFrame() {
                            "paints; " + DescribePixelDiff(diff));
 }
 
-// A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
-// is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
   while (SDL_GetTicks() < 2000) {
     SDL_Delay(50);
@@ -3741,9 +3346,6 @@ Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
   return 0;
 }
 
-// A caret blink in the lower pane of a split repaints that pane and leaves the
-// divider above it intact. Found by the QA redraw verifier (tools/qa suite
-// split-and-close: a 1-px row at the lower pane's top edge after split-down).
 void TestWorkspaceShellBlinkInALowerPaneKeepsTheDivider() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3770,7 +3372,6 @@ void TestWorkspaceShellBlinkInALowerPaneKeepsTheDivider() {
   WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, hidden);
   shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
-  // The blink's wake asks for a frame; prep damages the caret's row.
   WorkspaceShell::RenderInvalidation invalidation;
   invalidation.frame = true;
   const auto diff = PaintAndDiffWithFullRepaint(
@@ -3780,9 +3381,6 @@ void TestWorkspaceShellBlinkInALowerPaneKeepsTheDivider() {
                                DescribePixelDiff(diff));
 }
 
-// With the terminal's find bar focused, only the find field's caret blinks; the
-// terminal shows a steady outline cursor. It blinked along with the field while
-// the blink repainted only the field's caret. Found by the QA monkey (seed 4).
 void TestWorkspaceShellTerminalFindBarOwnsTheBlink() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3815,7 +3413,6 @@ void TestWorkspaceShellTerminalFindBarOwnsTheBlink() {
   WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, hidden);
   shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
-  // The blink turns visible and repaints the rect it names, as the blink wake does.
   WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks());
   const std::optional<SDL_FRect> blink = shell.CurrentCaretDirtyRect();
   Expect(blink.has_value(), "the find field should name its caret rect");
@@ -3828,12 +3425,6 @@ void TestWorkspaceShellTerminalFindBarOwnsTheBlink() {
                                DescribePixelDiff(diff));
 }
 
-// The caret blink is decided once per prepared frame. Paint sites used to read the
-// clock themselves (the single-line input, the terminal, the commit fields, the
-// compare and merge carets), so two renders of ONE prepared frame could disagree
-// about the caret -- which is what the QA redraw verifier does on every partial
-// frame (a partial render and a full reference render of the same frame), and a
-// blink edge between them was a false QA-STALE.
 void TestWorkspaceShellCaretBlinkIsDecidedOncePerFrame() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3852,8 +3443,6 @@ void TestWorkspaceShellCaretBlinkIsDecidedOncePerFrame() {
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
   WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
   SoftwareCanvas canvas(kWidth, kHeight);
-  // A shell's very first frame sets up its text measurement; the frames under
-  // test are ordinary ones after it.
   shell.Render(canvas.renderer(), kWidth, kHeight);
   WorkspaceShellTestAccess::OpenCommandPalette(shell);
   shell.Render(canvas.renderer(), kWidth, kHeight);
@@ -3867,7 +3456,6 @@ void TestWorkspaceShellCaretBlinkIsDecidedOncePerFrame() {
   SDL_FlushRenderer(canvas.renderer());
   SDL_Surface* first = SDL_DuplicateSurface(canvas.surface());
 
-  // The clock moves into the hidden phase between the two renders of the frame.
   WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, hidden_epoch);
   shell.RenderClip(token, canvas.renderer(), kWidth, kHeight);
   SDL_FlushRenderer(canvas.renderer());
@@ -3877,11 +3465,6 @@ void TestWorkspaceShellCaretBlinkIsDecidedOncePerFrame() {
                                std::to_string(differences) + " pixels differ");
 }
 
-// The first frame after focus moves to a text input paints that input's caret.
-// Frame prep built the text-input view model and only THEN synced the active
-// surface, so the frame that opened the command palette still described the
-// editor: no caret in the palette until the next blink repaint, half a second
-// later. Found by the QA redraw work (the blink test below was vacuous for it).
 void TestWorkspaceShellOpenedPaletteShowsItsCaretOnTheFirstFrame() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3916,12 +3499,6 @@ void TestWorkspaceShellOpenedPaletteShowsItsCaretOnTheFirstFrame() {
                                std::to_string(differences) + " pixels differ");
 }
 
-// The editor paints its caret only while it owns the blinking caret. The blink
-// repaint names ONE caret's rect -- the focused input's -- but the editor drew its
-// caret in that blink phase whenever its pane was the active one, focused or not.
-// With the terminal or a sidebar field focused, the editor caret froze in whatever
-// phase the last editor repaint caught. Found by the QA redraw verifier
-// (QA-STALE 1x18 at the editor's first column while the terminal blinked).
 void TestWorkspaceShellUnfocusedEditorDoesNotPaintTheBlinkingCaret() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3946,8 +3523,6 @@ void TestWorkspaceShellUnfocusedEditorDoesNotPaintTheBlinkingCaret() {
              microide::workspace::TextInputSurface::SidebarSearchQuery,
          "the search view's query field should own the keyboard");
 
-  // Hidden phase painted in full; then the blink turns visible and repaints the
-  // rect it names, as the blink wake does.
   WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, HiddenCaretBlinkEpoch(shell));
   shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
@@ -3967,14 +3542,6 @@ void TestWorkspaceShellUnfocusedEditorDoesNotPaintTheBlinkingCaret() {
                                std::to_string(differences) + " pixels differ");
 }
 
-// A repaint of the editor under an open menu must repaint the editor. RenderClip
-// skips the editor, sidebar and panels when a dirty rect lies inside the open
-// chrome ("only a popup row changed"), and tested that against the BOUNDING BOX
-// of the menu bar and the popup. The bar spans the window, so with the Edit menu
-// open -- tall enough to reach the bottom of the editor -- the box covered the
-// whole editor: a caret blink or a file reload there skipped the editor and left
-// the window background painted over it until the menu closed. Reported as "the
-// editor goes black while the Edit menu is open".
 void TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -4012,8 +3579,6 @@ void TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor() {
   const std::optional<SDL_FRect> popup =
       WorkspaceShellTestAccess::PopupMenuRectForTest(shell, WorkspaceShell::MenuId::Edit);
   Expect(popup.has_value(), "the Edit menu should be open");
-  // A band of the first text row to the right of the popup: not under any chrome,
-  // but inside the bar+popup bounding box -- the case the box got wrong.
   const float left = popup->x + popup->w + 24.0f;
   const SDL_FRect damage{left, layout.editor_surface.y + 6.0f,
                          layout.editor_surface.x + layout.editor_surface.w - left - 24.0f, 14.0f};
@@ -4041,9 +3606,6 @@ void TestWorkspaceShellProjectTabTooltipDismissRetainedRedrawMatchesFullRender()
   return;
 #endif
 #if defined(__SANITIZE_THREAD__)
-  // TSAN-instrumented redraw scheduling can perturb retained/full tooltip-dismiss parity in the
-  // aggregate chrome suite while the isolated fixture remains stable; skip this pixel-equality
-  // assertion in TSAN and keep the dedicated single-test path for coverage.
   return;
 #endif
   EnsureDummySdlVideo();
@@ -4173,10 +3735,6 @@ void TestWorkspaceShellPromptInputRendersSharedFramedField() {
   SDL_DestroySurface(pixels);
 }
 
-// Every list in the shell lifts the row under the pointer — sidebar, overlay
-// pickers, debug pane, tab strips. Settings, the largest list in the app and one
-// whose rows already turn the cursor into a hand, painted only its keyboard
-// selection: the pointer moved over a hundred clickable rows with no feedback.
 void TestWorkspaceShellSettingsRowsLiftOnHover() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -4194,8 +3752,6 @@ void TestWorkspaceShellSettingsRowsLiftOnHover() {
   WorkspaceShellTestAccess::SetSettingsOverlayCategory(shell, 0);
   WorkspaceShellTestAccess::SetSettingsOverlaySelectedRow(shell, 0);
 
-  // Hover the *second* visible row, so the selection is somewhere else and the
-  // lift under test cannot be the selected fill.
   const SDL_FRect row = WorkspaceShellTestAccess::SettingsOverlayVisibleRowRect(shell, 1);
   Expect(row.w > 0.0f && row.h > 0.0f, "the settings fixture should expose a second value row");
   Expect(WorkspaceShellTestAccess::SettingsOverlaySelectedRowIndex(shell) == 0,
@@ -4216,7 +3772,6 @@ void TestWorkspaceShellSettingsRowsLiftOnHover() {
     return color.r == theme.row_highlight.r && color.g == theme.row_highlight.g &&
            color.b == theme.row_highlight.b && color.a == theme.row_highlight.a;
   };
-  // Sample the row's left edge, clear of the label text and of any control.
   const float sample_x = row.x + 3.0f;
   const float sample_y = row.y + row.h * 0.5f;
 
@@ -4229,10 +3784,6 @@ void TestWorkspaceShellSettingsRowsLiftOnHover() {
          "the settings row under the pointer should lift like every other list row");
 }
 
-// The bottom panel draws a focus ring for its terminal and Output contents, but
-// the plugin-surface branch returned before reaching it — so a focused preview was
-// the one surface in the shell with no visible focus, in a panel that is in the
-// Ctrl+Tab ring and answers the navigation keys.
 void TestWorkspaceShellPluginSurfacePanelDrawsItsFocusRing() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -4256,8 +3807,6 @@ void TestWorkspaceShellPluginSurfacePanelDrawsItsFocusRing() {
     return color.r == theme.accent.r && color.g == theme.accent.g &&
            color.b == theme.accent.b && color.a == theme.accent.a;
   };
-  // DrawSurfaceFocusRing outlines the region inset by one pixel, so the ring's
-  // left edge sits one pixel inside the panel.
   const auto ring_pixel = [&]() {
     const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
     SoftwareCanvas canvas(1280, 720);
@@ -4402,9 +3951,6 @@ void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
   text_event.text.text = typed_text.c_str();
   const auto typed = undo_shell.HandleEvent(text_event);
   Expect(typed.handled, "undo invalidation fixture should type into the editor first");
-  // The typed text's frame, as the app paints it before the next key: the editor's
-  // damage is derived from what was last prepared, and an undo of a keystroke no
-  // frame ever showed changes nothing on screen.
   (void)FrameDamage(undo_shell, undo_shell_canvas, 1280, 720, typed.redraw);
   const SDL_FRect undo_editor_surface = WorkspaceShellTestAccess::CurrentLayout(undo_shell).editor_surface;
   const auto undo = handle_shortcut(undo_shell, SDLK_Z);
@@ -4498,16 +4044,6 @@ void TestWorkspaceShellEditorTabContextMenuShowsAndExecutesPathActions() {
          "Copy Absolute Path should copy the active tab path");
 }
 
-// The sidebar renderer dispatches on mode and ends in an unguarded `else` that
-// paints the file tree, and for a long time neither Problems nor Tests had a branch
-// of its own: both fell through and painted the tree's rows under their own header,
-// while their hit-testing, keyboard and context menus acted on the entry list nobody
-// could see. Clicking what looked like a file in Problems jumped to a diagnostic.
-//
-// The earlier version of this test sampled the WHOLE sidebar rect, which the
-// mode-tab row alone makes differ between any two views — so it passed throughout.
-// It samples the list body only (from the first row down), which is the region the
-// fall-through actually corrupted.
 void TestWorkspaceShellSecondarySidebarsDoNotPaintTheFileTree() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -4524,12 +4060,6 @@ void TestWorkspaceShellSecondarySidebarsDoNotPaintTheFileTree() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
-  // Sample from the secondary views' list origin down. Comparing two renders of the
-  // SAME view (before and after a diagnostic arrives) is what keeps this honest: the
-  // file tree's Collapse/Refresh row sits inside this window and its enabled state
-  // differs between views, so 866 pixels of button chrome were enough to satisfy a
-  // bare "Problems must not look like the tree" — which is how the fall-through
-  // survived a test written to catch it.
   const auto body_pixels = [&]() {
     const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
     const float body_top = WorkspaceShellTestAccess::ProblemsSidebarRowRect(shell, 0).y;
@@ -4561,9 +4091,6 @@ void TestWorkspaceShellSecondarySidebarsDoNotPaintTheFileTree() {
     return true;
   };
 
-  // The load-bearing assertion is not "Problems looks different from the tree" — any
-  // stray pixel of chrome satisfies that. It is "Problems reacts to a diagnostic". A
-  // view that paints the file tree cannot: its body is the same before and after.
   WorkspaceShellTestAccess::ShowProblemsSidebar(shell);
   const std::vector<SDL_Color> problems_empty = body_pixels();
 
@@ -4586,7 +4113,6 @@ void TestWorkspaceShellSecondarySidebarsDoNotPaintTheFileTree() {
   Expect(!same(problems_empty, body_pixels()),
          "the Problems sidebar must paint its own rows, not the file tree's");
 
-  // Same property for Tests, the other view that had no branch of its own.
   WorkspaceShellTestAccess::ShowTestsSidebar(shell);
   const std::vector<SDL_Color> tests_body = body_pixels();
   WorkspaceShellTestAccess::ShowProblemsSidebar(shell);
@@ -4594,10 +4120,6 @@ void TestWorkspaceShellSecondarySidebarsDoNotPaintTheFileTree() {
          "the Tests and Problems sidebars must paint their own rows, not one shared tree");
 }
 
-// Call Hierarchy shipped as a command with no availability rule, no feature
-// setting and no menu entry, while its four LSP navigation siblings have all
-// three. Falling off the availability switch reached the trailing `return true`,
-// so it read as enabled with no editor open at all — the only LSP action that did.
 void TestWorkspaceShellCallHierarchyIsGatedLikeItsSiblings() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -4615,7 +4137,6 @@ void TestWorkspaceShellCallHierarchyIsGatedLikeItsSiblings() {
   Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::CallHierarchy),
          "Call Hierarchy should be enabled for a saved buffer");
 
-  // Its own feature toggle now exists and gates it, like every other LSP feature.
   WorkspaceShellTestAccess::SetSettingValue(shell, "lsp.call_hierarchy.enabled", "false");
   Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::CallHierarchy),
          "turning off lsp.call_hierarchy.enabled should disable Call Hierarchy");
@@ -4634,8 +4155,6 @@ void TestWorkspaceShellProjectTabContextMenuCopiesProjectRoot() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
-  // Open an editor tab so the active-tab path is non-empty; the project-tab
-  // Copy Absolute Path must still copy the project root, not the editor file.
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, target);
 
   Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::ProjectCopyAbsolutePath),
@@ -4684,7 +4203,6 @@ void TestWorkspaceShellTreeContextMenuShowsInFileExplorerContainingDir() {
         return true;
       });
 
-  // File entry: should reveal the file's containing directory.
   WorkspaceShellTestAccess::OpenTreeContextMenuForPath(
       shell, TreeContextTargetKind::File, file);
   Expect(WorkspaceShellTestAccess::ExecuteShowInFileExplorer(shell),
@@ -4695,7 +4213,6 @@ void TestWorkspaceShellTreeContextMenuShowsInFileExplorerContainingDir() {
           revealed.string() + ")")
              .c_str());
 
-  // Directory entry: should reveal the directory's parent.
   revealed.clear();
   WorkspaceShellTestAccess::OpenTreeContextMenuForPath(
       shell, TreeContextTargetKind::Directory, nested_dir);
@@ -4708,13 +4225,6 @@ void TestWorkspaceShellTreeContextMenuShowsInFileExplorerContainingDir() {
              .c_str());
 }
 
-// Every mouse path over a popup resolves ONE row by geometry (HitTestPopupRow
-// plus a single IsMenuItemEnabled probe) rather than building the whole row
-// vector: over an open menu the row-building form was a heap allocation and an
-// enablement probe per item on every motion event (TD-2026-09-13-293c). The two
-// have to agree about which row the pointer is on and whether it is live, so
-// this hovers the centre of every painted row and holds the mouse path's answer
-// against the row builder's.
 void TestWorkspaceShellTreeContextMenuHoverMatchesTheRowBuilder() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -4747,20 +4257,15 @@ void TestWorkspaceShellTreeContextMenuHoverMatchesTheRowBuilder() {
       ++separator_or_disabled_rows;
     }
   }
-  // Both branches have to have run, or the agreement above is only half checked.
   Expect(hovered_rows > 0, "no row in the file context menu was enabled");
   Expect(separator_or_disabled_rows > 0,
          "the file context menu had no separator or disabled row to check the -1 branch with");
 
-  // The popup's own padding is inside the popup but on no row: the pointer is
-  // still in the menu, so the hover clears rather than keeping the last row lit.
   Expect(SendMouseMotion(shell, popup_rect->x + 1.0f, popup_rect->y + 1.0f, 0),
          "a motion in the popup padding should be handled");
   Expect(WorkspaceShellTestAccess::TreeContextMenuActiveItemIndex(shell) == -1,
          "hovering the popup padding should light no row");
 
-  // And a click on a row the builder calls enabled runs it -- the button path
-  // resolves the row the same way, so it must not have drifted from the hover.
   const auto enabled = std::find_if(rows.begin(), rows.end(), [](const auto& row) {
     return row.enabled && !row.separator;
   });
@@ -4770,10 +4275,6 @@ void TestWorkspaceShellTreeContextMenuHoverMatchesTheRowBuilder() {
          "clicking an enabled context menu row should be handled");
 }
 
-// TD-2026-07-17-061: the file-explorer reveal validates its path synchronously
-// (so an obviously-bad target still reports failure at once, driving the error
-// toast) and dispatches only the actual xdg-open subprocess off the shell thread.
-// An empty or missing path must fail fast without spawning anything.
 void TestWorkspaceShellRevealInFileExplorerValidatesPathSynchronously() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -4787,8 +4288,6 @@ void TestWorkspaceShellRevealInFileExplorerValidatesPathSynchronously() {
   Expect(!WorkspaceShellTestAccess::RevealPathInFileExplorer(shell, root / "does-not-exist"),
          "a missing reveal path should fail synchronously without dispatching a subprocess");
 
-  // An injected opener (the deterministic seam) still short-circuits the async
-  // dispatch and returns its own result.
   bool opened = false;
   WorkspaceShellTestAccess::SetFileManagerOpener(
       shell, [&](const std::filesystem::path&) {
@@ -4870,10 +4369,7 @@ void TestWorkspaceShellSidebarModeRetainedRedrawMatchesFullRender() {
 
   Expect(WorkspaceShellTestAccess::ExecuteShowGitSidebar(retained_shell),
          "sidebar redraw regression fixture should switch to the git sidebar");
-  // Settle the async git refresh so the retained (rendered twice) and reference
-  // (rendered once) shells capture the same deterministic git sidebar state.
   WorkspaceShellTestAccess::SettleGitSidebarRefresh(retained_shell);
-  // What the frame repaints: the request plus what preparing it derives.
   const auto redraw = FrameDamage(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight,
                                   retained_shell.ConsumePendingRenderInvalidation());
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(retained_shell);
@@ -4921,8 +4417,6 @@ void TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender() {
   static constexpr int kCanvasWidth = 1280;
   static constexpr int kCanvasHeight = 720;
 
-  // A project open in the window: a strip paints its tabs only for one
-  // (TabStripPaint::shown).
   const auto configure_shell = [&](WorkspaceShell& shell) {
     Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
            "tab redraw regression fixture should open its project");
@@ -4939,7 +4433,6 @@ void TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender() {
 
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(retained_shell, beta),
          "tab redraw regression fixture should open a second file");
-  // What the frame repaints: the request plus what preparing it derives.
   const auto redraw = FrameDamage(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight,
                                   retained_shell.ConsumePendingRenderInvalidation());
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(retained_shell);
@@ -5012,13 +4505,6 @@ void TestWorkspaceShellPartialRedrawWithoutCompareTabSkipsCompareSurfaceRender()
          "partial redraw with no compare tab active should not call RenderCompareSurface");
 }
 
-// Regression: the Settings font-family row draws its stored value through
-// TruncateToWidth, which returns an *owned* std::string. Binding that temporary to a
-// std::string_view (instead of a std::string) dangled the buffer before DrawStringOn
-// ran, so the row painted freed heap — corrupted text that shifted as mouse-move
-// redraws churned memory. Render the overlay with a heap-length font value so ASAN
-// faults if the lifetime bug returns; a name longer than the SSO buffer forces a
-// heap allocation for a deterministic use-after-free rather than a stack read.
 void TestWorkspaceShellSettingsFontRowRendersStoredValueWithoutDanglingView() {
   EnsureDummySdlVideo();
 
@@ -5034,21 +4520,13 @@ void TestWorkspaceShellSettingsFontRowRendersStoredValueWithoutDanglingView() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, kCanvasWidth, kCanvasHeight);
   WorkspaceShellTestAccess::OpenFile(shell, source);
-  // Long enough to force a heap allocation for the value string (so the old bug is
-  // a deterministic heap-use-after-free under ASAN, not a stack read), yet short
-  // enough to fit the 180px value box uncut — TruncateToWidth then heap-copies the
-  // whole value, and the dangling view painted that freed heap.
   Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "editor.font_family",
                                                             "HeapFontName1234"),
          "the font-family String setting should accept an arbitrary value");
   WorkspaceShellTestAccess::OpenSettingsOverlay(shell);
-  // Isolate the font-family row so it is guaranteed on-screen (unfiltered it scrolls
-  // below the visible window) and therefore actually exercises the render branch.
   WorkspaceShellTestAccess::SetSettingsOverlayQueryAndRefresh(shell, "font family");
 
   SoftwareCanvas canvas(kCanvasWidth, kCanvasHeight);
-  // Two frames: a mouse-move redraw re-churns the heap, which is what made the stale
-  // view visibly change frame-to-frame. Both must render cleanly under ASAN.
   shell.Render(canvas.renderer(), kCanvasWidth, kCanvasHeight);
   shell.Render(canvas.renderer(), kCanvasWidth, kCanvasHeight);
 }
@@ -5065,7 +4543,6 @@ void TestWorkspaceShellNewlineInsertionRequestsEditorPartialRedraw() {
   WorkspaceShellTestAccess::OpenFile(shell, source);
   (void)shell.ConsumePendingRenderInvalidation();
 
-  // A frame painted first: the derived surfaces compare with it.
   SoftwareCanvas canvas{1280, 720};
   shell.Render(canvas.renderer(), 1280, 720);
   (void)shell.ConsumePendingRenderInvalidation();
@@ -5076,7 +4553,6 @@ void TestWorkspaceShellNewlineInsertionRequestsEditorPartialRedraw() {
   event.type = SDL_EVENT_KEY_DOWN;
   event.key.key = SDLK_RETURN;
   const auto result = shell.HandleEvent(event);
-  // What the frame repaints: the event's rects and what preparing it derives.
   const auto damage = FrameDamage(shell, canvas, 1280, 720, result.redraw);
   Expect(result.handled,
          "newline redraw regression fixture should insert a newline into the editor");
@@ -5147,7 +4623,6 @@ void TestWorkspaceShellBottomEdgeNewlineRetainedRedrawMatchesFullRender() {
          "bottom-edge newline fixture should insert a newline into both editor shells");
   Expect(!retained_result.redraw.full && !retained_result.redraw.rects.empty(),
          "bottom-edge newline insertion should still use partial redraw invalidation");
-  // Keep the retained-vs-full pixel comparison deterministic by hiding editor caret blinking.
   WorkspaceShellTestAccess::SetFocusSidebar(retained_shell);
   WorkspaceShellTestAccess::SetFocusSidebar(reference_shell);
 
@@ -5167,9 +4642,6 @@ void TestWorkspaceShellBottomEdgeNewlineRetainedRedrawMatchesFullRender() {
     SDL_DestroySurface(reference_pixels);
   }
 
-  // ASAN/UBSAN instrumented runs can produce minor rasterization deltas near
-  // clip boundaries; keep the assertion strict enough to catch real redraw
-  // mismatches while remaining stable across sanitizer builds.
   static constexpr std::size_t kMaxAllowedPixelDiff = 2048;
   Expect(pixel_differences <= kMaxAllowedPixelDiff,
          "retained redraw after a bottom-edge newline should match a full redraw");
@@ -5354,9 +4826,6 @@ void TestWorkspaceShellBottomPanelResizeRequestsFullRedrawAndSettleFrames() {
   const auto first_settle = retained_shell.ConsumePostRenderRedrawRequest();
   Expect(first_settle.has_value(),
          "bottom-panel resize should schedule a follow-up redraw after the first full render");
-  // Scoped to the panel, not the window: the reflow can only change what the
-  // bottom panel shows, and two whole-window repaints per reflow were the third
-  // and fourth full renders of the startup path.
   Expect(!first_settle->full && first_settle->rects.size() == 1,
          "the settle redraw should be a single rect, not a whole-window repaint");
   const SDL_FRect settle_rect = first_settle->rects.front();
@@ -5404,12 +4873,6 @@ void TestWorkspaceShellPrepareFrameRecomputesLayoutAfterResize() {
          "PrepareFrameOnce should recompute layout once on the frame after a resize");
 }
 
-// The layout memo is keyed on its inputs, not on a dirty flag (TD-2026-08-30-280).
-// This walks every live input the shell feeds the key, changes it through the
-// same state the product mutates, and checks two things each time: the memo
-// answers exactly what a from-scratch compute of the current state answers (no
-// stale hit-test geometry), and the layout actually moved (so the case is not
-// vacuous). Ten unchanged queries must cost zero computes.
 void TestWorkspaceShellLayoutMemoTracksEveryInput() {
   using microide::workspace::ComputeLayout;
   using microide::workspace::LayoutModeInputs;
@@ -5476,10 +4939,6 @@ void TestWorkspaceShellLayoutMemoTracksEveryInput() {
          "the second project should open");
   expect_moved("a second project tab (the project tab strip appears)");
 
-  // The frame path reads the same memo the query path fills. First let a frame
-  // settle whatever the project open still applies (live settings, clamps), then
-  // mutate an input, ask through the QUERY path, and prove the next frame
-  // computes nothing -- the query already did.
   SoftwareCanvas canvas(1400, 900);
   shell.Render(canvas.renderer(), 1400, 900);
   WorkspaceShellTestAccess::SetSidebarVisible(shell, true);
@@ -5490,9 +4949,6 @@ void TestWorkspaceShellLayoutMemoTracksEveryInput() {
          "frame prep should serve its layout from the memo the hit-test query just filled");
 }
 
-// The pane-rect memo follows the split tree's revision and the layout VALUE it
-// was asked about: a split, a divider move, and a different layout each miss;
-// the same question twice hits and answers identically.
 void TestWorkspaceShellEditorGroupRectsMemoFollowsTheTree() {
   using microide::workspace::EditorGroupRectsLayout;
   using microide::workspace::EditorSplitOrientation;
@@ -5513,9 +4969,6 @@ void TestWorkspaceShellEditorGroupRectsMemoFollowsTheTree() {
   auto rects_equal = [](const SDL_FRect& a, const SDL_FRect& b) {
     return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
   };
-  // Two asks about the same (layout, tree): the second is always a memo hit. The
-  // first must be a walk after a mutation or a layout change (`require_miss`);
-  // on the very first ask the memo may already be warm from the project open.
   auto rects_after = [&](const WorkspaceLayout& for_layout, bool require_miss, const char* what) {
     util::ResetPerformanceCounters();
     const EditorGroupRectsLayout first = WorkspaceShellTestAccess::EditorGroupRectsFor(shell, for_layout);
@@ -5543,13 +4996,10 @@ void TestWorkspaceShellEditorGroupRectsMemoFollowsTheTree() {
 
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
          "the fixture needs a split");
-  // `SplitEditorGroup` queries the rects itself (redraw placement), so the memo
-  // may already be warm here; what matters is that the ANSWER follows the tree.
   const EditorGroupRectsLayout split = rects_after(layout, false, "after the split");
   Expect(split.groups.size() == 2 && split.dividers.size() == 1,
          "after the split the memo must report two panes and a divider");
 
-  // Same tree, a different layout value: miss, and the panes follow the new width.
   WorkspaceLayout wider = layout;
   wider.editor_area.w += 200.0f;
   const EditorGroupRectsLayout for_wider = rects_after(wider, true, "a different layout value");
@@ -5557,13 +5007,10 @@ void TestWorkspaceShellEditorGroupRectsMemoFollowsTheTree() {
              split.groups[1].editor_surface.x + split.groups[1].editor_surface.w,
          "a wider editor area should push the right pane's edge out");
 
-  // Back to the original layout: the single-entry memo now holds the wider one, so
-  // this misses too -- and must answer the ORIGINAL rects, not the wider ones.
   const EditorGroupRectsLayout back = rects_after(layout, true, "back to the first layout");
   Expect(rects_equal(back.groups[1].editor_surface, split.groups[1].editor_surface),
          "returning to a layout should recompute it, not serve the other layout's rects");
 
-  // A divider move stamps the tree, so the next ask walks again and sees the move.
   Expect(WorkspaceShellTestAccess::ResizeRootSplitDivider(shell, 0, 0.3f),
          "the fixture needs a divider move");
   const EditorGroupRectsLayout moved = rects_after(layout, true, "after a divider move");
@@ -5594,10 +5041,6 @@ void TestWorkspaceShellRenderBuildsEditorViewModelOncePerSimplePaneFrame() {
          "simple single-pane editor frame should build the editor view model exactly once");
 }
 
-// TD-2026-07-17A-004: folding freshness is resolved once per prepared frame in
-// PrepareFrameOnce, not per pane on every partial-redraw RenderClip. Repeated
-// RenderPrepared (retained partial redraws) after a single PrepareRenderFrame
-// must not re-run the state-mutating fold scan.
 void TestWorkspaceShellFoldingRefreshRunsOncePerPreparedFrame() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(1280, 720);
@@ -5613,8 +5056,6 @@ void TestWorkspaceShellFoldingRefreshRunsOncePerPreparedFrame() {
          "folding-refresh regression test should open the project");
   WorkspaceShellTestAccess::OpenFile(shell, file);
 
-  // Settle one full frame so the viewport metrics (visible line count) are set
-  // for the fold scan, then measure a single prepared frame in isolation.
   shell.Render(canvas.renderer(), 1280, 720);
   util::ResetPerformanceCounters();
 
@@ -5623,13 +5064,9 @@ void TestWorkspaceShellFoldingRefreshRunsOncePerPreparedFrame() {
              util::PerfCounterId::FrameRefreshEditorFoldingModelsCalls) == 1,
          "PrepareFrameOnce should resolve editor folding exactly once per prepared frame");
 
-  // The fold scan must actually resolve the braced range during prep, so the
-  // render path can consume an already-fresh model.
   Expect(!WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell)->resolved_ranges().empty(),
          "prepared-frame folding refresh should resolve the fold range before render");
 
-  // Five retained partial redraws off the same prepared frame must not re-run
-  // the fold scan — folding stays resolved from prep.
   for (int i = 0; i < 5; ++i) {
     shell.RenderPrepared(canvas.renderer(), 1280, 720);
   }
@@ -5638,13 +5075,6 @@ void TestWorkspaceShellFoldingRefreshRunsOncePerPreparedFrame() {
          "RenderClip partial redraws must not re-run the folding refresh");
 }
 
-// TD-2026-07-16-30 / standing backlog #9: steady-state frame-prep counts. One
-// prepared frame does each unit of prep work exactly once — frame prep itself,
-// the status-bar model rebuild, and the frame/overlay view-model builds — and
-// retained partial redraws (RenderPrepared) off that frame re-run none of it.
-// The event-driven all-tabs preference apply must not run at all during quiet
-// prep/redraw. Guards the silent per-clip CPU-burn regression class the
-// counters were added to watch.
 void TestWorkspaceShellFramePrepCountersRunOncePerPreparedFrame() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(1280, 720);
@@ -5660,7 +5090,7 @@ void TestWorkspaceShellFramePrepCountersRunOncePerPreparedFrame() {
          "frame-prep counter regression test should open the project");
   WorkspaceShellTestAccess::OpenFile(shell, file);
 
-  shell.Render(canvas.renderer(), 1280, 720);  // settle fonts/layout/first paint
+  shell.Render(canvas.renderer(), 1280, 720);
   util::ResetPerformanceCounters();
 
   shell.PrepareRenderFrame(canvas.renderer(), 1280, 720);
@@ -5710,9 +5140,6 @@ void TestEditorTabStripOverflowControlsScrollAndCount() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   WriteFile(root / "README.md", "tab overflow\n");
-  // Open enough tabs to overflow a 1280-wide strip (each tab clamps at 132px
-  // minimum, so 16 tabs alone won't fit when the strip reserves margins +
-  // chevron space).
   std::vector<std::filesystem::path> sources;
   for (int i = 0; i < 16; ++i) {
     std::filesystem::path p =
@@ -5728,7 +5155,6 @@ void TestEditorTabStripOverflowControlsScrollAndCount() {
     WorkspaceShellTestAccess::OpenFile(shell, p);
   }
 
-  // Force the active tab to the first one so all overflow is on the right.
   WorkspaceShellTestAccess::ActivateTab(shell, 0);
   const auto overflow_at_left =
       WorkspaceShellTestAccess::EditorTabOverflowControls(shell);
@@ -5737,7 +5163,6 @@ void TestEditorTabStripOverflowControlsScrollAndCount() {
   Expect(overflow_at_left.hidden_right > 0,
          "tabs should be hidden right when more open than fit");
 
-  // Scroll right by one and verify hidden counts shift.
   const std::size_t hidden_right_before = overflow_at_left.hidden_right;
   Expect(WorkspaceShellTestAccess::ScrollEditorTabStrip(shell, +1),
          "scrolling the editor tab strip right should report a change");
@@ -5749,15 +5174,10 @@ void TestEditorTabStripOverflowControlsScrollAndCount() {
          "after one right-scroll the right-hidden count should decrement by one");
 }
 
-// The shell resolves horizontal wheel ticks (synthesizing them from Shift+wheel)
-// and hands them to compare, merge and the chrome. The editor ignored them and
-// scrolled down instead, so the same gesture moved sideways in a diff and
-// downwards in the file it was diffing.
 void TestEditorWheelScrollsHorizontally() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path wide = root / "wide.txt";
-  // One line far wider than the viewport, so horizontal scroll has somewhere to go.
   WriteFile(wide, std::string(4000, 'x') + "\n");
 
   WorkspaceShell shell;
@@ -5785,10 +5205,6 @@ void TestEditorWheelScrollsHorizontally() {
          "wheeling back should reduce the horizontal scroll");
 }
 
-// Editor tabs were openable (Ctrl+P) and closable (Ctrl+W) from the keyboard, but
-// there was no chord to move between them at all — the only way was the mouse.
-// Ctrl+PageDown/PageUp cycle, wrapping at both ends as they do in VS Code, and the
-// typed `tabswitch` now reads +N/-N the way its sibling `tabmove` always has.
 void TestEditorTabSwitchAcceptsRelativeOffsetsAndKeyChords() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -5815,8 +5231,6 @@ void TestEditorTabSwitchAcceptsRelativeOffsetsAndKeyChords() {
   Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 0,
          "Ctrl+PageUp should activate the previous tab");
 
-  // Wrapping: previous from the first tab lands on the last, and next from the
-  // last comes back to the first.
   Expect(SendKeyDown(shell, SDLK_PAGEUP, SDL_KMOD_CTRL), "Ctrl+PageUp at the first tab is handled");
   Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == tab_count - 1,
          "Ctrl+PageUp on the first tab should wrap to the last");
@@ -5825,7 +5239,6 @@ void TestEditorTabSwitchAcceptsRelativeOffsetsAndKeyChords() {
   Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 0,
          "Ctrl+PageDown on the last tab should wrap to the first");
 
-  // The same offsets through the typed command, which is what the chords run.
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tabswitch +2"),
          "tabswitch should accept a relative forward offset");
   Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 2,
@@ -5834,16 +5247,12 @@ void TestEditorTabSwitchAcceptsRelativeOffsetsAndKeyChords() {
          "tabswitch should accept a relative backward offset");
   Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 0,
          "tabswitch -2 should move two tabs back");
-  // An absolute slot still resolves, so the relative form is additive.
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tabswitch 2"),
          "tabswitch should still accept an absolute one-based slot");
   Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 1,
          "tabswitch 2 should activate the second tab");
 }
 
-// Reordering a tab was mouse-only. `tabmove` has always taken a relative offset,
-// but nothing reached it from the keyboard; Ctrl+Shift+PageDown/PageUp are VS
-// Code's Move Editor Right / Left, and like it they clamp rather than wrap.
 void TestEditorTabMoveKeyChordsReorderAndClamp() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -5875,17 +5284,12 @@ void TestEditorTabMoveKeyChordsReorderAndClamp() {
              WorkspaceShellTestAccess::OpenTabs(shell)[0].path == first_path,
          "Ctrl+Shift+PageUp moves it back");
 
-  // Clamp, not wrap: moving left from the first slot is a no-op, and the tab
-  // must not reappear at the far end.
   Expect(SendKeyDown(shell, SDLK_PAGEUP, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
          "Ctrl+Shift+PageUp at the first slot is still handled");
   Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 0 &&
              WorkspaceShellTestAccess::OpenTabs(shell)[0].path == first_path,
          "moving left from the first slot clamps instead of wrapping to the end");
 
-  // A two-directional action is half-documented if Help lists one of its chords.
-  // The lookup used to keep only the first binding per action, so Switch Tab
-  // advertised Ctrl+PageDown and never Ctrl+PageUp.
   WorkspaceShellTestAccess::OpenHelpAboutOverlay(shell);
   const auto help_rows = WorkspaceShellTestAccess::HelpAboutRows(shell);
   const auto detail_for = [&](std::string_view label) -> std::string {
@@ -5906,10 +5310,6 @@ void TestEditorTabMoveKeyChordsReorderAndClamp() {
          "Help/About should list both Switch Tab chords");
 }
 
-// The wheel and the ⟨ ⟩ overflow buttons scroll the same strip, so they must stop
-// at the same place. The buttons stop correctly — they disappear once nothing is
-// hidden on that side — but the wheel clamped on the raw scroll index instead, so
-// it ran on to the last tab and left most of the strip blank.
 void TestEditorTabStripWheelStopsWhereTheOverflowButtonDoes() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -5930,30 +5330,24 @@ void TestEditorTabStripWheelStopsWhereTheOverflowButtonDoes() {
   const auto at_left = WorkspaceShellTestAccess::EditorTabOverflowControls(shell);
   Expect(at_left.hidden_left == 0 && at_left.hidden_right > 0,
          "fixture should expose right-side editor-tab overflow");
-  // A full strip at the left end: everything not hidden on the right is on screen.
   const std::size_t visible_when_full = kTotalTabs - at_left.hidden_right;
   Expect(visible_when_full > 1, "fixture should fit more than one tab at a time");
 
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
   const float wheel_x = layout.tab_strip.x + layout.tab_strip.w * 0.5f;
   const float wheel_y = layout.tab_strip.y + layout.tab_strip.h * 0.5f;
-  // Far more notches than there are tabs, so an ungated wheel runs off the end.
   for (int i = 0; i < 40; ++i) {
     SendMouseWheel(shell, wheel_x, wheel_y, -1);
   }
 
   const auto at_right = WorkspaceShellTestAccess::EditorTabOverflowControls(shell);
   Expect(at_right.hidden_right == 0, "wheeling right should reach the last tab");
-  // The point of the stop: the strip is still FULL. Clamping on the raw scroll
-  // index instead left exactly one tab on screen with the rest of the strip blank,
-  // which is what a hidden_left of kTotalTabs - 1 means.
   const std::size_t visible_at_right = kTotalTabs - at_right.hidden_left;
   Expect(visible_at_right > 1,
          "wheeling to the end must leave the strip full, not scroll past the last tab");
   Expect(visible_at_right + 1 >= visible_when_full,
          "the strip at the right end should hold about as many tabs as at the left end");
 
-  // And the same on the way back: it stops with the first tab flush left.
   for (int i = 0; i < 40; ++i) {
     SendMouseWheel(shell, wheel_x, wheel_y, 1);
   }
@@ -6031,10 +5425,6 @@ void TestClosingTabsWhileScrolledRecomputesOverflowImmediately() {
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-  // The strip is the EDITOR COLUMN's width, not the window's (TD-2026-08-19-267),
-  // so the window has to be wide enough that eight tabs fit BESIDE the sidebar --
-  // otherwise this asserts the overflow controls clear on a strip that genuinely
-  // still overflows.
   WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 720);
   for (int i = 0; i < 16; ++i) {
     const std::filesystem::path file = root / ("c" + std::to_string(i) + ".txt");
@@ -6054,15 +5444,11 @@ void TestClosingTabsWhileScrolledRecomputesOverflowImmediately() {
          "closing tabs should recompute overflow immediately when the remaining tabs all fit");
 }
 
-// The MATLAB-style gutter menu opens only on an existing breakpoint, seeds the
-// enable/disable label from the breakpoint's state, and the disable / clear-
-// condition items act without a prompt (clearing keeps hit-count + log message).
 void TestWorkspaceShellBreakpointGutterMenu() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetSettingValue(shell, "debug.enabled", "true");
   const std::filesystem::path path = "/tmp/project/main.cpp";
 
-  // Right-click on a bare line is inert (no breakpoint there yet).
   WorkspaceShellTestAccess::OpenBreakpointContextMenu(shell, path, 9);
   Expect(!WorkspaceShellTestAccess::BreakpointContextMenuOpen(shell),
          "the gutter menu does not open on a line without a breakpoint");
@@ -6072,14 +5458,12 @@ void TestWorkspaceShellBreakpointGutterMenu() {
   store.SetCondition(path, 9, "i > 5");
   store.SetHitCondition(path, 9, ">10");
 
-  // On a breakpoint line the menu opens and seeds the enabled flag (true here).
   WorkspaceShellTestAccess::OpenBreakpointContextMenu(shell, path, 9);
   Expect(WorkspaceShellTestAccess::BreakpointContextMenuOpen(shell),
          "the gutter menu opens on an existing breakpoint");
   Expect(WorkspaceShellTestAccess::BreakpointContextMenuEnabledFlag(shell),
          "the menu seeds the enabled flag from an enabled breakpoint");
 
-  // Toggle-enabled disables the breakpoint without removing it.
   Expect(WorkspaceShellTestAccess::ExecuteBreakpointMenuAction(
              shell, ActionId::DebugBreakpointToggleEnabled),
          "the toggle-enabled menu item executes");
@@ -6087,12 +5471,10 @@ void TestWorkspaceShellBreakpointGutterMenu() {
   Expect(bps != nullptr && bps->size() == 1 && !(*bps)[0].enabled,
          "toggle-enabled disables the breakpoint, keeping it in the store");
 
-  // Reopening seeds the flag as disabled (drives the "Enable Breakpoint" label).
   WorkspaceShellTestAccess::OpenBreakpointContextMenu(shell, path, 9);
   Expect(!WorkspaceShellTestAccess::BreakpointContextMenuEnabledFlag(shell),
          "the menu seeds the enabled flag from a disabled breakpoint");
 
-  // Clear-condition drops only the condition; hit-count is preserved.
   Expect(WorkspaceShellTestAccess::ExecuteBreakpointMenuAction(
              shell, ActionId::DebugBreakpointClearCondition),
          "the clear-condition menu item executes");
@@ -6115,10 +5497,6 @@ void TestColorschemeChangeRequestsRepaint() {
   WorkspaceShellTestAccess::SetWindowSize(shell, static_cast<int>(kWindowWidth),
                                           static_cast<int>(kWindowHeight));
 
-  // A theme change recolors the whole UI, so it must repaint the entire window —
-  // not just the chrome strips that other action side effects happen to dirty.
-  // Without that full repaint the shell idles on events and keeps showing the
-  // previous theme's colors (the reported bug).
   const auto repaints_whole_window = [&](const auto& inv) {
     if (inv.full) {
       return true;
@@ -6128,8 +5506,6 @@ void TestColorschemeChangeRequestsRepaint() {
     });
   };
 
-  // What the frame repaints, not what was asked: the style is a whole-window unit
-  // (PrepareFrameOnce), so the change owes a frame and the frame damages it all.
   EnsureDummySdlVideoInitialized();
   SoftwareCanvas canvas(static_cast<int>(kWindowWidth), static_cast<int>(kWindowHeight));
   shell.Render(canvas.renderer(), static_cast<int>(kWindowWidth), static_cast<int>(kWindowHeight));
@@ -6145,7 +5521,6 @@ void TestColorschemeChangeRequestsRepaint() {
              std::optional<std::string>("light"),
          "the colorscheme command should activate the requested theme");
 
-  // toggle-theme flips between light and dark and must repaint the whole window too.
   (void)shell.ConsumePendingRenderInvalidation();
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "toggle-theme"),
          "the toggle-theme command should run");
@@ -6154,7 +5529,6 @@ void TestColorschemeChangeRequestsRepaint() {
              std::optional<std::string>("light"),
          "toggle-theme should switch away from the light theme");
 
-  // A name no theme has is a rejection, not a silent no-op that answers ok.
   const std::optional<std::string> before =
       WorkspaceShellTestAccess::GetSettingValue(shell, "editor.colorscheme");
   Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "colorscheme no-such-theme"),
@@ -6163,11 +5537,6 @@ void TestColorschemeChangeRequestsRepaint() {
          "an unknown colorscheme name must leave the active theme alone");
 }
 
-// TD-2026-07-17A-033: switching to an already-open editor tab must SCHEDULE the
-// LSP hydration (didOpen + semantic tokens + inlay hints), not run it inline —
-// activation stays non-blocking and the buffer serialization happens after the
-// tab-switch frame is presented. The pending flag is set by Activate and cleared
-// by the post-present drain (OnFramePresented -> ConsumeDeferredBufferOpen).
 void TestWorkspaceShellTabSwitchDefersLspHydration() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -6178,30 +5547,21 @@ void TestWorkspaceShellTabSwitchDefersLspHydration() {
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-  // Two editor tabs; the fixture leaves tab 0 active without going through the
-  // deferred activation path, so nothing is pending to begin with.
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, left);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, right);
   WorkspaceShellTestAccess::OnFramePresented(shell);
   Expect(!WorkspaceShellTestAccess::HasPendingLspBufferOpen(shell),
          "opening editor files should not leave LSP hydration pending");
 
-  // Switching to the other tab (a real 0 -> 1 activation) must SCHEDULE hydration,
-  // leaving the pending flag set instead of hydrating inline during Activate.
   WorkspaceShellTestAccess::ActivateTab(shell, 1);
   Expect(WorkspaceShellTestAccess::HasPendingLspBufferOpen(shell),
          "activating a different tab must schedule (not synchronously run) LSP hydration");
 
-  // The post-present drain runs the deferred hydration and clears the flag.
   WorkspaceShellTestAccess::OnFramePresented(shell);
   Expect(!WorkspaceShellTestAccess::HasPendingLspBufferOpen(shell),
          "the post-present drain must consume the scheduled LSP hydration");
 }
 
-// TD-2026-07-17A-079: keyboard keep-visible computes the scroll target from a
-// single overlay build (per-row advance heights) instead of rebuilding the whole
-// overlay up to 513 times per keystroke. Selecting the last row must still scroll it
-// fully into view; selecting the first row must scroll back to the top.
 void TestWorkspaceShellSettingsKeepSelectionVisibleScrollsToRow() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -6209,10 +5569,6 @@ void TestWorkspaceShellSettingsKeepSelectionVisibleScrollsToRow() {
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-  // A short canvas so the settings pane holds only a few rows and a bottom selection
-  // is guaranteed to start off-screen at scroll 0 — but tall enough that the tallest
-  // row still fits the pane, or "fully visible" would be unsatisfiable rather than
-  // merely unmet (rows are variable-height and one can exceed a very short pane).
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 560);
   WorkspaceShellTestAccess::OpenSettingsOverlay(shell);
   WorkspaceShellTestAccess::SetSettingsOverlayCategory(shell, 0);
@@ -6230,7 +5586,6 @@ void TestWorkspaceShellSettingsKeepSelectionVisibleScrollsToRow() {
   Expect(WorkspaceShellTestAccess::SettingsOverlaySelectedRowFullyVisible(shell),
          "the selected last row must be fully within the settings pane after keep-visible");
 
-  // Selecting the first row scrolls back to the top.
   WorkspaceShellTestAccess::SetSettingsOverlaySelectedRow(shell, 0);
   WorkspaceShellTestAccess::EnsureSettingsSelectionVisible(shell);
   Expect(WorkspaceShellTestAccess::SettingsOverlayScrollRow(shell) == 0,
@@ -6239,13 +5594,9 @@ void TestWorkspaceShellSettingsKeepSelectionVisibleScrollsToRow() {
          "the first row is fully visible at the top of the pane");
 }
 
-// Toggle Debugger read `debug.enabled` through a private token list that took
-// "no" for on, while the menus (SettingFlagEnabled) took it for off: the first
-// press "disabled" a debugger the menus already showed as off and changed nothing.
 void TestWorkspaceShellToggleDebuggerAgreesWithTheMenus() {
   WorkspaceShell shell;
   for (const char* off : {"no", "Off", "FALSE"}) {
-    // As a hand-edited config file loads it: the setter would canonicalize.
     WorkspaceShellTestAccess::SetRawUserSetting(shell, "debug.enabled", off);
     Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::DebugToggleEnabled, {}),
            "Toggle Debugger runs");
@@ -6255,9 +5606,6 @@ void TestWorkspaceShellToggleDebuggerAgreesWithTheMenus() {
   }
 }
 
-// Splitting an untitled tab cloned its title but not its number, and activation
-// re-derives the title from the number: the split's "Untitled-2" became
-// "Untitled" (QA monkey, commands profile, seed 19).
 void TestWorkspaceShellSplitKeepsTheUntitledNumber() {
   TemporaryDirectory temp;
   WorkspaceShell shell;
@@ -6272,7 +5620,6 @@ void TestWorkspaceShellSplitKeepsTheUntitledNumber() {
   Expect(title == "Untitled-2", "the second untitled tab is numbered: " + title);
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, microide::workspace::EditorSplitOrientation::Vertical),
          "the untitled tab splits");
-  // Activating the split's tab (a click on it) re-derives its title.
   WorkspaceShellTestAccess::FocusEditorGroup(shell, 1);
   WorkspaceShellTestAccess::ActivateTab(shell, 0);
   const std::string split_title = state.editor_groups[1].active_tab().title;
@@ -6280,9 +5627,6 @@ void TestWorkspaceShellSplitKeepsTheUntitledNumber() {
          "the split shows the same buffer under the same name after activation: " + split_title);
 }
 
-// A tab title changed on a frame that damaged no tab strip -- a title re-derived
-// on activation -- left the old title painted. Frame prep hashes the titles with
-// the dirty marks.
 void TestWorkspaceShellTabTitleChangeRepaintsTheStrip() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -6296,14 +5640,10 @@ void TestWorkspaceShellTabTitleChangeRepaintsTheStrip() {
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
   WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
-  // An untitled tab: a file tab's strip label is its path's name, and the title
-  // is only what an untitled one shows.
-  for (int i = 0; i < 2; ++i) {  // two, so the strip is drawn
+  for (int i = 0; i < 2; ++i) {
     Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::Tab, {}),
            "a new untitled tab opens");
   }
-  // In a pane that is NOT focused: the focused tab's title is also the window
-  // title, whose own fingerprint repainted it and hid the gap.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
              shell, microide::workspace::EditorSplitOrientation::Vertical),
          "the editor splits");
@@ -6320,9 +5660,6 @@ void TestWorkspaceShellTabTitleChangeRepaintsTheStrip() {
   Expect(diff.identical(), "the strip shows the new title: " + DescribePixelDiff(diff));
 }
 
-// `save <path>` on a file that already has a name re-points the buffer; the tab
-// must follow, its path and its label alike. A save to "-1" left the tab saying
-// README.md over a buffer that was now "-1" (QA monkey, commands profile, seed 27).
 void TestWorkspaceShellSaveAsRenamesANamedTab() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "project";
@@ -6346,8 +5683,6 @@ void TestWorkspaceShellSaveAsRenamesANamedTab() {
                WorkspaceShellTestAccess::TabDisplayTitle(shell, state.focused_group().active_tab_index));
   }
 
-  // The same buffer in a second pane (a split shares the document): a Save As in
-  // one pane re-points the shared buffer, so the other pane's tab must follow too.
   WorkspaceShellTestAccess::OpenFile(shell, root / "README.md");
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
              shell, microide::workspace::EditorSplitOrientation::Vertical),
@@ -6365,11 +5700,6 @@ void TestWorkspaceShellSaveAsRenamesANamedTab() {
   }
 }
 
-// `save <path>` onto a path another tab already holds as a buffer that has no file
-// yet -- a new file, or a dangling symlink -- passed the "already exists" check
-// and bound a second, independent buffer to that file. The two saved over each
-// other, and a kill -9 restored whichever the session listed last: the dangling
-// link's 14 typed bytes came back as the other buffer's 4 (soak 2c342fa52edd).
 void TestWorkspaceShellSaveAsRefusesAPathAnotherTabHolds() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "project";
@@ -6404,11 +5734,6 @@ void TestWorkspaceShellSaveAsRefusesAPathAnotherTabHolds() {
   }
 }
 
-// `sidebar-show` under a maximized panel, with the sidebar already flagged visible,
-// moved the keyboard to the sidebar and requested no frame: the rule that restores
-// a maximized panel when another surface takes focus runs in frame prep, so the
-// panel stayed up, the sidebar stayed collapsed under it, and the keys went to a
-// surface nobody could see (QA monkey, seed 44 at 600 steps).
 void TestWorkspaceShellSidebarShowUnderAMaximizedPanelShowsIt() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "project";
@@ -6435,9 +5760,6 @@ void TestWorkspaceShellSidebarShowUnderAMaximizedPanelShowsIt() {
          "and the keyboard is on a sidebar that is shown");
 }
 
-// The hover probe walked the chrome before the overlay, so a pointer onto a
-// command-palette row lying over a lower pane's tab strip took the hidden tab as
-// its hover; the row it lit was never damaged (QA monkey, seed 39 at 600 steps).
 void TestWorkspaceShellPaletteRowOverATabStripRepaintsOnHover() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -6457,7 +5779,7 @@ void TestWorkspaceShellPaletteRowOverATabStripRepaintsOnHover() {
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
              shell, microide::workspace::EditorSplitOrientation::Horizontal),
          "the editor splits");
-  for (int i = 1; i < 12; ++i) {  // a lower strip full of tabs, running under the palette
+  for (int i = 1; i < 12; ++i) {
     WorkspaceShellTestAccess::OpenFileInNewTab(shell, root / ("file_" + std::to_string(i) + ".txt"));
   }
   WorkspaceShellTestAccess::OpenCommandPalette(shell);
@@ -6480,9 +5802,6 @@ void TestWorkspaceShellPaletteRowOverATabStripRepaintsOnHover() {
   Expect(diff.identical(), "the hovered palette row repaints: " + DescribePixelDiff(diff));
 }
 
-// An edit can break a bracket pair on a line it does not damage: commenting out the
-// closer left the opener two lines up painted lit (QA monkey, seed 40 at 600
-// steps). Frame prep repaints the lines a pair left or reached.
 void TestWorkspaceShellBracketPairBrokenByAnEditRepaintsTheOpener() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -6498,7 +5817,7 @@ void TestWorkspaceShellBracketPairBrokenByAnEditRepaintsTheOpener() {
   WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
   WorkspaceShellTestAccess::OpenFile(shell, root / "main.cpp");
   auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
-  editor.MoveCursorTo(2, 0);  // just before the closing brace: the pair is lit
+  editor.MoveCursorTo(2, 0);
   const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
   SoftwareCanvas canvas(kWidth, kHeight);
   pin_caret();
@@ -6512,13 +5831,6 @@ void TestWorkspaceShellBracketPairBrokenByAnEditRepaintsTheOpener() {
   Expect(diff.identical(), "the opener's highlight goes with the pair: " + DescribePixelDiff(diff));
 }
 
-// A tab activated under a maximized panel: the editor surface, its strip and the
-// breadcrumb have no area, so every damage the activation asked for was dropped,
-// no frame was prepared, and the window title kept naming the tab before (QA
-// monkey, seed 61 at 600 steps). The title's menu bar is always on screen.
-// The same under a maximized panel for a save: the tab's dirty mark is also the
-// window title's, and the save's strip damage had no area, so the title kept its
-// unsaved mark (QA monkey, seed 83 at 600 steps).
 void TestWorkspaceShellSaveUnderAMaximizedPanelClearsTheTitleMark() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "project";
@@ -6569,19 +5881,12 @@ void TestWorkspaceShellNewTabUnderAMaximizedPanelRetitlesTheWindow() {
   Expect(title.starts_with("Untitled-1"), "the window title names the new tab: " + title);
 }
 
-}  // namespace
+}
 
-// Regression: a left-click in a horizontally-scrolled (non-soft-wrapped) editor must
-// place the caret under the pointer. The mouse coordinator fed LogicalPositionForVisualHit
-// an ABSOLUTE visual column while the function re-adds the row's visual_start (which
-// equals horizontal_scroll in the non-wrap layout), double-counting the scroll and
-// snapping the caret to the right edge on every click once the line scrolled.
 void TestWorkspaceShellEditorClickHonorsHorizontalScroll() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path source = root / "long.txt";
-  // A very long single line, wider than any plausible viewport, with uniform content
-  // so the visual->text column mapping is 1:1 (no tabs to expand).
   WriteFile(source, std::string(2000, 'a') + "\n");
 
   WorkspaceShell shell;
@@ -6591,8 +5896,6 @@ void TestWorkspaceShellEditorClickHonorsHorizontalScroll() {
 
   auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
   Expect(!editor.soft_wrap(), "word wrap should default off so the view scrolls horizontally");
-  // Move the caret far right so the view scrolls horizontally, then settle the metrics
-  // (this also sets the viewport size the hit-test uses).
   editor.MoveCursorTo(0, 1999, false);
   const auto metrics = WorkspaceShellTestAccess::ActiveEditorRenderMetrics(shell);
   const float char_width = WorkspaceShellTestAccess::TextCharWidth(shell);
@@ -6601,7 +5904,6 @@ void TestWorkspaceShellEditorClickHonorsHorizontalScroll() {
   Expect(horizontal_scroll > 0,
          "moving the caret to the far right should scroll the view horizontally");
 
-  // Click five cells into the visible text area (well within the viewport width).
   const std::size_t screen_cells = 5;
   const float click_x = metrics.text_x + (static_cast<float>(screen_cells) + 0.25f) * char_width;
   const float click_y = metrics.first_line_y + metrics.line_height * 0.5f;
@@ -6613,19 +5915,10 @@ void TestWorkspaceShellEditorClickHonorsHorizontalScroll() {
          "click caret column must honor the horizontal scroll exactly once (no double-count)");
 }
 
-// Regression: with word wrap on, a click on a CONTINUATION row must place the
-// caret under the pointer. Both mouse paths resolved the hit and then placed the
-// caret by column: the left click threw the row away by re-clamping, and the
-// right-click retarget passed the pointer's SCREEN column to
-// MoveCursorToVisualColumn, which reads it as an absolute column in the logical
-// line -- so a right-click halfway down a wrapped line jumped the caret to near
-// the line's start.
 void TestWorkspaceShellEditorClickOnWrappedContinuationRow() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path source = root / "wrapped.txt";
-  // One long line of uniform content: visual column == text column, so the
-  // expected caret position is exactly "row start + screen cells".
   WriteFile(source, std::string(2000, 'a') + "\n");
 
   WorkspaceShell shell;
@@ -6642,7 +5935,6 @@ void TestWorkspaceShellEditorClickOnWrappedContinuationRow() {
   Expect(editor.visual_line_count() > 2, "the long line should wrap into several rows");
   Expect(editor.scroll_line() == 0, "the view starts at the top");
 
-  // Second visible row = the line's first continuation row.
   const auto row = editor.WrappedVisualRowLayout(1);
   Expect(row.visual_start > 0, "row 1 is a continuation row of the same logical line");
   const std::size_t screen_cells = 5;
@@ -6655,7 +5947,6 @@ void TestWorkspaceShellEditorClickOnWrappedContinuationRow() {
   Expect(editor.cursor_column() == row.visual_start + screen_cells,
          "a click on a continuation row lands under the pointer, not near the line start");
 
-  // The right-click retarget resolves the same position.
   editor.MoveCursorTo(0, 0, false);
   Expect(SendMouseDown(shell, click_x, click_y, SDL_BUTTON_RIGHT, 1),
          "the editor right-click should be handled");
@@ -6664,10 +5955,6 @@ void TestWorkspaceShellEditorClickOnWrappedContinuationRow() {
 }
 
 
-// Every pane in a split paints its own active tab, so before this they were
-// pixel-identical and nothing on screen said which pane the next Ctrl+P would
-// open into. VS Code's tab.unfocusedActiveBorderTop: the unfocused pane's accent
-// is dimmed toward the chrome behind it.
 void TestWorkspaceShellUnfocusedSplitPaneTabIsDimmed() {
   using microide::workspace::EditorSplitOrientation;
   TemporaryDirectory temp_dir;
@@ -6697,9 +5984,6 @@ void TestWorkspaceShellUnfocusedSplitPaneTabIsDimmed() {
   };
   const SDL_Color focused_accent = accent_pixel(focused);
   const SDL_Color unfocused_accent = accent_pixel(unfocused);
-  // Sampled against the live theme rather than MakeDefaultTheme(): the shell
-  // applies the user colorscheme, so the literal accent value is not knowable
-  // here. The contract is the RELATION between the two panes.
   Expect(!(unfocused_accent.r == focused_accent.r && unfocused_accent.g == focused_accent.g &&
            unfocused_accent.b == focused_accent.b),
          "the unfocused pane's active tab must not paint the same accent as the focused one; both " +
@@ -6710,7 +5994,6 @@ void TestWorkspaceShellUnfocusedSplitPaneTabIsDimmed() {
   };
   Expect(luminance(unfocused_accent) < luminance(focused_accent),
          "the unfocused pane's accent is the dimmer of the two");
-  // ...but still an accent: dimmed toward the chrome, not erased into it.
   const SDL_FRect strip = WorkspaceShellTestAccess::GroupTabStripRect(shell, unfocused);
   const SDL_Color strip_background =
       canvas.PixelAt(static_cast<int>(strip.x + strip.w) - 3, static_cast<int>(strip.y) + 1);
@@ -6720,9 +6003,6 @@ void TestWorkspaceShellUnfocusedSplitPaneTabIsDimmed() {
 }
 
 
-// Two open tabs with the same file name show their parent folder after the name
-// ("index.txt — a"), as VS Code does; a tab with a unique name stays bare. Both
-// used to read identically, leaving only the tooltip to tell them apart.
 void TestWorkspaceShellSameNameTabsShowTheirParentFolder() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -6749,15 +6029,10 @@ void TestWorkspaceShellSameNameTabsShowTheirParentFolder() {
          "a uniquely named tab stays bare");
 }
 
-// An edit that changes the language of the whole buffer -- typing before a
-// shebang turns a shell script into plain text -- damaged only its own line, and
-// every other row kept the shell colours (QA monkey, seed 60 at 600 steps: a
-// stale `exec` keyword and grey comments under a Plain Text status bar). Prep
-// diffs each pane's language as painted and repaints the pane when it changes.
 void TestWorkspaceShellAnEditThatChangesTheLanguageRepaintsThePane() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
-  const std::filesystem::path hook = root / "post-update";  // no extension: the shebang decides
+  const std::filesystem::path hook = root / "post-update";
   WriteFile(hook, "#!/bin/sh\n#\n# An example hook\n#\nexec git update-server-info\n");
   static constexpr int kWidth = 1280;
   static constexpr int kHeight = 720;
@@ -7082,4 +6357,4 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellUnfocusedSplitPaneTabIsDimmed);
 }
 
-}  // namespace microide::tests
+}

@@ -101,8 +101,6 @@ void PromptSurfaceService::ShowDirtyPromptForProject(std::size_t index,
   prompts_.dirty.target_tabs = dirty_tabs;
   prompts_.dirty.dirty_tabs = std::move(dirty_tabs);
   prompts_.dirty.dirty_count = dirty_count;
-  // CloseProject re-reads the live dirty set at confirm time (not stored indices/ids),
-  // so clear any stale ids from a prior prompt.
   prompts_.dirty.tab_id = 0;
   prompts_.dirty.target_tab_ids.clear();
   prompts_.dirty.dirty_tab_ids.clear();
@@ -124,7 +122,6 @@ void PromptSurfaceService::ShowDirtyPromptForQuit(std::size_t active_tab_index,
   prompts_.dirty.project_index = active_project_index;
   prompts_.dirty.dirty_tabs = std::move(dirty_tabs);
   prompts_.dirty.dirty_count = dirty_count;
-  // Quit re-reads the live dirty set per project at confirm time; clear stale ids.
   prompts_.dirty.tab_id = 0;
   prompts_.dirty.target_tab_ids.clear();
   prompts_.dirty.dirty_tab_ids.clear();
@@ -151,9 +148,6 @@ void PromptSurfaceService::ShowDirtyPathPrompt(DirtyPromptState::Kind kind,
 }
 
 FocusTarget PromptSurfaceService::FocusAfterPrompt(FocusTarget previous) const {
-  // Whatever is still on top -- the other prompt, or an overlay the prompt opened
-  // over -- takes the keyboard; else the surface the prompt was opened from, while
-  // it is still shown.
   if (prompts_.dirty_visible || prompts_.surface_visible || state_.overlay.visible) {
     return FocusTarget::Overlay;
   }
@@ -166,14 +160,11 @@ void PromptSurfaceService::OnTabClosed(std::uint64_t stable_id) {
   }
   const DirtyPromptState& prompt = prompts_.dirty;
   if (prompt.kind != DirtyPromptState::Kind::CloseTab && prompt.kind != DirtyPromptState::Kind::CloseTabs) {
-    return;  // project, quit and path prompts re-read the live set when confirmed
+    return;
   }
-  // A tab closed behind its prompt (a git refresh retiring a compare tab): the
-  // prompt went on asking about "this tab", one that no longer existed (soak
-  // 5ec45751b332). The set it asked about is gone, so the question is too.
   if (std::find(prompt.target_tab_ids.begin(), prompt.target_tab_ids.end(), stable_id) !=
       prompt.target_tab_ids.end()) {
-    DismissDirtyPrompt(/*restore_focus=*/true);
+    DismissDirtyPrompt(true);
   }
 }
 
@@ -181,11 +172,6 @@ void PromptSurfaceService::DismissDirtyPrompt(bool restore_focus) {
   operations_.request_prompt_redraw();
   prompts_.dirty_visible = false;
   prompts_.dirty = DirtyPromptState{};
-  // `restore_focus` false means "the continuation decides" -- but a continuation
-  // that waits (a close behind a slow formatter's save) decides nothing until
-  // later, and focus stayed on this closed prompt: every key went nowhere (QA
-  // save-wait, the stranded-focus oracle). Focus still on the prompt goes back
-  // now; a continuation that wants another surface sets it after this.
   if (restore_focus || state_.surface.focus == FocusTarget::Overlay) {
     state_.surface.focus = FocusAfterPrompt(prompts_.dirty_previous_focus);
   }
@@ -203,9 +189,6 @@ void PromptSurfaceService::DismissPromptSurface(bool restore_focus) {
 }
 
 void PromptSurfaceService::CancelOpenPrompts() {
-  // The surface prompt first: when it was opened over the dirty prompt, its
-  // previous focus is the dirty prompt's, and the dirty prompt's own previous
-  // focus is the surface the user was on.
   if (prompts_.surface_visible) {
     DismissPromptSurface(true);
   }
@@ -281,4 +264,4 @@ void PromptSurfaceService::OpenExternalUrlPrompt(std::string url) {
   operations_.request_prompt_redraw();
 }
 
-}  // namespace microide::workspace
+}

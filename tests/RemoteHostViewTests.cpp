@@ -24,9 +24,6 @@
 
 #include <unistd.h>
 
-// remote-host-activity's Host view over the fake ssh host: Remote: Show Status
-// opens it, its rows carry what the host's terminals and processes cost, Enter and
-// Delete act on them, and hiding it stops the host's pushes.
 namespace microide::tests {
 namespace {
 
@@ -61,7 +58,6 @@ void PointAtFakeHost(WorkspaceShell& shell, const FakeSshHost& host) {
          "no automatic forwards");
 }
 
-// A connection of the test's own to the host's server, under `root`.
 std::shared_ptr<remote::RemoteServerClient> ConnectRaw(const FakeSshHost& host, const std::filesystem::path& root) {
   auto client = remote::RemoteServerClient::Create();
   const int fd = platform::ConnectUnixSocket(remote::ServerSocketPath(host.server_dir()));
@@ -109,7 +105,6 @@ void PressKey(WorkspaceShell& shell, SDL_Keycode key) {
   (void)shell.HandleEvent(event);
 }
 
-// What the CPU figure in a row's detail says, in per mille; nullopt for "…".
 std::optional<double> CpuOf(const Item& row) {
   const std::size_t percent = row.detail.find('%');
   if (percent == std::string::npos) {
@@ -123,10 +118,6 @@ std::optional<double> CpuOf(const Item& row) {
   return std::stod(row.detail.substr(start, percent - start)) * 10.0;
 }
 
-// The proposal's scenario end to end: a project with a terminal running `yes` and
-// a kept tool. Show Status opens the view with both; the terminal's CPU rises on
-// a push; Delete ends each on the host (the running ones after a confirm); hiding
-// the view leaves the host with no subscriber and the rows still.
 void TestHostViewShowsAndEndsWhatTheHostRuns() {
   FakeSshHost host;
   const std::filesystem::path host_root = host.home / "src" / "activity";
@@ -142,13 +133,12 @@ void TestHostViewShowsAndEndsWhatTheHostRuns() {
   const std::uint64_t terminal_handle = session.host_identity().handle;
   session.SendBytes("yes > /dev/null\n");
 
-  // A tool the project left running and kept: spawned by a connection that then dropped.
   std::uint64_t tool_handle = 0;
   int tool_pid = -1;
   {
     auto tool_client = ConnectRaw(host, host_root);
     const remote::RemoteServerClient::Spawned spawned =
-        tool_client->Spawn({"sleep", "300"}, host_root, {}, /*keep_on_detach=*/true, {});
+        tool_client->Spawn({"sleep", "300"}, host_root, {}, true, {});
     Expect(spawned.handle != 0, "the tool spawns: " + spawned.error);
     tool_handle = spawned.handle;
     tool_pid = spawned.pid;
@@ -178,22 +168,19 @@ void TestHostViewShowsAndEndsWhatTheHostRuns() {
   Expect(WorkspaceShellTestAccess::RemoteHosts(shell).StatusText().find(target + " server") != std::string::npos,
          "Show Status's text carries the host's totals: " + WorkspaceShellTestAccess::RemoteHosts(shell).StatusText());
 
-  // Collapse and expand a group.
   Expect(SelectRow(shell, "group:processes"), "the Processes group");
   PressKey(shell, SDLK_LEFT);
   Expect(RowWithId(shell, tool_id) == nullptr, "collapsing hides its rows");
   PressKey(shell, SDLK_RIGHT);
   Expect(RowWithId(shell, tool_id) != nullptr, "expanding shows them again");
 
-  // Enter on the terminal: the tab that holds it, not a second one.
   const std::size_t tabs = WorkspaceShellTestAccess::TerminalTabCount(shell);
   Expect(SelectRow(shell, terminal_id), "the terminal row");
   PressKey(shell, SDLK_RETURN);
   Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == tabs, "its tab is focused, none added");
   Expect(WorkspaceShellTestAccess::FocusIsPanel(shell), "with the keyboard in it");
-  WorkspaceShellTestAccess::SetFocusSidebar(shell);  // back to the view, as a click on it would
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
 
-  // Delete on the running terminal asks first, then ends it.
   Expect(SelectRow(shell, terminal_id), "the terminal row again");
   PressKey(shell, SDLK_DELETE);
   Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell) &&
@@ -203,7 +190,6 @@ void TestHostViewShowsAndEndsWhatTheHostRuns() {
   Expect(PumpUntil(shell, [&] { return RowWithId(shell, terminal_id) == nullptr; }),
          [&] { return "the terminal ends on the host and leaves the view:" + Rows(shell); });
 
-  // Delete on the kept tool: confirm, proc/end, gone from the host.
   Expect(SelectRow(shell, tool_id), "the tool row");
   PressKey(shell, SDLK_DELETE);
   Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell) &&
@@ -213,7 +199,6 @@ void TestHostViewShowsAndEndsWhatTheHostRuns() {
   Expect(PumpUntil(shell, [&] { return RowWithId(shell, tool_id) == nullptr && ::kill(tool_pid, 0) != 0; }),
          [&] { return "the tool ends and leaves the view:" + Rows(shell); });
 
-  // Hide it: the host keeps no subscriber, and nothing changes the rows any more.
   const auto hidden = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "sidebar-show tree");
   Expect(hidden.ok && WorkspaceShellTestAccess::SidebarViewId(shell) == "tree", "the tree replaces it");
   auto observer = ConnectRaw(host, host_root);
@@ -230,8 +215,6 @@ void TestHostViewShowsAndEndsWhatTheHostRuns() {
   Expect(later.has_value() && later->activity_subscribers == 0, "and gains none while it stays hidden");
 }
 
-// The rows from a reply an older server sends: no processes, no figures, a
-// terminal count instead of rows -- what it has is shown, the rest says so.
 void TestHostRowsFromAnOlderServer() {
   const std::optional<util::JsonValue> json = util::ParseJson(R"({
     "release": "2.10.0", "daemon_epoch": "e",
@@ -275,10 +258,6 @@ void TestHostRowsFromAnOlderServer() {
          "before any status: the connection's own row");
 }
 
-// Two hosts open (TD-2026-10-27-407): the view lists both, each under its own
-// group, rows prefixed with their host; Delete on one host's row acts on that
-// host; a collapsed host group stays collapsed through a save and a restore of
-// the workspace session.
 void TestHostViewListsEveryOpenHost() {
   TemporaryDirectory homes;
   const ScopedEnvVar state("XDG_STATE_HOME", (homes.path() / "state").string());
@@ -339,7 +318,7 @@ void TestHostViewListsEveryOpenHost() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterRemoteHostViewTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostView/ShowsAndEndsWhatTheHostRuns", TestHostViewShowsAndEndsWhatTheHostRuns);
@@ -347,4 +326,4 @@ void RegisterRemoteHostViewTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostView/ListsEveryOpenHost", TestHostViewListsEveryOpenHost);
 }
 
-}  // namespace microide::tests
+}

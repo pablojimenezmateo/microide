@@ -10,13 +10,8 @@ namespace microide::workspace {
 
 namespace {
 
-// Fixed so the rendered page is byte-stable (the drift test compares it to the
-// committed file). Bump by hand when the man page meaningfully changes.
 constexpr const char* kManPageDate = "2026-06-20";
 
-// Escape a block destined for a groff `.nf`/`.fi` (no-fill) region: escape the
-// control character `\`, and guard any line beginning with `.` or `'` (which
-// groff would otherwise read as a request) with `\&`.
 std::string EscapeNoFillBlock(const std::string& text) {
   std::string out;
   out.reserve(text.size() + 16);
@@ -35,7 +30,7 @@ std::string EscapeNoFillBlock(const std::string& text) {
   return out;
 }
 
-}  // namespace
+}
 
 std::string RenderManPage() {
   std::string page;
@@ -163,4 +158,4 @@ std::string RenderManPage() {
   return page;
 }
 
-}  // namespace microide::workspace
+}

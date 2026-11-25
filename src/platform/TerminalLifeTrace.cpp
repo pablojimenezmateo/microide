@@ -18,13 +18,11 @@ void TraceTerminalLife(std::string_view event, int pid, bool with_stack) {
   }
   std::string report = std::format("microide terminal-life: {} pid={}", event, pid);
   if (with_stack) {
-    // Deep enough to get past the backend and the session to the workspace code
-    // that asked for the terminal.
     constexpr int kFrames = 24;
     void* frames[kFrames];
     const int count = ::backtrace(frames, kFrames);
     if (char** symbols = ::backtrace_symbols(frames, count); symbols != nullptr) {
-      for (int i = 1; i < count; ++i) {  // frame 0 is this function
+      for (int i = 1; i < count; ++i) {
         report += std::format("\n  #{} {}", i, symbols[i]);
       }
       std::free(symbols);  // NOLINT(cppcoreguidelines-no-malloc): backtrace_symbols' contract
@@ -33,4 +31,4 @@ void TraceTerminalLife(std::string_view event, int pid, bool with_stack) {
   util::Log(report);
 }
 
-}  // namespace microide::platform
+}

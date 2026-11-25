@@ -13,17 +13,10 @@
 #include "workspace/coordinators/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspaceLayout.h"
 
-// Geometry + scroll helpers for the right-side debug pane. These read project
-// state, so they deliberately live OUTSIDE the lint-covered render TU
-// (DebugPaneRender.cpp); that file consumes only the view model and calls these
-// members. Mirrors the bottom-panel ComputeBottomPanelLogLayout / SetBottomPanelScrollRow
-// split (those live in WorkspaceShellTerminal.cpp).
-
 namespace microide::workspace {
 
 namespace {
 
-// Header band reserved at the top of the pane for the mode-row button switcher.
 constexpr float kDebugPaneModeRowTop = 4.0f;
 constexpr float kDebugPaneModeRowHeight = 20.0f;
 constexpr float kDebugPaneHeaderBandHeight = kDebugPaneModeRowTop + kDebugPaneModeRowHeight + 6.0f;
@@ -41,25 +34,23 @@ SDL_FRect DebugPaneContentRect(const SDL_FRect& pane) {
                   std::max(0.0f, pane.h - kDebugPaneHeaderBandHeight));
 }
 
-}  // namespace
+}
 
 DebugPaneRowHit DebugPaneRowAtPoint(const SDL_FRect& content_rect, float text_y, float line_height,
                                     int visible_rows, int vertical_scroll, std::size_t line_count,
                                     float x, float y) {
   DebugPaneRowHit hit;
   if (line_height <= 0.0f || !Contains(content_rect, x, y)) {
-    return hit;  // row_index = -1, in_content = false
+    return hit;
   }
   hit.in_content = true;
-  // The top text inset (content_rect.y .. text_y) belongs to the first visible row
-  // rather than rejecting the click — this is the dead-zone fix.
   int relative = 0;
   const float band_top = DebugPaneRowBandTop(text_y, line_height, 0);
   if (y > band_top) {
     relative = static_cast<int>(std::floor((y - band_top) / line_height));
   }
   if (relative < 0 || relative >= visible_rows) {
-    return hit;  // inside content but below the last visible row
+    return hit;
   }
   const int absolute = vertical_scroll + relative;
   if (absolute < 0 || static_cast<std::size_t>(absolute) >= line_count) {
@@ -135,11 +126,6 @@ std::size_t WorkspaceShell::DebugPaneActiveRowCount() const {
 }
 
 void WorkspaceShell::RevealDebugPaneSelection() {
-  // Keyboard navigation moved the selection without touching the scroll, so
-  // arrowing past the last visible row walked the highlight off screen — the same
-  // failure the git sidebar's visible-row walk was written to avoid. Every other
-  // list in the shell reveals. Each mode names its selection differently, which is
-  // the whole of the switch below.
   const auto layout_state = CurrentWorkspaceLayout();
   if (!layout_state.has_value()) {
     return;
@@ -154,8 +140,6 @@ void WorkspaceShell::RevealDebugPaneSelection() {
       selected = static_cast<int>(ps.debug_watch.SelectedRow());
       break;
     case DebugPaneMode::CallStack:
-      // The Call Stack's selection is the focused session/thread/frame, which is
-      // also what the render highlights — there is no separate selection to track.
       selected = static_cast<int>(ps.debug_execution.FocusedPanelRow());
       break;
     case DebugPaneMode::Breakpoints:
@@ -172,19 +156,18 @@ void WorkspaceShell::RevealDebugPaneSelection() {
 }
 
 void WorkspaceShell::FocusDebugCallStackRow(std::size_t row) {
-  MakeDebugPaneMouseCoordinator().ActivateCallStackRow(row, /*move_focus_to_editor=*/false);
+  MakeDebugPaneMouseCoordinator().ActivateCallStackRow(row, false);
 }
 
 void WorkspaceShell::ActivateDebugBreakpointRow(std::size_t row, bool toggle) {
   MakeDebugPaneMouseCoordinator().ActivateBreakpointRow(row, toggle,
-                                                        /*move_focus_to_editor=*/false);
+                                                        false);
 }
 
 bool WorkspaceShell::DebugPaneRowIsActionable(std::size_t row) const {
   const ProjectWorkspaceState& ps = context_.current_project_state;
   switch (ps.debug_pane.mode) {
     case DebugPaneMode::CallStack:
-      // Every panel row (session / thread / frame) focuses or navigates.
       return row < ps.debug_execution.PanelRowCount();
     case DebugPaneMode::Variables: {
       const std::vector<DebugVariableRowView>& rows = ps.debug_variables.Rows();
@@ -216,7 +199,7 @@ bool WorkspaceShell::DebugPaneRowIsActionable(std::size_t row) const {
       if (r.kind == DebugBreakpointRowView::Kind::Breakpoint) {
         return !r.path.empty();
       }
-      return false;  // section header
+      return false;
     }
   }
   return false;
@@ -319,8 +302,6 @@ DebugPaneMouseCoordinator& WorkspaceShell::MakeDebugPaneMouseCoordinator() {
           .toggle_debug_breakpoint_enabled =
               [this](const std::filesystem::path& path, std::size_t line) {
                 if (context_.current_project_state.breakpoint_store.ToggleEnabled(path, line)) {
-                  // Re-send the file's breakpoints (a disabled one drops off the
-                  // adapter) and rebuild the panel + gutter.
                   debug_service_.ResendBreakpointsForFile(path);
                   RequestPreparedFrame();
                 }
@@ -365,4 +346,4 @@ WorkspaceShell::LogSurfaceLayout WorkspaceShell::ComputeDebugPaneListLayout(
   return panel_layout;
 }
 
-}  // namespace microide::workspace
+}

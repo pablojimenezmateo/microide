@@ -1,9 +1,5 @@
 #pragma once
 
-// The compare and merge surfaces' geometry -- where their columns, header and
-// rows sit, and how far they scroll -- as plain data and pure functions. Layout,
-// hit-testing, frame prep and paint all read the same answers from here.
-
 #include <SDL3/SDL.h>
 
 #include <array>
@@ -79,7 +75,6 @@ struct MergeInteractionLayout {
   std::array<float, 4> result_action_widths{};
 };
 
-// The furthest each surface scrolls, and its stored scroll clamped to that.
 int CompareMaxScrollRow(const CompareTabState& compare_tab, int visible_rows);
 std::size_t CompareMaxScrollColumn(const CompareTabState& compare_tab, std::size_t visible_columns);
 void ClampCompareScrollRow(CompareTabState& compare_tab, int visible_rows);
@@ -89,18 +84,14 @@ std::size_t MergeMaxScrollColumn(const MergeTabState& merge_tab, std::size_t vis
 void ClampMergeScrollRow(MergeTabState& merge_tab, int visible_rows);
 void ClampMergeHorizontalScroll(MergeTabState& merge_tab, std::size_t visible_columns);
 
-// The scrollbars beside each surface's rows.
 ScrollSurfaceLayout ComputeCompareScrollLayout(const SDL_FRect& rect, const CompareSurfaceLayout& surface,
                                                const CompareTabState& compare_tab);
 ScrollSurfaceLayout ComputeMergeScrollLayout(const SDL_FRect& rect, const MergeSurfaceLayout& surface,
                                              const MergeTabState& merge_tab);
 
-// Scrolls the compare tab so its selected row's whole wrapped block is in view.
 void RevealCompareSelectedRow(CompareTabState& compare_tab, int visible_rows);
-// A tracked conflict's four result-pane buttons (Base, Remote, Local, Both), laid
-// out against the conflict's rows in the result pane.
 std::array<SDL_FRect, 4> BuildMergeResultActionButtonRects(const MergeSurfaceLayout& surface,
                                                            const MergeInteractionLayout& interaction,
                                                            const MergeTrackedConflict& conflict);
 
-}  // namespace microide::workspace
+}

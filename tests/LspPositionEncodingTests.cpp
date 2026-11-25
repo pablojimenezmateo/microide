@@ -25,37 +25,20 @@ using microide::workspace::lsp_encoding::ParsePositionEncoding;
 using microide::workspace::lsp_encoding::PositionEncoding;
 using LspClient = microide::workspace::LspClient;
 
-// "café x" — 'é' (U+00E9) is 2 UTF-8 bytes, 1 UTF-16 unit, 1 codepoint. So the
-// space after "café" is at byte 5, utf-16 unit 4, codepoint 4.
 constexpr std::string_view kCafe = "caf\xC3\xA9 x";
 
-// "a😀b" — the emoji U+1F600 is 4 UTF-8 bytes, 2 UTF-16 units (surrogate pair),
-// 1 codepoint. 'b' is at byte 5, utf-16 unit 3, codepoint 2.
 constexpr std::string_view kEmoji = "a\xF0\x9F\x98\x80\x62";
 
-// ---- exhaustive round trips -------------------------------------------------
-//
-// Every LSP request and every diagnostic crosses these two functions, in both
-// directions, once per position. They are each other's inverse on UTF-8
-// boundaries, and that has to hold for EVERY column of every line -- not just
-// the few literals a hand-written case happens to pick.
-//
-// The corpus deliberately includes ill-formed UTF-8. A source file is arbitrary
-// bytes; a server that reports a position inside a truncated sequence must be
-// clamped, not walked off the end of the line.
-
-// Well-formed lines. "Never split a codepoint" is only a meaningful assertion
-// here, because only here is a codepoint boundary well defined.
 const std::vector<std::string>& WellFormedCorpus() {
   static const std::vector<std::string> corpus = {
       "",
       "a",
       "plain ascii line",
-      "caf\xC3\xA9 x",                                  // 2-byte
-      "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E",              // 3-byte CJK
-      "a\xF0\x9F\x98\x80\x62",                          // 4-byte: a surrogate pair in utf-16
-      "\xF0\x9F\x98\x80\xF0\x9F\x99\x83",                    // two 4-byte in a row
-      "e\xCC\x81 combining",                            // base + combining mark
+      "caf\xC3\xA9 x",
+      "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E",
+      "a\xF0\x9F\x98\x80\x62",
+      "\xF0\x9F\x98\x80\xF0\x9F\x99\x83",
+      "e\xCC\x81 combining",
       "mix \xC3\xA9 \xE6\x97\xA5 \xF0\x9F\x98\x80 end",
       "\t\tindented\t",
       "trailing multibyte \xC3\xA9",
@@ -63,11 +46,6 @@ const std::vector<std::string>& WellFormedCorpus() {
   return corpus;
 }
 
-// Ill-formed bytes: a lead byte with its continuations cut off, a stray
-// continuation, an overlong form, and bytes that are not UTF-8 at all. A source
-// file is arbitrary bytes, so these must still clamp, stay ordered and converge
-// -- the lenient decoder's idea of where a "codepoint" starts is its own, so the
-// boundary assertion does not apply to them.
 const std::vector<std::string>& IllFormedCorpus() {
   static const std::vector<std::string> corpus = {
       "bad \xE6\x97 truncated",
@@ -105,9 +83,6 @@ std::string Where(std::string_view line, std::size_t index, PositionEncoding enc
          " line=" + bytes + "]";
 }
 
-// A byte column that IS a codepoint boundary must survive byte -> character ->
-// byte unchanged. Anything else silently moves an edit, a rename, or a
-// diagnostic squiggle off its target.
 void TestByteColumnRoundTripsThroughEveryEncoding() {
   std::size_t checked = 0;
   for (const std::string& line : WellFormedCorpus()) {
@@ -130,11 +105,6 @@ void TestByteColumnRoundTripsThroughEveryEncoding() {
                             std::to_string(checked));
 }
 
-// The other direction cannot be an exact round trip -- a character offset inside
-// a multi-unit codepoint snaps to that codepoint's start -- but it must be
-// IDEMPOTENT: converting the snapped result again lands in the same place.
-// A conversion that drifts by one on each hop walks a long-lived diagnostic off
-// its symbol as the file is edited.
 void TestCharacterOffsetConversionIsIdempotent() {
   const std::vector<std::string> well_formed = WellFormedCorpus();
   for (const std::string& line : EncodingCorpus()) {
@@ -161,17 +131,10 @@ void TestCharacterOffsetConversionIsIdempotent() {
   }
 }
 
-// Both directions are monotonic: a column further along the line never maps to
-// an earlier offset. A non-monotonic mapping inverts a range, and an inverted
-// range is applied as a deletion of the wrong span.
 void TestConversionIsMonotonicInBothDirections() {
   for (const std::string& line : EncodingCorpus()) {
     for (const PositionEncoding encoding :
          {PositionEncoding::Utf8, PositionEncoding::Utf16, PositionEncoding::Utf32}) {
-      // Only boundary columns: the editor stores caret and range columns as
-      // codepoint boundaries, so a column pointing INTO a sequence is not an
-      // input this direction ever receives. Asking anyway measures how a
-      // truncated slice happens to decode, which is not a contract.
       std::size_t previous_character = 0;
       for (std::size_t column = 0; column <= line.size(); ++column) {
         if (!IsUtf8Boundary(line, column)) {
@@ -195,9 +158,6 @@ void TestConversionIsMonotonicInBothDirections() {
   }
 }
 
-// utf-8 is the encoding this client advertises first, so it is the one clangd
-// and rust-analyzer actually use. It must be a pure pass-through -- any work at
-// all here is work on every position of every request.
 void TestUtf8EncodingIsAnExactPassThrough() {
   for (const std::string& line : EncodingCorpus()) {
     for (std::size_t column = 0; column <= line.size() + 4; ++column) {
@@ -218,32 +178,25 @@ void TestParsePositionEncoding() {
 }
 
 void TestUtf16RoundTrip() {
-  // The space after café: utf-16 unit 4 <-> byte 5.
   Expect(LspCharacterToByteColumn(kCafe, 4, PositionEncoding::Utf16) == 5,
          "utf-16 unit 4 maps past the 2-byte é to byte 5");
   Expect(ByteColumnToLspCharacter(kCafe, 5, PositionEncoding::Utf16) == 4,
          "byte 5 maps back to utf-16 unit 4");
-  // 'x' at the end: utf-16 unit 5 <-> byte 6.
   Expect(LspCharacterToByteColumn(kCafe, 5, PositionEncoding::Utf16) == 6, "x at byte 6");
   Expect(ByteColumnToLspCharacter(kCafe, 6, PositionEncoding::Utf16) == 5, "x back to unit 5");
 }
 
 void TestUtf16SurrogatePair() {
-  // 'b' after the emoji: 2 surrogate units for the emoji + 1 for 'a' = unit 3, byte 5.
   Expect(LspCharacterToByteColumn(kEmoji, 3, PositionEncoding::Utf16) == 5,
          "utf-16 unit 3 clears the surrogate pair to byte 5");
   Expect(ByteColumnToLspCharacter(kEmoji, 5, PositionEncoding::Utf16) == 3, "byte 5 back to unit 3");
-  // A character offset landing INSIDE the surrogate pair (unit 2) snaps to the
-  // codepoint start (byte 1, just after 'a').
   Expect(LspCharacterToByteColumn(kEmoji, 2, PositionEncoding::Utf16) == 1,
          "an offset inside the surrogate pair snaps to the codepoint start");
 }
 
 void TestUtf32AndUtf8() {
-  // utf-32 counts codepoints: the space after café is codepoint 4 <-> byte 5.
   Expect(LspCharacterToByteColumn(kCafe, 4, PositionEncoding::Utf32) == 5, "utf-32 cp4 -> byte 5");
   Expect(ByteColumnToLspCharacter(kCafe, 5, PositionEncoding::Utf32) == 4, "byte 5 -> utf-32 cp4");
-  // utf-8 is a pass-through (byte == unit), clamped to the line length.
   Expect(LspCharacterToByteColumn(kCafe, 3, PositionEncoding::Utf8) == 3, "utf-8 passes bytes");
   Expect(LspCharacterToByteColumn(kCafe, 999, PositionEncoding::Utf8) == kCafe.size(),
          "utf-8 clamps to line length");
@@ -257,10 +210,6 @@ void TestClampingBeyondLine() {
   Expect(LspCharacterToByteColumn("", 3, PositionEncoding::Utf16) == 0, "empty line -> byte 0");
 }
 
-// The viewport-aware helpers (LspViewportPositions.h) resolve the affected line
-// in a TextViewport, then map its column through the negotiated encoding. These
-// replaced three hand-rolled copies; the tests pin the shared behavior, including
-// the non-ASCII skew that a per-copy drift would have introduced.
 TextViewport MakeViewport(std::string_view content) {
   TextViewport viewport;
   viewport.LoadContent(std::string(content) + "\n", "/t.cpp");
@@ -274,30 +223,21 @@ void TestViewportLineView() {
 }
 
 void TestViewportOutboundInboundRoundTrip() {
-  const TextViewport viewport = MakeViewport(kCafe);  // "café x": space at byte 5, utf-16 unit 4.
-  // Outbound: editor byte column 5 -> utf-16 unit 4.
+  const TextViewport viewport = MakeViewport(kCafe);
   const LspClient::Position pos = ByteColumnToLspPosition(viewport, 0, 5, PositionEncoding::Utf16);
   Expect(pos.line == 0 && pos.character == 4, "byte col 5 -> utf-16 position (0,4)");
-  // Inbound: utf-16 unit 4 -> editor byte column 5.
   Expect(LspPositionToByteColumn(viewport, 0, 4, PositionEncoding::Utf16) == 5,
          "utf-16 unit 4 -> byte col 5");
 }
 
 void TestViewportInboundColumnFastPaths() {
   const TextViewport viewport = MakeViewport(kCafe);
-  // Null viewport (file not open) passes the character through as a raw byte.
   Expect(LspInboundColumn(nullptr, 0, 4, PositionEncoding::Utf16) == 4,
          "null viewport passes the offset through");
-  // utf-8 short-circuits without touching the line text.
   Expect(LspInboundColumn(&viewport, 0, 4, PositionEncoding::Utf8) == 4, "utf-8 passes through");
-  // utf-16 converts through the resolved line.
   Expect(LspInboundColumn(&viewport, 0, 4, PositionEncoding::Utf16) == 5, "utf-16 converts to byte 5");
 }
 
-// TD-2026-07-17-089: an outbound line/column past INT_MAX must saturate to INT_MAX
-// rather than wrapping to a negative value (which would ask the server about the
-// wrong location). LspLineView tolerates an out-of-range line, so we can pass a
-// huge line index directly.
 void TestViewportOutboundPositionSaturates() {
   const TextViewport viewport = MakeViewport("abc");
   constexpr std::size_t kHuge = static_cast<std::size_t>(std::numeric_limits<int>::max()) + 100;
@@ -306,21 +246,20 @@ void TestViewportOutboundPositionSaturates() {
   Expect(pos.line == std::numeric_limits<int>::max(),
          "an out-of-int line saturates to INT_MAX, never wraps negative");
   Expect(pos.character >= 0, "the outbound character is never negative after saturation");
-  // The shared helper saturates directly.
   Expect(microide::workspace::SaturateToLspInt(kHuge) == std::numeric_limits<int>::max(),
          "SaturateToLspInt clamps an over-range size_t to INT_MAX");
   Expect(microide::workspace::SaturateToLspInt(42) == 42, "SaturateToLspInt is identity in range");
 }
 
 void TestViewportRangeToEditorRange() {
-  const TextViewport viewport = MakeViewport(kCafe);  // space at unit 4/byte 5, 'x' at unit 5/byte 6.
+  const TextViewport viewport = MakeViewport(kCafe);
   const editor::SelectionRange range = LspRangeToEditorRange(
       viewport, LspClient::Range{{0, 4}, {0, 5}}, PositionEncoding::Utf16);
   Expect(range.start.line == 0 && range.start.column == 5, "range start utf-16 unit 4 -> byte 5");
   Expect(range.end.line == 0 && range.end.column == 6, "range end utf-16 unit 5 -> byte 6");
 }
 
-}  // namespace
+}
 
 void RegisterLspPositionEncodingTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LspPositionEncoding/ByteColumnRoundTripsThroughEveryEncoding",
@@ -345,4 +284,4 @@ void RegisterLspPositionEncodingTests(std::vector<TestCase>& tests) {
           TestViewportOutboundPositionSaturates);
 }
 
-}  // namespace microide::tests
+}

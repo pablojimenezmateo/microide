@@ -7,8 +7,6 @@ TerminalAlertOutcome DecideTerminalAlert(const TerminalAlert& alert) {
   if (!alert.bell && !alert.notification) {
     return outcome;
   }
-  // On screen the program is already showing it; behind another tab, a hidden
-  // panel or another project it is not.
   outcome.mark_tab = !alert.tab_on_screen;
   if (alert.notification && !alert.tab_on_screen) {
     if (!alert.project_in_front && !alert.project_label.empty()) {
@@ -29,8 +27,6 @@ TerminalAlertOutcome DecideTerminalAlert(const TerminalAlert& alert) {
   outcome.flag_window = true;
   if (alert.notification) {
     DesktopNotification desktop;
-    // The summary says where: the user is in another application and has to
-    // know which project and terminal to come back to.
     if (!alert.project_label.empty()) {
       desktop.summary.append(alert.project_label).append(" — ");
     }
@@ -49,9 +45,8 @@ bool AdmitDesktopNotification(std::uint64_t now_ms, std::uint64_t& last_posted_m
   if (last_posted_ms != 0 && now_ms - last_posted_ms < kDesktopNotificationSpacingMs) {
     return false;
   }
-  // 0 means "none yet", so a post at tick 0 records 1.
   last_posted_ms = now_ms == 0 ? 1 : now_ms;
   return true;
 }
 
-}  // namespace microide::workspace
+}

@@ -14,9 +14,6 @@ using microide::workspace::NotificationService;
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
-// Scope the app config/state homes so persistence is test-local (mirrors the
-// other WorkspaceShell fixtures).
-
 std::string ViewportText(const editor::TextViewport& viewport) {
   const editor::TextBuffer& lines = viewport.lines();
   std::string text;
@@ -34,8 +31,6 @@ bool AnyNotificationContains(const WorkspaceShell& shell, std::string_view needl
   return false;
 }
 
-// The command reindents the active buffer, sorts object keys human-alphabetically,
-// keeps the edit in memory (disk untouched), and is one undoable step.
 void TestFormatJsonCommandFormatsActiveBufferInMemory() {
   TemporaryDirectory temp;
   ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
@@ -62,16 +57,12 @@ void TestFormatJsonCommandFormatsActiveBufferInMemory() {
   Expect(apple < zebra, "keys sorted: apple before zebra");
   Expect(formatted.find("\"x\"") < formatted.find("\"y\""), "subkeys sorted: x before y");
 
-  // The edit is in memory only — disk still holds the original minified bytes.
   Expect(ReadFile(file) == original, "format-json must not write to disk");
 
-  // One undo restores the original single-line content.
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "undo"), "undo should be handled");
   Expect(ViewportText(WorkspaceShellTestAccess::ActiveEditor(shell)) == original,
          "a single undo restores the pre-format buffer");
 
-  // The caret keeps its line (clamped) instead of snapping to the top of the
-  // buffer with the whole-document replace.
   auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
   viewport.LoadContent("{\n\"zebra\": 1,\n\"apple\": 2\n}\n", file);
   viewport.MoveCursorTo(2, 3);
@@ -81,7 +72,6 @@ void TestFormatJsonCommandFormatsActiveBufferInMemory() {
              std::to_string(viewport.cursor_line()) + ")");
 }
 
-// Invalid JSON is reported via a toast and leaves the buffer untouched.
 void TestFormatJsonCommandTogglesToastOnInvalidJson() {
   TemporaryDirectory temp;
   ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
@@ -104,7 +94,6 @@ void TestFormatJsonCommandTogglesToastOnInvalidJson() {
          "invalid JSON leaves the buffer unchanged");
 }
 
-// With no editable buffer, the command surfaces a toast rather than doing nothing.
 void TestFormatJsonCommandToastsWhenNoActiveBuffer() {
   TemporaryDirectory temp;
   ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
@@ -118,7 +107,7 @@ void TestFormatJsonCommandToastsWhenNoActiveBuffer() {
          "no active buffer should surface a toast");
 }
 
-}  // namespace
+}
 
 void RegisterWorkspaceShellFormatJsonTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/FormatJson/FormatsActiveBufferInMemory",
@@ -129,4 +118,4 @@ void RegisterWorkspaceShellFormatJsonTests(std::vector<TestCase>& tests) {
           TestFormatJsonCommandToastsWhenNoActiveBuffer);
 }
 
-}  // namespace microide::tests
+}

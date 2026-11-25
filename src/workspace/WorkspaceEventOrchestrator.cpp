@@ -24,7 +24,7 @@ class ScopeExit {
   std::function<void()> on_exit_;
 };
 
-}  // namespace
+}
 
 WorkspaceEventDispatcher::WorkspaceEventDispatcher(Runtime runtime,
                                                    State state,
@@ -76,8 +76,6 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
         if (!operations_.handle_file_drop) {
           return Finish(false);
         }
-        // SDL owns event.drop.data and frees it after dispatch, so the handler
-        // must copy anything it keeps. It does (into a std::filesystem::path).
         return Finish(operations_.handle_file_drop(event.drop.data, event.drop.x, event.drop.y));
       }
     case SDL_EVENT_WINDOW_MOUSE_LEAVE:
@@ -90,11 +88,6 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
     case SDL_EVENT_WINDOW_MOUSE_ENTER:
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::WindowMouseEnter");
-      // SDL re-asserts a (possibly stale) hit-test cursor on pointer-enter; make
-      // the next cursor update re-apply ours so the displayed cursor is correct.
-      // Request a redraw too: the force flag is consumed inside the next prepared
-      // frame, so without a queued frame (nothing else dirtied the scene) the
-      // reassert would sit latent until unrelated work or motion triggered a paint.
       util::InvokeIfSet(operations_.force_cursor_reassert);
       operations_.request_window_redraw();
       return Finish(true);
@@ -103,7 +96,6 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::WindowFocusGained");
       state_.window_has_input_focus = true;
-      // Keys pressed or released while another window had the focus sent us nothing.
       state_.key_modifiers = SDL_GetModState();
       util::InvokeIfSet(operations_.window_focus_gained);
       util::InvokeIfSet(operations_.force_cursor_reassert);
@@ -114,17 +106,8 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::WindowFocusLost");
       state_.window_has_input_focus = false;
-      // A drag does not survive the window losing focus: the button-up will be
-      // delivered to whoever took the focus, not to us, so a selection left
-      // "in progress" here would still be in progress on the next click. This
-      // also disarms selection autoscroll, which is the one loop that keeps
-      // running with no input behind it.
       util::InvokeIfSet(operations_.end_selection_gesture);
-      // Autosave dirty buffers when configured for "on focus change".
       util::InvokeIfSet(operations_.autosave_on_focus_lost);
-      // While unfocused another app or the compositor can repaint the global
-      // cursor; force a reassert so regaining focus restores ours even if no
-      // pointer-enter (which separately forces) crosses the window edge.
       util::InvokeIfSet(operations_.force_cursor_reassert);
       operations_.request_window_redraw();
       return Finish(true);
@@ -144,11 +127,6 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
 }
 
 EventResult WorkspaceEventDispatcher::Finish(bool handled) const {
-  // A handler may request a redraw (e.g. UpdateMouseCursor queuing a present so
-  // the compositor re-latches the hardware cursor plane) yet still return false
-  // because nothing "interesting" changed. The app loop ignores result.redraw
-  // unless result.handled is set, so treat any pending redraw as handled —
-  // otherwise the queued present is silently dropped and the cursor goes stale.
   RenderInvalidation redraw = operations_.consume_pending_render_invalidation();
   return EventResult{
       .handled = handled || redraw.HasAnyRedraw(),
@@ -164,17 +142,11 @@ void WorkspaceEventDispatcher::NoteKeyModifiers(SDL_Keymod modifiers) const {
   }
 }
 
-// The wake events background work posts to the main thread: each is consumed
-// whole, and is never offered to the input handlers below.
 std::optional<EventResult> WorkspaceEventDispatcher::HandleWakeEvent(const SDL_Event& event) const {
   if (runtime_.project_open_dialog_event_type != 0 &&
       event.type == runtime_.project_open_dialog_event_type) {
     util::PerformanceTrace::Scope scope(
         "WorkspaceEventDispatcher::Handle::ProjectOpenDialogEvent");
-    // Every native picker shares this wake event. Consuming here, not only in
-    // frame prep, is what makes an answer land without some other reason to
-    // paint: Open File… on a welcome page (no caret blinking) used to keep the
-    // picked file until the next unrelated frame.
     operations_.consume_pending_dialog_results();
     return Finish(true);
   }
@@ -187,15 +159,7 @@ std::optional<EventResult> WorkspaceEventDispatcher::HandleWakeEvent(const SDL_E
   }
   if (runtime_.project_file_event_type != 0 && event.type == runtime_.project_file_event_type) {
     util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::ProjectFileEvent");
-    // A watcher wake that does not lead to a reload is wasted main-thread work;
-    // the wakes-vs-file_index_apply_batch_calls ratio makes an over-eager watcher
-    // visible without a debugger.
     util::AddPerformanceCounter(util::PerfCounterId::FileWatcherWakes);
-    // The apply requests the surfaces it changed (the sidebar, an open file's
-    // pane), and `finish` collects them; it used to answer every applied batch
-    // with a full frame (TD-2026-10-15-341). The event type matched, so it is ours
-    // and is consumed either way — a wake whose batch turned out to change nothing
-    // is still handled, not unhandled.
     (void)operations_.reload_project_if_files_changed(false);
     return Finish(true);
   }
@@ -227,9 +191,6 @@ std::optional<EventResult> WorkspaceEventDispatcher::HandleWakeEvent(const SDL_E
   }
   if (runtime_.git_blame_event_type != 0 && event.type == runtime_.git_blame_event_type) {
     util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::GitBlameEvent");
-    // The blame becomes state here, with the repaint that shows it, rather than
-    // whenever the worker wrote it -- which could be between two clips of one
-    // partial frame (TD-2026-10-16-345).
     if (operations_.apply_git_blame_results()) {
       operations_.request_frame();
     }
@@ -295,13 +256,10 @@ EventResult WorkspaceWakeController::HandleScheduledWake() const {
     };
   }
 
-  // A blinking caret that names no rect is drawn by a surface that derives its
-  // own damage (an editor pane's, a compare's or a merge's caret rows): the blink
-  // owes a frame, and prep damages what the phase changed -- or nothing.
   util::AddPerformanceCounter(util::PerfCounterId::WorkspaceWakeReasonCaretBlink);
   EventResult blink{.handled = true};
   blink.redraw.frame = true;
   return blink;
 }
 
-}  // namespace microide::workspace
+}

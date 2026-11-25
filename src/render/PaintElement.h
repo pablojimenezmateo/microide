@@ -9,44 +9,24 @@
 
 #include "render/ScopedRenderClip.h"
 
-// openspec clip-discipline D1: an element (a tab, a row, a cell, a divider) is
-// painted inside a PaintElement scope on its layout rect. The scope clips to the
-// rect -- so a full frame draws exactly what a partial frame clipped to the rect
-// can -- fills it first when the element is opaque, and, while overrun recording
-// is on (the QA redraw verifier, redraw tests), notes every draw that falls
-// outside the rect: the defect a stale `clip-edge` frame only showed afterwards,
-// named where it happens.
 namespace microide::render {
 
 struct PaintOverrun {
   std::string element;
-  SDL_Rect element_rect{};  // device-snapped
-  SDL_Rect draw_rect{};     // device-snapped
-  // The same two as the paint code gave them, and the device scale they were
-  // snapped at: an overrun no replay reproduces is diagnosed from its log line.
+  SDL_Rect element_rect{};
+  SDL_Rect draw_rect{};
   SDL_FRect element_logical{};
   SDL_FRect draw_logical{};
   SDL_FPoint scale{1.0f, 1.0f};
 };
 
-// Whether draws are checked against their element (MICROIDE_QA_VERIFY_REDRAW, or a
-// test's SetPaintOverrunRecording). Off: a scope costs its clip and fill only.
 bool PaintOverrunRecordingEnabled();
 void SetPaintOverrunRecording(bool enabled);
 
-// A drawing primitive reports the logical rect it is about to touch. Free unless
-// recording is on and a scope is open.
 void NotePaint(SDL_Renderer* renderer, const SDL_FRect& logical);
 
-// The overruns noted since the last call, once per element name.
 std::vector<PaintOverrun> TakePaintOverruns();
 
-// A paint pass that a partial frame may skip (the workspace's RenderClip runs it
-// only for clips that touch what it declared it paints). While one is open and
-// recording is on, every draw it makes -- as far as the renderer's clip and the
-// innermost element let it show -- must fall inside a rect `covers` accepts; one
-// that does not is an overrun named "pass:<name>": a pixel a partial frame skipping
-// the pass would leave stale.
 class PaintPassScope {
  public:
   using Covers = bool (*)(const void* context, const SDL_FRect& visible);
@@ -83,4 +63,4 @@ class PaintElement {
   std::optional<ScopedRenderClip> clip_;
 };
 
-}  // namespace microide::render
+}

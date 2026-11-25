@@ -17,7 +17,7 @@ std::uint64_t CurrentProcessId() {
   return static_cast<std::uint64_t>(::getpid());
 }
 
-}  // namespace
+}
 
 std::filesystem::path EstablishIsolatedAppRoot(bool keep_artifacts, std::string* error) {
   std::error_code ec;
@@ -74,4 +74,4 @@ void CleanupIsolatedAppRoot(const std::filesystem::path& root, bool keep) {
   std::filesystem::remove_all(root, ec);
 }
 
-}  // namespace microide::tests::perf
+}

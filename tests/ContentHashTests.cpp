@@ -12,7 +12,6 @@ using util::ContentHasher;
 using util::HashContent;
 using util::HashFileContent;
 
-// The official BLAKE3 test-vector input: bytes 0..250 repeating.
 std::string VectorInput(std::size_t length) {
   std::string input(length, '\0');
   for (std::size_t i = 0; i < length; ++i) {
@@ -21,9 +20,6 @@ std::string VectorInput(std::size_t length) {
   return input;
 }
 
-// Upstream test_vectors.json (1.5.4), first 32 bytes of each `hash`. Lengths that
-// straddle the 1 KiB chunk and the multi-chunk tree so the SIMD backends' many-chunk
-// paths are on the line, not only the portable single-chunk one.
 void TestContentHashKnownAnswers() {
   struct Vector {
     std::size_t length;
@@ -44,7 +40,6 @@ void TestContentHashKnownAnswers() {
     const std::string input = VectorInput(vector.length);
     Expect(HashContent(input).Hex() == vector.hex,
            "BLAKE3 of the " + std::to_string(vector.length) + "-byte vector matches upstream");
-    // Streaming in uneven pieces must agree with the one-shot hash.
     ContentHasher hasher;
     for (std::size_t offset = 0; offset < input.size(); offset += 777) {
       hasher.Update(std::string_view(input).substr(offset, 777));
@@ -76,7 +71,7 @@ void TestContentHashFileMatchesInMemory() {
   Expect(!HashFileContent(temp_dir.path() / "missing").has_value(), "a missing file has none");
 }
 
-}  // namespace
+}
 
 void RegisterContentHashTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ContentHash/KnownAnswers", TestContentHashKnownAnswers);
@@ -84,4 +79,4 @@ void RegisterContentHashTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ContentHash/FileMatchesInMemory", TestContentHashFileMatchesInMemory);
 }
 
-}  // namespace microide::tests
+}

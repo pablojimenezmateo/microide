@@ -22,7 +22,7 @@ StatusTone ToneFromString(std::string_view tone) {
   return StatusTone::Default;
 }
 
-}  // namespace
+}
 
 std::vector<StatusItemView> ResolveStatusItems(const plugin::PluginHost& plugin_host) {
   return ResolveStatusItems(plugin_host.ContributedStatusItems());
@@ -32,7 +32,7 @@ std::vector<StatusItemView> ResolveStatusItems(
     const std::vector<plugin::PluginHost::ContributedStatusItem>& contributions) {
   std::vector<StatusItemView> items;
   if (contributions.empty()) {
-    return items;  // No plugin contributes status items: zero allocation, no sort.
+    return items;
   }
   items.reserve(contributions.size());
   for (const auto& contrib : contributions) {
@@ -50,9 +50,6 @@ std::vector<StatusItemView> ResolveStatusItems(
         .plugin_id = contrib.plugin_id,
     });
   }
-  // stable_sort so items with equal alignment+priority keep their registration
-  // (contribution) order instead of reordering nondeterministically between
-  // revisions/platforms — plain std::sort has no tie-break and would jitter.
   std::stable_sort(items.begin(), items.end(),
                    [](const StatusItemView& a, const StatusItemView& b) {
                      if (a.alignment != b.alignment) {
@@ -73,4 +70,4 @@ const std::vector<StatusItemView>& ResolveStatusItems(const plugin::PluginHost& 
   return cache.items;
 }
 
-}  // namespace microide::workspace
+}

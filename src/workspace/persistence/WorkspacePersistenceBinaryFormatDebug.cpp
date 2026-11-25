@@ -247,20 +247,15 @@ bool DecodeExceptionFilterCondition(std::span<const std::byte> input, std::strin
       });
 }
 
-// Decode caps: a corrupt or hostile debug-state file must not be able to force
-// large allocations or long restore work before the project UI opens. Each
-// repeated collection is bounded independently, and the sum of the bytes backing
-// every decoded repeated record is bounded so string payloads cannot blow up
-// aggregate memory even when each individual entry is small.
 constexpr std::size_t kMaxDebugFileBreakpointGroups = 4096;
 constexpr std::size_t kMaxDebugLaunchConfigs = 4096;
 constexpr std::size_t kMaxDebugWatchExpressions = 4096;
 constexpr std::size_t kMaxDebugExceptionFilters = 4096;
 constexpr std::size_t kMaxDebugFunctionBreakpoints = 4096;
 constexpr std::size_t kMaxDebugExceptionFilterConditions = 4096;
-constexpr std::size_t kMaxDebugDecodedStringBytes = 8u * 1024u * 1024u;  // 8 MiB
+constexpr std::size_t kMaxDebugDecodedStringBytes = 8u * 1024u * 1024u;
 
-}  // namespace
+}
 
 bool EncodeDebugStateRecord(const PersistedDebugState& state, std::vector<std::byte>* out) {
   if (out == nullptr) {
@@ -334,9 +329,6 @@ bool DecodeDebugStateRecord(std::span<const std::byte> input, PersistedDebugStat
   *state = PersistedDebugState{};
   bool seen_schema = false;
   std::size_t total_decoded_bytes = 0;
-  // Charge every repeated record's payload against a shared byte budget; the
-  // record framing already bounds each payload, so summing them bounds the
-  // aggregate string bytes the decoder will materialize.
   auto charge_bytes = [&](std::span<const std::byte> record_payload) -> bool {
     total_decoded_bytes += record_payload.size();
     return total_decoded_bytes <= kMaxDebugDecodedStringBytes;
@@ -440,4 +432,4 @@ bool DecodeDebugStateRecord(std::span<const std::byte> input, PersistedDebugStat
          seen_schema;
 }
 
-}  // namespace microide::workspace
+}

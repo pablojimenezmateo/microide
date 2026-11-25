@@ -43,7 +43,7 @@ std::string JoinLineRange(editor::LineSpan lines,
   return joined;
 }
 
-}  // namespace
+}
 
 void WorkspaceShell::MoveFileFinderSelection(int delta) {
   context_.current_project_state.file_finder.MoveSelection(delta);
@@ -62,20 +62,12 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
     return TextInputSurface::None;
   }
 
-  // The settings overlay is a host-owned modal layered above everything else. It
-  // only claims text input when its filter pane holds focus, mirroring the
-  // "focused-only" rule the buffer-search surfaces use below.
   if (settings_overlay_service_.Visible()) {
-    // Help/About filters through the same query editor (its rows have always been
-    // filtered by RebuildHelpRows; the input just had nowhere to be typed), so it
-    // claims text input on the same terms. It has no value-edit or category panes.
     if (settings_overlay_service_.Mode() == SettingsOverlayMode::HelpAbout) {
       return settings_overlay_service_.FocusedPane() == SettingsPane::Filter
                  ? TextInputSurface::SettingsQuery
                  : TextInputSurface::None;
     }
-    // An active inline value edit claims text input regardless of focused pane so
-    // typing lands in the value editor; otherwise the filter pane owns input.
     if (settings_overlay_service_.EditingValue()) {
       return TextInputSurface::SettingsValueEdit;
     }
@@ -96,10 +88,6 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
   }
 
   if (context_.current_project_state.overlay.visible) {
-    // The find/replace widget is non-modal: while it floats, focus may be on the
-    // editor (so the user can keep editing). Only claim the buffer-search input
-    // surfaces when the widget actually holds focus; otherwise fall through so
-    // typing and the caret belong to the editor underneath.
     const bool overlay_focused =
         context_.current_project_state.surface.focus == FocusTarget::Overlay;
     switch (context_.current_project_state.overlay.mode) {
@@ -125,8 +113,6 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
       case OverlayMode::CommandPalette:
         return TextInputSurface::CommandPalette;
       case OverlayMode::Completion:
-        // Typing goes to the editor under the list, which follows it (see
-        // CompletionAssist::FollowCompletionCaret).
         return ActiveEditableViewport() != nullptr ? TextInputSurface::Editor
                                                    : TextInputSurface::None;
       case OverlayMode::CodeActions:
@@ -174,8 +160,6 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
 
   if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
     if (BottomPanelShowsTerminal() && ActiveTerminalPane() != nullptr) {
-      // The find bar floats over a live terminal; it only takes typing while it
-      // holds focus, the same rule the in-file find widget follows above.
       return terminal_find_service_.focused() ? TextInputSurface::TerminalFind
                                               : TextInputSurface::Terminal;
     }
@@ -245,10 +229,6 @@ std::optional<std::string> WorkspaceShell::SelectionTextWithContext() {
     return std::nullopt;
   }
 
-  // Resolve the copied body and its 0-indexed line span. With a selection we
-  // honour it verbatim; otherwise we fall back to the current line, expanding a
-  // blank line out to its enclosing fold (method/block) so right-clicking an
-  // empty line still yields useful context.
   std::string body;
   std::size_t start_line = 0;
   std::size_t end_line = 0;
@@ -265,9 +245,6 @@ std::optional<std::string> WorkspaceShell::SelectionTextWithContext() {
       --end_line;
     }
   } else {
-    // No selection: read the live buffer zero-copy (LineView) instead of materializing
-    // every line with Snapshot() just to return the current line or a small enclosing
-    // fold (TD-2026-07-17A-035).
     const editor::LineSpan lines = viewport->lines();
     const std::size_t cursor = viewport->cursor_line();
     if (cursor >= lines.size()) {
@@ -289,14 +266,11 @@ std::optional<std::string> WorkspaceShell::SelectionTextWithContext() {
   }
 
   const std::filesystem::path path = viewport->path().lexically_normal();
-  // Shared helper: relative label inside the root, absolute path outside it.
   std::string path_label = RelativePathLabel(context_.current_project_state.root, path);
   if (path_label.empty()) {
     path_label = path.empty() ? "Untitled" : path.string();
   }
 
-  // Prepend the enclosing fold opener (function/method/block header) as a
-  // neutral context comment so the snippet pastes into an LLM with scope.
   std::string result;
   if (const editor::FoldingModel* folding_model = EnsureActiveFoldingModelFresh();
       folding_model != nullptr) {
@@ -320,4 +294,4 @@ std::optional<std::string> WorkspaceShell::SelectionTextWithContext() {
   return result;
 }
 
-}  // namespace microide::workspace
+}

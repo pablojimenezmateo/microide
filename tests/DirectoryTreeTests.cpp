@@ -28,9 +28,6 @@ const TreeEntry* FindEntry(const DirectoryTree& tree, const std::filesystem::pat
   return nullptr;
 }
 
-// Siblings sort folders first, then case-insensitively with numeric-aware digit
-// runs -- the explorer order VS Code and every file manager use. A byte-wise sort
-// put "Zebra.txt" before "apple.txt" and "file10.txt" before "file2.txt".
 void TestDirectoryTreeSortsSiblingsNaturallyAndCaseInsensitively() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -143,13 +140,9 @@ void TestDirectoryTreeShowsHiddenIgnoredEntries() {
          "hidden ignored directories should be tagged as ignored");
 }
 
-// The user's requirement: VCS metadata and build-output dirs are treated exactly
-// like gitignored entries — shown GRAYED (ignored=true), not hidden — even when no
-// .gitignore exists. A user exclude glob grays a custom dir the same way.
 void TestDirectoryTreeGraysBuildAndVcsDirsNotHidden() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "svn_project";
-  // No .gitignore (SVN-style checkout).
   WriteFile(root / "src" / "main.cpp", "int main() {}\n");
   WriteFile(root / ".svn" / "wc.db", "svn\n");
   WriteFile(root / "builds" / "artifact.o", "bin\n");
@@ -194,10 +187,6 @@ void TestDirectoryTreeStopsExpandingSymlinkCycle() {
   const std::filesystem::path root = temp_dir.path() / "project";
   WriteFile(root / "a" / "marker.txt", "marker\n");
 
-  // `loop` is a directory symlink back to the project root, so loop/loop/loop/…
-  // all resolve to the same real directory. The tree may follow it once, but
-  // expanding `loop/loop` must not re-materialize the root subtree underneath
-  // it — otherwise expansion through a cycle grows without bound.
   std::error_code link_error;
   std::filesystem::create_directory_symlink(root, root / "loop", link_error);
   Expect(!link_error, "fixture should create a root-referential directory symlink");
@@ -217,15 +206,8 @@ void TestDirectoryTreeStopsExpandingSymlinkCycle() {
          "expanding a symlink that loops back to an ancestor must not re-enter the cycle");
 }
 
-}  // namespace
+}
 
-// Expanded/collapsed key sets accumulate forever otherwise; a deleted directory's
-// key must be pruned on the fs-resync Refresh so the sets stay bounded and a
-// deleted-then-recreated dir renders collapsed (like VSCode) instead of expanded.
-// Restored expansion/collapse keys are validated for root containment before storing, so
-// a tampered or cross-root session file cannot seed absolute or `..`-escaping keys that
-// PruneDeletedDirectoryKeys would stat or that would be re-serialized as outside-root
-// relatives (TD-2026-07-17A-089).
 void TestDirectoryTreeRestoreRejectsOutsideRootExpansionKeys() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -235,8 +217,6 @@ void TestDirectoryTreeRestoreRejectsOutsideRootExpansionKeys() {
   DirectoryTree tree;
   Expect(tree.SetRoot(root), "directory tree should open fixture root");
 
-  // One contained key plus hostile ones: an absolute path, a `..` escape, and a deep
-  // traversal that normalizes to a sibling of the root.
   tree.RestoreExpansionState({"alpha", "/etc", "../../outside", "beta/../../escape"},
                              {"../sibling-collapsed", "/var"});
 
@@ -277,7 +257,7 @@ void TestDirectoryTreePrunesDeletedDirectoryKeysOnRefresh() {
   tree.ExpandSelection();
   Expect(tree.SelectPathIfVisible(root / "collapsed"), "collapsed should be visible");
   tree.ExpandSelection();
-  tree.CollapseSelection();  // Populates the manually-collapsed key set.
+  tree.CollapseSelection();
 
   Expect(has(tree.ExpandedRelativePaths(), "alpha"), "alpha should be recorded expanded");
   Expect(has(tree.ExpandedRelativePaths(), "survivor"), "survivor should be recorded expanded");
@@ -299,17 +279,9 @@ void TestDirectoryTreePrunesDeletedDirectoryKeysOnRefresh() {
          "an existing expanded directory must survive refresh (no over-pruning)");
 }
 
-// The stale-key sweep stats every remembered expand/collapse key, so once the set is large
-// (a big session restore or heavy manual expansion) it must NOT run on every refresh — a
-// single changed row should not pay an O(history) syscall sweep. Amortize: a deleted dir's
-// key lingers briefly (harmless — the dir is simply not enumerated) and is reclaimed by a
-// later bounded-interval sweep, so the set still stays bounded across a session
-// (TD-2026-07-17A-088).
 void TestDirectoryTreeAmortizesDeletedKeyPruneForLargeSets() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
-  // Build a remembered set well past the immediate-prune threshold so the amortized path
-  // engages: 80 expanded top-level directories.
   constexpr int kDirCount = 80;
   std::vector<std::filesystem::path> dirs;
   for (int i = 0; i < kDirCount; ++i) {
@@ -337,14 +309,12 @@ void TestDirectoryTreeAmortizesDeletedKeyPruneForLargeSets() {
   std::error_code error;
   std::filesystem::remove_all(root / "d005", error);
 
-  // A single refresh must NOT sweep the whole large set: the deleted key still lingers.
   tree.Refresh();
   Expect(has(tree.ExpandedRelativePaths(), "d005"),
          "with a large set, one refresh must not pay the full O(history) stale-key sweep");
   Expect(FindEntry(tree, root / "d005") == nullptr,
          "the deleted directory must still be gone from the visible tree (walk-driven)");
 
-  // The bounded-interval backstop eventually reclaims the stale key so the set stays bounded.
   for (int i = 0; i < 40; ++i) {
     tree.Refresh();
   }
@@ -354,12 +324,6 @@ void TestDirectoryTreeAmortizesDeletedKeyPruneForLargeSets() {
          "surviving directories keep their expansion state across the sweep (no over-prune)");
 }
 
-// The sidebar's git badge: ApplyGitStatuses stores keys relative to the repository
-// root in generic form, and every tree entry has to resolve its own badge out of
-// that map. Nothing covered it — the key derivation could be off by a byte and the
-// whole suite stayed green, so a "no file ever shows as modified" regression was
-// invisible. (Found while replacing the per-entry lexically_relative +
-// lexically_normal + generic_string chain with a root-prefix strip, 12x faster.)
 void TestDirectoryTreeResolvesGitBadgesFromRelativeKeys() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -372,8 +336,6 @@ void TestDirectoryTreeResolvesGitBadgesFromRelativeKeys() {
   Expect(tree.SelectPath(root / "src" / "deep" / "file.cpp"),
          "selecting the nested file should expand its ancestors into the entry list");
 
-  // Exactly the key shape the porcelain parser writes: repository-relative,
-  // '/'-separated, with the folder badge aggregated onto each ancestor.
   const auto statuses = std::make_shared<const microide::project::GitTreeStatusMap>(
       microide::project::GitTreeStatusMap{
           {"top.txt", GitFileStatus::Untracked},
@@ -382,7 +344,6 @@ void TestDirectoryTreeResolvesGitBadgesFromRelativeKeys() {
           {"src", GitFileStatus::Modified},
       });
   Expect(tree.ApplyGitStatuses(statuses), "applying badges to clean rows should report a change");
-  // The same map again changes no row, and says so (its caller skips the repaint).
   Expect(!tree.ApplyGitStatuses(statuses), "re-applying the same badges should report no change");
 
   const auto badge = [&](const std::filesystem::path& path) {
@@ -403,15 +364,11 @@ void TestDirectoryTreeResolvesGitBadgesFromRelativeKeys() {
          "a path absent from the status map must stay Clean");
   Expect(tree.has_dirty_files(), "a non-Clean status should mark the tree dirty");
 
-  // Clearing the map must clear every badge, not leave the previous sweep's values.
   Expect(tree.ApplyGitStatuses({}), "clearing the badges should report a change");
   Expect(badge(root / "src" / "deep" / "file.cpp") == GitFileStatus::Clean,
          "an emptied status map should clear existing badges");
 }
 
-// A remote mirror's first sync: files the host lists that have not arrived are
-// rows too (dimmed), under folders that may not exist yet, so the user can open
-// them; a file that has landed is listed once, as itself.
 void TestDirectoryTreeListsPendingPaths() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -473,4 +430,4 @@ void RegisterDirectoryTreeTests(std::vector<TestCase>& tests) {
           TestDirectoryTreeResolvesGitBadgesFromRelativeKeys);
 }
 
-}  // namespace microide::tests
+}

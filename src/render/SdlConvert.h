@@ -5,9 +5,6 @@
 #include "util/KeyModifiers.h"
 #include "util/Rgba8.h"
 
-// The one boundary between the kernel's plain input/colour vocabulary and SDL's.
-// Kernel code (the terminal model, the shared ANSI palette) produces util::Rgba8 and
-// consumes util::KeyModifiers; anything that paints or reads SDL events converts here.
 namespace microide::render {
 
 constexpr SDL_Color ToSdlColor(util::Rgba8 color) {
@@ -31,4 +28,4 @@ constexpr util::KeyModifiers ToKeyModifiers(SDL_Keymod modifiers) {
   return result;
 }
 
-}  // namespace microide::render
+}

@@ -41,7 +41,6 @@ struct SocketPair {
   }
 };
 
-// Collects what a transport delivers, from its I/O thread.
 struct Inbox {
   std::mutex mutex;
   std::vector<Frame> frames;
@@ -71,7 +70,6 @@ struct Inbox {
   }
 };
 
-// Read whatever a raw (non-transport) peer receives, as frames.
 std::vector<Frame> ReadRawFrames(int fd, FrameDecoder& decoder, std::size_t want,
                                  std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
   std::vector<Frame> frames;
@@ -106,8 +104,6 @@ void WriteAll(int fd, const std::string& bytes) {
   }
 }
 
-// Two transports, one on each end: every frame arrives, in order, intact — and the
-// transport-internal acks never surface as frames.
 void TestFramesRoundTripBetweenTwoTransports() {
   SocketPair pair;
   Inbox inbox_a;
@@ -125,7 +121,6 @@ void TestFramesRoundTripBetweenTwoTransports() {
   Expect(WaitUntil([&]() { return inbox_b.Count() == 200; }, std::chrono::seconds(5)),
          "every frame arrives");
   std::lock_guard lock(inbox_b.mutex);
-  // Within a lane, order is preserved; ids tell us which frame is which.
   std::uint64_t last_interactive = 0;
   std::uint64_t last_bulk = 0;
   bool first_interactive = true;
@@ -143,8 +138,6 @@ void TestFramesRoundTripBetweenTwoTransports() {
   Expect(inbox_a.closes.load() == 0 && inbox_b.closes.load() == 0, "nobody closed");
 }
 
-// The design's headline: with 50 MiB of bulk queued, an interactive frame goes out
-// next, behind at most the bulk window. And bulk beyond the window waits for acks.
 void TestInteractiveOvertakesABulkBacklog() {
   SocketPair pair;
   Inbox inbox;
@@ -153,7 +146,7 @@ void TestInteractiveOvertakesABulkBacklog() {
   options.bulk_window_initial = 256 * 1024;
   Expect(sender.Start(pair.a, pair.a, inbox.Callbacks(), options), "start");
   const std::string chunk(RemoteFrameTransport::kMaxBulkChunkBytes, 'b');
-  for (int i = 0; i < 800; ++i) {  // 50 MiB
+  for (int i = 0; i < 800; ++i) {
     Expect(sender.Send(FrameType::ProcStdout, Lane::Bulk, 1, chunk), "queue bulk");
   }
   Expect(sender.Send(FrameType::Notification, Lane::Interactive, 42, "keystroke"),
@@ -161,7 +154,6 @@ void TestInteractiveOvertakesABulkBacklog() {
 
   FrameDecoder raw;
   std::vector<Frame> received;
-  // Read until the keystroke shows up.
   while (true) {
     std::vector<Frame> more = ReadRawFrames(pair.b, raw, 1, std::chrono::seconds(5));
     Expect(!more.empty(), "frames keep arriving until the keystroke");
@@ -185,8 +177,6 @@ void TestInteractiveOvertakesABulkBacklog() {
          "at most one window of bulk went ahead of the keystroke (" + std::to_string(bulk_before) +
              " bytes)");
 
-  // Nothing further flows until the peer acks: the window, not the socket buffer,
-  // bounds what is in flight.
   std::size_t bulk_total = 0;
   for (const Frame& frame : received) {
     bulk_total += frame.id == 42 ? 0 : frame.payload.size();
@@ -207,11 +197,6 @@ void TestInteractiveOvertakesABulkBacklog() {
   Expect(inbox.closes.load() == 0, "and the transport is healthy");
 }
 
-// Over a link with a real round trip and bandwidth (DelayRelay: 40 ms, 100
-// Mbit/s) the adaptive bulk window settles at the bandwidth-delay product plus
-// the 5 ms an echo may wait (TD-2026-10-08-325: it used to aim at 100 ms of
-// bandwidth whatever the round trip, which queued ~20 ms in front of every
-// keystroke on this link), while the link stays full.
 void TestBulkWindowSettlesAtTheBandwidthDelayProduct() {
   SocketPair pair;
   constexpr auto kRtt = std::chrono::milliseconds(40);
@@ -225,7 +210,7 @@ void TestBulkWindowSettlesAtTheBandwidthDelayProduct() {
   const int far = relay.TakeClientFd();
   Expect(receiver.Start(far, far, receiver_inbox.Callbacks(), {}), "start the receiver");
   const std::string chunk(RemoteFrameTransport::kMaxBulkChunkBytes, 'b');
-  constexpr int kChunks = 200;  // 12.5 MiB: about a second on this link
+  constexpr int kChunks = 200;
   const TimingWindow timing;
   for (int i = 0; i < kChunks; ++i) {
     Expect(sender.Send(FrameType::ProcStdout, Lane::Bulk, 1, chunk), "queue bulk");
@@ -237,8 +222,6 @@ void TestBulkWindowSettlesAtTheBandwidthDelayProduct() {
   const double throughput = kChunks * static_cast<double>(chunk.size()) / seconds;
   const double window = static_cast<double>(sender.bulk_window());
   const double product = kBytesPerSecond * std::chrono::duration<double>(kRtt).count();
-  // The rule, against what the transport itself measured: bandwidth x (base RTT +
-  // the allowance), less the one chunk a frame-to-ack sample already contains.
   const double base = std::chrono::duration<double>(sender.base_rtt()).count();
   const double rule = sender.bulk_bandwidth() *
                           (base + std::chrono::duration<double>(
@@ -247,33 +230,15 @@ void TestBulkWindowSettlesAtTheBandwidthDelayProduct() {
   Expect(base > 0.0 && std::abs(window - std::clamp(rule, 64.0 * 1024, 1024.0 * 1024)) < window * 0.005,
          "the window follows bandwidth x (base RTT + allowance): window " + std::to_string(window) +
              ", rule " + std::to_string(rule));
-  // The absolute bound holds only where the simulated link behaves like one: not
-  // in a sanitizer build (the relay itself cannot pace 100 Mbit/s there), and not
-  // when the transfer's own stretch of time was starved -- every sample inflated,
-  // or the relay's pacing slowed without moving the minimum (the hardened lane at
-  // load 17 on 12 threads: 9.5 MB/s, base RTT fine). TimingWindow reads the CPU
-  // stall over exactly that stretch: the 1-minute load average this used to ask
-  // lagged a parallel ctest that had just started, and the test failed at 9.1 and
-  // 9.3 MB/s with its guard in place.
   if (timing.Trustworthy() && base < 2 * std::chrono::duration<double>(kRtt).count()) {
-    // 75 %, not 80: a window too small to fill the link shows as a large
-    // shortfall, while a loaded parallel run measured 9.5 and 9.86 of 12.5 MB/s
-    // (79 %) with the window exactly right.
     Expect(throughput > kBytesPerSecond * 0.75,
            "the link stays full: " + std::to_string(throughput / 1e6) + " MB/s");
-    // Below by a measurement's worth (2%): the window comes from the MEASURED
-    // bandwidth, which a busy box reads a fraction low -- 499392 against 500000
-    // failed a full parallel ctest run once while the rule above held exactly.
     Expect(window >= product * 0.98 && window <= product + kBytesPerSecond * 0.015,
            "the window is the bandwidth-delay product plus a few ms of queue: window " +
                std::to_string(window) + ", product " + std::to_string(product));
   }
 }
 
-// On a long, slower link (150 ms, 25 Mbit/s: a product of 469 KB, above the
-// 256 KiB the window starts at) the window must GROW to fill it. A window-limited
-// link measures window / RTT, so a target computed from that measurement has to
-// stay above the current window or the window can never climb out of its start.
 void TestBulkWindowFillsALongLink() {
   SocketPair pair;
   constexpr auto kRtt = std::chrono::milliseconds(150);
@@ -287,7 +252,7 @@ void TestBulkWindowFillsALongLink() {
   const int far = relay.TakeClientFd();
   Expect(receiver.Start(far, far, receiver_inbox.Callbacks(), {}), "start the receiver");
   const std::string chunk(RemoteFrameTransport::kMaxBulkChunkBytes, 'b');
-  constexpr int kChunks = 160;  // 10 MiB: ~3.4 s on this link
+  constexpr int kChunks = 160;
   const TimingWindow timing;
   for (int i = 0; i < kChunks; ++i) {
     Expect(sender.Send(FrameType::ProcStdout, Lane::Bulk, 1, chunk), "queue bulk");
@@ -299,8 +264,6 @@ void TestBulkWindowFillsALongLink() {
   const double throughput = kChunks * static_cast<double>(chunk.size()) / seconds;
   const double product = kBytesPerSecond * std::chrono::duration<double>(kRtt).count();
   const double window = static_cast<double>(sender.bulk_window());
-  // On any machine, the window is the rule's answer for what the acks MEASURED:
-  // bandwidth x (base RTT + the allowance), less one chunk.
   const double base = std::chrono::duration<double>(sender.base_rtt()).count();
   const double measured_rule =
       sender.bulk_bandwidth() *
@@ -309,46 +272,25 @@ void TestBulkWindowFillsALongLink() {
   Expect(base > 0.0 && std::abs(window - std::clamp(measured_rule, 64.0 * 1024, 1024.0 * 1024)) < window * 0.005,
          "the window follows the measured bandwidth x (base RTT + allowance): window " +
              std::to_string(window) + ", rule " + std::to_string(measured_rule));
-  // What this test is for: the window climbs out of its start at all. That needs a
-  // relay that kept its pace: a starved one delivers short of window / RTT, and the
-  // window then rightly follows the measurement DOWN (70 KB under a UBSan build
-  // sharing the machine with three other lanes, 2026-10-27). Not Trustworthy(),
-  // which is false in every sanitizer build and would leave those lanes checking
-  // nothing here: only the starvation it also reads.
   if (timing.StalledFraction() < 0.10) {
     Expect(window > static_cast<double>(RemoteFrameTransport::Options{}.bulk_window_initial),
            "the window grew past its start: window " + std::to_string(window) + "; " + timing.Describe());
   }
-  // And where it settles is the rule's answer for this link: bandwidth x (RTT +
-  // the allowance), less the one chunk a frame-to-ack sample already contains --
-  // ~419 KB here. This used to demand 90 % of the bare 469 KB product, i.e. 422 KB,
-  // ABOVE the rule's own nominal answer, so it passed only while relay overhead
-  // inflated the measured RTT and failed under a loaded parallel ctest (415 KB).
   const double nominal_rule =
       kBytesPerSecond * (std::chrono::duration<double>(kRtt).count() +
                          std::chrono::duration<double>(RemoteFrameTransport::kQueueAllowance).count()) -
       static_cast<double>(RemoteFrameTransport::kMaxBulkChunkBytes);
-  // Both bounds below measure the machine as well: the window comes from the
-  // bandwidth the acks measured, which a starved relay delivers short (355 KB
-  // against a 419 KB rule at load 12.3 on 12 threads). Only over a window of time
-  // the machine kept -- and even then a full parallel ctest (six shards, the load
-  // under the oversubscription guard) settled it at 379 KB and 346 KB on
-  // 2026-10-21, against a 95 % bound of 398 KB, twice in one day. 80 % (335 KB)
-  // still tells "settled at the rule" from "barely left the 256 KiB start", which
-  // the assertion above already pins.
   if (timing.Trustworthy()) {
     Expect(window >= nominal_rule * 0.80,
            "the window grew to the link's product: window " + std::to_string(window) +
                ", rule at the link's nominal rate " + std::to_string(nominal_rule) + ", product " +
                std::to_string(product));
-    // Slow start included: a ramp of a few round trips, then a full link.
     Expect(throughput > kBytesPerSecond * 0.7,
            "the link fills: " + std::to_string(throughput / 1e6) + " MB/s of " +
                std::to_string(kBytesPerSecond / 1e6));
   }
 }
 
-// Garbage from the peer ends the connection once, with the decoder's reason.
 void TestGarbageFromThePeerClosesOnce() {
   SocketPair pair;
   Inbox inbox;
@@ -374,8 +316,6 @@ void TestPeerHangupCloses() {
   Expect(WaitUntil([&]() { return inbox.closes.load() == 1; }), "EOF closes the transport");
 }
 
-// A peer that stops reading is a dead peer: the queue bound tears the connection
-// down instead of growing without limit.
 void TestWedgedPeerIsTornDown() {
   SocketPair pair;
   Inbox inbox;
@@ -393,7 +333,6 @@ void TestWedgedPeerIsTornDown() {
   ::close(pair.b);
 }
 
-// An ack for bytes never sent is a lie about the window; it closes the connection.
 void TestLyingAckCloses() {
   SocketPair pair;
   Inbox inbox;
@@ -406,15 +345,12 @@ void TestLyingAckCloses() {
   ::close(pair.b);
 }
 
-// Flush waits until what was queued has been written — the reply a deliberate
-// teardown sends last (server/shutdown's) — and gives up on a peer that does not
-// read.
 void TestFlushWaitsForQueuedFrames() {
   SocketPair pair;
   Inbox inbox;
   RemoteFrameTransport transport;
   Expect(transport.Start(pair.a, pair.a, inbox.Callbacks()), "start");
-  const std::string big(4 * 1024 * 1024, 'f');  // more than the socket buffers hold
+  const std::string big(4 * 1024 * 1024, 'f');
   Expect(transport.Send(FrameType::ProcStdout, Lane::Interactive, 1, big), "queued");
   Expect(!transport.Flush(std::chrono::milliseconds(50), std::chrono::seconds(10)),
          "with nobody reading, the flush gives up once it has stalled");
@@ -429,8 +365,6 @@ void TestFlushWaitsForQueuedFrames() {
   ::close(pair.b);
 }
 
-// A peer that reads slowly but steadily is not a dead one: the flush waits as long
-// as bytes keep going out, far past its stall time, and stops at its limit.
 void TestFlushWaitsForASlowReaderUpToItsLimit() {
   const std::string big(4 * 1024 * 1024, 'f');
   const auto trickle = [](int fd, std::atomic<bool>& stop) {
@@ -479,7 +413,7 @@ void TestFlushWaitsForASlowReaderUpToItsLimit() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterRemoteFrameTransportTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteFrameTransport/FramesRoundTripBetweenTwoTransports",
@@ -499,4 +433,4 @@ void RegisterRemoteFrameTransportTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteFrameTransport/LyingAckCloses", TestLyingAckCloses);
 }
 
-}  // namespace microide::tests
+}

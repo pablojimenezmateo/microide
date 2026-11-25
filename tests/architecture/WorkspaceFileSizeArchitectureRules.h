@@ -10,4 +10,4 @@ RuleResult CheckWorkspaceShellCompanionTuCount(const std::filesystem::path& repo
 RuleResult CheckCoordinatorTuSize(const std::filesystem::path& repo_root);
 RuleResult CheckDebugTuSize(const std::filesystem::path& repo_root);
 
-}  // namespace microide::tests::architecture
+}

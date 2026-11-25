@@ -48,8 +48,6 @@ std::pair<editor::EditorViewMetrics, std::vector<std::size_t>> EditorPointerLayo
       fold_enabled ? ensure_active_folding_model_fresh() : nullptr;
   const bool sticky_active = fold_enabled && sticky_setting && folding_model != nullptr;
   const bool line_numbers = setting_enabled("editor.line_numbers", true);
-  // The frame's sizing (EditorViewRenderer::SizeViewportWithStickyBand), so a
-  // pointer resolves against the geometry the frame paints.
   std::vector<std::size_t> sticky_lines;
   const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::SizeViewportWithStickyBand(
       text_renderer, viewport, editor_rect, line_numbers, [&](const editor::TextViewport& view) {
@@ -85,15 +83,6 @@ std::optional<editor::EditorViewMetrics> FastEditorPointerMetricsFromViewportSta
   return metrics;
 }
 
-// Resolve the pointer metrics for a viewport, preferring the allocation-free
-// fast path and falling back to the full layout bundle when the viewport's
-// cached row/column counts do not agree with a recomputed layout (a resize or
-// a folding change between frames).
-//
-// The drag and the selection-motion handlers each spelled this out: the same
-// fast call with the same `editor.line_numbers` default-true lookup, the same
-// has_value test, the same fallback that builds the bundle and discards its
-// sticky scratch. Only the trace label differed, so it is a parameter.
 editor::EditorViewMetrics ResolveEditorPointerMetrics(
     editor::TextViewport& viewport,
     const SDL_FRect& editor_rect,
@@ -115,10 +104,6 @@ editor::EditorViewMetrics ResolveEditorPointerMetrics(
   return metrics;
 }
 
-// Project a pointer onto the nearest cell of the pane's visible text band.
-//
-// The band is the rows the renderer actually painted, not the pane rect -- see
-// selection_autoscroll::ClampPointerToBand, which every dragging surface shares.
 SDL_FPoint ClampPointerToVisibleTextBand(const SDL_FRect& editor_rect,
                                          const editor::EditorViewMetrics& metrics,
                                          float x, float y) {
@@ -126,19 +111,16 @@ SDL_FPoint ClampPointerToVisibleTextBand(const SDL_FRect& editor_rect,
       selection_autoscroll::BandFor(editor_rect, metrics), x, y);
 }
 
-// Same, for a setting whose registered default is ON: an unbound getter and an
-// unset value both have to read as enabled, or the feature is off wherever the
-// host has not wired settings (and in every test that does not set it).
 bool SettingOnByDefault(
     const std::function<std::optional<std::string>(std::string_view)>& get_setting_value,
     std::string_view id) {
   if (!get_setting_value) {
     return true;
   }
-  return SettingFlagEnabled(get_setting_value(id), /*default_value=*/true);
+  return SettingFlagEnabled(get_setting_value(id), true);
 }
 
-}  // namespace
+}
 
 EditorMouseCoordinator::EditorMouseCoordinator(ProjectWorkspaceState& state,
                                                InteractionState& interaction_state,
@@ -172,8 +154,6 @@ bool EditorMouseCoordinator::HandleGutterContextMenu(const SDL_Event& event,
   if (viewport == nullptr || viewport->path().empty()) {
     return false;
   }
-  // The painted grid, sticky band included: without it the gutter's menu opened for
-  // the line the band's height below the one right-clicked.
   const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
       text_renderer_, *viewport, pane_it->rect, viewport->sticky_band_rows(),
       SettingFlagEnabled(operations_.get_setting_value
@@ -206,8 +186,6 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
                                               const WorkspaceLayout& layout) {
   util::PerformanceTrace::Scope perf_scope("EditorMouseCoordinator::HandleButtonDown");
 
-  // Non-blocking external-change banner occupies the top strip of the editor
-  // surface, above the panes. Intercept its clicks before pane dispatch.
   if (const EditorBannerState* banner = ActiveEditorBannerForTab(state_); banner != nullptr) {
     const SDL_FRect strip =
         ActiveEditorBannerStripRect(state_, ComputeEditorGroupRects(layout, state_.editor_split));
@@ -228,7 +206,6 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
           }
         }
       }
-      // Consume any click on the strip so it does not fall through to content.
       return true;
     }
   }
@@ -242,8 +219,6 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (pane_it == panes.end()) {
     return false;
   }
-  // Clicking into a split group focuses it first, so the cursor positioning and
-  // viewport below resolve against that group's active editor.
   if (pane_it->group_index != state_.focused_group_index &&
       pane_it->group_index < state_.editor_groups.size()) {
     state_.focused_group_index = pane_it->group_index;
@@ -264,7 +239,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       Contains(scroll_layout.vertical_scrollbar->track, event.button.x, event.button.y)) {
     interaction_state_.drag_target = DragTarget::EditorVerticalScrollbar;
     interaction_state_.drag_scrollbar_offset = ScrollbarGrabOffset(
-        *scroll_layout.vertical_scrollbar, static_cast<float>(event.button.y), /*vertical=*/true);
+        *scroll_layout.vertical_scrollbar, static_cast<float>(event.button.y), true);
     viewport->SetScrollLine(static_cast<std::size_t>(std::max(
         0L, std::lround(ScrollUnitsForPointer(*scroll_layout.vertical_scrollbar,
                                               static_cast<float>(event.button.y),
@@ -277,7 +252,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     interaction_state_.drag_target = DragTarget::EditorHorizontalScrollbar;
     interaction_state_.drag_scrollbar_offset =
         ScrollbarGrabOffset(*scroll_layout.horizontal_scrollbar,
-                            static_cast<float>(event.button.x), /*vertical=*/false);
+                            static_cast<float>(event.button.x), false);
     viewport->SetHorizontalScroll(static_cast<std::size_t>(std::max(
         0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
                                               static_cast<float>(event.button.x),
@@ -304,14 +279,11 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
   }
 
-  // Fold gutter click toggles the fold on the opener row. The painted marker
-  // (see FoldGutterMarkerRect) sits in the rightmost few px of the gutter; we
-  // widen the hit zone here so users don't need pixel precision.
   if (event.button.button == SDL_BUTTON_LEFT && event.button.y >= metrics.first_line_y) {
     const auto fold_setting = operations_.get_setting_value
                                   ? operations_.get_setting_value("editor.fold.enabled")
                                   : std::nullopt;
-    if (SettingFlagEnabled(fold_setting, /*default_value=*/true)) {
+    if (SettingFlagEnabled(fold_setting, true)) {
       const float gutter_right = editor_rect.x + metrics.gutter_width;
       const float fold_hit_left = editor::kGutterFoldHitLeft(editor_rect.x, metrics.gutter_width);
       if (event.button.x >= fold_hit_left && event.button.x < gutter_right) {
@@ -337,11 +309,6 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
   }
 
-  // Breakpoint gutter click. When the debugger is enabled, the gutter area to
-  // the left of the fold hit zone toggles a breakpoint on the clicked line.
-  // Gated on `debug.enabled` so the editor is unchanged when debugging is off.
-  // (Right-click opens the breakpoint context menu via HandleGutterContextMenu,
-  // dispatched ahead of the editor context menu in WorkspaceShellMouse.)
   if (event.button.button == SDL_BUTTON_LEFT && event.button.y >= metrics.first_line_y) {
     const auto debug_setting = operations_.get_setting_value
                                    ? operations_.get_setting_value("debug.enabled")
@@ -378,24 +345,15 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   const bool alt_left_click =
       event.button.button == SDL_BUTTON_LEFT && (modifiers & SDL_KMOD_ALT) != 0;
   const editor::TextPosition anchor{viewport->cursor_line(), viewport->cursor_column()};
-  // Shift+Alt+drag is a rectangular (column/box) selection: the anchor corner is
-  // the current primary caret, and the pointer extends a per-line selection across
-  // the row span. When the two corners share a column this degenerates to plain
-  // zero-width column carets, matching the prior Shift+Alt+click behavior.
   const bool shift_alt_box =
       alt_left_click && (modifiers & SDL_KMOD_SHIFT) != 0;
   const bool plain_left_click =
       event.button.button == SDL_BUTTON_LEFT &&
       (modifiers & (SDL_KMOD_ALT | SDL_KMOD_SHIFT | SDL_KMOD_CTRL | SDL_KMOD_GUI)) == 0;
-  // Ctrl+click (no other modifier) places the caret and then goes to the
-  // definition under it (VS Code). Ctrl+Shift+click stays a selection extend.
   const bool ctrl_left_click =
       event.button.button == SDL_BUTTON_LEFT && event.button.clicks == 1 &&
       (modifiers & SDL_KMOD_CTRL) != 0 &&
       (modifiers & (SDL_KMOD_ALT | SDL_KMOD_SHIFT | SDL_KMOD_GUI)) == 0;
-  // A plain press on the line numbers selects that whole line, and a drag from it
-  // extends by whole lines (VS Code). The fold and breakpoint zones of the gutter
-  // took their presses above; what reaches here is the number column.
   const bool line_number_press =
       plain_left_click && event.button.x < editor_rect.x + metrics.gutter_width;
   interaction_state_.editor_box_selecting = false;
@@ -403,11 +361,6 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   interaction_state_.text_drag_has_drop = false;
   interaction_state_.editor_gesture_viewport = viewport;
 
-  // A plain single press INSIDE an existing selection commits to nothing yet: it
-  // is either a click that collapses the caret there (what it has always done)
-  // or the start of a drag that MOVES the selected text (VS Code's
-  // editor.dragAndDrop). Which one it is only becomes knowable once the pointer
-  // moves — see HandleSelectionMotion's threshold (TD-2026-08-13-204).
   if (plain_left_click && !line_number_press && event.button.clicks == 1 &&
       !viewport->has_multiple_carets() && SettingOnByDefault(operations_.get_setting_value, "editor.drag_and_drop")) {
     if (const auto selection = viewport->selection_range();
@@ -426,9 +379,6 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       interaction_state_.text_drag_source_end_column = source.end.column;
       interaction_state_.text_drag_viewport = viewport;
       interaction_state_.text_drag_content_revision = viewport->content_revision();
-      // The caret is deliberately NOT moved and the selection deliberately NOT
-      // cleared: both are what a plain click would do, and the release path does
-      // exactly that if the gesture turns out to have been a click.
       interaction_state_.mouse_selecting = true;
       operations_.reset_caret_blink();
       state_.surface.focus = FocusTarget::Editor;
@@ -445,14 +395,9 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     interaction_state_.editor_box_anchor_line = anchor.line;
     interaction_state_.editor_box_anchor_column = anchor.column;
   } else if (alt_left_click) {
-    // Alt+click adds a caret at the pointer and keeps every existing selection
-    // (VS Code): the previous primary becomes a secondary WITH its selection
-    // rather than a collapsed caret, so a word selected before the click is
-    // still one of the sites the next keystroke edits. Alt+click on an existing
-    // secondary caret removes it instead.
     if (!viewport->RemoveSecondaryCaretAt(editor::TextPosition{hit.line, hit.column})) {
       const std::optional<editor::SelectionRange> previous = viewport->selection_range();
-      viewport->MoveCursorToVisualHit(visual_row, hit_column, /*extend_selection=*/false);
+      viewport->MoveCursorToVisualHit(visual_row, hit_column, false);
       if (previous.has_value()) {
         viewport->AddSecondaryCaretWithRange(*previous);
       } else {
@@ -462,14 +407,8 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   } else {
     util::PerformanceTrace::Scope move_scope(
         "EditorMouseCoordinator::HandleButtonDown::MoveCursorToVisualColumn");
-    // Hit-test and place in one call: under soft wrap a click past a wrapped
-    // row's last glyph resolves to the wrap point, which the plain
-    // MoveCursorTo(line, column) form renders at the start of the row BELOW the
-    // one that was clicked. Same result everywhere else.
     viewport->MoveCursorToVisualHit(visual_row, hit_column, (modifiers & SDL_KMOD_SHIFT) != 0);
   }
-  // Word/line expansion never applies to a box gesture (it would collapse the
-  // rectangular selection back to a single row).
   interaction_state_.selection_granularity = InteractionState::SelectionGranularity::Character;
   if (!shift_alt_box) {
     selection_granularity::ApplyClick(interaction_state_, *viewport,
@@ -478,10 +417,6 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   operations_.reset_caret_blink();
   state_.surface.focus = FocusTarget::Editor;
   if (ctrl_left_click && operations_.go_to_definition) {
-    // The click moved the caret before asking for the definition, which answers
-    // asynchronously (and may stay in this file): repaint now, or the caret and
-    // its highlights stay where they were until the answer -- or for good when
-    // there is none (QA flow lsp-navigation).
     operations_.request_frame();
     operations_.go_to_definition();
     return true;
@@ -491,13 +426,11 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         text.has_value()) {
       viewport->InsertText(*text);
       operations_.reset_caret_blink();
-      operations_.note_active_editable_edit();  // asks for the frame too
+      operations_.note_active_editable_edit();
     }
     return true;
   }
   operations_.request_frame();
-  // A plain Alt+click just drops a caret and does not drag-select. A Shift+Alt box
-  // gesture keeps selecting on drag, so it falls through to arm mouse_selecting.
   if (alt_left_click && !shift_alt_box) {
     return true;
   }
@@ -565,9 +498,6 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
   if (viewport == nullptr) {
     return false;
   }
-  // The gesture was pressed in a different buffer -- a tab switch landed while the
-  // button was down. Every coordinate it carries names a document that is no
-  // longer in front, so end it rather than aim it at this one.
   if (interaction_state_.editor_gesture_viewport != nullptr &&
       interaction_state_.editor_gesture_viewport != static_cast<const void*>(viewport)) {
     interaction_state_.mouse_selecting = false;
@@ -582,25 +512,9 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
       operations_.ensure_active_folding_model_fresh,
       "EditorMouseCoordinator::HandleSelectionMotion::FallbackPointerLayout");
 
-  // A selection drag does not stop at the pane edge. This used to refuse any
-  // pointer outside `editor_rect`, so dragging up into the tab strip, down into
-  // the panel, sideways into a split sibling, or off the window froze the
-  // selection at wherever it last crossed the boundary -- and it stayed frozen
-  // while the button was still held. Every other editor (VS Code included)
-  // extends toward the pointer wherever the pointer goes.
-  //
-  // Clamping into the visible text band is what that means geometrically: the
-  // row/column math below is unchanged and simply reads a pointer that has been
-  // projected back onto the nearest visible cell. Autoscroll then walks that
-  // clamped edge through the document while the pointer sits still outside it,
-  // which is the half a clamp alone cannot do.
   const SDL_FPoint pointer = ClampPointerToVisibleTextBand(editor_rect, metrics,
                                                            static_cast<float>(event.motion.x),
                                                            static_cast<float>(event.motion.y));
-  // Arm (or disarm) the autoscroll from how far past the band the real pointer
-  // is. Stored rather than applied here because the wake, not this handler, is
-  // what repeats it: a pointer held still outside the band produces no further
-  // motion events, and that is precisely the case that has to keep scrolling.
   selection_autoscroll::Arm(interaction_state_, InteractionState::SelectionAutoscrollOwner::Text,
                             selection_autoscroll::BandFor(editor_rect, metrics),
                             static_cast<float>(event.motion.x),
@@ -611,19 +525,15 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
       operations_.get_setting_value);
 
   if (interaction_state_.text_drag != InteractionState::TextDragState::None) {
-    // Threshold first: a press-and-release with a pixel of jitter is still a
-    // click, and must collapse the caret rather than move the text.
     if (interaction_state_.text_drag == InteractionState::TextDragState::Pending) {
       const float dx = static_cast<float>(event.motion.x) - interaction_state_.text_drag_press_x;
       const float dy = static_cast<float>(event.motion.y) - interaction_state_.text_drag_press_y;
       constexpr float kTextDragThresholdPx = 4.0f;
       if (dx * dx + dy * dy < kTextDragThresholdPx * kTextDragThresholdPx) {
-        return true;  // still undecided; the selection stays exactly as it was
+        return true;
       }
       interaction_state_.text_drag = InteractionState::TextDragState::Dragging;
     }
-    // The drop point is where the text would land. Recorded rather than applied:
-    // nothing is edited until the button comes up.
     interaction_state_.text_drag_drop_line = hit.line;
     interaction_state_.text_drag_drop_column = hit.column;
     interaction_state_.text_drag_has_drop = true;
@@ -638,9 +548,6 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
     selection_granularity::ExtendToPointer(interaction_state_, *viewport,
                                            editor::TextPosition{hit.line, hit.column});
   } else if (interaction_state_.editor_box_selecting) {
-    // Rebuild the rectangular selection from the fixed anchor corner to the live
-    // pointer. The anchor column is virtual: SetBoxSelection clamps it per line, so
-    // dragging past a short line and back preserves the full-width box.
     viewport->SetBoxSelection(
         editor::TextPosition{interaction_state_.editor_box_anchor_line,
                              interaction_state_.editor_box_anchor_column},
@@ -655,9 +562,6 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
 }
 
 bool EditorMouseCoordinator::FinishTextDrag(bool copy) {
-  // Read the whole gesture out before disarming it: the drop flag is cleared
-  // here, and reading it after the clear is how this returned "no drop" for every
-  // drag that actually had one.
   const InteractionState::TextDragState state = interaction_state_.text_drag;
   const bool has_drop = interaction_state_.text_drag_has_drop;
   interaction_state_.text_drag = InteractionState::TextDragState::None;
@@ -677,10 +581,6 @@ bool EditorMouseCoordinator::FinishTextDrag(bool copy) {
                            interaction_state_.text_drag_source_end_column}};
 
   if (state == InteractionState::TextDragState::Pending) {
-    // Never passed the threshold: this was a click inside the selection, so do
-    // what a click does — collapse the caret where it landed. Deferring it to
-    // here is the whole point of the Pending state; doing it at press would have
-    // destroyed the selection the drag was about to move.
     viewport->JumpCursorTo(interaction_state_.text_drag_press_line,
                            interaction_state_.text_drag_press_column);
     operations_.reset_caret_blink();
@@ -691,11 +591,6 @@ bool EditorMouseCoordinator::FinishTextDrag(bool copy) {
   if (!has_drop) {
     return true;
   }
-  // The source range describes the document as it was at PRESS. If a different
-  // tab is in front now, or the buffer has changed under the gesture, those
-  // coordinates name text nobody selected -- and Apply would delete it. Drop the
-  // gesture instead; a refused drag costs the user a repeat, a wrong one costs
-  // them the text.
   if (interaction_state_.text_drag_viewport != static_cast<const void*>(viewport) ||
       interaction_state_.text_drag_content_revision != viewport->content_revision()) {
     operations_.request_frame();
@@ -705,17 +600,14 @@ bool EditorMouseCoordinator::FinishTextDrag(bool copy) {
                                   interaction_state_.text_drag_drop_column};
   const auto moved = editor::text_drag_drop::Apply(*viewport, source, drop, copy);
   if (!moved.has_value()) {
-    // Dropped onto itself: leave the selection exactly as it was, as VS Code does.
     operations_.request_frame();
     return true;
   }
-  // The moved text stays selected, so the gesture can be repeated or undone
-  // against something visible.
   viewport->JumpCursorTo(moved->start.line, moved->start.column);
-  viewport->MoveCursorTo(moved->end.line, moved->end.column, /*extend_selection=*/true);
+  viewport->MoveCursorTo(moved->end.line, moved->end.column, true);
 
   operations_.reset_caret_blink();
-  operations_.note_active_editable_edit();  // asks for the frame too
+  operations_.note_active_editable_edit();
   return true;
 }
 
@@ -727,10 +619,6 @@ bool EditorMouseCoordinator::HandleWheel(const SDL_Event& event,
     return false;
   }
 
-  // Scroll the split pane under the pointer, not merely the focused pane, so a
-  // wheel over an inactive split moves that split (matches VS Code and most
-  // editors). Fall back to the active viewport when the pointer is not over any
-  // pane rect (e.g. in a divider gap). Focus is intentionally left unchanged.
   editor::TextViewport* viewport = nullptr;
   const auto panes = operations_.compute_editor_pane_layouts(layout);
   const auto pane_it =
@@ -745,11 +633,6 @@ bool EditorMouseCoordinator::HandleWheel(const SDL_Event& event,
     viewport = operations_.active_editor_viewport();
   }
   if (viewport != nullptr) {
-    // Shift+wheel (and a real horizontal wheel) scrolls sideways, as it does in the
-    // compare and merge surfaces one tab over and in VS Code. The shell has been
-    // resolving horizontal ticks all along — synthesizing them from Shift+vertical —
-    // and handing them to compare, merge and the chrome; the editor was the one
-    // surface that ignored them and scrolled down instead.
     if (horizontal_ticks != 0) {
       const auto columns = static_cast<std::size_t>(kWheelScrollRows);
       const std::size_t current = viewport->horizontal_scroll();
@@ -760,7 +643,6 @@ bool EditorMouseCoordinator::HandleWheel(const SDL_Event& event,
       viewport->ScrollVertical(-vertical_ticks * kWheelScrollRows);
     }
   }
-  // Scrolling is not focusing — see SidebarMouseCoordinator::HandleWheel.
   return true;
 }
 
@@ -817,4 +699,4 @@ EditorMouseCoordinator& WorkspaceShell::MakeEditorMouseCoordinator() {
   return *glue_->editor_mouse_coordinator;
 }
 
-}  // namespace microide::workspace
+}

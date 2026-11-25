@@ -133,9 +133,6 @@ std::unordered_map<std::string, LanguageContract> BuildDefaults() {
   {
     LanguageContract c;
     c.language_id = "markdown";
-    // Prose: parens/brackets routinely span lines, so bracket-based folding
-    // produces bogus fold markers on ordinary paragraphs. Leave this empty;
-    // markdown still folds on indentation (nested lists / indented blocks).
     c.bracket_pairs = {};
     c.auto_close_pairs = {{"(", ")"}, {"[", "]"},
                           {"\"", "\""}, {"`", "`"}};
@@ -176,19 +173,13 @@ std::unordered_map<std::string, LanguageContract> BuildDefaults() {
   return map;
 }
 
-}  // namespace
+}
 
 struct WorkspaceLanguageContract::Impl {
   std::unordered_map<std::string, LanguageContract> table;
 
-  // True while `table` is exactly `BuildDefaults()` — no plugin contribution and
-  // no user override layered on it. Refresh reads it to skip a rebuild that
-  // would reproduce the same table (see Refresh).
   bool table_is_pure_defaults = true;
 
-  // Memo behind ResolveEditorView. Mutable because resolution is a pure query;
-  // `views_revision == 0` means "never populated", which is distinguishable
-  // because WorkspaceLanguageContract's revision starts at 1.
   mutable std::unordered_map<std::string, std::shared_ptr<const editor::LanguageContractView>,
                              util::TransparentStringHash, std::equal_to<>>
       editor_views;
@@ -197,7 +188,6 @@ struct WorkspaceLanguageContract::Impl {
   mutable bool editor_views_surround = false;
   mutable bool editor_views_smart_indent = false;
 
-  // Memo behind ResolveDiffSyntax; same revision rule as `editor_views`.
   mutable std::unordered_map<std::string, std::shared_ptr<const compare::DiffSyntax>,
                              util::TransparentStringHash, std::equal_to<>>
       diff_syntaxes;
@@ -213,12 +203,6 @@ WorkspaceLanguageContract::~WorkspaceLanguageContract() = default;
 
 namespace {
 
-// Map runtime-syntax filetype names to language-contract keys. The runtime
-// detector returns names like "c++"/"objective-c"/"csharp" (which match
-// language-id conventions in `RuntimeSyntaxRegistry`), while the language
-// contract defaults are keyed by short ids like "cpp". Without this alias
-// step, `.cpp` files would resolve to a null contract and auto-close /
-// surround / smart-indent would silently no-op.
 std::string_view CanonicalContractKey(std::string_view key) {
   if (key == "c++") return "cpp";
   if (key == "objective-c") return "c";
@@ -226,9 +210,6 @@ std::string_view CanonicalContractKey(std::string_view key) {
   return key;
 }
 
-// The ONE key spelling, for writers and readers alike: a plugin contributing for
-// "c++" (the id a C++ buffer reports) once landed in a "c++" entry that Find,
-// which canonicalizes, never reached -- so its snippets/brackets were dropped.
 std::string ContractKey(std::string_view language_id) {
   std::string key = util::ToLowerAscii(language_id);
   if (const std::string_view canonical = CanonicalContractKey(key); canonical != key) {
@@ -317,11 +298,6 @@ std::optional<LanguageBracketPair> ParseUserBracketPair(std::string_view token) 
                              std::string(token.substr(bar + 1))};
 }
 
-// The five user/project setting overrides, parsed once per Refresh. Kept as a
-// value so Refresh can ask whether any of them are set BEFORE deciding to
-// rebuild the table: with no overrides and no plugin contributions the rebuilt
-// table is byte-identical to the defaults, and building it costs ~5,000
-// allocations (TD-2026-08-06-159).
 struct UserOverrides {
   std::vector<LanguageBracketPair> add_pairs;
   std::vector<LanguageBracketPair> disabled_pairs;
@@ -417,7 +393,7 @@ void ApplyUserOverrides(std::unordered_map<std::string, LanguageContract>& table
   }
 }
 
-}  // namespace
+}
 
 std::string WorkspaceLanguageContract::SettingsFingerprint(const SettingGetter& get_setting) {
   static constexpr std::string_view kIds[] = {
@@ -428,8 +404,6 @@ std::string WorkspaceLanguageContract::SettingsFingerprint(const SettingGetter& 
   };
   std::string fingerprint;
   for (const std::string_view id : kIds) {
-    // An unset value and an empty one resolve alike; the separator keeps
-    // ("a", "bc") and ("ab", "c") apart.
     if (const auto value = get_setting(id); value.has_value()) fingerprint += *value;
     fingerprint += '\x1f';
   }
@@ -442,23 +416,12 @@ void WorkspaceLanguageContract::Refresh(const plugin::PluginHost& plugin_host) {
 
 void WorkspaceLanguageContract::Refresh(const plugin::PluginHost& plugin_host,
                                         const SettingGetter& get_setting) {
-  // Built-in defaults form the base layer. Plugin contributions append to the
-  // matching language entry (or create a new one when no built-in exists).
-  // User / project setting overrides are layered on top via `get_setting`.
-  // The revision counter advances on every Refresh that changes the table so
-  // downstream caches invalidate cleanly.
   const bool has_contributions = !plugin_host.ContributedBrackets().empty() ||
                                  !plugin_host.ContributedComments().empty() ||
                                  !plugin_host.ContributedIndents().empty() ||
                                  !plugin_host.ContributedSnippets().empty();
   const UserOverrides overrides = ParseUserOverrides(get_setting);
 
-  // A Refresh with nothing layered on top produces exactly BuildDefaults(), so
-  // when the table already IS that, rebuilding it is ~5,000 allocations that
-  // change nothing — and the revision bump would additionally drop the shared
-  // editor-view cache and re-apply preferences to every open tab. Every project
-  // switch runs this path (the shared plugin host is torn down on switch-away,
-  // so it contributes nothing at reactivation time). TD-2026-08-06-159.
   if (!has_contributions && overrides.empty() && impl_->table_is_pure_defaults) {
     return;
   }
@@ -528,8 +491,6 @@ std::shared_ptr<const compare::DiffSyntax> WorkspaceLanguageContract::ResolveDif
     if (syntax->delimiters.empty()) {
       syntax->delimiters = compare::GenericDiffSyntax()->delimiters;
     }
-    // The raw string forms the diff's lexer reads whole (TD-2026-11-11-441).
-    // The contract carries no string syntax, so they are named per language.
     if (language_id == "c++") {
       syntax->raw_strings = compare::kDiffRawCpp;
     } else if (language_id == "rust") {
@@ -555,8 +516,6 @@ std::shared_ptr<const editor::LanguageContractView> WorkspaceLanguageContract::R
       impl_->editor_views_auto_close != auto_close_enabled ||
       impl_->editor_views_surround != surround_enabled ||
       impl_->editor_views_smart_indent != smart_indent_enabled) {
-    // The toggles are baked into the view, so a toggle change invalidates every
-    // cached view -- clear rather than try to patch them in place.
     impl_->editor_views.clear();
     impl_->editor_views_revision = revision_;
     impl_->editor_views_auto_close = auto_close_enabled;
@@ -589,11 +548,7 @@ std::shared_ptr<const editor::LanguageContractView> WorkspaceLanguageContract::R
   view->auto_close_enabled = auto_close_enabled;
   view->surround_enabled = surround_enabled;
   view->smart_indent_enabled = smart_indent_enabled;
-  // Keyed by the raw detected id, not the canonical contract key: two ids that
-  // alias to one contract ("c++" and "cpp") get one entry each, which is a
-  // duplicate view but keeps the lookup a single hash with no normalization
-  // allocation on the hot path.
   return impl_->editor_views.emplace(std::string(language_id), std::move(view)).first->second;
 }
 
-}  // namespace microide::workspace
+}

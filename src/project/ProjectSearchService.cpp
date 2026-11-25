@@ -40,14 +40,11 @@ bool UsesCaseSensitiveSearch(std::string_view query, ProjectSearchCaseMode case_
       return false;
     case ProjectSearchCaseMode::Smart:
     default:
-      // Smart case is Unicode-aware: an uppercase letter in any covered script
-      // (Latin-1/Greek/Cyrillic/…), not just ASCII A-Z, forces a case-sensitive
-      // search. Matches the case folding used for the insensitive path below.
       return util::Utf8QueryHasCaseVariation(query);
   }
 }
 
-}  // namespace
+}
 
 namespace search_internal {
 
@@ -59,16 +56,11 @@ bool FindNextRegexMatch(const util::CompiledRegex& pattern,
                         std::size_t* match_end,
                         const std::atomic<bool>& cancel_requested,
                         util::RegexSubject subject) {
-  // Thin seam over the shared match engine (util::FindNextRegexMatchInLine): the
-  // empty-match advance, anchored-alternative recovery, and coarse cancel polling
-  // all live once in RegexUtil so project-wide and in-file regex search cannot
-  // drift. This wrapper only binds the worker's cancellation flag and preserves
-  // the internal test seam.
   return util::FindNextRegexMatchInLine(pattern, line, search_from, match_data, match_start,
                                         match_end, &cancel_requested, subject);
 }
 
-}  // namespace search_internal
+}
 
 ProjectSearchMatcher::ProjectSearchMatcher(std::string_view query, const ProjectSearchOptions& options)
     : query_(query), case_sensitive_(UsesCaseSensitiveSearch(query, options.case_mode)) {
@@ -83,16 +75,11 @@ ProjectSearchMatcher::ProjectSearchMatcher(std::string_view query, const Project
       error_ = regex_->error();
       return;
     }
-    // Each scanner allocates its OWN match data; fail here, once, if that cannot
-    // work rather than in every worker.
     if (!regex_->CreateMatchData().valid()) {
       error_ = "Failed to initialize project search matcher";
     }
     return;
   }
-  // Case fold (not just ASCII-lower) so `É`/`é`, `Δ`/`δ`, `А`/`а` match. The
-  // covered folds are all length-preserving in UTF-8, so folded byte offsets
-  // stay aligned with the original line and reported columns remain correct.
   if (!case_sensitive_) {
     folded_query_ = util::Utf8CaseFold(query_);
   }
@@ -112,9 +99,6 @@ void ProjectSearchMatcher::Scanner::BeginLine(std::string_view line) {
   }
   util::AddPerformanceCounter(util::PerfCounterId::SearchProjectLowerLineCalls);
   util::AddPerformanceCounter(util::PerfCounterId::SearchProjectLowerLineBytes, line.size());
-  // Unicode case fold with an ASCII fast path (the common case stays a byte
-  // copy), reusing the buffer's capacity line after line. Length-preserving, so
-  // match offsets into the folded line map back to the original line's columns.
   util::Utf8CaseFoldInto(line, folded_line_);
 }
 
@@ -151,19 +135,14 @@ ProjectSearchResult MakeProjectSearchResult(std::string_view line,
                                             std::size_t line_index) {
   match_start = std::min(match_start, line.size());
   match_end = std::clamp(match_end, match_start, line.size());
-  // The window of the line the preview shows: some context before the match and
-  // the rest of the budget after it, on character boundaries. A whole line when it
-  // fits; otherwise every hit on a long line would hold its own copy of the line.
   std::size_t window_begin = 0;
   std::size_t window_end = line.size();
   if (line.size() > kMaxProjectSearchPreviewBytes) {
     window_begin = match_start - std::min(match_start, kProjectSearchPreviewContextBytes);
     window_end = std::min(line.size(), window_begin + kMaxProjectSearchPreviewBytes);
     if (window_end == line.size()) {
-      // Near the line's end: spend the unused budget on context before the match.
       window_begin = line.size() - kMaxProjectSearchPreviewBytes;
     }
-    // A cut inside a multi-byte character moves inwards to its boundary.
     while (window_begin < window_end && util::IsUtf8ContinuationByte(static_cast<unsigned char>(line[window_begin]))) {
       ++window_begin;
     }
@@ -173,11 +152,8 @@ ProjectSearchResult MakeProjectSearchResult(std::string_view line,
     }
   }
   const std::string_view window = line.substr(window_begin, window_end - window_begin);
-  // The match as far as it lies inside the window (a `.*` hit is longer than it).
   const std::size_t window_match_start = std::clamp(match_start, window_begin, window_end) - window_begin;
   const std::size_t window_match_end = std::clamp(match_end, window_begin, window_end) - window_begin;
-  // Collapse the window for display while mapping this match's byte range into
-  // the collapsed preview so the sidebar can highlight it.
   std::size_t preview_match_start = 0;
   std::size_t preview_match_length = 0;
   std::string preview = util::CollapseAsciiWhitespaceTrackingMatch(window, window_match_start, window_match_end,
@@ -251,12 +227,6 @@ std::uint64_t ProjectSearchService::Start(const std::filesystem::path& root,
   worker_finished_.store(false, std::memory_order_release);
 
   util::IncrementBackgroundTaskCount();
-  // Balance the increment via an RAII guard captured in the task rather than a plain
-  // decrement in the body: Start() begins with Stop() -> CancelAll(), which clears the
-  // pending queue WITHOUT running dropped tasks. A body-only decrement leaks the count
-  // (+1 per superseded search / panel-close). The guard (a shared_ptr with a decrement
-  // deleter, copyable so it fits std::function) fires exactly once when the task's last
-  // copy is destroyed — whether it ran to completion or was dropped by CancelAll.
   auto task_guard = std::shared_ptr<void>(
       nullptr, [](void*) { util::DecrementBackgroundTaskCountAndWake(); });
   task_executor_.Submit(
@@ -344,11 +314,7 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
     return ProjectSearchCompletion{.error = "Failed to index project files"};
   }
 
-  // Reject a pathologically long query before compiling it: a giant pasted
-  // pattern would drive a large one-shot PCRE2 compile (or, for literal mode, a
-  // full-query lower-casing) with no upside — no real search pattern is anywhere
-  // near this long.
-  constexpr std::size_t kMaxSearchPatternBytes = 1u << 16;  // 64 KiB
+  constexpr std::size_t kMaxSearchPatternBytes = 1u << 16;
   if (query.size() > kMaxSearchPatternBytes) {
     return ProjectSearchCompletion{.error = "Project search pattern is too long"};
   }
@@ -361,55 +327,30 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
   static const std::vector<std::string> kEmpty;
   const std::vector<std::string>& candidate_files = indexed_files ? *indexed_files : kEmpty;
   const std::size_t total_files = candidate_files.size();
-  // Publish total_files immediately so the UI can show the denominator before
-  // the first match (large empty-match prefixes were otherwise invisible).
   sink.progress(0, total_files);
   if (total_files == 0) {
     return ProjectSearchCompletion{};
   }
 
-  // Periodic progress wake interval — coarser than per-file to avoid event spam
-  // on tiny files; fine enough for the UI to feel responsive on large repos.
   constexpr std::size_t kProgressTickFiles = 64;
 
-  // Lock-free coordination shared by the worker threads. Files are claimed via a
-  // work-stealing cursor (file sizes vary too much for static chunks to balance).
-  // `matches_found` counts every match globally; only the first cap are stored.
   std::atomic<std::size_t> next_file{0};
   std::atomic<std::size_t> files_visited{0};
   std::atomic<std::size_t> matches_found{0};
   std::atomic<bool> truncated{false};
   const bool count_all = options.count_all_matches;
 
-  // Scope filters are parsed once here and shared read-only by every worker; the
-  // per-file test is a pure string match against the already-materialized relative
-  // path, so a filtered-out file never reaches the filesystem. When both boxes are
-  // empty `scope_active` is false and the loop below pays one bool check per file.
   const GlobSet include_globs = GlobSet::Parse(options.include_globs);
   const GlobSet exclude_globs = GlobSet::Parse(options.exclude_globs);
   const bool scope_active = !include_globs.empty() || !exclude_globs.empty();
 
   auto run_worker = [&]() {
-    // Per-worker scratch: reused buffers (no per-file/per-line allocation) and a
-    // private match-data object (pcre2_match is thread-safe only with distinct
-    // match data per thread; the compiled code is shared).
     std::string file_buffer;
     ProjectSearchMatcher::Scanner scanner = matcher.NewScanner();
     std::vector<ProjectSearchResult> batch;
-    // Count-all matches seen after the global display cap is reached. Counted in this
-    // per-worker local (folded into `matches_found` once at worker exit) instead of a
-    // per-match fetch_add on the shared atomic, which would serialize every worker on
-    // one cache line for the whole tail of a common-pattern count-all search.
     std::size_t local_over_cap_matches = 0;
-    // Files the scope filter rejected without opening. Tallied locally and folded
-    // once at worker exit for the same reason as `local_over_cap_matches`: a
-    // per-file bump on a process-global counter would serialize every worker on one
-    // cache line across the entire index scan, which is exactly the loop scoping is
-    // supposed to make cheap.
     std::size_t local_scope_filtered = 0;
 
-    // Default stops claiming files once the display cap is reached; count-all
-    // keeps scanning every file so it can report the exact total.
     while (!token.IsCancellationRequested() &&
            !cancel.load(std::memory_order_relaxed) &&
            (count_all ||
@@ -423,11 +364,6 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
         sink.progress(visited, total_files);
       }
 
-      // The index hands out normalized generic path TEXT, so the scope filter can
-      // reject a file from its path alone — the whole point of scoping is that an
-      // out-of-scope file is never opened — with no per-candidate string to
-      // materialize. This used to be `relative_path.generic_string()`, one
-      // allocation per candidate on every search worker (TD-2026-08-17-259).
       const std::string& relative_path_string = candidate_files[file_index];
       if (scope_active) {
         if ((!include_globs.empty() && !include_globs.Matches(relative_path_string)) ||
@@ -436,8 +372,6 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
           continue;
         }
       }
-      // One whole-file read (reusing file_buffer's capacity); returns false for
-      // unreadable files and binaries (any embedded NUL), which we skip.
       if (!util::ReadFileForTextSearch(absolute_root / relative_path_string, file_buffer)) {
         continue;
       }
@@ -446,9 +380,6 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
       std::size_t line_index = 0;
       std::size_t line_start = 0;
       bool reached_cap = false;
-      // Iterate lines by scanning for '\n'; views point into file_buffer so no
-      // per-line allocation occurs. Matches std::getline framing: a trailing
-      // newline does not yield a phantom empty final line.
       while (line_start < content.size()) {
         if (cancel.load(std::memory_order_relaxed)) {
           break;
@@ -466,17 +397,6 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
         std::size_t match_start = 0;
         std::size_t match_end = 0;
         while (scanner.Next(line, &search_from, &match_start, &match_end, cancel)) {
-          // Count every match globally. The first kMaxProjectSearchResults claims
-          // (found 1..cap) keep their match for display; later matches only bump
-          // the count and flag truncation, so all workers together store at most
-          // the cap regardless of thread interleaving.
-          //
-          // Past the cap a match can never be stored, so avoid the shared-atomic
-          // fetch_add entirely: hammering `matches_found` once per match makes all
-          // workers ping-pong one cache line (the hot contention point for a common
-          // pattern in count-all), and the inner loop otherwise never polls Stop() —
-          // one enormous single-line file would ignore cancellation for seconds.
-          // Count locally, fold in at worker exit, and poll cancellation here.
           if (matches_found.load(std::memory_order_relaxed) >= kMaxProjectSearchResults) {
             truncated.store(true, std::memory_order_relaxed);
             if (!count_all) {
@@ -489,13 +409,10 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
               reached_cap = true;
               break;
             }
-            continue;  // count-all keeps scanning without storing past the cap
+            continue;
           }
           const std::size_t found = matches_found.fetch_add(1, std::memory_order_relaxed) + 1;
           if (found > kMaxProjectSearchResults) {
-            // Lost the boundary race to another worker that just filled the last slot.
-            // This match is already counted in the global total via the fetch_add
-            // above, so it must NOT also be added to local_over_cap_matches.
             truncated.store(true, std::memory_order_relaxed);
             if (!count_all) {
               reached_cap = true;
@@ -521,10 +438,6 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
       }
     }
 
-    // Fold this worker's post-cap tally into the global total exactly once. Every
-    // over-cap match was counted here rather than via the shared atomic, so the
-    // count-all total is only complete after this fold. (Under-cap and boundary-race
-    // matches were already counted by the fetch_add above.)
     if (local_over_cap_matches != 0) {
       matches_found.fetch_add(local_over_cap_matches, std::memory_order_relaxed);
     }
@@ -538,18 +451,9 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
     }
   };
 
-  // Optional deterministic override: with a global (all-thread) allocation
-  // counter, N parallel workers make a search's measured allocation count
-  // non-deterministic. Perf/regression runs that need reproducibility pin the
-  // worker count via MICROIDE_SEARCH_WORKER_LIMIT (production leaves it unset and
-  // uses the full hardware parallelism).
   unsigned int worker_cap = 8;
   if (const char* limit = std::getenv("MICROIDE_SEARCH_WORKER_LIMIT")) {
     if (const auto parsed = util::ParseInt(limit); parsed.has_value() && *parsed >= 1) {
-      // Clamp the override to a small product maximum. Without this a bad
-      // environment (e.g. 999999) lets the cap rise to full hardware
-      // concurrency on a many-core box, spawning far more helper threads than
-      // search ever benefits from and starving other background subsystems.
       constexpr int kMaxSearchWorkerOverride = 64;
       worker_cap = static_cast<unsigned int>(std::min(*parsed, kMaxSearchWorkerOverride));
     }
@@ -562,9 +466,6 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
   if (worker_count <= 1) {
     run_worker();
   } else {
-    // Spawn worker_count-1 helpers and run one inline so the submitting task
-    // thread participates rather than idling. All helpers are joined before
-    // returning, so no worker outlives this run to race the next Start().
     std::vector<std::thread> helpers;
     helpers.reserve(worker_count - 1);
     for (std::size_t i = 0; i + 1 < worker_count; ++i) {
@@ -582,23 +483,7 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
   if (token.IsCancellationRequested() || cancel.load(std::memory_order_relaxed)) {
     return {};
   }
-  // Final progress publish so the finish update carries an accurate denominator
-  // and a matching searched count.
   sink.progress(files_visited.load(std::memory_order_relaxed), total_files);
-  // Truncation by *unclaimed files*, not just by an over-cap match.
-  //
-  // The in-loop flag above only fires when some worker actually attempts a match
-  // while the counter already sits at the cap. When the last stored match fills
-  // the cap exactly, that never happens: every other worker re-tests the claim
-  // loop's `matches_found < kMaxProjectSearchResults` guard, sees it false, and
-  // exits without ever claiming — let alone scanning — the files past the cursor.
-  // Those files were never searched, so the published set is a prefix of the true
-  // result set and the UI must say so. 210 files holding one match each hit this
-  // exactly (WorkspaceShell/ReplaceAllFallsBackWhenResultsTruncated flaked on it
-  // under TSAN's slower scheduling, and it was misread as a test-only race twice).
-  //
-  // `next_file` is the claim cursor: every index below it was claimed by some
-  // worker, and everything from it up to `total_files` was not.
   const std::size_t claimed_files = next_file.load(std::memory_order_relaxed);
   if (matches_found.load(std::memory_order_relaxed) >= kMaxProjectSearchResults &&
       claimed_files < total_files) {
@@ -606,8 +491,6 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
     util::AddPerformanceCounter(util::PerfCounterId::SearchProjectCapUnscannedFiles,
                                 total_files - claimed_files);
   }
-  // Report the exact total only for count-all runs; a default early-stop run does
-  // not scan past the cap and therefore cannot know it.
   return ProjectSearchCompletion{
       .error = {},
       .truncated = truncated.load(std::memory_order_relaxed),
@@ -626,9 +509,6 @@ void ProjectSearchService::PublishResults(std::uint64_t run_id,
     if (!BeginPendingUpdateLocked(run_id)) {
       return;
     }
-    // The worker stops emitting matches at `kMaxProjectSearchResults` (see `RunProjectSearch`), so
-    // we never need to cap here — push the whole batch and let the consumer
-    // apply its own display cap.
     pending_update_.results.insert(pending_update_.results.end(),
                                    std::make_move_iterator(batch.begin()),
                                    std::make_move_iterator(batch.end()));
@@ -638,7 +518,7 @@ void ProjectSearchService::PublishResults(std::uint64_t run_id,
 
 bool ProjectSearchService::BeginPendingUpdateLocked(std::uint64_t run_id) {
   if (active_run_id_ != run_id) {
-    return false;  // a superseded run's late batch
+    return false;
   }
   if (pending_update_.run_id != 0 && pending_update_.run_id != run_id) {
     pending_update_ = {};
@@ -662,8 +542,6 @@ void ProjectSearchService::PublishFinished(std::uint64_t run_id, ProjectSearchCo
     pending_update_.searched_local_copy = completion.searched_local_copy;
     pending_update_.error = std::move(completion.error);
   }
-  // Publish completion to WorkerFinished() peekers after the pending state is
-  // fully populated under the lock, so a waiter that then drains sees everything.
   worker_finished_.store(true, std::memory_order_release);
   PushWakeEvent();
 }
@@ -697,15 +575,9 @@ void ProjectSearchService::PushWakeEvent() const {
   }
   wake_pending_ = true;
 
-  // TD-2026-07-17-085: route through util::PushWake instead of a raw
-  // wake push. On a rejected push it latches the process-wide owed-wake bit
-  // that CurrentIdleWaitState() consumes to schedule a short fallback wait, so a
-  // dropped FINAL (PublishFinished) wake self-heals within one poll interval
-  // instead of stranding a completed search until unrelated input. We still clear
-  // the local coalescing flag on failure so a later producer retries the push.
   if (!util::PushWake(wake_channel_)) {
     wake_pending_ = false;
   }
 }
 
-}  // namespace microide::project
+}

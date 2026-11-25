@@ -23,4 +23,4 @@ std::vector<std::filesystem::path> DataDirectories(
   return directories;
 }
 
-}  // namespace microide::plugin::data_directory_interop
+}

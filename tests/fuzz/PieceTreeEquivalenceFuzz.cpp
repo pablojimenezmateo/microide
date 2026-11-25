@@ -1,15 +1,3 @@
-// Equivalence fuzzer: drives a PieceTree and a naive oracle with the same random
-// mutations (decoded from the fuzz input) and aborts if any observable -- line
-// count, per-line content/length, or full materialization -- ever diverges. This
-// is the load-bearing safety net for the piece-tree data structure (Phase 3 of
-// the large-file overhaul).
-//
-// Both mutation primitives are driven against the SAME document, interleaved:
-// the line-shaped `ReplaceLineRange` (oracle: a vector<string> erase+insert) and
-// the column-scoped `ReplaceTextRange` (oracle: a splice of the '\n'-joined
-// bytes, re-split). The column-scoped form is what the in-line edit path uses,
-// so it carries the same corruption risk and needs the same net.
-
 #include "editor/PieceTree.h"
 
 #include <cassert>
@@ -20,7 +8,6 @@
 
 namespace {
 
-// Sequential byte reader over the fuzz input.
 struct Cursor {
   const std::uint8_t* data;
   std::size_t size;
@@ -36,15 +23,11 @@ std::string MakeLine(Cursor& cursor) {
   std::string line;
   line.reserve(len);
   for (std::size_t i = 0; i < len; ++i) {
-    // Printable, never '\n' (lines hold no embedded newlines).
     line.push_back(static_cast<char>('a' + (cursor.Byte() % 26)));
   }
   return line;
 }
 
-// Every snapshot taken, with what the document read at the time: a snapshot
-// shares the tree's buffers, so a later edit, compaction or copy that rewrote a
-// byte it reads would show here.
 struct TakenSnapshot {
   microide::editor::DocumentSnapshot snapshot;
   std::vector<std::string> lines;
@@ -67,7 +50,7 @@ void CheckEquivalent(const microide::editor::PieceTree& tree,
   assert(tree.ToVector() == model);
 }
 
-}  // namespace
+}
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
   if (data == nullptr) return 0;
@@ -76,7 +59,6 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   microide::editor::PieceTree tree;
   std::vector<std::string> model;
 
-  // Optional initial document.
   const std::size_t initial = cursor.Bounded(16);
   std::vector<std::string> seed;
   for (std::size_t i = 0; i < initial; ++i) seed.push_back(MakeLine(cursor));
@@ -85,8 +67,6 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   CheckEquivalent(tree, model);
 
   std::vector<TakenSnapshot> taken;
-  // A copy of the tree edited alongside: it shares the original's chunks and must
-  // never append into them.
   microide::editor::PieceTree copy = tree;
   std::vector<std::string> copy_model = model;
   int guard = 0;
@@ -105,7 +85,6 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     CheckSnapshots(taken);
     const std::size_t n = model.size();
     if (n != 0 && (cursor.Byte() & 1u) != 0u) {
-      // Column-scoped splice. Oracle: replace the byte span in the joined text.
       const std::size_t start_line = cursor.Bounded(n);
       const std::size_t start_column = cursor.Bounded(model[start_line].size() + 1);
       const std::size_t end_line = start_line + cursor.Bounded(n - start_line);

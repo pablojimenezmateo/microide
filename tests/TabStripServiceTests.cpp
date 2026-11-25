@@ -28,11 +28,6 @@ using microide::workspace::WorkspaceOutputChannels;
 
 using ChannelInfo = WorkspaceOutputChannels::ChannelInfo;
 
-// The QA monkey (editing profile, seed 105, at ui.scale 2): in a strip narrower
-// than the layout's 120 px tab floor plus the overflow chips' reserve, the first
-// tab ran under the "N>" chip -- the strip-end cut stopped at the strip, not at
-// the chip -- so the ui named its close button where the chip is painted, under
-// it. Nothing of a visible tab lies under an overflow chip, at any width.
 void TestNoEditorTabLiesUnderAnOverflowChip() {
   microide::workspace::EditorGroup group;
   for (const char* name : {"binary-file-with-a-long-name.bin", "b.txt", "c.txt", "d.txt", "e.txt", "f.txt"}) {
@@ -75,10 +70,6 @@ void TestNoEditorTabLiesUnderAnOverflowChip() {
   Expect(checked > 0, "some width overflows the strip (the sweep's precondition)");
 }
 
-// The panel's strip, the same rule: its tabs started at a fixed 32 px while its
-// "<N" chip spans 8..36 px (wider past nine hidden tabs), so the first visible
-// tab always lay 4 px under the chip (QA monkey: button:panel-tabs/more-left over
-// panel-tab:bash), and nothing cut a tab at the right chip.
 void TestNoPanelTabLiesUnderAnOverflowChip() {
   ProjectWorkspaceState state;
   state.panel.content = PanelContentKind::Output;
@@ -118,11 +109,6 @@ void TestNoPanelTabLiesUnderAnOverflowChip() {
   Expect(checked > 0, "some width overflows the panel strip (the sweep's precondition)");
 }
 
-// The QA monkey (seed 1, the CI seed; minimized 271 -> 25 actions): a click on
-// the "<N" chip of an unfocused group's strip scrolled the strip and requested no
-// repaint of it -- the shell's fallback repaints the window only when the click
-// damaged nothing else, and focusing the group had. The scroll is the state
-// change, so it requests its own repaint; so does a panel strip's.
 void TestScrollingATabStripRequestsItsRepaint() {
   WorkspaceContext context;
   TabStripService tab_strip_service;
@@ -155,9 +141,6 @@ void TestScrollingATabStripRequestsItsRepaint() {
   }
 }
 
-// TD-2026-07-17A-084: BuildBottomPanelTabs memoizes on a content fingerprint of
-// its inputs. A same-state repeat call reuses the cached model list; any change to
-// the open ids, a channel label, or the panel content must miss and rebuild.
 void TestBottomPanelTabsCacheReusesOnUnchangedState() {
   TabStripService service;
   ProjectWorkspaceState state;
@@ -172,7 +155,6 @@ void TestBottomPanelTabsCacheReusesOnUnchangedState() {
   Expect(first[0].label == "Build", "output label resolves from channel info");
   Expect(first[1].label == "Test Results", "second output label resolves");
 
-  // Identical inputs -> cache hit -> identical result.
   const auto second = service.BuildBottomPanelTabs(state, channels);
   Expect(second.size() == first.size(), "cache hit returns the same tab count");
   Expect(second[1].label == first[1].label, "cache hit returns the same labels");
@@ -189,7 +171,6 @@ void TestBottomPanelTabsCacheInvalidatesOnLabelChange() {
   const auto before = service.BuildBottomPanelTabs(state, channels);
   Expect(before.size() == 1 && before[0].label == "Build", "initial label is Build");
 
-  // A pure label change (same id, same count) must miss the cache and rebuild.
   channels[0].label = "Build (Debug)";
   const auto after = service.BuildBottomPanelTabs(state, channels);
   Expect(after.size() == 1, "still one tab after relabel");
@@ -213,10 +194,6 @@ void TestBottomPanelTabsCacheInvalidatesOnOpenIdChange() {
   Expect(after[1].output_channel_id == "test", "the newly opened channel appears");
 }
 
-// TD-2026-08-14-209: the bottom-panel strip had a model cache but no LAID-OUT
-// cache, and four call sites asked for the layout per frame. The model cache
-// deliberately does not key on which tab is active or how far the strip is
-// scrolled — neither shapes the model list — so the layout cache must.
 void TestBottomPanelVisibleTabsAreMemoized() {
   TabStripService service;
   ProjectWorkspaceState state;
@@ -247,23 +224,17 @@ void TestBottomPanelVisibleTabsAreMemoized() {
                        state, header, microide::workspace::LayoutMode::Regular, measure, channels),
          "the memoized vector is returned by reference");
 
-  // The strip scroll index shapes the LAYOUT but not the model, so the model
-  // fingerprint cannot see it — the layout key has to.
   state.panel.tab_scroll_index = 1;
   const auto& scrolled = service.ComputeVisibleBottomPanelTabs(
       state, header, microide::workspace::LayoutMode::Regular, measure, channels);
   Expect(!scrolled.empty() && scrolled.front().index == 1,
          "scrolling the strip re-lays it out rather than serving the old scroll");
 
-  // Same for the header rect.
   const SDL_FRect narrow{0.0f, 700.0f, 200.0f, 26.0f};
   const auto& resized = service.ComputeVisibleBottomPanelTabs(
       state, narrow, microide::workspace::LayoutMode::Regular, measure, channels);
   Expect(resized.size() <= scrolled.size(), "a narrower header fits no more tabs than a wide one");
 
-  // And a genuine model change still misses both caches. Scroll back to the top
-  // first: with the strip scrolled past it, tab 0 is not laid out at all and this
-  // would be asserting about a tab that is off-screen rather than about the cache.
   state.panel.tab_scroll_index = 0;
   channels[0].label = "Build (Debug)";
   const auto& relabelled = service.ComputeVisibleBottomPanelTabs(
@@ -275,13 +246,6 @@ void TestBottomPanelVisibleTabsAreMemoized() {
   Expect(found_relabelled, "a relabelled channel is not served stale from the layout cache");
 }
 
-// A font-size / font-family change moves every measured width without touching a
-// single thing the layout key above can see: the header rect is a constant height
-// over a user-resized panel, the model fingerprint hashes labels rather than their
-// widths, and the mode/active/scroll fields are all unchanged. The editor strip and
-// the project strip both take the geometry epoch for exactly this; the bottom panel
-// was the one strip that did not, so its tabs kept the old font's widths — wrong
-// rects to paint AND wrong rects to hit-test (TD-2026-08-14-215).
 void TestBottomPanelVisibleTabsMissOnGeometryEpoch() {
   TabStripService service;
   ProjectWorkspaceState state;
@@ -301,7 +265,6 @@ void TestBottomPanelVisibleTabsMissOnGeometryEpoch() {
   Expect(before.size() == 2, "two output tabs are laid out");
   const float width_before = before[0].rect.w;
 
-  // Exactly what a font change does: same state, wider glyphs, epoch bumped.
   glyph_width = 16.0f;
   service.InvalidateTabStripGeometry();
   const auto& after = service.ComputeVisibleBottomPanelTabs(
@@ -311,11 +274,6 @@ void TestBottomPanelVisibleTabsMissOnGeometryEpoch() {
          "a geometry-epoch bump re-measures instead of serving the old font's widths");
 }
 
-// TD-2026-08-13-198: the project strip used to be rebuilt from scratch by every
-// caller that asked what was on it — five per frame, each producing a title, a
-// tooltip, a badge label and a text measurement per project. The chrome adapter
-// memoizes the sources on a content fingerprint; these pin that a repeat call
-// produces nothing, and that each input that shapes the strip still busts it.
 struct ProjectStripHarness {
   WorkspaceContext context;
   TabStripService tab_strip_service;
@@ -390,13 +348,8 @@ void TestProjectStripCacheMissesOnDirtyFlip() {
   Expect(before.size() == 2, "two project tabs before");
   const int titles_before = harness.title_calls;
 
-  // A dirty buffer prefixes the title with "*", so the fingerprint must move.
   microide::workspace::TabEntry tab;
   tab.kind = microide::workspace::TabEntry::Kind::Editor;
-  // `emplace()` on purpose: it is the spelling that did not compile under clang
-  // while `EditorTabState` was nested inside `TabEntry` (TD-2026-08-14-214), so
-  // this call site is the regression test for the hoist. Do not "simplify" it
-  // back to an assignment.
   tab.editor_state.emplace();
   tab.editor_state->viewport.InsertText("dirty");
   harness.context.current_project_state.focused_group().open_tabs.push_back(std::move(tab));
@@ -410,8 +363,6 @@ void TestProjectStripCacheMissesOnGeometryEpochAndLayoutMode() {
   harness.Compute();
   const int titles_before = harness.title_calls;
 
-  // Font metrics change with no catalog state change at all; the service epoch
-  // is what carries that into the fingerprint.
   harness.tab_strip_service.InvalidateTabStripGeometry();
   harness.Compute();
   Expect(harness.title_calls > titles_before, "a geometry-epoch bump rebuilds the sources");
@@ -423,11 +374,6 @@ void TestProjectStripCacheMissesOnGeometryEpochAndLayoutMode() {
   Expect(!compact.empty() && !compact.front().show_badge, "compact mode drops the project badge");
 }
 
-// Nothing a tab strip lays out runs past the strip's bottom. A lower editor pane
-// squeezed shorter than a strip still got 22 px tabs (a floor), 14 px close
-// buttons and 16 px overflow chips (two more), so they hung below its strip
-// into the bottom panel's tab row (soak 9c685a037963, d468aa9e4552, 351bb9c5ae38:
-// a panel tab "overlaps" tabs/2/more-left or a close-tab button).
 void TestEditorStripContentsStayInsideAShortStrip() {
   microide::workspace::EditorGroup group;
   for (const char* name : {"a-rather-long-file-name.txt", "b.txt", "c.txt", "d.txt", "e.txt", "f.txt"}) {
@@ -463,11 +409,6 @@ void TestEditorStripContentsStayInsideAShortStrip() {
   }
 }
 
-// The horizontal twin of the test above. A narrow pane truncates its last tab
-// at the strip's right edge, and the soak caught that tab's background one device
-// pixel past the pane, over the divider, at ui.scale 2 (49a23ffecdf7): the full
-// frame painted it, a partial frame clipped to the pane did not. Nothing a strip
-// lays out may extend past its right edge, at whole or fractional widths.
 void TestEditorStripContentsStayInsideANarrowStrip() {
   microide::workspace::EditorGroup group;
   for (const char* name : {"Welcome", "main.cpp", "a-rather-long-file-name.txt"}) {
@@ -501,7 +442,7 @@ void TestEditorStripContentsStayInsideANarrowStrip() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterTabStripServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TabStripService/EditorStripContentsStayInsideAShortStrip",
@@ -529,4 +470,4 @@ void RegisterTabStripServiceTests(std::vector<TestCase>& tests) {
           TestBottomPanelTabsCacheInvalidatesOnOpenIdChange);
 }
 
-}  // namespace microide::tests
+}

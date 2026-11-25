@@ -3,13 +3,6 @@
 
 #include <vector>
 
-// The kernel's test binary (TD-2026-09-22-303). It links microide_kernel and
-// nothing else — no SDL, no shell, no Lua — which is the same link unit
-// microide-server is built from, so "the kernel's tests run without a display"
-// is a property of this binary rather than a claim. A test TU that reaches for
-// the shell fails to LINK here; move it to microide_tests instead of adding the
-// dependency.
-
 namespace microide::tests {
 
 void RegisterAppDirectoriesTests(std::vector<TestCase>& tests);
@@ -192,18 +185,16 @@ void RegisterKernelTests(std::vector<TestCase>& tests) {
   RegisterEditBatchOrderTests(tests);
 }
 
-}  // namespace
+}
 
-}  // namespace microide::tests
+}
 
 namespace microide::tests {
-// tests/MirrorFaultMatrixTests.cpp re-executes this binary as the client it kills.
 bool IsMirrorFaultClient(int argc, char** argv);
 int RunMirrorFaultClient(int argc, char** argv);
-// tests/LocalWriteFaultMatrixTests.cpp re-executes it as the writer it kills.
 bool IsLocalWriteFaultClient(int argc, char** argv);
 int RunLocalWriteFaultClient(int argc, char** argv);
-}  // namespace microide::tests
+}
 
 int main(int argc, char** argv) {
   if (microide::tests::IsMirrorFaultClient(argc, argv)) {

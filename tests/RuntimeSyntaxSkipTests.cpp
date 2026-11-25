@@ -10,15 +10,6 @@
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/SyntaxHighlighter.h"
 
-// Golden/characterization coverage for the `skip`-masking path in
-// RuntimeSyntaxRegistry::FindFirstRegex (the region end/start search that masks
-// `skip` matches with '\0' before searching). This is the gate the known-tech-debt
-// entry required before touching the skip machinery: it snapshots the per-byte
-// token output for the tricky cases (escape masking, escaped-backslash, escaped
-// quote at EOL, nested regions re-entering a skip region, `^`-anchored skip under
-// NOTBOL, and UTF-8 next to an escape) so any change to the masking — including the
-// empty-skip fast path — is verified to produce byte-identical highlighting.
-
 namespace microide::tests {
 namespace {
 
@@ -29,8 +20,6 @@ using microide::editor::runtime_syntax::ReloadDefinitions;
 using microide::editor::runtime_syntax::RuntimeSyntaxDefinitionData;
 using microide::editor::runtime_syntax::RuntimeSyntaxRuleData;
 
-// Restores the built-in-only registry (drops the plugin definitions installed by a
-// test) when the test scope exits, so one test's grammar never leaks into another.
 struct ScopedGoldGrammar {
   ScopedGoldGrammar() { ReloadDefinitions({MakeGoldDefinition()}); }
   ~ScopedGoldGrammar() { ReloadDefinitions({}); }
@@ -41,37 +30,30 @@ struct ScopedGoldGrammar {
     def.filename_patterns = {"\\.gold$"};
     def.source_path = "goldskip.test";
 
-    // Double-quoted string with `\.` escape skip and a `${ }` interpolation child.
-    // The interpolation makes control leave and re-enter the string region mid-line,
-    // which is what re-runs the end+skip search over the shrinking tail.
     RuntimeSyntaxRuleData string_rule;
     string_rule.kind = GeneratedRuleKind::Region;
     string_rule.group_name = "constant.string";
     string_rule.limit_group_name = "constant.string";
     string_rule.start_regex = "\"";
     string_rule.end_regex = "\"";
-    string_rule.skip_regex = "\\\\.";  // regex: backslash + any char
+    string_rule.skip_regex = "\\\\.";
 
     RuntimeSyntaxRuleData interp;
     interp.kind = GeneratedRuleKind::Region;
     interp.group_name = "symbol.operator";
     interp.limit_group_name = "symbol.operator";
-    interp.start_regex = "\\$\\{";  // regex: ${
-    interp.end_regex = "\\}";       // regex: }
+    interp.start_regex = "\\$\\{";
+    interp.end_regex = "\\}";
     string_rule.children.push_back(interp);
     def.rules.push_back(string_rule);
 
-    // Angle region with a `^`-anchored skip: the skip may only mask a backslash at
-    // the very start of the searched segment. Because mid-line segments are searched
-    // with PCRE2_NOTBOL, the `^` must NOT assert there, so the backslash stays
-    // unmasked. Locks that at_line_start/NOTBOL is threaded through the skip scan.
     RuntimeSyntaxRuleData angle_rule;
     angle_rule.kind = GeneratedRuleKind::Region;
     angle_rule.group_name = "comment";
     angle_rule.limit_group_name = "comment";
     angle_rule.start_regex = "<";
     angle_rule.end_regex = ">";
-    angle_rule.skip_regex = "^\\\\";  // regex: ^ then a literal backslash
+    angle_rule.skip_regex = "^\\\\";
     def.rules.push_back(angle_rule);
 
     return def;
@@ -125,22 +107,16 @@ void ExpectKinds(std::string_view line, std::string_view expected) {
 
 void TestSkipMasksEscapedQuoteInsideString() {
   ScopedGoldGrammar grammar;
-  // The `\"` is masked by the skip so it does not close the string; the final `"`
-  // does. All six bytes are one string.
   ExpectKinds("\"a\\\"b\"", "SSSSSS");
 }
 
 void TestSkipMasksEscapedBackslashSoNextQuoteCloses() {
   ScopedGoldGrammar grammar;
-  // `\\` is an escaped backslash (masked as a unit), so the following `"` is a real
-  // close quote — the string is exactly the five bytes.
   ExpectKinds("\"a\\\\\"", "SSSSS");
 }
 
 void TestEscapedQuoteAtEndLeavesStringOpen() {
   ScopedGoldGrammar grammar;
-  // `"a\"` : the trailing `\"` is masked, so no close quote remains on the line and
-  // the string region stays open into the next line.
   const std::string_view line = "\"a\\\"";
   ExpectKinds(line, "SSSS");
   const auto highlighted = Highlight(line);
@@ -150,51 +126,31 @@ void TestEscapedQuoteAtEndLeavesStringOpen() {
 
 void TestTwoStringsHitEmptySkipFastPath() {
   ScopedGoldGrammar grammar;
-  // Neither string nor the gap between them contains an escape, so every end/start
-  // search takes the empty-skip fast path. Two strings around a plain `+`.
   ExpectKinds("\"x\"+\"y\"", "SSS.SSS");
 }
 
 void TestNestedInterpolationReEntersSkipRegion() {
   ScopedGoldGrammar grammar;
-  // The `${b}` interpolation forces control out of the string and back in, which
-  // re-runs the end+skip search over the tail after `}` — the exact re-scan the
-  // skip fast path optimizes. Coloring must stay: string, operator run, string.
   ExpectKinds("\"a${b}c\"", "SSOOOOSS");
 }
 
 void TestNestedInterpolationWithEscapeBeforeAndAfter() {
   ScopedGoldGrammar grammar;
-  // Escapes on both sides of an interpolation exercise the masked (non-empty skip)
-  // path on re-entry. `"\n${b}\t"` -> string, escape(string), operator, string.
   ExpectKinds("\"\\n${b}\\t\"", "SSSOOOOSSS");
 }
 
 void TestCaretAnchoredSkipDoesNotMaskMidLine() {
   ScopedGoldGrammar grammar;
-  // `<\>` : inside the angle region the tail `\>` is searched with NOTBOL, so the
-  // `^`-anchored skip cannot mask the backslash; the `>` closes the region and all
-  // three bytes are comment-colored.
   ExpectKinds("<\\>", "CCC");
 }
 
 void TestUtf8NextToEscapeStaysString() {
   ScopedGoldGrammar grammar;
-  // A 2-byte é sits right before an escaped quote. Masking must not corrupt the
-  // multi-byte codepoint; every byte remains string.
   ExpectKinds("\"\xc3\xa9\\\"x\"", "SSSSSSS");
 }
 
-// A line carrying bytes that are not valid UTF-8 (a Latin-1 file, a stray byte in
-// an otherwise-UTF-8 source — both of which the text reader happily loads, since it
-// only rejects embedded NULs) must still be highlighted. The patterns compile with
-// PCRE2_UTF, and without PCRE2_MATCH_INVALID_UTF every pcre2_match against such a
-// subject returns PCRE2_ERROR_UTF8_ERR* — a negative rc that the search helpers
-// treat as "no match", silently dropping ALL highlighting for the line.
 void TestInvalidUtf8LineStillHighlights() {
   ScopedGoldGrammar grammar;
-  // 0xE9 is é in Latin-1 and an invalid UTF-8 lead byte (it announces a 3-byte
-  // sequence but is followed by ASCII).
   const std::string line = "\"a\xe9?b\"";
   const std::string rendered = RenderKinds(line);
   Expect(rendered.size() == line.size(),
@@ -204,20 +160,8 @@ void TestInvalidUtf8LineStillHighlights() {
                      "line: got '") + rendered + "'");
 }
 
-// A line past the tokenization cutoff renders unhighlighted. That has always been
-// the behaviour; what this pins is that it costs nothing to say so. The refusal
-// path used to `assign(line.size(), Plain)` before returning, so declining to
-// tokenize an 8 MB minified line still allocated and memset 8 MB — per token-cache
-// miss, then held it in the per-line LRU. An EMPTY token vector renders identically
-// because every consumer treats an absent entry as Plain (the same convention
-// TextViewport::HighlightedLineTokens has always used when highlighting is off).
-//
-// The under-cutoff control case is what keeps this from passing vacuously: the
-// pre-sizing still has to happen for every line that IS tokenized, since the
-// highlighter writes through MarkRange, which only overwrites existing entries.
 void TestOverLongLineSkipsTokenMaterialization() {
   ScopedGoldGrammar grammar;
-  // Just under the cutoff: tokenized, so every byte carries a kind.
   const std::string under = "\"" + std::string(90000, 'a') + "\"";
   const auto under_result = Highlight(under);
   Expect(under_result.tokens.size() == under.size(),
@@ -225,14 +169,11 @@ void TestOverLongLineSkipsTokenMaterialization() {
   Expect(under_result.tokens.front() == SyntaxTokenKind::String,
          "a line under the cutoff must still be highlighted");
 
-  // Past the cutoff: declined, and declined for free.
   const std::string over = "\"" + std::string(150000, 'a') + "\"";
   const auto over_result = Highlight(over);
   Expect(over_result.tokens.empty(),
          "a line past the tokenization cutoff must not materialize a token per byte");
 
-  // The open-region carry-forward across an over-long line is unchanged by this:
-  // an inherited region state still survives the line it could not scan.
   microide::editor::SyntaxState open_state;
   open_state.definition_id = under_result.end_state.definition_id;
   open_state.region_depth = 1;
@@ -242,11 +183,6 @@ void TestOverLongLineSkipsTokenMaterialization() {
          "an over-long line must carry the incoming open-region stack forward");
 }
 
-// Stress/liveness guard for the pathological re-scan shape the tech-debt entry
-// describes: a single string with many `${}` interpolations makes the string
-// region's end+skip search re-run at each `}`. This must still terminate with the
-// string correctly closed (no hang, no depth leak) — it is the shape a future O(n)
-// rewrite must keep behaving identically.
 void TestManyInterpolationsTerminateWithStringClosed() {
   ScopedGoldGrammar grammar;
   std::string line = "\"";
@@ -267,12 +203,6 @@ void TestManyInterpolationsTerminateWithStringClosed() {
          "the leading open quote must be highlighted as string");
 }
 
-// TD-2026-07-17A-115: the thread-local regex match-data cache is keyed by
-// CompiledRegex address. A reload destroys the old patterns and can reuse their
-// addresses for new, differently-shaped patterns, so the cache must be cleared
-// when the registry revision advances. Assert the revision advances on reload and
-// that highlighting stays correct across reloads (running under ASAN, a stale,
-// under-sized match-data reuse would trip an out-of-bounds ovector read).
 void TestMatchDataCacheInvalidatesOnReload() {
   using microide::editor::runtime_syntax::RegistryRevision;
 
@@ -281,30 +211,17 @@ void TestMatchDataCacheInvalidatesOnReload() {
   const std::size_t rev1 = RegistryRevision();
   Expect(rev1 != rev0, "reloading definitions must advance the registry revision");
 
-  // Populate the per-thread match-data cache for the gold grammar's patterns.
   Expect(RenderKinds("\"a\\\"b\"") == "SSSSSS", "gold grammar highlights the string");
 
-  // Reload a distinct grammar (new CompiledRegex objects, possibly reusing the old
-  // addresses). The revision advances again, so the next highlight must rebuild
-  // match data rather than reuse a stale block.
   ReloadDefinitions({ScopedGoldGrammar::MakeGoldDefinition()});
   const std::size_t rev2 = RegistryRevision();
   Expect(rev2 != rev1, "a second reload must advance the revision again");
   Expect(RenderKinds("\"a\\\"b\"") == "SSSSSS",
          "highlighting stays correct after the reload (no stale match-data reuse)");
 
-  ReloadDefinitions({});  // restore built-in-only registry
+  ReloadDefinitions({});
 }
 
-// Each rule regex is compiled twice -- once with PCRE2_UTF|PCRE2_UCP and once
-// byte-oriented -- and a line picks the byte-mode one when it holds no byte
-// >= 0x80, where the two are provably equivalent and byte mode is ~2x faster.
-// These two tests pin both halves of that split.
-//
-// The word-boundary case is the one that would silently break: a keyword rule is
-// spelled `\b(...)\b`, and only UCP makes `\b` see a Unicode letter as a word
-// character. Running the byte-mode compilation against a line containing an
-// accented identifier would split `\b` inside it and paint the embedded keyword.
 struct ScopedWordBoundaryGrammar {
   ScopedWordBoundaryGrammar() { ReloadDefinitions({MakeDefinition()}); }
   ~ScopedWordBoundaryGrammar() { ReloadDefinitions({}); }
@@ -336,8 +253,6 @@ std::string RenderWordKinds(std::string_view line) {
 
 void TestAsciiAndUnicodeCompilationsAgreeOnAsciiInput() {
   ScopedWordBoundaryGrammar grammar;
-  // Plain ASCII: the byte-mode compilation runs, and `int` is a whole word here
-  // but not inside `intptr`.
   Expect(RenderWordKinds("int x") == "KKK..",
          "a standalone ASCII keyword is highlighted on the byte-mode path");
   Expect(RenderWordKinds("intptr x") == "........",
@@ -346,31 +261,17 @@ void TestAsciiAndUnicodeCompilationsAgreeOnAsciiInput() {
 
 void TestNonAsciiLineKeepsUnicodeWordBoundaries() {
   ScopedWordBoundaryGrammar grammar;
-  // `é` is U+00E9, two UTF-8 bytes. Under PCRE2_UCP it is a word character, so
-  // `\b` does not assert between `int` and `égré` and the keyword must NOT be
-  // painted. The byte-mode compilation would see the 0xC3 lead byte as a
-  // non-word byte, assert a boundary there, and paint `int` -- which is exactly
-  // why a line carrying any byte >= 0x80 has to fall back to the Unicode one.
   const std::string accented = "int\xc3\xa9gr\xc3\xa9 x";
   const std::string rendered = RenderWordKinds(accented);
   Expect(rendered.find('K') == std::string::npos,
          std::string("a keyword inside a non-ASCII identifier must stay unhighlighted, got '") +
              rendered + "'");
-  // The same buffer with the accents removed is a different word, so still no
-  // match -- guard against the assertion above passing for the wrong reason by
-  // checking the rule does fire on this grammar at all.
   Expect(RenderWordKinds("int") == "KKK", "the keyword rule fires on a bare keyword line");
 }
 
-}  // namespace
+}
 
 
-// The classification is one kind per BYTE of the line (the fold model and the
-// renderer index it by column), and it is a pure function of (line, state).
-// Random lines with the characters that open and close the regions of every
-// bundled language — quotes, slashes, stars, hashes, braces, backslashes,
-// multi-byte scalars — must keep both properties, and AdvanceState must agree
-// with the full highlight's end state.
 void TestSyntaxHighlighterRandomLinesKeepPerByteCoverage() {
   using microide::editor::SyntaxHighlighter;
   using microide::editor::SyntaxState;
@@ -449,4 +350,4 @@ void RegisterRuntimeSyntaxSkipTests(std::vector<TestCase>& tests) {
           TestManyInterpolationsTerminateWithStringClosed);
 }
 
-}  // namespace microide::tests
+}

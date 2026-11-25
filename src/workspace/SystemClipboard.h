@@ -8,30 +8,17 @@
 
 namespace microide::workspace {
 
-// The system clipboard, with the app's own copy kept when the system refuses it.
-//
-// A Wayland compositor accepts a clipboard selection only with the serial of a
-// recent input event on the client. Input the control channel delivers carries
-// none, so an agent's `copy` was refused and its `paste` then inserted nothing
-// (TD-2026-10-19-366). A copy the system does not hold afterwards -- read back at
-// once -- is held here and answers the app's own paste for as long as the system
-// clipboard still holds what it held at that moment; anything another client
-// copies since takes over, as it would have anyway. Other clients still cannot
-// see a refused copy: nothing in this process can make the compositor take it.
 class SystemClipboard {
  public:
   struct Backend {
     std::function<bool(std::string_view)> set;
     std::function<std::optional<std::string>()> get;
-    // The bytes the clipboard offers as image/png; nullopt when it offers none.
     std::function<std::optional<std::string>()> get_png;
   };
 
-  // The SDL clipboard.
   SystemClipboard();
   explicit SystemClipboard(Backend backend) : backend_(std::move(backend)) {}
 
-  // Tests replace one half of the backend at a time.
   void SetReaderForTesting(std::function<std::optional<std::string>()> get) {
     backend_.get = std::move(get);
   }
@@ -42,20 +29,15 @@ class SystemClipboard {
     backend_.get_png = std::move(get_png);
   }
 
-  // True when the text is on the clipboard -- the system's, or held here for the
-  // app's own paste.
   bool Write(std::string_view text);
   std::optional<std::string> Read();
-  // The PNG image on the system clipboard -- a screenshot, an image copied in a
-  // browser -- as its file bytes. nullopt when the clipboard offers no PNG, or
-  // offers something under that name that is not one or is over kMaxPngBytes.
   std::optional<std::string> ReadPng();
   static constexpr std::size_t kMaxPngBytes = 64u * 1024 * 1024;
 
  private:
   Backend backend_;
-  std::optional<std::string> held_;            // a copy the system refused
-  std::optional<std::string> system_at_hold_;  // what the system held when it did
+  std::optional<std::string> held_;
+  std::optional<std::string> system_at_hold_;
 };
 
-}  // namespace microide::workspace
+}

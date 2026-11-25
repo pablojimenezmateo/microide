@@ -38,20 +38,9 @@ namespace microide::workspace {
 
 namespace {
 
-// A DAP request that gets no response within its deadline is failed
-// synthetically, so a wedged or silent adapter can never leave a request — and the
-// UI's loading state — pending forever. The deadline is command-aware: startup
-// requests can legitimately take many seconds (loading symbols, launching a large
-// program), while a value fetch on a paused target should be near-instant. A slow
-// value fetch is the runaway signature (gdb formatting a garbage container), so we
-// fail it fast — both to surface "<unavailable>" promptly and to bound how long
-// the adapter churns before we stop waiting on it.
 constexpr std::chrono::milliseconds kStartupRequestTimeout{30000};
 constexpr std::chrono::milliseconds kInteractiveRequestTimeout{6000};
 
-// Longer deadline only for the handshake/run-control requests that can be
-// genuinely slow; everything else (variables/evaluate/scopes/stackTrace/
-// setVariable/…) uses the short interactive deadline.
 inline std::chrono::milliseconds RequestTimeoutFor(const std::string& command) {
   if (command == "launch" || command == "attach" || command == "initialize" ||
       command == "configurationDone" || command == "restart") {
@@ -60,15 +49,7 @@ inline std::chrono::milliseconds RequestTimeoutFor(const std::string& command) {
   return kInteractiveRequestTimeout;
 }
 
-// An inbound DAP `request_seq` only matches one of OUR pending requests if it is an
-// exact integer within int range (our seqs are a small monotonic counter). A value
-// outside int range from a hostile/buggy adapter cannot match anything we sent, so
-// returning false skips it — mirrors the LSP transport's ResponseIdInRange. A bare
-// `static_cast<int>(AsInt())` would wrap e.g. 4294967297 to 1 and could collide with a
-// live pending seq, dispatching the wrong callback or forging an initialize match.
 inline bool DapResponseSeqInRange(const util::JsonValue& seq_value, int* out) {
-  // Our seqs are exact integers; reject a fractional double (5.9) instead of
-  // truncating it into a live pending seq (TD-2026-07-17A-117).
   if (!protocol_numeric::IsIntegralJsonNumber(seq_value)) {
     return false;
   }
@@ -81,30 +62,11 @@ inline bool DapResponseSeqInRange(const util::JsonValue& seq_value, int* out) {
   return true;
 }
 
-// OOM backstop for the outbound/deferred queues. The I/O thread drains outbound
-// continuously, so this is never approached in normal operation; the queues only grow
-// without bound if the adapter stops reading its stdin while staying alive. At that
-// point the session is wedged, so we refuse further messages rather than silently DROP
-// queued protocol messages or grow until the IDE OOMs. Refused requests fail cleanly
-// via the send-failure path; the timeout sweep clears anything already pending.
 constexpr std::size_t kMaxQueuedMessages = 50000;
-// Aggregate approximate byte budget for queued outbound payloads (the count cap
-// above does not bound retained BYTES — large evaluate/setExpression/source-content
-// bodies capture their text by value until sent). TD-2026-07-17A-071.
-constexpr std::size_t kMaxQueuedBytes = 512u * 1024 * 1024;  // 512 MiB
+constexpr std::size_t kMaxQueuedBytes = 512u * 1024 * 1024;
 
-// Debug adapters are external, possibly-buggy or hostile processes. Bound a
-// single decoded message body and, with slack, the whole read-accumulation
-// buffer, so an adapter cannot declare a near-INT_MAX Content-Length or stream
-// unframed bytes to grow the buffer without limit (OOM). A body over the message
-// cap is rejected; a read buffer past the buffer cap tears the session down.
 constexpr std::size_t kMaxDapMessageBytes = 64ull * 1024 * 1024;
 constexpr std::size_t kMaxDapReadBufferBytes = kMaxDapMessageBytes + (1ull * 1024 * 1024);
-// TD-2026-07-17A-098: cap the pre-initialize replay buffer. Individual frames and the read
-// buffer are bounded, and the wall-clock deadline prevents infinite waiting, but a hostile
-// adapter can stream many valid small output/event frames for the full timeout window and
-// grow `early_messages` without an item budget. A conforming adapter emits only a handful
-// of events before its initialize response, so exceeding this count is a runaway adapter.
 constexpr std::size_t kMaxDapEarlyMessages = 10000;
 
 bool DapLifecycleTraceEnabled() {
@@ -130,13 +92,8 @@ void TraceDapLifecycle(std::string_view adapter_id, int pid, std::string_view ph
                static_cast<int>(detail.size()), detail.data());
 }
 
-}  // namespace
+}
 
-// The transport half (I/O thread, outbound queues, framing, caps) lives in the
-// shared StdioJsonRpcClientTransport mixin — one implementation for the LSP and
-// DAP clients, which used to carry drifting copies of it. Impl supplies the
-// protocol half the mixin calls back into: DispatchMessage, FailPendingRequests,
-// SetLastError, TraceSend, WakeMainThread.
 struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
   Impl()
       : StdioJsonRpcClientTransport(StdioTransportConfig{
@@ -159,21 +116,12 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
 
   std::mutex mutex;
 
-  // Whether the teardown `disconnect` ends the debuggee. A launched program is the
-  // session's and ends with it; gdb's DAP takes an unnamed terminateDebuggee as
-  // false and detached, leaving the program running after the editor quit.
   std::atomic<bool> terminate_debuggee_on_disconnect{false};
   std::condition_variable shutdown_cv;
   bool shutdown_response_received = false;
   int shutdown_request_seq = 0;
 
-  // A registered request awaiting its response: the raw response handler plus the
-  // deadline after which the request is failed synthetically.
-  // Pending request callbacks keyed by request seq, guarded by mutex.
   PendingRequestTable<std::function<void(util::JsonValue)>> pending_requests;
-  // Callbacks marshalled to the main thread and drained once per frame. Carries
-  // its own mutex + SDL wake event, so it is the innermost lock: producers may
-  // post while holding `mutex`, and DrainCallbacks() never takes `mutex`.
   util::MainThreadMailbox main_mailbox;
 
   std::function<void(const std::string&, const util::JsonValue&, ResponseCallback)>
@@ -204,11 +152,7 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
     shutdown_request_seq = 0;
   }
 
-  // --- dispatch -------------------------------------------------------------
   void DispatchMessage(util::JsonValue msg) {
-    // Single funnel for every inbound message (responses, events, reverse requests).
-    // Mirrors lsp::DispatchMessage -- these two transports duplicate each other,
-    // so instrumenting one and not the other leaves half the picture.
     util::PerformanceTrace::Scope perf_scope("dap::DispatchMessage");
     util::AddPerformanceCounter(util::PerfCounterId::DapMessagesReceived);
     util::DebugTrace::Message("recv", msg);
@@ -223,10 +167,6 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
   }
 
   void HandleResponse(util::JsonValue msg) {
-    // Correlate only on a numeric request_seq within int range (mirrors the LSP
-    // dispatch's ResponseIdInRange). A string-encoded or out-of-int-range seq from a
-    // non-conformant/hostile adapter cannot match one of our small monotonic seqs, so
-    // skip it rather than narrow-and-collide with a live pending request.
     int request_seq = 0;
     if (!DapResponseSeqInRange(msg["request_seq"], &request_seq)) {
       return;
@@ -266,14 +206,7 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
     }
   }
 
-  // Adapter -> client requests must always get a reply or the adapter may stall.
-  // We advertise no client-side capabilities (runInTerminal etc.), so reject any
-  // reverse request that does arrive.
   void HandleReverseRequest(util::JsonValue msg) {
-    // The adapter's seq is echoed back verbatim as our response's request_seq. If it
-    // is out of int range we cannot represent it faithfully, and narrowing it would
-    // reply against a different request id — a non-conformant adapter, so drop the
-    // reverse request without replying rather than send a mis-correlated response.
     int request_seq = 0;
     if (!DapResponseSeqInRange(msg["seq"], &request_seq)) {
       return;
@@ -293,24 +226,15 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
     return seq;
   }
 
-  // A failed send's cleanup; false when the EOF sweep claimed the entry first
-  // (PendingRequestTable::Remove).
   bool RemovePendingRequest(int seq) {
     std::lock_guard lock(mutex);
     return pending_requests.Remove(seq);
   }
 
-  // Synthesize failure responses for pending requests so a non-responding adapter
-  // never strands a request (and the UI's loading state). `only_expired` fails
-  // just those past their deadline (the periodic timeout sweep); otherwise fails
-  // all (the adapter has exited and no response can ever arrive). Runs on the I/O
-  // thread; pushes the handlers onto the main-thread ready queue and wakes it.
   void FailPendingRequests(bool only_expired) {
     const auto now = std::chrono::steady_clock::now();
     std::lock_guard lock(mutex);
     const std::size_t failed = pending_requests.Sweep(only_expired, now, [&](int seq, auto entry) {
-      // The runaway/<unavailable> smoking gun: correlate this seq with the
-      // matching outbound "send" line to see which request the adapter dropped.
       util::DebugTrace::Note("dap", only_expired ? "request-timeout seq" : "adapter-gone seq",
                              static_cast<long long>(seq));
       util::JsonValue envelope = dap_protocol::MakeResponse(
@@ -323,8 +247,6 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
     }
   }
 
-  // Register the response handler, send the request, and on send failure clean up
-  // and report the failure. Returns false when the request cannot be sent.
   bool DispatchRequest(const std::string& command, util::JsonValue arguments,
                        std::function<void(util::JsonValue)> response_handler,
                        std::function<void()> on_send_failure) {
@@ -335,9 +257,6 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
     const int seq = RegisterPendingRequest(std::move(response_handler), RequestTimeoutFor(command));
     if (!SendMessageAfterInitialize(
             dap_protocol::MakeRequest(seq, command, std::move(arguments)))) {
-      // Only report the failure if the entry was still ours to fail. If the EOF
-      // sweep already claimed it, it also already invoked the handler — running
-      // on_send_failure() again would double-fire the callback.
       if (RemovePendingRequest(seq)) {
         on_send_failure();
       }
@@ -358,8 +277,6 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
       on_send_failure();
       return false;
     }
-    // Bridge the user-facing ResponseCallback (DapResponse) back into the raw
-    // pending-handler shape by re-encoding into a response envelope.
     ResponseCallback bridge = [this, command,
                                response_handler = std::move(response_handler)](
                                   const dap_protocol::DapResponse& response) {
@@ -403,22 +320,7 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
     }
 
     bool got_init = false;
-    // Messages that arrive BEFORE the initialize response are buffered here and
-    // dispatched only after `capabilities` is stored and `initialized` is set. A
-    // non-conformant adapter that emits the `initialized` event before its
-    // initialize response would otherwise have that event dispatched to the main
-    // thread while capabilities were still default-constructed — so
-    // SendConfigurationDone would read supports_configuration_done_request==false
-    // and skip configurationDone, hanging a debuggee that needs it. For a
-    // spec-compliant adapter (response first) this stays empty and is zero-cost.
     std::vector<util::JsonValue> early_messages;
-    // Bound the initialize wait by WALL-CLOCK, not an attempt count. proc.Read returns
-    // as soon as any data is available and dispatching a buffered message does not read
-    // at all, so an adapter that emits a burst of events (e.g. `output`) before its
-    // initialize response would burn an attempt-count budget in milliseconds and get
-    // force-killed while healthy. A steady_clock deadline spends the budget only as real
-    // time elapses; message supply is bounded per read, so this never spins hot.
-    // Symmetric with the LSP client's initialize wait.
     const auto init_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
     while (std::chrono::steady_clock::now() < init_deadline) {
       if (stop_init.load(std::memory_order_acquire)) {
@@ -435,28 +337,18 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
           framer_.Append(*chunk);
         }
         if (framer_.BufferedBytes() > kMaxDapReadBufferBytes) {
-          break;  // runaway adapter
+          break;
         }
         continue;
       }
       const util::JsonValue& msg = *msg_opt;
       const std::string& type = msg["type"].AsString();
-      // Range-check the seq before comparing to init_seq: a wrapped out-of-range
-      // request_seq must not be able to forge an initialize match and cause us to
-      // trust capabilities from a response that was never the initialize reply.
       int init_response_seq = 0;
       const bool is_init_response =
           type == "response" && DapResponseSeqInRange(msg["request_seq"], &init_response_seq) &&
           init_response_seq == init_seq;
       if (!is_init_response) {
-        // Defer adapter-initiated messages that arrive before the initialize
-        // response (e.g. an early `output`, or a non-conformant `initialized`)
-        // until capabilities are stored, preserving arrival order.
         early_messages.push_back(std::move(*msg_opt));
-        // TD-2026-07-17A-098: bound the pre-initialize replay buffer. A conforming
-        // adapter emits only a handful of events before its initialize response; an
-        // adapter flooding thousands is runaway — fail initialization cleanly instead
-        // of retaining an unbounded event backlog for the full timeout window.
         if (early_messages.size() > kMaxDapEarlyMessages) {
           SetLastError("debug adapter emitted too many events before initialize response");
           AbandonInitialize();
@@ -501,9 +393,6 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
       deferred_messages.clear();
     }
 
-    // Now that capabilities are parsed and `initialized` is set, replay any
-    // pre-response messages in arrival order. A buffered `initialized` event
-    // therefore reaches the main-thread handshake with correct capabilities.
     for (util::JsonValue& message : early_messages) {
       DispatchMessage(std::move(message));
     }
@@ -559,10 +448,6 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
     disconnect_args["restart"] = JsonValue(false);
     disconnect_args["terminateDebuggee"] =
         JsonValue(terminate_debuggee_on_disconnect.load(std::memory_order_acquire));
-    // Bounded lock acquisition: if the io_thread is stuck in a proc.Write to a
-    // wedged-but-alive adapter (holding write_mutex), this returns false quickly
-    // rather than blocking teardown forever, and we fall through to the force-kill
-    // below — which unblocks that write so io_thread can be joined.
     const bool sent_disconnect = SendMessageImmediate(
         dap_protocol::MakeRequest(disconnect_seq, "disconnect", JsonValue(std::move(disconnect_args))),
         true, std::chrono::milliseconds(1000));
@@ -583,4 +468,4 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
   }
 };
 
-}  // namespace microide::workspace
+}

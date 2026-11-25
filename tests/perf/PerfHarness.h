@@ -28,11 +28,6 @@
 
 namespace microide::tests::perf {
 
-// Non-throwing fixture probes. The perf runner is the speed-regression oracle, so
-// fixture discovery must fail in controlled, diagnosable ways: a probe error
-// (permission denied, symlink loop, stale mount, overlong component) must degrade to
-// "fixture absent" so the scenario can print its labelled message and honor
-// --require-fixtures, never throw a raw std::filesystem_error mid-run.
 inline bool PathExistsNoThrow(const std::filesystem::path& path) {
   std::error_code ec;
   return std::filesystem::exists(path, ec) && !ec;
@@ -45,23 +40,10 @@ inline bool DirectoryExistsNoThrow(const std::filesystem::path& path) {
 
 class ScenarioContext;
 
-// The ONE fixture guard for scenario bodies (TD-2026-08-10-170). Returns true
-// when the fixture is there; otherwise marks the scenario skipped — which the
-// harness turns into a `SKIP` line and, for a baseline-gated scenario, a run
-// failure — and returns false so the caller returns immediately.
-//
-// Every scenario used to spell this itself as `std::cerr << ... ; return;`,
-// which told the harness nothing: the empty iteration was measured and compared,
-// and a scenario that did nothing PASSED its gate.
 bool RequireFixture(ScenarioContext& context,
                     const std::filesystem::path& fixture,
                     std::string_view scenario_label);
 
-// Linear-interpolated percentile over an unsorted sample. Shared with the
-// baseline comparison, which re-percentiles the clock-normalised CPU series
-// (Baseline.cpp) and must do it exactly the way the harness percentiled the raw
-// one -- two subtly different percentile rules would put the normalised and raw
-// numbers on different samples and make the reported factor unreadable.
 inline double Percentile(std::vector<double> values, double p) {
   if (values.empty()) {
     return 0.0;
@@ -83,48 +65,9 @@ struct MetricSnapshot {
   std::uint64_t frees = 0;
   std::uint64_t bytes_allocated = 0;
   std::uint64_t bytes_freed = 0;
-  // Process CPU time (user + system, summed across ALL threads) consumed by the
-  // iteration. Wall time alone cannot see priority 3: a change that keeps its
-  // latency by moving work onto three background threads reads as neutral on
-  // wall and is a large regression here. This is what makes "low CPU usage" a
-  // measured budget instead of a stated intention.
   double cpu_ms = 0.0;
-  // Nanoseconds the harness's fixed-work calibration probe took just OUTSIDE this
-  // iteration's window -- a reading of the machine's effective clock while the
-  // iteration ran, not of the iteration. Zero when no probe ran.
-  //
-  // Carried per iteration and not just per run because the failure that motivated
-  // it was a clock that stepped MID-run: idle_soak_30s measured 14 ms of CPU on
-  // its first five iterations and 30 ms on its last five, one clean step, with
-  // every application counter byte-identical across it. Normalising against a
-  // single per-run number would smear that; normalising each iteration against
-  // its own reading cancels it exactly (TD-2026-08-05-137).
   std::uint64_t cpu_calibration_ns = 0;
-  // Resident-set growth across the iteration, in bytes. Deliberately the delta and
-  // not absolute RSS: the harness runs every iteration of every scenario in one
-  // process, so absolute RSS is dominated by whatever ran earlier and is not
-  // attributable to the scenario. Growth is. Clamped at zero when the iteration
-  // gives memory back.
   std::uint64_t rss_growth_bytes = 0;
-  // `bytes_allocated - bytes_freed` across the measured window: the bytes this
-  // iteration allocated through the counting `operator new` and did NOT hand back
-  // before the window closed. Signed, because a scenario whose setup allocates
-  // and whose measured window releases is legitimately negative
-  // (debug_session_stop_to_variables reads -141,047 every iteration).
-  //
-  // This is the DETERMINISTIC retention instrument, and it is the reason the
-  // resident gate stopped being a coin flip (TD-2026-08-06-150). Measured across
-  // three process states whose heaps could not have been more different -- a
-  // solo run, a 26-scenario prefix, a 52-scenario prefix -- 52 of 52 scenarios
-  // reported the SAME value, worst spread 9 bytes. Over the same three states
-  // `rss_growth_bytes` for one of them (diff_stage_selected_lines) read 21 KB,
-  // 79 KB and 239 KB per iteration for a byte-identical 28,470 bytes of actual
-  // retention: RSS is a 7x-amplifying, prefix-dependent view of this number.
-  //
-  // It is not a superset of RSS and does not replace it. `operator new` is the
-  // only allocator it sees, so malloc from Lua, PCRE2, SDL and libc, and anything
-  // mmap'd, are invisible here and visible there. Both are gated, for different
-  // things.
   std::int64_t net_heap_bytes = 0;
 };
 
@@ -141,33 +84,13 @@ struct MetricSet {
   double p50_rss_growth_bytes = 0.0;
   double p95_rss_growth_bytes = 0.0;
   double max_rss_growth_bytes = 0.0;
-  // Mean resident growth per iteration with the single largest sample dropped.
-  // This is the GATED resident statistic; p50/p95/max stay recorded for
-  // diagnosis. See CompareToBaseline for why a percentile is the wrong
-  // instrument for this metric.
   double mean_rss_growth_bytes = 0.0;
-  // Median per-iteration `net_heap_bytes`. The median rather than the mean
-  // because iteration 0 pays the scenario's one-time cold retention (8 MB on the
-  // diff fixtures against 28 KB steady state) and would own an average; the
-  // steady-state value is the one that reproduces to the byte.
   double p50_net_heap_bytes = 0.0;
-  // Median of the per-iteration calibration probe. Recorded INTO the
-  // baseline, which is what makes a duration gate machine-state-independent: the
-  // baseline knows what clock it was captured at, so a later run can be compared
-  // against a scaled expectation instead of against a number that silently meant
-  // "on a 5.1 GHz core" (TD-2026-08-05-137). Zero on a run with no probe, which
-  // disables normalisation rather than scaling by a nonsense factor.
   double p50_cpu_calibration_ns = 0.0;
 };
 
-// Process-wide CPU time and resident set, for the harness and for scenarios that
-// want to assert on them directly. CPU time comes from getrusage(RUSAGE_SELF),
-// which sums every thread; RSS from /proc/self/statm.
 double ProcessCpuMilliseconds();
 std::uint64_t ProcessResidentBytes();
-// Release allocator-held free pages back to the OS. Call immediately before a
-// resident reading that is meant to measure retained memory; see the definition
-// for why an untrimmed reading is a coin flip (TD-2026-08-05-136).
 void SettleResidentSet();
 
 struct Iteration {
@@ -186,38 +109,14 @@ struct Iteration {
   std::vector<std::pair<std::string, std::uint64_t>> perf_counters;
 };
 
-// One measured phase, aggregated across a scenario's measured iterations.
-//
-// A scenario total answers "what did this whole iteration cost", which for most
-// scenarios is dominated by setup: search_first_result's 20,192 allocations are
-// 20,047 of project-open-and-index-build and 145 of the search the scenario is
-// named after, so its tight total gate would not notice the search doubling
-// (TD-2026-08-06-153). The phase is the thing the scenario claims to measure, so
-// the phase is what has to be gated.
-//
-// ALLOCATIONS are the gated statistic, for the same reason they are at scenario
-// level: they are deterministic run to run and they scale with the work done.
-// Wall is recorded for diagnosis only -- a 2 ms phase carries the whole of this
-// runner's scheduler jitter.
 struct PhaseMetricSet {
   std::string name;
-  // Per-iteration allocation count for this phase: the SUM over every Measure()
-  // call that used this name in that iteration, then percentiled across
-  // iterations. Summing matters because a scenario is free to call Measure with
-  // one name several times per iteration, and gating one arbitrary call of a
-  // repeated phase would be a gate on which call happened to be last.
   double p50_allocations = 0.0;
   double max_allocations = 0.0;
   double p50_wall_ms = 0.0;
-  // Measured iterations that recorded this phase at all. A phase inside a
-  // conditional shows up here as a count below the run's iteration count, which
-  // is worth seeing before trusting its percentile.
   std::size_t iterations = 0;
 };
 
-// The build this binary was compiled as, e.g. "RelWithDebInfo+lto". Empty when
-// the definition is absent (a target that does not set it), which reads as
-// "unknown" and compares exactly as it did before the field existed.
 inline std::string PerfBuildConfig() {
 #ifdef MICROIDE_PERF_BUILD_CONFIG
   return MICROIDE_PERF_BUILD_CONFIG;
@@ -230,43 +129,20 @@ struct Aggregate {
   std::string scenario_name;
   std::vector<Iteration> iterations;
   MetricSet metrics;
-  // Aggregated per-phase metrics, in first-appearance order.
   std::vector<PhaseMetricSet> phases;
   bool smoke = false;
-  // The scenario's declared measurement revision at the time this run happened.
-  // Copied from Scenario::measurement_revision; see that field for what it means
-  // and why comparing two numbers recorded at different revisions is not a
-  // comparison.
   std::size_t measurement_revision = 1;
-  // Which BUILD produced these numbers (see BaselineRecord::build_config).
-  // Filled from MICROIDE_PERF_BUILD_CONFIG, which CMake bakes into the perf
-  // binary, so a comparison across two configurations is declined rather than
-  // reported as a regression (TD-2026-08-12-191).
   std::string build_config = PerfBuildConfig();
-  // Non-empty when the scenario declared it could not run (see
-  // ScenarioContext::SkipScenario). Its metrics describe nothing and must not be
-  // compared to a baseline, written as one, or reported as a pass.
   std::string skip_reason;
 };
 
-// Aggregate the per-iteration phase records into one entry per phase name.
-// Header-inline because both binaries need it: microide_perf produces it from a
-// run, and microide_tests (which does not link the harness TU) builds Aggregates
-// the same way to test the gate.
 inline std::vector<PhaseMetricSet> AggregatePhaseMetrics(const std::vector<Iteration>& iterations) {
-  // First-appearance order, kept deliberately: a scenario's phases read as a
-  // timeline, and sorting them alphabetically would scramble that in every
-  // report and every baseline diff.
   std::vector<PhaseMetricSet> phases;
   std::vector<std::vector<double>> allocation_samples;
   std::vector<std::vector<double>> wall_samples;
-  // Keyed on the iteration's own strings, which outlive this call.
   std::unordered_map<std::string_view, std::size_t> index_by_name;
 
   for (const Iteration& iteration : iterations) {
-    // Sum repeats WITHIN an iteration before percentiling ACROSS iterations: a
-    // scenario may call Measure() with one name several times in a single pass,
-    // and each of those calls is part of what that iteration cost.
     std::vector<double> iteration_allocations(phases.size(), 0.0);
     std::vector<double> iteration_wall(phases.size(), 0.0);
     std::vector<bool> present(phases.size(), false);
@@ -308,19 +184,16 @@ inline std::vector<PhaseMetricSet> AggregatePhaseMetrics(const std::vector<Itera
 }
 
 struct ReportMetadata {
-  std::string runner_class;           // e.g. "perf-runner-v1" or "local-advisory"
-  std::string sdl_video_driver;       // e.g. "dummy", "x11", "software"
-  std::string sdl_renderer_driver;    // e.g. "software"
-  std::vector<std::string> scenarios; // resolved scenario list executed
+  std::string runner_class;
+  std::string sdl_video_driver;
+  std::string sdl_renderer_driver;
+  std::vector<std::string> scenarios;
   std::size_t iterations = 0;
-  std::string layout_mode;            // "auto" | "regular" | "compact" | ""
+  std::string layout_mode;
   std::uint64_t seed = 0;
-  std::string provenance;             // "reference" | "advisory"
-  std::string isolated_app_root;      // path to the per-run sandbox, if any
-  std::string cpu_affinity;           // e.g. "0-3,12-15 (8 cpus @ 5157 MHz)", "off"
-  // When this run happened, ISO-8601 UTC. A --report-json is only a drift record
-  // if it says when it was taken; without it a directory of reports is dated by
-  // mtime, which any copy or rsync destroys (TD-2026-08-06-141).
+  std::string provenance;
+  std::string isolated_app_root;
+  std::string cpu_affinity;
   std::string timestamp_utc;
 };
 
@@ -330,22 +203,6 @@ class ScenarioContext {
   ScenarioContext(workspace::WorkspaceShell& shell, SDL_Window* window, SDL_Renderer* renderer);
 
   void PumpFrames(std::size_t count);
-  // The app's real steady-state frame: drain the shell's queued damage, coalesce
-  // it through AnalyzeDirtyRegions, and paint per merged clip (or full, when the
-  // damage or the promotion policy says so) — the exact decision sequence of
-  // Application::Render. PumpFrames paints every frame FULL, so before this
-  // existed no scenario exercised the partial-redraw pipeline at all and a
-  // coalescer regression (an oversized union, a wrong promotion) was invisible
-  // to the whole suite (TD-2026-08-30-281).
-  //
-  // HandleEvent drains the shell's queued damage into its EventResult, so an
-  // event-driven scenario must hand that result's damage to the pump — the
-  // count form only sees damage queued OUTSIDE event handling (render-path
-  // re-requests, wake work) and paints a full frame when there is none.
-  // What a pumped frame repainted: the whole window, or the area of the rects it
-  // damaged -- the event's own, the queued ones and what preparing it derived --
-  // before coalescing. A scenario bounding an event's repaint scope reads this:
-  // the event's rects alone miss every surface whose damage prep derives.
   struct PumpedFrameDamage {
     bool full = false;
     double area = 0.0;
@@ -355,14 +212,7 @@ class ScenarioContext {
   void PumpEvents();
   bool Open(const std::filesystem::path& project_root);
   void OpenTab(const std::filesystem::path& path);
-  // Closes the focused group's active tab, unconditionally (no dirty prompt).
-  // For scenarios whose driver would otherwise reuse an already-open tab and
-  // measure a re-show instead of the open they are named for
-  // (TD-2026-08-12-190). No-op when no tab is open.
   void CloseActiveTab();
-  // Returns the shell's damage for the keystroke, so a scenario can measure
-  // repaint SCOPE the same way the pointer drivers below let a drag do it. Most
-  // callers ignore it.
   workspace::WorkspaceShell::RenderInvalidation Type(std::string_view text);
   void Scroll(int vertical_ticks);
   void KeyDown(SDL_Keycode key, SDL_Keymod modifiers = SDL_KMOD_NONE);
@@ -372,42 +222,17 @@ class ScenarioContext {
   std::uint64_t Wait(std::chrono::milliseconds duration);
   bool WaitForDiagnostics(const std::filesystem::path& path,
                           std::chrono::milliseconds timeout);
-  // Publish diagnostics for `path` under `owner`, exactly as an LSP publish or a
-  // linter integration would. Deterministic stand-in for a wait: a scenario that
-  // wants to measure the delivery path should DRIVE it rather than spin a
-  // wall-clock loop hoping an external tool answers (see linter_on_save).
   void PublishDiagnostics(std::string_view owner,
                           const std::filesystem::path& path,
                           std::vector<editor::Diagnostic> diagnostics);
-  // Whether the store currently holds any diagnostic for `path`. The vacuity
-  // check for a scenario that just published some.
   bool HasDiagnostics(const std::filesystem::path& path) const;
-  // Pump frames until `relative_path` appears in the project file index (the
-  // initial background build has reached it) or the timeout elapses. Used to
-  // take the async indexer out of a scenario's measured window so its metrics
-  // are deterministic. Returns whether the path was present.
   bool WaitForFileIndexPath(const std::filesystem::path& relative_path,
                             std::chrono::milliseconds timeout);
-  // Drain project-search updates, pumping frames, until the active search
-  // reports it is no longer running (finished) or the timeout elapses. Returns
-  // whether the search finished.
   bool WaitForProjectSearchFinished(std::chrono::milliseconds timeout);
   bool AssertNoAllocationsDuringDraw(std::string* error = nullptr);
   double Measure(std::string_view phase_name, const std::function<void()>& action);
   std::vector<Iteration::PhaseMetrics> TakePhaseMetrics();
-  // Harness-owned counters, merged into the iteration's `perf_counters` under a
-  // `harness.` prefix. The production counters describe what the *application*
-  // did; on a soak scenario almost none of the measured CPU is application work,
-  // it is the harness's own idle-poll loop and its 1920x1080 software present.
-  // Without these the two are indistinguishable, and an iteration that costs 2x
-  // for identical application counters has no visible explanation at all.
   std::vector<std::pair<std::string, std::uint64_t>> TakeHarnessCounters();
-  // Nanoseconds a fixed, deterministic slab of integer work took, measured just
-  // OUTSIDE this iteration's window. cpu_ms is a duration, so it moves when the machine's effective clock moves —
-  // and on a laptop forty minutes into a gate run the boost budget is spent and
-  // identical instructions cost measurably more wall and CPU. Without this
-  // reading, the report cannot tell "the code got slower" from "the machine got
-  // slower"; with it, the gate normalises the difference away.
   void RecordCpuCalibration(std::uint64_t nanoseconds);
   std::uint64_t RandomU64();
   void OpenFileFinder();
@@ -422,64 +247,26 @@ class ScenarioContext {
   void MoveMergeConflict(int delta);
   void ApplyMergeChoice(compare::MergeChoice choice);
   void SimulateExternalFileChange(const std::filesystem::path& path, std::string_view appended_text);
-  // Truncate every file SimulateExternalFileChange appended to back to the size
-  // it had before this iteration touched it. Called by the harness after each
-  // iteration (measured and warmup alike), outside the measured window, and on
-  // the exception path too — a fixture left grown makes every later run of every
-  // scenario reading that tree measure something else (TD-2026-08-06-155).
   void RestoreExternalFileChanges();
   void StartSearch(std::string_view query);
   void OpenTerminal(std::string_view command);
-  // Push bytes straight into the active terminal's emulator, exactly as the
-  // production pty reader thread does. The harness spawns no real shell, so this
-  // is the ONLY way a terminal scenario gets content — and unlike waiting on a
-  // child process it is byte-for-byte reproducible.
   void FeedTerminalOutput(std::string_view bytes);
-  // Show output channel `id` in the bottom panel, following its tail.
   void ShowOutputChannel(std::string_view id);
-  // A line into output channel `id`, as a debug adapter, a language server's log
-  // or a plugin appends one: nothing asks for a repaint.
   void AppendOutputLine(std::string_view id, std::string line);
-  // The debugger on and the debug pane showing Variables: one Locals scope of
-  // `count` values, as a stopped session's first variables response gives them.
   void ShowDebugVariables(std::size_t count);
-  // One variables response: the values a step gives the Locals scope.
   using DebugValues = std::vector<workspace::dap_protocol::DapVariable>;
-  // `steps` responses of `count` values each, built ahead of a measured window:
-  // each step moves one value in eight, as a loop's step does.
   static std::vector<DebugValues> DebugVariableSteps(std::size_t count, int steps);
-  // Applies a response as the adapter's arrives: nothing asks for a repaint.
   void ApplyDebugVariables(const DebugValues& values);
-  // The pane's surface: Variables when `variables`, else the Call Stack.
   void ShowDebugPaneVariables(bool variables);
-  // Close every terminal tab. The driver is shared across a scenario's iterations,
-  // so a scenario that opens terminals must close them or each iteration inherits
-  // every earlier one.
   void CloseAllTerminals();
   void ResizeWindow(int width, int height);
 
-  // Raw pointer input. Every other driver on this class expresses an intent
-  // (Scroll, Type, JumpCompareHunk); these are deliberately the mechanism,
-  // because a drag is a gesture made of individual events and the thing being
-  // measured is the per-EVENT cost. The return value is the shell's damage for
-  // that one event: `rects` is what would repaint, so a scenario can measure
-  // repaint SCOPE — the property a headless event-cost measurement is otherwise
-  // blind to (TD-2026-08-14-212).
   workspace::WorkspaceShell::RenderInvalidation MousePress(float x, float y);
   workspace::WorkspaceShell::RenderInvalidation MouseMoveDragging(float x, float y);
-  // Buttonless pointer motion (a hover), returning the whole EventResult so the
-  // caller can both assert the event was handled and pump exactly the damage it
-  // produced (PumpPartialFrame).
   workspace::WorkspaceShell::EventResult MouseMoveHover(float x, float y);
   workspace::WorkspaceShell::RenderInvalidation MouseRelease(float x, float y);
-  // The rect of one editor tab / one group's tab strip, so a drag scenario can
-  // aim at real geometry instead of guessed coordinates.
   SDL_FRect EditorTabRect(std::size_t tab_index);
   SDL_FRect EditorGroupTabStripRect(std::size_t group_index);
-  // The n-way editor grid: how many panes are live, one pane's buffer area, and
-  // the rect of a divider between two of them. A split scenario cannot aim at a
-  // divider it cannot locate, and guessing the coordinate from two strip rects
-  // silently stops naming a divider the moment the layout constants move.
   std::size_t EditorGroupCount();
   SDL_FRect EditorGroupSurfaceRect(std::size_t group_index);
   std::size_t EditorSplitDividerCount();
@@ -493,21 +280,10 @@ class ScenarioContext {
   bool OpenVirtualDocument(std::string_view uri);
   bool ExpandSnippetAtCaret(std::string_view snippet_body);
 
-  /// Open an editor tab with outline + snippet placeholder session primed; drain outline debounce.
-  /// Used by `idle_soak_30s` (§13.E.3) after snippet/outline ship.
   void PrimeEditorEssentialsIdleSoakSurface();
 
   workspace::WorkspaceShell& Shell() { return shell_; }
 
-  // Declare that this scenario cannot run — a fixture it needs is absent, so
-  // whatever it measured is not what its baseline describes.
-  //
-  // Scenarios used to handle this themselves: print to stderr and `return`. The
-  // harness never learned, so the iteration was recorded, compared to a real
-  // baseline, and reported **PASS** — because a gate only fails on a regression
-  // and "did nothing" is not a regression. `editor_moby_dick_workout` passed
-  // measuring **7 allocations against a baseline of 138,599**, which is the
-  // shape of every vacuous green in `validation-traps.md` (TD-2026-08-10-170).
   void SkipScenario(std::string reason);
   bool skipped() const { return !skip_reason_.empty(); }
   const std::string& skip_reason() const { return skip_reason_; }
@@ -519,19 +295,10 @@ class ScenarioContext {
   SDL_Renderer* renderer_ = nullptr;
   std::mt19937_64 rng_;
   std::vector<Iteration::PhaseMetrics> phase_metrics_;
-  // Reused by PumpPartialFrames so the per-frame damage handoff settles into
-  // zero allocations once its capacity is warm (the analysis itself still
-  // allocates its merged list per frame, exactly as the app does).
   std::vector<SDL_FRect> partial_dirty_rects_;
   app::DirtyRegionAnalysis partial_analysis_;
-  // (path, size before this iteration's first append) for every fixture file
-  // SimulateExternalFileChange touched. See RestoreExternalFileChanges.
   std::vector<std::pair<std::filesystem::path, std::uintmax_t>> external_file_restores_;
 
-  // Fixed slots rather than a name lookup: the idle-wait loop bumps these up to
-  // ~5,600 times per iteration, and a counter that costs a string compare per
-  // bump would become a measurable share of the very budget it is there to
-  // explain.
   enum class HarnessCounter : std::size_t {
     kFramesPumped,
     kIdleWaitPolls,
@@ -553,124 +320,21 @@ struct Scenario {
   bool smoke = false;
   bool baseline_gated = true;
   bool run_by_default = true;
-  // Discarded iterations run (on the same reused driver) before the measured
-  // ones. For scenarios whose first run does one-time cold work the rest reuse
-  // — e.g. a project's initial file-index build — this warms that state so every
-  // measured iteration is uniform and the p95/max percentiles aren't governed by
-  // a single noisy cold sample. Keep 0 for scenarios that are already uniform.
   std::size_t warmup_iterations = 0;
-  // Per-metric regression tolerances (percent), written into this scenario's
-  // baseline at --update-baseline time.
-  //
-  // WALL is gated loosely and ALLOCATIONS tightly, on purpose. Three full gated
-  // runs of one unchanged binary on this reference runner produced 14, 2 and 0
-  // failures against baselines captured from that same binary, with wall
-  // overshoots up to +159% on the p50 -- the machine lands in stable modes tens
-  // of percent apart and the smallest scenarios (a 2 ms median) are dominated by
-  // it. A 10% wall gate here is not a regression detector, it is a coin flip, and
-  // a suite that is red on half its runs detects nothing at all because nobody
-  // reads it.
-  //
-  // Allocation counts, since the counter became per-thread (AllocationCounter.cpp),
-  // ARE byte-identical run to run. They scale with the work done, so they catch
-  // exactly the regressions that matter most -- an added allocation on a hot path,
-  // a cache that stopped hitting, an O(n) walk that became O(n^2) -- and they catch
-  // them precisely. That is the oracle; keep it tight.
-  //
-  // What this policy gives up is a constant-factor wall regression under ~2x. That
-  // is already the job of the interleaved current-vs-main tools/perf-compare.py
-  // run, where shared machine load cancels because both sides pay it.
   double tolerance_p50_percent = 100.0;
   double tolerance_p95_percent = 150.0;
   double tolerance_max_percent = 200.0;
-  // A negative value means "inherit the matching wall tolerance". Do not use it:
-  // it exists only so the resolution rule stays expressible, and inheriting the
-  // wall envelope would throw away the precise gate above.
   double tolerance_alloc_p50_percent = 10.0;
   double tolerance_alloc_p95_percent = 20.0;
   double tolerance_alloc_max_percent = 50.0;
-  // Resident-growth envelope, written into this scenario's baseline at
-  // --update-baseline time.
-  //
-  // These exist because a widened envelope that lives only in the committed JSON
-  // does not survive a rebaseline. editor_long_line_select_all_edit carried a
-  // hand-edited 60% for TD-2026-08-05-136 while the writer below had no rss
-  // fields at all, so the next `--update-baseline` would have silently reset it to
-  // the struct default and re-armed a gate its own TD calls a coin flip -- with
-  // nothing in the diff to read except three numbers changing in a generated file.
-  // A tolerance that is not expressed in code is a comment.
   double tolerance_rss_percent = 25.0;
-  // Net-heap-retention envelope, written into this scenario's baseline at
-  // --update-baseline time for the same reason the resident one is: a tolerance
-  // that lives only in the committed JSON does not survive a rebaseline.
-  //
-  // Tight by default because the metric is deterministic (TD-2026-08-06-150).
   double tolerance_net_heap_percent = 10.0;
-  // Whether this scenario's iteration CPU time is a valid regression signal.
-  //
-  // Set false only where it provably is not, and say what replaces it. cpu_ms is
-  // a duration, so it scales with the machine's effective clock -- and a scenario
-  // that spends most of its iteration asleep lets the governor walk the core down
-  // to the 605 MHz floor, 8.5x below its 5157 MHz ceiling. What is left to
-  // measure then is a handful of frames rendered at whatever clock the core
-  // happened to be at on the way back up. `harness.cpu_calibration_ns` makes that
-  // visible: on idle_soak_30s it stepped 671 -> 857 us mid-run and the iteration
-  // cpu_ms stepped 14 -> 30 ms with it, application counters byte-identical
-  // across the step (TD-2026-08-05-137). No percentage envelope is both stable
-  // and meaningful against that. Same reasoning as the p50-only RSS gate in
-  // Baseline.cpp: a metric that measures which iteration got unlucky is not a
-  // gate. The numbers are still measured and reported, just not enforced.
   bool gate_cpu_metrics = true;
-  // Whether this scenario's net heap retention is a valid regression signal.
-  //
-  // It is for almost everything -- 52 of 52 scenarios re-measured under three
-  // different suite prefixes reproduced to the byte, and 98 of 99 held across two
-  // full-suite runs on very differently loaded machines (TD-2026-08-06-150). Set
-  // false only where the metric provably measures timing instead of code, and say
-  // what does.
-  //
-  // The one counterexample so far is `multi_project_switch`, and it is
-  // instructive: `bytes_allocated - bytes_freed` is measured on the shell thread
-  // across ONE iteration's window, so a scenario whose window frees structures
-  // the PREVIOUS iteration allocated reports a difference that depends on when
-  // the teardown lands, not on what the code does. Its series spans −21,284 to
-  // +29,061 bytes with `p50_allocations` moving by 14 across the same runs. The
-  // allocation count is the oracle there.
   bool gate_net_heap_metrics = true;
-  // What this scenario measures, versioned. Bump it — in the same commit — every
-  // time the scenario body changes what work it performs, as opposed to how fast
-  // the product performs it.
-  //
-  // A baseline file records a value and, until this field existed, nothing about
-  // whether that value means the same thing it meant last release. Cutting v2.9.0
-  // needed one number (how much faster than v2.8.1) and the obvious way to get it
-  // — diff `p50_allocations` across the two tags' baselines — reported three
-  // regressions, all three artifacts (TD-2026-08-07-167). `f38ef7fd` changed what
-  // the two terminal scenarios *do*: they used to scroll and toggle an empty
-  // buffer and now feed 4,000 lines through the emulator, so the +172.6 % and
-  // +112.3 % were the scenario growing, not the product slowing. The only way to
-  // know was to read the commit that moved the baseline, and the changelog worked
-  // around it by naming the excluded scenarios in prose — a fact that survives one
-  // release and is then lost.
-  //
-  // Two things read this. `CompareToBaseline` refuses to gate a run against a
-  // baseline recorded at a different revision (the numbers are still reported;
-  // they just do not decide anything, and the run goes red asking to be
-  // rerecorded). `tools/perf-release-diff.py` refuses to difference two releases'
-  // baselines across a revision change and counts them as "not comparable"
-  // instead of reporting a phantom regression.
-  //
-  // Do NOT bump it for a product change. A scenario that got faster or slower at
-  // the same work is exactly what the gate is for.
   std::size_t measurement_revision = 1;
   std::function<void(ScenarioContext&)> run;
 };
 
-// Wall envelopes for the handful of scenarios that need an even wider tail than
-// the (already wide) default -- a flat baseline whose p95/max have no natural
-// headroom at all, so a single context switch in one of ten iterations trips
-// them. Allocation envelopes are NOT widened here: see Scenario above for why
-// they are the gate that matters.
 namespace tolerance {
 
 inline constexpr double kJitterWallP50 = 100.0;
@@ -681,7 +345,7 @@ inline constexpr double kExactAllocP50 = 10.0;
 inline constexpr double kExactAllocP95 = 20.0;
 inline constexpr double kExactAllocMax = 50.0;
 
-}  // namespace tolerance
+}
 
 class PerfHarness {
  public:
@@ -692,54 +356,19 @@ class PerfHarness {
     std::optional<std::uint64_t> random_seed;
     std::optional<std::string> layout_mode_override;
     bool keep_artifacts = false;
-    // SDL renderer driver to measure through. "software" (default) is the
-    // portable, baseline-gated reference path. "auto"/"default" lets SDL pick
-    // the platform GPU backend; any other value forces that specific SDL driver.
-    // A non-software driver is advisory only (numbers are not cross-machine
-    // portable and never update baselines) -- it exists so GPU-only paths like
-    // batched glyph text can be measured at all.
     std::string renderer_driver = "software";
-    // SDL *video* driver to measure through. "dummy" (default) is the
-    // baseline-gated reference lane: no window system, so a present is a no-op
-    // and a scenario's wall time is the app's own work. Any real video driver
-    // (x11, wayland) adds window-system present cost that lands only on
-    // frame-pumping scenarios -- measured on perf-runner-v1 at 2-12x the dummy
-    // lane for shell scenarios and 1.0x for pure-unit ones, with byte-identical
-    // allocation counts. That asymmetry silently invalidates every wall gate, so
-    // a non-dummy video driver is advisory only, exactly like a non-software
-    // renderer. "auto"/"default" leaves SDL_VIDEODRIVER alone and lets SDL pick.
     std::string video_driver = "dummy";
   };
 
   static void RegisterScenario(const Scenario& scenario);
   static std::vector<Scenario> RegisteredScenarios();
   static std::optional<Aggregate> RunScenario(const Scenario& scenario, const RunOptions& options);
-  // Committed manifest for a fixture tree: `<root>.sha256`. Derived rather than
-  // passed so a call site cannot pair a tree with the wrong manifest.
   static std::filesystem::path FixtureManifestPath(const std::filesystem::path& root);
-  // Integrity check for a fixture tree against its committed manifest. Hashes in
-  // process (util::Sha256); the perf runner needs no interpreter on PATH. A git
-  // fixture (one with a `.git`) is digested the way its generator wrote it: the
-  // worktree outside `.git`, then `git status --porcelain`, so index state a
-  // scenario left behind is a mismatch too.
   static bool VerifyFixtureTree(const std::filesystem::path& root, std::string* error);
-  // Every generated fixture tree under `fixtures_root` that has a committed
-  // manifest (`<tree>.sha256`) and is present, verified once before any scenario
-  // runs; the first mismatch is reported in `error`. Found by its manifest rather
-  // than named in a list: the list named three trees and left the seven git ones to
-  // the ctest setup, which a lane running microide_perf directly never runs
-  // (TD-2026-08-10-172). An absent tree is not an error here: a fresh checkout has
-  // none, and the scenarios that need one skip.
   static bool VerifyPresentFixtureTrees(const std::filesystem::path& fixtures_root,
                                         std::string* error);
   static std::string LastError();
-  // SDL driver name the most recent InitializeDriver actually resolved (e.g.
-  // "software", "opengl"). Empty before the first driver init. Backs report
-  // metadata so the GPU advisory lane records the real backend it measured.
   static std::string ResolvedRendererDriver();
-  // SDL video driver the most recent InitializeDriver actually resolved (e.g.
-  // "dummy", "x11"). Read back from SDL rather than from the environment so the
-  // report records the lane that was measured, not the one that was requested.
   static std::string ResolvedVideoDriver();
 
  private:
@@ -765,7 +394,7 @@ class ScenarioRegistration {
   explicit ScenarioRegistration(const Scenario& scenario);
 };
 
-}  // namespace microide::tests::perf
+}
 
 #define MICROIDE_PERF_SCENARIO(NAME_LITERAL, SMOKE, FN)                              \
   namespace {                                                                         \
@@ -777,4 +406,4 @@ class ScenarioRegistration {
           .run_by_default = true,                                                    \
           .run = FN,                                                                 \
       });                                                                             \
-  }  // namespace
+  }

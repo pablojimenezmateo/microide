@@ -5,19 +5,11 @@
 
 #include "compare/StructuralDiff.h"
 
-// Slider correction (TD-2026-11-11-442), difftastic's `fix_all_sliders` in this
-// tree's terms. A novel run of nodes can often sit at several positions at the
-// same cost -- inserting an item into a list whose neighbours are equal, or a
-// block whose closing brace equals the next block's -- and the search's
-// tie-break picks one deterministically but not the one a reader expects. This
-// pass moves novelty only between EQUAL nodes, so which tokens are unchanged is
-// the same set of texts on each side; the line diff, the hunks and the row
-// alignment never read it.
 namespace microide::compare {
 namespace {
 
 constexpr std::uint8_t kNovel = 0;
-constexpr std::uint8_t kWhole = 1;  // every token partnered, unreplaced, onto one equal subtree
+constexpr std::uint8_t kWhole = 1;
 constexpr std::uint8_t kMixed = 2;
 
 struct Side {
@@ -29,7 +21,7 @@ struct Side {
 };
 
 struct SliderScratch {
-  std::vector<std::uint32_t> other_node_at_token;  // node of `other` whose token_begin is the token
+  std::vector<std::uint32_t> other_node_at_token;
   std::vector<std::uint8_t> state;
   std::vector<std::uint32_t> run;
 };
@@ -55,7 +47,6 @@ std::uint8_t Classify(const Side& side, const std::vector<std::uint32_t>& other_
   if (!all) {
     return kMixed;
   }
-  // The partners must be exactly one equal subtree on the other side, in order.
   const std::uint32_t first = side.partner[node.token_begin];
   const std::uint32_t other_index = other_node_at_token[first];
   if (other_index == kNoDiffNode) {
@@ -73,8 +64,6 @@ std::uint8_t Classify(const Side& side, const std::vector<std::uint32_t>& other_
   return kWhole;
 }
 
-// Gives `from`'s whole-subtree partner to `to` (an equal subtree), leaving
-// `from` novel.
 void MovePartner(const Side& side, std::uint32_t from, std::uint32_t to) {
   const DiffSyntaxNode& a = side.tree.nodes[from];
   const DiffSyntaxNode& b = side.tree.nodes[to];
@@ -94,10 +83,6 @@ bool EndsLine(const DiffSyntaxTree& tree, std::uint32_t token) {
   return token + 1 >= tree.tokens.size() || tree.tokens[token + 1].line != tree.tokens[token].end_line;
 }
 
-// One sibling run: every maximal novel stretch slides to its best equivalent
-// position. Positions are equivalent when the node stepped over equals the one
-// that takes its place: sliding up past matched `run[s-1]` needs it equal to
-// `run[e-1]`; down past matched `run[e]` needs it equal to `run[s]`.
 void FixSiblingRun(const Side& side, std::vector<std::uint32_t>& run, std::vector<std::uint8_t>& state) {
   const DiffSyntaxTree& tree = side.tree;
   const auto id = [&](std::size_t index) { return tree.nodes[run[index]].content_id; };
@@ -113,7 +98,6 @@ void FixSiblingRun(const Side& side, std::vector<std::uint32_t>& run, std::vecto
       ++e;
     }
     const std::size_t length = e - s;
-    // The reach in each direction.
     std::size_t up = 0;
     while (s >= up + 1 && state[s - up - 1] == kWhole && id(s - up - 1) == id(e - up - 1)) {
       ++up;
@@ -126,11 +110,6 @@ void FixSiblingRun(const Side& side, std::vector<std::uint32_t>& run, std::vecto
       index = e;
       continue;
     }
-    // Rank each start position, best first: a stretch that is whole lines
-    // (reads as lines added); then one touching fewer lines (novelty straddling
-    // a line break when it need not); then one ending its line; then the
-    // latest position (an item appended after its separator, a new block's own
-    // closing brace -- git's "slide down" for the same reason).
     std::size_t best = s;
     int best_score = std::numeric_limits<int>::min();
     for (std::size_t start = s - up; start <= s + down; ++start) {
@@ -145,7 +124,6 @@ void FixSiblingRun(const Side& side, std::vector<std::uint32_t>& run, std::vecto
         best = start;
       }
     }
-    // Slide one node at a time so every intermediate state is a valid match.
     std::size_t at = s;
     while (at > best) {
       MovePartner(side, run[at - 1], run[at - 1 + length]);
@@ -163,9 +141,6 @@ void FixSiblingRun(const Side& side, std::vector<std::uint32_t>& run, std::vecto
   }
 }
 
-// A novel list wrapping exactly one matched list with the same delimiters: the
-// novelty belongs to the inner pair (the reader's "a new block around this"),
-// not to the outer one that shares its lines with the unchanged context.
 void FixNestedSliders(const Side& side) {
   const DiffSyntaxTree& tree = side.tree;
   for (std::uint32_t index = 0; index < tree.nodes.size(); ++index) {
@@ -188,8 +163,6 @@ void FixNestedSliders(const Side& side) {
         tree.tokens[outer_close].text != tree.tokens[inner_close].text) {
       continue;
     }
-    // A valid swap: nothing sits between the two opens or between the two
-    // closes, so the partners stay in order.
     const std::uint32_t open_partner = side.partner[inner_open];
     const std::uint32_t close_partner = side.partner[inner_close];
     side.partner[outer_open] = open_partner;
@@ -203,8 +176,6 @@ void FixNestedSliders(const Side& side) {
 
 void FixSide(const Side& side) {
   SliderScratch& scratch = Scratch();
-  // Nested first: it only swaps delimiter pairs, and the sibling pass then sees
-  // the final novelty of every list.
   FixNestedSliders(side);
   scratch.other_node_at_token.assign(side.other.tokens.size(), kNoDiffNode);
   for (std::uint32_t index = 0; index < side.other.nodes.size(); ++index) {
@@ -236,11 +207,11 @@ void FixSide(const Side& side) {
   }
 }
 
-}  // namespace
+}
 
 void FixStructuralSliders(const DiffSyntaxTree& lhs, const DiffSyntaxTree& rhs, StructuralMatch& match) {
   FixSide(Side{lhs, match.lhs_partner, match.lhs_replaced, rhs, match.rhs_partner});
   FixSide(Side{rhs, match.rhs_partner, match.rhs_replaced, lhs, match.lhs_partner});
 }
 
-}  // namespace microide::compare
+}

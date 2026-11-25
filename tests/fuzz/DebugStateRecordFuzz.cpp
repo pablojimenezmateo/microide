@@ -5,9 +5,6 @@
 #include <span>
 #include <vector>
 
-// Fuzz the per-project debug-state decoder (breakpoints + launch configs).
-// DecodeDebugStateRecord must never crash on arbitrary bytes, mirroring the
-// PersistedRecordReader fuzz target.
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
   if (data == nullptr) {
     return 0;

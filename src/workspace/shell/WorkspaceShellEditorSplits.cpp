@@ -8,16 +8,7 @@
 
 namespace microide::workspace {
 
-// Editor splits are modelled as editor *groups* above the tab level, arranged by
-// `ProjectWorkspaceState::editor_split` (see EditorSplitTree). Every geometry
-// query here goes through the one tree walk in ComputeEditorGroupRects, which
-// produces each group's tab strip, breadcrumb and surface together — the panes
-// below are just that walk's surface rects, with the focused group's external-
-// change banner trimmed off.
-
 std::size_t WorkspaceShell::FocusedEditorGroupIndex() const {
-  // Clamped: the stored index outlives a group collapse by one call, and every
-  // caller here indexes groups or compares against a pane ordinal with it.
   return context_.current_project_state.clamped_focused_group_index();
 }
 
@@ -39,11 +30,6 @@ const editor::TextViewport* WorkspaceShell::ViewportForPane(const EditorPaneLayo
 
 EditorGroupRectsLayout WorkspaceShell::ComputeEditorGroupRectsForState(
     const WorkspaceLayout& layout) const {
-  // Memoized on (layout value, tree revision). The layout compare is ~50 float
-  // equalities with early exit; the walk it replaces builds a chrome rect set per
-  // leaf and ran ~490 times in one grid scenario, once per damage event
-  // (TD-2026-08-30-280). Returned by value on purpose: a reference into a mutable
-  // memo would silently change under a caller that asks again mid-loop.
   const EditorSplitTree& split = context_.current_project_state.editor_split;
   if (editor_group_rects_memo_layout_.has_value() &&
       editor_group_rects_memo_tree_revision_ == split.revision() &&
@@ -60,7 +46,7 @@ EditorGroupRectsLayout WorkspaceShell::ComputeEditorGroupRectsForState(
 SDL_FRect WorkspaceShell::ActiveTabSurface(const WorkspaceLayout& layout, const void* shown) const {
   const ProjectWorkspaceState& state = context_.current_project_state;
   if (state.editor_groups.size() < 2) {
-    return layout.editor_surface;  // one pane: the column (no memo walk)
+    return layout.editor_surface;
   }
   const EditorGroupRectsLayout rects = ComputeEditorGroupRectsForState(layout);
   if (shown != nullptr) {
@@ -87,8 +73,6 @@ WorkspaceShell::EditorPaneLayouts WorkspaceShell::EditorPaneLayoutsFromGroupRect
     return panes;
   }
   const std::size_t focused = state.clamped_focused_group_index();
-  // The external-change banner belongs to the focused group; trim it from that
-  // group's surface so the editor content lays out below the strip.
   const float banner_height = ActiveEditorBannerStripRect(state, group_rects).h;
   for (std::size_t i = 0; i < group_rects.groups.size(); ++i) {
     const bool active = i == focused;
@@ -125,4 +109,4 @@ WorkspaceShell::EditorPaneLayouts WorkspaceShell::ComputeEditorPaneLayouts(
   return EditorPaneLayoutsFromGroupRects(ComputeEditorGroupRectsForState(layout));
 }
 
-}  // namespace microide::workspace
+}

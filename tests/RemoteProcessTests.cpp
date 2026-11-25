@@ -28,7 +28,6 @@ namespace remote = project::remote;
 
 using ShortDir = ShortServerDir;
 
-// A client that collects each handle's output and exit, acknowledging as it goes.
 class ProcClient {
  public:
   struct Output {
@@ -98,7 +97,6 @@ class ProcClient {
     return static_cast<std::uint64_t>((*result)["handle"].AsInt());
   }
 
-  // Resume `handle` from `out`/`err` (the offsets this client says it has through).
   void Attach(std::uint64_t handle, std::uint64_t out, std::uint64_t err) {
     {
       std::lock_guard lock(mutex_);
@@ -149,8 +147,6 @@ class ProcClient {
   std::map<std::uint64_t, std::uint64_t> base_err_;
 };
 
-// argv is an ARRAY end to end: an argument with a space, both quotes, `$HOME` and
-// a newline reaches the process byte for byte — no shell, nothing joined.
 void TestArgvArrivesIntact() {
   ShortDir dir;
   StartServer(dir);
@@ -176,8 +172,6 @@ void TestExitCodesStderrAndSignals() {
   Expect(missing.code == 127, "a missing program exits 127, like a shell");
 }
 
-// A kept process keeps running through a dropped connection, and the reattaching
-// client resumes its stdout from the offset it had: nothing duplicated, nothing lost.
 void TestKeptProcessResumesFromItsOffset() {
   ShortDir dir;
   StartServer(dir);
@@ -188,7 +182,7 @@ void TestKeptProcessResumesFromItsOffset() {
   {
     ProcClient first(dir.path());
     handle = first.Spawn({"sh", "-c", "for i in $(seq 1 60); do echo line$i; sleep 0.01; done"},
-                         /*keep=*/true);
+                         true);
     Expect(WaitUntil([&]() { return first.StdoutSoFar(handle).size() >= 30; },
                      std::chrono::seconds(10)),
            "some output arrives before the drop");
@@ -204,14 +198,13 @@ void TestKeptProcessResumesFromItsOffset() {
   second.Notify("proc/release", handle);
 }
 
-// A process NOT kept on detach is terminated when its client goes.
 void TestUnkeptProcessIsTerminatedOnDetach() {
   ShortDir dir;
   StartServer(dir);
   int pid = -1;
   {
     ProcClient client(dir.path());
-    (void)client.Spawn({"sleep", "60"}, /*keep=*/false, &pid);
+    (void)client.Spawn({"sleep", "60"}, false, &pid);
     Expect(pid > 0 && ::kill(pid, 0) == 0, "it runs");
     client.Drop();
   }
@@ -219,10 +212,6 @@ void TestUnkeptProcessIsTerminatedOnDetach() {
          "the language-server case: it does not outlive its client");
 }
 
-// A kept process is for the client that lost its link and comes back; one nobody
-// comes back for is terminated once the keep grace runs out, and forgotten. Before
-// this, every language server a client's crash or SIGTERM left behind stayed on the
-// host for the server's lifetime.
 void TestKeptProcessIsReleasedAfterTheKeepGrace() {
   ShortDir dir;
   StartServer(dir, {"--keep-grace-ms", "500"});
@@ -230,7 +219,7 @@ void TestKeptProcessIsReleasedAfterTheKeepGrace() {
   std::uint64_t handle = 0;
   {
     ProcClient client(dir.path());
-    handle = client.Spawn({"sleep", "60"}, /*keep=*/true, &pid);
+    handle = client.Spawn({"sleep", "60"}, true, &pid);
     Expect(pid > 0 && ::kill(pid, 0) == 0, "it runs");
     client.Drop();
   }
@@ -248,15 +237,13 @@ void TestKeptProcessIsReleasedAfterTheKeepGrace() {
          "and its handle is forgotten, like an unkept process's");
 }
 
-// A kept process that exits while nobody is attached delivers its output and exit
-// on the next attach.
 void TestExitWhileDetachedIsDeliveredOnAttach() {
   ShortDir dir;
   StartServer(dir);
   std::uint64_t handle = 0;
   {
     ProcClient client(dir.path());
-    handle = client.Spawn({"sh", "-c", "sleep 0.3; echo bye; exit 3"}, /*keep=*/true);
+    handle = client.Spawn({"sh", "-c", "sleep 0.3; echo bye; exit 3"}, true);
     client.Drop();
   }
   std::this_thread::sleep_for(std::chrono::milliseconds(800));
@@ -276,9 +263,6 @@ void TestExitWhileDetachedIsDeliveredOnAttach() {
          "a released handle is forgotten");
 }
 
-// A relative PATH entry is the spawned program's: `PATH=bin:...` in a project finds
-// the project's bin/tool, as a shell started there would. The server resolved it
-// against its own directory ("/" for the daemon) and the program was not found.
 void TestARelativePathEntryIsTheChildsDirectory() {
   ShortDir dir;
   StartServer(dir);
@@ -312,7 +296,7 @@ void TestMalformedSpawnIsRefused() {
          "a bad env name is refused");
 }
 
-}  // namespace
+}
 
 void RegisterRemoteProcessTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteProcess/ArgvArrivesIntact", TestArgvArrivesIntact);
@@ -328,4 +312,4 @@ void RegisterRemoteProcessTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteProcess/ARelativePathEntryIsTheChildsDirectory", TestARelativePathEntryIsTheChildsDirectory);
 }
 
-}  // namespace microide::tests
+}

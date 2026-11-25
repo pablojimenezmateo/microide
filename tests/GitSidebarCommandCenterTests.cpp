@@ -98,10 +98,6 @@ void TestGitSidebarViewModelGrouping() {
   const BranchReviewStateService branch_review;
   const GitSidebarViewModel view_model =
       BuildGitSidebarViewModel(git_state, std::filesystem::path{"/tmp/project"}, branch_review);
-  // Action availability is asked of GitSidebarActionAvailabilityForEntry, which
-  // is what the sidebar coordinators call for the one entry they act on. The row
-  // view model used to carry a per-row copy; nothing in production read it, so
-  // it was removed and these assertions now go to the same API production does.
   const auto row_actions = [&](const auto& row) {
     return GitSidebarActionAvailabilityForEntry(git_state.entries[row.entry_index],
                                                 git_state.repo_available,
@@ -144,14 +140,6 @@ void TestGitSidebarViewModelGrouping() {
          "nested file entries should be indented under their directory");
 }
 
-// TD-2026-08-06-159: the sidebar tree is grouped on '/'-separated generic text
-// instead of `std::filesystem::path` algebra, and each row's key is computed once
-// rather than derived from scratch on both sides of every sort comparison.
-//
-// The reference below is the ORIGINAL path-algebra formulation, spelled out here
-// rather than called through, so this compares the new grouping against an
-// independent implementation instead of against itself. It must stay written in
-// terms of `parent_path()` / `lexically_normal()` / `generic_string()`.
 namespace tree_reference {
 
 std::vector<std::string> ParentPathSegments(const std::filesystem::path& relative_path) {
@@ -171,7 +159,6 @@ std::string DirectoryNodeKey(int section, const std::filesystem::path& path) {
   return std::to_string(section) + "|" + path.lexically_normal().generic_string();
 }
 
-// (kind, label, tree_node_key, depth, entry_index) per emitted line, in order.
 struct Line {
   int kind = 0;
   std::string label;
@@ -245,16 +232,12 @@ std::vector<Line> Build(const microide::workspace::GitSidebarSectionViewModel& s
   return out;
 }
 
-}  // namespace tree_reference
+}
 
 void TestGitSidebarTreeGroupingMatchesPathAlgebra() {
   using microide::workspace::GitSidebarRowViewModel;
   using microide::workspace::GitSidebarSectionViewModel;
 
-  // Awkward shapes on purpose: unnormalized dot components, a "//" run, a
-  // parent-climb, an absolute path, a trailing separator, a bare filename, two
-  // rows whose keys tie (so the entry_index tiebreak is exercised), and a path
-  // past the 64-level depth cap.
   std::string deep;
   for (int i = 0; i < 80; ++i) deep += "d" + std::to_string(i) + "/";
   deep += "leaf.cpp";
@@ -270,16 +253,7 @@ void TestGitSidebarTreeGroupingMatchesPathAlgebra() {
   for (std::size_t i = 0; i < paths.size(); ++i) {
     GitSidebarRowViewModel row;
     row.entry_index = static_cast<int>(i);
-    // `GitSidebarRowViewModel::relative_path` is normalized generic text by
-    // contract (TD-2026-08-11-183): every ingress normalizes before the row is
-    // built — MakeGitRepositoryPathIdentity for status entries,
-    // CollectGitBranchOutgoingFiles' lexically_normal() for outgoing ones — and
-    // the grouping keys are views into it rather than normalized copies. So
-    // normalize here too, exactly where the shipping path does it, and let the
-    // awkward spellings above go on exercising normalization *into* the grouping.
     row.relative_path = std::filesystem::path(paths[i]).lexically_normal().generic_string();
-    // Left deliberately empty so FileLeafLabel's derive-from-path branch runs;
-    // in the shipping path BuildGitSidebarViewModel always fills it.
     section.rows.push_back(row);
   }
   GitSidebarViewModel view_model;
@@ -309,9 +283,6 @@ void TestGitSidebarTreeGroupingMatchesPathAlgebra() {
   Expect(expected.size() > 20, "the fixture must actually produce a tree, not one flat row");
 }
 
-// TD-2026-07-17A-008: entry rows carry a render-ready display_label with the
-// branch-review "[<marker>] " prefix precomputed, so the sidebar render TU no longer
-// assembles it per paint. A marker-less row's display_label equals its leaf label.
 void TestGitSidebarEntryDisplayLabelCarriesReviewMarker() {
   using microide::workspace::GitSidebarRowViewModel;
   using microide::workspace::GitSidebarSectionViewModel;
@@ -495,16 +466,6 @@ void TestRefreshingDoesNotReplaceUnstagedEmptyLabel() {
          "refreshing should not replace the clean-tree empty-state label");
 }
 
-// ---------------------------------------------------------------------------
-// CachedGitSidebarPresentation memo: an in-depth suite whose central guarantee is
-// that the memo can never return output that differs from a fresh
-// BuildGitSidebarViewModel + BuildGitSidebarLines. Because the memo keys on a
-// captured snapshot of the git-state / branch-review inputs, any input the key
-// forgets would make `cached != uncached` after that input is mutated -- which the
-// equivalence fuzz below turns into a hard failure. So a future field that starts
-// feeding the view model but is not added to the key is caught here, not shipped.
-// ---------------------------------------------------------------------------
-
 using microide::compare::MakeBranchReviewTargetIdentity;
 using microide::workspace::BuildGitSidebarLines;
 using microide::workspace::CachedGitSidebarPresentation;
@@ -515,9 +476,6 @@ using microide::workspace::GitSidebarPresentationCacheMissesForTesting;
 using microide::workspace::GitSidebarViewModel;
 using microide::workspace::ResetGitSidebarPresentationCacheForTesting;
 
-// Serialize every user-visible field of the presentation so a single string
-// comparison catches a divergence in ANY field (a missed cache-key input surfaces
-// as a stale digest).
 std::string DigestPresentation(const GitSidebarViewModel& vm,
                                const std::vector<GitSidebarLine>& lines) {
   std::string d;
@@ -611,7 +569,6 @@ GitSidebarState MakePopulatedGitState() {
   return git;
 }
 
-// Deterministic LCG (Date/random are unavailable in this environment).
 struct CacheRng {
   std::uint64_t state;
   std::uint32_t Next() {
@@ -621,9 +578,6 @@ struct CacheRng {
   std::size_t Below(std::size_t n) { return n == 0 ? 0 : Next() % n; }
 };
 
-// CENTRAL GUARANTEE: across a long random walk of mutations to every input, the
-// memoized presentation must always equal a fresh build. A key that forgets any
-// field would return a stale digest here.
 void TestGitSidebarCacheMatchesUncachedAcrossMutations() {
   const std::filesystem::path root = "/tmp/project";
   for (std::uint64_t seed : {1ULL, 7ULL, 42ULL, 1337ULL, 0xBEEFULL}) {
@@ -636,7 +590,6 @@ void TestGitSidebarCacheMatchesUncachedAcrossMutations() {
                                             git.snapshot_generation);
     };
     for (int step = 0; step < 300; ++step) {
-      // Cached and uncached must agree on EVERY iteration.
       Expect(DigestCached(git, root, branch_review) == DigestUncached(git, root, branch_review),
              "cached presentation must equal a fresh build after every mutation");
       switch (rng.Below(16)) {
@@ -652,7 +605,7 @@ void TestGitSidebarCacheMatchesUncachedAcrossMutations() {
         case 8: git.base_label = rng.Below(2) ? "vs origin/main" : "vs dev"; break;
         case 9: git.error = rng.Below(2) ? "" : "boom"; break;
         case 10: git.refresh_error = rng.Below(2) ? "" : "fetch failed"; break;
-        case 11: {  // mutate entries + bump generation (mirrors a refresh apply)
+        case 11: {
           ++git.snapshot_generation;
           if (rng.Below(2) && !git.entries.empty()) {
             git.entries.pop_back();
@@ -665,7 +618,7 @@ void TestGitSidebarCacheMatchesUncachedAcrossMutations() {
           }
           break;
         }
-        case 12: {  // collapse toggle
+        case 12: {
           const std::string key = "dir/a";
           if (git.collapsed_directory_keys.count(key)) {
             git.collapsed_directory_keys.erase(key);
@@ -674,15 +627,15 @@ void TestGitSidebarCacheMatchesUncachedAcrossMutations() {
           }
           break;
         }
-        case 13: {  // branch-review mutation affecting the Outgoing marker
+        case 13: {
           branch_review.MarkFileReviewed(review_target(), "src/out.cpp");
           break;
         }
-        case 14: {  // branch-review clear
+        case 14: {
           branch_review.ClearTarget(review_target());
           break;
         }
-        case 15:  // no-repo clear: entries emptied; size drop is the key signal
+        case 15:
           git.entries.clear();
           break;
       }
@@ -690,8 +643,6 @@ void TestGitSidebarCacheMatchesUncachedAcrossMutations() {
   }
 }
 
-// Mutating each fingerprint input from a fixed baseline forces a rebuild (miss);
-// this pins that no relevant field is silently absent from the key.
 void TestGitSidebarCacheInvalidatesOnEveryInput() {
   const std::filesystem::path root = "/tmp/project";
   BranchReviewStateService shared_review;
@@ -700,7 +651,7 @@ void TestGitSidebarCacheInvalidatesOnEveryInput() {
                              std::string_view what) {
     ResetGitSidebarPresentationCacheForTesting();
     GitSidebarState git = baseline();
-    (void)CachedGitSidebarPresentation(git, root, shared_review);  // prime (miss #1)
+    (void)CachedGitSidebarPresentation(git, root, shared_review);
     const std::uint64_t misses_before = GitSidebarPresentationCacheMissesForTesting();
     mutate(git);
     (void)CachedGitSidebarPresentation(git, root, shared_review);
@@ -727,17 +678,15 @@ void TestGitSidebarCacheInvalidatesOnEveryInput() {
             "collapsed_directory_keys");
 }
 
-// Unchanged state hits; a branch-review revision bump (from a review mutation)
-// misses even though no git-state field moved.
 void TestGitSidebarCacheHitsAndBranchReviewRevision() {
   const std::filesystem::path root = "/tmp/project";
   ResetGitSidebarPresentationCacheForTesting();
   GitSidebarState git = MakePopulatedGitState();
   BranchReviewStateService branch_review;
 
-  (void)CachedGitSidebarPresentation(git, root, branch_review);  // miss #1
+  (void)CachedGitSidebarPresentation(git, root, branch_review);
   for (int i = 0; i < 5; ++i) {
-    (void)CachedGitSidebarPresentation(git, root, branch_review);  // hits
+    (void)CachedGitSidebarPresentation(git, root, branch_review);
   }
   Expect(GitSidebarPresentationCacheMissesForTesting() == 1, "unchanged state should miss once");
   Expect(GitSidebarPresentationCacheHitsForTesting() == 5, "repeat calls should all hit");
@@ -758,7 +707,7 @@ void TestGitSidebarCacheHitsAndBranchReviewRevision() {
          "post-review cached output must still match a fresh build");
 }
 
-}  // namespace
+}
 
 void RegisterGitSidebarCommandCenterTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GitSidebarCommandCenter/SectionClassification",
@@ -788,4 +737,4 @@ void RegisterGitSidebarCommandCenterTests(std::vector<TestCase>& tests) {
           TestGitSidebarCacheHitsAndBranchReviewRevision);
 }
 
-}  // namespace microide::tests
+}

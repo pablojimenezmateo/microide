@@ -13,7 +13,7 @@
 namespace microide::workspace {
 
 namespace {
-}  // namespace
+}
 
 TextInputCoordinator::TextInputCoordinator(ProjectWorkspaceState& state,
                                            PromptState& prompts,
@@ -32,11 +32,6 @@ void TextInputCoordinator::SyncTextInputSurface(SDL_Window* window) {
     return;
   }
 
-  // Fields draw their focus ring from the active surface, so the field losing the
-  // keyboard and the one gaining it both repaint: a menu opened by click took it
-  // from the Search view's query field and left the ring on screen. The editor and
-  // the terminal draw no ring; their caret is tracked by frame prep, and repainting
-  // a whole pane per focus change would undo their partial redraws.
   for (const TextInputSurface surface : {text_input_state_.active_surface, current_surface}) {
     if (surface != TextInputSurface::Editor && surface != TextInputSurface::Terminal) {
       RequestSurfaceRedraw(surface);
@@ -84,7 +79,6 @@ void TextInputCoordinator::RequestSurfaceRedraw(TextInputSurface surface) {
       operations_.request_prompt_redraw();
       break;
     case TextInputSurface::DebugVariableEdit:
-      // The Variables inline edit now lives in the right-side debug pane.
       operations_.request_window_redraw();
       break;
     case TextInputSurface::SidebarSearchQuery:
@@ -238,14 +232,11 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
       }
       break;
     case TextInputSurface::SettingsValueEdit:
-      // The inline value editor does not filter rows; just repaint the overlay.
       operations_.request_overlay_redraw();
       break;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchInclude:
     case TextInputSurface::SidebarSearchExclude:
-      // The search view searches as you type, after a pause (ProjectSearchState::
-      // search_on_type_due_ms); the replace field only feeds a later Replace All.
       if (text_changed) {
         state_.overlay.workflow.project_search.search_on_type_due_ms =
             SDL_GetTicks() + ProjectSearchState::kSearchOnTypeDebounceMs;
@@ -255,13 +246,9 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
     case TextInputSurface::SidebarSearchReplace:
     case TextInputSurface::CommitSubject:
     case TextInputSurface::CommitBody:
-      // Typing in the commit subject/body only repaints the sidebar; the (heavier)
-      // pre-check + draft-persist refresh happens on coarser events (field switch,
-      // close) so each keystroke stays cheap.
       operations_.request_sidebar_redraw();
       break;
     case TextInputSurface::DebugVariableEdit:
-      // The Variables inline edit now lives in the right-side debug pane.
       operations_.request_window_redraw();
       break;
     case TextInputSurface::None:
@@ -308,8 +295,6 @@ bool TextInputCoordinator::HandleTextEditing(const SDL_TextEditingEvent& event) 
 
 bool TextInputCoordinator::HandleTextInput(const SDL_TextInputEvent& event) {
   if (text_input_state_.swallow_next_text_input) {
-    // The text of the key press that just put a field into edit; see
-    // TextInputState::swallow_next_text_input.
     text_input_state_.swallow_next_text_input = false;
     return true;
   }
@@ -320,10 +305,6 @@ bool TextInputCoordinator::HandleTextInput(const SDL_TextInputEvent& event) {
     return false;
   }
 
-  // InsertTextAtActiveSurface clears the composition itself, for every insert
-  // path including paste; clearing again here was a second answer to the same
-  // question, and it is the one that would have been missed had the authoritative
-  // clear ever moved.
   return InsertTextAtActiveSurface(event.text);
 }
 
@@ -363,8 +344,6 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input,
     case TextInputSurface::DebugVariableEdit:
     case TextInputSurface::CommitSubject:
     case TextInputSurface::TerminalFind:
-      // These are single-line editors handled by ActiveSingleLineTextState above;
-      // reaching here means it had no backing state, so there is nothing to insert.
       return false;
     case TextInputSurface::CommitBody: {
       editor::TextViewport& body = state_.sidebar.git.commit_workflow.body;
@@ -383,9 +362,6 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input,
         if (viewport == nullptr) {
           return false;
         }
-        // The completion list narrows by what was just typed or closes when it
-        // ended the word; with no list up, a trigger character or the start of a
-        // word may open one. A paste is not typing.
         const auto follow_completion = [this, input, distribute_across_carets] {
           if (operations_.assist_after_typing) {
             operations_.assist_after_typing(distribute_across_carets ? std::string_view{}
@@ -397,11 +373,6 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input,
           follow_completion();
           return true;
         }
-        // A paste spreads a matching multi-line payload over the carets; every
-        // other insert goes whole to each. This branch used to call InsertText
-        // for both, so the spread rule (which lives in PasteText) was only ever
-        // reached when no text surface claimed the editor -- i.e. never from a
-        // paste with the editor focused.
         if (distribute_across_carets) {
           viewport->PasteText(input);
         } else {
@@ -418,7 +389,7 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input,
           operations_.update_merge_tracking_after_viewport_edit(*merge_tab);
         }
         operations_.reset_caret_blink();
-        operations_.note_active_editable_edit();  // asks for the frame too
+        operations_.note_active_editable_edit();
         follow_completion();
         return true;
       }
@@ -512,4 +483,4 @@ bool TextInputCoordinator::CutSelectionAtActiveSingleLineSurface() {
 }
 
 
-}  // namespace microide::workspace
+}

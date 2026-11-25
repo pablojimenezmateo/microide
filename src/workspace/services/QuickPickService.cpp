@@ -22,10 +22,7 @@ void QuickPickService::Open(QuickPickState picker) {
     return;
   }
   ++open_count_;
-  // A pick replacing one still previewing hands back what that one changed.
   Cancel();
-  // The selection the builder chose (the active theme) survives the first
-  // filter, which an empty query leaves in item order.
   const std::size_t selected = picker.selected_index;
   *state_ = std::move(picker);
   Refilter();
@@ -41,8 +38,6 @@ void QuickPickService::Refilter() {
   picker.matches.clear();
   picker.selected_index = 0;
   if (picker.server_filtered) {
-    // The server filters: the items shown are its last answer while it is asked
-    // again.
     picker.loading = true;
     if (operations_.requery) {
       operations_.requery(picker.kind, picker.query.text());
@@ -51,9 +46,6 @@ void QuickPickService::Refilter() {
     return;
   }
   const std::string query = util::ToLowerAscii(picker.query.text());
-  // An exact match first, then the items the query starts, then the rest that
-  // hold it, each in item order: `light` must not sit under `dukelight-tc`. The
-  // search text leads with the item's name (a symbol's kind follows a space).
   const auto rank_of = [&](const std::string& text) {
     const std::size_t at = text.find(query);
     if (at == std::string::npos) {
@@ -75,8 +67,6 @@ void QuickPickService::Refilter() {
                                        : BuildFilteredCountSummary(picker.matches.size(), picker.items.size(),
                                                                    picker.noun);
   util::InvokeIfSet(operations_.list_changed);
-  // Typing a filter previews its top match, as VS Code's theme pick does; an
-  // empty query (the open) keeps what is in use.
   if (!query.empty()) {
     Preview();
   }
@@ -92,7 +82,7 @@ void QuickPickService::Preview() {
   switch (state_->kind) {
     case QuickPickKind::ColorTheme:
       if (operations_.apply_colorscheme) {
-        operations_.apply_colorscheme(item.value, /*persist=*/false);
+        operations_.apply_colorscheme(item.value, false);
       }
       break;
     case QuickPickKind::DocumentSymbol:
@@ -101,7 +91,7 @@ void QuickPickService::Preview() {
       }
       break;
     case QuickPickKind::LaunchConfig:
-    case QuickPickKind::WorkspaceSymbol:  // VS Code opens nothing until Enter
+    case QuickPickKind::WorkspaceSymbol:
     case QuickPickKind::LanguageMode:
     case QuickPickKind::RecentEditor:
     case QuickPickKind::RunCommand:
@@ -122,7 +112,7 @@ void QuickPickService::Accept() {
       break;
     case QuickPickKind::ColorTheme:
       if (operations_.apply_colorscheme) {
-        operations_.apply_colorscheme(item.value, /*persist=*/true);
+        operations_.apply_colorscheme(item.value, true);
       }
       break;
     case QuickPickKind::DocumentSymbol:
@@ -158,7 +148,7 @@ void QuickPickService::Cancel() {
   }
   const std::string revert = std::exchange(state_->revert_value, {});
   if (state_->kind == QuickPickKind::ColorTheme && operations_.apply_colorscheme) {
-    operations_.apply_colorscheme(revert, /*persist=*/false);
+    operations_.apply_colorscheme(revert, false);
   }
 }
 
@@ -304,7 +294,6 @@ QuickPickState QuickPickService::RecentEditors(const EditorGroup& group, const s
         .search_text = util::ToLowerAscii(tab.title),
     });
   };
-  // Most recent first, then any tab the order has not seen yet, in strip order.
   for (const std::uint64_t id : group.recent_tab_ids) {
     for (const TabEntry& tab : group.open_tabs) {
       if (tab.stable_id == id) {
@@ -360,14 +349,11 @@ namespace {
 
 void AppendSymbolItems(std::span<const plugin::PluginHost::DocumentSymbolNode> symbols, std::size_t depth,
                        std::vector<QuickPickItem>& out) {
-  // A language server's tree is semi-trusted input; nothing real nests this deep.
   constexpr std::size_t kMaxDepth = 64;
   if (depth > kMaxDepth) {
     return;
   }
   for (const plugin::PluginHost::DocumentSymbolNode& symbol : symbols) {
-    // Symbol nodes are 1-based; line 0 is a row with no place (the outline's
-    // "truncated" marker), which a pick that goes somewhere leaves out.
     if (symbol.line == 0) {
       AppendSymbolItems(symbol.children, depth + 1, out);
       continue;
@@ -385,7 +371,7 @@ void AppendSymbolItems(std::span<const plugin::PluginHost::DocumentSymbolNode> s
   }
 }
 
-}  // namespace
+}
 
 std::vector<QuickPickItem> QuickPickService::DocumentSymbolItems(
     std::span<const plugin::PluginHost::DocumentSymbolNode> symbols) {
@@ -394,4 +380,4 @@ std::vector<QuickPickItem> QuickPickService::DocumentSymbolItems(
   return items;
 }
 
-}  // namespace microide::workspace
+}

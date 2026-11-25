@@ -24,7 +24,6 @@ void TerminalHostFrameBuilder::Resume(std::uint64_t screen_top, bool alternate) 
 }
 
 std::size_t TerminalHostFrameBuilder::EstimateLineBytes(const TerminalLine& line) {
-  // One byte per ASCII glyph plus a style run every few cells, plus the header.
   return 4 + line.cells.size() + line.cells.size() / 4;
 }
 
@@ -54,8 +53,6 @@ std::size_t TerminalHostFrameBuilder::Build(const TerminalSession::HostCapture& 
   frame.extras.clear();
 
   const bool alternate = header.has(TerminalHostFrame::kAlternateScreen);
-  // The shadow describes the client's screen only while it is the same screen:
-  // after a switch the client's "old screen" is a different buffer.
   const bool shadow_valid = !reset_ && alternate == alternate_;
   if (reset_) {
     frame.flags |= TerminalHostFrame::kReset;
@@ -70,11 +67,9 @@ std::size_t TerminalHostFrameBuilder::Build(const TerminalSession::HostCapture& 
 
   std::size_t sent_bytes = 0;
   if (alternate) {
-    // No scrollback on the alternate screen; the primary position stands.
     frame.previous_top = primary_top_;
     frame.screen_top = primary_top_;
   } else {
-    // A cold attach starts where the capture does: the prefetched history.
     const std::uint64_t previous = reset_ ? std::min(first, screen_top) : primary_top_;
     frame.previous_top = previous;
     frame.screen_top = screen_top;
@@ -87,7 +82,7 @@ std::size_t TerminalHostFrameBuilder::Build(const TerminalSession::HostCapture& 
     };
     for (std::uint64_t absolute = previous; absolute < screen_top; ++absolute) {
       if (absolute < first) {
-        append(TerminalHostRun::Kind::Gap);  // trimmed on the host, or past the cap
+        append(TerminalHostRun::Kind::Gap);
         continue;
       }
       const TerminalLine& line = capture.lines[static_cast<std::size_t>(absolute - first)];
@@ -115,7 +110,6 @@ std::size_t TerminalHostFrameBuilder::Build(const TerminalSession::HostCapture& 
     }
   }
 
-  // The extras the sent lines carry (the capture's set is a superset).
   if (!header.extras.empty()) {
     const auto add_extras = [&](const std::vector<TerminalLine>& lines) {
       for (const TerminalLine& line : lines) {
@@ -136,7 +130,6 @@ std::size_t TerminalHostFrameBuilder::Build(const TerminalSession::HostCapture& 
     add_extras(frame.screen_lines);
   }
 
-  // What the client now holds.
   shadow_top_ = screen_top;
   const std::size_t screen_from =
       static_cast<std::size_t>(std::min(end, std::max(screen_top, first)) - first);
@@ -168,4 +161,4 @@ std::size_t TerminalHostFrameBuilder::Build(const TerminalSession::HostCapture& 
   return sent_bytes;
 }
 
-}  // namespace microide::terminal
+}

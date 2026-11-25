@@ -37,4 +37,4 @@ std::vector<std::string> VirtualDocumentRegistry::DocumentUris() const {
 
 void VirtualDocumentRegistry::Remove(const std::string& uri) { documents_.erase(uri); }
 
-}  // namespace microide::workspace
+}

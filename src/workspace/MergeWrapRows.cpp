@@ -19,9 +19,6 @@ DiffWrapLayout::UnitText MergeWrapUnitText(const MergeTabState& merge_tab, std::
   return text;
 }
 
-// End of a half-open LINE range, projected to the first on-screen row past it.
-// A range that ends at (or past) the document end maps to the row count, so the
-// band covers the last line's final wrapped row rather than stopping short.
 std::size_t ProjectRangeEnd(std::size_t end_line,
                             std::size_t unit_count,
                             std::size_t row_count,
@@ -34,7 +31,7 @@ std::size_t ProjectRangeEnd(std::size_t end_line,
                 : MergeResultVisualRowForLine(merge_tab, end_line);
 }
 
-}  // namespace
+}
 
 void EnsureMergeWrapLayout(const MergeTabState& merge_tab,
                            bool soft_wrap,
@@ -75,9 +72,6 @@ std::span<const MergeTrackedConflict> MergeVisualConflicts(const MergeTabState& 
   if (!merge_tab.wrap_layout.active()) {
     return std::span<const MergeTrackedConflict>(merge_tab.conflicts);
   }
-  // Keyed on everything that can move a projection: the model (which rebuilds the
-  // source wrap table and the conflict list), the result buffer, and the two row
-  // counts, which is how a pane-width change shows up here.
   const std::size_t source_rows = MergeSourceVisualRowCount(merge_tab);
   const std::size_t result_rows =
       static_cast<std::size_t>(std::max(0, merge_tab.result_viewport.VisualRowCount()));
@@ -98,18 +92,18 @@ std::span<const MergeTrackedConflict> MergeVisualConflicts(const MergeTabState& 
     conflict.incoming_start_line =
         MergeSourceVisualRowForLine(merge_tab, conflict.incoming_start_line);
     conflict.incoming_end_line = ProjectRangeEnd(conflict.incoming_end_line, source_units,
-                                                 source_rows, merge_tab, /*source=*/true);
+                                                 source_rows, merge_tab, true);
     conflict.current_start_line =
         MergeSourceVisualRowForLine(merge_tab, conflict.current_start_line);
     conflict.current_end_line = ProjectRangeEnd(conflict.current_end_line, source_units,
-                                                source_rows, merge_tab, /*source=*/true);
+                                                source_rows, merge_tab, true);
     conflict.start_line = MergeResultVisualRowForLine(merge_tab, conflict.start_line);
     conflict.end_line = ProjectRangeEnd(conflict.end_line, result_units, result_rows, merge_tab,
-                                        /*source=*/false);
+                                        false);
   }
   merge_tab.visual_conflicts_key = key;
   merge_tab.visual_conflicts_valid = true;
   return std::span<const MergeTrackedConflict>(merge_tab.visual_conflicts);
 }
 
-}  // namespace microide::workspace
+}

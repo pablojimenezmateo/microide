@@ -35,8 +35,6 @@ bool RederiveProjectSearchHits(ProjectSearchState& search,
     return false;
   }
 
-  // The results are sorted by (file_index, line, column): the file's hits are one
-  // run of them, and they say where the file sits among the candidates.
   auto& results = search.results;
   auto first = std::find_if(results.begin(), results.end(), [&](const project::ProjectSearchResult& hit) {
     return hit.relative_path_string == relative_path;
@@ -51,10 +49,8 @@ bool RederiveProjectSearchHits(ProjectSearchState& search,
       file_index.value_or(0), project::kMaxProjectSearchResults);
   if (!file_index.has_value()) {
     if (hits.empty()) {
-      return false;  // no hits before, none now
+      return false;
     }
-    // A file gaining its first hit: whether the search considered it at all, and
-    // where, is the candidate list's to say.
     const project::SharedPathList list = candidates ? candidates() : nullptr;
     if (!list) {
       return false;
@@ -81,8 +77,6 @@ bool RederiveProjectSearchHits(ProjectSearchState& search,
   if (unchanged) {
     return false;
   }
-  // Keep the selection on its hit: the same file, line and column, else where it
-  // was.
   std::optional<std::tuple<std::size_t, std::size_t, std::size_t>> selected;
   if (search.selected_index < results.size()) {
     const auto& hit = results[search.selected_index];
@@ -130,4 +124,4 @@ bool RederiveProjectSearchHitsIfStale(ProjectSearchState& search,
   return RederiveProjectSearchHits(search, root, viewport, candidates);
 }
 
-}  // namespace microide::workspace
+}

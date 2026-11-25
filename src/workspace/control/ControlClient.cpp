@@ -13,8 +13,6 @@ namespace microide::workspace {
 
 namespace {
 
-// Consume the value that must follow a flag like `--pid`. Advances *index past
-// the value. Returns nullopt (and flags an error) when the value is missing.
 std::optional<std::string> TakeValue(const std::vector<std::string>& args, std::size_t* index,
                                      std::string_view flag, std::string* error) {
   if (*index + 1 >= args.size()) {
@@ -25,15 +23,6 @@ std::optional<std::string> TakeValue(const std::vector<std::string>& args, std::
   return args[*index];
 }
 
-// Quote a single argv token so ParseCommandLine (the receiver's parser) recovers it
-// verbatim. The receiver re-parses the joined `command` string, so a bare space-join
-// would split a token containing spaces and mangle quotes/backslashes. We use the
-// parser's own double-quote grammar: inside "...", '\' escapes the next byte and '"'
-// closes, so escaping '\' and '"' and wrapping in quotes round-trips ANY content
-// (spaces, apostrophes, backslashes, embedded quotes). Tokens with no parser-special
-// bytes are emitted unquoted to keep the wire form readable. NOTE: this deliberately
-// does NOT reuse workspace::QuoteCommandArg — that emits POSIX single-quote escaping
-// (e.g. 'can'\''t') which ParseCommandLine, not being a shell, cannot round-trip.
 std::string QuoteTokenForParser(std::string_view token) {
   bool needs_quoting = token.empty();
   for (const char c : token) {
@@ -74,14 +63,10 @@ void EmitError(const std::string& message) {
   std::cerr << util::SerializeJson(util::JsonObject{{"error", message}}) << '\n';
 }
 
-}  // namespace
+}
 
 ControlSendOptions ParseControlSendArgs(const std::vector<std::string>& args) {
   ControlSendOptions options;
-  // Recognized control-send flags are consumed wherever they appear, so an agent
-  // can append `--wait`/`--timeout` after the command verb. Any other token
-  // (including unknown --flags such as debug-run's --type) forms the command, in
-  // order. control-send's own flag names never collide with debug commands.
   for (std::size_t i = 0; i < args.size(); ++i) {
     const std::string& token = args[i];
     if (token == "--pid") {
@@ -136,7 +121,6 @@ ControlSendOptions ParseControlSendArgs(const std::vector<std::string>& args) {
     }
   }
 
-  // Shape validation: exactly one of command / --query / --json.
   const int shapes = (options.command_tokens.empty() ? 0 : 1) +
                      (options.query_verb.has_value() ? 1 : 0) +
                      (options.raw_json.has_value() ? 1 : 0);
@@ -169,10 +153,6 @@ std::optional<std::string> BuildControlSendRequest(const ControlSendOptions& opt
       return std::nullopt;
     }
     util::JsonObject object = parsed->AsObject();
-    // Inject the client's correlation id when the caller left it absent OR passed an
-    // explicit null: the server treats a null id as "no id" and omits it from the
-    // reply, which the read loop then can't correlate — the command runs and its
-    // reply prints, but the client falls through to a false "timed out" (exit 2).
     const auto id_it = object.find("id");
     if (id_it == object.end() || id_it->value.IsNull()) {
       object["id"] = static_cast<std::int64_t>(options.request_id);
@@ -200,8 +180,6 @@ std::optional<std::string> BuildControlSendRequest(const ControlSendOptions& opt
 
 namespace {
 
-// Resolve the target socket from options + discovery. Returns nullopt and sets
-// *error on ambiguity / no instance / unknown pid.
 std::optional<std::filesystem::path> ResolveSocket(const ControlSendOptions& options,
                                                    std::string* error) {
   if (options.socket.has_value()) {
@@ -234,11 +212,11 @@ std::optional<std::filesystem::path> ResolveSocket(const ControlSendOptions& opt
   return instances.front().socket;
 }
 
-}  // namespace
+}
 
 int RunControlSend(int argc, char** argv) {
   std::vector<std::string> args;
-  for (int i = 2; i < argc; ++i) {  // skip argv[0] (binary) and argv[1] (control-send)
+  for (int i = 2; i < argc; ++i) {
     if (argv[i] != nullptr) {
       args.emplace_back(argv[i]);
     }
@@ -256,10 +234,6 @@ int RunControlSend(int argc, char** argv) {
     EmitError(build_error);
     return 2;
   }
-  // The id we will match the response against (honors --json's own id), kept as a
-  // full 64-bit value so a large --json id is not narrowed to int (which could wrap
-  // and match the wrong reply) (TD-2026-07-17A-123). A non-integer id in the --json
-  // body falls back to the option id.
   std::int64_t response_id = options.request_id;
   if (const std::optional<util::JsonValue> parsed = util::ParseJson(*request);
       parsed && parsed->IsObject() && parsed->HasKey("id") && (*parsed)["id"].IsInt()) {
@@ -278,9 +252,6 @@ int RunControlSend(int argc, char** argv) {
     EmitError("could not connect to " + socket->string());
     return 2;
   }
-  // ONE overall deadline shared by the send and the read loop. Previously each used
-  // its own full timeout, so a peer that accepts but never reads could cost up to
-  // 2x the requested timeout (a full send timeout followed by a full read timeout).
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::seconds(options.timeout_seconds);
   const auto send_budget = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -289,9 +260,6 @@ int RunControlSend(int argc, char** argv) {
     EmitError("failed to send request");
     return 2;
   }
-  // Half-closing lets the server reap us promptly once it has replied — but only
-  // when we are not also waiting for a later broadcast event (which would be lost
-  // if the connection were reaped right after the command's reply).
   if (!options.wait_event.has_value()) {
     client.ShutdownWrite();
   }
@@ -307,7 +275,7 @@ int RunControlSend(int argc, char** argv) {
     const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
     const std::optional<std::string> line = client.ReadLine(remaining);
     if (!line) {
-      break;  // timeout or EOF
+      break;
     }
     std::cout << *line << '\n';
     std::cout.flush();
@@ -319,8 +287,6 @@ int RunControlSend(int argc, char** argv) {
     if (parsed->HasKey("event")) {
       if (options.wait_event.has_value() &&
           (*parsed)["event"].AsString() == *options.wait_event) {
-        // For a two-phase stop, wait for the resolved frame (framesPending:false),
-        // not the instant first notification.
         const bool frames_pending = (*parsed)["framesPending"].AsBool(false);
         if (!((*parsed)["event"].AsString() == "stopped" && frames_pending)) {
           wait_seen = true;
@@ -332,7 +298,6 @@ int RunControlSend(int argc, char** argv) {
       response_ok = (*parsed)["ok"].AsBool(false);
     }
 
-    // A failed command yields no follow-up event, so stop waiting for one.
     if (response_seen && (!response_ok || wait_seen)) {
       break;
     }
@@ -353,4 +318,4 @@ int RunControlSend(int argc, char** argv) {
   return 0;
 }
 
-}  // namespace microide::workspace
+}

@@ -36,4 +36,4 @@ bool EnsureSingleFinalNewline(std::vector<std::string>& lines) {
   return changed;
 }
 
-}  // namespace microide::editor
+}

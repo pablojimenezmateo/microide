@@ -45,9 +45,6 @@ FileWriteGate::Result MirrorRoutingWriteGate::WriteText(const std::filesystem::p
 
 FileWriteGate::TreeResult MirrorRoutingWriteGate::ApplyTreeOps(std::span<const TreeOp> ops) {
   std::shared_lock lock(mutex_);
-  // A batch is all or nothing, so it goes through one gate: the mirror's when any
-  // of its paths is in one (that gate applies the local half and replays to the
-  // host what lies in its tree), the local one otherwise.
   for (const TreeOp& op : ops) {
     for (const std::filesystem::path* path : {&op.path, &op.new_path}) {
       if (path->empty()) {
@@ -80,4 +77,4 @@ bool MirrorRoutingWriteGate::MakeWritable(const std::filesystem::path& path) {
   return GateForLocked(path).MakeWritable(path);
 }
 
-}  // namespace microide::project::remote
+}

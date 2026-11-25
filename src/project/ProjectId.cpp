@@ -10,8 +10,6 @@
 namespace microide::project {
 namespace {
 
-// The last named component: `/a/b` and `/a/b/` are both `b`; `/` has none and is
-// shown whole. A scan of the normalized text, so one allocation: the result.
 std::string LeafLabel(const std::filesystem::path& path) {
   std::filesystem::path scratch;
   std::string_view text = util::NormalizedPathView(path, scratch).native();
@@ -23,7 +21,7 @@ std::string LeafLabel(const std::filesystem::path& path) {
   return std::string(name.empty() ? text : name);
 }
 
-}  // namespace
+}
 
 std::string ProjectId::Label() const {
   if (const Remote* remote_id = remote()) {
@@ -53,7 +51,6 @@ ProjectId ResolveProjectId(const std::filesystem::path& io_root) {
   if (record.has_value()) {
     const std::optional<remote::RemoteHostTarget> target =
         remote::ParseRemoteHostTarget(record->host, nullptr);
-    // Only the mirror's own tree: a copy or a renamed directory is a local folder.
     if (target.has_value() &&
         remote::RemoteProject::DefaultTree(target->Display(), record->host_root) == io_root) {
       return ProjectId::ForRemote(target->Display(), record->host_root);
@@ -62,4 +59,4 @@ ProjectId ResolveProjectId(const std::filesystem::path& io_root) {
   return ProjectId::ForLocal(io_root);
 }
 
-}  // namespace microide::project
+}

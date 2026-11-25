@@ -25,9 +25,6 @@ class PersistenceService {
 
   bool LoadProjectSession(const std::filesystem::path& target_path,
                           PersistedProjectSessionState* state) const;
-  // Takes the state by value: it is encoded on the write queue's worker, not the
-  // caller's thread (the crash-safety flush's dirty buffers made that ~28 ms).
-  // True when accepted, as every save here: Flush() is what waits for the disk.
   bool SaveProjectSession(const std::filesystem::path& target_path, PersistedProjectSessionState state) const;
 
   bool LoadWorkspaceSession(const std::filesystem::path& target_path,
@@ -45,39 +42,16 @@ class PersistenceService {
   bool SaveMruState(const std::filesystem::path& target_path,
                     const PersistedMruState& state) const;
 
-  // Remove a persisted record entirely: both the primary file AND its `.bak`
-  // sibling. Callers that clear state (e.g. debug state with nothing left to
-  // persist) must use this rather than removing only the primary — the reader
-  // falls back to the backup when the primary is missing, so a lone primary
-  // remove would let stale state resurrect on the next restore.
   void DeleteState(const std::filesystem::path& target_path) const;
 
-  // Block until every accepted Save has actually reached disk.
-  //
-  // Saves are applied on a background thread (see PersistedRecordWriteQueue), so
-  // a Save returning true means the record was accepted, not that the bytes have
-  // landed. Anything that needs the old synchronous guarantee -- shutting down,
-  // or handing the file to something outside this process -- calls this. The
-  // Load/Delete paths already flush internally.
   void FlushPendingWrites() const { write_queue_.Flush(); }
 
-  // Every accepted Save has finished on the worker (see
-  // PersistedRecordWriteQueue::settled); the non-blocking half of the above.
   bool WritesSettled() const { return write_queue_.settled(); }
 
  private:
-  // Paths whose in-memory state was recovered from a `.bak` because the primary
-  // was present but unreadable/corrupt (not merely absent). Maps the normalized
-  // path to the record body re-encoded from the recovered state. While a path is
-  // guarded, a Save whose encoded body equals this baseline — i.e. no user
-  // mutation since recovery — is suppressed, so the still-recoverable corrupt
-  // primary is not clobbered with stale backup-derived state. A differing body
-  // (a real mutation) writes normally and clears the guard.
   mutable std::unordered_map<std::string, std::vector<std::byte>> backup_recovery_baseline_;
 
-  // Applies the durable record writes off the shell thread, and owns the
-  // "already on disk byte for byte" memo that skips redundant ones.
   mutable persistence::PersistedRecordWriteQueue write_queue_;
 };
 
-}  // namespace microide::workspace
+}

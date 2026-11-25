@@ -29,8 +29,6 @@ struct CommitPreCheck {
   std::string message;
 };
 
-// Repository-relative generic ("/"-separated) text, matching
-// GitRepositoryPathIdentity::relative_path. Nothing here opens the file.
 struct CommitStagedFileSummary {
   std::string relative_path;
   int added_lines = 0;
@@ -67,15 +65,6 @@ struct CommitOperationResult {
   CommitOperationResultCategory category = CommitOperationResultCategory::UnknownError;
   std::string detail;
   std::string hook_output;
-  // NOTE: there is deliberately no `refresh_failed_after_success` flag here. The
-  // post-commit repository refresh is asynchronous and completes long after this
-  // result is published, so the committing worker cannot know its outcome. It is
-  // reported separately, as a follow-up toast built from
-  // `CommitOperationResultCategory::RefreshFailedAfterSuccess`: the commit arms a
-  // watch on the refresh generation it asks for, and
-  // `CommitWorkflowService::NoteGitRefreshOutcome` fires when the matching
-  // snapshot comes back failed. A bool on this struct could never be set by the
-  // code that produces it and only made the gap look handled.
 };
 
 struct CommitDraftContext {
@@ -85,4 +74,4 @@ struct CommitDraftContext {
 
 constexpr std::size_t kCommitSubjectMaxLength = 72;
 
-}  // namespace microide::project
+}

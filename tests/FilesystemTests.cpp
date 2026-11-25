@@ -139,11 +139,6 @@ void TestCaptureTreeSnapshotRespectsEntryBudget() {
   Expect(bounded.size() <= 5, "snapshot should not exceed the entry budget");
 }
 
-// The whole point of ReadFileMetadata is that callers stop pairing file_size()
-// with last_write_time(), so the stamps it produces have to be interchangeable
-// with the ones std::filesystem produces — index diffing compares a stamp taken
-// by one against a stamp taken by the other, and a conversion that is off by a
-// tick would report every file as modified, forever.
 void TestReadFileMetadataMatchesStdFilesystem() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "meta";
@@ -171,8 +166,6 @@ void TestReadFileMetadataMatchesStdFilesystem() {
   Expect(!platform::ReadFileMetadata({}).has_value(),
          "ReadFileMetadata should report nullopt for an empty path");
 
-  // Symlinks resolve, exactly as file_size()/last_write_time()/status() do; a
-  // dangling one is Missing rather than Other.
   std::error_code link_error;
   std::filesystem::create_symlink(file, root / "link.txt", link_error);
   if (!link_error) {
@@ -199,7 +192,7 @@ void TestFileWatcherTreeTooLargeSuppressesPolling() {
   }
 
   FileTreeWatcher watcher(std::chrono::milliseconds(500));
-  watcher.SetEntryBudget(4);  // trip the budget well below the tree size
+  watcher.SetEntryBudget(4);
   watcher.SetRoots({root});
   Expect(watcher.TreeTooLarge(), "watcher should flag a tree that exceeds the entry budget");
   Expect(!watcher.NextPollDelay().has_value(),
@@ -274,9 +267,6 @@ void TestFileWatcherNativeWakeDoesNotForceZeroDelayPoll() {
   watcher.Clear();
 }
 
-// CopyPath must not throw when the tree contains a symlink (previously it walked
-// with a throwing recursive_directory_iterator and dereferenced symlinks). It
-// should copy symlinks as symlinks, not follow them into real files/dirs.
 void TestCopyPathPreservesSymlinksAndDoesNotThrow() {
   namespace fs = std::filesystem;
   std::error_code ec;
@@ -288,8 +278,6 @@ void TestCopyPathPreservesSymlinksAndDoesNotThrow() {
   fs::create_directories(outside, ec);
   { std::ofstream(source / "file.txt") << "hello"; }
   { std::ofstream(outside / "target.txt") << "external"; }
-  // A symlink pointing outside the copied tree: dereferencing would copy the
-  // external file's contents; copy_symlinks must reproduce it as a symlink.
   fs::create_symlink(outside / "target.txt", source / "link.txt", ec);
   Expect(!ec, "symlink fixture created");
 
@@ -304,10 +292,6 @@ void TestCopyPathPreservesSymlinksAndDoesNotThrow() {
   fs::remove_all(base, ec);
 }
 
-// TD-2026-07-17A-131: a top-level symlink to a file must be reproduced as a link,
-// not dereferenced into a regular file. Previously is_directory() followed the link
-// and CopyPath fell through to copy_file, copying the target bytes — so cross-device
-// trash/rename fallbacks turned a file symlink into a real file and dropped the link.
 void TestCopyPathPreservesTopLevelFileSymlink() {
   namespace fs = std::filesystem;
   std::error_code ec;
@@ -330,12 +314,6 @@ void TestCopyPathPreservesTopLevelFileSymlink() {
   fs::remove_all(base, ec);
 }
 
-// TD-2026-07-17A-132: the portable no-overwrite move fallback must refuse a dangling
-// destination symlink. exists() follows the link and reports the broken target as
-// absent, so the fallback would clobber the existing link node; symlink_status sees
-// the node itself. The cross-device fallback is forced by moving between two temp
-// subtrees (same device here, but the exists()/symlink_status distinction is what the
-// test pins — the atomic RENAME_NOREPLACE path already refuses a present node).
 void TestMovePathNoOverwriteRefusesDanglingDestinationSymlink() {
   namespace fs = std::filesystem;
   std::error_code ec;
@@ -358,9 +336,6 @@ void TestMovePathNoOverwriteRefusesDanglingDestinationSymlink() {
   fs::remove_all(base, ec);
 }
 
-// TD-2026-07-17-064: CopyPath must accept a bare-filename destination (empty
-// parent_path). Previously it unconditionally called create_directories("") which
-// libstdc++ fails with EINVAL, breaking an otherwise valid copy-into-cwd.
 void TestCopyPathAcceptsBareFilenameDestination() {
   namespace fs = std::filesystem;
   std::error_code ec;
@@ -369,8 +344,6 @@ void TestCopyPathAcceptsBareFilenameDestination() {
   const fs::path source = temp_dir.path() / "source.txt";
   WriteFile(source, "bare filename copy");
 
-  // Run with the process cwd inside the temp dir so a bare relative filename
-  // resolves to a writable location, then restore it no matter the outcome.
   fs::current_path(temp_dir.path(), ec);
   Expect(!ec, "should be able to chdir into the temp dir");
   const bool ok = microide::platform::CopyPath(source, fs::path("copy.txt"));
@@ -383,11 +356,6 @@ void TestCopyPathAcceptsBareFilenameDestination() {
   Expect(copied == "bare filename copy", "the bare-filename copy should hold the source bytes");
 }
 
-// TD-2026-07-17-063: a dangling symlink is a real, removable directory entry that a
-// normal file manager can trash. MovePathToTrash validated the source with
-// std::filesystem::exists, which follows the link and reports a broken link as
-// absent — so it could never be trashed. It now validates the link node itself.
-// XDG_DATA_HOME is redirected to a temp dir so the test never touches the real trash.
 void TestTrashAcceptsDanglingSymlink() {
   namespace fs = std::filesystem;
   TemporaryDirectory temp_dir;
@@ -408,8 +376,6 @@ void TestTrashAcceptsDanglingSymlink() {
          "the dangling symlink should be removed from its original location");
 }
 
-// Removes a tree on scope exit, even when an Expect throws: the cross-device
-// tests below write to /dev/shm, which outlives the test's temp directory.
 struct RemoveTreeOnExit {
   std::filesystem::path path;
   ~RemoveTreeOnExit() {
@@ -418,12 +384,6 @@ struct RemoveTreeOnExit {
   }
 };
 
-// A folder the trash must reach across devices (the data home on another mount,
-// as /tmp is a tmpfs on the dev PC) and cannot copy -- here an unreadable file --
-// fails once and leaves the trash as it found it. Trash took every failed move
-// whose slot it then found occupied for a lost race and retried at the next
-// suffix: a full copy of the folder per attempt, up to 10000, on the UI thread
-// (soak d3f7c53a3cd7, stalled copying "qa-weird 5273").
 void TestTrashOfAnUncopyableFolderAcrossDevicesFailsOnce() {
   namespace fs = std::filesystem;
   TemporaryDirectory temp_dir;
@@ -450,7 +410,7 @@ void TestTrashOfAnUncopyableFolderAcrossDevicesFailsOnce() {
   WriteFile(unreadable, "secret");
   fs::permissions(unreadable, fs::perms::none, ec);
   if (std::FILE* probe = std::fopen(unreadable.c_str(), "rb"); probe != nullptr) {
-    std::fclose(probe);  // running as root: the file is readable after all
+    std::fclose(probe);
     std::cerr << "skipped: an unreadable file is readable here\n";
     return;
   }
@@ -458,8 +418,6 @@ void TestTrashOfAnUncopyableFolderAcrossDevicesFailsOnce() {
   const microide::platform::TrashOperationResult result =
       microide::platform::MovePathToTrash(folder);
   Expect(!result.ok, "a folder the trash cannot copy is not trashed");
-  // One attempt, failing for what it is -- not every suffix tried until the slots
-  // ran out.
   Expect(result.error_message == "Failed to move the path to trash",
          "the trash fails on its first attempt, not after exhausting its slots: " +
              result.error_message);
@@ -475,9 +433,6 @@ void TestTrashOfAnUncopyableFolderAcrossDevicesFailsOnce() {
   Expect(left == 0, "a failed trash leaves nothing in the trash");
 }
 
-// A rename across devices that cannot copy the folder is a no-op: MovePath read
-// an absent destination as pre-existing (symlink_status reports it not_found
-// with ENOENT set), skipped its rollback and left the half-made copy behind.
 void TestMovePathOfAnUncopyableFolderAcrossDevicesLeavesNoCopy() {
   namespace fs = std::filesystem;
   TemporaryDirectory temp_dir;
@@ -494,7 +449,7 @@ void TestMovePathOfAnUncopyableFolderAcrossDevicesLeavesNoCopy() {
   fs::create_directories(folder / "sub", ec);
   WriteFile(folder / "a.txt", "a");
   WriteFile(folder / "sub" / "b.txt", "b");
-  const fs::path unreadable = folder / "zz-unreadable.txt";  // after a.txt and sub/
+  const fs::path unreadable = folder / "zz-unreadable.txt";
   WriteFile(unreadable, "secret");
   fs::permissions(unreadable, fs::perms::none, ec);
   if (std::FILE* probe = std::fopen(unreadable.c_str(), "rb"); probe != nullptr) {
@@ -512,10 +467,6 @@ void TestMovePathOfAnUncopyableFolderAcrossDevicesLeavesNoCopy() {
   Expect(fs::exists(folder / "a.txt"), "the folder stays where it was");
 }
 
-// TD-2026-07-17-027: OpenUrl is a trust boundary. Unsupported schemes and
-// over-long URLs must be refused before reaching the OS opener. Only the
-// rejection paths are exercised here (an allowed scheme would launch a real
-// browser); each rejection returns before any SDL/xdg call.
 void TestOpenUrlRejectsUnsafeSchemesAndOverlongInput() {
   Expect(!microide::platform::OpenUrl("").ok, "an empty URL is refused");
   Expect(!microide::platform::OpenUrl("javascript:alert(1)").ok,
@@ -528,8 +479,6 @@ void TestOpenUrlRejectsUnsafeSchemesAndOverlongInput() {
   Expect(!microide::platform::OpenUrl(overlong).ok, "an over-long URL is refused");
 }
 
-// A desktop notification's text comes from a terminal program: what reaches the
-// notification daemon is one bounded line each, with the body's markup inert.
 void TestDesktopNotificationCommandSanitizesTerminalText() {
   using microide::platform::DesktopNotificationCommand;
   const std::vector<std::string> plain = DesktopNotificationCommand("alpha \xe2\x80\x94 claude", "needs your input");
@@ -548,7 +497,6 @@ void TestDesktopNotificationCommandSanitizesTerminalText() {
   const std::vector<std::string> empty = DesktopNotificationCommand(" \n", "");
   Expect(empty.back() == "MicroIDE", "an empty summary falls back to the application's name, with no body");
 
-  // Cut on a code-point boundary: 200 two-byte characters against a 160-byte cap.
   std::string wide;
   for (int i = 0; i < 200; ++i) {
     wide += "\xc3\xa9";
@@ -560,9 +508,6 @@ void TestDesktopNotificationCommandSanitizesTerminalText() {
          "and never mid-character");
 }
 
-// The transient store behind a host upload and a pasted clipboard image: each file
-// in its own directory under a private root, old entries swept on the way in, and
-// a root that is a planted link refused.
 void TestTransientFileStoreKeepsFilesApartAndPrivate() {
   namespace fs = std::filesystem;
   using microide::platform::StoreTransientFile;
@@ -582,7 +527,6 @@ void TestTransientFileStoreKeepsFilesApartAndPrivate() {
   Expect(::stat(root.c_str(), &info) == 0 && (info.st_mode & 0777) == 0700, "the root is private");
   Expect(::stat(first->c_str(), &info) == 0 && (info.st_mode & 0777) == 0600, "and so is the file");
 
-  // An entry older than a day goes with the next store.
   std::error_code ec;
   fs::last_write_time(first->parent_path(), fs::file_time_type::clock::now() - std::chrono::hours(25), ec);
   Expect(!ec && StoreTransientFile(root, "new.png", "three", &error).has_value(), "a later store succeeds");
@@ -594,23 +538,13 @@ void TestTransientFileStoreKeepsFilesApartAndPrivate() {
          "a root that is a link is refused");
 }
 
-// RetireDescriptorAsync hands a descriptor to a background worker so the caller
-// never blocks in close(2) -- which, for an inotify descriptor, sporadically
-// costs milliseconds. The contract that matters is simply that the close DOES
-// happen, off the caller's thread, and that a negative descriptor is ignored.
-//
-// Observed through a pipe rather than by polling fcntl: fcntl on a closed number
-// can be confused by descriptor reuse, whereas the read end of a pipe reports EOF
-// exactly when the last write end is closed, and nothing else.
 void TestRetireDescriptorAsyncEventuallyCloses() {
-  microide::platform::RetireDescriptorAsync(-1);  // must not crash or enqueue
+  microide::platform::RetireDescriptorAsync(-1);
 
   int fds[2] = {-1, -1};
   Expect(::pipe(fds) == 0, "test needs a pipe");
   microide::platform::RetireDescriptorAsync(fds[1]);
 
-  // Wait for the write end to go away, bounded so a failure reports rather than
-  // hangs the suite.
   pollfd waiter{.fd = fds[0], .events = POLLIN, .revents = 0};
   const int ready = ::poll(&waiter, 1, 5000);
   Expect(ready == 1, "the retired write end should be closed within the timeout");
@@ -622,7 +556,7 @@ void TestRetireDescriptorAsyncEventuallyCloses() {
   ::close(fds[0]);
 }
 
-}  // namespace
+}
 
 void RegisterFilesystemTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Platform/RetireDescriptorAsyncEventuallyCloses",
@@ -666,4 +600,4 @@ void RegisterFilesystemTests(std::vector<TestCase>& tests) {
           TestFileWatcherNativeWakeDoesNotForceZeroDelayPoll);
 }
 
-}  // namespace microide::tests
+}

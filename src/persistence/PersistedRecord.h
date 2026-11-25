@@ -16,8 +16,6 @@ namespace microide::persistence {
 inline constexpr std::array<char, 4> kPersistedRecordMagic = {'M', 'I', 'D', 'E'};
 inline constexpr std::uint32_t kPersistedRecordFormatVersion = 1;
 
-// The tag byte in front of every persisted path. Only POSIX paths are written or
-// accepted (the value 2 was once reserved for Windows paths and is never valid).
 enum class PathPlatform : std::uint8_t {
   Posix = 1,
 };
@@ -93,12 +91,6 @@ class PrimitiveReader {
       return false;
     }
     values->clear();
-    // Bound the reservation so a corrupt length field cannot force an unbounded
-    // allocation. reserve(N) allocates N*sizeof(T) bytes, so cap N by
-    // remaining()/sizeof(T) — that keeps the up-front byte allocation at or below
-    // the bytes still available, regardless of the element size. (The previous
-    // bound capped by remaining() as an element count, which for a multi-byte T
-    // would have requested remaining()*sizeof(T) bytes from one corrupt length.)
     values->reserve(
         std::min<std::size_t>(count, remaining() / std::max<std::size_t>(1, sizeof(T))));
     for (std::uint32_t i = 0; i < count; ++i) {
@@ -148,4 +140,4 @@ bool ReadTaggedRecord(std::span<const std::byte> input,
                       std::size_t* offset,
                       TaggedRecordView* record);
 
-}  // namespace microide::persistence
+}

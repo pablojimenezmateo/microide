@@ -10,17 +10,11 @@
 #include "workspace/render/EditorRowUnits.h"
 #include "workspace/render/SidebarListPaint.h"
 
-// The sidebar's shared two-column list (Problems, Tests, Outline, plugin item
-// views). Prep lays it out into the frame's snapshot and derives its damage from
-// it; paint draws the snapshot only. A row repaints when what it shows changes,
-// whoever changed it: diagnostics republished, a test run's status landing off the
-// shell thread, a plugin's items replaced, a pointer resting on a row.
-
 namespace microide::workspace {
 
 using namespace detail;
 
-namespace {}  // namespace
+namespace {}
 
 SDL_FRect SidebarPlaceholderBox(const SDL_FRect& sidebar, const ScrollableListLayout& list) {
   const float top = list.row_y + 4.0f;
@@ -46,8 +40,6 @@ void PrepareSidebarListFrame(PreparedFrameState& frame, const SidebarListInputs&
     }
     const ScrollableListLayout& layout = inputs.list;
     const int scroll_row = layout.scroll_row;
-    // The visible rows' labels and the placeholder, copied into the snapshot's own
-    // text: one pass to size it (its capacity is kept across frames), one to fill.
     std::size_t bytes = inputs.placeholder.size();
     for (int row = 0; row < layout.visible_rows; ++row) {
       const std::size_t index = static_cast<std::size_t>(scroll_row + row);
@@ -58,8 +50,6 @@ void PrepareSidebarListFrame(PreparedFrameState& frame, const SidebarListInputs&
       bytes += item.primary.size() + item.secondary.size();
     }
     list.text.reserve(bytes);
-    // The placeholder and the scrollbar come first, at fixed places: the rows that
-    // follow come and go with the list.
     list.placeholder_is_error = inputs.placeholder_is_error;
     list.placeholder_box = inputs.placeholder.empty() ? SDL_FRect{} : SidebarPlaceholderBox(inputs.sidebar, layout);
     list.placeholder_at = list.text.size();
@@ -93,8 +83,6 @@ void PrepareSidebarListFrame(PreparedFrameState& frame, const SidebarListInputs&
       painted.rect = ScrollableListRowRect(layout, row);
       painted.selected = index == inputs.selected_index;
       painted.emphasized = painted.selected || inputs.pointer_over(painted.rect);
-      // Tree rows: indentation by depth plus a disclosure twisty on collapsible
-      // rows; flat rows keep the list's left inset.
       painted.label_x = painted.rect.x + 6.0f;
       if (item.depth > 0 || item.collapsible) {
         painted.tree_x = painted.rect.x + 6.0f + static_cast<float>(item.depth) * kWorkspaceSidebarTreeIndentWidth;
@@ -152,4 +140,4 @@ void PaintSidebarList(SDL_Renderer* renderer, const PreparedFrameState& frame, c
   }
 }
 
-}  // namespace microide::workspace
+}

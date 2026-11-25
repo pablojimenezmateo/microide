@@ -26,11 +26,6 @@ using persistence::TaggedRecordView;
 
 constexpr std::uint32_t kSchemaVersion = 1;
 
-// The project-session record carries editor groups (splits above tabs). This
-// shape diverged from the original single-tab-list layout, so the session record
-// is versioned independently of the other records: an older session file is
-// cleanly rejected on decode (the workspace then starts with an empty session)
-// rather than being misread against the new tag scheme.
 constexpr std::uint32_t kProjectSessionSchemaVersion = 2;
 
 enum class UserConfigTag : std::uint16_t {
@@ -43,9 +38,6 @@ enum class UserConfigTag : std::uint16_t {
 
 enum class ProjectConfigTag : std::uint16_t {
   Schema = 1,
-  // Tags 2-4 (EditorTabSize/EditorIndentWidth/EditorSoftTabs) are retired: the
-  // canonical editor preferences now round-trip solely through the layered
-  // `Setting` records (tag 7). Old files carrying tags 2-4 are skipped on decode.
   ColorschemeName = 5,
   ProjectBaseColor = 6,
   Setting = 7,
@@ -118,30 +110,27 @@ enum class ProjectSessionTag : std::uint16_t {
   RightPaneVisible = 10,
   RightPaneWidth = 11,
   RightPaneMode = 12,
-  // 13/14 were the single split's orientation + fraction, replaced by SplitTree.
   SplitTree = 20,
-  ExpandedTreePath = 15,    // repeated; one relative path per record
-  CollapsedTreePath = 16,   // repeated; one relative path per record
+  ExpandedTreePath = 15,
+  CollapsedTreePath = 16,
   SelectedTreePath = 17,
   SidebarScrollRow = 18,
   SidebarViewId = 19,
   PanelMaximized = 21,
-  TerminalTab = 22,         // repeated; one nested TerminalTabTag record per tab
+  TerminalTab = 22,
   ActiveTerminalTab = 23,
-  ClosedEditor = 24,        // repeated; one nested EditorTabTag record per editor
+  ClosedEditor = 24,
 };
 
 enum class TerminalTabTag : std::uint16_t {
   ActivePane = 1,
-  Pane = 2,    // repeated; one nested TerminalPaneTag record per pane
-  Weight = 3,  // repeated; one f32 per pane, in pane order
+  Pane = 2,
+  Weight = 3,
 };
 
 enum class TerminalPaneTag : std::uint16_t {
   Cwd = 1,
   Command = 2,
-  // A host pane's terminal (TerminalPaneRecord::host), written only when there is
-  // one. An older reader skips both; a session without them revives fresh shells.
   HostEpoch = 3,
   HostHandle = 4,
 };
@@ -153,7 +142,6 @@ enum class EditorGroupTag : std::uint16_t {
 
 enum class EditorTabTag : std::uint16_t {
   Kind = 1,
-  // Inline single-view editor fields (formerly nested EditorView records).
   Path = 2,
   CursorLine = 3,
   CursorColumn = 4,
@@ -183,34 +171,29 @@ enum class EditorTabTag : std::uint16_t {
   MergeLeftDividerFraction = 22,
   MergeRightDividerFraction = 23,
   MergeHunkChoice = 24,
-  // Appended after the fields above; older records simply omit these and decode
-  // with defaults (empty string).
   CompareReviewMode = 31,
   CompareStagingView = 32,
   Utf8Bom = 33,
-  CollapsedFold = 34,  // repeated; one opener line per record
-  DiskBaseline = 35,   // bool exists, u64 mtime ticks, u64 size: a dirty snapshot's baseline
-  DiskBaselineContent = 36,  // u64 content hash, u64 hash probe: after DiskBaseline, when known
-  UntitledNumber = 37,       // u32: an untitled buffer's "Untitled-N"
-  // Repeated, with a merge result's dirty snapshot: size hunk, size start line,
-  // size end line, string choice label, bool valid, bool resolved.
+  CollapsedFold = 34,
+  DiskBaseline = 35,
+  DiskBaselineContent = 36,
+  UntitledNumber = 37,
   MergeConflictSpan = 38,
 };
 
 enum class WorkspaceSessionTag : std::uint16_t {
   Schema = 1,
-  ProjectRoot = 2,  // legacy: repeated, one path per project (dual-written)
+  ProjectRoot = 2,
   ActiveProjectIndex = 3,
-  Project = 4,      // repeated, one nested ProjectIdTag record per project
-  HostViewCollapsed = 5,  // repeated string: a collapsed Host view group's row id
+  Project = 4,
+  HostViewCollapsed = 5,
 };
 
-// A project::ProjectId. Kind decides which of the rest are present.
 enum class ProjectIdTag : std::uint16_t {
-  Kind = 1,      // u8: ProjectIdKind
-  Path = 2,      // Local
-  Host = 3,      // Remote
-  HostRoot = 4,  // Remote, absolute
+  Kind = 1,
+  Path = 2,
+  Host = 3,
+  HostRoot = 4,
 };
 
 enum class ProjectIdKind : std::uint8_t {
@@ -220,14 +203,14 @@ enum class ProjectIdKind : std::uint8_t {
 
 enum class DebugStateTag : std::uint16_t {
   Schema = 1,
-  FileBreakpoints = 2,            // repeated, one nested record per file
-  LaunchConfig = 3,               // repeated, one nested record per config
+  FileBreakpoints = 2,
+  LaunchConfig = 3,
   SelectedLaunchConfigIndex = 4,
-  WatchExpression = 5,            // Phase 6: repeated, one string record per expression
-  ExceptionFilter = 6,            // Phase 7: repeated, one string record per enabled filter id
-  ExceptionFiltersSeeded = 7,     // Phase 7: bool, whether adapter defaults were seeded once
-  FunctionBreakpoint = 8,         // additive: repeated, one nested record per function breakpoint
-  ExceptionFilterCondition = 9,   // additive: repeated, one nested {filterId, condition} record
+  WatchExpression = 5,
+  ExceptionFilter = 6,
+  ExceptionFiltersSeeded = 7,
+  FunctionBreakpoint = 8,
+  ExceptionFilterCondition = 9,
 };
 
 enum class FunctionBreakpointTag : std::uint16_t {
@@ -239,9 +222,9 @@ enum class FunctionBreakpointTag : std::uint16_t {
 
 enum class MruStateTag : std::uint16_t {
   Schema = 1,
-  RecentProjectRoot = 2,  // legacy: repeated, one path record per project (dual-written)
-  RecentFile = 3,         // repeated, one nested record per file
-  RecentProject = 4,      // repeated, one nested ProjectIdTag record per project
+  RecentProjectRoot = 2,
+  RecentFile = 3,
+  RecentProject = 4,
 };
 
 enum class RecentFileEntryTag : std::uint16_t {
@@ -256,7 +239,7 @@ enum class ExceptionFilterConditionTag : std::uint16_t {
 
 enum class FileBreakpointsTag : std::uint16_t {
   Path = 1,
-  Breakpoint = 2,                 // repeated, one nested record per breakpoint
+  Breakpoint = 2,
 };
 
 enum class BreakpointTag : std::uint16_t {
@@ -282,9 +265,6 @@ bool AppendRecord(EnumTag tag, WritePayload write_payload, std::vector<std::byte
   std::vector<std::byte> payload;
   PrimitiveWriter writer(&payload);
   if (!write_payload(writer)) {
-    // One line per enclosing record as the failure unwinds, innermost first: a
-    // value the format cannot hold (a size past 32 bits) drops the whole record,
-    // and for a session that is every crash-safety flush until it changes.
     util::Log("persistence: could not encode record tag " + std::to_string(static_cast<unsigned>(tag)));
     return false;
   }
@@ -310,9 +290,6 @@ bool ReadSize(PrimitiveReader& reader, std::size_t* value) {
   return true;
 }
 
-// OnRecord is a deduced callable bool(EnumTag, std::span<const std::byte>); taking
-// it as a template param (mirroring AppendRecord) avoids std::function type-erasure
-// on the decode tree — all 25 call sites pass inline lambdas.
 template <typename EnumTag, typename OnRecord>
 bool ParseRecordStream(std::span<const std::byte> input, OnRecord on_record) {
   std::size_t offset = 0;
@@ -356,9 +333,6 @@ bool ReadStringRecord(EnumTag expected_tag,
          AppendRecord(ProjectIdTag::Path, [&](PrimitiveWriter& w) { return w.WritePath(id.local()->root); }, out);
 }
 
-// False for a malformed record. A well-formed one that names no usable project --
-// an unknown (newer) kind, a missing field, a relative host root -- decodes to
-// nullopt, and the caller skips that entry rather than the whole file.
 [[maybe_unused]] bool DecodeProjectId(std::span<const std::byte> input, std::optional<project::ProjectId>* id) {
   std::uint8_t kind = 0;
   std::filesystem::path path;
@@ -521,13 +495,8 @@ bool ReadStringRecord(EnumTag expected_tag,
   return true;
 }
 
-// Project-session decode budgets. The 256 MiB raw-file cap is not enough on its own:
-// a tiny empty-string BufferLine record still becomes a separate std::string + vector
-// slot, so millions of them turn a merely oversized session into a startup stall /
-// bad_alloc before any UI. Cap the repeated nested records and charge an aggregate
-// decoded-byte budget for the dirty buffer snapshot. (TD-2026-07-16-20.)
 inline constexpr std::size_t kMaxSessionBufferLines = 4'000'000;
-inline constexpr std::size_t kMaxSessionBufferBytes = 64u * 1024 * 1024;  // 64 MiB snapshot
+inline constexpr std::size_t kMaxSessionBufferBytes = 64u * 1024 * 1024;
 inline constexpr std::size_t kMaxSessionMergeHunkChoices = 200'000;
 inline constexpr std::size_t kMaxSessionTabsPerGroup = 4096;
 inline constexpr std::uint32_t kMaxSessionUntitledNumber = 1'000'000;
@@ -540,7 +509,6 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
   }
   *tab = PersistedEditorTabState{};
   std::size_t buffer_bytes = 0;
-  // The buffer's lines, '\n'-joined as they arrive; wrapped once at the end.
   std::string buffer_text;
   std::size_t buffer_line_count = 0;
   const bool parsed = ParseRecordStream<EditorTabTag>(
@@ -566,8 +534,6 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
             if (!reader.ReadU32(&number) || reader.remaining() != 0) {
               return false;
             }
-            // A number no session of real tabs reaches is dropped (the restore
-            // numbers the tab afresh), not trusted into a title.
             tab->untitled_number = number <= kMaxSessionUntitledNumber ? number : 0;
             return true;
           }
@@ -586,7 +552,7 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
             if (!reader.ReadU64(&hash) || !reader.ReadU64(&probe) || reader.remaining() != 0) {
               return false;
             }
-            if (tab->disk_baseline.has_value()) {  // written after it; alone it means nothing
+            if (tab->disk_baseline.has_value()) {
               tab->disk_baseline->content_hash = hash;
               tab->disk_baseline->hash_probe = probe;
             }
@@ -597,7 +563,6 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
             if (!ReadSize(reader, &opener) || reader.remaining() != 0) {
               return false;
             }
-            // Past the cap the rest are dropped: the tab still restores.
             if (tab->collapsed_fold_openers.size() < kMaxSessionCollapsedFolds) {
               tab->collapsed_fold_openers.push_back(opener);
             }
@@ -616,8 +581,6 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
             if (!reader.ReadString(&line) || reader.remaining() != 0) {
               return false;
             }
-            // Fail closed on a snapshot past the product line-count or aggregate-byte
-            // budget rather than materializing millions of tiny strings.
             if (buffer_line_count >= kMaxSessionBufferLines ||
                 buffer_bytes + line.size() > kMaxSessionBufferBytes) {
               return false;
@@ -742,7 +705,7 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
           }
           case EditorGroupTag::Tab: {
             if (group->tabs.size() >= kMaxSessionTabsPerGroup) {
-              return false;  // over the product per-group tab budget
+              return false;
             }
             PersistedEditorTabState tab;
             if (!DecodeEditorTab(payload, &tab)) {
@@ -835,10 +798,6 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
           case BranchReviewHunkIdentityTag::NewCount:
             return reader.ReadI32(&identity->new_count) && reader.remaining() == 0;
           case BranchReviewHunkIdentityTag::ContentHash:
-            // content_hash is a full-range std::hash result; the top bit is set
-            // ~half the time. Read it as unsigned so a high-bit hash is preserved
-            // instead of failing a signed >= 0 guard and discarding the whole
-            // project-config record. Wire bytes match the prior WriteI64 memcpy.
             return reader.ReadU64(&identity->content_hash) && reader.remaining() == 0;
         }
         return true;
@@ -871,7 +830,6 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
                       [&](PrimitiveWriter& w) { return w.WritePath(file.path); }, &payload) ||
         !AppendRecord(BranchReviewFileEntryTag::ReviewedSnapshotGeneration,
                       [&](PrimitiveWriter& w) {
-                        // A full-range hash: unsigned, as the hunk's content_hash.
                         return w.WriteU64(file.reviewed_diff_fingerprint);
                       },
                       &payload) ||
@@ -963,11 +921,6 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
                     case BranchReviewFileEntryTag::Path:
                       return file_reader.ReadPath(&file.path) && file_reader.remaining() == 0;
                     case BranchReviewFileEntryTag::ReviewedSnapshotGeneration:
-                      // The diff fingerprint, a full-range hash whose top bit is set
-                      // about half the time: read unsigned, as the hunk's content_hash
-                      // is. A signed >= 0 guard here discarded the whole project
-                      // config for such a file (soak 4bbda24149d1). Wire bytes match
-                      // the prior WriteI64 memcpy, so files already written decode.
                       return file_reader.ReadU64(&file.reviewed_diff_fingerprint) &&
                              file_reader.remaining() == 0;
                     case BranchReviewFileEntryTag::ReviewedAtUnixMs: {
@@ -979,10 +932,6 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
                   }
                   return true;
                 }) &&
-                   // Enforce the live service's per-target file cap at decode so a
-                   // corrupt/hostile .microide config cannot bypass the caps that
-                   // runtime PruneTarget maintains. Excess entries are dropped (keep
-                   // the first N deterministically). (TD-2026-07-16-34.)
                    ((target->reviewed_files.size() >=
                              compare::BranchReviewStateService::kMaxFileEntriesPerTarget
                          ? true
@@ -1077,9 +1026,6 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
         if (tag != BranchReviewStateTag::Target) {
           return true;
         }
-        // Enforce the live service's per-repository target cap at decode. Excess
-        // targets are dropped (keep the first N) so a corrupt config cannot load more
-        // review targets than runtime prunes to. (TD-2026-07-16-34.)
         if (state->targets.size() >= compare::BranchReviewStateService::kMaxTargetsPerRepository) {
           return true;
         }
@@ -1098,14 +1044,10 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
     return false;
   }
   *draft = PersistedCommitDraftState{};
-  // Per-field decode budgets: a persisted commit draft is a small INLINE editor draft,
-  // not a bulk payload. Without these one string inside the 256 MiB raw-record cap can
-  // load a huge body into the sidebar TextViewport and get re-snapshotted on every
-  // precheck/save/dispatch. Fail closed on an over-budget field. (TD-2026-07-16-37.)
-  constexpr std::size_t kMaxDraftOidBytes = 128;      // a git oid is 40-64 hex chars
-  constexpr std::size_t kMaxDraftBranchBytes = 1024;  // ref-name length bound
+  constexpr std::size_t kMaxDraftOidBytes = 128;
+  constexpr std::size_t kMaxDraftBranchBytes = 1024;
   constexpr std::size_t kMaxDraftSubjectBytes = 8192;
-  constexpr std::size_t kMaxDraftBodyBytes = 1u << 20;  // 1 MiB inline body ceiling
+  constexpr std::size_t kMaxDraftBodyBytes = 1u << 20;
   const auto read_capped = [&](PrimitiveReader& reader, std::string* out,
                                std::size_t cap) -> bool {
     return reader.ReadString(out) && reader.remaining() == 0 && out->size() <= cap;
@@ -1147,6 +1089,6 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
          reader.remaining() == 0;
 }
 
-}  // namespace
+}
 
-}  // namespace microide::workspace
+}

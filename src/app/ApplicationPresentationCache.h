@@ -21,4 +21,4 @@ inline bool CanReuseCachedPresentationState(
   return std::fabs(last_presented_ui_scale - current_ui_scale) < 0.001f;
 }
 
-}  // namespace microide::app
+}

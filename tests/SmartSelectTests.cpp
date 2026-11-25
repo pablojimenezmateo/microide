@@ -14,7 +14,6 @@ using editor::SelectionRange;
 using editor::TextBuffer;
 using editor::TextPosition;
 
-// The text a range covers, '\n' between lines.
 std::string Covered(const std::vector<std::string>& lines, const SelectionRange& range) {
   std::string out;
   for (std::size_t line = range.start.line; line <= range.end.line && line < lines.size(); ++line) {
@@ -28,7 +27,6 @@ std::string Covered(const std::vector<std::string>& lines, const SelectionRange&
   return out;
 }
 
-// Expands from a caret `steps` times and returns what each step covered.
 std::vector<std::string> Ladder(const std::vector<std::string>& lines, TextPosition caret, int steps) {
   const TextBuffer buffer(lines);
   SelectionRange current{caret, caret};
@@ -94,11 +92,11 @@ void TestViewportShrinkWalksBackDownTheLadder() {
          "shrinking again returns to the bare caret where it started");
   Expect(!viewport.ShrinkSelection(), "with the ladder walked down there is nothing to shrink");
   Expect(viewport.ExpandSelection(), "expanding again starts a new ladder");
-  viewport.MoveCursorTo(0, 0, true);  // the selection changes another way
+  viewport.MoveCursorTo(0, 0, true);
   Expect(!viewport.ShrinkSelection(), "a selection changed another way cannot be shrunk");
 }
 
-}  // namespace
+}
 
 void RegisterSmartSelectTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SmartSelect/WordThenBracketsThenLineThenDocument", TestWordThenBracketsThenLineThenDocument);
@@ -108,4 +106,4 @@ void RegisterSmartSelectTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SmartSelect/ViewportShrinkWalksBackDownTheLadder", TestViewportShrinkWalksBackDownTheLadder);
 }
 
-}  // namespace microide::tests
+}

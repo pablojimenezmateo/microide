@@ -20,9 +20,6 @@ using microide::util::JsonValue;
 using microide::workspace::DapClient;
 namespace codec = microide::workspace::dap_protocol;
 
-// A minimal DAP adapter in Python. Speaks Content-Length framed JSON and answers
-// the handful of commands the client tests exercise. argv[1] is a marker path the
-// adapter touches when it processes `disconnect`.
 const char* MockAdapterSource() {
   return R"py(import json
 import pathlib
@@ -145,7 +142,6 @@ void TestWorkspaceDapClientCorrelatesResponsesBySeq() {
          "mock adapter should start");
   Expect(WaitForInitialized(client), "client should initialize");
 
-  // Two concurrently in-flight requests must each get their own response.
   bool got_threads = false;
   bool got_eval = false;
   std::size_t thread_count = 0;
@@ -187,7 +183,6 @@ void TestWorkspaceDapClientDispatchesEventsOnMainThread() {
          "mock adapter should start");
   Expect(WaitForInitialized(client), "client should initialize");
 
-  // The adapter emits `initialized` during the handshake; drain it first.
   Expect(PollUntil(client, [&]() {
            return std::find(events.begin(), events.end(), "initialized") != events.end();
          }),
@@ -208,9 +203,6 @@ void TestWorkspaceDapClientReportsAdapterThatExitsBeforeInitialize() {
   DapClient client;
   Expect(client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "mock"),
          "client should launch the adapter process");
-  // It never answers initialize; the client must give up rather than hang. The
-  // init thread starts asynchronously, so wait for the failure to surface rather
-  // than racing it.
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
   while (std::chrono::steady_clock::now() < deadline) {
     if (!client.IsInitializing() && !client.LastError().empty()) {
@@ -223,15 +215,9 @@ void TestWorkspaceDapClientReportsAdapterThatExitsBeforeInitialize() {
   client.Shutdown();
 }
 
-// TD-2026-07-17A-098: an adapter can stream many valid small event frames before its
-// initialize response; the pre-initialize replay buffer must be bounded so it cannot grow
-// without limit for the whole timeout window. A flooding adapter must fail initialization
-// cleanly rather than accumulating an unbounded backlog.
 void TestWorkspaceDapClientBoundsPreInitializeEventFlood() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "flood_adapter.py";
-  // On the initialize request, emit far more than kMaxDapEarlyMessages (10000) output
-  // events and never send the initialize response. The client must shed the session.
   WriteFile(server_path, std::string(R"py(import json
 import sys
 
@@ -344,10 +330,6 @@ void TestWorkspaceDapClientStubModeAnswersRequestsAndInjectsEvents() {
 void TestWorkspaceDapClientInitFailureFailsPendingRequest() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "stall-adapter.py";
-  // Consume the initialize request, then stall briefly and exit WITHOUT ever
-  // responding, so the client's init loop hits EOF and takes the !got_init
-  // failure path. The stall gives the test time to register a pending request
-  // before init fails.
   WriteFile(server_path, std::string(R"py(import sys
 import time
 
@@ -369,8 +351,6 @@ time.sleep(0.3)
   Expect(client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "mock"),
          "stall adapter should start");
 
-  // Issue a request while the client is still initializing. When init fails, the
-  // request must be failed (callback invoked with success=false), not dropped.
   std::atomic<bool> responded{false};
   bool success = true;
   client.SendRequestAsync("threads", JsonValue(nullptr),
@@ -386,12 +366,6 @@ time.sleep(0.3)
   client.Shutdown();
 }
 
-// Regression (symmetric with the LSP client): the initialize wait is bounded by
-// wall-clock, not an attempt count. proc.Read returns as soon as any data is available,
-// so an adapter that emits a burst of events before its initialize response used to
-// exhaust the attempt budget in milliseconds and get force-killed while healthy. This
-// adapter floods 200 `output` events ahead of the response; the client must still
-// initialize.
 void TestWorkspaceDapClientPreInitializeEventFloodStillInitializes() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "flood-adapter.py";
@@ -458,12 +432,6 @@ while True:
   client.Shutdown();
 }
 
-// Regression: a non-conformant adapter that emits the `initialized` event BEFORE
-// the initialize response must not make the client dispatch that event while
-// capabilities are still default-constructed. If it did, the main-thread handshake
-// would read supports_configuration_done_request==false and skip configurationDone,
-// hanging a debuggee that needs it. The client now buffers pre-response messages and
-// replays them only after capabilities are stored.
 void TestWorkspaceDapClientEmitsInitializedBeforeResponseSeesCapabilities() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "reorder-adapter.py";
@@ -538,7 +506,7 @@ while True:
   client.Shutdown();
 }
 
-}  // namespace
+}
 
 void RegisterWorkspaceDapClientTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceDapClient/EmitsInitializedBeforeResponseSeesCapabilities",
@@ -563,4 +531,4 @@ void RegisterWorkspaceDapClientTests(std::vector<TestCase>& tests) {
           TestWorkspaceDapClientStubModeAnswersRequestsAndInjectsEvents);
 }
 
-}  // namespace microide::tests
+}

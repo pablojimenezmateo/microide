@@ -69,12 +69,6 @@ void TestWorkspaceShellEditorBlameLoadsForCleanTrackedFile() {
          "editor blame overlay should anchor eight columns after the visible line end");
 }
 
-// One prepared frame paints one blame. The blame cache is filled by a worker
-// thread and inline blame read it on every render, so a result landing between
-// two renders of the same frame -- the clips of one partial frame, or the QA redraw
-// verifier's full reference -- painted blame in one and not the other: a torn
-// frame. Found by the QA redraw verifier (QA-STALE over the inline blame text on
-// the frame that opened a file).
 void TestWorkspaceShellEditorBlameIsFixedForAPreparedFrame() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -101,7 +95,6 @@ void TestWorkspaceShellEditorBlameIsFixedForAPreparedFrame() {
   SDL_FlushRenderer(canvas.renderer());
   SDL_Surface* first = SDL_DuplicateSurface(canvas.surface());
 
-  // The blame result lands (the worker fills the cache) before the frame's next render.
   Expect(WaitForActiveEditorBlameOverlay(shell, 1).has_value(), "the blame should load");
   shell.RenderClip(token, canvas.renderer(), kWidth, kHeight);
   SDL_FlushRenderer(canvas.renderer());
@@ -111,9 +104,6 @@ void TestWorkspaceShellEditorBlameIsFixedForAPreparedFrame() {
                                DescribePixelDiff(diff));
 }
 
-// The blame card goes when the pointer leaves for the tab strip. Leaving cleared
-// the card's target and repainted only the strip, so the card stayed over the
-// editor. Found by the QA monkey (seed 7).
 void TestWorkspaceShellEditorBlameCardGoesWhenThePointerLeaves() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -161,10 +151,6 @@ void TestWorkspaceShellEditorBlameCardGoesWhenThePointerLeaves() {
   Expect(left.identical(), "leaving for the tab strip should take the blame card off screen; " +
                                DescribePixelDiff(left));
 
-  // The same card, left by a pointer that moved with no motion event (a window
-  // move or resize re-seeds it and queues a hover refresh): the refresh used to
-  // run inside RenderClip, only when it painted the editor, so a partial frame
-  // elsewhere kept the card while a full render of that frame dropped it.
   const auto back = PaintAndDiffWithFullRepaint(
       shell, canvas, kWidth, kHeight, DispatchEvents(shell, {MouseMotionEvent(bx, by)}), pin_caret);
   Expect(WorkspaceShellTestAccess::ActiveEditorBlamePopupRect(shell).has_value(),
@@ -179,13 +165,6 @@ void TestWorkspaceShellEditorBlameCardGoesWhenThePointerLeaves() {
                                  DescribePixelDiff(seeded));
 }
 
-// The card goes when its line does, with the pointer still. The overlay the card
-// is laid out from is rebuilt while the active pane PAINTS, after frame prep
-// decided the card's damage from the previous frame's overlay: prep still saw the
-// card, paint dropped it, and a frame that repainted somewhere else left its
-// pixels on screen (QA monkey, editor profile, seed 309: a focus change between
-// stacked panes repainted the other pane). Here the caret leaves the blamed line
-// with no editor damage, and a partial frame elsewhere follows.
 void TestWorkspaceShellEditorBlameCardGoesWithItsLine() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -225,8 +204,6 @@ void TestWorkspaceShellEditorBlameCardGoesWithItsLine() {
          "hovering blame text should open the blame card");
   Expect(shown.identical(), "showing the card should paint what a full repaint paints; " +
                                 DescribePixelDiff(shown));
-  // The caret moves two lines down: a caret move repaints the rows it leaves and
-  // lands on, which is all the editor damage there is.
   const util::JsonValue ui = WorkspaceShellTestAccess::ControlUi(shell);
   const util::JsonValue& pane = ui["editors"].AsArray()[0];
   microide::workspace::RenderInvalidation elsewhere;
@@ -246,9 +223,6 @@ void TestWorkspaceShellEditorBlameCardGoesWithItsLine() {
                                 DescribePixelDiff(moved));
 }
 
-// Typing into the blamed line takes the card with the blame, under a still
-// pointer, and the frame repaints all of it (TD-2026-10-22-377's flow; the defect
-// it found is pinned by the next test).
 void TestWorkspaceShellEditorBlameCardGoesWhenItsLineIsEdited() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -297,14 +271,6 @@ void TestWorkspaceShellEditorBlameCardGoesWhenItsLineIsEdited() {
                                 DescribePixelDiff(typed));
 }
 
-// Every render of one frame paints the hover card frame prep laid out, whatever
-// changes after prep. Paint laid the card out again itself, so a frame whose prep
-// kept the card (and damaged nothing for it) could paint without it -- its pixels
-// outside the frame's clips stayed on screen, while the verifier's full render of
-// the same frame had no card (TD-2026-10-22-377, CI's qa-asan: a blame card left
-// on a split's divider). Here the live hover target goes between prep and paint,
-// a partial clip elsewhere is painted, and the full render of the same frame must
-// match it.
 void TestWorkspaceShellEveryRenderOfAFramePaintsThePreparedHoverCard() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -342,7 +308,6 @@ void TestWorkspaceShellEveryRenderOfAFramePaintsThePreparedHoverCard() {
   Expect(WorkspaceShellTestAccess::ActiveEditorBlamePopupRect(shell).has_value() && shown.identical(),
          "hovering blame text shows the card; " + DescribePixelDiff(shown));
 
-  // One frame, rendered as Application and the redraw verifier render it.
   pin_caret();
   const WorkspaceShell::FrameToken token = shell.PrepareFrameOnce(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
@@ -364,11 +329,6 @@ void TestWorkspaceShellEveryRenderOfAFramePaintsThePreparedHoverCard() {
          "left it; " + DescribePixelDiff(same_frame));
 }
 
-// TD-2026-10-24-389: the inline-blame overlay was built while the active pane
-// painted, so everything that resolved against it between frames -- the hover card,
-// a click on Copy SHA, prep's damage for the card -- read the previous paint's. It
-// is built at frame prep now: a prepared frame, painted or not, carries the
-// overlay for the caret's current line.
 void TestWorkspaceShellEditorBlameOverlayIsBuiltAtFramePrep() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -392,15 +352,12 @@ void TestWorkspaceShellEditorBlameOverlayIsBuiltAtFramePrep() {
   shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(3, 0);
-  (void)shell.PrepareFrameOnce(canvas.renderer(), kWidth, kHeight);  // prepared, not painted
+  (void)shell.PrepareFrameOnce(canvas.renderer(), kWidth, kHeight);
   const auto& overlay = WorkspaceShellTestAccess::VisibleBlameOverlay(shell);
   Expect(overlay.has_value() && overlay->lines.size() == 1 && overlay->lines[0].line_index == 3,
          "a prepared frame's overlay annotates the caret's new line");
 }
 
-// Invalidating the blame of the file on screen (the tree's Refresh, a change on
-// disk) repaints the editor: the inline blame drops until the re-fetch lands, and
-// it used to stay painted. Found by the QA monkey (seed 4).
 void TestWorkspaceShellInvalidatedBlameRepaintsTheEditor() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -429,7 +386,7 @@ void TestWorkspaceShellInvalidatedBlameRepaintsTheEditor() {
   (void)shell.ConsumePendingRenderInvalidation();
   WorkspaceShellTestAccess::InvalidateEditorBlamePath(shell, source);
   microide::workspace::RenderInvalidation redraw = shell.ConsumePendingRenderInvalidation();
-  redraw.rects.push_back(SDL_FRect{0.0f, 0.0f, 20.0f, 20.0f});  // some frame happens
+  redraw.rects.push_back(SDL_FRect{0.0f, 0.0f, 20.0f, 20.0f});
   const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, redraw, pin_caret);
   Expect(diff.identical(), "invalidated blame should repaint the editor; " + DescribePixelDiff(diff));
 }
@@ -546,8 +503,6 @@ void TestWorkspaceShellEditorBlameHidesForDirtyBufferAndResumesAfterSave() {
   Expect(WorkspaceShellTestAccess::SaveTab(shell, 0),
          "saving the dirty editor should succeed");
 
-  // Inline blame annotates the caret line only, so park the caret on the line
-  // that exists in the working tree but not in HEAD to observe its marker.
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
 
   const auto overlay = WaitForActiveEditorBlameOverlay(shell);
@@ -579,7 +534,6 @@ void TestWorkspaceShellEditorDirtyTransitionRedrawsBlameNeighborhood() {
          "clean tracked editor should expose the caret blame line before editing");
   (void)shell.ConsumePendingRenderInvalidation();
 
-  // A frame painted first: the derived surfaces compare with it.
   SoftwareCanvas canvas{1280, 720};
   shell.Render(canvas.renderer(), 1280, 720);
   (void)shell.ConsumePendingRenderInvalidation();
@@ -588,7 +542,6 @@ void TestWorkspaceShellEditorDirtyTransitionRedrawsBlameNeighborhood() {
   const std::string text = "x";
   event.text.text = text.c_str();
   const auto result = shell.HandleEvent(event);
-  // What the frame repaints: the event's rects and what preparing it derives.
   const auto damage = FrameDamage(shell, canvas, 1280, 720, result.redraw);
 
   Expect(result.handled, "editor typing should be handled for blame redraw checks");
@@ -711,10 +664,6 @@ void TestWorkspaceShellEditorBlamePopupWrapsLongSummary() {
          "long blame summaries should wrap into a taller popup instead of truncating to one line");
 }
 
-// Hover wrapping is memoized (it runs several times per frame for as long as a
-// card is on screen). A memo is only ever wrong by being stale, so what needs
-// pinning is that every key component actually participates: text, wrap width,
-// line cap, and the font metrics generation.
 void TestWorkspaceShellHoverWrapMemoKeysOnEveryInput() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -726,39 +675,26 @@ void TestWorkspaceShellHoverWrapMemoKeysOnEveryInput() {
   Expect(!narrow.empty(), "the fixture text should wrap to at least one line");
   Expect(narrow == narrow_again, "a repeated wrap must return the same lines");
 
-  // Width is part of the key: a wider card fits more per line.
   const auto wide = WorkspaceShellTestAccess::WrapHoverPopupText(shell, text, 600.0f, 8);
   Expect(wide != narrow, "changing the wrap width must not return the narrow cache entry");
   Expect(wide.size() < narrow.size(), "a wider card should need fewer lines");
 
-  // Line cap is part of the key.
   const auto capped = WorkspaceShellTestAccess::WrapHoverPopupText(shell, text, 120.0f, 2);
   Expect(capped.size() <= 2, "the line cap must be honored");
   Expect(capped != narrow, "changing the line cap must not return the uncapped cache entry");
 
-  // Different text with identical width/cap must not collide.
   const auto other = WorkspaceShellTestAccess::WrapHoverPopupText(
       shell, "a completely different hover string entirely", 120.0f, 8);
   Expect(other != narrow, "different text must not return another entry's lines");
 
-  // The memo holds a small fixed number of entries; cycling past it must not
-  // corrupt a later lookup of an evicted key.
   for (int i = 1; i <= 12; ++i) {
     WorkspaceShellTestAccess::WrapHoverPopupText(shell, text, 120.0f + static_cast<float>(i), 8);
   }
   Expect(WorkspaceShellTestAccess::WrapHoverPopupText(shell, text, 120.0f, 8) == narrow,
          "an evicted key must be recomputed to the same lines, not served from a wrong slot");
-
-  // The memo's fourth key component — the text renderer's metrics generation — is
-  // deliberately NOT asserted here: these tests run with no text backend, where
-  // MeasureWidth is a fixed 8px per byte and SetFontPointSize is a no-op that does
-  // not even bump the generation. Nothing observable would change, so an assertion
-  // would pass whether or not the term were in the key. The term guards a real case
-  // (a font size / family / presentation-scale change re-wraps at new advances);
-  // its three invalidation points are ClearWidthCache's call sites in TextRenderer.
 }
 
-}  // namespace
+}
 
 void RegisterWorkspaceShellEditorBlameTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/HoverWrapMemoKeysOnEveryInput",
@@ -795,4 +731,4 @@ void RegisterWorkspaceShellEditorBlameTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorBlamePopupWrapsLongSummary);
 }
 
-}  // namespace microide::tests
+}

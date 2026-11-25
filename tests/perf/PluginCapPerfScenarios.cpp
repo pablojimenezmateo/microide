@@ -1,18 +1,3 @@
-// Measurement scenarios backing the plugin contribution-cap derivation
-// (TD-2026-07-17-019, dev-docs/project/known-tech-debt.md).
-//
-// The per-kind contribution ceilings in plugin/PluginContributionLimits.h bound
-// two main-thread cost classes:
-//  - the STATUS ITEM cap bounds the per-revision resolve (copy + parse +
-//    stable_sort) that reruns on every ctx.status.update while the status bar
-//    is visible (WorkspaceStatusRegistry::ResolveStatusItems);
-//  - the generic per-kind cap bounds the per-reload registry rebuilds; the
-//    keybinding resolve (chord parse + conflict index) is the most expensive
-//    per-entry one (WorkspaceKeybindingRegistry::ResolveKeybindings).
-// Both scenarios drive the real resolve seam AT the derived cap, so the
-// committed baseline pins the "worst legal plugin load stays within budget"
-// claim, and an accidental return to quadratic conflict scanning (the pre-019
-// behavior) or a cap raise without re-measurement trips the gate.
 #include "perf/PerfHarness.h"
 
 #include <string>
@@ -28,9 +13,6 @@ namespace {
 
 using microide::plugin::PluginHost;
 
-// Representative status items: realistic id/tooltip lengths (heap-allocated),
-// short texts (SSO), a mix of alignments/tones/icons, shuffled priorities so
-// the stable_sort does real work.
 std::vector<PluginHost::ContributedStatusItem> MakeStatusItems(std::size_t count) {
   std::vector<PluginHost::ContributedStatusItem> items;
   items.reserve(count);
@@ -51,9 +33,6 @@ std::vector<PluginHost::ContributedStatusItem> MakeStatusItems(std::size_t count
   return items;
 }
 
-// Representative keybindings: valid parsable chords over a realistic key space,
-// so most entries past the first few hundred are conflict-skipped — the worst
-// (and typical hostile) per-entry path: chord parse + conflict-index lookup.
 std::vector<PluginHost::ContributedKeybinding> MakeKeybindings(std::size_t count) {
   static constexpr const char* kMods[] = {"Ctrl+", "Ctrl+Shift+", "Alt+", "Ctrl+Alt+"};
   static constexpr const char* kContexts[] = {"global", "editor", "sidebar", "terminal"};
@@ -105,5 +84,5 @@ const ScenarioRegistration g_perf_plugin_keybindings_resolve_at_cap({Scenario{
     .run = RunKeybindingsResolveAtCap,
 }});
 
-}  // namespace
-}  // namespace microide::tests::perf
+}
+}

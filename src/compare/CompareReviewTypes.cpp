@@ -10,7 +10,7 @@ bool IsGitStageRef(std::string_view ref) {
   return !ref.empty() && ref.front() == ':' && ref.size() <= 3;
 }
 
-}  // namespace
+}
 
 std::string CompareReviewModeLabel(CompareReviewMode mode) {
   switch (mode) {
@@ -113,4 +113,4 @@ bool BranchReviewTargetIdentity::operator==(const BranchReviewTargetIdentity& ot
          head_commit == other.head_commit && merge_base_commit == other.merge_base_commit;
 }
 
-}  // namespace microide::compare
+}

@@ -20,7 +20,7 @@ void PushAddOnlyModule(lua_State* state,
   lua_setfield(state, -2, module_name);
 }
 
-}  // namespace
+}
 
 void PushPluginContext(lua_State* state, void* host_upvalue, const ApiFns& fns) {
   lua_createtable(state, 0, 12);
@@ -104,7 +104,6 @@ void PushPluginContext(lua_State* state, void* host_upvalue, const ApiFns& fns) 
   PushAddOnlyModule(state, host_upvalue, "document_symbols", fns.document_symbols_add);
   PushAddOnlyModule(state, host_upvalue, "lsp", fns.lsp_add);
 
-  // ctx.debug exposes both adapter and launch-config contribution.
   lua_createtable(state, 0, 2);
   PushBoundFn(state, host_upvalue, fns.debug_add, "add");
   PushBoundFn(state, host_upvalue, fns.debug_add_config, "addConfig");
@@ -122,6 +121,6 @@ void PushPluginContext(lua_State* state, void* host_upvalue, const ApiFns& fns) 
   PushAddOnlyModule(state, host_upvalue, "snippets", fns.snippets_add);
 }
 
-}  // namespace microide::plugin::lua_context_interop
+}
 
 #endif

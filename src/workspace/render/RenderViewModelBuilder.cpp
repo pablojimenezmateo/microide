@@ -41,12 +41,7 @@ namespace {
 
 thread_local struct OccurrenceSeedDetectCache {
   std::uintptr_t viewport = 0;
-  // The document too: a reload gives the viewport a new document whose content
-  // revisions start over, so (viewport, revision, caret) can name other text --
-  // the old word's highlights stayed on the reloaded file.
   const void* document = nullptr;
-  // Occurrence seed text comes from the buffer at the caret; only content
-  // mutations can change what the seed string is.
   std::uint64_t content_revision = 0;
   std::size_t caret_line = 0;
   std::size_t caret_column = 0;
@@ -61,13 +56,10 @@ thread_local struct OccurrenceSeedDetectCache {
 
 thread_local struct OccurrenceViewportScanCache {
   std::uintptr_t viewport = 0;
-  const void* document = nullptr;  // see OccurrenceSeedDetectCache::document
-  // Scan results enumerate occurrences of the needle inside buffer bytes.
+  const void* document = nullptr;
   std::uint64_t content_revision = 0;
   std::size_t scroll_line = 0;
   std::size_t visible_rows = 0;
-  // The scan is bounded to the columns a row can actually show, so the horizontal
-  // window is part of what the result depends on.
   std::size_t horizontal_scroll = 0;
   std::size_t visible_columns = 0;
   bool case_sensitive = false;
@@ -89,11 +81,6 @@ thread_local struct StickyScrollViewportCache {
   std::vector<std::size_t> lines;
 } g_sticky_scroll_cache;
 
-// The welcome/placeholder surface's view model, memoized on everything it can
-// vary with. Everything else in it is a string literal or a compile-time
-// accelerator from the command-spec table, so a miss is the only time any of it
-// needs materializing. See BuildWelcomeView's declaration for why both callers
-// repeat with nothing changed.
 thread_local struct WelcomeViewCache {
   bool valid = false;
   std::uint64_t recents_instance = 0;
@@ -109,11 +96,6 @@ thread_local std::uint64_t g_welcome_view_misses = 0;
 thread_local std::uint64_t g_sticky_scroll_hits = 0;
 thread_local std::uint64_t g_sticky_scroll_misses = 0;
 
-// Project-search sidebar status/hint line. Previously assembled per frame from
-// 5+ JoinHintSegments/BuildCountStatus calls while the search panel was visible
-// (and progress wakes repaint it constantly). Cache it keyed on the small set of
-// inputs that change the text and rebuild only on change; the render TU draws a
-// prebuilt std::string_view.
 struct ProjectSearchStatusKey {
   bool editing = false;
   ProjectSearchEditField edit_field = ProjectSearchEditField::Query;
@@ -135,16 +117,8 @@ thread_local struct ProjectSearchStatusCache {
   std::string text;
 } g_project_search_status_cache;
 
-// Status only — no key cheat-sheet. The sidebar is ~270px wide, so appending
-// "/ query | = replace | r rerun | R replace all | c count all" guaranteed the
-// line was cut mid-word ("26 matches | / query | = rep…") and ate the part that
-// carried information. No other sidebar inlines its keys either; the search
-// panel's keys live in Help/About next to the git sidebar's, and every button
-// already carries a hover tooltip.
 std::string ComposeProjectSearchStatusCore(const ProjectSearchState& ps);
 
-// A search that fell back to the local copy says so on every result line it
-// produced: the copy may be behind the host (remote-projects.md § 6.11).
 std::string ComposeProjectSearchStatus(const ProjectSearchState& ps) {
   std::string status = ComposeProjectSearchStatusCore(ps);
   if (ps.searched_local_copy && !ps.editing && !ps.running) {
@@ -155,9 +129,6 @@ std::string ComposeProjectSearchStatus(const ProjectSearchState& ps) {
 
 std::string ComposeProjectSearchStatusCore(const ProjectSearchState& ps) {
   if (ps.editing) {
-    // No "Editing query"/"Editing replace" prefix: the field being edited already
-    // draws with the accent border and a caret, and spelling it out here pushed
-    // the line past the sidebar width so the keys themselves were what got cut.
     return JoinHintSegments({"Enter apply", "Esc cancel"});
   }
   if (!ps.error.empty()) {
@@ -202,10 +173,6 @@ std::string_view CachedProjectSearchStatus(const ProjectSearchState& ps) {
   return cache.text;
 }
 
-// Placeholder drawn over an empty project-search result list. The render TU used
-// to build this with `"Error: " + state.error` / FormatEmptyState("matches")
-// EVERY frame — two heap allocations per repaint on a surface that repaints on
-// every search-progress wake. Same keyed-cache idiom as the status line above.
 struct ProjectSearchEmptyKey {
   bool error_empty = true;
   bool running = false;
@@ -225,8 +192,6 @@ std::string_view CachedProjectSearchEmptyText(const ProjectSearchState& ps) {
       .error_empty = ps.error.empty(),
       .running = ps.running,
       .query_empty = ps.query.text().empty(),
-      // The error string itself is the only variable-length input; its length is
-      // enough of a discriminator to catch a swapped message without hashing it.
       .error_size = ps.error.size(),
   };
   auto& cache = g_project_search_empty_cache;
@@ -237,9 +202,6 @@ std::string_view CachedProjectSearchEmptyText(const ProjectSearchState& ps) {
     } else if (ps.running) {
       cache.text = "Searching…";
     } else if (ps.query.text().empty()) {
-      // Nothing: the status line directly above already says "Type to search the
-      // project". Saying it twice, and in the second voice naming the subsystem
-      // back at the user ("Project Search is idle"), was noise.
       cache.text.clear();
     } else {
       cache.text = FormatEmptyState("matches");
@@ -284,9 +246,6 @@ void RefillOccurrenceSeedCache(const editor::TextViewport& viewport,
   std::size_t seed_end = seed->end.column;
   if (seed_start >= seed_end || seed_line >= viewport.lines().size() ||
       seed_end > viewport.lines().LineLength(seed_line)) {
-    // A stale selection anchor column can outlive a content shrink, leaving
-    // seed_start/seed_end past the line length; guard before substr (which throws
-    // std::out_of_range when pos > size) and to avoid seeding a truncated needle.
     seed_cache.lowered_needle.clear();
     return;
   }
@@ -305,9 +264,6 @@ void RefillOccurrenceSeedCache(const editor::TextViewport& viewport,
   }
 }
 
-// A visible buffer line, with the union of the visual-column spans its on-screen
-// rows cover. Under soft wrap that is a small window into a possibly enormous
-// line; in every other mode it is the horizontal scroll window.
 struct VisibleLineVisualSpan {
   std::size_t line_index = 0;
   std::size_t first_visual = 0;
@@ -356,10 +312,6 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
 
   scan_cache.ranges.clear();
 
-  // Each visible line, with the VISUAL COLUMN span its on-screen rows actually
-  // cover. Several wrapped rows can share a buffer line, and a line's rows are
-  // contiguous (see TextLayoutCache::WrappedRowRangeForLine), so merging into the
-  // last entry collects the union without a sort or a hash set.
   thread_local std::vector<VisibleLineVisualSpan> visible_line_spans_scratch;
   std::vector<VisibleLineVisualSpan>& visible_line_spans = visible_line_spans_scratch;
   visible_line_spans.clear();
@@ -413,9 +365,6 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
         pos = found + 1;
       }
     } else {
-      // Lower the haystack once, then reuse the same fast find() as the
-      // case-sensitive branch — the previous nested loop re-lowered every
-      // haystack byte O(needle) times for each candidate position.
       thread_local std::string lowered_haystack;
       util::ToLowerAsciiInto(haystack, lowered_haystack);
       for (std::size_t pos = 0; pos <= lowered_haystack.size();) {
@@ -429,30 +378,6 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
     }
   };
 
-  // An occurrence is only ever painted inside a row's visible window -- the
-  // row-fill loops clip every span to it -- so scanning outside it produces
-  // matches that are discarded on arrival. On ordinary text that is a few dozen
-  // wasted bytes. On a file with no line breaks in it the "line" is the whole
-  // document, and the scan re-lowercases and re-searches a megabyte every time the
-  // caret moves to a different word (TD-2026-08-05-132 follow-up,
-  // `editor_long_line_horizontal_scroll`).
-  //
-  // ONE rule for every layout mode, because the row layout already states the
-  // window: in the trivial and fold-but-no-wrap modes `WrappedRowAt` returns
-  // exactly [horizontal_scroll, horizontal_scroll + visible_columns), which is the
-  // horizontal window this used to compute separately; under soft wrap it returns
-  // the row's own visual span.
-  //
-  // Soft wrap used to opt OUT of the bound entirely, on the reasoning that "soft
-  // wrap lays the whole line out across several rows, so all of it is visible".
-  // That is true of the LAYOUT and false of the SCREEN: a one-megabyte line wraps
-  // to ~10,000 rows and about forty of them are on screen. The scan read and
-  // lower-cased the whole megabyte every frame, which measured as 0.49 ms of the
-  // 1.05 ms an editor pane spent per frame in `editor_soft_wrap_long_line_scroll`
-  // -- the single largest app-side cost in the perf suite (TD-2026-08-15-248).
-  //
-  // Pad by the needle so a match straddling either edge is still found; the edge
-  // conversion is a nearest-column mapping, not an exact one.
   const std::size_t window_pad = std::max<std::size_t>(needle.size(), 1);
 
   for (const VisibleLineVisualSpan& span : visible_line_spans) {
@@ -474,12 +399,6 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
 }
 
 SidebarMode SidebarModeFromViewId(std::string_view view_id) {
-  // The built-ins from their registry (this was a second, hand-kept table of
-  // them, one view behind each time a view was added). Any other id is a
-  // plugin's view ("plugin" included): every plugin view used to come out None,
-  // and the sidebar painted the file tree under the plugin's rows; a view whose
-  // provider went away is reset to the tree by the sidebar coordinator
-  // (RefreshPlugin).
   if (const SidebarViewSpec* builtin = FindBuiltinSidebarView(view_id); builtin != nullptr) {
     return builtin->mode;
   }
@@ -495,7 +414,6 @@ void CollectWhitespaceGlyphRuns(const editor::TextViewport& viewport,
   if (visible_rows == 0) {
     return;
   }
-  // CSR layout: out_row_offsets has size visible_rows + 1; the last entry is the total run count.
   out_row_offsets->reserve(visible_rows + 1);
   out_row_offsets->push_back(0);
   const auto& lines = viewport.lines();
@@ -511,11 +429,6 @@ void CollectWhitespaceGlyphRuns(const editor::TextViewport& viewport,
     finalize_remaining_rows(0);
     return;
   }
-  // Rows of one soft-wrapped line arrive in ascending order, so the previous
-  // row's stopping point is this row's start. Without the carry every row
-  // re-derives it from the line's own start -- which the prefix probe below does
-  // by READING [0, row_start), so scrolling deep into a wrapped megabyte line
-  // re-read ~a megabyte per visible row per frame (TD-2026-08-14-218).
   editor::WhitespaceWalkCursor walk_cursor;
   for (std::size_t row = 0; row < visible_rows; ++row) {
     const std::size_t visual_row_index = scroll_line + row;
@@ -529,20 +442,9 @@ void CollectWhitespaceGlyphRuns(const editor::TextViewport& viewport,
       out_row_offsets->push_back(out->size());
       continue;
     }
-    // LineView, not lines[i]: `operator[]` goes through `LineRef`, which copies the
-    // line and interns the copy in the buffer's line cache. Here that was two
-    // allocations per visible row per painted frame, 24 % of the whitespace-overlay
-    // scroll phase, for a view that is read and discarded (TD-2026-08-06-159).
     const std::string_view line_text = lines.LineView(line_index);
     const std::size_t row_start_visual = row_meta.visual_start;
     const std::size_t row_end_visual = row_meta.visual_end;
-    // Carry from the previous row of this line when there was one; otherwise
-    // start at the row instead of at the line, when the bytes before it are all
-    // plain single-cell ASCII -- there byte offset IS visual column, so the walk
-    // can resume mid-line exactly. Without either, every visible row re-walked
-    // its logical line from byte 0, which under soft wrap means walking the same
-    // long line once per row on screen (quadratic in the rows of one wrapped
-    // line). The scan itself is word-at-a-time; the per-cell loop below is not.
     const editor::WhitespaceRowResume resume{
         &walk_cursor, line_index, viewport.PlainAsciiPrefixEnd(line_index, row_start_visual)};
     const editor::WhitespaceWalkStart walk_start =
@@ -554,11 +456,6 @@ void CollectWhitespaceGlyphRuns(const editor::TextViewport& viewport,
     while (byte < line_text.size()) {
       const std::size_t cell_byte = byte;
       const char c = line_text[byte];
-      // One authoritative tab-stop/width step, stepping by CODE POINT: a per-byte
-      // walk over-counted columns after any multibyte glyph and shifted every
-      // later marker on the line one cell right of the real grid. The renderer's
-      // fallback path had this right and the view-model path -- the one actually
-      // used -- did not.
       const std::size_t cell_start = visual_col;
       visual_col = editor::TextLayout::AdvanceVisualColumnAt(cell_start, line_text, byte, tab_size,
                                                              &byte);
@@ -591,16 +488,13 @@ void CollectWhitespaceGlyphRuns(const editor::TextViewport& viewport,
     if (!stopped_at_row_end) {
       editor::InvalidateWhitespaceWalkCursor(resume);
     }
-    // Bytes this row's walk actually visited (the loop stops at the row's end),
-    // so "resumed at the row" is a measurement rather than a comment. Once per
-    // row, not per glyph -- AddPerformanceCounter is a locked read-modify-write.
     util::AddPerformanceCounter(util::PerfCounterId::EditorWhitespaceMarkerWalkBytes,
                                 byte - walk_start_byte);
     out_row_offsets->push_back(out->size());
   }
 }
 
-}  // namespace
+}
 
 int ParseStickyScrollMaxDepthSetting(const std::optional<std::string>& value) {
   constexpr int kDefault = 3;
@@ -619,12 +513,6 @@ void ComputeStickyScrollLinesUncached(const editor::TextViewport& viewport,
                                       bool sticky_scroll_enabled,
                                       int sticky_max_depth,
                                       std::vector<std::size_t>& out_opener_lines) {
-  // The two working buffers, held across calls rather than declared here. A
-  // scroll changes the viewport's top line every frame, so every frame is a
-  // sticky-scroll cache MISS by design and lands in this function — and a fresh
-  // `ancestors` (reserve(8), 192 bytes) plus a fresh `openers` was two
-  // allocations per painted frame. thread_local for the same reason the memo
-  // above is: a non-main thread computing this keeps its own.
   thread_local std::vector<editor::FoldRange> ancestors;
   thread_local std::vector<std::size_t> openers;
   out_opener_lines.clear();
@@ -637,13 +525,8 @@ void ComputeStickyScrollLinesUncached(const editor::TextViewport& viewport,
     return;
   }
   const std::size_t top_line = viewport.VisualRowLineIndex(viewport.scroll_line());
-  // The indexed AppendFoldsContaining walk returns ranges in outer→inner order
-  // via the prefix-max-closer cache instead of a linear scan over ranges().
   ancestors.clear();
   folding_model->AppendFoldsContaining(top_line, &ancestors);
-  // The sticky-scroll bar paints openers strictly above the viewport's top
-  // visible line (opener_line < top_line); drop the self-containing entry if
-  // the top happens to land on an opener.
   openers.clear();
   for (const editor::FoldRange& range : ancestors) {
     if (range.opener_line < top_line && top_line <= range.closer_line) {
@@ -654,7 +537,6 @@ void ComputeStickyScrollLinesUncached(const editor::TextViewport& viewport,
     return;
   }
   const std::size_t take = std::min(max_depth, openers.size());
-  // openers is already sorted outermost-first; take the innermost `max_depth`.
   const auto start_it = openers.end() - static_cast<std::ptrdiff_t>(take);
   out_opener_lines.assign(start_it, openers.end());
 }
@@ -710,9 +592,6 @@ FrameSurfaceViewModel RenderViewModelBuilder::BuildFrameSurface(const WorkspaceL
 
 namespace {
 
-// Deferred reference into either OverlaySurfaceViewModel::label_storage (which may
-// reallocate while the model is being composed) or a frame-stable state string.
-// Resolved into string_views only after the blob stops growing.
 struct OverlayLabelRef {
   static constexpr std::size_t kDirect = static_cast<std::size_t>(-1);
   std::size_t offset = kDirect;
@@ -739,9 +618,6 @@ struct OverlayLabelRef {
   }
 };
 
-// Truncates `text` to `max_width` and records it: a fitting, frame-stable string
-// stays a zero-copy direct view; anything truncated (the ephemeral scratch) or
-// unstable is copied into the blob.
 OverlayLabelRef AddTruncatedLabel(const render::TextRenderer& tr, std::string& blob,
                                   std::string_view text, float max_width, bool stable) {
   const std::string_view shown = tr.TruncateToWidthEphemeralView(text, max_width);
@@ -757,8 +633,6 @@ struct OverlayRowRef {
   float secondary_width = 0.0f;
 };
 
-// Focused fields show the caret-relative scrolled tail; unfocused fields (and an
-// empty focused field) fall back to "<prefix><full text>" from the start.
 OverlayLabelRef QueryFieldText(const render::TextRenderer& tr, std::string& blob, bool focused,
                                const editor::SingleLineEditor& editor, float available_width) {
   if (focused) {
@@ -777,7 +651,6 @@ OverlayLabelRef QueryFieldText(const render::TextRenderer& tr, std::string& blob
   return ref;
 }
 
-// The find widget (a compact non-modal card): its own submodel, no list chrome.
 void BuildFindWidgetInto(OverlayFindWidgetViewModel& fw_vm, std::string& blob,
                          const BufferSearchState& buffer_search, bool replace_mode,
                          TextInputSurface current_surface, const SDL_FRect& surface,
@@ -787,8 +660,6 @@ void BuildFindWidgetInto(OverlayFindWidgetViewModel& fw_vm, std::string& blob,
   fw_vm.search_focused = current_surface == TextInputSurface::BufferSearch ||
                          current_surface == TextInputSurface::BufferReplaceSearch;
   fw_vm.replace_focused = current_surface == TextInputSurface::BufferReplaceReplace;
-  // Aa / ab / .* / Find in Selection, the same order and the same first two
-  // glyphs as the terminal find bar three pixels below it.
   fw_vm.toggles[static_cast<std::size_t>(BufferFindToggle::MatchCase)] =
       FindWidgetToggleViewModel{.label = "Aa", .active = buffer_search.match_case};
   fw_vm.toggles[static_cast<std::size_t>(BufferFindToggle::WholeWord)] =
@@ -834,10 +705,6 @@ void BuildFindWidgetInto(OverlayFindWidgetViewModel& fw_vm, std::string& blob,
   fw_vm.count_text = count_ref.Resolve(blob);
 }
 
-// The modal list overlays (quick-open pickers, project search, completion, code
-// actions): shared geometry and chrome, one method per mode for its rows, then
-// every deferred label resolved against the finished blob. Labels are added as
-// offsets while the blob grows and resolved last, because a growing blob moves.
 class ListOverlayBuilder {
  public:
   ListOverlayBuilder(OverlaySurfaceViewModel& out, const ProjectWorkspaceState& project,
@@ -936,14 +803,11 @@ class ListOverlayBuilder {
     return overlay_rect_.x + overlay_rect_.w - kOverlayInset - tr_.MeasureWidth(text);
   }
 
-  // The title row's right-aligned note, cut to the box: wider than a narrow
-  // picker, its left edge landed outside the card, where a partial frame clipped
-  // to the card never repainted it.
   void SetRightAlignedNote(std::string_view note) {
     const float inner_width = std::max(1.0f, overlay_rect_.w - kOverlayInset * 2.0f);
     const std::string_view shown = tr_.TruncateToWidthEphemeralView(note, inner_width);
     out_.note_x = RightAlignedX(shown);
-    note_ref_ = AddTruncatedLabel(tr_, blob_, note, inner_width, /*stable=*/true);
+    note_ref_ = AddTruncatedLabel(tr_, blob_, note, inner_width, true);
   }
 
   template <typename EmitRow>
@@ -959,21 +823,12 @@ class ListOverlayBuilder {
     }
   }
 
-  // One single-column row, truncated to the row column (which already excludes
-  // the scrollbar gutter when the list overflows).
   void EmitRow(std::string_view label, bool stable) {
     OverlayRowRef row_ref;
     row_ref.primary = AddTruncatedLabel(tr_, blob_, label, row_width_ - 16.0f, stable);
     row_refs_.push_back(row_ref);
   }
 
-  // Two-column picker rows: the muted right column keeps its measured width and
-  // the primary is pre-truncated to the space that remains (TD-2026-07-16-33
-  // still holds: only the VISIBLE window is materialized). The right column is
-  // bounded too: the primary keeps its full width up to half the row, and a
-  // longer secondary (a workspace symbol's "container · path") is truncated to
-  // the rest -- unbounded, it started left of the row and painted over the label
-  // and out past the overlay.
   template <typename RowAt>
   void EmitTwoColumnRows(RowAt&& row_at) {
     ForVisible([&](std::size_t item_index) {
@@ -983,47 +838,31 @@ class ListOverlayBuilder {
         const float primary_room = std::min(tr_.MeasureWidth(primary) + 22.0f, row_width_ * 0.5f);
         const float secondary_room = std::max(0.0f, row_width_ - primary_room - 12.0f);
         row_ref.secondary =
-            AddTruncatedLabel(tr_, blob_, secondary, secondary_room, /*stable=*/true);
+            AddTruncatedLabel(tr_, blob_, secondary, secondary_room, true);
         const std::string_view shown = row_ref.secondary.Resolve(blob_);
         row_ref.secondary_width = shown.empty() ? 0.0f : tr_.MeasureWidth(shown) + 12.0f;
       }
       const float primary_width = std::max(20.0f, row_width_ - 12.0f - row_ref.secondary_width);
-      row_ref.primary = AddTruncatedLabel(tr_, blob_, primary, primary_width, /*stable=*/true);
+      row_ref.primary = AddTruncatedLabel(tr_, blob_, primary, primary_width, true);
       row_refs_.push_back(row_ref);
     });
   }
 
-  // Shared chrome for every quick-open modal (file finder, project search, command
-  // palette, commit/launch pickers): title, optional context subtitle, query field,
-  // result summary, and the key hint. `*_stable` says a label lives in state that
-  // outlives the frame; anything composed per frame is copied into the blob.
   void FillPickerChrome(std::string_view title, std::string_view context_label,
                         const editor::SingleLineEditor& query, TextInputSurface surface,
                         std::string_view summary_line, bool summary_stable,
                         std::string_view empty_label, bool empty_label_stable) {
-    // Every line of the chrome fits the box. A narrow editor area (a split, a
-    // small window, a large ui.scale) made a picker narrower than its title, its
-    // "No matching ..." line and its key hint, which then painted past its edges
-    // -- in full frames, so a partial frame clipped to the box disagreed with
-    // them (QA monkey seed 1). Lines are truncated; the hint, a convenience, is
-    // dropped rather than cut mid-word.
     const float inner_width = std::max(1.0f, overlay_rect_.w - kOverlayInset * 2.0f);
-    title_ref_ = AddTruncatedLabel(tr_, blob_, title, inner_width, /*stable=*/true);
+    title_ref_ = AddTruncatedLabel(tr_, blob_, title, inner_width, true);
     if (!context_label.empty()) {
       context_ref_ = AddTruncatedLabel(tr_, blob_, context_label,
-                                       overlay_rect_.w - kOverlayInset * 2.0f, /*stable=*/true);
+                                       overlay_rect_.w - kOverlayInset * 2.0f, true);
     }
     out_.has_query_field = true;
     out_.query_surface = surface;
     out_.query_row_y = overlay_rect_.y + OverlayQueryRowOffset(overlay_.mode);
     query_ref_ = QueryFieldText(tr_, blob_, current_surface_ == surface, query,
                                 std::max(1.0f, overlay_rect_.w - kOverlayInset * 2.0f));
-    // An empty summary stays empty. This used to substitute a literal "0 of 0",
-    // which a picker showing no rows then printed directly above its own "No
-    // matching …" line -- the same sentence twice, in the old count wording.
-    // The summary shares its row with the key hint and can be a failed pick's
-    // reason, as long as any message: it fits beside the hint, or the hint goes
-    // and it is truncated to the box (soak 5ec45751b332).
     const float summary_width = summary_line.empty() ? 0.0f : tr_.MeasureWidth(summary_line);
     const float hint_width = tr_.MeasureWidth(kPickerHint);
     const bool show_hint = summary_line.empty()
@@ -1044,8 +883,6 @@ class ListOverlayBuilder {
 
   void ProjectSearch() {
     const ProjectSearchState& search = overlay_.workflow.project_search;
-    // The candidate set came from the file index; if that index is only a prefix
-    // of the tree, some files were never searched — flag it (TD-2026-07-17-008/033).
     if (search.index_incomplete) {
       constexpr std::string_view kNote = "index incomplete — results may be partial";
       SetRightAlignedNote(kNote);
@@ -1063,8 +900,8 @@ class ListOverlayBuilder {
     }
     FillPickerChrome("Project Search", std::string_view{}, search.query,
                      TextInputSurface::ProjectSearchOverlay, scratch,
-                     /*summary_stable=*/false, "No results",
-                     /*empty_label_stable=*/true);
+                     false, "No results",
+                     true);
     ForVisible([&](std::size_t item_index) {
       const auto& result = search.results[item_index];
       scratch.clear();
@@ -1075,7 +912,7 @@ class ListOverlayBuilder {
       AppendUnsigned(scratch, result.column + 1);
       scratch += "  ";
       scratch += tr_.TruncateToWidthEphemeralView(result.preview, overlay_rect_.w - 220.0f);
-      EmitRow(scratch, /*stable=*/false);
+      EmitRow(scratch, false);
     });
   }
 
@@ -1086,8 +923,8 @@ class ListOverlayBuilder {
                              : FormatEmptyState("matching revisions");
     FillPickerChrome(picker.title.empty() ? std::string_view("Compare against") : picker.title,
                      picker.context_label, picker.query, TextInputSurface::CommitPicker,
-                     picker.summary_line, /*summary_stable=*/true, scratch,
-                     /*empty_label_stable=*/false);
+                     picker.summary_line, true, scratch,
+                     false);
     EmitTwoColumnRows([&](std::size_t i) -> std::pair<std::string_view, std::string_view> {
       return {picker.matches[i].primary_label, picker.matches[i].secondary_label};
     });
@@ -1100,7 +937,7 @@ class ListOverlayBuilder {
     FillPickerChrome(
         picker.title.empty() ? std::string_view("Select Launch Configuration") : picker.title,
         std::string_view{}, picker.query, TextInputSurface::QuickPick, picker.summary_line,
-        /*summary_stable=*/true, scratch, /*empty_label_stable=*/false);
+        true, scratch, false);
     EmitTwoColumnRows([&](std::size_t i) -> std::pair<std::string_view, std::string_view> {
       return {picker.matches[i].primary_label, picker.matches[i].secondary_label};
     });
@@ -1112,8 +949,8 @@ class ListOverlayBuilder {
     scratch = FormatEmptyState("matching commands");
     FillPickerChrome(palette.title.empty() ? std::string_view("Commands") : palette.title,
                      std::string_view{}, palette.query, TextInputSurface::CommandPalette,
-                     palette.summary_line, /*summary_stable=*/true, scratch,
-                     /*empty_label_stable=*/false);
+                     palette.summary_line, true, scratch,
+                     false);
     EmitTwoColumnRows([&](std::size_t i) -> std::pair<std::string_view, std::string_view> {
       const CommandPaletteItem& item = palette.items[palette.matches[i]];
       return {item.primary_label, item.secondary_label};
@@ -1124,56 +961,45 @@ class ListOverlayBuilder {
     const CompletionSessionState& completion = overlay_.workflow.completion;
     if (!completion.error.empty()) {
       error_ref_ = AddTruncatedLabel(tr_, blob_, completion.error, overlay_rect_.w - 36.0f,
-                                     /*stable=*/true);
+                                     true);
       out_.error_at_title_row = true;
     }
     std::string& scratch = ComposeScratch();
     ForVisible([&](std::size_t item_index) {
       const CompletionSessionItem& item = completion.VisibleItem(item_index);
       if (item.detail.empty()) {
-        EmitRow(item.label, /*stable=*/true);
+        EmitRow(item.label, true);
         return;
       }
       scratch.clear();
       scratch += item.label;
       scratch += "  ";
       scratch += item.detail;
-      EmitRow(scratch, /*stable=*/false);
+      EmitRow(scratch, false);
     });
   }
 
   void CodeActions() {
     const CodeActionSessionState& actions = overlay_.workflow.code_actions;
-    // Cut to the box like every picker's title (FillPickerChrome): at ui.scale 3
-    // in a 640x480 window the menu is narrower than "Code Actions", which then
-    // painted past its right edge and stayed there (soak ab1ec3eb174a).
     title_ref_ = AddTruncatedLabel(tr_, blob_, "Code Actions",
                                    std::max(1.0f, overlay_rect_.w - kOverlayInset * 2.0f),
-                                   /*stable=*/true);
-    // "Loading..." / "No code actions available" render in the list area, below
-    // the title, so they read as the menu's status rather than colliding with it.
+                                   true);
     if (!actions.error.empty()) {
       error_ref_ =
-          AddTruncatedLabel(tr_, blob_, actions.error, overlay_rect_.w - 36.0f, /*stable=*/true);
+          AddTruncatedLabel(tr_, blob_, actions.error, overlay_rect_.w - 36.0f, true);
     }
     ForVisible([&](std::size_t item_index) {
-      EmitRow(actions.items[item_index].title, /*stable=*/true);
+      EmitRow(actions.items[item_index].title, true);
     });
   }
 
   void FileFinder() {
     const auto& finder = project_.file_finder;
-    // When the file index is only a prefix of a very large/deep/unreadable tree,
-    // say so on the title row (right-aligned) with the specific cause so the
-    // ranked list is never read as authoritative (TD-2026-07-17-008/033).
     if (const std::string_view note = ScanIncompleteNote(finder.index_scan_status());
         !note.empty()) {
       SetRightAlignedNote(note);
     }
     const auto& results = finder.results();
-    // Shared with the command palette, the git pickers and the overlay footers,
-    // so the count means one thing across quick-open. Appended into the reused
-    // scratch buffer rather than built, to keep the frame allocation-free.
     std::string& scratch = ComposeScratch();
     scratch.clear();
     AppendFilteredCountSummary(scratch, results.size(), finder.indexed_file_count(), "files");
@@ -1181,14 +1007,13 @@ class ListOverlayBuilder {
     FillPickerChrome(compare_title.empty() ? std::string_view("Find File")
                                            : std::string_view(compare_title),
                      std::string_view{}, finder.query_state(), TextInputSurface::FileFinder,
-                     scratch, /*summary_stable=*/false, "No matching files",
-                     /*empty_label_stable=*/true);
+                     scratch, false, "No matching files",
+                     true);
     ForVisible([&](std::size_t item_index) {
-      EmitRow(results[item_index].path_string, /*stable=*/true);
+      EmitRow(results[item_index].path_string, true);
     });
   }
 
-  // The blob is complete: resolve every deferred reference into stable views.
   void Resolve() {
     out_.title = title_ref_.Resolve(blob_);
     out_.note = note_ref_.Resolve(blob_);
@@ -1207,8 +1032,6 @@ class ListOverlayBuilder {
     }
   }
 
-  // Per-frame composition buffer, kept warm across frames so composing a row or a
-  // summary does not allocate.
   static std::string& ComposeScratch() {
     thread_local std::string scratch;
     return scratch;
@@ -1230,13 +1053,12 @@ class ListOverlayBuilder {
   OverlayLabelRef summary_ref_;
   OverlayLabelRef error_ref_;
   OverlayLabelRef empty_ref_;
-  // Warm across frames like the scratch: the row refs of the visible window.
   static thread_local std::vector<OverlayRowRef> row_refs_;
 };
 
 thread_local std::vector<OverlayRowRef> ListOverlayBuilder::row_refs_;
 
-}  // namespace
+}
 
 void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& out,
                                                      const WorkspaceLayout& layout,
@@ -1248,9 +1070,6 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
   out.visible = overlay.visible;
   out.mode = overlay.mode;
   out.current_surface = current_surface;
-  // Seeded from state so the field is never stale on the paths that return before
-  // the list layout computes it (hidden overlay, find widget); the list-overlay
-  // path below replaces it with the layout-clamped row.
   out.scroll_row = overlay.scroll_row;
   out.buffer_search_query_text = overlay.workflow.buffer_search.query.text();
   out.caret_anchored = overlay.mode == OverlayMode::Completion;
@@ -1322,8 +1141,6 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
   const std::string_view replace_text =
       editing_replace ? project_search.edit_buffer.text() : project_search.replace_text.text();
 
-  // String constants live in static storage; live state is owned by the project state which
-  // outlives this view model. Either way the view is safe to hold for the duration of a frame.
   constexpr std::string_view kQueryPlaceholder = "Search in project";
   constexpr std::string_view kReplacePlaceholder = "Replace in project";
   const std::string_view query_fallback_text =
@@ -1356,15 +1173,7 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
   std::shared_ptr<const GitSidebarPresentation> git_presentation;
   const GitSidebarViewModel* git_sidebar = nullptr;
   const std::vector<GitSidebarLine>* git_sidebar_lines = nullptr;
-  // Building the git VM walks every changed/staged/untracked/outgoing entry and
-  // allocates per-entry label strings. Only do it when the sidebar is actually
-  // visible: a hidden-but-git-selected sidebar otherwise rebuilds (and discards)
-  // the whole VM every frame. Mirrors the debug-pane VM's visibility guard.
   if (mode == SidebarMode::Git && context_.current_project_state.sidebar.visible) {
-    // Held from the revision-exact memo: a hover/scroll repaint that changed no git
-    // state reuses the prior build with zero copying, and a rebuild later in the
-    // frame (hit-testing, a control query) replaces the memo's build without
-    // touching the one this frame paints (soak eab90dac1acf).
     git_presentation = SharedGitSidebarPresentation(context_.current_project_state.sidebar.git,
                                                     context_.current_project_state.root,
                                                     context_.current_project_state.branch_review);
@@ -1421,8 +1230,6 @@ DebugPaneSurfaceViewModel RenderViewModelBuilder::BuildDebugPaneSurface() const 
       .scroll_row = scroll_row,
       .header_label = spec != nullptr ? spec->label : std::string_view{},
       .focus = state.surface.focus,
-      // Only the active mode's model is wired; the render TU draws whichever is
-      // non-null and never touches broad project state.
       .execution = pane.mode == DebugPaneMode::CallStack ? &state.debug_execution : nullptr,
       .variables = pane.mode == DebugPaneMode::Variables ? &state.debug_variables : nullptr,
       .watch = pane.mode == DebugPaneMode::Watch ? &state.debug_watch : nullptr,
@@ -1438,26 +1245,16 @@ void RenderViewModelBuilder::BuildEditorInsetGaps(editor::EditorViewModel& out,
                                                   editor::InsetGapFeatureFlags inset_flags,
                                                   float line_height) const {
   out.code_lens_above = inset_flags.code_lens_above;
-  // No plugin/LSP contribution published: no surfaces or code lenses can exist,
-  // so skip the gap build entirely (and never touch the stores) — the common
-  // no-plugin case pays nothing here.
   const auto* pres = context_.current_project_state.plugin_presentation_if_present();
   if (pres == nullptr) {
     out.row_gaps = {};
     out.row_gap_contents = {};
     return;
   }
-  // Ghost text (gated): the suggestion's first line draws inline at the caret
-  // (tail, set below), and its remaining lines occupy a single Below gap so the
-  // real rows push down. The gap is emitted by the shared producer so the render
-  // and hit-test paths stay in sync; the tail is render-only.
   editor::InsetGapOptions gap_options{.inline_surfaces = inset_flags.inline_surfaces,
                                       .code_lens_above = inset_flags.code_lens_above,
                                       .code_lens_height = line_height};
   thread_local editor::GhostTextInset ghost_inset;
-  // SamePathNormalized compares raw first (document paths are stored normalized,
-  // so it matches in the common case), keeping this per-frame check zero-allocation
-  // while a suggestion shows.
   if (inset_flags.ghost_text && pres->ghost_text.has_value() &&
       !pres->ghost_text->lines.empty() &&
       util::SamePathNormalized(viewport.path(), pres->ghost_text->path)) {
@@ -1483,17 +1280,6 @@ void RenderViewModelBuilder::BuildEditorInsetGaps(editor::EditorViewModel& out,
   out.row_gap_contents = std::span<const editor::RowGapContent>(contents.data(), contents.size());
 }
 
-// The sticky band's opener lines, memoized on (viewport, scroll line, fold
-// revision, settings). Split out of BuildEditorViewModelInto because the render
-// path needs the band's *height* before it can size the editor metrics, and the
-// band does not depend on those metrics.
-//
-// Resolving it needed a whole view-model build before: the pane built the model
-// with visible_rows computed for a zero-height band, read sticky_lines.size(),
-// recomputed the metrics, and built the entire model again -- fold gutter marks,
-// breakpoints, whitespace runs, occurrence scan, inset gaps, all of it twice per
-// frame for every pane with sticky scroll on (the default). The
-// render.build_editor_view_model_calls counter read 2 per frame.
 std::span<const std::size_t> RenderViewModelBuilder::StickyScrollLines(
     const editor::TextViewport& viewport,
     const editor::FoldingModel* folding_model,
@@ -1552,14 +1338,7 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
   out.whitespace_glyph_runs.clear();
   out.whitespace_row_offsets.clear();
 
-  // Phase E1/E2 (gated, default off): inline plugin-surface insets become inert
-  // gaps below their anchor row, and above-line code lenses become inert strips
-  // above their line. Built here so the render TU stays view-model-only; bounded
-  // to the visible window so it is O(visible).
   out.code_lens_above = false;
-  // Phase scopes, because this function is half the cost of an editor pane on the
-  // soft-wrap scroll scenario -- 0.48 ms of 1.05 ms a frame -- and not one of its
-  // five phases had a name to hang that on (TD-2026-08-15-248).
   {
     util::PerformanceTrace::Scope insets_scope("RenderViewModelBuilder::Editor::InsetGaps");
     BuildEditorInsetGaps(out, viewport, visible_rows, inset_flags, line_height);
@@ -1589,9 +1368,6 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
     }
   }
 
-  // Breakpoint gutter dots, gated on the debugger being enabled. Mirrors the
-  // fold-mark loop: one mark per visible opener row, deduped to the first visual
-  // row of a wrapped line so a dot is not painted on every wrap fragment.
   if (debug_enabled && breakpoints != nullptr && !viewport.is_placeholder()) {
     if (const std::vector<editor::Breakpoint>* file =
             breakpoints->FindByPathKey(viewport.path_key());
@@ -1624,10 +1400,6 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
     }
   }
 
-  // Execution-line marker: set only when a session is stopped on this viewport's
-  // file. Path-matched after normalization (the frame source was normalized the
-  // same way when the stop was recorded); SamePathNormalized skips the per-frame
-  // string allocations the old generic_string() compare paid.
   if (debug_enabled && debug_execution != nullptr && debug_execution->HasLocation() &&
       !viewport.is_placeholder()) {
     if (util::SamePathNormalized(viewport.path(), debug_execution->FocusedPath())) {
@@ -1635,7 +1407,7 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
     }
   }
 
-  }  // GutterMarks
+  }
 
   {
     util::PerformanceTrace::Scope sticky_scope("RenderViewModelBuilder::Editor::StickyLines");
@@ -1660,23 +1432,10 @@ std::span<const editor::OccurrenceRange> RenderViewModelBuilder::OccurrenceRange
   util::PerformanceTrace::Scope occurrences_scope(
       "RenderViewModelBuilder::Editor::Occurrences");
 
-  // While a word is being actively typed/deleted the occurrence seed is a growing
-  // prefix ("a" → "ap" → "app"), which both churns the scan cache every keystroke
-  // and paints a fresh semi-transparent highlight layer into the retained scene
-  // texture before the prior one is cleared (visible as left-to-right darkening).
-  // Suppress occurrence highlighting for an edit-driven caret; a deliberate
-  // navigation re-syncs the anchor and restores it. A selection-seeded highlight
-  // stays (the seed is the selection, not the typed prefix).
   if (viewport.CaretIsFromActiveTextEdit() && !viewport.selection_range().has_value()) {
     return {};
   }
 
-  // Prefer the language server's answer whenever it is still valid for this caret.
-  // It resolved the symbol, so a same-spelled name in an unrelated scope stays
-  // unpainted, a shadowed one is painted, and writes get the strong tint. The
-  // textual scan below stays the fallback: unserved languages, servers with no
-  // documentHighlightProvider, and the window between a caret move and its
-  // response (where showing the last good set would be worse than a word match).
   const ProjectWorkspaceState::SemanticOccurrenceHighlights& semantic =
       context_.current_project_state.semantic_occurrences;
   if (semantic.CoversCaret(viewport.path(), viewport.document_identity(), viewport.content_revision(),
@@ -1747,13 +1506,9 @@ editor::EditorViewModel RenderViewModelBuilder::BuildEditorViewModel(
 BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() const {
   const TabDragState& drag = context_.interaction_state.tab_drag;
   const TabSlideState& slide = context_.interaction_state.tab_slide;
-  // The bottom-panel strip is never a cross-group animation, so it is always the
-  // first slot; `OffsetsFor` finds it wherever it sits regardless.
   const std::span<const float> panel_offsets = slide.OffsetsFor(TabDragKind::Terminal, 0);
   const bool sliding = !panel_offsets.empty();
   const PanelState& panel = context_.current_project_state.panel;
-  // Resolve the plugin content surface (Phase E0) here so the render TU paints a
-  // prebuilt pointer instead of walking owner/id through project state.
   const editor::SurfaceContent* plugin_surface = nullptr;
   if (panel.content == PanelContentKind::PluginSurface) {
     if (const auto* pres = context_.current_project_state.plugin_presentation_if_present();
@@ -1761,12 +1516,6 @@ BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() co
       plugin_surface = pres->surfaces.Find(panel.surface_owner, panel.surface_id);
     }
   }
-  // Empty-state hint. Phrased like the debug pane's -- say what would put a row
-  // here -- and static, so painting it costs no allocation. The bottom panel was
-  // the last list surface in the shell that painted a blank body with no
-  // explanation: an output channel whose tab is open before the tool has written
-  // anything, and a Terminal panel with no live session, both showed a header over
-  // nothing.
   std::string_view empty_label;
   if (panel.content == PanelContentKind::Terminal) {
     empty_label = "No terminal session — use + on the tab strip, or Terminal ▸ New Terminal.";
@@ -1788,8 +1537,6 @@ BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() co
               .sliding = sliding,
               .offsets = panel_offsets,
           },
-      // `tabs` / `tab_overflow` stay empty here; PrepareFrameOnce fills them once
-      // the frame layout (bottom-panel header rect) is known.
       .plugin_surface = plugin_surface,
       .plugin_surface_scroll_y = static_cast<float>(panel.surface_scroll_y),
       .empty_label = empty_label,
@@ -1798,10 +1545,6 @@ BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() co
 
 HoverPopupViewModel RenderViewModelBuilder::BuildHoverPopup(bool has_active_target,
                                                            bool modal_open) const {
-  // A card left open over the editor stayed live under the command palette --
-  // painted over but hit-tested first, so a click on a palette row inside its rect
-  // was swallowed. The centred list overlays, the prompts and the modals cover it.
-  // (The caret-anchored lists and the find widget sit beside it and do not.)
   const OverlayState& overlay = context_.current_project_state.overlay;
   bool list_overlay = false;
   if (overlay.visible) {
@@ -1864,8 +1607,6 @@ NotificationsViewModel RenderViewModelBuilder::BuildNotifications(
         .focused = notification.focused,
     };
 
-    // Buttons share the row evenly when their labels do not all fit, so one long
-    // label cannot push the others off the card; each keeps at least its padding.
     const std::size_t button_count = notification.actions.size();
     float buttons_width = 0.0f;
     std::array<float, NotificationService::MaxActions()> label_widths{};
@@ -1881,8 +1622,6 @@ NotificationsViewModel RenderViewModelBuilder::BuildNotifications(
     }
     const float message_width = text_renderer.MeasureWidth(notification.message);
     const float content_width = std::max(message_width, buttons_width);
-    // Wrap a message wider than the card: greedy, at spaces, into views of the
-    // row's own text; the last line takes whatever is left (truncated when painted).
     std::string_view rest = notification.message;
     while (!rest.empty() && entry.lines.size() + 1 < entry.lines.capacity() &&
            text_renderer.MeasureWidth(rest) > budget) {
@@ -1895,7 +1634,7 @@ NotificationsViewModel RenderViewModelBuilder::BuildNotifications(
         cut = space;
       }
       if (cut == 0) {
-        break;  // one word wider than the card: it is truncated, not split
+        break;
       }
       entry.lines.push_back(rest.substr(0, cut));
       rest.remove_prefix(cut + 1);
@@ -1906,8 +1645,6 @@ NotificationsViewModel RenderViewModelBuilder::BuildNotifications(
     entry.layout = NotificationToastLayoutAt(status_bar, line_height, bottom, content_width,
                                              button_count > 0, entry.lines.size());
 
-    // Right-aligned, in the order the caller listed them (VS Code puts the primary
-    // action last, nearest the corner).
     float x = entry.layout.buttons.x + entry.layout.buttons.w - buttons_width;
     for (std::size_t i = 0; i < button_count; ++i) {
       const float width = label_widths[i] + kNotificationButtonPadX * 2.0f;
@@ -1950,8 +1687,6 @@ std::optional<NotificationHit> NotificationHitAt(const NotificationsViewModel& v
 
 namespace {
 
-// The display leaf of a path: its folder/file name, stepping past a trailing separator so
-// "/path/proj/" still yields "proj"; falls back to the full string for a bare root.
 std::string PathLeafName(const std::filesystem::path& path) {
   std::filesystem::path leaf = path;
   if (!leaf.has_filename() && leaf.has_parent_path()) {
@@ -1961,13 +1696,6 @@ std::string PathLeafName(const std::filesystem::path& path) {
   return name.empty() ? path.string() : name;
 }
 
-// Build a WelcomeRecent row for each of the project's recent files: the file's
-// name, then the folder it is in relative to `project_root` ("" at the root) --
-// as VS Code's recent list reads. Never the full path: for a remote project the
-// files live in the local mirror, and its path names a directory on this machine
-// that the user never chose, where the host's own path is the same relative one.
-// Callers pass RecentsService's exists-validated list (ExistingRecentFilesFor),
-// whose validation is cached against the MRU revision (TD-2026-07-17A-014).
 std::vector<editor::WelcomeRecent> BuildRecentFileRows(const std::filesystem::path& project_root,
                                                        std::span<const std::filesystem::path> paths) {
   std::vector<editor::WelcomeRecent> rows;
@@ -1986,8 +1714,6 @@ std::vector<editor::WelcomeRecent> BuildRecentFileRows(const std::filesystem::pa
   return rows;
 }
 
-// A row per recent project, named by its id: a remote one shows `host:/path`,
-// never its mirror's directory, and is reopened by that name.
 std::vector<editor::WelcomeRecent> BuildRecentProjectRows(std::span<const project::ProjectId> ids) {
   std::vector<editor::WelcomeRecent> rows;
   rows.reserve(ids.size());
@@ -2005,7 +1731,6 @@ std::vector<editor::WelcomeRecent> BuildRecentProjectRows(std::span<const projec
   return rows;
 }
 
-// Append the action's accelerator to `label` as "  (chord)" when one is bound.
 std::string LabelWithChord(std::string label, ActionId id) {
   if (const ActionSpec* spec = FindWorkspaceActionSpec(id);
       spec != nullptr && !spec->accelerator.empty()) {
@@ -2014,7 +1739,7 @@ std::string LabelWithChord(std::string label, ActionId id) {
   return label;
 }
 
-}  // namespace
+}
 
 const editor::WelcomeViewModel& RenderViewModelBuilder::BuildWelcomeView(
     const RecentsService& recents) const {
@@ -2036,13 +1761,10 @@ const editor::WelcomeViewModel& RenderViewModelBuilder::BuildWelcomeView(
   g_welcome_view_cache.root = cache_root;
   editor::WelcomeViewModel& vm = g_welcome_view_cache.model;
   vm = editor::WelcomeViewModel{};
-  // A new generation per rebuild, never reused: the model is rebuilt where it is.
   thread_local std::uint64_t generation = 0;
   vm.generation = ++generation;
   vm.shortcuts_heading = "Keyboard Shortcuts";
 
-  // Curated, registry-sourced shortcut rows. Listing ActionIds (not literal chords)
-  // keeps the welcome screen in lock-step with the command registry and keybindings.
   static constexpr std::array<ActionId, 9> kWelcomeShortcutActions = {
       ActionId::OpenCommandPalette, ActionId::Files,    ActionId::ProjectSearch,
       ActionId::Search,             ActionId::Save,     ActionId::SidebarToggle,
@@ -2062,7 +1784,6 @@ const editor::WelcomeViewModel& RenderViewModelBuilder::BuildWelcomeView(
 
   const std::filesystem::path& root = context_.current_project_state.root;
   if (root.empty()) {
-    // Cold-start home: open a folder or reopen a recent project.
     vm.kind = editor::WelcomeKind::NoProject;
     vm.title = "Welcome to microide";
     vm.subtitle = "Open a folder to start, or pick up where you left off.";
@@ -2075,10 +1796,7 @@ const editor::WelcomeViewModel& RenderViewModelBuilder::BuildWelcomeView(
     return vm;
   }
 
-  // Project home: a project is open but the focused group has no tab. Offer this project's
-  // recent files plus the create/open/find affordances — not "open a different folder".
   vm.kind = editor::WelcomeKind::ProjectHome;
-  // The project's name, not its root's: a remote project's root is its mirror.
   vm.title = context_.current_project_state.id.Label();
   vm.subtitle = "Open a file, or jump back into a recent one.";
   vm.actions_heading = "Actions";
@@ -2120,19 +1838,10 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
         .tone = seg.tone,
     });
   };
-  // Spec ordering (workspace-status-bar §"Segment list at first slice"):
-  //   left:  project, branch, language, indent, encoding
-  //   right: line/column, problems, lsp
   add_segment(StatusBarSegmentId::Project, vm.left_segments);
   add_segment(StatusBarSegmentId::Branch, vm.left_segments);
   add_segment(StatusBarSegmentId::Worktrees, vm.left_segments);
   add_segment(StatusBarSegmentId::Remote, vm.left_segments);
-  // Compact-mode drop order (workspace-status-bar §"Compact-mode segment drop order"):
-  //   encoding, language, indent display
-  // Keep: project+branch+cleanliness, line/column, problems count, LSP state.
-  // Not added rather than added-then-erased: the drop set is exactly the three
-  // segments that come after Branch, so skipping them preserves the same order
-  // and costs no find-and-erase per painted frame.
   if (vm.layout_mode != LayoutMode::Compact) {
     add_segment(StatusBarSegmentId::Language, vm.left_segments);
     add_segment(StatusBarSegmentId::Indent, vm.left_segments);
@@ -2147,28 +1856,19 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
 
 namespace {
 
-// Settings two-pane metrics. Control geometry uses fixed slots; the description
-// column is word-wrapped, so BuildSettingsOverlay takes a TextRenderer to measure
-// text and size each row to fit its full (wrapped) help description.
 constexpr float kSettingsPad = 12.0f;
 constexpr float kSettingsHeaderH = 38.0f;
 constexpr float kSettingsFilterH = 26.0f;
-// Left and right inset of the filter text inside its bar.
 constexpr float kSettingsFilterTextInset = 8.0f;
 constexpr float kSettingsCatRowH = 28.0f;
-// Value rows are variable-height: a fixed head band (title + controls) plus one
-// line per wrapped description line, so the full help text is always visible.
-constexpr float kSettingsRowPadTop = 6.0f;     // title baseline offset from row top
-constexpr float kSettingsRowPadBottom = 8.0f;  // gap below the last description line
+constexpr float kSettingsRowPadTop = 6.0f;
+constexpr float kSettingsRowPadBottom = 8.0f;
 constexpr float kSettingsScrollbarMargin = 14.0f;
-// Help/About column metrics, moved here with the rest of its scroll model.
 constexpr float kSettingsHelpPadX = 18.0f;
 constexpr float kSettingsHelpPadRight = 16.0f;
 constexpr float kSettingsHelpPadY = 10.0f;
 constexpr float kSettingsHelpColumnGap = 16.0f;
 constexpr float kSettingsHelpEntryGap = 6.0f;
-// Footer band carrying the result count and the key hint, matching the quick-open
-// modals. Both modes reserve it, so the two surfaces end at the same place.
 constexpr float kSettingsFooterH = 24.0f;
 constexpr float kSettingsBtnW = 24.0f;
 constexpr float kSettingsBtnH = 22.0f;
@@ -2179,9 +1879,6 @@ constexpr float kSettingsScopeW = 68.0f;
 constexpr float kSettingsTextEditW = 180.0f;
 constexpr float kSettingsCheckBox = 18.0f;
 
-// One-line subtitle shown under each settings section's title, keyed by the
-// top-level category label. Unknown categories (e.g. plugin-contributed) get none,
-// so the header still renders its title but no subtitle line.
 std::string_view SettingsSectionSubtitle(std::string_view category) {
   if (category == "Editor") return "Text editing, indentation, saving, and fonts";
   if (category == "Appearance") return "Theme, interface scale, layout, and chrome";
@@ -2197,9 +1894,6 @@ std::string_view SettingsSectionSubtitle(std::string_view category) {
   return {};
 }
 
-// The subsection label of a group ("Editor → View" -> "View",
-// "Editor → Essentials → Block Structure" -> "Essentials → Block Structure"), or
-// empty when the group has no subsection. Used to render right-pane sub-headers.
 std::string_view SettingsSubsectionLabel(std::string_view group) {
   const std::size_t arrow = group.find(" → ");
   if (arrow == std::string_view::npos) {
@@ -2209,17 +1903,12 @@ std::string_view SettingsSubsectionLabel(std::string_view group) {
 }
 constexpr float kSettingsControlGap = 6.0f;
 
-// The Help / About card: two read-only columns (the label column sized to the
-// widest label, bounded) with a word-wrapped detail, scrolled a whole entry at a time.
 void LayoutHelpAboutOverlay(SettingsOverlayViewModel& vm, const SettingsOverlayService& service,
                             const render::TextRenderer& text_renderer) {
   vm.title = "Help / About";
   vm.filter_placeholder = "Type to filter commands and shortcuts…";
   vm.help_rows = std::span<const HelpAboutRow>(service.HelpRows());
 
-  // Two read-only columns with a word-wrapped detail, scrolled a whole entry at
-  // a time. The label column sizes to the widest label, bounded so a long one
-  // cannot starve the detail column.
   const float content_x = vm.rect.x + kSettingsHelpPadX;
   const float content_right = vm.rect.x + vm.rect.w - kSettingsHelpPadRight;
   const float inner_width = std::max(1.0f, content_right - content_x);
@@ -2227,9 +1916,6 @@ void LayoutHelpAboutOverlay(SettingsOverlayViewModel& vm, const SettingsOverlayS
   for (const HelpAboutRow& row : vm.help_rows) {
     label_column = std::max(label_column, text_renderer.MeasureWidth(row.label));
   }
-  // The 40% cap wins over the 100 px floor: on a card narrower than 250 px the
-  // floor would exceed the cap, and std::clamp with lo > hi is undefined (an
-  // assertion abort with libstdc++ assertions on; soak 56b6f01f2cf7).
   vm.help_label_column = std::min(std::max(label_column, 100.0f), inner_width * 0.40f);
   vm.help_detail_x = content_x + vm.help_label_column + kSettingsHelpColumnGap;
   vm.help_detail_width = std::max(40.0f, content_right - vm.help_detail_x);
@@ -2240,8 +1926,6 @@ void LayoutHelpAboutOverlay(SettingsOverlayViewModel& vm, const SettingsOverlayS
   const float available_height = std::max(0.0f, list_bottom - list_top);
   vm.help_list_rect = MakeRect(vm.rect.x, list_top, vm.rect.w, std::max(1.0f, available_height));
 
-  // Entries are variable-height, so the count that fits is measured from the
-  // bottom up: that is exactly the window shown at max scroll.
   const float line_height = text_renderer.LineHeight();
   const int total_rows = static_cast<int>(vm.help_rows.size());
   float accumulated = 0.0f;
@@ -2266,9 +1950,6 @@ void LayoutHelpAboutOverlay(SettingsOverlayViewModel& vm, const SettingsOverlayS
   }
 }
 
-// A settings row's controls, right to left from `content_right` in its head band:
-// the value control, the reset affordance and the scope chip. Returns where they
-// begin, which is where the description column ends.
 float LayoutSettingsRowControls(SettingsRowViewModel& rvm, const SettingsOverlayRow& row, float head_top,
                                 float head_band, float content_right, const SettingsOverlayService& service,
                                 const render::TextRenderer& text_renderer) {
@@ -2282,10 +1963,6 @@ float LayoutSettingsRowControls(SettingsRowViewModel& rvm, const SettingsOverlay
     case SettingsControlKind::Checkbox: {
       const float box_y = head_top + (head_band - kSettingsCheckBox) * 0.5f;
       control.checkbox_rect = MakeRect(content_right - kSettingsCheckBox, box_y, kSettingsCheckBox, kSettingsCheckBox);
-      // The predicate the toggle and every reader use: a private token list here
-      // drew "no" checked (a click then wrote "true": still checked) and ""
-      // unchecked (a click wrote "false": still unchecked).
-      // (SettingFlagEnabled of a present value, without copying it per row).
       control.checkbox_on = !util::IsFalseyToken(row.value);
       leftmost = control.checkbox_rect.x;
       break;
@@ -2316,10 +1993,6 @@ float LayoutSettingsRowControls(SettingsRowViewModel& rvm, const SettingsOverlay
       break;
   }
 
-  // Precompute the value string + caret the render TU draws, so painting the
-  // settings overlay never constructs "(default)", truncates the value to the box,
-  // or measures a caret prefix per frame (TD-2026-07-17A-007). The truncation width
-  // matches the render TU's `value_rect.w - 12` for all three drawn kinds.
   if (control.kind == SettingsControlKind::Segmented || control.kind == SettingsControlKind::Stepper ||
       control.kind == SettingsControlKind::TextEdit) {
     if (control.kind == SettingsControlKind::TextEdit && control.display_value.empty() && !control.editing) {
@@ -2330,7 +2003,6 @@ float LayoutSettingsRowControls(SettingsRowViewModel& rvm, const SettingsOverlay
     }
     if (control.editing) {
       const std::size_t caret = std::min(control.edit_caret, control.display_value.size());
-      // display_value is a string_view, so this substr allocates nothing.
       control.caret_offset_x = text_renderer.MeasureWidth(control.display_value.substr(0, caret));
     }
   }
@@ -2339,15 +2011,10 @@ float LayoutSettingsRowControls(SettingsRowViewModel& rvm, const SettingsOverlay
     rvm.reset_rect = MakeRect(leftmost - kSettingsControlGap - kSettingsResetW, cy, kSettingsResetW, kSettingsBtnH);
     leftmost = rvm.reset_rect.x;
   }
-  // Per-row scope chip ("Project" / "Default") for built-in project-scoped
-  // settings, placed to the left of the reset affordance. The active write
-  // target is "Project" (this project) unless a user-level default exists with
-  // no per-project override, in which case edits flow to the shared default.
   if (row.scope_selectable) {
     const bool target_project = row.project_override || !row.has_user_default;
     rvm.scope_is_project = target_project;
     rvm.scope_text = target_project ? "Project" : "Default";
-    // Explain what the chip does and which way clicking it will flip the value.
     rvm.scope_help = target_project ? "Saved for this project only, overriding your user default. "
                                       "Click to make it your user-wide default instead."
                                     : "Following your user-wide default. "
@@ -2357,7 +2024,7 @@ float LayoutSettingsRowControls(SettingsRowViewModel& rvm, const SettingsOverlay
   return leftmost;
 }
 
-}  // namespace
+}
 
 SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     const WorkspaceLayout& layout,
@@ -2376,9 +2043,6 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     return vm;
   }
 
-  // Footer band: reserved from the bottom of the card before either mode lays its
-  // content out, so the list/pane heights below account for it. Inset by the card
-  // border so painting it does not erase the card's bottom edge.
   vm.footer_rect = MakeRect(vm.rect.x + 1.0f, vm.rect.y + vm.rect.h - kSettingsFooterH - 1.0f,
                             vm.rect.w - 2.0f, kSettingsFooterH);
   {
@@ -2391,23 +2055,17 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
                             : "No setting matches this filter.";
     }
   }
-  // Help/About rows are read-only, so it says "scroll", not "choose"; Settings has
-  // two panes and editable values, so it advertises Tab and Enter.
   vm.footer_hint = vm.mode == SettingsOverlayMode::HelpAbout
                        ? "↑↓ scroll · Esc close"
                        : "Tab pane · ↑↓ move · Enter edit · Esc close";
 
-  // The filter bar, the same in both modes: full width just below the header.
-  // Its text scrolls with the caret, as every single-line input does -- drawn
-  // whole, a long query ran past the bar and out of the card, over whatever lay
-  // beside the overlay (QA monkey).
   vm.filter_rect = MakeRect(vm.rect.x + kSettingsPad, vm.rect.y + kSettingsHeaderH + 4.0f,
                             vm.rect.w - 2.0f * kSettingsPad, kSettingsFilterH);
   if (!vm.query_empty) {
     const editor::SingleLineEditor& editor = service.QueryEditor();
     const float available = std::max(0.0f, vm.filter_rect.w - 2.0f * kSettingsFilterTextInset);
     if (text_renderer.MeasureWidth(vm.query) <= available) {
-      vm.query_display_view = vm.query;  // fits: a view, no copy
+      vm.query_display_view = vm.query;
       vm.query_caret_x = text_renderer.MeasureWidth(
           vm.query.substr(0, std::min(editor.caret(), vm.query.size())));
     } else {
@@ -2433,8 +2091,6 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
   const float left_w = std::clamp(vm.rect.w * 0.26f, 150.0f, 240.0f);
   vm.left_pane_rect = MakeRect(vm.rect.x, content_top, left_w, content_height);
 
-  // Carve a fixed header band (section title + one-line subtitle) from the top of the
-  // right pane; the value rows scroll below it. The left rail keeps its full height.
   const float section_line_height = text_renderer.LineHeight();
   const float section_header_h =
       kSettingsRowPadTop + 2.0f * section_line_height + kSettingsRowPadBottom;
@@ -2450,9 +2106,6 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
                                 vm.rect.w - left_w,
                                 std::max(0.0f, content_height - section_header_h));
 
-  // Left pane: one clickable rect per category, whole-row scrolled. Categories are
-  // fixed-height so the visible count and max scroll are exact; the offset shifts
-  // every category rect up so off-top rows land above the pane (render skips them).
   const std::vector<std::string>& categories = service.Categories();
   const int category_count = static_cast<int>(categories.size());
   vm.category_visible_rows =
@@ -2479,7 +2132,6 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
         static_cast<float>(vm.category_scroll_row), false);
   }
 
-  // Right pane: rows of the selected category, variable-height, whole-row scrolled.
   std::vector<const SettingsOverlayRow*> cat_rows;
   for (int i = 0;; ++i) {
     const SettingsOverlayRow* row = service.RowAtVisibleIndex(service.SelectedCategory(), i);
@@ -2490,9 +2142,6 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
   }
   const int total = static_cast<int>(cat_rows.size());
 
-  // A row is a fixed head band (title + right-aligned controls) plus one line per
-  // wrapped description line. N>=1 keeps description-less rows at the previous
-  // single-line height, so their layout is unchanged.
   const float line_height = text_renderer.LineHeight();
   const float head_band = kSettingsRowPadTop + 2.0f * line_height + kSettingsRowPadBottom;
   const auto row_height_for = [&](std::size_t desc_lines) {
@@ -2502,10 +2151,6 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
   const float row_w = vm.right_pane_rect.w - kSettingsScrollbarMargin;
   const float content_right = vm.right_pane_rect.x + row_w - kSettingsPad;
 
-  // Build every row at its natural (unscrolled) position, wrapping the description
-  // to the row's text column so heights are exact; the scroll offset is applied
-  // afterwards. Controls/title/scope center in the fixed head band (anchored to the
-  // row top) so they stay aligned with the title however tall the description is.
   vm.rows.reserve(static_cast<std::size_t>(total));
   std::vector<float> heights;
   heights.reserve(static_cast<std::size_t>(total));
@@ -2522,9 +2167,6 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     rvm.selected = i == service.SelectedRow();
     rvm.resettable = row.resettable;
 
-    // A sub-header labels the first row of each non-empty subsection ("Editor → View"
-    // -> "View"). It occupies a reserved line strip above the row's head band; the
-    // head-band content (title/controls/description) anchors below it at head_top.
     const std::string_view subsection = SettingsSubsectionLabel(row.group);
     const bool new_subsection = !subsection.empty() && subsection != prev_subsection;
     prev_subsection = subsection;
@@ -2538,9 +2180,6 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     const float leftmost =
         LayoutSettingsRowControls(rvm, row, head_top, head_band, content_right, service, text_renderer);
 
-    // Description column: everything left of the controls (and the scope chip, if
-    // present). The dim scope label ("User"/"Project") is right-aligned on the
-    // first description line; reserve its slot so wrapped text never runs under it.
     const float text_x = rvm.row_rect.x + kSettingsPad;
     float text_left = leftmost;
     if (rvm.scope_rect.w > 0.0f) {
@@ -2558,15 +2197,10 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     }
     if (!rvm.description.empty()) {
       if (first_line_width >= full_description_width - 0.5f) {
-        // No scope-label reservation in effect: wrap every line at the full width.
         text_renderer.ForEachWrappedLine(
             rvm.description, full_description_width,
             [&](std::string_view wrapped) { rvm.description_lines.push_back(wrapped); });
       } else {
-        // The dim scope label sits only on the first line, so wrap just the first
-        // line at the reduced width to clear it, then wrap the remainder at the full
-        // width — continuation lines have no label above them and need not be
-        // narrowed (fewer wrapped lines -> shorter rows -> more settings on screen).
         std::string_view remainder = rvm.description;
         bool first_emitted = false;
         text_renderer.ForEachWrappedLine(
@@ -2594,20 +2228,12 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
 
     const float row_h = row_height_for(rvm.description_lines.size());
     rvm.row_rect.h = row_h;
-    // The row advances by its own height plus any reserved sub-header strip above it;
-    // row_rect stays the clickable setting row (excludes the sub-header line).
-    // advance_height is the scroll-independent per-row advance, exposed so keyboard
-    // keep-visible can compute the scroll target in one pass instead of rebuilding
-    // the whole overlay per candidate scroll step (TD-2026-07-17A-079).
     rvm.advance_height = row_h + subheader_h;
     heights.push_back(row_h + subheader_h);
     natural_y += row_h + subheader_h;
     vm.rows.push_back(std::move(rvm));
   }
 
-  // Scroll model: whole-row index. max_scroll is the largest first-row index that
-  // still fills the pane to the bottom (trailing-fit accumulation), and the pixel
-  // offset for the chosen scroll shifts every built row up into place.
   int fit_from_bottom = 0;
   float acc = 0.0f;
   for (int i = total - 1; i >= 0; --i) {
@@ -2643,7 +2269,6 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     }
   }
 
-  // Fully-visible row count from the current scroll drives keyboard keep-visible.
   const float rows_content_bottom = vm.right_pane_rect.y + vm.right_pane_rect.h;
   float visible_y = vm.right_pane_rect.y;
   int visible = 0;
@@ -2662,34 +2287,23 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
         static_cast<float>(scroll), false);
   }
 
-  // Font-picker dropdown: a windowed list of matching installed families plus a
-  // pinned "Choose file…" entry, anchored to the editing row's value box.
   if (service.EditingFonts() && has_editing_row) {
     const std::vector<std::string_view>& filtered = service.FilteredFontFamilies();
     const int family_count = static_cast<int>(filtered.size());
     const int highlight = service.PickerHighlight();
-    // "Choose file…" is pinned after the families, so its index is the family count.
-    // Use the already-computed `filtered` rather than PickerChooseFileIndex(), which
-    // re-runs the whole FilteredFontFamilies() filter every frame the picker is open.
     const int choose_file_index = family_count;
     constexpr int kMaxVisibleFamilies = SettingsOverlayService::kPickerVisibleFamilies;
     constexpr float kPickerRowH = 22.0f;
     constexpr float kPickerPad = 3.0f;
 
-    // The scroll offset is owned by the service (driven by wheel / scrollbar, kept
-    // in view by keyboard nav); the window is just a clamped slice from it.
     const int start =
         std::clamp(service.PickerScroll(), 0, std::max(0, family_count - kMaxVisibleFamilies));
     const int end = std::min(family_count, start + kMaxVisibleFamilies);
     const int visible_family_rows = end - start;
-    const int total_rows = visible_family_rows + 1;  // + "Choose file…" footer
+    const int total_rows = visible_family_rows + 1;
 
     const float card_w = std::max(editing_value_rect.w, 220.0f);
     const float card_h = static_cast<float>(total_rows) * kPickerRowH + kPickerPad * 2.0f;
-    // Prefer below the field; flip above when it would overflow the overlay bottom.
-    // When it fits on neither side it overlaps the field, pinned inside the
-    // overlay: it went below regardless and ran past the window (soak
-    // 5ee820946d92, "Choose file…" at y 536 in a 546-high window).
     const float top = vm.rect.y + 4.0f;
     const float bottom = vm.rect.y + vm.rect.h - 4.0f;
     const float below_y = editing_value_rect.y + editing_value_rect.h + 2.0f;
@@ -2697,8 +2311,6 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     const float card_y = below_y + card_h <= bottom ? below_y
                          : above_y >= top           ? above_y
                                                     : std::max(top, bottom - card_h);
-    // A card wider than the overlay pins to its left edge rather than handing
-    // std::clamp an inverted range.
     const float card_min_x = vm.rect.x + 4.0f;
     const float card_x = std::clamp(editing_value_rect.x, card_min_x,
                                     std::max(card_min_x, vm.rect.x + vm.rect.w - card_w - 4.0f));
@@ -2708,7 +2320,6 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     picker.rect = MakeRect(card_x, card_y, card_w, card_h);
     picker.max_scroll = std::max(0, family_count - kMaxVisibleFamilies);
     if (family_count > kMaxVisibleFamilies) {
-      // Scrollbar spans just the family-rows region (above the pinned footer).
       const SDL_FRect families_rect = MakeRect(
           card_x, card_y + kPickerPad, card_w,
           static_cast<float>(visible_family_rows) * kPickerRowH);
@@ -2798,4 +2409,4 @@ std::uint64_t RenderViewModelBuilder::OccurrenceScanCacheMissesForTesting() {
   return g_occurrence_scan_misses;
 }
 
-}  // namespace microide::workspace
+}

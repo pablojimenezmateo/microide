@@ -38,9 +38,6 @@ void CallBufferCallback(runtime_types::PluginInstance* plugin,
                         const std::function<std::string(const runtime_types::PluginInstance*)>&
                             format_plugin_prefix);
 
-// Like CallBufferCallback but pushes a third argument table (the event payload —
-// a changed-line range, caret position, or selection). `push_payload` writes one
-// Lua value onto the stack. Used by the reactive editor events (SEAM 1).
 void CallBufferEventCallback(runtime_types::PluginInstance* plugin,
                              int ref,
                              const char* callback_name,
@@ -78,9 +75,6 @@ bool LoadPluginRoot(const std::filesystem::path& plugin_root,
                         load_plugin_descriptor,
                     const std::function<bool(runtime_types::PluginInstance*, std::string*)>&
                         call_setup,
-                    // Passed the live PluginInstance (not just its lua_State): on
-                    // setup failure the plugin is not yet in `plugins`, so teardown
-                    // must clean its contributions from the pointer we hold here.
                     const std::function<void(const runtime_types::PluginInstance&)>&
                         unregister_for_state,
                     const std::function<void(const runtime_types::PluginInstance*)>&
@@ -92,4 +86,4 @@ bool LoadPluginRoot(const std::filesystem::path& plugin_root,
                     std::string* error_message);
 #endif
 
-}  // namespace microide::plugin::lifecycle_callback_interop
+}

@@ -1,23 +1,3 @@
-// The shell's one hover-tooltip resolver.
-//
-// Every tooltip in the workspace chrome used to be its own pair of
-// `Hovered<Thing>TooltipLabel` / `Hovered<Thing>TooltipRect` shell methods, each
-// with its own copy of the placement maths, and each caller had to remember to
-// list all of them. They had already drifted apart: the sidebar search tooltip
-// was missing from the menu-blocked invalidation lists, the git sidebar tooltip
-// was missing from the motion change-detection list, and the sidebar mode-row
-// tooltip — the only tooltip on an icon-only control — was in neither, so it
-// painted only when the sidebar happened to repaint for some other reason.
-//
-// Only one tooltip can ever show, because the pointer is in one place. So there
-// is one resolver: it walks the providers in a fixed order, returns the first
-// hit already truncated and already placed, and every consumer (paint, redraw
-// invalidation, motion change-detection, tests) reads that single answer.
-//
-// Deliberately NOT named WorkspaceShell*.cpp: that keeps the file off the shell
-// companion-count cap and out of the render-surface lint glob, so it may read
-// state for the hit test, exactly like DebugToolbarSurface.cpp.
-
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
@@ -37,8 +17,6 @@ using namespace detail;
 
 namespace {
 
-// A provider's answer before placement: what to say, and which control to say it
-// about. An empty `text` means "not hovering anything of mine".
 struct TooltipHit {
   std::string text;
   SDL_FRect anchor{};
@@ -46,30 +24,20 @@ struct TooltipHit {
   explicit operator bool() const { return !text.empty(); }
 };
 
-// Tooltips for the shared find widget's fixed buttons. The two surfaces that use
-// it (the editor find/replace card and the terminal find bar) differ only in
-// their toggles, handled by the caller.
 constexpr std::string_view kFindPrevTooltip = "Previous Match (Shift+Enter)";
 constexpr std::string_view kFindNextTooltip = "Next Match (Enter)";
 constexpr std::string_view kFindCloseTooltip = "Close (Escape)";
 constexpr std::string_view kFindReplaceTooltip = "Replace";
 constexpr std::string_view kFindReplaceAllTooltip = "Replace All";
 
-}  // namespace
+}
 
 std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout& layout) const {
-  // A modal (Settings / Help, a prompt, the unsaved-changes prompt) owns the
-  // pointer: nothing under it shows a tooltip (QA redraw verifier: a status-bar
-  // tooltip painted under Settings on full frames only).
   if (!last_mouse_position_valid_ || MenuSurfaceCapturingMouse() ||
       settings_overlay_service_.Visible() || context_.prompts.surface_visible ||
       context_.prompts.dirty_visible) {
     return std::nullopt;
   }
-  // A live tab drag hides every tooltip. The one that was up when the gesture
-  // started used to stay up for the whole drag — floating over the strip the tab
-  // is being dragged across, naming whatever the pointer happened to rest on
-  // first — because the drag path owns the pointer and stops re-resolving hover.
   if (context_.interaction_state.tab_drag.dragging) {
     return std::nullopt;
   }
@@ -80,13 +48,6 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
     return TooltipHit{.text = std::move(text), .anchor = anchor};
   };
 
-  // 1) Project tab strip, 2) editor tab strip: the tab's full path.
-  //
-  // `compute_tabs` is a callable, not a vector: this runs once per painted frame
-  // (RenderHoverTooltip), and passing the vector by value meant both strips were
-  // laid out — one std::vector<VisibleStripTab> with a tooltip-label string per
-  // tab — on every frame, before the containment test that discards them. The
-  // mouse is over a tab strip for a vanishing fraction of frames.
   const auto strip_hit = [&](const SDL_FRect& strip, auto&& compute_tabs) -> TooltipHit {
     if (!Contains(strip, x, y)) {
       return {};
@@ -103,10 +64,6 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
       strip_hit(layout.project_tab_strip, [&]() -> const std::vector<VisibleStripTab>& {
         return tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
       });
-  // Each group's tabs in that group's strip. The focused group's tabs laid over
-  // the whole band (`layout.tab_strip`) named the wrong tab, or none, over any
-  // other pane of a split, and re-laid the strip at a second width every hover
-  // frame, defeating its memo.
   if (!found && !context_.current_project_state.root.empty()) {
     const EditorGroupRectsLayout rects = ComputeEditorGroupRectsForState(layout);
     for (std::size_t group = 0; group < rects.groups.size() && !found; ++group) {
@@ -117,7 +74,6 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
     }
   }
 
-  // 3) Breadcrumb status items (plugin-contributed and built-in).
   if (!found && Contains(layout.breadcrumb, x, y)) {
     for (const VisibleStatusItem& item : ComputeVisibleStatusItems(layout.breadcrumb)) {
       if (item.hovered && !item.item.tooltip.empty()) {
@@ -127,11 +83,9 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
     }
   }
 
-  // 4) Sidebar: the mode row, then whichever view owns the header controls.
   if (!found && context_.current_project_state.sidebar.visible &&
       Contains(layout.sidebar, x, y)) {
     const SidebarModeRowLayout mode_row = SidebarModeRow(layout.sidebar);
-    // Labelled tabs already say what they are; only name them when collapsed.
     if (mode_row.icon_only) {
       for (int i = 0; i < mode_row.tab_count; ++i) {
         const SidebarModeTab& tab = mode_row.tabs[static_cast<std::size_t>(i)];
@@ -158,9 +112,6 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
                         : "Refresh",
                     refresh);
       }
-      // The Sync button says "Sync 2\u2193 1\u2191"; the tooltip is what spells out
-      // which remote branch that is against. It is composed here, on hover,
-      // rather than on every git view-model rebuild (TD-2026-09-19-296).
       if (!found) {
         if (const SDL_FRect sync = git_sidebar_header::SyncButtonRect(layout.sidebar);
             Contains(sync, x, y)) {
@@ -183,8 +134,6 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
           found = hit("Discard All Changes", discard_all);
         }
       }
-      // Per-entry git actions live on the row context menu, so the header
-      // buttons are the git sidebar's only tooltips.
     }
     if (!found && mode == SidebarMode::Search) {
       const auto& options = context_.current_project_state.overlay.workflow.project_search.options;
@@ -219,7 +168,6 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
     }
   }
 
-  // 5) The two find widgets. Same geometry, same buttons; only the toggles differ.
   const auto find_widget_hit = [&](const FindWidgetLayout& fw,
                                    std::span<const std::string_view> toggle_tooltips) -> TooltipHit {
     if (!Contains(fw.widget, x, y)) {
@@ -266,9 +214,6 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
           kEditorToggles);
     }
   }
-  // 5a) Bottom-panel header buttons: new terminal, and maximize / restore. The
-  //     glyphs are bare (a plus, a chevron), so the tooltip carries the verb and
-  //     the chord.
   if (!found && BottomPanelVisible()) {
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
@@ -294,11 +239,6 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
                             kTerminalToggles);
   }
 
-  // 5b) The floating debug toolbar. It used to paint its own tooltip inside
-  //     RenderDebugToolbar, which is why those tooltips were unreliable: the
-  //     hover-motion handler invalidates the toolbar CARD, and the tooltip is
-  //     anchored below it, outside that rect. Routing it here puts it on the same
-  //     before/after invalidation as every other chrome tooltip.
   if (!found && DebugToolbarVisible()) {
     const DebugToolbarLayout tb = ComputeDebugToolbarLayout(
         ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout), debug_service_.SupportsStepBack());
@@ -308,17 +248,12 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
         if (!Contains(tb.buttons[i], x, y)) {
           continue;
         }
-        // A disabled button still gets a tooltip, so the user can learn *why* it
-        // is inert rather than meeting a dead control.
         found = hit(std::string(DebugToolbarButtonTooltip(tb.kinds[i], session_stopped)),
                     tb.buttons[i]);
       }
     }
   }
 
-  // 6) Status bar segments. Their tooltips were built every frame and thrown
-  //    away: nothing ever drew them, so the one row of chrome that tells you the
-  //    language, encoding, indent and LSP state explained none of it.
   if (!found && Contains(layout.status_bar, x, y)) {
     const StatusBarViewModel status_vm =
         RenderViewModelBuilder(context_).BuildStatusBar(layout, status_bar_service_);
@@ -332,7 +267,6 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
         });
   }
 
-  // 7) A review comment too long for its row in a diff: the whole comment.
   if (!found && ActiveTabIsCompare()) {
     const SDL_FRect view_surface = ActiveTabSurface(layout);
     if (const CompareTabState* compare_tab = ActiveCompareTab();
@@ -358,4 +292,4 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
   };
 }
 
-}  // namespace microide::workspace
+}

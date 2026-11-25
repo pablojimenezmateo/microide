@@ -13,14 +13,9 @@ namespace microide::workspace {
 
 namespace {
 
-// Keys whose string value is a `file://` URI (LSP: TextDocumentIdentifier.uri,
-// Location/LocationLink, InitializeParams.rootUri, WorkspaceFolder.uri, rename and
-// create/delete resource ops, ConfigurationItem.scopeUri, RelativePattern.baseUri).
 constexpr std::array<std::string_view, 7> kUriKeys = {
     "uri", "rootUri", "targetUri", "oldUri", "newUri", "scopeUri", "baseUri",
 };
-// Keys whose string value is a plain filesystem path (LSP InitializeParams.rootPath;
-// DAP Source.path, and the launch request's program and cwd).
 constexpr std::array<std::string_view, 4> kPathKeys = {"rootPath", "path", "program", "cwd"};
 
 template <std::size_t N>
@@ -33,7 +28,7 @@ bool Contains(const std::array<std::string_view, N>& keys, std::string_view key)
   return false;
 }
 
-}  // namespace
+}
 
 void HostPathTranslator::ToHost(util::JsonValue& message) const {
   if (active()) {
@@ -49,7 +44,7 @@ void HostPathTranslator::FromHost(util::JsonValue& message) const {
 
 void HostPathTranslator::TranslatePath(std::string& path, Direction direction) const {
   if (path.empty() || path.front() != '/') {
-    return;  // not an absolute path; nothing a mapping can say about it
+    return;
   }
   std::filesystem::path mapped = direction == Direction::kToHost
                                      ? launcher_->ResolveWorkingDirectory(path)
@@ -62,7 +57,7 @@ void HostPathTranslator::TranslatePath(std::string& path, Direction direction) c
 void HostPathTranslator::TranslateUri(std::string& uri, Direction direction) const {
   const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
   if (!path.has_value()) {
-    return;  // not a file URI (untitled:, a jar:, a server-private scheme)
+    return;
   }
   const std::filesystem::path mapped = direction == Direction::kToHost
                                            ? launcher_->ResolveWorkingDirectory(*path)
@@ -92,8 +87,6 @@ void HostPathTranslator::Walk(util::JsonValue& value, Direction direction) const
       }
       continue;
     }
-    // WorkspaceEdit.changes is the one place a URI is an object KEY. The object
-    // is kept sorted by key, so a changed key means rebuilding it.
     if (entry.key == "changes") {
       if (util::JsonObject* changes = entry.value.MutableObject()) {
         util::JsonObject rebuilt;
@@ -112,4 +105,4 @@ void HostPathTranslator::Walk(util::JsonValue& value, Direction direction) const
   }
 }
 
-}  // namespace microide::workspace
+}

@@ -53,18 +53,12 @@ class ScopedProjectAppHomes {
   ScopedEnvVar appdata_;
 };
 
-// Drive the merged command surface: open the command palette (Ctrl+Shift+P), type the
-// command line, and run it with Enter. Argument-bearing commands and unmatched verbs run
-// through the shared command executor (ExecuteCommandLine); the palette dismisses after.
 bool ExecuteCommand(WorkspaceShell& shell, std::string_view command) {
   return SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT) &&
          WorkspaceShellTestAccess::HandleTextInput(shell, command) &&
          SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE);
 }
 
-// Run a command line directly through the shared executor, bypassing the palette UI. Used
-// where a bare verb would otherwise fuzzy-match a palette row (e.g. "open" → "Open File")
-// instead of reaching the executor.
 bool RunCommandLine(WorkspaceShell& shell, std::string_view command) {
   return WorkspaceShellTestAccess::ExecuteCommandLine(shell, std::string(command));
 }
@@ -75,16 +69,6 @@ bool WaitForProjectReload(WorkspaceShell& shell, std::chrono::milliseconds timeo
       timeout, std::chrono::milliseconds(10));
 }
 
-// Poll the FORCED check instead of asserting on a single call.
-//
-// The forced path scans the tree and diffs it against the file index — and the
-// watcher thread is racing it. Its callback applies a batch to the index BEFORE
-// it ingests the change into the coalescer and before it raises the pending-work
-// flag, so a forced scan landing inside that window sees an index that already
-// holds the new file, diffs to nothing, and correctly reports "no batch to
-// apply" for a change that is a microsecond from arriving by the other route.
-// One call is not an answer to "was the change detected"; eventual delivery is.
-// Reproduced roughly one run in six under TSAN, where the window is widest.
 bool WaitForForcedProjectChange(WorkspaceShell& shell, std::chrono::milliseconds timeout) {
   return WaitUntil(
       [&shell]() { return WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true); },
@@ -178,10 +162,6 @@ void TestWorkspaceShellProjectOpenMenuUsesNativePickerSelection() {
          "selected project should open the README startup file");
 }
 
-// TD-2026-07-17-024: a dirty CloseTab prompt stores a STABLE tab id, so if a tab
-// closes/reorders while the modal prompt is up, Confirm resolves the id back to the
-// current index and saves+closes the ORIGINALLY-TARGETED tab -- never whatever now
-// occupies the captured index.
 void TestWorkspaceShellDirtyPromptSurvivesTabShiftWhileOpen() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -194,33 +174,26 @@ void TestWorkspaceShellDirtyPromptSurvivesTabShiftWhileOpen() {
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-  WorkspaceShellTestAccess::OpenFile(shell, a);  // tab 0 (clean)
-  WorkspaceShellTestAccess::OpenFile(shell, b);  // tab 1 (will be dirtied)
-  WorkspaceShellTestAccess::OpenFile(shell, c);  // tab 2 (clean)
+  WorkspaceShellTestAccess::OpenFile(shell, a);
+  WorkspaceShellTestAccess::OpenFile(shell, b);
+  WorkspaceShellTestAccess::OpenFile(shell, c);
   Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 3,
          "fixture should have three open tabs");
 
-  // Dirty the non-active tab b (index 1) directly.
   WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 1).InsertText("!");
   Expect(WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 1).dirty(),
          "tab b should be dirty");
 
-  // Request closing the dirty tab b -> a modal dirty prompt opens for it (stamping b's id).
   WorkspaceShellTestAccess::RequestCloseTab(shell, 1);
   Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
          "closing a dirty tab should open the dirty prompt");
 
-  // While the prompt is up, close the CLEAN tab a (index 0) -- simulating a
-  // control-channel/plugin close. This shifts b to index 0 and c to index 1, so the
-  // prompt's captured index 1 now points at c.
   WorkspaceShellTestAccess::RequestCloseTab(shell, 0);
   Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 2,
          "closing the clean tab should leave two tabs while the prompt is up");
   Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
          "the dirty prompt for b should still be up after the unrelated close");
 
-  // Confirm Save+Close. It must act on b (via its stable id), NOT on c (which now sits
-  // at the originally-captured index 1).
   WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);
 
   Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 1,
@@ -231,11 +204,6 @@ void TestWorkspaceShellDirtyPromptSurvivesTabShiftWhileOpen() {
          "tab b's unsaved edit should have been saved to disk before closing");
 }
 
-// Soak 5ec45751b332 (a git refresh closed a compare tab behind its Unsaved
-// changes prompt): the prompt stayed up asking about "this tab", a tab that no
-// longer existed, and its text changed with no repaint. A tab prompt closes with
-// the tab it asks about -- in its own group or another -- and stays up when an
-// unrelated tab closes.
 void TestWorkspaceShellDirtyPromptClosesWithItsTab() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -246,26 +214,22 @@ void TestWorkspaceShellDirtyPromptClosesWithItsTab() {
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-  WorkspaceShellTestAccess::OpenFile(shell, a);  // tab 0 (clean)
-  WorkspaceShellTestAccess::OpenFile(shell, b);  // tab 1 (dirtied)
+  WorkspaceShellTestAccess::OpenFile(shell, a);
+  WorkspaceShellTestAccess::OpenFile(shell, b);
   WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 1).InsertText("!");
   WorkspaceShellTestAccess::RequestCloseTab(shell, 1);
   Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell), "closing a dirty tab opens the prompt");
 
-  WorkspaceShellTestAccess::CloseTab(shell, 0);  // an unrelated tab closes
+  WorkspaceShellTestAccess::CloseTab(shell, 0);
   Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
          "the prompt stays up when a tab it does not ask about closes");
 
-  WorkspaceShellTestAccess::CloseTab(shell, 0);  // the tab it asks about closes behind it
+  WorkspaceShellTestAccess::CloseTab(shell, 0);
   Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell),
          "the prompt closes with the tab it asks about");
   Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 0, "both tabs are gone");
 }
 
-// TD-2026-07-17-081/082: the forced full rescan (manual refresh / exclude edit)
-// runs its whole-tree scan + per-file stat off the shell thread and applies the
-// result back on the main thread. Adding a file on disk and forcing a refresh must
-// surface it in the index without a synchronous shell-thread scan.
 void TestWorkspaceShellForcedFileIndexRefreshRunsOffThreadAndPicksUpNewFiles() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -333,12 +297,6 @@ void TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails(
          "menu fallback should prefill the typed open-project command");
 }
 
-// `tab-size [n]`, `indent-width [n]` and `ui-scale [n|up|down|reset]` all declare
-// their argument optional and then required it. A palette row dispatches its
-// action with NO arguments, so all three rows could only ever answer their own
-// usage error — the dead-entry shape the bare `open` / `project-open` fixes
-// repaired, and they get the same fallback: seed the palette with the verb so the
-// user types only the value.
 void TestWorkspaceShellValueCommandsFromTheMenuSeedTheCommandPalette() {
   struct Case {
     WorkspaceShell::ActionId id;
@@ -360,12 +318,6 @@ void TestWorkspaceShellValueCommandsFromTheMenuSeedTheCommandPalette() {
   }
 }
 
-// Expanding a directory from the tree must repaint the whole sidebar, even when
-// the click also changed the cursor. Mouse-down resolves the cursor before it
-// dispatches, and a cursor change (or a forced reassert, which Wayland's hit-test
-// path triggers) queued a 1x1 "present" damage rect at the pointer. The sidebar's
-// fallback redraw only ran when nothing was queued yet, so it saw that pixel,
-// assumed the tree was covered, and the newly expanded rows never painted.
 void TestWorkspaceShellTreeExpandRepaintsSidebarWhenCursorChanges() {
   EnsureDummySdlVideoInitialized();
   TemporaryDirectory temp_dir;
@@ -394,8 +346,6 @@ void TestWorkspaceShellTreeExpandRepaintsSidebarWhenCursorChanges() {
 
   (void)WorkspaceShellTestAccess::ConsumePendingRedraw(shell);
   WorkspaceShellTestAccess::ForceCursorReassert(shell);
-  // A click: the press arms the row (it could become a drag of it), the release
-  // opens it -- for a folder, expands it (TD-2026-10-24-386).
   const auto send = [&](Uint32 type) {
     SDL_Event event{};
     event.type = type;
@@ -413,16 +363,10 @@ void TestWorkspaceShellTreeExpandRepaintsSidebarWhenCursorChanges() {
   Expect(WorkspaceShellTestAccess::TreeEntries(shell).size() > rows_before,
          "the click expanded the directory");
   const SDL_FRect sidebar = WorkspaceShellTestAccess::CurrentLayout(shell).sidebar;
-  // The tree's rows are derived units: a frame owed repaints the rows the expansion
-  // moved. What must not happen is the cursor change standing in for the request.
   Expect(result.handled && (result.redraw.full || result.redraw.frame || AnyRectCovers(result.redraw.rects, sidebar)),
          "expanding a directory repaints the sidebar, cursor change or not");
 }
 
-// A tree row dragged (TD-2026-10-24-386), VS Code's explorer drags: onto a pane's
-// right edge it opens in a new pane carved from that one; onto a pane's middle it
-// opens there; onto a folder it moves there, and with Ctrl held copies. A press
-// that wobbles less than the threshold is still the click that opens the row.
 void TestWorkspaceShellTreeRowDragAndDrop() {
   EnsureDummySdlVideoInitialized();
   TemporaryDirectory temp_dir;
@@ -452,9 +396,6 @@ void TestWorkspaceShellTreeRowDragAndDrop() {
     (void)SendMouseDown(shell, x, y, SDL_BUTTON_LEFT);
     (void)SendMouseMotion(shell, x + 10.0f, y + 2.0f, SDL_BUTTON_LMASK);
     (void)SendMouseMotion(shell, to_x, to_y, SDL_BUTTON_LMASK);
-    // Ctrl goes down mid-drag as a key event; SDL's live state is never set. The
-    // drop read that live state, which ran ahead of the queue: a Ctrl released
-    // right after the button read as already up (QA tree-drag, ASan build).
     if (ctrl) {
       (void)shell.HandleEvent(KeyDownEvent(SDLK_LCTRL, SDL_KMOD_LCTRL));
     }
@@ -468,7 +409,6 @@ void TestWorkspaceShellTreeRowDragAndDrop() {
     return rects.groups[0].editor_surface;
   };
 
-  // A wobble under the threshold is a click: the row opens on the release.
   const auto alpha_row = row_of(root / "alpha.txt");
   Expect(alpha_row.has_value(), "alpha.txt is on screen");
   const float ax = alpha_row->x + alpha_row->w * 0.5f;
@@ -479,8 +419,7 @@ void TestWorkspaceShellTreeRowDragAndDrop() {
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == (root / "alpha.txt").lexically_normal(),
          "a click with a small wobble opens the row");
 
-  // Onto the pane's right edge: a new pane on the right holding alpha.txt.
-  WorkspaceShellTestAccess::ActivateTab(shell, 0);  // beta.txt in front again
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
   const SDL_FRect body = pane();
   drag(*row_of(root / "alpha.txt"), body.x + body.w - 8.0f, body.y + body.h * 0.5f);
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "a drop on a pane's right edge carves a new pane");
@@ -488,13 +427,12 @@ void TestWorkspaceShellTreeRowDragAndDrop() {
              std::vector<std::filesystem::path>{(root / "alpha.txt").lexically_normal()},
          "the new pane, on the right, holds the dropped file");
 
-  // Onto a folder: moved there; with Ctrl, copied.
   WorkspaceShellTestAccess::ShowTreeSidebar(shell);
   WorkspaceShellTestAccess::RefreshProjectFiles(shell);
   const auto dest_row = row_of(root / "zdest");
   Expect(dest_row.has_value(), "zdest is on screen");
   drag(*row_of(root / "beta.txt"), dest_row->x + dest_row->w * 0.5f, dest_row->y + dest_row->h * 0.5f,
-       /*ctrl=*/true);
+       true);
   Expect(std::filesystem::exists(root / "beta.txt") && ReadFile(root / "zdest" / "beta.txt") == "b\n",
          "a Ctrl drop on a folder copies the file there");
   WorkspaceShellTestAccess::RefreshProjectFiles(shell);
@@ -505,7 +443,6 @@ void TestWorkspaceShellTreeRowDragAndDrop() {
              std::vector<std::filesystem::path>{(root / "zdest" / "alpha.txt").lexically_normal()},
          "and its open tab follows it");
 
-  // Escape mid-drag drops nothing.
   WorkspaceShellTestAccess::RefreshProjectFiles(shell);
   const auto keep_parent = row_of(root / "zdest");
   const auto beta_row = row_of(root / "beta.txt");
@@ -517,10 +454,6 @@ void TestWorkspaceShellTreeRowDragAndDrop() {
          "a cancelled drag moves nothing");
 }
 
-// QA tree-drag (redraw verifier): moving a file retitles its tab and breadcrumb
-// in EVERY pane showing it, and the move repainted only the focused pane, so the
-// other pane's breadcrumb kept the old folder on screen. A move (Ctrl+X, Ctrl+V
-// in the tree here) repaints what it retitles.
 void TestWorkspaceShellTreeMoveRepaintsEveryPaneShowingTheFile() {
   EnsureDummySdlVideoInitialized();
   TemporaryDirectory temp_dir;
@@ -536,7 +469,7 @@ void TestWorkspaceShellTreeMoveRepaintsEveryPaneShowingTheFile() {
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, root / "a.txt"), "a.txt opens");
   Expect(SendKeyDown(shell, SDLK_BACKSLASH, SDL_KMOD_CTRL), "Ctrl+\\ splits a.txt into a second pane");
   WorkspaceShellTestAccess::FocusEditorGroup(shell, 0);
-  WorkspaceShellTestAccess::ActivateTab(shell, 0);  // the first pane shows keep.txt; the second, a.txt
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
   WorkspaceShellTestAccess::ShowTreeSidebar(shell);
   WorkspaceShellTestAccess::SetFocusSidebar(shell);
   WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
@@ -546,7 +479,6 @@ void TestWorkspaceShellTreeMoveRepaintsEveryPaneShowingTheFile() {
   shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
 
-  // a.txt's row dragged onto dest's row.
   const auto row_of = [&](const std::filesystem::path& path) {
     const auto& entries = WorkspaceShellTestAccess::TreeEntries(shell);
     for (std::size_t i = 0; i < entries.size(); ++i) {
@@ -562,7 +494,7 @@ void TestWorkspaceShellTreeMoveRepaintsEveryPaneShowingTheFile() {
   (void)DispatchEvents(shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, from.x + 20.0f, from.y + 4.0f),
                                MouseMotionEvent(from.x + 30.0f, from.y + 10.0f),
                                MouseMotionEvent(to.x + 20.0f, to.y + 4.0f)});
-  shell.Render(canvas.renderer(), kWidth, kHeight);  // the drag's preview on screen
+  shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
   const microide::workspace::RenderInvalidation redraw =
       DispatchEvents(shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, to.x + 20.0f, to.y + 4.0f)});
@@ -571,10 +503,6 @@ void TestWorkspaceShellTreeMoveRepaintsEveryPaneShowingTheFile() {
   Expect(diff.count == 0, "the move repaints every pane that shows the file: " + DescribePixelDiff(diff));
 }
 
-// Commands that need an argument, run bare from a menu (TD-2026-10-18-357), offer
-// their own choices: Show Output Channel… a pick of the channels, Move Tab to
-// Group a pick of the other panes, Compare Files… over an open file the file
-// finder, whose pick is compared with it.
 void TestWorkspaceShellBareArgumentCommandsOfferTheirChoices() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -597,7 +525,6 @@ void TestWorkspaceShellBareArgumentCommandsOfferTheirChoices() {
          "with a row per channel that runs show-output for it");
   Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Escape closes the pick");
 
-  // Move Tab to Group: two panes, the pick offers the other one.
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, root / "left.txt"), "left.txt opens");
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, root / "right.txt"), "right.txt opens");
   Expect(SendKeyDown(shell, SDLK_BACKSLASH, SDL_KMOD_CTRL), "Ctrl+\\ splits");
@@ -610,7 +537,6 @@ void TestWorkspaceShellBareArgumentCommandsOfferTheirChoices() {
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "Enter chooses it");
   Expect(WorkspaceShellTestAccess::GroupTabPaths(shell, 1).size() == 2, "the active tab moved to group 2");
 
-  // Compare Files… over the open file: the finder, titled for it; its pick is compared.
   WorkspaceShellTestAccess::FocusEditorGroup(shell, 1);
   WorkspaceShellTestAccess::OpenFile(shell, root / "left.txt");
   Expect(WorkspaceShellTestAccess::ExecuteBareMenuAction(shell, ActionId::CompareFiles), "Compare Files… runs");
@@ -621,7 +547,6 @@ void TestWorkspaceShellBareArgumentCommandsOfferTheirChoices() {
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "Enter picks right.txt");
   Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(shell), "and compares it with left.txt");
 
-  // Set Breakpoint: the prompt holds the active file and the caret's line.
   WorkspaceShellTestAccess::OpenFile(shell, root / "left.txt");
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
   Expect(WorkspaceShellTestAccess::ExecuteBareMenuAction(shell, ActionId::BreakpointSet), "Set Breakpoint runs");
@@ -632,8 +557,6 @@ void TestWorkspaceShellBareArgumentCommandsOfferTheirChoices() {
              WorkspaceShellTestAccess::PromptSurfaceInput(shell));
 }
 
-// The wheel path resolves the cursor before it dispatches too, so scrolling the
-// tree under a cursor change repainted one pixel and left the old rows on screen.
 void TestWorkspaceShellTreeWheelRepaintsSidebarWhenCursorChanges() {
   EnsureDummySdlVideoInitialized();
   TemporaryDirectory temp_dir;
@@ -663,18 +586,10 @@ void TestWorkspaceShellTreeWheelRepaintsSidebarWhenCursorChanges() {
 
   Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) > scroll_before,
          "the wheel scrolled the tree");
-  // The tree's rows are derived units: its scroll owes a frame, which repaints the
-  // rows and the thumb (QaFlowRegression/TheFileTreeFollowsItsScrollAndARefresh
-  // checks the pixels). What must not happen is the cursor's re-present standing
-  // in for it.
   Expect(result.handled && (result.redraw.full || result.redraw.frame || AnyRectCovers(result.redraw.rects, sidebar)),
          "scrolling the tree asks for its frame, cursor change or not");
 }
 
-// The fallback redraw answers to what the HANDLER requested, not to whatever is
-// queued (TD-2026-10-13-337). Damage queued before the event -- a background
-// tick, a focus change -- used to satisfy "something is already queued", so a
-// handler that relied on its fallback repainted nothing of its own surface.
 void TestWorkspaceShellTreeRepaintsWhenUnrelatedDamageIsQueued() {
   EnsureDummySdlVideoInitialized();
   TemporaryDirectory temp_dir;
@@ -706,7 +621,6 @@ void TestWorkspaceShellTreeRepaintsWhenUnrelatedDamageIsQueued() {
     const WorkspaceShell::EventResult result = shell.HandleEvent(event);
     Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) > scroll_before,
            "the wheel scrolled the tree");
-    // A frame, for the tree's derived rows (or its rect, for a view that is not).
     Expect(result.handled && (result.redraw.full || result.redraw.frame || AnyRectCovers(result.redraw.rects, sidebar)),
            "a wheel over the tree asks for its repaint though other damage was queued");
   }
@@ -1082,8 +996,6 @@ void TestWorkspaceShellUnknownCommandKeepsPromptOpenWithFeedback() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::ResetProjectScopedState(shell, true);
 
-  // An unknown verb has no fuzzy match, so the palette routes it to the executor, which
-  // reports the failure. Driving via the palette UI exercises that no-match → execute rule.
   Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
          "Ctrl+Shift+P should open the command palette");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "bogus-command"),
@@ -1113,12 +1025,6 @@ void TestWorkspaceShellOpenCommandRequiresPath() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
 
-  // A *typed* bare `open` rejects and must never reach for a native dialog — the
-  // picker belongs to the UI surfaces (menu, shortcut, welcome button), and the
-  // headless control channel drives this same command path. Installing a launcher
-  // that fails the test if invoked pins that: previously the shared bare-`open`
-  // branch called SDL_ShowOpenFileDialog here, firing a real XDG portal request
-  // mid-test (and leaking its allocation, which is how ASAN caught it).
   WorkspaceShellTestAccess::SetOpenFileDialogLauncher(
       shell, [](WorkspaceShell&, const std::filesystem::path&) {
         Expect(false, "a typed `open` must not launch the native file picker");
@@ -1131,11 +1037,6 @@ void TestWorkspaceShellOpenCommandRequiresPath() {
          "open without a path should report the missing path explicitly");
 }
 
-// No test reaches a real OS dialog: with no launcher installed, the test process
-// reports the native pickers unavailable (NativeDialogTestMode.h) instead of
-// sending an XDG portal request from the developer's session. A shortcut that
-// opened one (Ctrl+O in a terminal that skips the shell) failed an ASAN shard on
-// SDL's portal allocations.
 void TestWorkspaceShellNativeDialogsAreOffInTests() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1176,12 +1077,6 @@ void TestWorkspaceShellProjectNextAndPrevCommandsCycleProjects() {
          "project-next should activate the next project tab");
 }
 
-// Soak 1dd177bb2104: back on a project, keyboard focus sat on "the overlay" with
-// no overlay, prompt or menu up, so every key went nowhere. The prompts are the
-// window's (`context_.prompts`), focus is the project's: a prompt opened in one
-// project set THAT project's focus to the overlay, a project switch stored it so,
-// and closing the prompt in the other project restored focus there -- the first
-// project kept focus on a prompt that no longer existed.
 void TestWorkspaceShellAProjectLeftUnderAPromptGetsItsFocusBack() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
@@ -1202,7 +1097,7 @@ void TestWorkspaceShellAProjectLeftUnderAPromptGetsItsFocusBack() {
 
   Expect(RunCommandLine(shell, "project-next"), "project-next should run under the prompt");
   if (WorkspaceShellTestAccess::DirtyPromptVisible(shell)) {
-    WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 2);  // Cancel
+    WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 2);
   }
   Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell), "the prompt is gone");
   Expect(RunCommandLine(shell, "project-prev"), "project-prev should run");
@@ -1247,15 +1142,6 @@ void TestWorkspaceShellProjectSwitchPreservesProjectScopedCommandState() {
          "switching forward should restore the second project's editor preferences");
 }
 
-// Regression (soak 88696b6b00ac and its cluster: "the clean buffer of bom.txt
-// differs from its file on disk", ~1500 sightings over a dozen fixture files): a
-// project's file watcher is stopped while another project is in front, and the
-// restarted watcher's first batch is a baseline, not a change list. So a file
-// rewritten while its project was in the background -- by another project's
-// save of the same file, an external tool, a checkout -- was never re-read: the
-// clean buffer kept the old text after the switch back, and its next save wrote
-// that old text over the file. Only a background GIT completion armed the
-// catch-up; every activation must re-check the clean buffers.
 void TestWorkspaceShellProjectSwitchReloadsCleanBuffersChangedInTheBackground() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
@@ -1342,11 +1228,6 @@ void TestWorkspaceShellProjectSwitchPreservesSearchSidebarSurfaceState() {
          "switching forward should restore the second project's sidebar width");
 }
 
-// Regression: the Settings overlay has three scrollbars — the row list, the
-// category rail, and the font-picker dropdown. The release path named only the
-// first two, so the picker fell through to the generic drag-release, which
-// repaints the whole window instead of just the overlay. Pin that all three
-// release identically: consumed, drag cleared, grab offset dropped.
 void TestWorkspaceShellSettingsScrollbarsReleaseAlike() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "settings-scrollbar-project";
@@ -1389,10 +1270,6 @@ void TestWorkspaceShellProjectSwitchClearsTransientInteractionState() {
          "first project should open");
   WorkspaceShellTestAccess::SetTransientDragTargetSidebarDivider(shell);
   WorkspaceShellTestAccess::SetTransientMouseSelecting(shell, true);
-  // A selection drag and a box selection both hold line/column coordinates
-  // captured at press. Surviving the switch means the next button-up applies them
-  // to a DIFFERENT document — a text drag would move text it never selected, at an
-  // offset it never pointed at (TD-2026-08-14-216).
   WorkspaceShellTestAccess::SetTransientTextDragging(shell);
   WorkspaceShellTestAccess::SetTransientBoxSelecting(shell);
 
@@ -1461,11 +1338,6 @@ void TestWorkspaceShellTermCommandRequestsBottomPanelRedraw() {
          "term command should open exactly one additional terminal tab");
 }
 
-// An open project must not put a periodic tick in the idle loop. It used to: a
-// second watcher polled the whole tree on a 2 s timer, and before that re-armed on
-// a synthetic 1 ms tick. External changes now arrive as FileIndexWatcher batches
-// on the watcher's own thread and wake the loop by event, so an idle project asks
-// for no timed wake at all (TD-2026-08-15-252).
 void TestWorkspaceShellProjectOpenSchedulesNoIdleWatcherTick() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1474,15 +1346,9 @@ void TestWorkspaceShellProjectOpenSchedulesNoIdleWatcherTick() {
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "idle watcher tick fixture should open the project");
-  // The caret blink is the other producer of a sub-second wake, and its delay is a
-  // countdown to the next phase change — i.e. anywhere in (0, interval]. Leaving it
-  // on makes this assertion fail at random rather than when a watcher tick comes
-  // back, which is exactly the flake it produced on the first run.
   Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.caret_blink.enabled", "false"),
          "idle watcher tick fixture should be able to disable the caret blink");
 
-  // Drain whatever the initial index batch queued, so what remains is the steady
-  // idle state rather than the open itself.
   for (int attempt = 0; attempt < 20; ++attempt) {
     if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
       break;
@@ -1587,11 +1453,8 @@ void TestWorkspaceShellTabMoveCommandSupportsRelativeForwardOffset() {
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, alpha), "first tab should open");
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, beta), "second tab should open");
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, gamma), "third tab should open");
-  WorkspaceShellTestAccess::ActivateTab(shell, 0);  // make alpha the active tab
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
 
-  // Regression: "tabmove +N" (leading '+') silently failed because ParseInt
-  // (std::from_chars) rejects a leading '+', so the whole relative-forward form
-  // was unreachable — only "tabmove -N" and absolute "tabmove N" worked.
   Expect(ExecuteCommand(shell, "tabmove +2"),
          "tabmove should accept a leading '+' relative-forward offset");
 
@@ -1604,9 +1467,6 @@ void TestWorkspaceShellTabMoveCommandSupportsRelativeForwardOffset() {
          "relative-forward tabmove should keep the moved tab active");
 }
 
-// Regression: a wheel scroll must move the split pane UNDER THE POINTER, not the
-// focused/active viewport. Previously HandleWheel always scrolled the active
-// viewport, so scrolling an inactive split did nothing (or moved the wrong pane).
 void TestWorkspaceShellWheelScrollsPaneUnderPointer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1621,7 +1481,6 @@ void TestWorkspaceShellWheelScrollsPaneUnderPointer() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, alpha), "alpha should open in group 0");
-  // Split beta into a new group; focus moves to group 1, so group 0 is inactive.
   Expect(RunCommandLine(shell, "split-right beta.txt"), "split-right beta should succeed");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "a second group should exist");
   Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1, "focus should be on group 1");
@@ -1630,8 +1489,6 @@ void TestWorkspaceShellWheelScrollsPaneUnderPointer() {
              WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).scroll_line() == 0,
          "both panes should start unscrolled");
 
-  // Wheel down over the INACTIVE pane (group 0). It must scroll, while the active
-  // pane (group 1) stays put.
   const SDL_FRect inactive = WorkspaceShellTestAccess::InactiveEditorPaneRect(shell);
   const float wheel_x = inactive.x + inactive.w * 0.5f;
   const float wheel_y = inactive.y + inactive.h * 0.5f;
@@ -1643,10 +1500,6 @@ void TestWorkspaceShellWheelScrollsPaneUnderPointer() {
          "the active pane (group 1) must NOT have scrolled");
 }
 
-// Regression: with two editor groups already open, `split-right <path>` must OPEN
-// the file as a new tab in the target group — never overwrite that group's active
-// tab in place, which silently discarded its unsaved edits (VS Code "open to the
-// side").
 void TestWorkspaceShellSplitDoesNotClobberAnotherGroupsDirtyTab() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1661,17 +1514,13 @@ void TestWorkspaceShellSplitDoesNotClobberAnotherGroupsDirtyTab() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, alpha), "alpha should open in group 0");
 
-  // Split beta into a new group (1 -> 2 groups); focus moves to the new group.
   Expect(RunCommandLine(shell, "split-right beta.txt"), "split-right beta should succeed");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "a second group should exist");
   Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1, "focus should be on the new group");
 
-  // Dirty beta in the new group.
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "EDIT "), "typing should dirty beta");
   Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).dirty(), "beta should be dirty");
 
-  // Focus back to group 0 and split gamma. The editor area is n-way now, so this
-  // carves a THIRD pane; nothing may touch the dirty tab in the pane next door.
   Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell),
          "focus should wrap from the last pane back to group 0");
   Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0,
@@ -1684,7 +1533,6 @@ void TestWorkspaceShellSplitDoesNotClobberAnotherGroupsDirtyTab() {
                                                  WorkspaceShellTestAccess::FocusedGroupIndex(shell))
                  .front() == gamma.lexically_normal(),
          "gamma should be showing in the pane the split created");
-  // beta's group shifted right by the insertion; find it by content.
   bool beta_survives = false;
   for (std::size_t gi = 0; gi < WorkspaceShellTestAccess::EditorGroupCount(shell); ++gi) {
     const auto paths = WorkspaceShellTestAccess::GroupTabPaths(shell, gi);
@@ -1695,11 +1543,6 @@ void TestWorkspaceShellSplitDoesNotClobberAnotherGroupsDirtyTab() {
   Expect(beta_survives, "beta's dirty tab must survive a split elsewhere, untouched");
 }
 
-// A file open in two panes is ONE buffer (VS Code's model per resource, and what
-// the plain split's clone already guarantees). `open` from the other pane and
-// `split-right <path>` on an open file used to read it from disk again, so an
-// edit in one pane was invisible in the other and each pane saved its own copy
-// over the other's.
 void TestWorkspaceShellSecondViewOfAnOpenFileSharesItsBuffer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1714,7 +1557,6 @@ void TestWorkspaceShellSecondViewOfAnOpenFileSharesItsBuffer() {
   Expect(RunCommandLine(shell, "split-right beta.txt"), "split-right beta should succeed");
   Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1, "focus should be on the new group");
 
-  // Opening alpha from group 1 is a second view of the buffer group 0 holds.
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, alpha), "alpha should open in group 1");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "X"), "typing into group 1's alpha");
   Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).lines().LineView(0) == "Xalpha",
@@ -1724,7 +1566,6 @@ void TestWorkspaceShellSecondViewOfAnOpenFileSharesItsBuffer() {
   Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).dirty(),
          "both views are dirty together");
 
-  // Saving from group 0 writes the shared buffer and cleans both views.
   Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus should wrap to group 0");
   Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0, "group 0 should be focused");
   Expect(RunCommandLine(shell, "save"), "save should succeed");
@@ -1732,7 +1573,6 @@ void TestWorkspaceShellSecondViewOfAnOpenFileSharesItsBuffer() {
   Expect(!WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).dirty(),
          "group 1's view is clean once the buffer is saved");
 
-  // `split-right <path>` on a file open elsewhere shares it too.
   Expect(RunCommandLine(shell, "split-right alpha.txt"), "split-right alpha should succeed");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 3, "a third pane should exist");
   const std::size_t split_group = WorkspaceShellTestAccess::FocusedGroupIndex(shell);
@@ -1751,14 +1591,6 @@ void TestWorkspaceShellSecondViewOfAnOpenFileSharesItsBuffer() {
   }
 }
 
-// The tab/group/buffer model under a random operation sequence. Each step is one
-// of the things a user does to the editor area (open, split with or without a
-// path, focus, type, undo, save, close a tab or a pane and answer its prompt,
-// move a tab or a pane, switch tabs) and after every step the structure has to
-// hold: the split tree is well formed with one leaf per group, the focus index
-// is a group, no pane is empty while another exists, every editor tab's path is
-// its viewport's, and two editor tabs on one file are views of ONE document
-// while tabs on different files are not. No prompt survives a step.
 void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
   using microide::workspace::EditorGroupDirection;
   using microide::workspace::EditorSplitOrientation;
@@ -1768,30 +1600,21 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
   for (const std::string& name : names) {
     WriteFile(root / name, name + "\n");
   }
-  // Compare and merge tabs live in the same panes and take the same close,
-  // move and focus verbs, with their own editable viewports.
   WriteFile(root / "base.txt", "a\nb\nc\n");
   WriteFile(root / "incoming.txt", "a\nB\nc\n");
   WriteFile(root / "current.txt", "a\nb\nC\n");
-  // A second project: project tabs switch the whole editor area in and out.
   const std::filesystem::path other_root = temp_dir.path() / "other";
   WriteFile(other_root / "omega.txt", "omega\n");
 
   WorkspaceShell shell;
-  // Through the catalog (not SetProjectRoot) so the project ops below have a
-  // first project tab to switch away from and back to.
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "the first project should open as a project tab");
   WorkspaceShellTestAccess::SetClipboardTextReader(shell, []() { return std::string("clip"); });
   WorkspaceShellTestAccess::SetClipboardTextWriter(shell, [](std::string_view) { return true; });
 
-  // Several seeds: the run is a quarter of a second per 600 steps, and every seed
-  // is a different walk through the layout space.
   for (std::uint32_t seed = 20260906; seed < 20260906 + 5; ++seed) {
   std::mt19937 rng(seed);
   const auto pick = [&](std::size_t n) { return n == 0 ? 0 : static_cast<std::size_t>(rng() % n); };
-  // Vacuity guards: the sequence must actually reach split layouts, shared views
-  // and answered prompts, or the invariants are checked over nothing.
   std::size_t max_groups_seen = 0;
   std::size_t max_projects_seen = 0;
   std::size_t shared_view_steps = 0;
@@ -1800,8 +1623,6 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
   std::size_t saves_refused = 0;
   std::string last_prompt_message;
 
-  // The files a step can pick: whatever text files the walk's renames, deletes
-  // and new buffers have left in the project (the merge fixture aside).
   const auto active_root = [&]() -> std::filesystem::path {
     const auto roots = WorkspaceShellTestAccess::ProjectRoots(shell);
     const std::size_t active = WorkspaceShellTestAccess::ActiveProjectIndex(shell);
@@ -1877,11 +1698,6 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
       last_prompt_action = static_cast<int>(pick(3));
       last_prompt_message = WorkspaceShellTestAccess::DirtyPromptMessage(shell);
       WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, last_prompt_action);
-      // "Save" is refused (and the prompt kept) when the file changed on disk
-      // under an independent viewport of the same path -- a compare tab's right
-      // side after the editor tab saved, or the reverse -- which raises the
-      // external-change banner instead. The prompt then still has to answer
-      // Discard / Cancel.
       if (last_prompt_action == 0 && WorkspaceShellTestAccess::DirtyPromptVisible(shell)) {
         ++saves_refused;
         last_prompt_action = 1 + static_cast<int>(pick(2));
@@ -1988,7 +1804,6 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
         context += " compare-files";
         break;
       case 17: {
-        // The file changes on disk under whatever views show it.
         WriteFile(active_root() / file, "external " + std::to_string(step) + "\n" + file + "\n");
         WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true);
         answer_prompt();
@@ -2001,7 +1816,7 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
         WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
         answer_prompt();
         if (WorkspaceShellTestAccess::PromptSurfaceVisible(shell)) {
-          WorkspaceShellTestAccess::ConfirmPromptSurface(shell, 1);  // Cancel
+          WorkspaceShellTestAccess::ConfirmPromptSurface(shell, 1);
         }
         context += " rename " + file + " -> " + target;
         break;
@@ -2012,7 +1827,7 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
           WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
           answer_prompt();
           if (WorkspaceShellTestAccess::PromptSurfaceVisible(shell)) {
-            WorkspaceShellTestAccess::ConfirmPromptSurface(shell, 1);  // Cancel
+            WorkspaceShellTestAccess::ConfirmPromptSurface(shell, 1);
           }
         }
         context += " delete " + file;
@@ -2027,8 +1842,6 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
         break;
       case 22:
         if (WorkspaceShellTestAccess::ProjectCount(shell) < 2) {
-          // Whichever of the two projects is not open: a close may have taken
-          // the first one, in which case reopening the other only re-activates it.
           const auto roots = WorkspaceShellTestAccess::ProjectRoots(shell);
           for (const std::filesystem::path& candidate : {root, other_root}) {
             if (std::find(roots.begin(), roots.end(), candidate.lexically_normal()) == roots.end()) {
@@ -2063,12 +1876,10 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
   Expect(prompts_answered > 0, "the sequence answered a dirty prompt");
   Expect(max_projects_seen >= 2, "the sequence opened a second project");
   (void)saves_refused;
-  // Back to the first project alone before the next seed.
   while (WorkspaceShellTestAccess::ProjectCount(shell) > 1) {
     WorkspaceShellTestAccess::CloseProject(shell, WorkspaceShellTestAccess::ProjectCount(shell) - 1);
   }
   WorkspaceShellTestAccess::SwitchProject(shell, 0);
-  // Close everything so the next seed starts from one empty pane.
   while (WorkspaceShellTestAccess::EditorGroupCount(shell) > 1) {
     RunCommandLine(shell, "close-group");
     answer_prompt();
@@ -2082,10 +1893,6 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
   }
 }
 
-// The editor area holds `kMaxEditorGroups` panes; the split action refuses past
-// that rather than silently rendering only the panes that fit.
-// The breadcrumb band belongs to the PANE it sits over, not to the window: with a
-// split open, the left column's band named whatever the focused pane was showing.
 void TestWorkspaceShellBreadcrumbIsPerPane() {
   using microide::workspace::EditorSplitOrientation;
   TemporaryDirectory temp_dir;
@@ -2112,14 +1919,10 @@ void TestWorkspaceShellBreadcrumbIsPerPane() {
          "the right pane's breadcrumb names its own file, not the other pane's");
   Expect(WorkspaceShellTestAccess::BreadcrumbLabel(shell) == right,
          "the unqualified breadcrumb still follows the focused pane");
-  // A pane index past the end falls back to the focused pane rather than reading
-  // out of range -- the render path asks per rect, and rects can outlive a close.
   Expect(WorkspaceShellTestAccess::BreadcrumbLabelForGroup(shell, 99) == right,
          "an out-of-range pane index resolves to the focused pane");
 }
 
-// The file finder (Ctrl+P) opens into the FOCUSED pane. With a split open it
-// opened into the left pane no matter which pane the user was in.
 void TestWorkspaceShellFileFinderOpensIntoTheFocusedPane() {
   using microide::workspace::EditorSplitOrientation;
   TemporaryDirectory temp_dir;
@@ -2131,10 +1934,6 @@ void TestWorkspaceShellFileFinderOpensIntoTheFocusedPane() {
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "file finder split fixture should open the project");
-  // This test asks the finder to MATCH gamma.txt, so it depends on the background
-  // index the same way the sibling above does. Without this wait it is a race the
-  // loaded CI runner loses: the index is still empty, the query matches nothing,
-  // and the failure reads "gamma.txt should match" as if the finder regressed.
   Expect(WaitForFileIndexPath(shell, std::filesystem::path("gamma.txt"), true,
                               std::chrono::milliseconds(5000)),
          "the file index must contain gamma.txt before the finder is asked to match it");
@@ -2159,11 +1958,6 @@ void TestWorkspaceShellFileFinderOpensIntoTheFocusedPane() {
          "the unfocused pane must not receive the opened file");
 }
 
-// A pane's tab strip is a fraction of the window once the editor area is split.
-// The reveal math sized against the WINDOW, so it believed every tab fit and
-// never scrolled -- a file opened into a split pane landed on a tab parked off
-// the right edge of that pane's own strip, with only the overflow chip to hint
-// at it.
 void TestWorkspaceShellSplitPaneRevealsItsNewTab() {
   using microide::workspace::EditorSplitOrientation;
   TemporaryDirectory temp_dir;
@@ -2215,9 +2009,6 @@ void TestWorkspaceShellSplitStopsAtTheGroupCap() {
              WorkspaceShellTestAccess::EditorGroupCount(shell),
          "the split tree's leaves should stay in step with the editor groups");
 
-  // A full editor area refuses another split, and nothing else: Find, Replace,
-  // Go to Line and Reopen shared the split's availability rule, so with eight
-  // panes open their keys resolved to nothing and their menu rows greyed out.
   WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 900);
   using microide::workspace::ActionId;
   for (const ActionId action : {ActionId::Search, ActionId::ReplaceInBuffer, ActionId::Jump, ActionId::Reopen}) {
@@ -2254,17 +2045,12 @@ void TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests() {
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 1 &&
              WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 0,
          "jump should move the cursor relative to the current line");
-  // The column is a CHARACTER column (VS Code's Ctrl+G), so on "é=1" column 3 is
-  // the "1" -- byte offset 3, not byte offset 2 (which would split "é=" short).
   Expect(ExecuteCommand(shell, "goto 5:3"), "goto with a column on a multibyte line executes");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 4 &&
              WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 3,
          "the column counts characters, so a two-byte letter before it is one column");
 }
 
-// TD-2026-07-16-68: `goto` is an absolute 1-based line. A negative or zero line must be
-// rejected (no navigation), NOT interpreted as the old hidden "from end" mode where
-// `goto -1` landed on the last line. `jump` keeps signed relative deltas.
 void TestWorkspaceShellGotoRejectsNonPositiveLine() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2275,22 +2061,18 @@ void TestWorkspaceShellGotoRejectsNonPositiveLine() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenFile(shell, source);
 
-  // Park the caret at a known line first.
   Expect(ExecuteCommand(shell, "goto 2"), "goto 2 should move to line index 1");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 1,
          "caret is at line index 1 after goto 2");
 
-  // goto -1 must NOT navigate to the last line (old from-end behavior).
   ExecuteCommand(shell, "goto -1");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 1,
          "goto -1 must be rejected and leave the caret where it was, not jump to EOF");
 
-  // goto 0 is likewise rejected.
   ExecuteCommand(shell, "goto 0");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 1,
          "goto 0 must be rejected and leave the caret unchanged");
 
-  // jump -1 (relative) still works: moves one line up.
   Expect(ExecuteCommand(shell, "jump -1"), "jump -1 relative should still execute");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 0,
          "jump -1 moves the caret one line up (relative), unlike absolute goto");
@@ -2330,10 +2112,6 @@ void TestWorkspaceShellGlobalCommandsApplyTypedRequests() {
   Expect(!WorkspaceShellTestAccess::SoftWrapEnabled(shell),
          "wrap without args should invert the current soft-wrap setting");
 
-  // `soft-tabs [on|off]` declares the same optional argument `wrap [on|off]` does,
-  // and its palette row dispatches with NO arguments — so a bare invocation has to
-  // do the same thing wrap's does, or "Soft Tabs" is a row that can only answer
-  // "soft-tabs expects on or off".
   Expect(ExecuteCommand(shell, "soft-tabs"),
          "soft-tabs should toggle when invoked without explicit args");
   Expect(!WorkspaceShellTestAccess::SoftTabsEnabled(shell),
@@ -2351,8 +2129,6 @@ void TestWorkspaceShellGlobalCommandsApplyTypedRequests() {
 void TestWorkspaceShellCommandPaletteTabCompletion() {
   WorkspaceShell shell;
 
-  // The merged palette query supports Tab-completion over command verbs (no history — the
-  // palette's Up/Down navigate the result list instead).
   Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
          "Ctrl+Shift+P should open the command palette before completion");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "soft"),
@@ -2385,9 +2161,6 @@ void TestWorkspaceShellCommandPaletteTabCompletion() {
          "tab completion should report the wrap command completion");
 }
 
-// The wheel over a list overlay pans the rows and must NOT move the selection: a
-// scroll nudge can never change what Enter is about to run (VS Code behaves the same).
-// Before this, every overlay except project search stepped its selected index instead.
 void TestWorkspaceShellOverlayWheelScrollsWithoutMovingSelection() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -2419,16 +2192,12 @@ void TestWorkspaceShellOverlayWheelScrollsWithoutMovingSelection() {
   Expect(WorkspaceShellTestAccess::OverlaySelectedIndex(shell) == selected_before,
          "wheeling up must also leave the selection untouched");
 
-  // Keyboard navigation still owns the selection and pulls it back into view.
   Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE),
          "Down should navigate the palette list");
   Expect(WorkspaceShellTestAccess::OverlaySelectedIndex(shell) == selected_before + 1,
          "Down should advance the palette selection by one row");
 }
 
-// Home/End belong to the query field in every overlay that has one, so the command
-// palette's command line can be edited like a text field (VS Code quick input). They
-// used to jump the result list, which left no way to reach the start of a typed line.
 void TestWorkspaceShellCommandPaletteHomeEndEditsQuery() {
   WorkspaceShell shell;
   Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
@@ -2456,7 +2225,6 @@ void TestWorkspaceShellCommandPaletteRunsCommandLineVsFuzzyPick() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
 
-  // A typed command line with arguments runs through the executor (soft-tabs applies).
   Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
          "soft tabs should start enabled (the default indents with spaces)");
   Expect(ExecuteCommand(shell, "soft-tabs off"),
@@ -2466,8 +2234,6 @@ void TestWorkspaceShellCommandPaletteRunsCommandLineVsFuzzyPick() {
   Expect(!WorkspaceShellTestAccess::SoftTabsEnabled(shell),
          "the soft-tabs command line should apply its argument");
 
-  // A single-token fragment that fuzzy-matches a command label keeps matches, so Enter would
-  // confirm the highlighted row rather than executing a bare verb.
   Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
          "Ctrl+Shift+P should open the palette");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "settings"),
@@ -2494,8 +2260,6 @@ void TestWorkspaceShellCtrlNOpensUntitledTab() {
   Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 0,
          "Ctrl+N should activate the newly opened untitled tab");
 
-  // VS Code numbers untitled editors so two are told apart (in the strip, the
-  // unsaved prompt, Quick Open), and a closed one's number is free again.
   Expect(SendKeyDown(shell, SDLK_N, SDL_KMOD_CTRL), "a second Ctrl+N should be handled");
   Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 2 &&
              WorkspaceShellTestAccess::OpenTabs(shell)[1].title == "Untitled-2",
@@ -2545,8 +2309,6 @@ void TestWorkspaceShellVsCodeAlignedShortcutsDispatch() {
   Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
          "opening a file should focus the editor");
 
-  // Ctrl+G (editor context) opens the "Go to Line" modal — VSCode's Go to Line.
-  // Previously this action had no key and no-opped from the menu.
   Expect(SendKeyDown(shell, SDLK_G, SDL_KMOD_CTRL), "Ctrl+G should be handled");
   Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
          "Ctrl+G should open the Go to Line modal");
@@ -2555,21 +2317,17 @@ void TestWorkspaceShellVsCodeAlignedShortcutsDispatch() {
   Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
          "Escape should close the modal");
 
-  // Ctrl+P opens the file finder (VSCode "Go to File"; replaces the former F6).
   Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL), "Ctrl+P should be handled");
   Expect(WorkspaceShellTestAccess::OverlayModeIsFileFinder(shell),
          "Ctrl+P should open the file-finder overlay");
   Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
          "Escape should dismiss the file finder");
 
-  // Ctrl+B toggles the sidebar (VSCode "Toggle Sidebar"; replaces the former F8).
   const bool sidebar_before = WorkspaceShellTestAccess::SidebarVisible(shell);
   Expect(SendKeyDown(shell, SDLK_B, SDL_KMOD_CTRL), "Ctrl+B should be handled");
   Expect(WorkspaceShellTestAccess::SidebarVisible(shell) != sidebar_before,
          "Ctrl+B should toggle sidebar visibility");
 
-  // The retired function keys no longer trigger their old surfaces (F6 is now
-  // debug-pause, F8 is debug-start — both inert without a debug session).
   const bool sidebar_state = WorkspaceShellTestAccess::SidebarVisible(shell);
   Expect(!WorkspaceShellTestAccess::OverlayVisible(shell),
          "no overlay should be open before pressing F6");
@@ -2628,13 +2386,6 @@ void TestWorkspaceShellFilesShortcutOpensMatchedFileAfterDeferredIndexCacheBuild
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "project fixture should open");
-  // The finder can only match what the background scan has indexed, and this test
-  // asserts a match OPENS — so it has to wait for the target to be there. Without
-  // this the assertion is a race the CI runner loses: the finder finds nothing,
-  // Enter opens nothing, and the failure reads as a file-finder regression.
-  // (A sibling finder test below made exactly the "focus behaviour does not depend
-  // on the index" assumption and skipped this wait; it then failed in CI for the
-  // reason above. Any finder test that asserts a MATCH has to wait here.)
   Expect(WaitForFileIndexPath(shell, std::filesystem::path("src/target-match.cpp"), true,
                               std::chrono::milliseconds(5000)),
          "file index should contain the target before the finder is asked to match it");
@@ -2642,12 +2393,6 @@ void TestWorkspaceShellFilesShortcutOpensMatchedFileAfterDeferredIndexCacheBuild
          "files shortcut should open the file finder overlay");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "target-match"),
          "typing in the file finder should be handled");
-  // Sample the finder's state BEFORE Enter (which dismisses the overlay), and say
-  // the numbers. "should still open matches" on its own cannot distinguish "the
-  // query matched nothing", "the overlay was gone by the time Enter arrived" and
-  // "Enter opened the wrong row" — and this test has failed that way once in CI
-  // with no way to tell which. The truncated-replace-all test next door was made
-  // to name its numbers for the same reason, and that is what identified its bug.
   const bool finder_open = WorkspaceShellTestAccess::OverlayVisible(shell) &&
                            WorkspaceShellTestAccess::OverlayModeIsFileFinder(shell);
   const std::size_t match_count = WorkspaceShellTestAccess::FileFinderResultCount(shell);
@@ -2738,20 +2483,12 @@ void TestWorkspaceShellReopeningCleanTabDoesNotReloadUnrelatedTabs() {
   util::ResetPerformanceCounters();
   WorkspaceShellTestAccess::OpenFile(shell, alpha);
 
-  // Nothing at all: the file on disk is byte-for-byte what alpha's buffer was
-  // loaded from, so the open activates the tab and stops. It used to re-read the
-  // file and swap in a fresh viewport, which bumped the content revision twice
-  // and dropped every derived cache -- on a large file that is a whole-document
-  // width rebuild for a keystroke that changed nothing (TD-2026-08-06-138).
   Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorContentRevisionBumps) == 0,
          "reopening an unchanged already-open clean tab should not reload it at all");
   Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineWidthTableBuilds) == 0,
          "reopening an unchanged already-open clean tab should not rebuild any width table");
 }
 
-// The other half of the contract above: when the file HAS changed underneath the
-// buffer, reopening it still picks the new content up. Without this the skip
-// could be spelled "never reload" and the test above would not notice.
 void TestWorkspaceShellReopeningCleanTabPicksUpExternalEdits() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2764,9 +2501,6 @@ void TestWorkspaceShellReopeningCleanTabPicksUpExternalEdits() {
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, alpha),
          "alpha should open for external-edit reload regression");
 
-  // Push the write past the recorded signature. mtime+size is the equality the
-  // skip trusts, and a same-size rewrite inside one filesystem timestamp tick
-  // would be indistinguishable -- so change the size too.
   WriteFile(alpha, "alpha changed on disk\n");
 
   WorkspaceShellTestAccess::OpenFile(shell, alpha);
@@ -2841,9 +2575,6 @@ void TestWorkspaceShellTreeCollapseAllowsOpenDescendantsAndReselectReveal() {
          "reselecting the open file tab should preserve collapsed ancestors in the tree");
 }
 
-// Scrolling is not focusing. Wheeling over the sidebar (or the panel, or an unfocused
-// editor pane) used to hand keyboard focus to whatever surface was under the pointer,
-// so a nudge of the wheel silently redirected the user's next keystroke.
 void TestWorkspaceShellWheelDoesNotStealKeyboardFocus() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2870,8 +2601,6 @@ void TestWorkspaceShellWheelDoesNotStealKeyboardFocus() {
          "scrolling the sidebar must leave keyboard focus in the editor");
 }
 
-// The wheel advances every scrollable list by the same three rows per tick the editor
-// text surface uses; the lists used to crawl one row at a time.
 void TestWorkspaceShellWheelStepMatchesEditorAcrossSurfaces() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2893,11 +2622,6 @@ void TestWorkspaceShellWheelStepMatchesEditorAcrossSurfaces() {
          "one wheel tick should advance the sidebar by the shared row step");
 }
 
-// File > Open File… (and its Ctrl+O accelerator, and the welcome screen's Open File
-// action) opens the native file picker. All three used to funnel into a bare `open`
-// with no arguments, which the executor rejected with "open requires a path" — so the
-// menu entry's ellipsis, the welcome button and the advertised shortcut were dead
-// ends, while `project-open` had had a working picker all along.
 void TestWorkspaceShellCtrlOOpensNativeFilePicker() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2926,9 +2650,6 @@ void TestWorkspaceShellCtrlOOpensNativeFilePicker() {
   Expect(WorkspaceShellTestAccess::OpenTabs(shell).empty(),
          "launching the picker should not open a tab on its own");
 
-  // The answer lands through the dialog's wake event alone, as the app delivers
-  // it: it used to be consumed only while preparing a frame, so on a page with
-  // nothing else to paint (the welcome page) the picked file never opened.
   WorkspaceShellTestAccess::QueueOpenFileDialogSelection(shell, picked);
   const Uint32 wake = WorkspaceShellTestAccess::DialogWakeEventType(shell);
   Expect(wake != 0, "the shell should have registered the dialog wake event");
@@ -2942,8 +2663,6 @@ void TestWorkspaceShellCtrlOOpensNativeFilePicker() {
          "the picked file should open as an editor tab");
 }
 
-// The file tree answers Page/Home/End like every other sidebar list. It used to
-// support arrows only, so a large tree could be walked one row at a time.
 void TestWorkspaceShellTreeSidebarSupportsPageAndHomeEndKeys() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2980,10 +2699,6 @@ void TestWorkspaceShellTreeSidebarSupportsPageAndHomeEndKeys() {
          "PageUp at the top should clamp rather than wrap");
 }
 
-// F6 (Focus Next Part; it was Ctrl+Tab, which now steps the recent editors as in
-// VS Code) cycles every on-screen surface in visual order. The debug pane is a full
-// keyboard focus target with its own row navigation, but the old nested-ternary chain
-// covered only sidebar/editor/panel, so it was reachable by click and never by keyboard.
 void TestWorkspaceShellF6CyclesEveryVisibleSurface() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2995,7 +2710,6 @@ void TestWorkspaceShellF6CyclesEveryVisibleSurface() {
   WorkspaceShellTestAccess::SetDebugPaneVisible(shell, true);
   WorkspaceShellTestAccess::SetFocusEditor(shell);
 
-  // Forward: editor -> debug pane -> (no panel open) wraps to sidebar -> editor.
   Expect(SendKeyDown(shell, SDLK_F6, SDL_KMOD_NONE), "F6 should be handled");
   Expect(WorkspaceShellTestAccess::FocusIsDebugPane(shell),
          "F6 from the editor should reach the visible debug pane");
@@ -3006,7 +2720,6 @@ void TestWorkspaceShellF6CyclesEveryVisibleSurface() {
   Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
          "F6 should return to the editor after a full cycle");
 
-  // Reverse cycles the same ring the other way.
   Expect(SendKeyDown(shell, SDLK_F6, SDL_KMOD_SHIFT),
          "Shift+F6 should be handled");
   Expect(WorkspaceShellTestAccess::FocusIsSidebar(shell),
@@ -3017,10 +2730,6 @@ void TestWorkspaceShellF6CyclesEveryVisibleSurface() {
          "Shift+F6 should wrap backwards onto the debug pane");
 }
 
-// Ctrl+Tab steps the focused group's editors in most-recently-used order, as in
-// VS Code: a tap goes back to the previous editor, holding Ctrl and pressing Tab
-// again walks further back, and releasing Ctrl opens the selected one. Tab-strip
-// order is irrelevant -- the MRU order is what is under test.
 void TestWorkspaceShellCtrlTabStepsRecentEditors() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3031,13 +2740,11 @@ void TestWorkspaceShellCtrlTabStepsRecentEditors() {
   WriteFile(beta, "int beta() { return 2; }\n");
   WriteFile(gamma, "int gamma() { return 3; }\n");
 
-  // Frame prep records the use order, and prep runs only with a renderer.
   SoftwareCanvas canvas(1280, 720);
   WorkspaceShell shell;
   const auto render = [&] { WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer()); };
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
-  // Use order alpha, gamma, beta: the strip order (alpha, beta, gamma) differs.
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, alpha), "first tab should open");
   render();
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, beta), "second tab should open");
@@ -3047,7 +2754,6 @@ void TestWorkspaceShellCtrlTabStepsRecentEditors() {
   render();
   WorkspaceShellTestAccess::SetFocusEditor(shell);
 
-  // A tap: Ctrl+Tab then releasing Ctrl goes back to the previous editor.
   Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL), "Ctrl+Tab should be handled");
   Expect(WorkspaceShellTestAccess::OverlayVisible(shell) &&
              WorkspaceShellTestAccess::ActiveOverlayMode(shell) == WorkspaceShell::OverlayMode::QuickPick,
@@ -3060,14 +2766,12 @@ void TestWorkspaceShellCtrlTabStepsRecentEditors() {
          "a Ctrl+Tab tap should open the previously used editor (gamma)");
   render();
 
-  // A tap again flips straight back: the two most recent swap places.
   Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL), "Ctrl+Tab should be handled");
   Expect(shell.HandleEvent(KeyUpEvent(SDLK_LCTRL)).handled, "releasing Ctrl should be handled");
   Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 1,
          "a second tap should return to the editor the first one left (beta)");
   render();
 
-  // Holding Ctrl and pressing Tab twice reaches two back: alpha.
   Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL), "Ctrl+Tab should be handled");
   Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL), "a second Tab under Ctrl should be handled");
   Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 1,
@@ -3077,18 +2781,14 @@ void TestWorkspaceShellCtrlTabStepsRecentEditors() {
          "Ctrl+Tab, Tab should open the least recent of three (alpha)");
   render();
 
-  // Escape while Ctrl is held cancels: nothing switches.
   Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL), "Ctrl+Tab should be handled");
   Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_CTRL), "Escape should be handled");
   Expect(!WorkspaceShellTestAccess::OverlayVisible(shell), "Escape under Ctrl should close the pick");
-  (void)shell.HandleEvent(KeyUpEvent(SDLK_LCTRL));  // nothing left for it to open
+  (void)shell.HandleEvent(KeyUpEvent(SDLK_LCTRL));
   Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 0,
          "Escape should leave the active editor as it was");
 }
 
-// Every resize divider answers a double-click by restoring its default size, the way
-// a window-manager sash does. Before this there was no way back to the defaults short
-// of hand-editing the session file.
 void TestWorkspaceShellDoubleClickResetsResizeDividers() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3099,7 +2799,7 @@ void TestWorkspaceShellDoubleClickResetsResizeDividers() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::SetSidebarWidth(shell, 420.0f);
   WorkspaceShellTestAccess::SetBottomPanelHeight(shell, 320.0f);
-  WorkspaceShellTestAccess::EnsureTerminalTab(shell);  // opens the bottom panel
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
 
   const SDL_FRect sidebar_handle = microide::workspace::SidebarResizeHitRect(
       WorkspaceShellTestAccess::CurrentLayout(shell));
@@ -3283,8 +2983,6 @@ void TestWorkspaceShellTabSizeSettingStaysVisibleAfterRestart() {
   Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.tab_size", "2"),
          "setting editor.tab_size should succeed before restart");
 
-  // Model the restart faithfully: the first shell's state writes land at process
-  // exit, and this test keeps it alive, so flush explicitly before reading back.
   WorkspaceShellTestAccess::FlushPendingStateWrites(shell);
 
   WorkspaceShell reloaded_shell;
@@ -3313,7 +3011,6 @@ void TestWorkspaceShellFontSizeSettingAppliesImmediately() {
          "setting editor.font_size should succeed through the settings path");
   Expect(WorkspaceShellTestAccess::EditorFontSize(shell) == 20,
          "editor font-size preference should update immediately after the setting change");
-  // Out-of-range values clamp into the supported 8..32 range.
   Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.font_size", "100"),
          "setting an out-of-range editor.font_size should still succeed");
   Expect(WorkspaceShellTestAccess::EditorFontSize(shell) == 32,
@@ -3339,8 +3036,6 @@ void TestWorkspaceShellFontSizeIsProjectScopedAndPersists() {
   Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.font_size", "20"),
          "setting editor.font_size should succeed before restart");
 
-  // Round-trips for project A: the canonical value is reapplied to the editor
-  // preferences and the stored setting survives for the overlay display.
   WorkspaceShellTestAccess::FlushPendingStateWrites(shell);
   WorkspaceShell reloaded_shell;
   WorkspaceShellTestAccess::SetProjectRoot(reloaded_shell, root_a);
@@ -3353,8 +3048,6 @@ void TestWorkspaceShellFontSizeIsProjectScopedAndPersists() {
   Expect(stored_font_size.has_value() && *stored_font_size == "20",
          "restored project settings should retain editor.font_size for settings overlay display");
 
-  // Project B (under the same app homes but a different root) keeps the default:
-  // font size is project-scoped and must not leak across projects.
   WorkspaceShell other_shell;
   WorkspaceShellTestAccess::SetProjectRoot(other_shell, root_b);
   WorkspaceShellTestAccess::OpenFile(other_shell, source_b);
@@ -3378,8 +3071,6 @@ void TestWorkspaceShellCommandTabSizeStaysVisibleAfterRestart() {
   Expect(ExecuteCommand(shell, "tab-size 5"),
          "tab-size command should update editor preferences and persist project config");
 
-  // Model the restart faithfully: the first shell's state writes land at process
-  // exit, and this test keeps it alive, so flush explicitly before reading back.
   WorkspaceShellTestAccess::FlushPendingStateWrites(shell);
 
   WorkspaceShell reloaded_shell;
@@ -3419,10 +3110,6 @@ void TestWorkspaceShellAutoCloseToggleUpdatesViewportContract() {
          "second toggle should re-enable auto-close in the active viewport contract");
 }
 
-// TD-2026-07-17A-103: live preference application splits by setting family — the
-// O(tabs) filetype-detect + contract rebuild is skipped unless a contract-affecting
-// toggle changed. A contract-affecting toggle (auto-close) must still refresh EVERY
-// open tab's contract, not just the active one.
 void TestWorkspaceShellAutoCloseToggleUpdatesAllTabContracts() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3434,7 +3121,7 @@ void TestWorkspaceShellAutoCloseToggleUpdatesAllTabContracts() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenFile(shell, first);
-  WorkspaceShellTestAccess::OpenFile(shell, second);  // second is now active
+  WorkspaceShellTestAccess::OpenFile(shell, second);
 
   Expect(WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 0)
              .language_contract_view()
@@ -3444,20 +3131,14 @@ void TestWorkspaceShellAutoCloseToggleUpdatesAllTabContracts() {
   Expect(ExecuteCommand(shell, "toggle-editor-auto-close"),
          "toggle-editor-auto-close should execute");
 
-  // The active tab updates (contract-affecting change routed through ApplyLiveSettings)...
   Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).language_contract_view().auto_close_enabled,
          "active tab contract reflects the auto-close toggle");
-  // ...and so does the background tab: the contract rebuild is still applied to all tabs.
   Expect(!WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 0)
               .language_contract_view()
               .auto_close_enabled,
          "background tab contract is also refreshed by the all-tabs contract rebuild");
 }
 
-// The language contract's five user overrides (extra / disabled pairs, the
-// line-comment marker, extra indent patterns, disabled snippet prefixes) took
-// effect only at the next plugin reload: a live write of one changed the stored
-// value and left every open tab on the old contract (QA `language-overrides`).
 void TestWorkspaceShellLanguageOverrideSettingAppliesLive() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3494,10 +3175,6 @@ void TestWorkspaceShellLanguageOverrideSettingAppliesLive() {
          "clearing the override restores the language's marker");
 }
 
-// TD-2026-08-03-110: tabs of the same language share ONE contract view instead of
-// each owning a byte-identical copy of it. Address identity is the assertion —
-// forty `.cpp` tabs used to mean forty deep copies of four vectors and three
-// strings on every settings change, project activation and session restore.
 void TestWorkspaceShellSameLanguageTabsShareOneContractView() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3526,8 +3203,6 @@ void TestWorkspaceShellSameLanguageTabsShareOneContractView() {
   Expect(&cpp_first != &python, "a different language must resolve to a different view");
   Expect(!cpp_first.auto_close_pairs.empty(), "the shared C++ view still carries its pairs");
 
-  // A contract-affecting toggle is baked into the view, so it must produce a new
-  // shared view rather than mutating the one every tab points at.
   Expect(cpp_first.auto_close_enabled, "auto-close starts enabled");
   Expect(ExecuteCommand(shell, "toggle-editor-auto-close"),
          "toggle-editor-auto-close should execute");
@@ -3541,8 +3216,6 @@ void TestWorkspaceShellSameLanguageTabsShareOneContractView() {
          "both .cpp tabs still share one view after the toggle rebuild");
 }
 
-// A non-contract preference change (tab size) still applies its cheap runtime setter
-// to every open tab even though the language-contract rebuild is skipped.
 void TestWorkspaceShellTabSizeChangeAppliesToAllTabsWithoutContractRebuild() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3577,7 +3250,7 @@ void TestWorkspaceShellTabKeyIndentsMultiLineSelection() {
 
   auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
   viewport.MoveCursorTo(0, 0);
-  viewport.MoveCursorTo(2, 5, /*select=*/true);
+  viewport.MoveCursorTo(2, 5, true);
   Expect(viewport.has_selection() && viewport.selection_range().has_value() &&
              viewport.selection_range()->start.line != viewport.selection_range()->end.line,
          "fixture should have a multi-line selection across three lines");
@@ -3622,11 +3295,6 @@ void TestWorkspaceShellTabKeyOnSingleLineInsertsTabCharacter() {
          "InsertTab should prepend an indent unit at the caret");
 }
 
-// Ctrl+D parity: every press adds the NEXT occurrence, walking forward from the
-// one the previous press added and wrapping once. The search was seeded from the
-// primary selection on every press, so the third press re-found the second
-// press's match and the dedupe swallowed it: "foo foo foo foo" could never get
-// more than two carets, and typing after three presses replaced two words.
 void TestWorkspaceShellAddCursorAtNextMatchWalksForwardEachPress() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3660,31 +3328,15 @@ void TestWorkspaceShellAddCursorAtNextMatchWalksForwardEachPress() {
          "typing replaces every occurrence the presses selected");
 }
 
-// Ctrl+D as a PROPERTY, not a fixture. The seed/hop walk in the executor is the
-// part with a history: presses used to stop after two carets because the search
-// re-found the previous press's match and the dedupe swallowed it. What must hold
-// for every document is arithmetic, not a caret list:
-//
-//   count       after k presses the buffer has min(k, occurrences) selections
-//   exhaustion  further presses add nothing and remove nothing
-//   shape       every selection spans exactly one occurrence of the needle
-//   disjoint    no two selections overlap, and none is a duplicate
-//
-// The shapes below are the ones a "find the next one after the last one I added"
-// walk gets wrong: occurrences that touch, occurrences that OVERLAP each other,
-// a single occurrence, one per line, and a needle that is the whole line.
 void TestWorkspaceShellAddCursorAtNextMatchCountsEveryOccurrence() {
   struct Case {
     const char* name;
     const char* content;
-    // Caret placed here; the first press selects the word under it.
     std::size_t caret_line;
     std::size_t caret_column;
-    // What the first press is expected to select, and how many times it occurs.
     const char* needle;
     std::size_t occurrences;
   };
-  // `SelectWordAtCursor` seeds on an identifier run, so every needle here is one.
   const std::vector<Case> cases = {
       {"one-per-line", "foo\nbar\nfoo\nfoo\n", 0, 1, "foo", 3},
       {"several-on-one-line", "foo foo foo\nfoo\n", 0, 0, "foo", 4},
@@ -3710,13 +3362,10 @@ void TestWorkspaceShellAddCursorAtNextMatchCountsEveryOccurrence() {
     const std::string where = std::string(test_case.name) + ": ";
     const std::string needle = test_case.needle;
 
-    // Two presses past exhaustion, so the "adds nothing more" half is checked
-    // rather than assumed.
     for (std::size_t press = 1; press <= test_case.occurrences + 2; ++press) {
       Expect(ExecuteCommand(shell, "add-cursor-next-match"),
              where + "press " + std::to_string(press) + " should dispatch");
 
-      // Collect every selection: the primary plus each ranged secondary.
       std::vector<microide::editor::SelectionRange> selections;
       if (const auto primary = viewport.selection_range()) {
         selections.push_back(*primary);
@@ -3769,26 +3418,6 @@ void TestWorkspaceShellAddCursorAtNextMatchCountsEveryOccurrence() {
   }
 }
 
-// A drag-and-drop of selected text spans two events -- press and release -- with
-// the whole application running in between, and the source range it moves is the
-// one captured at PRESS. The release used to apply it unconditionally, so an
-// async LSP workspace edit, a plugin edit, a reload from disk, or a Ctrl+PageDown
-// to another tab arriving mid-gesture all made it delete whatever had since
-// inherited those coordinates -- in the tab-switch case, out of a different file.
-// A project switch was already guarded (TD-2026-08-14-216); a tab switch and a
-// plain content change were not.
-//
-// A refused drag costs the user a repeat. A wrong one costs them the text.
-// A press inside a selection arms a text drag -- unless there are several
-// carets, which the press path guards against explicitly.
-//
-// The guard is load-bearing and nothing tested it. The drag records ONE source
-// range (the primary's selection) and moves exactly that, so arming it with
-// three selections would move one of them and leave the other two behind, at
-// coordinates the move has already shifted. VS Code does not offer the gesture
-// there either. Every other drag test arms the gesture directly through
-// ArmTextDrag, which bypasses the press path where this decision is made, so
-// this one has to go through a real mouse-down.
 void TestWorkspaceShellTextDragDoesNotArmWithSeveralCarets() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3805,23 +3434,20 @@ void TestWorkspaceShellTextDragDoesNotArmWithSeveralCarets() {
   const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
   const float char_width = WorkspaceShellTestAccess::TextCharWidth(shell);
   const float y = metrics.first_line_y + metrics.line_height * 0.5f;
-  // Press in the middle of "alpha", which is inside the selection below.
   const float press_x = metrics.text_x + char_width * 2.5f;
 
-  // Control: one caret with a selection under the press DOES arm the gesture.
   viewport.MoveCursorTo(0, 0);
-  viewport.MoveCursorTo(0, 5, /*extend_selection=*/true);
+  viewport.MoveCursorTo(0, 5, true);
   Expect(SendMouseDown(shell, press_x, y, SDL_BUTTON_LEFT), "the press is handled");
   Expect(WorkspaceShellTestAccess::InteractionState_(shell).text_drag !=
              microide::workspace::InteractionState::TextDragState::None,
          "a press inside a single selection arms the drag -- without this the negative "
          "case below would pass for the wrong reason");
 
-  // Now the same press with a second caret in play must NOT arm it.
   WorkspaceShellTestAccess::InteractionState_(shell).text_drag =
       microide::workspace::InteractionState::TextDragState::None;
   viewport.MoveCursorTo(0, 0);
-  viewport.MoveCursorTo(0, 5, /*extend_selection=*/true);
+  viewport.MoveCursorTo(0, 5, true);
   viewport.AddSecondaryCaretWithRange(microide::editor::SelectionRange{
       microide::editor::TextPosition{1, 0}, microide::editor::TextPosition{1, 7}});
   Expect(viewport.has_multiple_carets(), "two selections are in play");
@@ -3847,11 +3473,10 @@ void TestWorkspaceShellTextDragRefusesAStaleSourceRange() {
     WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
     WorkspaceShellTestAccess::OpenFile(shell, file);
 
-    // Select "alpha" and arm a drag of it onto line 2, exactly as the press does.
     auto* viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
     Expect(viewport != nullptr, "the fixture opens an editor tab");
     viewport->MoveCursorTo(0, 0);
-    viewport->MoveCursorTo(0, 5, /*extend_selection=*/true);
+    viewport->MoveCursorTo(0, 5, true);
     WorkspaceShellTestAccess::ArmTextDrag(
         shell,
         microide::editor::SelectionRange{microide::editor::TextPosition{0, 0},
@@ -3859,12 +3484,8 @@ void TestWorkspaceShellTextDragRefusesAStaleSourceRange() {
         microide::editor::TextPosition{2, 0});
 
     disturb(shell, root);
-    WorkspaceShellTestAccess::FinishTextDrag(shell, /*copy=*/false);
+    WorkspaceShellTestAccess::FinishTextDrag(shell, false);
 
-    // The BUFFER, not the file on disk: the drag never saves, so reading the file
-    // would report "unchanged" for a drag that moved the text and the control case
-    // below would pass over a gesture that does nothing at all. The tab in front
-    // may have been switched by `disturb`, so name the file explicitly.
     std::string out;
     if (const auto* buffer = WorkspaceShellTestAccess::EditorViewportForPath(shell, file);
         buffer != nullptr) {
@@ -3876,13 +3497,10 @@ void TestWorkspaceShellTextDragRefusesAStaleSourceRange() {
     return out;
   };
 
-  // Control: with nothing disturbing it, the drag applies. Without this the two
-  // cases below would pass on a drag that never worked at all.
   const std::string moved = arm_and_release([](WorkspaceShell&, const std::filesystem::path&) {});
   Expect(moved.find("alpha") != std::string::npos && moved.rfind("alpha", 0) != 0,
          "the undisturbed drag should move `alpha` off line 0: " + moved);
 
-  // An edit arriving under the gesture.
   const std::string after_edit = arm_and_release([](WorkspaceShell& shell,
                                                     const std::filesystem::path&) {
     auto* viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
@@ -3892,8 +3510,6 @@ void TestWorkspaceShellTextDragRefusesAStaleSourceRange() {
   Expect(after_edit.rfind("XX\nalpha\nbravo\ncharlie\n", 0) == 0,
          "a drag whose buffer changed under it must not move anything: " + after_edit);
 
-  // Another TAB in front at release. The coordinator re-reads the active viewport,
-  // so without the identity check this applied file a's coordinates to file b.
   const std::string after_tab_switch = arm_and_release(
       [](WorkspaceShell& shell, const std::filesystem::path& root) {
         WorkspaceShellTestAccess::OpenFile(shell, root / "b.txt");
@@ -3902,23 +3518,10 @@ void TestWorkspaceShellTextDragRefusesAStaleSourceRange() {
          "a drag released over a different tab must not move anything: " + after_tab_switch);
 }
 
-// The editor's vertical scrollbar was SIZED in logical lines while the scroll
-// position it shows is a VISUAL row -- `scroll_line()` is what ClampScrollState
-// bounds against `visual_line_count()`. With soft wrap on (or a collapsed fold)
-// the two spaces differ, and the consequences are not cosmetic: the layout clamps
-// the scroll to `total_rows - visible_rows`, and a scrollbar drag maps the pointer
-// back through the same total straight into SetScrollLine. So the thumb was
-// over-sized and dragging it to the bottom of a wrapped file stopped short,
-// leaving the end of the document unreachable by the scrollbar.
-//
-// The merge surface already sized its bar in visual rows; the editor was the one
-// that did not.
 void TestWorkspaceShellEditorScrollbarUsesVisualRows() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const auto file = root / "wide.txt";
-  // Twelve lines, each far wider than the pane: with wrap on this is many times
-  // twelve visual rows.
   std::string content;
   for (int i = 0; i < 12; ++i) {
     content += std::string(300, static_cast<char>('a' + i));
@@ -3942,7 +3545,6 @@ void TestWorkspaceShellEditorScrollbarUsesVisualRows() {
              std::to_string(viewport->visual_line_count()) + " rows for " +
              std::to_string(viewport->line_count()) + " lines");
 
-  // The bar must reach the last visual row, not the last logical line.
   const std::size_t visible_rows = static_cast<std::size_t>(std::max(1, layout->visible_rows));
   const std::size_t expected_max = viewport->visual_line_count() > visible_rows
                                        ? viewport->visual_line_count() - visible_rows
@@ -3952,8 +3554,6 @@ void TestWorkspaceShellEditorScrollbarUsesVisualRows() {
              std::to_string(layout->max_vertical_scroll) + ", expected " +
              std::to_string(expected_max));
 
-  // And a scroll to the very bottom must survive the layout's own clamp, which is
-  // the half that made the end of the document unreachable by dragging.
   viewport->SetScrollLine(expected_max);
   const auto at_bottom = WorkspaceShellTestAccess::ActiveEditorScrollLayout(shell, pane);
   Expect(at_bottom.has_value() &&
@@ -3961,10 +3561,6 @@ void TestWorkspaceShellEditorScrollbarUsesVisualRows() {
          "a scroll to the last visual row must not be clamped back to the line count: " +
              std::to_string(at_bottom.has_value() ? at_bottom->vertical_scroll : 0));
 
-  // The same question, asked of the two other places that pair a total with
-  // `scroll_line()`. A selection drag held past the bottom edge autoscrolls; it
-  // clamped against the LOGICAL line count, so in a wrapped file it stopped long
-  // before the end of the document.
   viewport->SetScrollLine(0);
   namespace autoscroll = microide::workspace::selection_autoscroll;
   autoscroll::Band band;
@@ -3974,9 +3570,6 @@ void TestWorkspaceShellEditorScrollbarUsesVisualRows() {
   band.visible_rows = visible_rows;
   auto& interaction = WorkspaceShellTestAccess::InteractionState_(shell);
   for (int step = 0; step < 2000; ++step) {
-    // Re-armed each tick, as a pointer held past the bottom edge does: the ramp is
-    // recomputed from the live pointer on every motion, and a held pointer sends
-    // none, which is why the wake repeats the step.
     autoscroll::Arm(interaction, workspace::InteractionState::SelectionAutoscrollOwner::Text, band, pane.x + 10.0f,
                     pane.y + pane.h + 200.0f);
     autoscroll::Step(interaction, *viewport);
@@ -3988,13 +3581,6 @@ void TestWorkspaceShellEditorScrollbarUsesVisualRows() {
              std::to_string(viewport->visual_line_count()) + " visual rows");
 }
 
-// The box selection and the plain selection drag carry press-time coordinates
-// too, and while neither EDITS, both are resolved against whichever viewport is
-// active when the motion arrives -- so a tab switch mid-drag (Ctrl+PageDown with
-// the button still down) selected a rectangle in a file the gesture was never
-// pointed at. The motion handler ends any gesture whose buffer has left the
-// front, which is one check rather than a reset call at each of the nine sites
-// that assign `active_tab_index`.
 void TestWorkspaceShellEditorGestureEndsWhenItsBufferLeavesTheFront() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -4007,21 +3593,16 @@ void TestWorkspaceShellEditorGestureEndsWhenItsBufferLeavesTheFront() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, first);
 
-  // A box gesture armed in the FIRST file.
   WorkspaceShellTestAccess::SetTransientMouseSelecting(shell, true);
   WorkspaceShellTestAccess::SetTransientBoxSelecting(shell);
   WorkspaceShellTestAccess::SetEditorGestureViewportToActive(shell);
   Expect(WorkspaceShellTestAccess::TransientBoxSelecting(shell), "the gesture is armed");
 
-  // Then the second file takes the front, still mid-gesture.
   WorkspaceShellTestAccess::OpenFile(shell, second);
   const auto* second_viewport = WorkspaceShellTestAccess::EditorViewportForPath(shell, second);
   Expect(second_viewport != nullptr && second_viewport->line_count() >= 3,
          "the second file is open");
 
-  // A motion event now must end the gesture rather than extend it here.
-  // Whether the shell reports the motion as handled is a routing detail; what
-  // matters is that the gesture is over and nothing was selected here.
   SendMouseMotion(shell, 600.0f, 200.0f, SDL_BUTTON_LMASK);
   Expect(!WorkspaceShellTestAccess::TransientBoxSelecting(shell),
          "the box gesture must end rather than build a rectangle in a file it was "
@@ -4033,14 +3614,6 @@ void TestWorkspaceShellEditorGestureEndsWhenItsBufferLeavesTheFront() {
          "no box carets were placed in the second file");
 }
 
-// A keyboard column-select gesture is anchored to where the caret WAS, so any
-// caret move that is not the gesture's own has to end it -- otherwise the next
-// Ctrl+Shift+Alt+Arrow extends a box from a corner the user has since left. That
-// used to be two hand-placed ClearColumnSelection() calls in the two KEY
-// handlers, which is a list of one input kind: a mouse click, a `goto` from the
-// palette, a control-channel caret move and a jump-to-definition all left the
-// stale box armed. The gesture invalidates itself in PlacePrimaryCaret now, so
-// this test drives the caret the way a click does -- not through a key.
 void TestWorkspaceShellColumnSelectReanchorsAfterAForeignCaretMove() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -4068,8 +3641,6 @@ void TestWorkspaceShellColumnSelectReanchorsAfterAForeignCaretMove() {
          "a box over lines 0-2 is the primary plus two secondaries, got " +
              std::to_string(viewport->secondary_caret_range_view().size()));
 
-  // A click, in the only form a test can spell it: MoveCursorTo is the mouse
-  // path's own entry point.
   viewport->MoveCursorTo(5, 2);
   Expect(!viewport->column_selection().active,
          "a caret move outside the gesture must end it, or the next step extends a "
@@ -4086,8 +3657,6 @@ void TestWorkspaceShellColumnSelectReanchorsAfterAForeignCaretMove() {
                std::to_string(caret.position.line));
   }
 
-  // And the gesture still survives its OWN steps, which is what the re-arm
-  // ordering in the executor is for.
   step_down();
   viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
   Expect(viewport->column_selection().active, "the gesture survives its own step");
@@ -4096,27 +3665,12 @@ void TestWorkspaceShellColumnSelectReanchorsAfterAForeignCaretMove() {
              std::to_string(viewport->secondary_caret_range_view().size()));
 }
 
-// An action may edit the buffer in FRONT. It may not edit one that is not.
-//
-// That sounds obvious until you count the ways a verb can name a viewport:
-// `ActiveEditableViewport()` (the compare right pane on a compare tab),
-// `ActiveEditorViewport()` (editor tabs only), `ActiveNavigableViewport()`, and
-// the LSP/plugin appliers that resolve a PATH to whichever tab holds it. A verb
-// that reaches for the wrong one edits a file the user is not looking at, and
-// nothing on screen changes to say so -- the class the merge-layout copies and
-// the drag's tab switch were both instances of.
-//
-// So: a background editor tab holding a marked buffer, a different tab in front,
-// every registered action, and one requirement -- the background buffer is
-// untouched. Run twice, once with an editor tab in front and once with a compare
-// tab, because those two resolve `ActiveEditableViewport()` differently.
 void TestWorkspaceShellNoActionEditsABackgroundBuffer() {
   const std::vector<WorkspaceShell::ActionId> skipped = {
       WorkspaceShell::ActionId::CloseActiveTab,   WorkspaceShell::ActionId::CloseOtherTabs,
       WorkspaceShell::ActionId::CloseTabsToRight, WorkspaceShell::ActionId::CloseTabsToLeft,
       WorkspaceShell::ActionId::CloseAllTabs,     WorkspaceShell::ActionId::CloseGroup,
       WorkspaceShell::ActionId::ProjectClose,     WorkspaceShell::ActionId::Quit,
-      // Native OS dialogs; see the other sweeps.
       WorkspaceShell::ActionId::Open,             WorkspaceShell::ActionId::ProjectOpen,
   };
   const std::string background_text = "keep0();\nkeep1();\nkeep2();\nkeep3();\n";
@@ -4142,7 +3696,6 @@ void TestWorkspaceShellNoActionEditsABackgroundBuffer() {
       WorkspaceShellTestAccess::SetProjectRoot(shell, root);
       WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
-      // The buffer that must not move, opened FIRST and then left behind.
       WorkspaceShellTestAccess::OpenFile(shell, background);
       if (compare_in_front) {
         if (!WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, foreground, "HEAD",
@@ -4170,22 +3723,20 @@ void TestWorkspaceShellNoActionEditsABackgroundBuffer() {
       Expect(before_background.rfind(background_text, 0) == 0,
              "the background buffer starts as written");
 
-      // A caret and a selection in whatever is in front, so the edit verbs have
-      // something to act on THERE.
       if (auto* front = WorkspaceShellTestAccess::ActiveEditorOrNull(shell); front != nullptr) {
         front->MoveCursorTo(1, 1);
-        front->MoveCursorTo(2, 3, /*extend_selection=*/true);
+        front->MoveCursorTo(2, 3, true);
       } else if (auto* compare = WorkspaceShellTestAccess::ActiveCompareOrNull(shell);
                  compare != nullptr) {
         compare->right_viewport.MoveCursorTo(1, 1);
-        compare->right_viewport.MoveCursorTo(2, 3, /*extend_selection=*/true);
+        compare->right_viewport.MoveCursorTo(2, 3, true);
       }
 
       WorkspaceShellTestAccess::ExecuteAction(shell, spec.id, {});
 
       const std::string after_background = background_now();
       if (after_background.empty()) {
-        continue;  // the action closed or replaced that tab; not this test's question
+        continue;
       }
       Expect(after_background == before_background,
              std::string("`") + std::string(spec.command_name) +
@@ -4203,16 +3754,6 @@ void TestWorkspaceShellNoActionEditsABackgroundBuffer() {
   }
 }
 
-// Soft wrap is a VIEW setting, so no ACTION may notice it. The viewport-level
-// differential next door (EditorWrapInvarianceTests) proves that of the
-// `editor::` free functions; this proves it of the whole dispatch, which is a
-// different amount of machinery -- the compare refresh, the merge re-tracking,
-// the find refresh, the breakpoint slide, the folding mark and the LSP sync all
-// hang off the same post-edit hook, and each of them has a row-space question of
-// its own. Five sites got that question wrong this session.
-//
-// Two shells over the same file, identical in every way except `editor.wrap`,
-// every registered action run on both, and one requirement: the buffers agree.
 void TestWorkspaceShellNoActionNoticesSoftWrap() {
   const std::vector<WorkspaceShell::ActionId> skipped = {
       WorkspaceShell::ActionId::CloseActiveTab,   WorkspaceShell::ActionId::CloseOtherTabs,
@@ -4220,11 +3761,8 @@ void TestWorkspaceShellNoActionNoticesSoftWrap() {
       WorkspaceShell::ActionId::CloseAllTabs,     WorkspaceShell::ActionId::CloseGroup,
       WorkspaceShell::ActionId::ProjectClose,     WorkspaceShell::ActionId::Quit,
       WorkspaceShell::ActionId::Open,             WorkspaceShell::ActionId::ProjectOpen,
-      // The wrap toggle itself is the one action whose whole job is to notice.
       WorkspaceShell::ActionId::Wrap,
   };
-  // Lines far wider than the pane, so wrap genuinely reflows them, with the
-  // indentation and comment markers the shaping verbs need.
   const std::string content =
       "  aaa(" + std::string(200, 'a') + ");\n"
       "  bbb(" + std::string(200, 'b') + ");\n"
@@ -4246,9 +3784,6 @@ void TestWorkspaceShellNoActionNoticesSoftWrap() {
       WriteFile(file, content);
       WorkspaceShell shell;
       WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-      // A NARROW window for the wrapped pass would change `visible_rows` too, and
-      // a page verb legitimately depends on that; the width is identical and only
-      // the setting differs.
       WorkspaceShellTestAccess::SetWindowSize(shell, 640, 480);
       Expect(WorkspaceShellTestAccess::SetSettingValueTransient(
                  shell, "editor.wrap", wrapped != 0 ? "word" : "off"),
@@ -4261,13 +3796,13 @@ void TestWorkspaceShellNoActionNoticesSoftWrap() {
       }
       if (wrapped != 0) {
         if (viewport->visual_line_count() <= viewport->line_count()) {
-          usable = false;  // nothing wrapped; the comparison would prove nothing
+          usable = false;
           break;
         }
         ++wrapped_checks;
       }
       viewport->MoveCursorTo(1, 4);
-      viewport->MoveCursorTo(2, 6, /*extend_selection=*/true);
+      viewport->MoveCursorTo(2, 6, true);
       WorkspaceShellTestAccess::ExecuteAction(shell, spec.id, {});
       viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
       if (viewport == nullptr) {
@@ -4300,19 +3835,6 @@ void TestWorkspaceShellNoActionNoticesSoftWrap() {
              " wrapped passes");
 }
 
-// A collapsed fold is one row on screen, so SOME verbs treat it as one line and
-// the rest act on its opener alone. `ResolveLineRanges` spells the rule out --
-// "a bare caret on the opener of a collapsed fold names the whole fold, as it
-// does for the verbs that move, duplicate, cut or delete 'the line' in VS Code.
-// Indent, comment and sort keep acting on the opener alone" -- and that rule is
-// carried by ONE bool argument, `expand_collapsed_folds`, passed at each call
-// site.
-//
-// A per-site bool is a list, and a list drifts from the sentence describing it.
-// So pin the sentence: run every registered action with the caret on a collapsed
-// opener and with no fold at all, and require the set whose RESULT differs to be
-// exactly the documented one. Flipping the flag at any call site -- in either
-// direction -- fails here and names the verb.
 void TestWorkspaceShellCollapsedFoldExpandingVerbsAreExactlyTheDocumentedSet() {
   const std::vector<WorkspaceShell::ActionId> skipped = {
       WorkspaceShell::ActionId::CloseActiveTab,   WorkspaceShell::ActionId::CloseOtherTabs,
@@ -4320,13 +3842,10 @@ void TestWorkspaceShellCollapsedFoldExpandingVerbsAreExactlyTheDocumentedSet() {
       WorkspaceShell::ActionId::CloseAllTabs,     WorkspaceShell::ActionId::CloseGroup,
       WorkspaceShell::ActionId::ProjectClose,     WorkspaceShell::ActionId::Quit,
       WorkspaceShell::ActionId::Open,             WorkspaceShell::ActionId::ProjectOpen,
-      // These are ABOUT folds; differing is their job.
       WorkspaceShell::ActionId::Fold,             WorkspaceShell::ActionId::Unfold,
       WorkspaceShell::ActionId::ToggleFoldAtCursor, WorkspaceShell::ActionId::FoldAll,
       WorkspaceShell::ActionId::UnfoldAll,
   };
-  // "move, duplicate, cut or delete the line" -- the four shapes the rule names,
-  // as command names so a failure reads as the sentence does.
   const std::vector<std::string> expected_expanding = {
       "copy-line-down", "copy-line-up", "cut", "delete-line", "move-line-down", "move-line-up",
   };
@@ -4361,7 +3880,7 @@ void TestWorkspaceShellCollapsedFoldExpandingVerbsAreExactlyTheDocumentedSet() {
           return;
         }
       }
-      viewport->MoveCursorTo(1, 0);  // the opener
+      viewport->MoveCursorTo(1, 0);
       WorkspaceShellTestAccess::ExecuteAction(shell, spec.id, {});
       viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
       if (viewport == nullptr) {
@@ -4396,8 +3915,6 @@ void TestWorkspaceShellCollapsedFoldExpandingVerbsAreExactlyTheDocumentedSet() {
          "the verbs that treat a collapsed fold as one line should be exactly the set "
          "ResolveLineRanges documents.\n  expected: " +
              join(expected_expanding) + "\n  observed: " + join(observed_expanding));
-  // Vacuity: a run where the fold never collapsed would report an empty set and
-  // an equality against an empty expectation would be the bug.
   Expect(compared > 100 && !observed_expanding.empty(),
          "the sweep must have compared the whole registry and seen the fold matter, "
          "compared " +
@@ -4405,17 +3922,6 @@ void TestWorkspaceShellCollapsedFoldExpandingVerbsAreExactlyTheDocumentedSet() {
              " expanding");
 }
 
-// The unfocused half of a SPLIT is a different way to be "not in front" from a
-// background tab, and it resolves through a different path: `focused_group()`
-// rather than an active tab index, with the split tree's leaf order having to
-// agree with `editor_groups` for either to mean anything (the hard invariant
-// CheckEditorGroupsMutateWithTheSplitTree). A verb that reaches for
-// `editor_groups[0]` instead of the focused one edits the pane the user is
-// looking AWAY from -- visibly, in the other half of the window, while their
-// caret sits somewhere else.
-//
-// Same requirement as the background-tab sweep: every registered action, and the
-// buffer in the unfocused group is untouched.
 void TestWorkspaceShellNoActionEditsAnUnfocusedSplitGroup() {
   const std::vector<WorkspaceShell::ActionId> skipped = {
       WorkspaceShell::ActionId::CloseActiveTab,   WorkspaceShell::ActionId::CloseOtherTabs,
@@ -4447,8 +3953,6 @@ void TestWorkspaceShellNoActionEditsAnUnfocusedSplitGroup() {
       Expect(false, "the fixture should split the editor area");
       return;
     }
-    // The split leaves the NEW group focused; open the other file there so the two
-    // groups hold different buffers.
     WorkspaceShellTestAccess::OpenFile(shell, focused);
     if (WorkspaceShellTestAccess::EditorGroupCount(shell) < 2) {
       Expect(false, "the fixture should have two groups");
@@ -4472,14 +3976,14 @@ void TestWorkspaceShellNoActionEditsAnUnfocusedSplitGroup() {
 
     if (auto* front = WorkspaceShellTestAccess::ActiveEditorOrNull(shell); front != nullptr) {
       front->MoveCursorTo(1, 1);
-      front->MoveCursorTo(2, 3, /*extend_selection=*/true);
+      front->MoveCursorTo(2, 3, true);
     }
 
     WorkspaceShellTestAccess::ExecuteAction(shell, spec.id, {});
 
     const std::string after = other_now();
     if (after.empty()) {
-      continue;  // the action closed that view; not this test's question
+      continue;
     }
     ++swept;
     Expect(after == before,
@@ -4495,11 +3999,6 @@ void TestWorkspaceShellNoActionEditsAnUnfocusedSplitGroup() {
              std::to_string(swept));
 }
 
-// The two multi-cursor gestures VS Code users reach for most after Ctrl+D, driven
-// through the real chords rather than the viewport API -- a verb that exists but
-// is unreachable from the keyboard is the shape the 2026-08-13 review kept
-// finding (Ctrl+Enter, Shift+Alt+Up and Esc were all unbound while their code
-// existed).
 void TestWorkspaceShellAddCursorChordsAreBound() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -4513,7 +4012,6 @@ void TestWorkspaceShellAddCursorChordsAreBound() {
   Expect(viewport != nullptr, "the fixture opens an editor tab");
   viewport->MoveCursorTo(0, 2);
 
-  // Ctrl+Alt+Down twice: a column of three.
   const auto ctrl_alt = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_ALT);
   Expect(SendKeyDown(shell, SDLK_DOWN, ctrl_alt), "Ctrl+Alt+Down is bound");
   Expect(SendKeyDown(shell, SDLK_DOWN, ctrl_alt), "and again");
@@ -4521,7 +4019,6 @@ void TestWorkspaceShellAddCursorChordsAreBound() {
   Expect(viewport->secondary_caret_range_view().size() == 2,
          "two presses leave three carets, got " +
              std::to_string(viewport->secondary_caret_range_view().size() + 1));
-  // The whole column types, which is the point of the gesture.
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "X"), "typing is handled");
   viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
   Expect(std::string(viewport->lines().LineView(0)) == "aaXaa" &&
@@ -4532,14 +4029,12 @@ void TestWorkspaceShellAddCursorChordsAreBound() {
              std::string(viewport->lines().LineView(0)) + "/" +
              std::string(viewport->lines().LineView(2)));
 
-  // Ctrl+Alt+Up walks it back off the bottom rather than doing nothing.
   Expect(SendKeyDown(shell, SDLK_UP, ctrl_alt), "Ctrl+Alt+Up is bound");
 
-  // Shift+Alt+I over a selection: one caret at each line's end.
   viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
   viewport->ClearSecondaryCarets();
   viewport->MoveCursorTo(0, 0);
-  viewport->MoveCursorTo(2, 1, /*extend_selection=*/true);
+  viewport->MoveCursorTo(2, 1, true);
   Expect(SendKeyDown(shell, SDLK_I, static_cast<SDL_Keymod>(SDL_KMOD_SHIFT | SDL_KMOD_ALT)),
          "Shift+Alt+I is bound");
   viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
@@ -4554,17 +4049,6 @@ void TestWorkspaceShellAddCursorChordsAreBound() {
          "each line gained a character at its END");
 }
 
-// A snippet session's placeholders are LINE:COLUMN ranges, and only the snippet
-// engine's own operations (a mirror edit, a choice swap, the expansion) keep them
-// in step with the text. Every other edit -- move-line, sort, paste, format, an
-// LSP workspace edit -- moves the buffer underneath them and nothing told the
-// session, so it stayed ACTIVE describing coordinates that had become somebody
-// else's: Tab then jumped into unrelated text and the next keystroke replaced it.
-//
-// The session now records the revision its ranges were computed against, and an
-// announced edit that is not the engine's ends it. That failure direction is the
-// safe one: a future engine op that forgets to stamp ends the session one edit
-// early, which a test sees, where the absence of the check was silent.
 void TestWorkspaceShellForeignEditEndsTheSnippetSession() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -4585,8 +4069,6 @@ void TestWorkspaceShellForeignEditEndsTheSnippetSession() {
   Expect(expanded.find("for(i;;)") != std::string::npos,
          "the placeholder text is on line 1: " + expanded);
 
-  // A shaping edit the engine knows nothing about: the snippet's whole line moves
-  // up, so every placeholder range is now one line below its text.
   Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::MoveLineUp, {}),
          "move-line-up should dispatch");
   viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
@@ -4596,8 +4078,6 @@ void TestWorkspaceShellForeignEditEndsTheSnippetSession() {
          "an edit the engine did not make must end the session rather than leave it "
          "pointing at moved text");
 
-  // Tab is therefore an ordinary tab, not a jump into whatever now sits at the old
-  // placeholder coordinates.
   const std::size_t caret_line = viewport->cursor_line();
   Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE), "Tab is handled");
   viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
@@ -4610,9 +4090,6 @@ void TestWorkspaceShellForeignEditEndsTheSnippetSession() {
          "that inherited the placeholder's coordinates");
 }
 
-// The other half: the engine's OWN edits must not end the session. Typing into a
-// placeholder is an announced edit like any other, so the revision stamp is the
-// only thing that tells the two apart.
 void TestWorkspaceShellTypingInAPlaceholderKeepsTheSnippetSession() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -4638,10 +4115,6 @@ void TestWorkspaceShellTypingInAPlaceholderKeepsTheSnippetSession() {
          "and the mirror still follows it: " + line);
 }
 
-// The slide runs off the ACTIVE editor's announced edit, so an edit applied to
-// another open buffer -- a rename's workspace edit touching other files, a
-// plugin's apply_edits on a named file, replace-in-project into an open tab --
-// never moved that file's breakpoints: the debugger then stopped a line off.
 void TestWorkspaceShellABackgroundBufferEditKeepsItsBreakpointsOnTheirLine() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -4652,8 +4125,8 @@ void TestWorkspaceShellABackgroundBufferEditKeepsItsBreakpointsOnTheirLine() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenFile(shell, a);
-  WorkspaceShellTestAccess::OpenFileInNewTab(shell, b);  // b is in front; a is in the background
-  WorkspaceShellTestAccess::ToggleBreakpointForTest(shell, a, 2);  // on "gamma"
+  WorkspaceShellTestAccess::OpenFileInNewTab(shell, b);
+  WorkspaceShellTestAccess::ToggleBreakpointForTest(shell, a, 2);
   auto& store = WorkspaceShellTestAccess::BreakpointStore(shell);
   Expect(store.HasBreakpoint(a, 2), "the breakpoint is on gamma");
   Expect(WorkspaceShellTestAccess::ApplyLspWorkspaceEdit(
@@ -4661,22 +4134,11 @@ void TestWorkspaceShellABackgroundBufferEditKeepsItsBreakpointsOnTheirLine() {
          "the workspace edit applies to the background buffer");
   Expect(store.HasBreakpoint(a, 3) && !store.HasBreakpoint(a, 2),
          "the breakpoint moved with gamma to line 3");
-  // And activating the file does not slide it a second time.
-  WorkspaceShellTestAccess::ActivateTab(shell, 0);  // a comes to the front
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
   WorkspaceShellTestAccess::RenderFrame(shell);
   Expect(store.HasBreakpoint(a, 3), "still on gamma after the file comes to the front");
 }
 
-// A breakpoint is a LINE NUMBER, and every edit that adds or removes lines above
-// one moves the statement it was set on. VS Code slides them; so does this, from
-// the viewport's applied-edit span -- but only where a code path announces the
-// edit (`RequestActiveEditableLastChangeRedraw`). An edit path that forgets to
-// announce leaves the disc on a line the user never marked, and the debugger
-// then stops somewhere else. That is invisible in a fixture test of one verb.
-//
-// So: every registered action, a breakpoint on the LAST line, a caret on the
-// first, and one requirement -- if the buffer changed, the breakpoint is still on
-// the text it was set on.
 void TestWorkspaceShellEveryActionKeepsBreakpointsOnTheirLine() {
   const std::vector<WorkspaceShell::ActionId> skipped = {
       WorkspaceShell::ActionId::CloseActiveTab,
@@ -4687,14 +4149,8 @@ void TestWorkspaceShellEveryActionKeepsBreakpointsOnTheirLine() {
       WorkspaceShell::ActionId::CloseGroup,
       WorkspaceShell::ActionId::ProjectClose,
       WorkspaceShell::ActionId::Quit,
-      // These pop a NATIVE OS dialog (SDL's XDG-portal file chooser). A test must
-      // never open one -- and headless it also leaks SDL's per-call portal state,
-      // because with no portal to answer, SDL never runs the callback that frees
-      // it. That leak is what made the ASAN lane fail with a stack of nothing but
-      // SDL_malloc; with fast_unwind_on_malloc=0 these two frames appear.
       WorkspaceShell::ActionId::Open,
       WorkspaceShell::ActionId::ProjectOpen,
-      // These are ABOUT breakpoints; moving or clearing one is their job.
       WorkspaceShell::ActionId::BreakpointToggle,
       WorkspaceShell::ActionId::BreakpointSet,
       WorkspaceShell::ActionId::BreakpointRemove,
@@ -4702,8 +4158,6 @@ void TestWorkspaceShellEveryActionKeepsBreakpointsOnTheirLine() {
       WorkspaceShell::ActionId::DebugBreakpointToggleEnabled,
       WorkspaceShell::ActionId::DebugBreakpointRemove,
   };
-  // The marked line's text: unique in the buffer, so "is the breakpoint still on
-  // it" needs no arithmetic about how many lines the action added.
   const std::string marked = "marked_statement();";
 
   std::size_t mutating_actions = 0;
@@ -4721,10 +4175,6 @@ void TestWorkspaceShellEveryActionKeepsBreakpointsOnTheirLine() {
     WorkspaceShellTestAccess::OpenFile(shell, file);
     auto& breakpoints = WorkspaceShellTestAccess::BreakpointStore(shell);
 
-    // Re-resolved on every use, never held. An action that opens a tab pushes onto
-    // the group's tab vector, and a reallocation there invalidates any reference
-    // into it -- a use-after-free that only ASAN sees, and the exact hazard this
-    // sweep walks into by running EVERY registered action.
     const auto editor = [&shell]() { return WorkspaceShellTestAccess::ActiveEditorOrNull(shell); };
     const auto line_at = [&editor](std::size_t line) {
       const auto* viewport = editor();
@@ -4748,10 +4198,8 @@ void TestWorkspaceShellEveryActionKeepsBreakpointsOnTheirLine() {
     breakpoints.Set(file, marked_line);
     Expect(breakpoints.HasBreakpoint(file, marked_line), "the breakpoint is set");
 
-    // Caret and a selection on the FIRST line, well above the marked one, so an
-    // action that edits there moves the marked line without touching it.
     editor()->MoveCursorTo(0, 0);
-    editor()->MoveCursorTo(0, 2, /*extend_selection=*/true);
+    editor()->MoveCursorTo(0, 2, true);
 
     const auto joined = [&]() {
       std::string out;
@@ -4765,8 +4213,6 @@ void TestWorkspaceShellEveryActionKeepsBreakpointsOnTheirLine() {
 
     WorkspaceShellTestAccess::ExecuteAction(shell, spec.id, {});
 
-    // The action may have opened a tab of its own; the buffer under test is no
-    // longer in front, so there is nothing to judge.
     if (editor() == nullptr) {
       continue;
     }
@@ -4776,8 +4222,6 @@ void TestWorkspaceShellEveryActionKeepsBreakpointsOnTheirLine() {
     }
     ++mutating_actions;
 
-    // Where the marked text actually is now. If the action deleted it there is
-    // nothing to require -- the breakpoint's line is gone with it.
     std::size_t moved_to = line_count();
     for (std::size_t i = 0; i < line_count(); ++i) {
       if (line_at(i) == marked) {
@@ -4808,12 +4252,6 @@ void TestWorkspaceShellEveryActionKeepsBreakpointsOnTheirLine() {
              std::to_string(mutating_actions));
 }
 
-// VS Code's emptySelectionClipboard rule: Ctrl+C with nothing selected copies
-// the whole line, and pasting that exact text back with a single caret and no
-// selection puts it on its own line ABOVE the caret's line rather than into the
-// middle of it. The marker is the text itself, so a selection copy (or another
-// application's clipboard) pastes inline as before, and a line CUT pastes the
-// same way.
 void TestWorkspaceShellEmptySelectionCopyPastesAsAWholeLine() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -4843,7 +4281,6 @@ void TestWorkspaceShellEmptySelectionCopyPastesAsAWholeLine() {
          "the caret stays where it was in its line, one line down (VS Code), at " +
              std::to_string(viewport.cursor_line()) + ":" + std::to_string(viewport.cursor_column()));
 
-  // A selection copy clears the rule: the same text pastes inline.
   viewport.MoveCursorTo(0, 0);
   viewport.SelectWordAtCursor();
   Expect(RunCommandLine(shell, "copy"), "a selection copy dispatches");
@@ -4852,7 +4289,6 @@ void TestWorkspaceShellEmptySelectionCopyPastesAsAWholeLine() {
   Expect(RunCommandLine(shell, "paste"), "paste dispatches");
   Expect(viewport.lines()[2] == "tonewo", "a selection copy pastes at the caret");
 
-  // A line cut pastes on its own line too.
   viewport.MoveCursorTo(0, 2);
   Expect(RunCommandLine(shell, "cut"), "cut with no selection dispatches");
   Expect(*clipboard == "one\n" && viewport.lines()[0] == "one",
@@ -4862,7 +4298,6 @@ void TestWorkspaceShellEmptySelectionCopyPastesAsAWholeLine() {
   Expect(viewport.lines().Snapshot() == std::vector<std::string>{"one", "one", "tonewo", ""},
          "the cut line comes back above the caret's line");
 
-  // Something else on the clipboard (another application, say) is not a line paste.
   *clipboard = "zzz\n";
   viewport.MoveCursorTo(0, 1);
   Expect(RunCommandLine(shell, "paste"), "paste dispatches");
@@ -4870,10 +4305,6 @@ void TestWorkspaceShellEmptySelectionCopyPastesAsAWholeLine() {
          "text the editor did not line-copy pastes at the caret");
 }
 
-// Ctrl+Shift+L / Ctrl+D with the find widget focused: the carets are in the
-// editor afterwards, so focus goes there too (VS Code's Alt+Enter / Ctrl+D from
-// the find input). It used to stay on the widget, so the replacement went into
-// the search box and every selected occurrence was left as it was.
 void TestWorkspaceShellAddCursorAtAllMatchesFromFindWidgetFocusesTheEditor() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -4897,11 +4328,6 @@ void TestWorkspaceShellAddCursorAtAllMatchesFromFindWidgetFocusesTheEditor() {
          "the keystroke replaces every occurrence, not the search query");
 }
 
-// A paste with one clipboard line per caret puts one line at each caret (VS
-// Code's spread rule). The rule lives in TextViewport::PasteText, and the
-// shell's paste never reached it: the text-input coordinator claimed the editor
-// surface and inserted the whole payload at every caret, so a two-caret paste of
-// "1\n2\n" put both lines at both carets.
 void TestWorkspaceShellPasteSpreadsOneLinePerCaret() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -4921,7 +4347,6 @@ void TestWorkspaceShellPasteSpreadsOneLinePerCaret() {
   Expect(viewport.lines().Snapshot() == std::vector<std::string>{"1a", "2b", ""},
          "each caret receives its own line of the clipboard");
 
-  // A payload whose line count does not match goes whole to every caret.
   WorkspaceShellTestAccess::SetClipboardTextReader(
       shell, []() -> std::optional<std::string> { return std::string("Z"); });
   viewport.MoveCursorTo(0, 0);
@@ -4931,11 +4356,6 @@ void TestWorkspaceShellPasteSpreadsOneLinePerCaret() {
          "a single-line payload is inserted at every caret");
 }
 
-// Save As and open-before-it-exists, as VS Code: an untitled buffer is named by
-// `save <path>` (Ctrl+S opens the Save As prompt; the command line is told what
-// to type), `tab`/`open` on a path that is not there yet opens an empty buffer
-// bound to it and `save` creates the file and its directories, and Save As never
-// overwrites a file that already exists.
 void TestWorkspaceShellSaveAsAndBuffersForPathsThatDoNotExistYet() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -5078,8 +4498,6 @@ void TestWorkspaceShellCodeActionMenuIsCentered() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
   const SDL_FRect editor_area = WorkspaceShellTestAccess::EditorAreaRect(shell);
-  // A short action list stays a compact, horizontally-centered modal — the canonical
-  // picker placement, not the former caret-anchored popup.
   const SDL_FRect menu = WorkspaceShellTestAccess::CodeActionMenuRectForItemCount(shell, 3);
   const float menu_center = menu.x + menu.w * 0.5f;
   const float area_center = editor_area.x + editor_area.w * 0.5f;
@@ -5088,8 +4506,6 @@ void TestWorkspaceShellCodeActionMenuIsCentered() {
   Expect(menu.w < editor_area.w,
          "code-action menu should be a compact modal, narrower than the editor area");
 
-  // The height tracks the row count: a longer list is taller than a short one (up to
-  // the visible-row cap), confirming the content-sized menu rather than a fixed modal.
   const SDL_FRect taller = WorkspaceShellTestAccess::CodeActionMenuRectForItemCount(shell, 8);
   Expect(taller.h > menu.h, "a longer action list should produce a taller menu");
 }
@@ -5117,17 +4533,10 @@ void TestWorkspaceShellSettingsOverlayRightClickDoesNotOpenEditorContextMenu() {
 }
 
 
-// Ctrl+Up/Down scroll the editor one line without moving the caret, and Ctrl+L
-// selects the caret's line and grows the selection by one line per press (VS
-// Code scrollLineUp/Down and expandLineSelection). Ctrl+Up/Down used to move the
-// caret like a plain arrow; Ctrl+L did nothing.
 void TestWorkspaceShellCtrlArrowsScrollAndCtrlLSelectsLines() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path source = root / "long.txt";
-  // No trailing newline, so the document's last line carries text (the
-  // last-line arm below selects to its end; an empty last line would select
-  // nothing, which is also what VS Code does).
   std::string content;
   for (int i = 0; i < 200; ++i) {
     content += (i == 0 ? "" : "\n") + std::string("line ") + std::to_string(i);
@@ -5141,8 +4550,6 @@ void TestWorkspaceShellCtrlArrowsScrollAndCtrlLSelectsLines() {
   WorkspaceShellTestAccess::RenderFrame(shell);
   WorkspaceShellTestAccess::SetFocusEditor(shell);
   auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
-  // The null test renderer never sizes the viewport (it stays one line tall, so
-  // any caret move would scroll); give it a real page.
   viewport.SetViewportSize(40, 120);
   viewport.MoveCursorTo(3, 2);
   Expect(viewport.scroll_line() == 0, "the fixture starts scrolled to the top");
@@ -5168,7 +4575,6 @@ void TestWorkspaceShellCtrlArrowsScrollAndCtrlLSelectsLines() {
              selection->end.line == 5 && selection->end.column == 0,
          "a second Ctrl+L grows the selection by one more line");
 
-  // On the document's last line the selection ends at that line's end instead.
   const std::size_t last = viewport.line_count() - 1;
   viewport.MoveCursorTo(last, 0);
   Expect(SendKeyDown(shell, SDLK_L, SDL_KMOD_CTRL), "Ctrl+L on the last line is handled");
@@ -5180,9 +4586,6 @@ void TestWorkspaceShellCtrlArrowsScrollAndCtrlLSelectsLines() {
 }
 
 
-// Esc with a selection collapses it to the caret (VS Code cancelSelection). With
-// several carets the first Esc removes the secondaries and keeps the primary's
-// selection; the second Esc deselects. Esc used to leave a single selection alone.
 void TestWorkspaceShellEscapeCancelsTheSelection() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -5198,7 +4601,7 @@ void TestWorkspaceShellEscapeCancelsTheSelection() {
   auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
 
   viewport.MoveCursorTo(0, 0);
-  viewport.MoveCursorTo(0, 5, /*extend_selection=*/true);
+  viewport.MoveCursorTo(0, 5, true);
   Expect(viewport.has_selection(), "the fixture selected \"hello\"");
   Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Esc with a selection is handled");
   Expect(!viewport.has_selection(), "Esc cancels the selection");
@@ -5208,7 +4611,7 @@ void TestWorkspaceShellEscapeCancelsTheSelection() {
          "Esc with nothing to cancel is not consumed by the editor");
 
   viewport.MoveCursorTo(0, 0);
-  viewport.MoveCursorTo(0, 5, /*extend_selection=*/true);
+  viewport.MoveCursorTo(0, 5, true);
   viewport.AddSecondaryCaret(1, 0);
   Expect(viewport.has_multiple_carets() && viewport.has_selection(),
          "the fixture has a selection plus a secondary caret");
@@ -5220,9 +4623,6 @@ void TestWorkspaceShellEscapeCancelsTheSelection() {
 }
 
 
-// VS Code parity bindings that used to do nothing: F9 toggles a breakpoint on the
-// caret's line, Alt+Z toggles word wrap, Ctrl+] / Ctrl+[ indent / outdent, and
-// Ctrl+Shift+E / G switch sidebar views.
 void TestWorkspaceShellVsCodeParityBindings() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -5237,7 +4637,6 @@ void TestWorkspaceShellVsCodeParityBindings() {
   WorkspaceShellTestAccess::SetFocusEditor(shell);
   auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
 
-  // F9 needs the debugger on; it toggles at the caret's line, like the gutter click.
   WorkspaceShellTestAccess::SetSettingValue(shell, "debug.enabled", "true");
   viewport.MoveCursorTo(1, 0);
   Expect(SendKeyDown(shell, SDLK_F9, SDL_KMOD_NONE), "F9 is handled");
@@ -5247,7 +4646,6 @@ void TestWorkspaceShellVsCodeParityBindings() {
   Expect(!WorkspaceShellTestAccess::BreakpointStore(shell).HasBreakpoint(source, 1),
          "a second F9 removes it again");
 
-  // Ctrl+] / Ctrl+[ indent and outdent the caret's line.
   viewport.MoveCursorTo(1, 0);
   Expect(SendKeyDown(shell, SDLK_RIGHTBRACKET, SDL_KMOD_CTRL), "Ctrl+] is handled");
   Expect(std::string(viewport.lines().LineView(1)).starts_with(" ") ||
@@ -5257,14 +4655,12 @@ void TestWorkspaceShellVsCodeParityBindings() {
   Expect(std::string(viewport.lines().LineView(1)) == "return 0;",
          "Ctrl+[ outdents it back");
 
-  // Alt+Z toggles word wrap.
   const bool wrap_before = viewport.soft_wrap();
   Expect(SendKeyDown(shell, SDLK_Z, SDL_KMOD_ALT), "Alt+Z is handled");
   Expect(viewport.soft_wrap() != wrap_before, "Alt+Z toggles word wrap");
   Expect(SendKeyDown(shell, SDLK_Z, SDL_KMOD_ALT), "a second Alt+Z is handled");
   Expect(viewport.soft_wrap() == wrap_before, "a second Alt+Z toggles it back");
 
-  // Ctrl+Shift+G / E switch the sidebar view.
   Expect(SendKeyDown(shell, SDLK_G, SDL_KMOD_CTRL | SDL_KMOD_SHIFT), "Ctrl+Shift+G is handled");
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Git,
          "Ctrl+Shift+G shows source control");
@@ -5274,9 +4670,6 @@ void TestWorkspaceShellVsCodeParityBindings() {
 }
 
 
-// Alt+F8 / Shift+Alt+F8 walk the active file's diagnostics from the caret, wrapping
-// at both ends (VS Code marker.next / marker.prev). There was no problem navigation
-// from the keyboard at all before.
 void TestWorkspaceShellAltF8StepsDiagnostics() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -5294,8 +4687,6 @@ void TestWorkspaceShellAltF8StepsDiagnostics() {
   using microide::editor::DiagnosticSeverity;
   using microide::editor::SelectionRange;
   using microide::editor::TextPosition;
-  // Published out of order on purpose: navigation must follow positions, not
-  // publication order.
   Expect(WorkspaceShellTestAccess::PublishDiagnostics(
              shell, "lsp", source,
              {Diagnostic{SelectionRange{TextPosition{4, 0}, TextPosition{4, 1}},
@@ -5342,8 +4733,6 @@ void TestWorkspaceShellSettingsOverlayTrapsKeyboardInput() {
   Expect(WorkspaceShellTestAccess::SettingsOverlayVisible(shell),
          "settings overlay fixture should open the overlay");
 
-  // Editing and navigation keys must be swallowed by the modal overlay, not leak into
-  // the editor surface beneath it.
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "Enter should be consumed by the settings overlay");
   Expect(SendKeyDown(shell, SDLK_BACKSPACE, SDL_KMOD_NONE),
@@ -5363,11 +4752,6 @@ void TestWorkspaceShellSettingsOverlayTrapsKeyboardInput() {
          "Escape should close the settings overlay");
 }
 
-// The font picker's dropdown is part of the Settings surface even where it hangs
-// below the card: a click on its rows picks, it does not close Settings (a click
-// on "Choose file…" at the bottom of the list did, found by the QA
-// native-dialogs flow). The geometry half is pinned on a view model whose
-// picker lies entirely outside the card; the shell half clicks the real rows.
 void TestWorkspaceShellSettingsPickerRowsBelowTheCardStillPick() {
   workspace::SettingsOverlayViewModel vm;
   vm.rect = SDL_FRect{100.0f, 100.0f, 600.0f, 300.0f};
@@ -5406,10 +4790,9 @@ void TestWorkspaceShellSettingsOverlayWheelScrolls() {
   WorkspaceShellTestAccess::OpenSettingsOverlay(shell);
   Expect(WorkspaceShellTestAccess::SettingsOverlayVisible(shell),
          "settings overlay fixture should open the overlay");
-  // The first category ("Editor") holds more settings than fit at this size.
   WorkspaceShellTestAccess::SetSettingsOverlayCategory(shell, 0);
   const SDL_FRect rect = WorkspaceShellTestAccess::SettingsOverlayRect(shell);
-  const float wheel_x = rect.x + rect.w * 0.7f;  // over the value pane
+  const float wheel_x = rect.x + rect.w * 0.7f;
   const float wheel_y = rect.y + rect.h * 0.6f;
 
   Expect(WorkspaceShellTestAccess::SettingsOverlayScrollRow(shell) == 0,
@@ -5424,9 +4807,6 @@ void TestWorkspaceShellSettingsOverlayWheelScrolls() {
          "scrolling up should reduce the settings scroll row");
 }
 
-// A row scrolled up past the value pane keeps its laid-out rect, which then
-// sits under the section header band. The click path hit-tested every row's
-// rect, so a click on the header selected the row scrolled away beneath it.
 void TestWorkspaceShellSettingsClickOnTheHeaderMissesTheRowScrolledBeneathIt() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -5455,11 +4835,6 @@ void TestWorkspaceShellSettingsClickOnTheHeaderMissesTheRowScrolledBeneathIt() {
          "the click on the header selects no row");
 }
 
-// The debug pane's Variables and Watch trees were the last keyboard-navigable
-// lists that answered Up/Down only, and the only ones that moved a selection
-// without scrolling it into view: arrowing past the last visible row walked the
-// highlight off screen, which is exactly the failure the git sidebar's
-// visible-row walk was written to avoid.
 void TestWorkspaceShellDebugPaneKeyboardRevealsAndPages() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -5474,8 +4849,6 @@ void TestWorkspaceShellDebugPaneKeyboardRevealsAndPages() {
   Expect(WorkspaceShellTestAccess::DebugPaneWatchScrollRow(shell) == 0,
          "the pane should start unscrolled");
 
-  // The initial window is rows [0, visible); `visible` presses land one row past
-  // its last, which is the first press that has to move the pane.
   for (int i = 0; i < visible; ++i) {
     Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE), "Down should be consumed by the pane");
   }
@@ -5488,7 +4861,6 @@ void TestWorkspaceShellDebugPaneKeyboardRevealsAndPages() {
              static_cast<int>(selected) < scroll + visible,
          "the selection must stay inside the visible window");
 
-  // The rest of the shared contract, which the pane did not answer at all.
   Expect(SendKeyDown(shell, SDLK_END, SDL_KMOD_NONE), "End should be consumed by the pane");
   Expect(WorkspaceShellTestAccess::DebugWatchSelectedRow(shell) == rows - 1,
          "End should select the last row");
@@ -5509,12 +4881,6 @@ void TestWorkspaceShellDebugPaneKeyboardRevealsAndPages() {
          "Home should scroll the pane back to the top");
 }
 
-// Call Stack rows were clickable but had no keyboard at all, in a pane the shell
-// otherwise treats as a first-class focus target (focus ring, Ctrl+Tab, its own
-// scrollbar, row context menus). Its selection is the focused frame, which the
-// render already highlights, so arrowing is the same act as clicking — except
-// that it must not hand focus to the editor, or the next arrow key would land
-// somewhere else.
 void TestWorkspaceShellDebugCallStackKeyboardNavigates() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -5566,11 +4932,6 @@ void TestWorkspaceShellDebugCallStackKeyboardNavigates() {
          "Home should scroll the pane back to the top");
 }
 
-// Soak 5a2cb8ba7f6b: with the debug pane focused, a key none of its surfaces
-// takes (Ctrl+Left there) fell through to the editor's key handler and moved
-// the caret of an editor that did not have focus -- the status bar, repainted
-// for the pane, then disagreed with it. Keys the focused pane does not handle
-// stay out of the editor, in every mode.
 void TestWorkspaceShellDebugPaneKeysDoNotReachTheEditor() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -5590,7 +4951,7 @@ void TestWorkspaceShellDebugPaneKeysDoNotReachTheEditor() {
     for (const auto& [key, mod] : {std::pair{SDLK_LEFT, SDL_KMOD_CTRL}, std::pair{SDLK_RIGHT, SDL_KMOD_SHIFT},
                                    std::pair{SDLK_BACKSPACE, SDL_KMOD_NONE}, std::pair{SDLK_DELETE, SDL_KMOD_NONE},
                                    std::pair{SDLK_RETURN, SDL_KMOD_SHIFT}}) {
-      (void)SendKeyDown(shell, key, mod);  // whether the pane takes it is its business
+      (void)SendKeyDown(shell, key, mod);
       Expect(WorkspaceShellTestAccess::FocusIsDebugPane(shell), "the key leaves focus in the pane");
       Expect(editor.cursor_line() == 0 && editor.cursor_column() == 16 && !editor.has_selection() &&
                  !editor.dirty(),
@@ -5601,10 +4962,6 @@ void TestWorkspaceShellDebugPaneKeysDoNotReachTheEditor() {
   }
 }
 
-// Breakpoints was the last of the debug pane's four modes with no keyboard. Unlike
-// the other three it had no selection concept at all, so it needed one — and a
-// highlight, or navigation would be invisible. Enter is the mouse's single click
-// (navigate to the line), Space its double click (toggle enabled).
 void TestWorkspaceShellDebugBreakpointsKeyboardNavigates() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -5634,7 +4991,6 @@ void TestWorkspaceShellDebugBreakpointsKeyboardNavigates() {
   Expect(WorkspaceShellTestAccess::DebugBreakpointsSelectedRow(shell) == 0,
          "Home should select the first row");
 
-  // Walk to a real breakpoint row (row 0 is the section header) and toggle it.
   Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE), "Down should be consumed by the panel");
   Expect(WorkspaceShellTestAccess::BreakpointEnabledForTest(shell, source, 0),
          "the fixture's first breakpoint starts enabled");
@@ -5644,7 +5000,6 @@ void TestWorkspaceShellDebugBreakpointsKeyboardNavigates() {
   Expect(WorkspaceShellTestAccess::FocusIsDebugPane(shell),
          "toggling from the keyboard must leave focus in the pane");
 
-  // Enter navigates instead, and must not steal focus the way a click does.
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "Enter should be consumed by the panel");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == source.lexically_normal(),
          "Enter should navigate to the selected breakpoint's file");
@@ -5652,10 +5007,6 @@ void TestWorkspaceShellDebugBreakpointsKeyboardNavigates() {
          "navigating from the keyboard must leave focus in the pane");
 }
 
-// Third instance of the same bug as the debug pane's and Help/About's bars: the
-// font-picker dropdown painted a scrollbar from the day it shipped and nothing
-// hit-tested it, so a long family list was reachable by mouse wheel only. The
-// grab has to run ahead of the item rows, which span the card width.
 void TestWorkspaceShellSettingsFontPickerScrollbarIsGrabbable() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -5677,17 +5028,10 @@ void TestWorkspaceShellSettingsFontPickerScrollbarIsGrabbable() {
          "clicking the picker scrollbar track should be handled");
   Expect(WorkspaceShellTestAccess::SettingsOverlayPickerScroll(shell) > 0,
          "clicking near the bottom of the picker track should scroll the family list");
-  // The grab must not be mistaken for a click on the family row behind the bar,
-  // which would apply that family and close the picker.
   Expect(WorkspaceShellTestAccess::SettingsOverlayPickerScrollbar(shell).has_value(),
          "grabbing the picker scrollbar must leave the dropdown open");
 }
 
-// Help/About is read-only *content*, which is not the same as inert chrome. It is a
-// scrollable list, so it must answer the shared Up/Down/Page/Home/End contract and
-// its painted scrollbar must be grabbable. Until 2026-07-29 the overlay swallowed
-// every key but Escape, and the scrollbar had no hit rect at all because the render
-// pass resolved the scroll model and published it into a mutable shell member.
 void TestWorkspaceShellHelpAboutIsKeyboardAndScrollbarNavigable() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -5713,8 +5057,6 @@ void TestWorkspaceShellHelpAboutIsKeyboardAndScrollbarNavigable() {
   const auto scrollbar = WorkspaceShellTestAccess::SettingsOverlayScrollbar(shell);
   Expect(scrollbar.has_value(),
          "an overflowing help/about list should publish a scrollbar on the view model");
-  // Grab near the bottom of the track: the bar the paint draws is the bar the
-  // hit test uses, so this must move the list.
   const float track_x = scrollbar->track.x + scrollbar->track.w * 0.5f;
   const float track_y = scrollbar->track.y + scrollbar->track.h - 2.0f;
   Expect(SendMouseDown(shell, track_x, track_y, SDL_BUTTON_LEFT),
@@ -5723,10 +5065,6 @@ void TestWorkspaceShellHelpAboutIsKeyboardAndScrollbarNavigable() {
          "clicking near the bottom of the track should jump the help/about list down");
 }
 
-// Help/About lists ~190 command rows and had no way to search them: the service
-// filtered HelpRows by the query all along, but the query field was only ever
-// drawn in Settings mode, so the filter was unreachable and the surface was
-// scroll-only. It now opens filter-focused like Settings, and typing narrows it.
 void TestWorkspaceShellHelpAboutFilterNarrowsRows() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -5735,7 +5073,6 @@ void TestWorkspaceShellHelpAboutFilterNarrowsRows() {
   const std::size_t unfiltered = WorkspaceShellTestAccess::HelpAboutRows(shell).size();
   Expect(unfiltered > 20, "the help/about fixture should have many rows to filter");
 
-  // Typing must reach the filter editor, not be swallowed as it was before.
   const std::string text = "split";
   for (char character : text) {
     SDL_Event event{};
@@ -5756,7 +5093,6 @@ void TestWorkspaceShellHelpAboutFilterNarrowsRows() {
                      }),
          "every surviving row should match the needle");
 
-  // Backspacing back to empty restores the full list.
   for (std::size_t i = 0; i < text.size(); ++i) {
     Expect(SendKeyDown(shell, SDLK_BACKSPACE, SDL_KMOD_NONE),
            "backspace should be routed to the help/about filter field");
@@ -5764,8 +5100,6 @@ void TestWorkspaceShellHelpAboutFilterNarrowsRows() {
   Expect(WorkspaceShellTestAccess::HelpAboutRows(shell).size() == unfiltered,
          "clearing the filter should restore every row");
 
-  // The list keys the surface already answered must still work, not be eaten by
-  // the field: Home/End stay list jumps here.
   Expect(SendKeyDown(shell, SDLK_END, SDL_KMOD_NONE), "End should still be consumed");
   Expect(WorkspaceShellTestAccess::SettingsOverlayScrollRow(shell) > 0,
          "End should still jump the help/about list, not move a caret");
@@ -5789,8 +5123,6 @@ void TestWorkspaceShellHelpAboutShowsBoundKeyChords() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::OpenHelpAboutOverlay(shell);
   const auto rows = WorkspaceShellTestAccess::HelpAboutRows(shell);
-  // Commands that have a keybinding should surface the bound chord, prefixed
-  // before the usage with the "  ·  " separator the help builder injects.
   const auto chord_row = std::find_if(rows.begin(), rows.end(), [](const auto& row) {
     return row.detail.find("  ·  ") != std::string::npos;
   });
@@ -5927,12 +5259,6 @@ void TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange() {
          "copy with context should prepend the enclosing opener, relative path and line range");
 }
 
-// The path label falls back to the absolute path for a buffer outside the project
-// root. Worth pinning on its own: the label came from a file-local RelativePathLabel
-// that shadowed the shared one in WorkspacePathUtils with the SAME name, the
-// REVERSED argument order, and a different out-of-root result (empty vs the absolute
-// path). Both parameters are std::filesystem::path, so mixing the two up compiles
-// silently — this asserts the surviving behaviour rather than trusting the swap.
 void TestWorkspaceShellCopySelectionWithContextOutsideProjectRootUsesAbsolutePath() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -5980,8 +5306,6 @@ void TestWorkspaceShellCopySelectionWithContextWithoutSelectionCopiesCurrentLine
         return true;
       });
 
-  // No selection: the current (non-blank) line is copied with the enclosing
-  // opener context.
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 5);
 
   Expect(WorkspaceShellTestAccess::ExecuteCopySelectionWithContext(shell),
@@ -5990,9 +5314,6 @@ void TestWorkspaceShellCopySelectionWithContextWithoutSelectionCopiesCurrentLine
          "copy with context without a selection should copy the current line plus context");
 }
 
-// A no-selection context copy on a large buffer returns ONLY the current line (plus its
-// enclosing opener), never the whole document. This pins that the LineSpan/LineView path
-// that replaced lines().Snapshot() (TD-2026-07-17A-035) reads just the range it needs.
 void TestWorkspaceShellCopySelectionWithContextNoSelectionReadsSingleLineFromLargeBuffer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -6000,8 +5321,6 @@ void TestWorkspaceShellCopySelectionWithContextNoSelectionReadsSingleLineFromLar
   const std::filesystem::path source = source_dir / "big.cpp";
   std::filesystem::create_directories(source_dir);
 
-  // A function with many body lines; each line is distinct so a broadened range would
-  // show up as extra content in the clipboard.
   std::string content = "void f() {\n";
   for (int i = 0; i < 40; ++i) {
     content += "  step_" + std::to_string(i) + "();\n";
@@ -6020,7 +5339,6 @@ void TestWorkspaceShellCopySelectionWithContextNoSelectionReadsSingleLineFromLar
         return true;
       });
 
-  // Cursor on body line "  step_20();" — file line 22 (1-based), buffer index 21.
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(21, 4);
   Expect(WorkspaceShellTestAccess::ExecuteCopySelectionWithContext(shell),
          "copy with context should execute on a large buffer without a selection");
@@ -6047,7 +5365,6 @@ void TestWorkspaceShellCopySelectionWithContextOnBlankLineExpandsToEnclosingFold
         return true;
       });
 
-  // Blank line inside the function body: expand to the enclosing brace fold.
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
 
   Expect(WorkspaceShellTestAccess::ExecuteCopySelectionWithContext(shell),
@@ -6167,7 +5484,7 @@ void TestWorkspaceShellAltClickKeepsTheExistingSelection() {
 
   auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
   viewport.MoveCursorTo(0, 0);
-  viewport.MoveCursorTo(0, 5, /*extend_selection=*/true);  // "alpha" selected
+  viewport.MoveCursorTo(0, 5, true);
 
   const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
   const float char_width = WorkspaceShellTestAccess::TextCharWidth(shell);
@@ -6183,7 +5500,6 @@ void TestWorkspaceShellAltClickKeepsTheExistingSelection() {
              secondaries[0].selection_anchor == microide::editor::TextPosition{0, 0},
          "the previous selection survives as a secondary caret with its range");
 
-  // Alt+click on an existing secondary caret removes it (VS Code toggles).
   Expect(SendMouseDown(shell, metrics.text_x + char_width * 5.0f, y, SDL_BUTTON_LEFT),
          "the second Alt+click is handled");
   Expect(!viewport.has_multiple_carets(), "Alt+click on a secondary caret removes it");
@@ -6272,9 +5588,6 @@ void TestWorkspaceShellShiftAltClickOffColumnMakesBoxSelection() {
   const float click_x = metrics.text_x + char_width * 5.0f;
 
   const ScopedHeldModifiers shift_alt_mods(shell, static_cast<SDL_Keymod>(SDL_KMOD_ALT | SDL_KMOD_SHIFT));
-  // Shift+Alt off-column is a rectangular (column/box) selection from the anchor
-  // corner (0,0) to the clicked corner (1,5): every line in the span selects
-  // columns 0..5 (VSCode behavior), not the old single-caret Alt+click fallback.
   const bool handled = SendMouseDown(shell, click_x, y, SDL_BUTTON_LEFT);
 
   Expect(handled, "Shift+Alt+off-column click should still be handled");
@@ -6295,8 +5608,6 @@ void TestWorkspaceShellShiftAltClickOffColumnMakesBoxSelection() {
          "line 0 should carry a ranged secondary caret selecting columns 0..5");
 }
 
-// Shift+Alt+drag continuously rebuilds the box from the fixed press anchor to the
-// live pointer, and mouse-up ends the box gesture.
 void TestWorkspaceShellShiftAltDragUpdatesBoxSelection() {
   EnsureDummySdlVideoInitialized();
   ResetSdlModStateForTests();
@@ -6321,7 +5632,6 @@ void TestWorkspaceShellShiftAltDragUpdatesBoxSelection() {
   viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
   const float char_width = WorkspaceShellTestAccess::TextCharWidth(shell);
 
-  // Press at (line 0, col 2).
   viewport.MoveCursorTo(0, 2);
   const float press_x = metrics.text_x + char_width * 2.0f;
   const float press_y = metrics.first_line_y + metrics.line_height * 0.5f;
@@ -6329,7 +5639,6 @@ void TestWorkspaceShellShiftAltDragUpdatesBoxSelection() {
   Expect(SendMouseDown(shell, press_x, press_y, SDL_BUTTON_LEFT),
          "Shift+Alt press should be handled");
 
-  // Drag to (line 2, col 6).
   const float drag_x = metrics.text_x + char_width * 6.0f;
   const float drag_y = metrics.first_line_y + metrics.line_height * 2.5f;
   Expect(SendMouseMotion(shell, drag_x, drag_y, SDL_BUTTON_LMASK),
@@ -6502,10 +5811,6 @@ void TestWorkspaceShellSidebarModeTabsSwitchView() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
-  // Three primary tabs plus an overflow button. The overflow is not plugin-only:
-  // Problems, Tests and Outline are builtin views with no tab of their own, and
-  // they were once filtered out of both the row and its menu, leaving them
-  // reachable only by typing `sidebar-show problems`.
   Expect(WorkspaceShellTestAccess::SidebarModeOverflowRect(shell).w > 0.0f,
          "the builtin overflow views should give the mode row an overflow button");
 
@@ -6515,7 +5820,6 @@ void TestWorkspaceShellSidebarModeTabsSwitchView() {
     return SendMouseDown(shell, tab.x + tab.w * 0.5f, tab.y + tab.h * 0.5f, SDL_BUTTON_LEFT);
   };
 
-  // A single click on a tab switches directly to that view (no intermediate menu).
   Expect(click_tab("git"), "clicking the Source Control tab should be handled");
   Expect(!WorkspaceShellTestAccess::MenuBarOpen(shell),
          "switching views via a tab should not open any menu");
@@ -6532,8 +5836,6 @@ void TestWorkspaceShellSidebarModeTabsSwitchView() {
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Tree,
          "clicking the Project tab should activate Tree mode");
 
-  // The tabless builtin views are reachable from the overflow menu, and selecting
-  // one actually switches to it.
   const SDL_FRect overflow = WorkspaceShellTestAccess::SidebarModeOverflowRect(shell);
   Expect(SendMouseDown(shell, overflow.x + overflow.w * 0.5f, overflow.y + overflow.h * 0.5f,
                        SDL_BUTTON_LEFT),
@@ -6717,13 +6019,6 @@ void TestWorkspaceShellEditorTabsDragReorderBetweenTabs() {
          "dragged editor tab should stay active after reordering");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == file_a.lexically_normal(),
          "dragged editor tab should keep its buffer active");
-  // The cached tab-strip geometry (display_titles / tooltip_labels / widths)
-  // is keyed only on (tab_count, window_width). A reorder leaves both unchanged
-  // and used to produce stale labels in the rendered strip while the underlying
-  // open_tabs vector had already shuffled — content moved, names didn't.
-  // ComputeVisibleTabs now drives the cache invalidation through
-  // WorkspaceShell::MoveActiveTabTo, so the visible titles must reflect the
-  // post-reorder order rather than the pre-reorder one.
   const auto visible_titles = WorkspaceShellTestAccess::EditorTabDisplayTitles(shell);
   Expect(visible_titles.size() == 3,
          "tab reorder should not change the number of visible tab labels");
@@ -6782,7 +6077,6 @@ void TestWorkspaceShellEditorTabDragDefersCommitUntilRelease() {
   const float drop_y = third_rect.y + third_rect.h * 0.5f;
   Expect(SendMouseMotion(shell, drop_x, drop_y, SDL_BUTTON_LMASK), "motion handled");
 
-  // Deferred commit: the underlying open_tabs vector must NOT mutate mid-drag.
   const auto& mid_tabs = WorkspaceShellTestAccess::OpenTabs(shell);
   Expect(mid_tabs.size() == 3 && mid_tabs[0].path == file_a.lexically_normal() &&
              mid_tabs[1].path == file_b.lexically_normal() &&
@@ -6868,8 +6162,6 @@ void TestWorkspaceShellEditorTabDragSeedsSlideAnimation() {
                        source_rect.y + source_rect.h * 0.5f, SDL_BUTTON_LEFT),
          "press starts a drag on tab 0");
 
-  // Drag tab 0 rightward past tab 1's midpoint so tab 1 must slide left to fill
-  // the vacated slot.
   const SDL_FRect third_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 2);
   Expect(SendMouseMotion(shell, third_rect.x + 1.0f, third_rect.y + third_rect.h * 0.5f,
                          SDL_BUTTON_LMASK),
@@ -6913,7 +6205,6 @@ void TestWorkspaceShellEditorTabDragHomeStillGlides() {
   const float cx = source_rect.x + source_rect.w * 0.5f;
   const float cy = source_rect.y + source_rect.h * 0.5f;
   Expect(SendMouseDown(shell, cx, cy, SDL_BUTTON_LEFT), "press starts a drag");
-  // Move past the drag threshold but stay over the source tab (no reorder).
   Expect(SendMouseMotion(shell, cx + 10.0f, cy, SDL_BUTTON_LMASK), "small drag is handled");
   Expect(!WorkspaceShellTestAccess::TabDrag(shell).reordered,
          "staying over the source slot marks no pending reorder");
@@ -6924,10 +6215,6 @@ void TestWorkspaceShellEditorTabDragHomeStillGlides() {
          "even a no-reorder drop glides the lifted tab back home instead of snapping");
 }
 
-// The drop slot follows the DRAGGED TAB, not the cursor. Grabbing a tab near its
-// left edge and pushing right used to need the cursor itself to cross the next
-// tab's midpoint, so the tab visually covered its neighbour a long way before
-// anything moved — the strip read as lagging half a tab behind the drag.
 void TestWorkspaceShellEditorTabDragSlotFollowsTheTabNotTheGrabPoint() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -6949,14 +6236,10 @@ void TestWorkspaceShellEditorTabDragSlotFollowsTheTabNotTheGrabPoint() {
   const SDL_FRect second_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 1);
   Expect(source_rect.w > 24.0f, "the fixture needs tabs wide enough for a grab offset to matter");
 
-  // Grab tab 0 near its LEFT edge, so the tab's own body sits well to the right
-  // of the cursor for the whole gesture.
   const float grab_x = source_rect.x + 2.0f;
   const float grab_y = source_rect.y + source_rect.h * 0.5f;
   Expect(SendMouseDown(shell, grab_x, grab_y, SDL_BUTTON_LEFT), "press starts a drag");
 
-  // Park the cursor just SHORT of tab 1's midpoint. The dragged tab's own centre
-  // is already past it, which is what decides.
   const float second_midpoint = second_rect.x + second_rect.w * 0.5f;
   Expect(SendMouseMotion(shell, second_midpoint - 4.0f, grab_y, SDL_BUTTON_LMASK),
          "dragging is handled");
@@ -6971,9 +6254,6 @@ void TestWorkspaceShellEditorTabDragSlotFollowsTheTabNotTheGrabPoint() {
          "the drop lands where the dragged tab was drawn, not where the cursor was");
 }
 
-// A tab dropped mid-glide used to snap its neighbours to their new resting slots
-// on the release frame, because the settle zeroed every offset. Their unfinished
-// ease has to carry across the commit instead.
 void TestWorkspaceShellEditorTabDropCarriesNeighborEaseAcrossTheCommit() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -6999,9 +6279,6 @@ void TestWorkspaceShellEditorTabDropCarriesNeighborEaseAcrossTheCommit() {
   const float drop_x = third_rect.x + third_rect.w + 20.0f;
   Expect(SendMouseMotion(shell, drop_x, cy, SDL_BUTTON_LMASK), "drag past the last tab");
 
-  // Snapshot the in-flight ease. Each neighbour is drawn at `base + current` and
-  // the commit makes `base + target` its new base, so its carried offset is
-  // exactly `current - target` — whatever the elapsed time happened to be.
   const microide::workspace::TabStripSlide during =
       WorkspaceShellTestAccess::TabSlide(shell).strips[0];
   Expect(during.current.size() == 3 && during.target.size() == 3,
@@ -7014,17 +6291,12 @@ void TestWorkspaceShellEditorTabDropCarriesNeighborEaseAcrossTheCommit() {
   const auto& settle = settle_state.strips[0];
   Expect(settle_state.settling && settle.current.size() == 3,
          "release hands off to a settle glide");
-  // Tab 0 moved to the end, so pre-reorder tabs 1 and 2 are now 0 and 1.
   Expect(std::fabs(settle.current[0] - residual_for_tab_1) < 1e-3f,
          "the first neighbour keeps its unfinished ease instead of teleporting");
   Expect(std::fabs(settle.current[1] - residual_for_tab_2) < 1e-3f,
          "the second neighbour keeps its unfinished ease instead of teleporting");
 }
 
-// Hovering a tab shows its full path. Starting a drag from that hover used to
-// leave the card up for the whole gesture, floating over the strip the tab is
-// being dragged across and naming whatever the pointer first rested on — the
-// drag path owns the pointer and stops re-resolving hover, so nothing retired it.
 void TestWorkspaceShellEditorTabDragHidesTheHoverTooltip() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -7061,9 +6333,6 @@ void TestWorkspaceShellEditorTabDragHidesTheHoverTooltip() {
          "the tooltip comes back once the drag ends");
 }
 
-// A drag owns the pointer, so it owns the cancel key too — and it cannot survive
-// the window losing focus, because the button-up goes to whoever took the focus.
-// Both abandon the gesture: the lifted tab glides home and nothing is reordered.
 void TestWorkspaceShellEditorTabDragIsAbandonedByEscapeAndFocusLoss() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -7120,9 +6389,6 @@ void TestWorkspaceShellEditorTabDragIsAbandonedByEscapeAndFocusLoss() {
   }
 }
 
-// A tab dragged onto the OTHER group's strip in a split moves BETWEEN groups; it
-// used to do nothing at all, because the drag resolved only the focused group's
-// strip and never asked whether the pointer had left it (TD-2026-08-14-213).
 void TestWorkspaceShellEditorTabDragMovesTabToTheOtherGroup() {
   using microide::workspace::EditorSplitOrientation;
   TemporaryDirectory temp_dir;
@@ -7137,8 +6403,6 @@ void TestWorkspaceShellEditorTabDragMovesTabToTheOtherGroup() {
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_a), "tab a opens");
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_b), "tab b opens");
   WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 900);
-  // Splitting clones the ACTIVE tab into the new group and focuses it; focusing
-  // back makes group 0 the drag source with two tabs to give away.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
          "the fixture needs a second editor group");
   Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus returns to group 0");
@@ -7153,7 +6417,6 @@ void TestWorkspaceShellEditorTabDragMovesTabToTheOtherGroup() {
   const float grab_y = source_rect.y + source_rect.h * 0.5f;
   Expect(SendMouseDown(shell, grab_x, grab_y, SDL_BUTTON_LEFT), "press starts a drag");
 
-  // Land past the other group's single tab, so the drop slot is its end.
   const float drop_x = other_strip.x + other_strip.w - 8.0f;
   const float drop_y = other_strip.y + other_strip.h * 0.5f;
   Expect(SendMouseMotion(shell, drop_x, drop_y, SDL_BUTTON_LMASK), "the drag crosses the divider");
@@ -7170,8 +6433,6 @@ void TestWorkspaceShellEditorTabDragMovesTabToTheOtherGroup() {
          "the moved tab is the destination group's active tab");
 }
 
-// Dragging the LAST tab out of a split group collapses the split, which is what
-// VS Code does — a group with no editors in it is not a state to leave on screen.
 void TestWorkspaceShellEditorTabDragOutOfLastTabCollapsesTheGroup() {
   using microide::workspace::EditorSplitOrientation;
   TemporaryDirectory temp_dir;
@@ -7185,8 +6446,6 @@ void TestWorkspaceShellEditorTabDragOutOfLastTabCollapsesTheGroup() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 900);
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
          "the fixture needs a second editor group");
-  // Focus stays on the NEW group (group 1), which holds exactly the clone. Drag
-  // that single tab back into group 0.
   Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1, "the split focuses the new group");
 
   const SDL_FRect source_rect = WorkspaceShellTestAccess::GroupEditorTabRect(shell, 1, 0);
@@ -7209,14 +6468,8 @@ void TestWorkspaceShellEditorTabDragOutOfLastTabCollapsesTheGroup() {
          "focus re-homes onto the surviving group across the erase");
 }
 
-// Dragging a tab onto the EDGE of an editor pane splits the editor area and drops
-// the tab into the new half -- VS Code's drag-to-split. The right/bottom edges put
-// the new group after the source one; left/top put it ahead, so the tab lands
-// under the pointer instead of jumping to the far side.
 namespace {
 
-// Press tab `tab_index` of group `group_index` and drag it to (x, y) without
-// releasing. Returns the shell's view of where the drop would land.
 void DragEditorTabTo(WorkspaceShell& shell,
                      std::size_t group_index,
                      std::size_t tab_index,
@@ -7231,7 +6484,7 @@ void DragEditorTabTo(WorkspaceShell& shell,
   Expect(SendMouseMotion(shell, x, y, SDL_BUTTON_LMASK), "the drag reaches the drop point");
 }
 
-}  // namespace
+}
 
 void TestWorkspaceShellEditorTabDragToPaneEdgeSplitsTheGroup() {
   using microide::workspace::EditorBodyDropZone;
@@ -7342,9 +6595,6 @@ void TestWorkspaceShellEditorTabDragToBottomPaneEdgeStacks() {
          "the dragged tab lands in the lower group");
 }
 
-// The other half of the gesture: with a split already open, dropping a tab into
-// the BODY of the other pane moves it into that group -- the way back from a
-// split without having to hit the other strip.
 void TestWorkspaceShellEditorTabDragToOtherPaneBodyMovesIntoThatGroup() {
   using microide::workspace::EditorBodyDropZone;
   using microide::workspace::EditorSplitOrientation;
@@ -7382,8 +6632,6 @@ void TestWorkspaceShellEditorTabDragToOtherPaneBodyMovesIntoThatGroup() {
          "the moved tab is the destination's active tab");
 }
 
-// A drop that would change nothing offers no target at all, so no overlay is
-// painted promising a move that will not happen.
 void TestWorkspaceShellEditorTabDragOverOwnPaneCenterOffersNoDrop() {
   using microide::workspace::EditorBodyDropZone;
   TemporaryDirectory temp_dir;
@@ -7409,12 +6657,6 @@ void TestWorkspaceShellEditorTabDragOverOwnPaneCenterOffersNoDrop() {
   Expect(WorkspaceShellTestAccess::GroupTabCount(shell, 0) == 2, "nothing moved");
 }
 
-// The last tab of a group has nothing to split off: carving it out would empty
-// the source group, which collapses straight back to where it started.
-// The editor area is n-way: an edge drop on a pane that is ALREADY half of a
-// split carves a third pane beside it, rather than being refused because "a split
-// exists". The new pane lands next to the pane that was dropped on, not next to
-// the one the tab came from.
 void TestWorkspaceShellEditorTabDragToPaneEdgeSplitsAnAlreadySplitPane() {
   using microide::workspace::EditorBodyDropZone;
   using microide::workspace::EditorSplitOrientation;
@@ -7437,8 +6679,6 @@ void TestWorkspaceShellEditorTabDragToPaneEdgeSplitsAnAlreadySplitPane() {
          "the fixture needs a second editor group");
   Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus returns to group 0");
 
-  // Drop group 0's tab on the BOTTOM edge of group 1's pane: a third pane stacked
-  // under group 1, inside its column.
   const SDL_FRect other_pane = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 1);
   const float drop_x = other_pane.x + other_pane.w * 0.5f;
   const float drop_y = other_pane.y + other_pane.h - 8.0f;
@@ -7460,8 +6700,6 @@ void TestWorkspaceShellEditorTabDragToPaneEdgeSplitsAnAlreadySplitPane() {
   Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 2).path() == file_a.lexically_normal(),
          "the new pane holds the dragged tab");
 
-  // Geometry: the new pane sits under the pane it was dropped on, in the same
-  // column, and the two share that column's width.
   const SDL_FRect target = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 1);
   const SDL_FRect carved = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 2);
   Expect(carved.x == target.x && carved.w == target.w,
@@ -7469,9 +6707,6 @@ void TestWorkspaceShellEditorTabDragToPaneEdgeSplitsAnAlreadySplitPane() {
   Expect(carved.y > target.y, "a bottom-edge drop stacks the new pane below the target");
 }
 
-// The last tab of ANOTHER pane is a real edge drop: that pane collapses and the
-// target pane gains a neighbour. Only splitting a pane with its own only tab is
-// the no-op.
 void TestWorkspaceShellEditorTabDragToPaneEdgeMovesAcrossPanes() {
   using microide::workspace::EditorBodyDropZone;
   using microide::workspace::EditorSplitOrientation;
@@ -7489,7 +6724,6 @@ void TestWorkspaceShellEditorTabDragToPaneEdgeMovesAcrossPanes() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 900);
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
          "the fixture needs a second editor group");
-  // Group 1 holds a single (cloned) tab; drag it onto group 0's top edge.
   Expect(WorkspaceShellTestAccess::GroupTabCount(shell, 1) == 1, "group 1 has one tab");
 
   const SDL_FRect target_pane = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 0);
@@ -7510,8 +6744,6 @@ void TestWorkspaceShellEditorTabDragToPaneEdgeMovesAcrossPanes() {
          "a top-edge drop seats the pane ahead of the target, and focus follows it");
 }
 
-// Dragging one divider of a three-pane row resizes only the two panes it
-// separates; the third keeps its width (VS Code's grid sash behaviour).
 void TestWorkspaceShellEditorSplitDividerDragMovesOnlyItsPair() {
   using microide::workspace::EditorSplitOrientation;
   TemporaryDirectory temp_dir;
@@ -7554,10 +6786,6 @@ void TestWorkspaceShellEditorSplitDividerDragMovesOnlyItsPair() {
          "the pane the divider does not touch keeps its width");
 }
 
-// At the pane cap an edge drop is still legal when it keeps the pane COUNT
-// constant: the source pane hands over its LAST tab, so it collapses as the
-// carved one appears (TD-2026-08-18-265). Without that, rearranging the last pane
-// of a full grid took two gestures.
 void TestWorkspaceShellEditorTabDragToPaneEdgeAtCapMovesThePane() {
   using microide::workspace::EditorBodyDropZone;
   using microide::workspace::EditorSplitOrientation;
@@ -7570,13 +6798,7 @@ void TestWorkspaceShellEditorTabDragToPaneEdgeAtCapMovesThePane() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_a), "tab a opens");
-  // Eight panes side by side still need a strip wide enough to lay a tab out in,
-  // or the drag has no geometry to start from.
   WorkspaceShellTestAccess::SetWindowSize(shell, 3000, 1000);
-  // Fill the grid BREADTH-first. A split takes half of the pane it splits, so
-  // splitting the newly focused pane eight times running leaves the last one at
-  // 1/128 of the column -- too narrow to lay a tab out in. Splitting every pane of
-  // one generation before starting the next keeps them even.
   const auto focus_group = [&](std::size_t index) {
     while (WorkspaceShellTestAccess::FocusedGroupIndex(shell) != index) {
       Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "cycling reaches every pane");
@@ -7633,8 +6855,6 @@ void TestWorkspaceShellEditorTabDragToPaneEdgeRefusesLoneTab() {
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 1, "nothing split");
 }
 
-// Directional pane focus and move: VS Code's focusLeft/RightGroup and
-// moveActiveEditorGroupLeft, answered off the pane rects (TD-2026-08-18-266).
 void TestWorkspaceShellDirectionalEditorGroupFocusAndMove() {
   using microide::workspace::EditorGroupDirection;
   using microide::workspace::EditorSplitOrientation;
@@ -7651,7 +6871,6 @@ void TestWorkspaceShellDirectionalEditorGroupFocusAndMove() {
   Expect(!WorkspaceShellTestAccess::FocusEditorGroupInDirection(shell, EditorGroupDirection::Right),
          "a single pane has nowhere to go");
 
-  // Two columns, then split the right one downward: 0 | (1 over 2).
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
          "the fixture needs a second column");
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Horizontal),
@@ -7672,8 +6891,6 @@ void TestWorkspaceShellDirectionalEditorGroupFocusAndMove() {
   Expect(!WorkspaceShellTestAccess::FocusEditorGroupInDirection(shell, EditorGroupDirection::Down),
          "there is nothing below the bottom pane");
 
-  // Moving the focused pane left takes it out of the stacked column and seats it
-  // before the left one; the pane count never changes.
   Expect(WorkspaceShellTestAccess::MoveEditorGroupInDirection(shell, EditorGroupDirection::Left),
          "the bottom-right pane can move left");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 3,
@@ -7686,9 +6903,6 @@ void TestWorkspaceShellDirectionalEditorGroupFocusAndMove() {
   const SDL_FRect neighbour = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 1);
   Expect(moved.x < neighbour.x, "the moved pane is now the leftmost column");
 
-  // The advertised chords have to actually dispatch. Ctrl+K Ctrl+O shipped in the
-  // registry for a while doing nothing at all because the leader handler knew only
-  // the two fold sequences, so a keybinding label is not evidence of a binding.
   Expect(SendKeyDown(shell, SDLK_K, SDL_KMOD_CTRL), "Ctrl+K arms the editor chord");
   Expect(SendKeyDown(shell, SDLK_RIGHT, SDL_KMOD_CTRL),
          "Ctrl+K Ctrl+Right is handled as focus-group-right");
@@ -7702,9 +6916,6 @@ void TestWorkspaceShellDirectionalEditorGroupFocusAndMove() {
          "Ctrl+K Ctrl+Shift+Left moves the focused pane left without changing the count");
 }
 
-// A cross-group drag animates two strips: the source closes the hole its lifted
-// tab left, the destination opens a gap. One TabSlideState could only express one
-// of those, which is why the state grew a second slot.
 void TestWorkspaceShellCrossGroupDragAnimatesBothStrips() {
   using microide::workspace::EditorSplitOrientation;
   TemporaryDirectory temp_dir;
@@ -7731,7 +6942,6 @@ void TestWorkspaceShellCrossGroupDragAnimatesBothStrips() {
   Expect(SendMouseDown(shell, source_rect.x + source_rect.w * 0.5f,
                        source_rect.y + source_rect.h * 0.5f, SDL_BUTTON_LEFT),
          "press starts a drag on group 0's first tab");
-  // Drop at the FRONT of group 1's strip, so its existing tab has to make room.
   const float drop_x = other_strip.x + 4.0f;
   const float drop_y = other_strip.y + other_strip.h * 0.5f;
   Expect(SendMouseMotion(shell, drop_x, drop_y, SDL_BUTTON_LMASK), "the drag crosses the divider");
@@ -7750,8 +6960,6 @@ void TestWorkspaceShellCrossGroupDragAnimatesBothStrips() {
   Expect(slide.strips[1].target[0] > 1.0f,
          "the destination strip opens a gap ahead of the tab being dropped in front of it");
 
-  // Coming back over its own group must retire the second strip, or its stale
-  // offsets keep painting a gap in a group nothing is landing in.
   Expect(SendMouseMotion(shell, source_rect.x + source_rect.w * 0.5f,
                          source_rect.y + source_rect.h * 0.5f, SDL_BUTTON_LMASK),
          "the drag comes back to its own strip");
@@ -7761,9 +6969,6 @@ void TestWorkspaceShellCrossGroupDragAnimatesBothStrips() {
          "the destination strip's animation is retired when the drag leaves it");
 }
 
-// An overflowing strip has to walk under a drag held at its edge; without that the
-// off-screen end of the strip is unreachable, because the drop slot now pins to
-// what is visible rather than teleporting the tab to a slot nobody can see.
 void TestWorkspaceShellEditorTabDragAutoScrollsOverflowingStrip() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -7786,9 +6991,6 @@ void TestWorkspaceShellEditorTabDragAutoScrollsOverflowingStrip() {
   const float cy = source_rect.y + source_rect.h * 0.5f;
   Expect(SendMouseDown(shell, source_rect.x + source_rect.w * 0.5f, cy, SDL_BUTTON_LEFT),
          "press starts a drag on the first visible tab");
-  // The press activates that tab, which re-runs EnsureActiveTabVisible and can
-  // move the strip on its own — so the auto-scroll is measured from here, not
-  // from the pre-press index.
   const int pressed_index = WorkspaceShellTestAccess::EditorTabScrollIndex(shell);
   Expect(pressed_index > 0, "the strip is still scrolled after the press");
   Expect(SendMouseMotion(shell, strip.x + 2.0f, cy, SDL_BUTTON_LMASK),
@@ -7810,7 +7012,6 @@ void TestWorkspaceShellOutputTabReorderMovesActiveChannel() {
              std::vector<std::string>{"lint", "run", "build"},
          "the active output channel should move to the requested slot");
 
-  // Dragging an output tab whose channel is not yet pinned should pin it first.
   WorkspaceShellTestAccess::SetOutputChannelTabs(shell, {"build", "lint"}, "run");
   Expect(WorkspaceShellTestAccess::MoveActiveOutputTabTo(shell, 0),
          "reordering an unpinned active output channel succeeds");
@@ -7931,11 +7132,6 @@ void TestWorkspaceShellProjectWatcherReloadDoesNotContinuouslyRearm() {
          "project watcher reload should settle without a zero-delay wake after refresh");
 }
 
-// An EMPTY directory created under the project has no file in it, so the file
-// index — which tracks regular files only — can report nothing about it. The
-// sidebar tree still has to show it. This is the one signal the retired
-// WorkspaceProjectFileMonitor existed to produce, and it now rides on the index
-// watcher's batches instead of a second tree walk (TD-2026-08-15-252).
 void TestWorkspaceShellEmptyDirectoryCreationRefreshesTree() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -7945,7 +7141,6 @@ void TestWorkspaceShellEmptyDirectoryCreationRefreshesTree() {
   WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "empty-directory fixture should open the project");
-  // Settle the open before measuring, so what follows is attributable to the mkdir.
   for (int attempt = 0; attempt < 20; ++attempt) {
     if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
       break;
@@ -7973,12 +7168,6 @@ void TestWorkspaceShellEmptyDirectoryCreationRefreshesTree() {
          "creating an empty directory should refresh the sidebar tree");
 }
 
-// A truncated initial scan means the finder and search cover only part of the
-// project. That degradation used to be announced by the project file monitor's
-// "too large to live-watch" notice; it is now driven by the index watcher's own
-// truncated flag, which is the honest description (watching survives, indexing
-// does not). Driven through the live watcher's dispatch so the shell's real batch
-// callback runs.
 void TestWorkspaceShellTruncatedIndexBatchNotifiesOnce() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -8010,23 +7199,15 @@ void TestWorkspaceShellTruncatedIndexBatchNotifiesOnce() {
   Expect(truncation_notices() == 1,
          "a truncated initial index batch should surface exactly one notice");
 
-  // Draining again must not re-raise it: the flag is consumed, not sampled.
   WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false);
   Expect(truncation_notices() == 1, "the truncation notice should not repeat per drain");
 
-  // It reports a STATE — the index is a prefix of this project for as long as the
-  // project is open — so it must outlive the four-second toast timer. As a
-  // transient it told whoever was looking at the corner at that second, and after
-  // that nothing explained why search results were incomplete.
   const auto& rows = WorkspaceShellTestAccess::ActiveNotifications(shell);
   Expect(rows.size() == 1 && rows.front().sticky, "the truncation notice is sticky");
   WorkspaceShellTestAccess::ExpireNotificationsAt(shell,
                                                   workspace::NotificationService::DurationMs() * 100);
   Expect(truncation_notices() == 1, "a sticky state notice does not expire on the timer");
 
-  // And it clears with the state: opening another project restarts the watcher
-  // on a different tree, so the row must not survive to claim THAT index is
-  // truncated. A sticky row that outlives its subject is worse than no row.
   const std::filesystem::path other_root = temp_dir.path() / "other-project";
   WriteFile(other_root / "README.md", "other\n");
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, other_root, false, false),
@@ -8035,8 +7216,6 @@ void TestWorkspaceShellTruncatedIndexBatchNotifiesOnce() {
          "restarting the index watcher clears the notice about the old index");
 }
 
-// A project whose folder is deleted while it is open says so, in a sticky row,
-// instead of quietly emptying; a switch to a project that is there clears it.
 void TestWorkspaceShellAProjectWhoseFolderIsDeletedSaysSo() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "doomed";
@@ -8066,8 +7245,6 @@ void TestWorkspaceShellAProjectWhoseFolderIsDeletedSaysSo() {
              std::chrono::seconds(10)),
          "the watcher's batch raises the row");
   Expect(row()->sticky && row()->message.find(root.string()) != std::string::npos, "sticky, naming the folder");
-  // Put back while the window was elsewhere: its watcher died with it, so the
-  // window's next focus looks, clears the row and indexes the folder again.
   WriteFile(root / "BACK.md", "back\n");
   SDL_Event focus{};
   focus.type = SDL_EVENT_WINDOW_FOCUS_GAINED;
@@ -8099,17 +7276,6 @@ void TestWorkspaceShellProjectWatcherIgnoresGitignoredDirectories() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "ignored-directory watcher fixture should open the project");
 
-  // Before asserting on a NEGATIVE, wait for the initial index batch to have
-  // LANDED and then drain it. `ReloadProjectIfFilesChanged` returns true for
-  // `file_index_has_pending_changes_` alone, and the watcher applies its initial
-  // batch from its own thread — so on a loaded machine the batch arrives inside
-  // the window between the open and the check, and a test about gitignore fails
-  // for a reason that has nothing to do with gitignore.
-  //
-  // Draining until quiet is not enough on its own, and was tried: the drain can
-  // run to completion BEFORE the batch has been applied at all, which is the same
-  // race one step earlier. Waiting for a file the fixture is known to index is
-  // what makes "the initial batch is behind us" a fact rather than a hope.
   Expect(WaitForFileIndexPath(shell, std::filesystem::path("README.md"), true,
                               std::chrono::seconds(5)),
          "the initial file-index batch should land before the gitignore assertion");
@@ -8158,11 +7324,6 @@ void TestWorkspaceShellProjectWatcherIgnoresGitMetadataLockfiles() {
          "project watcher should still detect visible project changes after ignoring git locks");
 }
 
-// Regression: a .gitignore'd file created via an INCREMENTAL watcher event must
-// not leak into the file index. The Linux inotify single-file branch used to emit
-// a CreatedOrModified change without applying the ignore filter (only the initial
-// scan / poll fallback did), so an ignored file appeared in the finder/search
-// mid-session and only vanished on a full rescan.
 void TestWorkspaceShellWatcherIgnoresGitignoredIncrementalCreate() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -8173,7 +7334,6 @@ void TestWorkspaceShellWatcherIgnoresGitignoredIncrementalCreate() {
   WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "gitignore watcher fixture should open the project");
-  // Drain the initial scan.
   for (int attempt = 0; attempt < 20; ++attempt) {
     if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
       break;
@@ -8181,9 +7341,6 @@ void TestWorkspaceShellWatcherIgnoresGitignoredIncrementalCreate() {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 
-  // Create both an ignored and a visible file. Same directory => inotify delivers
-  // them in order on one watch, so once the visible one is indexed the ignored
-  // one's earlier event has already been processed (and, correctly, filtered).
   WriteFile(root / "debug.log", "noise\n");
   WriteFile(root / "visible.cpp", "int main(){ return 0; }\n");
   Expect(WaitForProjectReload(shell, std::chrono::milliseconds(1000)),
@@ -8368,7 +7525,6 @@ void TestWorkspaceShellReplaceAllAbortsWithFeedbackPastAggregateCap() {
   Expect(!WorkspaceShellTestAccess::ProjectSearchResults(shell).empty(),
          "replace-all abort fixture should find matches");
 
-  // Force the aggregate buffer ceiling to trip on the very first modified file.
   WorkspaceShellTestAccess::SetReplaceAllAggregateCapBytes(shell, 1);
   WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
 
@@ -8378,8 +7534,6 @@ void TestWorkspaceShellReplaceAllAbortsWithFeedbackPastAggregateCap() {
          "an aborted replace-all must not have written any file");
 }
 
-// A replace-all some files of which cannot be written names the first and why:
-// "1 could not be written" alone left the user to find which, and the cause.
 void TestWorkspaceShellReplaceAllNamesAFileItCouldNotWrite() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -8395,7 +7549,7 @@ void TestWorkspaceShellReplaceAllNamesAFileItCouldNotWrite() {
                                std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec);
   if (::access((root / "locked").c_str(), W_OK) == 0) {
     std::filesystem::permissions(root / "locked", std::filesystem::perms::owner_all);
-    return;  // root writes anything
+    return;
   }
   WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
   std::filesystem::permissions(root / "locked", std::filesystem::perms::owner_all);
@@ -8406,11 +7560,6 @@ void TestWorkspaceShellReplaceAllNamesAFileItCouldNotWrite() {
          "the writable file is replaced, the other untouched");
 }
 
-// A file open with unsaved edits is replaced IN ITS BUFFER (VS Code applies a
-// replace-all to the editor): one undoable edit that leaves it dirty, the disk not
-// written beneath it, and the rest of the project replaced as usual. It used to
-// abort the whole operation with "save open changes first" (TD-2026-07-17-021's
-// refusal; QA journey-rename-refactor met it renaming a type across files).
 void TestWorkspaceShellReplaceAllReplacesInADirtyOpenBuffer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -8429,7 +7578,6 @@ void TestWorkspaceShellReplaceAllReplacesInADirtyOpenBuffer() {
   Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
          "replace-all dirty fixture should complete search");
 
-  // Open the matched file and leave an unsaved edit in it.
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
@@ -8447,15 +7595,9 @@ void TestWorkspaceShellReplaceAllReplacesInADirtyOpenBuffer() {
          "nothing is refused: " + WorkspaceShellTestAccess::ProjectSearchError(shell));
 }
 
-// Soak 3f4a5a06d599 / 993fa989aee6: crlf.txt closed, made unreadable, and its tab
-// reopened (Ctrl+Shift+T). The read fails, so the tab keeps naming its file with
-// no editor content. Every lookup of "the active editor" then fell back to the
-// group's welcome surface -- whose viewport held README.md -- so the tab said
-// crlf.txt while typing went into that hidden README.md view, dirtying it (a save
-// would have written it). An editor tab with no content has nothing to edit.
 void TestWorkspaceShellAContentlessReopenedTabEditsNothing() {
   if (::geteuid() == 0) {
-    return;  // permissions do not refuse root
+    return;
   }
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -8479,8 +7621,6 @@ void TestWorkspaceShellAContentlessReopenedTabEditsNothing() {
 
   Expect(group.has_active_tab() && group.active_tab().path.filename() == "crlf.txt",
          "the reopened tab is active, naming its file");
-  // What the editor reports as the active buffer is the tab's own (the control
-  // channel's `buffer`, the pane's paint, navigation): never the welcome view.
   const editor::TextViewport* active = WorkspaceShellTestAccess::ActiveNavigableViewport(shell);
   Expect(active != &group.welcome_surface.viewport, "the active editor is not the welcome surface's view");
   Expect(active == nullptr || active->path().filename() == "crlf.txt",
@@ -8495,11 +7635,6 @@ void TestWorkspaceShellAContentlessReopenedTabEditsNothing() {
   }
 }
 
-// Soak 88696b6b00ac: qa-weird/bom.txt lost its UTF-8 byte order mark on disk.
-// Replace-all in the project read each file through ReadFileForTextSearch, which
-// strips the mark (search columns count from the text after it, as the editor's
-// do), and wrote the replaced text back without it: every file a project replace
-// touched dropped its BOM, silently.
 void TestWorkspaceShellReplaceAllKeepsAUtf8ByteOrderMark() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -8527,17 +7662,11 @@ void TestWorkspaceShellReplaceAllKeepsAUtf8ByteOrderMark() {
   Expect(ReadFile(root / "plain.txt") == "a  there\n", "a file without one gains none");
 }
 
-// TD-2026-07-16-21 / TD-2026-07-17-021: replace-all used to re-read and re-scan
-// EVERY file in the project to rediscover the match set the just-completed search
-// already knew. When the cached results provably cover all matches, it must touch
-// only the matched-file subset -- a large no-match decoy set proves the whole
-// project is not re-read.
 void TestWorkspaceShellReplaceAllReadsOnlyMatchedFiles() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   WriteFile(root / "match_a.txt", "needle here\n");
   WriteFile(root / "match_b.txt", "a needle line\n");
-  // A no-match decoy set the fast path must never read during replace-all.
   constexpr int kDecoyCount = 30;
   for (int i = 0; i < kDecoyCount; ++i) {
     WriteFile(root / ("decoy_" + std::to_string(i) + ".txt"), "hay only\n");
@@ -8546,11 +7675,6 @@ void TestWorkspaceShellReplaceAllReadsOnlyMatchedFiles() {
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "replace-all matched-only fixture should open the project");
-  // Wait for the whole tree to be indexed so both the trailing refresh and the
-  // control refresh below pin an identical candidate set (the read-count subtraction
-  // relies on the two "needle" scans reading exactly the same files). Waiting on two
-  // named paths did not establish that -- the scan visits the directory in
-  // filesystem order, so both could land while the rest was still missing.
   Expect(WaitForFileIndexSize(shell, static_cast<std::size_t>(kDecoyCount) + 2,
                               std::chrono::milliseconds(1500)),
          "replace-all matched-only fixture should index the whole tree");
@@ -8563,26 +7687,11 @@ void TestWorkspaceShellReplaceAllReadsOnlyMatchedFiles() {
   Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 2,
          "the search should find exactly the two matching files");
 
-  // TD-2026-07-26-005: this used to subtract two readings of the process-global
-  // util::TextSearchReadCount() across windows that also contain a trailing
-  // "needle" refresh, live search workers AND the filesystem watcher — which the
-  // worker-idle barriers do not drain. Replace-all writes match_a/match_b inside
-  // the measured window, so watcher activity there is guaranteed, and one
-  // watcher-triggered rescan lands extra counted reads and fails the ==2.
-  //
-  // The replace path now carries its own counters that nothing else bumps, so
-  // the measurement is a plain delta with no control search and nothing a
-  // background subsystem can perturb.
   const std::uint64_t candidates_before =
       util::ReadPerformanceCounter(util::PerfCounterId::SearchProjectReplaceCandidateFiles);
   const std::uint64_t reads_before =
       util::ReadPerformanceCounter(util::PerfCounterId::SearchProjectReplaceFilesRead);
   WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
-  // Wait on the on-disk result, not on `!running`: the replace runs on the
-  // background executor and its trailing refresh is only fired by the apply, so
-  // "the search is not running" is also true in the window before either starts.
-  // Every counted read happens before the first write, so both files carrying
-  // their replacement is a hard barrier for the numbers read below.
   const bool replaced = WaitUntil(
       [&root]() {
         return ReadFile(root / "match_a.txt").find("needle") == std::string::npos &&
@@ -8612,15 +7721,9 @@ void TestWorkspaceShellReplaceAllReadsOnlyMatchedFiles() {
          "a no-match decoy file must be left untouched");
 }
 
-// The fast path is only safe when the cached results are COMPLETE. A truncated
-// (capped) search omits whole matching files, so replace-all must fall back to the
-// authoritative whole-project scan -- otherwise it would silently skip every match
-// beyond the display cap. Create more matching files than the cap and prove every
-// one is still rewritten.
 void TestWorkspaceShellReplaceAllFallsBackWhenResultsTruncated() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
-  // kMaxProjectSearchResults is 200; go comfortably past it so the search truncates.
   constexpr int kMatchFiles = 210;
   for (int i = 0; i < kMatchFiles; ++i) {
     WriteFile(root / ("m_" + std::to_string(i) + ".txt"), "needle\n");
@@ -8629,12 +7732,6 @@ void TestWorkspaceShellReplaceAllFallsBackWhenResultsTruncated() {
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "truncated replace-all fixture should open the project");
-  // Wait on the COUNT, not on one named path: the assertion below is "the search
-  // found more than the display cap", which only holds once every match file is
-  // indexed. Waiting for m_209.txt proved nothing — the scan visits the directory
-  // in filesystem order, so that file could land first and leave the search to run
-  // against a partial index and legitimately not truncate. That is exactly how
-  // this failed under TSAN in CI.
   Expect(WaitForFileIndexSize(shell, static_cast<std::size_t>(kMatchFiles),
                               std::chrono::milliseconds(10000)),
          "truncated replace-all fixture should index the whole match set");
@@ -8644,10 +7741,6 @@ void TestWorkspaceShellReplaceAllFallsBackWhenResultsTruncated() {
   WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
   Expect(WaitForProjectSearchResults(shell, revision_before, std::chrono::milliseconds(15000)),
          "truncated replace-all fixture should complete the search");
-  // Assert the PRECONDITION separately, and say the number. "must mark the results
-  // truncated" on its own cannot distinguish "truncation is broken" from "the
-  // search only ever saw 40 of the 210 files", which is what actually went wrong
-  // here twice -- once diagnosed as a TSAN race, once as an index-size wait.
   const std::size_t candidate_files = WorkspaceShellTestAccess::ProjectSearchTotalFiles(shell);
   const std::size_t indexed_files = WorkspaceShellTestAccess::FileIndexSize(shell);
   Expect(candidate_files >= static_cast<std::size_t>(kMatchFiles),
@@ -8663,8 +7756,6 @@ void TestWorkspaceShellReplaceAllFallsBackWhenResultsTruncated() {
 
   WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
 
-  // Every file must be rewritten despite the truncation -- the fallback scanned the
-  // whole project rather than trusting the capped result subset.
   for (int i = 0; i < kMatchFiles; ++i) {
     Expect(ReadFile(root / ("m_" + std::to_string(i) + ".txt")).find("needle") ==
                std::string::npos,
@@ -8672,15 +7763,6 @@ void TestWorkspaceShellReplaceAllFallsBackWhenResultsTruncated() {
   }
 }
 
-// A background rescan REPLACES the whole file list, so one that started before a
-// watcher batch landed silently deletes everything that batch reported. In the
-// product that is a file created while a project is still opening disappearing
-// from the finder and from project search until the next full rescan — which
-// nothing schedules (TD-2026-08-15-247).
-//
-// The version guard is what stops it. This drives the apply step directly with a
-// stale dispatch version rather than racing a real scan against a real watcher,
-// so it fails every run without the guard instead of one run in five.
 void TestWorkspaceShellForcedIndexRefreshDoesNotDropABatchThatLandedDuringTheScan() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -8689,23 +7771,16 @@ void TestWorkspaceShellForcedIndexRefreshDoesNotDropABatchThatLandedDuringTheSca
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "forced-refresh ordering fixture should open the project");
-  // The live watcher is the one uncontrolled source of index changes here: its
-  // initial batch REPLACES the index, and it reacts to the files this test writes.
-  // Either landing between reading a version and applying a scan made the
-  // "current" scan stale — under parallel load the test failed on exactly that.
-  // Let the initial scan land, then stop the watcher (Unwatch joins its threads).
   Expect(WaitForFileIndexSize(shell, 1, std::chrono::milliseconds(5000)),
          "the project's own initial scan lands");
   Expect(WorkspaceShellTestAccess::QuiesceFileIndexWatcherForTesting(shell),
          "the live watcher is quiesced");
 
-  // What a scan dispatched NOW would see: the project without the injected file.
   const std::uint64_t version_at_dispatch =
       WorkspaceShellTestAccess::ProjectFileIndexVersion(shell);
   std::vector<project::ProjectFile> scanned_without_injected =
       project::FileIndex::ScanFiles(root, false, {}, nullptr);
 
-  // …and then a watcher batch lands, while that scan is still "running".
   const std::filesystem::path relative_injected = std::filesystem::path("src/injected.cpp");
   WriteFile(root / relative_injected, "needle\n");
   (void)WorkspaceShellTestAccess::ApplyFileIndexBatchForTesting(
@@ -8716,14 +7791,11 @@ void TestWorkspaceShellForcedIndexRefreshDoesNotDropABatchThatLandedDuringTheSca
          "a batch that changed the index must move its version, or the guard has "
          "nothing to compare");
 
-  // The stale scan now lands. It must NOT be applied.
   WorkspaceShellTestAccess::ApplyForcedFileIndexRefreshForTesting(
       shell, root, std::move(scanned_without_injected), version_at_dispatch);
   Expect(WorkspaceShellTestAccess::ProjectFileIndexContains(shell, relative_injected),
          "a rescan that predates a watcher batch must not delete what the batch added");
 
-  // A scan dispatched with the CURRENT version is not stale and still applies —
-  // otherwise the guard would have turned the rescan path off entirely.
   WriteFile(root / "second.txt", "second\n");
   const std::uint64_t current_version =
       WorkspaceShellTestAccess::ProjectFileIndexVersion(shell);
@@ -8735,11 +7807,6 @@ void TestWorkspaceShellForcedIndexRefreshDoesNotDropABatchThatLandedDuringTheSca
          "and it still sees the injected file, which is on disk");
 }
 
-// A project search on screen re-runs when files change under it, so its results
-// stay true. It used to clear the list first: under agents writing the tree that
-// is twice a second, and each time the list went empty, the selection reset to the
-// first match and the scroll to the top. The re-run now replaces the results when
-// it finishes, in one step, with the selection on the same match.
 void TestWorkspaceShellSearchRerunOnAFileChangeKeepsTheListAndSelection() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -8769,7 +7836,6 @@ void TestWorkspaceShellSearchRerunOnAFileChangeKeepsTheListAndSelection() {
   const std::filesystem::path selected_path =
       WorkspaceShellTestAccess::ProjectSearchResults(shell)[3].relative_path;
 
-  // An agent adds a match ahead of the selected one in display order.
   WriteFile(root / "aa.cpp", "// needle, new\n");
   platform::IndexUpdateBatch batch = BuildInjectedCreateBatch(root, "aa.cpp");
   Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(shell, std::move(batch)),
@@ -8802,13 +7868,6 @@ void TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch() {
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "injected file-index batch fixture should open the project");
-  // Wait for the project's OWN initial scan to land before injecting anything.
-  // OpenProjectTab starts a real watcher whose initial batch REPLACES the index, so an
-  // injection that arrives first is silently undone by a scan that walked the tree
-  // before the file existed — which is exactly what it looks like from the finder: the
-  // entry is in the index when the batch is applied and gone by the time the query
-  // runs. It only loses the race under parallel load, which is where this test kept
-  // failing.
   Expect(WaitForFileIndexSize(shell, 1, std::chrono::milliseconds(5000)),
          "injected file-index batch fixture should finish its initial project scan");
 
@@ -8817,15 +7876,6 @@ void TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch() {
   WriteFile(absolute_injected, "needle\n");
   const platform::IndexUpdateBatch create_batch =
       BuildInjectedCreateBatch(root, relative_injected);
-  // The batch may legitimately report "no change": OpenProjectTab starts a live
-  // filesystem watcher on `root`, and if its thread is scheduled between the
-  // WriteFile above and this call it applies its own CreatedOrModified for the
-  // same path first. BuildInjectedCreateBatch stats the real file, so the two
-  // entries carry identical mtime+size and UpsertProjectFileLocked correctly
-  // dedups the second to a no-op. Assert the observable end state — the entry is
-  // in the index — rather than the internal changed bit, which is what the
-  // delete half of this test below already does. (Asserting the bit made this
-  // test fail under heavy parallel load, where the watcher wins the race.)
   const bool create_changed =
       WorkspaceShellTestAccess::ApplyFileIndexBatchForTesting(shell, create_batch);
   Expect(WorkspaceShellTestAccess::ProjectFileIndexContains(shell, relative_injected),
@@ -8834,8 +7884,6 @@ void TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch() {
     Expect(WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false),
            "injected create batch should flow through project reload plumbing");
   } else {
-    // The watcher already flagged the change and the shell may have consumed the
-    // flag; drain whatever is pending so the finder/search below see the entry.
     WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false);
   }
 
@@ -8878,10 +7926,6 @@ void TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch() {
          "injected delete batch should remove entries from project search");
 }
 
-// A hostile control client can issue `tab` (open untitled) in a tight loop. Each
-// untitled tab retains a full editor viewport and grows every O(open_tabs) layout
-// / dirty-scan / tab-strip pass, so the per-group tab count must be bounded rather
-// than growing without limit toward OOM + UI-thread DoS.
 void TestWorkspaceShellUntitledTabFloodIsBounded() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -8900,11 +7944,6 @@ void TestWorkspaceShellUntitledTabFloodIsBounded() {
          "untitled-tab flood must be bounded by the per-group tab ceiling");
 }
 
-// The same silent-success shape one branch over: `tab` (open untitled) discarded
-// OpenUntitledTab's result, so at the ceiling it told the caller a fresh empty
-// buffer was active while the previously active tab still was — and the next
-// keystroke typed into someone else's file. The path branch of the same `case`
-// already reported its failure.
 void TestWorkspaceShellUntitledTabAtTheCeilingIsRejected() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -8925,12 +7964,6 @@ void TestWorkspaceShellUntitledTabAtTheCeilingIsRejected() {
          "the refused `tab` must not have added a tab");
 }
 
-// `open <path>` at the per-group tab ceiling used to report SUCCESS while doing
-// nothing: WorkspaceActionContext::OpenPath called the void-returning
-// `operations_.open_file` and answered `true` unconditionally. The editor stayed
-// on the previously active tab, so the caller's next edit and save landed in a
-// different file than the one it asked to open — silently, over the control
-// channel, where there is no tab strip to notice.
 void TestWorkspaceShellOpenAtTheTabCeilingIsRejected() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -8942,7 +7975,6 @@ void TestWorkspaceShellOpenAtTheTabCeilingIsRejected() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "project fixture should open");
 
-  // Untitled tabs, so the fill costs no disk reads.
   while (WorkspaceShellTestAccess::OpenTabs(shell).size() <
          microide::workspace::kMaxOpenTabsPerGroup) {
     Expect(RunCommandLine(shell, "tab"), "filling the group must keep succeeding");
@@ -8976,8 +8008,6 @@ void TestWorkspaceShellRevealOpensAndCentresTheLine() {
   Expect(viewport.path().filename() == "long.txt", "reveal opened the file");
   Expect(viewport.cursor_line() == 149 && viewport.cursor_column() == 2,
          "the caret lands on the 1-based line:col");
-  // The tab was opened by the reveal itself, so it has not been sized yet; size
-  // it the way the next painted frame does and check the line ends mid-view.
   const_cast<microide::editor::TextViewport&>(viewport).SetViewportSize(30, 120);
   Expect(viewport.scroll_line() == 149 - 15,
          "the line is centred once the new tab has its real size");
@@ -9007,7 +8037,6 @@ void TestWorkspaceShellTabToGroupMovesTheActiveTabAcrossPanes() {
   const std::size_t before_left = WorkspaceShellTestAccess::GroupTabCount(shell, 0);
   const std::size_t before_right = WorkspaceShellTestAccess::GroupTabCount(shell, 1);
 
-  // Groups count from 1, as focus-group and Ctrl+1/2 do; 0 is not a group.
   Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tab-to-group 0"),
          "group 0 is not a group: the numbering is the one focus-group uses");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tab-to-group 1"),
@@ -9024,7 +8053,7 @@ void TestWorkspaceShellTabToGroupMovesTheActiveTabAcrossPanes() {
          "a non-numeric group is rejected");
 }
 
-}  // namespace
+}
 
 void TestWorkspaceShellEditorGroupSplitFocusCloseSemantics() {
   using microide::workspace::EditorSplitOrientation;
@@ -9044,11 +8073,8 @@ void TestWorkspaceShellEditorGroupSplitFocusCloseSemantics() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1000, 700);
   WorkspaceShellTestAccess::OpenFile(shell, file_a);
 
-  // Scroll group 0 down so we can prove the split keeps an independent view.
   WorkspaceShellTestAccess::SetGroupScrollLine(shell, 0, 40);
 
-  // Split right: clones the active tab into a new, focused second group sharing the
-  // same document (shared buffer) but with an independent view.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
          "split-right should succeed when an editor tab is active");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2,
@@ -9063,32 +8089,24 @@ void TestWorkspaceShellEditorGroupSplitFocusCloseSemantics() {
              WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).line_count(),
          "both groups should observe the same shared buffer contents");
 
-  // The clone starts at the source view position, but scrolling it must not move
-  // group 0 (independent views over the shared buffer).
   WorkspaceShellTestAccess::SetGroupScrollLine(shell, 1, 5);
   Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).scroll_line() == 40,
          "scrolling the second group must not disturb the first group's scroll");
   Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).scroll_line() == 5,
          "the second group should keep its own scroll position");
 
-  // Open a different document in the focused (second) group: the two groups now show
-  // distinct files.
   WorkspaceShellTestAccess::OpenFile(shell, file_b);
   Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).path() == file_a.lexically_normal(),
          "the first group should still show the original document");
   Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).path() == file_b.lexically_normal(),
          "the second group should show the newly opened document");
 
-  // Focus toggles back and forth without disturbing either view.
   Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell),
          "focus-other-group should switch focus when two groups exist");
   Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0, "focus should move to group 0");
   Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).scroll_line() == 40,
          "group 0 scroll should survive a focus switch (guards the original scroll-reset bug)");
 
-  // Splitting the focused pane again stacks a third one inside its column: the
-  // outermost split stays side-by-side, and the new pane lands right after the
-  // pane it came from.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Horizontal),
          "splitting a pane of an existing split should succeed");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 3,
@@ -9098,7 +8116,6 @@ void TestWorkspaceShellEditorGroupSplitFocusCloseSemantics() {
   Expect(WorkspaceShellTestAccess::GroupSplitOrientation(shell) == EditorSplitOrientation::Vertical,
          "a nested split should not change the outermost orientation");
 
-  // Closing the focused groups collapses back to a single full-area group.
   Expect(WorkspaceShellTestAccess::CloseEditorGroup(shell),
          "close-group should succeed while more than one group exists");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2,
@@ -9132,19 +8149,15 @@ void TestWorkspaceShellSplitContextMenuAvailabilityAndTreeOpen() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1000, 700);
 
-  // No editor open: split is unavailable (nothing to split from).
   Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::SplitEditorRight),
          "split-right should be disabled with no active editor");
 
   WorkspaceShellTestAccess::OpenFile(shell, file_a);
-  // Single group + active editor: both split items are available.
   Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::SplitEditorRight),
          "split-right should be enabled with one editor group");
   Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::SplitEditorDown),
          "split-down should be enabled with one editor group");
 
-  // Right-click file B in the tree and choose Split Right: B opens in a new group
-  // while the original group keeps file A.
   WorkspaceShellTestAccess::OpenTreeContextMenuForPath(shell, TreeContextTargetKind::File, file_b);
   Expect(WorkspaceShellTestAccess::ExecuteContextMenuAction(shell, ActionId::SplitEditorRight),
          "tree Split Right should execute");
@@ -9157,8 +8170,6 @@ void TestWorkspaceShellSplitContextMenuAvailabilityAndTreeOpen() {
   Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).path() == file_a.lexically_normal(),
          "the original group should keep its own file");
 
-  // A split already open is no reason to grey the items out — the editor area is
-  // n-way. They stay enabled right up to the pane cap.
   Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::SplitEditorRight),
          "split-right should stay enabled while the editor area is below its cap");
   Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::SplitEditorDown),
@@ -9174,11 +8185,6 @@ void TestWorkspaceShellSplitContextMenuAvailabilityAndTreeOpen() {
          "split-down should be disabled at the pane cap");
 }
 
-// Right-clicking an editor tab and choosing "Reveal in File Tree" performs a full
-// VSCode-style reveal: it opens the sidebar on the Tree view (switching from another
-// view), force-expands the file's collapsed ancestors, and selects it — even when the
-// user had manually collapsed a parent folder (which the passive tab-focus auto-reveal
-// deliberately respects and would not expand).
 void TestWorkspaceShellRevealInFileTreeFromTabMenu() {
   using ActionId = WorkspaceShell::ActionId;
   using SidebarMode = WorkspaceShell::SidebarMode;
@@ -9195,8 +8201,6 @@ void TestWorkspaceShellRevealInFileTreeFromTabMenu() {
   Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::RevealInFileTree),
          "reveal-in-tree should be enabled for a project-backed active tab");
 
-  // Manually collapse the file's ancestor so its row is no longer visible, and move
-  // the sidebar to the Search view — the reveal must recover from both.
   Expect(WorkspaceShellTestAccess::SelectTreePath(shell, root / "src"),
          "src folder should be selectable in the tree");
   WorkspaceShellTestAccess::CollapseTreeSelection(shell);
@@ -9214,11 +8218,6 @@ void TestWorkspaceShellRevealInFileTreeFromTabMenu() {
          "reveal should force-expand ancestors and select the revealed file");
 }
 
-// OpenBufferViewCounts feeds the bulk-close LSP didClose decision: a buffer must
-// be reported as still open while any group keeps a view of it, and as a single
-// view only when exactly one tab references it. This guards the per-tab-count ->
-// single-pass-map refactor in CloseEditorGroup, including that closing a split
-// group does not drop a buffer the surviving group still shows.
 void TestWorkspaceShellOpenBufferViewCountsAcrossGroups() {
   using microide::workspace::EditorSplitOrientation;
   TemporaryDirectory temp_dir;
@@ -9243,7 +8242,6 @@ void TestWorkspaceShellOpenBufferViewCountsAcrossGroups() {
            "the map and the single-path count agree for one view");
   }
 
-  // Splitting clones the active tab into a second group sharing the same buffer.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
          "split-right should succeed when an editor tab is active");
   {
@@ -9253,8 +8251,6 @@ void TestWorkspaceShellOpenBufferViewCountsAcrossGroups() {
            "the map and the single-path count agree for a shared buffer");
   }
 
-  // Distinguish the two groups: open b.txt in the focused (second) group so it
-  // also holds a view the surviving group will not.
   WorkspaceShellTestAccess::OpenFile(shell, file_b);
   {
     const auto counts = WorkspaceShellTestAccess::OpenBufferViewCounts(shell);
@@ -9262,8 +8258,6 @@ void TestWorkspaceShellOpenBufferViewCountsAcrossGroups() {
     Expect(counts.at(key_b) == 1, "b.txt has a single view in the second group");
   }
 
-  // Closing the focused group drops its tabs: the shared a.txt survives in group 0
-  // (back to one view, no spurious didClose), while b.txt is gone entirely.
   Expect(WorkspaceShellTestAccess::CloseEditorGroup(shell),
          "close-group should succeed while a second group exists");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 1,
@@ -9277,9 +8271,6 @@ void TestWorkspaceShellOpenBufferViewCountsAcrossGroups() {
   }
 }
 
-// Project-wide regex replace-all: a regex query with a capture group replaces
-// across every matching file, expanding $1, and leaves unmatched files untouched.
-// Regex mode now allows replace-all (previously gated to literal only).
 void TestWorkspaceShellRegexReplaceAllAcrossFiles() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -9290,8 +8281,6 @@ void TestWorkspaceShellRegexReplaceAllAcrossFiles() {
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "regex replace-all fixture should open the project");
-  // All three files, not just a.txt: the assertions below require b.txt to have
-  // been rewritten too, which only happens if it was indexed when the search ran.
   Expect(WaitForFileIndexSize(shell, 3, std::chrono::milliseconds(1000)),
          "regex replace-all fixture should wait for the whole tree to be indexed");
 
@@ -9317,8 +8306,6 @@ void TestWorkspaceShellRegexReplaceAllAcrossFiles() {
          "a file with no match must be left untouched");
 }
 
-// A regex replace-all with an invalid replacement escape aborts with an error and
-// writes nothing (the failure is deterministic across every file).
 void TestWorkspaceShellRegexReplaceAllInvalidReplacementAborts() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -9337,7 +8324,6 @@ void TestWorkspaceShellRegexReplaceAllInvalidReplacementAborts() {
   Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
          "invalid-replacement fixture should complete search");
 
-  // `\q` is not a valid extended replacement escape.
   WorkspaceShellTestAccess::SetProjectSearchReplaceText(shell, "bar_\\q");
   WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
 
@@ -9775,4 +8761,4 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/DirtyPromptClosesWithItsTab", TestWorkspaceShellDirtyPromptClosesWithItsTab);
 }
 
-}  // namespace microide::tests
+}

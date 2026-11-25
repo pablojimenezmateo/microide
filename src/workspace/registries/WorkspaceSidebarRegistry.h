@@ -17,8 +17,6 @@ struct SidebarViewSpec {
   std::string_view id;
   std::string_view label;
   SidebarMode mode = SidebarMode::None;
-  // Shown on request only (a command or a notification's button), never in the
-  // view switcher: a view that means nothing in most projects (VS Code's `when`).
   bool contextual = false;
 };
 
@@ -41,9 +39,6 @@ std::vector<SidebarViewInfo> SidebarViews(const plugin::PluginHost& plugin_host)
 std::optional<SidebarViewInfo> FindSidebarView(std::string_view id,
                                                const plugin::PluginHost& plugin_host);
 
-// The mode a view id resolves to, or None for an empty/unknown id. One
-// definition — the shell and the sidebar coordinator each carried an identical
-// private spelling of this lookup.
 inline SidebarMode SidebarModeForViewId(std::string_view view_id,
                                         const plugin::PluginHost& plugin_host) {
   if (view_id.empty()) {
@@ -56,27 +51,19 @@ std::vector<std::string> SidebarViewIds(const plugin::PluginHost& plugin_host);
 SidebarViewRequest ParseSidebarViewRequest(const std::vector<std::string>& args,
                                           const plugin::PluginHost& plugin_host);
 
-// Per-view user policy: visibility and display order.
 struct SidebarViewPolicy {
   std::string view_id;
   bool hidden = false;
-  int order = 0;  // lower = earlier in the list
+  int order = 0;
 };
 
-// Inline capacity covers the built-ins plus a handful of plugin views, which is
-// every real case; past that it spills like any vector. `SidebarModeRow` calls
-// the function below on the frame path, and it was two heap vectors per painted
-// frame for a list of string_views (TD-2026-08-14-221).
 using OrderedSidebarViewList = util::SmallVector<SidebarViewInfo, 16>;
 
-// Returns all views merged, ordered by policy, with hidden views removed.
-// Views with no explicit policy entry keep their default order after policy-ordered views.
 OrderedSidebarViewList OrderedSidebarViews(const plugin::PluginHost& plugin_host,
                                            const std::vector<SidebarViewPolicy>& policies);
 
-// Returns the effective policy for a given view id (or a default policy with hidden=false).
 SidebarViewPolicy EffectiveSidebarViewPolicy(
     std::string_view view_id,
     const std::vector<SidebarViewPolicy>& policies);
 
-}  // namespace microide::workspace
+}

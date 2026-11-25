@@ -40,35 +40,12 @@ using microide::project::PatchLineSelectionFromModelRows;
 using microide::project::PatchLineSelectionHasChanges;
 using microide::project::PatchOperationKind;
 
-// Differential: every patch this generates is fed to REAL `git apply`.
-//
-// The tests around this one assert on the patch TEXT, which pins the format but
-// cannot say whether git accepts it — and the ways a unified diff goes wrong (an
-// off-by-one in a hunk header's start or count, a context line that does not
-// byte-match the blob, a body that lost a CRLF's `\r`, a missing
-// `\ No newline at end of file`) all produce text that still looks like a patch.
-// git is the only authority on that, so ask it: generate over randomized file
-// pairs, apply each hunk on its own, and check the result against what applying
-// exactly that hunk must produce.
-//
-// The second property is the one the staging flow actually rests on: applying
-// EVERY hunk in order must reproduce the right side exactly.
-
-// The left text with only the rows of `hunk` taken from the right side — what
-// `git apply` of that hunk's patch alone must produce.
-// A patch that empties a file is a DELETION patch (git writes the `/dev/null`
-// header for it), so git removes the path rather than truncating it. Both are
-// "the file now has no content" as far as this check is concerned.
 std::string ReadFileOrEmptyIfDeleted(const std::filesystem::path& path) {
   return std::filesystem::exists(path) ? ReadFile(path) : std::string{};
 }
 
 std::string ExpectedSingleHunkResult(const CompareModel& model,
                                      const microide::compare::CompareHunk& hunk) {
-  // Collect the lines each side contributes, then JOIN them. Appending "\n" per
-  // line instead would add a spurious trailing newline, because the model's last
-  // row is the empty line that follows a file's final newline — it is a real line
-  // of the reconstruction, just not one that carries a separator after it.
   std::vector<std::string_view> lines;
   for (std::size_t row = 0; row < model.rows.size(); ++row) {
     const CompareRow& compare_row = model.rows[row];
@@ -82,14 +59,6 @@ std::string ExpectedSingleHunkResult(const CompareModel& model,
       lines.push_back(compare_row.left_text);
     }
   }
-  // JOIN with the side's terminator and add no trailing one. A file that ends with
-  // a newline has a trailing EMPTY row in the model — the line after that newline —
-  // so joining reproduces the terminator; a file that does not end with one has no
-  // such row, and joining correctly leaves the last line bare. Appending a
-  // terminator per line instead would add a spurious one in the first case.
-  //
-  // A CRLF file's rows carry bare text (SplitLineViews strips the ending), so the
-  // terminator has to come from the model's flag rather than from the row.
   const std::string_view terminator = model.left_uses_crlf ? "\r\n" : "\n";
   std::string out;
   for (std::size_t i = 0; i < lines.size(); ++i) {
@@ -101,10 +70,6 @@ std::string ExpectedSingleHunkResult(const CompareModel& model,
   return out;
 }
 
-// A file pair built to hit the shapes a unified diff gets wrong: runs of equal
-// lines long enough to exercise context trimming, adjacent and separated changes,
-// insertions, and whole-line deletions. The alphabet is small on purpose —
-// repeated lines make the aligner's job real.
 void GenerateComparePair(std::uint64_t& seed, std::string* left, std::string* right) {
   const auto next = [&seed]() {
     seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
@@ -112,10 +77,6 @@ void GenerateComparePair(std::uint64_t& seed, std::string* left, std::string* ri
   };
   left->clear();
   right->clear();
-  // The three shapes a unified diff is most often wrong about, mixed in on
-  // purpose: CRLF (git keeps the `\r` in the blob, so every body line of the
-  // patch must carry it), no trailing newline (the `\ No newline at end of file`
-  // marker), and an empty side (a `/dev/null` creation or deletion header).
   const bool crlf = next() % 5 == 0;
   const bool left_final_newline = next() % 4 != 0;
   const bool right_final_newline = next() % 4 != 0;
@@ -127,16 +88,16 @@ void GenerateComparePair(std::uint64_t& seed, std::string* left, std::string* ri
     const std::string line = "line" + std::to_string(next() % 6) + "_" + std::to_string(i % 4);
     left_lines.push_back(line);
     switch (next() % 6) {
-      case 0:  // delete
+      case 0:
         break;
-      case 1:  // modify
+      case 1:
         right_lines.push_back(line + "_edited");
         break;
-      case 2:  // insert before, then keep
+      case 2:
         right_lines.push_back("inserted" + std::to_string(next() % 5));
         right_lines.push_back(line);
         break;
-      default:  // keep
+      default:
         right_lines.push_back(line);
         break;
     }
@@ -179,12 +140,10 @@ void TestGeneratedPatchesApplyWithRealGit() {
       continue;
     }
 
-    // One hunk at a time: each patch must apply to the pristine left side and
-    // produce exactly that hunk's change and nothing else.
     for (const microide::compare::CompareHunk& hunk : model.hunks) {
       const auto patch = GenerateComparePatch(model, "f.txt", hunk.index);
       if (!patch.has_value()) {
-        continue;  // over the byte budget; nothing to check
+        continue;
       }
       WriteFile(target, left);
       WriteFile(patch_path, *patch);
@@ -193,8 +152,6 @@ void TestGeneratedPatchesApplyWithRealGit() {
       Expect(RunGitCommand(repo_path, {"apply", patch_path.string()}) == 0,
              "git apply must apply a generated hunk patch");
       if (ReadFileOrEmptyIfDeleted(target) != ExpectedSingleHunkResult(model, hunk)) {
-        // A randomized failure is unactionable without its inputs, and these are
-        // small by construction, so print the case rather than just the verdict.
         std::fprintf(stderr,
                      "hunk %d of %zu (rows %d..%d)\n--- LEFT ---\n%s\n--- RIGHT ---\n%s\n"
                      "--- PATCH ---\n%s\n--- GIT PRODUCED ---\n%s\n--- EXPECTED ---\n%s\n",
@@ -206,11 +163,6 @@ void TestGeneratedPatchesApplyWithRealGit() {
       ++applied_hunks;
     }
 
-    // Every hunk in order reproduces the right side — the property the whole
-    // stage-hunk-by-hunk flow rests on. Each hunk's patch is generated against
-    // the ORIGINAL left, so the later ones must still apply once earlier ones
-    // have shifted the line numbers; that is what git's offset search is for,
-    // and what a real staging run does.
     WriteFile(target, left);
     bool all_applied = true;
     for (const microide::compare::CompareHunk& hunk : model.hunks) {
@@ -232,7 +184,6 @@ void TestGeneratedPatchesApplyWithRealGit() {
     }
   }
 
-  // Guard against the whole test silently generating nothing to check.
   Expect(applied_hunks >= 100,
          "the generator must produce a substantial number of applicable hunks");
   Expect(full_applies >= 20, "and a substantial number of complete applies");
@@ -249,9 +200,6 @@ void TestPatchGeneratorProducesUnifiedDiff() {
   Expect(patch->find("+beta") != std::string::npos, "patch should include added line");
 }
 
-// Patch generation enforces a byte budget: an oversized patch returns nullopt
-// (surfaced as "no patch") instead of allocating an arbitrarily large string,
-// while a normal patch is unaffected by the default budget. TD-2026-07-17A-099.
 void TestPatchGeneratorEnforcesByteBudget() {
   std::string right = "alpha\n";
   for (int i = 0; i < 500; ++i) {
@@ -261,7 +209,7 @@ void TestPatchGeneratorEnforcesByteBudget() {
   Expect(!model.hunks.empty(), "compare model should contain a hunk");
 
   microide::project::PatchGenerationOptions tiny;
-  tiny.max_patch_bytes = 128;  // far smaller than the ~500-line patch body
+  tiny.max_patch_bytes = 128;
   Expect(!GenerateComparePatch(model, "file.txt", 0, tiny).has_value(),
          "an over-budget patch should be refused (nullopt)");
 
@@ -322,10 +270,6 @@ void TestPatchStageHunkInRepository() {
          "staged diff should contain added line");
 }
 
-// Bug: appending a blank line + content to a newline-terminated file produced a
-// patch whose @@ old count included the LEFT file's phantom trailing element as a
-// context line, so `git apply` rejected the pre-image. The whole-file patch must
-// apply cleanly against the real repo.
 void TestPatchGeneratorOneSidedPhantomTrailingLineApplies() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -355,24 +299,19 @@ void TestPatchGeneratorOneSidedPhantomTrailingLineApplies() {
          "git apply should accept the appended-blank-line patch");
 }
 
-// Bug: staging a single non-terminal hunk that ends just before an EOF-no-newline
-// shared line emitted a `\ No newline at end of file` marker mid-file, so git
-// rejected the isolated hunk (it does not reach the file end). The marker must be
-// suppressed for a non-terminal hunk so the shared line is ordinary context.
 void TestPatchGeneratorNonTerminalHunkNoNewlineMarkerApplies() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
   std::filesystem::create_directories(repo_path);
   InitializeGitRepo(repo_path);
   const auto file_path = repo_path / "f.txt";
-  WriteFile(file_path, "p\nalpha\nq");  // no trailing newline
+  WriteFile(file_path, "p\nalpha\nq");
   CommitAll(repo_path, "base", "base");
 
-  WriteFile(file_path, "P\nalpha");  // no trailing newline
+  WriteFile(file_path, "P\nalpha");
   const CompareModel model = BuildCompareModel("p\nalpha\nq", "P\nalpha");
   Expect(model.hunks.size() >= 2, "fixture should produce at least two hunks");
 
-  // Stage only the FIRST hunk (the p->P change), which does not reach the file end.
   const auto patch = GenerateComparePatch(model, "f.txt", 0);
   Expect(patch.has_value(), "non-terminal hunk patch should be generated");
   Expect(patch->find("\\ No newline at end of file") == std::string::npos,
@@ -409,17 +348,9 @@ void TestPatchFailureCategoryForAMissingRepository() {
          "invalid repository should fail safely");
 }
 
-// A failed `git apply` splits into two very different user situations, and they
-// used to collapse into one message. If the file moved under the diff (an edit or
-// a pull between opening the compare tab and clicking the hunk) the actionable
-// message is "refresh the compare tab and try again"; if OUR patch is corrupt,
-// refreshing will never help. ClassifyGitApplyFailure is the split.
 void TestClassifyGitApplyFailureSeparatesStaleFromCorrupt() {
   using microide::project::ClassifyGitApplyFailure;
 
-  // Content/index mismatch: the diff is stale. The first two are verbatim from a
-  // real `git apply` of a patch whose target moved (both the worktree and the
-  // --cached form print exactly these two lines).
   for (const std::string_view stale : {
            "error: patch failed: src/main.cpp:12\nerror: src/main.cpp: patch does not apply\n",
            "error: src/main.cpp: does not match index\n",
@@ -431,9 +362,6 @@ void TestClassifyGitApplyFailureSeparatesStaleFromCorrupt() {
            "a content/index mismatch must classify as StaleDiff so the user is told to refresh");
   }
 
-  // A patch we generated badly is not staleness — refreshing would loop forever.
-  // "corrupt patch at line N" and "No valid patches in input" are verbatim from
-  // real `git apply` runs (a truncated hunk and wholly unparseable input).
   for (const std::string_view corrupt : {
            "error: corrupt patch at line 5\n",
            "error: No valid patches in input (allow with \"--allow-empty\")\n",
@@ -445,15 +373,11 @@ void TestClassifyGitApplyFailureSeparatesStaleFromCorrupt() {
            "a corrupt/unparseable patch must NOT be reported as a stale diff");
   }
 
-  // Corrupt wins when git reports both: git emits the mismatch phrasing alongside
-  // a corrupt fragment in some modes, and mislabeling our bug as staleness sends
-  // the user to refresh forever.
   Expect(ClassifyGitApplyFailure(
              "error: corrupt patch at line 4\nerror: a.cpp: patch does not apply\n") ==
              PatchApplyResultCategory::PatchDidNotApply,
          "a corrupt patch outranks a co-reported mismatch");
 
-  // Anything unrecognized stays the conservative generic failure.
   Expect(ClassifyGitApplyFailure("") == PatchApplyResultCategory::PatchDidNotApply,
          "empty output falls back to PatchDidNotApply");
   Expect(ClassifyGitApplyFailure("error: something entirely new\n") ==
@@ -483,10 +407,6 @@ struct ParsedPatchHunkHeader {
   bool explicit_counts{false};
 };
 
-// Independent test oracle for the generator's unified ranges. Using std::regex
-// here instantiated libstdc++'s NFA at -O2 and produced GCC 15 ASan
-// -Wmaybe-uninitialized warnings in the library's state moves. These ranges
-// have a fixed grammar; reading it directly also rejects overflowing counts.
 std::optional<ParsedPatchHunkHeader> ParsePatchHunkHeader(std::string_view patch) {
   const std::size_t start = patch.find("@@ -");
   if (start == std::string_view::npos) {
@@ -635,9 +555,6 @@ void TestPatchGeneratorCrlfContextLines() {
   const auto patch = GenerateComparePatch(model, "file.txt", 0);
   Expect(patch.has_value(), "CRLF compare patch should be generated");
   Expect(PatchHunkCountsMatchBody(*patch), "CRLF context should keep hunk counts aligned");
-  // git keeps each CRLF line's trailing `\r` in the blob, so every body line must
-  // re-emit the carriage return before the patch's own `\n`. A bare-LF context
-  // line here would fail to match the CRLF blob under `git apply`.
   Expect(patch->find(" keep\r\n") != std::string::npos,
          "CRLF context line must carry a carriage return");
   Expect(patch->find("-old\r\n") != std::string::npos,
@@ -646,16 +563,11 @@ void TestPatchGeneratorCrlfContextLines() {
          "CRLF addition line must carry a carriage return");
 }
 
-// Regression: staging a hunk of a CRLF working-tree file failed context matching
-// under `git apply --cached` because the generated patch emitted bare-LF body
-// lines while the blob content keeps the `\r`. The patch must re-emit CRLF so the
-// stage succeeds AND the staged blob preserves the file's line endings exactly.
 void TestPatchStageCrlfFileApplies() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
   std::filesystem::create_directories(repo_path);
   InitializeGitRepo(repo_path);
-  // Keep git from normalizing CRLF so the blob stores the bytes verbatim.
   RequireGitCommandSuccess(repo_path, {"config", "core.autocrlf", "false"}, "disable autocrlf");
   const auto file_path = repo_path / "crlf.txt";
   WriteFile(file_path, "line1\r\nline2\r\n");
@@ -691,10 +603,6 @@ void TestPatchStageCrlfFileApplies() {
          "staged blob must preserve CRLF endings on the added line");
 }
 
-// Ignore-whitespace folds whitespace-only differences into Unchanged rows, so a
-// generated patch cannot faithfully represent the working tree. Every apply entry
-// point must refuse — the shared choke point covers both the keyboard and menu
-// paths — with a specific, actionable message rather than silently misstaging.
 void TestPatchApplyRejectsIgnoreWhitespace() {
   microide::project::ProjectBackgroundExecutor executor;
   microide::workspace::GitRepositoryService git_service(executor);
@@ -731,8 +639,6 @@ void TestPatchApplyRejectsIgnoreWhitespace() {
   expect_refused(service.RequestDiscardSelectedLinesPreview(compare_tab),
                  "discard lines must be refused");
 
-  // With the option off, the guard must not fire: the same tab now fails later for
-  // lack of a repository, and that message never mentions ignore-whitespace.
   compare_tab.build_options.ignore_whitespace = false;
   feedback.clear();
   Expect(!service.RequestStageHunk(compare_tab),
@@ -743,12 +649,6 @@ void TestPatchApplyRejectsIgnoreWhitespace() {
   executor.Shutdown();
 }
 
-// TD-2026-11-01-427 item 1: a stage that finishes after the user switched to
-// another project refreshed the git view, reloaded clean tabs and rebuilt compare
-// tabs in the project in FRONT, and said "Patch applied" there as if it were its
-// own. The completion now knows the project it was dispatched in: the front
-// project is left alone, the applying one catches up on activation, and the
-// feedback names it.
 void TestPatchApplyFinishingInTheBackgroundStaysWithItsProject() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "alpha";
@@ -790,7 +690,7 @@ void TestPatchApplyFinishingInTheBackgroundStaysWithItsProject() {
   compare_tab.staging_view = microide::compare::WorkingTreeStagingView::Unstaged;
   compare_tab.model = BuildCompareModel("a\nb\n", "A\nb\n");
   Expect(service.RequestStageHunk(compare_tab), "the stage is dispatched in alpha");
-  front = temp_dir.path() / "beta";  // switched before it finishes
+  front = temp_dir.path() / "beta";
   Expect(WaitUntil([&] { return service.PendingCompletionCount() > 0; }), "the apply finishes");
   service.DrainCompletions();
 
@@ -857,11 +757,6 @@ void TestPatchUnstageSelectedLinesWithStagedAndUnstagedChanges() {
          "unrelated unstaged worktree edits should remain");
 }
 
-// Regression: staging only the trailing inserted lines of a file whose preceding
-// row is a modification (so no context is attached) yields a hunk with zero
-// old-side lines. The header must be a valid `@@ -L,0 +M,N @@` (git's pure-insertion
-// convention), not a clamped `@@ -1,1 ... @@` that claims a line the body lacks —
-// which `git apply` rejects, silently failing the stage.
 void TestPatchStagePureInsertionWithNoContextApplies() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -871,8 +766,6 @@ void TestPatchStagePureInsertionWithNoContextApplies() {
   WriteFile(file_path, "a\nb\n");
   CommitAll(repo_path, "base", "base");
 
-  // Modify line 2 AND append two lines. The added lines sit directly after the
-  // modification, so range expansion attaches no context on the old side.
   WriteFile(file_path, "a\nZ\nc\nd\n");
   const CompareModel model = BuildCompareModel("a\nb\n", "a\nZ\nc\nd\n");
 
@@ -890,7 +783,6 @@ void TestPatchStagePureInsertionWithNoContextApplies() {
 
   const auto patch = GenerateComparePatchForRows(model, "file.txt", first_added, last_added);
   Expect(patch.has_value(), "a pure-insertion patch should be generated");
-  // The old side must be a genuine zero-length range, not a clamped 1.
   Expect(patch->find("@@ -2,0 ") != std::string::npos,
          "pure insertion after old line 2 must emit a zero-length old range at line 2");
 
@@ -925,8 +817,6 @@ void TestPatchStageNewFileUsesDevNull() {
   WriteFile(repo_path / "seed.txt", "seed\n");
   CommitAll(repo_path, "base", "base");
 
-  // An untracked file diffs empty-vs-content; staging its hunk must create the
-  // file in the index via a `/dev/null` patch.
   const auto file_path = repo_path / "created.txt";
   WriteFile(file_path, "alpha\nbeta\n");
   const CompareModel model = BuildCompareModel("", "alpha\nbeta\n");
@@ -992,9 +882,9 @@ void TestPatchStagePreservesMissingFinalNewline() {
   std::filesystem::create_directories(repo_path);
   InitializeGitRepo(repo_path);
   const auto file_path = repo_path / "nonl.txt";
-  WriteFile(file_path, "a\nb\nc");  // no trailing newline
+  WriteFile(file_path, "a\nb\nc");
   CommitAll(repo_path, "base", "base");
-  WriteFile(file_path, "a\nb\nC");  // edit last line, still no trailing newline
+  WriteFile(file_path, "a\nb\nC");
 
   const CompareModel model = BuildCompareModel("a\nb\nc", "a\nb\nC");
   Expect(model.left_final_newline_missing && model.right_final_newline_missing,
@@ -1021,7 +911,7 @@ void TestPatchStagePreservesMissingFinalNewline() {
          "staged blob must preserve the missing final newline (no added '\\n')");
 }
 
-}  // namespace
+}
 
 void TestPatchGeneratorUtf8Paths() {
   const CompareModel model = BuildCompareModel("café\n", "café\nnaïve\n");
@@ -1039,32 +929,20 @@ void TestPatchGeneratorIgnoresSpuriousAlignmentRows() {
          "hunk header counts should match stageable lines");
 }
 
-// Regression: staging a hunk whose context includes an interior blank line
-// after an earlier insertion shifted the line numbering. The blank Unchanged
-// row then has left_line != right_line (both > 0); the old `real_blank_line`
-// gate required equality, so it dropped the blank from the body while the @@
-// header still counted it — desyncing the header line numbers against the real
-// file. `git apply --check` (run by the preflight) then rejected the hunk. The
-// fix keys phantom-trailing-EOF suppression on the globally-last row instead of
-// line-number equality, so genuine interior blanks are emitted.
 void TestPatchStageHunkWithShiftedBlankContextApplies() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
   std::filesystem::create_directories(repo_path);
   InitializeGitRepo(repo_path);
   const auto file_path = repo_path / "tracked.txt";
-  // Committed content has an interior blank line (line 2) before the target.
   const std::string committed = "keep\n\ntarget_old\n";
   WriteFile(file_path, committed);
   CommitAll(repo_path, "base", "base");
 
-  // Working content inserts a line at the very top (shifting every following
-  // line's right-side number by one) AND changes the target line.
   const std::string working = "inserted\nkeep\n\ntarget_new\n";
   WriteFile(file_path, working);
 
   const CompareModel model = BuildCompareModel(committed, working);
-  // Locate the hunk that carries the target modification (not the top insert).
   int target_hunk = -1;
   for (const CompareRow& row : model.rows) {
     if (row.kind == CompareRowKind::Modified && row.left_text == "target_old") {
@@ -1076,10 +954,8 @@ void TestPatchStageHunkWithShiftedBlankContextApplies() {
 
   const auto patch = GenerateComparePatch(model, "tracked.txt", target_hunk);
   Expect(patch.has_value(), "target-hunk patch should be generated");
-  // The interior blank line must survive as a space-only context line...
   Expect(patch->find("\n \n") != std::string::npos,
          "shifted interior blank line must be emitted as a context line");
-  // ...and the phantom trailing-EOL blank must NOT be appended as a bogus line.
   Expect(PatchHunkCountsMatchBody(*patch), "hunk header counts should match the emitted body");
 
   PatchApplyRequest request{
@@ -1102,19 +978,15 @@ void TestPatchStageHunkWithShiftedBlankContextApplies() {
          "staged diff should contain the changed target line");
 }
 
-// Appending lines to a file that has no trailing newline: the shared last line must
-// become a delete/add pair so git's `\ No newline` marker lands on the old side's
-// final line only. Regression for the corruption where the marker on a *context*
-// line made git treat it as EOF and fuse the following added content onto it.
 void TestPatchStageAppendAfterMissingFinalNewline() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
   std::filesystem::create_directories(repo_path);
   InitializeGitRepo(repo_path);
   const auto file_path = repo_path / "nonl.txt";
-  WriteFile(file_path, "line1\nline2");        // committed: no trailing newline
+  WriteFile(file_path, "line1\nline2");
   CommitAll(repo_path, "base", "base");
-  WriteFile(file_path, "line1\nline2\nline3\n");  // append a line (now newline-terminated)
+  WriteFile(file_path, "line1\nline2\nline3\n");
 
   const CompareModel model = BuildCompareModel("line1\nline2", "line1\nline2\nline3\n");
   const auto patch = GenerateComparePatch(model, "nonl.txt", 0);
@@ -1137,18 +1009,15 @@ void TestPatchStageAppendAfterMissingFinalNewline() {
          "staged blob must be exactly the appended content (line2 and line3 not fused)");
 }
 
-// Deleting the trailing lines of a newline-terminated file, leaving a new content
-// with no final newline. Previously the marker was misplaced on a context line and
-// git rejected the patch (could not stage/discard the hunk).
 void TestPatchStageDeleteTrailingLeavesMissingFinalNewline() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
   std::filesystem::create_directories(repo_path);
   InitializeGitRepo(repo_path);
   const auto file_path = repo_path / "nonl.txt";
-  WriteFile(file_path, "line1\nline2\nline3\n");  // committed: newline-terminated
+  WriteFile(file_path, "line1\nline2\nline3\n");
   CommitAll(repo_path, "base", "base");
-  WriteFile(file_path, "line1");                  // keep only line1, no trailing newline
+  WriteFile(file_path, "line1");
 
   const CompareModel model = BuildCompareModel("line1\nline2\nline3\n", "line1");
   const auto patch = GenerateComparePatch(model, "nonl.txt", 0);
@@ -1171,10 +1040,6 @@ void TestPatchStageDeleteTrailingLeavesMissingFinalNewline() {
          "staged blob must be exactly 'line1' with no added trailing newline");
 }
 
-// J37: the copy-to-clipboard "file patch" path (CopyCompareFilePatch) now routes
-// through the real generator (whole-file row span) instead of the removed
-// display-only exporter that emitted fake `@@ hunk N @@` headers. The copied
-// text must be a genuine unified diff that git accepts.
 void TestCopyFilePatchWholeFileIsRealUnifiedDiffAndApplies() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -1186,7 +1051,6 @@ void TestCopyFilePatchWholeFileIsRealUnifiedDiffAndApplies() {
   WriteFile(file_path, "one\nTWO\nthree\n");
 
   const CompareModel model = BuildCompareModel("one\ntwo\nthree\n", "one\nTWO\nthree\n");
-  // CopyCompareFilePatch spans every model row through the real generator.
   const auto patch =
       GenerateComparePatchForRows(model, "tracked.txt", 0, model.rows.size() - 1);
   Expect(patch.has_value(), "whole-file copy patch should be generated");
@@ -1212,8 +1076,6 @@ void TestCopyFilePatchWholeFileIsRealUnifiedDiffAndApplies() {
          "copied whole-file patch must be git-apply-able");
 }
 
-// J37: copied patches must be git-apply-able for the full edge matrix — an add,
-// a delete, a path containing spaces, and a file missing its trailing newline.
 void TestCopyPatchAppliesForAddDeleteSpacesAndNoNewline() {
   const auto make_repo = [](const TemporaryDirectory& temp) {
     const auto repo_path = temp.path() / "repo";
@@ -1224,7 +1086,6 @@ void TestCopyPatchAppliesForAddDeleteSpacesAndNoNewline() {
     return repo_path;
   };
 
-  // Add (whole-file copy of an untracked file uses a /dev/null old side).
   {
     TemporaryDirectory temp_dir;
     const auto repo_path = make_repo(temp_dir);
@@ -1245,7 +1106,6 @@ void TestCopyPatchAppliesForAddDeleteSpacesAndNoNewline() {
            "copied add patch must apply");
   }
 
-  // Delete (whole-file copy of a removed file uses a /dev/null new side).
   {
     TemporaryDirectory temp_dir;
     const auto repo_path = temp_dir.path() / "repo";
@@ -1269,7 +1129,6 @@ void TestCopyPatchAppliesForAddDeleteSpacesAndNoNewline() {
            "copied delete patch must apply");
   }
 
-  // Path with spaces (git leaves such paths unquoted; the header must still apply).
   {
     TemporaryDirectory temp_dir;
     const auto repo_path = temp_dir.path() / "repo";
@@ -1293,7 +1152,6 @@ void TestCopyPatchAppliesForAddDeleteSpacesAndNoNewline() {
            "copied spaces-path patch must apply");
   }
 
-  // Missing trailing newline.
   {
     TemporaryDirectory temp_dir;
     const auto repo_path = temp_dir.path() / "repo";
@@ -1318,15 +1176,11 @@ void TestCopyPatchAppliesForAddDeleteSpacesAndNoNewline() {
   }
 }
 
-// J38: patch header paths must be quoted/escaped exactly like git so that tabs,
-// newlines, quotes, backslashes, and high-bit bytes cannot split or corrupt the
-// `--- ` / `+++ ` / `diff --git` lines. Spaces and a leading dash under the
-// `a/`/`b/` prefix stay unquoted, matching git.
 void TestPatchHeaderQuotesUnsafePaths() {
   const CompareModel model = BuildCompareModel("x\n", "y\n");
   struct Case {
     std::filesystem::path path;
-    std::string expected_minus_header;  // exact bytes expected on the `--- ` line
+    std::string expected_minus_header;
     const char* note;
   };
   const std::vector<Case> cases = {
@@ -1343,7 +1197,6 @@ void TestPatchHeaderQuotesUnsafePaths() {
     const auto patch = GenerateComparePatch(model, test_case.path, 0);
     Expect(patch.has_value(), test_case.note);
     Expect(patch->find(test_case.expected_minus_header) != std::string::npos, test_case.note);
-    // The diff --git line must carry the same quoted token on both sides.
     if (test_case.expected_minus_header.rfind("--- \"", 0) == 0) {
       Expect(patch->find("diff --git \"a/") != std::string::npos,
              "quoted path must also quote the diff --git a/ token");
@@ -1351,9 +1204,6 @@ void TestPatchHeaderQuotesUnsafePaths() {
   }
 }
 
-// J39: building a patch-apply request must not deep-copy the whole compare model.
-// The patch text is generated synchronously from the live model; only compact
-// target metadata is dispatched, so staging one hunk costs O(hunk), not O(file).
 void TestPatchApplyRequestDoesNotCopyModel() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path();
@@ -1370,7 +1220,6 @@ void TestPatchApplyRequestDoesNotCopyModel() {
   callbacks.current_repository_state = [repo_state]() { return repo_state; };
   service.SetCallbacks(std::move(callbacks));
 
-  // A deliberately large diff. Staging a single hunk must not clone all of it.
   std::string left;
   std::string right;
   for (int i = 0; i < 500; ++i) {
@@ -1395,25 +1244,16 @@ void TestPatchApplyRequestDoesNotCopyModel() {
   compare_tab.selected_row = changed_row;
 
   const auto request = service.BuildRequestForTesting(
-      compare_tab, PatchOperationKind::StageHunk, /*line_scope=*/false);
+      compare_tab, PatchOperationKind::StageHunk, false);
   Expect(request.has_value(), "request should build for a working-tree text hunk");
   Expect(request->target.hunk.has_value(), "request should target a hunk");
-  // The fix: the dispatched request carries no copy of the (large) diff model.
   Expect(request->model.rows.empty(),
          "request must not deep-copy the compare model (cost bounded by hunk, not file)");
-  // The source model is untouched — the emptiness above is the request's, not a
-  // side effect that mutated the tab.
   Expect(compare_tab.model.rows.size() > 400, "source model must remain intact");
 
   executor.Shutdown();
 }
 
-// Regression: a whole-line selection made with the standard gesture (anchor at the
-// start of the target line, cursor dragged to the START of the next line) reports an
-// EXCLUSIVE end — end.column == 0 on the next line, which is NOT selected. BuildRequest
-// must decrement that end line before mapping it to a model row, or a line-scoped
-// stage/unstage/DISCARD spans one extra line. For Discard that silently destroys an
-// unselected working-tree change.
 void TestPatchLineScopeSelectionExcludesExclusiveEndLine() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path();
@@ -1430,7 +1270,6 @@ void TestPatchLineScopeSelectionExcludesExclusiveEndLine() {
   callbacks.current_repository_state = [repo_state]() { return repo_state; };
   service.SetCallbacks(std::move(callbacks));
 
-  // Two consecutive CHANGED right lines: b->X (right line 2) and c->Y (right line 3).
   const std::string left = "a\nb\nc\nd\n";
   const std::string right = "a\nX\nY\nd\n";
   microide::workspace::CompareTabState compare_tab;
@@ -1443,17 +1282,13 @@ void TestPatchLineScopeSelectionExcludesExclusiveEndLine() {
   WriteFile(right_path, right);
   Expect(compare_tab.right_viewport.OpenFile(right_path), "right viewport should open");
 
-  // Select ONLY line index 1 (X): anchor at (1,0), drag cursor to the start of line 2
-  // — end.column == 0, so line 2 (Y) is excluded from the selection.
-  compare_tab.right_viewport.MoveCursorTo(1, 0, /*extend_selection=*/false);
-  compare_tab.right_viewport.MoveCursorTo(2, 0, /*extend_selection=*/true);
+  compare_tab.right_viewport.MoveCursorTo(1, 0, false);
+  compare_tab.right_viewport.MoveCursorTo(2, 0, true);
   const auto selection = compare_tab.right_viewport.selection_range();
   Expect(selection.has_value() && selection->start.line == 1 && selection->end.line == 2 &&
              selection->end.column == 0,
          "fixture selection must be the exclusive-end whole-line gesture");
 
-  // The two right lines must map to distinct model rows or the test can't distinguish
-  // the off-by-one.
   const std::size_t row_line1 =
       microide::workspace::CompareTabModelRowForRightLine(compare_tab, 1);
   const std::size_t row_line2 =
@@ -1461,7 +1296,7 @@ void TestPatchLineScopeSelectionExcludesExclusiveEndLine() {
   Expect(row_line1 != row_line2, "fixture must map the two right lines to different model rows");
 
   const auto request = service.BuildRequestForTesting(
-      compare_tab, PatchOperationKind::DiscardSelectedLines, /*line_scope=*/true);
+      compare_tab, PatchOperationKind::DiscardSelectedLines, true);
   Expect(request.has_value(), "line-scope discard request should build");
   Expect(request->target.line_selection.has_value(), "request should carry a line selection");
   Expect(request->target.line_selection->first_model_row == row_line1,
@@ -1472,13 +1307,6 @@ void TestPatchLineScopeSelectionExcludesExclusiveEndLine() {
   executor.Shutdown();
 }
 
-// Every hunk of a random edit must stage through real `git apply`, alone on a
-// clean index and in sequence, and the sequence must leave the index holding the
-// edited file byte for byte. The literal cases above each pin one shape the
-// generator got wrong once (phantom trailing element, missing final newline,
-// blank context, CRLF); this walks the shapes in between: repeated and blank
-// lines, adjacent hunks, edits at both ends of the file, a final newline that
-// appears or disappears, and files that are all context but one line.
 void TestPatchGeneratorRandomEditsStageThroughGit() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -1538,7 +1366,6 @@ void TestPatchGeneratorRandomEditsStageThroughGit() {
     WriteFile(file_path, base);
     CommitAll(repo_path, "base", "base");
     WriteFile(file_path, modified);
-    // Both files exist throughout (an emptied file is an edit, not a deletion).
     microide::compare::CompareBuildOptions both_exist;
     both_exist.left_exists = true;
     both_exist.right_exists = true;
@@ -1550,7 +1377,6 @@ void TestPatchGeneratorRandomEditsStageThroughGit() {
     const std::string label = "trial " + std::to_string(trial) + " base=[" + base +
                               "] modified=[" + modified + "]";
 
-    // Each hunk alone, on a clean index.
     for (std::size_t hunk = 0; hunk < model.hunks.size(); ++hunk) {
       Expect(repo.Execute({"reset", "-q"}).success(), "index reset");
       const auto patch = GenerateComparePatch(model, "f.txt", static_cast<int>(hunk));
@@ -1573,11 +1399,6 @@ void TestPatchGeneratorRandomEditsStageThroughGit() {
                  .c_str());
     }
 
-    // Every hunk in sequence, the way the product does it: each request carries
-    // the hunk's working-tree line window from the HEAD-vs-worktree model, and
-    // the apply regenerates the patch against the index as it is by then. The
-    // index must end up holding the edited file exactly, whatever order the
-    // hunks were staged in.
     Expect(repo.Execute({"reset", "-q"}).success(), "index reset");
     std::vector<std::size_t> order(model.hunks.size());
     for (std::size_t i = 0; i < order.size(); ++i) {
@@ -1669,4 +1490,4 @@ void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
                    TestGeneratedPatchesApplyWithRealGit});
 }
 
-}  // namespace microide::tests
+}

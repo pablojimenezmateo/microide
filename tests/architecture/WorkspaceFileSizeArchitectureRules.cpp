@@ -64,14 +64,6 @@ RuleResult CheckCoordinatorTuSize(const std::filesystem::path& repo_root) {
 }
 
 RuleResult CheckDebugTuSize(const std::filesystem::path& repo_root) {
-  // The debugger subsystem (DAP client/manager, DebugSession, DebugService,
-  // value tree, pane) decomposes the same way the rest of the workspace does:
-  // cohesive clusters split into companion TUs (e.g. DebugSessionBreakpoints,
-  // DebugServiceCallbacks) instead of growing one file unbounded. The 2026-06
-  // debug-parity work split DebugSession.cpp / DebugService.cpp to land under
-  // this cap (largest remaining ~470 code lines); the headroom keeps the cap a
-  // ratchet, not a constant edit-time obstacle. When a Debug*/WorkspaceDap* TU
-  // approaches the cap, carve a companion rather than raising it.
   RuleResult result;
   result.label = "debug translation unit size";
   result.hard_fail = true;
@@ -101,4 +93,4 @@ RuleResult CheckDebugTuSize(const std::filesystem::path& repo_root) {
 }
 
 
-}  // namespace microide::tests::architecture
+}

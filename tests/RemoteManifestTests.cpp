@@ -50,14 +50,12 @@ void TestRemoteManifestRoundTrip() {
   Expect(DecodeManifestRows(bytes, decoded), "a well-formed chunk decodes");
   Expect(decoded == rows, "every row survives the trip, kinds, modes and hashes included");
 
-  // Shared prefixes are stored once: the chunk is far smaller than the paths.
   std::size_t path_bytes = 0;
   for (const ManifestRow& row : rows) {
     path_bytes += row.path.size();
   }
   Expect(bytes.size() < path_bytes + rows.size() * 48, "paths are prefix-compressed");
 
-  // A second chunk appends, and decodes independently of the first.
   Expect(DecodeManifestRows(bytes, decoded) && decoded.size() == rows.size() * 2,
          "chunks append");
 }
@@ -73,7 +71,6 @@ void TestRemoteManifestRejectsUnsafePaths() {
     Expect(IsSafeRelativePath(path), std::string("safe: '") + path + "'");
   }
 
-  // A forged chunk whose second row walks out of the root through the prefix.
   std::vector<ManifestRow> rows = {FileRow("ok", "x")};
   std::string bytes;
   EncodeManifestRows(rows, bytes);
@@ -108,13 +105,10 @@ void TestRemoteManifestRejectsMalformedBytes() {
   Expect(!DecodeManifestRows(huge_count, decoded), "a count the payload cannot hold is refused");
 }
 
-// A row count is the peer's to write and a row is 128 bytes here against five on
-// the wire: a refused decode must not have reserved for the count it claimed
-// (1 MiB of padding claimed ~200,000 rows, 26 MB, before the first row failed).
 void TestRemoteManifestForgedCountReservesNoMoreThanAChunk() {
   std::string forged;
   util::PutVarint(forged, 200'000);
-  forged.append(1u << 20, '\xff');  // decodes as no row at all
+  forged.append(1u << 20, '\xff');
   std::vector<ManifestRow> rows;
   Expect(!DecodeManifestRows(forged, rows), "the forged chunk is refused");
   Expect(rows.empty(), "and leaves no row behind");
@@ -122,7 +116,7 @@ void TestRemoteManifestForgedCountReservesNoMoreThanAChunk() {
          "having reserved at most a chunk: " + std::to_string(rows.capacity()) + " rows");
 }
 
-}  // namespace
+}
 
 void RegisterRemoteManifestTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteManifest/RoundTrip", TestRemoteManifestRoundTrip);
@@ -132,4 +126,4 @@ void RegisterRemoteManifestTests(std::vector<TestCase>& tests) {
           TestRemoteManifestForgedCountReservesNoMoreThanAChunk);
 }
 
-}  // namespace microide::tests
+}

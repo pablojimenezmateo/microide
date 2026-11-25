@@ -47,28 +47,18 @@ struct GitSidebarActionAvailability {
 struct GitSidebarRowViewModel {
   int entry_index = -1;
   GitSidebarRowKind row_kind = GitSidebarRowKind::Changed;
-  // Normalized generic ('/'-separated) text; the presentation layer's grouping keys
-  // are views into it (TD-2026-08-11-183).
   std::string relative_path;
   std::string primary_label;
   std::string secondary_label;
   std::string review_marker_label;
   std::string primary_action_label;
   project::GitFileStatus status = project::GitFileStatus::Clean;
-  // No per-row action availability here. The row used to carry the whole
-  // GitSidebarActionAvailability plus two booleans derived from it, for inline
-  // stage/discard buttons that moved to the right-click context menu (see the
-  // comment in WorkspaceShellRenderSidebar's git row loop). Nothing read any of
-  // the three, and the real consumers call GitSidebarActionAvailabilityForEntry
-  // for the ONE entry they act on rather than for every visible row.
 };
 
 struct GitSidebarSectionViewModel {
   GitSidebarEntry::Section section = GitSidebarEntry::Section::Changed;
   std::string header_label;
   std::string empty_label;
-  // False for the two whole-panel states ("Not a git repository", "No changes"),
-  // which are a single line of prose rather than a group with a count above it.
   bool show_header = true;
   std::vector<GitSidebarRowViewModel> rows;
 };
@@ -81,26 +71,15 @@ struct GitSidebarViewModel {
   std::string selection_action_line;
   std::string stale_banner;
   std::string error_banner;
-  // Commit-button state for the panel header. commit_ready drives the enabled state;
-  // commit_blocked_reason is a short label shown beside a disabled button (empty when
-  // ready). show_commit_button is false when there is no repo or the inline draft is open.
   bool show_commit_button = false;
   bool commit_ready = false;
   std::string commit_blocked_reason;
   bool refreshing = false;
-  // Labels for the branch row's two buttons, composed here because the render TU
-  // may not materialize strings. `branch_button_label` is the current branch (or a
-  // prompt when HEAD is detached/unborn); `sync_button_label` carries the
-  // ahead/behind counts so the button says what syncing would actually do.
   std::string branch_button_label;
   std::string sync_button_label;
   std::vector<GitSidebarSectionViewModel> sections;
 };
 
-// The Sync button's hover tooltip. Composed on demand by the hover-tooltip
-// resolver rather than carried on the view model: it used to be built on every
-// git view-model rebuild — three allocations for a string no surface painted,
-// because no sidebar hover-tooltip path consumed it (TD-2026-09-19-296).
 std::string BuildGitSyncButtonTooltip(const GitSidebarState& git_state);
 
 GitSidebarEntry::Section ClassifyGitSidebarSection(bool conflicted,
@@ -132,4 +111,4 @@ GitSidebarViewModel BuildGitSidebarViewModel(const GitSidebarState& git_state,
 std::string BuildGitDiscardPreviewSummary(const GitSidebarEntry& entry,
                                           std::string_view project_label);
 
-}  // namespace microide::workspace
+}

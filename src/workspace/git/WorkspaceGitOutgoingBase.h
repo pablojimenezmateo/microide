@@ -19,4 +19,4 @@ ResolvedGitOutgoingBase ResolveGitOutgoingBase(const std::filesystem::path& proj
                                                const OutgoingBaseChoice& choice,
                                                bool repo_available);
 
-}  // namespace microide::workspace
+}

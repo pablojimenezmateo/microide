@@ -12,10 +12,6 @@
 
 namespace microide::terminal {
 
-// Text-attribute bits packed into TerminalStyle::attrs. Replaces the previous
-// pair of `bold`/`inverse` bools so the full SGR attribute set fits without
-// growing the cell (two uint8 flags -> one uint16 bitfield is memory-neutral
-// and keeps TerminalCell trivially copyable for bulk snapshot/scrollback memcpy).
 namespace cell_attr {
 enum Bit : std::uint16_t {
   kBold = 1u << 0,
@@ -27,24 +23,11 @@ enum Bit : std::uint16_t {
   kInverse = 1u << 6,
   kHidden = 1u << 7,
   kStrikethrough = 1u << 8,
-  // The cell is the trailing half of a double-width glyph. It carries no glyph
-  // of its own; the renderer skips it so the wide lead cell paints across both
-  // columns. Kept in the style so it travels with snapshot copies.
   kWideTrailing = 1u << 9,
-  // The foreground was set via a basic SGR color (30..37) whose brightness must
-  // track the bold flag: `\e[1m\e[31m` and `\e[31m\e[1m` both yield bright red,
-  // and `\e[22m` reverts to dark red. Bits 11..13 hold the palette index (0..7)
-  // so SGR 1/22 can re-resolve the RGB. Explicit bright colors (90..97) do NOT
-  // set this bit, so `\e[91m…\e[22m` stays bright. Free bits, memory-neutral.
   kFgBasic = 1u << 10,
-  // Bits 14..15: the single underline's shape (TerminalUnderlineVariant), read
-  // only while kUnderline is set. `CSI 4:3 m` and its siblings, the curly line
-  // language-server-aware TUIs (helix, neovim) mark diagnostics with.
 };
-}  // namespace cell_attr
+}
 
-// The shape of a single underline (SGR 4:1, 4:3, 4:4, 4:5). Double (4:2, 21) is
-// its own bit, kDoubleUnderline.
 enum class TerminalUnderlineVariant : std::uint8_t {
   Straight = 0,
   Curly = 1,
@@ -52,12 +35,6 @@ enum class TerminalUnderlineVariant : std::uint8_t {
   Dashed = 3,
 };
 
-// A cell colour, or "the default colour" (the theme's, resolved at paint time).
-// Default is encoded as alpha 0 rather than as `std::optional<Rgba8>`: an
-// optional is five bytes and costs the cell its room for a hyperlink id
-// (TD-2026-10-08-333, option C), while a terminal cell colour is opaque by
-// definition — every assignment stores alpha 0xff — so alpha has a free value.
-// The optional-like surface keeps the readers unchanged.
 class TerminalColor {
  public:
   constexpr TerminalColor() = default;
@@ -106,7 +83,6 @@ struct TerminalStyle {
   constexpr bool strikethrough() const { return has(cell_attr::kStrikethrough); }
   constexpr bool wide_trailing() const { return has(cell_attr::kWideTrailing); }
 
-  // Basic-palette foreground tracking (bits 11..13). See cell_attr::kFgBasic.
   static constexpr std::uint16_t kFgBasicIndexShift = 11;
   static constexpr std::uint16_t kFgBasicIndexMask = static_cast<std::uint16_t>(0x7u << 11);
   constexpr bool has_basic_foreground() const { return has(cell_attr::kFgBasic); }
@@ -132,37 +108,15 @@ struct TerminalStyle {
 };
 
 struct TerminalCell {
-  // Inline UTF-8 storage. ASCII glyphs use length=1; multi-byte UTF-8 sequences fit in 2..4 bytes.
-  // length=0 marks an empty/uninitialized cell. The cell is now trivially copyable, so terminal
-  // snapshots and scrollback trims become bulk memcpys instead of per-cell std::string moves.
-  // (Round-2 Finding 8.)
-  //
-  // FIVE bytes, not four, and the fifth is free: `length` + TerminalStyle already
-  // pad the struct out to 18 bytes at either width (verified — 6 bytes is what
-  // costs 20). A base glyph plus one combining mark has to fit inline or the mark
-  // is dropped, and the widest case that can occur is a 3-byte base with a 2-byte
-  // mark: every double-width codepoint is U+1100 or above (3 bytes in UTF-8) and
-  // every combining mark is at least 2, so four bytes could not hold a single
-  // accented CJK glyph. Longer runs (an emoji with a 3-byte variation selector,
-  // several stacked marks) still do not fit; that wants out-of-line storage keyed
-  // by cell, which is what xterm.js does, and is a separate change.
   std::array<char, 5> bytes{};
   std::uint8_t length = 0;
   TerminalStyle style;
-  // The cell's extended attributes: an id into the owning session's
-  // TerminalCellExtraTable -- an OSC 8 hyperlink and/or an SGR 58 underline
-  // colour -- 0 for neither. Neither fits the 18 bytes, and both are rare and
-  // repeat along a run, so cells share interned entries (xterm.js's extended
-  // attributes). Not part of the style on purpose: the pen's extras are written
-  // onto glyphs only, never onto erased blanks.
   std::uint16_t extra = 0;
 
   std::string_view DisplayText() const {
     return length == 0 ? std::string_view{} : std::string_view(bytes.data(), length);
   }
 
-  // Convenience for callers that only care about the ASCII case (tests, scratch fixtures, etc.).
-  // Returns '\0' for empty cells or for cells whose first byte is a UTF-8 lead byte.
   char ascii_character() const {
     if (length == 1) {
       return bytes[0];
@@ -184,8 +138,6 @@ struct TerminalCell {
   }
 };
 
-// What a cell SHOWS: the glyph's bytes up to its length (the tail of `bytes` is
-// whatever a reused buffer held before) and the style.
 inline bool SameCell(const TerminalCell& a, const TerminalCell& b) {
   if (a.length != b.length || a.extra != b.extra || a.style.attrs != b.style.attrs ||
       a.style.foreground != b.style.foreground || a.style.background != b.style.background) {
@@ -218,8 +170,6 @@ inline bool SameLine(const TerminalLine& a, const TerminalLine& b) {
   return true;
 }
 
-// DECSCUSR (`CSI Ps SP q`): the cursor's shape. Programs switch it per mode --
-// vim's insert mode, zsh/fish vi mode and readline's vi mode show a bar.
 enum class TerminalCursorShape : std::uint8_t {
   Block,
   Underline,
@@ -231,23 +181,16 @@ struct TerminalCursorSnapshot {
   std::size_t column = 0;
   bool visible = true;
   TerminalCursorShape shape = TerminalCursorShape::Block;
-  // False for DECSCUSR's steady shapes (2, 4, 6) and with DEC mode 12 reset.
   bool blinking = true;
-  // The cursor is on the lead cell of a wide glyph, so its caret covers two cells.
-  // The session does not set it; the workspace derives it from the lines it
-  // samples with the cursor (PrepareTerminalPanesForFrame).
   bool wide = false;
   friend bool operator==(const TerminalCursorSnapshot&, const TerminalCursorSnapshot&) = default;
 };
 
-// An SGR 58 underline colour a snapshot's cells name by their `extra` id.
 struct TerminalUnderlineColor {
   std::uint16_t extra = 0;
   TerminalColor color;
 };
 
-// The underline colour `extra` names in `colors` (sorted by extra), or the
-// default -- draw in the text colour -- when it names none.
 inline TerminalColor FindUnderlineColor(std::span<const TerminalUnderlineColor> colors,
                                         std::uint16_t extra) {
   if (extra == 0 || colors.empty()) {
@@ -262,9 +205,7 @@ inline TerminalColor FindUnderlineColor(std::span<const TerminalUnderlineColor> 
 struct TerminalLineRangeSnapshot {
   std::uint64_t generation = 0;
   std::vector<TerminalLine> lines;
-  // The underline colours `lines` use, sorted by extra id: the table they live
-  // in belongs to the session and its mutex, and paint reads the snapshot only.
   std::vector<TerminalUnderlineColor> underline_colors;
 };
 
-}  // namespace microide::terminal
+}

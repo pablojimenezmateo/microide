@@ -16,8 +16,6 @@ std::size_t ResolveVisualColumn(const RowDecorationInput& in, std::size_t column
                                          in.row_visual_end, column);
 }
 
-// Row-local display column of an absolute visual column, counting any phantom
-// inlay-hint cells inserted before it. Identity when the row has no inlay hints.
 std::size_t DisplayColumn(const RowDecorationInput& in, std::size_t absolute_visual) {
   const std::size_t local = absolute_visual - in.row_visual_start;
   return local + in.inlay.CellsInsertedBefore(local);
@@ -61,8 +59,6 @@ void AppendColumnFill(DecoratedTextRow& row, const RowDecorationInput& in, const
   });
 }
 
-// Append underline / strikethrough lines for plugin text-style decorations,
-// clipped to the visible byte window (same geometry as diagnostic underlines).
 void AppendTextStyleUnderlines(DecoratedTextRow& row, const RowDecorationInput& in) {
   if (in.text_styles.empty() || in.text.empty() || in.text_renderer == nullptr) {
     return;
@@ -104,8 +100,6 @@ void AppendTextStyleUnderlines(DecoratedTextRow& row, const RowDecorationInput& 
     SDL_Color color = ts.line_color.a != 0 ? ts.line_color
                       : ts.foreground.a != 0 ? ts.foreground
                                              : in.plain_color;
-    // Underlines are dimmed 0.55x at draw time; lift the source alpha so plugin
-    // lines render at the author's intended intensity.
     color.a = 255;
     if (underline) {
       row.underlines.push_back(DecoratedUnderline{
@@ -122,14 +116,6 @@ void AppendTextStyleUnderlines(DecoratedTextRow& row, const RowDecorationInput& 
   }
 }
 
-// Grid-aligned plugin text-style under/strike lines (source->visual via
-// ResolveVisualColumn, then visual * char_width), matching the grid text runs,
-// caret, selection, diagnostics and the sibling AppendChangedSpanUnderlinesGrid.
-// Used when the row renders on the fixed cell grid (`layout` set): the proportional
-// MeasureWidth geometry of AppendTextStyleUnderlines mispositions the line whenever
-// the row has a tab, a wide glyph, or is horizontally scrolled (row_visual_start is
-// a visual column, not a codepoint count). Inlay displacement is applied uniformly
-// by the post-pass in BuildDecoratedRow, so this stays grid-plain.
 void AppendTextStyleUnderlinesGrid(DecoratedTextRow& row, const RowDecorationInput& in) {
   if (in.text_styles.empty()) {
     return;
@@ -175,7 +161,7 @@ void AppendTextStyleUnderlinesGrid(DecoratedTextRow& row, const RowDecorationInp
   }
 }
 
-}  // namespace
+}
 
 void PushWhitespaceMarker(std::vector<DecoratedTextFill>& fills,
                           bool is_tab,
@@ -202,20 +188,13 @@ void PushWhitespaceMarker(std::vector<DecoratedTextFill>& fills,
 WhitespaceWalkStart ResolveWhitespaceWalkStart(std::string_view text,
                                                std::size_t row_visual_start,
                                                WhitespaceRowResume resume) {
-  // The previous row of this line stopped exactly where this one starts, so the
-  // answer is already in hand and costs no reading at all.
   if (resume.cursor != nullptr && resume.cursor->valid &&
       resume.cursor->line_key == resume.line_key && resume.cursor->byte <= text.size() &&
       resume.cursor->visual_col <= row_visual_start) {
     util::AddPerformanceCounter(util::PerfCounterId::EditorWhitespaceMarkerRowsCarried);
     return WhitespaceWalkStart{resume.cursor->byte, resume.cursor->visual_col};
   }
-  // First row of this line in this pass (or the caller kept no cursor): resume at
-  // the row rather than at byte 0 when everything before it is plain single-cell
-  // ASCII, because there byte offset IS visual column (TD-2026-08-12-187). This
-  // reads the prefix, which is why it must not happen once per row.
   const std::size_t prefix_probe = std::min(row_visual_start, text.size());
-  // ...and when the caller already knows the answer, it need not happen at all.
   if (prefix_probe <= resume.plain_prefix_end) {
     return WhitespaceWalkStart{prefix_probe, prefix_probe};
   }
@@ -283,7 +262,6 @@ std::size_t AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
                          color);
   }
   if (!stopped_at_row_end) {
-    // The line ran out inside this row, so there is no next row of it to carry to.
     InvalidateWhitespaceWalkCursor(resume);
   }
   return i - start_byte;
@@ -329,9 +307,6 @@ void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
   for (const DecoratedTextFill& fill : in.prepositioned_fills) {
     row.fills.push_back(fill);
   }
-  // Plugin text-style background fills ride the column-fill geometry path,
-  // layered above selection/search so a translucent author color blends over
-  // them and below the syntax runs.
   for (const TextStyleDecoration& ts : in.text_styles) {
     if (ts.background.a == 0) {
       continue;
@@ -355,7 +330,6 @@ void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
     if (in.layout != nullptr) {
       AppendLayoutSyntaxTextRuns(row, *in.text_renderer, *in.theme, in.text_x, in.y, *in.layout,
                                  in.plain_color, tokens, in.text_styles, in.inlay);
-      // Draw the hint glyphs in the phantom cells the displacement reserved.
       if (!in.inlay.empty()) {
         AppendInlayHintRuns(row, *in.text_renderer, in.text_x, in.y, in.char_width, in.line_height,
                             in.inlay_inline_texts, in.inlay.spans(), in.inlay_color);
@@ -368,26 +342,19 @@ void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
                                   in.text_styles);
     }
 
-    if (!in.diagnostics.empty() && !in.text.empty()) {  // `text` is set only when needed
+    if (!in.diagnostics.empty() && !in.text.empty()) {
       AppendDiagnosticUnderlines(row, *in.text_renderer, *in.theme, in.text_x, in.y, in.line_height,
                                  in.text, in.diagnostic_line_index, in.diagnostic_horizontal_scroll,
                                  in.diagnostic_visible_columns, in.tab_size, in.diagnostics);
     }
 
     if (in.layout != nullptr) {
-      // Grid text -> grid-aligned under/strike lines (see AppendTextStyleUnderlinesGrid).
       AppendTextStyleUnderlinesGrid(row, in);
     } else {
       AppendTextStyleUnderlines(row, in);
     }
   }
 
-  // Mid-line inlay hints shift the real glyphs right; every underline (diagnostic
-  // squiggle, semantic/plugin under/strike) must follow the token it sits under.
-  // Fills and runs are already displaced at construction; underlines are the one
-  // family built with proportional geometry across several appenders, so shift them
-  // here in one uniform pass keyed on each underline's start column. Identity (and
-  // skipped) when the row has no hints.
   if (!in.inlay.empty() && in.char_width > 0.0f) {
     for (DecoratedUnderline& underline : row.underlines) {
       const float local_cells = (underline.rect.x - in.text_x) / in.char_width;
@@ -401,4 +368,4 @@ void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
   }
 }
 
-}  // namespace microide::editor
+}

@@ -22,7 +22,7 @@ bool RectContains(const SDL_FRect& outer, const SDL_FRect& inner) {
          inner.y + inner.h <= outer.y + outer.h;
 }
 
-}  // namespace
+}
 
 void WorkspaceShell::RenderClip(const FrameToken& frame_token,
                                 SDL_Renderer* renderer,
@@ -34,9 +34,6 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
     return;
   }
 
-  // Set MICROIDE_TRACE_MENU_HOVER=1 to log per-RenderClip timing/skip decisions
-  // when a menu is open. One line per partial-render clip rect; quiet when
-  // unset. Used to verify which subsystems actually run during menu hover.
   static const bool menu_hover_trace =
       util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_MENU_HOVER");
   const Uint64 trace_start_ns =
@@ -44,37 +41,17 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
           ? SDL_GetTicksNS()
           : 0;
 
-  // "WorkspaceRootView::Render" is trace vocabulary, not a class reference: the
-  // WorkspaceRootView indirection this clip path replaced is gone, but every perf
-  // ledger, baseline and investigation in dev-docs/performance names these scopes,
-  // so the labels stay put. Don't go looking for the class.
   util::PerformanceTrace::Scope trace_scope("WorkspaceRootView::Render");
   util::AddPerformanceCounter(util::PerfCounterId::RenderClipInvocations);
   const WorkspaceLayout& layout = *prepared_frame_layout_;
 
   EnsureClipFrameAndOverlayViewModels(layout);
-  // Heavy subsystems (editor surface, window chrome, sidebar, debug pane, bottom
-  // panel) walk their own scenes even when the SDL clip would mask their pixels,
-  // so a partial clip runs only the passes that paint something it touches --
-  // above all during menu hover, where the clips sit in the popup and the editor
-  // render dominated per-event CPU. What each pass paints is prepared
-  // (PreparedFrameState::paint_pass_extents): its layout region and every Chrome
-  // unit it draws, the unit naming its pass where it is keyed. This was a list of
-  // rects RenderClip assembled from live state -- the strips of each pane, a tab
-  // drag's drop preview, a tree drag's ghost, the split dividers' tops -- each one
-  // added after the QA verifier caught a pass skipped under a clip it painted.
-  // A collapsed surface paints nothing, hinted or not (PaintPassExtents::Runs).
   const PaintPassExtents& passes = frame_state_.paint_pass_extents;
   bool skip_editor_surface = !passes.Runs(PaintPass::Editor, dirty_rect_hint);
   const bool skip_window_chrome = !passes.Runs(PaintPass::WindowChrome, dirty_rect_hint);
   bool skip_sidebar = !passes.Runs(PaintPass::Sidebar, dirty_rect_hint);
   bool skip_right_pane = !passes.Runs(PaintPass::RightPane, dirty_rect_hint);
   bool skip_bottom_panel = !passes.Runs(PaintPass::BottomPanel, dirty_rect_hint);
-  // A clip wholly inside one open menu's card repaints the card alone: the card
-  // is opaque over the editor, sidebar and panel, whose pixels the scene texture
-  // keeps. One card, not their bounding box: a tall menu's box with the bar's
-  // covers the editor, and a caret blink under an open Edit menu painted the
-  // window background over it. The cards as this frame paints them (MenuPopupPaint).
   bool contained_in_chrome_union = false;
   std::optional<SDL_FRect> traced_chrome_union;
   if (dirty_rect_hint.has_value()) {
@@ -91,17 +68,10 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
     }
   }
 
-  // Each surface gets its own scope: this function is the top of the per-frame
-  // paint and every call below it is a whole subsystem, so without them the
-  // ranked summary charges the lot to `WorkspaceRootView::Render` self time and
-  // says only "painting is slow".
   {
     util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::FrameBase");
     RenderFrameBase(renderer, layout);
   }
-  // Each skippable pass draws inside what it declared (render::PaintPassScope,
-  // checked while overrun recording is on: the QA redraw verifier and the redraw
-  // tests). A draw outside it is a pixel a clip that skipped the pass leaves stale.
   const auto pass_scope = [&](PaintPass paint_pass, std::string_view name) {
     return render::PaintPassScope(renderer, name, &PaintPassExtent::CoversThunk,
                                   &passes.extents[static_cast<std::size_t>(paint_pass)]);
@@ -135,10 +105,6 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
     util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::BottomPanel");
     RenderBottomPanelSurface(renderer, layout);
   }
-  // After the panel: an overlay taller than the editor area (the palette, a quick
-  // pick at a large ui.scale or in a short window) reaches down over the panel,
-  // and painted before it, the panel's tabs and terminal covered its lower rows
-  // in every frame (QA monkey).
   {
     util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::Overlay");
     RenderOverlaySurface(renderer, layout, *clip_cached_overlay_vm_);
@@ -204,4 +170,4 @@ void WorkspaceShell::RenderPrepared(SDL_Renderer* renderer, int width, int heigh
   RenderClip(frame_token, renderer, width, height);
 }
 
-}  // namespace microide::workspace
+}

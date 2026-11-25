@@ -4,10 +4,6 @@
   static bool RestoreUserConfig(WorkspaceShell& shell) {
     return shell.MakePersistenceCoordinator().RestoreUserConfig();
   }
-  // State saves are applied on a background worker, so "saved" and "on disk" are
-  // no longer the same instant. Process exit reconciles them (~WorkspaceShell
-  // flushes); a test that models a restart WITHOUT destroying the first shell has
-  // to say so explicitly.
   static void FlushPendingStateWrites(WorkspaceShell& shell) {
     shell.persistence_service_.FlushPendingWrites();
   }
@@ -15,19 +11,10 @@
   static bool RestoreConfigState(WorkspaceShell& shell) {
     return shell.MakePersistenceCoordinator().RestoreConfigState();
   }
-  // The Save* seams below flush before returning. State writes are applied on a
-  // background worker, so a save only ACCEPTS the record; production reconciles
-  // that at process exit (~WorkspaceShell). A test that drives a save and then
-  // reads the file back -- directly or through a second shell -- is asserting the
-  // on-disk effect, so these seams give it the synchronous behaviour it is
-  // written against instead of a race. Use FlushPendingStateWrites for saves that
-  // happen through other paths.
   static void SaveSessionState(WorkspaceShell& shell) {
     shell.MakePersistenceCoordinator().SaveSessionState();
     FlushPendingStateWrites(shell);
   }
-  // Crash-safety session flush seam: invoke the exact routine the debounced timer fires,
-  // and inspect/drive the debounce arming, without simulating SDL clock advancement.
   static void FlushSessionStateForCrashSafety(WorkspaceShell& shell) {
     shell.FlushSessionStateForCrashSafety();
     FlushPendingStateWrites(shell);
@@ -75,9 +62,6 @@
     }
     return false;
   }
-  // Every banner, kind and path, for a failure message. "No banner was raised"
-  // and "a banner was raised for a path spelled differently" look identical
-  // through the two path-keyed predicates above, and they are different bugs.
   static std::string DescribeEditorBanners(const WorkspaceShell& shell) {
     std::string description;
     for (const EditorBannerState& banner : shell.context_.current_project_state.editor_banners) {
@@ -102,7 +86,6 @@
     }
     return false;
   }
-  // A banner button, as a click on it runs it.
   static void ActivateEditorBanner(WorkspaceShell& shell, EditorBannerAction action,
                                    const std::filesystem::path& path) {
     shell.ActivateEditorBannerAction(action, path);
@@ -138,15 +121,9 @@
   static void EditorBannerRetry(WorkspaceShell& shell, const std::filesystem::path& path) {
     shell.ActivateEditorBannerAction(EditorBannerAction::Retry, path);
   }
-  // The banner the active tab shows (what the frame paints), or nullptr.
   static const EditorBannerState* ActiveEditorBanner(const WorkspaceShell& shell) {
     return ActiveEditorBannerForTab(shell.context_.current_project_state);
   }
-  // Prompt PAINT drivers. Every prompt action is reachable in production only
-  // through the command or menu that raises it, so a paint test that wanted to
-  // cover all 22 of them would have to drive 22 unrelated workflows. Setting the
-  // state directly is what lets the render path be exercised across the whole
-  // action space, which is where its per-action branches live.
   static void OpenPromptSurfaceForTest(WorkspaceShell& shell,
                                        PromptSurfaceState::Action action,
                                        PromptSurfaceState::Kind kind,
@@ -161,10 +138,6 @@
     shell.context_.prompts.surface.button_count = 2;
     shell.context_.prompts.surface.selected_button = 0;
   }
-  // The two counts the prompt render loop has to reconcile. They are read
-  // separately so a test can state the mismatch as a fact rather than inferring
-  // it: the rects come from `button_count`, the labels are a fixed pair, and
-  // nothing makes the two agree.
   static std::size_t PromptSurfaceLabelCount(const WorkspaceShell& shell) {
     return shell.PromptSurfaceActionLabels().size();
   }
@@ -215,7 +188,6 @@
     return std::make_pair(selection->start, selection->end);
   }
   static std::string PromptSurfaceTitle(const WorkspaceShell& shell) {
-    // Copies on purpose: existing tests compare against std::string literals.
     return std::string(shell.PromptSurfaceTitle());
   }
   static std::string PromptSurfaceMessage(const WorkspaceShell& shell) {
@@ -234,7 +206,6 @@
     shell.context_.disabled_keybinding_ids = std::move(ids);
   }
   static std::size_t ActiveTabIndex(const WorkspaceShell& shell) { return shell.context_.current_project_state.focused_group().active_tab_index; }
-  // IME composition preview (the uncommitted text an input method is showing).
   static const TextCompositionState& TextComposition(const WorkspaceShell& shell) {
     return shell.context_.text_input.composition;
   }
@@ -289,19 +260,12 @@
     }
     return labels;
   }
-  // Drive the three menu-bar layout functions and return only counts.
-  //
-  // Exists so an allocation test can put the layout in a loop without the probe
-  // itself allocating around it — VisibleMenuBarLabels builds strings, and
-  // CurrentLayout is a whole layout pass. The counts are returned rather than
-  // discarded so the call cannot be optimised away (TD-2026-08-06-149).
   static std::size_t LayOutMenuBar(WorkspaceShell& shell, const SDL_FRect& menu_bar) {
     return shell.ComputeVisibleMenuBarItems(menu_bar).size() +
            shell.ComputeOverflowMenuBarItems(menu_bar).size() +
            shell.ComputeVisibleWindowControlButtons(menu_bar).size();
   }
   static SDL_FRect MenuBarRect(WorkspaceShell& shell) { return CurrentLayout(shell).menu_bar; }
-  // The on-bar rect of one menu's title, or nullopt when it is in the overflow.
   static std::optional<SDL_FRect> MenuBarItemRect(WorkspaceShell& shell,
                                                   WorkspaceShell::MenuId id) {
     const WorkspaceLayout layout = CurrentLayout(shell);
@@ -312,8 +276,6 @@
     }
     return std::nullopt;
   }
-  // The hover probe frame prep and pointer motion share: which control lights at
-  // (x, y) whatever surface took the motion.
   static std::optional<SDL_FRect> HoveredInteractiveRect(WorkspaceShell& shell, float x, float y) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.HoveredInteractiveRect(layout, x, y);
@@ -322,8 +284,6 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.MenuOverflowChevronRect(layout.menu_bar);
   }
-  // The bar's laid-out menus and the ones its overflow chevron holds, at the
-  // current window size.
   static VisibleMenuBarItems MenuBarItemsForTest(WorkspaceShell& shell) {
     return shell.ComputeVisibleMenuBarItems(CurrentLayout(shell).menu_bar);
   }
@@ -333,9 +293,6 @@
   static std::size_t MenuBarOverflowItemCount(WorkspaceShell& shell) {
     return shell.ComputeOverflowMenuBarItems(CurrentLayout(shell).menu_bar).size();
   }
-  // Places the live pointer. The overflow popup's hover now comes from
-  // `overflow_popup_active_index` (which the motion path writes), so a paint test
-  // reaches the hovered fill by sending a motion event rather than by setting this.
   static void SetMousePositionForTest(WorkspaceShell& shell, float x, float y) {
     shell.last_mouse_x_ = x;
     shell.last_mouse_y_ = y;
@@ -378,7 +335,7 @@
       if (visible_item.separator) {
         continue;
       }
-      labels.emplace_back(shell.MenuItemLabel(items[visible_item.index], /*with_reason=*/false));
+      labels.emplace_back(shell.MenuItemLabel(items[visible_item.index], false));
     }
     return labels;
   }
@@ -395,15 +352,12 @@
       if (visible_item.separator) {
         continue;
       }
-      if (shell.MenuItemLabel(items[visible_item.index], /*with_reason=*/false) == label) {
+      if (shell.MenuItemLabel(items[visible_item.index], false) == label) {
         return visible_item.rect;
       }
     }
     return std::nullopt;
   }
-  // Returns true if any menu item with the given label resolves to a
-  // checked state on the menu's item table (does NOT require the menu to
-  // be open — useful for unit-style checks against IsMenuItemChecked).
   static std::optional<bool> MenuItemCheckedByLabel(const WorkspaceShell& shell,
                                                     WorkspaceShell::MenuId id,
                                                     std::string_view label) {
@@ -412,26 +366,21 @@
       if (item.separator) {
         continue;
       }
-      if (shell.MenuItemLabel(item, /*with_reason=*/false) == label) {
+      if (shell.MenuItemLabel(item, false) == label) {
         return shell.IsMenuItemChecked(item);
       }
     }
     return std::nullopt;
   }
-  // What `id`'s row named `label` paints: its label, and why it is dimmed when it
-  // is and says (ActionAvailability::DisabledReason). Empty for no such row.
   static std::string PaintedMenuItemLabel(const WorkspaceShell& shell, WorkspaceShell::MenuId id,
                                           std::string_view label) {
     for (const auto& item : shell.MenuItems(id)) {
-      if (!item.separator && shell.MenuItemLabel(item, /*with_reason=*/false) == label) {
+      if (!item.separator && shell.MenuItemLabel(item, false) == label) {
         return std::string(shell.MenuItemLabel(item));
       }
     }
     return {};
   }
-  // Non-separator labels of a menu's assembled item list, read straight from
-  // MenuItems (no popup/layout needed). Reflects LSP hide filtering, so useful for
-  // asserting which entries survive for a given feature/provider state.
   static std::vector<std::string> MenuItemLabels(const WorkspaceShell& shell,
                                                  WorkspaceShell::MenuId id) {
     std::vector<std::string> labels;
@@ -439,7 +388,7 @@
       if (item.separator) {
         continue;
       }
-      labels.emplace_back(shell.MenuItemLabel(item, /*with_reason=*/false));
+      labels.emplace_back(shell.MenuItemLabel(item, false));
     }
     return labels;
   }
@@ -547,8 +496,6 @@
         });
     return found;
   }
-  // A segment as a publisher outside the frame sets it (the remote segment, with no
-  // host to connect to).
   static void SetStatusBarSegment(WorkspaceShell& shell, StatusBarSegmentId id, StatusBarSegmentValue value) {
     (void)shell.status_bar_service_.SetSegment(id, std::move(value));
   }
@@ -579,7 +526,6 @@
   static const std::vector<project::TreeEntry>& TreeEntries(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.directory_tree.entries();
   }
-  // The on-screen rect of tree row `entry_index`, or nullopt when it is scrolled out.
   static std::optional<SDL_FRect> TreeSidebarRowRect(WorkspaceShell& shell, std::size_t entry_index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const ScrollableListLayout list = shell.ComputeTreeSidebarListLayout(
@@ -614,17 +560,12 @@
   static bool ProjectSearchRunning(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.running;
   }
-  // Grouped sidebar line map (file-header -1 rows interleaved with result indices),
-  // served from the revision-keyed cache on ProjectSearchState.
   static std::vector<int> ProjectSearchLineMap(const WorkspaceShell& shell) {
     return shell.BuildProjectSearchLineMap();
   }
   static std::uint64_t ProjectSearchResultsRevision(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.results_revision;
   }
-  // Whether the background search worker has finished, peeked without consuming
-  // its pending results (see ProjectSearchService::WorkerFinished). Lets the perf
-  // harness wait for genuine completion, then drain exactly once for determinism.
   static bool ProjectSearchWorkerFinished(const WorkspaceShell& shell) {
     return shell.project_search_runtime_.WorkerFinished();
   }
@@ -640,9 +581,6 @@
   static bool ProjectSearchIndexIncomplete(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.index_incomplete;
   }
-  // The candidate-set size pinned at search start. This is what a search-scale
-  // assertion ("more matches than the display cap") actually depends on, so a
-  // test asserting one should say what the search was given to work with.
   static std::size_t ProjectSearchTotalFiles(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.total_files;
   }
@@ -655,8 +593,6 @@
   static bool ProjectOpenDialogActive(const WorkspaceShell& shell) {
     return shell.project_dialog_state_.active;
   }
-  // The command line lives entirely in the command palette: "palette open" is the surface,
-  // the palette query is the command input, and the feedback text is the executor's result.
   static bool CommandPaletteOpen(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.visible &&
            shell.context_.current_project_state.overlay.mode == OverlayMode::CommandPalette;
@@ -676,8 +612,6 @@
   static std::size_t BufferSearchMatchCount(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.buffer_search.matches.size();
   }
-  // Drives one find-as-you-type keystroke: sets the buffer-search query and runs
-  // the refresh that recomputes matches (the incremental-find hot path).
   static void SetBufferSearchQueryAndRefresh(WorkspaceShell& shell, std::string query) {
     shell.context_.current_project_state.overlay.workflow.buffer_search.query.SetText(
         std::move(query));
@@ -692,12 +626,10 @@
   static bool BufferSearchRegexEnabled(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.buffer_search.regex;
   }
-  // Toggles in-file regex mode and recomputes matches, as the `.*` button / Alt+R do.
   static void SetBufferSearchRegexAndRefresh(WorkspaceShell& shell, bool enabled) {
     shell.context_.current_project_state.overlay.workflow.buffer_search.regex = enabled;
     shell.RefreshBufferSearch();
   }
-  // The one entry point the `Aa`/`ab`/`.*` buttons and the Alt chords share.
   static void ToggleBufferSearchOption(WorkspaceShell& shell, BufferFindToggle toggle) {
     shell.ToggleBufferSearchOption(toggle);
   }
@@ -714,8 +646,6 @@
   static void ReplaceCurrentBufferSearchMatch(WorkspaceShell& shell) {
     shell.ReplaceCurrentBufferSearchMatch();
   }
-  // What the announced edit paths call after an edit; a test editing the
-  // viewport directly calls it itself.
   static void RefreshBufferSearchIfStale(WorkspaceShell& shell) { shell.RefreshBufferSearchIfStale(); }
   static void ReplaceAllBufferSearchMatches(WorkspaceShell& shell) {
     shell.ReplaceAllBufferSearchMatches();
@@ -726,8 +656,6 @@
   static void SetProjectSearchSelectedIndex(WorkspaceShell& shell, std::size_t index) {
     shell.context_.current_project_state.overlay.workflow.project_search.selected_index = index;
   }
-  // Selects the whole buffer-search query, so a test can check that a focused
-  // single-line field -- not the editor under it -- owns a copy keystroke.
   static void SelectAllBufferSearchQuery(WorkspaceShell& shell) {
     shell.context_.current_project_state.overlay.workflow.buffer_search.query.SelectAll();
   }
@@ -814,8 +742,6 @@
   static std::size_t CommandPaletteItemCount(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.command_palette.items.size();
   }
-  // Resolve a match row's primary label through matches[i] -> items[...] (the index
-  // indirection the palette now uses instead of copying rows). Empty if out of range.
   static std::string CommandPaletteMatchLabelAt(const WorkspaceShell& shell, std::size_t i) {
     const auto& palette = shell.context_.current_project_state.overlay.workflow.command_palette;
     if (i >= palette.matches.size() || palette.matches[i] >= palette.items.size()) {
@@ -850,19 +776,16 @@
   static bool SetSettingValue(WorkspaceShell& shell, std::string_view id, std::string value) {
     return shell.SetSettingValue(id, std::move(value));
   }
-  // The Settings row's scope chip: a project override becomes the user default.
   static void ToggleSettingScope(WorkspaceShell& shell, std::string_view id) {
     shell.ToggleSettingScope(id);
   }
   static bool SetSettingValueTransient(WorkspaceShell& shell, std::string_view id,
                                        std::string value) {
-    return shell.SetSettingValue(id, std::move(value), /*persist=*/false);
+    return shell.SetSettingValue(id, std::move(value), false);
   }
   static bool IsSettingTransient(const WorkspaceShell& shell, std::string_view id) {
     return shell.context_.transient_setting_keys.count(std::string(id)) != 0;
   }
-  // A user-layer value as RestoreUserConfig loads it from a hand-edited file: raw,
-  // not through the setter's validation and canonicalization.
   static void SetRawUserSetting(WorkspaceShell& shell, std::string_view id, std::string value) {
     settings_layer::Upsert(shell.context_.user_settings, id, std::move(value));
     shell.settings_store_.Reindex();
@@ -889,8 +812,6 @@
     return it->second;
   }
   static void OpenSettingsOverlay(WorkspaceShell& shell) { shell.OpenSettingsOverlay(); }
-  // A row's value edit (the font picker for a font row), as a click on its value
-  // box begins it.
   static void BeginSettingValueEdit(WorkspaceShell& shell, std::string_view id) {
     shell.BeginSettingValueEdit(id);
   }
@@ -908,7 +829,6 @@
   static const editor::SingleLineEditor& PromptSurfaceInputEditor(const WorkspaceShell& shell) {
     return shell.context_.prompts.surface.input;
   }
-  // The Settings row stepper / segmented control / checkbox, one step.
   static void StepSetting(WorkspaceShell& shell, std::string_view id, bool forward) {
     shell.StepSetting(id, forward);
   }
@@ -920,22 +840,16 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return ComputeSettingsOverlaySurfaceRect(layout.overlay_anchor, layout.full);
   }
-  // Overlay rect for whatever overlay is currently open — routes through the shell's
-  // ComputeOverlayRect (so a code-action overlay yields its centered-menu rect).
   static SDL_FRect ActiveOverlayRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.ComputeOverlayRect(layout.overlay_anchor);
   }
-  // Where the shell draws (and blinks) the focused field's caret.
   static std::optional<SDL_FRect> CaretDirtyRect(const WorkspaceShell& shell) {
     return shell.CurrentCaretDirtyRect();
   }
   static const std::optional<SDL_FRect>& OverlayCaretAnchor(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.caret_anchor;
   }
-  // Force a code-action menu open with `item_count` placeholder actions and return
-  // its overlay rect. Exercises the centered-menu geometry without the async plugin/
-  // LSP path.
   static SDL_FRect CodeActionMenuRectForItemCount(WorkspaceShell& shell, std::size_t item_count) {
     auto& overlay = shell.context_.current_project_state.overlay;
     overlay.visible = true;
@@ -962,9 +876,6 @@
   static std::size_t SettingsOverlayRowCountInSelectedCategory(const WorkspaceShell& shell) {
     return shell.settings_overlay_service_.RowCountInSelectedCategory();
   }
-  // Row-list scroll model as the builder resolves it, for both modes. Help/About
-  // used to resolve its own inside the paint pass, so the painted scrollbar had no
-  // hit rect and the wheel bound came from whatever the last frame published.
   static int SettingsOverlayMaxScroll(WorkspaceShell& shell) {
     const auto layout = shell.CurrentWorkspaceLayout();
     if (!layout.has_value()) {
@@ -986,9 +897,6 @@
   static void EnsureSettingsSelectionVisible(WorkspaceShell& shell) {
     shell.EnsureSettingsSelectionVisible();
   }
-  // Builds the settings overlay view model once and reports whether the selected
-  // row is fully within the right pane (bottom not clipped). Used to assert the
-  // keyboard keep-visible scroll target.
   static bool SettingsOverlaySelectedRowFullyVisible(WorkspaceShell& shell) {
     const auto layout = shell.CurrentWorkspaceLayout();
     if (!layout.has_value()) {
@@ -1007,8 +915,6 @@
     }
     return false;
   }
-  // Row rect of the Nth visible value row, and of the Nth category in the rail.
-  // Both come from the same view model the painter consumes.
   static SDL_FRect SettingsOverlayVisibleRowRect(WorkspaceShell& shell, std::size_t index) {
     const auto layout = shell.CurrentWorkspaceLayout();
     const SettingsOverlayViewModel vm =
@@ -1016,7 +922,6 @@
             .BuildSettingsOverlay(*layout, shell.settings_overlay_service_, shell.text_renderer_);
     return index < vm.rows.size() ? vm.rows[index].row_rect : SDL_FRect{};
   }
-  // The filter bar, and the text width its query is painted at.
   static std::pair<SDL_FRect, float> SettingsOverlayFilterRectAndTextWidth(WorkspaceShell& shell) {
     const auto layout = shell.CurrentWorkspaceLayout();
     const SettingsOverlayViewModel vm =
@@ -1027,9 +932,6 @@
   static int SettingsOverlaySelectedRowIndex(const WorkspaceShell& shell) {
     return shell.settings_overlay_service_.SelectedRow();
   }
-  // Opens the font-picker dropdown with a supplied family list. The production path
-  // enumerates installed fonts, which is environment-dependent, so tests that need
-  // an overflowing list seed it here.
   static void BeginSettingsFontValueEdit(WorkspaceShell& shell, std::string row_id,
                                          std::vector<std::string> families) {
     shell.settings_overlay_service_.BeginFontValueEdit(std::move(row_id), std::move(families));
@@ -1077,16 +979,10 @@
   static bool TransientMouseSelecting(const WorkspaceShell& shell) {
     return shell.context_.interaction_state.mouse_selecting;
   }
-  // The two gestures that are ALSO a live drag but are not `mouse_selecting`: a
-  // selection being dragged to a new home, and a rectangular selection. Both carry
-  // document coordinates captured at press, so both have to die with the document.
   static void SetTransientTextDragging(WorkspaceShell& shell) {
     shell.context_.interaction_state.text_drag = InteractionState::TextDragState::Dragging;
     shell.context_.interaction_state.text_drag_has_drop = true;
   }
-  // Arms a text drag exactly as the press path does -- source range, drop point,
-  // and the viewport identity + content revision the release revalidates against
-  // -- so a test can drive the release without synthesising pointer geometry.
   static void ArmTextDrag(WorkspaceShell& shell, editor::SelectionRange source,
                           editor::TextPosition drop) {
     auto& interaction = shell.context_.interaction_state;
@@ -1106,15 +1002,12 @@
   static bool FinishTextDrag(WorkspaceShell& shell, bool copy) {
     return shell.MakeEditorMouseCoordinator().FinishTextDrag(copy);
   }
-  // Marks the armed gesture as belonging to the tab currently in front, which is
-  // what a real press records.
   static void SetEditorGestureViewportToActive(WorkspaceShell& shell) {
     shell.context_.interaction_state.editor_gesture_viewport = shell.ActiveEditorViewport();
   }
   static InteractionState& InteractionState_(WorkspaceShell& shell) {
     return shell.context_.interaction_state;
   }
-  // The theme the shell paints with (settings may have changed it from the default).
   static const render::Theme& PaintTheme(const WorkspaceShell& shell) { return shell.theme_; }
   static bool TransientTextDragIsIdle(const WorkspaceShell& shell) {
     return shell.context_.interaction_state.text_drag == InteractionState::TextDragState::None &&
@@ -1150,8 +1043,6 @@
   static void SetFocusPanel(WorkspaceShell& shell) {
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Panel;
   }
-  // What the plugin host does when a plugin clears its surface (publish_surface's
-  // clear_surface): drop it from the store, then let the panel follow.
   static void ClearPluginSurface(WorkspaceShell& shell, std::string_view owner, std::string_view surface_id) {
     auto& state = shell.context_.current_project_state;
     if (auto* pres = state.plugin_presentation.get(); pres != nullptr && pres->surfaces.ClearOwnerSurface(owner, surface_id)) {
@@ -1171,8 +1062,6 @@
       shell.context_.current_project_state.debug_pane.width = kWorkspaceDefaultRightPaneWidth;
     }
   }
-  // Drives the debug pane's keyboard-navigable Watch surface: focus it, seed it
-  // with more rows than fit, and read back the selection and the pane's scroll.
   static void FocusDebugPaneWatch(WorkspaceShell& shell) {
     SetDebugPaneVisible(shell, true);
     shell.context_.current_project_state.debug_pane.mode = DebugPaneMode::Watch;
@@ -1221,10 +1110,6 @@
   static int DebugPaneCallStackScrollRow(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.debug_pane.call_stack_scroll_row;
   }
-  // The debug pane view model as the LAST painted frame saw it. A paint test that
-  // only asserts on pixels cannot tell "the pane drew" from "the pane's two early
-  // returns fired and the editor drew instead"; this reads the cached view model
-  // the render TU consumes, so a test can prove it got past them.
   static bool LastPaintedDebugPaneWasVisible(const WorkspaceShell& shell) {
     return shell.prepare_cached_debug_pane_vm_.has_value() &&
            shell.prepare_cached_debug_pane_vm_->visible;
@@ -1277,12 +1162,9 @@
     return shell.context_.current_project_state.surface.focus == WorkspaceShell::FocusTarget::Overlay;
   }
   static bool MenuBarOpen(const WorkspaceShell& shell) { return shell.context_.menu_state.menu_bar_open; }
-  // The control channel's `ui` query, answered exactly as the channel answers it.
   static util::JsonValue ControlUi(WorkspaceShell& shell) {
     return ControlUiQuery::Build(shell.context_, shell.MakeControlUiOperations());
   }
-  // A debug adapter on the shell's own DapManager (a scripted mock: see
-  // tests/support/MockDapAdapter.h), and the drain the SDL wake would run.
   static void RegisterDebugAdapterForTest(WorkspaceShell& shell, const std::string& type,
                                           const std::vector<std::string>& command) {
     shell.CurrentDapManager().RegisterAdapter(type, platform::LocalProcessLauncher(), command);
@@ -1294,7 +1176,6 @@
     const auto& drag = shell.context_.interaction_state.tab_drag;
     return drag.dragging && drag.body_drop();
   }
-  // Any control query verb, answered by the live control channel service.
   static util::JsonValue ControlQuery(WorkspaceShell& shell, const std::string& verb) {
     bool ok = false;
     std::string error;
@@ -1311,7 +1192,6 @@
     bool ok = false;
     return shell.control_channel_service_.AnswerQuery(verb, &ok, error);
   }
-  // The keybinding reachability matrix (tests/KeybindingReachabilityTests.cpp).
   static KeyInputCoordinator::DispatchProbe& KeyDispatchProbe(WorkspaceShell& shell) {
     return shell.MakeKeyInputCoordinator().dispatch_probe();
   }
@@ -1321,7 +1201,6 @@
   static WorkspaceShell::MenuId ActiveMenuId(const WorkspaceShell& shell) {
     return shell.context_.menu_state.active_menu_id;
   }
-  // Moves the tree selection the way a background sync does: no damage of its own.
   static void SetTreeSelectedIndexSilently(WorkspaceShell& shell, std::size_t index) {
     shell.context_.current_project_state.directory_tree.SetSelectedIndex(index);
   }

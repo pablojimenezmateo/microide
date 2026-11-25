@@ -27,10 +27,8 @@
 namespace microide::workspace {
 
 namespace {
-// One answer for every `goto` it cannot take -- a word, 0, a negative line -- so
-// the same mistake is not described two ways depending on how the parser failed.
 constexpr const char* kGotoExpects = "Go to Line expects a positive 1-based line[:col], such as 12 or 12:5";
-}  // namespace
+}
 
 namespace {
 
@@ -38,7 +36,7 @@ bool SettingEnabled(const WorkspaceActionContext& context, std::string_view id, 
   return SettingFlagEnabled(context.GetSettingValue(id), default_value);
 }
 
-}  // namespace
+}
 
 ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
                                                                  const std::vector<std::string>& args,
@@ -47,11 +45,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
   (void)source;
   const auto reject = RejectInto(rejection_feedback);
 
-  // Settings-backed editor-essentials toggles flip their setting key and nothing
-  // else, and EditorEssentialsCapabilitySettingKey already knows which actions
-  // those are — it is what the executor and the menu's checked state both read.
-  // Listing the eighteen of them again as case labels only created a second
-  // place to forget a new one.
   if (EditorEssentialsCapabilitySettingKey(id) != nullptr) {
     context_.ToggleEditorEssentialsCapability(id);
     return DispatchResult::Handled;
@@ -89,8 +82,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
     case ActionId::FormatJson:
       return ExecuteFormatJson(id, args, source, rejection_feedback);
     case ActionId::RenameSymbol: {
-      // `rename-symbol <new-name>` renames outright (a headless driver cannot
-      // answer a prompt); bare, it opens the prompt prefilled with the symbol.
       if (!args.empty()) {
         std::string error_message;
         if (!context_.assist().refactor().RenameSymbol(JoinCommandArguments(args, 0), &error_message)) {
@@ -116,7 +107,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       if (!target.has_value()) {
         return reject("No problems");
       }
-      // `reveal` opens the file when the problem is in another one.
       if (!Execute(ActionId::Reveal,
                    {target->path.string(), std::to_string(target->range.start.line + 1) + ":" +
                                                std::to_string(target->range.start.column + 1)},
@@ -179,8 +169,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::CallHierarchy: {
-      // `call-hierarchy [incoming|outgoing]`, defaulting to incoming — "who calls
-      // this?" is the question that gets asked, and it is what VS Code opens with.
       bool incoming = true;
       if (!args.empty()) {
         if (args[0] == "outgoing") {
@@ -196,7 +184,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::WorkspaceSymbol:
-      // A pick the server filters as the query is typed; the arguments seed it.
       context_.OpenWorkspaceSymbolPicker(JoinCommandArguments(args, 0));
       return DispatchResult::Handled;
     case ActionId::SignatureHelp: {
@@ -214,25 +201,14 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       const std::optional<LineNavigationRequest> request =
           BuildLineNavigationRequest(args, id == ActionId::Jump);
       if (!request.has_value()) {
-        // No line supplied (the Ctrl+G shortcut or the "Go to Line…" menu):
-        // open the single-line "Go to Line" modal. Typing `goto <line>` in the
-        // command palette still works for the keyboard-driven path.
         if (id == ActionId::Goto && args.empty()) {
           context_.OpenGoToLinePrompt();
           return DispatchResult::Handled;
         }
-        // An argument that is not a location: say so. Answering "handled" to
-        // `jump abc` left the caret where it was and the command line silent.
         return reject(id == ActionId::Goto ? kGotoExpects
                                            : "jump expects a signed line[:col], such as +3 or -2:1");
       }
 
-      // `goto` is an ABSOLUTE 1-based line per its public contract (README, control
-      // protocol). Reject any non-positive line with feedback rather than silently
-      // succeeding: a negative value previously fell through to the "from end" mode in
-      // ExecuteLineNavigation (goto -1 -> last line), which contradicts the documented
-      // absolute contract and made typos navigate to EOF. `jump` keeps signed relative
-      // deltas. (TD-2026-07-16-68.)
       if (id == ActionId::Goto && request->requested_line <= 0) {
         return reject(kGotoExpects);
       }
@@ -285,7 +261,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
         context_.WriteClipboardText(*reference);
         return DispatchResult::Handled;
       }
-      // A space after it, as after a dropped path: the prompt goes on from there.
       if (!context_.TypeIntoActiveTerminal(*reference + " ")) {
         return reject("No terminal is running to take the reference");
       }
@@ -300,10 +275,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::InsertText: {
-      // `type <text>`: insert literal text at the caret. Args are already
-      // shell-tokenized (quotes/escapes handled by ParseCommandLine), so join
-      // them with single spaces — `type foo bar` and `type "foo bar"` both
-      // insert `foo bar`.
       std::string text;
       for (const std::string& arg : args) {
         if (!text.empty()) text.push_back(' ');
@@ -312,10 +283,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       if (text.empty()) {
         return DispatchResult::Handled;
       }
-      // A read-only view refuses the edit by counting it; the keyboard path says
-      // so from the event loop, but this verb answered `ok` to an agent driving
-      // the editor whose text never landed. Rejected through the action, the
-      // reply carries the reason.
       const editor::TextViewport* target = context_.ActiveNavigableViewport();
       const std::uint64_t refused_before = target != nullptr ? target->refused_edits() : 0;
       context_.InsertText(std::move(text));
@@ -326,11 +293,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::PressKey: {
-      // `key <chord> [count]`: a real key press, for a headless driver (an agent
-      // answering a TUI's prompt in the terminal) and for tests — the encoder,
-      // the shortcuts and the focused surface see exactly what the keyboard
-      // sends. `type` pastes text; this presses keys (VS Code's sendSequence
-      // writes bytes, which would skip the terminal's keyboard protocol).
       SDL_Keycode key = SDLK_UNKNOWN;
       SDL_Keymod modifiers = SDL_KMOD_NONE;
       if (args.empty() || !ParseKeyChord(args[0], &key, &modifiers)) {
@@ -372,14 +334,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       auto match = editor::FindBracketMatch(*viewport, viewport->cursor_line(),
                                             viewport->cursor_column());
       if (!match) return DispatchResult::Handled;
-      // `caret_at_opener` is the scanner's own answer: it knows which character
-      // it resolved, opener or closer. This used to re-derive that here as
-      // `cursor_column == open_column || cursor_column == open_column + 1`,
-      // which agrees everywhere except on an EMPTY pair. In `()` with the caret
-      // between the brackets, close_column IS open_column + 1, so the
-      // hand-rolled test said "at the opener" and jumped to the closer -- the
-      // column the caret was already on. Ctrl+Shift+\ did nothing at all on
-      // `()`, `[]` and `{}`. VSCode's jumpToBracket moves to the opener there.
       if (match->caret_at_opener) {
         viewport->JumpCursorTo(match->close_line, match->close_column, false);
       } else {
@@ -402,23 +356,14 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
           : id == ActionId::ColumnSelectLeft ? editor::ColumnSelectDirection::Left
                                              : editor::ColumnSelectDirection::Right;
       const editor::ColumnSelectionState before = viewport->column_selection();
-      // The gesture works in visual columns (a step is one cell, and the box stays
-      // straight across tabs and multi-byte text), so the caret enters as the
-      // visual column it occupies.
       const editor::TextPosition caret{viewport->cursor_line(), viewport->cursor_visual_column()};
       const std::size_t lo =
           before.active ? std::min(before.anchor.line, before.cursor.line) : caret.line;
       const std::size_t hi =
           before.active ? std::max(before.anchor.line, before.cursor.line) : caret.line;
-      // The virtual column may only grow to the widest line the box currently
-      // covers; unbounded growth would let Right run forever over short lines.
       const editor::ColumnSelectionState after = editor::StepColumnSelection(
           before, direction, caret, viewport->line_count(),
           viewport->MaxVisualWidthInSpan(lo, hi));
-      // Placement first, then re-arm: SetBoxSelectionVisual moves the primary
-      // caret, and every caret placement clears the gesture (see
-      // TextViewport::PlacePrimaryCaret). The order is what lets the gesture
-      // survive its own step while any foreign caret move ends it.
       viewport->SetBoxSelectionVisual(after.anchor.line, after.anchor.column, after.cursor.line,
                                       after.cursor.column);
       viewport->SetColumnSelection(after);
@@ -442,7 +387,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       return ExecuteSortLines(id, args, source, rejection_feedback);
     case ActionId::ExpandSelection:
     case ActionId::ShrinkSelection: {
-      // A selection, not an edit: read-only buffers take it too.
       auto* viewport = context_.ActiveNavigableViewport();
       if (viewport == nullptr) return DispatchResult::Handled;
       if (id == ActionId::ExpandSelection ? viewport->ExpandSelection() : viewport->ShrinkSelection()) {
@@ -460,8 +404,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
               ? viewport->AddCaretsAtSelectedLineEnds()
               : viewport->AddCaretVertical(id == ActionId::AddCursorBelow ? 1 : -1);
       if (changed) {
-        // A caret move, not an edit: no buffer changed, so this must not take the
-        // last-change path that re-tracks conflicts and slides breakpoints.
         context_.NotifyEditorCaretMoved();
       }
       return DispatchResult::Handled;
@@ -479,8 +421,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       auto* viewport = context_.ActiveNavigableViewport();
       bool changed = false;
       if (id == ActionId::FoldAll) {
-        // The per-frame refresh only resolves the viewport's window, so "all"
-        // has to widen it to the whole document first.
         if (viewport == nullptr) return DispatchResult::Handled;
         model->ResolveAllFolds(viewport->lines(), viewport);
         changed = model->CollapseAllResolved();
@@ -491,7 +431,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
         }
       } else {
         if (viewport == nullptr) return DispatchResult::Handled;
-        // The innermost fold whose opener_line <= caret_line <= closer_line.
         const std::optional<editor::FoldRange> target =
             model->InnermostFoldContaining(viewport->cursor_line());
         if (!target) return DispatchResult::Handled;
@@ -504,7 +443,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
         }
       }
       if (changed) {
-        context_.NotifyEditorViewportChanged(/*last_change=*/false);
+        context_.NotifyEditorViewportChanged(false);
       }
       return DispatchResult::Handled;
     }
@@ -514,19 +453,15 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
 }
 
 ActionCoordinator::DispatchResult ActionCoordinator::ExecuteAddCursorAtMatch(ActionId id,
-                                                                             const std::vector<std::string>& /*args*/,
-                                                                             ActionSource /*source*/,
-                                                                             std::string* /*rejection_feedback*/) {
+                                                                             const std::vector<std::string>& ,
+                                                                             ActionSource ,
+                                                                             std::string* ) {
   if (!SettingEnabled(context_, "editor.multicursor.add_at_match.enabled", true)) {
     return DispatchResult::Handled;
   }
   auto* viewport = context_.ActiveEditableViewport();
   if (viewport == nullptr)
     return DispatchResult::Handled;
-  // No selection: the word under the caret becomes the needle. For the
-  // next-match chord that IS the first press (VS Code's Ctrl+D selects the
-  // word and stops; the next press adds the next occurrence); select-all
-  // goes on to take every occurrence at once.
   if (!viewport->has_selection()) {
     viewport->SelectWordAtCursor();
     if (id == ActionId::AddCursorAtNextMatch) {
@@ -538,8 +473,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteAddCursorAtMatch(Act
   if (!sel || sel->start.line != sel->end.line || sel->start.column == sel->end.column) {
     return DispatchResult::Handled;
   }
-  // Scan through the piece tree's zero-copy LineView rather than snapshotting
-  // the whole document into a vector<std::string> on every press.
   const editor::TextBuffer& lines = viewport->lines();
   if (sel->start.line >= lines.LineCount())
     return DispatchResult::Handled;
@@ -554,21 +487,11 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteAddCursorAtMatch(Act
   const std::string_view needle_view = needle;
   const bool case_sensitive = SettingEnabled(context_, "editor.search.case_sensitive", false);
   if (id == ActionId::AddCursorAtNextMatch) {
-    // Each press adds the next occurrence that is not a caret yet, walking
-    // forward from the one the previous press added (VS Code's Ctrl+D). The
-    // search is seeded from the primary selection and wraps once; it used to
-    // stop there, so the third press re-found the second press's match and
-    // the dedupe swallowed it -- two carets was the most the chord could make.
     const std::span<const editor::TextViewportUndoHistory::SecondaryCaret> taken =
         viewport->secondary_caret_range_view();
     std::size_t seed_line = sel->start.line;
     std::size_t seed_start = a;
     std::size_t seed_end = b;
-    // The presses so far took a prefix of the occurrences in cyclic document
-    // order from the primary, so the one added last is the farthest along
-    // that order: the last caret before the primary if the walk has wrapped,
-    // else the last caret after it. Seeding there makes a press one search;
-    // the hop loop below only has to skip carets placed by other means.
     const editor::TextPosition primary_start{sel->start.line, a};
     const auto precedes = [](const editor::TextPosition& lhs, const editor::TextPosition& rhs) {
       return lhs.line < rhs.line || (lhs.line == rhs.line && lhs.column < rhs.column);
@@ -596,7 +519,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteAddCursorAtMatch(Act
       const auto next =
           FindNextLiteralMatchAfterSeedWrapOnce(lines, seed_line, seed_start, seed_end, needle_view, case_sensitive);
       if (!next.has_value() || (next->line == sel->start.line && next->column == a)) {
-        break;  // wrapped back to the primary: every occurrence is a caret already
+        break;
       }
       const editor::SelectionRange range{
           editor::TextPosition{next->line, next->column},
@@ -615,19 +538,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteAddCursorAtMatch(Act
       seed_end = range.end.column;
     }
     if (fresh.has_value()) {
-      // Add the match as a RANGED secondary caret (anchor at match start,
-      // cursor at match end) so multi-caret typing replaces the occurrence
-      // and copy aggregates it -- VS Code parity. Bare positions through
-      // SetSecondaryCarets would drop the selection anchor. This appends to
-      // and preserves any secondary carets from prior presses.
       viewport->AddSecondaryCaretWithRange(*fresh);
     }
   } else {
-    // Add a ranged cursor at every match in the file, each keeping its
-    // selection so a following keystroke replaces all occurrences at once.
-    // CollectAddCursorMatchRanges folds each line once (not once per match)
-    // and caps the installed carets so a dense single-line match set stays
-    // bounded (TD-2026-07-17A-031).
     AddCursorMatchScan scan = CollectAddCursorMatchRanges(lines, sel->start.line, a, needle_view, case_sensitive);
     const std::size_t match_count = scan.ranges.size();
     const bool truncated = scan.truncated;
@@ -637,20 +550,15 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteAddCursorAtMatch(Act
                       "Added cursors at the first " + std::to_string(match_count) + " matches (more remain)");
     }
   }
-  // The carets are in the editor now, so that is where the next keystroke
-  // belongs. Both chords are reachable while the find widget holds focus
-  // (VS Code's Ctrl+D / Alt+Enter from the find input do the same and hand
-  // focus to the editor); leaving it on the widget put the replacement text
-  // into the search box and left every selected occurrence untouched.
   context_.Focus(FocusRequestTarget::Editor);
   context_.NotifyEditorCaretMoved();
   return DispatchResult::Handled;
 }
 
 ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSortLines(ActionId id,
-                                                                      const std::vector<std::string>& /*args*/,
-                                                                      ActionSource /*source*/,
-                                                                      std::string* /*rejection_feedback*/) {
+                                                                      const std::vector<std::string>& ,
+                                                                      ActionSource ,
+                                                                      std::string* ) {
   auto* viewport = context_.ActiveEditableViewport();
   if (viewport == nullptr)
     return DispatchResult::Handled;
@@ -660,10 +568,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSortLines(ActionId i
   bool changed = false;
   switch (id) {
     case ActionId::ToggleLineComment: {
-      // Comment markers are language-dependent: read them from the buffer's
-      // resolved language contract (populated by ApplyEditorPreferences on
-      // open/language change), falling back to C-style when a language
-      // provides none.
       const editor::LanguageContractView& lc = viewport->language_contract_view();
       const std::string_view line_marker =
           lc.line_comment.empty() ? std::string_view("//") : std::string_view(lc.line_comment);
@@ -685,10 +589,10 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSortLines(ActionId i
       changed = editor::MoveLineDown(*viewport);
       break;
     case ActionId::DuplicateLine:
-      changed = editor::CopyLines(*viewport, /*downward=*/true);
+      changed = editor::CopyLines(*viewport, true);
       break;
     case ActionId::CopyLineUp:
-      changed = editor::CopyLines(*viewport, /*downward=*/false);
+      changed = editor::CopyLines(*viewport, false);
       break;
     case ActionId::InsertLineBelow:
       changed = editor::InsertLineBelow(*viewport);
@@ -709,29 +613,25 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSortLines(ActionId i
       changed = editor::JoinLinesAtCarets(*viewport);
       break;
     case ActionId::SortLinesAscending:
-      changed = editor::SortLines(*viewport, /*ascending=*/true);
+      changed = editor::SortLines(*viewport, true);
       break;
     case ActionId::SortLinesDescending:
-      changed = editor::SortLines(*viewport, /*ascending=*/false);
+      changed = editor::SortLines(*viewport, false);
       break;
     default:
       break;
   }
   if (changed) {
-    context_.NotifyEditorViewportChanged(/*last_change=*/true);
+    context_.NotifyEditorViewportChanged(true);
   }
   return DispatchResult::Handled;
 }
 
-ActionCoordinator::DispatchResult ActionCoordinator::ExecutePointer(ActionId /*id*/,
+ActionCoordinator::DispatchResult ActionCoordinator::ExecutePointer(ActionId ,
                                                                     const std::vector<std::string>& args,
-                                                                    ActionSource /*source*/,
+                                                                    ActionSource ,
                                                                     std::string* rejection_feedback) {
   const auto reject = RejectInto(rejection_feedback);
-  // `pointer [mods+]<verb> <x> <y> ...`: the mouse, for a driver with no
-  // window-system input to send (a Wayland session, an agent) -- x and y in
-  // layout units, the coordinates `ui` reports. Every verb moves the pointer
-  // there first, as a real hand would; `move x y left` is a drag step.
   static constexpr std::string_view kUsage =
       "usage: pointer [mods+]<move|down|up|click|wheel> <x> <y> [button|notches] [clicks], "
       "or pointer drop <x> <y> <path>";
@@ -743,7 +643,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecutePointer(ActionId /*i
   const std::string verb = util::ToLowerAscii(plus == std::string_view::npos ? chord : chord.substr(plus + 1));
   SDL_Keymod modifiers = SDL_KMOD_NONE;
   if (plus != std::string_view::npos) {
-    // The modifier prefix spelled as for `key`, on a stand-in key.
     SDL_Keycode ignored = SDLK_UNKNOWN;
     if (!ParseKeyChord(std::string(chord.substr(0, plus + 1)) + "a", &ignored, &modifiers)) {
       return reject(std::string(kUsage));
@@ -803,16 +702,14 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecutePointer(ActionId /*i
     const Uint8 which = button.value_or(SDL_BUTTON_LEFT);
     move(verb == "up" ? SDL_BUTTON_MASK(which) : 0);
     if (verb == "click") {
-      // A double click is two presses, the second counted 2: what SDL sends.
       for (int count = 1; count <= clicks; ++count) {
-        press(which, /*down=*/true, count);
-        press(which, /*down=*/false, count);
+        press(which, true, count);
+        press(which, false, count);
       }
     } else {
       press(which, verb == "down", clicks);
     }
   } else if (verb == "drop") {
-    // A file dragged in from another application and released here.
     if (args.size() < 4 || args[3].empty()) {
       return reject("usage: pointer drop <x> <y> <path>");
     }
@@ -832,7 +729,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecutePointer(ActionId /*i
     SDL_Event event{};
     event.type = SDL_EVENT_MOUSE_WHEEL;
     event.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
-    // SDL's y is positive away from the user (up); a notch down is -1.
     event.wheel.y = static_cast<float>(-*notches);
     event.wheel.integer_y = -*notches;
     event.wheel.mouse_x = *x;
@@ -844,14 +740,10 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecutePointer(ActionId /*i
   return DispatchResult::Handled;
 }
 
-ActionCoordinator::DispatchResult ActionCoordinator::ExecuteFormatJson(ActionId /*id*/,
+ActionCoordinator::DispatchResult ActionCoordinator::ExecuteFormatJson(ActionId ,
                                                                        const std::vector<std::string>& args,
-                                                                       ActionSource /*source*/,
-                                                                       std::string* /*rejection_feedback*/) {
-  // Optional path argument: open/focus that file first (resolved against the
-  // project root like `open`), then format its buffer. With no argument the
-  // command targets the active buffer. Feedback surfaces via toast per the
-  // command's contract; disk is never touched (the edit stays in memory).
+                                                                       ActionSource ,
+                                                                       std::string* ) {
   if (!args.empty()) {
     if (!context_.HasProjectRoot()) {
       context_.Notify(NotificationService::Tone::Error, "No active project");
@@ -873,17 +765,12 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteFormatJson(ActionId 
     context_.Notify(NotificationService::Tone::Warning, "No active buffer to format");
     return DispatchResult::Handled;
   }
-  // The piece tree already holds the document '\n'-joined, so take it in one
-  // walk rather than two tree descents per line (which also materializes
-  // every piece-spanning line into the per-line cache on the way).
   std::string source;
   viewport->lines().AppendWholeText(source);
-  // Indentation follows the buffer's own editor settings (VSCode-style).
   const std::string indent_unit =
       viewport->soft_tabs() ? std::string(viewport->indent_width(), ' ') : std::string("\t");
   const util::JsonFormatResult formatted = util::FormatJson(source, indent_unit);
   if (!formatted.ok) {
-    // Byte offset -> 1-based line:col for a helpful toast.
     std::size_t line = 1;
     std::size_t col = 1;
     for (std::size_t i = 0; i < formatted.error_offset && i < source.size(); ++i) {
@@ -899,12 +786,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteFormatJson(ActionId 
     return DispatchResult::Handled;
   }
   if (formatted.text == source) {
-    // Already formatted: no edit, no undo churn (VSCode is silent here).
     return DispatchResult::Handled;
   }
-  // Replace the whole document as one undo step (the same whole-document
-  // replace path editor::SortLines uses). The formatter emits '\n'-joined
-  // lines with no trailing newline.
   std::vector<std::string> new_lines;
   {
     std::size_t start = 0;
@@ -916,16 +799,14 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteFormatJson(ActionId 
       }
     }
   }
-  // A whole-document replace snaps the caret to the top; keep the user's
-  // line (clamped) so formatting does not scroll them away from their spot.
   const std::size_t caret_line = viewport->cursor_line();
   const std::size_t caret_column = viewport->cursor_column();
   if (viewport->ReplaceLines(0, viewport->line_count(), std::move(new_lines),
-                             /*record_undo=*/true)) {
+                             true)) {
     viewport->JumpCursorTo(std::min(caret_line, viewport->line_count() - 1), caret_column);
-    context_.NotifyEditorViewportChanged(/*last_change=*/true);
+    context_.NotifyEditorViewportChanged(true);
   }
   return DispatchResult::Handled;
 }
 
-}  // namespace microide::workspace
+}

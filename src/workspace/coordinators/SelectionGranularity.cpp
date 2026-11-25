@@ -9,9 +9,6 @@ void RecordSeed(InteractionState& interaction_state,
                 const editor::TextViewport& viewport) {
   const auto selected = viewport.selection_range();
   if (!selected.has_value()) {
-    // The click landed somewhere with no word under it (whitespace, empty line).
-    // Character granularity is then exactly right, and leaving the seed unset
-    // avoids a drag that snaps to a word the user never selected.
     return;
   }
   const editor::SelectionRange range = editor::TextViewport::NormalizeRange(*selected);
@@ -49,9 +46,6 @@ void ExtendToPointer(const InteractionState& interaction_state,
   editor::TextPosition unit_end = hit_position;
   if (interaction_state.selection_granularity ==
       InteractionState::SelectionGranularity::Word) {
-    // The same rule the double-click used (WordSelectionRangeAt, not the
-    // identifier-only WordRangeAt): a drag that started on `===` or on an indent
-    // must keep extending by those runs, not fall back to one character a step.
     if (const auto word = viewport.WordSelectionRangeAt(hit_position); word.has_value()) {
       unit_start = word->start;
       unit_end = word->end;
@@ -65,15 +59,10 @@ void ExtendToPointer(const InteractionState& interaction_state,
   const auto before = [](const editor::TextPosition& a, const editor::TextPosition& b) {
     return a.line != b.line ? a.line < b.line : a.column < b.column;
   };
-  // Dragging below/after the seed anchors at the seed's start and puts the caret
-  // at the far end of the pointer's unit; dragging above/before mirrors it.
-  // No SetSelection(anchor, caret) exists; the established idiom is a collapse
-  // followed by an extending move, which is what every other selection writer
-  // here does.
   const editor::TextPosition anchor = before(unit_start, seed_start) ? seed_end : seed_start;
   const editor::TextPosition caret = before(unit_start, seed_start) ? unit_start : unit_end;
   viewport.MoveCursorTo(anchor.line, anchor.column);
-  viewport.MoveCursorTo(caret.line, caret.column, /*extend_selection=*/true);
+  viewport.MoveCursorTo(caret.line, caret.column, true);
 }
 
-}  // namespace microide::workspace::selection_granularity
+}

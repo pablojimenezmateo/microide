@@ -14,15 +14,10 @@
 namespace microide::workspace {
 namespace {
 
-// The tab a violation is about. Its title goes in quotes: a driver that keys a
-// finding on the detail (tools/qa/findings.py) masks what is quoted, and
-// unquoted the one broken rule was a finding per file it was seen on.
 std::string TabName(std::size_t group, std::size_t tab, const TabEntry& entry) {
   return "group " + std::to_string(group) + " tab " + std::to_string(tab) + " '" + entry.title + "'";
 }
 
-// A position inside `view`'s buffer: an existing line, a column no further than
-// its end.
 bool Inside(const editor::TextViewport& view, std::size_t line, std::size_t column) {
   return line < view.line_count() && column <= view.lines().LineLength(line);
 }
@@ -31,10 +26,6 @@ std::string At(std::size_t line, std::size_t column) {
   return std::to_string(line + 1) + ":" + std::to_string(column + 1);
 }
 
-// How a position misses `view`'s buffer: no such line, or a column past the end
-// of a line it has. Two different faults (a caret kept across a reload that
-// shortened the file, against one kept across an edit of its line), and "outside
-// its 29-line buffer" for a caret on line 1 said neither.
 std::string Outside(const editor::TextViewport& view, std::size_t line, std::size_t column) {
   if (line >= view.line_count()) {
     return At(line, column) + ", past the last of its " + std::to_string(view.line_count()) + " lines";
@@ -43,7 +34,7 @@ std::string Outside(const editor::TextViewport& view, std::size_t line, std::siz
          " long)";
 }
 
-}  // namespace
+}
 
 WorkspaceInvariantReport CheckWorkspaceInvariants(const ProjectWorkspaceState& project,
                                                   const ControlInvariantsQueryOptions& options) {
@@ -70,13 +61,8 @@ WorkspaceInvariantReport CheckWorkspaceInvariants(const ProjectWorkspaceState& p
   }
 
   std::set<std::uint64_t> stable_ids;
-  // Untitled number -> the buffer the first tab with it shows.
   std::map<std::uint32_t, const editor::TextViewport*> untitled;
-  // File -> the first tab holding it as a live buffer, and that tab's name.
   std::map<std::string, std::pair<const editor::TextViewport*, std::string>> files;
-  // The domain is LiveBufferViewOfPath's: a loaded editor tab and a compare tab's
-  // editable side ARE the file; a view still loading, a read-only compare side and
-  // a merge result are not.
   const auto one_buffer = [&files, &violate](const editor::TextViewport& view, std::string name) {
     if (view.path().empty()) {
       return;
@@ -132,7 +118,7 @@ WorkspaceInvariantReport CheckWorkspaceInvariants(const ProjectWorkspaceState& p
       }
       const EditorTabState& state = *tab.editor_state;
       if (state.content_pending()) {
-        continue;  // the viewport is not the file yet: nothing of it to hold
+        continue;
       }
       const editor::TextViewport& view = state.viewport;
       ++report.editors;
@@ -151,13 +137,6 @@ WorkspaceInvariantReport CheckWorkspaceInvariants(const ProjectWorkspaceState& p
         continue;
       }
       if (view.CaretsLagDocument()) {
-        // The document moved since this view last ran -- another view of it
-        // edited it, and that view may be closed by now: this view's carets are
-        // reconciled on its next use, and every read of them before that sees
-        // them reconciled (TextViewport::SyncCaretsWithSharedDocument), so the
-        // stored positions may name columns the document no longer has. A rule
-        // that lag needs a live sharer fired on every closed sibling (soak
-        // 8cc3fd5f5a87).
       } else if (!Inside(view, view.cursor_line(), view.cursor_column())) {
         violate("carets", TabName(g, t, tab) + " has its caret at " +
                               Outside(view, view.cursor_line(), view.cursor_column()));
@@ -213,4 +192,4 @@ util::JsonValue BuildControlInvariantsJson(const ProjectWorkspaceState* project,
   return util::JsonValue(std::move(object));
 }
 
-}  // namespace microide::workspace
+}

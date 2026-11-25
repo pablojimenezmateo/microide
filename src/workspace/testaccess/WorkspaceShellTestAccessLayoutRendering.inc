@@ -1,5 +1,3 @@
-  // Where the IME is told the caret is (SDL_SetTextInputArea's rect), for the
-  // focused editor pane: BuildActiveTextInputVisual as the frame calls it.
   static std::optional<SDL_FRect> ActiveTextInputArea(WorkspaceShell& shell) {
     const auto layout = shell.CurrentWorkspaceLayout();
     if (!layout.has_value()) {
@@ -62,26 +60,20 @@
     return group_index < group_rects.groups.size() ? group_rects.groups[group_index].tab_strip
                                                     : SDL_FRect{};
   }
-  // The editor PANE of a group -- the buffer area under its strip, which is what
-  // the drag-to-split drop zones are carved out of.
   static SDL_FRect GroupEditorSurfaceRect(WorkspaceShell& shell, std::size_t group_index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const auto group_rects = shell.ComputeEditorGroupRectsForState(layout);
     return group_index < group_rects.groups.size() ? group_rects.groups[group_index].editor_surface
                                                    : SDL_FRect{};
   }
-  // Where the focused group's tab in front lays out and hit-tests (its pane).
   static SDL_FRect ActiveTabSurface(WorkspaceShell& shell) {
     return shell.ActiveTabSurface(CurrentLayout(shell));
   }
-  // Every split divider the editor area currently shows, in visual order.
   static microide::util::InlineVector<microide::workspace::EditorSplitDividerRect,
                                       microide::workspace::kMaxEditorGroups - 1>
   EditorSplitDividerRects(WorkspaceShell& shell) {
     return shell.ComputeEditorGroupRectsForState(CurrentLayout(shell)).dividers;
   }
-  // The layout memo's key, read fresh from state -- so a test can prove the memo
-  // answers what a from-scratch compute of the CURRENT state would.
   static microide::workspace::WorkspaceLayoutInputs CurrentLayoutInputs(const WorkspaceShell& shell) {
     return shell.CurrentLayoutInputs(static_cast<float>(shell.window_presentation_.logical_width),
                                      static_cast<float>(shell.window_presentation_.logical_height));
@@ -94,7 +86,6 @@
     shell.context_.current_project_state.sidebar.visible = visible;
   }
   static bool BottomPanelVisible(const WorkspaceShell& shell) { return shell.BottomPanelVisible(); }
-  // "The bottom panel changed", as the services that own its content say it.
   static void RequestPreparedFrame(WorkspaceShell& shell) { shell.RequestPreparedFrame(); }
   static void HideBottomPanel(WorkspaceShell& shell) {
     shell.context_.current_project_state.panel.content = WorkspaceShell::PanelContentKind::None;
@@ -146,9 +137,6 @@
   static std::string TabTooltipLabel(WorkspaceShell& shell, std::size_t index) {
     return shell.TabTooltipLabel(index);
   }
-  // The shell resolves one tooltip for the whole window (HoverTooltipSurface.cpp);
-  // tests assert on that single answer, which also pins that no other provider
-  // claimed the point.
   static std::string HoveredTooltipLabel(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const auto tooltip = shell.HoveredTooltip(layout);
@@ -187,8 +175,6 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.GitSidebarOutgoingBaseButtonRect(layout.sidebar);
   }
-  // Collapses or expands the git sidebar folder row labelled `label`; false when
-  // there is no such row.
   static bool ToggleGitSidebarFolder(WorkspaceShell& shell, std::string_view label) {
     for (const auto& line : shell.BuildGitSidebarLines()) {
       if (line.kind == WorkspaceShell::GitSidebarLine::Kind::Directory && line.label == label) {
@@ -262,9 +248,6 @@
                                                                 *shell.ActiveEditorViewport(),
                                                                 pane);
   }
-  // The viewport a hit-test resolves for a given pane (split group), exercised by
-  // hover/cursor/right-click paths. Returns the path each pane's group renders so a
-  // test can assert the inactive pane resolves its own group, not the focused one.
   static std::vector<std::string> PaneViewportPaths(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const auto panes = shell.ComputeEditorPaneLayouts(layout);
@@ -334,8 +317,6 @@
                                                             std::size_t end_line) {
     return shell.CurrentEditorLineRangeRect(start_line, end_line);
   }
-  // The editor pane's scrollbar geometry for the active tab, computed the way the
-  // render and mouse paths compute it.
   static std::optional<ScrollSurfaceLayout> ActiveEditorScrollLayout(WorkspaceShell& shell,
                                                                      const SDL_FRect& rect) {
     editor::TextViewport* viewport = shell.ActiveEditorViewport();
@@ -361,8 +342,6 @@
   static std::size_t LiveTextBackendCount(WorkspaceShell& shell) {
     return shell.text_renderer_.backend_pool()->LiveBackendCount();
   }
-  // What the blame wake's handler does: finished blame becomes visible. A test
-  // polling an overlay with no event loop pumps this in its wait.
   static bool ApplyGitBlameResults(WorkspaceShell& shell) {
     return shell.git_blame_service_.ApplyReadyResults();
   }
@@ -441,7 +420,6 @@
         shell.context_.current_project_state.root, shell.editor_text_renderer_, shell.git_blame_service_,
         merge.result_viewport, ActiveMergeResultRect(shell), 280.0f, 0, shell.LineNumbersEnabled());
   }
-  // The overlay hover and clicks resolve against, as the last prepared frame left it.
   static const std::optional<microide::editor::EditorBlameOverlay>& VisibleBlameOverlay(
       const WorkspaceShell& shell) {
     return shell.editor_blame_overlay_service_.VisibleOverlay();
@@ -471,13 +449,9 @@
     const auto popup = shell.ActiveEditorBlamePopupLayout();
     return popup.has_value() ? std::make_optional(popup->rect) : std::nullopt;
   }
-  // Drops the live hover target without a prepared frame: what any change between
-  // a frame's prep and its paint looks like to the card.
   static void ClearEditorHoverTargetForTest(WorkspaceShell& shell) {
     shell.active_editor_hover_target_.reset();
   }
-  // A provider's hover card over `anchor`, as a resolved hover leaves it: what a
-  // language server's reply (or its fuller second reply) shows.
   static void SetPluginHoverTargetForTest(WorkspaceShell& shell, const SDL_FRect& anchor, std::string title,
                                           std::string content) {
     EditorHoverTarget target;
@@ -506,7 +480,6 @@
     }
     return {};
   }
-  // The terminal tabs' labels as the bottom panel models them (no layout needed).
   static std::vector<std::string> BottomPanelTerminalLabels(WorkspaceShell& shell) {
     std::vector<std::string> labels;
     for (const BottomPanelTabModel& tab : shell.tab_strip_service_.BuildBottomPanelTabs(
@@ -559,19 +532,12 @@
   static bool MousePositionValid(const WorkspaceShell& shell) {
     return shell.last_mouse_position_valid_;
   }
-  // Consumes any pending render invalidation and reports whether one was queued.
-  // Used to prove an event-time cursor change requests a present (so an idle
-  // compositor recomposites and re-latches the hardware cursor plane).
   static bool ConsumePendingRedraw(WorkspaceShell& shell) {
     return shell.ConsumePendingRenderInvalidation().HasAnyRedraw();
   }
-  // The damage queued so far, taken -- what the app loop paints next (frame
-  // prep queues the status bar this way, after the frame that changed it).
   static WorkspaceShell::RenderInvalidation TakePendingRenderInvalidation(WorkspaceShell& shell) {
     return shell.ConsumePendingRenderInvalidation();
   }
-  // Queues damage that no handler asked for, the way a background tick or a
-  // focus change does before an event is dispatched.
   static void QueueUnrelatedDamage(WorkspaceShell& shell, const SDL_FRect& rect) {
     shell.RequestRedrawRect(rect);
   }

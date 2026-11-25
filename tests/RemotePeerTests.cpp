@@ -24,8 +24,6 @@ namespace {
 using project::remote::LinkHeartbeat;
 namespace remote = project::remote;
 
-// Three unanswered pings declare the link dead at the moment the fourth would go
-// out: 6 s at the 2 s default — no waiting, made-up time.
 void TestHeartbeatDeclaresDeathAfterThreeMisses() {
   LinkHeartbeat heartbeat;
   Expect(heartbeat.Tick(0) == 0, "the first ping goes at once");
@@ -36,10 +34,6 @@ void TestHeartbeatDeclaresDeathAfterThreeMisses() {
          "three misses: dead at 6 s, no fourth ping");
 }
 
-// The I/O thread sleeps exactly as long as NextTickDelayMs says: following it
-// lands every tick on a deadline, so the schedule above -- a ping each interval,
-// death at 6 s -- takes one wakeup per interval and none in between (it used to
-// tick at a quarter interval, three idle wakeups of every four).
 void TestHeartbeatSleepsUntilItsNextDeadline() {
   LinkHeartbeat heartbeat;
   Expect(heartbeat.NextTickDelayMs(0) == 0, "before the first ping: due now");
@@ -93,8 +87,6 @@ void TestHelloRoundTripsAndValidates() {
          "a hello reply round-trips: " + error);
   Expect(!decoded.has_value() || !decoded->ephemeral_ports.has_value(),
          "an unreported ephemeral range stays unreported");
-  // The host's ephemeral range (TD-2026-11-02-429 item 4): carried, and advisory --
-  // a malformed one reads as not reported, never as a failed hello.
   reply.ephemeral_ports = remote::PortRange{.low = 40000, .high = 50000};
   const auto with_range = remote::HelloReplyFromJson(
       *util::ParseJson(util::SerializeJson(remote::ToJson(reply))), &error);
@@ -114,8 +106,6 @@ void TestHelloRoundTripsAndValidates() {
       &error);
   Expect(request.has_value() && request->settings.backfill_inflight_bytes == 5,
          "the client's settings round-trip: " + error);
-  // remote.max_manifest_files: carried both ways, absent from an older peer = the
-  // default, and the default opens a 99,093-file checkout the old 50,000 refused.
   const auto with_cap = remote::HelloRequestFromJson(
       *util::ParseJson(util::SerializeJson(remote::ToJson(
           remote::HelloRequest{.release = "x", .settings = {.max_manifest_files = 250'000}}))),
@@ -156,13 +146,6 @@ void TestHelloRoundTripsAndValidates() {
          "a negative content-set cap is refused");
 }
 
-// Only a release both sides can order triggers a server update, and only toward
-// a newer one: an older editor must never downgrade a host.
-// Raising kMinProtocolVersion is the one change that makes an editor upgrade
-// END a host's terminals (the older server is refused instead of kept serving;
-// design § 6.12). This pins it so a raise is a reviewed decision: update the
-// number here only together with a CHANGELOG line saying upgrades restart host
-// servers.
 void TestMinimumProtocolVersionIsADeliberateChoice() {
   Expect(remote::kMinProtocolVersion == 3,
          "kMinProtocolVersion changed: an upgrade now restarts host servers (and ends their "
@@ -222,8 +205,6 @@ struct Result {
   }
 };
 
-// A request reaches its handler and the reply reaches the caller; an unknown
-// method is answered with an error rather than silence.
 void TestRequestsAndErrorsRoundTrip() {
   Pair pair;
   remote::RemotePeer server;
@@ -249,8 +230,6 @@ void TestRequestsAndErrorsRoundTrip() {
          "unknown method is an error reply");
 }
 
-// A malformed control body gets a protocol error for that request, and the
-// connection — and the next request — carry on.
 void TestMalformedBodyIsRejectedAndTheConnectionContinues() {
   Pair pair;
   remote::RemotePeer server;
@@ -284,7 +263,6 @@ void TestMalformedBodyIsRejectedAndTheConnectionContinues() {
   ::close(pair.a);
 }
 
-// op/cancel reaches a streaming handler, which stops and sends its terminal reply.
 void TestCancelReachesTheHandler() {
   Pair pair;
   remote::RemotePeer server;
@@ -310,8 +288,6 @@ void TestCancelReachesTheHandler() {
          "the caller sees the cancellation");
 }
 
-// A pending request is answered (with an error) when the connection goes away,
-// and the close is reported once.
 void TestPendingRequestsAreAnsweredOnClose() {
   Pair pair;
   remote::RemotePeer client;
@@ -328,14 +304,6 @@ void TestPendingRequestsAreAnsweredOnClose() {
          "nothing can be sent afterwards");
 }
 
-// A request the link's close takes between its registration and its send is
-// completed exactly once: by the close's "connection closed" answer, with Request
-// returning its id -- not ALSO by a 0 return that every caller reads as "never
-// sent, complete it yourself". Found by the remote fault matrix
-// (MirrorFaultMatrix/*/Pull/KillServer): a pull whose link died there finished
-// twice, the sync engine's outstanding-work count went below zero, and from then
-// on Flush returned with work still running and a recovered mirror reported the
-// dead link's error.
 void TestARequestTheCloseTookIsCompletedOnce() {
   Pair pair;
   remote::RemotePeer client;
@@ -345,7 +313,6 @@ void TestARequestTheCloseTookIsCompletedOnce() {
       "racing", util::JsonValue(nullptr), remote::Lane::Interactive,
       [&](std::optional<util::JsonValue>, std::optional<remote::RemotePeer::RpcError>) { answered.fetch_add(1); },
       [&](std::uint64_t) {
-        // The link dies in the window: the close answers the request before it is sent.
         client.Fail("the link dropped");
         Expect(WaitUntil([&]() { return answered.load() > 0; }), "the close answers the request");
       });
@@ -354,8 +321,6 @@ void TestARequestTheCloseTookIsCompletedOnce() {
                                std::to_string(id) + ", handler ran " + std::to_string(answered.load()) + ")");
 }
 
-// Pings flow and are answered automatically; a peer that stops answering is
-// declared dead by the heartbeat, not by waiting on the transport.
 void TestHeartbeatMeasuresRttAndDetectsADeadPeer() {
   Pair pair;
   remote::RemotePeer server;
@@ -365,7 +330,7 @@ void TestHeartbeatMeasuresRttAndDetectsADeadPeer() {
   options.heartbeat.interval_ms = 20;
   Expect(server.Start(pair.b, pair.b, {}) && client.Start(pair.a, pair.a, options), "start");
   Expect(WaitUntil([&]() { return client.rtt_ms().has_value(); }), "an RTT is measured");
-  server.Stop();  // the descriptor stays open: the link is silent, not closed
+  server.Stop();
 
   Pair silent;
   remote::RemotePeer lonely;
@@ -378,8 +343,6 @@ void TestHeartbeatMeasuresRttAndDetectsADeadPeer() {
     closes.fetch_add(1);
   });
   Expect(lonely.Start(silent.a, silent.a, options), "start the lonely client");
-  // Its pings are out and unanswered; they are the link's own, not requests a
-  // caller is waiting on (a test that waited for "its" request once took a ping).
   std::this_thread::sleep_for(std::chrono::milliseconds(30));
   Expect(lonely.pending_request_count() == 0, "unanswered pings are not pending requests: " +
                                                   std::to_string(lonely.pending_request_count()));
@@ -390,7 +353,7 @@ void TestHeartbeatMeasuresRttAndDetectsADeadPeer() {
   ::close(silent.b);
 }
 
-}  // namespace
+}
 
 void RegisterRemotePeerTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemotePeer/HeartbeatDeclaresDeathAfterThreeMisses",
@@ -415,4 +378,4 @@ void RegisterRemotePeerTests(std::vector<TestCase>& tests) {
           TestHeartbeatMeasuresRttAndDetectsADeadPeer);
 }
 
-}  // namespace microide::tests
+}

@@ -19,14 +19,11 @@
 namespace microide::platform {
 namespace {
 
-// A directory entry's content or existence: an in-place write (close-write), an
-// atomic replace (moved-to), a create, a delete or move away, a mode change (an
-// unreadable file reads differently); and the directory itself going.
 constexpr std::uint32_t kMask = IN_CLOSE_WRITE | IN_MOVED_TO | IN_MOVED_FROM | IN_CREATE |
                                 IN_DELETE | IN_ATTRIB | IN_DELETE_SELF | IN_MOVE_SELF |
                                 IN_ONLYDIR;
 
-}  // namespace
+}
 
 OpenFileWatcher::OpenFileWatcher(Callback callback) : callback_(std::move(callback)) {}
 
@@ -103,16 +100,11 @@ OpenFileWatcher::Armed OpenFileWatcher::ArmLocked(const std::filesystem::path& f
   if (directory.empty() || !file.has_filename()) {
     return Armed::Unwatchable;
   }
-  // Bounded by the path's depth: each pass either watches the directory, waits
-  // under an ancestor that holds, or found the directory back and goes again.
   for (std::size_t pass = 0, depth = static_cast<std::size_t>(
                                  std::distance(directory.begin(), directory.end()));
        pass <= depth; ++pass) {
     const int wd = inotify_add_watch(inotify_fd_, directory.c_str(), kMask);
     if (wd >= 0) {
-      // Two spellings of one directory (a symlinked directory and its target, a
-      // symlink loop) are one watch: inotify answers the same descriptor for the
-      // same inode, so the entries are merged per descriptor, never replaced.
       std::vector<Entry>& listed = entries[wd];
       const std::string name = file.filename().native();
       const bool known = std::any_of(listed.begin(), listed.end(), [&](const Entry& entry) {
@@ -124,9 +116,8 @@ OpenFileWatcher::Armed OpenFileWatcher::ArmLocked(const std::filesystem::path& f
       return Armed::Watching;
     }
     if (errno != ENOENT && errno != ENOTDIR) {
-      return Armed::Unwatchable;  // unreadable, or the watch limit: nothing to report on
+      return Armed::Unwatchable;
     }
-    // The directory is not there: wait for it from the nearest one that is.
     int ancestor_wd = -1;
     for (std::filesystem::path ancestor = directory.parent_path();
          !ancestor.empty() && ancestor_wd < 0; ancestor = ancestor.parent_path()) {
@@ -141,8 +132,6 @@ OpenFileWatcher::Armed OpenFileWatcher::ArmLocked(const std::filesystem::path& f
     if (ancestor_wd < 0) {
       return Armed::Unwatchable;
     }
-    // The directory may have come back between the failed watch and this one,
-    // with no event left to say so: only wait when it is still missing.
     std::error_code error;
     if (!std::filesystem::is_directory(directory, error)) {
       waiting[ancestor_wd].push_back(Waiting{.file = file, .reported = reported});
@@ -157,8 +146,6 @@ void OpenFileWatcher::RearmWaitingLocked(std::vector<std::filesystem::path>& cha
   const EntriesByWatch before_entries = entries_by_watch_;
   for (const auto& [wd, waiting] : before_waiting) {
     for (const Waiting& file : waiting) {
-      // Back, and watched from now on: whatever it holds was written before the
-      // watch existed, so the document is told to look.
       if (ArmLocked(file.file, file.reported, entries_by_watch_, waiting_by_watch_) ==
               Armed::Watching &&
           std::find(changed.begin(), changed.end(), file.reported) == changed.end()) {
@@ -218,14 +205,13 @@ void OpenFileWatcher::WorkerMain() {
       while (true) {
         const ssize_t length = read(inotify_fd_, buffer.data(), buffer.size());
         if (length <= 0) {
-          break;  // EAGAIN: drained
+          break;
         }
         for (ssize_t offset = 0; offset < length;) {
           const auto* event = reinterpret_cast<const inotify_event*>(buffer.data() + offset);
           offset += static_cast<ssize_t>(sizeof(inotify_event) + event->len);
           if ((event->mask & IN_Q_OVERFLOW) != 0) {
             rearm_waiting = true;
-            // Events were dropped: any file may have changed.
             for (const auto& [wd, entries] : entries_by_watch_) {
               for (const Entry& entry : entries) {
                 note(entry.reported);
@@ -233,9 +219,6 @@ void OpenFileWatcher::WorkerMain() {
             }
             continue;
           }
-          // Something appeared under a directory a missing one is waited for
-          // from (or that directory itself went, so the wait moves up): look
-          // again once the batch is read.
           if (waiting_by_watch_.find(event->wd) != waiting_by_watch_.end() &&
               (event->mask & (IN_CREATE | IN_MOVED_TO | IN_DELETE_SELF | IN_MOVE_SELF |
                               IN_IGNORED)) != 0) {
@@ -247,9 +230,6 @@ void OpenFileWatcher::WorkerMain() {
           }
           const bool directory_went = (event->mask & (IN_DELETE_SELF | IN_MOVE_SELF | IN_IGNORED)) != 0;
           if (directory_went) {
-            // Every file in it is gone or elsewhere, and the watch with it; a
-            // directory recreated under the same name (a branch switch, a stash
-            // pop) is re-armed by the caller's next SetFiles.
             for (const Entry& entry : found->second) {
               note(entry.reported);
             }
@@ -280,4 +260,4 @@ void OpenFileWatcher::WorkerMain() {
   }
 }
 
-}  // namespace microide::platform
+}

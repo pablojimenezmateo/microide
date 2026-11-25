@@ -15,9 +15,6 @@ bool LspLifecycleTraceEnabled() {
   return enabled;
 }
 
-// Milliseconds since the first traced event, so a lifecycle trace reads as a
-// timeline that shows exactly where the seconds between spawn and Ready go, without
-// a wall-clock the reader has to subtract. One epoch shared across all TUs.
 long LspTraceElapsedMs() {
   static const std::chrono::steady_clock::time_point epoch = std::chrono::steady_clock::now();
   return static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -25,7 +22,7 @@ long LspTraceElapsedMs() {
                                .count());
 }
 
-}  // namespace
+}
 
 void TraceLspLifecycle(std::string_view language_id, int pid, std::string_view phase,
                        std::string_view detail) {
@@ -44,4 +41,4 @@ void TraceLspLifecycle(std::string_view language_id, int pid, std::string_view p
                detail.data());
 }
 
-}  // namespace microide::workspace
+}

@@ -85,7 +85,6 @@ void TestSettingsCatalogProjectTabHideToggle() {
 }
 
 void TestSettingsCatalogLspToggles() {
-  // Master + per-feature toggles, all Bool / User-scoped and defaulting on.
   constexpr std::array<std::string_view, 14> kLspToggleIds = {
       "lsp.enabled",
       "lsp.completion.enabled",
@@ -114,7 +113,6 @@ void TestSettingsCatalogLspToggles() {
     const auto* on = std::get_if<bool>(&value);
     Expect(on != nullptr && *on, "LSP toggles default to on");
   }
-  // The master lives at the "LSP" top level; the features nest under "LSP → …".
   Expect(FindBuiltinSettingSpec("lsp.enabled")->group == "LSP",
          "the LSP master switch sits at the LSP category root");
   Expect(FindBuiltinSettingSpec("lsp.hover.enabled")->group.rfind("LSP", 0) == 0,
@@ -132,15 +130,10 @@ void TestSettingsOverlayDerivesLspCategory() {
 }
 
 void TestSettingsCatalogSaveDefaultsAndDedup() {
-  // The stale duplicate keys were removed in favor of the wired editor.save.* pair.
   Expect(FindBuiltinSettingSpec("editor.trim_trailing_whitespace") == nullptr,
          "stale editor.trim_trailing_whitespace spec should be gone");
   Expect(FindBuiltinSettingSpec("editor.insert_final_newline") == nullptr,
          "stale editor.insert_final_newline spec should be gone");
-  // The canonical save specs' defaults match the runtime fallback the save
-  // pipeline resolves (EditorPreferenceSettings.cpp): a final newline on, trailing
-  // whitespace kept (VS Code's files.trimTrailingWhitespace is off; trimming
-  // removes a Markdown hard break -- TD-2026-10-16-354).
   for (const auto& [id, expected] : {std::pair<std::string_view, bool>{"editor.save.trim_trailing_whitespace", false},
                                      std::pair<std::string_view, bool>{"editor.save.ensure_final_newline", true}}) {
     const SettingSpec* spec = FindBuiltinSettingSpec(id);
@@ -176,9 +169,6 @@ void TestSettingsCatalogEdgeValuesRoundTrip() {
   }
 }
 
-// A bool setting is stored by the same token sets it is read with
-// (SettingFlagEnabled): the store used to take only lower-case tokens, so a
-// typed `TRUE` was refused although every reader would have read it as on.
 void TestSettingsBoolValuesParseInAnyCase() {
   const SettingSpec* spec = FindBuiltinSettingSpec("editor.snippets.enabled");
   Expect(spec != nullptr && spec->type == microide::workspace::SettingType::Bool,
@@ -199,8 +189,6 @@ void TestSettingsBoolValuesParseInAnyCase() {
 void TestSettingsIntValuesClampAtStoreTime() {
   const SettingSpec* spec = FindBuiltinSettingSpec("editor.font_size");
   Expect(spec != nullptr, "font_size spec should exist");
-  // The store-time clamp keeps the stored/displayed value in sync with the value
-  // the editor actually applies (font size range is 8..32).
   const auto high = ParseSettingValue(*spec, "999");
   Expect(high.has_value() && std::get<int>(*high) == 32,
          "an out-of-range-high int must be clamped to max at store time, not stored verbatim");
@@ -210,7 +198,6 @@ void TestSettingsIntValuesClampAtStoreTime() {
   const auto ok = ParseSettingValue(*spec, "16");
   Expect(ok.has_value() && std::get<int>(*ok) == 16, "an in-range int should pass through");
 
-  // A setting without an explicit range keeps the unbounded sentinels: no clamp.
   const SettingSpec* unranged = FindBuiltinSettingSpec("editor.soft_tabs");
   if (unranged != nullptr && unranged->type == SettingType::Int) {
     const auto big = ParseSettingValue(*unranged, "1000000");
@@ -250,13 +237,6 @@ void TestSettingsOverlayFiltersAndPreservesScopes() {
          "settings overlay rows should preserve scope labels");
 }
 
-// TD-2026-08-06-159: a rebuild reuses its rows instead of freeing and reallocating
-// eight strings per row. RebuildSettingsRows runs on every keystroke in the
-// Settings search box, so what a repeated rebuild costs is a per-keystroke cost.
-//
-// Two claims are tested together because the fix is only correct if both hold: the
-// second rebuild must be nearly free, AND a narrowing rebuild must not leave stale
-// rows behind (reusing storage is exactly how that goes wrong).
 void TestSettingsOverlayRebuildReusesRowStorage() {
   std::vector<microide::workspace::SettingInfo> settings;
   for (int i = 0; i < 200; ++i) {
@@ -286,15 +266,11 @@ void TestSettingsOverlayRebuildReusesRowStorage() {
   const auto before = perf::Allocations::Snapshot();
   service.RebuildSettingsRows(settings, user, {});
   const auto delta = perf::Allocations::DeltaSince(before);
-  // Six string allocations per row plus one hash node per override is ~1,300 here;
-  // reusing the rows leaves only the two sorted layer indices, which keep their
-  // capacity, and the per-category row-index vectors.
   Expect(delta.allocations < 100,
          "a repeated rebuild of the same surface must reuse its row storage (took " +
              std::to_string(delta.allocations) + " allocations)");
 #endif
 
-  // Narrowing: the reused storage must not keep rows the query no longer matches.
   service.SetQuery("Alpha");
   service.RebuildSettingsRows(settings, user, {});
   Expect(service.SettingsRows().size() == 100,
@@ -304,8 +280,6 @@ void TestSettingsOverlayRebuildReusesRowStorage() {
            "no stale row survives into a narrowed rebuild");
   }
 
-  // Widening back must restore every row with correct content, not the values a
-  // reused row happened to hold.
   service.SetQuery("");
   service.RebuildSettingsRows(settings, user, {});
   Expect(service.SettingsRows().size() == 200, "clearing the query restores every row");
@@ -319,8 +293,6 @@ void TestSettingsOverlayRebuildReusesRowStorage() {
 }
 
 void TestSettingsOverlayScopeSelectableRows() {
-  // editor.line_endings is a built-in project-scoped setting, so its overlay row
-  // supports the per-row "This Project / Default" scope chip.
   const auto row_for = [](const std::vector<std::pair<std::string, std::string>>& user,
                           const std::vector<std::pair<std::string, std::string>>& project) {
     SettingsOverlayService service;
@@ -333,8 +305,6 @@ void TestSettingsOverlayScopeSelectableRows() {
     return *it;
   };
 
-  // A user-level default with no project override reads as "Default" and shows the
-  // default value; the chip is available and no project override is recorded.
   const auto defaulted = row_for({{"editor.line_endings", "crlf"}}, {});
   Expect(defaulted.scope_selectable, "project-scoped built-in should be scope-selectable");
   Expect(defaulted.has_user_default && !defaulted.project_override,
@@ -343,7 +313,6 @@ void TestSettingsOverlayScopeSelectableRows() {
   Expect(defaulted.scope_label == "Default", "no project override reads as Default");
   Expect(defaulted.resettable, "an active user default is resettable");
 
-  // A per-project override wins over the user default and reads as "Project".
   const auto overridden =
       row_for({{"editor.line_endings", "crlf"}}, {{"editor.line_endings", "lf"}});
   Expect(overridden.project_override && overridden.has_user_default,
@@ -351,7 +320,6 @@ void TestSettingsOverlayScopeSelectableRows() {
   Expect(overridden.value == "lf", "project override should win over the user default");
   Expect(overridden.scope_label == "Project", "a project override reads as Project");
 
-  // A user-scoped setting is never scope-selectable.
   SettingsOverlayService service;
   service.OpenSettings();
   service.RebuildSettingsRows(microide::workspace::AllSettingInfos(microide::plugin::PluginHost{}),
@@ -374,7 +342,6 @@ void TestSettingsOverlayStringRowsAreTextEditable() {
   Expect(it->control_kind == microide::workspace::SettingsControlKind::TextEdit,
          "String settings should use the inline text-edit control");
 
-  // The value-edit session round-trips text and clears on cancel.
   Expect(!service.EditingValue(), "no edit active initially");
   service.BeginValueEdit("editor.font_family", "JetBrains Mono");
   Expect(service.EditingValue() && service.EditingRowId() == "editor.font_family",
@@ -385,7 +352,6 @@ void TestSettingsOverlayStringRowsAreTextEditable() {
   service.CancelValueEdit();
   Expect(!service.EditingValue(), "CancelValueEdit ends the session");
 
-  // Closing the overlay must not strand an active edit.
   service.BeginValueEdit("editor.font_family", "x");
   service.Close();
   Expect(!service.EditingValue(), "closing the overlay cancels any active edit");
@@ -401,7 +367,6 @@ void TestSettingsOverlayFontPickerFiltersAndSelects() {
          "BeginFontValueEdit activates a font picker edit");
   Expect(service.ValueEditText().empty(), "the font picker opens with an empty search box");
 
-  // Empty query lists every family; a trailing row is the "Choose file…" entry.
   Expect(service.FilteredFontFamilies().size() == families.size(),
          "an empty query lists all families");
   Expect(service.PickerRowCount() == static_cast<int>(families.size()) + 1,
@@ -411,21 +376,16 @@ void TestSettingsOverlayFontPickerFiltersAndSelects() {
   Expect(service.PickerHighlight() == -1,
          "highlight starts unset so a stray Enter never commits a font");
 
-  // Filtering is case-insensitive substring.
   service.ValueEditor().SetText("mono");
   Expect(service.FilteredFontFamilies().size() == 3,
          "'mono' matches the three *Mono families");
-  // The result is memoized by query text: reverting the query returns the full
-  // list again (cache keyed on the query, not stale from the previous filter).
   service.ValueEditor().SetText("");
   Expect(service.FilteredFontFamilies().size() == families.size(),
          "reverting to an empty query re-lists every family");
-  // Re-opening with a different family set invalidates the memoized filter.
   service.BeginFontValueEdit("editor.font_family", {"Only One Mono"});
   Expect(service.FilteredFontFamilies().size() == 1,
          "a new family set replaces the cached filtered list");
 
-  // Highlight navigation clamps to [-1, ChooseFile].
   service.SetPickerHighlight(0);
   Expect(service.PickerHighlight() == 0, "highlight can land on the first family");
   service.MovePickerHighlight(100);
@@ -442,7 +402,6 @@ void TestSettingsOverlayFontPickerFiltersAndSelects() {
 void TestSettingsOverlayFontPickerScrollWindow() {
   SettingsOverlayService service;
   service.OpenSettings();
-  // More families than fit in one window so the dropdown must scroll.
   const int total = SettingsOverlayService::kPickerVisibleFamilies + 6;
   std::vector<std::string> families;
   for (int i = 0; i < total; ++i) {
@@ -451,17 +410,15 @@ void TestSettingsOverlayFontPickerScrollWindow() {
   service.BeginFontValueEdit("editor.font_family", families);
   Expect(service.PickerScroll() == 0, "picker opens scrolled to the top");
 
-  // Scroll offset clamps to [0, total - visible].
   const int max_top = total - SettingsOverlayService::kPickerVisibleFamilies;
   service.SetPickerScroll(1000);
   Expect(service.PickerScroll() == max_top, "scroll clamps to the last full window");
   service.SetPickerScroll(-5);
   Expect(service.PickerScroll() == 0, "scroll clamps at the top");
 
-  // Keyboard highlight keeps itself inside the visible window.
   service.SetPickerHighlight(0);
   Expect(service.PickerScroll() == 0, "highlighting the first family keeps scroll at top");
-  service.SetPickerHighlight(total - 1);  // last family
+  service.SetPickerHighlight(total - 1);
   Expect(service.PickerHighlight() == total - 1, "highlight lands on the last family");
   Expect(service.PickerScroll() == max_top,
          "highlighting the last family scrolls it into view");
@@ -470,8 +427,7 @@ void TestSettingsOverlayFontPickerScrollWindow() {
                  service.PickerScroll() + SettingsOverlayService::kPickerVisibleFamilies,
          "the highlighted family sits within the visible window");
 
-  // Re-filtering (a keystroke resets the highlight) snaps the window back to the top.
-  service.ValueEditor().SetText("Family");  // still matches all, but resets state
+  service.ValueEditor().SetText("Family");
   service.ResetPickerHighlight();
   Expect(service.PickerScroll() == 0, "re-filtering resets the scroll to the top");
 }
@@ -535,8 +491,6 @@ void TestSettingsOverlayDerivesCategories() {
                               {}, {});
   const auto& categories = service.Categories();
   Expect(!categories.empty(), "settings overlay should derive at least one category");
-  // Every builtin is now grouped, so there is no ungrouped "General" catch-all; the
-  // first spec (editor.tab_size) makes Editor the leading category.
   Expect(std::find(categories.begin(), categories.end(), "General") == categories.end(),
          "the General catch-all should be gone once every setting is grouped");
   Expect(categories.front() == "Editor",
@@ -545,7 +499,6 @@ void TestSettingsOverlayDerivesCategories() {
          "grouped Editor settings should produce an Editor category");
   Expect(std::find(categories.begin(), categories.end(), "Appearance") != categories.end(),
          "regrouped UI/appearance settings should produce an Appearance category");
-  // No duplicate categories.
   for (std::size_t i = 0; i < categories.size(); ++i) {
     for (std::size_t j = i + 1; j < categories.size(); ++j) {
       Expect(categories[i] != categories[j], "category list should not contain duplicates");
@@ -583,7 +536,6 @@ void TestSettingsOverlayFilterReclampsSelection() {
                               {}, {});
   service.SetSelectedCategory(static_cast<int>(service.Categories().size()) - 1);
 
-  // A query that matches nothing should empty the category list and reset selection.
   service.QueryEditor().SetText("zzz-no-such-setting-zzz");
   service.SyncQueryFromEditor();
   service.RebuildSettingsRows(microide::workspace::AllSettingInfos(microide::plugin::PluginHost{}),
@@ -594,7 +546,6 @@ void TestSettingsOverlayFilterReclampsSelection() {
   Expect(service.SelectedSettingRow() == nullptr,
          "no setting should be selected when the catalog is empty");
 
-  // Clearing the filter restores rows and keeps selection in range.
   service.QueryEditor().SetText("");
   service.SyncQueryFromEditor();
   service.RebuildSettingsRows(microide::workspace::AllSettingInfos(microide::plugin::PluginHost{}),
@@ -631,10 +582,6 @@ void TestSettingsOverlayRowControlMetadata() {
          "bool settings should use a checkbox control");
 }
 
-// TD-2026-07-17-028: pane cycling now derives its wrap modulus from the
-// SettingsPane::Count sentinel instead of a hard-coded 3, so adding/removing a
-// pane cannot desync keyboard navigation. Verify forward/backward wrap covers
-// exactly the focusable panes.
 void TestSettingsOverlayPaneCyclingWrapsAllPanes() {
   using microide::workspace::SettingsPane;
   SettingsOverlayService service;
@@ -647,11 +594,9 @@ void TestSettingsOverlayPaneCyclingWrapsAllPanes() {
   service.CycleFocusedPane(1);
   Expect(service.FocusedPane() == SettingsPane::Filter, "forward wraps: Values -> Filter");
 
-  // Backward wrap from the first pane lands on the last.
   service.CycleFocusedPane(-1);
   Expect(service.FocusedPane() == SettingsPane::Values, "backward wraps: Filter -> Values");
 
-  // A full-cycle delta returns to the start regardless of pane count.
   const int pane_count = static_cast<int>(SettingsPane::Count);
   service.SetFocusedPane(SettingsPane::Categories);
   service.CycleFocusedPane(pane_count);
@@ -659,7 +604,7 @@ void TestSettingsOverlayPaneCyclingWrapsAllPanes() {
          "cycling by exactly the pane count is a no-op");
 }
 
-}  // namespace
+}
 
 void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceSettingsOverlay/PaneCyclingWrapsAllPanes",
@@ -709,4 +654,4 @@ void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests) {
           TestSettingsOverlayRowControlMetadata);
 }
 
-}  // namespace microide::tests
+}

@@ -29,10 +29,6 @@ float OverflowStripReserveForHiddenCount(std::size_t hidden_count) {
   return hidden_count > 0 ? OverflowButtonWidthForHiddenCount(hidden_count) + 12.0f : 0.0f;
 }
 
-// Cuts a laid-out strip at `end`: a tab past it is shortened to it, its close
-// button moving with its edge (dropped once it no longer fits), and a tab that
-// starts past it is dropped. The paint is clipped to the same rects, so what the
-// `ui` query names and a click hits is what is painted.
 void CutVisibleTabsAt(std::vector<VisibleStripTab>& tabs, float end) {
   std::erase_if(tabs, [end](const VisibleStripTab& tab) { return tab.rect.x >= end; });
   for (VisibleStripTab& tab : tabs) {
@@ -48,10 +44,6 @@ void CutVisibleTabsAt(std::vector<VisibleStripTab>& tabs, float end) {
   }
 }
 
-// Ends a strip at its "N>" overflow chip while one is shown (the editor and the
-// panel strips alike): the layout's room can run a tab under it -- the editor's
-// 120 px floor in a narrow group, or a long first tab. Dropping a tab can widen
-// the chip's count, so the cut is made against the chip it leaves.
 template <typename OverflowOf>
 void CutVisibleTabsAtRightChip(std::vector<VisibleStripTab>& tabs, float gap, const OverflowOf& overflow_of) {
   for (int pass = 0; pass < 2 && !tabs.empty(); ++pass) {
@@ -63,10 +55,6 @@ void CutVisibleTabsAtRightChip(std::vector<VisibleStripTab>& tabs, float gap, co
   }
 }
 
-// FNV-1a mixers used to fingerprint the bottom-panel tab-model inputs. Content
-// hashing (not a monotonic revision) keeps the cache correct without threading a
-// bump through every terminal/output/plugin mutation site; a same-state repaint
-// hits, any label/id/count/order change misses.
 constexpr std::uint64_t kFnvOffset = util::kFnv1aOffsetBasis;
 
 std::uint64_t HashMix(std::uint64_t hash, std::uint64_t value) {
@@ -77,7 +65,7 @@ std::uint64_t HashMix(std::uint64_t hash, std::string_view text) {
   return util::Fnv1aBytes(util::Fnv1aValue(hash, text.size()), text);
 }
 
-}  // namespace
+}
 
 std::string TabStripService::BuildProjectBadgeText(std::string_view label) const {
   for (const unsigned char ch : label) {
@@ -120,8 +108,6 @@ void TabStripService::BuildVisibleStripTabsInto(
                                 model_indices, active_index, display_titles, tooltip_labels,
                                 kWorkspaceTabCloseButtonSize, kWorkspaceTabCloseButtonRightInset);
 
-  // resize, not clear+push_back, for the same reason the item list does it: the
-  // surviving elements keep the three string buffers this refills.
   out.resize(chrome_item_scratch_.size());
   for (std::size_t i = 0; i < chrome_item_scratch_.size(); ++i) {
     const ChromeTabRenderItem& model = chrome_item_scratch_[i];
@@ -206,8 +192,6 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleProjectTabs(
   if (all_tabs_visible) {
     tabs = build_tabs(project_tab_strip.x, 0.0f);
   } else {
-    // The same cut as the editor and panel strips: the 120 px floor never runs
-    // a project tab past the strip or under its "N>" chip.
     CutVisibleTabsAt(tabs, project_tab_strip.x + project_tab_strip.w);
     CutVisibleTabsAtRightChip(tabs, gap, [&](const std::vector<VisibleStripTab>& laid_out) {
       return ComputeProjectTabOverflowControls(project_tab_strip, laid_out, catalog);
@@ -288,9 +272,6 @@ void TabStripService::EnsureActiveEditorTabVisible(EditorGroup& group,
   const auto active_fits_from = [&](std::size_t candidate_first) {
     const float candidate_start_x = candidate_first > 0 ? OverflowStripReserveForHiddenCount(1) : 0.0f;
     float candidate_right_reserve = OverflowStripReserveForHiddenCount(1);
-    // The shared scratch, not a local: this runs once per candidate first-index
-    // and lays the strip out up to three times each, and the whole loop below can
-    // walk back several indices (TD-2026-08-14-222).
     std::vector<StripSlotLayout>& visible = strip_slot_scratch_;
     for (int pass = 0; pass < 3; ++pass) {
       const float candidate_max_x =
@@ -340,11 +321,6 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleEditorTabs(
     visible_cache.valid = false;
     return EmptyVisibleTabs();
   }
-  // A collapsed strip (zero height: the maximized panel owns the window) has no
-  // tabs. The tab height below has a 22 px floor, so without this the strip laid
-  // its tabs out — and painted them, over the panel header — at full size in a
-  // band that no longer exists. The caches are left alone: restoring the strip
-  // brings back the same geometry.
   if (tab_strip.h <= 0.0f || tab_strip.w <= 0.0f) {
     return EmptyVisibleTabs();
   }
@@ -352,12 +328,6 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleEditorTabs(
   RefreshEditorGeometryCache(group, group_index, tab_strip.w, measure_width, display_title,
                              tooltip_label, dirty_fingerprint);
 
-  // Memoize the built VisibleStripTab vector keyed by geometry-cache version
-  // plus the inputs the BuildVisibleStripTabs loop varies on. The geometry
-  // cache itself only refreshes on (tab_count, strip_width) changes, so the
-  // version bumps capture genuine source-data turnover; this avoids rebuilding
-  // ChromeTabRenderItem / VisibleStripTab vectors per mouse-motion frame when
-  // nothing has actually changed.
   const auto strip_matches = [&] {
     return visible_cache.strip.x == tab_strip.x && visible_cache.strip.y == tab_strip.y &&
            visible_cache.strip.w == tab_strip.w && visible_cache.strip.h == tab_strip.h;
@@ -369,13 +339,8 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleEditorTabs(
   }
 
   const float tab_y = tab_strip.y + 2.0f;
-  // Never taller than the strip: a 22 px floor here hung the tabs of a pane
-  // squeezed shorter than a strip into whatever lies below it (soak 9c685a037963).
   const float tab_height = std::max(0.0f, tab_strip.h - 2.0f);
   const float gap = 1.0f;
-  // Built straight into the memo's own vector: this runs only on a miss, where
-  // the previous contents are being replaced anyway, and the settle loop below
-  // lays the strip out up to four times (TD-2026-08-14-222).
   std::vector<VisibleStripTab>& tabs = visible_cache.tabs;
   const auto build_tabs = [&](float start_x, float right_overflow_reserve) {
     const float max_tab_x =
@@ -410,16 +375,6 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleEditorTabs(
   if (all_tabs_visible) {
     build_tabs(tab_strip.x, 0.0f);
   }
-  // The layout gives a tab at least 120 px of room, more than a narrow group's
-  // strip has: its tab ran into the neighbour's strip and off the window, where
-  // the ui named it and a click meant for the neighbour landed on it (QA monkey,
-  // editor profile). The paint was clipped to the strip; the geometry now is too
-  // -- a tab past the strip's end is cut to it, its close button moving with its
-  // edge, and one starting past it is dropped. The end is the "N>" overflow
-  // chip's left edge while it is shown: cut at the strip's end, a strip narrower
-  // than the floor plus the chips' reserve kept its first tab, close button and
-  // all, under the chip (QA monkey, editing profile at ui.scale 2). Dropping a tab
-  // can widen the chip's count, so the cut is made against the chip it leaves.
   CutVisibleTabsAt(tabs, tab_strip.x + tab_strip.w);
   CutVisibleTabsAtRightChip(tabs, gap, [&](const std::vector<VisibleStripTab>& laid_out) {
     return ComputeEditorTabOverflowControls(tab_strip, laid_out, group);
@@ -458,9 +413,6 @@ TabStripOverflowControls TabStripService::BuildOverflowControls(
 
   const float left_button_w = OverflowButtonWidthForHiddenCount(controls.hidden_left);
   const float right_button_w = OverflowButtonWidthForHiddenCount(controls.hidden_right);
-  // A 4 px inset on a full strip; on a short one the chip keeps its 16 px
-  // minimum only while the strip can hold it, centred, and is never taller than
-  // the strip -- the floor alone hung it below a squeezed pane's strip.
   const float button_h = std::min(std::max(0.0f, strip.h), std::max(16.0f, strip.h - 8.0f));
   const float button_y = strip.y + std::floor((strip.h - button_h) * 0.5f);
   if (controls.hidden_left > 0) {
@@ -516,8 +468,6 @@ bool TabStripService::ScrollEditorTabStrip(EditorGroup& group, std::size_t group
 
 namespace {
 
-// Whether the panel holds terminals on a host and terminals on this machine side
-// by side: only then does a label need to say where its shell runs.
 bool TerminalsAreMixed(const ProjectWorkspaceState& state) {
   bool host = false;
   bool local = false;
@@ -530,10 +480,6 @@ bool TerminalsAreMixed(const ProjectWorkspaceState& state) {
   return host && local;
 }
 
-// A terminal tab's label prefix: its own (the ssh authentication tab, a local
-// terminal in a remote project), else — while host and local terminals are mixed —
-// `local · ` or the project's host.
-// After a host terminal's label while its link is down (§ 7.4a).
 constexpr std::string_view kDetachedSuffix = " \xc2\xb7 detached";
 
 std::string TerminalLabelPrefix(const ProjectWorkspaceState& state, const TerminalPaneState& pane,
@@ -551,7 +497,7 @@ std::string TerminalLabelPrefix(const ProjectWorkspaceState& state, const Termin
   return std::string(host) + " \xc2\xb7 ";
 }
 
-}  // namespace
+}
 
 std::string TerminalPaneLabelPrefix(const ProjectWorkspaceState& state, const TerminalPaneState& pane) {
   return TerminalLabelPrefix(state, pane, TerminalsAreMixed(state));
@@ -561,9 +507,6 @@ std::uint64_t TabStripService::ComputeBottomPanelTabsFingerprint(
     const ProjectWorkspaceState& state,
     std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const {
   std::uint64_t hash = kFnvOffset;
-  // Terminals: presence + launch label (the only per-terminal input that shapes
-  // the tab model). A label copy per terminal is unavoidable, but far cheaper than
-  // constructing the full model list + nested channel scan on every caller.
   hash = HashMix(hash, state.terminal_tabs.size());
   for (const auto& terminal_tab : state.terminal_tabs) {
     if (terminal_tab == nullptr) {
@@ -574,18 +517,13 @@ std::uint64_t TabStripService::ComputeBottomPanelTabsFingerprint(
     const TerminalPaneState* pane = terminal_tab->active();
     hash = HashMix(hash, pane != nullptr ? std::string_view{pane->session.LaunchLabel()}
                                          : std::string_view{});
-    // Where it runs and its own prefix shape the label too (TerminalLabelPrefix).
     hash = HashMix(hash, pane != nullptr ? std::string_view{pane->label_prefix} : std::string_view{});
     hash = HashMix(hash, pane != nullptr && pane->session.is_host_terminal() ? std::uint64_t{1}
                                                                             : std::uint64_t{0});
-    // The activity dot is part of the model: it is painted from the strip tab.
     hash = HashMix(hash, terminal_tab->has_unseen_output ? std::uint64_t{1} : std::uint64_t{0});
     hash = HashMix(hash, terminal_tab->has_unseen_bell ? std::uint64_t{1} : std::uint64_t{0});
     hash = HashMix(hash, pane != nullptr && pane->session.host_link_down() ? std::uint64_t{1} : std::uint64_t{0});
   }
-  // Output: the augmentation inputs plus the resolved open ids and the full channel
-  // id/label table. The per-tab label is a deterministic function of (open ids,
-  // channels), so hashing both inputs independently (linear, no nesting) is enough.
   hash = HashMix(hash, static_cast<std::uint64_t>(state.panel.content));
   hash = HashMix(hash, std::string_view{state.panel.output.channel_id});
   hash = HashMix(hash, state.panel.output.open_channel_ids.size());
@@ -597,7 +535,6 @@ std::uint64_t TabStripService::ComputeBottomPanelTabsFingerprint(
     hash = HashMix(hash, std::string_view{channel.id});
     hash = HashMix(hash, std::string_view{channel.label});
   }
-  // Plugin preview surfaces: owner/id/title in the store's stable order.
   if (const auto* pres = state.plugin_presentation_if_present()) {
     for (const editor::SurfaceRef& ref : pres->surfaces.PreviewSurfaces()) {
       if (ref.content == nullptr || ref.content->preview != editor::SurfacePreviewSlot::Bottom) {
@@ -678,9 +615,6 @@ const std::vector<BottomPanelTabModel>& TabStripService::BuildBottomPanelTabs(
     });
   }
 
-  // Plugin-surface preview tabs (Phase E0): every surface that requested a
-  // bottom-panel preview becomes a tab, in the store's stable (owner, id) order.
-  // No plugin presentation published => no surface tabs; skip the loop entirely.
   if (const auto* pres = state.plugin_presentation_if_present()) {
     for (const editor::SurfaceRef& ref : pres->surfaces.PreviewSurfaces()) {
       if (ref.content == nullptr || ref.content->preview != editor::SurfacePreviewSlot::Bottom) {
@@ -702,7 +636,6 @@ const std::vector<BottomPanelTabModel>& TabStripService::BuildBottomPanelTabs(
   bottom_panel_tabs_cache_.fingerprint = fingerprint;
   bottom_panel_tabs_cache_.tabs = std::move(tabs);
   bottom_panel_tabs_cache_.valid = true;
-  // A model rebuild invalidates the laid-out list built from it.
   visible_bottom_panel_tabs_cache_.valid = false;
   return bottom_panel_tabs_cache_.tabs;
 }
@@ -774,7 +707,6 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleBottomPanelTa
   const float strip_right = std::max(panel_header.x, new_tab_rect.x - 8.0f);
   const std::size_t scroll_index = static_cast<std::size_t>(
       std::clamp(state.panel.tab_scroll_index, 0, std::max(0, static_cast<int>(tabs.size()) - 1)));
-  // Into the memo's own vector; see ComputeVisibleEditorTabs (TD-2026-08-14-222).
   std::vector<VisibleStripTab>& visible = cache.tabs;
   const auto build_tabs = [&](float start_x, float right_overflow_reserve) {
     const float max_tab_x = std::max(start_x, strip_right - right_overflow_reserve);
@@ -782,10 +714,6 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleBottomPanelTa
                               tab_height, model_indices, active_model_index, display_titles,
                               tooltip_labels);
   };
-  // The chips are laid out by BuildOverflowControls over the band left of the
-  // new-tab button; the tabs reserve exactly what a chip for the current hidden
-  // counts takes, settled as the editor strip settles it. A fixed 32 px start
-  // put the first tab 4 px under the 8..36 px "<N" chip (QA monkey).
   const auto overflow_of = [&](const std::vector<VisibleStripTab>& laid_out) {
     return ComputeBottomPanelTabOverflowControls(state, panel_header, layout_mode, laid_out, channels);
   };
@@ -892,8 +820,6 @@ TabStripOverflowControls TabStripService::ComputeBottomPanelTabOverflowControls(
     const std::vector<VisibleStripTab>& visible_tabs,
     std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const {
   const std::size_t total = BuildBottomPanelTabs(state, channels).size();
-  // Constrain the chevrons to the band left of the new-tab button so the right
-  // chevron never overlaps it.
   const SDL_FRect new_tab_rect = BottomPanelTerminalNewTabRect(layout_mode, panel_header);
   const SDL_FRect band = MakeRect(panel_header.x, panel_header.y,
                                   std::max(0.0f, new_tab_rect.x - panel_header.x), panel_header.h);
@@ -915,7 +841,7 @@ float BottomPanelHeaderButtonSize(LayoutMode mode, const SDL_FRect& panel_header
   return std::min(compact_max, std::max(14.0f, panel_header.h - 8.0f));
 }
 
-}  // namespace
+}
 
 SDL_FRect TabStripService::BottomPanelMaximizeButtonRect(LayoutMode mode,
                                                          const SDL_FRect& panel_header) const {
@@ -934,4 +860,4 @@ SDL_FRect TabStripService::BottomPanelTerminalNewTabRect(LayoutMode mode,
                   button_size);
 }
 
-}  // namespace microide::workspace
+}

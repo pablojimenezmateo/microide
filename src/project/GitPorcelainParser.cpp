@@ -29,10 +29,6 @@ bool StatusUsesTargetPath(std::string_view code) {
 std::vector<ParsedStatusV1Entry> ParseStatusV1Entries(std::string_view output) {
   std::vector<ParsedStatusV1Entry> entries;
 
-  // A rename/copy status record is followed by its origin path in the next NUL field,
-  // so a retained entry consumes up to 2 records. Bound token materialization at 2x the
-  // entry cap (+ slack) so hostile NUL-heavy status output cannot build millions of
-  // record views before the entry cap stops parsing. (TD-2026-07-16-30.)
   const std::vector<std::string_view> records =
       util::SplitNulDelimited(output, kMaxGitStatusEntries * 2 + 2);
   for (std::size_t i = 0; i < records.size() && entries.size() < kMaxGitStatusEntries; ++i) {
@@ -47,11 +43,6 @@ std::vector<ParsedStatusV1Entry> ParseStatusV1Entries(std::string_view output) {
       continue;
     }
 
-    // Rename/copy status codes emit two NUL-delimited records: git writes the
-    // destination first (in `entry`, right after the code) and the source path
-    // in the following record ("<code> <new>\0<old>"). Keep `path` pointing at
-    // the destination and consume the source record so it is not parsed as its
-    // own entry.
     if (StatusUsesTargetPath(code) && i + 1 < records.size()) {
       ++i;
     }
@@ -68,7 +59,7 @@ std::vector<ParsedStatusV1Entry> ParseStatusV1Entries(std::string_view output) {
   return entries;
 }
 
-}  // namespace
+}
 
 GitFileStatus GitPorcelainParser::StatusFromChangeCodeChars(std::string_view code) {
   if (code.find('D') != std::string_view::npos) {
@@ -90,7 +81,6 @@ GitFileStatus GitPorcelainParser::StatusFromPorcelainCode(std::string_view code)
   if (IsConflictedStatus(code)) {
     return GitFileStatus::Conflicted;
   }
-  // Conflict ('U') codes are handled above, so the ordinary precedence suffices.
   return StatusFromChangeCodeChars(code);
 }
 
@@ -149,34 +139,18 @@ void GitPorcelainParser::RecordNormalizedGitStatus(
     std::string_view normalized_generic_path,
     GitFileStatus status,
     std::string& scratch) {
-  // The ancestor walk used to run on std::filesystem::path: parent_path() built a
-  // fresh path per level and generic_string() a fresh std::string per level, so a
-  // 4-deep path cost 8 allocations on top of the leaf's. A normalized generic path
-  // is just '/'-separated text, so the same walk is a scratch string shortened in
-  // place — the only remaining allocations are the map keys actually inserted, and
-  // those are unavoidable (the map owns its keys).
   scratch.assign(normalized_generic_path);
   if (!scratch.empty() && scratch != ".") {
-    // Hoist the slot reference so operator[] runs once, not twice (read + assign).
     GitFileStatus& slot = statuses[scratch];
     slot = CombineGitStatus(slot, status);
   }
 
-  // Cap ancestor-badge propagation depth. A hostile repo can contain a single
-  // pathologically deep path (`a/a/.../x`); walking every ancestor and retaining
-  // a map key per level is O(depth) string allocations per entry — quadratic in
-  // path length, an OOM. Folder badges beyond a modest depth are not usefully
-  // visible anyway.
   constexpr int kMaxBadgeAncestorDepth = 64;
   for (int depth = 0; depth < kMaxBadgeAncestorDepth; ++depth) {
     const std::size_t slash = scratch.find_last_of('/');
-    // No separator left (a top-level name), or the only separator is a leading
-    // one (an absolute path, whose "/" ancestor is not a tree node) — done.
     if (slash == std::string::npos || slash == 0) {
       break;
     }
-    // No "." check here: a normalized path never has a "." ancestor ("./a/b"
-    // normalizes to "a/b"), so the guard the path walk needed is unreachable.
     scratch.resize(slash);
     GitFileStatus& slot = statuses[scratch];
     slot = CombineGitStatus(slot, status);
@@ -201,8 +175,6 @@ std::vector<GitWorkingTreeEntry> GitPorcelainParser::ParseWorkingTreeEntries(std
     if (lhs.staged != rhs.staged) {
       return lhs.staged > rhs.staged;
     }
-    // native() returns a const reference; generic_string() would allocate two
-    // throwaway strings per comparison. Ordering is for display stability only.
     return lhs.relative_path.native() < rhs.relative_path.native();
   });
   return entries;
@@ -210,11 +182,6 @@ std::vector<GitWorkingTreeEntry> GitPorcelainParser::ParseWorkingTreeEntries(std
 
 std::vector<GitCommitEntry> GitPorcelainParser::ParseLog(std::string_view output,
                                                          std::size_t max_entries) {
-  // Expected line layout, unit-separator (US, 0x1f) delimited, subject last so it
-  // may contain the delimiter (it never realistically does):
-  //   <hash>\x1f<short_hash>\x1f<author>\x1f<relative_date>\x1f<subject>
-  // US is used instead of a tab because a git author name (%an) can legitimately
-  // contain a literal tab, which would shift every subsequent field; US cannot.
   constexpr char kSep = '\x1f';
   std::vector<GitCommitEntry> commits;
   std::size_t line_start = 0;
@@ -253,4 +220,4 @@ std::vector<GitCommitEntry> GitPorcelainParser::ParseLog(std::string_view output
   return commits;
 }
 
-}  // namespace microide::project
+}

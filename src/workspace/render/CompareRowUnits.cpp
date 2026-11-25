@@ -12,7 +12,6 @@
 namespace microide::workspace {
 namespace {
 
-// The shared row-key fold (EditorRowUnits.h), under the names this file uses.
 std::uint64_t Mix(std::uint64_t hash, std::uint64_t value) { return MixRowKey(hash, value); }
 
 std::uint64_t MixText(std::uint64_t hash, std::string_view text, std::uint64_t long_line_stand_in) {
@@ -33,7 +32,6 @@ std::uint64_t MixSpans(std::uint64_t hash, const std::vector<compare::CompareTex
   return hash;
 }
 
-// Folds the right side's caret, selections and bracket marks on `line` (0-based).
 std::uint64_t MixRightMarks(std::uint64_t hash, const CompareTabState& compare,
                             const std::optional<editor::BracketMatchPair>& bracket_pair, bool caret_drawn,
                             std::size_t line) {
@@ -78,16 +76,12 @@ std::uint64_t MixRightMarks(std::uint64_t hash, const CompareTabState& compare,
   return hash;
 }
 
-// The band a row paints, as its damage: the surface's whole width (the selected
-// change's markers sit at its outer edges) and the line's height, with a pixel of
-// halo all round -- a row's fill starts a pixel above its text top, and glyphs
-// reach its last pixel row (DirtyRectWithHalo, which the row damage used before).
 SDL_FRect RowBand(const CompareRowGeometry& geometry, int row) {
   return SDL_FRect{geometry.surface.x - 1.0f, geometry.rows_y + static_cast<float>(row) * geometry.line_height - 2.0f,
                    geometry.surface.w + 2.0f, geometry.line_height + 3.0f};
 }
 
-}  // namespace
+}
 
 std::optional<editor::BracketMatchPair> CompareBracketMatch(CompareTabState& compare, bool enabled) {
   if (!enabled || !compare.right_view_active) {
@@ -113,8 +107,6 @@ void AppendCompareRowUnits(const CompareTabState& compare, const CompareRowGeome
                            const CompareRowKeyInputs& inputs, std::vector<DerivedDamage::Unit>& units) {
   const std::size_t visual_count = CompareTabVisualRowCount(compare);
   const std::uint64_t long_line_stand_in = compare.right_viewport.content_revision();
-  // The rows' keys, and which working-side line each shows (none: no such line),
-  // for the diagnostics' one pass below.
   struct RightLine {
     std::size_t line = 0;
     std::size_t row = 0;
@@ -123,10 +115,6 @@ void AppendCompareRowUnits(const CompareTabState& compare, const CompareRowGeome
   thread_local std::vector<RightLine> right_lines;
   keys.clear();
   right_lines.clear();
-  // What a presentation row shows whichever of its wrapped rows draws it -- its
-  // kind, its texts on both sides, their changed spans and syntax colours, the
-  // working side's decorations -- folded once for all of them (they follow one
-  // another), not once per visual row.
   std::uint64_t unit_key = 0;
   std::size_t unit_key_unit = 0;
   bool unit_key_valid = false;
@@ -147,11 +135,6 @@ void AppendCompareRowUnits(const CompareTabState& compare, const CompareRowGeome
       content = Mix(content, presentation->model_row_index);
       content = MixText(content, presentation->display_summary_text, long_line_stand_in);
       content = MixText(content, presentation->review_marker_label, long_line_stand_in);
-      // A change's NUMBER is not drawn: an edit on an unchanged line makes a new
-      // change and renumbers every one below it, and keyed on the numbers each of
-      // their rows repainted. What is drawn of them is whether a collapsed run has
-      // a change before and after it (its buttons), and below, whether a row is in
-      // a change and is the first row of it (the review mark's place).
       for (const std::int64_t part :
            {std::int64_t{presentation->collapsed_line_count},
             static_cast<std::int64_t>(presentation->collapsed_run_start_model_row),
@@ -176,15 +159,8 @@ void AppendCompareRowUnits(const CompareTabState& compare, const CompareRowGeome
         content = MixSpans(content, model.left_changed_spans);
         content = MixSpans(content, model.right_changed_spans);
         content = MixTokens(content, CompareRowLeftTokens(compare, model));
-        // WHICH window the working side reads, too (CompareRowRightTokensAliasLeft):
-        // it is paint's input as the tokens are, and it follows the two panes'
-        // syntax states, which can move with neither window's tokens for the row
-        // moving (soak 185e45a464f9, 47359511506b, 832463f2425b, b3d25c24c346).
         content = Mix(content, CompareRowRightTokensAliasLeft(compare, model_index) ? 1u : 2u);
         content = MixTokens(content, CompareRowRightOwnTokens(compare, model));
-        // The working side's plugin and language-server decorations on its line
-        // (its text styles and gutter mark are drawn; the line's whole key is
-        // folded, as an editor row folds it).
         if (model.right_line > 0 && inputs.decorations != nullptr) {
           content = LineDecorationKey(Mix(content, 0xDEC0), *inputs.decorations,
                                       static_cast<std::size_t>(model.right_line - 1));
@@ -207,17 +183,12 @@ void AppendCompareRowUnits(const CompareTabState& compare, const CompareRowGeome
     if (compare.hover_state.has_value() && compare.hover_state->presentation_row == wrap.unit) {
       key = Mix(Mix(key, 0x40), static_cast<std::uint64_t>(compare.hover_state->kind));
     }
-    // The review controls this row carries (CompareHunkControlsOnRow: a hunk's
-    // first row, or the view's top row inside a longer one): the badge follows
-    // the hunk's mark, the buttons whether it is hovered or selected (the pointer
-    // on ANOTHER row of the hunk shows them here), Comment whether it has a note.
     if (const int hunk = CompareHunkControlsOnRow(compare, wrap, row); hunk >= 0) {
       key = Mix(Mix(Mix(Mix(key, 0x4E + static_cast<std::uint64_t>(hunk) * 256u),
                         static_cast<std::uint64_t>(CompareHunkReviewStatus(compare, hunk))),
                     CompareHunkShowsReviewButtons(compare, hunk) ? 1u : 2u),
                 CompareHunkHasNote(compare, hunk) ? 1u : 2u);
     }
-    // A note row's caption says whether its change was edited since.
     if (presentation->kind == compare::ComparePresentationRowKind::ReviewNote) {
       key = Mix(key, util::Fnv1aHash(CompareNoteCaption(compare, presentation->hunk_index)));
     }
@@ -238,11 +209,6 @@ void AppendCompareRowUnits(const CompareTabState& compare, const CompareRowGeome
     }
     keys.push_back(key);
   }
-  // The working side's diagnostics, one pass over the file's: each folds its part
-  // of every visible row whose line it covers (its squiggle's columns, and its
-  // severity, which the gutter mark shows). The rows' lines ascend down the
-  // surface, so a diagnostic finds its rows by bisection; nearly all miss the
-  // visible lines on two comparisons.
   if (!inputs.diagnostics.empty() && !right_lines.empty()) {
     const std::size_t first_line = right_lines.front().line;
     const std::size_t last_line = right_lines.back().line;
@@ -298,8 +264,6 @@ void AppendMergeSideRowUnits(const MergeTabState& merge, const CompareRowGeometr
                                      std::uint64_t{wrap.right_present}}) {
       key = Mix(key, part);
     }
-    // Both sources' text and colours on this line, folded once for the wrapped
-    // rows it spans (they follow one another).
     if (!line_key_valid || line != line_key_line) {
       std::uint64_t content = util::kFnv1aOffsetBasis;
       if (line < merge.model.incoming_lines.size()) {
@@ -315,7 +279,6 @@ void AppendMergeSideRowUnits(const MergeTabState& merge, const CompareRowGeometr
       line_key_valid = true;
     }
     key = Mix(key, line_key);
-    // The conflicts this source line sits in, on either side, and how they show.
     for (std::size_t i = 0; i < merge.conflicts.size(); ++i) {
       const MergeTrackedConflict& conflict = merge.conflicts[i];
       const bool incoming = line >= conflict.incoming_start_line && line < conflict.incoming_end_line;
@@ -336,4 +299,4 @@ void AppendMergeSideRowUnits(const MergeTabState& merge, const CompareRowGeometr
                    Mix(surface_key, 0x7A12)});
 }
 
-}  // namespace microide::workspace
+}

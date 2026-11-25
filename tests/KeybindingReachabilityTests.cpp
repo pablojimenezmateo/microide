@@ -1,16 +1,3 @@
-// Keybinding reachability: every built-in keybinding, pressed from every focus
-// target, dispatches exactly where its registration says it is active.
-//
-// Three shortcuts reached the user dead in one afternoon because a binding's
-// context and the dispatch path disagreed (Ctrl+Shift+F did nothing with the tree
-// focused, db16f4a2), and a unit test sends keys from one focus at a time. This
-// presses each chord from each focus target through the shell's real keyboard
-// path with the key coordinator's dispatch probe in record-only mode (dispatch is
-// observed, nothing runs), and compares with the expectation computed from the
-// registration: the binding's context and terminal-skip flag (BindingMatches via
-// FindKeybinding) less the gates that legitimately refuse a matching binding.
-// Those gates are ONE named table below, so a new exception is a visible edit.
-
 #include "TestSupport.h"
 #include "TestSupportSdl.h"
 
@@ -36,12 +23,12 @@ using TestAccess = microide::workspace::WorkspaceShell::TestAccess;
 enum class Focus {
   Editor,
   Tree,
-  SearchView,  // the search view's query field, as Ctrl+Shift+F leaves it
+  SearchView,
   GitView,
   OutputPanel,
   Terminal,
   DebugPane,
-  QuickOpen,  // the command palette
+  QuickOpen,
 };
 
 constexpr Focus kFocusTargets[] = {Focus::Editor,      Focus::Tree,     Focus::SearchView,
@@ -62,8 +49,6 @@ std::string_view FocusName(Focus focus) {
   return "?";
 }
 
-// The keybinding context each focus target dispatches in
-// (KeyInputCoordinator::ActiveKeybindingContext).
 KeybindingContext ContextOf(Focus focus) {
   switch (focus) {
     case Focus::Editor: return KeybindingContext::Editor;
@@ -87,22 +72,15 @@ bool OnlyCtrl(const ResolvedKeybinding& binding) {
          HasCtrl(binding);
 }
 
-// THE GATES: a binding that matches the focus context and still must not
-// dispatch, with the reason. Mirrors KeyInputCoordinator::HandleKeyDown /
-// HandleGlobalKeyDown; a change there that adds or drops a refusal must show up
-// here as an edit.
 std::optional<std::string_view> Gate(const ResolvedKeybinding& binding, Focus focus) {
   const bool single_line_field = focus == Focus::SearchView || focus == Focus::QuickOpen;
-  // Paste into a field that takes it is a direct action, before any binding.
   if (single_line_field && HasCtrl(binding) && binding.key == SDLK_V) {
     return "a focused text field takes Ctrl+V as paste";
   }
-  // A focused single-line field owns select-all, copy and cut.
   if (single_line_field && OnlyCtrl(binding) &&
       (binding.key == SDLK_A || binding.key == SDLK_C || binding.key == SDLK_X)) {
     return "a focused text field owns Ctrl+A/C/X";
   }
-  // Text shortcuts act on the focused editor's buffer, whatever their context.
   const bool editor_text_shortcut =
       binding.action == ActionId::SelectAll || binding.action == ActionId::Undo ||
       binding.action == ActionId::Redo || binding.action == ActionId::CopySelection ||
@@ -144,11 +122,7 @@ struct FocusFixture {
 
   ~FocusFixture() { TestAccess::KeyDispatchProbe(shell).record_only = false; }
 
-  // Re-establish the focus before every chord: a key no binding took still
-  // reaches the surface (Escape closes the palette, a letter moves the tree).
   void Apply() {
-    // A key that reached the tree can open a prompt (F2 renames, Delete deletes the
-    // selected entry), which would take every key after it.
     while (TestAccess::PromptSurfaceVisible(shell)) {
       (void)shell.HandleEvent(KeyDownEvent(SDLK_ESCAPE, SDL_KMOD_NONE));
     }
@@ -186,8 +160,6 @@ struct FocusFixture {
     }
   }
 
-  // The binding id the binding's keys dispatched, or empty: a two-step chord
-  // presses its leader first.
   std::string Press(const ResolvedKeybinding& binding) {
     Apply();
     if (binding.leader_key != SDLK_UNKNOWN) {
@@ -227,8 +199,6 @@ void TestEveryBuiltinBindingDispatchesWhereItsRegistrationSays() {
       if (binding.from_plugin) {
         continue;
       }
-      // The rule dispatch applies: of bindings sharing a chord, the first whose
-      // action is enabled.
       fixture.Apply();
       const auto enabled = [&](workspace::ActionId action) {
         return TestAccess::IsActionEnabled(fixture.shell, action);
@@ -263,7 +233,6 @@ void TestEveryBuiltinBindingDispatchesWhereItsRegistrationSays() {
   Expect(failures.empty(), "keybinding reachability mismatches:" + report);
 }
 
-// The probe must see a dispatch, or the matrix above passes vacuously.
 void TestDispatchProbeSeesAGlobalShortcut() {
   FocusFixture fixture(Focus::Tree);
   Expect(fixture.Press(SDLK_F, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)) ==
@@ -273,7 +242,7 @@ void TestDispatchProbeSeesAGlobalShortcut() {
          "Ctrl+F from the tree should dispatch nothing (find is an editor text shortcut)");
 }
 
-}  // namespace
+}
 
 void RegisterKeybindingReachabilityTests(std::vector<TestCase>& tests) {
   AddTest(tests, "KeybindingReachability/DispatchProbeSeesAGlobalShortcut",
@@ -282,4 +251,4 @@ void RegisterKeybindingReachabilityTests(std::vector<TestCase>& tests) {
           TestEveryBuiltinBindingDispatchesWhereItsRegistrationSays);
 }
 
-}  // namespace microide::tests
+}

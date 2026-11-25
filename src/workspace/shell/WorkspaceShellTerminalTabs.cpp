@@ -18,11 +18,6 @@
 
 namespace microide::workspace {
 
-// The terminal strip's tab, pane and panel verbs live on TerminalPanelService;
-// this TU keeps only what needs the shell itself — the session launch (project
-// launcher, settings, wake channel), the focus-event sync and the per-tick
-// session drain that also owns the clipboard and notification side effects.
-
 namespace {
 
 std::size_t ResolvedScrollbackLines(const std::optional<std::string>& setting) {
@@ -30,18 +25,12 @@ std::size_t ResolvedScrollbackLines(const std::optional<std::string>& setting) {
   return static_cast<std::size_t>(std::clamp(parsed, 200, 100000));
 }
 
-}  // namespace
+}
 
 TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
   if (glue_->terminal_panel_service != nullptr) {
     return *glue_->terminal_panel_service;
   }
-  // Starts a session the way every terminal in this project starts: the
-  // project's launcher (a remote project's terminal is this same call and its
-  // shell runs on the host, TD-2026-09-22-301), the project's `terminal.shell`,
-  // the scrollback cap and the shell's wake channel.
-  // `project_launcher`: the launcher of the project the pane belongs to -- the
-  // active one's, except for a host terminal adopted into a background project.
   const auto start_pane = [this](TerminalPaneState& pane, const platform::ProcessLauncher& project_launcher,
                                  const std::filesystem::path& cwd, const std::string& command,
                                  terminal::HostIdentity attach) {
@@ -54,13 +43,7 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
         GetSettingValue("remote.predict").value_or("adaptive")));
     pane.launch_working_directory = cwd;
     pane.launch_command = command;
-    // A pane with its own launcher (the ssh authentication tab, a local terminal in
-    // a remote project) runs through it, else through the project's. A host's shell
-    // is the host's login shell: `terminal.shell` names a program on THIS machine.
     const platform::ProcessLauncher& launcher = pane.launcher != nullptr ? *pane.launcher : project_launcher;
-    // Test mode stands in for the project's own local shells only: a host terminal
-    // runs on the (fake) host, and an own-launcher pane is started on purpose — the
-    // authentication tab's ssh must really run for the connection to go on.
     return terminal::UsePlaceholderTerminalsForTesting() && pane.launcher == nullptr && launcher.is_local()
                ? pane.session.StartPlaceholderForTesting(cwd, command)
                : pane.session.Start(launcher, cwd, command,
@@ -100,8 +83,6 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
                                 std::move(attach))) {
                   return nullptr;
                 }
-                // Waiting for the project's connection: say for what, in the
-                // connection's own words, until it is up (host_terminals_waiting).
                 if (pane->session.host_pending() && glue_->remote_host_service != nullptr) {
                   pane->session.SetPendingStatus(glue_->remote_host_service->PendingTerminalLine(
                       context_.current_project_state.root));
@@ -161,8 +142,6 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
       .setting = [this](std::string_view key) { return GetSettingValue(std::string(key)); },
       .set_status_segment =
           [this](StatusBarSegmentValue value) {
-            // Published from sync ticks, outside any frame: ask for one. The
-            // status bar is derived, so the frame repaints the segments that moved.
             if (status_bar_service_.SetSegment(StatusBarSegmentId::Remote, std::move(value))) {
               RequestPreparedFrame();
             }
@@ -170,8 +149,8 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
       .compare_files =
           [this](const std::filesystem::path& left, std::string left_label,
                  const std::filesystem::path& right, std::string right_label) -> std::string {
-            std::optional<CompareInput> left_input = ReadFileCompareInput(left, /*editable=*/false);
-            std::optional<CompareInput> right_input = ReadFileCompareInput(right, /*editable=*/true);
+            std::optional<CompareInput> left_input = ReadFileCompareInput(left, false);
+            std::optional<CompareInput> right_input = ReadFileCompareInput(right, true);
             if (!left_input.has_value() || !right_input.has_value()) {
               return "cannot read " + (left_input.has_value() ? right : left).string();
             }
@@ -184,16 +163,12 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
           },
       .project_reconnected =
           [this](const std::filesystem::path& root) {
-            // A git refresh that failed while the link was down left a stale or
-            // failed snapshot; nothing else would ask again until a file changes.
             if (context_.current_project_state.root == root) {
               RequestGitSidebarRefresh();
             }
           },
       .start_host_terminals =
           [this](const std::filesystem::path& root) {
-            // The project's own state, active or not: a background project's
-            // terminals start with its connection too.
             ProjectWorkspaceState* state = context_.ProjectStateForRoot(root);
             if (state != nullptr && TerminalPanelService::StartPendingHostPanes(*state) > 0 &&
                 state == &context_.current_project_state) {
@@ -226,7 +201,7 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
                 }
                 switch (pane->session.host_reattach()) {
                   case terminal::HostReattach::Pending:
-                    continue;  // not answered yet: the next summary counts it
+                    continue;
                   case terminal::HostReattach::Reattached:
                     ++claims.reattached;
                     break;
@@ -274,7 +249,7 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
                 }
               }
             }
-            return false;  // closed meanwhile
+            return false;
           },
       .recent_terminal_lines =
           [this](const std::filesystem::path& root, const std::function<bool(std::string_view line)>& visit) {
@@ -282,7 +257,7 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
             if (state == nullptr) {
               return;
             }
-            constexpr std::size_t kLines = 200;  // the screen and what scrolled just above it
+            constexpr std::size_t kLines = 200;
             std::string text;
             for (const auto& tab : state->terminal_tabs) {
               for (const auto& pane : tab->panes) {
@@ -311,7 +286,6 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
           },
       .git_status_pushed =
           [this](const std::filesystem::path& root) {
-            // Rendered from the push: the refresh reads it instead of running git.
             if (context_.current_project_state.root == root) {
               RequestGitSidebarRefresh();
             }
@@ -343,8 +317,6 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
             if (state == nullptr || !TakeRoamingReview(text, state)) {
               return;
             }
-            // Kept as this machine's own from here on. A project in the
-            // background writes its configuration when it next comes forward.
             if (state == &context_.current_project_state) {
               MakePersistenceCoordinator().SaveConfigState();
               RequestPreparedFrame();
@@ -372,9 +344,6 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
             if (!MakeCompareMergeService().diff_tabs().OpenMergeEditor(base, incoming, current, output)) {
               return std::string("the merge editor did not open");
             }
-            // The output is the mirror's file, which is "mine": a fresh tab starts
-            // from the merge instead, so the host's clean changes are in the result.
-            // A tab already open with edits of its own is left as it is.
             if (MergeTabState* merge = ActiveMergeTab(); merge != nullptr && !merge->result_viewport.dirty()) {
               RefreshMergeTabDerivedState(*merge);
             }
@@ -389,10 +358,6 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
               if (state == &context_.current_project_state) {
                 RequestPreparedFrame();
               }
-              // Every project's tab wears its connection's state, a background one
-              // too. It is pushed here, so nothing polls; and only a change of that
-              // state repaints the strip, not every sync count. A frame: the strip's
-              // unit keys on its sources' version, which folds each tab's stage.
               if (editor::WorstRemoteStage(status) != shown) {
                 RequestPreparedFrame();
               }
@@ -442,7 +407,6 @@ void WorkspaceShell::SyncTerminalFocusState() {
       if (pane == nullptr) {
         continue;
       }
-      // Only the active pane of the focused tab has the keyboard.
       const bool should_focus = focused_index.has_value() && *focused_index == index &&
                                 pane_index == tab->active_pane && pane->session.WantsFocusEvents();
       if (pane->focus_events_active == should_focus) {
@@ -458,34 +422,19 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   const bool panel_visible_before = BottomPanelVisible();
   const std::size_t tab_count_before = context_.current_project_state.terminal_tabs.size();
   const bool had_terminal_tabs = tab_count_before > 0;
-  // OSC 52 lets a program running in the terminal set the system clipboard. That
-  // is a silent poisoning vector (any output could swap a copied command for a
-  // malicious one), so honor it only when the user has opted in. The pending text
-  // is still drained either way so it can't accumulate.
   const bool allow_osc52_clipboard =
       SettingFlagEnabled(GetSettingValue("terminal.osc52_clipboard_write"), false);
   const bool terminal_on_screen =
       context_.current_project_state.panel.content == PanelContentKind::Terminal;
   const std::size_t active_index = context_.current_project_state.active_terminal_tab_index;
   bool badge_changed = false;
-  // What the bottom panel paints an unstyled cell with (resolve_terminal_colors):
-  // programs ask for it to pick their own light or dark palette.
   const util::Rgba8 default_foreground{theme_.text_primary.r, theme_.text_primary.g,
                                        theme_.text_primary.b, 0xff};
   const util::Rgba8 default_background{theme_.surface_background.r, theme_.surface_background.g,
                                        theme_.surface_background.b, 0xff};
-  // One drain for every pane of every open project. A background project's
-  // terminals used to wait for that project to come to the front: an agent's
-  // "needs your input" (OSC 9), a bell, or a host program's $BROWSER request (a
-  // `claude` login) started in project B surfaced only when B was activated
-  // (TD-2026-11-01-427 item 2). Its toasts name the project, as every result
-  // finishing behind the front project does.
-  // Whether a drained project's host pane holds a terminal its saved session does
-  // not name: set by `drain`, read after it.
   bool host_terminal_unrecorded = false;
   InteractionState& interaction = context_.interaction_state;
   const auto& front_tabs = context_.current_project_state.terminal_tabs;
-  // Read once, and only by a drain that has an alert to decide.
   std::optional<bool> alert_setting;
   const auto alert_when_unfocused = [&]() {
     if (!alert_setting.has_value()) {
@@ -509,33 +458,21 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
         }
         pane->session.SetDefaultColors(default_foreground, default_background);
         const bool output_arrived = pane->session.ConsumeWakeEvent();
-        // A host terminal's handle arrives with its term/open (or attach) answer,
-        // after the pane started: from here on a crash would leave it running on
-        // the host with no record of which tab it was.
         if (pane->launcher == nullptr) {
           if (const std::uint64_t handle = pane->session.host_handle(); handle != pane->seen_host_handle) {
             pane->seen_host_handle = handle;
             host_terminal_unrecorded = host_terminal_unrecorded || handle != 0;
           }
         }
-        // Output in a tab the user cannot see lights its strip tab up, so an agent
-        // finishing in a background tab (or behind a hidden panel) is visible
-        // without switching to it. The frame that shows the tab clears it.
         if (output_arrived && !tab_on_screen && !tab->has_unseen_output) {
           tab->has_unseen_output = true;
           marked = true;
         }
-        // Both consumed whether or not the tab is on screen, so a bell rung while
-        // the user was watching does not mark the tab later. What they do -- the
-        // tab's mark and a toast for a tab out of sight, the window flagged and a
-        // desktop notification for a window out of focus -- is DecideTerminalAlert's.
         const bool bell = pane->session.ConsumeBell();
         const std::optional<terminal::TerminalSession::Notification> notification =
             pane->session.ConsumeNotification();
         if (bell || notification.has_value()) {
           const std::string terminal_label = pane->session.LaunchLabel();
-          // The front project's name is asked for only here, where an alert needs
-          // it: the drain runs at every terminal wake, and a label is a string.
           const bool in_front = &tabs == &front_tabs;
           const std::string front_label = in_front ? context_.current_project_state.id.Label() : std::string();
           TerminalAlertOutcome alert = DecideTerminalAlert(TerminalAlert{
@@ -566,21 +503,13 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
           if (alert.desktop.has_value() &&
               AdmitDesktopNotification(SDL_GetTicks(), interaction.last_desktop_notification_ms)) {
             ++interaction.desktop_notifications_posted;
-            // The test runner's switch for anything that pops on the developer's
-            // desktop; the spawn waits on the tool, so it is the executor's.
             if (!NativeDialogsDisabledForTesting()) {
               project_background_executor_.Post([posted = std::move(*alert.desktop)]() {
-                (void)platform::ShowDesktopNotification(posted.summary, posted.body);  // best effort
+                (void)platform::ShowDesktopNotification(posted.summary, posted.body);
               });
             }
           }
         }
-        // A program on the host asked for a URL through the BROWSER its server
-        // gives it (claude's login, `gh auth login --web`): open it here, where
-        // the user is, as a click on the printed link would -- whichever project
-        // the terminal belongs to (the pane carries its own launcher). Or it ran
-        // its $EDITOR on a file (git's commit message, an agent CLI's prompt):
-        // edited here in a tab, and the program goes on when that closes.
         terminal::TerminalHostRequests requests = pane->session.ConsumeHostRequests();
         if (requests.open_url.has_value()) {
           (void)MakeTerminalPanelService().OpenUrlForPane(pane.get(), *requests.open_url);
@@ -590,9 +519,6 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
                                                     std::move(*requests.edit));
         }
         if (pane->session.ConsumeOversizedOsc52Dropped()) {
-          // An OSC 52 clipboard write that overran the escape-sequence buffer was
-          // dropped. Surface it rather than fail silently so the user knows their
-          // (too-large) clipboard write did not land.
           Notify(NotificationService::Tone::Info,
                  "A terminal program tried to set the clipboard (OSC 52), but the payload "
                  "was too large and was ignored.");
@@ -603,9 +529,6 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
           if (allow_osc52_clipboard) {
             WriteClipboardText(*clipboard_text);
           } else {
-            // Surface every blocked write so it is not a silent regression for users
-            // who rely on OSC 52 yank-to-clipboard (tmux/vim over SSH). The toast
-            // service coalesces/expires duplicates, so this cannot flood the UI.
             Notify(NotificationService::Tone::Info,
                    "A terminal program tried to set the clipboard (OSC 52). Enable "
                    "\"Allow Terminal Clipboard Writes (OSC 52)\" in Settings to permit it.");
@@ -619,7 +542,6 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
                         terminal_on_screen ? std::optional<std::size_t>(active_index) : std::nullopt,
                         {});
   if (host_terminal_unrecorded) {
-    // Recorded the way unsaved text is: the crash-safety session flush, debounced.
     context_.current_project_state.host_terminals_unrecorded = true;
     session_flush_.Note(SDL_GetTicks());
   }
@@ -628,14 +550,9 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
     if (ProjectWorkspaceState* background = catalog.entries[i].get();
         background != nullptr && i != catalog.active_index && background != &context_.current_project_state) {
       (void)drain(background->root, background->terminal_tabs, std::nullopt, background->id.Label());
-      // Quit re-records it (record_inactive_host_terminals), even when a switch
-      // wrote this project's session before the handle was known.
       background->host_terminals_unrecorded = background->host_terminals_unrecorded || host_terminal_unrecorded;
     }
   }
-  // Exited terminal tabs are intentionally retained until the user closes them,
-  // so the `[process exited]` marker and prior command output stay inspectable
-  // (mirrors VS Code's task-terminal exit behavior). TD-2026-07-17A-130.
   SyncTerminalFocusState();
   if (had_terminal_tabs) {
     const bool reloaded = ReloadProjectIfFilesChanged(false);
@@ -643,20 +560,13 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
       RequestAutomaticGitSidebarRefresh();
     }
   }
-  // What a session's update changes on screen is derived: a pane's rows (its new
-  // snapshot), a tab's title or badge (the header's units), the panel opening or
-  // closing and the tabs there are (the chrome's regions, the body's unit). A
-  // frame, when the panel was or is shown. (An update repainted the panel's whole
-  // rect, and one that changed the tabs or the panel's visibility the window.)
   if (BottomPanelVisible() != panel_visible_before) {
     NoteLayoutInputsChanged();
   }
   if (panel_visible_before || BottomPanelVisible()) {
     RequestPreparedFrame();
   } else if (badge_changed) {
-    // The panel is hidden, so there is no strip to repaint; the badge shows the
-    // next time it is. Nothing to do now.
   }
 }
 
-}  // namespace microide::workspace
+}

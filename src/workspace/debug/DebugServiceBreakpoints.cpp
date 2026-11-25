@@ -85,7 +85,7 @@ std::optional<std::size_t> FindFunctionBreakpointIndex(
   return std::nullopt;
 }
 
-}  // namespace
+}
 
 void DebugService::RemoveFunctionBreakpointByName(const std::string& name) {
   if (const auto index =
@@ -123,7 +123,6 @@ void DebugService::ResendFunctionBreakpointsAndSync() {
 
 void DebugService::ResendExceptionFiltersAndSync() {
   SyncBreakpointsPanel();
-  // Live re-send so the change takes effect immediately on an active session.
   if (DebugSession* session = CurrentDapManager().ActiveSession();
       session != nullptr && session->IsActive()) {
     session->ResendExceptionFilters();
@@ -140,8 +139,6 @@ bool DebugService::ShiftBreakpointsForAppliedEdit(const std::filesystem::path& p
     return false;
   }
   SyncBreakpointsPanel();
-  // Live re-send so an active session rebinds the moved lines immediately; no-op
-  // when no session is running.
   ResendBreakpointsForFile(path);
   return true;
 }
@@ -154,12 +151,10 @@ bool DebugService::ShiftBreakpointsForViewportEdit(const editor::TextViewport& v
   const std::uint64_t revision = viewport.content_revision();
   const auto [it, first] = breakpoints_followed_revision_.try_emplace(path.native(), revision);
   if (!first && it->second == revision) {
-    return false;  // nothing changed since the last follow: no edit to slide through
+    return false;
   }
   const std::uint64_t followed = it->second;
   it->second = revision;
-  // The whole step from the revision followed when the record covers it; else the
-  // latest edit alone (the first follow of a file, or several edits since).
   const editor::AppliedEdit* edit = first ? nullptr : viewport.AppliedEditFromRevision(followed);
   if (edit == nullptr) {
     edit = viewport.LatestAppliedEdit();
@@ -172,4 +167,4 @@ void DebugService::SyncBreakpointsPanel() {
   state.debug_breakpoints_panel.Rebuild(state.breakpoint_store, state.function_breakpoint_store);
 }
 
-}  // namespace microide::workspace
+}

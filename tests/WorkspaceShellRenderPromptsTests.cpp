@@ -12,17 +12,6 @@
 #include <string>
 #include <vector>
 
-// The prompt surfaces' PAINT path. WorkspaceShellPromptTests drives the prompt
-// state machine thoroughly -- opening, typing, confirming, cancelling -- without
-// a renderer, so WorkspaceShellRenderPrompts.cpp sat at 32.14%: the two branches
-// that only a painted frame takes (the text-input field, the detail line) and
-// every per-action title/message/label combination were never drawn.
-//
-// The interesting axis is the ACTION, not the pixels: the title, message, detail
-// and button labels are a switch over 22 actions, and three of them (DeletePath,
-// DiscardGitEntry, OpenExternalUrl) compose their message from live state rather
-// than returning a literal. Painting one action would leave the other 21 dark.
-
 namespace microide::tests {
 namespace {
 
@@ -49,13 +38,9 @@ void OpenShell(WorkspaceShell& shell, const std::filesystem::path& root,
 }
 
 void PaintPromptSurface(WorkspaceShell& shell, SoftwareCanvas& canvas) {
-  // Vacuity guard. RenderPromptSurface returns immediately when the surface is
-  // hidden, and the frame underneath still paints and still comes out opaque --
-  // so a pixel assertion alone would pass on a prompt that was never shown.
   Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
          "the prompt surface must be visible for its paint to be exercised");
   WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
-  // The prompt draws a full-window backdrop, so the window centre belongs to it.
   const SDL_Color center = canvas.PixelAt(kWindowWidth / 2, kWindowHeight / 2);
   Expect(center.a == 255, "a painted prompt frame should be fully opaque");
 }
@@ -98,8 +83,6 @@ void TestPromptSurfacePaintsEveryAction() {
       {Action::RenameSymbol, Kind::TextInput},
       {Action::ConfirmRenameSave, Kind::Confirm},
   };
-  // A detail long enough to need truncation, since the detail line is drawn
-  // through TruncateLabelView and the fits/does-not-fit cases differ.
   const std::string long_detail =
       "https://example.invalid/a/very/long/link/that/will/not/fit/in/the/dialog/width";
 
@@ -108,11 +91,9 @@ void TestPromptSurfacePaintsEveryAction() {
                                                        long_detail, "typed input text");
     PaintPromptSurface(shell, canvas);
 
-    // The second button selected: the active-button visual is a separate fill.
     WorkspaceShellTestAccess::SetPromptSurfaceSelectedButton(shell, 1);
     PaintPromptSurface(shell, canvas);
 
-    // Empty detail takes the other side of the detail-line branch.
     WorkspaceShellTestAccess::OpenPromptSurfaceForTest(shell, entry.action, entry.kind, source,
                                                        std::string{}, std::string{});
     PaintPromptSurface(shell, canvas);
@@ -120,10 +101,6 @@ void TestPromptSurfacePaintsEveryAction() {
 }
 
 void TestPromptSurfacePaintsWithMoreButtonsThanLabels() {
-  // `button_count` is an int on the prompt state and the labels are a fixed
-  // pair, so the rect list can be longer than the label list. Nothing sets it
-  // above 2 today; the render bounds its loop by both, and this is what holds
-  // that bound in place.
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path source = MakeProject(root);
@@ -138,10 +115,6 @@ void TestPromptSurfacePaintsWithMoreButtonsThanLabels() {
   bool saw_more_rects_than_labels = false;
   for (const int count : {1, 2, 3, 7}) {
     WorkspaceShellTestAccess::SetPromptSurfaceButtonCount(shell, count);
-    // State the mismatch as a fact rather than trusting the paint not to crash:
-    // a sanitizer would only catch the overrun if the bound were removed AND the
-    // read happened to land outside the object. These two numbers are the whole
-    // hazard, and they are read independently of the render.
     const std::size_t rects = WorkspaceShellTestAccess::PromptSurfaceButtonRectCount(shell);
     const std::size_t labels = WorkspaceShellTestAccess::PromptSurfaceLabelCount(shell);
     Expect(rects == static_cast<std::size_t>(std::max(1, count)),
@@ -171,8 +144,6 @@ void TestDirtyPromptPaintsEveryKind() {
       DirtyPromptState::Kind::RenamePath,   DirtyPromptState::Kind::DeletePath,
   };
   for (const DirtyPromptState::Kind kind : kinds) {
-    // One dirty tab and several: the labels switch between "Save"/"Save all"
-    // and the message between singular and plural, so both are drawn.
     for (const std::size_t dirty_count : {std::size_t{1}, std::size_t{7}}) {
       WorkspaceShellTestAccess::ShowDirtyPromptForTest(shell, kind, dirty_count);
       Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
@@ -189,9 +160,6 @@ void TestDirtyPromptPaintsEveryKind() {
 }
 
 void TestPromptsPaintAtDegenerateWindowSizes() {
-  // A window smaller than the dialog. The dialog rect is computed from the full
-  // window, so this is where its width goes to zero and the truncation helpers
-  // are handed a negative budget.
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path source = MakeProject(root);
@@ -220,7 +188,7 @@ void TestPromptsPaintAtDegenerateWindowSizes() {
   }
 }
 
-}  // namespace
+}
 
 void RegisterWorkspaceShellRenderPromptsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShellRenderPrompts/PaintsEveryAction",
@@ -233,4 +201,4 @@ void RegisterWorkspaceShellRenderPromptsTests(std::vector<TestCase>& tests) {
           TestPromptsPaintAtDegenerateWindowSizes);
 }
 
-}  // namespace microide::tests
+}

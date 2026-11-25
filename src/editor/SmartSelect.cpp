@@ -22,9 +22,6 @@ bool SameRange(const SelectionRange& a, const SelectionRange& b) {
   return a.start == b.start && a.end == b.end;
 }
 
-// The string literals of one line as [open quote, close quote] byte columns. A
-// backslash escapes the next byte; an unterminated quote runs to the line's end
-// and is not a span.
 std::vector<std::array<std::size_t, 2>> StringSpans(std::string_view line) {
   std::vector<std::array<std::size_t, 2>> spans;
   for (std::size_t i = 0; i < line.size(); ++i) {
@@ -72,8 +69,6 @@ int CloserIndex(char c) {
   return -1;
 }
 
-// Walks bytes outside string literals from `from` (inclusive) in `direction`,
-// calling `visit(position, c)` until it returns true or the scan cap is reached.
 template <typename Visit>
 std::optional<TextPosition> Walk(const TextBuffer& lines, TextPosition from, int direction,
                                  Visit&& visit) {
@@ -113,9 +108,6 @@ std::optional<TextPosition> Walk(const TextBuffer& lines, TextPosition from, int
   return std::nullopt;
 }
 
-// The innermost bracket pair around [start, end): its opener's and closer's
-// positions. The opener is the first unmatched one walking back from `start`; the
-// closer, the one matching it walking forward from `end`.
 std::optional<std::array<TextPosition, 2>> EnclosingPair(const TextBuffer& lines, TextPosition start,
                                                          TextPosition end) {
   std::vector<int> pending_closers;
@@ -140,7 +132,6 @@ std::optional<std::array<TextPosition, 2>> EnclosingPair(const TextBuffer& lines
   if (!opener.has_value()) {
     return std::nullopt;
   }
-  // From `end`, the closer of `kind` with everything opened since closed again.
   std::vector<int> pending_openers;
   const std::optional<TextPosition> closer =
       Walk(lines, end, 1, [&](TextPosition, char c) {
@@ -164,7 +155,7 @@ std::optional<std::array<TextPosition, 2>> EnclosingPair(const TextBuffer& lines
   return std::array<TextPosition, 2>{*opener, *closer};
 }
 
-}  // namespace
+}
 
 std::optional<SelectionRange> ExpandSelectionRange(const TextBuffer& lines, SelectionRange current) {
   if (lines.size() == 0) {
@@ -184,8 +175,6 @@ std::optional<SelectionRange> ExpandSelectionRange(const TextBuffer& lines, Sele
   if (current.start.line == current.end.line) {
     const std::size_t row = current.start.line;
     const std::string_view line = lines.LineView(row);
-    // The identifier run touching the selection -- also a call's name joining its
-    // argument list once the list is selected, as VS Code's ladder does.
     std::size_t word_start = std::min(current.start.column, line.size());
     std::size_t word_end = std::min(current.end.column, line.size());
     while (word_start > 0 && IsIdentifierByte(line[word_start - 1])) {
@@ -214,8 +203,6 @@ std::optional<SelectionRange> ExpandSelectionRange(const TextBuffer& lines, Sele
                           : SelectionRange{{row, 0}, {row, line.size()}});
   }
 
-  // Enclosing bracket pairs, innermost first; stop at the first that offers
-  // something (anything further out is larger than it).
   TextPosition from = current.start;
   TextPosition to = current.end;
   for (int depth = 0; depth < 64; ++depth) {
@@ -228,7 +215,7 @@ std::optional<SelectionRange> ExpandSelectionRange(const TextBuffer& lines, Sele
     offer(content);
     offer(whole);
     if (best.has_value() && Contains(whole, *best)) {
-      break;  // every pair further out is larger still
+      break;
     }
     from = (*pair)[0];
     to = {(*pair)[1].line, (*pair)[1].column + 1};
@@ -238,4 +225,4 @@ std::optional<SelectionRange> ExpandSelectionRange(const TextBuffer& lines, Sele
   return best;
 }
 
-}  // namespace microide::editor
+}

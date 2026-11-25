@@ -14,4 +14,4 @@ class GitPorcelainV2Parser {
                                   std::uint64_t refreshed_at_ms);
 };
 
-}  // namespace microide::project
+}

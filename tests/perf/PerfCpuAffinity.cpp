@@ -34,8 +34,6 @@ std::optional<std::uint64_t> ReadCpuMaxFrequencyKhz(int cpu) {
   return static_cast<std::uint64_t>(*parsed);
 }
 
-// "0-3,12-15" -> {0,1,2,3,12,13,14,15}. Returns empty on anything malformed so a
-// typo cannot silently pin to a single core.
 std::vector<int> ParseCpuList(const std::string& text) {
   std::vector<int> cpus;
   std::size_t at = 0;
@@ -105,7 +103,7 @@ bool PinTo(const std::vector<int>& cpus) {
   return sched_setaffinity(0, sizeof(set), &set) == 0;
 }
 
-}  // namespace
+}
 
 CpuAffinityPlan ApplyPerfCpuAffinity(const std::string& request) {
   if (request == "off") {
@@ -124,9 +122,6 @@ CpuAffinityPlan ApplyPerfCpuAffinity(const std::string& request) {
     return CpuAffinityPlan{.description = FormatCpuList(cpus) + " (explicit)", .pinned = true};
   }
 
-  // Group every online CPU by its advertised maximum frequency. A machine with a
-  // single group is homogeneous and needs no pinning; pinning it anyway would
-  // just shrink the pool the background executors run on.
   cpu_set_t online;
   CPU_ZERO(&online);
   if (sched_getaffinity(0, sizeof(online), &online) != 0) {
@@ -139,8 +134,6 @@ CpuAffinityPlan ApplyPerfCpuAffinity(const std::string& request) {
     }
     const auto khz = ReadCpuMaxFrequencyKhz(cpu);
     if (!khz.has_value()) {
-      // No cpufreq data (a VM, a kernel without the driver): treat the machine as
-      // homogeneous rather than guessing.
       return CpuAffinityPlan{.description = "no cpufreq data (no pinning)", .pinned = false};
     }
     by_frequency[*khz].push_back(cpu);
@@ -159,4 +152,4 @@ CpuAffinityPlan ApplyPerfCpuAffinity(const std::string& request) {
       .pinned = true};
 }
 
-}  // namespace microide::tests::perf
+}

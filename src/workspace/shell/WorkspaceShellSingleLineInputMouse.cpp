@@ -22,15 +22,9 @@ constexpr float kSingleLineInputTextPadX = 6.0f;
 constexpr float kOverlayFieldOuterPad = 12.0f;
 constexpr float kOverlayFieldHeight = 18.0f;
 
-// Sets caret to byte_offset, then either anchors a selection (extend=true) or
-// clears any existing selection (extend=false). Mirrors editor convention so
-// shift-click extends from the previous caret and a plain click collapses.
 void PlaceCaret(editor::SingleLineEditor& state, std::size_t byte_offset, bool extend) {
   const std::size_t clamped = std::min(byte_offset, state.text().size());
   if (extend) {
-    // Shift+click. Anchoring first and moving second left no selection at all:
-    // an anchor equal to the caret is empty and was normalized away before the
-    // caret moved. Found by the QA prompts-keyboard flow dragging across a field.
     state.ExtendSelectionTo(clamped);
     return;
   }
@@ -38,17 +32,13 @@ void PlaceCaret(editor::SingleLineEditor& state, std::size_t byte_offset, bool e
   state.SetCaret(clamped);
 }
 
-}  // namespace
+}
 
 std::size_t WorkspaceShell::HitTestSingleLineByteOffset(
     const editor::SingleLineEditor& state,
     std::string_view prefix,
     float available_width,
     float relative_x) const {
-  // Recompute view_start the same way ComputeSingleLineViewMetrics does so the
-  // returned byte index lines up with what the user actually clicked on,
-  // including the horizontally-scrolled case where the leftmost visible
-  // codepoint is well past byte 0.
   thread_local std::string full_scratch;
   full_scratch.clear();
   full_scratch.reserve(prefix.size() + state.text().size());
@@ -82,9 +72,6 @@ std::size_t WorkspaceShell::HitTestSingleLineByteOffset(
     cursor_x += before_cursor[i - 1].width;
     view_start_idx = i - 1;
   }
-  // If not even the single glyph immediately left of the caret fits, view_start_idx
-  // stays == size(); indexing it would read past the end (uninitialized CharEntry,
-  // UB) and corrupt the hit-test offset. Anchor the view at the caret instead.
   const std::size_t view_start =
       view_start_idx < before_cursor.size() ? before_cursor[view_start_idx].start : cursor_byte;
 
@@ -138,15 +125,10 @@ std::optional<WorkspaceShell::SingleLineInputHit> FilledHit(
   return hit;
 }
 
-}  // namespace
+}
 
 std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLineInputHit(
     const WorkspaceLayout& layout, float x, float y) {
-  // A modal prompt: its own input, when it has one (rename, create file), and
-  // nothing behind it. A confirmation (Delete, Discard All) is as modal as a text
-  // prompt; stopping only at one with an input let a click on the terminal find
-  // bar behind "Discard All Changes" focus it, under a dialog that kept the
-  // keyboard, with only the dialog repainted (soak 750ae3401299).
   if (context_.prompts.dirty_visible) {
     return std::nullopt;
   }
@@ -162,7 +144,6 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
     return std::nullopt;
   }
 
-  // Modal overlay (file finder, buffer search/replace, project search, commit picker).
   if (context_.current_project_state.overlay.visible) {
     const SDL_FRect overlay = ComputeOverlayRect(layout.overlay_anchor);
     if (!Contains(overlay, x, y)) {
@@ -175,8 +156,6 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
     };
 
     auto& state = context_.current_project_state;
-    // One source for where the query field sits; RenderViewModelBuilder paints it
-    // from the same helper, so the field can never be drawn off its hit target.
     const float query_row_offset = OverlayQueryRowOffset(state.overlay.mode);
     switch (state.overlay.mode) {
       case OverlayMode::FileFinder: {
@@ -188,8 +167,6 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
         break;
       }
       case OverlayMode::BufferSearch: {
-        // Compact find widget: fields carry no inline prefix, so the field rect
-        // from the shared layout (matching the renderer) is the hit target.
         const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(ActiveTabSurface(layout), false);
         if (Contains(fw.search_field, x, y)) {
           return FilledHit(TextInputSurface::BufferSearch, fw.search_field, "",
@@ -248,7 +225,6 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
     return std::nullopt;
   }
 
-  // Sidebar search query / replace fields.
   if (context_.current_project_state.sidebar.visible &&
       ActiveSidebarMode() == SidebarMode::Search &&
       Contains(layout.sidebar, x, y)) {
@@ -257,8 +233,6 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
       if (field.rect.w <= 0.0f || !Contains(field.rect, x, y)) {
         continue;
       }
-      // Activate the field if it's not already being edited so the click immediately
-      // refers to the live edit_buffer (which the renderer + key handler also use).
       if (!search.editing || search.edit_field != field.field) {
         BeginProjectSearchEdit(field.field);
       }
@@ -266,8 +240,6 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
     }
   }
 
-  // Terminal find bar query field. Uses the same layout frame prep handed the
-  // renderer, so click-to-caret lands exactly where the text is drawn.
   if (terminal_find_service_.visible() && BottomPanelShowsTerminal()) {
     const FindWidgetLayout fw =
         ComputeTerminalFindWidgetLayout(ActiveTerminalBodyRect(layout), layout);
@@ -277,7 +249,6 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
     }
   }
 
-  // Git commit-workflow subject field (a single-line input cached by the sidebar render).
   if (context_.current_project_state.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git &&
       context_.current_project_state.sidebar.git.commit_workflow.open) {
     auto& workflow = context_.current_project_state.sidebar.git.commit_workflow;
@@ -298,11 +269,6 @@ bool WorkspaceShell::HandleSingleLineInputMouseDown(const SDL_Event& event,
     return false;
   }
 
-  // The multi-line commit body is not a single-line surface, so hit-test it against its
-  // render-cached rect here (click positions the caret; double/triple-click select the
-  // word/line, matching the editor). Under the same modals FindSingleLineInputHit
-  // honours: behind a modal prompt or picker the body took the click, focus and a
-  // caret while the modal kept the keyboard (QA monkey, seed 607).
   const OverlayState& overlay = context_.current_project_state.overlay;
   const bool modal_up = context_.prompts.surface_visible ||
                         (overlay.visible && OverlayIsModal(overlay.mode));
@@ -358,7 +324,6 @@ bool WorkspaceShell::HandleSingleLineInputMouseDown(const SDL_Event& event,
   } else if (event.button.clicks == 2) {
     PlaceCaret(*hit->mutable_state, byte, false);
     if (!hit->mutable_state->SelectWordAt(byte)) {
-      // No word at this byte — leave the caret in place.
     }
   } else {
     PlaceCaret(*hit->mutable_state, byte, shift);
@@ -366,10 +331,8 @@ bool WorkspaceShell::HandleSingleLineInputMouseDown(const SDL_Event& event,
     context_.interaction_state.single_line_drag_surface = hit->surface;
   }
 
-  // Focus the surface owning the input so subsequent keystrokes route correctly.
   switch (hit->surface) {
     case TextInputSurface::PromptInput:
-      // Prompt is modal; focus already pinned by the prompt service.
       break;
     case TextInputSurface::TerminalFind:
       terminal_find_service_.SetFocused(true);
@@ -401,10 +364,7 @@ bool WorkspaceShell::HandleSingleLineInputMouseDown(const SDL_Event& event,
       break;
     case TextInputSurface::SettingsQuery:
     case TextInputSurface::SettingsValueEdit:
-      // The Settings overlay owns its own focus and mouse handling.
     case TextInputSurface::DebugVariableEdit:
-      // The Variables value field is entered/managed by the bottom-panel mouse
-      // coordinator, not the shared single-line hit-test path.
     case TextInputSurface::None:
     case TextInputSurface::Editor:
     case TextInputSurface::Terminal:
@@ -427,13 +387,7 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
   }
 
   const TextInputSurface surface = context_.interaction_state.single_line_drag_surface;
-  // Resolve the input by re-running FindSingleLineInputHit at the original press
-  // location is unnecessary — we trust the cached surface. Instead, query the
-  // rect again by name so we use up-to-date layout (window resize during drag).
-  // Iterate the same dispatch table the press used to find the matching state.
   std::optional<SingleLineInputHit> hit;
-  // Sweep candidate centers: cheaper than re-running the full dispatcher because
-  // the surface tells us exactly which rect helper to call.
   switch (surface) {
     case TextInputSurface::PromptInput: {
       if (context_.prompts.surface_visible &&
@@ -457,9 +411,6 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
     case TextInputSurface::SidebarSearchInclude:
     case TextInputSurface::SidebarSearchExclude:
     case TextInputSurface::TerminalFind: {
-      // Re-dispatch via FindSingleLineInputHit at the *current* pointer is wrong
-      // (the pointer may have left the rect mid-drag). Re-derive directly from
-      // the stored surface using the same layout math the press used.
       const SDL_FRect overlay = ComputeOverlayRect(layout.overlay_anchor);
       const auto overlay_field_rect = [&](float text_y) {
         return MakeRect(overlay.x + kOverlayFieldOuterPad, text_y - 4.0f,
@@ -545,12 +496,9 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
       break;
     }
     case TextInputSurface::CommitBody:
-      // The multi-line body manages its own drag selection.
     case TextInputSurface::SettingsQuery:
     case TextInputSurface::SettingsValueEdit:
-      // The Settings overlay manages its own drag selection.
     case TextInputSurface::DebugVariableEdit:
-      // The Variables value field has no shared drag-selection geometry.
     case TextInputSurface::None:
     case TextInputSurface::Editor:
     case TextInputSurface::Terminal:
@@ -563,9 +511,6 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
     return false;
   }
 
-  // The press placed the caret without selecting; the first motion anchors the
-  // selection there and every motion moves its other end (see ExtendSelectionTo
-  // for why the anchor cannot be set ahead of the caret).
   const float relative_x = static_cast<float>(event.motion.x) - hit->text_rect.x;
   const std::size_t byte =
       HitTestSingleLineByteOffset(*hit->state, hit->prefix, hit->available_width, relative_x);
@@ -574,4 +519,4 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
   return true;
 }
 
-}  // namespace microide::workspace
+}

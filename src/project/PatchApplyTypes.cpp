@@ -28,4 +28,4 @@ bool PatchOperationReversesPatch(const PatchOperationKind operation) {
   }
 }
 
-}  // namespace microide::project
+}

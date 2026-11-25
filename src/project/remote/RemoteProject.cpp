@@ -25,7 +25,7 @@ std::filesystem::path RecordPath(const std::filesystem::path& tree) {
   return tree.parent_path() / "meta" / "remote";
 }
 
-}  // namespace
+}
 
 std::filesystem::path RemoteProject::DefaultTree(std::string_view host,
                                                  std::string_view host_root) {
@@ -74,7 +74,6 @@ RemoteProject::RemoteProject(Config config, Listener listener)
 }
 
 RemoteProject::~RemoteProject() {
-  // The session first: its worker reports into the engine.
   session_.reset();
   if (engine_) {
     engine_->Flush();
@@ -131,18 +130,12 @@ ProjectLocality RemoteProject::locality() const {
 
 void RemoteProject::OnSessionStatus(const RemoteHostSession::Status& status) {
   if (status.state == RemoteHostSession::State::Ready && engine_ && workspace_) {
-    // A new connection: resubscribe first, then sync — a change between the two is
-    // in the manifest, and nothing is lost before it.
     std::string error;
     bool native = false;
     if (workspace_->SubscribeWatch(engine_->WatchSink(), &native, &error)) {
       std::lock_guard lock(watch_mutex_);
       watch_native_ = native;
     }
-    // The sidebar's status, pushed rather than asked for (§ 6.5). A host that
-    // refuses it is still usable: git simply runs per refresh. Through the
-    // workspace, not session_: this runs on the session's thread, which reports
-    // once more while ~RemoteProject's reset has already cleared session_.
     (void)workspace_->SubscribeGitStatus(config_.git_status_changed, &error);
     engine_->RequestSync();
   }
@@ -151,4 +144,4 @@ void RemoteProject::OnSessionStatus(const RemoteHostSession::Status& status) {
   }
 }
 
-}  // namespace microide::project::remote
+}

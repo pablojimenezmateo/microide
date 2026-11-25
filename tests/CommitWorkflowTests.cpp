@@ -36,8 +36,6 @@ using microide::workspace::EncodeProjectConfigRecord;
 using microide::workspace::PersistedCommitDraftState;
 using microide::workspace::PersistedProjectConfigState;
 
-// The pre-checks and commits here run against a real local repository (or a state
-// that names one), so every call names the local launcher.
 const platform::ProcessLauncher& Local() { return platform::LocalProcessLauncher(); }
 
 GitRepositoryState MakeRepositoryState() {
@@ -86,9 +84,6 @@ void TestEmptySubjectBlocksCommit() {
   Expect(!CommitPreChecksAllowExecution(checks, {}), "blocking checks should prevent commit");
 }
 
-// Regression: the subject-length gate counts Unicode scalar values, not bytes.
-// A subject that is well within the character limit but exceeds it in bytes
-// (accented / CJK text) must NOT be flagged as too long.
 void TestCommitSubjectLengthCountsCharactersNotBytes() {
   const GitRepositoryState state = MakeRepositoryState();
   const microide::project::CommitStagedSummary summary{.file_count = 1};
@@ -99,16 +94,11 @@ void TestCommitSubjectLengthCountsCharactersNotBytes() {
     return false;
   };
 
-  // 40 three-byte CJK characters = 120 bytes but only 40 characters — under the
-  // 72-character limit, so no long-subject check should fire.
   std::string cjk;
-  for (int i = 0; i < 40; ++i) cjk += "\xe5\xad\x97";  // 字
+  for (int i = 0; i < 40; ++i) cjk += "\xe5\xad\x97";
   Expect(!has_long_subject(RunCommitPreChecks(state, Local(), cjk, "", {}, &summary)),
          "a 40-character (120-byte) subject must not be flagged as too long");
 
-  // 80 characters really is over the limit and must still be flagged -- as a
-  // WARNING the user can acknowledge, not a block: git accepts any length and VS
-  // Code only decorates the input, so a project with a longer convention commits.
   const std::string too_long(80, 'a');
   const auto checks = RunCommitPreChecks(state, Local(), too_long, "", {}, &summary);
   Expect(has_long_subject(checks), "an 80-character subject must still be flagged as too long");
@@ -163,11 +153,6 @@ void TestCommitDraftPersistenceRoundTrip() {
   Expect(decoded.commit_draft->body == "Body text", "commit draft body mismatch");
 }
 
-// Regression: git status --porcelain=v2 emits exactly ONE record per path, so a
-// partially-staged file (`1 MM` — staged edit plus a further unstaged edit) is a single
-// GitRepositoryEntry that is both staged and worktree_dirty. The old two-entries-per-path
-// assumption never fired under v2, silently dropping the "commit includes only staged
-// hunks" warning.
 void TestPartialStageWarnsForV2SingleModifiedEntry() {
   GitRepositoryState state{
       .repository_root = "/repo",
@@ -192,7 +177,6 @@ void TestPartialStageWarnsForV2SingleModifiedEntry() {
   Expect(saw_partial,
          "a single staged+worktree-dirty (MM) entry must raise the partial-stage warning");
 
-  // A fully-staged file (M.) — staged but not worktree-dirty — must NOT warn.
   GitRepositoryState fully_staged = state;
   fully_staged.entries[0].worktree_dirty = false;
   const auto clean_checks = RunCommitPreChecks(fully_staged, Local(), "subject", "", {});
@@ -205,12 +189,6 @@ void TestPartialStageWarnsForV2SingleModifiedEntry() {
   Expect(!saw_clean, "a fully-staged (M.) file must not raise the partial-stage warning");
 }
 
-// Regression: RunCommitPreChecks accepts a precomputed staged summary so the
-// commit-workflow refresh does not run the identical `git diff --cached --numstat`
-// subprocess twice per refresh on the shell thread. It also holds the caller's
-// summary by *reference* (no whole-`files`-vector copy per keystroke); passing the
-// summary must still produce byte-identical checks to recomputing it internally,
-// and the reference-viewed `files` must still drive the partial-stage warning.
 void TestRunCommitPreChecksPrecomputedSummaryMatchesRecompute() {
   GitRepositoryState state{
       .repository_root = "/repo",
@@ -236,10 +214,6 @@ void TestRunCommitPreChecksPrecomputedSummaryMatchesRecompute() {
                reused[i].message == recomputed[i].message,
            "precomputed-summary path must yield identical checks");
   }
-  // The partial-stage warning is derived by iterating the precomputed summary's
-  // `files`; assert it fires through the reference view (mm.cpp is staged + worktree
-  // dirty) so a future "simplify back to a by-value copy" can't silently break the
-  // path this test exists to protect.
   const bool reused_has_partial = std::any_of(
       reused.begin(), reused.end(), [](const microide::project::CommitPreCheck& check) {
         return check.kind == microide::project::CommitPreCheckKind::UnstagedLeftovers;
@@ -248,15 +222,9 @@ void TestRunCommitPreChecksPrecomputedSummaryMatchesRecompute() {
          "the reference-viewed precomputed summary must still raise the partial-stage warning");
 }
 
-// Regression: a staged `=======` section divider (banner comment, RST/Markdown
-// underline) must NOT be mistaken for a leaked conflict marker. Only an *added*
-// line beginning with the unambiguous `<<<<<<<` / `>>>>>>>` sigils blocks the
-// commit. The old substring predicate matched a bare `=======` anywhere in the
-// diff and refused perfectly clean commits.
 void TestStagedDiffConflictMarkerDetection() {
   using microide::util::StagedDiffIntroducesConflictMarker;
 
-  // A banner divider of `=` is common, benign content -- must not trip.
   const std::string_view banner_diff =
       "diff --git a/mod.py b/mod.py\n"
       "--- a/mod.py\n"
@@ -268,7 +236,6 @@ void TestStagedDiffConflictMarkerDetection() {
   Expect(!StagedDiffIntroducesConflictMarker(banner_diff),
          "a staged `=======` divider must not be flagged as a conflict marker");
 
-  // An added `<<<<<<<` sigil at line start is a genuine leaked marker.
   const std::string_view leaked_diff =
       "diff --git a/mod.cpp b/mod.cpp\n"
       "--- a/mod.cpp\n"
@@ -281,8 +248,6 @@ void TestStagedDiffConflictMarkerDetection() {
   Expect(StagedDiffIntroducesConflictMarker(leaked_diff),
          "an added `<<<<<<<` marker must be flagged");
 
-  // A marker that only appears on a context line (already committed) or a removed
-  // line (being resolved) is not introduced by this commit.
   const std::string_view context_marker_diff =
       "@@ -1,3 +1,3 @@\n"
       " <<<<<<< HEAD\n"
@@ -291,7 +256,6 @@ void TestStagedDiffConflictMarkerDetection() {
   Expect(!StagedDiffIntroducesConflictMarker(context_marker_diff),
          "a marker on a context line must not block the commit");
 
-  // The `+++ b/path` file header must not be mistaken for an added marker.
   Expect(!StagedDiffIntroducesConflictMarker("+++ b/<<<<<<<weird\n"),
          "the +++ file header must not be treated as a marker line");
 }
@@ -303,8 +267,6 @@ void TestClassifyHookFailure() {
   Expect(project::ClassifyCommitFailure(1, "Please tell me who you are") ==
              CommitOperationResultCategory::AuthFailed,
          "missing author should classify as auth failure");
-  // Regression: output that merely contains the word "hook" (in a branch name,
-  // path, or message) must NOT be misclassified as a hook failure.
   Expect(project::ClassifyCommitFailure(1, "error: pathspec 'hooks/setup' did not match") ==
              CommitOperationResultCategory::UnknownError,
          "a path containing 'hook' is not a hook failure");
@@ -324,9 +286,6 @@ void TestExecuteCommitInTempRepo() {
   Expect(result.category == CommitOperationResultCategory::Success, "commit should succeed");
 }
 
-// Regression: the commit message is fed on stdin via `commit -F -`, not `-m`, so
-// a body with shell-significant bytes and one far larger than argv limits is
-// recorded verbatim rather than mangled or rejected.
 void TestExecuteCommitPreservesShellSignificantAndLargeBody() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path& root = temp_dir.path();
@@ -342,8 +301,6 @@ void TestExecuteCommitPreservesShellSignificantAndLargeBody() {
   Expect(result.category == CommitOperationResultCategory::Success,
          "a huge shell-significant body must commit via -F - stdin");
 
-  // %B is the raw commit message (subject + blank line + body). It must contain
-  // the subject and the long tail verbatim.
   microide::project::GitRepository repo(root, Local());
   const auto logged = repo.Execute({"log", "-1", "--format=%B"});
   Expect(logged.success(), "git log should read back the message");
@@ -353,12 +310,6 @@ void TestExecuteCommitPreservesShellSignificantAndLargeBody() {
          "the long body must be recorded verbatim (argv limits bypassed)");
 }
 
-// TD-2026-08-06-159: `CurrentSummary()` replaced a `CurrentState()` deep copy on
-// the per-refresh path (`InvalidateStaleMergeTabs` needed two numbers and was
-// copying the entry list and the tree-status map to get them). It has to keep
-// agreeing with the state it summarizes, including across a conflicted merge —
-// which is the case that makes `conflicted_entry_count` non-zero, and the only
-// consumer of it.
 void TestGitRepositorySummaryAgreesWithFullState() {
   using microide::project::GitRepositoryState;
   using microide::project::ProjectBackgroundExecutor;
@@ -377,7 +328,6 @@ void TestGitRepositorySummaryAgreesWithFullState() {
   RequireGitCommandSuccess(repo, {"checkout", "main"}, "back to the base branch");
   WriteFile(repo / "shared.txt", "ours\n");
   CommitAll(repo, "ours", "ours");
-  // Expected to fail: that is what leaves the conflicted entry in the index.
   RunGitCommand(repo, {"merge", "theirs"});
 
   ProjectBackgroundExecutor executor;
@@ -410,9 +360,6 @@ void TestGitRepositorySummaryAgreesWithFullState() {
   Expect(check("after the conflicted refresh") > 0,
          "the fixture must actually leave a conflicted entry, else the count proves nothing");
 
-  // A refresh must still install the state it built: the publish moved after the
-  // snapshot build, so a broken ordering would leave CurrentState() on the old
-  // generation while the sidebar snapshot advanced.
   const std::uint64_t first_generation = git_service.CurrentState().generation;
   RequireGitCommandSuccess(repo, {"checkout", "--ours", "shared.txt"}, "resolve the conflict");
   RequireGitCommandSuccess(repo, {"add", "shared.txt"}, "stage the resolution");
@@ -424,11 +371,6 @@ void TestGitRepositorySummaryAgreesWithFullState() {
   Expect(check("after resolving") == 0, "the resolved tree reports no conflicted entries");
 }
 
-// Regression: the background commit result must be published to the shared
-// CommitWorkflowState on the MAIN thread, never mutated on the worker thread
-// (which would race the render thread reading subject/body/status_message).
-// After the worker finishes the git commit, the state must stay "in flight"
-// until DrainCompletions() runs on the main thread.
 void TestCommitResultIsMarshaledToMainThread() {
   using microide::project::ProjectBackgroundExecutor;
   using microide::workspace::CommitWorkflowService;
@@ -442,7 +384,6 @@ void TestCommitResultIsMarshaledToMainThread() {
   InitializeGitRepo(repo);
   WriteFile(repo / "seed.txt", "seed\n");
   CommitAll(repo, "base", "base");
-  // Stage a change so there is something to commit.
   WriteFile(repo / "seed.txt", "seed\nmore\n");
   RequireGitCommandSuccess(repo, {"add", "seed.txt"}, "stage change for commit marshaling test");
 
@@ -457,7 +398,6 @@ void TestCommitResultIsMarshaledToMainThread() {
   CommitWorkflowState state;
   service.Open(state);
   state.subject.SetText("Add more");
-  // Acknowledge any non-blocking warnings so the commit is executable.
   for (const auto& check : state.checks) {
     if (check.severity == project::CommitPreCheckSeverity::Warning) {
       state.acknowledged_warning_ids.insert(check.id);
@@ -468,33 +408,22 @@ void TestCommitResultIsMarshaledToMainThread() {
   Expect(dispatched, "a staged change with a subject should dispatch a commit");
   Expect(state.operation_in_flight, "the commit should be in flight immediately after dispatch");
 
-  // Wait for the worker to finish the git commit and queue its completion for the
-  // main thread — WITHOUT cancelling the task (Shutdown/Drain would cancel it if it
-  // were still queued). Polling the completion count observes the worker naturally.
   for (int i = 0; i < 2000 && service.PendingCompletionCount() == 0; ++i) {
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
   Expect(service.PendingCompletionCount() > 0,
          "the worker should queue a completion for the main thread");
 
-  // Crucially, the result must NOT have been applied on the worker thread.
   Expect(state.operation_in_flight,
          "the commit result must not be published from the worker thread");
   Expect(state.status_message == "Committing\xE2\x80\xA6",
          "state must stay pending until the main thread drains the completion");
 
-  // Draining on the main thread publishes the result.
   service.DrainCompletions();
   Expect(!state.operation_in_flight,
          "draining completions on the main thread must publish the commit result");
 }
 
-// Regression: a commit dispatched from a project state that is then CLOSED must not
-// publish into freed memory. The queued completion captures the CommitWorkflowState
-// by reference, and that state lives inside a ProjectWorkspaceState that a project
-// tab close destroys. The generation guard only covered "a newer commit was
-// dispatched", not "the target went away", so draining after a close was a
-// use-after-free. Heap-allocate the state so ASAN sees the freed region.
 void TestCommitCompletionSurvivesStateDestruction() {
   using microide::project::ProjectBackgroundExecutor;
   using microide::workspace::CommitWorkflowService;
@@ -530,25 +459,18 @@ void TestCommitCompletionSurvivesStateDestruction() {
   Expect(service.RequestCommit(*state, CommitOperationKind::Create),
          "a staged change with a subject should dispatch a commit");
 
-  // Let the worker finish and queue its completion, so the completion is genuinely
-  // pending when the state dies — the exact interleaving that used to crash.
   for (int i = 0; i < 2000 && service.PendingCompletionCount() == 0; ++i) {
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
   Expect(service.PendingCompletionCount() > 0,
          "the worker should queue a completion for the main thread");
 
-  // The project tab closes: the state is destroyed with its completion still queued.
   state.reset();
 
-  // Draining must run the queued closure and drop it, not publish into freed memory.
   service.DrainCompletions();
   Expect(service.PendingCompletionCount() == 0, "the abandoned completion should be consumed");
 }
 
-// A state destroyed AFTER its completion published must not cancel an unrelated
-// commit that a different project dispatched in the meantime. The claim is released
-// on publication, so its destructor has nothing left to abandon.
 void TestPublishedCommitDoesNotCancelALaterOne() {
   using microide::project::ProjectBackgroundExecutor;
   using microide::workspace::CommitWorkflowService;
@@ -592,7 +514,6 @@ void TestPublishedCommitDoesNotCancelALaterOne() {
   service.DrainCompletions();
   Expect(!first->operation_in_flight, "the first commit should have published");
 
-  // Second project dispatches; only now does the first project's tab close.
   WriteFile(repo / "seed.txt", "seed\nfirst\nsecond\n");
   RequireGitCommandSuccess(repo, {"add", "seed.txt"}, "stage second change");
   git_service.RunRefreshSynchronouslyForTesting(repo, Local(),
@@ -610,11 +531,6 @@ void TestPublishedCommitDoesNotCancelALaterOne() {
          "closing an already-published state must not cancel the live commit");
 }
 
-// Regression: the ConflictMarkers pre-check runs an unbounded `git diff --cached`
-// on the calling thread. Interactive commit-panel refreshes (every keystroke) must
-// skip it for speed by passing scan_staged_diff_for_conflict_markers=false; only the
-// pre-dispatch check pays for it. Gating off must not surface the blocking check;
-// gating on must surface it for the same staged content.
 void TestConflictMarkerScanGate() {
   using microide::workspace::GitRepositoryService;
   using microide::workspace::GitSidebarRefreshScope;
@@ -626,7 +542,6 @@ void TestConflictMarkerScanGate() {
   InitializeGitRepo(repo);
   WriteFile(repo / "seed.txt", "seed\n");
   CommitAll(repo, "base", "base");
-  // Stage a file whose added content leaks a real conflict-marker sigil.
   WriteFile(repo / "conflict.txt", "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\n");
   RequireGitCommandSuccess(repo, {"add", "conflict.txt"}, "stage leaked conflict markers");
 
@@ -650,21 +565,16 @@ void TestConflictMarkerScanGate() {
   };
 
   const auto scanned =
-      RunCommitPreChecks(state, Local(), "subject", "", {}, &summary, /*scan=*/true);
+      RunCommitPreChecks(state, Local(), "subject", "", {}, &summary, true);
   Expect(has_conflict_marker_check(scanned),
          "scan=true must surface the blocking conflict-marker check for staged markers");
 
   const auto skipped =
-      RunCommitPreChecks(state, Local(), "subject", "", {}, &summary, /*scan=*/false);
+      RunCommitPreChecks(state, Local(), "subject", "", {}, &summary, false);
   Expect(!has_conflict_marker_check(skipped),
          "scan=false (interactive refresh) must skip the unbounded conflict-marker scan");
 }
 
-// Regression (A-075): CommitWorkflowState::BodyText() memoizes the serialized
-// commit body against the body viewport's content_revision, so a precheck +
-// persisted-draft build on the same keystroke does not re-snapshot and
-// re-concatenate the whole body twice. A matching revision must return the
-// cached string (same storage); a content edit must invalidate it.
 void TestCommitBodyTextCachesUntilContentEdit() {
   using microide::workspace::CommitWorkflowState;
 
@@ -674,23 +584,16 @@ void TestCommitBodyTextCachesUntilContentEdit() {
   const std::string& first = state.BodyText();
   Expect(first == "first line\nsecond line", "BodyText must serialize the loaded body");
 
-  // No content edit between calls: the cache is reused (same backing storage).
   const std::string& again = state.BodyText();
   Expect(&again == &first, "unchanged body must return the cached string, not rebuild it");
   Expect(again == "first line\nsecond line", "cached body content must stay correct");
 
-  // A content edit bumps content_revision and must invalidate the cache.
   state.body.LoadContent("replaced body");
   const std::string& after_edit = state.BodyText();
   Expect(after_edit == "replaced body",
          "an edit must invalidate the cache and re-serialize the new body");
 }
 
-// The body field shows "Commit body (optional)" until it is typed into, and that
-// was the BUFFER's text, not a placeholder: a commit with a subject only went in
-// with "Commit body (optional)" as its body, and typing landed inside the hint
-// ("Commit body (optfirst line…ional)", QA git-commit-body). The hint is no part
-// of the message, and the first keystroke replaces it.
 void TestCommitBodyHintIsNotTheMessage() {
   using microide::project::ProjectBackgroundExecutor;
   using microide::workspace::CommitWorkflowService;
@@ -707,16 +610,6 @@ void TestCommitBodyHintIsNotTheMessage() {
          "and the saved draft has no body either");
 }
 
-// An untracked file in the repo raises the UntrackedFiles pre-check, whose severity
-// is Warning. CommitPreChecksAllowExecution refuses on ANY unacknowledged warning,
-// and the only writer of acknowledged_warning_ids (AcknowledgeWarning) had no caller
-// anywhere in src/ -- so the set was permanently empty and this commit could never
-// be dispatched from the UI at all. Same for a branch behind upstream, or a staged
-// file with further unstaged edits: all extremely common, all hard blocks with
-// purely informational message text and no way to proceed.
-//
-// Now a warning raises a confirmation instead of a refusal, and confirming it
-// dispatches the operation the user originally asked for.
 void TestUnacknowledgedWarningsConfirmRatherThanBlock() {
   using microide::project::ProjectBackgroundExecutor;
   using microide::workspace::CommitWorkflowPendingConfirmation;
@@ -734,7 +627,6 @@ void TestUnacknowledgedWarningsConfirmRatherThanBlock() {
 
   WriteFile(repo / "seed.txt", "seed\nmore\n");
   RequireGitCommandSuccess(repo, {"add", "seed.txt"}, "stage a change to commit");
-  // The trigger: an untracked, unstaged file. Nothing about it should stop a commit.
   WriteFile(repo / "scratch.txt", "not staged, not tracked\n");
 
   ProjectBackgroundExecutor executor;
@@ -768,7 +660,6 @@ void TestUnacknowledgedWarningsConfirmRatherThanBlock() {
   Expect(state.acknowledged_warning_ids.empty(),
          "a freshly opened workflow acknowledges nothing");
 
-  // First request: does NOT commit, asks instead.
   Expect(service.RequestCommit(state, CommitOperationKind::Create),
          "a warning must be surfaced as a confirmation, not a silent refusal");
   Expect(!state.operation_in_flight, "no commit may dispatch before the warning is confirmed");
@@ -778,7 +669,6 @@ void TestUnacknowledgedWarningsConfirmRatherThanBlock() {
              CommitWorkflowPendingConfirmation::Warnings,
          "the workflow should be parked on a Warnings confirmation");
 
-  // Confirming acknowledges the warnings and runs the original operation.
   Expect(service.ConfirmPendingOperation(state),
          "confirming the warning should dispatch the commit");
   Expect(state.operation_in_flight, "the commit should be in flight after confirmation");
@@ -791,8 +681,6 @@ void TestUnacknowledgedWarningsConfirmRatherThanBlock() {
   Expect(confirmations == 1, "the confirmed commit must not re-ask about the same warnings");
 }
 
-// Cancelling must leave the workflow exactly as it was: nothing acknowledged (so the
-// next attempt asks again) and nothing committed.
 void TestCancelledWarningConfirmationCommitsNothing() {
   using microide::project::ProjectBackgroundExecutor;
   using microide::workspace::CommitWorkflowPendingConfirmation;
@@ -836,12 +724,6 @@ void TestCancelledWarningConfirmationCommitsNothing() {
          "cancelling must not acknowledge anything, so the next attempt asks again");
 }
 
-// The checks read the repository snapshot, and the snapshot can be stale when
-// Commit is pressed: a file appeared (or was un-staged) outside the app and the
-// watcher's refresh has not landed yet. The commit went in on the old snapshot,
-// past the untracked-files question it should have asked (qa-asan,
-// journey-feature-branch). A request made on a stale snapshot asks for a refresh
-// and is evaluated against what that refresh finds.
 void TestCommitOnAStaleSnapshotWaitsForTheRefresh() {
   using microide::project::ProjectBackgroundExecutor;
   using microide::workspace::CommitWorkflowPendingConfirmation;
@@ -878,7 +760,6 @@ void TestCommitOnAStaleSnapshotWaitsForTheRefresh() {
   service.Open(state);
   state.subject.SetText("Add more");
 
-  // The tree changes under the snapshot; the watcher only marks it stale.
   WriteFile(repo / "scratch.txt", "untracked\n");
   git_service.MarkStale();
 
@@ -896,14 +777,13 @@ void TestCommitOnAStaleSnapshotWaitsForTheRefresh() {
          "parked on the warnings confirmation");
   Expect(!state.operation_in_flight, "still nothing committed before the answer");
 
-  // Once answered, a later refresh does not evaluate the commit again.
   service.CancelPendingConfirmation(state);
   refresh();
   service.NoteGitRefreshOutcome(state, git_service.CurrentSummary().generation, "");
   Expect(confirmations == 1, "a commit waits for one refresh, not every refresh after");
 }
 
-}  // namespace
+}
 
 void RegisterCommitWorkflowTests(std::vector<TestCase>& tests) {
   AddTest(tests, "CommitWorkflow/GitRepositorySummaryAgreesWithFullState",
@@ -941,4 +821,4 @@ void RegisterCommitWorkflowTests(std::vector<TestCase>& tests) {
   AddTest(tests, "CommitWorkflow/BodyHintIsNotTheMessage", TestCommitBodyHintIsNotTheMessage);
 }
 
-}  // namespace microide::tests
+}

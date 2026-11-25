@@ -101,7 +101,7 @@ void TestRejectInvalidShards() {
          "shard-index without a value should be rejected");
 }
 
-}  // namespace
+}
 
 void RegisterTestRunnerCliTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TestRunnerCli/ParseHelpFlags", TestParseHelpFlags);
@@ -117,4 +117,4 @@ void RegisterTestRunnerCliTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TestRunnerCli/RejectInvalidShards", TestRejectInvalidShards);
 }
 
-}  // namespace microide::tests
+}

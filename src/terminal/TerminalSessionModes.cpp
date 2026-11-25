@@ -9,17 +9,17 @@
 namespace microide::terminal {
 
 void TerminalSession::HandleKittyKeyboardLocked(char prefix,
-                                                char /*final*/,
+                                                char ,
                                                 const std::vector<int>& params) {
   constexpr std::size_t kMaxKittyStackDepth = 16;
   const auto param = [&](std::size_t index, int fallback) {
     return index < params.size() ? params[index] : fallback;
   };
   switch (prefix) {
-    case '?':  // Query current flags.
+    case '?':
       SendBytesLocked("\x1b[?" + std::to_string(static_cast<int>(kitty_keyboard_flags_)) + "u");
       return;
-    case '>': {  // Push flags.
+    case '>': {
       if (kitty_keyboard_stack_.size() >= kMaxKittyStackDepth) {
         kitty_keyboard_stack_.erase(kitty_keyboard_stack_.begin());
       }
@@ -27,12 +27,7 @@ void TerminalSession::HandleKittyKeyboardLocked(char prefix,
       kitty_keyboard_flags_ = static_cast<std::uint8_t>(param(0, 0) & 0xFF);
       return;
     }
-    case '<': {  // Pop flags.
-      // CSI params clamp to 65535, but the stack holds at most kMaxKittyStackDepth
-      // entries, so a pop count larger than the stack can only end in "empty stack,
-      // flags = 0". Bound the loop to the stack size so a hostile `ESC[<65535u` (or a
-      // flood of them) cannot burn terminal-reader CPU proportional to the parameter
-      // rather than the byte volume. Once the stack is empty the result is fixed.
+    case '<': {
       const std::size_t requested = static_cast<std::size_t>(std::max(1, param(0, 1)));
       const std::size_t pops = std::min(requested, kitty_keyboard_stack_.size());
       for (std::size_t i = 0; i < pops; ++i) {
@@ -40,13 +35,11 @@ void TerminalSession::HandleKittyKeyboardLocked(char prefix,
         kitty_keyboard_stack_.pop_back();
       }
       if (pops < requested) {
-        // More pops requested than entries: the extra pops drain to the empty-stack
-        // default of flags = 0, in O(1) rather than iterating the full count.
         kitty_keyboard_flags_ = 0;
       }
       return;
     }
-    case '=': {  // Set flags with mode (1=set, 2=union, 3=clear bits).
+    case '=': {
       const auto flags = static_cast<std::uint8_t>(param(0, 0) & 0xFF);
       switch (param(1, 1)) {
         case 2:
@@ -68,7 +61,6 @@ void TerminalSession::HandleKittyKeyboardLocked(char prefix,
 }
 
 int TerminalSession::QueryPrivateModeStateLocked(int mode) const {
-  // DECRQM reply value: 1 = set, 2 = reset, 0 = not recognized.
   switch (mode) {
     case 1:
       return application_cursor_keys_mode_ ? 1 : 2;
@@ -113,8 +105,6 @@ void TerminalSession::HandlePrivateModeLocked(int mode, bool enabled) {
       application_cursor_keys_mode_ = enabled;
       return;
     case 5:
-      // DECSCNM changes every cell on screen and no row's text, so the snapshot
-      // generation is what tells the UI to repaint.
       if (screen_reverse_video_ != enabled) {
         screen_reverse_video_ = enabled;
         AdvanceSnapshotGenerationLocked();
@@ -122,17 +112,11 @@ void TerminalSession::HandlePrivateModeLocked(int mode, bool enabled) {
       return;
     case 6:
       origin_mode_ = enabled;
-      // DECOM set/reset homes the cursor: to the scroll region's top when set, the
-      // screen's when reset -- rows counted from the visible screen's top, since on
-      // the primary buffer cursor_row_ is a deque index (a bare 0 jumped into
-      // scrollback and overwrote history).
       MoveCursorLocked(PrimaryScreenTopLocked() + (enabled ? ActiveScrollRegionTopLocked() : 0), 0);
       return;
     case 7:
       auto_wrap_mode_ = enabled;
       return;
-    // A program (re)starting to track is told where the pointer is on its first
-    // move, not left with the cell an earlier report named.
     case 1000:
       mouse_.normal = enabled;
       pointer_.last_motion.reset();
@@ -165,7 +149,7 @@ void TerminalSession::HandlePrivateModeLocked(int mode, bool enabled) {
       return;
     case 2026:
       if (!enabled && synchronized_output_) {
-        sync_frame_completed_ = true;  // a whole frame is ready to show
+        sync_frame_completed_ = true;
       }
       synchronized_output_ = enabled;
       if (!enabled) {
@@ -197,4 +181,4 @@ void TerminalSession::HandlePrivateModeLocked(int mode, bool enabled) {
   }
 }
 
-}  // namespace microide::terminal
+}

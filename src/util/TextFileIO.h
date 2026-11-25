@@ -10,196 +10,82 @@
 
 namespace microide::util {
 
-// Upper bound on a single text file we will slurp into memory. The whole file is
-// buffered at once (and the CRLF path transiently doubles it), so without a cap a
-// multi-gigabyte or crafted-sparse file forces one enormous allocation and an
-// uncaught std::bad_alloc / OOM. Files above this are refused with a defined
-// failure (nullopt / false) rather than crashing the process. 512 MiB is far
-// above any realistic source file while still bounding the allocation.
 inline constexpr std::uintmax_t kMaxTextFileBytes = 512ull * 1024 * 1024;
 
-// Tighter cap for project text search. Search runs N worker threads, each buffering
-// a whole candidate file at once, so the 512 MiB whole-file cap lets worst-case
-// transient use reach N x 512 MiB. Line-scanning a file that large (a generated /
-// minified blob) is also pure latency with no useful result. 32 MiB bounds both the
-// aggregate memory and the per-file scan cost while covering every realistic source
-// file; files above it are simply skipped by the searcher.
 inline constexpr std::uintmax_t kMaxSearchFileBytes = 32ull * 1024 * 1024;
 
-// Non-throwing check that `path` resolves (following symlinks) to a regular file.
-// Opening a FIFO, device node, or procfs/sysfs entry with std::ifstream can block
-// on open or seek in implementation-specific ways *before* any later size guard
-// runs, so every text-read entry point rejects non-regular paths up front. A
-// directory, socket, dangling symlink, or stat error all report false here.
 bool IsRegularFileFollowingSymlinks(const std::filesystem::path& path);
 
 std::optional<std::string> ReadTextFile(const std::filesystem::path& path);
-// On failure `*error` (when given) holds the step's errno: creating the parent, the
-// staging file's write, fsync or close, or the rename into place.
-// What an atomic write may find at its path: Replace swaps the new bytes in over
-// whatever is there; CreateNew only creates, and fails with errc::file_exists when a
-// file appeared there meanwhile (a Save As, a new file's first save).
 enum class WriteTarget { Replace, CreateNew };
-// `staging`, when given, is the directory the temporary is written in instead of
-// beside the target: on the target's filesystem (the rename must stay atomic),
-// outside the tree a crash would otherwise leave it in (the mirror's meta/staging).
 [[nodiscard]] bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text,
                                            std::error_code* error = nullptr,
                                            WriteTarget target = WriteTarget::Replace,
                                            const std::filesystem::path& staging = {});
 
-// A write failure in the words a save's error row uses ("permission denied",
-// "no space left on the device"); empty for no error.
 std::string DescribeWriteError(const std::error_code& error);
 
-// Resolve a symlink chain to the real file an atomic temp+rename should target, so a
-// write preserves the link instead of replacing it with a fresh regular file. Follows
-// the chain manually (read_symlink + lexical resolution) so a dangling link resolves
-// to its intended (not-yet-existing) target; falls back to `path` for a non-symlink,
-// an unreadable link, or a cycle. Shared by the text-save and persisted-record writers.
 std::filesystem::path ResolveSymlinkTarget(const std::filesystem::path& path);
 
-// The file `path` names with every link resolved -- the file's own (as
-// ResolveSymlinkTarget, so a dangling link names its intended target) and every
-// folder's on the way (`dir/loop/a.txt` with `loop -> .` is `dir/a.txt`). Two
-// paths name the same file exactly when these agree. Falls back to `path` on any
-// resolution error.
 std::filesystem::path ResolveRealPath(const std::filesystem::path& path);
 
-// Reads the 1-based inclusive line range [first_line, last_line] from a text file
-// WITHOUT materializing the whole file. Streams bytes in bounded chunks, counting
-// newlines, retaining only the bytes of in-range lines, and stops as soon as
-// `last_line` has been read (or `max_bytes` total bytes have been streamed). This
-// lets a caller show a small snippet (e.g. a reference's line +/- one) out of a
-// huge generated file at O(bytes up to last_line) cost with no whole-file
-// retention. `first_line == 0` is treated as 1. The returned vector holds the
-// lines actually present in range; element i corresponds to line `first_line + i`,
-// and it may be shorter than requested if the file ends first or the byte budget
-// is hit before the range is reached. Trailing '\r' is stripped so a CRLF file
-// shows no stray carriage return. A non-regular / unopenable file, or one whose
-// scanned prefix contains a NUL byte (binary), yields an empty vector.
 std::vector<std::string> ReadFileLineWindow(const std::filesystem::path& path,
                                             std::size_t first_line, std::size_t last_line,
                                             std::uintmax_t max_bytes = kMaxTextFileBytes);
 
-// Outcome of a classifying text read. Distinguishes a genuinely absent file from
-// one that exists but cannot be represented as ordinary text. Callers that would
-// otherwise collapse every read failure to "" (e.g. a compare tab's working-tree
-// side) must branch on this so an unreadable, binary, or oversized file surfaces
-// an error state instead of masquerading as an empty / whole-file-deleted document.
 enum class TextFileReadStatus {
-  Ok,          // read succeeded and the content is text (no embedded NUL)
-  Missing,     // file does not exist (a legitimate "deleted" state -> empty is fine)
-  Unreadable,  // file exists but could not be opened/read (permissions, I/O error)
-  Binary,      // file contains a NUL byte -> binary, must not render as text
-  TooLarge,    // file exceeds kMaxTextFileBytes and was refused before allocation
+  Ok,
+  Missing,
+  Unreadable,
+  Binary,
+  TooLarge,
 };
 
 struct TextFileReadResult {
   TextFileReadStatus status = TextFileReadStatus::Missing;
-  std::string content;  // populated only when status == Ok
+  std::string content;
 
   bool ok() const { return status == TextFileReadStatus::Ok; }
   bool missing() const { return status == TextFileReadStatus::Missing; }
-  // True when the file exists but cannot be treated as ordinary text. These callers
-  // must refuse rather than substitute empty content.
   bool is_error() const {
     return status == TextFileReadStatus::Unreadable || status == TextFileReadStatus::Binary ||
            status == TextFileReadStatus::TooLarge;
   }
 };
 
-// Classifying counterpart to ReadTextFile. Unlike ReadTextFile (which returns
-// nullopt for both an absent and an unreadable file, and returns raw bytes for a
-// binary file), this reports exactly which case occurred so the caller can map
-// only true absence to empty content.
 TextFileReadResult ReadTextFileClassified(const std::filesystem::path& path);
 
-// Cheap on-disk identity of a file: modification time + size. Used to detect that
-// a file changed underneath an open editor buffer without reading its contents.
-// `exists == false, error == false` means the file is absent; `error == true`
-// means the stat itself failed (treat conservatively as "unknown / changed").
-//
-// mtime+size is deliberately the FIRST test, for speed/low-CPU: any normal external
-// writer bumps the mtime, and one stat answers for the overwhelming majority of
-// checks. It is not the last word, though — see `content_hash` below and
-// TextViewport::DetectDiskConflict.
 struct FileSignature {
   bool exists = false;
   bool error = false;
   std::uint64_t mtime_ticks = 0;
   std::uintmax_t size = 0;
 
-  // Hash of the bytes this signature was recorded FROM, set only when those bytes
-  // were already in hand — a read, or a write. A bare stat cannot produce one and
-  // leaves it unset.
-  //
-  // std::hash, BY DESIGN: fast and free of a new dependency, and never compared
-  // across machines. Its one persisted use -- a crash snapshot's baseline -- stores
-  // QuickContentHashProbe() beside it and is trusted only by a process whose probe
-  // matches, so a build that hashes differently reads it as absent (the safe way:
-  // the save asks). The remote manifest needs a stable, cross-machine hash and gets
-  // a different one (blake3, per dev-docs/design/remote-projects.md § 6.2).
   bool has_content_hash = false;
   std::size_t content_hash = 0;
 
-  // The stat was taken within a couple of seconds of the file's own mtime, so it
-  // cannot vouch for the content: a same-size rewrite in the same coarse timestamp
-  // tick (or second, on a filesystem that stores seconds) leaves mtime and size as
-  // they were — git's "racily clean" entry (TD-2026-10-08-329).
   bool racy = false;
 
-  // Two existing files with identical mtime+size are treated as the same content —
-  // unless either stat is racy. This is the cheap test; a caller that can afford to
-  // read the file confirms a MISMATCH against the content hash rather than trusting
-  // it (a touch and a byte-identical rewrite both fail this one), and a racy match
-  // takes that same confirmation.
   bool SameContentAs(const FileSignature& other) const {
     return SameStatAs(other) && !racy && !other.racy;
   }
-  // The stat alone, racy or not: all a caller holding no content hash to confirm
-  // against can go on.
   bool SameStatAs(const FileSignature& other) const {
     return exists && other.exists && !error && !other.error &&
            mtime_ticks == other.mtime_ticks && size == other.size;
   }
 };
 
-// Process-local hash of `bytes` for FileSignature::content_hash (not the mirror's
-// BLAKE3 util::ContentHash). See the field's comment for why
-// std::hash is the right choice here and blake3 is the right one for the manifest.
 std::size_t QuickContentHash(std::string_view bytes);
-// QuickContentHash of a fixed string: stored beside a QuickContentHash that is
-// persisted (a crash snapshot's baseline), it says whether a later process hashes
-// the same way -- the one condition under which the stored value means anything.
 std::uint64_t QuickContentHashProbe();
 
 FileSignature StatFileSignature(const std::filesystem::path& path);
 
-// Stat `path` and record `bytes` as the content it holds. For the two moments the
-// bytes are already in hand and the hash is therefore nearly free: just after
-// reading a file, and just after writing one.
 FileSignature SignatureForKnownContent(const std::filesystem::path& path,
                                        std::string_view bytes);
 
-// Modification time alone, as raw filesystem ticks. nullopt for an absent path or
-// a failed stat. One stat call — callers polling for "did this file change on
-// disk since I wrote it" (git metadata sampling, merge-result freshness) compare
-// the tick they recorded against the current one. Prefer StatFileSignature when
-// size is also available cheaply; this exists for stores that persist a single
-// tick value.
 std::optional<std::uint64_t> FileModificationTick(const std::filesystem::path& path);
 
-// Reads the whole file at `path` into `out`, reusing `out`'s capacity so callers
-// in hot loops (project search, replace-all) avoid per-file allocation. Returns
-// false if the file cannot be opened/read, if it contains a NUL byte (treated as
-// binary), or if it exceeds `max_bytes` (skipped before allocation). On a false
-// return `out`'s contents are unspecified. `max_bytes` defaults to the search cap;
-// pass `kMaxTextFileBytes` for whole-file callers that must slurp large files.
-// A UTF-8 byte order mark is stripped (columns count from the text, as the
-// editor's do); `had_utf8_bom`, when given, says whether there was one -- a
-// caller that writes the text back must put it back.
 bool ReadFileForTextSearch(const std::filesystem::path& path, std::string& out,
                            std::uintmax_t max_bytes = kMaxSearchFileBytes, bool* had_utf8_bom = nullptr);
 
-}  // namespace microide::util
+}

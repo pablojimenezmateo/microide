@@ -1,13 +1,3 @@
-// The review controls on a diff (render/CompareReviewControls,
-// services/CompareReviewService): a hunk's Mark Reviewed / Comment buttons, its
-// comment row's Edit / Delete, the header's Previous / Next Change and Mark File
-// Reviewed, the comments handed to an agent from the Git menu and the git view's
-// right-click, and the status bar's worktree count.
-//
-// Each flow clicks what the `ui` query names, as a user or the QA monkey does, and
-// every transition paints as the app loop paints it and must equal a full
-// repaint (support/FlowFixture.h).
-
 #include "TestSupport.h"
 #include "TestSupportSdl.h"
 #include "WorkspaceShellEventHelpers.h"
@@ -44,17 +34,12 @@ std::string Lines(int count, int changed_a = -1, int changed_b = -1) {
   return text;
 }
 
-// A review of calc.txt against `main`: two changes far enough apart
-// that the unchanged run between them collapses (lines 3 and 25 of 30).
 struct ReviewScene {
   ReviewScene() : ReviewScene(Lines(30), Lines(30, 3, 25)) {}
 
-  // A review of calc.txt going from `base` to `changed`, in a window of the
-  // given size.
   ReviewScene(const std::string& base, const std::string& changed, int width = FlowFixture::kWidth,
               int height = FlowFixture::kHeight)
       : fixture("calc.txt", base, width, height, [&changed](const std::filesystem::path& root) {
-          // As an agent leaves it: its work committed on a branch of its own.
           InitializeGitRepo(root);
           CommitAll(root, "base", "the review's base");
           RequireGitCommandSuccess(root, {"branch", "-M", "main"}, "the base branch");
@@ -65,7 +50,7 @@ struct ReviewScene {
     Expect(TestAccess::ExecuteCommandLine(fixture.shell, "review-branch main"), "the review opens");
     TestAccess::FlushPendingFileReads(fixture.shell);
     fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the review's first frame");
-    TestAccess::FlushPendingFileReads(fixture.shell);  // the frame that shows a tab loads it
+    TestAccess::FlushPendingFileReads(fixture.shell);
     fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the loaded review");
   }
 
@@ -77,7 +62,6 @@ struct ReviewScene {
 
   std::optional<SDL_FRect> Button(std::string_view name) { return fixture.ElementRect("button:" + std::string(name)); }
 
-  // Clicks the control and expects the frame it owes to be fresh.
   void Click(std::string_view name, const std::string& what) {
     const std::optional<SDL_FRect> rect = Button(name);
     Expect(rect.has_value(), std::string(name) + " should be on screen to " + what);
@@ -86,7 +70,6 @@ struct ReviewScene {
     }
   }
 
-  // The first row of hunk `hunk`, on screen.
   std::optional<SDL_FRect> HunkRow(int hunk) {
     const workspace::CompareTabState& tab = Tab();
     const std::size_t row = compare::ComparePresentationRowForModelRow(
@@ -102,7 +85,6 @@ struct ReviewScene {
     return count;
   }
 
-  // Types a comment into the open prompt and saves it, as the keyboard does.
   void TypeComment(const char* text, const std::string& what) {
     Expect(TestAccess::PromptSurfaceVisible(fixture.shell) &&
                TestAccess::CurrentPromptSurface(fixture.shell).action ==
@@ -115,9 +97,6 @@ struct ReviewScene {
   FlowFixture fixture;
 };
 
-// The selected change shows Mark Reviewed and Comment; a click marks it, its
-// badge says so and the header counts it, and Unmark takes it back. Another
-// change shows its buttons while the pointer is over it.
 void TestHunkButtonsMarkAndUnmarkAChange() {
   ReviewScene scene;
   Expect(scene.Button("compare/hunk-0/toggle-reviewed").has_value() && scene.Button("compare/hunk-0/comment"),
@@ -164,8 +143,6 @@ void TestHunkButtonsMarkAndUnmarkAChange() {
          "off the change its buttons go; its badge stays (it is painted, not a control)");
 }
 
-// Comment opens the prompt; what is typed shows under the change with Edit and
-// Delete; Edit opens it seeded with the comment; Delete removes it.
 void TestCommentsShowUnderTheirChange() {
   ReviewScene scene;
   scene.Click("compare/hunk-0/comment", "opening the comment prompt");
@@ -188,9 +165,6 @@ void TestCommentsShowUnderTheirChange() {
   Expect(scene.Button("compare/hunk-0/comment").has_value(), "and the change can take a comment again");
 }
 
-// The prompt pins the change it was opened on: whatever moves the selection
-// while it is up (an agent rewriting the file reloads the diff), the comment
-// lands where the reader opened it.
 void TestCommentPromptPinsItsChange() {
   ReviewScene scene;
   scene.Click("compare/hunk-0/comment", "opening the comment prompt on the first change");
@@ -203,8 +177,6 @@ void TestCommentPromptPinsItsChange() {
          "the comment is on the change the prompt was opened on");
 }
 
-// Previous / Next Change step through the diff's changes; Mark File Reviewed
-// marks every change and flips to Unmark File, which takes them all back.
 void TestHeaderStepsChangesAndMarksTheFile() {
   ReviewScene scene;
   Expect(workspace::CompareTabSelectedHunkIndex(scene.Tab()) == 0, "the review opens on its first change");
@@ -223,8 +195,6 @@ void TestHeaderStepsChangesAndMarksTheFile() {
   Expect(scene.Tab().review_reviewed_hunk_count == 0, "Unmark File takes every mark back");
 }
 
-// A working-tree diff from the git view (the working tree against HEAD) is for
-// staging, not review: it steps through its changes but takes no marks.
 void TestAStagingDiffStepsButTakesNoMarks() {
   FlowFixture fixture("calc.txt", Lines(30), [](const std::filesystem::path& root) {
     InitializeGitRepo(root);
@@ -244,9 +214,6 @@ void TestAStagingDiffStepsButTakesNoMarks() {
          "and has no review controls");
 }
 
-// The review's comments go to an agent from anywhere: the Git menu counts them
-// with no diff in front, and the git view's right-click on a folder hands over
-// the ones under it.
 void TestCommentsAreHandedOverFromTheGitMenuAndTheGitView() {
   ReviewScene scene;
   WorkspaceShell& shell = scene.fixture.shell;
@@ -261,7 +228,6 @@ void TestCommentsAreHandedOverFromTheGitMenuAndTheGitView() {
   scene.Click("compare/hunk-1/comment", "commenting on the second change");
   scene.TypeComment("second", "the second comment");
 
-  // Away from the diff: the editor tab the fixture opened.
   for (std::size_t i = 0; i < TestAccess::OpenTabs(shell).size(); ++i) {
     if (TestAccess::OpenTabs(shell)[i].kind == workspace::TabEntry::Kind::Editor) {
       TestAccess::ActivateTab(shell, i);
@@ -281,7 +247,6 @@ void TestCommentsAreHandedOverFromTheGitMenuAndTheGitView() {
   Expect(TestAccess::ExecuteCommandLine(shell, "copy-review-comments calc.txt") && copied.find("calc.txt:3") == 0,
          "a file's path narrows it to that file");
 
-  // The git view: right-click on the Outgoing header is the whole review.
   TestAccess::ShowGitSidebar(shell);
   Expect(SettleGitSidebarRefresh(shell), "the git view settles");
   scene.fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the git view");
@@ -321,10 +286,6 @@ std::string LinesWhere(int count, const std::function<bool(int)>& changed) {
   return text;
 }
 
-// A change longer than the view keeps its buttons: once its first row scrolls
-// off above, they ride the view's top row for as long as that is inside the
-// change. They sat on the first row only, so deep in a long change there was
-// nothing to click.
 void TestALongChangeKeepsItsButtonsOnScreen() {
   ReviewScene scene(Lines(300), LinesWhere(300, [](int line) { return line >= 5 && line <= 250; }));
   const std::optional<SDL_FRect> first = scene.Button("compare/hunk-0/toggle-reviewed");
@@ -347,8 +308,6 @@ void TestALongChangeKeepsItsButtonsOnScreen() {
          "and the click marks it");
 }
 
-// Rows scrolled under a still pointer move the hover with them: the change that
-// was under the pointer kept its buttons until the mouse moved again.
 void TestScrollingMovesTheHoveredChange() {
   ReviewScene scene(Lines(400), LinesWhere(400, [](int line) {
     return line == 3 || line == 9 || (line >= 30 && line % 12 == 0);
@@ -372,17 +331,13 @@ void TestScrollingMovesTheHoveredChange() {
          "the change still on screen but no longer under the pointer drops its buttons");
 }
 
-// A comment whose change was edited since stays under it, flagged, and saving
-// it re-pins it (one comment, not two); one whose change is gone shows at the
-// top and can still be deleted. Both were out of sight while the export went on
-// handing them over, and only clearing the whole review removed them.
 void TestACommentOutlivesItsChange() {
   ReviewScene scene;
   compare::BranchReviewStateService& review = TestAccess::CurrentProjectState(scene.fixture.shell).branch_review;
   const compare::BranchReviewTargetIdentity target = scene.Tab().branch_target;
   compare::BranchReviewHunkIdentity edited_since =
       compare::ComputeBranchReviewHunkIdentity(scene.Tab().model, 1, scene.Tab().path);
-  edited_since.content_hash ^= 1;  // written on other text at the same place
+  edited_since.content_hash ^= 1;
   review.SetNote(target, compare::BranchReviewNoteScope::Hunk, scene.Tab().path, edited_since, "before the edit");
   compare::BranchReviewHunkIdentity gone = edited_since;
   gone.old_start = gone.new_start = 900;
@@ -405,7 +360,6 @@ void TestACommentOutlivesItsChange() {
              !scene.Tab().review_hunk_markers[1].note_outdated,
          "saved, it is the change's comment as it stands: re-pinned, not doubled");
 
-  // A comment too long for its row shows whole in a tooltip over the row.
   scene.Click("compare/note-1/edit", "editing it again");
   const std::string long_comment(400, 'w');
   scene.TypeComment(long_comment.c_str(), "saving a comment wider than the diff");
@@ -423,9 +377,6 @@ void TestACommentOutlivesItsChange() {
   Expect(scene.NoteRows() == 1 && review.NoteCount(target) == 1, "Delete removes it from the review");
 }
 
-// A narrow window keeps what matters: the change's Mark Reviewed (Comment goes
-// first), and the header's progress count ahead of its buttons. It kept Comment
-// and dropped the mark, and cut the summary to "Bra..." under three buttons.
 void TestANarrowDiffKeepsTheMarkAndTheProgress() {
   ReviewScene scene(Lines(30), Lines(30, 3, 25), 700, 560);
   Expect(scene.Button("compare/hunk-0/toggle-reviewed").has_value(),
@@ -439,14 +390,11 @@ void TestANarrowDiffKeepsTheMarkAndTheProgress() {
                                                 ? scene.Button("compare/file-reviewed")
                                                 : scene.Button("compare/previous-change");
   if (leftmost.has_value()) {
-    // The summary is wider than half this header, so half is what it keeps.
     const float pane_width = layout.right_x + layout.gutter_width + layout.right_width - layout.left_x;
     Expect(leftmost->x - layout.left_x >= pane_width * 0.4f, "the header's buttons leave the summary its room");
   }
 }
 
-// A repository with linked worktrees says how many in the status bar, and a
-// click on it switches between them; with just the one tree it says nothing.
 void TestStatusBarCountsTheWorktrees() {
   FlowFixture fixture("calc.txt", Lines(3), [](const std::filesystem::path& root) {
     InitializeGitRepo(root);
@@ -469,7 +417,6 @@ void TestStatusBarCountsTheWorktrees() {
   Expect(TestAccess::StatusBarSegmentTooltip(shell, workspace::StatusBarSegmentId::Worktrees) == "Switch Worktree…",
          "a click switches worktree");
 
-  // A tree whose directory is gone is prunable, not one to switch to.
   std::filesystem::remove_all(agent);
   Expect(TestAccess::ExecuteCommandLine(shell, "git-refresh"), "another refresh");
   Expect(SettleGitSidebarRefresh(shell), "it lands");
@@ -478,7 +425,7 @@ void TestStatusBarCountsTheWorktrees() {
          "the prunable tree does not count");
 }
 
-}  // namespace
+}
 
 void RegisterReviewControlsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ReviewControls/HunkButtonsMarkAndUnmarkAChange", TestHunkButtonsMarkAndUnmarkAChange);
@@ -495,4 +442,4 @@ void RegisterReviewControlsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ReviewControls/StatusBarCountsTheWorktrees", TestStatusBarCountsTheWorktrees);
 }
 
-}  // namespace microide::tests
+}

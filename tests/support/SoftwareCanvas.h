@@ -1,13 +1,5 @@
 #pragma once
 
-// A render target every pixel-level test can paint into without a window.
-//
-// SDL's software renderer draws straight into a CPU surface, so a test can render
-// a real shell frame and then read the result back byte-for-byte. This lived as
-// five byte-identical copies across the render test files; it is one type now, and
-// the surface is exposed so a test can assert on the alpha channel too (the
-// retained-scene contract: a painted frame must come out fully opaque).
-
 #include <SDL3/SDL.h>
 
 #include "TestSupport.h"
@@ -38,9 +30,6 @@ class SoftwareCanvas final {
   SDL_Renderer* renderer() const { return renderer_; }
   SDL_Surface* surface() const { return surface_; }
 
-  // Reading the backing surface bypasses the renderer, so drain its queued draw
-  // commands first — otherwise the read returns the surface as it was before the
-  // frame was submitted.
   SDL_Color PixelAt(int x, int y) const {
     SDL_FlushRenderer(renderer_);
     SDL_Color color{};
@@ -54,4 +43,4 @@ class SoftwareCanvas final {
   SDL_Renderer* renderer_ = nullptr;
 };
 
-}  // namespace microide::tests
+}

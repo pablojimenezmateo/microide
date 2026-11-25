@@ -57,10 +57,6 @@ using microide::workspace::WorkspaceThemeRegistry;
 using microide::workspace::SettingType;
 using microide::workspace::SidebarViewPolicy;
 
-// ---------------------------------------------------------------------------
-// Keybinding registry – built-ins
-// ---------------------------------------------------------------------------
-
 void TestKeybindingRegistryBuiltinsNonEmpty() {
   Expect(!BuiltinKeybindingSpecs().empty(),
          "BuiltinKeybindingSpecs should be non-empty");
@@ -79,11 +75,6 @@ void TestKeybindingRegistryFindUnknown() {
 }
 
 
-// No two built-in bindings may claim one chord in contexts that can both be
-// active: FindKeybinding returns the FIRST match in list order, so the second is
-// advertised in Help and Settings and never dispatched. (This lint existed three
-// times, as KeybindingRegistry/NoOverlaps and MenuAccelerators/... too, each with
-// its own copy of the overlap rule and all three wrong about the terminal.)
 void TestBuiltinKeybindingsDoNotShadowEachOther() {
   using microide::workspace::KeybindingContext;
   using microide::workspace::ResolveKeybindings;
@@ -100,22 +91,16 @@ void TestBuiltinKeybindingsDoNotShadowEachOther() {
               microide::workspace::NormalizedKeyModifiers(b.leader_modifiers)) {
         continue;
       }
-      // The registry's own rule, not a copy: a copy that treated Global as
-      // overlapping Terminal flagged Ctrl+PageDown (next tab) against the
-      // terminal's next tab, which a focused terminal does get.
       if (!microide::workspace::KeybindingContextsOverlap(a.context, a.skips_terminal, b.context,
                                                           b.skips_terminal)) {
         continue;
       }
-      // Declared to take the chord when the earlier one's action is not enabled.
       if (b.shares_chord) {
         continue;
       }
       offenders += a.id + " vs " + b.id + " (" + microide::workspace::FormatBindingKeys(a) + "); ";
     }
   }
-  // A single key on a chord's leader (a plain Ctrl+K binding) leaves every chord
-  // behind it dead: the leader never arms where that binding is active.
   for (const auto& single : bindings) {
     if (single.leader_key != SDLK_UNKNOWN) {
       continue;
@@ -133,7 +118,6 @@ void TestBuiltinKeybindingsDoNotShadowEachOther() {
   Expect(offenders.empty(), ("built-in bindings shadow each other: " + offenders).c_str());
 }
 
-// When two bindings on one chord can both fire: the rule dispatch applies.
 void TestKeybindingContextsOverlapFollowsDispatch() {
   using microide::workspace::KeybindingContext;
   using microide::workspace::KeybindingContextsOverlap;
@@ -159,12 +143,6 @@ void TestParseKeyChordSingleKey() {
   Expect(mods == SDL_KMOD_NONE, "F8 should have no modifiers");
 }
 
-// A chord names a KEYCODE — what the key produces under the user's layout —
-// because that is what a key event carries and what FindKeybinding compares.
-// The parser used to go through the physical QWERTY scancode, so on QWERTZ a
-// plugin's "ctrl+z" bound to the key labelled Y. Pin the mapping to the keycode
-// constants (on this test's QWERTY keymap both forms agree, so the pin is the
-// contract, not a layout repro).
 void TestParseKeyChordResolvesKeycodesByName() {
   SDL_Keycode key = SDLK_UNKNOWN;
   SDL_Keymod mods = SDL_KMOD_NONE;
@@ -215,11 +193,6 @@ void TestParseKeyChordInvalid() {
          "ParseKeyChord should fail for unknown key name");
 }
 
-// FormatKeyChord is the only spelling of a chord the user sees (menus, the
-// shortcuts overlay, Help/About) and ParseKeyChord is the only reading of one
-// (plugin contributions, and any chord a user copies from that UI into a
-// keybinding), so every builtin chord must survive the round trip — not just
-// Ctrl+S. This used to check that the formatted string was non-empty.
 void TestFormatKeyChordRoundTrip() {
   std::size_t checked = 0;
   for (const microide::workspace::KeybindingSpec& spec : BuiltinKeybindingSpecs()) {
@@ -240,7 +213,6 @@ void TestFormatKeyChordRoundTrip() {
     ++checked;
   }
   Expect(checked > 50, "the builtin table was enumerated");
-  // Every modifier subset over a named key and a printable key.
   for (int mask = 0; mask < 16; ++mask) {
     SDL_Keymod modifiers = SDL_KMOD_NONE;
     if (mask & 1) modifiers = static_cast<SDL_Keymod>(modifiers | SDL_KMOD_CTRL);
@@ -253,8 +225,6 @@ void TestFormatKeyChordRoundTrip() {
       SDL_Keycode parsed_key = SDLK_UNKNOWN;
       SDL_Keymod parsed_mods = SDL_KMOD_NONE;
       Expect(ParseKeyChord(formatted, &parsed_key, &parsed_mods), "chord parses: " + formatted);
-      // Keypad Enter is spelled "Enter" on purpose (the legend), so it reads back
-      // as the main Enter key.
       const SDL_Keycode expected_key = key == SDLK_KP_ENTER ? SDLK_RETURN : key;
       Expect(parsed_key == expected_key && parsed_mods == modifiers,
              "chord round-trips: " + formatted);
@@ -307,8 +277,6 @@ void TestResolveKeybindingsFindLeftCtrlMatch() {
          "left modifiers should resolve to the command palette shortcut");
 }
 
-// A Global binding yields to a focused terminal unless it skips the shell; a
-// Terminal-context binding and the skip-shell set still match there.
 void TestFindKeybindingTerminalOwnsGlobalChordsUnlessSkipped() {
   PluginHost host;
   const auto bindings = ResolveKeybindings(host);
@@ -324,8 +292,6 @@ void TestFindKeybindingTerminalOwnsGlobalChordsUnlessSkipped() {
          "Ctrl+O belongs to the terminal");
   Expect(id_at(SDLK_S, SDL_KMOD_CTRL, KeybindingContext::Terminal) == "<none>",
          "Ctrl+S belongs to the terminal");
-  // The keys that clashed with programs in the terminal: Ctrl+J is Claude Code's
-  // newline, Ctrl+P readline's previous-history, F5/F10 htop's and mc's keys.
   for (const auto& [key, mods, what] :
        {std::tuple<SDL_Keycode, SDL_Keymod, const char*>{SDLK_J, SDL_KMOD_CTRL, "Ctrl+J"},
         {SDLK_P, SDL_KMOD_CTRL, "Ctrl+P"},
@@ -355,8 +321,6 @@ void TestFindKeybindingTerminalOwnsGlobalChordsUnlessSkipped() {
   const auto* builtin = FindBuiltinKeybindingByKey(SDLK_O, SDL_KMOD_CTRL, KeybindingContext::Terminal);
   Expect(builtin == nullptr, "the built-in lookup applies the same terminal rule");
 
-  // A plugin may now claim Ctrl+O for the terminal: the Global open-file binding
-  // never fires there, so the two do not collide.
   std::vector<PluginHost::ContributedKeybinding> contributed(2);
   contributed[0].id = "plugin.terminal-ctrl-o";
   contributed[0].key_chord = "Ctrl+O";
@@ -377,12 +341,6 @@ void TestFindKeybindingTerminalOwnsGlobalChordsUnlessSkipped() {
   Expect(!has_ctrl_shift_p, "a terminal Ctrl+Shift+P contribution collides with the skip-shell palette");
 }
 
-// A focused terminal owns every key but the reserved chords
-// (IsTerminalReservedChord): any built-in active there -- a Terminal-context
-// binding, or a Global one that skips the shell -- must sit on one. Ctrl+J
-// (panel), Ctrl+P (Go to File), Ctrl+F (terminal find), Alt+Left/Right (pane
-// focus) and the F-keys were active there and took keys Claude Code, readline,
-// vim, htop and mc read.
 void TestBuiltinsActiveInATerminalAreReservedChords() {
   std::string offenders;
   for (const auto& binding :
@@ -403,10 +361,6 @@ void TestBuiltinsActiveInATerminalAreReservedChords() {
   Expect(!microide::workspace::IsTerminalReservedChord(SDLK_LEFT, SDL_KMOD_ALT), "Alt+Left is not");
 }
 
-// `terminal.commands_to_skip_shell` edits the skip-shell set by binding id, and a
-// plugin's Global binding opts in through its manifest flag. The edits apply
-// before conflicts resolve, so a chord handed back to the shell can be taken by
-// a plugin's terminal binding.
 void TestResolveKeybindingsSkipShellOverrides() {
   const auto id_at = [](const std::vector<microide::workspace::ResolvedKeybinding>& bindings, SDL_Keycode key,
                         SDL_Keymod mods) {
@@ -450,10 +404,6 @@ void TestResolveKeybindingsSkipShellOverrides() {
   Expect(id_at(overridden, SDLK_Y, SDL_KMOD_CTRL | SDL_KMOD_ALT) == "<none>",
          "the setting overrides a plugin's own skips_terminal");
 }
-
-// ---------------------------------------------------------------------------
-// Settings registry – built-ins
-// ---------------------------------------------------------------------------
 
 void TestSettingsRegistryBuiltinsNonEmpty() {
   Expect(!BuiltinSettingSpecs().empty(), "BuiltinSettingSpecs should be non-empty");
@@ -528,10 +478,6 @@ void TestSerializeSettingValueRoundTrip() {
   Expect(text == "42", "serialised int should be '42'");
   const std::string btext = SerializeSettingValue(true);
   Expect(btext == "true", "serialised bool should be 'true'");
-  // A float goes out in its shortest round-trip form through a locale-
-  // independent formatter: std::to_string gave "1.500000", and under a
-  // comma-decimal LC_NUMERIC (which SDL's X11 backend installs) "1,500000",
-  // which the locale-independent ParseFloat rejected on reload.
   Expect(SerializeSettingValue(1.5f) == "1.5", "serialised float is the shortest form");
   Expect(SerializeSettingValue(1.0f) == "1", "an integral float has no fraction digits");
   Expect(SerializeSettingValue(0.75f) == "0.75", "0.75 round-trips exactly");
@@ -545,10 +491,6 @@ void TestDefaultSettingValue() {
   const auto dv = DefaultSettingValue(*spec);
   Expect(std::get<int>(dv) == 4, "default tab_size should be 4");
 }
-
-// ---------------------------------------------------------------------------
-// Plugin-contributed settings (requires Lua)
-// ---------------------------------------------------------------------------
 
 void TestPluginContributedSettingsDeclare() {
 #if !MICROIDE_HAS_LUA_PLUGINS
@@ -582,10 +524,6 @@ return ide.plugin({
   Expect(host.ContributedSettings().front().type == "string",
          "setting type should be string");
 }
-
-// ---------------------------------------------------------------------------
-// Plugin-contributed menu entries
-// ---------------------------------------------------------------------------
 
 void TestPluginContributedMenuEntries() {
 #if !MICROIDE_HAS_LUA_PLUGINS
@@ -621,11 +559,6 @@ return ide.plugin({
   Expect(file_items.front().label == "Greet", "menu item label should match");
 }
 
-// A plugin names a menu as the bar does: "File", "Git", "Help" reach those menus
-// (only lowercase file/edit/view/go/terminal used to, so "Help" and every Git or
-// Debug entry vanished), and a menu that does not exist ("Tools", which the guide's
-// own example used) is a registration error the plugin is told about, not an entry
-// dropped without a word (QA plugin-api).
 void TestPluginMenuEntriesNameTheMenuBar() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -668,11 +601,6 @@ return ide.plugin({
   Expect(told, "registering into a menu that does not exist should fail, naming it");
 }
 
-// The plugin parser's list of menu names lives in src/plugin, which cannot read the
-// workspace's spec table, so the two are held together here: one entry per menu on
-// the bar, named by its label, must register and reach that menu. A bar menu the
-// parser does not know (the Remote menu, when it was added) is refused at
-// registration, and a name the bar no longer has would register into nothing.
 void TestPluginMenuNamesAreTheBarsMenus() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -714,10 +642,6 @@ void TestPluginMenuNamesAreTheBarsMenus() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Plugin-contributed keybindings
-// ---------------------------------------------------------------------------
-
 void TestPluginContributedKeybindings() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -749,10 +673,6 @@ return ide.plugin({
          "keybinding context should be editor");
 }
 
-// A plugin chord that collides with an already-resolved binding (a built-in, or an
-// earlier plugin) must be skipped in ResolveKeybindings: built-ins resolve first and
-// FindKeybinding returns the first match, so a shadowed plugin binding would be shown
-// in Help/Settings yet silently run the winner. Regression for inventory J2.
 void TestResolveKeybindingsSkipsBuiltinCollision() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -788,8 +708,6 @@ return ide.plugin({
     return rb.id == "collide.kb.shadow-save";
   });
   Expect(!shadow_present, "the colliding plugin binding must be dropped, not advertised");
-  // ...and the drop is reported, naming who holds the chord, for the plugin log
-  // (TD-2026-10-20-369): it used to vanish without a word.
   const auto shadowed = microide::workspace::ShadowedContributedKeybindings(host.ContributedKeybindings());
   Expect(shadowed.size() == 1 && shadowed.front().id == "collide.kb.shadow-save" && shadowed.front().chord == "Ctrl+S" &&
              shadowed.front().held_by == "save",
@@ -802,9 +720,6 @@ return ide.plugin({
          "a non-colliding plugin chord must still resolve as a plugin binding");
 }
 
-// When two plugins register the same chord, only the first resolved one wins; the
-// second collides with an already-resolved plugin binding and is skipped. Regression
-// for inventory J2 ("two plugins registering the same chord → second skipped").
 void TestResolveKeybindingsSkipsSecondPluginSameChord() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -843,14 +758,6 @@ return ide.plugin({
          "two plugins registering the same chord must resolve to exactly one binding");
 }
 
-// ---------------------------------------------------------------------------
-// Plugin-contributed status items
-// ---------------------------------------------------------------------------
-
-// registry_interop::ApplyStatusItemUpdate now keeps an id->position cache so a
-// runtime ctx.status.update resolves in O(1). This exercises the cache directly:
-// updates land on the right row, the lazy rebuild triggers when the order vector's
-// size changes (register/teardown), and a same-size structural swap still resolves.
 void TestStatusItemUpdateIndexCache() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -879,17 +786,13 @@ void TestStatusItemUpdateIndexCache() {
   Expect(!registry_interop::ApplyStatusItemUpdate(text_update("p.missing", "x"), &order, &index),
          "an unknown id reports no match");
 
-  // Simulate a teardown: the order vector shrinks. The next update must rebuild the
-  // stale index (size mismatch) and still resolve the surviving row.
-  order.erase(order.begin());  // drop "p.a"; order is now [p.b, p.c]
+  order.erase(order.begin());
   Expect(registry_interop::ApplyStatusItemUpdate(text_update("p.c", "c1"), &order, &index),
          "update resolves after a structural shrink");
   Expect(order[1].text == "c1", "the surviving row updates at its new position");
   Expect(!registry_interop::ApplyStatusItemUpdate(text_update("p.a", "x"), &order, &index),
          "the removed id no longer resolves");
 
-  // Simulate a same-size swap (one id replaced by another): the id-verify fallback
-  // must rebuild and resolve rather than trust a stale slot.
   order[0].id = "p.d";
   order[0].text = "d0";
   Expect(registry_interop::ApplyStatusItemUpdate(text_update("p.d", "d1"), &order, &index),
@@ -932,8 +835,6 @@ return ide.plugin({
   Expect(views.front().text == "ready", "resolved status item text should match");
 }
 
-// Two status items with equal alignment+priority must keep their registration
-// order (stable_sort), not reorder nondeterministically between revisions.
 void TestPluginStatusItemsEqualPriorityKeepRegistrationOrder() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -959,8 +860,6 @@ return ide.plugin({
   Expect(contribs.size() == 2, "both equal-priority status items should be contributed");
   const auto views = ResolveStatusItems(host);
   Expect(views.size() == 2, "both equal-priority status items should resolve");
-  // stable_sort: equal alignment+priority items preserve the contribution order
-  // (deterministic, no jitter) rather than reordering under an unstable sort.
   Expect(views[0].id == contribs[0].id && views[1].id == contribs[1].id,
          "equal alignment+priority items must keep contribution order (stable_sort, no jitter)");
 }
@@ -993,8 +892,6 @@ return ide.plugin({
          "status text should update after command");
 }
 
-// The cache-aware resolve must reuse one sorted build until the host's status
-// items change, then rebuild after a status update bumps StatusItemsRevision().
 void TestStatusItemCacheInvalidatesOnRevisionBump() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1024,7 +921,7 @@ return ide.plugin({
   const auto& second = ResolveStatusItems(host, cache);
   Expect(&first == &second, "an unchanged host returns the cached view by reference");
 
-  host.ExecuteCommand("cache.status.tick", {});  // ctx.status.update bumps the revision.
+  host.ExecuteCommand("cache.status.tick", {});
   const auto& third = ResolveStatusItems(host, cache);
   Expect(third.size() == 1 && third.front().text == "1",
          "a status update invalidates the cache and rebuilds the resolved view");
@@ -1067,10 +964,6 @@ return ide.plugin({
   Expect(item.progress > 0.49f && item.progress < 0.51f, "progress should round-trip ~0.5");
 }
 
-// ---------------------------------------------------------------------------
-// Plugin-contributed colour themes (Phase D)
-// ---------------------------------------------------------------------------
-
 void TestPluginContributedTheme() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1112,17 +1005,12 @@ return ide.plugin({
 
   const auto theme = registry.Resolve("contrib.theme.noir");
   Expect(theme.has_value(), "registry should resolve the theme");
-  // The "default" group's background drives editor_background verbatim.
   Expect(theme->editor_background.r == 0x10 && theme->editor_background.g == 0x10 &&
              theme->editor_background.b == 0x14,
          "editor background should reflect the contributed default colour");
   Expect(!registry.Resolve("contrib.theme.missing").has_value(),
          "unknown theme id should resolve to nullopt");
 }
-
-// ---------------------------------------------------------------------------
-// Plugin-contributed file-icon themes (Phase D)
-// ---------------------------------------------------------------------------
 
 void TestPluginFileIconTheme() {
 #if !MICROIDE_HAS_LUA_PLUGINS
@@ -1160,7 +1048,6 @@ return ide.plugin({
   const auto makefile = registry.Resolve("Makefile");
   Expect(makefile.has_value() && makefile->shape == editor::GutterIconShape::Square,
          "plugin filename rule should map Makefile to a square");
-  // Built-in fallback still applies for unconfigured types.
   const auto cpp = registry.Resolve("main.cpp");
   Expect(cpp.has_value() && cpp->shape == editor::GutterIconShape::Dot,
          "built-in default should map .cpp to a dot");
@@ -1168,16 +1055,10 @@ return ide.plugin({
          "unknown extension should resolve to no icon");
 }
 
-// ---------------------------------------------------------------------------
-// Sidebar view ordering and visibility
-// ---------------------------------------------------------------------------
-
 void TestSidebarOrderedViewsNoPolicy() {
   PluginHost host;
   const auto ordered = OrderedSidebarViews(host, {});
   const auto all = microide::workspace::SidebarViews(host);
-  // Every view but the contextual ones (Changed on Host, Host, Conflicts), which
-  // open on request only.
   const auto listed = std::count_if(all.begin(), all.end(), [](const auto& view) {
     const auto* spec = microide::workspace::FindBuiltinSidebarView(view.id);
     return spec == nullptr || !spec->contextual;
@@ -1196,18 +1077,10 @@ void TestSidebarHideView() {
   Expect(!has_git, "hidden view should not appear in ordered list");
 }
 
-// The ordering must be STABLE: views the policy set says nothing about all share
-// order = INT_MAX, and their relative order is the registration order the sidebar
-// rail is expected to show. The sort was a `std::stable_sort`, which takes a
-// `_Temporary_buffer` — one heap allocation per call, on a path that runs once per
-// painted frame — and is now a `std::sort` keyed on (order, insertion index).
-// This is the assertion that key has to earn (TD-2026-08-14-229).
 void TestSidebarUnpolicedViewsKeepRegistrationOrder() {
   PluginHost host;
   const auto baseline = OrderedSidebarViews(host, {});
   Expect(baseline.size() > 1, "the built-in view set should have more than one view");
-  // Pin the LAST view to the front. Everything else stays unpoliced, so the rest
-  // must follow in exactly the order they had with no policies at all.
   std::vector<SidebarViewPolicy> policies;
   policies.push_back(SidebarViewPolicy{std::string(baseline.back().id), false, 0});
   const auto ordered = OrderedSidebarViews(host, policies);
@@ -1229,19 +1102,6 @@ void TestSidebarReorderViews() {
   Expect(ordered.front().id == "git", "git should be first due to order=0");
 }
 
-// ---------------------------------------------------------------------------
-// Persistence – settings and keybinding overrides
-// ---------------------------------------------------------------------------
-
-
-// ---------------------------------------------------------------------------
-// Settings get callback
-// ---------------------------------------------------------------------------
-
-// A plugin declares a bool's default the way Lua spells a bool, `default = true`,
-// or as a token. The string reader refused the boolean, so the default became ""
-// and the setting started off; and the registry took only an exact "true", so
-// "yes"/"on"/"1"/"True" were off too.
 void TestPluginBoolSettingDefaults() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1327,11 +1187,6 @@ return ide.plugin({
   Expect(logged_custom, "plugin should receive the custom value from the callback");
 }
 
-// The snapshot settings cache (TD-2026-07-17A-076) must reuse the resolved
-// values while the host settings revision is unchanged, and re-resolve exactly
-// when it advances. A plugin reading the same setting across two commands should
-// see the OLD value while the revision is pinned (cache reuse, no re-resolve) and
-// the NEW value after the revision bumps (invalidation), never a stale read.
 void TestPluginSettingsSnapshotCacheInvalidation() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1388,8 +1243,6 @@ return ide.plugin({
   Expect(last_logged_value() == "first", "plugin should read the resolved value 'first'");
   const int calls_after_first = resolve_calls;
 
-  // Change the underlying value WITHOUT bumping the revision: the cache must serve
-  // the previously-resolved value and must not re-invoke get_setting.
   current_value = "second";
   host.ExecuteCommand("settings.rev.read", {});
   Expect(last_logged_value() == "first",
@@ -1397,7 +1250,6 @@ return ide.plugin({
   Expect(resolve_calls == calls_after_first,
          "an unchanged revision must not re-resolve the setting through get_setting");
 
-  // Bump the revision: the cache invalidates and the new value is resolved.
   revision = 2;
   host.ExecuteCommand("settings.rev.read", {});
   Expect(last_logged_value() == "second",
@@ -1405,10 +1257,6 @@ return ide.plugin({
   Expect(resolve_calls > calls_after_first,
          "a bumped revision must re-resolve the setting through get_setting");
 }
-
-// ---------------------------------------------------------------------------
-// Phase C: tree-capable plugin sidebar
-// ---------------------------------------------------------------------------
 
 void TestPluginTreeSidebarToggle() {
 #if !MICROIDE_HAS_LUA_PLUGINS
@@ -1469,17 +1317,12 @@ return ide.plugin({
   Expect(items.size() == 1 && items[0].collapsed,
          "collapsing the root should hide its child and mark it collapsed");
 
-  // A flat sidebar with no on_toggle reports toggle as an unhandled no-op.
   std::vector<PluginHost::SidebarItem> flat_items;
   Expect(host.SnapshotSidebar("flat", &flat_items, &error) && flat_items.size() == 1,
          "flat sidebar should snapshot its single row");
   Expect(!host.ToggleSidebarItem("flat", flat_items[0], &error) && error.empty(),
          "toggling a sidebar without on_toggle should be a silent no-op");
 }
-
-// ---------------------------------------------------------------------------
-// Phase C: plugin-native language providers
-// ---------------------------------------------------------------------------
 
 void TestPluginLanguageProviders() {
 #if !MICROIDE_HAS_LUA_PLUGINS
@@ -1537,9 +1380,6 @@ return ide.plugin({
   host.Reload(temp.path() / "project");
   const std::filesystem::path file = temp.path() / "project" / "src" / "main.lua";
 
-  // The published view the UI thread reads for action availability: plugin-only
-  // definition/references providers used to be invisible here, so Go to Definition
-  // stayed disabled (menu, Ctrl+click) for languages without a language server.
   using LangKind = PluginHost::ContributedLanguageProvider::Kind;
   Expect(host.ContributedLanguageProviders().size() == 4,
          "definition, references, signature-help and document-symbol providers are published "
@@ -1574,7 +1414,6 @@ return ide.plugin({
              symbols.front().children.front().name == "draw",
          "document symbols should preserve nesting");
 
-  // A language with no provider yields nothing (so callers fall back to LSP).
   Expect(host.QueryDefinition("python", file, 1, 1, &error).empty(),
          "unmatched language should yield no plugin definitions");
 }
@@ -1583,12 +1422,6 @@ void TestPluginDocumentSymbolsBoundedAgainstAdversarialArray() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
-  // Regression: the document-symbol harvest ran an unbounded for(;;) with a
-  // metamethod-invoking lua_geti, so a returned array whose __index yields a
-  // non-nil value for every integer key would spin the worker thread forever.
-  // The harvest now bounds by lua_rawlen + lua_rawgeti, so a real two-element
-  // array wrapped in such a metatable must terminate and return exactly the
-  // two real entries.
   TemporaryDirectory temp;
   const std::filesystem::path plugins_dir = temp.path() / "config" / "microide" / "plugins";
   WriteFile(plugins_dir / "sym" / "init.lua", R"lua(
@@ -1624,11 +1457,7 @@ return ide.plugin({
          "harvest should return exactly the real array entries");
 }
 
-}  // namespace
-
-// ---------------------------------------------------------------------------
-// Phase E: plugin content surfaces (ctx.surface.set)
-// ---------------------------------------------------------------------------
+}
 
 void TestPluginSurfacePublish() {
 #if !MICROIDE_HAS_LUA_PLUGINS
@@ -1690,7 +1519,6 @@ return ide.plugin({
   Expect(list != nullptr && list->ops.size() == 2, "the display list body has both ops");
   Expect(list != nullptr && list->content_hash != 0, "the display list got a content hash");
 
-  // A spec with two bodies is rejected: the host records an error and never publishes.
   host.ExecuteCommand("surface.test.bad", {});
   Expect(publish_count == 1, "a two-body spec must not publish");
 }
@@ -1777,4 +1605,4 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SurfaceRegistry/PluginPublish", TestPluginSurfacePublish);
 }
 
-}  // namespace microide::tests
+}

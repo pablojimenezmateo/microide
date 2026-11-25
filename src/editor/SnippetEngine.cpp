@@ -19,17 +19,13 @@ bool IsDigit(char ch) {
   return util::IsAsciiDigit(static_cast<unsigned char>(ch)) != 0;
 }
 
-// Hard caps so a hostile or pathological snippet body cannot signed-overflow the
-// tab-stop accumulator or make the parser allocate/loop unboundedly. On exceeding
-// any cap ParseSnippetBody fails cleanly by returning an empty result (no
-// expansion text, no occurrences); the caller treats that as "nothing to insert".
 constexpr int kMaxTabStopId = 100000;
-constexpr std::size_t kMaxBodyBytes = std::size_t{1} << 16;      // 64 KiB
-constexpr std::size_t kMaxExpandedBytes = std::size_t{1} << 16;  // 64 KiB
+constexpr std::size_t kMaxBodyBytes = std::size_t{1} << 16;
+constexpr std::size_t kMaxExpandedBytes = std::size_t{1} << 16;
 constexpr std::size_t kMaxOccurrences = 4096;
 constexpr std::size_t kMaxChoicesPerPlaceholder = 256;
 
-}  // namespace
+}
 
 void SnippetSessionState::Reset(TextViewport* viewport_restore_secondary_to) {
   if (active && viewport_restore_secondary_to != nullptr && !saved_secondary_carets.empty()) {
@@ -40,10 +36,6 @@ void SnippetSessionState::Reset(TextViewport* viewport_restore_secondary_to) {
 
 namespace {
 
-// Unknown variables become placeholders numbered after the highest numeric tab
-// stop, in order of first appearance; the same name always maps to the same
-// stop. They carry a negative id (-1, -2, ...) while parsing and are renumbered
-// once the maximum is known.
 constexpr std::size_t kMaxNestingDepth = 32;
 
 bool IsVariableStart(char ch) {
@@ -62,22 +54,18 @@ class SnippetBodyParser {
 
   bool Parse() {
     std::size_t pos = 0;
-    if (!ParseSequence(pos, /*nested=*/false, SnippetParseResult::kNoParent, 0)) {
+    if (!ParseSequence(pos, false, SnippetParseResult::kNoParent, 0)) {
       return false;
     }
     return RenumberUnknownVariables();
   }
 
  private:
-  // Text and constructs up to the end of the body or, when `nested`, up to the
-  // unescaped '}' that closes the enclosing placeholder (consumed). An
-  // unterminated placeholder keeps what it parsed, as it always did.
   bool ParseSequence(std::size_t& pos, bool nested, std::size_t parent, std::size_t depth) {
     while (pos < body_.size()) {
       const char c = body_[pos];
       if (c == '\\' && pos + 1 < body_.size() &&
           (body_[pos + 1] == '$' || body_[pos + 1] == '}' || body_[pos + 1] == '\\')) {
-        // VS Code's text escapes. Any other `\x` stays two literal bytes.
         if (!AppendText(body_[pos + 1])) {
           return false;
         }
@@ -102,12 +90,9 @@ class SnippetBodyParser {
     return true;
   }
 
-  // `pos` is at a '$'. Every form that is not a construct leaves a literal '$'
-  // and resumes after it, which is how a stray `$}` or `${x` always read.
   bool ParseDollar(std::size_t& pos, std::size_t parent, std::size_t depth) {
     std::size_t j = pos + 1;
     if (j < body_.size() && IsDigit(body_[j])) {
-      // Bare `$N`: ALL consecutive digits (VS Code treats `$10` as stop 10).
       int tab = 0;
       if (!ReadTabId(j, tab)) {
         return false;
@@ -118,12 +103,12 @@ class SnippetBodyParser {
     if (j < body_.size() && IsVariableStart(body_[j])) {
       const std::string_view name = ReadVariableName(j);
       pos = j;
-      return AddVariable(name, /*default_at=*/std::nullopt, pos, parent, depth);
+      return AddVariable(name, std::nullopt, pos, parent, depth);
     }
     if (j >= body_.size() || body_[j] != '{') {
       return LiteralDollar(pos);
     }
-    ++j;  // after '{'
+    ++j;
     if (j < body_.size() && IsDigit(body_[j])) {
       int tab = 0;
       if (!ReadTabId(j, tab)) {
@@ -138,8 +123,6 @@ class SnippetBodyParser {
         return ParseChoice(pos, tab, parent);
       }
       if (j + 1 < body_.size() && body_[j] == ':' && body_[j + 1] == '|') {
-        // The `${1:|a,b|}` spelling this engine accepted before the standard
-        // `${1|a,b|}` form; kept so a shipped body keeps parsing.
         pos = j + 1;
         return ParseChoice(pos, tab, parent);
       }
@@ -148,7 +131,6 @@ class SnippetBodyParser {
         return ParsePlaceholder(pos, tab, parent, depth);
       }
       if (j < body_.size() && body_[j] == '/') {
-        // `${1/regex/format/opts}`: the stop is inserted untransformed.
         pos = j;
         SkipToClosingBrace(pos);
         return AddTabStop(tab, parent);
@@ -180,8 +162,6 @@ class SnippetBodyParser {
     return AppendText('$');
   }
 
-  // Checked accumulation: `tab` is <= kMaxTabStopId before each step, so
-  // tab*10 + digit cannot signed-overflow. An id past the cap fails the parse.
   bool ReadTabId(std::size_t& j, int& tab) {
     tab = 0;
     while (j < body_.size() && IsDigit(body_[j])) {
@@ -202,9 +182,6 @@ class SnippetBodyParser {
     return body_.substr(start, j - start);
   }
 
-  // Skip to just past the '}' that closes the construct `pos` is inside, over
-  // `\x` escapes and balanced inner braces (a transform's format may spell
-  // `${1:/upcase}`).
   void SkipToClosingBrace(std::size_t& pos) {
     std::size_t depth = 0;
     while (pos < body_.size()) {
@@ -234,16 +211,13 @@ class SnippetBodyParser {
     if (!PushOccurrence(tab, parent)) {
       return false;
     }
-    // The default may itself hold placeholders; they record this one as their
-    // parent. Indices, not references: the vector grows underneath.
-    if (!ParseSequence(pos, /*nested=*/true, index, depth + 1)) {
+    if (!ParseSequence(pos, true, index, depth + 1)) {
       return false;
     }
     out_.occurrences[index].end_off = out_.expanded.size();
     return true;
   }
 
-  // `pos` is at the opening '|'.
   bool ParseChoice(std::size_t& pos, int tab, std::size_t parent) {
     std::size_t j = pos + 1;
     std::vector<std::string> choices;
@@ -252,9 +226,6 @@ class SnippetBodyParser {
         ++j;
         break;
       }
-      // Honor escapes inside a choice value: `\,`, `\|`, `\}`, and `\\`
-      // insert the literal character instead of ending the choice, so a
-      // choice like `${1|a\,b,c|}` yields the two options "a,b" and "c".
       std::string value;
       while (j < body_.size() && body_[j] != ',' && body_[j] != '|') {
         if (body_[j] == '\\' && j + 1 < body_.size() &&
@@ -267,12 +238,6 @@ class SnippetBodyParser {
           ++j;
         }
       }
-      // A choice value must stay single-line: ApplyChoiceForTab records the
-      // post-cycle range as `start.column + text.size()` on one line, so a
-      // choice carrying a '\n'/'\r' (ReplaceRange would add a line) leaves a
-      // stale off-line range and orphans the wrapped text on the next cycle.
-      // Reject the malformed snippet (matching VSCode, whose choices cannot
-      // contain newlines, and the other parse-cap failure sentinels here).
       if (value.find('\n') != std::string::npos || value.find('\r') != std::string::npos) {
         return false;
       }
@@ -304,13 +269,10 @@ class SnippetBodyParser {
     return PushOccurrence(tab, parent);
   }
 
-  // `default_at`, when set, is the offset of a `${NAME:default}` default whose
-  // closing '}' has not been consumed; `pos` is updated past it either way.
   bool AddVariable(std::string_view name, std::optional<std::size_t> default_at, std::size_t& pos,
                    std::size_t parent, std::size_t depth) {
     const std::optional<std::string> value = resolver_ ? resolver_(name) : std::nullopt;
     if (value.has_value() && !value->empty()) {
-      // Known and set: the value, and the default is syntax to step over.
       if (!AppendText(*value)) {
         return false;
       }
@@ -321,7 +283,6 @@ class SnippetBodyParser {
       return true;
     }
     if (value.has_value()) {
-      // Known but empty: the default text, or nothing.
       if (!default_at.has_value()) {
         return true;
       }
@@ -329,9 +290,8 @@ class SnippetBodyParser {
         return false;
       }
       pos = *default_at;
-      return ParseSequence(pos, /*nested=*/true, parent, depth + 1);
+      return ParseSequence(pos, true, parent, depth + 1);
     }
-    // Unknown: the default (or the name) is inserted and becomes a placeholder.
     const int tab = UnknownVariableTab(name);
     if (depth >= kMaxNestingDepth) {
       return false;
@@ -342,7 +302,7 @@ class SnippetBodyParser {
     }
     if (default_at.has_value()) {
       pos = *default_at;
-      if (!ParseSequence(pos, /*nested=*/true, index, depth + 1)) {
+      if (!ParseSequence(pos, true, index, depth + 1)) {
         return false;
       }
     } else if (!AppendText(name)) {
@@ -375,14 +335,12 @@ class SnippetBodyParser {
     }
     for (auto& occ : out_.occurrences) {
       if (occ.tab_stop < 0) {
-        occ.tab_stop = max_tab - occ.tab_stop;  // -1 -> max+1, -2 -> max+2
+        occ.tab_stop = max_tab - occ.tab_stop;
       }
     }
     return true;
   }
 
-  // A zero-width occurrence at the current end of the expansion; a placeholder
-  // grows it by setting end_off after its default is appended.
   bool PushOccurrence(int tab, std::size_t parent) {
     SnippetParseResult::Occurrence occ;
     occ.tab_stop = tab;
@@ -409,12 +367,10 @@ class SnippetBodyParser {
   std::vector<std::string> unknown_variables_;
 };
 
-}  // namespace
+}
 
 SnippetParseResult ParseSnippetBody(std::string_view body,
                                     const SnippetVariableResolver& resolve_variable) {
-  // Oversized bodies are rejected outright rather than parsed; every downstream
-  // buffer (expanded text, occurrence list) is bounded by the body length.
   if (body.size() > kMaxBodyBytes) {
     return SnippetParseResult{};
   }
@@ -457,7 +413,7 @@ std::string RandomHexDigits(std::size_t count) {
   return out;
 }
 
-}  // namespace
+}
 
 std::optional<std::string> ResolveEditorSnippetVariable(const TextViewport& viewport,
                                                         const SelectionRange& trigger,
@@ -465,7 +421,6 @@ std::optional<std::string> ResolveEditorSnippetVariable(const TextViewport& view
   const std::filesystem::path& path = viewport.path();
   const std::size_t line = std::min(trigger.start.line, viewport.lines().size() - 1);
   if (name == "TM_SELECTED_TEXT") {
-    // The trigger range is the typed prefix or completion word, not a selection.
     return std::string{};
   }
   if (name == "TM_CURRENT_LINE") {
@@ -493,8 +448,6 @@ std::optional<std::string> ResolveEditorSnippetVariable(const TextViewport& view
     return path.string();
   }
   if (name == "CLIPBOARD" || name == "WORKSPACE_NAME" || name == "WORKSPACE_FOLDER") {
-    // Set but empty: the editor layer has no clipboard or project root in hand,
-    // and an empty value lets a `${CLIPBOARD:default}` default apply.
     return std::string{};
   }
   if (name == "CURSOR_INDEX") {
@@ -553,10 +506,6 @@ TextPosition PositionAfterOffsetInExpanded(TextPosition trigger_start,
   for (std::size_t k = 0; k < offset && k < expanded_flat.size(); ++k) {
     const char c = expanded_flat[k];
     if (c == '\r') {
-      // ReplaceRange inserts NormalizeLineEndings(expanded), which collapses both
-      // a lone \r and a \r\n pair to a single \n. Mirror that here so tab-stop
-      // positions computed against the raw body land on the inserted text: treat
-      // \r as a line break and swallow a following \n (within the counted range).
       ++line;
       col = 0;
       if (k + 1 < offset && k + 1 < expanded_flat.size() && expanded_flat[k + 1] == '\n') {
@@ -624,9 +573,6 @@ static const SelectionRange* RangeContaining(const std::vector<SelectionRange>& 
   return nullptr;
 }
 
-// One applied mirror edit of the currently-edited tab: `range_index` names its
-// range in the edited tab's vector, `origin_col` is the column on `line` at/after
-// which text shifts, and `delta` is the signed byte size change.
 struct AppliedMirrorEdit {
   std::size_t range_index = 0;
   std::size_t line = 0;
@@ -634,20 +580,6 @@ struct AppliedMirrorEdit {
   std::ptrdiff_t delta = 0;
 };
 
-// Fold every mirror edit's column shift into every recorded placeholder range in
-// one pass, replacing the old per-edit ShiftPlaceholdersAtOrAfter scan (which
-// re-walked ALL tab stops and ALL placeholder ranges once per mirror, so a
-// snippet with many mirrors or many tab stops on one line was
-// O(active_mirrors * total_placeholders) per keystroke — TD-2026-07-17A-060).
-//
-// The mirror edits of one tab are disjoint and stay ordered under the shifts, so
-// each placeholder endpoint's total shift is the sum of deltas of same-line edits
-// whose `origin_col` is <= the endpoint's governing (start) column — independent
-// of the high-to-low application order, exactly matching the incremental result.
-// Start and end move together (linked mirrors keep their width); the edited tab's
-// own mirror additionally grows/shrinks by its own delta, and never shifts its
-// own start on its own edit.
-// The link that names (tab, index)'s parent, if it is nested.
 static const SnippetNestedLink* ParentLinkOf(const SnippetSessionState& session, int tab,
                                             std::size_t index) {
   for (const SnippetNestedLink& link : session.nested_links) {
@@ -660,7 +592,6 @@ static const SnippetNestedLink* ParentLinkOf(const SnippetSessionState& session,
 
 static bool IsNestedInsideTab(const SnippetSessionState& session, int tab, std::size_t index,
                               int ancestor_tab) {
-  // Bounded by the link count: a chain cannot be longer than the links.
   for (std::size_t hops = 0; hops <= session.nested_links.size(); ++hops) {
     const SnippetNestedLink* link = ParentLinkOf(session, tab, index);
     if (link == nullptr) {
@@ -675,9 +606,6 @@ static bool IsNestedInsideTab(const SnippetSessionState& session, int tab, std::
   return false;
 }
 
-// Typing over a placeholder discards the placeholders nested in it (VS Code's
-// rule): their text was just replaced, so their ranges name nothing. Every
-// mirror of the edited tab holds the same nested set, so all of them go.
 static void DropPlaceholdersNestedInTab(SnippetSessionState& session, int edited_tab) {
   std::vector<int> emptied_tabs;
   for (auto& [tab, ranges] : session.ranges_by_tab) {
@@ -695,8 +623,6 @@ static void DropPlaceholdersNestedInTab(SnippetSessionState& session, int edited
       continue;
     }
     ranges.resize(kept);
-    // Remap the links that name this tab; a link whose child or parent was
-    // dropped goes with it (a dropped parent means a dropped child).
     std::vector<SnippetNestedLink> links;
     links.reserve(session.nested_links.size());
     for (SnippetNestedLink link : session.nested_links) {
@@ -741,11 +667,6 @@ static void ApplyBatchedMirrorShifts(SnippetSessionState& session, int edited_ta
   if (edits.empty()) {
     return;
   }
-  // Nesting: the placeholders inside the edited tab are gone, and the ones the
-  // edited tab sits INSIDE grow by each mirror's delta at their end. The
-  // ancestors' starts are at or left of the edit; the one case the generic
-  // start shift below would move them is an edit at exactly their start, which
-  // is excluded here.
   struct AncestorAdjust {
     int tab = 0;
     std::size_t index = 0;
@@ -789,17 +710,9 @@ static void ApplyBatchedMirrorShifts(SnippetSessionState& session, int edited_ta
       }
     }
   }
-  // (line, origin_col) -> running prefix sum of the deltas at or left of it, as
-  // ONE sorted vector.
-  //
-  // This was an unordered_map<line, vector<...>> plus a second unordered_map keyed
-  // by range index, so a keystroke allocated a hash node per mirror — on a snippet
-  // whose entire point is having many mirrors, and once per character typed. The
-  // 150-mirror scenario paid 151 of them per keystroke (TD-2026-08-06-159).
   struct ShiftEvent {
     std::size_t line = 0;
     std::size_t origin_col = 0;
-    // Delta on the way in; the running prefix sum for its line on the way out.
     std::ptrdiff_t shift = 0;
   };
   std::vector<ShiftEvent> events;
@@ -815,12 +728,11 @@ static void ApplyBatchedMirrorShifts(SnippetSessionState& session, int edited_ta
     std::size_t j = i;
     while (j < events.size() && events[j].line == events[i].line) {
       acc += events[j].shift;
-      events[j].shift = acc;  // sum of deltas on this line with origin_col <= this one
+      events[j].shift = acc;
       ++j;
     }
     i = j;
   }
-  // Sum of deltas whose origin_col <= col on `line` (0 when the line has none).
   const auto shift_at = [&](std::size_t line, std::size_t col) -> std::ptrdiff_t {
     const auto it = std::upper_bound(
         events.begin(), events.end(), std::pair<std::size_t, std::size_t>{line, col},
@@ -833,9 +745,6 @@ static void ApplyBatchedMirrorShifts(SnippetSessionState& session, int edited_ta
     const ShiftEvent& last_at_or_left = *(it - 1);
     return last_at_or_left.line == line ? last_at_or_left.shift : 0;
   };
-  // The edited tab's mirrors, keyed by range index, with their own edit footprint.
-  // Dense, not a hash map: the keys ARE positions in the tab's range vector, so a
-  // hash table over 0..n-1 is a hash table over its own array indices.
   struct OwnEdit {
     std::size_t origin_col = 0;
     std::ptrdiff_t delta = 0;
@@ -847,7 +756,6 @@ static void ApplyBatchedMirrorShifts(SnippetSessionState& session, int edited_ta
   }
   std::vector<OwnEdit> own_edit(max_range_index + 1);
   for (const AppliedMirrorEdit& e : edits) {
-    // Last write wins, as the map's operator[] assignment did.
     own_edit[e.range_index] = OwnEdit{.origin_col = e.origin_col, .delta = e.delta,
                                       .present = true};
   }
@@ -863,8 +771,6 @@ static void ApplyBatchedMirrorShifts(SnippetSessionState& session, int edited_ta
       if (tab == edited_tab && j < own_edit.size() && own_edit[j].present) {
         const OwnEdit& own = own_edit[j];
         own_delta = own.delta;
-        // Its own edit must not shift its own start; only exclude it when the
-        // edit origin actually falls at/left of the start (rel == 0 case).
         if (own.origin_col <= r.start.column) {
           start_shift -= own.delta;
         }
@@ -882,14 +788,10 @@ static void ApplyBatchedMirrorShifts(SnippetSessionState& session, int edited_ta
   }
 }
 
-// The ranges now describe THIS revision of the buffer. Called wherever the engine
-// finishes writing them; see SnippetSessionState::tracked_content_revision.
 static void StampSessionRevision(const TextViewport& viewport, SnippetSessionState& session) {
   session.tracked_content_revision = viewport.content_revision();
 }
 
-// The indices of `ranges` ordered by start position, last first: the order in
-// which mirrors are edited so the earlier ones' recorded columns stay valid.
 static std::vector<std::size_t> MirrorIndicesBottomUp(const std::vector<SelectionRange>& ranges) {
   std::vector<std::size_t> order(ranges.size());
   for (std::size_t i = 0; i < order.size(); ++i) {
@@ -912,11 +814,6 @@ static void ApplyChoiceForTab(TextViewport& viewport,
                               const std::string& text) {
   auto& ranges = session.ranges_by_tab[tab];
   const std::vector<std::size_t> order = MirrorIndicesBottomUp(ranges);
-  // Apply each mirror's full-range replacement high-to-low (so lower mirrors'
-  // recorded columns stay valid), collecting each edit. A choice can change the
-  // placeholder's length; the shift origin is the pre-edit end (`r.end`), so a
-  // single batched pass then folds every mirror's delta into all recorded ranges
-  // instead of rescanning every tab stop per mirror.
   std::vector<AppliedMirrorEdit> edits;
   edits.reserve(order.size());
   for (std::size_t idx : order) {
@@ -946,14 +843,7 @@ bool ExpandSnippetAtSelection(TextViewport& viewport,
   session.saved_secondary_carets = viewport.secondary_carets();
   viewport.ClearSecondaryCarets();
 
-  // ReplaceRange is false for a refused edit (a read-only buffer) and for a
-  // no-op (the trigger already reads as the expansion: `WORD$0` accepted over a
-  // WORD typed in full). Only the first is a failure. Reading the second as one
-  // sent the completion path to its plain-text fallback, which inserted the raw
-  // body -- `$0` and all.
   if (!viewport.ReplaceRange(trigger, parsed.expanded, true) && viewport.read_only()) {
-    // Expansion refused: the buffer is unchanged, so the saved carets are still at
-    // valid positions and are restored.
     if (!session.saved_secondary_carets.empty()) {
       viewport.SetSecondaryCarets(session.saved_secondary_carets);
     }
@@ -964,11 +854,6 @@ bool ExpandSnippetAtSelection(TextViewport& viewport,
     return false;
   }
 
-  // Expansion succeeded: the snippet consumes the pre-expansion multi-cursor
-  // state. Discard the saved secondary carets rather than restoring them on
-  // commit — the initial replacement (and every later field edit) shifts the
-  // buffer, so the saved pre-snippet offsets would land at stale positions.
-  // Clearing here makes CommitSnippetSession's restore a no-op.
   session.saved_secondary_carets.clear();
 
   if (parsed.occurrences.empty()) {
@@ -979,7 +864,6 @@ bool ExpandSnippetAtSelection(TextViewport& viewport,
     return true;
   }
 
-  // Where each occurrence landed, so a nested one can name its parent's slot.
   std::vector<std::size_t> slot_index(parsed.occurrences.size(), 0);
   for (std::size_t i = 0; i < parsed.occurrences.size(); ++i) {
     const auto& occ = parsed.occurrences[i];
@@ -1048,9 +932,6 @@ void SnippetOnBufferChanged(TextViewport& viewport, SnippetSessionState& session
   if (!session.active || session.tracked_content_revision == viewport.content_revision()) {
     return;
   }
-  // Somebody else edited the buffer. The placeholder ranges describe text that has
-  // moved, so navigating them would select whatever inherited their coordinates --
-  // VS Code likewise drops the session on an edit it did not make.
   CommitSnippetSession(viewport, session);
 }
 
@@ -1107,7 +988,6 @@ bool SnippetNavigateTab(TextViewport& viewport, SnippetSessionState& session, bo
     return true;
   }
 
-  // Shift+Tab: if can cycle choice back
   const auto ch_it = session.choices_by_tab.find(cur);
   if (ch_it != session.choices_by_tab.end() && ch_it->second.size() > 1) {
     std::size_t& idx = session.choice_index_by_tab[cur];
@@ -1135,12 +1015,6 @@ bool SnippetHandleEscape(TextViewport& viewport, SnippetSessionState& session) {
   return true;
 }
 
-// The span of the focused tab's mirror that a keystroke acts on. A selection
-// that lies inside one mirror is the span (typing replaces it, exactly as it
-// replaces the default text VS Code selects when a placeholder is focused);
-// otherwise the caret is a zero-width span. `mirror_index` is the mirror the
-// caret is in, which is where the caret is put back after the edit. A selection
-// that reaches outside the field is not a linked edit.
 struct MirrorEditTarget {
   std::size_t mirror_index = 0;
   std::size_t rel_start = 0;
@@ -1179,13 +1053,6 @@ static std::optional<MirrorEditTarget> FocusedMirrorTarget(const TextViewport& v
   return std::nullopt;
 }
 
-// Replace [rel_start, rel_end) of every mirror of `tab` with `text`. Mirrors are
-// edited high-to-low so the lower ones' recorded columns stay valid, every
-// recorded range is then shifted in one batched pass, and the caret ends up
-// collapsed just after the new text in the mirror the user was editing. (It
-// used to re-select the whole first mirror after every keystroke, which is why
-// a keystroke could not be allowed to replace the selection: the next one would
-// have replaced what was just typed.)
 static void ReplaceInMirrors(TextViewport& viewport, SnippetSessionState& session, int tab,
                              const MirrorEditTarget& target, std::string_view text) {
   auto& ranges = session.ranges_by_tab[tab];
@@ -1194,8 +1061,6 @@ static void ReplaceInMirrors(TextViewport& viewport, SnippetSessionState& sessio
   edits.reserve(order.size());
   for (std::size_t idx : order) {
     const SelectionRange r = ranges[idx];
-    // Every mirror holds the same bytes, so the relative span maps onto the
-    // same code points; the clamp only guards a mirror that somehow does not.
     const std::size_t start_col = std::min(r.start.column + target.rel_start, r.end.column);
     const std::size_t end_col = std::min(r.start.column + target.rel_end, r.end.column);
     if (start_col == end_col && text.empty()) {
@@ -1206,8 +1071,6 @@ static void ReplaceInMirrors(TextViewport& viewport, SnippetSessionState& sessio
         text, false);
     const std::ptrdiff_t delta = static_cast<std::ptrdiff_t>(text.size()) -
                                  static_cast<std::ptrdiff_t>(end_col - start_col);
-    // The shift origin is the pre-edit END of the replaced span: a range that
-    // starts at or after it moves by the delta, one that ends before it does not.
     edits.push_back(AppliedMirrorEdit{idx, r.start.line, end_col, delta});
   }
   ApplyBatchedMirrorShifts(session, tab, edits);
@@ -1237,20 +1100,8 @@ bool SnippetTryInsertText(TextViewport& viewport, SnippetSessionState& session, 
   if (!session.active || text.empty()) {
     return false;
   }
-  // The mirror fast path only knows how to shift columns on a single line: it
-  // advances end.column by text.size() and shifts later same-line placeholders.
-  // A payload containing a line break (a raw '\n', or a '\r'/'\r\n' that
-  // ReplaceRange would normalize to a newline) would make every following
-  // placeholder's line/column ranges stale. Decline the fast path so the caller
-  // falls back to normal editing (VSCode likewise drops the linked-edit session
-  // on a multi-line insert). Returning false does not double-insert: the caller
-  // performs the single normal insert itself.
   if (text.find('\n') != std::string_view::npos ||
       text.find('\r') != std::string_view::npos) {
-    // Drop the linked-edit session before the caller inserts the line break.
-    // Leaving it active would retain ranges computed for the pre-newline document,
-    // so later tab navigation / mirror edits would operate on stale line/column
-    // positions. (VSCode likewise ends the session on a multi-line insert.)
     CommitSnippetSession(viewport, session);
     return false;
   }
@@ -1278,15 +1129,10 @@ bool SnippetTryBackspace(TextViewport& viewport, SnippetSessionState& session) {
     return false;
   }
   if (target->rel_start == target->rel_end) {
-    // No selection: remove the whole UTF-8 code point ENDING at the caret. Scan
-    // back to its start so multi-byte code points (é, emoji) are never split
-    // mid-byte. A caret at the field's start has nothing of the field to remove;
-    // that is an ordinary backspace, which the caller performs.
     if (target->rel_start == 0) {
       return false;
     }
     const SelectionRange& r = (*ranges)[target->mirror_index];
-    // The caret line is always a valid buffer line (cursor_line() is bounded).
     const std::string& caret_line = viewport.lines()[r.start.line];
     target->rel_start =
         util::PreviousUtf8Boundary(caret_line, r.start.column + target->rel_end) - r.start.column;
@@ -1306,9 +1152,6 @@ bool SnippetTryDeleteForward(TextViewport& viewport, SnippetSessionState& sessio
     return false;
   }
   if (target->rel_start == target->rel_end) {
-    // No selection: remove the whole UTF-8 code point STARTING at the caret,
-    // clamped to the field so it never spills past the mirror. A caret at the
-    // field's end has nothing of the field to remove.
     const SelectionRange& r = (*ranges)[target->mirror_index];
     if (r.start.column + target->rel_start >= r.end.column) {
       return false;
@@ -1322,4 +1165,4 @@ bool SnippetTryDeleteForward(TextViewport& viewport, SnippetSessionState& sessio
   return true;
 }
 
-}  // namespace microide::editor
+}

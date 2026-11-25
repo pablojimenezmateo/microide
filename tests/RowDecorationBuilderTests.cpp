@@ -26,7 +26,6 @@ using editor::RowFillSpan;
 using editor::SyntaxTokenKind;
 using editor::TextLayout;
 
-// One painted band; large enough to hold every decoration in the battery.
 constexpr int kCanvasWidth = 640;
 constexpr int kCanvasHeight = 40;
 constexpr float kTextX = 28.0f;
@@ -34,8 +33,6 @@ constexpr float kRowY = 14.0f;
 constexpr float kLineHeight = 16.0f;
 constexpr std::size_t kTabSize = 4;
 
-// A fixed, representative line battery: pure ASCII, leading tabs, mixed
-// tabs+spaces, and UTF-8 multibyte. Each is exercised at scroll 0 and scrolled.
 struct LineCase {
   const char* label;
   std::string text;
@@ -59,10 +56,6 @@ render::Theme& OracleTheme() {
   static render::Theme theme;
   return theme;
 }
-
-// --- Legacy replicas of the per-surface fill resolution -------------------
-// These reproduce the exact inline math the production renderers used before
-// the unified builder, so a zero pixel diff proves the builder is faithful.
 
 DecoratedTextFill ResolveRangeFillLayout(const LayoutLine& layout, std::size_t row_start,
                                          std::size_t row_end, float char_width, std::size_t start_col,
@@ -95,8 +88,6 @@ DecoratedTextFill ResolveSingleCellLayout(const LayoutLine& layout, std::size_t 
   };
 }
 
-// Drives one comparison: builds the expected row via the legacy formulas and
-// the actual row via BuildDecoratedRow, then asserts byte-identical pixels.
 void ExpectLayoutRowMatches(const render::TextRenderer& text_renderer, const LineCase& line_case,
                             bool selected, std::optional<std::pair<std::size_t, std::size_t>> selection,
                             std::optional<std::size_t> bracket_column,
@@ -107,7 +98,7 @@ void ExpectLayoutRowMatches(const render::TextRenderer& text_renderer, const Lin
   const std::size_t row_end = line_case.horizontal_scroll + line_case.visible_columns;
   const LayoutLine layout = TextLayout::BuildVisibleLine(
       line_case.text, line_case.horizontal_scroll, line_case.visible_columns, kTabSize);
-  const std::vector<SyntaxTokenKind> tokens;  // plain text: syntax delegated identically
+  const std::vector<SyntaxTokenKind> tokens;
   const SDL_Color plain_color = selected ? theme.text_primary : theme.text_secondary;
   const SDL_Color background_color = theme.row_highlight;
   const DecoratedTextFill background_fill{
@@ -115,8 +106,6 @@ void ExpectLayoutRowMatches(const render::TextRenderer& text_renderer, const Lin
       .color = background_color,
   };
 
-  // Expected: legacy assembly order (background -> selection -> bracket ->
-  // syntax -> diagnostics).
   DecoratedTextRow expected;
   std::vector<RowFillSpan> column_fills;
   if (selected) {
@@ -155,7 +144,6 @@ void ExpectLayoutRowMatches(const render::TextRenderer& text_renderer, const Lin
                                      line_case.visible_columns, kTabSize,
                                      std::span<const PublishedDiagnostic>(diagnostics));
 
-  // Actual: through the unified builder.
   RowDecorationInput input;
   input.text_x = kTextX;
   input.y = kRowY;
@@ -187,7 +175,6 @@ void ExpectLayoutRowMatches(const render::TextRenderer& text_renderer, const Lin
          std::string("builder layout-path row must paint byte-identically: ") + line_case.label);
 }
 
-// Compare/merge visible-window path (layout == null, optional visual map).
 void ExpectVisibleRowMatches(const render::TextRenderer& text_renderer, const LineCase& line_case,
                              std::optional<std::pair<std::size_t, std::size_t>> selection,
                              const std::vector<compare::CompareTextSpan>& changed_spans) {
@@ -207,8 +194,6 @@ void ExpectVisibleRowMatches(const render::TextRenderer& text_renderer, const Li
   DecoratedTextRow expected;
   std::vector<RowFillSpan> column_fills;
   expected.fills.push_back(background_fill);
-  // One fill per visible byte range, on the visual-map columns: the geometry
-  // both the novel-token emphasis and the selection share.
   const auto push_range_fill = [&](std::size_t start_byte, std::size_t end_byte, SDL_Color color) {
     const std::size_t visible_start = std::max(visual_map.VisualColumnFor(start_byte), row_start);
     const std::size_t visible_end = std::min(visual_map.VisualColumnFor(end_byte), row_end);
@@ -222,7 +207,6 @@ void ExpectVisibleRowMatches(const render::TextRenderer& text_renderer, const Li
       });
     }
   };
-  // Novel-token emphasis sits under the selection, so it is pushed first.
   for (const compare::CompareTextSpan& span : changed_spans) {
     push_range_fill(span.start, span.end, changed_fill);
   }
@@ -283,15 +267,12 @@ void TestBuilderLayoutPathMatchesLegacyEditorAssembly() {
   text_renderer.EnsureInitialized(init_canvas.renderer());
 
   for (const LineCase& line_case : Battery()) {
-    // Plain row.
-    ExpectLayoutRowMatches(text_renderer, line_case, /*selected=*/false, std::nullopt, std::nullopt,
+    ExpectLayoutRowMatches(text_renderer, line_case, false, std::nullopt, std::nullopt,
                            {});
-    // Selected row with a selection spanning a window edge + a bracket cell.
-    ExpectLayoutRowMatches(text_renderer, line_case, /*selected=*/true,
+    ExpectLayoutRowMatches(text_renderer, line_case, true,
                            std::make_pair<std::size_t, std::size_t>(2, 9), std::size_t{4}, {});
-    // Diagnostic at end of line.
     const std::size_t len = line_case.text.size();
-    ExpectLayoutRowMatches(text_renderer, line_case, /*selected=*/false, std::nullopt, std::nullopt,
+    ExpectLayoutRowMatches(text_renderer, line_case, false, std::nullopt, std::nullopt,
                            {MakeDiagnostic(len > 4 ? len - 4 : 0, len)});
   }
 }
@@ -306,7 +287,6 @@ void TestBuilderVisiblePathMatchesLegacyCompareAssembly() {
     ExpectVisibleRowMatches(text_renderer, line_case, std::nullopt, {});
     ExpectVisibleRowMatches(text_renderer, line_case,
                             std::make_pair<std::size_t, std::size_t>(1, 7), {});
-    // Changed span crossing the window boundary.
     const std::size_t len = line_case.text.size();
     std::vector<compare::CompareTextSpan> spans = {
         compare::CompareTextSpan{.start = 2, .end = len > 6 ? len - 2 : len}};
@@ -314,10 +294,6 @@ void TestBuilderVisiblePathMatchesLegacyCompareAssembly() {
   }
 }
 
-// When the row renders on the cell grid (layout set), the novel-token emphasis must
-// land on tab-expanded grid columns (visual * char_width), aligned with the grid
-// text/caret/selection — not on the proportional MeasureWidth positions. A leading
-// tab makes the two models produce different x, so this pins the grid geometry.
 void TestChangedSpanFillsUseGridWhenLayoutSet() {
   oracle::EnsureDummyVideo();
   oracle::OracleCanvas init_canvas(kCanvasWidth, kCanvasHeight);
@@ -325,11 +301,9 @@ void TestChangedSpanFillsUseGridWhenLayoutSet() {
   text_renderer.EnsureInitialized(init_canvas.renderer());
   const render::Theme& theme = OracleTheme();
 
-  const std::string text = "\treturn x;";  // '\t' + "return x;"
+  const std::string text = "\treturn x;";
   const LayoutLine layout = TextLayout::BuildVisibleLine(text, 0, 40, kTabSize);
   const std::vector<SyntaxTokenKind> tokens;
-  // Changed span covers bytes [1, 7) == "return"; byte 1 sits at visual column 4
-  // (the tab expands to kTabSize=4 cells), byte 7 at visual column 10.
   const std::vector<compare::CompareTextSpan> spans = {compare::CompareTextSpan{.start = 1, .end = 7}};
 
   RowDecorationInput input;
@@ -342,7 +316,7 @@ void TestChangedSpanFillsUseGridWhenLayoutSet() {
   input.text = text;
   input.tokens = &tokens;
   input.plain_color = theme.text_secondary;
-  input.layout = &layout;  // grid path
+  input.layout = &layout;
   input.changed_spans = std::span<const compare::CompareTextSpan>(spans);
   input.changed_span_fill = SDL_Color{200, 40, 40, 255};
   input.text_renderer = &text_renderer;
@@ -354,18 +328,12 @@ void TestChangedSpanFillsUseGridWhenLayoutSet() {
   Expect(row.underlines.empty(), "novel-token emphasis is a fill, not an underline");
   Expect(row.fills.size() == 1, "one novel-token fill should be emitted");
   const SDL_FRect& rect = row.fills.front().rect;
-  // Grid: start at visual col 4 -> x = 10 + 4*8 = 42; width = 6 cells -> 48.
   Expect(rect.x == 10.0f + 4.0f * 8.0f, "fill must start at the tab-expanded grid column");
   Expect(rect.w == 6.0f * 8.0f, "fill width must span the changed cells on the grid");
   Expect(row.fills.front().color.r == 200 && row.fills.front().color.a == 255,
          "fill must carry the caller's emphasis color unchanged");
 }
 
-// When the row renders on the cell grid (layout set), plugin text-style under/strike
-// lines must land on tab-expanded grid columns (visual * char_width), matching the
-// grid text — not on the proportional MeasureWidth positions. A leading tab makes the
-// two models diverge, so this pins the grid geometry for the text-style path (the
-// changed-span sibling above pins the same for compare's novel-token fills).
 void TestTextStyleUnderlinesUseGridWhenLayoutSet() {
   oracle::EnsureDummyVideo();
   oracle::OracleCanvas init_canvas(kCanvasWidth, kCanvasHeight);
@@ -373,11 +341,9 @@ void TestTextStyleUnderlinesUseGridWhenLayoutSet() {
   text_renderer.EnsureInitialized(init_canvas.renderer());
   const render::Theme& theme = OracleTheme();
 
-  const std::string text = "\treturn x;";  // '\t' + "return x;"
+  const std::string text = "\treturn x;";
   const LayoutLine layout = TextLayout::BuildVisibleLine(text, 0, 40, kTabSize);
   const std::vector<SyntaxTokenKind> tokens;
-  // Underline covers bytes [1, 7) == "return"; byte 1 is at visual column 4 (the tab
-  // expands to kTabSize=4 cells), byte 7 at visual column 10.
   std::vector<editor::TextStyleDecoration> text_styles;
   editor::TextStyleDecoration ul;
   ul.line = 0;
@@ -397,7 +363,7 @@ void TestTextStyleUnderlinesUseGridWhenLayoutSet() {
   input.text = text;
   input.tokens = &tokens;
   input.plain_color = theme.text_secondary;
-  input.layout = &layout;  // grid path
+  input.layout = &layout;
   input.text_styles = text_styles;
   input.text_renderer = &text_renderer;
   input.theme = &theme;
@@ -407,22 +373,10 @@ void TestTextStyleUnderlinesUseGridWhenLayoutSet() {
 
   Expect(row.underlines.size() == 1, "one text-style underline should be emitted");
   const SDL_FRect& rect = row.underlines.front().rect;
-  // Grid: start at visual col 4 -> x = 10 + 4*8 = 42; width = 6 cells -> 48. The old
-  // proportional path put it at x = 10 + MeasureWidth("\t") = 18 (one cell), width 48.
   Expect(rect.x == 10.0f + 4.0f * 8.0f, "underline must start at the tab-expanded grid column");
   Expect(rect.w == 6.0f * 8.0f, "underline width must span the styled cells on the grid");
 }
 
-// TD-2026-08-05-133: a whole-line plugin decoration ends at the LINE's extent, and
-// `RowDecorationInput.text` no longer carries the line on the editor's row path --
-// it is left empty unless the row has a diagnostic, because reading the line to
-// render a row copies any piece-tree line that spans pieces. So whole-line spans
-// read `line_length` instead, and nothing else in the tree pinned them: without
-// this, a plugin whole-line highlight would silently collapse to zero width on
-// every editor row and no test would have noticed.
-//
-// Pinned on both row paths, with `text` empty (the editor's shape) and with `text`
-// present (compare/merge's), which must agree.
 void TestWholeLineDecorationsSpanTheLineWithoutItsBytes() {
   oracle::EnsureDummyVideo();
   oracle::OracleCanvas init_canvas(kCanvasWidth, kCanvasHeight);
@@ -438,7 +392,7 @@ void TestWholeLineDecorationsSpanTheLineWithoutItsBytes() {
   editor::TextStyleDecoration whole;
   whole.line = 0;
   whole.start_column = 0;
-  whole.end_column = 0;  // ignored for a whole-line decoration
+  whole.end_column = 0;
   whole.background = SDL_Color{40, 90, 40, 255};
   whole.line_color = SDL_Color{200, 40, 40, 255};
   whole.flags = editor::kDecorationWholeLine | editor::kDecorationUnderline;
@@ -456,7 +410,7 @@ void TestWholeLineDecorationsSpanTheLineWithoutItsBytes() {
     input.line_length = line_length;
     input.tokens = &tokens;
     input.plain_color = theme.text_secondary;
-    input.layout = &layout;  // grid path, i.e. the editor row
+    input.layout = &layout;
     input.text_styles = text_styles;
     input.text_renderer = &text_renderer;
     input.theme = &theme;
@@ -483,30 +437,24 @@ void TestWholeLineDecorationsSpanTheLineWithoutItsBytes() {
              with_bytes.underlines.front().rect.w == without_bytes.underlines.front().rect.w,
          "handing the row its bytes must not change a whole-line decoration");
 
-  // And the failure mode this guards: a `line_length` left at zero collapses it.
   const DecoratedTextRow unset = build(std::string_view{}, 0);
   Expect(unset.fills.empty() && unset.underlines.empty(),
          "an unset line_length is what a collapsed whole-line span looks like");
 }
 
-// A mid-line inlay hint must (a) split and shift the real text runs to its right
-// by its whole-cell width, (b) leave text to its left untouched, and (c) emit its
-// own glyph run in the reserved phantom cells. Backend-less TextRenderer => 8px
-// cells and MeasureWidth == 8*len, so the geometry below is exact.
 void TestInlayHintsShiftRunsAndDrawGlyph() {
   oracle::EnsureDummyVideo();
   oracle::OracleCanvas init_canvas(kCanvasWidth, kCanvasHeight);
   render::TextRenderer text_renderer;
   text_renderer.EnsureInitialized(init_canvas.renderer());
   const render::Theme& theme = OracleTheme();
-  const float char_width = text_renderer.CharWidth();  // 8
+  const float char_width = text_renderer.CharWidth();
   Expect(char_width == 8.0f, "backend-less cell width is 8px");
 
-  const std::string text = "let x = 5;";  // col 5 is the space after 'x'
+  const std::string text = "let x = 5;";
   const LayoutLine layout = TextLayout::BuildVisibleLine(text, 0, 40, kTabSize);
-  const std::vector<SyntaxTokenKind> tokens;  // one plain color -> one run without hints
+  const std::vector<SyntaxTokenKind> tokens;
 
-  // Type hint " i32" (4 glyphs => 4 cells) anchored before column 5.
   std::vector<editor::InlineTextDecoration> inline_texts;
   editor::InlineTextDecoration hint;
   hint.anchor_column = 5;
@@ -523,8 +471,6 @@ void TestInlayHintsShiftRunsAndDrawGlyph() {
   Expect(spans.front().cell_width == 4, "\" i32\" occupies 4 cells");
   Expect(total_cells == 4, "total line phantom cells");
 
-  // A plugin/semantic underline on bytes [6, 10) ("= 5;"), i.e. to the RIGHT of the
-  // hint, must follow the shifted glyphs (uniform underline post-pass).
   std::vector<editor::TextStyleDecoration> text_styles;
   editor::TextStyleDecoration ul;
   ul.line = 0;
@@ -556,7 +502,6 @@ void TestInlayHintsShiftRunsAndDrawGlyph() {
   DecoratedTextRow row;
   editor::BuildDecoratedRow(row, input);
 
-  // Locate the three expected runs by their text.
   const editor::DecoratedTextRun* left = nullptr;
   const editor::DecoratedTextRun* right = nullptr;
   const editor::DecoratedTextRun* glyph = nullptr;
@@ -568,32 +513,22 @@ void TestInlayHintsShiftRunsAndDrawGlyph() {
   Expect(left != nullptr, "unshifted run left of the hint is emitted");
   Expect(right != nullptr, "run right of the hint is emitted");
   Expect(glyph != nullptr, "the hint glyph run is emitted");
-  // Left run stays at the origin; right run shifts by 4 cells (32px); the hint
-  // sits in the 4 phantom cells between them (display cols 5..8 -> x=text_x+40).
   Expect(left->x == text_x, "text left of the hint is not shifted");
   Expect(glyph->x == text_x + 5.0f * char_width, "hint draws at the phantom region start");
   Expect(right->x == text_x + (5.0f + 4.0f) * char_width,
          "text right of the hint shifts by the hint's cell width");
 
-  // The underline starts at byte 6 (visual col 6, right of the hint at 5) and must
-  // shift by the hint's 4 cells: base x = text_x + 6*8, shifted x = + 4*8.
   Expect(row.underlines.size() == 1, "one underline emitted");
   Expect(row.underlines.front().rect.x == text_x + (6.0f + 4.0f) * char_width,
          "an underline right of the hint follows the shifted glyphs");
 }
 
-// Regression: AppendDiagnosticUnderlines builds a per-line visual-column map ONCE
-// and reuses it for every diagnostic. Its rects must stay byte-identical to the
-// per-diagnostic DiagnosticUnderlineRect (which does the uncached tab-stop walk),
-// including on a line with tabs and a multibyte char where visual != byte column.
 void TestDiagnosticUnderlineCacheMatchesUncachedPath() {
   oracle::EnsureDummyVideo();
   oracle::OracleCanvas init_canvas(kCanvasWidth, kCanvasHeight);
   render::TextRenderer text_renderer;
   text_renderer.EnsureInitialized(init_canvas.renderer());
 
-  // Tabs make visual columns diverge from byte columns; the trailing "é" (2 bytes)
-  // exercises the code-point-boundary snap in the cached lookup.
   const std::string line_text = "\tab\tcde\tfghïj";
   const std::size_t len = line_text.size();
   constexpr std::size_t kScroll = 0;
@@ -629,49 +564,37 @@ void TestDiagnosticUnderlineCacheMatchesUncachedPath() {
   }
 }
 
-}  // namespace
+}
 
-// TD-2026-08-13-206: "Render Whitespace" did nothing on the compare panes, which
-// painted through their own row loop. The marker walk is shared now, so this pins
-// the contract both surfaces depend on: one marker per space/tab inside the
-// visible window, tabs measured across the cells they expand to, and a multi-byte
-// glyph not shifting every later marker right.
 void TestWhitespaceMarkersCoverVisibleCellsOnly() {
   std::vector<DecoratedTextFill> fills;
   const SDL_Color color{1, 2, 3, 255};
-  // "a b	c" -> space at visual column 1, tab at column 3 expanding to column 4.
-  editor::AppendWhitespaceMarkers(fills, "a b\tc", /*tab_size=*/4, /*row_visual_start=*/0,
-                                  /*row_visual_end=*/10, /*text_x=*/100.0f, /*char_width=*/10.0f,
-                                  /*y=*/50.0f, /*line_height=*/16.0f, color);
+  editor::AppendWhitespaceMarkers(fills, "a b\tc", 4, 0,
+                                  10, 100.0f, 10.0f,
+                                  50.0f, 16.0f, color);
   Expect(fills.size() == 2, "one marker for the space and one for the tab");
-  // Space dot: centered in its cell, 2x2.
   Expect(fills[0].rect.w == 2.0f && fills[0].rect.h == 2.0f, "a space renders as a dot");
   Expect(fills[0].rect.x > 110.0f && fills[0].rect.x < 120.0f,
          "the space dot sits in the second cell");
-  // Tab bar: 1px tall, spanning the cells the tab expands to. This one sits at
-  // visual column 3 with tab_size 4, so it advances exactly one cell.
   Expect(fills[1].rect.h == 1.0f, "a tab renders as a bar");
   Expect(fills[1].rect.w == 6.0f, "a one-cell tab bar spans that cell, inset 2px each side");
 
-  // A tab at column 0 expands across all four cells, and the bar grows with it.
   fills.clear();
   editor::AppendWhitespaceMarkers(fills, "\tx", 4, 0, 10, 0.0f, 10.0f, 0.0f, 16.0f, color);
   Expect(fills.size() == 1 && fills[0].rect.w == 36.0f,
          "a four-cell tab bar spans four cells, inset 2px each side");
 
-  // A window that starts past both whitespace cells emits nothing.
   fills.clear();
-  editor::AppendWhitespaceMarkers(fills, "a b\tc", 4, /*row_visual_start=*/5,
-                                  /*row_visual_end=*/10, 100.0f, 10.0f, 50.0f, 16.0f, color);
+  editor::AppendWhitespaceMarkers(fills, "a b\tc", 4, 5,
+                                  10, 100.0f, 10.0f, 50.0f, 16.0f, color);
   Expect(fills.empty(), "whitespace outside the visible window emits no markers");
 }
 
 void TestWhitespaceMarkersTrackMultiByteGlyphs() {
   std::vector<DecoratedTextFill> fills;
   const SDL_Color color{1, 2, 3, 255};
-  // Two-byte glyph then a space: the space is at VISUAL column 1, not byte 2.
-  editor::AppendWhitespaceMarkers(fills, "\xc3\xa9 x", /*tab_size=*/4, 0, 10, /*text_x=*/0.0f,
-                                  /*char_width=*/10.0f, 0.0f, 16.0f, color);
+  editor::AppendWhitespaceMarkers(fills, "\xc3\xa9 x", 4, 0, 10, 0.0f,
+                                  10.0f, 0.0f, 16.0f, color);
   Expect(fills.size() == 1, "one marker for the single space");
   Expect(fills[0].rect.x > 10.0f && fills[0].rect.x < 20.0f,
          "the marker sits one cell in, not two bytes in");
@@ -698,4 +621,4 @@ void RegisterRowDecorationBuilderTests(std::vector<TestCase>& tests) {
           TestBuilderVisiblePathMatchesLegacyCompareAssembly);
 }
 
-}  // namespace microide::tests
+}

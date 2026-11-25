@@ -27,16 +27,9 @@ std::string_view PathAfterLeadingTokens(std::string_view body, std::size_t token
     }
     ++offset;
   }
-  // Do NOT trim leading spaces here: porcelain v2 fields are single-space delimited,
-  // so `offset` already points at the first character of the path. Skipping spaces
-  // would corrupt a tracked file whose name legitimately begins with a space (e.g.
-  // " leading.cpp" would be reported as "leading.cpp").
   return body.substr(offset);
 }
 
-// The `index`-th space-delimited token of a porcelain v2 record body (0-based),
-// or empty when the record is short. Fields are single-space delimited and the
-// path is always last, so this never has to handle a token containing a space.
 std::string_view TokenAt(std::string_view body, std::size_t index) {
   std::size_t offset = 0;
   for (std::size_t i = 0; i < index; ++i) {
@@ -53,7 +46,6 @@ std::string_view TokenAt(std::string_view body, std::size_t index) {
   return body.substr(offset, end == std::string_view::npos ? std::string_view::npos : end - offset);
 }
 
-// `<sub>` is "N..." for an ordinary path and "S<c><m><u>" for a gitlink.
 bool SubmoduleField(std::string_view body, std::size_t sub_token_index) {
   const std::string_view sub = TokenAt(body, sub_token_index);
   return !sub.empty() && sub.front() == 'S';
@@ -65,11 +57,6 @@ bool ParseAheadBehind(std::string_view token, int* ahead, int* behind) {
     return false;
   }
   const std::size_t minus = token.find('-');
-  // Real porcelain-v2 emits `+<ahead> -<behind>` with a single space field
-  // separator (e.g. "+2 -0"), so splitting on the first '-' leaves that
-  // separator space trailing on the ahead field. Trim surrounding ASCII
-  // whitespace (view-based, no allocation) so the full-consume check below
-  // still accepts genuine git output while rejecting garbage like "+12x-3".
   const auto trim_ascii_ws = [](std::string_view text) {
     const auto is_ws = [](char ch) { return ch == ' ' || ch == '\t'; };
     while (!text.empty() && is_ws(text.front())) {
@@ -82,8 +69,6 @@ bool ParseAheadBehind(std::string_view token, int* ahead, int* behind) {
   };
   const std::string_view ahead_text = trim_ascii_ws(token.substr(1, minus - 1));
   const std::string_view behind_text = trim_ascii_ws(token.substr(minus + 1));
-  // Reject empty fields outright: from_chars on an empty range reports
-  // invalid_argument, but an explicit guard keeps the intent obvious.
   if (ahead_text.empty() || behind_text.empty()) {
     return false;
   }
@@ -93,9 +78,6 @@ bool ParseAheadBehind(std::string_view token, int* ahead, int* behind) {
                                             parsed_ahead);
   const auto behind_result =
       std::from_chars(behind_text.data(), behind_text.data() + behind_text.size(), parsed_behind);
-  // Require both fields to parse cleanly AND to consume every byte, so a
-  // trailing non-numeric suffix ("+12x-3", "+12-3x") is rejected instead of
-  // silently yielding a truncated count.
   if (ahead_result.ec != std::errc{} || behind_result.ec != std::errc{} ||
       ahead_result.ptr != ahead_text.data() + ahead_text.size() ||
       behind_result.ptr != behind_text.data() + behind_text.size()) {
@@ -110,15 +92,9 @@ void RecordTreeGitStatus(std::unordered_map<std::string, GitFileStatus>& statuse
                          const GitRepositoryEntry& entry,
                          std::string& scratch) {
   const GitFileStatus status = entry.conflicted ? GitFileStatus::Conflicted : entry.status;
-  // MakeGitRepositoryPathIdentity already normalized these paths and stores exactly
-  // the generic text this map keys by, so re-deriving it per entry was pure
-  // duplicated work on the refresh path that every project pays on every git change.
   GitPorcelainParser::RecordNormalizedGitStatus(statuses, GenericPathView(entry.path), status,
                                                scratch);
   if (entry.old_path.has_value()) {
-    // The rename/copy source no longer exists at its old path in the working tree,
-    // so badge it Deleted rather than inheriting the destination's status (which
-    // painted the now-gone source as Modified/Added).
     GitPorcelainParser::RecordNormalizedGitStatus(statuses, GenericPathView(*entry.old_path),
                                                   GitFileStatus::Deleted, scratch);
   }
@@ -149,7 +125,7 @@ GitRepositoryEntry MakeEntry(GitRepositoryEntryKind kind,
   return entry;
 }
 
-}  // namespace
+}
 
 GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
                                                std::filesystem::path repository_root,
@@ -166,14 +142,8 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
   };
   state.repo_available = true;
 
-  // Bound BOTH the retained entries AND the pre-cap token materialization: a v2 rename
-  // entry consumes 2 records (the origin path is the following NUL field), so split at
-  // most 2x the entry cap (+ slack). Splitting the whole output first paid an O(record
-  // count) allocation for hostile millions-of-tiny-records output. (TD-2026-07-16-30.)
   const std::vector<std::string_view> records =
       util::SplitNulDelimited(output, kMaxGitStatusEntries * 2 + 2);
-  // Cap entries (and the reserve) against a hostile repo's millions of records;
-  // see kMaxGitStatusEntries. Extra records past the cap are dropped.
   state.entries.reserve(std::min(records.size(), kMaxGitStatusEntries));
   for (std::size_t index = 0;
        index < records.size() && state.entries.size() < kMaxGitStatusEntries; ++index) {
@@ -207,21 +177,11 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
       continue;
     }
 
-    // A well-formed changed/untracked record is `<kind><space><XY>...`, so it is
-    // at least 2 bytes. A shorter record (e.g. a single byte left by the 128 MiB
-    // capture truncation on a repo with millions of entries) would make substr(2)
-    // throw std::out_of_range, which propagates off the background worker thread
-    // and aborts the process. Guard it like the v1 parser's `< 4` check.
     if (record.size() < 2) {
       continue;
     }
     const char kind = record[0];
     const std::string_view body = record.substr(2);
-    // Only the changed-entry kinds (1/2/u) carry a leading XY status field. For
-    // '?'/'!' (untracked/ignored) records `body` is the whole path — which may
-    // legally begin with a space — and the literal "??"/"!!" is used below, so the
-    // XY extraction (and its empty-guard) must not run for them or a leading-space
-    // untracked file would be silently dropped.
     std::string_view xy;
     if (kind == '1' || kind == '2' || kind == 'u') {
       const std::size_t xy_end = body.find(' ');
@@ -248,15 +208,6 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
         if (path.empty()) {
           break;
         }
-        // In `--porcelain=v2 -z` a rename/copy record's origPath is always the
-        // immediately following NUL-delimited field. SplitNulDelimited already
-        // consumed that NUL, so `record` never contains one and the origPath is
-        // simply records[index + 1]; consume it unconditionally (bounds
-        // permitting), exactly as the v1 status parser and the diff parser do.
-        // The previous first-byte heuristic gate silently dropped the source path
-        // for any file whose name began with '#', '1', '2', 'u', '?' or '!'
-        // (e.g. "1-notes.md", "2023-log.txt", "#readme"), losing its tree badge
-        // and leaving the origPath record to be misparsed as a bogus entry.
         std::optional<std::string> old_path;
         if (index + 1 < records.size()) {
           old_path = std::string(records[index + 1]);
@@ -268,7 +219,6 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
         break;
       }
       case 'u': {
-        // Porcelain v2 unmerged: XY sub m1 m2 m3 mW h1 h2 h3 <path>
         const std::string_view path = PathAfterLeadingTokens(body, 9);
         if (path.empty()) {
           break;
@@ -298,10 +248,7 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
     state.branch.branch_name = state.branch.head_oid.substr(0, std::min<std::size_t>(7, state.branch.head_oid.size()));
   }
 
-  // Built locally and published once: the state holds it as a shared, immutable
-  // map so the sidebar snapshot can take a pointer instead of a deep copy.
   auto tree_statuses = std::make_shared<GitTreeStatusMap>();
-  // One scratch buffer for the whole sweep, like DirectoryTree::ApplyGitStatuses'.
   std::string scratch;
   for (const GitRepositoryEntry& entry : state.entries) {
     if (entry.kind == GitRepositoryEntryKind::Ignored) {
@@ -314,4 +261,4 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
   return state;
 }
 
-}  // namespace microide::project
+}

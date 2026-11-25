@@ -25,15 +25,8 @@ class GitRepositoryService {
   void SetWakeCallbacks(WakeCallbacks callbacks);
   void Reset();
 
-  // The whole state, by value — `entries` plus the tree-status map, so this is
-  // thousands of allocations on a large repository. Use it only where the caller
-  // genuinely needs the entry list (opening a merge tab, staging a commit).
   project::GitRepositoryState CurrentState() const;
 
-  // The scalar facts a per-refresh caller usually wants, read under the same lock
-  // without copying anything. `InvalidateStaleMergeTabs` runs on every git sidebar
-  // refresh and was deep-copying the entire state to read two numbers
-  // (TD-2026-08-06-159).
   struct Summary {
     std::uint64_t generation = 0;
     std::size_t conflicted_entry_count = 0;
@@ -45,11 +38,6 @@ class GitRepositoryService {
   bool IsRefreshing() const;
 
   void MarkStale();
-  // `launcher` is the ACTIVE PROJECT's launcher (`ProjectWorkspaceState::launcher()`),
-  // not the process-wide local one — it decides which machine the refresh's git runs
-  // on. It is stored by pointer in the request and read on the refresh worker, so it
-  // must outlive the refresh; the local launcher is a function-local static and a
-  // remote one is owned by the project's connection. (TD-2026-09-22-301.)
   void RequestRefresh(const std::filesystem::path& project_root,
                       const platform::ProcessLauncher& launcher,
                       GitSidebarRefreshScope scope,
@@ -57,42 +45,22 @@ class GitRepositoryService {
                       bool tree_git_badges_materialized);
   bool ConsumePendingSidebarSnapshot(GitSidebarState::RefreshSnapshot* snapshot);
 
-  // Generation of the most recently *scheduled* refresh. A published snapshot
-  // carries the generation of the request that produced it, so a caller that
-  // wants to hear about the outcome of a refresh it is about to ask for reads
-  // this first and then waits for a snapshot whose generation exceeds it — which
-  // stays correct when the request is throttled or coalesced into a deferred
-  // follow-up (see CommitWorkflowService's post-commit refresh watch).
   std::uint64_t CurrentRefreshGeneration() const;
 
-  // Test seam: drives a refresh on the calling thread. Always compiled; unused
-  // by production code paths (which dispatch refreshes asynchronously).
   void RunRefreshSynchronouslyForTesting(const std::filesystem::path& project_root,
                                          const platform::ProcessLauncher& launcher,
                                          GitSidebarRefreshScope scope,
                                          OutgoingBaseChoice outgoing_base_choice,
                                          bool tree_git_badges_materialized);
 
-  // Test seam: replaces the `git status` subprocess that BuildRepositoryState
-  // would spawn on the refresh worker with an injected state producer. Lets tests
-  // block the git query (and assert the sidebar is refreshing before it returns)
-  // without running real git — the fake-git seam mirror of the async compare
-  // picker's provider seam. Default (empty) runs the real subprocess. Set on the
-  // main thread before dispatching refreshes; read on the worker with the queue's
-  // enqueue/dequeue mutex as the happens-before edge.
   using RepositoryStateProviderForTesting = std::function<project::GitRepositoryState(
       const std::filesystem::path& project_root, std::uint64_t generation)>;
   void SetRepositoryStateProviderForTesting(RepositoryStateProviderForTesting provider);
 
-  // Count of actual (cache-miss) outgoing-base resolutions performed. A refresh
-  // whose repository identity is unchanged serves the base from cache and does
-  // not increment this. Test-only observability for the outgoing-base memo.
   std::uint64_t OutgoingBaseResolveCountForTesting() const {
     return outgoing_base_resolve_count_;
   }
 
-  // Through the project's launcher: the host's `.git`, not this machine's copy of
-  // the tree (TD-2026-10-06-319).
   static bool IsGitRepoValid(const std::filesystem::path& project_root,
                              const platform::ProcessLauncher& launcher);
 
@@ -110,20 +78,10 @@ class GitRepositoryService {
   GitSidebarState::RefreshSnapshot BuildSidebarSnapshot(
       const project::GitRepositoryState& repository_state,
       const RefreshRequest& request) const;
-  // Resolves the outgoing-base ref, memoizing the result across refreshes. The
-  // Auto resolution runs several git subprocesses (symbolic-ref, config, show-ref,
-  // rev-parse); a plain status refresh after a file edit leaves the identity below
-  // unchanged, so it is served from the cache and spawns no git process. Called
-  // only from BuildSidebarSnapshot, which the executor serializes.
   ResolvedGitOutgoingBase ResolveOutgoingBaseCached(
       const project::GitRepositoryState& repository_state, const RefreshRequest& request) const;
   void PublishSnapshot(GitSidebarState::RefreshSnapshot snapshot, std::uint64_t generation);
   void ScheduleRefresh(RefreshRequest request);
-  // Shared exit for a refresh task whose generation was superseded before it
-  // could publish. Clears refresh_in_flight_ and re-schedules a deferred
-  // follow-up if one is pending. Must be called with mutex_ NOT held. (The
-  // global background-task counter is owned entirely by ProjectBackgroundExecutor's
-  // queue hooks, which balance it once per job on every exit path.)
   void HandleSupersededRefresh();
 
   project::ProjectBackgroundExecutor& background_executor_;
@@ -138,13 +96,6 @@ class GitRepositoryService {
   std::filesystem::path active_project_root_;
   RepositoryStateProviderForTesting repository_state_provider_for_testing_;
 
-  // Outgoing-base memo (see ResolveOutgoingBaseCached). Confined to a single thread
-  // via BuildSidebarSnapshot, so it needs no separate lock: production refreshes run
-  // it only on the serial background-executor worker, and the synchronous test seam
-  // (RunRefreshSynchronouslyForTesting) drains that worker before building on the
-  // calling thread, so the two never touch the memo concurrently. The key includes
-  // head_oid, so any HEAD movement (commit/checkout/reset/merge) or branch/upstream/
-  // root/choice change re-resolves; a file-edit status refresh hits the cache.
   struct OutgoingBaseCacheKey {
     std::filesystem::path root;
     OutgoingBaseChoice::Kind choice_kind = OutgoingBaseChoice::Kind::Auto;
@@ -161,4 +112,4 @@ class GitRepositoryService {
   mutable std::uint64_t outgoing_base_resolve_count_ = 0;
 };
 
-}  // namespace microide::workspace
+}

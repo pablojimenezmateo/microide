@@ -21,19 +21,11 @@ std::optional<SDL_Rect> ToClipRect(const SDL_FRect& rect,
                                    int width,
                                    int height,
                                    SDL_FPoint device_scale) {
-  // Reject non-finite or non-positive-size input BEFORE any arithmetic or float->int
-  // cast: NaN/inf flow through floor/ceil and the subsequent static_cast<int> is UB
-  // ([conv.fpint]). A negative/zero-size dirty rect is not a valid partial invalidation
-  // either. SDL eventually consumes integer rects, so invalid geometry is dropped here.
   if (!std::isfinite(rect.x) || !std::isfinite(rect.y) || !std::isfinite(rect.w) ||
       !std::isfinite(rect.h) || rect.w <= 0.0f || rect.h <= 0.0f) {
     return std::nullopt;
   }
 
-  // The padded rect, clamped to the surface IN FLOAT space first, so a huge finite
-  // coordinate saturates rather than overflowing int in the snap's cast; then the
-  // shared device-pixel snap -- the same computation the frame's clip and a fill of
-  // this rect go through (clip-discipline D2) -- and the surface bounds again.
   const float fw = static_cast<float>(width);
   const float fh = static_cast<float>(height);
   const float fx0 = std::clamp(rect.x - padding.left, 0.0f, fw);
@@ -54,10 +46,6 @@ std::optional<SDL_Rect> ToClipRect(const SDL_FRect& rect,
 }
 
 bool RectsOverlapOrNearlyTouch(const SDL_Rect& a, const SDL_Rect& b) {
-  // Edge arithmetic in int64 so a near-INT_MAX coordinate (fuzzed or future
-  // offscreen/high-DPI input) cannot overflow signed int before the comparison.
-  // The normal AnalyzeDirtyRegions path already clamps rects to the surface, so
-  // this only hardens the general helper.
   const std::int64_t a_right = static_cast<std::int64_t>(a.x) + a.w;
   const std::int64_t b_right = static_cast<std::int64_t>(b.x) + b.w;
   const std::int64_t a_bottom = static_cast<std::int64_t>(a.y) + a.h;
@@ -69,8 +57,6 @@ bool RectsOverlapOrNearlyTouch(const SDL_Rect& a, const SDL_Rect& b) {
 }
 
 SDL_Rect UnionRects(const SDL_Rect& a, const SDL_Rect& b) {
-  // Compute edges in int64 then clamp back to the int range so a pathological
-  // union can never wrap the resulting SDL_Rect width/height.
   constexpr std::int64_t kIntMax = std::numeric_limits<int>::max();
   constexpr std::int64_t kIntMin = std::numeric_limits<int>::min();
   const std::int64_t left = std::min(a.x, b.x);
@@ -88,7 +74,7 @@ SDL_Rect UnionRects(const SDL_Rect& a, const SDL_Rect& b) {
                   .h = clamp_int(bottom - top)};
 }
 
-}  // namespace
+}
 
 DirtyRegionAnalysis AnalyzeDirtyRegions(const std::vector<SDL_FRect>& dirty_rects,
                                         const render::TextClipPadding& padding,
@@ -106,7 +92,7 @@ void AnalyzeDirtyRegions(const std::vector<SDL_FRect>& dirty_rects,
                          int height,
                          SDL_FPoint device_scale,
                          DirtyRegionAnalysis& analysis) {
-  analysis.merged_clip_rects.clear();  // keeps its capacity
+  analysis.merged_clip_rects.clear();
   analysis.clipped_rect_count = 0;
   analysis.coverage = 0.0f;
   if (width <= 0 || height <= 0) {
@@ -125,8 +111,6 @@ void AnalyzeDirtyRegions(const std::vector<SDL_FRect>& dirty_rects,
     return;
   }
 
-  // Iterative merge: O(n²) worst case but n is always small in practice (< 20).
-  // Uses swap+pop_back instead of mid-vector erase to keep each removal O(1).
   bool merged_any = true;
   while (merged_any) {
     merged_any = false;
@@ -200,7 +184,6 @@ SDL_FRect DeviceClipHint(const SDL_Rect& clip, float scale_x, float scale_y) {
     return SDL_FRect{static_cast<float>(clip.x), static_cast<float>(clip.y),
                      static_cast<float>(clip.w), static_cast<float>(clip.h)};
   }
-  // SDL_render: floor(x * s) wide by ceil(w * s), back in logical units.
   const float device_x = std::floor(static_cast<float>(clip.x) * scale_x);
   const float device_y = std::floor(static_cast<float>(clip.y) * scale_y);
   const float device_w = std::ceil(static_cast<float>(clip.w) * scale_x);
@@ -218,4 +201,4 @@ bool ShouldPromotePartialFrameToFull(const DirtyRegionAnalysis& analysis) {
          analysis.coverage >= kPromoteWideCoverageThreshold;
 }
 
-}  // namespace microide::app
+}

@@ -20,13 +20,7 @@ class ChromeMouseCoordinator {
     std::function<void(MenuId, const SDL_FRect&)> open_anchored_menu;
     std::function<SidebarModeRowLayout(const SDL_FRect&)> sidebar_mode_row;
     std::function<void(std::string_view)> activate_sidebar_view;
-    // A frame is owed and frame prep derives what it repaints: everything this
-    // coordinator changes on screen is a derived unit keyed on the state it
-    // writes (an open menu's lit rows, the bar's items and chevron).
     std::function<void()> request_frame;
-    // Heap-free returns: these three run ~10 times per pointer-motion event over
-    // the menu bar, and returning std::vector made that 32 of the 50 allocations
-    // an event (TD-2026-08-06-149).
     std::function<WorkspaceShell::VisibleMenuBarItems(const SDL_FRect&)>
         compute_visible_menu_bar_items;
     std::function<WorkspaceShell::MenuBarOverflowIds(const SDL_FRect&)>
@@ -38,18 +32,6 @@ class ChromeMouseCoordinator {
     std::function<void()> request_quit;
     std::function<void(MenuId)> open_menu_bar_menu;
     std::function<std::optional<SDL_FRect>(const SDL_FRect&)> active_submenu_rect;
-    // Geometry-only hit/rect lookups. The value-returning
-    // `ComputeVisiblePopupMenuItems` builds a row vector and probes
-    // IsMenuItemEnabled and IsMenuItemChecked per item; a mouse event wants one
-    // row, so every mouse path here resolves the row by geometry and asks about
-    // that row alone. It dominated per-motion handler time, and over an open
-    // menu it was also one heap allocation per event.
-    //
-    // They take the menu's items, which a handler resolves ONCE per event
-    // (`menu_items`): resolving them is the menu's assembly (the LSP-visibility
-    // filter), and each of these asked for it again (TD-2026-10-25-391). The span
-    // is valid until that menu is assembled again, so a handler takes it after
-    // any call that may assemble it (the popup and submenu rects).
     std::function<std::optional<PopupRowGeometry>(
         std::span<const MenuItemSpec>, const SDL_FRect&, float, float)>
         hit_test_popup_row;
@@ -58,9 +40,6 @@ class ChromeMouseCoordinator {
     std::function<std::optional<SDL_FRect>(const SDL_FRect&, MenuId)> compute_popup_menu_rect;
     std::function<const MenuSpec*(MenuId)> find_menu_spec;
     std::function<std::span<const MenuItemSpec>(MenuId)> menu_items;
-    // The find widget is the one overlay whose wheel/buttons still move a selection
-    // (they step through matches); every list overlay scrolls detached instead, so no
-    // per-mode "move selection" hook is needed here.
     std::function<void(int)> move_buffer_search_selection;
     std::function<void()> replace_current_buffer_search_match;
     std::function<void()> replace_all_buffer_search_matches;
@@ -75,7 +54,6 @@ class ChromeMouseCoordinator {
     std::function<void(const SDL_FRect&)> reveal_overlay_selection;
     std::function<void()> activate_overlay_selection;
     std::function<std::optional<SDL_FRect>()> compute_tree_context_menu_rect;
-    // The tree context menu's half of the geometry-only pair above.
     std::function<std::optional<PopupRowGeometry>(
         TreeContextTargetKind, const SDL_FRect&, float, float)>
         hit_test_tree_context_menu_row;
@@ -97,7 +75,6 @@ class ChromeMouseCoordinator {
                    int horizontal_ticks);
 
  private:
-  // A popup's highlighted rows: under the pointer, and the active (keyboard) item.
   struct PopupRowPair {
     int hovered = -1;
     int active = -1;
@@ -105,8 +82,6 @@ class ChromeMouseCoordinator {
 
   bool HandleMenuButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleMenuMotion(const SDL_Event& event, const WorkspaceLayout& layout);
-  // The popup row under (x, y): its index (-1 for none), whether it is an enabled
-  // item (a separator never is), and its rect.
   struct PopupRowHover {
     int index = -1;
     bool enabled = false;
@@ -115,9 +90,6 @@ class ChromeMouseCoordinator {
   PopupRowHover HoveredPopupRow(std::span<const MenuItemSpec> items, const SDL_FRect& popup_rect,
                                 float x, float y) const;
   void RequestFrameIfPopupRowsChanged(PopupRowPair previous, PopupRowPair current);
-  // Tracks the hovered overflow row into `overflow_popup_active_index` so the
-  // render path highlights from state rather than from the live pointer, and
-  // the keyboard and the mouse cannot select two different rows.
   bool HandleMenuOverflowPopupMotion(const SDL_Event& event, const WorkspaceLayout& layout);
   void CloseOverflowPopupWithRedraw();
   bool HandleOverlayButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
@@ -130,4 +102,4 @@ class ChromeMouseCoordinator {
   Operations operations_;
 };
 
-}  // namespace microide::workspace
+}

@@ -31,9 +31,6 @@ void BuildRowGapsForWindow(const PluginSurfaceStore& surface_store,
   const std::size_t visual_count = viewport.visual_line_count();
   const std::size_t window_end = std::min(visual_count, scroll + visible_rows);
 
-  // Below: inline plugin-surface insets anchored at a line in the window. Skip the
-  // PathKey normalisation entirely when no plugin has published any anchored
-  // surface, so the feature-on-but-unused case stays allocation-free.
   if (want_surfaces && surface_store.has_anchored()) {
     const std::span<const AnchoredSurface> anchored =
         surface_store.AnchoredSurfacesForPathKey(viewport.path_key());
@@ -52,16 +49,13 @@ void BuildRowGapsForWindow(const PluginSurfaceStore& surface_store,
     }
   }
 
-  // Above: a fixed-height code-lens strip over the first visual row of each
-  // visible line that carries a lens. Pointers index the store's sorted lens
-  // vector, valid until the next store mutation (same contract as surfaces).
   if (want_lenses) {
     const FileDecorations* decorations = decoration_store.FindByPathKey(viewport.path_key());
     if (decorations != nullptr) {
       for (std::size_t visual_row = scroll; visual_row < window_end; ++visual_row) {
         const std::size_t line = viewport.VisualRowLineIndex(visual_row);
         if (viewport.VisualRowForLine(line) != visual_row) {
-          continue;  // only the line's first visual row hosts the strip
+          continue;
         }
         const std::span<const CodeLensDecoration> lenses =
             decorations->CodeLensesForLine(static_cast<std::uint32_t>(line));
@@ -75,10 +69,6 @@ void BuildRowGapsForWindow(const PluginSurfaceStore& surface_store,
     }
   }
 
-  // Below: the ghost-text suggestion's trailing lines, hosted in one gap under the
-  // caret line so the real rows below push down. Geometry only depends on the
-  // anchor + height, so render and hit-test agree even though only render supplies
-  // `ghost_content` for drawing.
   if (want_ghost) {
     const std::size_t visual_row = viewport.VisualRowForLine(options.ghost_anchor_line);
     if (VisualRowInWindow(visual_row, scroll, visible_rows, visual_count)) {
@@ -103,8 +93,6 @@ InsetClickResult ResolveInsetClick(const PluginSurfaceStore& surface_store,
                                 static_cast<std::uint32_t>(viewport.scroll_line()), gaps);
   InsetClickResult result{layout.HitTest(y, visible_rows), {}};
   if (result.hit.in_gap) {
-    // A row hosts at most one Above and one Below gap; the strip y fell into tells
-    // them apart (Above sits over the text band, Below under it).
     const std::uint32_t target =
         static_cast<std::uint32_t>(viewport.scroll_line() + result.hit.row);
     const bool above_hit = y < layout.RowTop(result.hit.row);
@@ -119,4 +107,4 @@ InsetClickResult ResolveInsetClick(const PluginSurfaceStore& surface_store,
   return result;
 }
 
-}  // namespace microide::editor
+}

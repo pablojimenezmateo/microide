@@ -116,9 +116,6 @@ return ide.plugin({
              WorkspaceShellTestAccess::ActiveOverlayMode(shell) ==
                  WorkspaceShell::OverlayMode::CodeActions,
          "code-actions command should open the action overlay");
-  // The code-action menu is the canonical centered modal (not the old caret-anchored
-  // popup): it must not carry a caret anchor. (Centered-rect geometry is covered by
-  // WorkspaceShellProjectTests' CodeActionMenuIsCentered.)
   Expect(!WorkspaceShellTestAccess::OverlayCaretAnchor(shell).has_value(),
          "code actions must not carry a caret anchor (centered menu, not caret-anchored)");
   Expect(WorkspaceShellTestAccess::ExecuteSelectedCodeAction(shell),
@@ -142,9 +139,6 @@ void TestPhase5LspCommandsDriveDiagnosticsNavigationAndActions() {
   const std::filesystem::path source = project_root / "README.md";
   const std::filesystem::path refs = project_root / "refs.md";
   WriteFile(source, "alpha\nusage\nafter\n");
-  // The third line opens with a non-BMP glyph (two UTF-16 units, four bytes), so
-  // a reference to the `x` after it is `character: 2` in the server's default
-  // utf-16 encoding but character column 2 -- a raw print says 3.
   WriteFile(refs, "before-def\ndefinition\n\xf0\x9f\x98\x80x-after-def\n");
   WriteFile(
       server_path,
@@ -470,7 +464,6 @@ return ide.plugin({
                  references_channel->end() &&
              std::find(references_channel->begin(), references_channel->end(), "refs.md:2:1") !=
                  references_channel->end() &&
-             // utf-16 `character: 2` after a two-unit emoji is character column 2.
              std::find(references_channel->begin(), references_channel->end(), "refs.md:3:2") !=
                  references_channel->end() &&
              std::find(references_channel->begin(), references_channel->end(), "refs.md:3:3") ==
@@ -482,10 +475,6 @@ return ide.plugin({
              std::find(references_channel->begin(), references_channel->end(),
                        " > 2 | usage") != references_channel->end(),
          "find-references should publish host-owned output lines with local context");
-  // Output-panel surfacing for find-references was retired with the user-facing
-  // 'Show Output' action. The references list still accumulates in the LSP
-  // output channel storage (verified above); the panel auto-open and
-  // click-to-navigate flow no longer exist. Goto-definition continues below.
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "goto-definition"),
          "goto-definition should execute");
@@ -501,8 +490,6 @@ return ide.plugin({
              WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 0,
          "goto-definition should open the returned location and move the caret");
 
-  // typeDefinition / implementation / declaration each navigate to their own
-  // distinct location, proving the request routes to the right server method.
   const auto expect_nav_to = [&](const char* command, std::size_t line, std::size_t column) {
     Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, command),
            std::string(command) + " should execute");
@@ -517,23 +504,15 @@ return ide.plugin({
   expect_nav_to("goto-implementation", 1, 0);
   expect_nav_to("goto-declaration", 0, 3);
 
-  // workspace/symbol answers Search Workspace Symbols' pick (TD-2026-10-18-356).
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "workspace-symbol Wid"),
          "workspace-symbol should execute with a query");
   Expect(WaitForLspCondition(shell, [&] {
            const std::vector<std::string> labels = WorkspaceShellTestAccess::QuickPickMatchLabels(shell);
-           // The server echoes the query into the name: "WidgetWid".
            return std::find(labels.begin(), labels.end(), "WidgetWid") != labels.end();
          }),
          "workspace-symbol should list the returned symbol in its pick");
 }
 
-// workspace/symbol is project-wide, so there is no active-file cursor to anchor a
-// staleness check on. A slower response for an OLDER query must not clear the channel and
-// render over the newer query's results: the request now carries a generation token and
-// the callback drops when superseded (TD-2026-07-17A-034). Uses a stub client whose
-// workspace-symbol handler CAPTURES the callbacks so the test can deliver them out of
-// order.
 void TestPhase5WorkspaceSymbolDropsSupersededResponse() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path project = temp_dir.path() / "project";
@@ -549,13 +528,12 @@ void TestPhase5WorkspaceSymbolDropsSupersededResponse() {
   stub->EnableTestStubMode();
   std::vector<workspace::LspClient::WorkspaceSymbolCallback> captured;
   stub->SetTestWorkspaceSymbolHandler(
-      [&captured](std::string /*query*/, workspace::LspClient::WorkspaceSymbolCallback cb) {
+      [&captured](std::string , workspace::LspClient::WorkspaceSymbolCallback cb) {
         captured.push_back(std::move(cb));
       });
   WorkspaceShellTestAccess::LspManagerForTesting(shell).InstallTestClientForTesting(
       "python", std::move(stub));
 
-  // Fire two queries; drain so the stub handler captures each callback.
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "workspace-symbol AAA"),
          "first workspace-symbol query should dispatch");
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
@@ -575,20 +553,13 @@ void TestPhase5WorkspaceSymbolDropsSupersededResponse() {
     return std::find(labels.begin(), labels.end(), std::string(name)) != labels.end();
   };
 
-  // Deliver the OLDER (AAA) response: it is superseded and must be dropped.
   captured[0](symbol("Older"));
   Expect(!listed("Older"), "a superseded workspace-symbol response must not replace the newer query's");
 
-  // Deliver the NEWER (BBB) response: it is current and lists.
   captured[1](symbol("Newer"));
   Expect(listed("Newer"), "the current workspace-symbol response should list its result");
 }
 
-// TD-2026-07-17A-030: a same-file assist request invoked twice before the first
-// response lands must drop the OLDER response via a per-surface request generation.
-// Signature help is the observable surface here (LSP stub captures callbacks so the
-// test delivers them out of order); the same generation guard covers definition /
-// navigation / references.
 void TestPhase5SignatureHelpDropsSupersededResponse() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path project = temp_dir.path() / "project";
@@ -604,7 +575,7 @@ void TestPhase5SignatureHelpDropsSupersededResponse() {
   stub->EnableTestStubMode();
   std::vector<workspace::LspClient::SignatureHelpCallback> captured;
   stub->SetTestSignatureHelpHandler(
-      [&captured](std::string /*uri*/, workspace::LspClient::Position /*pos*/,
+      [&captured](std::string , workspace::LspClient::Position ,
                   workspace::LspClient::SignatureHelpCallback cb) {
         captured.push_back(std::move(cb));
       });
@@ -619,15 +590,12 @@ void TestPhase5SignatureHelpDropsSupersededResponse() {
     return help;
   };
 
-  // Fire two signature-help requests; drain so the stub captures each callback.
   Expect(WorkspaceShellTestAccess::ShowSignatureHelp(shell), "first signature help dispatches");
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
   Expect(WorkspaceShellTestAccess::ShowSignatureHelp(shell), "second signature help dispatches");
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
   Expect(captured.size() == 2, "both signature-help requests capture a callback");
 
-  // Deliver the OLDER response: it is superseded and must be dropped (no popup, or
-  // at least not the older signature).
   captured[0](make_help("OLD_SIG"));
   {
     const auto popup = WorkspaceShellTestAccess::SignatureHelpPopup(shell);
@@ -635,7 +603,6 @@ void TestPhase5SignatureHelpDropsSupersededResponse() {
            "a superseded signature-help response must not open its popup");
   }
 
-  // Deliver the NEWER response: it is current and shows.
   captured[1](make_help("NEW_SIG"));
   {
     const auto popup = WorkspaceShellTestAccess::SignatureHelpPopup(shell);
@@ -769,14 +736,6 @@ return ide.plugin({
          "opening an editable merge buffer should trigger the normal plugin buffer-open hook");
 }
 
-// A server that mirrors the buffer incrementally sees every edit. Typing into a
-// snippet placeholder edits each of its mirrors with one ReplaceRange; the
-// keystroke's LSP sync sent the last of them as the ranged delta and the server's
-// copy lost the others (TD-2026-11-03-431). The fake server applies each change
-// the way clangd does (utf-8 positions, incremental sync) and writes its copy out.
-// A language server that keeps the document as its didOpen / didChange messages
-// build it and writes it to `mirror_path` after each one: what the server
-// believes the buffer holds, for a test to compare with the buffer.
 void WriteMirrorLspServer(const std::filesystem::path& plugins_root, const std::filesystem::path& server_path,
                           const std::filesystem::path& mirror_path) {
   WriteFile(server_path, std::string(R"py(#!/usr/bin/env python3
@@ -854,8 +813,6 @@ return ide.plugin({
 )lua"));
 }
 
-// Waits until the mirror server's copy reads `expected`; empty when it did, else
-// what it last read.
 std::string WaitForMirrorLspText(WorkspaceShell& shell, const std::filesystem::path& mirror_path,
                                  const std::string& expected) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -894,18 +851,15 @@ void TestPhase5IncrementalSyncCarriesEverySnippetMirrorEdit() {
   const auto server_has = [&](const std::string& expected) {
     return WaitForMirrorLspText(shell, mirror_path, expected);
   };
-  // A first keystroke opens the document on the server (and is itself synced).
   editor::TextViewport& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
   viewport.MoveCursorTo(1, 0, false);
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "x"), "a keystroke");
   const std::string opened = server_has(viewport.SerializeText());
   Expect(opened.empty(), "the server has the buffer after a keystroke (it has '" + opened + "')");
 
-  // Three mirrors of one placeholder, then a keystroke typed into it.
   Expect(WorkspaceShellTestAccess::PerfExpandSnippetAtCaret(shell, " ${1:ab}=${1:ab}+${1:ab}"),
          "the snippet expands");
   Expect(WorkspaceShellTestAccess::SnippetSessionActive(shell), "its session is live");
-  // The seam expands without the sync a real expansion's keystroke runs; run it.
   WorkspaceShellTestAccess::SyncLspForActiveEditableLastChange(shell);
   const std::string expanded = server_has(viewport.SerializeText());
   Expect(expanded.empty(), "the server has the expansion (it has '" + expanded + "')");
@@ -915,10 +869,6 @@ void TestPhase5IncrementalSyncCarriesEverySnippetMirrorEdit() {
   Expect(typed.empty(), "the server's copy has every mirror's edit (it has '" + typed + "')");
 }
 
-// Replace-in-project into a buffer with unsaved edits rewrote it outside the
-// workspace-edit service, so the language server was never told: its copy, and
-// its diagnostics, stayed on the old text until the next keystroke. The
-// replacement is one workspace edit, synced like any other.
 void TestPhase5ReplaceAllInADirtyBufferReachesTheServer() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1102,15 +1052,8 @@ return ide.plugin({
 
 }
 
-}  // namespace
+}
 
-// The completed word starts where the identifier run before the caret starts,
-// however long it is and however the line is stored. The range is read from a
-// window before the caret (quick suggestions ask on every keystroke, and reading
-// the line materialized a whole minified file per keystroke), widened while the
-// run reaches the window's start: an identifier longer than the first window,
-// with a two-byte character straddling that window's edge, on a line an edit has
-// split across pieces.
 void TestCompletionWordStartsAtALongIdentifierOnAnEditedLine() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1141,7 +1084,6 @@ return ide.plugin({
   WorkspaceShellTestAccess::OpenFile(shell, source);
   auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
   editor.MoveCursorTo(0, 4);
-  // 300 bytes, "é", then 255 more: the first 256-byte window opens inside "é".
   const std::string identifier = std::string(300, 'a') + "\xc3\xa9" + std::string(255, 'b');
   editor.InsertText(identifier);
   Expect(editor.cursor_column() == 4 + identifier.size(), "the caret ends the identifier");
@@ -1152,10 +1094,6 @@ return ide.plugin({
   Expect(range.end.column == 4 + identifier.size(), "and ends at the caret");
 }
 
-// The word at the caret already reads as the item: accepting is a no-op edit,
-// which `ReplaceRange` reports as false. The accept used to read that as a
-// failure and return without dismissing, so Enter and Tab (which the list
-// swallows) did nothing and the list stayed up over a finished word.
 void TestCompletionAcceptingTheWordAlreadyTypedClosesTheList() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1221,4 +1159,4 @@ void RegisterPhase5Tests(std::vector<TestCase>& tests) {
           TestPhase5SignatureHelpDropsSupersededResponse);
 }
 
-}  // namespace microide::tests
+}

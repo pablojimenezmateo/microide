@@ -19,9 +19,6 @@ namespace {
 using path_interop::ContainPath;
 using path_interop::ResolveRuntimePath;
 
-// Builds the set of roots a plugin may reach for a given access level: always the project
-// root, plus the plugin's data directory when the level grants data access. Empty roots are
-// preserved in the array and skipped by ContainPath.
 std::array<std::filesystem::path, 2> AllowedRoots(const PluginFsContext& fs, FsAccess level) {
   std::array<std::filesystem::path, 2> roots;
   roots[0] = fs.project_root;
@@ -31,8 +28,6 @@ std::array<std::filesystem::path, 2> AllowedRoots(const PluginFsContext& fs, FsA
   return roots;
 }
 
-// Resolves `raw_path` against the project root and contains it within the roots permitted by
-// `level`. Returns nullopt (and marks `denied`) when the level is kNone or the path escapes.
 std::optional<std::filesystem::path> ResolveContained(const PluginFsContext& fs,
                                                       FsAccess level,
                                                       const char* raw_path,
@@ -76,7 +71,7 @@ void PushBufferTable(lua_State* state,
   }
 }
 
-}  // namespace
+}
 
 int LuaWorkspaceProjectRoot(lua_State* state, const std::filesystem::path& current_project_root) {
   if (current_project_root.empty()) {
@@ -91,9 +86,6 @@ int LuaWorkspaceOpenFile(lua_State* state,
                          const std::filesystem::path& current_project_root,
                          const PluginHost::Callbacks& callbacks) {
   const char* raw_path = luaL_checkstring(state, 1);
-  // Read all longjmp-capable arguments before constructing the std::filesystem::path
-  // local: luaL_optinteger raises on a present-but-non-numeric argument, and that
-  // error is a C longjmp that would skip `path`'s destructor.
   const lua_Integer line = luaL_optinteger(state, 2, 0);
   const lua_Integer column = luaL_optinteger(state, 3, 0);
   if (!callbacks.open_file) {
@@ -136,13 +128,6 @@ int LuaWorkspaceActiveBuffer(lua_State* state,
   return 1;
 }
 
-// TD-2026-07-17A-039: explicit byte ceilings for the plugin filesystem API. A plugin with
-// project/data filesystem capability could otherwise duplicate a very large file in host
-// memory (read) or push a very large atomic write through the host helper (write) before
-// Lua's own allocator budget is visible. 16 MiB is far beyond any real plugin snippet
-// workload; over-budget calls fail soft (nil/false), matching the existing
-// denied/unreadable contract, rather than raising (avoids the no-longjmp-over-C++-locals
-// dance for a size guard).
 constexpr std::uintmax_t kMaxPluginFileReadBytes = 16ull * 1024 * 1024;
 constexpr std::size_t kMaxPluginFileWriteBytes = 16ull * 1024 * 1024;
 
@@ -154,7 +139,6 @@ int LuaFilesReadText(lua_State* state, const PluginFsContext& fs, bool* denied) 
     lua_pushnil(state);
     return 1;
   }
-  // Refuse before the whole-file allocation when the file is over the plugin read budget.
   std::error_code size_ec;
   const std::uintmax_t file_size = std::filesystem::file_size(*path, size_ec);
   if (!size_ec && file_size > kMaxPluginFileReadBytes) {
@@ -174,7 +158,6 @@ int LuaFilesWriteText(lua_State* state, const PluginFsContext& fs, bool* denied)
   const char* raw_path = luaL_checkstring(state, 1);
   size_t text_length = 0;
   const char* text = luaL_checklstring(state, 2, &text_length);
-  // Reject an over-budget write before resolving containment / copying into the host.
   if (text_length > kMaxPluginFileWriteBytes) {
     lua_pushboolean(state, 0);
     return 1;
@@ -208,6 +191,6 @@ int LuaFilesExists(lua_State* state, const PluginFsContext& fs, bool* denied) {
   return 1;
 }
 
-}  // namespace microide::plugin::workspace_interop
+}
 
 #endif

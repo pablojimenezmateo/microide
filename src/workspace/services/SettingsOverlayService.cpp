@@ -13,12 +13,6 @@ namespace microide::workspace {
 
 namespace {
 
-// Renders a float setting value in its shortest round-trip form so the overlay
-// shows "1" / "1.25" rather than "1.000000". Into a string the caller already
-// owns: the rows are retained across rebuilds precisely so their buffers are not
-// freed and re-allocated on every keystroke of the filter, and returning a fresh
-// string to move-assign over one undoes that. to_chars, not std::to_string: the
-// latter honours LC_NUMERIC (see SerializeSettingValueInto).
 void CompactFloatInto(std::string_view value, std::string* out) {
   const auto parsed = util::ParseFloat(value);
   if (!parsed.has_value()) {
@@ -34,11 +28,6 @@ void CompactFloatInto(std::string_view value, std::string* out) {
   out->assign(buffer, static_cast<std::size_t>(end - buffer));
 }
 
-// Fill `index` with one (key -> payload) pair per element of `layer`, sorted for
-// binary search. Duplicate keys resolve to the LAST element in `layer`, which is
-// what the `unordered_map` this replaced did (`index[key] = value` overwrites):
-// equal keys sort by descending payload address, and the payloads live inside one
-// contiguous vector, so the first of an equal run is the last-inserted one.
 template <typename Layer, typename Payload>
 void BuildSortedIndex(const Layer& layer,
                       std::vector<std::pair<std::string_view, Payload>>* index,
@@ -50,8 +39,6 @@ void BuildSortedIndex(const Layer& layer,
     index->emplace_back(key_of(entry), payload_of(entry));
   }
   std::sort(index->begin(), index->end(), [](const auto& a, const auto& b) {
-    // std::greater rather than `>`: for pointer payloads that is the totally
-    // ordered comparison, and it reads the same for the integer one.
     return a.first != b.first ? a.first < b.first : std::greater<Payload>{}(a.second, b.second);
   });
 }
@@ -66,13 +53,13 @@ Payload LookupSortedIndex(const std::vector<std::pair<std::string_view, Payload>
   return it != index.end() && it->first == key ? it->second : missing;
 }
 
-}  // namespace
+}
 
 std::string_view SettingsCategoryLabel(std::string_view group) {
   if (group.empty()) {
     return "General";
   }
-  const std::size_t arrow = group.find(" → ");  // "Group → Subsection"
+  const std::size_t arrow = group.find(" → ");
   return arrow == std::string_view::npos ? group : group.substr(0, arrow);
 }
 
@@ -93,9 +80,6 @@ void SettingsOverlayService::OpenHelpAbout() {
   visible_ = true;
   mode_ = SettingsOverlayMode::HelpAbout;
   scroll_row_ = 0;
-  // Same filter-first opening as Settings: the list is ~190 command rows, so
-  // scrolling to find one keybinding is the wrong default. RebuildHelpRows has
-  // always applied the query; it just had nowhere to type it.
   focused_pane_ = SettingsPane::Filter;
   query_.clear();
   query_editor_.SetText("");
@@ -134,13 +118,8 @@ void SettingsOverlayService::BeginFontValueEdit(std::string row_id,
   editing_value_ = true;
   editing_fonts_ = true;
   editing_row_id_ = std::move(row_id);
-  // Empty search field: the dropdown starts showing every family and narrows as
-  // the user types. Highlight starts at -1 so a stray Enter never commits a font.
   value_editor_.SetText("");
   font_families_ = std::move(families);
-  // Cap the family list well below INT_MAX so the picker's size_t->int row-count
-  // math cannot overflow on a hostile/broken font provider. Real installed-font
-  // lists number in the hundreds; 100k is a generous ceiling.
   constexpr std::size_t kMaxFontFamilies = 100000;
   if (font_families_.size() > kMaxFontFamilies) {
     font_families_.resize(kMaxFontFamilies);
@@ -177,10 +156,8 @@ int SettingsOverlayService::PickerChooseFileIndex() const {
 
 void SettingsOverlayService::SetPickerHighlight(int index) {
   const int family_count = static_cast<int>(FilteredFontFamilies().size());
-  const int max_index = family_count;  // the pinned "Choose file…" entry
+  const int max_index = family_count;
   picker_highlight_ = std::clamp(index, -1, std::max(-1, max_index));
-  // Keep a highlighted family row inside the scrolling window. The "Choose file…"
-  // footer (index == family_count) is pinned and always drawn, so it needs none.
   if (picker_highlight_ >= 0 && picker_highlight_ < family_count) {
     if (picker_highlight_ < picker_scroll_) {
       picker_scroll_ = picker_highlight_;
@@ -188,7 +165,7 @@ void SettingsOverlayService::SetPickerHighlight(int index) {
       picker_scroll_ = picker_highlight_ - kPickerVisibleFamilies + 1;
     }
   }
-  SetPickerScroll(picker_scroll_);  // re-clamp against the current filtered count
+  SetPickerScroll(picker_scroll_);
 }
 
 void SettingsOverlayService::MovePickerHighlight(int delta) {
@@ -231,12 +208,6 @@ void SettingsOverlayService::RebuildSettingsRows(
     const std::vector<std::pair<std::string, std::string>>& user_settings,
     const std::vector<std::pair<std::string, std::string>>& project_settings,
     const std::vector<SettingsOverlayRow>& extra_rows) {
-  // Index each layer once (O(layer)) so per-row override resolution is O(log layer)
-  // rather than a linear settings_layer::Find scan per surviving row — a large
-  // plugin settings surface otherwise costs setting_count * override_count
-  // comparisons on every overlay open / query change / plugin reload. The
-  // string_view keys point into the caller's layers, which are not mutated during
-  // the rebuild.
   settings_rows_total_ = settings.size() + extra_rows.size();
   const auto layer_key = [](const std::pair<std::string, std::string>& entry) {
     return std::string_view(entry.first);
@@ -247,13 +218,6 @@ void SettingsOverlayService::RebuildSettingsRows(
   BuildSortedIndex(user_settings, &user_layer_index_, layer_key, layer_value);
   BuildSortedIndex(project_settings, &project_layer_index_, layer_key, layer_value);
 
-  // Rows are OVERWRITTEN in place rather than cleared and re-pushed. Every row
-  // holds eight strings, and clearing frees all eight per row so the next rebuild
-  // has to allocate them again — six allocations per row per keystroke in the
-  // Settings search box, on a surface that is unchanged between most of those
-  // keystrokes. `assign` into a retained string reuses its buffer; the tail past
-  // the last surviving row is dropped at the end, which is the only place capacity
-  // is given back.
   std::size_t out = 0;
   const auto next_row = [&]() -> SettingsOverlayRow& {
     if (out == settings_rows_.size()) {
@@ -269,8 +233,6 @@ void SettingsOverlayService::RebuildSettingsRows(
         LookupSortedIndex<const std::string*>(user_layer_index_, setting.id, nullptr);
     const std::string* project_stored =
         LookupSortedIndex<const std::string*>(project_layer_index_, setting.id, nullptr);
-    // Built-in project-scoped settings support a user-level default that a
-    // per-project override wins over (project → user default → spec default).
     const bool scope_selectable =
         setting.plugin_id.empty() && setting.scope == SettingScope::Project;
     const std::string* active_stored =
@@ -294,15 +256,11 @@ void SettingsOverlayService::RebuildSettingsRows(
     row.scope_selectable = scope_selectable;
     row.project_override = project_stored != nullptr;
     row.has_user_default = user_stored != nullptr;
-    // The scope label reflects where the active value lives: a project override
-    // reads "Project"; otherwise a project-scoped setting reads "Default".
     if (setting.scope == SettingScope::User) {
       row.scope_label.assign("User");
     } else {
       row.scope_label.assign(project_stored != nullptr ? "Project" : "Default");
     }
-    // Appended into the row's own buffer. `"plugin:" + plugin_id` built a whole
-    // temporary string per row purely to be appended and thrown away.
     row.detail.assign(setting.scope == SettingScope::User ? "User / " : "Project / ");
     if (setting.plugin_id.empty()) {
       row.detail.append("built-in");
@@ -329,27 +287,17 @@ void SettingsOverlayService::RebuildSettingsRows(
         row.control_kind = SettingsControlKind::TextEdit;
         break;
     }
-    // Resettable when the active layer holds an override (project override when
-    // present, else a user-level default).
     row.resettable = active_stored != nullptr;
     row.editable = true;
   }
 
-  // Append host-built extra rows (e.g. the per-plugin enable toggles), honoring the
-  // same query filter so they show up in their own category alongside settings.
   for (const SettingsOverlayRow& extra : extra_rows) {
     if (RowMatchesQuery(extra.label, extra.id)) {
       next_row() = extra;
     }
   }
-  // Only here does a rebuild give capacity back: everything past the last
-  // surviving row is destroyed, so a narrowing query does not leave the overlay
-  // holding rows it no longer shows.
   settings_rows_.resize(out);
 
-  // Derive the left-pane category list from the filtered rows: "General" first
-  // (when any ungrouped row survives the filter), then each distinct top-level
-  // group segment in first-seen order. Empty categories never appear.
   categories_.clear();
   bool has_general = false;
   for (const SettingsOverlayRow& row : settings_rows_) {
@@ -372,12 +320,6 @@ void SettingsOverlayService::RebuildSettingsRows(
     }
   }
 
-  // Index every filtered row into its category once (O(rows)), so RowAtVisibleIndex /
-  // RowCountInCategory become O(1)/O(index) lookups instead of full rescans of
-  // settings_rows_ per call (TD-2026-07-17A-019).
-  // Same sorted-view form as the two override layers, and for the same reason:
-  // `categories_` entries are unique by construction (the loop above only appends
-  // a label it has not seen), so there is no duplicate-key case to resolve.
   category_index_.clear();
   category_index_.reserve(categories_.size());
   for (int c = 0; c < static_cast<int>(categories_.size()); ++c) {
@@ -385,9 +327,6 @@ void SettingsOverlayService::RebuildSettingsRows(
   }
   std::sort(category_index_.begin(), category_index_.end(),
             [](const auto& a, const auto& b) { return a.first < b.first; });
-  // resize + clear, not assign: `assign` destroys every inner vector and
-  // default-constructs new ones, so each category's index buffer is reallocated on
-  // every rebuild. Clearing keeps them.
   category_row_indices_.resize(categories_.size());
   for (std::vector<int>& rows : category_row_indices_) {
     rows.clear();
@@ -438,11 +377,6 @@ bool SettingsOverlayService::RowMatchesQuery(std::string_view label, std::string
   if (query_.empty()) {
     return true;
   }
-  // Allocation-free case-insensitive substring test on both operands. RebuildSettings/
-  // Help/plugin-rows call this once per row on every keystroke; the previous form
-  // lowered the query, the label, AND the detail into fresh strings per row — 3N
-  // allocations per rebuild (TD-2026-07-17A-006). ContainsCaseInsensitiveAscii folds
-  // each byte in place, so filtering is O(bytes) with zero churn.
   return util::ContainsCaseInsensitiveAscii(label, query_) ||
          util::ContainsCaseInsensitiveAscii(detail, query_);
 }
@@ -483,7 +417,6 @@ void SettingsOverlayService::ClampSelection() {
     return;
   }
   selected_category_ = std::clamp(selected_category_, 0, static_cast<int>(categories_.size()) - 1);
-  // A shrunk (filtered) category list must not strand the scroll past the last row.
   category_scroll_row_ =
       std::clamp(category_scroll_row_, 0, static_cast<int>(categories_.size()) - 1);
   const int count = static_cast<int>(RowCountInSelectedCategory());
@@ -523,12 +456,10 @@ void SettingsOverlayService::MoveRow(int delta) {
 }
 
 void SettingsOverlayService::CycleFocusedPane(int delta) {
-  // Derive the wrap modulus from the enum's Count sentinel so adding/removing a
-  // pane never desyncs cycling (TD-2026-07-17-028).
   constexpr int kPaneCount = static_cast<int>(SettingsPane::Count);
   int pane = static_cast<int>(focused_pane_) + delta;
   pane = ((pane % kPaneCount) + kPaneCount) % kPaneCount;
   focused_pane_ = static_cast<SettingsPane>(pane);
 }
 
-}  // namespace microide::workspace
+}

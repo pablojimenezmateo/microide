@@ -28,16 +28,10 @@ bool EqualsIgnoreAsciiCase(std::string_view a, std::string_view b) {
   return true;
 }
 
-// Fill a centered shape row-by-row. `half_width_at(dy)` returns the outer
-// half-extent at vertical offset `dy` from the shape center; `inner_at` (may be
-// null) carves a concentric hole (for rings). Coalesced by SDL's batcher; the
-// marker is ≤12px so this is a handful of fills.
 template <typename Outer, typename Inner>
 void FillScanlines(SDL_Renderer* renderer, const SDL_FRect& bounds, float cx, float cy, Outer outer,
                    Inner inner) {
   const int rows = static_cast<int>(std::ceil(bounds.h));
-  // Reuse per-thread scratch: gutter icons are drawn per marked line per frame, so
-  // a fresh vector each call is a hot-path heap allocation. Clearing keeps capacity.
   thread_local std::vector<SDL_FRect> spans;
   spans.clear();
   spans.reserve(static_cast<std::size_t>(std::max(1, rows)) * 2);
@@ -70,7 +64,6 @@ void DrawCheck(SDL_Renderer* renderer, const SDL_FRect& b, SDL_Color color) {
       SDL_FPoint{b.x + b.w * 0.42f, b.y + b.h * 0.78f},
       SDL_FPoint{b.x + b.w * 0.84f, b.y + b.h * 0.26f},
   };
-  // Reused per-thread scratch: DrawCheck runs per checkmark gutter icon per frame.
   thread_local std::vector<SDL_Vertex> verts;
   thread_local std::vector<int> indices;
   verts.clear();
@@ -106,7 +99,7 @@ void DrawCheck(SDL_Renderer* renderer, const SDL_FRect& b, SDL_Color color) {
   }
 }
 
-}  // namespace
+}
 
 std::optional<GutterIconShape> GutterIconRegistry::ResolveShape(std::string_view name) {
   struct Entry {
@@ -132,7 +125,7 @@ std::optional<GutterIconShape> GutterIconRegistry::ResolveShape(std::string_view
   return std::nullopt;
 }
 
-SDL_FRect GutterIconRegistry::MarkerRect(float gutter_x, float y, float /*gutter_width*/,
+SDL_FRect GutterIconRegistry::MarkerRect(float gutter_x, float y, float ,
                                          float line_height) {
   const float diameter = std::clamp(line_height * 0.55f, 6.0f, kGutterMarkerMaxExtent);
   const float x = gutter_x + kGutterMarkerInset;
@@ -177,16 +170,14 @@ void GutterIconRegistry::Draw(SDL_Renderer* renderer, GutterIconShape shape, SDL
       break;
     }
     case GutterIconShape::Triangle: {
-      // Upward triangle: apex at top, base at bottom.
       const auto tri = [&](float dy) {
-        const float frac = (dy + radius) / bounds.h;  // 0 at top, 1 at bottom
+        const float frac = (dy + radius) / bounds.h;
         return std::clamp(frac, 0.0f, 1.0f) * radius;
       };
       FillScanlines(renderer, bounds, cx, cy, tri, no_inner);
       break;
     }
     case GutterIconShape::Bookmark: {
-      // Pennant: full-width rect with a V-notch carved from the bottom center.
       const float notch_height = bounds.h * 0.32f;
       const float notch_top = bounds.y + bounds.h - notch_height;
       const auto outer = [&](float) { return radius; };
@@ -195,9 +186,7 @@ void GutterIconRegistry::Draw(SDL_Renderer* renderer, GutterIconShape shape, SDL
         if (row_y < notch_top) {
           return 0.0f;
         }
-        // The hole opens from nothing at the notch's top to the full half-width at
-        // the bottom edge, leaving the pennant's two points at the corners.
-        const float db = (bounds.y + bounds.h) - row_y;  // distance from bottom
+        const float db = (bounds.y + bounds.h) - row_y;
         return (1.0f - std::clamp(db / notch_height, 0.0f, 1.0f)) * radius;
       };
       FillScanlines(renderer, bounds, cx, cy, outer, inner);
@@ -210,7 +199,6 @@ void GutterIconRegistry::Draw(SDL_Renderer* renderer, GutterIconShape shape, SDL
       break;
     }
     case GutterIconShape::Square: {
-      // Slightly inset filled square so it reads distinctly from the dot.
       const float inset = std::max(0.0f, bounds.w * 0.08f);
       SDL_FRect box{bounds.x + inset, bounds.y + inset, bounds.w - inset * 2.0f,
                     bounds.h - inset * 2.0f};
@@ -223,4 +211,4 @@ void GutterIconRegistry::Draw(SDL_Renderer* renderer, GutterIconShape shape, SDL
   }
 }
 
-}  // namespace microide::editor
+}

@@ -27,8 +27,6 @@ using microide::workspace::PersistedProjectConfigState;
 using microide::workspace::ToPersistedBranchReviewState;
 
 void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
-  // Regression: unreviewing / deleting for an unknown target must be a clean
-  // no-op — it must not create empty target state or bump the revision.
   tests.push_back({"BranchReviewState/UnreviewMissingTargetIsNoOp",
                    [] {
                      const BranchReviewTargetIdentity target =
@@ -41,7 +39,6 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                      Expect(service.revision() == before,
                             "a no-op unreview must not bump the revision");
 
-                     // A real unreview (after a review) DOES bump the revision.
                      service.MarkFileReviewed(target, std::filesystem::path("a.cpp"));
                      const std::uint64_t after_review = service.revision();
                      service.MarkFileUnreviewed(target, std::filesystem::path("a.cpp"));
@@ -49,9 +46,6 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                             "removing a real review bumps the revision");
                    }});
 
-  // TD-2026-10-22-381: a file whose every hunk is marked reviewed is reviewed --
-  // its git-view row (which has no diff to look at, only the file's mark) says so
-  // -- and unmarking a hunk takes the file's mark back.
   tests.push_back({"BranchReviewState/EveryHunkReviewedMarksTheFile",
                    [] {
                      const BranchReviewTargetIdentity target =
@@ -103,11 +97,6 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                             "edited hunk content should mark changed since reviewed");
                    }});
 
-  // ResolveHunkMarkers is a batched rewrite of "call HunkStatus + HasNote once per
-  // hunk". Diff it against that oracle across the state combinations that select
-  // different branches inside it: no state at all, hunk-only reviews, a reviewed
-  // file supplying the fallback, a reviewed file whose hunks then moved, a stale
-  // snapshot generation, and hunk notes (one live, one whose hunk content moved).
   tests.push_back({"BranchReviewState/ResolveHunkMarkersMatchesPerHunkOracle",
                    [] {
                      std::string left;
@@ -127,8 +116,6 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                      const BranchReviewTargetIdentity stale_target =
                          MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 4);
 
-                     // A model whose hunk 1 content moved, so an identity recorded
-                     // against `model` resolves as changed against this one.
                      std::string moved_right = right;
                      const std::string moved_marker = "line 5 MODIFIED";
                      const std::size_t at = moved_right.find(moved_marker);
@@ -136,8 +123,6 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                      moved_right.replace(at, moved_marker.size(), "line 5 EDITED-X");
                      const auto moved_model = BuildCompareModel(left, moved_right);
 
-                     // Vacuity guard: a diff-against-oracle test passes trivially if
-                     // every hunk in every case resolves Unreviewed with no note.
                      bool saw_reviewed = false;
                      bool saw_changed = false;
                      bool saw_unreviewed = false;
@@ -160,8 +145,6 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                          query.selected_hunk_index = static_cast<int>(i);
                          Expect(batched[i].status == service.HunkStatus(query),
                                 std::string("batched hunk status must match HunkStatus: ") + what);
-                         // HasNote is the exact-identity question; the resolve also
-                         // keeps a note on a hunk whose content moved, flagged.
                          Expect((batched[i].has_note && !batched[i].note_outdated) ==
                                     service.HasNote(query, BranchReviewNoteScope::Hunk),
                                 std::string("an up-to-date batched note must match HasNote: ") + what);
@@ -204,17 +187,8 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
 
   tests.push_back({"BranchReviewState/HunkContentHashSeparatesLeftAndRight",
                    [] {
-                     // Two hunks with identical row kind and line ranges whose per-row
-                     // left+right byte concatenation is the same, but split differently:
-                     // ("hello","world") vs ("hell","oworld"). The old undelimited hash
-                     // collided on these; the length-prefixed hash must tell them apart.
                      auto make_model = [](std::string_view left, std::string_view right) {
                        compare::CompareModel model;
-                       // A row's text is a VIEW (TD-2026-08-14-232), so the bytes
-                       // have to live somewhere that outlives the row. Put them in
-                       // the model's own source buffers, exactly where the builder
-                       // puts them — assigning a temporary std::string to
-                       // `left_text` compiles and dangles.
                        model.left_source = compare::MakeCompareText(std::string(left));
                        model.right_source = compare::MakeCompareText(std::string(right));
                        compare::CompareRow row;
@@ -242,11 +216,6 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                             "the hunk identities must differ so a changed hunk is not stale-reviewed");
                    }});
 
-  // The git view's snapshot counter counts refreshes within a session. It was part
-  // of the target's identity and the file entry's staleness check, so the next
-  // refresh -- and every restart -- made a mark vanish. A mark now goes stale only
-  // when the diff's changed text differs from the one reviewed; and the diff (an
-  // absolute path) and the git view (a repository-relative one) share one key.
   tests.push_back({"BranchReviewState/AFileMarkOutlivesRefreshesAndFollowsTheDiff",
                    [] {
                      const auto reviewed_model = microide::compare::BuildCompareModel("old\n", "new\n");
@@ -304,12 +273,6 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                             "reloaded review state should restore reviewed file");
                    }});
 
-  // Regression: query scans compare stored paths as plain strings now, which is
-  // only correct because every ingress normalizes. The persistence file is the one
-  // ingress that does not run through a mutator — a config written by an older
-  // build (or hand-edited) can hold "./src/a.cpp", and an un-normalized entry
-  // would compare unequal to the query's "src/a.cpp" and silently read as
-  // "never reviewed".
   tests.push_back({"BranchReviewState/PersistedUnnormalizedPathsNormalizeOnLoad",
                    [] {
                      using microide::workspace::PersistedBranchReviewFileEntry;
@@ -380,10 +343,6 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
 
   tests.push_back({"BranchReviewState/HighBitContentHashSurvivesRoundTrip",
                    [] {
-                     // Regression: content_hash is a full-range std::hash result, so
-                     // its top bit is set ~half the time. It must survive binary
-                     // encode/decode; a signed >= 0 guard on decode used to reject a
-                     // high-bit hash and discard the ENTIRE project-config record.
                      const BranchReviewTargetIdentity target =
                          MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 7);
                      compare::BranchReviewHunkIdentity identity;
@@ -392,7 +351,7 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                      identity.old_count = 2;
                      identity.new_start = 3;
                      identity.new_count = 4;
-                     identity.content_hash = 0x8000000000000001ULL;  // top bit set
+                     identity.content_hash = 0x8000000000000001ULL;
 
                      BranchReviewStateService service;
                      service.MarkHunkReviewed(target, identity);
@@ -420,15 +379,11 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                             "high-bit content_hash must be preserved exactly");
                    }});
 
-  // Soak 4bbda24149d1: the same defect one field over. A reviewed file's diff
-  // fingerprint is a full-range hash too, written through WriteI64 and read
-  // back behind a signed >= 0 guard -- a file whose fingerprint had its top
-  // bit set (about half of them) made the whole project config undecodable.
   tests.push_back({"BranchReviewState/HighBitFileFingerprintSurvivesRoundTrip",
                    [] {
                      const BranchReviewTargetIdentity target =
                          MakeBranchReviewTargetIdentity("/repo", "HEAD~2~1", "HEAD~2", "HEAD~2~1", 7);
-                     constexpr std::uint64_t kFingerprint = 0xDA2B853A67404A38ULL;  // from the soak's file
+                     constexpr std::uint64_t kFingerprint = 0xDA2B853A67404A38ULL;
                      BranchReviewStateService service;
                      service.MarkFileReviewed(target, std::filesystem::path(".gitignore"), kFingerprint);
 
@@ -452,9 +407,6 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                             "and the fingerprint must be preserved exactly");
                    }});
 
-  // TD-2026-07-16-34: a persisted config with MORE targets / per-target files than the
-  // live service caps must be truncated to the caps at decode (a corrupt/hostile
-  // .microide config cannot bypass the runtime PruneTarget limits).
   tests.push_back({"BranchReviewState/PersistedStateDecodeHonorsCaps",
                    [] {
                      using microide::workspace::PersistedBranchReviewFileEntry;
@@ -462,7 +414,6 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                      using microide::workspace::PersistedBranchReviewTarget;
 
                      PersistedBranchReviewState review;
-                     // 2x the target cap, each with 2x the per-target file cap.
                      const std::size_t target_over =
                          BranchReviewStateService::kMaxTargetsPerRepository * 2;
                      const std::size_t file_over =
@@ -566,8 +517,6 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                             "note text should be queryable for hunk scope");
                    }});
 
-  // The notes of a review as lines to hand to whoever acts on them: by path,
-  // then line, each naming the hunk's lines in the new file.
   tests.push_back({"BranchReviewState/NotesAsReferences",
                    [] {
                      const BranchReviewTargetIdentity target =
@@ -603,8 +552,6 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                      Expect(service.NotesAsReferences(other).empty(), "another review's notes are not this one's");
                    }});
 
-  // A scope narrows the hand-over to a file or a directory -- the git view's
-  // right-click on a row -- and a directory is matched by whole components.
   tests.push_back({"BranchReviewState/NotesAsReferencesNarrowToAPath",
                    [] {
                      const BranchReviewTargetIdentity target =
@@ -625,7 +572,6 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                             "nothing under a path with no notes");
                    }});
 
-  // With no review diff in front, "the review" is the repository's last touched.
   tests.push_back({"BranchReviewState/MostRecentTargetIsTheLastTouched",
                    [] {
                      BranchReviewStateService service;
@@ -635,18 +581,13 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                      const BranchReviewTargetIdentity second =
                          MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 1);
                      service.SetNote(first, BranchReviewNoteScope::File, "a.txt", std::nullopt, "one");
-                     service.FindOrCreateTarget(second)->last_accessed_unix_ms = 1;  // long ago
+                     service.FindOrCreateTarget(second)->last_accessed_unix_ms = 1;
                      Expect(service.MostRecentTarget("/repo") != nullptr &&
                                 service.MostRecentTarget("/repo")->target == first,
                             "the review touched last");
                      Expect(service.MostRecentTarget("/elsewhere") == nullptr, "another repository's are not");
                    }});
 
-  // Marking a file reviewed marks its every hunk in one pass, and a file with
-  // more hunks than a review keeps entries for takes none of another file's
-  // marks with it: it marked hunk by hunk, each resolving the whole file again
-  // (0.2-0.9 s on 1100 hunks), and the cap then dropped the oldest entries --
-  // the other file's.
   tests.push_back({"BranchReviewState/MarkingALargeFileKeepsOtherFilesMarks",
                    [] {
                      const BranchReviewTargetIdentity target =
@@ -685,7 +626,6 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                             "Unmark File takes every hunk and the file back");
                      Expect(reviewed_of("small.txt", small) == 1, "and still not the other file's");
 
-                     // Each hunk keeps its own entry: an edit shows on the hunk it touched.
                      service.SetFileReviewed(target, "small.txt", small, true);
                      const auto edited = BuildCompareModel("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n",
                                                            "AA\nb\nc\nd\ne\nf\ng\nh\ni\nJ\n");
@@ -696,10 +636,6 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                             "the edited hunk reads changed, the other still reviewed");
                    }});
 
-  // A hunk note is never out of sight: on its hunk while the hunk stands (flagged
-  // once the hunk's content changes), on the same change when an edit above moved
-  // its lines, and detached when the change is gone. It used to match on the full
-  // identity only, so any of those hid a note the export still handed over.
   tests.push_back({"BranchReviewState/AHunkNoteFollowsItsChangeOrIsDetached",
                    [] {
                      const BranchReviewTargetIdentity target =
@@ -746,4 +682,4 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                    }});
 }
 
-}  // namespace microide::tests
+}

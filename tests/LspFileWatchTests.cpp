@@ -21,8 +21,6 @@ using microide::workspace::LspClient;
 using microide::workspace::LspFileChangeType;
 using microide::workspace::LspFileWatchRegistry;
 
-// Build the `registrations[]` entry a server sends in client/registerCapability
-// for workspace/didChangeWatchedFiles.
 JsonValue MakeWatcherRegistration(const std::string& id,
                                   const std::vector<std::string>& patterns,
                                   int kind = microide::workspace::kLspWatchKindAll) {
@@ -63,9 +61,6 @@ void TestRegistryMatchesRelativeGlobs() {
 }
 
 void TestRegistryExpandsBraceAlternation() {
-  // GlobMatches has no brace support of its own, so a registration carrying
-  // "{c,cpp,h}" only works because the registry expands it first. This is the
-  // shared expander the search scope box uses.
   LspFileWatchRegistry registry;
   Expect(registry.Register(MakeWatcherRegistration("clangd", {"**/*.{c,cpp,h,hpp}"}),
                            "/home/u/proj"),
@@ -85,7 +80,6 @@ void TestRegistryExpandsBraceAlternation() {
 
 void TestRegistryHonorsWatchKindMask() {
   LspFileWatchRegistry registry;
-  // kind=1 is Create only.
   Expect(registry.Register(
              MakeWatcherRegistration("creates", {"**/*.go"},
                                      microide::workspace::kLspWatchKindCreate),
@@ -133,7 +127,6 @@ void TestRegistryUnregisterAndReregister() {
   Expect(registry.WantsChange("a.rs", "/home/u/proj/a.rs", LspFileChangeType::Changed),
          "the initial registration should match");
 
-  // Re-registering the same id supersedes rather than duplicating.
   registry.Register(MakeWatcherRegistration("id-1", {"**/*.toml"}), "/home/u/proj");
   Expect(registry.size() == 1, "re-registering an id must replace, not duplicate");
   Expect(!registry.WantsChange("a.rs", "/home/u/proj/a.rs", LspFileChangeType::Changed),
@@ -161,7 +154,6 @@ void TestRegistryRejectsMalformedRegistrations() {
 }
 
 void TestRegistryBoundsPatternExplosion() {
-  // A pathological brace product must not become an unbounded per-file match loop.
   LspFileWatchRegistry registry;
   Expect(registry.Register(
              MakeWatcherRegistration(
@@ -173,8 +165,6 @@ void TestRegistryBoundsPatternExplosion() {
          "the expanded pattern count must be capped");
 }
 
-// The whole point of the feature: a server that registered watchers is told about
-// on-disk changes it did not make, and a server that registered none is not.
 void TestManagerNotifiesOnlyServersThatRegisteredWatchers() {
   microide::workspace::LspManager manager;
 
@@ -208,7 +198,6 @@ void TestManagerNotifiesOnlyServersThatRegisteredWatchers() {
   Expect(manager.NotifyWatchedFileChanges(changes) == 1,
          "exactly the one server whose globs matched should be notified");
 
-  // A batch that matches nobody notifies nobody, without touching either client.
   std::vector<microide::workspace::LspManager::WatchedFileChange> unmatched;
   unmatched.push_back({.relative_path = "docs/readme.md",
                        .absolute_path = "/home/u/proj/docs/readme.md",
@@ -222,7 +211,7 @@ void TestManagerNotifiesOnlyServersThatRegisteredWatchers() {
   manager.ShutdownAll();
 }
 
-}  // namespace
+}
 
 void RegisterLspFileWatchTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LspFileWatch/RegistryMatchesRelativeGlobs", TestRegistryMatchesRelativeGlobs);
@@ -241,4 +230,4 @@ void RegisterLspFileWatchTests(std::vector<TestCase>& tests) {
           TestManagerNotifiesOnlyServersThatRegisteredWatchers);
 }
 
-}  // namespace microide::tests
+}

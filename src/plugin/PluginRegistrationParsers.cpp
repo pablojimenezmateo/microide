@@ -13,13 +13,11 @@
 namespace microide::plugin::registration_parsers {
 namespace {
 
-// Field readers are centralized in lua_interop; ReadStringField here is the
-// optional-returning variant so parsers can detect missing required fields.
 using lua_interop::ReadFunctionRefField;
 using lua_interop::ReadStringArrayField;
 constexpr auto& ReadStringField = lua_interop::ReadOptionalStringField;
 
-}  // namespace
+}
 
 bool ParseCompletionRegistration(lua_State* state,
                                  const std::string& plugin_id,
@@ -190,11 +188,6 @@ bool ParseMenuEntryRegistration(lua_State* state,
   if (!id_opt || !menu_opt || !action_opt || !label_opt) {
     return util::Fail(error_message, "menu entry requires id, menu, action, and label");
   }
-  // The menus on the bar, named as it shows them (any case). Anything else used to
-  // register and then appear nowhere -- "Tools", the guide's own example, among
-  // them -- so the plugin is told here instead.
-  // ContributionRegistry's every-bar-menu test holds this to the bar's own list
-  // (workspace::ParseMenuId reads that, and src/plugin cannot).
   static constexpr std::array<std::string_view, 9> kMenus = {"file",     "edit",  "view", "go",  "git",
                                                              "remote", "terminal", "debug", "help"};
   std::string menu_name = *menu_opt;
@@ -287,8 +280,6 @@ bool ParseSettingRegistration(lua_State* state,
   if (auto default_opt = ReadStringField(state, table_index, "default")) {
     default_value = std::move(*default_opt);
   } else {
-    // `default = true` is how Lua spells a bool, and the string reader refuses a
-    // boolean: the default became "" and every such setting started off.
     lua_interop::GetFieldProtected(state, table_index, "default");
     if (lua_isboolean(state, -1)) {
       default_value = lua_toboolean(state, -1) != 0 ? "true" : "false";
@@ -300,7 +291,6 @@ bool ParseSettingRegistration(lua_State* state,
   if (*type_opt == "enum") {
     lua_interop::GetFieldProtected(state, table_index, "enum_values");
     if (lua_istable(state, -1)) {
-      // Clamp against a sparse-border lua_rawlen; matches the hardened harvests.
       constexpr lua_Integer kMaxEnumValues = 4096;
       const lua_Integer n =
           std::min<lua_Integer>(static_cast<lua_Integer>(lua_rawlen(state, -1)), kMaxEnumValues);
@@ -374,8 +364,6 @@ bool ParseStatusItemRegistration(lua_State* state,
   float progress = -1.0f;
   lua_interop::GetFieldProtected(state, table_index, "progress");
   if (lua_isnumber(state, -1)) {
-    // NaN survives std::clamp (all comparisons false), so reject non-finite
-    // progress explicitly; it would otherwise poison the progress-bar layout.
     const double raw = lua_tonumber(state, -1);
     if (std::isfinite(raw)) {
       progress = std::clamp(static_cast<float>(raw), 0.0f, 1.0f);
@@ -442,14 +430,9 @@ bool ParseVirtualDocumentRegistration(lua_State* state,
   if (!id_opt || id_opt->empty()) {
     return util::Fail(error_message, "virtual document registration requires a non-empty id");
   }
-  // NUL-reject the id, as every other contribution does (TD-2026-07-17A-080): a
-  // truncated id collides with another document's URI at the C-string boundary.
   if (id_opt->find('\0') != std::string::npos) {
     return util::Fail(error_message, "virtual document id must not contain a NUL byte");
   }
-  // The URI is DERIVED, never taken from the plugin: `virtual://<plugin>/<id>`.
-  // A plugin-supplied URI could name another plugin's document (or a non-virtual
-  // scheme), and the consumer side treats a URI as an identity.
   out->contributed = PluginHost::ContributedVirtualDocument{
       .uri = "virtual://" + plugin_id + "/" + *id_opt,
       .language_id = ReadStringField(state, table_index, "language_id").value_or(std::string{}),
@@ -468,17 +451,12 @@ bool ParseSaveParticipantRegistration(lua_State* state,
   if (out == nullptr) {
     return util::Fail(error_message, "save participant registration output is required");
   }
-  // Validate without raising: luaL_checkstring/luaL_checktype would longjmp over
-  // the caller's live std::string error_message. Report via error_message so the
-  // wrapper raises only after that local has destructed.
   if (!lua_isstring(state, 1)) {
     return util::Fail(error_message, "save participant registration requires a string id");
   }
   if (lua_type(state, 2) != LUA_TFUNCTION) {
     return util::Fail(error_message, "save participant registration requires a function handler");
   }
-  // NUL-reject the id (TD-2026-07-17A-080): a truncated id collides with another save
-  // participant of the same plugin.
   std::optional<std::string> id = lua_interop::ToHostString(state, 1);
   if (!id) {
     return util::Fail(error_message, "save participant registration requires a NUL-free string id");
@@ -508,21 +486,13 @@ bool ReadPairArrayField(lua_State* state,
   lua_interop::GetFieldProtected(state, table_index, field);
   if (lua_isnil(state, -1)) {
     lua_pop(state, 1);
-    return true;  // optional
+    return true;
   }
   if (!lua_istable(state, -1)) {
     lua_pop(state, 1);
     return false;
   }
-  // Cap the drain so a plugin returning an unbounded/huge sequence cannot grow
-  // this vector without limit and hang/OOM the host.
   constexpr lua_Integer kMaxPairArrayItems = 100000;
-  // Read entries with lua_rawgeti, never metamethod-invoking lua_geti: this parse
-  // runs inside the setup PCall with the count-hook watchdog armed, so an adversarial
-  // __index that raises would longjmp over the caller's live `contributed`
-  // (ContributedBracketSet with std::string/std::vector members) and the wrapper's
-  // error_message std::string, leaking them. A bracket-pair sequence never
-  // legitimately resolves through __index. Mirrors ReadStringArrayField.
   for (lua_Integer i = 1; i <= kMaxPairArrayItems; ++i) {
     lua_rawgeti(state, -1, i);
     if (lua_isnil(state, -1)) {
@@ -546,7 +516,7 @@ bool ReadPairArrayField(lua_State* state,
   return true;
 }
 
-}  // namespace
+}
 
 bool ParseBracketSetRegistration(lua_State* state,
                                  const std::string& plugin_id,
@@ -659,6 +629,6 @@ bool ParseSnippetRegistration(lua_State* state,
   return true;
 }
 
-}  // namespace microide::plugin::registration_parsers
+}
 
 #endif

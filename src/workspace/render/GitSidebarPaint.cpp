@@ -12,13 +12,6 @@
 #include "workspace/render/GitSidebarPaint.h"
 #include "workspace/render/SingleLineViewMetrics.h"
 
-// The Source Control panel's head. Prep lays it out into the frame's snapshot
-// (PrepareGitPanelFrame) and derives its damage from it (openspec
-// derived-damage 4.1); paint draws the snapshot only, each element in its own
-// PaintElement (clip-discipline 4.1). The commit draft's control rects and caret
-// are laid out here, in prep, and published to its hit-testing by the caller:
-// paint used to write them, so a frame that skipped the sidebar left them stale.
-
 namespace microide::workspace {
 
 using namespace detail;
@@ -41,10 +34,6 @@ SDL_Color InkColor(const render::Theme& theme, GitPanelInk ink) {
   return theme.text_muted;
 }
 
-// Lays the commit draft out under `top`: its staged summary, the Subject and Body
-// fields, the confirm button and the pre-check and status lines the sidebar has
-// room for. A control with no room is left out, its rect empty, so no click,
-// cursor or control-channel query finds it (soak c8c7389e178d).
 void LayOutCommitDraft(PreparedFrameState::GitPanelPaint& head, const GitPanelInputs& inputs, float top) {
   const CommitWorkflowState& workflow = *inputs.workflow;
   const render::TextRenderer& tr = *inputs.text_renderer;
@@ -54,15 +43,12 @@ void LayOutCommitDraft(PreparedFrameState::GitPanelPaint& head, const GitPanelIn
   const float bottom = inputs.sidebar.y + inputs.sidebar.h;
   const bool subject_focused = inputs.panel_focused && workflow.focus_field == CommitWorkflowFocusField::Subject;
   const bool body_focused = inputs.panel_focused && workflow.focus_field == CommitWorkflowFocusField::Body;
-  // As many rows as keep the Commit button inside the sidebar (the same fit
-  // GitSidebarCommitWorkflowHeight and PrepareCommitBodyViewportForFrame make).
   const int body_rows =
       FitCommitWorkflowBodyRows(top, bottom, line_height, workflow.checks.size(), !workflow.status_message.empty());
   const CommitWorkflowLayout panel = ComputeCommitWorkflowLayout(
       top, field_x, field_w, line_height, body_rows, workflow.checks.size(), !workflow.status_message.empty());
   head.body_visible_rows = body_rows;
   const auto fits = [bottom](const SDL_FRect& rect) { return rect.y + rect.h <= bottom; };
-  // A text line is its line box: one the sidebar cuts is left out, not drawn past it.
   const auto line = [&](float x, float y, float width, std::string_view text, GitPanelInk ink) {
     const SDL_FRect rect = MakeRect(x, y, std::max(0.0f, width), line_height);
     if (fits(rect)) {
@@ -74,7 +60,6 @@ void LayOutCommitDraft(PreparedFrameState::GitPanelPaint& head, const GitPanelIn
 
   line(field_x, panel.staged_summary_y, field_w, workflow.staged_summary_line, GitPanelInk::Primary);
 
-  // Subject: a framed single-line input, scrolled so its caret shows.
   if (fits(panel.subject_field)) {
     line(field_x, panel.subject_label_y, field_w, "Subject:", GitPanelInk::Muted);
     GitPanelFieldPaint& field = head.subject;
@@ -105,9 +90,6 @@ void LayOutCommitDraft(PreparedFrameState::GitPanelPaint& head, const GitPanelIn
     }
   }
 
-  // Body: a framed multi-line edit area. Its viewport was sized and scrolled to
-  // the caret earlier in prep (PrepareCommitBodyViewportForFrame); only the
-  // visible rows are read, through zero-copy line views (TD-2026-07-17-083).
   if (fits(panel.body_field)) {
     line(field_x, panel.body_label_y, field_w, "Body:", GitPanelInk::Muted);
     GitPanelFieldPaint& field = head.body;
@@ -138,9 +120,6 @@ void LayOutCommitDraft(PreparedFrameState::GitPanelPaint& head, const GitPanelIn
           const std::size_t to =
               index == selection->end.line ? std::min(selection->end.column, text.size()) : text.size();
           if (from < to && from <= text.size()) {
-            // Within the text area the line is drawn in: the line is truncated to
-            // it, and a selection measured over the whole text ran past the field's
-            // edge, outside its repaint (soak 6334a6235e8b).
             const float left = field.text_x + tr.MeasureWidth(text.substr(0, from));
             const float right = std::min(left + tr.MeasureWidth(text.substr(from, to - from)),
                                          field.text_x + field.text_width);
@@ -160,8 +139,6 @@ void LayOutCommitDraft(PreparedFrameState::GitPanelPaint& head, const GitPanelIn
     }
   }
 
-  // The confirm button: the discoverable way to commit the staged changes (the
-  // Ctrl+Enter shortcut's twin), enabled only when the draft can be committed.
   if (fits(panel.commit_button)) {
     head.commit_button = panel.commit_button;
     head.buttons.push_back(GitPanelButtonPaint{.rect = panel.commit_button,
@@ -172,7 +149,6 @@ void LayOutCommitDraft(PreparedFrameState::GitPanelPaint& head, const GitPanelIn
                                                           inputs.pointer_over(panel.commit_button)});
   }
 
-  // The pre-check and status lines below the button: those the sidebar has room for.
   float check_y = panel.checks_y;
   for (const project::CommitPreCheck& check : workflow.checks) {
     const GitPanelInk ink = check.severity == project::CommitPreCheckSeverity::Blocking ? GitPanelInk::Primary
@@ -207,8 +183,6 @@ void PaintField(SDL_Renderer* renderer, const GitPanelFieldPaint& field, const r
   }
 }
 
-// The list's visible rows, from the frame's presentation alone: the lines, and
-// each file's status from its row view model (no live entry is read).
 void LayOutGitList(PreparedFrameState::GitPanelPaint& head, const GitPanelInputs& inputs) {
   const GitSidebarPresentation& presentation = *head.presentation;
   const std::vector<GitSidebarLine>& lines = presentation.lines;
@@ -256,7 +230,7 @@ void LayOutGitList(PreparedFrameState::GitPanelPaint& head, const GitPanelInputs
                 ? row_by_entry[static_cast<std::size_t>(line.entry_index)]
                 : nullptr;
         if (row_vm == nullptr) {
-          row.kind = GitSidebarLine::Kind::Empty;  // an entry the presentation does not list
+          row.kind = GitSidebarLine::Kind::Empty;
           row.label = {};
           break;
         }
@@ -288,7 +262,6 @@ void PaintGitRow(SDL_Renderer* renderer, const GitPanelRowPaint& row, const rend
   const float right = rect.x + rect.w;
   switch (row.kind) {
     case GitSidebarLine::Kind::Header: {
-      // A raised band with a hairline on top, so the sections read as blocks.
       FillRect(renderer, rect, theme.surface_raised);
       FillRect(renderer, MakeRect(rect.x, rect.y, rect.w, 1.0f), theme.border);
       float label_width = rect.w - 8.0f;
@@ -310,8 +283,6 @@ void PaintGitRow(SDL_Renderer* renderer, const GitPanelRowPaint& row, const rend
     }
     case GitSidebarLine::Kind::Directory: {
       DrawSelectableRowBackground(renderer, theme, rect, theme.surface_background, row.hovered, false);
-      // Nothing of a folder indented past its row is drawn: past it, the row's own
-      // repaint never reaches (soak 538a455016ef).
       if (label_x > right) {
         return;
       }
@@ -326,7 +297,6 @@ void PaintGitRow(SDL_Renderer* renderer, const GitPanelRowPaint& row, const rend
       const bool emphasized = row.selected || row.hovered;
       const SDL_Color background = emphasized ? theme.row_highlight : theme.surface_background;
       DrawSelectableRowBackground(renderer, theme, rect, theme.surface_background, emphasized, row.selected);
-      // The status badge in a fixed slot before the name, as in the file tree.
       constexpr float kBadgeSlot = 18.0f;
       float name_x = label_x;
       const char marker = GitMarker(row.status);
@@ -351,7 +321,7 @@ void PaintGitRow(SDL_Renderer* renderer, const GitPanelRowPaint& row, const rend
   }
 }
 
-}  // namespace
+}
 
 void PrepareGitPanelFrame(PreparedFrameState& frame, const GitPanelInputs& inputs) {
   PreparedFrameState::GitPanelPaint& head = frame.git_panel;
@@ -378,7 +348,6 @@ void PrepareGitPanelFrame(PreparedFrameState& frame, const GitPanelInputs& input
     const SDL_FRect& sidebar = inputs.sidebar;
     const float text_width = sidebar.w - kInset * 2.0f;
 
-    // The action row: Stage All, Discard All, Refresh.
     const auto action = [&](const SDL_FRect& rect, std::string_view label, bool enabled, GitPanelTone tone) {
       head.buttons.push_back(GitPanelButtonPaint{.rect = rect,
                                                  .label = label,
@@ -392,8 +361,6 @@ void PrepareGitPanelFrame(PreparedFrameState& frame, const GitPanelInputs& input
            GitPanelTone::Destructive);
     action(git_sidebar_header::RefreshButtonRect(sidebar), "Refresh", true, GitPanelTone::Neutral);
 
-    // The branch row: the current branch (opens the switch picker) and Sync, which
-    // carries the ahead/behind counts, both labels precomposed by the presentation.
     const SDL_FRect branch_rect = git_sidebar_header::BranchButtonRect(sidebar);
     const SDL_FRect sync_rect = git_sidebar_header::SyncButtonRect(sidebar);
     head.buttons.push_back(GitPanelButtonPaint{.rect = branch_rect,
@@ -405,12 +372,8 @@ void PrepareGitPanelFrame(PreparedFrameState& frame, const GitPanelInputs& input
                                                .hovered = inputs.pointer_over(sync_rect),
                                                .ellipsize = true});
 
-    // Below the action row: the Commit button (or, while the draft is open, the
-    // commit line), then the banners -- a stale snapshot, a refresh error.
     const SDL_FRect action_row = git_sidebar_header::ActionRowRect(sidebar, 1);
     float y = action_row.y + action_row.h + 10.0f;
-    // GitSidebarSummaryHeight stacks the same metrics, so the file list starts
-    // exactly below this block.
     using git_sidebar_header::kCommitButtonGap;
     using git_sidebar_header::kCommitButtonHeight;
     using git_sidebar_header::kSummaryLineHeight;
@@ -422,9 +385,6 @@ void PrepareGitPanelFrame(PreparedFrameState& frame, const GitPanelInputs& input
                                                  .enabled = git.commit_ready,
                                                  .hovered = git.commit_ready && inputs.pointer_over(commit_rect)});
       if (!git.commit_ready && !git.commit_blocked_reason.empty()) {
-        // To the right of the button, in the room left there: across the whole
-        // sidebar a narrow one painted "nothing staged" past its own edge (QA
-        // monkey, seed 4).
         const float reason_x = commit_rect.x + commit_rect.w + 8.0f;
         const float reason_width = std::max(0.0f, sidebar.x + sidebar.w - kInset - reason_x);
         const float reason_y = commit_rect.y + std::floor(std::max(0.0f, commit_rect.h - line_height) * 0.5f);
@@ -547,7 +507,6 @@ std::optional<std::size_t> ResolvePaintedGitEntry(const PreparedFrameState& fram
   }
   const auto painted_index = static_cast<std::size_t>(line.entry_index);
   const PreparedFrameState::GitPanelPaint& panel = frame.git_panel;
-  // The painted row's identity, from the presentation that laid it out.
   std::string_view relative_path;
   if (panel.presentation != nullptr) {
     for (const GitSidebarSectionViewModel& section : panel.presentation->view_model.sections) {
@@ -559,21 +518,20 @@ std::optional<std::size_t> ResolvePaintedGitEntry(const PreparedFrameState& fram
     }
   }
   if (relative_path.empty()) {
-    // Not a painted line: it indexes the live entries, which it was built from.
     return painted_index < git.entries.size() ? std::optional<std::size_t>(painted_index) : std::nullopt;
   }
   const auto same = [&](const GitSidebarEntry& entry) {
     return entry.section == line.section && entry.relative_path == relative_path;
   };
   if (painted_index < git.entries.size() && same(git.entries[painted_index])) {
-    return painted_index;  // nothing moved since that frame
+    return painted_index;
   }
   for (std::size_t i = 0; i < git.entries.size(); ++i) {
     if (same(git.entries[i])) {
       return i;
     }
   }
-  return std::nullopt;  // gone since that frame
+  return std::nullopt;
 }
 
-}  // namespace microide::workspace
+}

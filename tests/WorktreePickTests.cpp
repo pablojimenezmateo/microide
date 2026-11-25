@@ -1,6 +1,3 @@
-// Git: Switch Worktree…: what `git worktree list --porcelain -z` says
-// (project::ParseGitWorktreeList) and the pick's rows built from it, without git.
-
 #include "TestSupport.h"
 
 #include "project/GitWorktrees.h"
@@ -21,7 +18,6 @@ using microide::project::ParseGitWorktreeState;
 using microide::workspace::BuildWorktreePickItems;
 using microide::workspace::QuickPickItem;
 
-// NUL-terminated lines; a record ends with an empty one.
 std::string Porcelain(std::vector<std::vector<std::string_view>> records) {
   std::string out;
   for (const auto& record : records) {
@@ -59,7 +55,6 @@ void TestWorktreeListParsesEveryKindOfEntry() {
 
   Expect(ParseGitWorktreeList("").empty() && ParseGitWorktreeList(std::string_view("\0\0", 2)).empty(),
          "nothing listed is nothing");
-  // A last record cut short of its terminator still counts.
   std::string cut = "worktree /src/repo";
   cut.push_back('\0');
   cut += "branch refs/heads/main";
@@ -92,7 +87,6 @@ void TestWorktreePickRowsOpenEachTreeWhereItIs() {
 
   const std::vector<QuickPickItem> remote =
       BuildWorktreePickItems(worktrees, "/src/detached", "remote-open", "dev@build:");
-  // Quoted for the command line, which takes the quotes off again.
   Expect(remote.size() == 3 && remote[0].value == "remote-open 'dev@build:/src/repo'",
          "a host's tree opens on the host: " + (remote.empty() ? std::string() : remote[0].value));
   Expect(remote.size() == 3 && remote[2].secondary_label.ends_with("this project") &&
@@ -100,9 +94,6 @@ void TestWorktreePickRowsOpenEachTreeWhereItIs() {
          "the current tree is the host root's");
 }
 
-// What `git status --porcelain=v2 --branch -z` says of a tree: its entries
-// counted (a rename's original path is part of its record, not another change)
-// and the branch's distance from its upstream, when it has one.
 void TestWorktreeStateCountsChangesAndReadsTheUpstream() {
   const auto status = [](std::initializer_list<std::string_view> records) {
     std::string out;
@@ -136,7 +127,6 @@ void TestWorktreeStateCountsChangesAndReadsTheUpstream() {
          "a header that is not two signed counts is not believed");
   Expect(ParseGitWorktreeState("") == GitWorktreeState{}, "nothing said is nothing");
 
-  // The pick puts what waits in a tree before where the tree is.
   const std::vector<GitWorktree> worktrees = {
       GitWorktree{.path = "/src/repo", .branch = "main", .head = "1111111111111111", .state = GitWorktreeState{}},
       GitWorktree{.path = "/src/wt/agent", .branch = "agent", .head = "2222222222222222", .state = busy},
@@ -153,7 +143,6 @@ void TestWorktreeStateCountsChangesAndReadsTheUpstream() {
          "a tree that is only behind: " + (rows.size() < 3 ? std::string() : rows[2].secondary_label));
 }
 
-// Git: Review Commit…: a row per recent commit, opening its review by full hash.
 void TestCommitPickRowsReviewEachCommit() {
   const std::vector<microide::project::GitCommitEntry> commits = {
       {.hash = "1111111111111111111111111111111111111111", .short_hash = "1111111",
@@ -177,7 +166,7 @@ void TestCommitPickRowsReviewEachCommit() {
          "rows filter by subject and author");
 }
 
-}  // namespace
+}
 
 void RegisterWorktreePickTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorktreePick/StateCountsChangesAndReadsTheUpstream",
@@ -187,4 +176,4 @@ void RegisterWorktreePickTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorktreePick/RowsOpenEachTreeWhereItIs", TestWorktreePickRowsOpenEachTreeWhereItIs);
 }
 
-}  // namespace microide::tests
+}

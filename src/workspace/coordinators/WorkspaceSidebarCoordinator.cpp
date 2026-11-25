@@ -54,12 +54,6 @@ void SidebarCoordinator::ShowMode(SidebarMode mode, bool temporary) {
     operations_.stop_project_search();
   }
 
-  // "Temporary" is a peek: a sidebar that was HIDDEN opens for one pick (a search
-  // hit, a problem) and goes away again after it, or on Escape. A sidebar the user
-  // already has open is a different case: Ctrl+Shift+F there switches it to the
-  // search view for good, as VS Code does. Treating that as a peek too restored
-  // the tree the moment a result opened, so the result list was gone after the
-  // first hit (QA flow wb-project-search).
   if (temporary && state_.sidebar.visible && !state_.sidebar.temporary) {
     temporary = false;
   }
@@ -97,12 +91,6 @@ void SidebarCoordinator::ShowSearch(std::string query, bool temporary) {
   search.editing = search.query.text().empty();
   search.edit_field = ProjectSearchEditField::Query;
 
-  // Reuse cached results when returning to the search panel with a query whose
-  // search already completed. Previously every activation cleared the results
-  // and re-ran the search even though the query text was preserved, which
-  // wasted work and discarded the user's selection. A changed query, a toggled
-  // option, or a committed edit re-runs through RefreshProjectSearch (which
-  // clears searched_query), so the cache stays correct.
   const bool results_cached =
       !search.query.text().empty() && search.searched_query == search.query.text();
   if (!results_cached) {
@@ -236,10 +224,6 @@ void SidebarCoordinator::RestorePrevious() {
 void SidebarCoordinator::RefreshProjectFiles() {
   state_.directory_tree.Refresh();
   RevealSelectedTreeLine();
-  // Run the whole-tree file-index rescan + per-file stat off the shell thread; the
-  // finder/search invalidation + redraw fire when the scan result applies on the
-  // main thread (TD-2026-07-17-081/082). Fall back to a synchronous rescan only if
-  // the shell did not wire the async operation.
   if (operations_.request_file_index_refresh) {
     operations_.request_file_index_refresh();
   } else {
@@ -259,9 +243,6 @@ void SidebarCoordinator::RefreshProjectFiles() {
 }
 
 SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
-  // A Host row's Enter or Delete: refused out loud, asked first, or run -- through
-  // the command line, so the row, the palette and the control channel run and
-  // refuse alike.
   const auto run_row_command = [this](std::optional<RemoteHostService::RowCommand> command) {
     if (!command.has_value()) {
       return false;
@@ -295,10 +276,6 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
                 const bool consumed = git_repository_service_.ConsumePendingSidebarSnapshot(snapshot);
                 if (consumed) {
                   InvalidateStaleMergeTabs();
-                  // A commit that succeeded and then asked for this refresh wants
-                  // to hear whether it failed (TD-2026-07-26-003). Every consumed
-                  // snapshot goes through here, so this is the one place the async
-                  // outcome is known on the main thread.
                   commit_workflow_service_.NoteGitRefreshOutcome(
                       context_.current_project_state.sidebar.git.commit_workflow,
                       snapshot->generation, snapshot->refresh_error);
@@ -314,7 +291,6 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
                 QueryDocumentSymbols(
                     viewport, [this](const std::filesystem::path& path, const std::string& error,
                                      std::vector<plugin::PluginHost::DocumentSymbolNode> symbols) {
-                      // Fresh coordinator: the transient one that issued the query is gone.
                       MakeSidebarService().ApplyOutlineResult(path, error, symbols);
                     });
               },
@@ -322,7 +298,6 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
               [this](std::string request_view_id, bool ok,
                      std::vector<plugin::PluginHost::SidebarItem> items,
                      std::string error_message) {
-                // Fresh coordinator: the transient one that issued the query is gone.
                 MakeSidebarService().ApplyPluginSidebarResult(
                     request_view_id, ok, std::move(items), std::move(error_message));
               },
@@ -515,18 +490,10 @@ void WorkspaceShell::MaybeRequestTreeGitBadgesAfterFirstPaint() {
 
 void WorkspaceShell::OnFramePresented() {
   MaybeRequestTreeGitBadgesAfterFirstPaint();
-  // A compare/merge tokenizer still catching up: the next frame takes its next
-  // step (see PreparedFrameState::syntax_catch_up_owed).
   if (std::exchange(frame_state_.syntax_catch_up_owed, false)) {
     RequestPreparedFrame();
   }
-  // Run any LSP hydration deferred by a tab switch now that the tab-switch frame
-  // is on screen (TD-2026-07-17A-033). No-op when nothing was scheduled.
   lsp_service_.ConsumeDeferredBufferOpen();
-  // Re-request semantic occurrence highlights when the caret has moved since the
-  // last frame. Every caret-moving path (mouse, keyboard, search, go-to-definition,
-  // fold) ends in a repaint, so this is the single point they all converge on; the
-  // call is an identity comparison and returns without work when nothing moved.
   lsp_service_.MaybeRequestDocumentHighlights();
 }
 
@@ -534,8 +501,6 @@ void WorkspaceShell::RequestAutomaticGitSidebarRefresh() {
   if (context_.current_project_state.root.empty()) {
     return;
   }
-  // Paced, never dropped: one turned away now is issued by ConsumeGitSidebarRefresh
-  // once the running refresh lands or the interval ends.
   if (!automatic_git_refresh_pacer_.Request(SDL_GetTicks(),
                                             context_.current_project_state.sidebar.git.refreshing)) {
     git_repository_service_.MarkStale();
@@ -552,15 +517,10 @@ void WorkspaceShell::RefreshGitSidebar() {
 }
 
 void WorkspaceShell::ConsumeGitSidebarRefresh() {
-  // Drain any completed async compare/ref picker query first (its wake reuses
-  // this event), then publish any completed background commit, then rebuild the
-  // sidebar to reflect the new state.
   compare_picker_mailbox_.Drain();
   commit_workflow_service_.DrainCompletions();
   git_operation_service_.DrainCompletions();
   patch_apply_service_.DrainCompletions();
-  // A paced automatic refresh is due on the pacer's own wake (before RefreshGit,
-  // so that one finds it running), or once the refresh it waited behind lands.
   const auto resume_paced_refresh = [this]() {
     if (automatic_git_refresh_pacer_.Resume(SDL_GetTicks(),
                                             context_.current_project_state.sidebar.git.refreshing)) {
@@ -591,8 +551,6 @@ bool WorkspaceShell::RefreshTestsSidebarState() {
   context_.current_project_state.sidebar.tests.entries.reserve(item_count);
   for (const TestItem& item : test_controller_.TestItems()) {
     std::string status = "queued";
-    // O(1) latest-status lookup instead of allocating + scanning the full result
-    // history per row (a 10k-test discovery previously did that every rebuild).
     if (const TestResult* latest = test_controller_.LatestTestResult(item.id);
         latest != nullptr) {
       switch (latest->state) {
@@ -616,7 +574,6 @@ bool WorkspaceShell::RefreshTestsSidebarState() {
           break;
       }
     }
-    // "passed · src/foo_test.cpp:42" — composed here, not per paint.
     std::string detail = status;
     const std::string location =
         RelativePathLabel(context_.current_project_state.root, item.file);
@@ -696,4 +653,4 @@ bool WorkspaceShell::DispatchGitSidebarAction(GitSidebarActionId action, std::si
   return MakeSidebarService().DispatchGitSidebarAction(action, entry_index);
 }
 
-}  // namespace microide::workspace
+}

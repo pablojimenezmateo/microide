@@ -6,26 +6,12 @@
 
 namespace microide::workspace {
 
-// Visible body-field rows of the inline commit draft when the sidebar has room
-// for them; a short sidebar gets fewer (FitCommitWorkflowBodyRows). Shared by the
-// sidebar render path, GitSidebarCommitWorkflowHeight, and the frame-prep
-// viewport sizing (PrepareCommitBodyViewportForFrame) so they can never drift apart.
 inline constexpr int kCommitWorkflowBodyRows = 4;
 
-// Horizontal inset of the commit draft fields inside the sidebar (matches the
-// sidebar's kSidebarInset). Used by frame prep to derive the body field width
-// without the full panel layout.
 inline constexpr float kCommitWorkflowFieldInset = 10.0f;
 
-// Height of one pre-check or status line under the confirm button.
 inline constexpr float kCommitWorkflowCheckLineHeight = 14.0f;
 
-// Pure geometry of the inline commit draft panel: the staged-summary header, the framed
-// subject/body fields, the pre-check/status lines, and the confirm button. Shared by the
-// sidebar render path (which draws and caches the rects) and GitSidebarCommitWorkflowHeight
-// (which reserves exactly this much vertical space). Computing both from one helper keeps the
-// file list flush below the panel instead of leaving the old fixed-height dead gap before the
-// Conflicts section.
 struct CommitWorkflowLayout {
   float staged_summary_y = 0.0f;
   float subject_label_y = 0.0f;
@@ -33,22 +19,19 @@ struct CommitWorkflowLayout {
   float body_label_y = 0.0f;
   SDL_FRect body_field{};
   SDL_FRect commit_button{};
-  float checks_y = 0.0f;  // top of the first pre-check line, below the button
-  float status_y = 0.0f;  // top of the status line (valid when has_status)
-  float total_height = 0.0f;  // top..bottom extent of the panel content
+  float checks_y = 0.0f;
+  float status_y = 0.0f;
+  float total_height = 0.0f;
 };
 
 inline CommitWorkflowLayout ComputeCommitWorkflowLayout(float top, float field_x, float field_w,
                                                         float line_height, int body_rows,
                                                         std::size_t check_count, bool has_status) {
-  // Tuned spacing: the staged-summary header gets clear separation from the subject field,
-  // each label sits just above its own field, and the body field has breathing room before
-  // the pre-checks/confirm button without the previous oversized reserved gap.
-  constexpr float kStagedToLabelGap = 12.0f;    // staged summary -> Subject label
-  constexpr float kLabelToFieldGap = 5.0f;      // label -> framed field top
-  constexpr float kFieldToLabelGap = 12.0f;     // framed field bottom -> next label
-  constexpr float kFieldVerticalPadding = 8.0f; // extra height inside framed fields
-  constexpr float kButtonGap = 12.0f;  // body field -> confirm button -> first check line
+  constexpr float kStagedToLabelGap = 12.0f;
+  constexpr float kLabelToFieldGap = 5.0f;
+  constexpr float kFieldToLabelGap = 12.0f;
+  constexpr float kFieldVerticalPadding = 8.0f;
+  constexpr float kButtonGap = 12.0f;
   constexpr float kButtonHeight = 26.0f;
 
   CommitWorkflowLayout layout;
@@ -68,11 +51,6 @@ inline CommitWorkflowLayout ComputeCommitWorkflowLayout(float top, float field_x
                                 line_height * static_cast<float>(body_rows) + kFieldVerticalPadding};
   y += layout.body_field.h + kFieldToLabelGap;
 
-  // The button comes straight after the fields, so where it lands does not depend
-  // on how many pre-check and status lines the draft has: those are variable, and
-  // above the button they pushed it out of a short sidebar after the body had
-  // already given up every row it could (soak c8c7389e178d). They follow it
-  // instead, and the render drops the ones the sidebar has no room for.
   y += kButtonGap;
   layout.commit_button = SDL_FRect{field_x, y, field_w, kButtonHeight};
   y += kButtonHeight + kButtonGap;
@@ -88,13 +66,6 @@ inline CommitWorkflowLayout ComputeCommitWorkflowLayout(float top, float field_x
   return layout;
 }
 
-// The body rows the panel gets when it starts at `top` in a sidebar ending at
-// `bottom`: kCommitWorkflowBodyRows when they fit, otherwise the most that keep
-// the Commit button inside the sidebar, and never fewer than one. Only the button
-// has to fit; the pre-check and status lines below it are clipped by the render. A fixed four
-// rows laid the button out below a short sidebar (640x480 at scale 2 with the
-// bottom panel open), under the panel's tab row, where nothing drew it and a
-// click on it landed on a terminal tab (soak c8c7389e178d).
 inline int FitCommitWorkflowBodyRows(float top, float bottom, float line_height,
                                      std::size_t check_count, bool has_status) {
   for (int rows = kCommitWorkflowBodyRows; rows > 1; --rows) {
@@ -108,4 +79,4 @@ inline int FitCommitWorkflowBodyRows(float top, float bottom, float line_height,
   return 1;
 }
 
-}  // namespace microide::workspace
+}

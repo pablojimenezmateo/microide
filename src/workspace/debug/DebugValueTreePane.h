@@ -11,21 +11,11 @@
 
 namespace microide::workspace {
 
-// What the Variables and Watch panes expose of the shared DebugValueTree they own:
-// lazy expand, the rows, selection and the inline setVariable edit. A non-virtual
-// base that only removes the pass-through copy each pane would otherwise carry;
-// the panes are never handled through it.
 class DebugValueTreePane {
  public:
   using EditTarget = DebugValueTree::EditTarget;
 
-  // Toggle expansion / load-more for the row at `row_index` (see
-  // DebugValueTree::ToggleRow).
   DebugValueTree::ChildFetch ToggleRow(std::size_t row_index) { return tree_.ToggleRow(row_index); }
-  // Attach fetched children. Returns the cascade fetches DebugValueTree::ApplyVariables
-  // produced (auto-expand of a freshly-attached child whose path is still remembered).
-  // The caller MUST issue them -- dropping them leaves an auto-expanded nested child
-  // stuck on the "loading..." placeholder forever.
   [[nodiscard]] std::vector<DebugValueTree::ChildFetch> ApplyVariables(
       int variables_reference, const std::vector<dap_protocol::DapVariable>& variables, int start) {
     return tree_.ApplyVariables(variables_reference, variables, start);
@@ -61,4 +51,4 @@ class DebugValueTreePane {
   DebugValueTree tree_;
 };
 
-}  // namespace microide::workspace
+}

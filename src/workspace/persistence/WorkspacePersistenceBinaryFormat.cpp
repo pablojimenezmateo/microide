@@ -12,41 +12,24 @@ namespace microide::workspace {
 
 namespace {
 
-// Product-sized decode budgets for persisted user/project config. The raw record is
-// already capped at 256 MiB by PersistedRecordReader, but that is far above any real
-// config: a corrupt/hostile file can otherwise spend startup time + heap on hundreds
-// of thousands of tiny unique settings / disabled IDs / sidebar policies. Every other
-// persisted collection (session trees, debug state, review state, plugin registries)
-// has an explicit product cap; config restore now matches. (TD-2026-07-16-36.)
 constexpr std::size_t kMaxPersistedSettings = 8192;
 constexpr std::size_t kMaxPersistedDisabledIds = 8192;
 constexpr std::size_t kMaxPersistedSidebarPolicies = 512;
 
-// A dedupe index over a vector<string> the decoder is already building. Seeded
-// small: the realistic config has a handful of ids, and the 8192 cap above is a
-// hostile-input ceiling, not a size hint.
 auto MakeIdIndex(const std::vector<std::string>& ids) {
   return util::FlatKeyIndex(
       8, [&ids](std::size_t index) -> std::string_view { return ids[index]; });
 }
 
-// The same, over the decoded (id, value) settings list: the key is the pair's id.
 auto MakeSettingIndex(const std::vector<std::pair<std::string, std::string>>& settings) {
   return util::FlatKeyIndex(
       8, [&settings](std::size_t index) -> std::string_view { return settings[index].first; });
 }
 
-// Append `id` to `ids` unless already present (dedupe by value) or the cap is reached.
-// Returns false only when the cap would be exceeded by a NEW id, so the caller can fail
-// the record closed. Repeated stale entries are silently deduped. `index` is the caller's
-// O(1) dedupe index over `ids` — a hostile config with thousands of unique disabled IDs
-// otherwise pays O(n^2) string comparisons here during startup. It stores indices, not
-// copies of the ids: the strings it dedupes are the ones `ids` already owns
-// (TD-2026-08-13-199).
 template <typename Index>
 bool AppendDisabledIdCapped(std::vector<std::string>* ids, Index* index, std::string id) {
   if (index->Find(id) != util::kFlatKeyNotFound) {
-    return true;  // dedupe: repeated entries do not inflate downstream resolution
+    return true;
   }
   if (ids->size() >= kMaxPersistedDisabledIds) {
     return false;
@@ -56,14 +39,6 @@ bool AppendDisabledIdCapped(std::vector<std::string>* ids, Index* index, std::st
   return true;
 }
 
-// One Setting record into `settings`, shared by the user and the project config.
-// A malformed setting id is dropped, not smuggled in (runtime mutation rejects
-// such ids too) -- and dropped ALONE. Failing the whole record here threw away
-// every setting and disabled id a user had for one bad key, which is what a rule
-// tightened in a later version does to a config the earlier one wrote. Duplicate
-// ids dedupe last-writer-wins: a corrupt/hand-edited config with duplicate keys
-// must not become a split-brain state where the UI shows one value and layering
-// applies another.
 template <typename Index>
 bool AppendSettingRecord(std::span<const std::byte> payload, std::vector<std::pair<std::string, std::string>>* settings,
                          Index* index) {
@@ -80,14 +55,14 @@ bool AppendSettingRecord(std::span<const std::byte> payload, std::vector<std::pa
     return true;
   }
   if (settings->size() >= kMaxPersistedSettings) {
-    return false;  // over the product settings budget
+    return false;
   }
   settings->push_back(std::move(setting));
   index->Insert(settings->size() - 1);
   return true;
 }
 
-}  // namespace
+}
 
 bool EncodeUserConfigRecord(const PersistedUserConfigState& state, std::vector<std::byte>* out) {
   if (out == nullptr) {
@@ -102,7 +77,7 @@ bool EncodeUserConfigRecord(const PersistedUserConfigState& state, std::vector<s
   }
   for (const auto& setting : state.settings) {
     if (!SettingsStore::IsValidSettingId(setting.first)) {
-      continue;  // never written: the decoder would drop it (see there)
+      continue;
     }
     std::vector<std::byte> payload;
     if (!EncodeSettingPair(setting, &payload) ||
@@ -131,9 +106,6 @@ bool DecodeUserConfigRecord(std::span<const std::byte> input, PersistedUserConfi
   }
   *state = PersistedUserConfigState{};
   bool seen_schema = false;
-  // O(1) dedupe indexes so a config with thousands of unique settings / disabled
-  // IDs decodes in O(n) rather than paying an O(n) linear scan per record. All
-  // three index into the state they are deduping, so no id is stored twice.
   auto setting_index = MakeSettingIndex(state->settings);
   auto disabled_keybinding_index = MakeIdIndex(state->disabled_keybinding_ids);
   auto disabled_plugin_index = MakeIdIndex(state->disabled_plugin_ids);
@@ -200,7 +172,7 @@ bool EncodeProjectConfigRecord(const PersistedProjectConfigState& state, std::ve
   }
   for (const auto& setting : state.settings) {
     if (!SettingsStore::IsValidSettingId(setting.first)) {
-      continue;  // never written: the decoder would drop it (see there)
+      continue;
     }
     std::vector<std::byte> payload;
     if (!EncodeSettingPair(setting, &payload) ||
@@ -239,22 +211,15 @@ bool DecodeProjectConfigRecord(std::span<const std::byte> input, PersistedProjec
   }
   *state = PersistedProjectConfigState{};
   bool seen_schema = false;
-  // Legacy typed editor-preference tags 2-4 (EditorTabSize/EditorIndentWidth/
-  // EditorSoftTabs) were retired from encode; the canonical prefs now round-trip
-  // through layered `Setting` records (tag 7). A project config written before that
-  // migration carries these prefs ONLY in the typed tags, so capture them here and
-  // fold them into the settings layer below — otherwise those files silently revert
-  // to the spec default indentation on load.
   std::optional<std::size_t> legacy_tab_size;
   std::optional<std::size_t> legacy_indent_width;
   std::optional<bool> legacy_soft_tabs;
-  // O(1) settings dedupe index (see DecodeUserConfigRecord).
   auto setting_index = MakeSettingIndex(state->settings);
   const bool parsed = ParseRecordStream<ProjectConfigTag>(
              input, [&](ProjectConfigTag tag, std::span<const std::byte> payload) {
                PrimitiveReader reader(payload);
                switch (static_cast<std::uint16_t>(tag)) {
-                 case 2: {  // retired ProjectConfigTag::EditorTabSize
+                 case 2: {
                    std::size_t value = 0;
                    if (!ReadSize(reader, &value) || reader.remaining() != 0) {
                      return false;
@@ -262,7 +227,7 @@ bool DecodeProjectConfigRecord(std::span<const std::byte> input, PersistedProjec
                    legacy_tab_size = value;
                    return true;
                  }
-                 case 3: {  // retired ProjectConfigTag::EditorIndentWidth
+                 case 3: {
                    std::size_t value = 0;
                    if (!ReadSize(reader, &value) || reader.remaining() != 0) {
                      return false;
@@ -270,7 +235,7 @@ bool DecodeProjectConfigRecord(std::span<const std::byte> input, PersistedProjec
                    legacy_indent_width = value;
                    return true;
                  }
-                 case 4: {  // retired ProjectConfigTag::EditorSoftTabs
+                 case 4: {
                    bool value = false;
                    if (!reader.ReadBool(&value) || reader.remaining() != 0) {
                      return false;
@@ -309,7 +274,7 @@ bool DecodeProjectConfigRecord(std::span<const std::byte> input, PersistedProjec
                      return false;
                    }
                    if (state->sidebar_policies.size() >= kMaxPersistedSidebarPolicies) {
-                     return false;  // over the product sidebar-policy budget
+                     return false;
                    }
                    state->sidebar_policies.push_back(std::move(policy));
                    return true;
@@ -336,9 +301,6 @@ bool DecodeProjectConfigRecord(std::span<const std::byte> input, PersistedProjec
   if (!parsed || !seen_schema) {
     return false;
   }
-  // Fold the captured legacy typed prefs into the settings layer, but only when a
-  // modern `Setting` record does not already carry the same id — a newer file that
-  // has both must let the layered record win.
   const auto has_setting = [&](std::string_view id) {
     return std::any_of(state->settings.begin(), state->settings.end(),
                        [id](const auto& kv) { return kv.first == id; });
@@ -355,4 +317,4 @@ bool DecodeProjectConfigRecord(std::span<const std::byte> input, PersistedProjec
   return true;
 }
 
-}  // namespace microide::workspace
+}

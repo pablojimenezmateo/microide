@@ -27,12 +27,7 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
   if (repository_changed) {
     git_repository_service_.MarkStale();
     context_.current_project_state.sidebar.git.snapshot_stale = true;
-    // Invalidates every answer derived from the repository merely existing; see
-    // the field's comment. A repository change is the only way `.git` can appear
-    // or disappear under a live project without the root itself changing.
     ++context_.current_project_state.sidebar.git.repository_marker_generation;
-    // Mark merge tabs stale in EVERY editor group, not just the focused split: a
-    // merge tab in the other split must not keep rendering a pre-change index.
     bool marked_merge_tab = false;
     for (EditorGroup& group : context_.current_project_state.editor_groups) {
       for (TabEntry& tab : group.open_tabs) {
@@ -47,9 +42,6 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
     if (marked_merge_tab) {
       RequestPreparedFrame();
     }
-    // The git view reads the now-stale snapshot, and the status bar's branch is
-    // read from HEAD at frame prep -- which needs a frame to run in. Both are
-    // derived: the frame repaints what the change moved.
     RequestPreparedFrame();
   }
 
@@ -59,15 +51,9 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
 
   std::set<std::filesystem::path> dirty_external_paths;
   std::set<std::filesystem::path> refresh_compare_paths;
-  // A `.editorconfig` write changes how every buffer under it is formatted, so the
-  // memoized resolution has to be dropped and preferences re-pushed. Checked with a
-  // filename compare inside the loop we already run rather than a second pass.
   bool editor_config_changed = false;
   for (const project::ProjectFileChange& change : batch.file_changes) {
     const std::filesystem::path normalized_path = change.absolute_path.lexically_normal();
-    // Whatever changed at this path, its open views look again at where it leads:
-    // a path that became a link (the sync makes the link, then the file it names)
-    // is how a later change to that file reaches them (soak a5c68f4f464f).
     MakeEditorTabService().RefreshRealPathsOf(normalized_path);
     if (normalized_path.filename() == ".editorconfig") {
       editor_config_changed = true;
@@ -81,21 +67,10 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
       case project::ProjectFileChangeKind::Modified: {
         EditorTabService& editor_tabs = MakeEditorTabService();
         const auto route = [&](const std::filesystem::path& path) {
-          // Suppress the watcher's echo of our own save: if every open view on
-          // this path already records the current on-disk signature, nothing
-          // changed underneath us and the save path already refreshed
-          // blame/compare.
           switch (editor_tabs.ClassifyExternalChange(path)) {
             case EditorTabService::ExternalChangeVerdict::OwnEcho:
               break;
             case EditorTabService::ExternalChangeVerdict::NeedsContentConfirm:
-              // One digest settles it, and computing it here is a read of up to
-              // 8 MiB on the shell thread — per changed path, per watcher event.
-              // A `git checkout` that moves the mtime of every open file pays
-              // that for each of them with the window frozen. Post it instead
-              // and decide when it lands; nothing is shown to the user in
-              // between, so an undecided path looks like no event at all rather
-              // than a wrong one.
               BeginExternalChangeConfirm(path);
               break;
             case EditorTabService::ExternalChangeVerdict::Changed:
@@ -104,12 +79,6 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
           }
         };
         route(normalized_path);
-        // A file open through a symlink: the watcher names the file written,
-        // and a write to the target -- from its own tab, or from outside --
-        // left the link's clean buffer stale with nothing to say so (QA monkey,
-        // qa-asan seed 3: link-to-crlf.txt). Each such view is asked as itself;
-        // its stat follows the link, so its own save's echo still classifies as
-        // one.
         for (const std::filesystem::path& alias : editor_tabs.OpenSymlinkAliasesOf(normalized_path)) {
           route(alias);
         }
@@ -120,11 +89,7 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
 
   if (editor_config_changed) {
     context_.current_project_state.editor_config.Invalidate();
-    // Re-push the cheap per-viewport setters only: `.editorconfig` drives indent,
-    // line ending, and save normalization, none of which affect the language
-    // contract, so the O(tabs) filetype-detect + contract rebuild is skipped.
-    ApplyEditorPreferencesToAllTabs(/*refresh_language_contracts=*/false);
-    // Indent width moves every visible guide and tab stop in every pane.
+    ApplyEditorPreferencesToAllTabs(false);
     RequestPreparedFrame();
   }
 
@@ -140,16 +105,9 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
   }
 
   if (batch.tree_rescan_requested) {
-    // A rescan names no file, or names only the first part of a flood: either
-    // way an open file may have changed with no per-path entry above.
     if (batch.file_changes.empty() || batch.file_changes_truncated) {
-      // Any open buffer may reload and any compare/merge restage: that is the
-      // editor column, not the window (the sidebar is RefreshProjectFileViews').
       RequestPreparedFrame();
       ReloadCleanOpenBuffersFromDisk();
-      // Reconcile compare/merge tabs across EVERY editor group, not just the focused
-      // one: a compare/merge tab open only in a background split must not keep a stale
-      // model/output after a pure tree-rescan. (TD-2026-07-16-57.)
       for (const auto& group : context_.current_project_state.editor_groups) {
         for (const TabEntry& tab : group.open_tabs) {
           if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
@@ -167,25 +125,9 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
     }
   }
 
-  // Tell the language servers about the on-disk changes. This is the only path by
-  // which a server learns about an edit the editor did not make — a `git switch`,
-  // a `pull`, a `stash pop`, a generated header — for every file the user does not
-  // have open. Without it the server keeps answering from a pre-change index:
-  // go-to-definition lands on stale lines and diagnostics name deleted symbols
-  // until the file happens to be opened.
-  //
-  // Every change in the batch is reported, including the watcher's echo of our own
-  // save that the loop above skips for buffer purposes. Filtering those out would
-  // save one event on a save and nothing at all on the case that matters (a branch
-  // switch is hundreds of paths, none of them echoes), while costing a filtered
-  // copy of the list every time. It is also safe: per LSP, once didOpen is sent the
-  // client owns that document's content until didClose, so a server must not
-  // re-read an open document from disk on the strength of a watched-file event.
   if (!batch.file_changes.empty()) {
     lsp_service_.NotifyWatchedFileChanges(batch.file_changes);
   }
-  // A flood's changes past the itemization cap: nothing above acted on them one
-  // by one, but a server learns of them only here.
   if (!batch.unitemized_file_changes.empty()) {
     lsp_service_.NotifyWatchedFileChanges(batch.unitemized_file_changes);
   }
@@ -204,10 +146,6 @@ void WorkspaceShell::RefreshProjectFileViews() {
   if (finder_open) {
     project.file_finder.Refresh();
   }
-  // Cached project-search results are stale against a changed file set (a match
-  // in a since-deleted file). Dropping the marker makes the next showing of Search
-  // re-run it; it re-runs NOW only where it is on screen. A hidden search re-run
-  // per batch was a tree walk per agent write that nobody looked at.
   ProjectSearchState& search = project.overlay.workflow.project_search;
   search.searched_query.clear();
   const bool search_shown =
@@ -216,10 +154,6 @@ void WorkspaceShell::RefreshProjectFileViews() {
   if (search_shown && !search.query.text().empty()) {
     RefreshProjectSearch(ProjectSearchRerun::InPlace);
   }
-  // What lists files is the sidebar (tree, search, Changed on Host) and the
-  // overlay (finder, search): a frame repaints what of them changed. Not one
-  // while neither shows -- under agents writing the tree that was two frames a
-  // second preparing a window with nothing to repaint (TD-2026-10-15-341).
   if (project.sidebar.visible || project.overlay.visible) {
     RequestPreparedFrame();
   }
@@ -227,10 +161,6 @@ void WorkspaceShell::RefreshProjectFileViews() {
 
 void WorkspaceShell::MarkCompareTabsStaleForPath(const std::filesystem::path& path) {
   const std::filesystem::path normalized_path = path.lexically_normal();
-  // Scan every editor group: a compare tab in the non-focused split must also be
-  // invalidated when its file changes externally, otherwise it keeps rendering a
-  // pre-change diff. (This used to set two `model_stale`/`model_refreshing` flags
-  // around the refresh and clear them right after; nothing ever read either.)
   for (const EditorGroup& group : context_.current_project_state.editor_groups) {
     for (const TabEntry& tab : group.open_tabs) {
       if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
@@ -256,15 +186,9 @@ void WorkspaceShell::InvalidateMergeTabsForPath(const std::filesystem::path& pat
     if (!std::filesystem::exists(normalized_path, exists_error) || exists_error) {
       continue;
     }
-    // Through the shared confirmation, not a tick compare of its own: a touch or a
-    // byte-identical rewrite moves the tick and changes nothing, and un-marking a
-    // completed resolution over that is the worst of the three ways this mistake
-    // showed up. (TD-2026-09-29-306.)
     if (MergeResultChangedOnDisk(*tab.merge)) {
       tab.merge->external_result_stale = true;
       tab.merge->marked_resolved = false;
-      // The stale-result banner and the resolved mark are on screen; the batch
-      // that got here no longer repaints the window for them (TD-2026-10-15-341).
       RequestPreparedFrame();
     }
    }
@@ -277,10 +201,6 @@ void WorkspaceShell::ClearDiagnosticsForPath(const std::filesystem::path& path) 
     QueueEditorHoverRefresh();
     RequestPreparedFrame();
   }
-  // Plugin/LSP decorations are path-keyed just like diagnostics, so an external delete
-  // (filesystem watcher) must clear them too — otherwise they linger stale and the
-  // plugin-presentation bundle can never drain empty and release. Gated on presence so
-  // a delete of an undecorated file never allocates the bundle.
   auto& state = context_.current_project_state;
   if (state.plugin_presentation_if_present() != nullptr) {
     if (state.EnsurePluginPresentation().decorations.ClearPathPrefix(path)) {
@@ -291,10 +211,6 @@ void WorkspaceShell::ClearDiagnosticsForPath(const std::filesystem::path& path) 
 }
 
 
-// The per-path half of an external change, shared by the immediate verdict and by
-// the deferred one that lands with a digest. Both must do the same things, and a
-// second copy of "invalidate blame, restage compare/merge, then banner-or-reload"
-// is how one of them ends up doing three of the four.
 void WorkspaceShell::ApplyExternalFileChange(const std::filesystem::path& normalized_path,
                                              std::set<std::filesystem::path>& dirty_external_paths,
                                              std::set<std::filesystem::path>& refresh_compare_paths) {
@@ -309,22 +225,6 @@ void WorkspaceShell::ApplyExternalFileChange(const std::filesystem::path& normal
     editor_tabs.NoteDiskChangedUnderEditsForPath(normalized_path);
     dirty_external_paths.insert(normalized_path);
   }
-  // Every CLEAN view of the path reloads, whatever else is dirty. The dirty view
-  // need not be one of them: a merge tab's edited result is a buffer of its own,
-  // and it kept the file's clean editor tab on the text git had just replaced
-  // (soak 4f0b1aff2ec8: conflict markers after `git merge --abort`). The reload
-  // skips dirty views itself, and a dirty editor's document is every editor view's.
-  //
-  // Reload silently and, only when an open clean buffer was actually refreshed,
-  // surface a passive "reloaded from disk" notice -- not for a buffer that already
-  // held what the file holds (the late echo of its own save), which is kept. Not
-  // under edits: the external-change banner the caller raises is the one to show.
-  // AlreadyResolved: the verdict above IS the echo check, and it has already read
-  // the file (off-thread) if a read was needed. Letting the reload re-ask would
-  // read the same file a second time, on the shell thread, to learn what the
-  // caller just established.
-  // The notice goes on each tab that reloaded -- a view open through a link to
-  // this file is reloaded with it and says so on its own tab.
   std::vector<std::filesystem::path> reloaded_paths;
   if (editor_tabs.ReloadCleanEditorTabsForPath(normalized_path, EditorReloadEchoGuard::AlreadyResolved,
                                                &reloaded_paths)) {
@@ -338,18 +238,11 @@ void WorkspaceShell::ApplyExternalFileChange(const std::filesystem::path& normal
 }
 
 void WorkspaceShell::BeginExternalChangeConfirm(const std::filesystem::path& normalized_path) {
-  // One in flight per path. A watcher that reports the same file twice before the
-  // first digest lands would otherwise read it twice and decide twice; the second
-  // event is about the same question, and the re-stat inside the confirm is what
-  // makes a later change still visible.
   if (!pending_external_change_confirms_.insert(normalized_path.generic_string()).second) {
     return;
   }
   util::AddPerformanceCounter(util::PerfCounterId::ExternalChangeConfirmPostedReads);
   auto digest = std::make_shared<std::optional<std::uint64_t>>();
-  // The stat the digest answers for, taken before the read; the worker re-stats
-  // after it and drops a digest whose file moved meanwhile. A digest paired with
-  // a later stat filed a real change as our own echo (ExternalChangeIsOwnEcho).
   const util::FileSignature read_signature = util::StatFileSignature(normalized_path);
   (void)file_read_service_.Begin({
       .path = normalized_path,
@@ -358,18 +251,12 @@ void WorkspaceShell::BeginExternalChangeConfirm(const std::filesystem::path& nor
             if (util::StatFileSignature(normalized_path).SameStatAs(read_signature)) {
               *digest = util::QuickContentHash(bytes);
             }
-            // The bytes stop here. Only the digest crosses to the shell thread —
-            // handing an 8 MiB buffer across to be hashed there would be the
-            // stall this exists to remove, one hop later.
             std::string().swap(bytes);
           },
       .on_complete =
           [this, normalized_path, digest,
            read_signature](project::FileReadService::Completion completion) {
             if (completion.status == project::FileReadService::Status::Cancelled) {
-              // Teardown, or the project changed under it. Whoever cancelled owns
-              // what happens next, and acting here would raise a banner on a
-              // project that is being dismantled.
               pending_external_change_confirms_.erase(normalized_path.generic_string());
               return;
             }
@@ -383,16 +270,9 @@ void WorkspaceShell::ApplyExternalChangeConfirm(const std::filesystem::path& nor
                                                 bool read_ok,
                                                 const std::optional<std::uint64_t>& digest,
                                                 const util::FileSignature& read_signature) {
-  // Gone from the set means the project was switched, closed or reset while the
-  // digest was in flight: the tabs this would act on are not the tabs it was
-  // posted about. The erase is the claim, so two completions for one path cannot
-  // both act.
   if (pending_external_change_confirms_.erase(normalized_path.generic_string()) == 0) {
     return;
   }
-  // A read that failed cannot excuse the stat mismatch, so the change stands.
-  // Announcing a change that turns out to be an echo costs the user a dismissable
-  // banner; suppressing a real one costs them their edits.
   if (read_ok && digest.has_value() &&
       MakeEditorTabService().ExternalChangeIsOwnEcho(normalized_path, *digest, read_signature)) {
     return;
@@ -411,4 +291,4 @@ void WorkspaceShell::ApplyExternalChangeConfirm(const std::filesystem::path& nor
   }
 }
 
-}  // namespace microide::workspace
+}

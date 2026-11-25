@@ -16,15 +16,6 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-// One slot per *live* channel. Two exist in the app (startup, perf); the cap
-// keeps the thread-local active-scope table a fixed-size array instead of a
-// per-thread allocation.
-//
-// Slots are reclaimed on destruction. A monotonic counter would have been
-// simpler, but it burns a slot per channel ever constructed, so a test that
-// builds a few throwaway channels silently pushes the next one past the cap and
-// disables it -- instrumentation that turns itself off is the worst failure mode
-// a tracer can have.
 constexpr std::size_t kMaxChannels = 8;
 constexpr std::size_t kNoSlot = static_cast<std::size_t>(-1);
 
@@ -58,13 +49,8 @@ void ReleaseSlot(std::size_t slot) {
   SlotsInUse()[slot] = false;
 }
 
-// Innermost live scope per channel on this thread. A plain thread_local array of
-// pointers: no allocation, and nesting depth stays per-thread so a background
-// scope can no longer shift the indentation of a main-thread one mid-line.
 thread_local std::array<TraceScope*, kMaxChannels> g_active_scope{};
 
-// Set on the shell / event-loop thread by MarkTracingMainThread. A plain
-// thread_local bool, not a thread-id comparison: it is read on every scope exit.
 thread_local bool g_is_main_thread = false;
 std::atomic<bool> g_main_thread_marked{false};
 
@@ -105,7 +91,7 @@ double DurationMs(Clock::duration duration) {
 
 constexpr std::string_view kOverflowLabel = "<aggregate-overflow>";
 
-}  // namespace
+}
 
 void MarkTracingMainThread() {
   g_is_main_thread = true;
@@ -129,18 +115,12 @@ TraceChannel::TraceChannel(const char* prefix,
       stream_enabled_(EnvFlagEnabled(stream_env)),
       aggregate_enabled_(EnvFlagEnabled(aggregate_env)),
       minimum_duration_ms_(ParseMinimumDurationMs(min_duration_env)) {
-  // No other thread can observe this object yet, so relaxed stores below are
-  // ordered by the caller's acquisition of it.
   if (!Enabled()) {
-    // An off channel needs neither a slot nor state; only its enabled flags are
-    // ever read.
     slot_ = kNoSlot;
     return;
   }
   slot_ = AcquireSlot();
   if (slot_ == kNoSlot) {
-    // More live channels than the thread-local table can index. Degrade to off
-    // rather than corrupting another channel's scope stack.
     stream_enabled_.store(false, std::memory_order_relaxed);
     aggregate_enabled_.store(false, std::memory_order_relaxed);
     std::fprintf(stderr, "[%s] trace channel disabled: more than %zu channels are live\n", prefix_,
@@ -151,9 +131,6 @@ TraceChannel::TraceChannel(const char* prefix,
 }
 
 TraceChannel::~TraceChannel() {
-  // Channels are function-local statics, so this runs at exit. Disarm before
-  // freeing: any TraceScope constructed after this point (from a later static
-  // destructor) must take the disabled fast path rather than touch `impl_`.
   stream_enabled_.store(false, std::memory_order_relaxed);
   aggregate_enabled_.store(false, std::memory_order_relaxed);
   if (slot_ != kNoSlot) {
@@ -280,10 +257,6 @@ void TraceChannel::WriteAggregate(std::FILE* out) const {
                  static_cast<unsigned long long>(entry.count), entry.label.c_str());
   }
 
-  // Second ranking, by main-thread self time only. The first table answers
-  // "where does CPU go"; this one answers "what makes the app feel slow", and
-  // they disagree often enough to be worth both. Suppressed when the main thread
-  // was never marked, since the ordering would then be arbitrary.
   if (main_known && main_total > 0.0) {
     std::vector<const AggregateEntry*> by_main;
     by_main.reserve(entries.size());
@@ -322,9 +295,6 @@ void TraceChannel::DumpAggregateOnce() {
 }
 
 void TraceScope::Begin(TraceChannel& channel, std::string_view label) {
-  // Copy the label only on the enabled path. These scopes sit in hot paths (the
-  // highlight query path constructs several per call), so an unconditional copy
-  // here was a per-scope heap allocation in production with tracing off.
   label_.assign(label);
   channel_ = &channel;
   slot_ = channel.slot_;
@@ -357,4 +327,4 @@ void TraceScope::End() {
   std::fflush(stderr);
 }
 
-}  // namespace microide::util
+}

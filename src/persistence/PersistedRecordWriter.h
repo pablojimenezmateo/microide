@@ -20,7 +20,6 @@ enum class PersistedRecordWriterError {
   RenameFailed,
 };
 
-// The stage's name, for a log line: "rename", "create-directory", ...
 const char* PersistedRecordWriterErrorName(PersistedRecordWriterError error);
 
 class PersistedRecordWriter {
@@ -31,11 +30,7 @@ class PersistedRecordWriter {
                         PersistedRecordWriterError* error = nullptr,
                         std::error_code* cause = nullptr);
   static std::filesystem::path BackupPathFor(const std::filesystem::path& path);
-  // How many WriteFile calls the CALLING thread has made. The process-wide
-  // `persistence.record_writes` counter also counts every other thread's saves (a
-  // background project-state write still in flight), so a "this did not write"
-  // assertion read from it fails whenever anything else is persisting.
   static std::uint64_t WritesOnThisThread();
 };
 
-}  // namespace microide::persistence
+}

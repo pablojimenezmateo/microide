@@ -1,8 +1,6 @@
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/shell/ShellGlueCache.h"
 
-// The unique_ptr members are declared over forward-declared types, so the
-// constructor and destructor are defined here, where every type is complete.
 #include "workspace/actions/WorkspaceActionServices.h"
 #include "workspace/coordinators/WorkspaceChromeMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
@@ -32,4 +30,4 @@ namespace microide::workspace {
 ShellGlueCache::ShellGlueCache() = default;
 ShellGlueCache::~ShellGlueCache() = default;
 
-}  // namespace microide::workspace
+}

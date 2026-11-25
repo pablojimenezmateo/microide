@@ -40,4 +40,4 @@ ResolvedGitOutgoingBase ResolveGitOutgoingBase(const std::filesystem::path& proj
   return resolved;
 }
 
-}  // namespace microide::workspace
+}

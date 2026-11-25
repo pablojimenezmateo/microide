@@ -7,18 +7,12 @@
 
 namespace microide::util {
 
-// Little-endian fixed-width and LEB128 varint encoding over a std::string, for
-// the remote wire's binary payloads (project/remote/RemoteFrame, terminal/
-// TerminalHostWire). One spelling of "put a u64 in N bytes" instead of one per
-// codec.
-
 inline void PutLe(std::string& out, std::uint64_t value, std::size_t bytes) {
   for (std::size_t i = 0; i < bytes; ++i) {
     out.push_back(static_cast<char>((value >> (8 * i)) & 0xffu));
   }
 }
 
-// Caller guarantees `offset + bytes <= in.size()`.
 inline std::uint64_t GetLe(std::string_view in, std::size_t offset, std::size_t bytes) {
   std::uint64_t value = 0;
   for (std::size_t i = 0; i < bytes; ++i) {
@@ -40,9 +34,6 @@ inline void PutBytes(std::string& out, std::string_view bytes) {
   out.append(bytes);
 }
 
-// A bounds-checked cursor over untrusted bytes. Every read past the end, or a
-// varint longer than ten bytes, latches `failed()` and returns zero/empty from
-// then on, so a decoder can read a whole record and check once at the end.
 class ByteReader {
  public:
   explicit ByteReader(std::string_view in) : in_(in) {}
@@ -73,7 +64,6 @@ class ByteReader {
     return 0;
   }
 
-  // Exactly `count` bytes, unprefixed.
   std::string_view Raw(std::size_t count) {
     if (failed_ || in_.size() - offset_ < count) {
       failed_ = true;
@@ -84,8 +74,6 @@ class ByteReader {
     return bytes;
   }
 
-  // A varint length, then that many bytes; at most `max_bytes` (a forged length
-  // fails rather than being trusted).
   std::string_view Bytes(std::size_t max_bytes) {
     const std::uint64_t size = Varint();
     if (failed_ || size > max_bytes || size > in_.size() - offset_) {
@@ -108,4 +96,4 @@ class ByteReader {
   bool failed_ = false;
 };
 
-}  // namespace microide::util
+}

@@ -79,9 +79,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSidebar(ActionId id,
       context_.RefreshProjectFiles();
       context_.ReloadCleanOpenBuffersFromDisk();
       if (id == ActionId::GitRefresh) {
-        // The files' refresh asks git only while Source Control is showing, and a
-        // finished snapshot waiting to be consumed answers it instead: an
-        // explicit refresh must ask git again (the status bar reads it too).
         context_.RequestGitRefresh();
       }
       return DispatchResult::Handled;
@@ -107,9 +104,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSidebar(ActionId id,
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
-      // The service runs git on the background executor and reports the outcome as
-      // a toast; only a refusal to start (no repo, one already in flight, missing
-      // argument) comes back here as a rejection sentence.
       std::string rejection = context_.DispatchGitOperation(id, args);
       if (!rejection.empty()) {
         return reject(std::move(rejection));
@@ -121,8 +115,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSidebar(ActionId id,
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
-      // From a conflict row's menu the row is the target; otherwise the path
-      // argument, else the active merge tab's file (resolved by the dispatcher).
       std::vector<std::string> target = args;
       if (target.empty() && source == ActionSource::ContextMenu) {
         std::string selected = context_.SelectedConflictedGitEntryPath();
@@ -141,7 +133,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSidebar(ActionId id,
     case ActionId::GitOpenFileEntry:
     case ActionId::GitStageToggleEntry:
     case ActionId::GitDiscardEntry: {
-      // Git sidebar entry context-menu actions; they act on the selected entry.
       if (source != ActionSource::ContextMenu) {
         return DispatchResult::Unhandled;
       }
@@ -276,4 +267,4 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSidebar(ActionId id,
   }
 }
 
-}  // namespace microide::workspace
+}

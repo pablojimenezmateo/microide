@@ -50,11 +50,6 @@ void TestSingleLineEditorSupportsMovementAndSelectionInvariants() {
   ExpectEditorState(editor, "alpha", 5, std::nullopt, "move end");
 }
 
-// ExtendSelectionTo is the pointer's extend gesture: the first call anchors
-// where the caret was, later ones keep that anchor. Anchoring first and moving
-// the caret second (SetSelectionAnchor(caret) then SetCaret) produced no
-// selection, because an anchor equal to the caret normalizes away at once --
-// which is why no single-line field ever selected by drag or Shift+click.
 void TestSingleLineEditorExtendSelectionToAnchorsAtTheCaret() {
   editor::SingleLineEditor editor("drag me");
   editor.SetCaret(1);
@@ -83,42 +78,29 @@ void TestSingleLineEditorSupportsSelectAllCopyCutPaste() {
 }
 
 void TestSingleLineEditorStripsLineBreaksOnInsert() {
-  // A single-line surface must never hold CR/LF. The common trigger is pasting a
-  // whole-line copy, which carries a trailing '\n'; multi-line clipboard content
-  // carries interior breaks too. Both Ctrl+V (Paste) and a paste delivered as a
-  // text-input event funnel through Insert, so the stripping lives there.
   editor::SingleLineEditor editor;
   Expect(editor.Paste("hello\n"), "pasting whole-line-copy text should insert");
   ExpectEditorState(editor, "hello", 5, std::nullopt, "trailing-newline paste");
 
   editor.SetText("");
   Expect(editor.Insert("a\r\nb\nc\rd"), "inserting multi-line text should insert");
-  // Line-break runs collapse to single spaces (foo\nbar -> foo bar), not
-  // concatenation (foobar), so pasted multi-line content keeps word boundaries.
   ExpectEditorState(editor, "a b c d", 7, std::nullopt, "multi-line insert collapses breaks to spaces");
 
-  // Pasting only line breaks inserts nothing (sanitized to empty).
   editor.SetText("keep");
   editor.MoveEnd(false);
   Expect(!editor.Paste("\r\n\n"), "pasting only line breaks inserts nothing");
   ExpectEditorState(editor, "keep", 4, std::nullopt, "newline-only paste is a no-op");
 }
 
-// SetText is the door EXTERNAL text comes through -- a debug adapter's variable
-// value, a persisted commit subject, a stored setting, a search term seeded from a
-// selection -- and it was the one text-entering path that did not enforce the
-// field's "must never hold CR/LF" rule. Insert/Append/Paste all did.
 void TestSingleLineEditorStripsLineBreaksOnSetText() {
   editor::SingleLineEditor editor;
 
-  // The shape a DAP adapter produces for a std::string with an embedded newline.
   editor.SetText("line one\nline two");
   ExpectEditorState(editor, "line one line two", 17, std::nullopt, "SetText collapses a newline");
 
   editor.SetText("a\r\nb\nc\rd");
   ExpectEditorState(editor, "a b c d", 7, std::nullopt, "SetText collapses every break run");
 
-  // Text with no breaks is stored verbatim, caret at the end, as before.
   editor.SetText("plain");
   ExpectEditorState(editor, "plain", 5, std::nullopt, "SetText leaves break-free text alone");
 
@@ -162,7 +144,6 @@ void TestSingleLineEditorSelectsWordAtOffset() {
   editor.SetSelectionAnchor(std::nullopt);
   editor.SetCaret(12);
   Expect(editor.SelectWordAt(12), "click on whitespace adjacent to next word selects nothing");
-  // Position 12 = 'e' of "example", whitespace at 11, but 12 indexes a word char.
   ExpectEditorState(editor, "hello_world example 123foo", 19,
                     editor::SingleLineSelection{12, 19}, "word starting at 12");
 
@@ -171,10 +152,6 @@ void TestSingleLineEditorSelectsWordAtOffset() {
   Expect(!editor.SelectWordAt(11) == false,
          "boundary case at 11 selects the preceding word, returns true");
 
-  // Off identifier content, the double-click takes the RUN under the pointer --
-  // the same rule the multi-line editor uses (editor::WordSelectionRunAt), and
-  // what a native text input does. It used to select nothing here, so the same
-  // gesture behaved differently in the command prompt than in the editor.
   editor::SingleLineEditor blanks("   ");
   blanks.SetCaret(2);
   Expect(blanks.SelectWordAt(1), "a whitespace run is selectable");
@@ -186,7 +163,6 @@ void TestSingleLineEditorSelectsWordAtOffset() {
   ExpectEditorState(operators, "a->b", 3, editor::SingleLineSelection{1, 3},
                     "the whole -> run, not one character");
 
-  // Nothing at all to select is still false, and leaves the state untouched.
   editor::SingleLineEditor empty("");
   Expect(!empty.SelectWordAt(0), "an empty field has nothing to select");
   ExpectEditorState(empty, "", 0, std::nullopt, "empty field untouched");
@@ -206,28 +182,21 @@ void TestSingleLineEditorSupportsSnapshotAndAppend() {
   ExpectEditorState(editor, "alpha-omega", 11, std::nullopt,
                     "append should extend text and collapse selection");
 
-  // Append shares Insert's single-line sanitization: CR/LF runs collapse to single
-  // spaces so the field never stores line breaks even via this public helper.
   editor::SingleLineEditor sanitized("x");
   sanitized.Append("a\r\nb\nc");
   ExpectEditorState(sanitized, "xa b c", 6, std::nullopt, "append collapses CR/LF to spaces");
 }
 
 void TestSingleLineEditorCaretSnapsToUtf8Boundary() {
-  // "é" is two UTF-8 bytes (0xC3 0xA9). Placing the caret at byte offset 1 lands
-  // mid-codepoint; it must snap back to the scalar start (0) so a following edit
-  // cannot split the code point and corrupt the field.
   editor::SingleLineEditor editor("\xc3\xa9xy");
   editor.SetCaret(1);
   Expect(editor.caret() == 0, "a caret inside a multibyte scalar snaps to its start");
 
-  // A boundary offset (start of 'x' at byte 2) is preserved exactly.
   editor.SetCaret(2);
   Expect(editor.caret() == 2, "a valid UTF-8 boundary caret is preserved");
 
-  // A selection anchor is snapped the same way; inserting there stays valid UTF-8.
   editor.SetCaret(2);
-  editor.SetSelectionAnchor(1);  // mid-"é" -> snaps to 0
+  editor.SetSelectionAnchor(1);
   const auto selection = editor.Selection();
   Expect(selection.has_value() && selection->start == 0 && selection->end == 2,
          "a selection anchor inside a multibyte scalar snaps to a boundary");
@@ -236,25 +205,21 @@ void TestSingleLineEditorCaretSnapsToUtf8Boundary() {
 void TestSingleLineEditorSupportsWordMotionAndDeletion() {
   editor::SingleLineEditor editor("foo bar baz");
 
-  // Word-left from end stops at each word edge.
   Expect(editor.MoveWordLeft(), "word-left should move to the start of the last word");
   ExpectEditorState(editor, "foo bar baz", 8, std::nullopt, "word-left once");
   Expect(editor.MoveWordLeft(), "word-left should move to the start of the previous word");
   ExpectEditorState(editor, "foo bar baz", 4, std::nullopt, "word-left twice");
 
-  // Word-right advances past each word.
   Expect(editor.MoveWordRight(), "word-right should move past the current word");
   ExpectEditorState(editor, "foo bar baz", 7, std::nullopt, "word-right once");
 
-  // Ctrl+Shift+Left extends the selection by a word.
   editor.SetCaret(11);
-  Expect(editor.MoveWordLeft(/*extend_selection=*/true),
+  Expect(editor.MoveWordLeft(true),
          "word-left with extend should grow a selection");
   Expect(editor.Selection().has_value() && editor.Selection()->start == 8 &&
              editor.Selection()->end == 11,
          "extended word-left should select the trailing word");
 
-  // Word deletion removes whole words.
   editor::SingleLineEditor deleter("foo bar baz");
   Expect(deleter.DeleteWordLeft(), "delete-word-left should remove the trailing word");
   ExpectEditorState(deleter, "foo bar ", 8, std::nullopt, "delete-word-left");
@@ -264,9 +229,7 @@ void TestSingleLineEditorSupportsWordMotionAndDeletion() {
 }
 
 void TestSingleLineEditorWordMotionHandlesUnicode() {
-  // "café ñoño": é (bytes 3-4) and ñ (2 bytes each) are word characters, so word
-  // motion must treat the accented words as whole words, not stop at every byte.
-  editor::SingleLineEditor editor("café ñoño");  // 12 bytes, caret starts at end
+  editor::SingleLineEditor editor("café ñoño");
   Expect(editor.MoveWordLeft(), "word-left enters the second accented word");
   ExpectEditorState(editor, "café ñoño", 6, std::nullopt, "word-left to start of ñoño");
   Expect(editor.MoveWordLeft(), "word-left crosses the space to the first word");
@@ -279,30 +242,25 @@ void TestSingleLineKeyHandlerBindsWordShortcuts() {
   editor::SingleLineEditor editor("alpha beta");
   const editor::SingleLineKeyHandler::Clipboard io{};
 
-  // Ctrl+Left is word-granular (not line-home).
   Expect(editor::SingleLineKeyHandler::HandleKeyDown(editor, SDLK_LEFT, SDL_KMOD_CTRL, io),
          "ctrl+left should be handled");
   Expect(editor.caret() == 6, "ctrl+left should jump to the start of the last word");
 
-  // Ctrl+Backspace deletes the previous word.
   Expect(editor::SingleLineKeyHandler::HandleKeyDown(editor, SDLK_BACKSPACE, SDL_KMOD_CTRL, io),
          "ctrl+backspace should be handled");
   Expect(editor.text() == "beta", "ctrl+backspace should delete the previous word");
 }
 
-// A word step over a selection steps word-wise from the caret and drops the
-// anchor -- the main editor's MoveCursorWord rule, VS Code's and a GTK entry's --
-// rather than merely collapsing to the selection's edge as Left/Right do.
 void TestSingleLineEditorWordStepOverSelectionMovesFromTheCaret() {
   editor::SingleLineEditor editor("alpha beta gamma");
   editor.SetCaret(6);
-  editor.SetSelectionAnchor(10);  // "beta" selected, caret at its start
+  editor.SetSelectionAnchor(10);
   Expect(editor.MoveWordLeft(), "word-left over a selection moves");
   Expect(!editor.HasSelection() && editor.caret() == 0,
          "word-left from the selection's caret end reaches the previous word start");
 
   editor.SetCaret(10);
-  editor.SetSelectionAnchor(6);  // "beta" selected, caret at its end
+  editor.SetSelectionAnchor(6);
   Expect(editor.MoveWordRight(), "word-right over a selection moves");
   Expect(!editor.HasSelection() && editor.caret() == 16,
          "word-right from the selection's caret end reaches the next word end");
@@ -314,12 +272,10 @@ void TestSingleLineEditorWordStepOverSelectionMovesFromTheCaret() {
          "it steps from the caret (6), not from the selection's end");
 }
 
-}  // namespace
+}
 
-// A double-click word selection spans a non-ASCII identifier; the byte-wise scan
-// stopped at the first byte >= 0x80 and selected only the ASCII tail.
 void TestSingleLineEditorSelectsNonAsciiWord() {
-  const std::string text = "gr\xc3\xb6\xc3\x9f" "e naive";  // "größe naive"
+  const std::string text = "gr\xc3\xb6\xc3\x9f" "e naive";
   editor::SingleLineEditor editor(text);
   const std::size_t word_end = std::string("gr\xc3\xb6\xc3\x9f" "e").size();
   Expect(editor.SelectWordAt(3), "a click on a continuation byte selects the word");
@@ -363,4 +319,4 @@ void RegisterSingleLineEditorTests(std::vector<TestCase>& tests) {
           TestSingleLineKeyHandlerBindsWordShortcuts);
 }
 
-}  // namespace microide::tests
+}

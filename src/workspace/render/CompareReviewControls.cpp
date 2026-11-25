@@ -15,12 +15,10 @@ namespace {
 
 constexpr float kEdgeInset = 6.0f;
 
-// The band a text line whose top is `line_y` paints (rows fill from a pixel above).
 SDL_FRect LineBand(float x, float line_y, float width, float line_height) {
   return MakeRect(x, line_y - 1.0f, width, line_height);
 }
 
-// The on-screen row under y, or nullopt off the rows.
 std::optional<int> VisibleRowAt(const CompareControlGeometry& geometry, float y) {
   const float offset = y - geometry.rows_y;
   if (offset < 0.0f || geometry.line_height <= 0.0f) {
@@ -33,7 +31,7 @@ float RightTextEnd(const CompareControlGeometry& geometry) {
   return geometry.right_x + geometry.gutter_width + geometry.right_width;
 }
 
-}  // namespace
+}
 
 std::string_view CompareHunkToggleLabel(compare::BranchReviewMarkerStatus status) {
   return status == compare::BranchReviewMarkerStatus::Reviewed ? std::string_view("Unmark")
@@ -118,7 +116,6 @@ int CompareHunkControlsOnRow(const CompareTabState& compare_tab, const DiffWrapR
   if (visible_row != 0) {
     return -1;
   }
-  // The view's top row, inside a hunk whose first row is above the view.
   const compare::ComparePresentationRow* row = CompareTabPresentationRowAt(compare_tab, wrap.unit);
   return row != nullptr && row->kind == compare::ComparePresentationRowKind::Model &&
                  row->model_row_index < compare_tab.model.rows.size()
@@ -170,13 +167,11 @@ CompareHeaderButtonRects BuildCompareHeaderButtonRects(const render::TextRendere
       .text_renderer = text_renderer,
       .row_rect = LineBand(geometry.surface.x, geometry.review_summary_y, geometry.surface.w, geometry.line_height),
       .right = right,
-      // The summary's share: all of it, up to half the line.
       .left_limit = geometry.surface.x + 8.0f +
                     std::min(text_renderer.MeasureWidth(compare_tab.review_header.summary_line) + 14.0f,
                              std::max(0.0f, right - geometry.surface.x) * 0.5f),
   };
   CompareHeaderButtonRects rects;
-  // Right to left: Next, Previous (the pair or neither), then the file's button.
   if (!compare_tab.model.hunks.empty()) {
     rects.next = placer.Place(kCompareNextChangeLabel);
     rects.previous = rects.next.has_value() ? placer.Place(kComparePreviousChangeLabel) : std::nullopt;
@@ -211,8 +206,6 @@ CompareHunkReviewRects BuildCompareHunkReviewRects(const render::TextRenderer& t
       .right = RightTextEnd(geometry) - kEdgeInset,
       .left_limit = geometry.right_x + geometry.gutter_width,
   };
-  // Right to left, so the badge sits left of the buttons it explains. The mark
-  // is the control a narrow pane keeps: Comment only when both fit.
   if (buttons) {
     const std::string_view toggle_label = CompareHunkToggleLabel(status);
     const bool both_fit = placer.right - CompareButtonWidth(text_renderer, kCompareHunkCommentLabel) -
@@ -259,7 +252,7 @@ std::optional<CompareClippedNote> CompareClippedNoteAt(const render::TextRendere
   }
   const CompareNoteActionRects rects = BuildCompareNoteActionRects(text_renderer, geometry, *visible_row);
   if (x < rects.block.x || x >= rects.text_right_edge) {
-    return std::nullopt;  // on its buttons, or off the block
+    return std::nullopt;
   }
   const float room = rects.text_right_edge - rects.text_x -
                      text_renderer.MeasureWidth(CompareNoteCaption(compare_tab, row->row->hunk_index));
@@ -336,4 +329,4 @@ int CompareHoveredHunk(const CompareTabState& compare_tab) {
                           compare_tab, CompareVisualRowToPresentationRow(compare_tab, static_cast<std::size_t>(visual_index))));
 }
 
-}  // namespace microide::workspace
+}

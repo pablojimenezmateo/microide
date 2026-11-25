@@ -11,8 +11,6 @@ namespace microide::workspace {
 
 namespace {
 
-// Move `value` to the front of `entries`, dropping any prior occurrence, and cap the
-// list at `max`. Newest-first ordering with deduplication.
 void PromoteToFront(std::vector<project::ProjectId>& entries,
                     const project::ProjectId& value,
                     std::size_t max) {
@@ -23,8 +21,6 @@ void PromoteToFront(std::vector<project::ProjectId>& entries,
   }
 }
 
-// The legacy path form written beside the ids (PersistedMruState): each one's I/O
-// root, in the same order.
 void SyncLegacyRoots(PersistedMruState& state) {
   state.recent_project_roots.clear();
   state.recent_project_roots.reserve(state.recent_projects.size());
@@ -33,11 +29,9 @@ void SyncLegacyRoots(PersistedMruState& state) {
   }
 }
 
-}  // namespace
+}
 
 std::uint64_t RecentsService::NextInstanceId() {
-  // Atomic: services are host-owned and single-threaded in practice, but a test
-  // harness constructing one per worker must not hand two of them the same id.
   static std::atomic<std::uint64_t> next{1};
   return next.fetch_add(1, std::memory_order_relaxed);
 }
@@ -52,8 +46,6 @@ void RecentsService::Configure(const PersistenceService& persistence) {
   ++revision_;
   if (!storage_path_.empty()) {
     persistence_->LoadMruState(storage_path_, &state_);
-    // A file written before identity records names projects by path alone: name
-    // each one as a typed path is named, once (a mirror's tree is its remote project).
     if (state_.recent_projects.empty()) {
       for (const std::filesystem::path& root : state_.recent_project_roots) {
         if (!root.empty()) {
@@ -61,7 +53,6 @@ void RecentsService::Configure(const PersistenceService& persistence) {
         }
       }
     }
-    // Defensively clamp anything an older/corrupt record might have over-grown.
     if (state_.recent_projects.size() > MaxProjects()) {
       state_.recent_projects.resize(MaxProjects());
     }
@@ -76,8 +67,6 @@ void RecentsService::RecordProjectOpen(const project::ProjectId& id) {
   if (id.empty()) {
     return;
   }
-  // Re-opening what is already newest changes nothing, so it must not cost a
-  // durable write. Reopening the active project is the common case.
   if (!state_.recent_projects.empty() && state_.recent_projects.front() == id) {
     return;
   }
@@ -149,8 +138,6 @@ const std::vector<project::ProjectId>& RecentsService::ExistingRecentProjects() 
       if (id.empty()) {
         continue;
       }
-      // A remote project outlives its mirror: opening it makes the mirror again
-      // from the host. A local folder that is gone cannot be opened.
       std::error_code ec;
       if (id.IsRemote() || std::filesystem::exists(id.local()->root, ec)) {
         existing_projects_.push_back(id);
@@ -167,9 +154,6 @@ const std::vector<std::filesystem::path>& RecentsService::ExistingRecentFilesFor
   if (!existing_files_valid_ || existing_files_revision_ != revision_ ||
       existing_files_root_ != project_root || existing_files_limit_ != limit) {
     existing_files_.clear();
-    // Mirror RecentFilesFor's cap-then-filter: take up to `limit` newest entries for
-    // this root, then drop any that no longer exist (so the count matches the prior
-    // BuildRecentFileRows exists-filter over a capped RecentFilesFor list).
     std::size_t matched = 0;
     for (const PersistedRecentFile& entry : state_.recent_files) {
       if (entry.project_root != project_root) {
@@ -218,4 +202,4 @@ void RecentsService::WriteNow() const {
   persistence_->SaveMruState(storage_path_, state_);
 }
 
-}  // namespace microide::workspace
+}

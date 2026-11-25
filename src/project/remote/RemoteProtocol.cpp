@@ -10,8 +10,6 @@
 namespace microide::project::remote {
 namespace {
 
-// Bounds on what a peer may send in the handshake. Generous for real values, small
-// enough that a hostile peer cannot make the handshake allocate much.
 constexpr std::size_t kMaxReleaseBytes = 64;
 constexpr std::size_t kMaxRootBytes = 4096;
 constexpr std::size_t kMaxCapabilities = 64;
@@ -63,7 +61,6 @@ bool ReadSettings(const util::JsonValue& json, HelloSettings* out, std::string* 
     return false;
   }
   out->backfill_inflight_bytes = bytes.IsNull() ? 0 : bytes.AsInt();
-  // Absent from an older peer: 0, the default.
   const util::JsonValue& files = settings["max_manifest_files"];
   if (!files.IsNull() && (!files.IsInt() || files.AsInt() < 0)) {
     *error = "settings.max_manifest_files must be a non-negative integer";
@@ -73,7 +70,7 @@ bool ReadSettings(const util::JsonValue& json, HelloSettings* out, std::string* 
   return true;
 }
 
-}  // namespace
+}
 
 std::int64_t EffectiveMaxManifestFiles(std::int64_t requested) {
   return requested <= 0 ? kDefaultMaxManifestFiles : std::min(requested, kMaxManifestFilesCeiling);
@@ -180,7 +177,6 @@ std::optional<HelloReply> HelloReplyFromJson(const util::JsonValue& json, std::s
     hello.session_survival.kill_user_processes = survival["kill_user_processes"].AsBool(false);
     hello.session_survival.linger = survival["linger"].AsBool(false);
   }
-  // Advisory: a malformed range reads as not reported, never as a failed hello.
   const util::JsonValue& range = json["ephemeral_ports"];
   if (range.IsArray() && range.AsArray().size() == 2 && range.AsArray()[0].IsInt() &&
       range.AsArray()[1].IsInt()) {
@@ -195,16 +191,13 @@ std::optional<HelloReply> HelloReplyFromJson(const util::JsonValue& json, std::s
 
 namespace {
 
-// A handle is a JSON integer; past 2^53 a peer's double would already have lost
-// it, so nothing above that is a handle this server could have issued.
 constexpr std::int64_t kMaxHandle = std::int64_t{1} << 53;
 constexpr std::int64_t kMaxClients = 1 << 20;
 constexpr std::int64_t kMaxCount = std::int64_t{1} << 40;
-constexpr std::int64_t kMaxPid = 1 << 30;  // Linux's PID_MAX_LIMIT is 2^22
+constexpr std::int64_t kMaxPid = 1 << 30;
 constexpr std::size_t kMaxListedArgs = 64;
 constexpr std::size_t kMaxListedArgBytes = 4096;
 
-// A count in [0, max], else not reported.
 std::optional<std::int64_t> ReadCount(const util::JsonValue& value, std::int64_t max = kMaxCount) {
   if (!value.IsInt() || value.AsInt() < 0 || value.AsInt() > max) {
     return std::nullopt;
@@ -229,8 +222,6 @@ ActivityFigures ReadFigures(const util::JsonValue& row) {
   if (const std::optional<std::int64_t> rss = ReadCount(row["rss_bytes"], std::int64_t{1} << 52)) {
     figures.rss_bytes = *rss;
   }
-  // -1 is the server's "no previous sample yet": not reported, like a missing key.
-  // A million permille is a thousand cores.
   if (const std::optional<std::int64_t> cpu = ReadCount(row["cpu_permille"], 1'000'000)) {
     figures.cpu_permille = static_cast<std::int32_t>(*cpu);
   }
@@ -248,8 +239,6 @@ std::string ReadPath(const util::JsonValue& value) {
   return value.IsString() && value.AsString().size() <= kMaxRootBytes ? value.AsString() : std::string();
 }
 
-// A process name the host reports (a comm: 15 bytes there), shown in a row: short,
-// and nothing that is not printable -- it is the host's text, not ours.
 std::string ReadCommandName(const util::JsonValue& value) {
   constexpr std::size_t kMaxCommandBytes = 64;
   if (!value.IsString() || value.AsString().size() > kMaxCommandBytes) {
@@ -264,7 +253,7 @@ std::string ReadCommandName(const util::JsonValue& value) {
   return name;
 }
 
-}  // namespace
+}
 
 ServerStatus ServerStatusFromJson(const util::JsonValue& json) {
   ServerStatus status;
@@ -315,14 +304,12 @@ ServerStatus ServerStatusFromJson(const util::JsonValue& json) {
                                watch.AsString() == "none")) {
         workspace.watch = watch.AsString();
       }
-      // An exbibyte bounds both: a number past it is not a disk.
       workspace.disk_free = ReadCount(row["disk_free"], std::int64_t{1} << 60);
       workspace.disk_total = ReadCount(row["disk_total"], std::int64_t{1} << 60);
       status.workspaces.push_back(std::move(workspace));
     }
   }
   if (const util::JsonValue& terminals = json["terminals"]; terminals.IsArray()) {
-    // An array, or absent / the count an older server sends: not listed.
     std::vector<ServerTerminal>& rows = status.terminals.emplace();
     for (const util::JsonValue& row : terminals.AsArray()) {
       if (rows.size() >= kMaxListedTerminals) {
@@ -374,7 +361,7 @@ ServerStatus ServerStatusFromJson(const util::JsonValue& json) {
         }
       }
       if (!argv_ok) {
-        continue;  // a row naming its process in something other than strings
+        continue;
       }
       process.pid = ReadPid(row["pid"]);
       process.cwd = ReadPath(row["cwd"]);
@@ -468,7 +455,7 @@ std::optional<std::vector<std::uint64_t>> ParseRelease(std::string_view text) {
     }
     text.remove_prefix(dot + 1);
     if (text.empty()) {
-      return std::nullopt;  // a trailing dot
+      return std::nullopt;
     }
   }
   if (parts.empty()) {
@@ -477,7 +464,7 @@ std::optional<std::vector<std::uint64_t>> ParseRelease(std::string_view text) {
   return parts;
 }
 
-}  // namespace
+}
 
 bool ReleaseIsOlder(std::string_view a, std::string_view b) {
   std::optional<std::vector<std::uint64_t>> left = ParseRelease(a);
@@ -485,7 +472,6 @@ bool ReleaseIsOlder(std::string_view a, std::string_view b) {
   if (!left.has_value() || !right.has_value()) {
     return false;
   }
-  // Missing trailing parts read as 0: "2.13" == "2.13.0".
   const std::size_t size = std::max(left->size(), right->size());
   left->resize(size, 0);
   right->resize(size, 0);
@@ -506,15 +492,15 @@ bool IsGitMutation(const std::vector<std::string>& argv) {
     const std::string& arg = argv[i];
     if (arg == "-C" || arg == "-c" || arg == "--git-dir" || arg == "--work-tree" ||
         arg == "--namespace") {
-      ++i;  // a global option's value
+      ++i;
       continue;
     }
     if (!arg.empty() && arg.front() == '-') {
-      continue;  // --no-pager, --literal-pathspecs, --git-dir=...
+      continue;
     }
     return std::find(std::begin(kReadOnly), std::end(kReadOnly), arg) == std::end(kReadOnly);
   }
-  return false;  // bare `git`
+  return false;
 }
 
-}  // namespace microide::project::remote
+}

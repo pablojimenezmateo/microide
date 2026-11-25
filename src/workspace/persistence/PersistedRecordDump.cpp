@@ -58,7 +58,6 @@ void AppendProjectConfigSummary(const workspace::PersistedProjectConfigState& st
 void AppendWorkspaceSessionSummary(const workspace::PersistedWorkspaceSessionState& state,
                                    std::ostringstream& stream) {
   stream << "decoded.workspace_session.active_project_index: " << state.active_project_index << '\n';
-  // The identities when the file has them, else the legacy roots it was written with.
   const bool has_ids = !state.projects.empty();
   stream << "decoded.workspace_session.project_count: "
          << (has_ids ? state.projects.size() : state.project_roots.size()) << '\n';
@@ -117,7 +116,7 @@ void AppendDecodedSummary(std::uint32_t capability_flags,
   stream << "decoded.info: unsupported_capability_flags\n";
 }
 
-}  // namespace
+}
 
 bool DumpPersistedRecordFile(const std::filesystem::path& path,
                              std::string* output,
@@ -160,4 +159,4 @@ bool DumpPersistedRecordFile(const std::filesystem::path& path,
   return true;
 }
 
-}  // namespace microide::persistence
+}

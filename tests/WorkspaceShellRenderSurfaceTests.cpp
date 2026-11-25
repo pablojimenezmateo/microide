@@ -1,29 +1,3 @@
-// Paint real frames with a real renderer.
-//
-// Every other shell test that "renders" calls WorkspaceShellTestAccess::RenderFrame,
-// which passes a null SDL_Renderer. Each render surface opens with
-// `if (renderer == nullptr) return;`, so those tests validate layout and view-model
-// construction and then stop at the guard. Nothing downstream of it had ever run.
-//
-// Coverage made the consequence concrete: WorkspaceShellRenderMerge.cpp had 568
-// lines and 0 of 11 functions executed across the whole suite, while its compare
-// sibling sat at 81% — compare's TU also holds hit-testing and geometry helpers that
-// other tests call directly, and merge's TU is paint all the way down. Three
-// sanitizers, twelve fuzz targets and an architecture lint cannot find a defect in
-// code that never executes, and the lint's structural rules (scratch rows,
-// TruncateLabelView, no per-row allocation) are all satisfiable by code that would
-// fault on its first real paint.
-//
-// These tests drive the actual drawing path for the surfaces that had no coverage
-// at all, in the states that make their branches diverge: conflicts present and
-// absent, scrolled and unscrolled, selected hunk in and out of view, before and
-// after a choice is applied.
-//
-// They paint into tests::SoftwareCanvas, the shared software render target the
-// compare/pixel tests already use — which is also why compare's paint path was
-// covered and merge's was not. Nothing new was needed here; merge had simply never
-// been given the same treatment.
-
 #include "TestSupport.h"
 #include "support/RetainedRedraw.h"
 
@@ -47,10 +21,6 @@ using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess
 constexpr int kWindowWidth = 1280;
 constexpr int kWindowHeight = 720;
 
-// A merge fixture whose three sides diverge on several separated line ranges, so the
-// resulting model carries more than one conflict. One conflict would leave the
-// multi-marker overview lane and the selected-vs-unselected conflict styling
-// unexercised.
 struct MergeFixture {
   std::filesystem::path root;
   std::filesystem::path base;
@@ -86,8 +56,6 @@ MergeFixture MakeMergeFixture(const std::filesystem::path& dir) {
   return fixture;
 }
 
-// The merge surface renders only when a merge tab is the active tab, so every case
-// here has to go through OpenMergeEditor rather than poking state.
 void OpenMergeTab(WorkspaceShell& shell, const MergeFixture& fixture) {
   WorkspaceShellTestAccess::SetProjectRoot(shell, fixture.root);
   WorkspaceShellTestAccess::SetWindowSize(shell, kWindowWidth, kWindowHeight);
@@ -111,19 +79,11 @@ void TestMergeSurfacePaintsWithARealRenderer() {
 
   WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
 
-  // The overview-marker cache is built inside RenderMergeScrollbars and only when a
-  // vertical scrollbar exists. Asserting it went valid is what distinguishes "the
-  // paint path ran" from "the frame early-returned somewhere upstream" — without it
-  // this test would still pass if the merge surface were never reached.
   Expect(merge.scrollbar_marker_cache_valid,
          "painting a scrollable merge tab should populate the overview marker cache");
   Expect(!merge.scrollbar_marker_cache.empty(),
          "a merge tab with conflicts should produce overview markers");
 
-  // Pixels, not just state: a merge frame must come out fully opaque like every
-  // other painted surface. A transparent pixel means the surface was skipped or
-  // drawn with an alpha-less format, which is the failure mode that makes text
-  // render as solid blocks.
   const SDL_Color center = canvas.PixelAt(kWindowWidth / 2, kWindowHeight / 2);
   Expect(center.a == 255, "a painted merge frame should be fully opaque");
 }
@@ -141,18 +101,11 @@ void TestMergeSurfacePaintsWhileScrolledAndAfterChoices() {
     auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
     const std::size_t conflict_count = merge.conflicts.size();
 
-    // Scroll deep enough that the first conflict leaves the viewport: the
-    // per-row conflict styling and the source-pane button rects take a different
-    // branch for conflicts above, inside, and below the visible range.
     merge.scroll_row = 60;
-    // Select a conflict that is not the first, so the selected-vs-unselected
-    // conflict tone diverges from the default.
     merge.selected_hunk = conflict_count > 1 ? conflict_count - 1 : 0;
   }
   WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
 
-  // Applying a choice bumps model_revision, which must invalidate and rebuild the
-  // marker cache on the next paint rather than drawing stale markers.
   WorkspaceShellTestAccess::ApplyMergeChoice(shell, microide::compare::MergeChoice::Incoming);
   WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
   {
@@ -166,7 +119,6 @@ void TestMergeSurfacePaintsWhileScrolledAndAfterChoices() {
   WorkspaceShellTestAccess::ApplyMergeChoice(shell, microide::compare::MergeChoice::Current);
   WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
 
-  // Horizontal scroll drives the second scrollbar branch and the row clipping.
   {
     auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
     merge.horizontal_scroll = 120;
@@ -174,9 +126,6 @@ void TestMergeSurfacePaintsWhileScrolledAndAfterChoices() {
   WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
 }
 
-// A merge tab whose sides agree has zero conflicts. The overview lane, the
-// conflict-row styling and the Next/Prev toolbar state all take their empty branch,
-// which the conflicted fixtures never reach.
 void TestMergeSurfacePaintsWithNoConflicts() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -202,9 +151,6 @@ void TestMergeSurfacePaintsWithNoConflicts() {
   WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
 }
 
-// A window small enough that the merge surface's three panes are squeezed toward
-// zero width. Truncation, the sub-glyph-width label paths, and the negative/degenerate
-// rect guards only run here.
 void TestMergeSurfacePaintsAtDegenerateWindowSizes() {
   TemporaryDirectory temp_dir;
   const MergeFixture fixture = MakeMergeFixture(temp_dir.path());
@@ -222,8 +168,6 @@ void TestMergeSurfacePaintsAtDegenerateWindowSizes() {
   }
 }
 
-// The compare surface has partial coverage from its geometry helpers but its paint
-// path was equally unexecuted. Same treatment.
 void TestCompareSurfacePaintsWithARealRenderer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -244,8 +188,6 @@ void TestCompareSurfacePaintsWithARealRenderer() {
   WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
 }
 
-// The plain editor surface, for the same reason and as the control: if this one
-// fails, the harness is wrong rather than the merge surface.
 void TestEditorSurfacePaintsWithARealRenderer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -261,9 +203,6 @@ void TestEditorSurfacePaintsWithARealRenderer() {
   WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
 }
 
-// Two paints of one prepared frame must agree (the redraw verifier's check). The
-// merge surface tokenized in paint, capped per call, so with the visible rows past
-// one call's reach the second paint highlighted rows the first left plain.
 void TestMergePaintsOfOneFrameAgree() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -289,7 +228,7 @@ void TestMergePaintsOfOneFrameAgree() {
          "merge editor should open");
   WorkspaceShellTestAccess::ActiveMerge(shell).scroll_row = 300;
 
-  SoftwareCanvas canvas(kWindowWidth, kWindowHeight);  // one canvas: glyph textures are per renderer
+  SoftwareCanvas canvas(kWindowWidth, kWindowHeight);
   const WorkspaceShell::FrameToken token =
       shell.PrepareFrameOnce(canvas.renderer(), kWindowWidth, kWindowHeight);
   (void)shell.ConsumePendingRenderInvalidation();
@@ -306,13 +245,6 @@ void TestMergePaintsOfOneFrameAgree() {
                              std::to_string(differing) + " differ");
 }
 
-// A merge tab scrolled past its end paints its three columns at one row. The
-// paint clamped `scroll_row` to the merge surface's row count, then sized the
-// result viewport to its own (an editor pane's rows, not the surface's), which
-// clamped the result's scroll further -- and drew the Remote and Local columns
-// at the first clamp, the result at the second. The next frame painted all
-// three at the second, so one frame's two paints disagreed (soak 4c6d45903600:
-// QA-STALE over every row of the merge, under a whole-window clip).
 void TestMergeColumnsPaintAtOneRowPastTheEnd() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -362,7 +294,7 @@ void TestMergeColumnsPaintAtOneRowPastTheEnd() {
                                       first_mismatch);
 }
 
-}  // namespace
+}
 
 void RegisterWorkspaceShellRenderSurfaceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShellRenderSurface/MergePaintsOfOneFrameAgree", TestMergePaintsOfOneFrameAgree);
@@ -382,4 +314,4 @@ void RegisterWorkspaceShellRenderSurfaceTests(std::vector<TestCase>& tests) {
           TestEditorSurfacePaintsWithARealRenderer);
 }
 
-}  // namespace microide::tests
+}

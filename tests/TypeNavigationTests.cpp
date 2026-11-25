@@ -47,7 +47,7 @@ void TestNoMatchKeepsTheSelection() {
          "an empty list selects nothing");
 }
 
-}  // namespace
+}
 
 void RegisterTypeNavigationTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TypeNavigation/TypingSelectsTheNextMatchingRow", TestTypingSelectsTheNextMatchingRow);
@@ -56,4 +56,4 @@ void RegisterTypeNavigationTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TypeNavigation/NoMatchKeepsTheSelection", TestNoMatchKeepsTheSelection);
 }
 
-}  // namespace microide::tests
+}

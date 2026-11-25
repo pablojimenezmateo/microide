@@ -18,79 +18,26 @@ namespace microide::editor {
 
 class FoldingModel;
 
-// An edit confined to a single line, described by the text it spliced in.
-//
-// A line already known to be plain ASCII stays plain exactly when the text
-// spliced into it is, and a plain line's visual width is its byte count. So with
-// this `TextLayoutCache::UpdateVisualColumnCacheAfterEdit` updates the width table
-// in O(inserted) instead of re-measuring the whole line -- which on a line with no
-// newlines in it is a megabyte scan per keystroke (TD-2026-08-05-132, item 2).
 struct InlineLineSplice {
   std::string_view inserted_text;
   bool valid = false;
 };
 
-// Owns the per-viewport derived-layout caches that previously lived as flat
-// mutable members on TextViewport: the visible-line LayoutLine LRU, the
-// wrapped-row layout vector (soft-wrap / fold-aware visual-row mapping), and
-// the visual-column-width cache backing MaxVisualColumns / scrollbar math.
-//
-// Methods take the inputs they need by value or const ref — the cache does
-// not hold a back-pointer to the owning viewport, so the indirection from
-// TextViewport into the cache is a plain non-virtual member call without
-// any added allocations. This mirrors the rule the doc lifts from the
-// rejected TextDocumentModel experiment: "no shared ownership for hot
-// editor state unless proven free", "no full-buffer copies in
-// render/layout/scroll/typing paths".
 class TextLayoutCache {
  public:
   struct WrappedRow {
     std::size_t line_index = 0;
     std::size_t visual_start = 0;
     std::size_t visual_end = 0;
-    // Hanging-indent: visual columns of leading whitespace the renderer should
-    // prepend before this row's content. Zero for first rows of a line, for
-    // the trivial path, and for the fold-but-no-wrap path.
     std::size_t indent = 0;
   };
 
   struct Stats {
     std::size_t visible_line_queries = 0;
     std::size_t visible_line_hits = 0;
-    // Entries dropped by the LRU to stay under kVisibleLineCacheLimit.
-    //
-    // VisibleLineLayoutRefCached hands out a reference INTO this cache, so an
-    // eviction is what could invalidate a reference a caller still holds. The
-    // safety argument has always been "a frame's working set is far below the
-    // limit, so a frame never evicts what it is still reading" — true, but until
-    // now unmeasured, so nothing failed if someone lowered the limit or a caller
-    // started querying many more lines (TD-2026-07-25-104). This counter is what
-    // makes that argument testable.
     std::size_t visible_line_evictions = 0;
   };
 
-  // ---- visible-line LayoutLine LRU --------------------------------------
-  // Returns the LayoutLine for `line_index` from the cache, or builds it on
-  // miss. Caller is responsible for caret-row decoration (the cache does not
-  // know which row the cursor is on). Hands back the cached LayoutLine in place
-  // instead of copying it out. The returned reference stays valid for the next
-  // kVisibleLineCacheLimit queries: the order is a true LRU, so a query can only
-  // recycle an entry that is older than every entry touched since — including
-  // the ones a caller merely READ (a FIFO gave that guarantee only to entries the
-  // frame had built, TD-2026-08-12-189). Like the by-value variant, the cache
-  // does not set caret fields.
-  //
-  // `content_revision` is what lets a miss reuse the per-line width table this
-  // cache already maintains, so building a row does not re-walk the line for its
-  // width and its first visible cell.
-  //
-  // `facts_hint` is a fallback for callers that know the line's visual width from
-  // somewhere other than this cache's width table -- the soft-wrap path knows it
-  // from the wrapped-row table, whose last row for a line ENDS at that width.
-  // Without it a wrapped row is built with unknown facts, which walks the whole
-  // logical line to measure it: once per visible row, per frame, which on a file
-  // with no line breaks in it is megabytes per row. Ignored when the width table
-  // is current (that answer is strictly better -- it also knows plain-ASCII-ness).
   const LayoutLine& VisibleLineLayoutRefCached(LineSpan lines,
                                                std::size_t line_index,
                                                std::size_t horizontal_scroll,
@@ -99,11 +46,6 @@ class TextLayoutCache {
                                                std::uint64_t content_revision,
                                                LineLayoutFacts facts_hint = {}) const;
 
-  // ---- wrapped row layout (soft-wrap + folds) ---------------------------
-  // Rebuilds the wrapped-row table when its keyed inputs changed. The
-  // trivial-layout fast path (no soft-wrap, no collapsed fold) leaves the
-  // vectors empty and lets the readers synthesize rows from
-  // `horizontal_scroll` + `visible_columns` directly.
   void EnsureWrappedRowLayouts(LineSpan lines,
                                std::size_t tab_size,
                                std::size_t visible_columns,
@@ -112,21 +54,6 @@ class TextLayoutCache {
                                std::uint64_t layout_shape_revision,
                                std::uint64_t content_revision) const;
 
-  // Incrementally re-wraps only the edited logical-line range and splices the
-  // new rows into the wrapped-row table, keeping per-keystroke cost proportional
-  // to the edit size instead of the whole document. Handles the pure soft-wrap
-  // path (no collapsed folds); any other mode (trivial, fold-but-no-wrap,
-  // collapsed folds, or a table that is out of sync / built for different keys)
-  // returns false without touching the cache, so the content_revision guard in
-  // EnsureWrappedRowLayouts safely triggers a full rebuild on next access.
-  //
-  // `inserted_count` is a COUNT, not the lines themselves: the new rows are
-  // re-wrapped from the live buffer regardless, and an in-line edit's undo entry
-  // no longer carries a materialized copy of the line it changed.
-  // `edit_column` is the byte column within `start_line` that the edit began at,
-  // for a single-line in-place edit; `kNoEditColumn` when the caller does not know
-  // one (a multi-line splice, or a multi-range undo part). It is what lets the
-  // re-wrap resume mid-line instead of restarting at the line's first byte.
   static constexpr std::size_t kNoEditColumn = static_cast<std::size_t>(-1);
   bool UpdateWrappedRowsAfterEdit(std::size_t start_line,
                                   std::size_t removed_count,
@@ -140,42 +67,19 @@ class TextLayoutCache {
                                   std::uint64_t content_revision,
                                   std::size_t edit_column = kNoEditColumn) const;
 
-  // Trivial-mode-aware accessors. EnsureWrappedRowLayouts() must have been
-  // called for the current input set before any of these are used. The
-  // trivial and fold-but-no-wrap paths synthesize the row span from the
-  // live `horizontal_scroll` / `visible_columns` passed here.
   WrappedRow WrappedRowAt(std::size_t visual_row_index,
                           std::size_t horizontal_scroll,
                           std::size_t visible_columns) const;
   std::size_t WrappedRowCount(std::size_t lines_size) const;
   std::size_t WrappedLineRowOffset(std::size_t line_index) const;
-  // Inclusive [first_row, last_row] range of wrapped rows belonging to
-  // `line_index`. Precondition: a non-trivial table with offsets is built
-  // (callers check wrapped_row_layouts_trivial()/has_wrapped_line_row_offsets
-  // first). Never returns last_row < first_row.
   std::pair<std::size_t, std::size_t> WrappedRowRangeForLine(std::size_t line_index,
                                                              std::size_t lines_size) const;
-  // Index of the row in [first_row, last_row] whose span owns `visual_column`.
-  //
-  // Rows of one line are contiguous and their `visual_end` is non-decreasing, so
-  // this is a binary search, not the linear walk it replaced: a megabyte line at
-  // wrap 100 is ten thousand rows, and the caret's row is re-resolved several
-  // times per keystroke and once per frame.
-  //
-  // `prefer_previous_row` picks the answer at a wrap boundary (a column that is
-  // both one past row R's end and row R+1's start): false hands back R+1, true
-  // hands back R. See WrapRowAffinity.
   std::size_t WrappedRowForVisualColumn(std::size_t first_row,
                                         std::size_t last_row,
                                         std::size_t visual_column,
                                         bool prefer_previous_row) const;
   bool wrapped_row_layouts_trivial() const { return wrapped_row_layouts_trivial_; }
 
-  // ---- max visual columns cache -----------------------------------------
-  // What this cache knows about `line_index`, or an unknown value when the width
-  // table does not currently describe the document. Callers that only need to
-  // turn a byte column into a visual one use this to answer in O(1) on a plain
-  // ASCII line instead of walking the line to the column.
   LineLayoutFacts LineFactsIfCurrent(std::size_t lines_size,
                                      std::size_t line_index,
                                      std::size_t tab_size,
@@ -190,12 +94,6 @@ class TextLayoutCache {
   std::size_t MaxVisualColumns(LineSpan lines,
                                std::size_t tab_size,
                                std::uint64_t content_revision) const;
-  // Maintains the per-line visual-column cache after an in-place line edit.
-  // Falls back to a full invalidation if the cache state predates the edit
-  // or the tab_size changed.
-  // `inserted_count` is a count; the widths are measured off `lines` (see
-  // UpdateWrappedRowsAfterEdit) unless `splice` describes the edit precisely
-  // enough to derive the new width without reading the line at all.
   void UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
                                         std::size_t removed_count,
                                         std::size_t inserted_count,
@@ -204,53 +102,15 @@ class TextLayoutCache {
                                         std::uint64_t content_revision,
                                         InlineLineSplice splice = {});
 
-  // ---- invalidation ------------------------------------------------------
-  // Wipes every cache + every cache key. Equivalent to the previous
-  // TextViewport::InvalidateVisualColumnCache (which despite its name also
-  // wiped the wrapped-row table).
   void InvalidateAll();
-  // A tab-size change: the width table no longer describes the document at the
-  // NEW size, but it still does at the old one, so it is parked rather than
-  // dropped, and a later return to that size with no content change in between
-  // takes it back instead of re-measuring every line. The large-file open needs
-  // exactly that: the reader thread builds the table at the file's final tab
-  // size, and applying preferences then indent detection on the shell thread
-  // flips the size away and back (TD-2026-09-29-317). One slot; an empty table
-  // never displaces a parked one.
   void ParkLineWidthsForTabSizeChange();
-  // Parking is opt-in: building the parked slot costs a deque (two
-  // allocations), which an ordinary tab-size change — a settings walk over every
-  // tab — must not pay for a round trip that never comes. The reader thread arms
-  // it for the one table it pre-builds; the next width-table build disarms it.
   void ArmLineWidthParking() { line_width_parking_armed_ = true; }
-  // Drops just the visible-line LRU + max-columns cache (used by tab-size
-  // changes, where the wrapped-row table is separately re-keyed via
-  // layout_shape_revision and rebuilt lazily on the next access).
   void ClearVisibleLineAndMaxColumns();
-  // Drops just the wrapped-row table and every key it is validated against.
-  //
-  // This is the half a viewport copy/move has to give up: the new viewport comes
-  // out with `folding_model_ == nullptr`, so a table built against the source's
-  // fold model describes a fold state the copy does not have — and the cached
-  // `const FoldingModel*` could later be compared against an unrelated model that
-  // reused the address. The other half (per-line widths + the visible-line LRU)
-  // depends on the document's bytes and the tab size, both of which the copy
-  // shares, so it survives. See TextViewport's copy constructor
-  // (TD-2026-08-06-138) and SetFoldingModel, which makes the same distinction.
   void DropWrappedRowLayouts();
-  // Per-line partial invalidation of the visible-line LRU: removes every
-  // cache entry whose `line_index >= start_line`, and records that what is left
-  // is current for `content_revision`. Used by InvalidateDerivedCaches for
-  // content-tier edits.
   void InvalidateVisibleLineCacheFrom(std::size_t start_line, std::uint64_t content_revision) const;
 
-  // ---- accessors for trivial-mode-sensitive callers ---------------------
-  // True when the wrapped-row table was rebuilt with row_offsets matching
-  // `lines_size`. Returns false in trivial mode (no offsets table exists)
-  // or when the cache predates the latest edit.
   bool has_wrapped_line_row_offsets(std::size_t lines_size) const;
 
-  // ---- stats -------------------------------------------------------------
   Stats stats() const {
     return Stats{visible_line_queries_, visible_line_hits_, visible_line_evictions_};
   }
@@ -260,42 +120,10 @@ class TextLayoutCache {
     visible_line_evictions_ = 0;
   }
 
-  // Heap bytes this cache is HOLDING, by container capacity rather than size --
-  // a vector that shrank still owns its buffer, and "how much does an open tab
-  // cost to keep open?" is a question about what is retained, not about what is
-  // currently in use.
-  //
-  // Approximate on purpose, and it says so in the name. `std::deque` and
-  // `std::unordered_map` do not expose their allocation shape, so those two are
-  // estimated from element count and a per-node overhead; everything else is
-  // exact. It exists because nothing answered the question at all
-  // (TD-2026-08-06-142), and an estimate that tracks the real curve is what a
-  // ceiling gets chosen from. It is NOT called on any production path -- see
-  // the perf scenario and WorkspaceShell::TestAccess.
   std::size_t ApproximateResidentBytes() const;
 
-  // Walks the visible-line recency list and checks it against the map: same
-  // length, consistent both ways, and every linked node really is the map node
-  // for its own key. That last clause is the one that matters — it is what a
-  // list left pointing into a COPY's source nodes fails, and the reason this is
-  // a callable check rather than a comment (see VisibleLineLruEnds).
-  //
-  // Compiled unconditionally, like every other `*ForTesting` seam here, so the
-  // regression that needs it runs in the default Release lane too. O(entries),
-  // bounded by kVisibleLineCacheLimit; no product path calls it.
   bool VisibleLineLruIsConsistentForTesting() const;
 
-  // Every derived table that claims to describe the document, checked against a
-  // fresh build from the same inputs: the per-line width table (and the widest
-  // line and block maxima derived from it) entry by entry, and the wrapped-row
-  // table and its line offsets row by row, rebuilt in a throwaway cache. Returns
-  // "" when everything that claims current is, else what disagrees. A table that
-  // does not claim current is not checked: it will be rebuilt before it is read.
-  //
-  // Each view of a document keeps its own tables, spliced only by its own edits;
-  // the class this guards (TD-2026-10-30-426) left one view's table stamped
-  // current over another view's edit, silently. Compiled unconditionally like the
-  // other `*ForTesting` seams; O(document), so no product path calls it.
   std::string VerifyAgainstFreshBuildForTesting(LineSpan lines,
                                                 std::size_t tab_size,
                                                 std::size_t visible_columns,
@@ -308,10 +136,6 @@ class TextLayoutCache {
   std::size_t wrapped_row_layout_build_count_for_debug() const {
     return wrapped_row_layout_build_count_;
   }
-  // Number of incremental edits that took the O(edit-size) in-place fast path
-  // (no suffix rows shifted, no offset table rebuilt) versus the O(suffix)
-  // splice path. Used by the large-buffer edit perf regression to prove that a
-  // common single-line edit does not walk the rest of the document.
   std::size_t wrapped_row_incremental_inplace_count_for_debug() const {
     return wrapped_row_incremental_inplace_count_;
   }
@@ -321,9 +145,6 @@ class TextLayoutCache {
   std::size_t visual_column_incremental_inplace_count_for_debug() const {
     return visual_column_incremental_inplace_count_;
   }
-  // Edits whose new line width came from the splice alone -- no read of the line
-  // at all. This is what makes "a keystroke does not re-measure the line" a
-  // testable claim rather than a comment (TD-2026-08-05-132, item 2).
   std::size_t visual_column_splice_derived_count_for_debug() const {
     return visual_column_splice_derived_count_;
   }
@@ -352,17 +173,7 @@ class TextLayoutCache {
     }
   };
 
-  // One line's derived layout facts, packed into a single word.
-  //
-  // This table holds one entry per line for the life of a tab, so on a 50k-line
-  // file it is real memory, and a separate `bool` member would double it to 16
-  // bytes per line to carry one bit. A visual width is bounded by the line's byte
-  // length, so the top bit is free.
   struct PackedLineWidth {
-    // Bit 63: plain ASCII. Bit 62: tab-indented (leading tabs, then plain
-    // ASCII). Bits 48..55: the leading-tab count of a tab-indented line (a run
-    // over 255 tabs just forgoes the flag). Bits 0..47: the visual width -- a
-    // line is at most 4 GiB of bytes and a tab at most a few cells, so it fits.
     static constexpr std::size_t kPlainAsciiBit = std::size_t{1}
                                                   << (8 * sizeof(std::size_t) - 1);
     static constexpr std::size_t kTabIndentedBit = std::size_t{1}
@@ -394,20 +205,6 @@ class TextLayoutCache {
     }
   };
 
-  // True when the per-line width table describes the document `lines` currently
-  // holds, at this tab size. Both the max-columns query and the visible-line
-  // builder read it, and every content edit either splices it (see
-  // UpdateVisualColumnCacheAfterEdit) or drops it, so freshness is exactly
-  // "same tab size, same content revision, same line count".
-  // True when a table stamped `table_revision` described the text the edit now
-  // stamped `content_revision` was applied to: every content edit advances the
-  // revision by exactly one and is spliced into these tables right after. A table
-  // any older describes some EARLIER text -- another view of the same document (a
-  // split, a second tab) edited it, and that view's splices went to its own
-  // tables. Line counts can agree across that gap, so splicing this edit in and
-  // stamping the table current kept the other view's change out of it under a
-  // current stamp: a split, soft-wrapped README laid a line out against its old
-  // width (QA monkey seeds 69 and 601; TD-2026-10-30-426).
   static bool DescribesTheTextJustBefore(std::uint64_t table_revision,
                                          std::uint64_t content_revision) {
     return content_revision != 0 && table_revision == content_revision - 1;
@@ -421,19 +218,11 @@ class TextLayoutCache {
   }
 
 #ifndef NDEBUG
-  // Cross-checks every entry of the per-line width table (and the memoized
-  // widest line) against a fresh measurement, but only when the table claims to
-  // be current AND MICROIDE_VERIFY_LINE_WIDTH_TABLE is set in the environment.
-  // See the definition for why this exists alongside the freshness predicate.
   void VerifyLineWidthTableIfRequested(LineSpan lines,
                                        std::size_t tab_size,
                                        std::uint64_t content_revision) const;
 #endif
 
-  // Appends the wrapped rows for a single logical line to `out` (always at
-  // least one row, even for an empty line). Shared by the full-table build and
-  // the incremental post-edit update so both use one wrap implementation.
-  // `wrap_columns` must already be clamped to >= 1.
   static void WrapSingleLine(std::string_view line_text,
                              std::size_t line_index,
                              std::size_t tab_size,
@@ -442,26 +231,9 @@ class TextLayoutCache {
 
   static constexpr std::size_t kVisibleLineCacheLimit = 256;
 
-  // Visible-line LRU.
-  //
-  // The recency order is an intrusive doubly-linked list threaded through the
-  // map's own nodes, not a side container of keys: an `unordered_map` node's
-  // address is stable across rehash AND across extract()/insert() of the same
-  // node, which is what lets the recycle path below splice a node from the head
-  // to the tail without allocating, and what a `std::list<Key>` of 256 nodes
-  // would have paid for on first fill.
-  //
-  // Recency is what makes VisibleLineLayoutRefCached's reference-stability claim
-  // hold for HITS, not just for builds (TD-2026-08-12-189): a FIFO evicted the
-  // oldest INSERT, so an entry a caller was still reading could be recycled
-  // underneath it if it had been inserted long enough ago. With move-to-tail on
-  // hit, the eviction victim is strictly older than anything touched since.
   struct VisibleLineCacheEntry {
     LayoutLine layout;
-    // Self key, so eviction can extract() the head without a reverse lookup.
     VisibleLineCacheKey key;
-    // Null on both ends of the list. `lru_prev` is toward the least recently
-    // used end (the eviction victim), `lru_next` toward the most recent.
     VisibleLineCacheEntry* lru_prev = nullptr;
     VisibleLineCacheEntry* lru_next = nullptr;
   };
@@ -469,21 +241,6 @@ class TextLayoutCache {
   using VisibleLineCacheMap =
       std::unordered_map<VisibleLineCacheKey, VisibleLineCacheEntry, VisibleLineCacheKeyHash>;
 
-  // Whole map nodes retired by invalidation, held for the next miss to build
-  // into. A node carries the map's own allocation AND the LayoutLine's three
-  // buffers, so a reuse costs zero allocations where a rebuild-from-nothing cost
-  // four.
-  //
-  // This used to pool bare `LayoutLine`s, on the reasoning that a node handle is
-  // move-only and TextLayoutCache has to stay copyable (a split pane copies its
-  // sibling's caches). That left the map node itself to allocate on every miss --
-  // and an EDIT misses on every visible row at or below the caret, because
-  // InvalidateVisibleLineCacheFrom erased them all. On the typing-latency
-  // scenarios that one remaining allocation was HALF of everything the phase did.
-  //
-  // Copyability is restored here rather than given up: a copied pool is an EMPTY
-  // pool. The pool is pure allocation reuse, so starting cold is correct, just
-  // slower for one repaint.
   class VisibleLineNodePool {
    public:
     VisibleLineNodePool() = default;
@@ -499,15 +256,10 @@ class TextLayoutCache {
     std::size_t size() const { return nodes_.size(); }
     const std::vector<VisibleLineCacheMap::node_type>& nodes() const { return nodes_; }
 
-    // Over the cap the node is dropped, which is the plain erase this replaced.
     void Retire(VisibleLineCacheMap::node_type node) {
       if (node.empty() || nodes_.size() >= kVisibleLineCacheLimit) {
         return;
       }
-      // A pooled node's recency links point into the live list it just left.
-      // Nothing reads them before VisibleLineLruPushBack overwrites both, but a
-      // dangling pointer that is merely never read is one refactor from being
-      // read.
       node.mapped().lru_prev = nullptr;
       node.mapped().lru_next = nullptr;
       nodes_.push_back(std::move(node));
@@ -528,25 +280,6 @@ class TextLayoutCache {
     std::vector<VisibleLineCacheMap::node_type> nodes_;
   };
 
-  // The ends of the intrusive recency list, in a wrapper whose COPY is empty.
-  //
-  // This cache is copyable on purpose (a split pane copies its sibling's caches,
-  // and a tab vector that reallocates copies every viewport in it). A copied
-  // `unordered_map` has its OWN nodes at their own addresses, so every raw entry
-  // pointer copied alongside it — these two ends, and every entry's `lru_prev` /
-  // `lru_next` — points into the SOURCE's nodes. The copy then walks the
-  // source's list, writing through those pointers; when the source dies, which
-  // for a vector reallocation is immediately, the next repaint writes into freed
-  // nodes. That is a heap-use-after-free on the shell thread, and it is what this
-  // wrapper exists to make impossible.
-  //
-  // Copying empty rather than fixing up, because a defaulted copy cannot see the
-  // source: `RelinkVisibleLineLruIfDetached` rebuilds the list from the map the
-  // first time anything needs it. Recency is not carried across the copy, which
-  // costs nothing real — the copy's first paint touches every visible row and
-  // moves it to the tail, so the "victim is older than anything touched since"
-  // invariant holds from that frame on, and only never-touched entries can be
-  // evicted before it.
   struct VisibleLineLruEnds {
     VisibleLineCacheEntry* head = nullptr;
     VisibleLineCacheEntry* tail = nullptr;
@@ -558,16 +291,11 @@ class TextLayoutCache {
       tail = nullptr;
       return *this;
     }
-    // A MOVED map keeps its node addresses, so moving the ends is correct as is.
     VisibleLineLruEnds(VisibleLineLruEnds&&) = default;
     VisibleLineLruEnds& operator=(VisibleLineLruEnds&&) = default;
   };
 
-  // Move every live entry into the pool, up to its cap. The caller is about to
-  // drop the map itself.
   void RetireVisibleLineNodes();
-  // Rebuilds the recency list over the live map when a copy left it detached.
-  // Cheap (one branch) and idempotent; call it before ANY read of the links.
   void RelinkVisibleLineLruIfDetached() const;
   void VisibleLineLruUnlink(VisibleLineCacheEntry& entry) const;
   void VisibleLineLruPushBack(VisibleLineCacheEntry& entry) const;
@@ -580,68 +308,24 @@ class TextLayoutCache {
   }
 
   mutable VisibleLineCacheMap visible_line_cache_;
-  // The content revision the visible-line LRU is current for. Its key has no
-  // revision in it: the viewport that runs an edit splices the LRU (above), but a
-  // viewport sharing the document from another editor group sees that edit only
-  // as a new revision, so a lookup at any other revision drops the LRU first. It
-  // kept drawing the line as it was before the edit, in full repaints too
-  // (QaFlowRegression/AnEditInOneHalfOfASplitShowsInTheOther).
   mutable std::uint64_t visible_line_cache_content_revision_ = 0;
-  // Bounded by the cache limit, so this never holds more than the live cache
-  // could have.
   mutable VisibleLineNodePool visible_line_node_pool_;
   mutable VisibleLineLruEnds visible_line_lru_;
   mutable std::size_t visible_line_queries_ = 0;
   mutable std::size_t visible_line_hits_ = 0;
   mutable std::size_t visible_line_evictions_ = 0;
-  // Scratch for the bounded line reads a visible-row build does (the prefix scan
-  // and the window itself). A member, not a local, so the capacity survives: a
-  // local would allocate once per rendered row of every line that spans pieces.
   mutable std::string line_window_scratch_;
 
  public:
-  // First byte of `line_index` that is not plain single-cell ASCII (no tab, no
-  // byte >= 0x80), searched in [0, probe) and returning `probe` when there is
-  // none. Byte offset IS visual column below that point, which is what lets a
-  // visible-row build start mid-line without decoding what precedes it.
-  //
-  // Memoized, because the answer is a property of the LINE and the question is
-  // asked per ROW. Soft wrap turns one long line into thousands of rows, each
-  // built with an ever-larger `probe`, so the un-memoized form re-reads the whole
-  // prefix on every row of every frame -- 29 MB per iteration of
-  // `editor_soft_wrap_long_line_scroll`, growing with scroll depth, on the
-  // default render path. This is the same shape TD-2026-08-12-187 removed one
-  // level up in the whitespace walk, which is where it was found
-  // (TD-2026-08-14-220).
   std::size_t PlainAsciiPrefixEnd(LineSpan lines,
                                   std::size_t line_index,
                                   std::size_t probe,
                                   std::uint64_t content_revision) const;
 
-  // True when byte offsets [0, column) of `line_index` are all plain single-cell
-  // ASCII -- i.e. visual column equals byte column there, so a visual<->text
-  // conversion at `column` is the identity and needs no walk.
-  //
-  // This exists because the width table is the only other thing that knows a
-  // line's encoding, and NOTHING BUILDS IT UNDER SOFT WRAP: soft wrap has no
-  // horizontal scrollbar, so the scrollbar geometry skips MaxVisualColumns, and
-  // ClampScrollState returns early at horizontal_scroll == 0. Two separate,
-  // individually correct optimizations, and between them the O(1) conversion path
-  // was unreachable in exactly the mode where lines are longest
-  // (TD-2026-08-30-274).
-  //
-  // It answers from the same incremental memo as PlainAsciiPrefixEnd -- reading
-  // only bytes nobody has read yet -- rather than measuring the whole line, which
-  // on a file with no line breaks in it is the multi-megabyte walk being avoided.
   bool PlainAsciiThroughColumn(LineSpan lines,
                                std::size_t line_index,
                                std::size_t column,
                                std::uint64_t content_revision) const;
-  // A content edit from `start_line` on took the document from `old_revision` to
-  // `new_revision`. Prefix memos of lines above it are still exact and are
-  // restamped; the memo of `start_line` keeps what it knew about the bytes before
-  // `edit_column` (kNoEditColumn: nothing); the rest are left to miss. `lines` is
-  // the edited document, for the edited line's new length.
   void CarryPlainPrefixMemosAcrossEdit(LineSpan lines,
                                        std::size_t start_line,
                                        std::size_t edit_column,
@@ -649,35 +333,20 @@ class TextLayoutCache {
                                        std::uint64_t new_revision) const;
 
  private:
-  // One slot per line the memo is tracking. Rows of a line arrive consecutively,
-  // so a single slot already collapses a frame's per-row scans into one; the four
-  // keep a document with several very long lines on screen from re-priming the
-  // slot per line per frame. Round-robin replacement — with four slots and this
-  // access pattern, an LRU would cost more than it saves.
   struct PlainPrefixMemo {
     std::size_t line_index = 0;
     std::size_t line_length = 0;
     std::uint64_t content_revision = 0;
-    // How far [0, ...) has been examined, and the first offending byte found.
-    // `first_non_plain == scanned_through` means "none found so far".
     std::size_t scanned_through = 0;
     std::size_t first_non_plain = 0;
     bool valid = false;
   };
 #ifndef NDEBUG
-  // The incremental splice is an optimization whose failure mode is silent: a
-  // wrong row table mis-lays glyphs, it does not crash. So in debug builds every
-  // splice re-wraps the edited line from scratch and asserts the table matches --
-  // the cache-free oracle, not a second incremental implementation. Bounded by
-  // line length for the same reason the width table's cross-check is: the
-  // pathological lines this path exists for must not make a debug run unusable.
   void VerifyWrappedRowsAgainstFullRewrap(LineSpan lines,
                                           std::size_t line_index,
                                           std::size_t tab_size,
                                           std::size_t wrap_columns) const;
 #endif
-  // Shared implementation of the two public prefix queries; `scratch` is the
-  // caller's own read buffer (see `column_scan_scratch_`).
   std::size_t PlainAsciiPrefixEndInto(LineSpan lines,
                                       std::size_t line_index,
                                       std::size_t probe,
@@ -686,18 +355,9 @@ class TextLayoutCache {
   static constexpr std::size_t kPlainPrefixMemoSlots = 4;
   mutable std::array<PlainPrefixMemo, kPlainPrefixMemoSlots> plain_prefix_memo_{};
   mutable std::size_t plain_prefix_memo_next_ = 0;
-  // The prefix scan reads through a caller-supplied scratch buffer, and the
-  // layout path holds a LineWindow VIEW into `line_window_scratch_` across its own
-  // call to the scan. Column conversion can be asked at any time, so it gets its
-  // own buffer rather than sharing one whose contents another caller may be
-  // looking at.
   mutable std::string column_scan_scratch_;
-  // Read buffer for the resumed re-wrap's line-tail and leading-indent windows.
-  // Its own, for the same reason `column_scan_scratch_` is: the two windows are
-  // read at different points and must not alias another caller's live view.
   mutable std::string wrapped_row_tail_scratch_;
 
-  // Wrapped-row table
   mutable std::vector<WrappedRow> wrapped_row_layouts_;
   mutable std::vector<std::size_t> wrapped_line_row_offsets_;
   mutable std::size_t wrapped_row_layouts_tab_size_ = 0;
@@ -706,27 +366,9 @@ class TextLayoutCache {
   mutable bool wrapped_row_layouts_soft_wrap_ = false;
   mutable const FoldingModel* wrapped_row_layouts_folding_model_ = nullptr;
   mutable std::size_t wrapped_row_layouts_fold_revision_ = 0;
-  // Content-tier guard: the wrapped-row table is content-derived, so a content
-  // edit that is not reflected by an incremental UpdateWrappedRowsAfterEdit must
-  // force a rebuild even though layout_shape_revision is unchanged.
   mutable std::uint64_t wrapped_row_layouts_content_revision_ = 0;
   mutable bool wrapped_row_layouts_trivial_ = false;
-  // Fold-but-no-soft-wrap: the table records line visibility/order only; each
-  // row's visual span is synthesized from the live horizontal_scroll in
-  // WrappedRowAt rather than baked at build time (so a horizontal scroll does
-  // not stale the cached spans nor force an O(lines) rebuild).
   mutable bool wrapped_row_layouts_fold_no_wrap_ = false;
-  // Scratch for the incremental splice in UpdateWrappedRowsAfterEdit, held so the
-  // buffers keep their capacity across keystrokes instead of being rebuilt from
-  // nothing per edit.
-  //
-  // `new_rows` used to be a local reserved to `inserted_count` -- the LINE count,
-  // not the ROW count -- so re-wrapping one long soft-wrapped line grew it from a
-  // reserve of 1 by doubling, every keystroke. It was the #1 allocator of both
-  // `editor_soft_wrap_long_line_typing` phases at 448 allocations and 33.5 MB
-  // moved per phase (TD-2026-08-30-268). `new_offsets` is SWAPPED with
-  // `wrapped_line_row_offsets_` rather than moved into it, so the scratch keeps
-  // the old table's buffer for the next edit.
   mutable std::vector<WrappedRow> wrapped_row_edit_scratch_;
   mutable std::vector<std::size_t> wrapped_row_edit_offsets_scratch_;
   mutable std::vector<std::size_t> wrapped_line_row_offsets_scratch_;
@@ -738,21 +380,12 @@ class TextLayoutCache {
   mutable std::size_t visual_column_splice_derived_count_ = 0;
 #endif
 
-  // Visual-column width cache
   mutable std::optional<std::size_t> cached_max_visual_columns_;
   mutable std::optional<std::size_t> cached_max_visual_columns_line_index_;
   mutable std::deque<PackedLineWidth> cached_visual_line_columns_;
-  // Scratch for UpdateVisualColumnCacheAfterEdit's inserted-line widths. A local
-  // vector there is one heap allocation per edit -- i.e. per keystroke, on the
-  // shell thread -- for what is usually a single value.
   mutable std::vector<PackedLineWidth> inserted_columns_scratch_;
   mutable std::size_t cached_max_visual_columns_tab_size_ = 0;
   mutable std::uint64_t cached_max_visual_columns_content_revision_ = 0;
-  // See ParkLineWidthsForTabSizeChange. Adopted or released by the next rebuild.
-  // Optional, not a bare deque: a libstdc++ deque allocates when it is
-  // default-constructed, and every TextViewport (and every copy of one) owns a
-  // TextLayoutCache, so a bare member cost two allocations per viewport for a
-  // slot that is only ever filled by a tab-size change. Reset frees the table.
   struct ParkedLineWidths {
     std::optional<std::deque<PackedLineWidth>> widths;
     std::size_t tab_size = 0;
@@ -766,34 +399,14 @@ class TextLayoutCache {
   mutable ParkedLineWidths parked_line_widths_;
   mutable bool line_width_parking_armed_ = false;
 
-  // Segmented maxima over `cached_visual_line_columns_`: the widest line of each
-  // run of `kVisualColumnBlockLines`, so the document maximum is a walk of
-  // lines/512 entries rather than of every line.
-  //
-  // It exists for the case nothing else can answer. When an edit narrows the
-  // widest line, its old width is gone and the runner-up is recorded nowhere, so
-  // the maximum had to be found by reading the whole table -- 50,000 deque
-  // entries on a 50k-line file, on the next paint, for every keystroke that
-  // shrinks the longest line. Holding backspace there is as ordinary as typing
-  // there (TD-2026-09-20-297).
-  //
-  // Maintenance is per-block and follows the width table's own two shapes: an
-  // in-place edit (the line count did not change) refreshes only the blocks it
-  // touched, and an edit that inserts or removes lines drops the table for a
-  // lazy rebuild -- which is what the deque splice underneath it already costs.
   struct VisualColumnBlockMax {
     std::uint32_t columns = 0;
-    // The line the block's maximum sits on, so the document argmax is available
-    // without a second pass; `max_line_replaced` is keyed on it.
     std::uint32_t line = 0;
   };
   static constexpr std::size_t kVisualColumnBlockLines = 512;
   mutable std::vector<VisualColumnBlockMax> visual_column_block_max_;
 
-  // O(lines). Only from the full-build path and from a scan that finds the block
-  // table missing or the wrong size.
   void RebuildVisualColumnBlockMaxima() const;
-  // O(touched lines + block size). `last_line` is inclusive.
   void RefreshVisualColumnBlocksFor(std::size_t first_line, std::size_t last_line) const;
   std::size_t VisualColumnBlockCount() const {
     return (cached_visual_line_columns_.size() + kVisualColumnBlockLines - 1) /
@@ -801,4 +414,4 @@ class TextLayoutCache {
   }
 };
 
-}  // namespace microide::editor
+}

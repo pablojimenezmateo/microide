@@ -19,10 +19,6 @@ class SidebarMouseCoordinator {
   struct Operations {
     std::function<SidebarMode()> active_sidebar_mode;
     std::function<void(ProjectSearchEditField)> begin_project_search_edit;
-    // Search-panel geometry is not routed through here: the coordinator already
-    // holds the project state the layout depends on, so it calls the free
-    // functions in ProjectSearchPanelLayout.h directly instead of five
-    // shell-bound rect callbacks.
     std::function<void()> commit_project_search_edit;
     std::function<void()> toggle_project_search_pattern_mode;
     std::function<void()> cycle_project_search_case_mode;
@@ -47,22 +43,14 @@ class SidebarMouseCoordinator {
     std::function<void(MenuId, const SDL_FRect&)> open_anchored_menu;
     std::function<bool(ActionId, const std::vector<std::string>&, ActionSource)> execute_action;
     std::function<float(const SDL_FRect&)> git_sidebar_list_top;
-    // Reference to the shared cached line model (valid until the next cache call on
-    // the same thread); mouse hit-testing reads it without copying the tree.
     std::function<const std::vector<GitSidebarLine>&()> build_git_sidebar_lines;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)> compute_git_sidebar_list_layout;
-    // The git list as the last prepared frame laid it out -- its lines, layout and
-    // the Outgoing header's base button -- so a click lands on the row the user saw,
-    // not on whatever a refresh or a collapse has put there since. `lines` is null
-    // when that frame showed no git list; the click then reads the live one.
     struct PaintedGitList {
       const std::vector<GitSidebarLine>* lines = nullptr;
       ScrollableListLayout layout;
       std::optional<SDL_FRect> outgoing_base_button;
     };
     std::function<PaintedGitList()> painted_git_sidebar_list;
-    // The live entry a painted line shows (by path and section), or nullopt when it
-    // has gone since that frame.
     std::function<std::optional<std::size_t>(const GitSidebarLine&)> resolve_git_sidebar_entry;
     std::function<bool(const std::string&)> toggle_git_sidebar_directory_collapsed;
     std::function<bool(GitSidebarActionId, std::size_t)> dispatch_git_sidebar_action;
@@ -88,7 +76,6 @@ class SidebarMouseCoordinator {
     std::function<void(TreeContextTargetKind, const std::filesystem::path&, const SDL_FRect&)>
         open_tree_context_menu;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)> compute_tree_sidebar_list_layout;
-    // The tree drag's drop targets (PathDragState) and what each drop does.
     std::function<EditorGroupRectsLayout(const WorkspaceLayout&)> compute_editor_group_rects;
     std::function<bool()> editor_area_full;
     std::function<std::optional<SDL_FRect>(const WorkspaceLayout&)> terminal_drop_rect;
@@ -97,7 +84,6 @@ class SidebarMouseCoordinator {
         open_path_in_new_group;
     std::function<std::string(const std::filesystem::path& source, bool cut, const std::filesystem::path& folder)>
         paste_tree_path;
-    // Types a dragged row's path into the active terminal (DroppedPathText).
     std::function<void(const std::filesystem::path&)> type_path_into_terminal;
   };
 
@@ -106,15 +92,8 @@ class SidebarMouseCoordinator {
                           Operations operations);
 
   bool HandleButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
-  // Shift+F10 / the Menu key: the context menu a right-click on the selected row
-  // opens, anchored under that row. False when the view has no selected row with
-  // a menu (the plugin views, an empty list).
   bool OpenSelectionContextMenu(const WorkspaceLayout& layout);
   bool HandleDrag(const SDL_Event& event, const WorkspaceLayout& layout);
-  // The tree drag (PathDragState). Motion past the threshold starts it and
-  // resolves the drop target under the pointer; the release drops it (`copy`:
-  // Ctrl held, a folder drop copies) or, if it never moved, opens the row.
-  // True when the gesture's state or target changed (the preview repaints).
   bool HandlePathDragMotion(float x, float y, const WorkspaceLayout& layout);
   bool FinishPathDrag(bool copy);
   bool CancelPathDrag();
@@ -146,8 +125,6 @@ class SidebarMouseCoordinator {
                             float local_y);
   bool BeginScrollbarDrag(const SDL_Event& event, const WorkspaceLayout& layout);
   void ResolvePathDropTarget(const WorkspaceLayout& layout);
-  // The click a press on a tree row defers to its release: a file opens, a
-  // folder toggles.
   void ActivateTreeSelection();
   ScrollableListLayout CurrentListLayout(const WorkspaceLayout& layout) const;
 
@@ -156,4 +133,4 @@ class SidebarMouseCoordinator {
   Operations operations_;
 };
 
-}  // namespace microide::workspace
+}

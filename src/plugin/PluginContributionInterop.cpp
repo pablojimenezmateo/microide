@@ -13,12 +13,6 @@ namespace microide::plugin::contribution_interop {
 
 namespace {
 
-// Reject a contribution whose non-empty `.id` already exists among the kind's
-// registered contributions. First-match consumers (task runner, tool/adapter/
-// launch lookup) would otherwise behave order-dependently on a duplicate local
-// id. `id_index` mirrors the storage vector's non-empty ids, so the membership
-// test is O(1) instead of an O(n) scan (registering N ids was O(N^2)). Empty ids
-// are left to the per-type parser's own validation and never enter the index.
 template <typename T>
 bool DuplicateContributionId(const std::unordered_set<std::string>* id_index, const T& candidate,
                              std::string_view kind, std::string* error_message) {
@@ -32,8 +26,6 @@ bool DuplicateContributionId(const std::unordered_set<std::string>* id_index, co
   return true;
 }
 
-// Record a just-accepted contribution's non-empty id in the kind's index so a
-// later duplicate is detected in O(1). Keeps the index in sync with push_back.
 template <typename T>
 void NoteContributionId(std::unordered_set<std::string>* id_index, const T& candidate) {
   if (id_index != nullptr && !candidate.id.empty()) {
@@ -41,11 +33,6 @@ void NoteContributionId(std::unordered_set<std::string>* id_index, const T& cand
   }
 }
 
-// The registration shapes the contribution kinds share. Each null-guards its
-// storage, refuses past the per-kind cap, then parses; they differ in what a
-// parsed registration adds besides its contribution.
-
-// A kind with nothing more: append the contribution.
 template <typename Contributed, typename Registration, typename Parse>
 bool RegisterSimpleContribution(lua_State* state,
                                 std::string_view plugin_id,
@@ -66,8 +53,6 @@ bool RegisterSimpleContribution(lua_State* state,
   return true;
 }
 
-// A kind whose contributions carry an id that must be unique among the kind's:
-// a duplicate is refused (see DuplicateContributionId), an accepted id indexed.
 template <typename Contributed, typename Registration, typename Parse>
 bool RegisterUniqueContribution(lua_State* state,
                                 std::string_view plugin_id,
@@ -94,8 +79,6 @@ bool RegisterUniqueContribution(lua_State* state,
   return true;
 }
 
-// A kind whose registration may also carry the Lua callbacks that run it: the
-// runtime goes into its own list when the registration has one.
 template <typename Contributed, typename Runtime, typename Registration, typename Parse>
 bool RegisterContributionWithRuntime(lua_State* state,
                                      std::string_view plugin_id,
@@ -120,7 +103,7 @@ bool RegisterContributionWithRuntime(lua_State* state,
   return true;
 }
 
-}  // namespace
+}
 
 bool RegisterFormatter(lua_State* state,
                        std::string_view plugin_id,
@@ -147,9 +130,6 @@ bool RegisterVirtualDocument(lua_State* state,
                                                               &registration, error_message)) {
     return false;
   }
-  // Last registration of a URI wins, so a plugin can republish a document's
-  // content by re-registering it rather than accumulating duplicates the
-  // registry would then have to disambiguate.
   for (PluginHost::ContributedVirtualDocument& existing : *documents) {
     if (existing.uri == registration.contributed.uri) {
       existing = std::move(registration.contributed);
@@ -371,6 +351,6 @@ bool RegisterSnippet(lua_State* state,
       registration_parsers::ParseSnippetRegistration);
 }
 
-}  // namespace microide::plugin::contribution_interop
+}
 
 #endif

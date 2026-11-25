@@ -21,29 +21,15 @@ struct WorkspaceContext {
   MenuSurfaceState menu_state;
   PromptState prompts;
   TextInputState text_input;
-  // Work waiting on deferred (format-on-save) writes: tab close, rename/delete,
-  // project close, quit. Shell-wide rather than per project because quit spans
-  // projects; each entry names the project its tabs live in.
   SaveContinuationQueue save_continuations;
   std::vector<std::pair<std::string, std::string>> user_settings;
   std::vector<std::string> disabled_keybinding_ids;
   std::vector<std::string> disabled_plugin_ids;
-  // Setting ids written transiently this session (`--set`, `--control-spec`
-  // settings, debug auto-enable). They live in user_settings / project settings
-  // so GetSettingValue + live application see them, but the persistence
-  // coordinator strips them before serializing so a headless drive never
-  // clobbers the user's saved config.
   std::set<std::string> transient_setting_keys;
 
-  // SDL renderer backend microide is drawing through, captured once at startup
-  // (Application -> WorkspaceShell::SetRenderBackendInfo). Surfaced by the
-  // control-channel `status` query and read by the GPU-gated batched-text path.
   std::string render_driver_name;
   bool render_is_gpu = false;
 
-  // Read-only snapshot of whether the per-plugin kernel confinement layers are usable on this host,
-  // captured once at startup (Application -> WorkspaceShell::SetSandboxSupport). Surfaced by the
-  // control-channel `status` query so silent fail-open degradation is observable.
   platform::SandboxSupport sandbox_support;
 
   WorkspaceContext() { RebindProjectState(current_project_state); }
@@ -76,7 +62,6 @@ struct WorkspaceContext {
     return index < project_catalog.entries.size() ? project_catalog.entries[index].get() : nullptr;
   }
 
-  // The open project whose root is `root`, active or not; null when none is.
   ProjectWorkspaceState* ProjectStateForRoot(const std::filesystem::path& root) {
     if (!current_project_state.root.empty() && current_project_state.root == root) {
       return &current_project_state;
@@ -90,10 +75,6 @@ struct WorkspaceContext {
     return nullptr;
   }
 
-  // BY REFERENCE. Both real answers are a path this context already owns, and the
-  // tab-strip chrome asks for one per project tab per painted frame -- returning
-  // by value copied a string plus libstdc++'s component list every time, for a
-  // path nobody mutates (TD-2026-08-10-174's neighbourhood).
   const std::filesystem::path& ProjectCatalogRoot(std::size_t index) const {
     static const std::filesystem::path kEmpty;
     if (index >= project_catalog.entries.size()) {
@@ -106,8 +87,6 @@ struct WorkspaceContext {
     return state != nullptr ? state->root : kEmpty;
   }
 
-  // What names the project at `index` (ProjectCatalogRoot's twin): every label of a
-  // project tab reads this, never the root.
   const project::ProjectId& ProjectCatalogId(std::size_t index) const {
     static const project::ProjectId kNone;
     if (index >= project_catalog.entries.size()) {
@@ -121,4 +100,4 @@ struct WorkspaceContext {
   }
 };
 
-}  // namespace microide::workspace
+}

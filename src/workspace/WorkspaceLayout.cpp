@@ -40,7 +40,7 @@ constexpr float kPromptSurfaceButtonHeight = 28.0f;
 constexpr float kPromptSurfaceButtonGap = 10.0f;
 constexpr float kEditorSplitDividerThickness = kWorkspaceEditorSplitDividerThickness;
 
-}  // namespace
+}
 
 SDL_FRect MakeRect(float x, float y, float w, float h) {
   return SDL_FRect{x, y, w, h};
@@ -61,15 +61,6 @@ WorkspaceLayout ComputeLayout(const WorkspaceLayoutInputs& inputs) {
   const bool project_tab_strip_visible = inputs.project_tab_strip_visible;
   const bool panel_maximized = bottom_panel_visible && inputs.bottom_panel_maximized;
   const LayoutMode layout_mode = ResolveLayoutMode(window_width, layout_mode_inputs);
-  // Clamp HERE, not only in frame prep. The stored pane sizes outlive the window
-  // they were set in, so after a shrink the raw sidebar width can leave the editor
-  // column at a few dozen pixels -- or nothing. Frame prep used to be the only
-  // place that noticed, which meant every consumer that reads a layout WITHOUT
-  // painting (hit tests, cursor shape, redraw rects, and every test) worked off a
-  // geometry the next painted frame would disagree with. The clamps are pure and
-  // idempotent, so frame prep still runs them to persist the corrected value.
-  // A maximized panel takes the whole band below the project strip: the clamp
-  // below is what keeps an editor column alive, and here there is none to keep.
   const float chrome_top = kMenuBarHeight + (project_tab_strip_visible ? kProjectTabStripHeight : 0.0f);
   const float resolved_bottom_panel_height =
       panel_maximized         ? std::max(0.0f, window_height - chrome_top)
@@ -77,17 +68,12 @@ WorkspaceLayout ComputeLayout(const WorkspaceLayoutInputs& inputs) {
                               : 0.0f;
   const float resolved_sidebar_width =
       sidebar_visible ? ClampSidebarWidth(sidebar_width, window_width) : 0.0f;
-  // The right debug pane is suppressed in compact layouts, and wherever it cannot
-  // fit at its minimum width, so the sidebar + pane can't starve the editor below
-  // its minimum width or run past the window (soak 560df81462d8).
   const bool right_pane_effective_visible = right_pane_visible && layout_mode != LayoutMode::Compact &&
                                             RightPaneFits(window_width, resolved_sidebar_width);
   const float resolved_right_pane_width =
       right_pane_effective_visible
           ? ClampRightPaneWidth(right_pane_width, window_width, resolved_sidebar_width)
           : 0.0f;
-  // The status bar is the one strip the user asked immersive mode to drop too:
-  // only the menu bar and the project strip stay.
   const float status_bar_height =
       reserve_status_bar && !panel_maximized ? kWorkspaceStatusBarHeight : 0.0f;
 
@@ -96,26 +82,15 @@ WorkspaceLayout ComputeLayout(const WorkspaceLayoutInputs& inputs) {
   layout.panel_maximized = panel_maximized;
   layout.full = MakeRect(0.0f, 0.0f, window_width, window_height);
   layout.menu_bar = MakeRect(0.0f, 0.0f, window_width, kMenuBarHeight);
-  // The strip collapses to zero height (but keeps its y) when hidden, so every render
-  // and hit-test path that reads the rect suppresses naturally.
   const float project_tab_strip_height =
       project_tab_strip_visible ? kProjectTabStripHeight : 0.0f;
   layout.project_tab_strip =
       MakeRect(0.0f, kMenuBarHeight, window_width, project_tab_strip_height);
-  // The editor column is fixed before the tab strip because the strip belongs to
-  // it: VS Code's editor tabs never cross the side bar, and a WINDOW-wide strip
-  // made the band above the sidebar change owner the moment a split opened
-  // (TD-2026-08-19-267). One shape, split or not -- every hit test, redraw rect
-  // and the unsplit `ComputeEditorGroupRects` early return read this same field.
   const float editor_area_x = resolved_sidebar_width + (sidebar_visible ? kDivider : 0.0f);
   const float right_pane_reserve =
       resolved_right_pane_width + (right_pane_effective_visible ? kDivider : 0.0f);
   const float editor_area_width =
       std::max(0.0f, window_width - editor_area_x - right_pane_reserve);
-  // Every editor-column band keeps its x/y/w and collapses to zero HEIGHT when the
-  // panel is maximized, the same way the hidden project strip does: a zero-height
-  // rect contains no point and paints nothing, so render and hit-test paths need
-  // no second branch.
   const float tab_strip_height = panel_maximized ? 0.0f : kTabStripHeight;
   layout.tab_strip = MakeRect(editor_area_x, kMenuBarHeight + project_tab_strip_height,
                               editor_area_width, tab_strip_height);
@@ -124,10 +99,6 @@ WorkspaceLayout ComputeLayout(const WorkspaceLayoutInputs& inputs) {
   layout.bottom_panel =
       MakeRect(0.0f, window_height - content_bottom_reserved, window_width,
                resolved_bottom_panel_height);
-  // Hidden, the bar is a zero-height strip along the window's bottom edge, not
-  // {0,0,0,0}: the toast stack is anchored on it, and at the origin every toast
-  // was laid out above the window and never seen (QA). Area-zero still reads as
-  // hidden to everything that asks (`w > 0 && h > 0`, the ui query's surfaces).
   layout.status_bar =
       reserve_status_bar
           ? MakeRect(0.0f, window_height - status_bar_height, window_width, status_bar_height)
@@ -135,22 +106,12 @@ WorkspaceLayout ComputeLayout(const WorkspaceLayoutInputs& inputs) {
   layout.content =
       MakeRect(0.0f, content_top, window_width,
                std::max(0.0f, window_height - content_top - content_bottom_reserved));
-  // The sidebar takes the band beside the editor tab strip too. That strip
-  // belongs to the editor column (TD-2026-08-19-267), so above the sidebar the
-  // band was chrome with nothing in it -- a strip-high gap over the tree that
-  // VS Code's side bar does not have. It runs from under the project strip to the
-  // panel, the editor column's full height, and collapses with it under a
-  // maximized panel (content is empty then, and so is this).
   const float sidebar_top = kMenuBarHeight + project_tab_strip_height;
   layout.sidebar =
       MakeRect(0.0f, sidebar_top, resolved_sidebar_width,
                std::max(0.0f, layout.content.y + layout.content.h - sidebar_top));
   layout.editor_area = MakeRect(editor_area_x, layout.content.y, editor_area_width,
                                 layout.content.h);
-  // The debug pane is the right-hand mirror of the sidebar and takes the same
-  // band, beside the editor tab strip as well (VS Code's secondary side bar does;
-  // TD-2026-11-01-427 item 4): it used to start under the strip, leaving a
-  // strip-high gap of chrome over it.
   layout.right_pane =
       right_pane_effective_visible
           ? MakeRect(layout.editor_area.x + layout.editor_area.w + kDivider, layout.sidebar.y,
@@ -162,8 +123,6 @@ WorkspaceLayout ComputeLayout(const WorkspaceLayoutInputs& inputs) {
       MakeRect(layout.editor_area.x, layout.editor_area.y + kHeaderHeight + kDivider,
                layout.editor_area.w, layout.editor_area.h - kHeaderHeight - kDivider);
   if (panel_maximized) {
-    // The column collapsed: no header band, no surface, and the overlays centre
-    // in the panel instead.
     layout.breadcrumb.h = 0.0f;
     layout.editor_surface = MakeRect(layout.editor_area.x, layout.editor_area.y,
                                      layout.editor_area.w, 0.0f);
@@ -174,11 +133,6 @@ WorkspaceLayout ComputeLayout(const WorkspaceLayoutInputs& inputs) {
 
 namespace {
 
-// Chrome for one leaf pane, given its region inside the editor area. A pane that
-// starts at the top of the area keeps the window's own tab-strip band and
-// breadcrumb (confined to its column); any pane below one synthesizes a strip at
-// the top of its own region and has no breadcrumb — the same two shapes the
-// two-group split always had, now decided per pane instead of per split.
 EditorGroupRects ChromeForRegion(const WorkspaceLayout& layout, const SDL_FRect& region) {
   const SDL_FRect ts = layout.tab_strip;
   const SDL_FRect bc = layout.breadcrumb;
@@ -200,7 +154,7 @@ EditorGroupRects ChromeForRegion(const WorkspaceLayout& layout, const SDL_FRect&
                std::max(0.0f, region.h - strip_h))};
 }
 
-}  // namespace
+}
 
 SDL_FRect FocusedGroupSurface(const EditorGroupRectsLayout& rects,
                               std::size_t focused_group,
@@ -229,9 +183,6 @@ EditorGroupRectsLayout ComputeEditorGroupRects(const WorkspaceLayout& layout,
   }
   util::AddPerformanceCounter(util::PerfCounterId::WorkspaceEditorGroupRectTreeWalks);
 
-  // Iterative depth-first walk, children left to right: the visit order of the
-  // leaves is the group order, and the whole walk is heap-free (the stack is
-  // bounded by the node budget, which the group cap bounds).
   struct Frame {
     std::uint8_t node = 0;
     SDL_FRect rect{};
@@ -252,14 +203,9 @@ EditorGroupRectsLayout ComputeEditorGroupRects(const WorkspaceLayout& layout,
     const bool vertical = node.orientation == EditorSplitOrientation::Vertical;
     const std::size_t count = node.children.size();
     const float span = vertical ? frame.rect.w : frame.rect.h;
-    // A span narrower than its dividers (seven groups beside a wide one, a tiny
-    // window) shares itself among them: at full thickness the panes shrank to
-    // nothing and the dividers ran on past the window (soak 52518545bf6d).
     const float divider = std::min(kEditorSplitDividerThickness,
                                    std::max(0.0f, span) / static_cast<float>(count - 1));
     const float avail = std::max(0.0f, span - divider * static_cast<float>(count - 1));
-    // Extents first: the divider between children i and i+1 needs both, and the
-    // last child absorbs the rounding so the panes always tile the span exactly.
     util::InlineVector<float, kMaxEditorGroups> extents;
     float remaining = avail;
     for (std::size_t i = 0; i < count; ++i) {
@@ -304,9 +250,6 @@ std::size_t AdjacentEditorGroup(const EditorGroupRectsLayout& rects,
   if (from >= rects.groups.size() || rects.groups.size() < 2) {
     return kNoEditorGroup;
   }
-  // Panes tile the editor area exactly, so a neighbour's near edge sits ON the
-  // focused pane's far edge; the tolerance only absorbs the divider and the
-  // per-child rounding the tiling walk pushes into the last pane.
   constexpr float kEdgeSlack = kEditorSplitDividerThickness + 1.0f;
   const SDL_FRect& self = rects.groups[from].editor_surface;
   const bool horizontal =
@@ -339,10 +282,8 @@ std::size_t AdjacentEditorGroup(const EditorGroupRectsLayout& rects,
         break;
     }
     if (gap < -kEdgeSlack) {
-      continue;  // Overlaps or sits the other way; not on that side.
+      continue;
     }
-    // How much of the CROSS axis the two share. A pane directly beside this one
-    // beats one that merely starts further along the same row.
     const float overlap =
         horizontal ? std::max(0.0f, std::min(self.y + self.h, other.y + other.h) -
                                         std::max(self.y, other.y))
@@ -374,19 +315,9 @@ std::optional<SDL_FRect> UnionOptionalRects(std::optional<SDL_FRect> lhs,
 }
 
 namespace {
-// The narrowest the sidebar and the debug pane get, by drag or by a small window:
-// wide enough for their header controls -- the view tabs beside the ⋯ button,
-// Collapse and Refresh, the search view's Replace All, the debug pane's four
-// view tabs. The old floor (one row's height plus the insets, 41 px) drew those
-// past the surface's edge, where a frame clipped them and the next hit-tested
-// them (QaFlowRegression/EveryElementStaysInsideItsSurfaceAtEverySize). VS
-// Code's sidebar stops at 170.
 constexpr float kSideSurfaceMinWidth = 120.0f;
-}  // namespace
+}
 
-// No fixed ceiling: the sidebar may take everything but the editor's minimum, so a
-// deep tree or a long search hit can be read whole. It used to stop at 520 px
-// whatever the window's width.
 float ClampSidebarWidth(float width, float window_width) {
   const float viable_min_width = kSideSurfaceMinWidth;
   const float max_width = std::max(viable_min_width, window_width - kMinEditorAreaWidth - kDivider);
@@ -400,7 +331,7 @@ float RightPaneAvailableWidth(float window_width, float sidebar_width) {
   return window_width - sidebar_reserve - kMinEditorAreaWidth - kDivider;
 }
 
-}  // namespace
+}
 
 bool RightPaneFits(float window_width, float sidebar_width) {
   return RightPaneAvailableWidth(window_width, sidebar_width) >= kSideSurfaceMinWidth;
@@ -443,9 +374,6 @@ SDL_FRect SidebarResizeHandleRect(const WorkspaceLayout& layout) {
   if (layout.sidebar.w <= 0.0f || layout.sidebar.h <= 0.0f) {
     return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
   }
-  // Beside the content only: the sidebar also fills the band beside the editor
-  // tab strip, but a handle there would reach half its width into the first
-  // tab and take its left edge's clicks (WelcomeTabUsesLeftEdgeHitArea).
   const float top = std::max(layout.sidebar.y, layout.content.y);
   const float bottom = layout.sidebar.y + layout.sidebar.h;
   if (bottom <= top) {
@@ -456,7 +384,6 @@ SDL_FRect SidebarResizeHandleRect(const WorkspaceLayout& layout) {
 }
 
 SDL_FRect BottomPanelResizeHandleRect(const WorkspaceLayout& layout) {
-  // A maximized panel has no top edge to drag: its height is the window's.
   if (layout.bottom_panel.w <= 0.0f || layout.bottom_panel.h <= 0.0f || layout.panel_maximized) {
     return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
   }
@@ -469,9 +396,6 @@ SDL_FRect RightPaneResizeHandleRect(const WorkspaceLayout& layout) {
   if (layout.right_pane.w <= 0.0f || layout.right_pane.h <= 0.0f) {
     return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
   }
-  // Beside the content only, as the sidebar's: the pane also fills the band
-  // beside the editor tab strip, where a handle would reach into the strip's
-  // right end and take its overflow chevrons' clicks.
   const float top = std::max(layout.right_pane.y, layout.content.y);
   const float bottom = layout.right_pane.y + layout.right_pane.h;
   if (bottom <= top) {
@@ -508,12 +432,6 @@ SDL_FRect RightPaneResizeCursorRect(const WorkspaceLayout& layout) {
                   visual.w + kWorkspaceResizeHandleCursorInflate * 2.0f, visual.h);
 }
 
-// The grab (hit) region is intentionally identical to the cursor-change region:
-// the user only ever sees a resize cursor inside *ResizeCursorRect, so the drag
-// must start in exactly that span and never extend past it. (Earlier these
-// inflated wider than the cursor zone to compensate for the cursor failing to
-// refresh on idle Wayland compositors; that bug is fixed, so the padding is gone
-// and the two can no longer drift.)
 SDL_FRect SidebarResizeHitRect(const WorkspaceLayout& layout) {
   return SidebarResizeCursorRect(layout);
 }
@@ -652,11 +570,6 @@ namespace {
 
 constexpr float kDialogFooterPadding = 16.0f;
 
-// A dialog's footer row of `count` buttons, right-aligned inside its padding.
-// Each button is `width` wide while the row fits, and the row shrinks to the
-// dialog's inner width when it does not (DrawButtonCentered clips the label):
-// fixed widths in a dialog narrowed to its window hung the first button past
-// the dialog's left edge, outside the dialog's own repaint (soak 538a455016ef).
 template <typename Emit>
 void LayOutDialogFooter(const SDL_FRect& dialog, int count, float width, float height, float gap,
                         Emit emit) {
@@ -673,7 +586,7 @@ void LayOutDialogFooter(const SDL_FRect& dialog, int count, float width, float h
   }
 }
 
-}  // namespace
+}
 
 std::array<SDL_FRect, 3> ComputeDirtyPromptButtonRects(const SDL_FRect& dialog) {
   std::array<SDL_FRect, 3> rects{};
@@ -685,11 +598,6 @@ std::array<SDL_FRect, 3> ComputeDirtyPromptButtonRects(const SDL_FRect& dialog) 
 }
 
 SDL_FRect ComputeEditorBannerStripRect(const SDL_FRect& editor_surface) {
-  // Whole or not at all. Squeezed to an editor area shorter than itself (the
-  // panel maximized leaves it none), the strip kept its buttons, centred on a
-  // strip of no height -- above the editor area, over the menu bar's window
-  // controls, where they painted and were named and clicked (QA monkey,
-  // qa-asan seed 4).
   if (editor_surface.h < kWorkspaceEditorBannerHeight) {
     return MakeRect(editor_surface.x, editor_surface.y, 0.0f, 0.0f);
   }
@@ -711,16 +619,10 @@ EditorBannerButtonLayout ComputeEditorBannerButtonRects(const SDL_FRect& strip,
   }
   const std::span<const EditorBannerButton> wanted =
       buttons.first(std::min(buttons.size(), kMaxEditorBannerButtons));
-  // Inside the strip at any width: in a sliver of a pane narrower than its pad
-  // and size, the dismiss button started left of the strip, over the sidebar
-  // (soak 2dc534f1ceac). The pad gives way first, then the button.
   const float dismiss_size = std::min(kDismissSize, strip.w);
   const float dismiss_pad = std::clamp(strip.w - dismiss_size, 0.0f, kEdgePad);
   layout.dismiss = MakeRect(strip.x + strip.w - dismiss_pad - dismiss_size,
                             strip.y + (strip.h - dismiss_size) * 0.5f, dismiss_size, dismiss_size);
-  // Laid right to left from the dismiss button, and only while they fit: the
-  // leading buttons of a row wider than the strip used to land left of it, over
-  // the sidebar (soak 6b622ef8a9ea). The trailing buttons that fit are kept.
   const float min_x = strip.x + kEdgePad;
   std::size_t fit = 0;
   float x = layout.dismiss.x;
@@ -814,18 +716,6 @@ std::size_t ClampTextGridLineAtY(const TextGridInteractionLayout& layout, float 
   const float local_y = std::max(0.0f, y - layout.first_line_y);
   std::size_t row =
       static_cast<std::size_t>(std::floor(local_y / std::max(1.0f, layout.line_height)));
-  // Clamp into the VISIBLE band, not merely into the document. A pointer held
-  // below the pane during a selection drag is 200-odd pixels past the last row,
-  // and resolving that literally addressed a row fifteen screens down: one motion
-  // event teleported the selection there, and a big enough overshoot went
-  // straight to the end of the file. It also made the drag autoscroll
-  // unobservable, because the pointer had already resolved past everything the
-  // autoscroll could scroll into.
-  //
-  // This is what the editor surface does with ClampPointerToVisibleTextBand, one
-  // step earlier: clamp onto the nearest visible cell and let the autoscroll walk
-  // that edge through the document. A pointer genuinely inside the pane is
-  // unaffected -- it cannot exceed the band by construction.
   if (layout.visible_rows > 0) {
     row = std::min(row, layout.visible_rows - 1);
   }
@@ -905,11 +795,6 @@ ScrollableListLayout ComputeScrollableListLayout(const SDL_FRect& container,
   const float available_height =
       std::max(0.0f, container.y + container.h - list_y - list_bottom_padding);
   const float raw_visible_units = row_step > 0.0f ? available_height / row_step : 0.0f;
-  // Only the rows there is room for, which can be none. A floor of one laid a row
-  // out below a list whose top had reached its container's bottom -- the git list
-  // under a commit draft that fills a short sidebar -- outside the window, where
-  // the control channel reported it and a click could land on it (soak
-  // 0156becd453c and eight more git-row signatures).
   layout.visible_units = fractional_visible_units ? raw_visible_units : std::floor(raw_visible_units);
   layout.visible_rows = static_cast<int>(std::floor(layout.visible_units));
   layout.max_scroll = std::max(
@@ -999,13 +884,6 @@ std::optional<SDL_FRect> ComputeScrollbarThumb(const SDL_FRect& track,
 
   const float max_scroll = std::max(0.0f, total_units - visible_units);
   const float clamped_scroll = std::clamp(scroll_units, 0.0f, max_scroll);
-  // NOT std::clamp(proportional, kScrollbarMinThumbLength, track_length): on a
-  // track SHORTER than the minimum thumb those two bounds invert, and clamp with
-  // hi < lo is undefined behaviour -- a library precondition the sanitizers do
-  // not check, which is why this survived until a _GLIBCXX_ASSERTIONS build.
-  // A 24px minimum against a track of a few pixels is reachable in production
-  // (a small window, a deep editor split, a panel dragged almost shut), and a
-  // track that short cannot show a proportional thumb at all, so it fills.
   const float thumb_length =
       std::min(track_length,
                std::max(kScrollbarMinThumbLength, track_length * (visible_units / total_units)));
@@ -1024,12 +902,6 @@ std::optional<ScrollbarGeometry> MakeVerticalScrollbarGeometry(const SDL_FRect& 
                                                               float visible_units,
                                                               float scroll_units,
                                                               bool reserve_horizontal) {
-  // A track that does not fit across the area is not laid out. It is placed from
-  // the area's far edge, so an area narrower than the track put it past the near
-  // one: a split pane dragged to its minimum width drew its scrollbar over the
-  // sidebar beside it, where a full frame showed it and the pane's partial frames
-  // did not (soak 250931ec505a; 640x480 at ui.scale 3). Every scroll surface
-  // shares this geometry, so the paint and the drag hit-test agree it is absent.
   if (area.w < kScrollbarThickness + kScrollbarInset) {
     return std::nullopt;
   }
@@ -1057,8 +929,6 @@ std::optional<ScrollbarGeometry> MakeHorizontalScrollbarGeometry(const SDL_FRect
                                                                 float visible_units,
                                                                 float scroll_units,
                                                                 bool reserve_vertical) {
-  // As for the vertical track: one that does not fit the area's height is not
-  // laid out, rather than placed above the area's top edge.
   if (area.h < kScrollbarThickness + kScrollbarInset) {
     return std::nullopt;
   }
@@ -1179,9 +1049,6 @@ void BuildCompareScrollbarRunsInto(const compare::ComparePresentationModel& pres
 }
 
 namespace {
-// Shared geometry for the centered modal overlays. The three public helpers differ
-// only by their width/height fractions, vertical-placement fraction, and minimum
-// padded width/height, so they forward into one body to keep them in lockstep.
 struct OverlaySurfaceParams {
   float width_frac;
   float height_frac;
@@ -1201,7 +1068,6 @@ SDL_FRect ComputeOverlaySurfaceRectImpl(const SDL_FRect& editor_area,
       std::min(overlay_width, std::max(params.min_width, editor_area.w - 56.0f));
   const float final_height =
       std::min(overlay_height, std::max(params.min_height, editor_area.h - 48.0f));
-  // Inside the window, whatever the editor area: shrink to it first, then shift.
   constexpr float kWindowMargin = 8.0f;
   const float max_width = std::max(0.0f, bounds.w - 2.0f * kWindowMargin);
   const float max_height = std::max(0.0f, bounds.h - 2.0f * kWindowMargin);
@@ -1214,20 +1080,13 @@ SDL_FRect ComputeOverlaySurfaceRectImpl(const SDL_FRect& editor_area,
                              std::max(bounds.y + kWindowMargin, bounds.y + bounds.h - kWindowMargin - height));
   return MakeRect(x, y, width, height);
 }
-}  // namespace
+}
 
 SDL_FRect ComputeQuickOpenOverlaySurfaceRect(const SDL_FRect& editor_area, const SDL_FRect& bounds) {
-  // One card for every quick-open modal: file finder, project search, command
-  // palette, and the commit/launch pickers. They previously split across two
-  // geometries (0.58/0.44/0.22 vs 0.66/0.60/0.18), so Ctrl+P and Ctrl+Shift+P
-  // painted visibly different dialogs in different places.
   return ComputeOverlaySurfaceRectImpl(editor_area, {0.66f, 0.60f, 0.18f, 260.0f, 160.0f}, bounds);
 }
 
 SDL_FRect ComputeSettingsOverlaySurfaceRect(const SDL_FRect& editor_area, const SDL_FRect& bounds) {
-  // The settings surface is a two-pane editor (category list + value pane), so it
-  // is the largest modal: wide enough for a left rail plus roomy controls, tall
-  // enough to show many rows without constant scrolling.
   return ComputeOverlaySurfaceRectImpl(editor_area, {0.72f, 0.66f, 0.14f, 420.0f, 220.0f}, bounds);
 }
 
@@ -1249,28 +1108,19 @@ constexpr float kDebugToolbarPad = 6.0f;
 constexpr float kDebugToolbarButton = 26.0f;
 constexpr float kDebugToolbarButtonGap = 4.0f;
 constexpr float kDebugToolbarStackGap = 8.0f;
-}  // namespace
+}
 
 SDL_FRect ComputeFindWidgetRect(const SDL_FRect& editor_area,
                                 bool replace_mode,
                                 std::optional<SDL_FRect> bounds) {
   const float available =
       std::max(kFindWidgetMinWidth, editor_area.w - 2.0f * kFindWidgetMargin);
-  // Never wider than the area itself: the minimum width is a preference, and an
-  // area narrower than it would otherwise push the widget off its left edge.
   const float width = std::min({kFindWidgetMaxWidth, available, std::max(0.0f, editor_area.w)});
   const float rows = replace_mode ? 2.0f : 1.0f;
   const float height = 2.0f * kFindWidgetPad + rows * kFindWidgetRowHeight +
                        (rows - 1.0f) * kFindWidgetRowGap;
   const float x =
       std::max(editor_area.x, editor_area.x + editor_area.w - width - kFindWidgetMargin);
-  // Anchored a margin below the area's top, but lifted when the area is too short
-  // to hold it there, so its bottom does not run past the area's: a bottom panel
-  // squeezed to its tab strip put the terminal's find bar off the window (soak
-  // 23535aaf3151). Never lifted above `bounds` (the area itself by default): an
-  // editor column collapsed under a maximized panel has a surface of no height at
-  // the window's top, and lifting over it put the widget past the window's top.
-  // On a roomy area this is the old placement, unchanged.
   const SDL_FRect limit = bounds.value_or(editor_area);
   const float y = std::max(
       limit.y, std::min(editor_area.y + kFindWidgetMargin, editor_area.y + editor_area.h - height));
@@ -1281,7 +1131,7 @@ FindWidgetLayout ComputeTerminalFindWidgetLayout(const SDL_FRect& terminal_body,
                                                  const WorkspaceLayout& layout) {
   const SDL_FRect panel_body = BottomPanelContentRect(layout);
   FindWidgetLayout fw =
-      ComputeFindWidgetLayout(terminal_body, /*replace_mode=*/false, kTerminalFindToggleCount, panel_body);
+      ComputeFindWidgetLayout(terminal_body, false, kTerminalFindToggleCount, panel_body);
   if (fw.widget.y + fw.widget.h > panel_body.y + panel_body.h) {
     FindWidgetLayout none;
     none.toggle_count = fw.toggle_count;
@@ -1302,8 +1152,6 @@ FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area,
 
   const float field_x = r.x + kFindWidgetPad;
   const float row1_y = r.y + kFindWidgetPad;
-  // Row 1, right-aligned: [count] [prev] [next] [close]; the search field fills
-  // whatever width is left on the left.
   layout.close_button =
       MakeRect(r.x + r.w - kFindWidgetPad - kFindWidgetButton, row1_y, kFindWidgetButton,
                kFindWidgetRowHeight);
@@ -1313,20 +1161,12 @@ FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area,
                                 row1_y, kFindWidgetButton, kFindWidgetRowHeight);
   const float count_x = layout.prev_button.x - kFindWidgetButtonGap - kFindWidgetCountWidth;
   layout.count_rect = MakeRect(count_x, row1_y, kFindWidgetCountWidth, kFindWidgetRowHeight);
-  // Mode toggles sit between the search field and the match count, filled from the
-  // right so slot 0 stays adjacent to the field however many there are.
   float toggles_x = count_x;
   for (std::size_t index = layout.toggle_count; index-- > 0;) {
     toggles_x -= kFindWidgetButtonGap + kFindWidgetButton;
     layout.toggle_buttons[index] =
         MakeRect(toggles_x, row1_y, kFindWidgetButton, kFindWidgetRowHeight);
   }
-  // A card narrower than its first row -- the widget is never wider than the area
-  // it floats in -- had the leftmost controls laid out past its left edge: over
-  // the sidebar, drawn outside the card, and missing from the hover probe, which
-  // looks for a button only inside the card (soak 250931ec505a, the most frequent
-  // stale frame). What does not fit is not laid out: its rect stays empty, as
-  // every consumer reads it, the toggles going first and the close button last.
   float row_start = r.x + r.w - kFindWidgetPad;
   const auto keep = [&](SDL_FRect& control) {
     if (control.w > 0.0f && control.x < field_x) {
@@ -1342,10 +1182,6 @@ FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area,
   for (std::size_t index = layout.toggle_count; index-- > 0;) {
     keep(layout.toggle_buttons[index]);
   }
-  // The fields fill what is left, and like every control that does not fit, one
-  // with no room is not laid out: kept at its origin with no width, it sat past a
-  // card a few units wide -- [1027, 347, 0, 24] in a 1024-wide window (soak
-  // 938ea521923b).
   const auto field_rect = [field_x](float y, float right) {
     const float width = right - kFindWidgetButtonGap - field_x;
     return width > 0.0f ? MakeRect(field_x, y, width, kFindWidgetRowHeight) : SDL_FRect{};
@@ -1360,9 +1196,6 @@ FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area,
     layout.replace_button =
         MakeRect(layout.replace_all_button.x - kFindWidgetButtonGap - kFindWidgetReplaceButtonWidth,
                  row2_y, kFindWidgetReplaceButtonWidth, kFindWidgetRowHeight);
-    // The same rule as the first row: what does not fit is not laid out, Replace
-    // going first. Without it, in a 75-px pane Replace sat at x -48, past the
-    // window's left edge (soak fd5e983d0496).
     row_start = r.x + r.w - kFindWidgetPad;
     keep(layout.replace_all_button);
     keep(layout.replace_button);
@@ -1375,9 +1208,6 @@ DebugToolbarLayout ComputeDebugToolbarLayout(const SDL_FRect& editor_area,
                                              std::optional<float> avoid_below_y,
                                              bool include_reverse) {
   DebugToolbarLayout layout;
-  // The active button order: Continue/Pause, the forward steps, optionally the
-  // reverse pair, then Restart and Stop. Skipping the reverse pair yields a layout
-  // byte-for-byte identical to the pre-reverse bar.
   layout.kinds[layout.button_count++] = DebugToolbarButton::ContinuePause;
   layout.kinds[layout.button_count++] = DebugToolbarButton::StepOver;
   layout.kinds[layout.button_count++] = DebugToolbarButton::StepInto;
@@ -1394,14 +1224,8 @@ DebugToolbarLayout ComputeDebugToolbarLayout(const SDL_FRect& editor_area,
                       (count - 1.0f) * kDebugToolbarButtonGap;
   const float height = 2.0f * kDebugToolbarPad + kDebugToolbarButton;
   const float x = editor_area.x + editor_area.w - width - kDebugToolbarMargin;
-  // Stack below the find widget or a banner when present, otherwise anchor at the
-  // editor top.
   const float y = avoid_below_y.has_value() ? *avoid_below_y + kDebugToolbarStackGap
                                             : editor_area.y + kDebugToolbarMargin;
-  // It floats over the editor and nothing else: where the editor area cannot hold
-  // it (the panel maximized, a window narrower than the bar) it is not shown --
-  // hung past the area it covered the panel's tabs, which then could not be
-  // clicked. The Debug menu, the keys and the debug pane still drive the session.
   if (x < editor_area.x || y + height > editor_area.y + editor_area.h) {
     layout.button_count = 0;
     return layout;
@@ -1428,4 +1252,4 @@ bool operator==(const WorkspaceLayout& lhs, const WorkspaceLayout& rhs) noexcept
          lhs.panel_maximized == rhs.panel_maximized;
 }
 
-}  // namespace microide::workspace
+}

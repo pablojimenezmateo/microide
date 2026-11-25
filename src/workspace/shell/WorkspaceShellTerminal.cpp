@@ -27,8 +27,6 @@ constexpr float kBottomPanelScrollbarTextReserve = 16.0f;
 
 
 
-// The cell under (x, y) in a laid-out terminal pane whose visible lines start at
-// `first_row`. A template so it can take the shell's private LogSurfaceLayout.
 template <typename Layout>
 std::optional<TerminalSelectionPoint> CellInPaneLayout(int x, int y, const Layout& panel_layout,
                                                        const std::vector<terminal::TerminalLine>& lines,
@@ -54,9 +52,6 @@ std::optional<TerminalSelectionPoint> CellInPaneLayout(int x, int y, const Layou
 }
 
 
-// Every absolute-row point a pane's selection holds, for the row-space rebase:
-// the two ends and, while there is a selection, the word or row it started on
-// (a drag or a Shift+click extends from it). Null for an end that is unset.
 std::array<TerminalSelectionPoint*, 4> SelectionPointsOf(TerminalPaneState& pane) {
   const bool selecting = pane.selection_anchor.has_value();
   return {pane.selection_anchor ? &*pane.selection_anchor : nullptr,
@@ -70,10 +65,6 @@ bool IsTerminalUrlTerminator(char character) {
          character == '\'' || character == '<' || character == '>';
 }
 
-// Strips the punctuation prose wraps a link in ("see https://x.org/a." or
-// "(https://x.org/a)"). A closing bracket is punctuation only when the URL has no
-// opener for it: `https://en.wikipedia.org/wiki/Foo_(bar)` keeps its `)`, as VS
-// Code's link detector does, where the old unconditional strip cut it off.
 std::string TrimTerminalUrl(std::string url) {
   const auto has_unmatched_closer = [&](char open, char close) {
     std::ptrdiff_t depth = 0;
@@ -100,11 +91,6 @@ std::string TrimTerminalUrl(std::string url) {
   return url;
 }
 
-// Byte offset within TerminalLineText(line) of the start of grid cell `column`,
-// mirroring TerminalLineSliceText's cell→text mapping (wide-trailing spacers
-// contribute no bytes; an empty cell contributes one space; a glyph contributes
-// its UTF-8 bytes). Needed because a wide/multibyte cell BEFORE a URL desyncs a
-// raw grid column from the byte offset TerminalUrlAtColumn works in.
 std::size_t TerminalColumnToByteOffset(const terminal::TerminalLine& line, std::size_t column) {
   const std::size_t clamped = std::min(column, line.cells.size());
   std::size_t byte_offset = 0;
@@ -119,15 +105,12 @@ std::size_t TerminalColumnToByteOffset(const terminal::TerminalLine& line, std::
   return byte_offset;
 }
 
-// A link found in a line's text: what it opens and the bytes of the text it is.
 struct TerminalTextLink {
   std::string target;
   std::size_t begin = 0;
   std::size_t end = 0;
 };
 
-// The grid column holding byte `byte` of TerminalLineText(line): the inverse of
-// TerminalColumnToByteOffset (the line's width when `byte` is past its text).
 std::size_t TerminalByteOffsetToColumn(const terminal::TerminalLine& line, std::size_t byte) {
   std::size_t offset = 0;
   for (std::size_t cell_index = 0; cell_index < line.cells.size(); ++cell_index) {
@@ -144,16 +127,10 @@ std::size_t TerminalByteOffsetToColumn(const terminal::TerminalLine& line, std::
   return line.cells.size();
 }
 
-// The logical line through row `hit` of `lines`: the rows soft-wrap joins (each
-// row `wrapped_from_previous` continues the one above) as one text, and the byte
-// offset in it where each row starts. A URL or path the terminal wrapped is one
-// token here, where the row alone held only the part up to the wrap
-// (TD-2026-10-29-422 item 4). Bounded by the rows `lines` holds: a link wrapped
-// past the visible window is a link over the part on screen.
 struct TerminalLogicalLine {
-  std::size_t first = 0;  // index into `lines` of the logical line's first row
+  std::size_t first = 0;
   std::string text;
-  std::vector<std::size_t> row_starts;  // row_starts[i]: where row first + i begins
+  std::vector<std::size_t> row_starts;
 };
 
 TerminalLogicalLine JoinTerminalLogicalLine(const std::vector<terminal::TerminalLine>& lines,
@@ -170,16 +147,11 @@ TerminalLogicalLine JoinTerminalLogicalLine(const std::vector<terminal::Terminal
   joined.row_starts.reserve(last - first + 1);
   for (std::size_t row = first; row <= last; ++row) {
     joined.row_starts.push_back(joined.text.size());
-    // Only the last row drops its trailing blanks: a wrapped row's every cell is
-    // part of the text, and TerminalColumnToByteOffset counts every cell.
     joined.text += TerminalLineSliceText(lines[row], 0, lines[row].cells.size(), row == last);
   }
   return joined;
 }
 
-// The (index into `lines`, column) of byte `byte` of `joined.text`. `exclusive_end`
-// resolves a byte that is exactly a row boundary to the end of the row before it,
-// so a link that ends at a wrap does not reach onto the next row.
 std::pair<std::size_t, std::size_t> TerminalLogicalByteToCell(
     const std::vector<terminal::TerminalLine>& lines, const TerminalLogicalLine& joined,
     std::size_t byte, bool exclusive_end) {
@@ -201,10 +173,6 @@ std::optional<TerminalTextLink> TerminalUrlAtColumn(std::string_view text, std::
       "git://",
   };
 
-  // URL schemes are case-insensitive (RFC 3986 §3.1), so match against a
-  // lowercased copy of the line while slicing the URL out of the original text
-  // to preserve the real casing of the path/query. Without this, `HTTPS://…`
-  // or `File://…` links were never detected.
   std::string lowered(text);
   for (char& ch : lowered) {
     ch = util::ToLowerAsciiChar(static_cast<char>(ch));
@@ -220,8 +188,6 @@ std::optional<TerminalTextLink> TerminalUrlAtColumn(std::string_view text, std::
       }
       std::string url = TrimTerminalUrl(std::string(text.substr(start, end - start)));
       const std::size_t trimmed_end = start + url.size();
-      // `target_byte` is a byte offset into `text` (see TerminalColumnToByteOffset
-      // at the call site), so it compares directly against the URL's byte range.
       if (target_byte >= start && target_byte < trimmed_end && !url.empty()) {
         return TerminalTextLink{.target = std::move(url), .begin = start, .end = trimmed_end};
       }
@@ -232,21 +198,11 @@ std::optional<TerminalTextLink> TerminalUrlAtColumn(std::string_view text, std::
   return std::nullopt;
 }
 
-// Tokens for file references stop at whitespace, quotes and bracket/list
-// punctuation: `src/a.cpp:12:3:` in "src/a.cpp:12:3: error: x" and `(a/b.py:7)`
-// both isolate the path with its position.
 bool IsTerminalPathTokenTerminator(char character) {
   return IsTerminalUrlTerminator(character) || character == '(' || character == ')' ||
          character == '[' || character == ']' || character == ',' || character == ';';
 }
 
-// A file reference under `target_byte` -- `path`, `path:line` or `path:line:col`
-// (1-based, as compilers, linters and grep print them) -- resolved against
-// `root` and kept only when `exists` says the file is there, so an arbitrary
-// word never becomes a link (VS Code's terminal link provider does the same
-// existence check). Returned as a `file://` link with an `#L<line>:<col>`
-// fragment so it travels the same hover / pointer / click path as URLs; the
-// click handler opens file links in the editor rather than externally.
 std::optional<TerminalTextLink> TerminalFileReferenceAtByte(
     std::string_view text, std::size_t target_byte, const std::filesystem::path& root,
     const std::function<bool(const std::filesystem::path&)>& exists) {
@@ -268,8 +224,7 @@ std::optional<TerminalTextLink> TerminalFileReferenceAtByte(
   if (token.empty() || token.find("://") != std::string_view::npos) {
     return std::nullopt;
   }
-  const std::size_t token_end = start + token.size();  // `path:line:col`, as printed
-  // Peel up to two trailing `:<digits>` groups: column, then line.
+  const std::size_t token_end = start + token.size();
   std::size_t line = 0;
   std::size_t column = 0;
   for (int group = 0; group < 2; ++group) {
@@ -288,8 +243,6 @@ std::optional<TerminalTextLink> TerminalFileReferenceAtByte(
   if (line == 0) {
     column = 0;
   }
-  // A bare word ("error", "make") is not a path; require a separator or an
-  // extension dot so the existence check only runs for path-shaped tokens.
   if (token.empty() || token.find_first_of("/.") == std::string_view::npos ||
       token == "." || token == "..") {
     return std::nullopt;
@@ -363,7 +316,7 @@ std::size_t FindWrappedInvocationStartRow(const terminal::TerminalSession& sessi
   return start_row;
 }
 
-}  // namespace
+}
 
 
 bool WorkspaceShell::BottomPanelShowsTerminal() const {
@@ -376,11 +329,6 @@ bool WorkspaceShell::BottomPanelShowsOutput() const {
 }
 
 bool WorkspaceShell::BottomPanelVisible() const {
-  // Must agree with the visibility PrepareFrameOnce feeds ComputeLayout
-  // (panel content != None): a PluginSurface panel is rendered and laid out,
-  // so the interactive paths (wheel, clicks, resize handle, cursor) must see
-  // it as visible too. It previously said Terminal-or-Output only, which left
-  // plugin surface previews painted but mouse-dead (TD-2026-07-16-60/61).
   return context_.current_project_state.panel.content != PanelContentKind::None;
 }
 
@@ -389,10 +337,6 @@ const render::TextRenderer& WorkspaceShell::PanelTextRenderer() const {
 }
 
 void WorkspaceShell::ApplyTerminalFontPreferences() {
-  // Runs every prepared frame a terminal is shown. terminal.font_* only change on a
-  // cold settings mutation (the store bumps its revision on any change), so skip the
-  // GetSettingValue allocations + SetFontFamily entirely when nothing has changed
-  // since the last apply — mirroring ApplyLiveSettings' allocation-free fast path.
   const std::uint64_t settings_revision = settings_store_.Revision();
   if (settings_revision == last_applied_terminal_font_settings_revision_) {
     return;
@@ -402,16 +346,9 @@ void WorkspaceShell::ApplyTerminalFontPreferences() {
   const int size = std::clamp(util::ParseIntOr(GetSettingValue("terminal.font_size"), 13), 8, 32);
   terminal_text_renderer_.SetFontPointSize(static_cast<float>(size));
   terminal_text_renderer_.SetFontFamily(GetSettingValue("terminal.font_family").value_or(""));
-  // The generation also moves on the first frame a terminal shows, when its
-  // renderer trades the stand-in backend for a real one: that grid needs the
-  // real cell metrics as much as a font change does.
   if (const std::size_t generation = terminal_text_renderer_.MetricsGeneration();
       generation != terminal_grid_metrics_generation_) {
     terminal_grid_metrics_generation_ = generation;
-    // Cell metrics moved: force a terminal re-grid (rows/cols) and repaint. A font
-    // change does not move the panel rect, so drop the cached rect to make the
-    // resize guard in PrepareFrameOnce re-run ResizeTerminalToPanel off the new
-    // metrics; the extra full redraws cover the reflow.
     last_terminal_panel_rect_.reset();
     NoteLayoutInputsChanged();
     post_render_redraws_remaining_ = std::max(post_render_redraws_remaining_, 2);
@@ -420,7 +357,6 @@ void WorkspaceShell::ApplyTerminalFontPreferences() {
 
 namespace {
 
-// The part of a log layout that is pure geometry: the body and its text insets.
 WorkspaceShell::LogSurfaceLayout LogLayoutForBody(const SDL_FRect& body, float line_height) {
   WorkspaceShell::LogSurfaceLayout panel_layout;
   panel_layout.content_rect = body;
@@ -430,7 +366,7 @@ WorkspaceShell::LogSurfaceLayout LogLayoutForBody(const SDL_FRect& body, float l
   return panel_layout;
 }
 
-}  // namespace
+}
 
 SDL_FRect WorkspaceShell::ActiveTerminalBodyRect(const WorkspaceLayout& layout) const {
   const SDL_FRect body = BottomPanelContentRect(layout);
@@ -461,8 +397,6 @@ WorkspaceShell::LogSurfaceLayout WorkspaceShell::ComputeTerminalPaneLogLayout(
 WorkspaceShell::LogSurfaceLayout WorkspaceShell::ComputeBottomPanelLogLayout(
     const WorkspaceLayout& layout,
     std::size_t line_count) const {
-  // The terminal lays out per PANE: the active pane's slice of the body with its
-  // own scroll state. Output (and an empty Terminal panel) keep the whole body.
   if (BottomPanelShowsTerminal()) {
     if (const TerminalPaneState* pane = ActiveTerminalPane(); pane != nullptr) {
       return ComputeTerminalPaneLogLayout(ActiveTerminalBodyRect(layout), layout.bottom_panel.h,
@@ -513,8 +447,6 @@ int WorkspaceShell::BottomPanelScrollRow(std::size_t line_count, int visible_row
 }
 
 std::optional<TerminalLinkHit> WorkspaceShell::TerminalLinkAtPoint(float x, float y) const {
-  // The pane under the point, not the active one: a link in any pane of the tab
-  // hovers and resolves (VS Code's split terminals).
   const TerminalTabState* tab = context_.current_project_state.active_terminal_tab();
   const auto layout_state = CurrentWorkspaceLayout();
   if (tab == nullptr || !BottomPanelShowsTerminal() || !layout_state.has_value()) {
@@ -534,17 +466,6 @@ std::optional<TerminalLinkHit> WorkspaceShell::TerminalLinkAtPoint(float x, floa
       static_cast<std::size_t>(std::max(0, panel_layout.scroll.vertical_scroll));
   const std::size_t visible_rows =
       static_cast<std::size_t>(std::max(0, panel_layout.scroll.visible_rows));
-  // Hover cursor-kind resolution runs on every pointer move over the terminal. The
-  // render frame already copied this exact visible range into
-  // `visible_lines_snapshot` (keyed by first_row/max_rows/generation), so reuse it
-  // instead of re-snapshotting the visible lines per move (TD-2026-07-17A-027). Fall
-  // back to a fresh snapshot only when the cached range does not match (e.g. a hover
-  // arriving before the first terminal-panel render).
-  // The fallback is NOT rare: a mouse wheel tick moves `first_row` and the render
-  // that refreshes `visible_lines_snapshot` has not run yet, so every tick of a
-  // scroll takes it. A by-value SnapshotLineRange there allocates one vector per
-  // visible row per tick; the reusing overload into a main-thread scratch keeps
-  // the buffers.
   thread_local std::vector<terminal::TerminalLine> fallback_lines;
   const std::vector<terminal::TerminalLine>* lines_ptr = nullptr;
   if (terminal_tab->visible_lines_first_row == first_row &&
@@ -564,10 +485,6 @@ std::optional<TerminalLinkHit> WorkspaceShell::TerminalLinkAtPoint(float x, floa
     return std::nullopt;
   }
 
-  // A row the terminal wrapped onto continues past the snapshot's edge when the
-  // hit's logical line reaches that edge: snapshot a range widened by up to
-  // kMaxTerminalLinkWrapRows each way so the join, the URL scan and the OSC 8 run
-  // see the whole link, not the part on screen (TD-2026-10-29-425 item 4).
   std::size_t base_row = first_row;
   std::size_t hit_index = position->row - first_row;
   {
@@ -600,15 +517,10 @@ std::optional<TerminalLinkHit> WorkspaceShell::TerminalLinkAtPoint(float x, floa
   }
   const std::vector<terminal::TerminalLine>& link_lines = *lines_ptr;
   const terminal::TerminalLine& hit_line = link_lines[hit_index];
-  // An OSC 8 hyperlink is what the program said the text links to; it wins over
-  // anything the text looks like. A `file://` link for another machine (the
-  // session keeps those verbatim) has no local path to open.
   if (position->column < hit_line.cells.size() && hit_line.cells[position->column].extra != 0) {
     const auto id = hit_line.cells[position->column].extra;
     std::string uri = terminal_tab->session.LinkUri(id);
     if (!uri.empty() && (!uri.starts_with("file://") || uri.starts_with("file:///"))) {
-      // The span is the run of cells the program marked with this link, across
-      // a soft wrap: the run continues onto a wrapped row from its first cell.
       std::size_t begin_index = hit_index;
       std::size_t begin = position->column;
       while (true) {
@@ -652,9 +564,9 @@ std::optional<TerminalLinkHit> WorkspaceShell::TerminalLinkAtPoint(float x, floa
                                   TerminalColumnToByteOffset(hit_line, position->column);
   const auto hit = [&](TerminalTextLink link) {
     const auto [begin_index, begin_column] =
-        TerminalLogicalByteToCell(link_lines, joined, link.begin, /*exclusive_end=*/false);
+        TerminalLogicalByteToCell(link_lines, joined, link.begin, false);
     const auto [end_index, end_column] =
-        TerminalLogicalByteToCell(link_lines, joined, link.end, /*exclusive_end=*/true);
+        TerminalLogicalByteToCell(link_lines, joined, link.end, true);
     return TerminalLinkHit{.target = std::move(link.target),
                            .span = {.row = base_row + begin_index,
                                     .begin_column = begin_column,
@@ -665,8 +577,6 @@ std::optional<TerminalLinkHit> WorkspaceShell::TerminalLinkAtPoint(float x, floa
   if (auto url = TerminalUrlAtColumn(line_text, target_byte); url.has_value()) {
     return hit(std::move(*url));
   }
-  // This runs on every pointer move over the terminal, so the existence check
-  // (a stat) is memoized on the last path it asked about.
   thread_local std::filesystem::path last_probe;
   thread_local bool last_probe_exists = false;
   std::optional<TerminalTextLink> file = TerminalFileReferenceAtByte(
@@ -692,14 +602,6 @@ bool WorkspaceShell::OpenExternalUrl(std::string_view url) {
   if (external_url_opener_) {
     return external_url_opener_(url);
   }
-  // Validate the URL cheaply on the shell thread so a rejected scheme still reports
-  // synchronously, then dispatch the actual xdg-open subprocess to the background
-  // executor — the same treatment the file-manager reveal got in TD-2026-07-17-061,
-  // for the same reason. This used to be SDL_OpenURL, which forked and returned at
-  // once; routing it through the launcher seam made it a captured, waited-on child
-  // with a 10s timeout, so a $BROWSER fallback that does not background its handler
-  // would freeze the editor for ten seconds per clicked link and then report failure
-  // for a browser that opened fine.
   if (!platform::IsOpenableExternalUrl(url)) {
     return false;
   }
@@ -715,12 +617,6 @@ bool WorkspaceShell::RevealPathInFileExplorer(const std::filesystem::path& direc
   if (file_manager_opener_) {
     return file_manager_opener_(directory);
   }
-  // Validate the path cheaply on the shell thread so an obviously-bad reveal still
-  // reports synchronously, then dispatch the actual xdg-open subprocess to the
-  // background executor: xdg-open normally forks and returns at once, but a wedged
-  // file manager would otherwise park the UI thread for the whole timeout
-  // (TD-2026-07-17-061). A rare post-validation launch failure is dropped rather
-  // than surfaced — a toast would need a main-thread hop for a marginal case.
   std::error_code error;
   if (!std::filesystem::exists(directory, error) || error) {
     return false;
@@ -739,13 +635,9 @@ void WorkspaceShell::SetBottomPanelScrollRow(int scroll_row,
     if (auto* terminal_tab = ActiveTerminalPane(); terminal_tab != nullptr) {
       terminal_tab->scroll_row = clamped_scroll;
       terminal_tab->follow_tail = clamped_scroll >= max_scroll;
-      // At the top of a host terminal's history: ask for the page before it, as
-      // VS Code's terminal reveals scrollback as you scroll. A no-op locally.
       if (clamped_scroll == 0 && max_scroll > 0) {
         terminal_tab->session.RequestOlderHostHistory();
       }
-      // And a gap rule on screen asks for the lines it withheld, so scrolling over
-      // one shows (and copies) the text rather than the rule. A no-op locally.
       terminal_tab->session.RequestHostGapFill(static_cast<std::size_t>(clamped_scroll),
                                                static_cast<std::size_t>(std::max(0, visible_rows)));
     }
@@ -763,17 +655,9 @@ void WorkspaceShell::SetBottomPanelScrollRow(int scroll_row,
   }
 }
 
-// Samples every pane of the terminal tab on screen once per prepared frame -- the
-// line count, the clamped scroll (persisted, as paint used to do mid-frame), the
-// visible lines and the cursor -- so every render of the frame paints the same
-// terminal. The sessions are written by their PTY reader threads; paint reading
-// them live let a partial frame's clips, and the QA redraw verifier's reference,
-// see different output and a different caret.
 void WorkspaceShell::PrepareTerminalPanesForFrame(TerminalTabState& tab,
                                                   const TerminalPaneRectsLayout& rects,
                                                   float panel_height) {
-  // Before the layouts read scroll_row, so a scrolled-up view tracks the same
-  // content instead of jumping forward by a trimmed batch.
   RebaseActiveTerminalRowSpace();
   for (std::size_t pane_index = 0; pane_index < tab.panes.size() && pane_index < rects.panes.size();
        ++pane_index) {
@@ -797,21 +681,10 @@ void WorkspaceShell::PrepareTerminalPanesForFrame(TerminalTabState& tab,
         pane->visible_lines_first_row == first_row && pane->visible_lines_max_rows == visible_rows;
     const std::uint64_t previous_generation =
         same_visible_range ? pane->visible_lines_snapshot.generation : 0;
-    // Paint reads this snapshot, and its rows are derived units
-    // (PrepareTerminalGridFrame) keyed on these content keys: the frame that takes
-    // a new snapshot repaints the rows whose cells changed, whatever it was drawn
-    // for. Output can land after the wake that announced it was handled (a caret
-    // blink repainted only the caret over vim's changed rows -- CI QA,
-    // terminal-programs). This repainted the whole pane: a keystroke's echo is
-    // one row.
-    // The caret with the lines it is painted over, under one lock (see the API).
     if (pane->session.SnapshotLineRangeIfChanged(first_row, visible_rows, previous_generation,
                                                  &pane->visible_lines_snapshot, &pane->frame_cursor)) {
       KeyTerminalGridRows(pane->visible_lines_snapshot.lines, pane->visible_row_keys);
     }
-    // A caret on a wide glyph's lead cell covers both its cells: one cell wide, its
-    // blink damaged half the glyph it draws over, and the other half kept the
-    // other phase in partial frames (soak bfa3565938ee, clip-discipline D3).
     {
       terminal::TerminalCursorSnapshot& cursor = pane->frame_cursor;
       const auto& lines = pane->visible_lines_snapshot.lines;
@@ -823,17 +696,12 @@ void WorkspaceShell::PrepareTerminalPanesForFrame(TerminalTabState& tab,
     pane->visible_lines_max_rows = visible_rows;
     pane->frame_line_count = line_count;
     pane->frame_reverse_video = pane->session.screen_reverse_video();
-    // The selection, active pane only (the others have none: switching panes
-    // clears it), and how strongly it paints. Each row's unit folds its slice.
     std::optional<TerminalSelectionBounds> selection;
     if (pane_index == tab.active_pane) {
       selection = NormalizeTerminalSelection(pane->selection_anchor, pane->selection_head);
     }
     pane->frame_selection = selection;
     pane->frame_selection_live = context_.current_project_state.surface.focus == FocusTarget::Panel;
-    // (The caret is a unit of the pane's grid, laid out from `frame_cursor` with the
-    // rows: a cursor that hid or moved without a row changing -- DECTCEM, a bare
-    // cursor move -- repaints where it was and is: PrepareTerminalGridFrame.)
   }
 }
 
@@ -842,17 +710,11 @@ void WorkspaceShell::RebaseActiveTerminalRowSpace() {
   if (terminal_tab == nullptr) {
     return;
   }
-  // Into or out of the alternate screen: the rows the selection names are now a
-  // different buffer's (vim's screen, or the shell's transcript again).
   if (const bool alternate = terminal_tab->session.using_alternate_screen();
       alternate != terminal_tab->observed_alternate_screen) {
     terminal_tab->observed_alternate_screen = alternate;
     ClearTerminalSelection();
   }
-  // A gap filled in the middle of a host terminal's scrollback moves every row
-  // below it down by the lines it inserted (and nothing above it), so the view and
-  // the selection stay on the text they were on. Applied first, in the row space
-  // last observed: a shift names an absolute row, which trims do not move.
   if (const std::uint64_t sequence = terminal_tab->session.RowShiftSequence();
       sequence != terminal_tab->observed_row_shift_sequence) {
     std::vector<terminal::TerminalHostHistory::RowShift> shifts;
@@ -874,8 +736,6 @@ void WorkspaceShell::RebaseActiveTerminalRowSpace() {
         }
       }
     }
-    // Further behind than the log: nothing to rebase by, so the view keeps its
-    // row numbers and the next frame clamps them.
     terminal_tab->observed_row_shift_sequence = sequence;
   }
   const std::uint64_t total = terminal_tab->session.ScrollbackTrimTotal();
@@ -883,9 +743,6 @@ void WorkspaceShell::RebaseActiveTerminalRowSpace() {
     return;
   }
   if (total < terminal_tab->observed_scrollback_trim_total) {
-    // Older history was PREPENDED (a host terminal's term/scrollback page): every
-    // row this pane names moved down by the page, and the view stays on the same
-    // text rather than jumping to the new top.
     const std::uint64_t added = terminal_tab->observed_scrollback_trim_total - total;
     terminal_tab->observed_scrollback_trim_total = total;
     terminal_tab->scroll_row += static_cast<int>(added);
@@ -905,8 +762,6 @@ void WorkspaceShell::RebaseActiveTerminalRowSpace() {
   const auto drop_rows = [delta](std::size_t row) -> std::size_t {
     return static_cast<std::uint64_t>(row) > delta ? row - static_cast<std::size_t>(delta) : 0;
   };
-  // scroll_row is a signed absolute row; clamp at 0 so a fully-trimmed scroll position
-  // snaps to the new top rather than jumping forward by the trim batch.
   if (terminal_tab->scroll_row > 0) {
     terminal_tab->scroll_row =
         static_cast<std::uint64_t>(terminal_tab->scroll_row) > delta
@@ -938,8 +793,6 @@ void WorkspaceShell::AppendTerminalPendingInput(std::string_view input) {
   if (terminal_tab == nullptr) {
     return;
   }
-  // TD-2026-07-17A-068: pending_input feeds only copy-last-command prompt stripping,
-  // never the PTY, so bound its growth across repeated sends/pastes before a newline.
   std::string& pending = terminal_tab->pending_input;
   if (pending.size() >= TerminalPaneState::kMaxPendingInputBytes) {
     terminal_tab->pending_input_truncated = true;
@@ -950,8 +803,6 @@ void WorkspaceShell::AppendTerminalPendingInput(std::string_view input) {
     pending.append(input);
     return;
   }
-  // Append a UTF-8-safe prefix that fits the budget, then flag truncation so submit
-  // skips the (now partial, unreliable) prompt-prefix match.
   pending.append(input.substr(0, util::Utf8ByteBudgetPrefixLength(input, remaining)));
   terminal_tab->pending_input_truncated = true;
 }
@@ -979,8 +830,6 @@ void WorkspaceShell::SubmitTerminalPendingInput() {
   terminal_tab->last_command_invocation = captured.text;
   terminal_tab->last_command_prompt_prefix.clear();
   terminal_tab->has_last_command = !captured.text.empty();
-  // A truncated capture is only a partial suffix of the real command, so the
-  // ends_with match would strip the wrong prefix — skip it (TD-2026-07-17A-068).
   if (!terminal_tab->pending_input_truncated &&
       !terminal_tab->pending_input.empty() &&
       captured.text.size() >= terminal_tab->pending_input.size() &&
@@ -1035,8 +884,6 @@ WorkspaceShell::TerminalViewportPositionForPoint(int x, int y) const {
     return std::nullopt;
   }
   const WorkspaceLayout layout = *layout_state;
-  // Mouse reports are in the ACTIVE pane's grid; a point in another pane is
-  // outside it (the press that lands there activates that pane first).
   const SDL_FRect panel_content = ActiveTerminalBodyRect(layout);
   if (!Contains(panel_content, x, y)) {
     return std::nullopt;
@@ -1064,4 +911,4 @@ WorkspaceShell::TerminalViewportPositionForPoint(int x, int y) const {
   };
 }
 
-}  // namespace microide::workspace
+}

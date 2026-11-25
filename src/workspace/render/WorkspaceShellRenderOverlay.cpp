@@ -9,10 +9,6 @@ namespace microide::workspace {
 
 using namespace detail;
 
-// Pure-draw overlay surface (TD-2026-07-17-084): every label is precomposed and
-// pre-truncated by RenderViewModelBuilder::BuildOverlaySurfaceInto, and the list
-// geometry (overlay rect, scrollable list layout, clamped scroll) arrives in the
-// view model. This TU reads no project state and materializes no strings.
 void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
                                           const WorkspaceLayout& layout,
                                           const OverlaySurfaceViewModel& overlay_vm) {
@@ -20,17 +16,12 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
     return;
   }
 
-  // Local file search/replace renders as a compact, non-modal floating widget
-  // (no backdrop, no match list) — handled entirely by RenderFindWidget.
   if (overlay_vm.mode == OverlayMode::BufferSearch ||
       overlay_vm.mode == OverlayMode::BufferReplace) {
     RenderFindWidget(renderer, overlay_vm.find_widget);
     return;
   }
 
-  // The completion popup anchors to the caret and stays compact: it must not dim
-  // the editor (that hides the code being completed) or carry a title bar. Code
-  // actions are a centered, titled menu like the other pickers.
   if (!overlay_vm.caret_anchored) {
     DrawFilledRect(renderer, layout.overlay_anchor, theme_.overlay_backdrop);
   }
@@ -79,8 +70,6 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
   }
   const ScrollableListLayout& list_layout = overlay_vm.list_layout;
   if (!overlay_vm.error_line.empty()) {
-    // Completion: caret-anchored popup shows its error on the (title-less) top
-    // row in the deleted tint. Code actions: muted status in the list area.
     if (overlay_vm.error_at_title_row) {
       DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
                  theme_.diff_deleted, theme_.overlay_background, overlay_vm.error_line);
@@ -96,14 +85,11 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
                overlay_vm.empty_label);
   }
 
-  // Rows: the visible window only, labels already truncated to their columns.
   for (std::size_t row = 0; row < overlay_vm.rows.size(); ++row) {
     const OverlayListRowViewModel& item = overlay_vm.rows[row];
     const bool selected =
         overlay_vm.scroll_row + static_cast<int>(row) == overlay_vm.selected_row;
     SDL_FRect row_rect = ScrollableListRowRect(list_layout, static_cast<int>(row));
-    // Keyboard selection keeps the accent strip; the pointer hovering a different
-    // row still lifts that row's background so the click target is obvious.
     const bool emphasized =
         selected || (row < frame_state_.overlay_pointer.row_hovered.size() && frame_state_.overlay_pointer.row_hovered[row]);
     DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_raised, emphasized,
@@ -139,18 +125,15 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
 void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
                                       const OverlayFindWidgetViewModel& fw_vm) {
   const FindWidgetLayout& fw = fw_vm.fw;
-  // Not laid out: its pane is too short to hold it (ComputeBufferFindWidgetLayout).
   if (fw.widget.w <= 0.0f || fw.widget.h <= 0.0f) {
     return;
   }
 
-  // Floating card only — no backdrop, so the editor underneath stays visible and
-  // editable while the widget floats above it.
   render::DrawCardFrame(renderer, theme_, fw.widget, render::CardStyle::Overlay);
 
   const auto draw_field = [&](const SDL_FRect& field, bool focused, std::string_view text) {
     if (field.w <= 0.0f || field.h <= 0.0f) {
-      return;  // not laid out: the card had no room for it (ComputeFindWidgetLayout)
+      return;
     }
     DrawTextFieldFrame(renderer, theme_, field, focused);
     const float text_y = field.y + std::floor((field.h - text_renderer_.LineHeight()) * 0.5f);
@@ -163,12 +146,9 @@ void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
   const PreparedFrameState::OverlayPointerPaint& pointer = frame_state_.overlay_pointer;
   const auto icon_button = [&](const SDL_FRect& rect, Icon icon, bool enabled, bool pointer_over) {
     if (rect.w <= 0.0f) {
-      return;  // not laid out: the card had no room for it (ComputeFindWidgetLayout)
+      return;
     }
     const ButtonTone tone = icon == Icon::Close ? ButtonTone::Destructive : ButtonTone::Neutral;
-    // Lift under the pointer like every other button in the shell; the find
-    // widget's five buttons were the last that stayed flat while the cursor over
-    // them already turned into a hand.
     const ButtonColors colors = ResolveButtonColors(
         theme_, tone,
         ButtonVisualState{.enabled = enabled, .hovered = enabled && pointer_over});
@@ -176,10 +156,10 @@ void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
     OutlineRect(renderer, rect, colors.border);
     switch (icon) {
       case Icon::Prev:
-        DrawArrowGlyph(renderer, rect, /*up=*/true, colors.text);
+        DrawArrowGlyph(renderer, rect, true, colors.text);
         break;
       case Icon::Next:
-        DrawArrowGlyph(renderer, rect, /*up=*/false, colors.text);
+        DrawArrowGlyph(renderer, rect, false, colors.text);
         break;
       case Icon::Close:
         DrawCloseGlyph(renderer, rect, colors.text);
@@ -189,11 +169,9 @@ void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
 
   draw_field(fw.search_field, fw_vm.search_focused, fw_vm.search_display_text);
 
-  // Mode toggles: highlighted (Accent tone) when active, neutral when off.
-  // Mirrors the project-search "Rx" affordance.
   for (std::size_t index = 0; index < fw.toggle_count; ++index) {
     if (fw.toggle_buttons[index].w <= 0.0f) {
-      continue;  // no room for it in this card
+      continue;
     }
     DrawButtonCentered(text_renderer_, renderer, theme_, fw.toggle_buttons[index],
                        fw_vm.toggles[index].label,
@@ -226,4 +204,4 @@ void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
   }
 }
 
-}  // namespace microide::workspace
+}

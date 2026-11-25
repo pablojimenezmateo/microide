@@ -20,27 +20,6 @@ std::string Format(std::string_view src, std::string_view indent = "  ") {
   return r.text;
 }
 
-// Property: reformatting is semantics-preserving.
-//
-// The tests above pin the intended OUTPUT for hand-written inputs, which is the
-// right shape for "keys sort naturally" but cannot say that reformatting never
-// changes what a document MEANS. Everything the formatter does by hand — copying
-// scalar tokens byte-for-byte, re-quoting nothing, sorting members, rewriting
-// whitespace — is a chance to drop a member, mangle an escape, or alter a number,
-// and any of those still produces well-formed JSON that the existing assertions
-// would not notice.
-//
-// So generate documents that exercise the parts most likely to break (escapes,
-// non-ASCII, duplicate and empty keys, numeric forms, deep nesting, whitespace
-// noise) and require three things of every one:
-//   * it formats,
-//   * the formatted text parses to an EQUIVALENT value (members compared as a
-//     multiset, since sorting them is the whole point), and
-//   * formatting is idempotent.
-
-// Order-insensitive structural equality. `JsonObject::operator==` compares its
-// entry vector in order, which a key-sorting formatter is expected to change, so
-// the comparison has to be by content: same multiset of (key, value) pairs.
 bool JsonEquivalent(const microide::util::JsonValue& a, const microide::util::JsonValue& b);
 
 bool JsonEntriesEquivalent(const microide::util::JsonObject& a,
@@ -96,8 +75,6 @@ struct JsonGenerator {
     return static_cast<std::size_t>(seed >> 33);
   }
 
-  // Whitespace between tokens is meaningless to JSON and is exactly what the
-  // formatter rewrites, so vary it.
   std::string Gap() {
     switch (Next() % 5) {
       case 0: return "";
@@ -154,8 +131,6 @@ struct JsonGenerator {
         std::string out = "{";
         for (std::size_t i = 0; i < count; ++i) {
           if (i > 0) out += "," + Gap();
-          // Keys deliberately collide in case, in natural-sort order, and
-          // occasionally exactly (a duplicate key is legal JSON).
           out += Gap() + String() + Gap() + ":" + Gap() + Value(depth - 1);
         }
         return out + Gap() + "}";
@@ -171,8 +146,6 @@ void TestFormattingPreservesSemantics() {
     const std::string source = generator.Gap() + generator.Value(4) + generator.Gap();
     const std::optional<microide::util::JsonValue> parsed = microide::util::ParseJson(source);
     if (!parsed.has_value()) {
-      // The generator only emits valid documents; a rejection here would mean the
-      // two parsers disagree, which is itself worth failing on.
       Expect(false, "the generator must only produce documents ParseJson accepts");
       continue;
     }
@@ -217,14 +190,12 @@ void TestEmptyContainersStayInline() {
 }
 
 void TestKeysSortedHumanAlphabetical() {
-  // Case-insensitive ordering: Banana between apple and cherry, not before both.
   const std::string out = Format(R"({"cherry":1,"Banana":2,"apple":3})");
   Expect(out == "{\n  \"apple\": 3,\n  \"Banana\": 2,\n  \"cherry\": 1\n}",
          "keys sort case-insensitively (apple, Banana, cherry)");
 }
 
 void TestKeysSortedNaturally() {
-  // Natural numeric ordering: item2 before item10.
   const std::string out = Format(R"({"item10":0,"item2":0,"item1":0})");
   Expect(out == "{\n  \"item1\": 0,\n  \"item2\": 0,\n  \"item10\": 0\n}",
          "digit runs sort by value, not lexically");
@@ -247,14 +218,11 @@ void TestSubkeysSortedRecursively() {
 }
 
 void TestArrayOrderPreserved() {
-  // Arrays are ordered data — never reordered, only reindented.
   const std::string out = Format(R"([3,1,2])");
   Expect(out == "[\n  3,\n  1,\n  2\n]", "array element order is preserved");
 }
 
 void TestScalarTokensCopiedVerbatim() {
-  // Numbers keep their exact literal form (no float/int normalization) and
-  // strings keep their escapes.
   const std::string out =
       Format(R"({"n":1.0,"big":123456789012345678901234567890,"e":2e10,"s":"a\t\"bé"})");
   Expect(out.find("\"n\": 1.0") != std::string::npos, "1.0 stays 1.0 (not 1)");
@@ -312,7 +280,7 @@ void TestDeeplyNestedRejected() {
   Expect(!r.ok, "pathological nesting rejects rather than overflowing the stack");
 }
 
-}  // namespace
+}
 
 void RegisterJsonFormatTests(std::vector<TestCase>& tests) {
   AddTest(tests, "JsonFormat/NestedObjectReindents", TestNestedObjectReindents);
@@ -331,4 +299,4 @@ void RegisterJsonFormatTests(std::vector<TestCase>& tests) {
   AddTest(tests, "JsonFormat/FormattingPreservesSemantics", TestFormattingPreservesSemantics);
 }
 
-}  // namespace microide::tests
+}

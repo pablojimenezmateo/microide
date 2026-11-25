@@ -24,32 +24,20 @@ namespace microide::workspace {
 class KeyInputCoordinator {
  public:
   struct Operations {
-    // The shell's damage generation (WorkspaceShell::MarkDamage).
     std::function<DamageMark()> damage_generation;
     std::function<void()> request_prompt_redraw;
     std::function<void()> request_window_redraw;
     std::function<void()> request_overlay_redraw;
     std::function<void()> request_sidebar_redraw;
     std::function<void()> request_bottom_panel_content_redraw;
-    // Bottom-panel scroll for the keyboard. The Output channel and the plugin
-    // surface preview are focusable and scrollable but had no key handling at all,
-    // so arrowing in a focused panel scrolled the editor behind it instead. Both
-    // route through PanelMouseCoordinator::ScrollPanelRows, the same clamped
-    // scroll model the wheel uses; the span only sizes the Home/End jump.
     std::function<void(int)> scroll_bottom_panel_rows;
     std::function<int()> bottom_panel_scroll_span_rows;
-    // Rows the bottom panel shows at once; a terminal Shift+PageUp/PageDown pages
-    // by this rather than the list widgets' fixed eight-row step.
     std::function<int()> bottom_panel_visible_rows;
-    // A frame owed: the editor, compare and merge surfaces derive their damage
-    // (RequestPreparedFrame); a request names no rect.
     std::function<void()> request_frame;
     std::function<bool(SDL_Keycode, SDL_Keymod)> text_input_composition_consumes_key;
     std::function<TextInputSurface()> current_text_input_surface;
     std::function<bool(const SDL_KeyboardEvent&, SDL_Keymod)> text_input_handle_single_line_key_down;
     std::function<bool(const SDL_KeyboardEvent&, SDL_Keymod)> text_input_handle_terminal_key_down;
-    // Arms / disarms TextInputState::swallow_next_text_input: a printable key
-    // that begins a field edit must not also type into it.
     std::function<void(bool)> set_swallow_next_text_input;
     std::function<void()> confirm_dirty_prompt;
     std::function<char(SDL_Keycode, SDL_Keymod)> keycode_to_ascii;
@@ -57,11 +45,6 @@ class KeyInputCoordinator {
     std::function<int(int, int)> next_enabled_tree_context_menu_item_index;
     std::function<bool(std::size_t)> execute_tree_context_menu_item;
     std::function<void()> close_menu_bar;
-    // The menu-bar overflow popup (the chevron's list of menus that did not fit
-    // in compact layout). It is the one popup in the app the keyboard could not
-    // reach: nothing in the key dispatch chain looked at `overflow_popup_open`,
-    // so while it was up every key fell through to the surface underneath — Esc
-    // included (TD-2026-09-19-296).
     std::function<std::size_t()> menu_overflow_item_count;
     std::function<bool(std::size_t)> open_menu_overflow_item;
     std::function<void()> close_menu_overflow_popup;
@@ -82,65 +65,41 @@ class KeyInputCoordinator {
     std::function<void(bool)> dismiss_overlay;
     std::function<bool()> settings_overlay_visible;
     std::function<void()> close_settings_overlay;
-    // Settings two-pane keyboard navigation. Panes are encoded as ints to keep
-    // this header free of the SettingsOverlayService enum (0=Filter,1=Categories,2=Values).
     std::function<bool()> settings_overlay_is_settings_mode;
     std::function<int()> settings_focused_pane;
     std::function<void(int)> settings_focus_pane;
     std::function<void(int)> settings_cycle_focus;
     std::function<void(int)> settings_move_category;
     std::function<void(int)> settings_move_row;
-    // Item count of a pane, used to size the Home/End jump so the overlay lists
-    // answer the same navigation contract as every other list in the shell.
     std::function<std::size_t(int)> settings_pane_item_count;
-    // Scrolls the row list by whole entries, clamped against the live layout.
-    // Help/About has no selection to move, so this is how it navigates.
     std::function<void(int)> settings_scroll_rows;
     std::function<void(int)> settings_step_selected;
     std::function<void()> settings_toggle_or_activate_selected;
     std::function<void()> settings_reset_selected;
-    // Inline String-value editing in the Settings overlay.
     std::function<bool()> settings_value_edit_active;
     std::function<void()> settings_commit_value_edit;
     std::function<void()> settings_cancel_value_edit;
-    // Font-picker specialization of value editing: Up/Down move the dropdown
-    // highlight; typing (any other key) re-filters and resets the highlight.
     std::function<bool()> settings_value_edit_is_picker;
     std::function<void(int)> settings_picker_move;
     std::function<void()> settings_picker_reset_highlight;
     std::function<void()> close_sidebar;
     std::function<SidebarMode()> active_sidebar_mode;
     std::function<void()> activate_overlay_selection;
-    // The quick pick's selection moved: the kind previews it (a colour theme).
     std::function<void()> quick_pick_selection_changed;
-    // Ctrl+Tab: open the recent-editors pick, or step its selection (`back`).
     std::function<bool(bool back)> step_recent_editors;
-    // Shift+F10 / the Menu key in a sidebar list (SidebarMouseCoordinator::
-    // OpenSelectionContextMenu).
     std::function<bool()> open_sidebar_selection_context_menu;
-    // Whether an action can run now: of several bindings on one chord, the first
-    // enabled one dispatches (FindKeybinding).
     std::function<bool(ActionId)> action_enabled;
     std::function<void()> complete_command_palette_query;
     std::function<void(int)> move_compare_picker_selection;
     std::function<std::optional<WorkspaceLayout>()> current_workspace_layout;
     std::function<SDL_FRect(const SDL_FRect&)> compute_overlay_rect;
     std::function<void(const SDL_FRect&)> reveal_overlay_selection;
-    // Keeps the debug pane's selection on screen after a move or an expand, like
-    // every other list's reveal.
     std::function<void()> reveal_debug_pane_selection;
-    // Focuses the session/thread/frame a Call Stack row names, running the same
-    // path a click on that row does (minus handing focus to the editor).
     std::function<void(std::size_t)> focus_debug_call_stack_row;
-    // Enter (navigate) / Space (toggle) on a Breakpoints row, running the same
-    // path the mouse's single/double click does.
     std::function<void(std::size_t, bool)> activate_debug_breakpoint_row;
     std::function<void(int)> move_buffer_search_selection;
     std::function<void(BufferFindToggle)> toggle_buffer_search_option;
     std::function<void(int)> move_project_search_selection;
-    // Alt+R / Alt+C / Alt+H in the search panel — the same three toggles the
-    // panel's buttons drive (VSCode binds the equivalent chords in its search
-    // box). Each re-runs the search itself.
     std::function<void()> toggle_project_search_pattern_mode;
     std::function<void()> cycle_project_search_case_mode;
     std::function<void()> toggle_project_search_hidden_files;
@@ -150,20 +109,16 @@ class KeyInputCoordinator {
     std::function<void(ProjectSearchEditField)> begin_project_search_edit;
     std::function<void()> commit_project_search_edit;
     std::function<void()> cancel_project_search_edit;
-    // Asks to replace every project-search match (a confirm prompt runs it).
     std::function<void()> replace_all_project_search_matches;
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<editor::TextViewport*()> active_editor_viewport;
     std::function<void()> restore_previous_sidebar;
     std::function<void()> seed_buffer_search_from_project_search;
     std::function<void(int)> move_git_sidebar_selection;
-    // Typing in the git list (SidebarCoordinator::TypeNavigateGit).
     std::function<bool(char, std::uint64_t)> type_navigate_git_sidebar;
     std::function<bool(GitSidebarActionId, std::size_t)> dispatch_git_sidebar_action;
     std::function<void()> close_commit_workflow;
     std::function<bool()> request_commit_workflow_commit;
-    // Move keyboard focus between the commit subject and body fields, then refresh the
-    // commit pre-checks/draft (this is the coarse refresh point, not every keystroke).
     std::function<void(CommitWorkflowFocusField)> set_commit_workflow_focus_field;
     std::function<bool(std::string_view)> commit_body_write_clipboard_text;
     std::function<std::optional<std::string>()> commit_body_read_clipboard_text;
@@ -177,8 +132,6 @@ class KeyInputCoordinator {
     std::function<void(int)> move_plugin_sidebar_selection;
     std::function<bool()> open_selected_plugin_sidebar_item;
     std::function<bool()> toggle_plugin_sidebar_item;
-    // Delete on an item-surface row: the view's row-end action (the Host view's
-    // End); false, leaving the key unhandled, where the view declares none.
     std::function<bool()> end_selected_plugin_sidebar_item;
     std::function<bool()> refresh_plugin_sidebar;
     std::function<void()> reveal_selected_tree_sidebar_line;
@@ -203,7 +156,6 @@ class KeyInputCoordinator {
     std::function<void()> reveal_active_compare_selection;
     std::function<bool()> accept_inline_completion;
     std::function<void()> dismiss_inline_completion;
-    // A key reached the editor while the completion list is up.
     std::function<void()> follow_completion_caret;
     std::function<bool(bool)> try_snippet_tab_in_editor;
     std::function<bool()> try_snippet_escape_in_editor;
@@ -216,15 +168,10 @@ class KeyInputCoordinator {
     std::function<void(int)> move_merge_selection;
     std::function<void(compare::MergeChoice)> apply_merge_choice;
     std::function<void()> open_merge_result_file;
-    // Debug Variables panel (Phase 4) keyboard ops: expand/collapse a tree row and
-    // enter/commit/cancel an inline value edit (selection movement is pure state,
-    // handled directly on the model).
     std::function<void(std::size_t)> toggle_debug_variable_row;
     std::function<void(std::size_t)> begin_debug_variable_edit;
     std::function<void()> commit_debug_variable_edit;
     std::function<void()> cancel_debug_variable_edit;
-    // Watch panel (Phase 6): tree nav/expand + inline child setVariable edit, plus
-    // add/edit/remove of the watch expression strings (add/edit route to a prompt).
     std::function<void(std::size_t)> toggle_debug_watch_row;
     std::function<void(std::size_t)> begin_debug_watch_edit;
     std::function<void()> commit_debug_watch_edit;
@@ -240,17 +187,8 @@ class KeyInputCoordinator {
                       NotificationService& notifications,
                       Operations operations);
 
-  // Dispatches one key press. A printable key that a surface consumed AND that
-  // moved the keyboard to another text surface (the unsaved prompt's D landing
-  // back in an editor, the search view's `/` opening its query field) arms
-  // TextInputState::swallow_next_text_input: SDL's TEXT_INPUT for the same press
-  // follows, and would type the accelerator into wherever the keyboard went.
   bool HandleKeyDown(const SDL_KeyboardEvent& event);
 
-  // Test seam for the keybinding reachability matrix: the binding the last key
-  // dispatched (null when it dispatched none; points into the resolved list, valid
-  // until bindings are re-resolved), and a record-only mode in which dispatch is
-  // recorded but nothing runs, so one shell can be pressed with every chord.
   struct DispatchProbe {
     const ResolvedKeybinding* last = nullptr;
     bool record_only = false;
@@ -273,19 +211,9 @@ class KeyInputCoordinator {
   bool DispatchResolvedKeybinding(const ResolvedKeybinding& binding, ActionSource source);
   bool HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleOverlayKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
-  // Match navigation + Alt+R regex toggle, shared by the find and
-  // find-and-replace widgets (see the definition for why it is factored out).
   bool HandleSharedBufferSearchKey(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
-  // Clamped selection move + reveal for the overlay lists whose selection is a plain
-  // index into a match vector (command palette, launch picker, completion, code
-  // actions). The pickers with extra reveal side effects keep their own helpers.
   void MoveOverlayListSelection(std::size_t& selected_index, std::size_t item_count, int delta);
-  // Requests a redraw only when the key's handler requested none itself: damage
-  // is measured from the mark HandleKeyDown takes on entry, so damage queued
-  // before the key (a focus change, a background tick) does not stand in for it.
-  // A member rather than a local lambda so the key handlers that live in their own
-  // translation units (settings, sidebar) coalesce redraws the same way.
   template <typename Fn>
   void EnsureRedraw(Fn&& request_redraw) {
     if (operations_.damage_generation() == key_damage_mark_) {
@@ -303,9 +231,6 @@ class KeyInputCoordinator {
   bool HandleDebugCallStackKeyDown(const SDL_KeyboardEvent& event);
   bool HandleDebugBreakpointsKeyDown(const SDL_KeyboardEvent& event);
   bool HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
-  // Keys while the notification stack holds keyboard focus (false at once when it
-  // does not). Returns true when the key was the stack's; any other key gives
-  // focus back and falls through.
   bool HandleNotificationFocusKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
 
   ProjectWorkspaceState& state_;
@@ -317,4 +242,4 @@ class KeyInputCoordinator {
   DamageMark key_damage_mark_ = 0;
 };
 
-}  // namespace microide::workspace
+}

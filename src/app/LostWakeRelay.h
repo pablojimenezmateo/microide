@@ -10,25 +10,6 @@
 
 namespace microide::app {
 
-// Re-delivers a cross-thread wake that SDL lost (TD-2026-11-07-433).
-//
-// SDL 3.4's SDL_WaitEventTimeout_Device checks the event queue, THEN publishes the
-// window its backend may wake (`wakeup_window`, an atomic -- the lock older SDL held
-// across both is gone), then blocks; there is no re-check in between. An
-// SDL_PushEvent from another thread that lands in that window enqueues its event
-// and finds no window to wake, so the main thread blocks with the event already
-// queued -- for good, when its wait has no timeout. Seen as the control channel
-// going silent on Wayland under load: the main thread in poll(display fd, -1), the
-// control thread alive, the command queued.
-//
-// The relay closes it without costing an idle wake. The main loop brackets each
-// blocking wait with EnterBlockingWait/LeaveBlockingWait; every pushed wake calls
-// NotePush. A push that lands while the main loop is blocked arms the relay, which
-// looks again `delay` later: if the loop is STILL blocked with a push newer than
-// its wait, that push's wake was lost (or is unusually slow) and the relay calls
-// `nudge` -- one more pushed event, whose wake does go through, because by then the
-// waiting thread has published its window. A spurious nudge is one no-op event.
-// With nothing pushed, the relay thread sleeps on its condition variable.
 class LostWakeRelay {
  public:
   using Nudge = std::function<void()>;
@@ -39,18 +20,12 @@ class LostWakeRelay {
   LostWakeRelay(const LostWakeRelay&) = delete;
   LostWakeRelay& operator=(const LostWakeRelay&) = delete;
 
-  // Any thread, AFTER the wake's event is enqueued.
   void NotePush();
-  // The main loop, immediately before and after a blocking SDL wait.
   void EnterBlockingWait();
   void LeaveBlockingWait();
 
-  // Diagnostics and tests: how many nudges the relay has sent.
   std::uint64_t nudges() const { return nudges_.load(std::memory_order_relaxed); }
-  // Diagnostics: how many wakes have been pushed (NotePush) so far.
   std::uint64_t pushes() const { return pushes_.load(std::memory_order_relaxed); }
-  // Diagnostics: when the first wake pushed during the current (or last) blocking
-  // wait was pushed, in steady-clock milliseconds; 0 when none was.
   std::uint64_t first_push_in_wait_ms() const { return first_push_in_wait_ms_.load(std::memory_order_relaxed); }
 
  private:
@@ -71,4 +46,4 @@ class LostWakeRelay {
   std::thread thread_;
 };
 
-}  // namespace microide::app
+}

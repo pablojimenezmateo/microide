@@ -76,9 +76,6 @@ void TestRemoteProjectOpensAMirrorOverSsh() {
              std::string(remote::RemoteHostSession::StateName(project.session().status().state)); });
 }
 
-// MICROIDE_BENCH_REMOTE=1: open this repository's src/ and tests/ as a remote
-// project through the fake host and report how long the first full sync takes.
-// A measurement, not a gate (no time assertions in the suite).
 void TestRemoteProjectBenchFirstSync() {
   if (std::getenv("MICROIDE_BENCH_REMOTE") == nullptr) {
     return;
@@ -92,7 +89,6 @@ void TestRemoteProjectBenchFirstSync() {
   }
   std::size_t files = 0;
   std::uintmax_t bytes = 0;
-  // A real host tree is mostly old: backdate it, as files edited an hour ago.
   const auto an_hour_ago = std::filesystem::file_time_type::clock::now() - std::chrono::hours(1);
   for (const auto& entry : std::filesystem::recursive_directory_iterator(host_root)) {
     if (entry.is_regular_file()) {
@@ -122,7 +118,6 @@ void TestRemoteProjectBenchFirstSync() {
         .count();
   };
   const long long cold = sync_once();
-  // Past the racy window, so the recorded stats vouch for the mirror's bytes.
   std::this_thread::sleep_for(std::chrono::milliseconds(2100));
   const long long warm = sync_once();
   std::fprintf(stderr,
@@ -131,11 +126,11 @@ void TestRemoteProjectBenchFirstSync() {
                files, static_cast<double>(bytes) / (1024.0 * 1024.0), cold, warm);
 }
 
-}  // namespace
+}
 
 void RegisterRemoteProjectTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteProject/OpensAMirrorOverSsh", TestRemoteProjectOpensAMirrorOverSsh);
   AddTest(tests, "RemoteProject/BenchFirstSync", TestRemoteProjectBenchFirstSync);
 }
 
-}  // namespace microide::tests
+}

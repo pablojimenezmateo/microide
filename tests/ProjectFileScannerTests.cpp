@@ -19,10 +19,6 @@ bool ContainsName(const std::vector<std::filesystem::path>& files, std::string_v
   });
 }
 
-// A directory symlink whose target escapes the project root must NOT be followed:
-// otherwise the scanner walks and indexes files outside the project (a
-// filesystem-wide DoS and an information-disclosure/traversal escape, since the
-// opened project is untrusted).
 void TestScannerDoesNotFollowRootEscapingSymlink() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path project = temp_dir.path() / "project";
@@ -42,9 +38,6 @@ void TestScannerDoesNotFollowRootEscapingSymlink() {
          "a root-escaping symlink target must not be indexed");
 }
 
-// A symlink that points to a directory *within* the project is legitimate and
-// should still be followed (containment allows it) — the guard only blocks
-// escapes and cycles, not all symlinks.
 void TestScannerFollowsInProjectSymlink() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path project = temp_dir.path() / "project";
@@ -57,14 +50,9 @@ void TestScannerFollowsInProjectSymlink() {
   Expect(!ec, "in-project symlink fixture should be created");
 
   const auto files = CollectProjectFiles(project, ProjectFileScanMode::ExcludeHidden);
-  // The real path is always indexed; the alias may also surface. The key
-  // assertion is that in-project symlinks do not crash or get wholesale dropped.
   Expect(ContainsName(files, "linked.txt"), "in-project content should be indexed");
 }
 
-// Opting in (project.follow_out_of_root_symlinks = true) restores following an
-// out-of-root symlink target, for monorepos / symlinked dependencies. Cycle
-// detection still applies; only the containment guard is relaxed.
 void TestScannerFollowsRootEscapingSymlinkWhenOptedIn() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path project = temp_dir.path() / "project";
@@ -79,15 +67,12 @@ void TestScannerFollowsRootEscapingSymlinkWhenOptedIn() {
   Expect(!ec, "symlink fixture should be created");
 
   const auto files = CollectProjectFiles(project, ProjectFileScanMode::ExcludeHidden,
-                                         /*follow_out_of_root_symlinks=*/true);
+                                         true);
   Expect(ContainsName(files, "inside.txt"), "in-project files should still be indexed");
   Expect(ContainsName(files, "shared.txt"),
          "opting in should follow an out-of-root symlink target");
 }
 
-// Regression: an in-root directory whose name begins with ".." (e.g. "..cache")
-// must not be misclassified as a root escape. The containment check compares the
-// first path *component*, not a raw string prefix.
 void TestScannerFollowsSymlinkToDotDotPrefixedInRootDir() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path project = temp_dir.path() / "project";
@@ -99,18 +84,11 @@ void TestScannerFollowsSymlinkToDotDotPrefixedInRootDir() {
   std::filesystem::create_directory_symlink(dotdot_dir, project / "alias", ec);
   Expect(!ec, "in-project '..'-prefixed symlink fixture should be created");
 
-  // Default containment (opt-in off): the target is in-root, so it must be
-  // followed despite the leading ".." in the directory name.
   const auto files = CollectProjectFiles(project, ProjectFileScanMode::ExcludeHidden);
   Expect(ContainsName(files, "cached.txt"),
          "in-root '..'-prefixed directory content should be indexed");
 }
 
-// Regression: a symlink cycle makes directory_entry::is_directory() throw
-// filesystem_error (ELOOP) when it stats through the loop. The scan runs on the
-// shell thread with no try/catch, so the throwing overload turned a symlink loop —
-// input the scanner explicitly expects (SymlinkLoopGuard) — into a std::terminate.
-// The scan must classify safely, skip the looping entry, and still index real files.
 void TestScannerSurvivesSymlinkCycle() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path project = temp_dir.path() / "project";
@@ -118,20 +96,16 @@ void TestScannerSurvivesSymlinkCycle() {
   WriteFile(project / "real.txt", "r");
 
   std::error_code ec;
-  // loopa -> loopb -> loopa: resolving either through status() yields ELOOP.
   std::filesystem::create_directory_symlink(project / "loopb", project / "loopa", ec);
   Expect(!ec, "loop symlink 'loopa' should be created");
   std::filesystem::create_directory_symlink(project / "loopa", project / "loopb", ec);
   Expect(!ec, "loop symlink 'loopb' should be created");
 
-  // Must not throw/terminate; real files must still be indexed.
   const auto files = CollectProjectFiles(project, ProjectFileScanMode::ExcludeHidden);
   Expect(ContainsName(files, "real.txt"),
          "a symlink cycle must not crash the scan or drop real files");
 }
 
-// Without any .gitignore, the scanner must still prune VCS metadata and build
-// output via the built-in defaults, and honor a user exclude glob.
 void TestScannerPrunesDefaultsAndUserExcludes() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -155,17 +129,6 @@ void TestScannerPrunesDefaultsAndUserExcludes() {
   Expect(ContainsName(excluded_scan, "main.cpp"), "real sources remain after exclusion");
 }
 
-// A scan that completes reports a clean status; a scan that hits the entry budget
-// reports truncated_by_budget and returns only a prefix of the tree, so the caller
-// can surface "index incomplete" instead of a silently-authoritative partial list
-// (TD-2026-07-17-008/033).
-// ExcludeHidden drops an entry whose OWN name begins with a dot, and a hidden
-// directory takes its subtree with it. The check reads the last component of the
-// relative text now instead of building `path.filename().string()` per entry, and
-// nothing asserted the mode directly before — every other scanner test runs
-// IncludeHidden. The "..cache" case is here because its name begins with a dot
-// while not being a ".." path component: it must read as hidden (it did before),
-// and the normalization fast path must not mistake it for a non-normal path.
 void TestScannerExcludeHiddenDropsDotNamedEntries() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -203,10 +166,9 @@ void TestScannerReportsEntryBudgetTruncation() {
   Expect(!status.incomplete(), "a scan under the entry budget reports complete");
   Expect(complete_scan.size() == 8, "a complete scan lists every file");
 
-  // Force truncation with a tiny entry budget rather than materializing a 50k tree.
   microide::project::ProjectFileScanStatus budget_status;
   const auto truncated_scan = CollectProjectFiles(
-      root, ProjectFileScanMode::IncludeHidden, false, {}, &budget_status, /*entry_budget=*/3);
+      root, ProjectFileScanMode::IncludeHidden, false, {}, &budget_status, 3);
   Expect(budget_status.truncated_by_budget,
          "a scan that exhausts the entry budget reports truncated_by_budget");
   Expect(budget_status.incomplete(), "budget truncation is an incomplete scan");
@@ -216,9 +178,6 @@ void TestScannerReportsEntryBudgetTruncation() {
          "a truncated scan returns only a prefix of the tree");
 }
 
-// A directory the process cannot open is reported as permission_limited (not
-// silently skipped) while readable siblings are still indexed. Root-run CI can
-// read 0000 dirs, so the assertion is gated on the mode actually taking effect.
 void TestScannerReportsPermissionLimited() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -230,8 +189,6 @@ void TestScannerReportsPermissionLimited() {
   std::filesystem::permissions(locked, std::filesystem::perms::none, ec);
   Expect(!ec, "permission fixture should apply");
 
-  // Skip the assertion when the walker can still read the dir (e.g. running as
-  // root): the fixture is a no-op there, so there is nothing to assert.
   std::error_code probe_ec;
   std::filesystem::directory_iterator probe(locked, probe_ec);
   const bool actually_locked = static_cast<bool>(probe_ec);
@@ -246,11 +203,10 @@ void TestScannerReportsPermissionLimited() {
     Expect(status.incomplete(), "permission-limited is an incomplete scan");
     Expect(!ContainsName(files, "secret.txt"), "an unreadable dir's contents are not indexed");
   }
-  // Restore perms so the temp dir can be cleaned up.
   std::filesystem::permissions(locked, std::filesystem::perms::owner_all, ec);
 }
 
-}  // namespace
+}
 
 void RegisterProjectFileScannerTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ProjectFileScanner/ExcludeHiddenDropsDotNamedEntries",
@@ -273,4 +229,4 @@ void RegisterProjectFileScannerTests(std::vector<TestCase>& tests) {
           TestScannerSurvivesSymlinkCycle);
 }
 
-}  // namespace microide::tests
+}

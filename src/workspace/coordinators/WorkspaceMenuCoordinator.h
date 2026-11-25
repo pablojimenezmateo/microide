@@ -15,16 +15,10 @@ namespace microide::workspace {
 class MenuCoordinator {
  public:
   struct Operations {
-    // A frame is owed and frame prep derives what it repaints: the popups' cards
-    // and rows and the bar's items are units keyed on this coordinator's state.
     std::function<void()> request_frame;
     std::function<std::span<const MenuItemSpec>(MenuId)> menu_items;
     std::function<bool(const MenuItemSpec&)> is_menu_item_enabled;
-    // The menu-bar items that did not fit, in order. Depends on the live
-    // menu-bar rect, which this coordinator does not see.
     std::function<MenuBarOverflowIds()> overflow_menu_bar_items;
-    // The live overflow chevron the overflow popup hangs from, or nullopt when
-    // nothing overflows.
     std::function<std::optional<SDL_FRect>()> menu_overflow_chevron_rect;
     std::function<std::optional<SDL_FRect>(MenuId, std::size_t)> menu_popup_item_rect;
     std::function<bool(MenuId, std::size_t)> execute_custom_menu_item;
@@ -41,12 +35,8 @@ class MenuCoordinator {
   int NextEnabledMenuItemIndex(MenuId id, int current_index, int delta) const;
   void OpenMenuBarMenu(MenuId id);
   void OpenAnchoredMenu(MenuId id, const SDL_FRect& anchor_rect);
-  // The menu-bar overflow popup: the menus that did not fit in compact layout.
-  // `OpenMenuOverflowItem` anchors the picked menu under its own row and closes
-  // the popup — the same landing the click path produces.
   std::size_t MenuOverflowItemCount() const;
   bool OpenMenuOverflowItem(std::size_t index);
-  // Closes the popup and repaints what it covered.
   void CloseMenuOverflowPopup();
   void OpenSubmenu(MenuId id, const SDL_FRect& anchor_rect);
   void CloseSubmenu();
@@ -65,11 +55,9 @@ class MenuCoordinator {
 
  private:
   void OweMenuFrame();
-  // Opens `id` (None closes the bar), anchored under `anchor_rect` when given,
-  // otherwise under its menu-bar item.
   void OpenMenu(MenuId id, std::optional<SDL_FRect> anchor_rect);
   MenuSurfaceState& menu_state_;
   Operations operations_;
 };
 
-}  // namespace microide::workspace
+}

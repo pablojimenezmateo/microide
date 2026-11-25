@@ -14,7 +14,6 @@ std::filesystem::path EnvironmentPath(const char* name) {
 std::filesystem::path ResolveUserHomeDirectory() { return EnvironmentPath("HOME"); }
 
 std::filesystem::path ResolveUserDirectory(UserDirectoryKind kind) {
-  // The XDG base directories, each falling back to its spec default under $HOME.
   const auto xdg = [](const char* variable, const char* home_relative) -> std::filesystem::path {
     if (std::filesystem::path explicit_dir = EnvironmentPath(variable); !explicit_dir.empty()) {
       return explicit_dir;
@@ -45,4 +44,4 @@ std::filesystem::path ResolveAppDirectory(UserDirectoryKind kind, std::string_vi
   return root / std::string(app_name);
 }
 
-}  // namespace microide::platform
+}

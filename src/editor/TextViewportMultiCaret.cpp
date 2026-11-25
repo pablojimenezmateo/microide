@@ -1,12 +1,3 @@
-// Multi-caret apply pipeline for TextViewport. The three Apply* methods all
-// follow the same shape: collect carets, walk them in reverse, build a single
-// history entry per caret, then assemble one aggregate history entry covering
-// the whole document delta. Split out of TextViewport.cpp so the apply
-// pipeline can be inspected without the rest of the editor core.
-//
-// These methods are still members of the `TextViewport` class — see
-// editor/TextViewport.h for the declarations.
-
 #include "editor/TextViewport.h"
 #include "editor/TextViewportInternal.h"
 
@@ -23,28 +14,17 @@ namespace microide::editor {
 
 namespace {
 
-// One caret's planned edit, computed from the pre-edit buffer. The reverse walk
-// applies higher (later) carets first, and those edits never touch the content
-// at a lower caret, so planning every edit up front from the original buffer is
-// equivalent to recomputing it mid-walk.
 struct PlannedCaretEdit {
   SelectionRange removed;
   std::string replacement;
-  // Explicit landing position (brace-split insert); otherwise the caret lands
-  // at the applied entry's after-state cursor.
   std::optional<TextPosition> landed_override;
 };
 
-// A caret plus the selection it owns (if any), so multi-caret Backspace / Delete /
-// Enter / paste replace the selection like the single-caret paths do instead of
-// dropping it and mis-editing one character per caret.
 struct MultiCaretSite {
   TextPosition position;
   std::optional<SelectionRange> selection;
 };
 
-// Normalize a caret+anchor into an ordered selection range, or nullopt when there
-// is no (non-empty) selection.
 std::optional<SelectionRange> NormalizedSelection(const TextPosition& caret,
                                                   const std::optional<TextPosition>& anchor) {
   if (!anchor.has_value() || *anchor == caret) {
@@ -56,16 +36,9 @@ std::optional<SelectionRange> NormalizedSelection(const TextPosition& caret,
   return SelectionRange{caret, *anchor};
 }
 
-}  // namespace
+}
 
 bool TextViewport::MultiCaretSelectionsOverlap() const {
-  // Collect every caret's affected range (its selection, or an empty point at its
-  // position), sorted by start. Any two ranges that intersect — or two carets
-  // sharing a start position with different anchors — cannot be applied by either
-  // multi-caret path without double-editing shared content, so the caller must
-  // refuse the edit. Touching endpoints (adjacent edits) are allowed. This is
-  // unreachable through normal UI, but SetSecondaryCaretsWithRanges / plugins /
-  // future multi-cursor commands can construct it.
   std::vector<SelectionRange> ranges;
   ranges.reserve(secondary_carets_.size() + 1);
   const TextPosition primary{cursor_line_, cursor_column_};
@@ -84,9 +57,6 @@ bool TextViewport::MultiCaretSelectionsOverlap() const {
     }
     return detail::PositionLess(lhs.end, rhs.end);
   });
-  // Two identical ranges are ONE site -- ApplyMultiCaretEdit collapses them --
-  // not an overlap. A save-time trim can clamp a secondary caret onto the
-  // primary; treating that as a conflict refused every later edit.
   ranges.erase(std::unique(ranges.begin(), ranges.end(),
                            [](const SelectionRange& lhs, const SelectionRange& rhs) {
                              return lhs.start == rhs.start && lhs.end == rhs.end;
@@ -101,16 +71,12 @@ bool TextViewport::MultiCaretSelectionsOverlap() const {
   return false;
 }
 
-// A one-character insert or delete at every caret continues a typing run, as
-// the single-caret paths do: one undo takes back "bar" typed at three carets,
-// not just its last letter (VS Code). Anything else -- a paste, a newline, a tab,
-// a word delete, a per-caret distribute -- stands alone.
 CoalesceHint TextViewport::MultiCaretCoalesceHint(MultiCaretEditKind kind, std::string_view text,
                                                   bool per_caret) {
   switch (kind) {
     case MultiCaretEditKind::Insert: {
       const auto code_points = std::count_if(text.begin(), text.end(), [](char c) {
-        return (static_cast<unsigned char>(c) & 0xC0u) != 0x80u;  // UTF-8 lead bytes
+        return (static_cast<unsigned char>(c) & 0xC0u) != 0x80u;
       });
       if (per_caret || code_points != 1 || text == "\n" || text == "\t") {
         return {};
@@ -158,12 +124,6 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
   }
   const TextPosition primary_caret{cursor_line_, cursor_column_};
   carets.push_back({primary_caret, NormalizedSelection(primary_caret, selection_anchor_)});
-  // Sort by the site's affected RANGE (selection start, then end), not by the
-  // caret: the reverse walk below relies on every later site lying wholly after
-  // every earlier one so that applying it cannot shift them. Two carets sharing a
-  // position with selections on opposite sides -- [0,10) leading right and
-  // [10,16) leading left, both carets at 10 -- tie on position, and applying the
-  // left one first moved the right one's text under its planned range.
   const auto site_start = [](const MultiCaretSite& site) {
     return site.selection.has_value() ? site.selection->start : site.position;
   };
@@ -181,10 +141,6 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
     }
     return detail::PositionLess(site_end(lhs), site_end(rhs));
   });
-  // Collapse fully-identical sites (same caret AND same selection). Distinct sites
-  // that merely share a caret position — two carets with different anchors — are
-  // intentionally kept so the overlap check below can reject them rather than
-  // silently discarding one replacement.
   carets.erase(std::unique(carets.begin(), carets.end(),
                            [](const MultiCaretSite& lhs, const MultiCaretSite& rhs) {
                              if (!(lhs.position == rhs.position)) {
@@ -202,10 +158,6 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
     return false;
   }
 
-  // Refuse overlapping / ambiguous sites before mutating anything (shared with the
-  // TryMultiCaretPairInsert fast path). The reverse-walk apply assumes each caret
-  // edits a DISJOINT region; overlapping selections would double-edit shared content
-  // and corrupt the buffer.
   if (MultiCaretSelectionsOverlap()) {
     return false;
   }
@@ -216,8 +168,6 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
     return position;
   };
 
-  // Spaces to the next tab stop from `column` on `line`: the single-caret
-  // InsertTab rule, per caret.
   const std::size_t safe_indent_width = std::max<std::size_t>(1, indent_width_);
   const auto soft_tab_at = [&](std::size_t line, std::size_t column) {
     const std::size_t visual_column = VisualColumnAt(line, column);
@@ -225,16 +175,10 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
     return std::string(remainder == 0 ? safe_indent_width : safe_indent_width - remainder, ' ');
   };
 
-  // Plan each caret's edit from the pre-edit buffer. Returns nullopt when the
-  // caret cannot edit (backspace at doc start, delete at doc end).
   const auto plan_edit = [&](std::size_t line, std::size_t column,
                              const std::optional<SelectionRange>& selection,
                              std::string_view caret_insert)
       -> std::optional<PlannedCaretEdit> {
-    // Selection-aware path: replace the selection (empty replacement for the
-    // delete kinds, the inserted text otherwise), exactly as the single-caret
-    // paths do. Without this, multi-caret Backspace/Delete/Enter/paste ignored
-    // active selections and edited one character per caret instead.
     if (selection.has_value()) {
       const SelectionRange removed{clamp_position(selection->start),
                                    clamp_position(selection->end)};
@@ -257,10 +201,6 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
         return PlannedCaretEdit{SelectionRange{TextPosition{line, column}, TextPosition{line, column}},
                                 soft_tab_at(line, column), std::nullopt};
       case MultiCaretEditKind::Insert: {
-        // On Enter, a caret between a matching auto-close pair splits the braces
-        // across three lines and lands on the inner-indent line (mirrors the
-        // single-caret TryInsertNewlineSplitBraces path); other carets fall back
-        // to a plain newline + auto-indent.
         if (caret_insert == "\n") {
           if (std::optional<NewlineBraceSplit> split = ComputeNewlineBraceSplit(line, column);
               split.has_value()) {
@@ -279,11 +219,9 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
       }
       case MultiCaretEditKind::Backspace: {
         if (column > 0) {
-          // Same indent-stop rule as the single-caret Backspace.
           const std::size_t erase_start =
               IndentStopBackspaceStart(line, column)
                   .value_or(TextLayout::PreviousTextColumn(document_->lines[line], column));
-          // Same pair rule as the single-caret Backspace: `(|)` loses both.
           const std::size_t erase_end =
               CaretSitsInsideAutoClosedPair(line, column) ? column + 1 : column;
           return PlannedCaretEdit{
@@ -317,7 +255,7 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
       case MultiCaretEditKind::DeleteWordForward: {
         const int direction = kind == MultiCaretEditKind::DeleteWordBackward ? -1 : 1;
         const TextPosition caret{line, column};
-        const TextPosition target = WordTargetForCaret(caret, direction, /*for_deletion=*/true);
+        const TextPosition target = WordTargetForCaret(caret, direction, true);
         if (target.line == caret.line && target.column == caret.column) {
           return std::nullopt;
         }
@@ -329,10 +267,6 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
     return std::nullopt;
   };
 
-  // Distribute one supplied string per caret (in sorted order) only when the
-  // caller passed exactly one per deduped caret on an Insert; otherwise every
-  // caret gets `insert_text`. The dedup above can shrink the set, so re-check
-  // sizes here rather than trusting the pre-dedup caller count.
   const bool distribute = per_caret_insert != nullptr &&
                           kind == MultiCaretEditKind::Insert &&
                           per_caret_insert->size() == carets.size();
@@ -357,9 +291,6 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
     return false;
   }
 
-  // The capture records the SET of edited line ranges, not one range spanning the
-  // outermost carets (TD-2026-08-06-157). Carets are sorted ascending already, so
-  // their ranges are too.
   detail::DisjointEditCapture capture(document_->lines);
   {
     std::vector<std::optional<detail::DisjointEditCapture::LineRange>> site_lines(planned.size());
@@ -374,10 +305,6 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
 
   const ViewState before_state = CaptureViewState();
   const TextPosition primary_before{cursor_line_, cursor_column_};
-  // Identify the primary's site by caret AND selection: a secondary can share
-  // the primary's position with a different selection (the sites are sorted by
-  // range, so a position probe could land on either), and one that clamped onto
-  // it with the same selection was collapsed into one site above.
   const std::optional<SelectionRange> primary_selection =
       NormalizedSelection(primary_before, selection_anchor_);
   const std::size_t primary_index = static_cast<std::size_t>(
@@ -392,31 +319,9 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
                              site.selection->end == primary_selection->end);
                    }) -
       carets.begin());
-  // Apply edits high-to-low (so each edit's coordinates stay valid against the
-  // still-unedited lower buffer), recording each caret's landed position + its
-  // edit footprint indexed by ascending caret order. The lower-edit remap is then
-  // done in a single batched pass (detail::ResolveMultiCaretRemapSites) instead of
-  // re-remapping every already-produced result after each apply (which was
-  // O(carets^2) per typed character with thousands of carets).
   std::vector<detail::MultiCaretRemapSite> sites(carets.size());
   bool changed = false;
   bool collapsed_no_op = false;
-  // Every per-site entry below is folded into ONE aggregate (capture.Build, after
-  // this loop) and the caret set is rebuilt from `sites`, so the per-site
-  // before/after caret vectors are written and never read. Capturing them is the
-  // same dead weight an undo GROUP already suppresses, at the same cost shape and
-  // one order worse: this loop runs once per caret, so the copies are
-  // O(carets^2). One Tab over a 1,201-cursor box allocated 163.9 MB, 161 MB of it
-  // here (TD-2026-09-20-300).
-  //
-  // Sound because the set is rebuilt unconditionally below: ApplyHistoryEntry
-  // restores each entry's (now caret-less) after_state, so `secondary_carets_` is
-  // empty when the loop ends, and SetSecondaryCarets fills it from where the
-  // sites landed. The guard closes before `CaptureViewState()` builds the
-  // aggregate's own state, which must be complete.
-  //
-  // Held in an optional purely so it can be released at the point below where the
-  // aggregate's state is captured, without indenting the whole loop.
   const std::uint64_t edit_base_revision = document_->content_revision;
   std::optional<SuppressEntryCaretCapture> suppress_dead_caret_copies;
   suppress_dead_caret_copies.emplace(*this);
@@ -429,9 +334,6 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
         planned[i].has_value() ? BuildRangeHistoryEntry(planned[i]->removed, planned[i]->replacement)
                                : std::nullopt;
     if (!entry.has_value()) {
-      // No buffer change. A planned edit that came back empty is an exact no-op
-      // (the replacement reproduces the selected text): the caret still lands
-      // past its replacement, as the single-caret path does.
       TextPosition landed{line, column};
       if (planned[i].has_value()) {
         const detail::ReplacementShape shape =
@@ -477,14 +379,10 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
 
   cursor_line_ = primary_after.line;
   cursor_column_ = primary_after.column;
-  // cursor_line_/cursor_column_ were just set to primary_after above, so
-  // SetSecondaryCarets clamps, sorts, dedups, and drops the primary in one pass.
   SetSecondaryCarets(std::move(updated_secondary_carets));
   preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   selection_anchor_.reset();
   if (!changed) {
-    // Every site was an exact no-op: the selections collapsed and the carets
-    // moved, but the buffer is untouched, so nothing to dirty or record.
     EnsureCursorVisible();
     return false;
   }
@@ -493,13 +391,6 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
   EnsureCursorVisible();
 
   HistoryEntry aggregate_entry = capture.Build(before_state, CaptureViewState());
-  // Only publish an AppliedEdit for a single edited region. A multi-region edit is
-  // not one replaced span, and single-range marker consumers (BreakpointStore, LSP
-  // diagnostic shifting) would drag markers on the preserved lines between carets
-  // to the span's end; leaving it empty makes them take their resync fallback
-  // (breakpoints stay put, diagnostics re-request) instead of mis-collapsing.
-  // `is_multi_range()` is now the direct test — the entry itself says whether it
-  // covers one region or several (TD-2026-08-06-157).
   std::size_t edited_region_count = 0;
   for (const std::optional<PlannedCaretEdit>& plan : planned) {
     if (plan.has_value()) ++edited_region_count;
@@ -520,9 +411,6 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
 
 namespace {
 
-// Collect primary + secondary carets as sorted, position-deduped sites, each
-// carrying its normalized selection. Shared by the multi-caret copy and the
-// distribute-paste line split so both agree on caret order.
 std::vector<MultiCaretSite> CollectSortedCaretSites(
     const TextPosition& primary, const std::optional<TextPosition>& primary_anchor,
     const std::vector<TextViewportUndoHistory::SecondaryCaret>& secondaries) {
@@ -544,16 +432,14 @@ std::vector<MultiCaretSite> CollectSortedCaretSites(
   return carets;
 }
 
-}  // namespace
+}
 
 std::optional<std::string> TextViewport::MultiCaretSelectedText() const {
   if (secondary_carets_.empty()) {
-    return std::nullopt;  // single caret: caller uses SelectedText()
+    return std::nullopt;
   }
   const std::vector<MultiCaretSite> carets = CollectSortedCaretSites(
       TextPosition{cursor_line_, cursor_column_}, selection_anchor_, secondary_carets_);
-  // Only aggregate when every caret contributes a real selection (the Ctrl-D
-  // case). Mixed selection/no-selection sets fall back to single-caret copy.
   for (const MultiCaretSite& caret : carets) {
     if (!caret.selection.has_value()) {
       return std::nullopt;
@@ -570,15 +456,10 @@ std::optional<std::string> TextViewport::MultiCaretSelectedText() const {
 }
 
 bool TextViewport::DeleteMultiCaretSelections(bool record_undo) {
-  // Each caret has a selection (caller guarantee), so the Backspace fan-out
-  // replaces every selection with "" in one aggregate undo entry and never
-  // touches a caret without a selection.
   return ApplyMultiCaretEdit(MultiCaretEditKind::Backspace, "", record_undo);
 }
 
 bool TextViewport::ApplyMultiCaretSoftTab(bool record_undo) {
-  // Each caret aligns to its OWN next tab stop; the pipeline plans the string per
-  // site (see MultiCaretEditKind::SoftTab).
   return ApplyMultiCaretEdit(MultiCaretEditKind::SoftTab, "", record_undo);
 }
 
@@ -589,12 +470,6 @@ bool TextViewport::PasteText(std::string_view text, bool record_undo) {
     InsertText(text, record_undo);
     return true;
   }
-  // Split the clipboard into lines (tolerating CRLF), then distribute one line
-  // per caret only when the counts match; otherwise insert the whole payload at
-  // every caret (ApplyMultiCaretEdit re-checks the count against the deduped set).
-  // One trailing line break does not count as an extra (empty) line, as in VS
-  // Code's spread rule: three whole lines copied with their final newline
-  // still spread over three carets.
   std::string_view lines = text;
   if (lines.ends_with('\n')) {
     lines.remove_suffix(1);
@@ -630,8 +505,6 @@ bool TextViewport::AddCaretVertical(int delta) {
   }
   document_->undo_history.NotifyCursorMoved();
 
-  // Every existing caret, as (position, sticky column, affinity). The primary's
-  // sticky column lives in preferred_column_; each secondary carries its own.
   struct Seed {
     TextPosition position;
     std::size_t preferred_column;
@@ -645,9 +518,6 @@ bool TextViewport::AddCaretVertical(int delta) {
     seeds.push_back(Seed{caret.position, caret.preferred_column, caret.wrap_affinity});
   }
 
-  // One step from EACH seed. Adding below every caret and deduping is what grows
-  // the column by one per press instead of doubling it; a seed already at the
-  // edge advances to itself and is dropped by the dedupe below.
   std::vector<Seed> added;
   added.reserve(seeds.size());
   for (const Seed& seed : seeds) {
@@ -662,8 +532,6 @@ bool TextViewport::AddCaretVertical(int delta) {
     return false;
   }
 
-  // The newest caret in the direction of travel becomes the primary, so a held
-  // chord scrolls the view to wherever the column now ends.
   const auto farther = [delta](const Seed& lhs, const Seed& rhs) {
     return delta > 0 ? detail::PositionLess(lhs.position, rhs.position)
                      : detail::PositionLess(rhs.position, lhs.position);
@@ -681,10 +549,8 @@ bool TextViewport::AddCaretVertical(int delta) {
     }
   }
 
-  // A vertical add is a caret gesture, not a selection one: VS Code drops any
-  // selection the carets carried rather than extending N of them at once.
   selection_anchor_.reset();
-  PlacePrimaryCaret(lead.position.line, lead.position.column, /*keep_preferred_column=*/false,
+  PlacePrimaryCaret(lead.position.line, lead.position.column, false,
                     lead.affinity);
   preferred_column_ = lead.preferred_column;
   SetSecondaryCarets(std::move(others));
@@ -705,9 +571,6 @@ bool TextViewport::AddCaretsAtSelectedLineEnds() {
   if (const auto selection = selection_range(); selection.has_value()) {
     first = selection->start.line;
     last = selection->end.line;
-    // A whole-line drag ends at column 0 of the line below its last content line;
-    // every line-scoped verb here normalizes that away, and a caret parked at the
-    // end of a line the user did not select would be a surprise.
     if (last > first && selection->end.column == 0) {
       --last;
     }
@@ -725,8 +588,6 @@ bool TextViewport::AddCaretsAtSelectedLineEnds() {
     return false;
   }
 
-  // The LAST line's end is the primary, which is where VS Code leaves the active
-  // cursor and what keeps the view on the bottom of the block.
   selection_anchor_.reset();
   const TextPosition primary = ends.back();
   ends.pop_back();
@@ -762,11 +623,6 @@ bool TextViewport::ExpandSelectionToWholeLines() {
   document_->undo_history.NotifyCursorMoved();
   const std::size_t line_count = document_->lines.size();
 
-  // One whole-line range per caret, from ITS own selection (or its bare position).
-  // Doing this per caret is the whole point: the previous implementation lived in
-  // the key handler, read `cursor_line()` and called MoveCursorTo, so three
-  // cursors produced one line selection and two carets with empty anchors --
-  // typing then replaced one line and inserted at two columns.
   const auto whole_lines = [&](std::size_t first, std::size_t last) {
     first = std::min(first, line_count - 1);
     last = std::min(last, line_count - 1);
@@ -780,11 +636,6 @@ bool TextViewport::ExpandSelectionToWholeLines() {
     if (!selection.has_value()) {
       return whole_lines(caret.line, caret.line);
     }
-    // Every line the selection touches, whole, through the newline of the line it
-    // ends on (VS Code: the end goes to column 1 of the line below its end line).
-    // A selection already ending at a line start therefore takes that line too,
-    // which is what makes a second press grow by one line; one ending mid-line
-    // takes only the lines it touches.
     const SelectionRange range = NormalizeRange(*selection);
     return whole_lines(range.start.line, range.end.line);
   };
@@ -798,9 +649,6 @@ bool TextViewport::ExpandSelectionToWholeLines() {
         caret.position));
   }
 
-  // Merge expansions that meet. Two line selections over the same line would put
-  // two carets on it and edit it twice, which is what the caret set's own dedupe
-  // prevents for bare carets and nothing prevented for ranged ones.
   std::sort(ranges.begin(), ranges.end(), [](const SelectionRange& a, const SelectionRange& b) {
     return detail::PositionLess(a.start, b.start);
   });
@@ -815,8 +663,6 @@ bool TextViewport::ExpandSelectionToWholeLines() {
     merged.push_back(range);
   }
 
-  // The range covering where the primary was stays the primary, so the view does
-  // not jump to the top of the document on every press.
   const TextPosition previous{cursor_line_, cursor_column_};
   std::size_t primary_index = 0;
   for (std::size_t i = 0; i < merged.size(); ++i) {
@@ -836,4 +682,4 @@ bool TextViewport::ExpandSelectionToWholeLines() {
   return true;
 }
 
-}  // namespace microide::editor
+}

@@ -61,10 +61,6 @@ float StepUiScale(float current_scale, int delta) {
 
 ParsedCommandLine ParseCommandLine(std::string_view input) {
   ParsedCommandLine parsed;
-  // Bound the parse: a pasted megabyte command or thousands of quoted tokens must
-  // not allocate/drive completion work without limit on the UI thread. The prompt
-  // is a single command line — real ones are tiny — so clamp the scanned length
-  // and the token count well above any legitimate input.
   constexpr std::size_t kMaxCommandInputBytes = 64 * 1024;
   constexpr std::size_t kMaxCommandTokens = 4096;
   if (input.size() > kMaxCommandInputBytes) {
@@ -248,10 +244,6 @@ std::vector<CommandCompletionCandidate> CompletePath(const std::filesystem::path
     return matches;
   }
 
-  // Advance with the non-throwing increment(error): range-for uses the throwing
-  // operator++, so a directory that vanishes, hits an I/O error, or exposes a hostile
-  // entry mid-completion would throw std::filesystem_error out of this UI-thread path.
-  // A mid-iteration error returns the candidates collected so far.
   const std::filesystem::directory_iterator end;
   for (; !error && iterator != end; iterator.increment(error)) {
     const std::filesystem::directory_entry& entry = *iterator;
@@ -285,9 +277,6 @@ std::vector<CommandCompletionCandidate> CompletePath(const std::filesystem::path
         .value = std::move(value),
         .append_space = !is_directory,
     });
-    // Bound candidate collection: completing `/usr/` or a generated directory with
-    // hundreds of thousands of entries would otherwise build and sort a huge list
-    // on the UI thread. The menu only shows a handful; this cap is well past that.
     constexpr std::size_t kMaxPathCandidates = 2000;
     if (matches.size() >= kMaxPathCandidates) {
       break;
@@ -314,7 +303,6 @@ std::string JoinShellCommandArguments(const std::vector<std::string>& args,
       joined += arg;
       continue;
     }
-    // POSIX: single quotes take everything literally; a ' closes, escapes, reopens.
     joined.push_back('\'');
     for (const char c : arg) {
       if (c == '\'') {
@@ -348,8 +336,6 @@ std::optional<std::string> CompleteRemoteHostText(std::string_view text,
   if (hosts.empty() || text.find(':') != std::string_view::npos) {
     return std::nullopt;
   }
-  // A typed `user@` rides along onto an ssh-config alias; a host already in use
-  // carries its own user (`dev@build-box`) and is matched whole.
   const std::size_t at = text.find('@');
   const std::string user(at == std::string_view::npos ? std::string_view() : text.substr(0, at + 1));
   std::vector<std::string> values;
@@ -361,7 +347,7 @@ std::optional<std::string> CompleteRemoteHostText(std::string_view text,
     }
   }
   if (const auto exact = std::find(values.begin(), values.end(), text); exact != values.end()) {
-    return *exact + ":";  // named: on to the path
+    return *exact + ":";
   }
   std::vector<CommandCompletionCandidate> matches;
   for (const std::string& value : values) {
@@ -379,4 +365,4 @@ std::optional<std::string> CompleteRemoteHostText(std::string_view text,
   return common.size() > text.size() ? common : matches.front().value;
 }
 
-}  // namespace microide::workspace
+}

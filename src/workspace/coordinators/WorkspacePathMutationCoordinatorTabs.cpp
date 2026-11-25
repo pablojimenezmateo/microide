@@ -34,7 +34,6 @@ PathMutationCoordinator::RetargetSpecialTabForRename(TabEntry& tab,
         tab.compare->right_viewport.SetPath(tab.compare->right_path);
       }
       tab.compare->title = "compare: " + tab.compare->path.filename().string();
-      // Keep selection and syntax-derived state aligned after retargeting a dirty compare tab.
       auto rebuilt = operations_.build_compare_tab_entry(tab.compare->path, *tab.compare);
       if (rebuilt.has_value() && rebuilt->compare.has_value()) {
         rebuilt->compare->right_viewport = tab.compare->right_viewport;
@@ -138,11 +137,6 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
     const std::filesystem::path& new_path,
     bool preserve_unsaved_state) {
   auto& state = CurrentProjectState();
-  // Discarding a dirty buffer reopens it from disk at the new path. Every view of
-  // that file (a split, a second pane) shares one DocumentState and so is dirty
-  // together; reopen the file ONCE and give each view a copy of the same viewport,
-  // or the panes come back as independent documents. Keyed on the new path,
-  // spanning the focused-group loop and the background-group loop below.
   std::unordered_map<std::string, editor::TextViewport> reopened_by_path;
   const auto reopen_discarded_view =
       [&](const std::filesystem::path& updated_path) -> const editor::TextViewport* {
@@ -169,10 +163,6 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       auto& editor_state = *tab.editor_state;
       bool retargeted = false;
       bool close_tab = false;
-      // Keyed on the tab's own path record, not the viewport's: a file open in
-      // several panes is one document, so the first view's SetPath below already
-      // moved every other view's viewport path, and matching on it skipped their
-      // tab records -- a tab titled by the old name over a buffer at the new one.
       const std::filesystem::path current_path =
           tab.path.empty() ? operations_.editor_view_path(editor_state) : tab.path.lexically_normal();
       if (!current_path.empty() && PathEqualsOrWithin(current_path, old_path)) {
@@ -227,11 +217,6 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       continue;
     }
 
-    // Deferred (session-restored, never-activated) editor tabs carry their path in
-    // deferred_handle, not editor_state; retarget it too or a folder rename strands
-    // the tab on the old path — unreachable when later activated (LoadEditorTabForActivation
-    // opens the stale path and fails) and silently dropped on the next restart because
-    // the persisted path no longer exists.
     if (tab.kind == TabEntry::Kind::Editor && tab.deferred_handle.has_value()) {
       auto& handle = *tab.deferred_handle;
       if (!handle.path.empty() && util::PathEqualsOrWithinNormalized(handle.path, old_path)) {
@@ -242,24 +227,12 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       continue;
     }
 
-    // Compare/merge tabs retarget in place (or are closed when their content no longer
-    // resolves at the new path) via the shared group-agnostic helper.
     if (RetargetSpecialTabForRename(tab, old_path, new_path, preserve_unsaved_state) ==
         SpecialTabRetargetOutcome::MustClose) {
       special_tabs_to_close.push_back(i);
     }
   }
 
-  // Retarget matching tabs in the NON-focused split groups too — BEFORE the focused close
-  // below, so a focused-group collapse (dirty-reopen-fail) that promotes a background group
-  // to focused does not skip it here. A split view of the renamed file otherwise keeps a
-  // stale path, and — now that autosave/save-all flush dirty tabs across every group —
-  // would write the buffer back to the OLD path, resurrecting the pre-rename file. SetPath
-  // preserves any unsaved edits and just redirects the write target. Compare/merge tabs in
-  // a background group are retargeted the same way (a rebuild failure closes them), rather
-  // than left to "self-heal", so a background comparison never strands on the old/deleted
-  // path (TD-2026-07-17A-036). Iterate groups back-to-front so a compare/merge rebuild
-  // failure that empties and collapses a group cannot invalidate a lower group index.
   for (std::size_t gi = state.editor_groups.size(); gi-- > 0;) {
     if (gi == state.focused_group_index || gi >= state.editor_groups.size()) {
       continue;
@@ -270,8 +243,6 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       TabEntry& tab = group_tabs[i];
       if (tab.kind == TabEntry::Kind::Editor && !tab.editor_state.has_value() &&
           tab.deferred_handle.has_value()) {
-        // Deferred split-view tab: retarget its deferred-open path so a later
-        // activation (or persistence round-trip) resolves the new path.
         auto& handle = *tab.deferred_handle;
         if (!handle.path.empty() && util::PathEqualsOrWithinNormalized(handle.path, old_path)) {
           handle.path = util::ReplacePathPrefix(handle.path, old_path, new_path).lexically_normal();
@@ -281,7 +252,6 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
         continue;
       }
       if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-        // Compare/merge background tab: retarget in place or close on rebuild failure.
         if (RetargetSpecialTabForRename(tab, old_path, new_path, preserve_unsaved_state) ==
             SpecialTabRetargetOutcome::MustClose) {
           group_tabs_to_close.push_back(i);
@@ -290,7 +260,6 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       }
       auto& editor_state = *tab.editor_state;
       if (editor_state.content_pending()) {
-        // Restore-pending tab: fix the deferred-open target path.
         if (!editor_state.restore.path.empty() &&
             util::PathEqualsOrWithinNormalized(editor_state.restore.path, old_path)) {
           editor_state.restore.path =
@@ -301,10 +270,6 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
         }
         continue;
       }
-      // Keyed on the tab's own path record, not the viewport's: a file open in
-      // several panes is one document, so the first view's SetPath below already
-      // moved every other view's viewport path, and matching on it skipped their
-      // tab records -- a tab titled by the old name over a buffer at the new one.
       const std::filesystem::path current_path =
           tab.path.empty() ? operations_.editor_view_path(editor_state) : tab.path.lexically_normal();
       if (current_path.empty() || !PathEqualsOrWithin(current_path, old_path)) {
@@ -312,11 +277,6 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       }
       const std::filesystem::path updated_path =
           util::ReplacePathPrefix(current_path, old_path, new_path).lexically_normal();
-      // Honor the user's Discard choice in background groups too, mirroring the focused
-      // path: when the rename discards unsaved edits, reopen fresh from disk at the new
-      // path so the "discarded" buffer is not later written back by all-groups autosave.
-      // If the reopen fails, fall back to SetPath (keep the buffer, just retarget) so no
-      // data is lost and nothing writes back to the old path.
       if (!preserve_unsaved_state && editor_state.viewport.dirty()) {
         const std::size_t cursor_line = editor_state.viewport.cursor_line();
         const std::size_t cursor_column = editor_state.viewport.cursor_column();
@@ -342,17 +302,12 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       tab.path = updated_path;
       tab.title = updated_path.filename().string();
     }
-    // Close any background compare/merge tabs whose content no longer resolves. Descending
-    // order keeps earlier indices valid; if this empties the group it collapses, which the
-    // back-to-front outer loop tolerates.
     std::sort(group_tabs_to_close.rbegin(), group_tabs_to_close.rend());
     for (std::size_t index : group_tabs_to_close) {
       editor_tabs_.CloseGroupTab(gi, index);
     }
   }
 
-  // Focused-group tabs that could not be reopened at the new path are closed last (this
-  // may collapse the focused group; the non-focused retargets above already ran).
   std::sort(special_tabs_to_close.rbegin(), special_tabs_to_close.rend());
   for (std::size_t index : special_tabs_to_close) {
     editor_tabs_.Close(index);
@@ -363,8 +318,6 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
     state.overlay.workflow.compare_picker.path =
         util::ReplacePathPrefix(state.overlay.workflow.compare_picker.path, old_path, new_path);
     if (state.overlay.visible && state.overlay.mode == OverlayMode::CommitPicker) {
-      // Hide via the focus-safe helper so input does not strand on the dismissed
-      // commit picker when its file is renamed/deleted out from under it.
       HideOverlay(state);
     }
   }
@@ -383,8 +336,6 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
     if (tab.kind != TabEntry::Kind::Editor) {
       continue;
     }
-    // Include deferred (never-activated) tabs too: their path lives in deferred_handle,
-    // not editor_state; otherwise a delete leaves them lingering on the defunct path.
     std::filesystem::path current_path;
     if (tab.editor_state.has_value()) {
       current_path = operations_.editor_view_path(*tab.editor_state);
@@ -406,15 +357,6 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
   indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
   std::sort(indices.rbegin(), indices.rend());
 
-  // Close matching editor tabs in the NON-focused split groups FIRST: a deleted file's
-  // split view otherwise lingers on the defunct path and (with all-groups autosave)
-  // would recreate the just-deleted file on the next flush. Doing this before the
-  // focused close means a focused-group collapse cannot promote a still-affected
-  // background group to focused and skip it. `focused_group_index` can shift as a
-  // background group collapses, so re-read it and iterate the survivors from the back.
-  // Compare/merge tabs in a background group are closed here too (mirroring the focused
-  // group), so a delete never strands a background comparison on the defunct path
-  // (TD-2026-07-17A-036).
   for (std::size_t gi = state.editor_groups.size(); gi-- > 0;) {
     if (gi == state.focused_group_index || gi >= state.editor_groups.size()) {
       continue;
@@ -448,8 +390,6 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
     }
   }
 
-  // Now the focused group (indices were captured against it above; non-focused collapses
-  // only re-home its index, leaving its own open_tabs — and these indices — valid).
   for (std::size_t index : indices) {
     editor_tabs_.Close(index);
   }
@@ -461,11 +401,9 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
     state.overlay.workflow.compare_picker.items.clear();
     state.overlay.workflow.compare_picker.matches.clear();
     if (state.overlay.visible && state.overlay.mode == OverlayMode::CommitPicker) {
-      // Hide via the focus-safe helper so input does not strand on the dismissed
-      // commit picker when its file is renamed/deleted out from under it.
       HideOverlay(state);
     }
   }
 }
 
-}  // namespace microide::workspace
+}

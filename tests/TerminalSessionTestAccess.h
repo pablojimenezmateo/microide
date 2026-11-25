@@ -10,8 +10,6 @@
 namespace microide::tests {
 
 struct TerminalSessionTestAccess {
-  // The prediction overlay's state, for a failure message: why a pending
-  // prediction may not be drawn (TD-2026-10-21-373).
   static std::string PredictionState(microide::terminal::TerminalSession& session) {
     std::scoped_lock lock(session.mutex_);
     return "pending=" + std::to_string(session.prediction_.pending()) +
@@ -24,20 +22,10 @@ struct TerminalSessionTestAccess {
                     std::size_t rows,
                     std::size_t columns) {
     std::scoped_lock lock(session.mutex_);
-    // Emulation state comes from the production reset, not a hand-kept copy of it.
-    // This used to restate ~35 fields inline, which meant every new TerminalSession
-    // member had to be remembered in two places; it had already fallen behind on
-    // pending_clipboard_text_, so a test fixture could start with a stale OSC-52
-    // clipboard payload attached. Geometry is seeded first because
-    // ResetEmulationStateLocked derives the scroll region from rows_.
     session.rows_ = std::max<std::size_t>(1, rows);
     session.columns_ = std::max<std::size_t>(1, columns);
     session.ResetEmulationStateLocked();
 
-    // What a fresh *fixture* needs on top of the emulation reset. Unlike the
-    // production start path this also zeroes scrollback_trim_total_ and drops the
-    // wake event type: a test session is a new object, not a restarted one, so
-    // nothing can be holding a search token or an event id from before.
     session.lines_ = {microide::terminal::TerminalLine{}};
     session.working_directory_.clear();
     session.default_launch_label_.clear();
@@ -46,18 +34,12 @@ struct TerminalSessionTestAccess {
     session.wake_event_pending_ = false;
     session.backend_.reset();
     session.scrollback_trim_total_ = 0;
-    // Forward, never back to a fixed value: a pane that sampled this session
-    // before the reset holds its generation, and a reset to 1 plus one append
-    // landed on that same number -- the pane kept the snapshot of the session it
-    // was before, and a redraw test over it painted an empty grid.
     session.snapshot_generation_.Bump();
 #ifdef MICROIDE_TESTING
     session.test_sent_bytes_.clear();
 #endif
   }
 
-  // What the PTY reader does with one read: parse it, then decide whether it wakes
-  // the frame loop (production's on_output). True: a redraw is requested.
   static bool AppendOutputAndDecideWake(microide::terminal::TerminalSession& session, std::string_view data) {
     std::scoped_lock lock(session.mutex_);
     session.AppendOutputLocked(data);
@@ -69,8 +51,6 @@ struct TerminalSessionTestAccess {
       std::scoped_lock lock(session.mutex_);
       session.AppendOutputLocked(data);
     }
-    // Mirror the production reader thread: query replies are buffered under the
-    // lock and flushed once it is released.
     session.FlushPendingReply();
   }
 
@@ -91,9 +71,6 @@ struct TerminalSessionTestAccess {
     return session.extras_.UnderlineColor(extra);
   }
 
-  // Live buffers in the trimmed-line recycler (TD-2026-08-14-231). Reading the
-  // pool directly is what lets a test tell "the buffers were reused" from "the
-  // allocator happened to hand back the same block".
   static std::size_t LineBufferPoolSize(const microide::terminal::TerminalSession& session) {
     std::scoped_lock lock(session.mutex_);
     return session.line_buffer_pool_.size();
@@ -110,9 +87,6 @@ struct TerminalSessionTestAccess {
     session.launch_label_ = session.default_launch_label_;
   }
 
-  // Arm the "output arrived since the last drain" flag the shell's update loop
-  // consumes, the way the reader thread's on_output callback does after an
-  // AppendOutput. AppendOutput alone leaves it clear.
   static void MarkOutputArrived(microide::terminal::TerminalSession& session) {
     std::scoped_lock lock(session.mutex_);
     session.wake_event_pending_ = true;
@@ -153,13 +127,11 @@ struct TerminalSessionTestAccess {
     session.mouse_.any = any;
   }
 
-  // Put `session` in host mode over `channel`, as StartOnHost would after the
-  // source opened it, without a launcher.
   static void EnterHostMode(microide::terminal::TerminalSession& session,
                             std::shared_ptr<microide::terminal::TerminalHostChannel> channel) {
     std::scoped_lock lock(session.mutex_);
     if (channel != nullptr && session.host_.channel == channel) {
-      return;  // the channel bound itself before its first request (it may hold a frame)
+      return;
     }
     session.host_.channel = std::move(channel);
     session.host_.screen_top = 0;
@@ -212,23 +184,15 @@ struct TerminalSessionTestAccess {
     return session.ReserveWakeChannel(channel);
   }
 
-  // TD-2026-07-17-087: drive the private wake producer directly so a test can force
-  // a rejected wake push (via util::SetWakePusherForTesting) and assert the
-  // owed-wake backstop latches.
   static void PushWakeEvent(const microide::terminal::TerminalSession& session) {
     session.PushWakeEvent();
   }
 
-  // TD-2026-07-17-067: inject an oversized saved primary cursor row and run the
-  // restore path. Primary restores do not clamp the saved row (only alternate
-  // restores do), so this exercises the scrollback cap inside
-  // EnsureCursorLineExistsLocked. Returns the resulting line count so the caller
-  // can assert the allocation stayed within the scrollback+visible budget.
   static std::size_t RestoreWithSavedPrimaryCursorRow(microide::terminal::TerminalSession& session,
                                                       std::size_t saved_row) {
     std::scoped_lock lock(session.mutex_);
     session.use_alternate_screen_ = false;
-    session.primary_screen_.lines.clear();  // force the empty-buffer restore branch
+    session.primary_screen_.lines.clear();
     session.primary_screen_.cursor_row = saved_row;
     session.primary_screen_.cursor_column = 0;
     session.RestoreSavedScreenLocked();
@@ -236,4 +200,4 @@ struct TerminalSessionTestAccess {
   }
 };
 
-}  // namespace microide::tests
+}

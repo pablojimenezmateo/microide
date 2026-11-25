@@ -42,119 +42,56 @@ class RemoteProject;
 
 namespace microide::workspace {
 
-// The editor's remote PROJECTS (dev-docs/design/remote-projects.md § 6.6, § 7): a
-// host directory opened as a project is a mirror the editor opens as an ordinary
-// root, with its own channel (RemoteHostSession) to the host, and everything the
-// user sees of that connection — the status-bar segment, the keyed notification
-// row with its buttons (Reconnect, Copy ssh Command, Copy Install Command), the
-// authentication terminal, port forwards. A "host" here is always a remote
-// project's host. A project whose id (project::ProjectId) is remote asks
-// LocalityFor when it is initialized, so one reopened from the recents list or a
-// restored session reconnects instead of opening as a plain local folder.
-//
-// Sessions report on their worker threads; every report is drained on the UI
-// thread (DrainCompletions), so all the state below is UI-thread only.
 class RemoteHostService {
  public:
-  // What the project's terminal tabs hold of its host's terminals when a connect's
-  // summary is made (host_terminals_claimed): every handle a pane is or will
-  // reattach to, and how the panes started since the last summary came up.
   struct HostTerminalClaims {
     std::vector<std::uint64_t> handles;
     std::size_t reattached = 0;
-    std::size_t server_restarted = 0;  // started fresh: recorded under another server
-    std::size_t gone = 0;              // started fresh: the server no longer had it
+    std::size_t server_restarted = 0;
+    std::size_t gone = 0;
   };
 
   struct Operations {
     std::function<void(NotificationService::Request)> notify;
     std::function<void(std::string_view key)> dismiss_notification;
-    // A removed mirror leaves the recents list (Remote: Remove Mirror).
     std::function<void(const project::ProjectId& id)> forget_recent_project;
-    // The recents list, newest first: the mirrors Remove Mirror can offer.
     std::function<const std::vector<project::ProjectId>&()> recent_projects;
-    // Bumped whenever that list changes (RecentsService::revision): what
-    // HasRemovableMirror's answer is cached against.
     std::function<std::uint64_t()> recents_revision;
-    // Open a terminal tab whose shell runs through `launcher` rather than the
-    // project's (the ssh authentication tab, a local terminal in a remote project),
-    // titled with `label_prefix`; `command` empty = an interactive shell. False on
-    // failure.
     std::function<bool(std::shared_ptr<const platform::ProcessLauncher> launcher,
                        std::string label_prefix, std::string command)>
         open_terminal;
     std::function<std::optional<std::string>(std::string_view key)> setting;
     std::function<void(StatusBarSegmentValue)> set_status_segment;
-    // Open a compare tab: `left` read-only, `right` editable, each side titled with
-    // its label. Empty string on success, else why not.
     std::function<std::string(const std::filesystem::path& left, std::string left_label,
                               const std::filesystem::path& right, std::string right_label)>
         compare_files;
-    // The remote project at `root` (re)gained its connection: whatever the editor
-    // asked of the host while it was down (git above all) is worth asking again.
     std::function<void(const std::filesystem::path& root)> project_reconnected;
-    // The remote project at `root`'s connection is up: start its pending host
-    // terminals (open, or reattach to the ones its session recorded).
     std::function<void(const std::filesystem::path& root)> start_host_terminals;
-    // Its connection's state changed while terminals wait for it: their line.
     std::function<void(const std::filesystem::path& root, std::string_view line)> host_terminals_waiting;
-    // What the project's tabs claim of its host's terminals (see HostTerminalClaims);
-    // marks the starts it counts as reported.
     std::function<HostTerminalClaims(const std::filesystem::path& root)> host_terminals_claimed;
-    // Open a terminal tab of the project at `root` attached to `identity`'s
-    // terminal. `focus` (the user's Attach): a new active tab of the ACTIVE project,
-    // shown and focused -- false when `root` is not active. Otherwise (a connect
-    // adopting what nobody claims): a last tab of that project, active or not, that
-    // moves neither the active tab nor the keyboard.
     std::function<bool(const std::filesystem::path& root, terminal::HostIdentity identity, bool focus)>
         attach_host_terminal;
-    // Whether a terminal tab of this window holds `identity`'s terminal; with
-    // `focus`, that tab is brought forward too.
     std::function<bool(const terminal::HostIdentity& identity, bool focus)> host_terminal_tab;
-    // Type `text` into the pane of the project at `root` holding `identity`'s host
-    // terminal, if it is still open (a dropped file's uploaded path).
     std::function<bool(const std::filesystem::path& root, const terminal::HostIdentity& identity, std::string text)>
         type_into_host_terminal;
-    // The recent lines -- the screen and some scrollback above it -- of each host
-    // terminal of the project at `root`, until `visit` returns true. Asked only when
-    // a port nobody's process owns starts listening (not per line of output).
     std::function<void(const std::filesystem::path& root, const std::function<bool(std::string_view line)>& visit)>
         recent_terminal_lines;
-    // The Host view's rows changed (a push, a group toggled, a reconnect).
     std::function<void()> host_activity_updated;
-    // The host pushed a new git status for the remote project at `root`.
     std::function<void(const std::filesystem::path& root)> git_status_pushed;
-    // Replace output channel `id`'s lines with `text`'s and show it.
     std::function<void(std::string_view id, std::string_view label, std::string_view text)>
         show_output;
-    // Open `path` in an editor tab (Changed on Host's added and deleted rows).
     std::function<void(const std::filesystem::path& path)> open_file;
-    // Open `path` with the caret at (line, column): the file another machine had
-    // in front (OpenOfferedSession).
     std::function<void(const std::filesystem::path& path, std::size_t line, std::size_t column)> open_file_at;
-    // The review marks and notes of the project at `root`, as the text another
-    // machine reads (RoamingReviewText); empty for none.
     std::function<std::string(const std::filesystem::path& root)> review_text;
-    // Take the review marks another machine left for the project at `root`
-    // (TakeRoamingReview): merged into its own, shown and saved.
     std::function<void(const std::filesystem::path& root, std::string_view text)> take_review;
-    // The Changed on Host list of the remote project at `root` changed.
     std::function<void(const std::filesystem::path& root)> host_changes_updated;
-    // The Conflicts view's rows for the remote project at `root` changed: a
-    // conflict came or went, or a row's selection flipped.
     std::function<void(const std::filesystem::path& root)> conflicts_updated;
-    // The desktop's browser (a host-local link, once its port is forwarded).
     std::function<bool(std::string_view url)> open_url;
-    // Open the three-way merge editor (base, incoming, current) writing to
-    // `output`. Empty string on success, else why not.
     std::function<std::string(const std::filesystem::path& base, const std::filesystem::path& incoming,
                               const std::filesystem::path& current, const std::filesystem::path& output)>
         open_merge;
-    // The remote project at `root`'s connection changed: its home's status block.
     std::function<void(const std::filesystem::path& root, const editor::WelcomeRemoteStatus& status)>
         project_status_changed;
-    // The files of the remote project at `root` the mirror has not fetched yet
-    // changed (null: none left): the sidebar and quick-open list them.
     std::function<void(const std::filesystem::path& root, project::SharedPendingPaths pending)>
         pending_paths_changed;
   };
@@ -165,102 +102,35 @@ class RemoteHostService {
   RemoteHostService& operator=(const RemoteHostService&) = delete;
 
   void SetWakeChannel(util::WakeChannel channel) { mailbox_.SetWakeChannel(channel); }
-  // Apply what the sessions reported. True when anything was drained.
   bool DrainCompletions();
 
-  // Remote: Open Local Terminal — a terminal tab on THIS machine, prefixed
-  // `local · `, in the active project (in a remote one, Terminal > New runs on the
-  // host). False when the tab could not be opened.
   bool OpenLocalTerminal();
-  // Remote: Open Folder on Host… — `[user@]host[:port]:/absolute/path`. Prepares the
-  // project's mirror and returns the tree the editor opens; the project connects
-  // when that tree is opened (LocalityFor). nullopt with *error otherwise.
   std::optional<std::filesystem::path> PrepareRemoteFolder(std::string_view spec,
                                                            std::string* error);
-  // The locality of the remote project `id` -- opening it (creating its mirror if
-  // there is none) and starting its connection the first time, reconnecting it
-  // after a close. nullopt for a local id, and, with a notification saying why,
-  // for a mirror that cannot be opened.
   std::optional<project::ProjectLocality> LocalityFor(const project::ProjectId& id);
-  // The write gate of a LOCAL project: a path in an open remote project's mirror
-  // is written through that project's gate (journaled and pushed), anything else
-  // locally (project::remote::MirrorRoutingWriteGate).
   project::FileWriteGate& LocalProjectWriteGate() { return local_project_write_gate_; }
-  // The project at `root` was closed: drop its connection (the ssh channel, the
-  // host's workspace and its watch). The RemoteProject itself stays — a project state
-  // may still point at its locality while it is torn down — and reopening reconnects.
   void ProjectClosed(const std::filesystem::path& root);
-  // Settle the conflict at `path` (a file in a remote project's mirror): keep the
-  // mirror's bytes over the host's, or take the host's. False when `path` is not a
-  // conflict of any remote project.
   bool ResolveConflict(const std::filesystem::path& path, bool keep_local);
-  // Keep All Local / Take All Remote on the counted conflict row: every conflict of
-  // the remote project at `root`, each settled as ResolveConflict would. False when
-  // `root` is not a remote project or has no conflict.
   bool ResolveAllConflicts(const std::filesystem::path& root, bool keep_local);
-  // A save the host refused for the path itself (MirrorSyncEngine::Blocked):
-  // `target` a blocked file in a remote project's mirror, or a remote project's
-  // root for every blocked save in it. Retry sends it again as it is; replace
-  // (Replace on Host) overwrites whatever refused it there, a link included.
-  // False when nothing at `target` is blocked.
   bool SettleBlockedSaves(const std::filesystem::path& target, bool replace);
-  // The Conflicts view (§ 7.9b) for the remote project at `root`: the action rows
-  // first (ids kConflictSelectAll, kConflictKeepLocal, kConflictTakeRemote,
-  // kConflictMerge), then one row per conflicted file, id = relative path, its
-  // label marked `[x]` when selected. Empty for any other root.
   static constexpr std::string_view kConflictSelectAll = "@select-all";
   static constexpr std::string_view kConflictKeepLocal = "@keep-local";
   static constexpr std::string_view kConflictTakeRemote = "@take-remote";
   static constexpr std::string_view kConflictMerge = "@merge";
-  // Merge opens a tab per selected file: at most this many at once.
   static constexpr std::size_t kMaxMergeTabs = 8;
   std::vector<plugin::PluginHost::SidebarItem> ConflictRows(const std::filesystem::path& root) const;
-  // Enter on a row of that view: a file row flips its selection; Select all selects
-  // every file (or clears the selection when every file is selected); Keep Local,
-  // Take Remote and Merge act on the selected files. False for an unknown row.
   bool ActivateConflictRow(const std::filesystem::path& root, std::string_view id);
-  // Compare: fetch the host's bytes of the conflicted `path` and open them beside
-  // the mirror's file. False when `path` is not a conflict of any remote project.
   bool CompareConflict(const std::filesystem::path& path);
-  // Merge: the conflicted `path` opens in the three-way merge editor — the version
-  // both sides started from, the host's, and the mirror's — writing into the
-  // mirror's file. With no base kept (a file over the object store's per-file
-  // size) it is the two-way Compare. False when `path` is not a conflict of any
-  // remote project.
   bool MergeConflict(const std::filesystem::path& path);
-  // Mark Resolved on a merge MergeConflict opened: push the result, but only over
-  // the host version it was merged against (a host that moved on keeps the
-  // conflict). False when `path` is not such a merge (a git one: stage it).
   bool ResolveMerged(const std::filesystem::path& path);
-  // `path` is a host file outside a remote project (the launcher's out-of-project
-  // cache): fetch its CURRENT bytes — every open, so a stale or locally changed
-  // copy is never what opens — and run `opened` with it on the UI thread. False
-  // when `path` is nothing of the kind (open it as usual).
   bool OpenWhenFetched(const std::filesystem::path& path,
                        std::function<void(const std::filesystem::path&)> opened);
-  // Whether `path` is such a copy: it opens read-only, since it is not part of the
-  // project and a save could only ever overwrite the copy.
   bool IsHostFileCopy(const std::filesystem::path& path) const;
-  // Whether `root` is an open remote project's mirror tree.
   bool IsRemoteProject(const std::filesystem::path& root) const;
-  // Whether `host`'s listening ports are being watched (its server answered
-  // ports/subscribe): from then on a port that starts listening is forwarded.
   bool PortsWatched(std::string_view host) const;
-  // The files of the remote project at `root` the mirror has not fetched yet (null
-  // for none, or any other root): for a project state created after
-  // pending_paths_changed reported them.
   project::SharedPendingPaths PendingPathsOf(const std::filesystem::path& root) const;
-  // What project_status_changed last reported for `root` (empty for any other).
   editor::WelcomeRemoteStatus ProjectStatusOf(const std::filesystem::path& root) const;
-  // Remote: Remove Mirror. Delete the mirror whose tree is `root` -- its tree,
-  // objects, journal and state -- and forget it in the recents list. Refuses, with
-  // *error, a root that is not a mirror, a project that is still open (close it
-  // first: the dirty prompt is the close's), and, unless `discard_unsent`, a mirror
-  // holding saves the host never received (the count is in *error).
   bool RemoveMirror(const std::filesystem::path& root, bool discard_unsent, std::string* error);
-  // The remote project at `root` as a driver reads it (the control channel's
-  // `status.remote`): its host, the session's state and the engine's counts.
-  // nullopt for a root that is not a remote project.
   struct ProjectSnapshot {
     std::string host;
     std::string host_root;
@@ -268,154 +138,56 @@ class RemoteHostService {
     project::remote::MirrorSyncEngine::Status sync;
   };
   std::optional<ProjectSnapshot> SnapshotOf(const std::filesystem::path& root) const;
-  // A local file dropped onto a host terminal of the remote project at `root`
-  // (the pane holding `terminal`) that the host has no copy of -- a screenshot
-  // from ~/Pictures: uploaded to the host (file/upload), then its host path typed
-  // into that pane, as the local path is typed into a local one (TD-2026-11-02-428
-  // item 5). Read and sent off this thread; a row says why when it cannot be.
-  // False when nothing was started (no such project, not a regular file).
   bool UploadDroppedFile(const std::filesystem::path& root, const terminal::HostIdentity& terminal,
                          const std::filesystem::path& local_path);
-  // A program in a host terminal of the remote project at `root` ran its $EDITOR
-  // on a file (the server's EDITOR helper, term/edit: git's commit message, a
-  // rebase list, an agent CLI's prompt). Its text opens in a tab on a private
-  // copy, and the program waits on the host until that tab closes
-  // (FinishTerminalEdit). `epoch` is the terminal's server process, which the
-  // request's token belongs to.
   void BeginTerminalEdit(const std::filesystem::path& root, std::string epoch, terminal::TerminalHostEdit edit);
-  // The last tab on `path` closed. When `path` is such a copy, what was saved in
-  // it goes back to the waiting program -- again on the next connect when the
-  // link is down, since the program outlives it. False for any other path.
   bool FinishTerminalEdit(const std::filesystem::path& path);
-  // Past this a drop is refused rather than read into memory and sent.
   static constexpr std::uint64_t kMaxDroppedUploadBytes = 64u * 1024 * 1024;
-  // Whether `line` names `port` on this machine's loopback or any-address
-  // (localhost:N, 127.0.0.1:N, 0.0.0.0:N, [::1]:N, [::]:N) -- what a dev server
-  // prints when it starts (Vite's "Local: http://localhost:5173/").
   static bool MentionsLocalPort(std::string_view line, std::uint16_t port);
-  // The home's status block for a project in `state` with `sync` (§ 7.3): the
-  // link, the server and the sync, each as far as it got, and what to do about a
-  // failure. `command` reproduces the connection in a terminal; `server_release`
-  // is what the server's hello said it is ("" before one answered).
   static editor::WelcomeRemoteStatus StatusBlock(std::string_view host, std::string_view host_root,
                                                  const project::remote::RemoteHostSession::Status& state,
                                                  const project::remote::MirrorSyncEngine::Status& sync,
                                                  std::string_view command, std::string_view server_release);
-  // Changed on Host (§ 7.9) for the remote project at `root`: one row per file the
-  // host changed since connect or the last Clear, newest first; `id` is the relative
-  // path. Empty for any other root.
   std::vector<plugin::PluginHost::SidebarItem> HostChangeRows(const std::filesystem::path& root) const;
-  // Confirm a row: a modified file opens as a before/after compare (VS Code's SCM
-  // click), an added one opens, a deleted one opens its last version read-only.
   bool OpenHostChange(const std::filesystem::path& root, const std::string& relative);
   void ClearHostChanges(const std::filesystem::path& root);
-  // File History for `path` in the remote project at `root`: the contents it had
-  // before the host replaced them that the mirror still holds, newest first
-  // (MirrorSyncEngine::FileVersions). Empty for any other root or path.
   std::vector<project::remote::FileVersionHistory::Version> FileVersions(const std::filesystem::path& root,
                                                                          const std::filesystem::path& path) const;
-  // Open the version of `path` whose hash starts with `hash_prefix` (hex) against
-  // the file as it is now, the version read-only on the left; a file the host
-  // deleted opens the version alone. False when there is no such version.
   bool OpenFileVersion(const std::filesystem::path& root, const std::filesystem::path& path,
                        std::string_view hash_prefix);
-  // Moving between machines (workspace/persistence/RoamingSession.h). The
-  // session of the remote project at `root` was saved: what it has open is left on
-  // its host for the next machine when the SET of open files changed since it was
-  // last left, and `remote.roam_session` is on. A caret that moved is not sent on
-  // its own -- sessions are saved at every pause in typing -- until
-  // LeaveSessions. A no-op while the project is not connected.
   void SessionSaved(const std::filesystem::path& root, const PersistedProjectSessionState& session);
-  // The window lost focus -- how a machine is left: every open project's session
-  // as last saved is left on its host, carets and all, when it differs from what
-  // is there.
   void LeaveSessions();
-  // The review marks or notes of the remote project at `root` changed: left on
-  // its host for the user's other machine the next time the window is left
-  // (LeaveSessions) -- a mark costs nothing when it is made. Under
-  // `remote.roam_session`, as the session is.
   void ReviewChanged(const std::filesystem::path& root);
-  // Open the files another machine left open in the project at `root` -- what a
-  // connect offered -- beside what is open here, the one that was in front last
-  // and at its caret. False when nothing is on offer.
   bool OpenOfferedSession(const std::filesystem::path& root);
-  // This machine's name in what it leaves, and whose sessions it is not offered.
-  // A test's one window plays two machines in turn: becoming another one forgets
-  // what the first left and was offered, as a different machine never knew them.
   void SetMachineNameForTesting(std::string name);
-  // The held mass delete of remote project `root`, applied (§ 6.3). False when it
-  // is not a remote project or holds none.
   bool ApplyHeldDeletes(const std::filesystem::path& root);
-  // `[user@]host[:port]:/absolute/path`, validated like a host target.
   static std::optional<std::pair<project::remote::RemoteHostTarget, std::string>> ParseRemoteFolder(
       std::string_view spec, std::string* error);
-  // The host's OPEN remote projects; false when there are none.
   bool Reconnect(std::string_view host);
-  // Empty = every host. Open projects only (a closed one is down already).
   void Disconnect(std::string_view host = {});
-  // Quit: every mirror's sync state written now (MirrorSyncEngine::PersistNow),
-  // closed ones too -- the process leaves through quick_exit, which runs no engine
-  // destructor, and pulled bytes no save records read as conflicts next start.
   void PersistMirrors();
-  // `microide-server stop` on the host, off the UI thread; the result is a row.
   bool StopServer(std::string_view host);
-  // Remote: Show Host Server Log — fetched off the UI thread, shown in an output
-  // channel (VS Code's "Remote - SSH" log). False when nothing connects to `host`.
   bool ShowLog(std::string_view host);
-  // Forward the host's localhost:<port> here (or stop): off the UI thread, the
-  // outcome a notification row — with Open in Browser and Copy Address on success.
-  // False when nothing connects to `host`.
   bool ForwardPort(std::string_view host, std::uint16_t port);
-  // A link clicked in a terminal that runs through `launcher`: when that is a remote
-  // project's and the URL names the host's own loopback (`http://localhost:3000/x`), forward
-  // the port and open the same URL at the local end — VS Code's terminal links do
-  // the same. False for anything else: the caller opens it as it is.
   bool OpenHostLocalUrl(const platform::ProcessLauncher& launcher, std::string_view url);
-  // `scheme://<loopback>:<port><rest>` -> its parts; nullopt for any other URL (no
-  // explicit port, another host, another scheme).
   struct LoopbackUrl {
-    std::string scheme;  // "http" or "https"
+    std::string scheme;
     std::uint16_t port = 0;
-    std::string rest;  // path, query and fragment, as written
+    std::string rest;
   };
   static std::optional<LoopbackUrl> ParseLoopbackUrl(std::string_view url);
   bool CancelForward(std::string_view host, std::uint16_t port);
-  // Hosts to offer when connecting: the open projects', then every concrete alias
-  // in ~/.ssh/config (and what it includes). Reads the config: not for a frame path.
   std::vector<std::string> KnownHosts() const;
-  // The host of the remote project at `root`, or empty.
   std::string HostOfProject(const std::filesystem::path& root) const;
-  // "ssh", "install", "linger", or "port:<host port>" (a forward's local address):
-  // what the matching Copy button puts on the clipboard.
   std::optional<std::string> CommandText(std::string_view host, std::string_view which) const;
-  // Remote: Show Status's text answer (the control channel's: it has no sidebar):
-  // each project's connection and sync, and each host's totals from the last
-  // status it sent.
   std::string StatusText() const;
 
-  // ---- The Host view (remote-host-activity D4-D6) ----
-  // The view lists every host with an open project: one host's rows as they are,
-  // or, with several, each under a collapsible group of its own (`@<host>`; its
-  // rows' ids carry the same prefix -- HostRowId). Show `host` there: its group
-  // is expanded. False when no open project is on it.
   bool ShowHost(std::string_view host);
-  // Whether the Host view is on screen. While it is, every host shown pushes its
-  // activity (activity/subscribe); once it is not, nothing is asked and nothing
-  // is pushed. Cheap when nothing changed: the shell calls it after every event
-  // and control command. (`active_root` is unused since the view shows them all.)
   void SetHostViewVisible(bool visible, const std::filesystem::path& active_root);
-  // The groups the user collapsed (host groups and per-host groups, by row id):
-  // what the session keeps, and what a restored session puts back.
   std::vector<std::string> CollapsedHostGroups() const;
   void RestoreCollapsedHostGroups(const std::vector<std::string>& ids);
-  // Its rows as of the last status, built when that arrived; a collapsed group's
-  // rows are left out.
   std::vector<plugin::PluginHost::SidebarItem> HostRows() const;
-  // Expand or collapse the group row `id`. False for any other row.
   bool ToggleHostGroup(std::string_view id);
-  // What Enter or Delete on Host row `id` runs: a command line, the question to
-  // confirm it with first ("" = none), or -- for a row whose action would not do
-  // what it says -- a refusal to show instead. nullopt for a row with no action.
   struct RowCommand {
     std::string command_line;
     std::string confirm;
@@ -423,155 +195,87 @@ class RemoteHostService {
   };
   std::optional<RowCommand> HostRowOpenCommand(std::string_view id) const;
   std::optional<RowCommand> HostRowEndCommand(std::string_view id) const;
-  // Remote: End Host Process -- proc/end for `handle` on `host`. False when
-  // nothing connects to it.
   bool EndHostProcess(std::string_view host, std::uint64_t handle);
-  // The status line of a host terminal of `root`'s project waiting for its
-  // connection, in that connection's words.
   std::string PendingTerminalLine(const std::filesystem::path& root) const;
-  // The connect summary's Attach: each of `handles` (host terminals nobody is
-  // attached to) in a new tab of the active project, which must be on `host`.
-  // False with *error otherwise.
   bool AttachHostTerminals(const std::filesystem::path& active_root, std::string_view host,
                            const std::vector<std::uint64_t>& handles, std::string* error);
-  // Its Close: term/close for each. False when nothing connects to `host`.
   bool CloseHostTerminals(std::string_view host, const std::vector<std::uint64_t>& handles);
-  // The only host among the open remote projects, or empty when there are none or
-  // several.
   std::string SoleHost() const;
 
-  // What the Remote menu's rows are available for. They run per painted row while
-  // the menu is open, so they read only what the service holds: no disk, no
-  // allocation.
-  //   a remote project is open -- a connection to show, reconnect, stop, forward on
   bool HasOpenProject() const;
-  //   a port is forwarded to a host with an open project -- one to stop forwarding
   bool HasForwardedPort() const;
-  //   a recent remote project is not open and its mirror is on disk -- one Remove
-  //   Mirror can take. The disk is read once per change of the recents or of the
-  //   open projects, not per row; a mirror deleted outside the editor meanwhile
-  //   is noticed when the pick lists what is there (RemovableMirrors).
   bool HasRemovableMirror() const;
 
-  // The hosts of the open remote projects, each once, in the order first opened.
   std::vector<std::string> OpenHosts() const;
   struct ForwardedPort {
     std::string host;
     std::uint16_t host_port = 0;
     std::uint16_t local_port = 0;
   };
-  // Every port forwarded to a host with an open project, by host then port.
   std::vector<ForwardedPort> ForwardedPorts() const;
-  // The recent remote projects that are not open and whose mirror is on disk: what
-  // Remove Mirror offers. Reads each candidate's record: not for a frame path.
   std::vector<project::ProjectId> RemovableMirrors() const;
-  // Whether `id` is a remote project whose mirror is on disk (its record reads):
-  // the per-recent half of the above. Reads the disk.
   static bool HasMirrorOnDisk(const project::ProjectId& id);
 
  private:
   struct Project {
     std::unique_ptr<project::remote::RemoteProject> project;
-    // Its record's fields, kept: record() builds both strings per call, and the
-    // menu's availability asks per painted row.
     std::string host;
     std::string host_root;
     project::remote::RemoteHostSession::Status status;
     bool auth_terminal_opened = false;
     bool announced_sync = false;
     bool warned_polling = false;
-    bool closed = false;  // its project tab is closed: disconnected, and not shown
-    std::vector<std::string> conflict_rows;  // relative paths with a row of their own showing
-    std::vector<std::string> conflicts;      // the engine's, sorted, as last published
-    std::set<std::string, std::less<>> selected_conflicts;  // the Conflicts view's ticks
-    std::vector<std::string> blocked_rows;  // relative paths with a blocked-save row of their own
-    // Changed on Host: the engine's change counter last seen, and when the "N files
-    // changed on host" row was last raised (it is raised at most every 30 s).
+    bool closed = false;
+    std::vector<std::string> conflict_rows;
+    std::vector<std::string> conflicts;
+    std::set<std::string, std::less<>> selected_conflicts;
+    std::vector<std::string> blocked_rows;
     std::size_t seen_host_changes = 0;
     std::optional<std::chrono::steady_clock::time_point> host_changes_announced;
-    std::uint64_t pending_revision = 0;  // the engine's, last reported
-    editor::WelcomeRemoteStatus status_block;  // last reported
-    // The host terminals under this project's root nobody is attached to, as the
-    // last connect's server/status listed them (Show Status names them).
+    std::uint64_t pending_revision = 0;
+    editor::WelcomeRemoteStatus status_block;
     std::vector<project::remote::ServerTerminal> unclaimed_terminals;
-    // Moving between machines: the fingerprint of what this machine last left on
-    // the host (the same content is not sent twice), of the last session it was
-    // offered (the same one is not offered twice), and that session until it is
-    // taken or replaced.
     std::string roaming_left;
-    std::string roaming_left_files;  // its RoamingSessionFileList
+    std::string roaming_left_files;
     std::string roaming_offered;
     std::optional<RoamingSession> roaming_offer;
-    // The session as last saved, not yet left on the host as it is.
     std::optional<RoamingSession> roaming_pending;
-    // The connection the host was last asked on for what another machine left.
     std::weak_ptr<project::remote::RemoteServerClient> roaming_checked;
-    // Review marks: changed here since they were last left on the host, and the
-    // text the host is known to hold (left by this machine, or read from it).
     bool review_changed = false;
     std::string review_on_host;
   };
-  // A host program's file open here for editing (BeginTerminalEdit).
   struct TerminalEdit {
     std::filesystem::path root;
     std::string epoch;
     std::uint64_t token = 0;
     std::filesystem::path copy;
-    bool closed = false;   // its tab closed: the host is owed the text
-    bool sending = false;  // ...and was sent it, with no answer yet
+    bool closed = false;
+    bool sending = false;
   };
   std::vector<TerminalEdit> terminal_edits_;
-  // Send a closed edit's text to its host, unless that is under way.
   void SendTerminalEdit(TerminalEdit& edit);
   void OnTerminalEditAnswered(std::uint64_t token, const std::string& epoch, std::optional<bool> delivered);
-  // On a connect: the edits of `root` whose tab closed while the link was down.
   void ResendTerminalEdits(const std::filesystem::path& root);
-  // Leave `entry`'s pending session on its host.
   void LeaveSession(const std::filesystem::path& root, Project& entry);
-  // On a connect: ask the host what another machine left, and offer it.
   void CheckRoamingSession(const std::filesystem::path& tree, Project& entry);
   void OnRoamingSession(const std::filesystem::path& tree, const std::string& text);
-  // Leave `entry`'s review marks on its host, unless it holds them already.
   void LeaveReview(const std::filesystem::path& root, Project& entry);
-  // The host's answer to "which review marks were left": nullopt for none.
   void OnRoamingReview(const std::filesystem::path& tree, const std::optional<std::string>& text);
   bool RoamingEnabled() const;
-  std::string machine_name_;  // gethostname(), read once
-  // The forward job behind ForwardPort and OpenHostLocalUrl; `then_open` (a
-  // LoopbackUrl's scheme and rest) opens the forwarded URL once it is up.
-  // `owner_root`: the host root of the project whose program opened the port
-  // ("" = none known), which the row names.
-  // `announce` false: no row, success or failure (an automatic forward the user
-  // asked to hear nothing about, or one announced moments ago).
+  std::string machine_name_;
   bool StartForward(std::string_view host, std::uint16_t port, std::optional<LoopbackUrl> then_open,
                     std::string owner_root = {}, bool announce = true);
-  // Whether a project on `host` at `host_root` is open (not closed) here.
   bool HasOpenProject(std::string_view host, std::string_view host_root) const;
-  // Automatic port forwarding (VS Code's): subscribe to `host`'s listening ports
-  // over `session`'s connection, once per connection, and forward a port a host
-  // program starts listening on after the first connect (remote.auto_forward_ports).
   void WatchPorts(const std::string& host, project::remote::RemoteHostSession& session);
   void OnHostPorts(const std::string& host, const project::remote::RemoteServerClient::HostPorts& listening);
   struct PortWatch {
-    std::weak_ptr<project::remote::RemoteServerClient> client;  // subscribed through
-    // The ports listening now (from the first connect on): only a port not in it
-    // is forwarded, so a forward the user stopped is not made again while its
-    // program runs.
+    std::weak_ptr<project::remote::RemoteServerClient> client;
     std::optional<std::set<std::uint16_t>> baseline;
-    // Forwarded by this watch rather than by the user: dropped when the port stops
-    // listening.
     std::set<std::uint16_t> auto_forwarded;
-    // When each automatically forwarded port was last announced: a dev server that
-    // restarts stops and starts listening, and its forward is made again quietly
-    // within kReannounceAfter. Pruned as it is written, so it holds only recent ports.
     std::map<std::uint16_t, std::chrono::steady_clock::time_point> announced;
-    // Where bind(port 0) lands on this host: never auto-forwarded.
     project::remote::PortRange ephemeral;
   };
-  // Queue `ports` (the host's whole listening list, answer or push) for
-  // OnHostPorts; only the newest queued list runs.
   void PostHostPorts(const std::string& host, project::remote::RemoteServerClient::HostPorts ports);
-  // CancelForward, announced or not (an automatic forward's port went away).
   bool StopForward(std::string_view host, std::uint16_t port, bool announce);
   void PublishHostChanges(const std::filesystem::path& tree, Project& entry,
                           const project::remote::MirrorSyncEngine::Status& sync);
@@ -582,64 +286,33 @@ class RemoteHostService {
                        std::string* error);
   void ApplyProject(const std::filesystem::path& tree);
   void PublishConflictRows(const std::filesystem::path& tree, Project& entry);
-  // Blocked saves (§ 6.3): one row per file naming the host's reason, with Retry
-  // and Replace on Host; from two on, one counted row that settles them all.
   void PublishBlockedRows(const std::filesystem::path& tree, Project& entry);
-  // After a connect's reattaches went out: ask server/status (off the UI thread)
-  // and sum the connect up in one row (OnHostTerminals).
   void ListHostTerminals(const std::filesystem::path& tree, Project& entry);
-  // The host root of an open project on `host` whose host terminal printed `port`'s
-  // address (MentionsLocalPort); "" when none did.
   std::string ProjectPrintingPort(std::string_view host, std::uint16_t port) const;
   void OnHostTerminals(const std::filesystem::path& tree,
                        const std::optional<project::remote::ServerStatus>& status);
   void DropUnclaimed(std::string_view host, const std::vector<std::uint64_t>& handles);
-  // The Host view's subscription follows its visibility and its host's connection:
-  // subscribe through the connection that should carry it, unsubscribe from one
-  // that should not. Called on every change of either.
   void UpdateActivitySubscription();
   void BuildHostRows();
-  // A row id's host and its id within that host: the prefix of a several-host
-  // view's ids, or the only host for an unprefixed one. Empty host: none.
   std::pair<std::string, std::string_view> HostOfRow(std::string_view id) const;
-  // A status for the Host view from `host`'s subscription `generation` (a stale
-  // one, from a connection or a view since replaced, is dropped).
   void OnHostActivity(const std::string& host, std::uint64_t generation,
                       std::optional<project::remote::ServerStatus> status);
-  // The client of `host`'s first open project, when it is connected.
   std::shared_ptr<project::remote::RemoteServerClient> ConnectedClient(std::string_view host) const;
-  // The session of the first OPEN remote project on `host`, or null: a closed one's
-  // is disconnected, and answering with it shadowed an open one on the same host.
   const project::remote::RemoteHostSession* SessionFor(std::string_view host) const;
   project::remote::RemoteHostSession* SessionFor(std::string_view host) {
     return const_cast<project::remote::RemoteHostSession*>(std::as_const(*this).SessionFor(host));
   }
-  // The project and relative path a conflicted mirror path belongs to.
   std::pair<Project*, std::string> ConflictOwner(const std::filesystem::path& path);
-  // Settle `paths` (relative, in list order) of `entry`'s project, each as
-  // ResolveConflict would.
   void ResolveConflicts(Project& entry, const std::vector<std::string>& paths, bool keep_local);
   void PublishStatusSegment();
-  // Once per host, when it is Ready: warn when its processes end at logout (the
-  // hello's session-survival report), which makes "terminals survive a
-  // disconnect" false; and offer to restart a server older than this editor once
-  // the new one is installed beside it (RemoteHostSession::update_installed).
   void AdviseAboutHostServer(const std::string& host,
                              const project::remote::RemoteHostSession& session);
 
   Operations operations_;
-  // By host (`RemoteHostTarget::Display`): the ports forwarded to it, shared by
-  // its sessions. Kept after they go, so the next connection forwards them again.
   std::map<std::string, std::shared_ptr<project::remote::HostPortForwards>, std::less<>> forwards_;
-  std::map<std::string, PortWatch, std::less<>> port_watches_;  // by host
-  // By mirror tree. Kept until the service goes: a project state may still hold
-  // their launcher and gate (ProjectLocality's lifetime rule).
-  // Before projects_: the mirrors registered in it are unregistered (the
-  // destructor, RemoveMirror) before their projects go.
+  std::map<std::string, PortWatch, std::less<>> port_watches_;
   project::remote::MirrorRoutingWriteGate local_project_write_gate_;
   std::map<std::filesystem::path, Project> projects_;
-  // Bumped whenever a project opens, closes or goes: with the recents revision,
-  // the key HasRemovableMirror's cached answer holds for.
   std::uint64_t open_generation_ = 0;
   struct RemovableMirrorAnswer {
     std::uint64_t recents_revision = 0;
@@ -647,35 +320,25 @@ class RemoteHostService {
     bool any = false;
   };
   mutable std::optional<RemovableMirrorAnswer> removable_mirror_;
-  std::vector<std::string> survival_warned_;  // hosts already warned
-  std::vector<std::string> update_offered_;   // hosts already offered a restart
-  std::filesystem::path fetching_copy_;  // the host-file copy being opened right now
-  // The last status each host sent (a connect's listing, the Host view's pushes):
-  // StatusText's totals and the Host view's rows.
+  std::vector<std::string> survival_warned_;
+  std::vector<std::string> update_offered_;
+  std::filesystem::path fetching_copy_;
   std::map<std::string, project::remote::ServerStatus, std::less<>> last_status_;
   struct HostView {
     bool visible = false;
     struct Subscription {
-      // The connection it went through; expired or replaced = none.
       std::weak_ptr<project::remote::RemoteServerClient> client;
-      // Its (un)subscribe's number: what a replaced subscription posts is dropped.
       std::uint64_t generation = 0;
     };
-    std::map<std::string, Subscription, std::less<>> subscriptions;  // by host
+    std::map<std::string, Subscription, std::less<>> subscriptions;
     std::uint64_t next_generation = 0;
     std::set<std::string, std::less<>> collapsed;
     std::vector<plugin::PluginHost::SidebarItem> rows;
   };
   HostView host_view_;
-  // Mirror file -> the host version its open merge is against (MergeConflict).
   std::map<std::filesystem::path, util::ContentHash> merges_;
-  // Blocking host work off the UI thread — Stop Host Server, Show Log, port
-  // forwards — one at a time. Shut down (in-flight job finished, the rest dropped)
-  // before the sessions its jobs use go.
   util::SerialWorkQueue work_{util::SerialWorkQueue::StartMode::kLazy, {}, {}, "remote-svc"};
-  // Last: its queued closures name `this`, and it must drop them before the
-  // sessions that post them are gone — sessions are destroyed explicitly first.
   util::MainThreadMailbox mailbox_;
 };
 
-}  // namespace microide::workspace
+}

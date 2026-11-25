@@ -10,10 +10,6 @@
 
 namespace microide::workspace {
 
-// A short, cause-specific note for an incomplete file-index scan, or an empty
-// view when the scan was complete (TD-2026-07-17-008/033). Returns a static
-// literal so render callers never materialize a string. Precedence favors the
-// most consequential cause (too large > too deep > unreadable folders > error).
 inline std::string_view ScanIncompleteNote(const project::ProjectFileScanStatus& status) {
   if (status.truncated_by_budget) {
     return "index incomplete — project too large";
@@ -30,19 +26,8 @@ inline std::string_view ScanIncompleteNote(const project::ProjectFileScanStatus&
   return {};
 }
 
-// One definition, in `util/StringUtil.h`. This spelling used `std::to_chars`
-// into a 20-byte buffer and SILENTLY APPENDED NOTHING on overflow; the util one
-// sizes its buffer for the widest std::size_t so there is no failure case.
 using util::AppendUnsigned;
 
-// A project's label is its id's (project::ProjectId::Label), never its root's: a
-// remote project's root is its mirror. There is deliberately no helper here that
-// takes a path -- `ProjectLabelForRoot` was one, and it labelled every remote
-// project by its mirror's directory.
-
-// The window's title: VS Code's `${dirty}${activeEditorShort} — ${rootName} —
-// ${appName}`, each part dropped when there is none. Written into `out` so a
-// caller that keeps the string composes into its capacity.
 inline void ComposeWindowTitle(std::string& out, std::string_view editor_title, bool dirty,
                                std::string_view project_label) {
   out.clear();
@@ -56,17 +41,9 @@ inline void ComposeWindowTitle(std::string& out, std::string_view editor_title, 
     out.append(project_label).append(" \u2014 ");
   }
   out.append("microide");
-  // A tab's title comes from a file name, and a file name is any bytes: SDL
-  // refuses a title that is not UTF-8 whole, so the platform window kept the
-  // previous one while the title bar showed the new name with a U+FFFD for the
-  // bad byte (soak c568d28b7719). Both now carry the same valid text.
   (void)util::ReplaceInvalidUtf8WithReplacementCharacter(out);
 }
 
-// A path for a message, with the home directory spelled "~" (as a shell prompt
-// does): the mirror and cache paths under ~/.local live there, and a toast that
-// spends 20 columns on "/home/<user>" loses the part that differs. Only a whole
-// leading component is replaced — "/home/pab" is not a prefix of "/home/pablo2".
 inline std::string HomeAbbreviatedPath(const std::filesystem::path& path, std::string_view home) {
   std::string text = path.string();
   while (home.size() > 1 && home.back() == '/') {
@@ -84,16 +61,8 @@ inline std::string HomeAbbreviatedPath(const std::filesystem::path& path, std::s
   return "~" + text.substr(home.size());
 }
 
-// The one separator for key-hint lists, matching the overlay hint ("↑↓ select ·
-// Enter choose · Esc cancel"). Not for joining unrelated fields — the breadcrumb's
-// "path | left -> right" and the merge status line are separators between
-// different things, not hint segments, and keep their own punctuation.
 inline constexpr std::string_view kHintSeparator = " · ";
 
-// Appending form, for hint lists assembled conditionally (the git sidebar and the
-// compare review header add a segment per available action). Both of those carried
-// a private byte-identical copy of this that joined on "  |  " instead, so the two
-// longest, most-read hint lines in the shell were the two that disagreed with it.
 inline void AppendHintSegment(std::string& line, std::string_view segment) {
   if (segment.empty()) {
     return;
@@ -122,23 +91,6 @@ inline std::string FormatEmptyState(std::string_view noun, std::string_view qual
   return text;
 }
 
-// Result-count line for any query-filtered list: "12 of 187 commands" while the
-// query is excluding rows and "187 commands" when it is not. Shared by the
-// quick-open pickers and the Settings / Help-About footer so a count means the
-// same thing everywhere.
-//
-// The denominator is deliberately dropped when it equals the numerator: an
-// unfiltered palette read "187 of 187", which is noise that also looks like a
-// filter is active.
-//
-// A zero-match list yields the EMPTY string, not "0 of 187" and not "No matching
-// commands": every one of these surfaces already prints a no-match line in the
-// list area, which is where the eye goes when the list is blank, and saying it
-// twice is the duplication this pass keeps removing. Callers pair this with their
-// own empty-state label rather than getting the message from here.
-// Appending form, for the render view-model builder's reused scratch string: the
-// overlay chrome composes into a frame-stable buffer specifically to keep painting
-// allocation-free, so it must not take a freshly-built std::string per frame.
 inline void AppendFilteredCountSummary(std::string& text,
                                        std::size_t shown,
                                        std::size_t total,
@@ -175,8 +127,6 @@ inline std::string BuildCountStatus(std::string_view prefix,
   return text;
 }
 
-// Builds "Showing <shown> of <total> matches" + suffix. Used when a count-all
-// project search knows the exact total but only displays the first `shown`.
 inline std::string BuildShownOfTotalStatus(std::size_t shown,
                                            std::size_t total,
                                            std::string_view suffix) {
@@ -191,9 +141,6 @@ inline std::string BuildShownOfTotalStatus(std::size_t shown,
   return text;
 }
 
-// Appends a " (X of Y files)" denominator clause when total > 0. Used by the
-// project search sidebar/overlay to surface progress on large repos so the
-// "Searching N matches" readout has a denominator while the worker is active.
 inline std::string BuildSearchProgressSuffix(std::size_t searched, std::size_t total) {
   if (total == 0) {
     return {};
@@ -220,4 +167,4 @@ inline std::string BuildSelectionSummary(std::size_t selected,
   return summary;
 }
 
-}  // namespace microide::workspace
+}

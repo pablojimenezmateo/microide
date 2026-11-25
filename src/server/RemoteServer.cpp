@@ -25,13 +25,11 @@ namespace microide::server {
 
 namespace {
 
-// What a connection's terminal frames may carry, from the wire version its
-// hello said it speaks (remote::kProtocolVersion's history).
 terminal::TerminalHostWireOptions TerminalWireOptionsFor(std::int64_t protocol) {
   return terminal::TerminalHostWireOptions{.underline_colors = protocol >= 4, .edit = protocol >= 5};
 }
 
-}  // namespace
+}
 
 RemoteServer::RemoteServer(Config config)
     : config_(std::move(config)), epoch_(remote::MakeDaemonEpoch()) {
@@ -54,9 +52,6 @@ RemoteServer::RemoteServer(Config config)
       .git_exited =
           [this](const std::string& cwd) {
             const std::uint64_t generation = ++git_generation_;
-            // The trees it ran in (or under) have a status to push again. Scheduled
-            // after mutex_ is released: scheduling takes a tree's publish_mutex,
-            // which PublishWatchBatch holds while it takes mutex_.
             std::vector<std::shared_ptr<ServedTree>> trees;
             {
               std::lock_guard lock(mutex_);
@@ -87,26 +82,16 @@ RemoteServer::RemoteServer(Config config)
 }
 
 void RemoteServer::InstallTerminalForwarders() {
-  // Only a daemon with a socket can be reached by the helper; serve-stdio (one
-  // connection, the tests) has nothing for it to connect to.
   if (config_.socket_path.empty()) {
     return;
   }
   const std::filesystem::path dir = config_.socket_path.parent_path();
-  // Links to this executable, named so `main` knows to act as the helper: BROWSER
-  // is ONE program path that is given the URL (Claude Code spawns it with no
-  // shell, xdg-open's generic mode runs it as `$BROWSER "$url"`), so neither a
-  // subcommand nor a quoted script line fits it -- and EDITOR, which git does
-  // run through a shell, is spawned bare by other programs. Re-made at every
-  // start: an upgraded server is at another path.
   std::error_code error;
   const std::filesystem::path self = std::filesystem::read_symlink("/proc/self/exe", error);
   if (error || self.empty()) {
     return;
   }
   std::vector<std::string> environment{"MICROIDE_SERVER_SOCKET_DIR=" + dir.string()};
-  // EDITOR and not VISUAL: a shell profile that names an editor in either keeps
-  // it (a program asks VISUAL first, and a profile's EDITOR replaces this one).
   for (const auto& [variable, helper] : {std::pair{"BROWSER", remote::BrowserHelperPath(dir)},
                                          std::pair{"EDITOR", remote::EditorHelperPath(dir)}}) {
     std::filesystem::remove(helper, error);
@@ -144,9 +129,6 @@ void RemoteServer::WithPeer(std::uint64_t connection_id,
   if (connection_id == 0) {
     return;
   }
-  // Under the lock for the whole use: ReapClosed destroys connections, and a
-  // pointer taken out of the lock could be to one it just destroyed. Sending only
-  // queues (the transport's own lock), so this never waits on the network.
   std::lock_guard lock(mutex_);
   for (const auto& connection : connections_) {
     if (connection->id == connection_id && !connection->closed) {
@@ -157,23 +139,15 @@ void RemoteServer::WithPeer(std::uint64_t connection_id,
 }
 
 RemoteServer::~RemoteServer() {
-  // Connections first: a peer closing during teardown runs its closed handler,
-  // which detaches from the process and terminal tables — so they must still be
-  // there. Once connections_ is empty the tables' threads send to nobody
-  // (WithPeer finds no connection), so stopping them second is safe.
   std::vector<std::unique_ptr<Connection>> connections;
   {
     std::lock_guard lock(mutex_);
     connections.swap(connections_);
   }
   for (auto& connection : connections) {
-    // A reply queued just before the teardown (server/shutdown's own) still goes out.
     (void)connection->peer.FlushForTeardown();
-    connection->peer.Stop();  // joins its I/O thread, and with it any closed handler
+    connection->peer.Stop();
   }
-  // The samplers before the tables: the activity one lists them, and the members
-  // that would otherwise stop the samplers outlive this body. After the
-  // connections, so no subscribe can start one again. Joined outside their locks.
   std::unique_ptr<PeriodicSampler> samplers[2];
   {
     std::lock_guard lock(activity_mutex_);
@@ -220,7 +194,7 @@ RemoteServer::Connection& RemoteServer::Accept(int read_fd, int write_fd) {
       ref.active.store(true, std::memory_order_relaxed);
     }
   });
-  remote::RemotePeer::Options options;  // the server answers pings; it does not send them
+  remote::RemotePeer::Options options;
   if (!ref.peer.Start(read_fd, write_fd, options)) {
     ref.closed = true;
   }
@@ -253,12 +227,8 @@ void RemoteServer::InstallHandlers(Connection& connection) {
                        ++workspace.clients;
                        if (!workspace.tree) {
                          WorkspaceTree::Options tree_options;
-                         // The first client's cap: the tree is shared by every
-                         // client of this root.
                          tree_options.max_files = static_cast<std::size_t>(
                              remote::EffectiveMaxManifestFiles(hello->settings.max_manifest_files));
-                         // Beside the socket, keyed by the root: a hand-started or
-                         // on-demand server finds its predecessor's hashes.
                          if (!config_.socket_path.empty()) {
                            tree_options.cache_path =
                                config_.socket_path.parent_path() / "cache" /
@@ -269,8 +239,6 @@ void RemoteServer::InstallHandlers(Connection& connection) {
                        }
                      }
                    }
-                   // The client's bulk bound applies to what this side sends too;
-                   // the reply says what was applied, and the client pins the same.
                    const std::int64_t backfill = remote::EffectiveBackfillInflightBytes(
                        hello->settings.backfill_inflight_bytes);
                    connection.peer.SetFixedBulkWindow(static_cast<std::size_t>(backfill));
@@ -291,7 +259,6 @@ void RemoteServer::InstallHandlers(Connection& connection) {
     connection.peer.Reply(id, StatusJson(params["activity"].AsBool(false)));
   });
   peer.OnRequest(remote::method::kServerLog, [this, &connection](std::uint64_t id, const util::JsonValue&) {
-    // Size-capped by the server's own logger, so this is a small local read.
     util::JsonObject result;
     std::string text;
     std::string path;
@@ -299,7 +266,7 @@ void RemoteServer::InstallHandlers(Connection& connection) {
       const std::filesystem::path log = remote::ServerLogPath(config_.socket_path.parent_path());
       path = log.string();
       if (std::optional<std::string> bytes = util::ReadTextFile(log)) {
-        constexpr std::size_t kMaxLogReplyBytes = 256 * 1024;  // the tail is what is read
+        constexpr std::size_t kMaxLogReplyBytes = 256 * 1024;
         text = bytes->size() > kMaxLogReplyBytes ? bytes->substr(bytes->size() - kMaxLogReplyBytes)
                                                  : std::move(*bytes);
       }
@@ -321,14 +288,12 @@ void RemoteServer::InstallHandlers(Connection& connection) {
       tree->subscribers.erase(connection.id);
       tree->git_subscribers.erase(connection.id);
     }
-    std::shared_ptr<ServedTree> released;  // destroyed (worker joined) outside the lock
+    std::shared_ptr<ServedTree> released;
     {
       std::lock_guard lock(mutex_);
       if (!connection.root.empty()) {
         auto workspace = workspaces_.find(connection.root);
         if (workspace != workspaces_.end() && --workspace->second.clients == 0) {
-          // A workspace with no client attached has nothing to keep alive: its
-          // processes and terminals are the tables', not the workspace's.
           released = std::move(workspace->second.tree);
           workspaces_.erase(workspace);
         }
@@ -340,8 +305,6 @@ void RemoteServer::InstallHandlers(Connection& connection) {
     processes_->Detach(connection.id);
     terminals_->Detach(connection.id);
     {
-      // A helper that went away (Ctrl+C) waits for nothing: its client's
-      // term/edit-done is then answered "not delivered".
       std::lock_guard lock(edits_mutex_);
       std::erase_if(pending_edits_, [&](const auto& edit) { return edit.second.connection == connection.id; });
     }
@@ -370,10 +333,6 @@ void RemoteServer::InstallProcessHandlers(Connection& connection) {
     result["pid"] = util::JsonValue(static_cast<std::int64_t>(spawned.pid));
     connection.peer.Reply(id, util::JsonValue(std::move(result)));
   });
-  // What the client's GitMetadataSource answers from (project/GitMetadataSource.h):
-  // whether a tree is a repository and where its git directory is, by stat on THIS
-  // machine — the client's mirror has no `.git`, and running git to ask would cost
-  // a host process per probe.
   peer.OnRequest("git/metadata", [&connection](std::uint64_t id, const util::JsonValue& params) {
     const util::JsonValue& root = params["root"];
     if (!root.IsString() || root.AsString().empty() || root.AsString().front() != '/') {
@@ -432,8 +391,6 @@ void RemoteServer::InstallProcessHandlers(Connection& connection) {
     if (type == remote::FrameType::ProcStdin) {
       processes_->WriteStdin(handle, bytes);
     } else if (type == remote::FrameType::WriteData) {
-      // The content of the file/write whose request id this is, sent just before
-      // it on the same lane. I/O thread only, like the request handler.
       if (connection.upload_bytes + bytes.size() > kMaxUploadBytes) {
         connection.peer.Fail("too much unclaimed file/write content");
         return;
@@ -480,8 +437,6 @@ void RemoteServer::InstallTerminalHandlers(Connection& connection) {
                  [this, &connection](std::uint64_t id, const util::JsonValue& params) {
                    const std::int64_t handle = params["handle"].AsInt(0);
                    const std::string url = params["url"].IsString() ? params["url"].AsString() : std::string();
-                   // Only what the client's opener would take anyway: a web or mail
-                   // URL, bounded. A refusal here is the helper's exit status.
                    if (handle <= 0 || !platform::IsOpenableExternalUrl(url)) {
                      connection.peer.ReplyError(id, remote::kErrorInvalidParams,
                                                 "not a terminal and an http(s) URL");
@@ -508,8 +463,6 @@ void RemoteServer::InstallTerminalHandlers(Connection& connection) {
                      return;
                    }
                    {
-                     // Under the lock across the hand-over, so the client's
-                     // answer cannot arrive before the request is recorded.
                      std::lock_guard lock(edits_mutex_);
                      edit.token = next_edit_token_++;
                      const std::uint64_t token = edit.token;
@@ -520,7 +473,7 @@ void RemoteServer::InstallTerminalHandlers(Connection& connection) {
                                                            .request = id,
                                                            .client = client,
                                                            .handle = static_cast<std::uint64_t>(handle)};
-                       return;  // answered by term/edit-done, or by AbandonEdits
+                       return;
                      }
                    }
                    util::JsonObject result;
@@ -547,7 +500,6 @@ void RemoteServer::InstallTerminalHandlers(Connection& connection) {
                    if (waiting.has_value()) {
                      util::JsonObject answer;
                      answer["delivered"] = util::JsonValue(true);
-                     // No text: the tab closed with nothing to write back.
                      if (params["text"].IsString() &&
                          params["text"].AsString().size() <= terminal::kMaxHostEditBytes) {
                        answer["text"] = util::JsonValue(params["text"].AsString());
@@ -592,8 +544,6 @@ void RemoteServer::InstallTerminalHandlers(Connection& connection) {
                                              static_cast<std::size_t>(columns));
                         }
                       });
-  // Older history than an attach prefetched, a page at a time as the client
-  // scrolls up (§ 6.12). Bulk: it is backfill, never ahead of an echo.
   peer.OnRequest("term/scrollback", [this, &connection, handle_of](std::uint64_t id,
                                                                     const util::JsonValue& params) {
     const std::int64_t before = params["before"].AsInt(-1);
@@ -635,8 +585,6 @@ void RemoteServer::InstallTerminalHandlers(Connection& connection) {
 namespace {
 
 void AddFigures(const ProcessActivity::Figures& figures, util::JsonObject& into) {
-  // A pid the walk did not find (exited, or gone between the listing and the
-  // sample) reports nothing rather than zero.
   if (figures.rss_bytes < 0) {
     return;
   }
@@ -648,7 +596,7 @@ std::int64_t Milliseconds(std::chrono::steady_clock::duration duration) {
   return std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
 }
 
-}  // namespace
+}
 
 util::JsonValue RemoteServer::StatusJson(bool activity) {
   util::JsonObject status;
@@ -657,8 +605,6 @@ util::JsonValue RemoteServer::StatusJson(bool activity) {
   status["release"] = util::JsonValue(config_.release);
   status["daemon_epoch"] = util::JsonValue(epoch_);
   status["on_demand"] = util::JsonValue(config_.on_demand);
-  // Copied under mutex_; listed and sampled outside it, so the I/O threads that
-  // send through connections_ never wait on a /proc walk.
   struct WorkspaceRow {
     std::string root;
     std::size_t clients = 0;
@@ -680,8 +626,6 @@ util::JsonValue RemoteServer::StatusJson(bool activity) {
   const std::vector<TerminalTable::Listing> terminals = terminals_->List();
   const std::vector<ProcessTable::Listing> processes = processes_->List();
 
-  // One walk for every row: the server alone, each shell and each process with
-  // everything under it.
   std::vector<ProcessActivity::Figures> figures;
   if (activity) {
     std::vector<ProcessActivity::Root> roots;
@@ -702,7 +646,6 @@ util::JsonValue RemoteServer::StatusJson(bool activity) {
   const auto now = std::chrono::steady_clock::now();
   util::JsonObject server;
   server["uptime_ms"] = util::JsonValue(Milliseconds(now - started_));
-  // Live versus freed-but-kept heap: RSS cannot tell them apart (TD-2026-10-28-418).
   if (const std::optional<util::HeapUsage> heap = util::CurrentHeapUsage()) {
     server["heap_in_use"] = util::JsonValue(static_cast<std::int64_t>(heap->in_use_bytes));
     server["heap_free"] = util::JsonValue(static_cast<std::int64_t>(heap->free_bytes));
@@ -716,9 +659,6 @@ util::JsonValue RemoteServer::StatusJson(bool activity) {
   }
   status["server"] = util::JsonValue(std::move(server));
 
-  // The terminals, listed: a client offers the ones nobody is attached to (a
-  // crash orphan, a quit before this client recorded it), and the Host view
-  // shows each with what it costs.
   util::JsonArray terminal_rows;
   terminal_rows.reserve(terminals.size());
   for (std::size_t i = 0; i < terminals.size(); ++i) {
@@ -782,8 +722,6 @@ util::JsonValue RemoteServer::StatusJson(bool activity) {
     entry["processes"] = util::JsonValue(static_cast<std::int64_t>(std::count_if(
         processes.begin(), processes.end(),
         [&](const ProcessTable::Listing& p) { return !p.exited && under(p.root); })));
-    // The filesystem the workspace is on: what builds and agents' worktrees fill.
-    // One statvfs per workspace per reply, and nothing while nobody asks.
     struct statvfs disk {};
     if (::statvfs(workspace.root.c_str(), &disk) == 0) {
       const auto bytes = [&](std::uint64_t blocks) {
@@ -803,8 +741,6 @@ util::JsonValue RemoteServer::StatusJson(bool activity) {
     workspaces.push_back(util::JsonValue(std::move(entry)));
   }
   status["workspaces"] = util::JsonValue(std::move(workspaces));
-  // `processes` was the live count before the listing, as `terminals` was; a
-  // client that reads a number reads it from `live_processes`.
   status["live_processes"] = util::JsonValue(live_processes);
   status["processes"] = util::JsonValue(std::move(process_rows));
   status["terminals"] = util::JsonValue(std::move(terminal_rows));
@@ -850,7 +786,7 @@ void RemoteServer::SampleActivity() {
 }
 
 void RemoteServer::DropActivitySubscriber(std::uint64_t connection_id) {
-  std::unique_ptr<PeriodicSampler> stopped;  // joined outside the lock its thread takes
+  std::unique_ptr<PeriodicSampler> stopped;
   {
     std::lock_guard lock(activity_mutex_);
     if (activity_subscribers_.erase(connection_id) > 0 && activity_subscribers_.empty()) {
@@ -861,8 +797,6 @@ void RemoteServer::DropActivitySubscriber(std::uint64_t connection_id) {
 
 namespace {
 
-// `{"ports": [...], "roots": {"<port>": "<workspace root>"}}`: `roots` holds the
-// ports a microide terminal or process of a workspace listens on (ListenerOwners.h).
 util::JsonValue PortsJson(const std::vector<std::uint16_t>& ports,
                           const std::map<std::uint16_t, std::string>& roots) {
   util::JsonArray list;
@@ -880,7 +814,7 @@ util::JsonValue PortsJson(const std::vector<std::uint16_t>& ports,
   return util::JsonValue(std::move(object));
 }
 
-}  // namespace
+}
 
 std::vector<OwnerRoot> RemoteServer::PortOwnerRoots() const {
   std::vector<OwnerRoot> roots;
@@ -920,14 +854,6 @@ void RemoteServer::InstallPortHandlers(Connection& connection) {
 
 void RemoteServer::SamplePorts() {
   const std::vector<Listener> listeners = ListeningSockets();
-  // The sockets of every port that gained one since the last sample. Compared by
-  // socket, not by port number: a listener that closed and another process that
-  // bound the same port before this sample leave the set of ports as it was, and
-  // by ports alone the newcomer was never attributed -- a workspace's dev server
-  // on a port something else had just left stayed nobody's (and a port a
-  // workspace's process left kept its owner for whatever took it). Only those
-  // ports are walked: the owner of a socket already announced does not change,
-  // and the fd walk is the costly part.
   std::vector<Listener> changed;
   {
     std::lock_guard lock(ports_mutex_);
@@ -938,7 +864,7 @@ void RemoteServer::SamplePorts() {
     for (const Listener& listener : listeners) {
       if (!std::binary_search(listeners_last_.begin(), listeners_last_.end(), listener) &&
           (gained.empty() || gained.back() != listener.port)) {
-        gained.push_back(listener.port);  // sorted: `listeners` is, by port first
+        gained.push_back(listener.port);
       }
     }
     for (const Listener& listener : listeners) {
@@ -947,7 +873,6 @@ void RemoteServer::SamplePorts() {
       }
     }
   }
-  // The walk runs with no lock held: the table listings take their own.
   std::map<std::uint16_t, std::string> found = AttributeListeners(changed, PortOwnerRoots());
   const std::vector<std::uint16_t> ports = PortsOf(listeners);
   std::vector<std::uint64_t> subscribers;
@@ -957,8 +882,6 @@ void RemoteServer::SamplePorts() {
     const std::vector<std::uint16_t> ports_before = PortsOf(listeners_last_);
     std::map<std::uint16_t, std::string> roots = port_roots_;
     for (auto it = roots.begin(); it != roots.end();) {
-      // Gone, or re-attributed just now (`found` has it again if it is still a
-      // workspace's).
       const bool walked = std::any_of(changed.begin(), changed.end(),
                                       [&](const Listener& listener) { return listener.port == it->first; });
       it = !walked && std::binary_search(ports.begin(), ports.end(), it->first) ? std::next(it) : roots.erase(it);
@@ -966,7 +889,7 @@ void RemoteServer::SamplePorts() {
     roots.merge(found);
     listeners_last_ = listeners;
     if (ports == ports_before && roots == port_roots_) {
-      return;  // a socket changed and nothing a client is shown did
+      return;
     }
     port_roots_ = std::move(roots);
     subscribers.assign(port_subscribers_.begin(), port_subscribers_.end());
@@ -978,7 +901,7 @@ void RemoteServer::SamplePorts() {
 }
 
 void RemoteServer::DropPortSubscriber(std::uint64_t connection_id) {
-  std::unique_ptr<PeriodicSampler> stopped;  // joined outside the lock its thread takes
+  std::unique_ptr<PeriodicSampler> stopped;
   {
     std::lock_guard lock(ports_mutex_);
     if (port_subscribers_.erase(connection_id) > 0 && port_subscribers_.empty()) {
@@ -1000,8 +923,6 @@ bool RemoteServer::ReapClosed() {
         ++it;
       }
     }
-    // An observer's connection holds the exit off while it is open (Idle wants no
-    // connection at all) but does not restart the countdown; a client's does.
     const bool in_use = !workspaces_.empty() ||
                         std::any_of(connections_.begin(), connections_.end(), [](const auto& connection) {
                           return connection->active.load(std::memory_order_relaxed) ||
@@ -1013,7 +934,7 @@ bool RemoteServer::ReapClosed() {
     open = !connections_.empty();
   }
   for (auto& connection : dead) {
-    connection->peer.Stop();  // joins its I/O thread; we are not on it
+    connection->peer.Stop();
   }
   return open;
 }
@@ -1038,10 +959,6 @@ int RemoteServer::RunListener(int listen_fd) {
       break;
     }
     pollfd fds[2] = {{listen_fd, POLLIN, 0}, {wake_.read_fd(), POLLIN, 0}};
-    // Idle needs no connection at all, and a connection that closes wakes this
-    // loop (wake_), so while one is open there is nothing to re-check: block. With
-    // none, wake at least once a second for the idle rule (a kept process exiting
-    // does not wake it). An open connection used to cost a wakeup a second here.
     const int timeout_ms = config_.on_demand && !connected
                                ? static_cast<int>(std::min<std::int64_t>(
                                      config_.idle_timeout.count() + 1, 1000))
@@ -1083,4 +1000,4 @@ int RemoteServer::ServeOne(int read_fd, int write_fd) {
   return 0;
 }
 
-}  // namespace microide::server
+}

@@ -131,8 +131,6 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
 
   if (state.action == PromptSurfaceState::Action::DiscardGitEntry) {
     const auto entry_index = util::ParseSize(state.input.text());
-    // Pass the confirmed path so the discard re-validates the (possibly stale)
-    // index still points at it — an async refresh may have reordered the entries.
     const bool discarded =
         entry_index.has_value() &&
         operations_.discard_git_sidebar_entry(*entry_index, state.path);
@@ -196,8 +194,6 @@ void PathMutationCoordinator::FollowRename(const std::filesystem::path& old_path
 
 namespace {
 
-// "name copy.ext", then "name copy 2.ext", … -- the first name free in
-// `directory` (a folder's "name copy" has no extension to keep).
 std::filesystem::path FreeCopyName(const std::filesystem::path& directory, const std::filesystem::path& source) {
   std::error_code error;
   const bool is_directory = std::filesystem::is_directory(std::filesystem::symlink_status(source, error));
@@ -212,17 +208,13 @@ std::filesystem::path FreeCopyName(const std::filesystem::path& directory, const
   }
 }
 
-}  // namespace
+}
 
 std::string PathMutationCoordinator::PastePath(const std::filesystem::path& source,
                                                bool cut,
                                                const std::filesystem::path& directory) {
   const std::filesystem::path from = source.lexically_normal();
   const std::filesystem::path into = directory.lexically_normal();
-  // Returned, not notified: each caller reports a refusal once, its own way (the
-  // tree action through its rejection, which also answers the control channel; a
-  // drop with a toast). Notified here as well, a refused Ctrl+V showed the same
-  // sentence twice, as an error and as a warning.
   const auto refuse = [](std::string why) { return why; };
   std::error_code error;
   if (std::filesystem::symlink_status(from, error).type() == std::filesystem::file_type::not_found) {
@@ -233,7 +225,7 @@ std::string PathMutationCoordinator::PastePath(const std::filesystem::path& sour
   }
   std::filesystem::path destination = into / from.filename();
   if (cut && destination == from) {
-    return {};  // cut and pasted where it is: nothing moves
+    return {};
   }
   if (cut && PathEqualsOrWithin(into, from)) {
     return refuse("A folder cannot be moved into itself");
@@ -254,7 +246,7 @@ std::string PathMutationCoordinator::PastePath(const std::filesystem::path& sour
                   (result.error_message.empty() ? std::string{} : ": " + result.error_message));
   }
   if (cut) {
-    FollowRename(from, result.resulting_path, /*preserve_unsaved_state=*/true);
+    FollowRename(from, result.resulting_path, true);
   } else {
     RefreshProjectViewsAfterMutation(result.resulting_path);
   }
@@ -316,4 +308,4 @@ PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator(EditorTabSer
       });
 }
 
-}  // namespace microide::workspace
+}

@@ -17,4 +17,4 @@ RuleResult CheckHintSegmentsUseTheSharedSeparator(const std::filesystem::path& r
 RuleResult CheckSideNamesAreLocalAndRemote(const std::filesystem::path& repo_root);
 RuleResult CheckDerivedSurfacePaintReadsOnlyItsSnapshot(const std::filesystem::path& repo_root);
 
-}  // namespace microide::tests::architecture
+}

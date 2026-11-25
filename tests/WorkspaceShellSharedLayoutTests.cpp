@@ -106,10 +106,6 @@ void TestWorkspaceSharedLayoutHelpers() {
          "bottom panel height should clamp to the available content height");
 }
 
-// The sidebar fills the band beside the editor tab strip (it starts under the
-// project strip, not under the tab strip), down to the panel like the editor
-// column -- that band was empty chrome over the tree. Its resize handle stays
-// beside the content so it never takes the first tab's left edge.
 void TestWorkspaceSharedSidebarFillsTheTabStripBand() {
   for (const bool project_strip : {false, true}) {
     const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f, {}, true, false, 0.0f,
@@ -125,14 +121,10 @@ void TestWorkspaceSharedSidebarFillsTheTabStripBand() {
   }
 }
 
-// The debug pane is the sidebar's mirror on the right and takes the same band
-// (VS Code's secondary side bar does; TD-2026-11-01-427 item 4) -- it started
-// under the editor tab strip, a strip-high gap of chrome over it. Its handle stays
-// beside the content, clear of the strip's overflow chevrons at its right end.
 void TestWorkspaceSharedDebugPaneFillsTheTabStripBand() {
   for (const bool project_strip : {false, true}) {
     const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f, {}, true,
-                                      /*right_pane_visible=*/true, 320.0f, project_strip);
+                                      true, 320.0f, project_strip);
     Expect(layout.right_pane.w > 0.0f && layout.right_pane.y == layout.sidebar.y &&
                layout.right_pane.h == layout.sidebar.h,
            "the debug pane spans the sidebar's band");
@@ -297,9 +289,6 @@ void TestWorkspaceSharedCompareScrollbarMarkersFollowPresentationRows() {
          "collapsed context should shrink the marker gap instead of preserving raw model spacing");
 }
 
-// A run whose rows changed only in layout (a re-indented body) is its own run,
-// flagged so the lane draws it muted; the rows carrying novel tokens around it
-// stay ordinary runs.
 void TestWorkspaceSharedCompareScrollbarRunsFlagLayoutOnlyRows() {
   const std::string left = "head\nf(a);\ng(b);\ntail\n";
   const std::string right = "head\nif (x) {\n  f(a);\n  g(b);\n}\ntail\n";
@@ -366,8 +355,6 @@ void TestWorkspaceSharedOverviewReducerBoundsAndPriority() {
   std::vector<std::uint32_t> buckets;
   std::vector<SDL_Color> palette;
 
-  // Thousands of single-line inputs across a huge document must collapse to at most
-  // one marker per lane pixel (~ceil(height)), never one per input.
   std::vector<overview::MarkerInput> dense;
   const SDL_Color low{10, 10, 10, 255};
   for (int line = 0; line < 4000; line += 2) {
@@ -383,8 +370,6 @@ void TestWorkspaceSharedOverviewReducerBoundsAndPriority() {
            "reduced markers stay within the lane");
   }
 
-  // Higher priority wins a contested pixel row: a high-priority error over the same
-  // row as a low-priority match paints the error color.
   const SDL_Color high{200, 0, 0, 255};
   const std::vector<overview::MarkerInput> contested = {
       {.start_row = 5, .end_row = 6, .color = low, .priority = 1},
@@ -411,9 +396,6 @@ void TestWorkspaceSharedOverviewReducerEqualPriorityTieIsInputOrder() {
 
   const SDL_Color first{10, 20, 30, 255};
   const SDL_Color second{200, 180, 160, 255};
-  // Two equal-priority, different-colored inputs collide on one pixel row. The winner
-  // must be the FIRST input (source order), deterministically — never the incidental
-  // palette-insertion order a full-packed-value compare used to leak.
   const auto color_at_row5 = [&](const SDL_Color& a, const SDL_Color& b) -> SDL_Color {
     const std::vector<overview::MarkerInput> contested = {
         {.start_row = 5, .end_row = 6, .color = a, .priority = 50},
@@ -436,19 +418,15 @@ void TestWorkspaceSharedOverviewLaneLeftClamp() {
   namespace overview = microide::workspace::overview;
   const SDL_FRect track = MakeRect(200.0f, 40.0f, 10.0f, 300.0f);
 
-  // Unclamped (default): the lane sits its full footprint left of the track.
   const SDL_FRect unclamped = overview::LaneRect(track);
   Expect(std::abs(unclamped.x - (track.x - overview::kLaneGap - overview::kLaneWidth)) < 0.01f,
          "default LaneRect places the lane a full gap+width left of the track");
 
-  // A min_x to the right of the natural lane x clamps the lane so it never paints left of
-  // the owning surface (regression: the extraction dropped this guard).
-  const float surface_left = track.x - 4.0f;  // narrower than gap+width (9px)
+  const float surface_left = track.x - 4.0f;
   const SDL_FRect clamped = overview::LaneRect(track, surface_left);
   Expect(clamped.x == surface_left, "LaneRect clamps the lane's left edge to min_x");
   Expect(clamped.w == overview::kLaneWidth, "clamping keeps the configured lane width");
 
-  // A min_x left of the natural lane x leaves it untouched.
   const SDL_FRect unaffected = overview::LaneRect(track, 0.0f);
   Expect(unaffected.x == unclamped.x, "a min_x left of the lane does not move it");
 }
@@ -457,8 +435,6 @@ void TestWorkspaceSharedPanelGeometryHelpers() {
   const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 200.0f);
   const auto content = BottomPanelContentRect(layout);
 
-  // The bottom panel content fills below the header with no reserved command-prompt strip
-  // (the command surface is now the overlay command palette).
   Expect(content.y > layout.bottom_panel.y, "panel content should sit below the panel header");
   Expect(content.y + content.h <= layout.bottom_panel.y + layout.bottom_panel.h + 0.5f,
          "panel content should stay within the bottom panel");
@@ -508,13 +484,6 @@ void TestWorkspaceSharedScrollbarEdgeCases() {
   Expect(!hidden_vertical.has_value(),
          "vertical scrollbar geometry should be absent when content does not overflow");
 
-  // A track SHORTER than the 24px minimum thumb. The thumb length used to be
-  // std::clamp(proportional, kMin, track_length), whose bounds invert here --
-  // undefined behaviour, and a library precondition no sanitizer checks, so it
-  // survived until a _GLIBCXX_ASSERTIONS build aborted on it. Reachable in
-  // production from a small window, a deep editor split, or a panel dragged
-  // almost shut; it was found by a menu paint test at a 40px-tall window, where
-  // the EDITOR underneath produced the short track.
   for (const float track_height : {1.0f, 4.0f, 12.0f, 23.0f, 24.0f, 25.0f}) {
     const auto short_track =
         ComputeScrollbarThumb(MakeRect(0.0f, 0.0f, 10.0f, track_height), 500.0f, 3.0f, 10.0f, true);
@@ -526,7 +495,6 @@ void TestWorkspaceSharedScrollbarEdgeCases() {
            "the thumb must stay inside the track");
   }
 
-  // The same inversion on the horizontal axis, which takes the other branch.
   for (const float track_width : {1.0f, 7.0f, 23.0f}) {
     const auto short_h =
         ComputeScrollbarThumb(MakeRect(0.0f, 0.0f, track_width, 10.0f), 500.0f, 3.0f, 10.0f, false);
@@ -579,12 +547,6 @@ void TestWorkspaceSharedTextGridInteractionLayout() {
          "text-grid interaction layout should translate visible row offsets into line indices");
   Expect(!VisibleTextGridLineAtY(layout, 112.0f).has_value(),
          "text-grid interaction layout should reject points past the visible row window");
-  // The last VISIBLE line, which with scroll_line 4 and 5 visible rows is 8 --
-  // rows 0..4 map to lines 4..8, and `VisibleTextGridLineAtY` rejects y=112
-  // (row 5) two assertions above for exactly that reason. This asserted 9 while
-  // its own message said "last visible line": the clamp was against the document
-  // end only, so a pointer held below a pane during a selection drag resolved to
-  // a row far past the band and one motion event teleported the selection there.
   Expect(ClampTextGridLineAtY(layout, 120.0f) == 8,
          "text-grid interaction layout should clamp result-surface hits below the window to the last visible line");
   Expect(ClampTextGridLineAtY(layout, 4000.0f) == 8,
@@ -654,13 +616,8 @@ void TestWorkspaceSharedScrollableListLayout() {
   Expect(fractional.list_rect.h == 103.0f,
          "scrollable list layout should honor separate scrollbar bottom padding");
 
-  // Soak 0156becd453c, 2c8a5f0188c1 and seven more git-row signatures: a list
-  // whose top sits at or below its container's bottom -- the git file list under
-  // a commit draft that fills a short sidebar -- still got one row, laid out
-  // below the container and the window, where the control channel reported it
-  // and a click there could select it. No room, no row; and none partly out.
   for (const bool fractional_units : {false, true}) {
-    for (const float list_y : {120.0f, 100.0f, 90.0f}) {  // below, at, 10px above the bottom
+    for (const float list_y : {120.0f, 100.0f, 90.0f}) {
       const auto none = ComputeScrollableListLayout(MakeRect(0.0f, 0.0f, 200.0f, 100.0f), list_y, 10, 0, 10.0f,
                                                     20.0f, 18.0f, 0.0f, 0.0f, fractional_units);
       Expect(none.visible_rows == 0,
@@ -724,8 +681,6 @@ void TestWorkspaceSharedEditorSplitLayout() {
   Expect(tree.leaf_count() == 1 && !tree.is_split() && tree.node(tree.root()).leaf(),
          "a fresh split tree should be a single pane");
 
-  // Splitting the same way twice in a row keeps ONE flat row (VS Code's grid),
-  // not a nest of pairs, and every new pane takes half of the one it split.
   Expect(tree.InsertLeaf(0, EditorSplitOrientation::Vertical, false) == 1,
          "splitting the only pane to the right should seat the new pane after it");
   Expect(tree.InsertLeaf(1, EditorSplitOrientation::Vertical, false) == 2 &&
@@ -735,7 +690,6 @@ void TestWorkspaceSharedEditorSplitLayout() {
              std::fabs(tree.node(tree.root()).weights[1] - 0.25f) < 0.001f,
          "a new pane should take half of the pane it split");
 
-  // A cross-axis split nests, and dropping that pane again flattens the row back.
   Expect(tree.InsertLeaf(0, EditorSplitOrientation::Horizontal, true) == 0 &&
              tree.leaf_count() == 4 && tree.node(tree.root()).children.size() == 3,
          "a cross-axis split should nest inside the pane it splits");
@@ -743,7 +697,6 @@ void TestWorkspaceSharedEditorSplitLayout() {
   Expect(tree.leaf_count() == 3 && tree.node(tree.root()).children.size() == 3,
          "dropping the nested pane should collapse its branch back into the row");
 
-  // Divider resize moves only the pair it separates.
   const float untouched = tree.node(tree.root()).weights[2];
   Expect(tree.ResizeDivider(tree.root(), 0, 0.25f) &&
              std::fabs(tree.node(tree.root()).weights[2] - untouched) < 0.0001f,
@@ -751,7 +704,6 @@ void TestWorkspaceSharedEditorSplitLayout() {
   Expect(!tree.ResizeDivider(tree.root(), 7, 0.5f),
          "resizing a divider that does not exist should fail");
 
-  // The cap is a hard one, and the tree stays consistent at it.
   while (!tree.full()) {
     Expect(tree.InsertLeaf(tree.leaf_count() - 1, EditorSplitOrientation::Vertical, false) !=
                EditorSplitTree::kNoLeaf,
@@ -761,9 +713,6 @@ void TestWorkspaceSharedEditorSplitLayout() {
              tree.InsertLeaf(0, EditorSplitOrientation::Vertical, false) == EditorSplitTree::kNoLeaf,
          "the split tree should refuse to grow past the editor group cap");
 
-  // MoveLeaf relocates without ever growing: it is the one structural edit a FULL
-  // grid can still take, which is what lets a pane be moved directionally and what
-  // lets another pane's last tab be dropped on an edge at the cap.
   Expect(tree.full(), "the cap fixture should still be full here");
   const std::size_t moved_at_cap = tree.MoveLeaf(microide::workspace::kMaxEditorGroups - 1, 0,
                                                  EditorSplitOrientation::Vertical, true);
@@ -778,7 +727,6 @@ void TestWorkspaceSharedEditorSplitLayout() {
              tree.MoveLeaf(0, 1, EditorSplitOrientation::None, true) == EditorSplitTree::kNoLeaf,
          "a move onto itself, past the end, or with no orientation should be refused");
 
-  // A row of three: moving the last pane to the front reorders the row.
   EditorSplitTree row;
   row.InsertLeaf(0, EditorSplitOrientation::Vertical, false);
   row.InsertLeaf(1, EditorSplitOrientation::Vertical, false);
@@ -790,7 +738,6 @@ void TestWorkspaceSharedEditorSplitLayout() {
              row.leaf_count() == 3,
          "a same-axis move should never change the pane count");
 
-  // Round-trip through the persisted pre-order form, and reject a malformed one.
   EditorSplitTree restored;
   Expect(restored.Load(tree.Flatten()) && restored == tree,
          "a split tree should survive its flat pre-order form");
@@ -801,10 +748,6 @@ void TestWorkspaceSharedEditorSplitLayout() {
          "a branch with no children should be rejected and leave a single pane");
 }
 
-// Every mutation of the split tree stamps a fresh revision, a copy carries its
-// source's, and a refused edit leaves it alone. The shell's pane-rect memo is
-// keyed on this (TD-2026-08-30-280), so a mutator that forgot to stamp would
-// serve the previous grid's rects for the new one -- and nothing else would say.
 void TestWorkspaceSharedEditorSplitTreeRevision() {
   using microide::workspace::EditorSplitOrientation;
   using microide::workspace::EditorSplitTree;
@@ -854,14 +797,6 @@ void TestWorkspaceSharedEditorSplitTreeRevision() {
   expect_stamped("Reset");
 }
 
-// The struct form of `ComputeLayout` is the one the shell memoizes on; the
-// positional form must be exactly the same function, and the key's `==` must
-// notice every field -- a field the comparison skipped would be an input the memo
-// ignores, which is the stale-hit-test failure the memo exists to rule out.
-// Soak 560df81462d8 (640x480 at ui.scale 3, the layout forced out of compact): a
-// 214-wide window with the sidebar and the debug pane. Each kept its minimum width,
-// so the pane ran 28 px past the window's edge with no editor column between them,
-// and its divider overlapped the sidebar's.
 void TestWorkspaceLayoutDropsADebugPaneThatCannotFitBesideTheSidebar() {
   using microide::workspace::ComputeLayout;
   using microide::workspace::LayoutMode;
@@ -922,9 +857,6 @@ void TestWorkspaceLayoutInputsStructMatchesPositionalForm() {
                            false),
          "the positional ComputeLayout must be the struct form, field for field");
 
-  // Each field, changed alone, must make the key unequal AND move the layout: a
-  // field that does not move the layout would be dead weight in the key, and one
-  // the key ignored would be a stale memo.
   const microide::workspace::WorkspaceLayout base = ComputeLayout(inputs);
   auto expect_field = [&](const char* name, WorkspaceLayoutInputs changed) {
     Expect(!(changed == inputs), std::string(name) + " should make the key unequal");
@@ -953,7 +885,7 @@ void TestWorkspaceLayoutInputsStructMatchesPositionalForm() {
   expect_field("layout_mode.user_override", v);
   v = inputs;
   v.layout_mode.previous_mode = LayoutMode::Compact;
-  v.layout_mode.compact_breakpoint_px = 1300.0f;  // inside the hysteresis band at 1280
+  v.layout_mode.compact_breakpoint_px = 1300.0f;
   expect_field("layout_mode.previous_mode+breakpoint", v);
   v = inputs;
   v.reserve_status_bar = false;
@@ -969,15 +901,11 @@ void TestWorkspaceLayoutInputsStructMatchesPositionalForm() {
   expect_field("project_tab_strip_visible", v);
 }
 
-// Soak 52518545bf6d (x91): seven groups side by side, one of them squeezed to a
-// span narrower than its dividers. The panes shrank to nothing but every divider
-// kept its full thickness, so the last one ended past the window
-// (divider:editor/5 [1437, 59, 6, 339] in a 1440-wide window).
 void TestWorkspaceEditorGroupDividersStayInsideAnAreaTooNarrowForThem() {
   using microide::workspace::EditorSplitOrientation;
   using microide::workspace::EditorSplitTree;
-  const auto layout = microide::workspace::ComputeLayout(400.0f, 300.0f, /*sidebar_visible=*/false,
-                                                         /*bottom_panel_visible=*/false, 0.0f, 0.0f);
+  const auto layout = microide::workspace::ComputeLayout(400.0f, 300.0f, false,
+                                                         false, 0.0f, 0.0f);
   EditorSplitTree tree;
   for (std::size_t i = 0; i + 1 < microide::workspace::kMaxEditorGroups; ++i) {
     tree.InsertLeaf(i, EditorSplitOrientation::Vertical, false);
@@ -1003,11 +931,9 @@ void TestWorkspaceEditorGroupDividersStayInsideAnAreaTooNarrowForThem() {
 void TestWorkspaceEditorGroupRects() {
   using microide::workspace::EditorSplitOrientation;
   using microide::workspace::EditorSplitTree;
-  // A reference single-window layout: sidebar hidden, no bottom panel.
-  const auto layout = microide::workspace::ComputeLayout(1000.0f, 700.0f, /*sidebar_visible=*/false,
-                                                         /*bottom_panel_visible=*/false, 0.0f, 0.0f);
+  const auto layout = microide::workspace::ComputeLayout(1000.0f, 700.0f, false,
+                                                         false, 0.0f, 0.0f);
 
-  // Single group reproduces the base layout rects byte-for-byte.
   EditorSplitTree tree;
   const auto one = microide::workspace::ComputeEditorGroupRects(layout, tree);
   Expect(one.groups.size() == 1 && one.dividers.empty(),
@@ -1017,8 +943,6 @@ void TestWorkspaceEditorGroupRects() {
              microide::workspace::RectsEqual(one.groups[0].editor_surface, layout.editor_surface),
          "single editor group rects should equal the base layout rects");
 
-  // Side-by-side split: surfaces partition the editor-area width with a divider
-  // between them; both groups keep their own breadcrumb band.
   EditorSplitTree side_by_side;
   side_by_side.InsertLeaf(0, EditorSplitOrientation::Vertical, false);
   const auto vertical = microide::workspace::ComputeEditorGroupRects(layout, side_by_side);
@@ -1040,8 +964,6 @@ void TestWorkspaceEditorGroupRects() {
              vertical.groups[0].editor_surface.w + vertical.groups[1].editor_surface.w,
          "a divider should span the two panes it can resize");
 
-  // Stacked split: group 0 keeps the top tab strip; group 1 synthesizes a tab
-  // strip inside its own region, with no breadcrumb of its own.
   EditorSplitTree stacked;
   stacked.InsertLeaf(0, EditorSplitOrientation::Horizontal, false);
   const auto horizontal = microide::workspace::ComputeEditorGroupRects(layout, stacked);
@@ -1059,9 +981,6 @@ void TestWorkspaceEditorGroupRects() {
              horizontal.groups[1].tab_strip.y + horizontal.groups[1].tab_strip.h,
          "stacked second group surface should sit below its synthesized tab strip");
 
-  // Three panes in a row, then the middle one split downward: the rects tile the
-  // editor area with one divider per gap, and the nested pair stays inside the
-  // column it was carved from.
   EditorSplitTree grid;
   grid.InsertLeaf(0, EditorSplitOrientation::Vertical, false);
   grid.InsertLeaf(1, EditorSplitOrientation::Vertical, false);
@@ -1078,8 +997,6 @@ void TestWorkspaceEditorGroupRects() {
   Expect(four.groups[2].breadcrumb.w == 0.0f && four.groups[1].breadcrumb.w > 0.0f,
          "only panes at the top of the editor area should carry a breadcrumb");
 
-  // Directional neighbours read straight off those rects: pane 0 is the left
-  // column, 1/2 are the top/bottom of the middle column, 3 is the right column.
   using microide::workspace::AdjacentEditorGroup;
   using microide::workspace::EditorGroupDirection;
   using microide::workspace::kNoEditorGroup;
@@ -1157,14 +1074,6 @@ void TestWorkspaceSharedMergeInteractionGeometry() {
          "merge result action rects should move above the conflict when they would overflow");
 }
 
-// A conflict's buttons stay inside their pane. In a narrow merge pane the
-// "Accept Local" button (114 px) ran past the right pane into the window's edge,
-// and the result row's buttons into the Local pane (soak a67e96e83bf3,
-// 4e21043cd592, 1b97fc7b724e). A source button with no room is not laid out;
-// the result row wraps onto further rows inside the Result pane, so all four
-// stay reachable in an ordinary window (its pane is narrower than the row at
-// 1280x900), and only a button wider than the pane itself is left out. Empty
-// rects are skipped by paint, the hover classifier and the QA element source.
 void TestWorkspaceSharedMergeConflictButtonsStayInsideTheirPane() {
   const SDL_FRect roomy = ComputeMergeSourceActionButtonRect(
       120.0f, 30.0f, 260.0f, 18.0f, 0, 2, 508.0f, 114.0f, 22.0f, 320.0f);
@@ -1192,12 +1101,10 @@ void TestWorkspaceSharedMergeConflictButtonsStayInsideTheirPane() {
     }
   }
   Expect(rects[1].y == rects[0].y && rects[2].y > rects[0].y, "the row wraps where the next button does not fit");
-  // Near the content's bottom the whole block moves above the conflict.
   const auto lifted = ComputeMergeResultActionButtonRects(450.0f, 260.0f, 380.0f, conflict, widths, 22.0f,
                                                           8.0f, 622.0f);
   Expect(lifted[3].y + lifted[3].h <= conflict.y && lifted[0].y >= 260.0f,
          "a wrapped block that would overflow the content moves above the conflict");
-  // A pane narrower than a button leaves that button out.
   const auto narrow = ComputeMergeResultActionButtonRects(450.0f, 260.0f, 508.0f, conflict, widths, 22.0f,
                                                           8.0f, 520.0f);
   Expect(narrow[0].w == 64.0f && narrow[1].w == 0.0f && narrow[2].w == 0.0f && narrow[3].w == 70.0f &&
@@ -1246,7 +1153,7 @@ void TestWorkspaceSharedMergeHoverClassifier() {
           },
       .incoming_accept_button_width = 90.0f,
       .current_accept_button_width = 92.0f,
-      .result_action_widths = {40.0f, 44.0f, 44.0f, 40.0f},  // all four fit the Result pane
+      .result_action_widths = {40.0f, 44.0f, 44.0f, 40.0f},
       .button_height = 22.0f,
       .button_gap = 8.0f,
   };
@@ -1317,18 +1224,12 @@ void TestWorkspaceSharedMergeHoverClassifier() {
          "merge hover classifier should ignore pointers outside the merge panes");
 }
 
-// B3: zero-length source spans (start == end) describe pure insertion/deletion
-// conflicts where one side contributes no source lines. They must still own their
-// anchor row for source hover/tint/accept hit-testing, exactly as the result-side
-// lookup normalizes zero-length ranges.
 void TestWorkspaceSharedMergeZeroLengthSourceHitTest() {
-  // Pure insertion on the incoming side: incoming span is zero-length at line 4,
-  // current side inserts two lines [4, 6).
   const std::vector<MergeTrackedConflict> insertion = {
       MergeTrackedConflict{
           .hunk_index = 0,
           .incoming_start_line = 4,
-          .incoming_end_line = 4,  // zero-length -> pure insertion, no incoming source lines
+          .incoming_end_line = 4,
           .current_start_line = 4,
           .current_end_line = 6,
           .start_line = 4,
@@ -1336,40 +1237,35 @@ void TestWorkspaceSharedMergeZeroLengthSourceHitTest() {
           .valid = true,
       },
   };
-  Expect(FindMergeTrackedConflictAtSourceLine(insertion, 4, /*incoming=*/true) == std::size_t{0},
+  Expect(FindMergeTrackedConflictAtSourceLine(insertion, 4, true) == std::size_t{0},
          "zero-length incoming source span should still match its anchor row");
-  Expect(!FindMergeTrackedConflictAtSourceLine(insertion, 5, /*incoming=*/true).has_value(),
+  Expect(!FindMergeTrackedConflictAtSourceLine(insertion, 5, true).has_value(),
          "a normalized zero-length span should only own the single anchor row");
-  Expect(FindMergeTrackedConflictAtSourceLine(insertion, 4, /*incoming=*/false) == std::size_t{0},
+  Expect(FindMergeTrackedConflictAtSourceLine(insertion, 4, false) == std::size_t{0},
          "the non-empty current source span should match across its two rows");
-  Expect(FindMergeTrackedConflictAtSourceLine(insertion, 5, /*incoming=*/false) == std::size_t{0},
+  Expect(FindMergeTrackedConflictAtSourceLine(insertion, 5, false) == std::size_t{0},
          "the non-empty current source span should match its second row");
 
-  // Pure deletion on the current side: current span is zero-length at line 7.
   const std::vector<MergeTrackedConflict> deletion = {
       MergeTrackedConflict{
           .hunk_index = 0,
           .incoming_start_line = 7,
           .incoming_end_line = 9,
           .current_start_line = 7,
-          .current_end_line = 7,  // zero-length -> pure deletion, no current source lines
+          .current_end_line = 7,
           .start_line = 7,
           .end_line = 9,
           .valid = true,
       },
   };
-  Expect(FindMergeTrackedConflictAtSourceLine(deletion, 7, /*incoming=*/false) == std::size_t{0},
+  Expect(FindMergeTrackedConflictAtSourceLine(deletion, 7, false) == std::size_t{0},
          "zero-length current source span should still match its anchor row");
-  Expect(!FindMergeTrackedConflictAtSourceLine(deletion, 8, /*incoming=*/false).has_value(),
+  Expect(!FindMergeTrackedConflictAtSourceLine(deletion, 8, false).has_value(),
          "a normalized zero-length current span should only own the single anchor row");
-  Expect(FindMergeTrackedConflictAtSourceLine(deletion, 8, /*incoming=*/true) == std::size_t{0},
+  Expect(FindMergeTrackedConflictAtSourceLine(deletion, 8, true) == std::size_t{0},
          "the non-empty incoming source span should still match its rows");
 }
 
-// B4: source-pane accept buttons must anchor to the SOURCE pane's own scroll, not
-// the result pane's clamped scroll. When a source pane is longer than the result,
-// the result scroll clamps lower, so a shared scroll would drift the button off its
-// rendered source row.
 void TestWorkspaceSharedMergeSourceButtonUsesSourceScroll() {
   const MergeHoverSurfaceLayout surface = {
       .gutter_width = 32.0f,
@@ -1386,9 +1282,6 @@ void TestWorkspaceSharedMergeSourceButtonUsesSourceScroll() {
   const SDL_FRect result_rect = ComputeMergeResultViewportRect(editor_surface, surface.center_x,
                                                                surface.rows_y, surface.gutter_width,
                                                                180.0f, true);
-  // Source panes scrolled to line 8; the (shorter) result pane clamps its scroll to
-  // line 3. A conflict whose incoming source ends at line 12 renders at a source-pane
-  // relative row of (12 - 8), so the accept button must anchor there, not at (12 - 3).
   const std::size_t source_scroll = 8;
   const std::size_t result_scroll = 3;
   const MergeHoverInteractionLayout interaction = {
@@ -1434,14 +1327,11 @@ void TestWorkspaceSharedMergeSourceButtonUsesSourceScroll() {
       },
   };
 
-  // The rendered source accept button uses the SOURCE scroll (source_scroll).
   const SDL_FRect source_anchored = ComputeMergeSourceActionButtonRect(
       surface.left_x, surface.gutter_width, surface.rows_y, surface.line_height,
       static_cast<int>(source_scroll), conflicts[0].incoming_end_line, interaction.content_bottom,
       interaction.incoming_accept_button_width, interaction.button_height,
       surface.left_x + surface.left_width);
-  // The old buggy geometry would have used the result scroll and landed on a
-  // different row; make sure the two actually differ so this test is meaningful.
   const SDL_FRect result_anchored = ComputeMergeSourceActionButtonRect(
       surface.left_x, surface.gutter_width, surface.rows_y, surface.line_height,
       static_cast<int>(result_scroll), conflicts[0].incoming_end_line, interaction.content_bottom,
@@ -1450,7 +1340,6 @@ void TestWorkspaceSharedMergeSourceButtonUsesSourceScroll() {
   Expect(source_anchored.y != result_anchored.y,
          "source and result scroll must produce different button rows for this fixture");
 
-  // The classifier must hit-test at the source-anchored position (not the result one).
   const auto hover = ClassifyMergeHoverState(surface, interaction, conflicts,
                                              source_anchored.x + source_anchored.w * 0.5f,
                                              source_anchored.y + source_anchored.h * 0.5f);
@@ -1486,10 +1375,6 @@ void TestWorkspaceSharedOverlayRectHelpers() {
   Expect(std::fabs(compact.y - 7.2f) < 0.01f,
          "overlay rect should preserve the vertical bias after compact-height clamping");
 
-  // QA resize-overlays: at 640x480 with the sidebar shown the editor area is 351 px
-  // wide, the Settings card's minimum is 420, and centring it on the editor area
-  // ran its right third off the window. A card wider than its anchor stays inside
-  // the window instead.
   const SDL_FRect window = MakeRect(0.0f, 0.0f, 640.0f, 480.0f);
   const SDL_FRect narrow_editor = MakeRect(289.0f, 58.0f, 351.0f, 240.0f);
   const SDL_FRect settings = ComputeSettingsOverlaySurfaceRect(narrow_editor, window);
@@ -1506,7 +1391,6 @@ void TestWorkspaceSharedOverlayRectHelpers() {
 void TestWorkspaceSharedHitTargets() {
   const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f);
 
-  // The resize grab pad equals the cursor-change region exactly (no over-extension).
   const SDL_FRect sidebar_visual = SidebarResizeHandleRect(layout);
   const SDL_FRect sidebar_hit = SidebarResizeHitRect(layout);
   Expect(RectsEqual(sidebar_hit, SidebarResizeCursorRect(layout)),
@@ -1551,9 +1435,6 @@ void TestWorkspaceHitTargetClickRouting() {
   const SDL_FRect sidebar_visual = SidebarResizeHandleRect(layout);
   const SDL_FRect sidebar_hit = SidebarResizeHitRect(layout);
 
-  // The hit pad equals the cursor rect, which inflates the visual seam by 1px each
-  // side: a click 1px outside the visual divider still lands on the seam, but a click
-  // deep in the editor must not.
   const float just_outside_left = sidebar_visual.x - 1.0f;
   const float just_outside_right = sidebar_visual.x + sidebar_visual.w + 0.5f;
   const float mid_y = sidebar_visual.y + sidebar_visual.h * 0.5f;
@@ -1607,30 +1488,25 @@ void TestLayoutModeServiceFlipFlop() {
   microide::workspace::LayoutModeService service;
   service.SetCompactBreakpointPx(kWorkspaceLayoutCompactBreakpointDefault);
 
-  // Wide window: should resolve Regular.
   service.SetCurrentMode(ResolveLayoutMode(900.0f, service.SnapshotInputs()));
   Expect(service.CurrentMode() == LayoutMode::Regular,
          "service should hold Regular for a wide window");
 
-  // Narrow window: flip to Compact.
   service.SetCurrentMode(ResolveLayoutMode(600.0f, service.SnapshotInputs()));
   Expect(service.CurrentMode() == LayoutMode::Compact,
          "service should flip to Compact below the breakpoint");
 
-  // Hover at breakpoint: hysteresis keeps Compact.
   service.SetCurrentMode(ResolveLayoutMode(kWorkspaceLayoutCompactBreakpointDefault,
                                            service.SnapshotInputs()));
   Expect(service.CurrentMode() == LayoutMode::Compact,
          "service hysteresis should hold Compact at the breakpoint");
 
-  // Cross hysteresis upward: flip to Regular.
   service.SetCurrentMode(ResolveLayoutMode(kWorkspaceLayoutCompactBreakpointDefault +
                                                kWorkspaceLayoutCompactHysteresis + 3.0f,
                                            service.SnapshotInputs()));
   Expect(service.CurrentMode() == LayoutMode::Regular,
          "service should flip to Regular only past breakpoint + hysteresis");
 
-  // Override defeats auto.
   service.SetUserOverride(LayoutModeInputs::Override::Compact);
   service.SetCurrentMode(ResolveLayoutMode(1920.0f, service.SnapshotInputs()));
   Expect(service.CurrentMode() == LayoutMode::Compact,
@@ -1654,28 +1530,23 @@ void TestWorkspaceSharedBottomPanelLineIndexAtY() {
   const int visible_rows = 5;
   const std::size_t line_count = 40;
 
-  // Above the first row rejects (floor, not snap-to-row-0).
   Expect(!BottomPanelLineIndexAtY(text_y, line_height, visible_rows, 10, text_y - 1.0f, line_count)
               .has_value(),
          "y above the first row maps to no line");
-  // First visible row resolves to the scroll offset; later rows add to it.
   const auto first =
       BottomPanelLineIndexAtY(text_y, line_height, visible_rows, 10, text_y + 1.0f, line_count);
   Expect(first.has_value() && *first == 10u, "first visible row is the scroll offset");
   const auto third = BottomPanelLineIndexAtY(text_y, line_height, visible_rows, 10,
                                              text_y + 2.0f * line_height + 1.0f, line_count);
   Expect(third.has_value() && *third == 12u, "row offset adds to the scroll offset");
-  // Below the last visible row rejects.
   Expect(!BottomPanelLineIndexAtY(text_y, line_height, visible_rows, 10,
                                   text_y + 5.0f * line_height + 1.0f, line_count)
               .has_value(),
          "y past the last visible row maps to no line");
-  // Absolute index past the content rejects even within the visible band.
   Expect(!BottomPanelLineIndexAtY(text_y, line_height, visible_rows, 38,
                                   text_y + 4.0f * line_height + 1.0f, line_count)
               .has_value(),
          "absolute index past line_count maps to no line");
-  // Non-positive line height rejects rather than dividing by zero.
   Expect(!BottomPanelLineIndexAtY(text_y, 0.0f, visible_rows, 10, text_y + 1.0f, line_count)
               .has_value(),
          "non-positive line height maps to no line");
@@ -1687,18 +1558,14 @@ void TestWorkspaceSharedCompareCollapsedContextBlockRect() {
   const float line_height = 16.0f;
 
   const SDL_FRect no_bar = CompareCollapsedContextBlockRect(editor_surface, rows_y, line_height,
-                                                            /*show_vertical_scrollbar=*/false, 2);
+                                                            false, 2);
   Expect(no_bar.x == editor_surface.x + 4.0f, "block is inset 4px from the surface left");
   Expect(no_bar.w == editor_surface.w - 8.0f, "block width drops the 4px inset on each side");
   Expect(no_bar.y == rows_y + 2.0f * line_height - 1.0f, "block row y matches the painted row");
   Expect(no_bar.h == line_height, "block height is one row");
 
-  // With a vertical scrollbar the block must also exclude the scrollbar reserve so the
-  // right-aligned action buttons stay clickable where they are painted. The pre-dedup
-  // hit-test passed the full editor-surface width, so its action rects drifted right of
-  // the painted buttons by exactly the scrollbar reserve plus the block inset.
   const SDL_FRect with_bar = CompareCollapsedContextBlockRect(editor_surface, rows_y, line_height,
-                                                              /*show_vertical_scrollbar=*/true, 2);
+                                                              true, 2);
   const float reserve = microide::workspace::kWorkspaceDiffScrollbarReserve;
   Expect(with_bar.w == editor_surface.w - reserve - 8.0f,
          "scrollbar reserve is excluded from the block width");
@@ -1714,12 +1581,9 @@ void TestWorkspaceSharedRightPaneLayout() {
   using microide::workspace::ClampRightPaneWidth;
   using microide::workspace::RightPaneResizeHandleRect;
 
-  // Pane hidden by default: editor area spans the full width past the sidebar.
   const auto hidden = ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f);
   Expect(hidden.right_pane.w == 0.0f, "right pane has zero width when not requested");
 
-  // Pane visible: it is carved off the right edge of the editor area, which shrinks
-  // by the pane width plus a divider.
   const auto shown = ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f,
                                    microide::workspace::LayoutModeInputs{}, false, true, 288.0f);
   Expect(shown.right_pane.w == 288.0f, "visible right pane preserves its width");
@@ -1731,14 +1595,12 @@ void TestWorkspaceSharedRightPaneLayout() {
   Expect(shown.editor_area.w < hidden.editor_area.w,
          "showing the right pane shrinks the editor area");
 
-  // Compact mode suppresses the pane to protect the minimum editor width.
   microide::workspace::LayoutModeInputs compact;
   compact.user_override = microide::workspace::LayoutModeInputs::Override::Compact;
   const auto compact_layout =
       ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f, compact, false, true, 288.0f);
   Expect(compact_layout.right_pane.w == 0.0f, "compact mode hides the right pane");
 
-  // Clamp keeps the editor above its minimum with both the sidebar and pane open.
   Expect(ClampRightPaneWidth(120.0f, 800.0f, 200.0f) == 120.0f,
          "right-pane width above the viable minimum is accepted");
   const float clamped = ClampRightPaneWidth(700.0f, 800.0f, 200.0f);
@@ -1753,18 +1615,14 @@ void TestWorkspaceSharedRightPaneLayout() {
 }
 
 void TestWorkspaceSharedProjectTabStripVisibility() {
-  // Strip shown by default: it reserves 32px below the 25px menu bar, so the editor
-  // tab strip and content start below both bands.
   const auto shown = ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f);
   Expect(shown.project_tab_strip.h == 32.0f, "project tab strip reserves 32px when visible");
   Expect(shown.tab_strip.y == 25.0f + 32.0f,
          "editor tab strip sits below the menu bar and the project tab strip");
 
-  // Hidden: the strip collapses to zero height (keeping its y at the menu-bar bottom),
-  // and everything below reclaims the 32px.
   const auto hidden = ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f,
                                     microide::workspace::LayoutModeInputs{}, false, false, 0.0f,
-                                    /*project_tab_strip_visible=*/false);
+                                    false);
   Expect(hidden.project_tab_strip.h == 0.0f, "hidden project tab strip has zero height");
   Expect(hidden.project_tab_strip.y == 25.0f,
          "hidden strip keeps its y at the menu-bar bottom so hit-tests reject naturally");
@@ -1778,22 +1636,12 @@ void TestWorkspaceSharedProjectTabStripVisibility() {
          "the editor tab strip height is unaffected by hiding the project strip");
 }
 
-// The find widget stays inside the area it belongs to. It was anchored 12 px
-// below the area's top with a 280 px minimum width and no check of either
-// dimension, so a bottom panel squeezed to its tab strip put the terminal's
-// find bar past the window's bottom edge (soak 23535aaf3151, cce216e505a7), and
-// an area narrower than 280 px pushed it off the area's left.
 void TestFindWidgetStaysInsideAShortOrNarrowArea() {
   using microide::workspace::ComputeFindWidgetLayout;
   const auto inside = [](const SDL_FRect& r, const SDL_FRect& area) {
     return r.x >= area.x && r.x + r.w <= area.x + area.w + 0.5f &&
            r.y + r.h <= area.y + area.h + 0.5f;
   };
-  // The terminal's find bar floats over the panel's body, never over its tab row:
-  // lifted onto the row it covered the panel tabs and the new-terminal button
-  // (soak 0ead4679e247, e04d9f4e8b95). A body that cannot hold it -- the panel
-  // squeezed to little more than its tab row -- lays out no bar at all rather
-  // than one past the window's bottom (soak 23535aaf3151).
   microide::workspace::WorkspaceLayout squeezed_panel;
   squeezed_panel.bottom_panel = SDL_FRect{0.0f, 748.0f, 1067.0f, 52.0f};
   const SDL_FRect short_body = microide::workspace::BottomPanelContentRect(squeezed_panel);
@@ -1805,7 +1653,6 @@ void TestFindWidgetStaysInsideAShortOrNarrowArea() {
     any_area = any_area || (r.w > 0.0f && r.h > 0.0f);
   }
   Expect(!any_area, "a panel body too short for the terminal's find bar lays out none of it");
-  // A body a little taller than the bar: lifted inside the body, below the tab row.
   microide::workspace::WorkspaceLayout low_panel;
   low_panel.bottom_panel = SDL_FRect{0.0f, 700.0f, 1067.0f, 100.0f};
   const SDL_FRect low_body = microide::workspace::BottomPanelContentRect(low_panel);
@@ -1813,27 +1660,19 @@ void TestFindWidgetStaysInsideAShortOrNarrowArea() {
   Expect(terminal_fw.widget.h > 0.0f && inside(terminal_fw.widget, low_body) &&
              terminal_fw.widget.y >= low_body.y && terminal_fw.next_button.y >= low_body.y,
          "the terminal's find bar stays inside the panel's body, below its tab row");
-  // An editor column collapsed under a maximized panel: a surface of no height at
-  // the window's top. The widget may not be lifted above it, out of the window.
   const SDL_FRect collapsed{240.0f, 24.0f, 700.0f, 0.0f};
   for (const bool replace : {false, true}) {
     const auto fw = ComputeFindWidgetLayout(collapsed, replace, 2);
     Expect(fw.widget.y >= collapsed.y && fw.search_field.y >= collapsed.y,
            "a find widget is never lifted above the region it floats over");
   }
-  // A roomy area keeps the widget where it always was: 12 px below the top.
   const SDL_FRect roomy{100.0f, 50.0f, 900.0f, 600.0f};
   const auto fw = ComputeFindWidgetLayout(roomy, false, 2);
   Expect(fw.widget.y == 62.0f, "a roomy area keeps the widget's top margin");
-  // An area narrower than the widget's minimum width.
   const SDL_FRect narrow{40.0f, 50.0f, 200.0f, 400.0f};
   const auto narrow_fw = ComputeFindWidgetLayout(narrow, false, 2);
   Expect(inside(narrow_fw.widget, narrow) && narrow_fw.close_button.x >= narrow.x,
          "a find widget must not run off the left of a narrow area");
-  // A pane a few units wide at the window's right edge: no room for the fields.
-  // They kept their origin past the card -- [1027, 347, 0, 24] in a 1024-wide
-  // window (soak 938ea521923b) -- where every control that does not fit is left
-  // empty: so are the fields.
   const SDL_FRect sliver{1018.0f, 300.0f, 6.0f, 300.0f};
   for (const bool replace : {false, true}) {
     const auto sliver_fw = ComputeFindWidgetLayout(sliver, replace, 4);
@@ -1845,11 +1684,8 @@ void TestFindWidgetStaysInsideAShortOrNarrowArea() {
   }
 }
 
-}  // namespace
+}
 
-// The editor banner shows whole or not at all: squeezed to an editor area with
-// no height (the panel maximized), its buttons were centred on a strip of none
-// and landed over the menu bar's window controls (QA monkey, qa-asan seed 4).
 void TestEditorBannerKeepsInsideTheEditorArea() {
   static constexpr workspace::EditorBannerButton kButtons[] = {{workspace::EditorBannerAction::Keep, "Keep", 54.0f, false}};
   const SDL_FRect roomy{100.0f, 60.0f, 800.0f, 400.0f};
@@ -1866,10 +1702,6 @@ void TestEditorBannerKeepsInsideTheEditorArea() {
   }
 }
 
-// The banner's buttons, laid right to left from its dismiss button, had no left
-// bound: in a pane narrower than the row, the leading ones landed over the
-// sidebar (soak 6b622ef8a9ea, a1673d0162dc, 4eda8acffd2f: banner/Overwrite on
-// git/sync). The trailing buttons that fit are kept; the rest are not laid out.
 void TestEditorBannerButtonsStayInsideANarrowStrip() {
   static constexpr workspace::EditorBannerButton kButtons[] = {
       {workspace::EditorBannerAction::Keep, "Reload", 64.0f, false},
@@ -1887,14 +1719,10 @@ void TestEditorBannerButtonsStayInsideANarrowStrip() {
          "a wide strip keeps every button");
 }
 
-// Soak fd5e983d0496: the find widget's first row drops what does not fit in a
-// narrow card (250931ec505a), but its Replace row did not: in a 75-px pane,
-// Replace sat at x -48, past the window's left edge. Every Replace-row control
-// is inside the card or not laid out at all.
 void TestFindWidgetReplaceRowStaysInsideANarrowCard() {
   for (float width = 20.0f; width <= 420.0f; width += 5.0f) {
     const SDL_FRect area{30.0f, 40.0f, width, 300.0f};
-    const workspace::FindWidgetLayout layout = workspace::ComputeBufferFindWidgetLayout(area, /*replace_mode=*/true);
+    const workspace::FindWidgetLayout layout = workspace::ComputeBufferFindWidgetLayout(area, true);
     const SDL_FRect& card = layout.widget;
     for (const SDL_FRect* control : {&layout.replace_button, &layout.replace_all_button, &layout.replace_field}) {
       Expect(control->w <= 0.0f ||
@@ -1905,10 +1733,6 @@ void TestFindWidgetReplaceRowStaysInsideANarrowCard() {
   }
 }
 
-// Soak 938ea521923b: the find widget in a pane shorter than itself (a split at
-// the bottom of a 534-px window) hung below the pane and past the window's
-// bottom edge. Like the terminal's find bar, it is laid out inside its pane or
-// not at all; every rect is then empty, so nothing paints, hit-tests or reports.
 void TestFindWidgetStaysInsideAShortPane() {
   for (float height = 1.0f; height <= 120.0f; height += 1.0f) {
     for (const bool replace : {false, true}) {
@@ -1925,10 +1749,6 @@ void TestFindWidgetStaysInsideAShortPane() {
   }
 }
 
-// Soak 2dc534f1ceac: the dismiss button had no bound either. Laid at the strip's
-// right edge less its pad and size, in a sliver of a pane narrower than that
-// (a nested split, 1024x700 at 1.25) it started left of the strip, over the
-// sidebar's Sync button. It stays inside the strip at every width.
 void TestEditorBannerDismissStaysInsideASliverStrip() {
   static constexpr workspace::EditorBannerButton kButtons[] = {
       {workspace::EditorBannerAction::Keep, "Reload", 64.0f, false}};
@@ -1942,12 +1762,6 @@ void TestEditorBannerDismissStaysInsideASliverStrip() {
   }
 }
 
-// Soak 538a455016ef (1024x700 at a scale of 3.25: 316x216 units): the dirty
-// prompt narrowed to the window and its three fixed-width buttons did not --
-// Save hung past the dialog's left edge, outside the dialog's repaint, so Tab
-// moving the choice off it left its focus ring on screen. The prompt surface's
-// footer had the same arithmetic. Every footer button stays inside its dialog's
-// padding at any window width.
 void TestDialogFooterButtonsStayInsideANarrowDialog() {
   const auto inside = [](const SDL_FRect& button, const SDL_FRect& dialog) {
     return button.w >= 0.0f && button.x >= dialog.x + 16.0f - 0.01f &&
@@ -2053,4 +1867,4 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedProjectTabStripVisibility);
 }
 
-}  // namespace microide::tests
+}

@@ -74,14 +74,11 @@ std::vector<std::filesystem::path> CollectRecursiveWatchPaths(
       }
       return WalkAction::Continue;
     });
-    // A subtree the walk could not read is a subtree nothing watches.
     if (status.root_unreadable || status.incomplete) {
       requires_polling = true;
     }
   }
 
-  // A tree we could not finish enumerating cannot be watched reliably: report
-  // truncation and force the polling fallback for whatever was collected.
   if (budget_exhausted) {
     requires_polling = true;
   }
@@ -101,7 +98,7 @@ constexpr std::uint32_t kLinuxWatchMask = IN_ATTRIB | IN_CLOSE_WRITE | IN_CREATE
                                           IN_DELETE_SELF | IN_MOVE_SELF | IN_MOVED_FROM |
                                           IN_MOVED_TO;
 
-}  // namespace
+}
 
 struct FileTreeWatcher::NativeBackend {
   explicit NativeBackend(std::function<void()> on_change)
@@ -117,10 +114,6 @@ struct FileTreeWatcher::NativeBackend {
     }
     CloseIfValid(control_pipe_[0]);
     CloseIfValid(control_pipe_[1]);
-    // Retired, not closed here: the worker is joined above, so nothing can touch
-    // this descriptor again, and closing an inotify fd blocks for milliseconds at
-    // random (see RetireDescriptorAsync). This destructor runs on the shell thread
-    // on every project switch.
     RetireDescriptorAsync(inotify_fd_);
     inotify_fd_ = -1;
   }
@@ -129,11 +122,6 @@ struct FileTreeWatcher::NativeBackend {
   NativeBackend& operator=(const NativeBackend&) = delete;
 
   bool Start(const std::vector<std::filesystem::path>& watch_paths) {
-    // IN_NONBLOCK is essential: the drain loop below re-reads whenever a read
-    // exactly fills the 4096-byte buffer, and without it that trailing read blocks
-    // indefinitely once the queue empties — stranding the worker in read() where
-    // the control-pipe wake in RequestStop() can never reach it, hanging shutdown's
-    // worker join. (Matches FileIndexWatcher, which already sets IN_NONBLOCK.)
     inotify_fd_ = inotify_init1(IN_CLOEXEC | IN_NONBLOCK);
     if (inotify_fd_ < 0) {
       return false;
@@ -273,8 +261,6 @@ void FileTreeWatcher::SetRoots(std::vector<std::filesystem::path> roots) {
     pending_change_ = false;
   }
 
-  // Build the native backend and (optionally) the snapshot WITHOUT holding the
-  // lock so a peer SetRoots/Clear/Poll never blocks on this tree walk.
   PreparedNativeBackend prepared = PrepareNativeBackend(normalized_roots, filter);
   bool capture_snapshot = true;
   std::vector<TreeSnapshotEntry> snapshot;
@@ -288,7 +274,6 @@ void FileTreeWatcher::SetRoots(std::vector<std::filesystem::path> roots) {
     }
   }
   if (prepared.tree_too_large) {
-    // A truncated snapshot can't be diffed reliably; don't retain it.
     capture_snapshot = false;
   }
 
@@ -296,7 +281,7 @@ void FileTreeWatcher::SetRoots(std::vector<std::filesystem::path> roots) {
   {
     std::scoped_lock lock(mutex_);
     if (roots_ != normalized_roots) {
-      return;  // superseded while unlocked; discard prepared backend + snapshot
+      return;
     }
     old_backend = InstallPreparedBackendLocked(std::move(prepared));
     if (capture_snapshot) {
@@ -325,8 +310,6 @@ void FileTreeWatcher::Clear() {
     old_backend = std::move(native_backend_);
     next_poll_at_ = std::chrono::steady_clock::time_point::min();
   }
-  // Destroyed outside the lock (it joins the backend's worker thread), and scoped
-  // so a switch stall can be attributed to the join rather than to the lock.
   util::PerformanceTrace::Scope scope("watch::TreeWatcher::Clear::DestroyBackend");
   old_backend.reset();
 }
@@ -337,8 +320,6 @@ std::optional<std::chrono::milliseconds> FileTreeWatcher::NextPollDelay() const 
     return std::nullopt;
   }
   if (tree_too_large_) {
-    // Native watching is off and the tree is unaffordable to poll: never schedule
-    // periodic full-tree walks. Changes are picked up only via explicit refresh.
     return std::nullopt;
   }
   if (pending_change_) {
@@ -373,7 +354,7 @@ bool FileTreeWatcher::Poll() {
       return false;
     }
     roots = roots_;
-    previous_snapshot = snapshot_;  // O(1) ref bump; the pointee is immutable
+    previous_snapshot = snapshot_;
     filter = entry_filter_;
     polling_required = polling_required_;
     pending_change = pending_change_;
@@ -420,10 +401,6 @@ bool FileTreeWatcher::Poll() {
     prepared.tree_too_large = true;
   }
   const bool too_large = prepared.tree_too_large;
-  // A truncated snapshot is unreliable (recursive_directory_iterator order is not
-  // stable), so never report a change off a partial walk. The compare runs
-  // unlocked against the shared immutable previous snapshot (an invalid previous
-  // snapshot compares as empty, matching the by-value member's semantics).
   static const std::vector<TreeSnapshotEntry> kNoSnapshot;
   const std::vector<TreeSnapshotEntry>& previous =
       previous_snapshot != nullptr ? *previous_snapshot : kNoSnapshot;
@@ -432,10 +409,6 @@ bool FileTreeWatcher::Poll() {
   std::unique_ptr<NativeBackend> old_backend;
   std::scoped_lock lock(mutex_);
   if (roots != roots_) {
-    // Roots were superseded while this poll scanned the filesystem unlocked. The
-    // computed `changed` flag describes the *old* root set, so reporting it would
-    // leak a stale change into the new root generation (a spurious project refresh
-    // after a project switch). Discard it exactly like the early superseded branch.
     return false;
   }
   if (too_large) {
@@ -451,17 +424,10 @@ bool FileTreeWatcher::Poll() {
 
 FileTreeWatcher::PreparedNativeBackend FileTreeWatcher::PrepareNativeBackend(
     const std::vector<std::filesystem::path>& roots, const TreeTraversalFilter& filter) {
-  // Runs WITHOUT mutex_ held: the recursive walk below dominates wall-clock on
-  // large trees and must not block concurrent SetRoots/Clear/Poll callers.
   PreparedNativeBackend prepared;
 
   bool requires_polling = false;
   bool truncated = false;
-  // The two halves of arming a native watch, separately named: the recursive
-  // enumeration of directories to watch, and the inotify_add_watch storm that
-  // registers them. Together they are the second full tree walk a project open
-  // pays (the file index's initial scan is the first), and until these scopes
-  // existed the only number for it was the caller's total.
   std::vector<std::filesystem::path> watch_paths;
   {
     util::PerformanceTrace::Scope collect_scope("watch::PrepareNativeBackend::CollectWatchPaths");
@@ -470,8 +436,6 @@ FileTreeWatcher::PreparedNativeBackend FileTreeWatcher::PrepareNativeBackend(
                                              &requires_polling, &truncated);
   }
   if (truncated) {
-    // Tree too large to enumerate within budget: do not watch a partial set, and
-    // do not poll-walk the whole tree on a timer. Degrade to "too large" mode.
     prepared.tree_too_large = true;
     prepared.polling_required = false;
     return prepared;
@@ -526,4 +490,4 @@ void FileTreeWatcher::NotifyWake() {
   }
 }
 
-}  // namespace microide::platform
+}

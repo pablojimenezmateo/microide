@@ -53,33 +53,13 @@ struct PublishedDiagnostic {
   }
 };
 
-// Parse a `diagnostics.min_severity` token ("error"/"warning"/"info"/"hint");
-// unknown tokens fall back to Hint (show everything).
-// The one severity table. Case-insensitive, and it accepts the aliases a tool or
-// a plugin actually writes ("warn", "information") -- the plugin interop carried
-// its own chain that did, while this one matched exact lowercase only.
 bool TryParseDiagnosticSeverity(std::string_view token, DiagnosticSeverity* severity);
-// Setting-reader form: an unrecognized value reads as Hint, i.e. show everything,
-// which is the safe direction to fail for `diagnostics.min_severity`. It used to
-// fail that way for "Error" and "warn" too, silently turning a request to hide
-// diagnostics into a request to show them all.
 DiagnosticSeverity ParseDiagnosticSeverity(std::string_view token);
 
-// Returns `in` unchanged when min_severity is Hint (the show-all default, zero
-// cost). Otherwise copies diagnostics at or above min_severity into `scratch` and
-// returns a span over it. Lives here (not a render TU) so the copy never counts as
-// render-hot-path string materialization.
 std::span<const PublishedDiagnostic> FilterDiagnosticsAtLeastSeverity(
     std::span<const PublishedDiagnostic> in, DiagnosticSeverity min_severity,
     std::vector<PublishedDiagnostic>& scratch);
 
-// TD-2026-07-17A-056: select diagnostics whose range overlaps `want` (both 0-based
-// half-open) for a code-action context payload, capped at `max_count`. The merged
-// per-file diagnostic view has no aggregate owner cap, so a code-action request over
-// a densely-annotated line could otherwise copy and later JSON-serialize a large
-// diagnostic payload before the async request is even queued. The scan stops once
-// the cap is reached, bounding both the copy and the downstream serialization; when
-// it caps, `*truncated` (when provided) is set. Preserves stored order.
 std::vector<PublishedDiagnostic> SelectContextDiagnostics(
     std::span<const PublishedDiagnostic> in, const SelectionRange& want, std::size_t max_count,
     bool* truncated = nullptr);
@@ -89,11 +69,6 @@ class DiagnosticsStore {
   bool ReplaceForOwnerFile(std::string_view owner,
                            const std::filesystem::path& path,
                            std::vector<Diagnostic> diagnostics);
-  // Adjust every diagnostic range for `owner`+`path` in place via `transform`,
-  // then re-sort and rebuild the merged view. Used to keep diagnostic positions
-  // live during editing (before the language server republishes), so squiggles
-  // slide with the text instead of being hidden while the buffer is dirty.
-  // Returns true if the file had diagnostics to transform.
   bool TransformOwnerFile(std::string_view owner, const std::filesystem::path& path,
                           const std::function<SelectionRange(SelectionRange)>& transform);
   bool ClearOwner(std::string_view owner);
@@ -103,15 +78,9 @@ class DiagnosticsStore {
   bool ClearPathPrefix(const std::filesystem::path& path_prefix);
   void Clear();
   const std::vector<PublishedDiagnostic>* FindByPath(const std::filesystem::path& path) const;
-  // Hot-path variant taking a precomputed NormalizedPathKey (see
-  // TextViewport::path_key). Allocation-free: the map uses heterogeneous lookup.
   const std::vector<PublishedDiagnostic>* FindByPathKey(std::string_view path_key) const;
-  // True when the stored diagnostics for `path` were capped
-  // (kMaxDiagnosticsPerOwnerFile) and some the server published were dropped, so
-  // callers (Problems sidebar/status) can flag that the list is incomplete.
   bool IsPathTruncated(const std::filesystem::path& path) const;
   bool IsPathKeyTruncated(std::string_view path_key) const;
-  // Store-wide flag: any file currently retains a truncated diagnostic list.
   bool HasTruncatedFile() const { return truncated_file_count_ > 0; }
   std::vector<PublishedDiagnostic> SnapshotAll() const;
   std::vector<PublishedDiagnostic> SnapshotForOwner(std::string_view owner) const;
@@ -120,10 +89,6 @@ class DiagnosticsStore {
   std::size_t InfoCount() const { return info_count_; }
   std::size_t HintCount() const { return hint_count_; }
   std::uint64_t revision() const { return revision_.value(); }
-  // The store's revision when `path_key`'s merged list last changed, or 0 while it
-  // has none: what moves when THIS file's diagnostics do, and only then (a
-  // pane's overview ruler keys on it, not on every file's). Never reused: a list
-  // that goes and comes back is stamped with a later revision.
   std::uint64_t PathRevisionByKey(std::string_view path_key) const;
 
  private:
@@ -140,12 +105,8 @@ class DiagnosticsStore {
     std::filesystem::path path;
     std::vector<PublishedDiagnostic> diagnostics;
     SeveritySummary summary;
-    // Set when the source list exceeded kMaxDiagnosticsPerOwnerFile and was
-    // capped; `original_count` records how many the server actually published
-    // (>= diagnostics.size()) so a summary can report the dropped remainder.
     bool truncated = false;
     std::size_t original_count = 0;
-    // The store's revision when this list last changed (PathRevisionByKey).
     std::uint64_t changed_at = 0;
 
     bool operator==(const FileDiagnostics&) const = default;
@@ -159,8 +120,6 @@ class DiagnosticsStore {
   void RemoveSummary(const SeveritySummary& summary);
   void RebuildPath(std::string_view path_key);
 
-  // Transparent hashing lets find() accept a string_view without allocating a
-  // throwaway std::string key on every lookup.
   std::unordered_map<std::string,
                      std::unordered_map<std::string, FileDiagnostics,
                                         util::TransparentStringHash, std::equal_to<>>,
@@ -173,10 +132,8 @@ class DiagnosticsStore {
   std::size_t warning_count_ = 0;
   std::size_t info_count_ = 0;
   std::size_t hint_count_ = 0;
-  // Number of entries in merged_by_path_ whose list is currently truncated;
-  // keeps HasTruncatedFile() O(1) as merged paths are rebuilt.
   std::size_t truncated_file_count_ = 0;
   util::Revision revision_;
 };
 
-}  // namespace microide::editor
+}

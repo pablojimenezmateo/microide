@@ -14,12 +14,6 @@
 
 namespace {
 
-// Position-sensitive FNV-1a fold of what each open tab's label is made of: its
-// dirty state (the "*") and its title. Both feed the geometry cache key, so a
-// save/edit that flips dirtiness, or a rename or Save As that retitles a tab,
-// rebuilds the strip without needing a resize -- the title was left out, and a
-// renamed file's tab kept its old name until the next edit (QA state oracle).
-// Hashing the stored titles allocates nothing.
 std::uint64_t EditorTabsLabelFingerprint(
     const microide::workspace::EditorGroup& group) {
   std::uint64_t fingerprint = microide::util::kFnv1aOffsetBasis;
@@ -32,7 +26,7 @@ std::uint64_t EditorTabsLabelFingerprint(
   return fingerprint;
 }
 
-}  // namespace
+}
 
 namespace microide::workspace {
 
@@ -43,7 +37,7 @@ SDL_Color ProjectTabBadgeColor(const ProjectWorkspaceState& state,
   return ResolveProjectTabBadgeColor(state, root);
 }
 
-}  // namespace
+}
 
 void WorkspaceTabStripChrome::Configure(WorkspaceContext& context,
                                         TabStripService& tab_strip_service,
@@ -63,14 +57,10 @@ std::uint64_t WorkspaceTabStripChrome::ComputeProjectStripFingerprint() const {
   fingerprint = util::Fnv1aValue(fingerprint, catalog.entries.size());
   fingerprint = util::Fnv1aValue(
       fingerprint, static_cast<std::uint64_t>(layout_mode_service_->CurrentMode()));
-  // Font metrics change without any state here changing; the service bumps this
-  // epoch on the same event that drops the editor strip's geometry cache.
   fingerprint = util::Fnv1aValue(fingerprint, tab_strip_service_->GeometryEpoch());
   for (std::size_t i = 0; i < catalog.entries.size(); ++i) {
     const std::filesystem::path& root = operations_.project_catalog_root(i);
     fingerprint = util::Fnv1aBytes(fingerprint, root.native());
-    // Answered straight off the catalog: routing this through the shell would
-    // build a TabCoordinator (~40 std::function constructions) per project.
     fingerprint = util::Fnv1aValue(
         fingerprint,
         TabCoordinator::ProjectHasDirtyTab(catalog, context_->current_project_state, i) ? 1u : 0u);
@@ -78,9 +68,6 @@ std::uint64_t WorkspaceTabStripChrome::ComputeProjectStripFingerprint() const {
         !context_->current_project_state.root.empty() && i == catalog.active_index;
     const ProjectWorkspaceState* project = is_active_project ? &context_->current_project_state
                                                              : operations_.project_catalog_entry(i);
-    // The badge color resolves from the project's explicit base color, or from
-    // the root when it has none — so hashing the override (and the root above)
-    // is exactly the color's input set, without resolving the color itself.
     std::uint64_t color_key = 0;
     if (project != nullptr && project->project_base_color.has_value()) {
       const SDL_Color color = *project->project_base_color;
@@ -90,13 +77,9 @@ std::uint64_t WorkspaceTabStripChrome::ComputeProjectStripFingerprint() const {
                   (static_cast<std::uint64_t>(color.a) << 32);
     }
     fingerprint = util::Fnv1aValue(fingerprint, color_key);
-    // The terminal-activity mark a background project's title carries.
     fingerprint = util::Fnv1aValue(
         fingerprint,
         !is_active_project && project != nullptr && TerminalPanelService::HasUnseenTerminalActivity(*project) ? 1u : 0u);
-    // A remote project's corner follows its connection: the worst stage, not the
-    // status revision, so a sync count ticking under a steady state re-lays nothing.
-    // (The host is in the id, which the root already pins.)
     std::uint64_t remote_key = 0;
     if (context_->ProjectCatalogId(i).IsRemote()) {
       remote_key = 1u + (project != nullptr
@@ -134,8 +117,6 @@ WorkspaceTabStripChrome::RefreshProjectStripSources() const {
         i == context_->project_catalog.active_index;
     const ProjectWorkspaceState* project = is_active_project ? &context_->current_project_state
                                                              : operations_.project_catalog_entry(i);
-    // A remote project says where it is on its tab: the host after the name, and
-    // the connection's state in the corner (visible however narrow the tab gets).
     std::string secondary_title;
     std::optional<editor::WelcomeStageState> remote_state;
     if (const project::ProjectId::Remote* remote = id.remote(); remote != nullptr) {
@@ -143,8 +124,6 @@ WorkspaceTabStripChrome::RefreshProjectStripSources() const {
       remote_state = project != nullptr ? editor::WorstRemoteStage(project->remote_status)
                                         : editor::WelcomeStageState::Active;
     }
-    // A project kept for its unsaved buffers after its folder went
-    // (ProjectWorkspaceState::root_missing) says so where the host would go.
     if (project != nullptr && project->root_missing) {
       secondary_title = std::string(kHintSeparator) + "folder missing";
     }
@@ -220,7 +199,7 @@ std::size_t ClampGroupIndex(const ProjectWorkspaceState& state, std::size_t grou
   return std::min(group_index, state.editor_groups.size() - 1);
 }
 
-}  // namespace
+}
 
 void WorkspaceTabStripChrome::EnsureActiveTabVisible() {
   EnsureActiveTabVisibleForGroup(context_->current_project_state.focused_group_index);
@@ -239,9 +218,6 @@ void WorkspaceTabStripChrome::EnsureActiveTabVisibleForGroup(std::size_t group_i
   if (group_index >= state.editor_groups.size()) {
     return;
   }
-  // The PANE's strip width, not the window's: with a split open the window fits
-  // several times as many tabs as the pane does, so sizing against it left the
-  // freshly-opened tab scrolled off the right edge of its own strip.
   const float tab_strip_width = operations_.editor_group_tab_strip_width
                                     ? operations_.editor_group_tab_strip_width(group_index)
                                     : 1440.0f;
@@ -387,11 +363,7 @@ bool WorkspaceTabStripChrome::CloseBottomPanelTab(std::size_t model_index) {
       operations_.close_output_channel_tab(tab.output_channel_id);
       break;
     case BottomPanelTabKind::PluginSurface: {
-      // Closing a preview tab withdraws the surface's preview request (host-side
-      // override); the surface itself stays published for inline/anchor use.
       auto& state = context_->current_project_state;
-      // A PluginSurface tab can only exist while a surface is published, so the
-      // bundle is present; guard defensively against a stale tab regardless.
       if (auto* pres = state.plugin_presentation.get()) {
         pres->surfaces.SetPreviewSlot(tab.surface_owner, tab.surface_id,
                                       editor::SurfacePreviewSlot::None);
@@ -411,4 +383,4 @@ bool WorkspaceTabStripChrome::CloseBottomPanelTab(std::size_t model_index) {
   return true;
 }
 
-}  // namespace microide::workspace
+}

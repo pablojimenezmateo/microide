@@ -37,8 +37,6 @@ terminal::TerminalSession::MouseButton TerminalMouseButtonFromSdl(Uint8 button) 
 
 namespace {
 
-// One past the last cell that shows a glyph. Everything after it is the row's
-// padding out to the terminal width, not text the program wrote.
 std::size_t TerminalLineContentEnd(const terminal::TerminalLine& line) {
   std::size_t end = line.cells.size();
   while (end > 0) {
@@ -51,7 +49,7 @@ std::size_t TerminalLineContentEnd(const terminal::TerminalLine& line) {
   return end;
 }
 
-}  // namespace
+}
 
 std::string ExtractTerminalSelectionText(const std::vector<terminal::TerminalLine>& lines,
                                          const TerminalSelectionBounds& selection,
@@ -73,26 +71,14 @@ bool TerminalSelectionTextBuilder::AddRow(std::size_t row, const terminal::Termi
   if (done_) {
     return false;
   }
-  // Only emit a hard newline at a *real* line boundary. If this row is a soft-wrap
-  // continuation of the last, the terminal never saw a newline there, so copying a
-  // long wrapped command must not inject one either.
-  if (pending_ && !SettlePending(line.wrapped_from_previous, /*more_rows=*/true)) {
+  if (pending_ && !SettlePending(line.wrapped_from_previous, true)) {
     return false;
   }
   const std::size_t line_size = line.cells.size();
   const std::size_t start_column = row == selection_.start.row ? std::min(selection_.start.column, line_size) : 0;
   const std::size_t end_column = row == selection_.end.row ? std::min(selection_.end.column, line_size) : line_size;
-  // Rows are stored at the full terminal width, so a selection that runs to a
-  // row's end covers its padding. Every terminal (xterm, VS Code's xterm.js)
-  // drops those trailing blanks from a copy -- three selected lines of `ls`
-  // output must not come out padded to 80 columns each. Blanks inside a
-  // soft-wrapped line are real text, so a row the next row continues keeps
-  // them (decided in SettlePending); blanks before a glyph are always kept.
   const std::size_t content_end =
       std::max(start_column, std::min(end_column, TerminalLineContentEnd(line)));
-  // Reuse the whole-line slice logic so selection copy and line copy produce
-  // identical text: wide-trailing spacer cells are skipped and empty cells
-  // render as a single space.
   AppendTerminalLineSlice(text_, line, start_column, content_end);
   pending_content_end_ = text_.size();
   AppendTerminalLineSlice(text_, line, content_end, end_column);
@@ -105,9 +91,6 @@ bool TerminalSelectionTextBuilder::SettlePending(bool continued, bool more_rows)
   if (!continued) {
     text_.resize(pending_content_end_);
   }
-  // Cap the copied bytes so a drag over the full scrollback can't materialize an
-  // unbounded transcript on the UI thread (TD-2026-07-17A-090). Truncate on a UTF-8
-  // boundary and report truncation rather than silently clipping mid-codepoint.
   if (text_.size() >= max_bytes_) {
     text_.resize(util::Utf8ByteBudgetPrefixLength(text_, max_bytes_));
     text_ += "\n[selection truncated]";
@@ -122,7 +105,7 @@ bool TerminalSelectionTextBuilder::SettlePending(bool continued, bool more_rows)
 
 std::string TerminalSelectionTextBuilder::Finish(bool next_row_continues) {
   if (pending_) {
-    (void)SettlePending(next_row_continues, /*more_rows=*/false);
+    (void)SettlePending(next_row_continues, false);
   }
   done_ = true;
   return std::move(text_);
@@ -142,9 +125,6 @@ std::string BuildLastTerminalCommandTranscript(
     return {};
   }
 
-  // Drop the trailing prompt row the shell redraws after the command finishes: either a
-  // literal re-print of the captured prompt prefix, or (in echo-off/partial-redraw
-  // shells) a leading fragment of the invocation itself.
   const std::string& last_line = rows[end_row - 1];
   if ((!trimmed_prompt_prefix.empty() &&
        (last_line == trimmed_prompt_prefix || last_line.starts_with(trimmed_prompt_prefix))) ||
@@ -165,17 +145,12 @@ std::string BuildLastTerminalCommandTranscript(
       transcript.push_back('\n');
     }
     transcript += rows[row];
-    // Cap the joined bytes so a command with a huge captured output can't materialize an
-    // unbounded transcript on the UI thread (TD-2026-07-17A-037). Truncate on a UTF-8
-    // boundary and report truncation rather than clipping mid-codepoint.
     if (transcript.size() >= max_bytes) {
       transcript.resize(util::Utf8ByteBudgetPrefixLength(transcript, max_bytes));
       transcript += "\n[output truncated]";
       return transcript;
     }
   }
-  // Rows were dropped upstream to honor the snapshot line cap: mark the tail as truncated
-  // even though the retained bytes fit the budget.
   if (source_truncated) {
     transcript += "\n[output truncated]";
   }
@@ -184,15 +159,7 @@ std::string BuildLastTerminalCommandTranscript(
 
 namespace {
 
-// A cell counts as part of a double-click word when it holds a single-byte
-// identifier char or one of the path/URL joiners a terminal token is made of.
-// Multi-byte cells are treated as word bytes so a UTF-8 identifier is not split
-// mid-token by the click.
 bool IsTerminalWordCell(const terminal::TerminalCell& cell) {
-  // The trailing spacer of a double-width glyph carries no text of its own but is
-  // part of the glyph in front of it, so it must not break a word — otherwise a
-  // double-click on CJK text stops at every second column. TerminalLineSliceText
-  // skips these cells when copying for the same reason.
   if (cell.style.wide_trailing()) {
     return true;
   }
@@ -208,7 +175,7 @@ bool IsTerminalWordCell(const terminal::TerminalCell& cell) {
          ch == '+' || ch == ':' || ch == '@';
 }
 
-}  // namespace
+}
 
 std::optional<TerminalSelectionBounds> TerminalWordBoundsAt(const terminal::TerminalLine& line,
                                                             std::size_t row,
@@ -243,14 +210,11 @@ TerminalSelectionEnds ExtendTerminalSelection(TerminalSelectionUnit unit,
   const auto before = [](TerminalSelectionPoint a, TerminalSelectionPoint b) {
     return a.row < b.row || (a.row == b.row && a.column < b.column);
   };
-  // The unit under the pointer: the cell's own position, or the word or row it is in.
   TerminalSelectionBounds target{.start = point, .end = point};
   switch (unit) {
     case TerminalSelectionUnit::Cell:
       return TerminalSelectionEnds{.anchor = origin.start, .head = point};
     case TerminalSelectionUnit::Word:
-      // The cell the pointer is over is the one left of the boundary it is
-      // nearest when it sits past the cell's middle, so test both sides.
       if (auto word = TerminalWordBoundsAt(line, point.row, point.column); word.has_value()) {
         target = *word;
       } else if (point.column > 0) {
@@ -317,8 +281,6 @@ void AppendTerminalLineSlice(std::string& out,
   const std::size_t clamped_end = std::min(std::max(clamped_start, end), line.cells.size());
   for (std::size_t column = clamped_start; column < clamped_end; ++column) {
     const auto& cell = line.cells[column];
-    // The trailing spacer of a double-width glyph holds no text of its own;
-    // skipping it keeps copied/selected text free of phantom spaces.
     if (cell.style.wide_trailing()) {
       continue;
     }
@@ -331,4 +293,4 @@ void AppendTerminalLineSlice(std::string& out,
   }
 }
 
-}  // namespace microide::workspace
+}

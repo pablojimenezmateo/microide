@@ -23,63 +23,35 @@ class WorkspaceOutputChannels;
 
 struct WorkspaceContext;
 
-// A registered debug adapter surfaced by the `adapters` query: its type id plus
-// the argv used to spawn it. Mirrors DapManager::AdapterInfo but kept local so
-// ControlChannelService stays free of DapManager coupling.
 struct ControlAdapterInfo {
   std::string type;
   std::vector<std::string> command;
 };
 
-// A remote project as the `status` query reports it (`remote`) and the `projects`
-// query marks it: what a driver waits on instead of reading a notification's text.
 struct ControlRemoteProjectInfo {
-  std::string host;       // `[user@]host[:port]`
-  std::string host_root;  // absolute, on the host
-  // The connection's state, lower-case: disconnected, connecting, needs-auth,
-  // starting, installing, reconnecting, offline; and a Ready link split into
-  // `syncing` (the first sync or a resync is running) and `ready`.
+  std::string host;
+  std::string host_root;
   std::string state;
-  std::int64_t files = 0;          // in the host's content set
-  std::int64_t files_pending = 0;  // listed but not yet pulled
-  std::int64_t unsent_pushes = 0;  // saved here, not yet on the host
-  std::int64_t conflicts = 0;      // parked, waiting for the user
-  std::int64_t blocked = 0;        // saves the host refused for the path itself
-  std::int64_t held_deletes = 0;   // a mass delete waiting for Apply
+  std::int64_t files = 0;
+  std::int64_t files_pending = 0;
+  std::int64_t unsent_pushes = 0;
+  std::int64_t conflicts = 0;
+  std::int64_t blocked = 0;
+  std::int64_t held_deletes = 0;
 };
 
-// A live control-channel instance discovered from its descriptor file.
 struct ControlInstanceDescriptor {
   int pid = 0;
   std::filesystem::path socket;
   std::string project_root;
   std::string project_hash;
-  // The single JSONL line `control-list` prints for this instance. Built by
-  // re-serializing the validated fields above, NOT copied from the descriptor
-  // file: the file body is attacker-droppable, so echoing it would hand a driver
-  // a forged `socket` path (the very redirect `socket` above is reconstructed to
-  // prevent) and let embedded newlines inject extra listing lines.
   std::string raw_json;
 };
 
-// Enumerate every running instance with the control channel enabled, parsed from
-// the per-instance descriptor files under $XDG_RUNTIME_DIR/microide/instances.
-// Descriptors whose process is gone (crash / SIGKILL) are pruned as a side
-// effect. Backs both `control-list` and `control-send` socket discovery.
 std::vector<ControlInstanceDescriptor> EnumerateControlInstances();
 
-// Concatenate the descriptor lines of every running instance (one JSON object
-// per line). Backs `microide control-list`. Empty when none are found.
 std::string ControlListInstancesText();
 
-// Host-owned home for the live control channel. Owns the AF_UNIX line server,
-// drains inbound command/query requests on the main thread, dispatches commands
-// through the shell command chokepoint (via Operations), answers queries by
-// reading WorkspaceContext, and broadcasts debug events to connected clients.
-//
-// Mirrors DebugService: a narrow Operations seam, a SetWakeChannel hook, and a
-// ConsumeControlCallbacks() drain pumped from the control SDL wake event.
-// The `persistence` query's answer (see Operations::persistence).
 struct ControlPersistenceState {
   bool crash_flush_armed = false;
   bool writes_settled = true;
@@ -94,68 +66,25 @@ class ControlChannelService {
   };
 
   struct Operations {
-    // Run a command line through the same path as the in-app command prompt.
     std::function<CommandOutcome(const std::string&)> execute_command_line;
-    // Write one JSONL line to the stdout mirror (the `--control` headless
-    // stream). Wired to std::cout; left null in tests / non-headless runs.
     std::function<void(const std::string&)> emit_jsonl;
-    // Registered debug adapters (type + spawn command) for the `adapters` query.
-    // Kept behind a callback so the service stays free of DapManager coupling.
     std::function<std::vector<ControlAdapterInfo>()> adapters;
-    // Enable the debugger transiently if it is off. Invoked before a
-    // breakpoint-*/debug-* command so the channel never needs a separate
-    // `set-setting debug.enabled true` prelude. Left null in tests.
     std::function<void()> ensure_debugger_enabled;
-    // The toast stack, for the `notifications` query. Null in tests that do not
-    // exercise it (the query then answers an empty list).
     const NotificationService* notifications = nullptr;
-    // The remote project whose mirror is `root`, for `status` and `projects`;
-    // nullopt for a local root. Null in tests that do not exercise it.
     std::function<std::optional<ControlRemoteProjectInfo>(const std::filesystem::path& root)>
         remote_project;
-    // The resolved keybindings, for the `keybindings` query. Null in tests that do
-    // not exercise it (the query then answers an empty list).
     std::function<const std::vector<ResolvedKeybinding>&()> keybindings;
-    // Whether an action can run now, for the query's `enabled`: of the bindings
-    // sharing a chord, the first enabled one is what the key runs. Null: every
-    // binding reads as enabled.
     std::function<bool(ActionId)> action_enabled;
-    // The on-screen element geometry for the `ui` query. Unset sources report
-    // nothing (tests that do not exercise it).
     ControlUiQuery::Operations ui;
-    // What a press at window point (x, y) reaches, for the `hit-test` query:
-    // "normal" (the app), "draggable" / "resize" (the window manager: SDL never
-    // delivers the press), or "outside" the window. Null in tests that do not
-    // exercise it (the query then fails).
     std::function<std::string_view(float, float)> window_hit_region;
-    // The buffer the caret is in, for the `buffer` query. Null in tests that do
-    // not exercise it (the query then answers `{available:false}`).
     std::function<ControlActiveBuffer()> active_buffer;
-    // The output channels (references, call hierarchy, workspace symbols, the
-    // debug console, logs), for the `output` query. Null in tests that do not
-    // exercise it (the query then answers no channels).
     const WorkspaceOutputChannels* output_channels = nullptr;
-    // Plugin-contributed command names, listed by the `commands` query after the
-    // built-ins (the palette lists them too).
     std::function<std::vector<std::string>()> plugin_command_names;
-    // Every registered setting, built-in and plugin-contributed, and one
-    // setting's current value, for the `settings` query. Null in tests that do
-    // not exercise it (the query then answers an empty list).
     std::function<std::vector<SettingInfo>()> settings;
     std::function<std::optional<std::string>(std::string_view id)> setting_value;
-    // Where the crash-safety flush stands, for the `persistence` query: armed (an
-    // unsaved change not staged yet) and whether every queued record write has
-    // finished on the persistence worker. Null in tests that do not exercise it.
     std::function<ControlPersistenceState()> persistence;
   };
 
-  // A single accepted control query (`debug-state`, `breakpoints`, `tabs`,
-  // `projects`, `launch-configs`, ...) is answered on the main thread by building a
-  // full JSON array/object before serialization. The socket layer caps request
-  // lines, inbound bytes, connections, and write buffers, but nothing caps how much
-  // workspace/debug state a single query materializes. Bound every query array at
-  // this item budget so a huge stack, breakpoint set, or tab list can't allocate and
-  // serialize a multi-megabyte response on the UI path. TD-2026-07-17A-095.
   static constexpr std::size_t kMaxControlQueryEntries = 10000;
 
   ControlChannelService() = default;
@@ -166,46 +95,22 @@ class ControlChannelService {
   void Configure(WorkspaceContext& context, Operations operations);
   void SetWakeChannel(std::uint32_t event_type);
 
-  // Mirror responses/events to stdout as JSONL (the `--control` stream). When on,
-  // debug events surface even with zero socket clients.
   void SetStdoutMirror(bool on) { stdout_mirror_ = on; }
 
-  // Emit one already-serialized JSONL line to the stdout mirror (no-op when the
-  // mirror is off or no sink is wired). Used for cold-start `applied` lines.
   void EmitJsonLine(const std::string& line) const;
 
-  // Start/stop the listener for `project_root`. Start binds the socket and
-  // writes the per-instance descriptor; Stop removes the descriptor. Idempotent.
-  // On a fresh bind a `{"event":"ready",...}` line is mirrored to stdout.
   [[nodiscard]] bool Start(const std::filesystem::path& project_root);
   void Stop();
   bool IsRunning() const;
 
-  // Main thread: drain + dispatch queued inbound requests (control wake event).
   void ConsumeControlCallbacks();
-  // Answers every `idle` query that asked to wait ({"wait": true}): the app is at
-  // an idle point. Called where the main loop is about to block with nothing
-  // queued (WorkspaceShell::CurrentIdleWaitState). A driver waits on this instead
-  // of guessing the moment from a quiet log.
   void ReleaseIdleWaiters();
 
-  // Main thread: push debug notifications to connected clients. No-ops when the
-  // server is not running.
-  //
-  // A stop is reported in two phases: `OnDebugStopBegan` fires the instant the
-  // adapter halts, carrying the real reason/thread with `framesPending:true`
-  // (file/line/frames omitted); `OnDebugStopped` fires once the stack resolves,
-  // carrying the populated frames with `framesPending:false`. Agents disambiguate
-  // on the `framesPending` flag.
   void OnDebugStopBegan(const std::string& reason, int thread_id);
   void OnDebugStopped();
-  // `reason` carries the teardown message on a non-clean end (crash / kill /
-  // launch rejection); it is emitted as a `reason` field when non-empty and omitted
-  // for a clean exit.
   void OnDebugTerminated(int session_id, const std::string& reason = {});
   void OnDebugOutput(const std::string& category, const std::string& text);
 
-  // Answer one query verb as a socket client would get it, without a socket (tests).
   util::JsonValue AnswerQuery(const std::string& verb, bool* ok, std::string* error) const {
     return HandleQuery(verb, util::JsonValue(util::JsonObject{}), ok, error);
   }
@@ -225,21 +130,12 @@ class ControlChannelService {
   util::JsonValue BuildNotifications(bool recent) const;
   util::JsonValue BuildOutput(const util::JsonValue& args) const;
   util::JsonValue BuildKeybindings() const;
-  // Every registered setting: {id, label, description, type, scope, plugin?,
-  // group, default, value, enumValues?, min?, max?, step?, suggestsFonts?}.
   util::JsonValue BuildSettings() const;
-  // Every editor group with its tabs (cursor/scroll/dirty per tab, the visible
-  // range of the focused active tab) and the split tree in its pre-order form.
   util::JsonValue BuildEditor() const;
   util::JsonValue BuildDocuments(const util::JsonValue& args) const;
   util::JsonValue BuildSurface() const;
-  // The runnable command registry: {command, usage, label}.
   util::JsonValue BuildCommands() const;
-  // Terminal strip: every tab with its panes ({pane, active, label, running,
-  // lineCount}), so an agent can address one with `terminal-output`.
   util::JsonValue BuildTerminals() const;
-  // One pane's scrollback tail: args {tab, pane, lines}, defaulting to the active
-  // tab's active pane and the last 1000 lines.
   util::JsonValue BuildTerminalOutput(const util::JsonValue& args, bool* ok,
                                       std::string* error) const;
   util::JsonValue BuildProjects() const;
@@ -247,13 +143,8 @@ class ControlChannelService {
   util::JsonValue BuildLaunchConfigs() const;
   util::JsonValue BuildAdapters() const;
 
-  // Broadcast an event to connected clients (when running) and mirror it to
-  // stdout (when mirroring). Surfaces events even with no socket client.
   void EmitEvent(util::JsonValue event);
 
-  // (Re)write the per-instance discovery descriptor (`instances/<pid>.json`).
-  // Called at Start and again when the socket server re-binds after the socket
-  // (and descriptor) vanished mid-run. Main thread only.
   void WriteDescriptor();
 
   WorkspaceContext* context_ = nullptr;
@@ -263,9 +154,7 @@ class ControlChannelService {
   std::filesystem::path descriptor_path_;
   std::filesystem::path project_root_;
   bool stdout_mirror_ = false;
-  // `idle` queries waiting for the next idle point: the connection and the
-  // request id to answer.
   std::vector<std::pair<std::uint64_t, std::optional<std::int64_t>>> idle_waiters_;
 };
 
-}  // namespace microide::workspace
+}

@@ -7,8 +7,6 @@
 
 namespace microide::tests {
 
-// A valid 3x5 RGBA PNG (opaque red), for tests that need a real encoded image:
-// one whose size is in its bytes, not beside them.
 inline constexpr int kTinyPngWidth = 3;
 inline constexpr int kTinyPngHeight = 5;
 
@@ -26,4 +24,4 @@ inline std::vector<std::byte> TinyPng() {
   return bytes;
 }
 
-}  // namespace microide::tests
+}

@@ -54,9 +54,6 @@ void TestRegexUtilCopiesCompiledPatterns() {
          "copied compiled regexes should preserve the compiled pattern");
 }
 
-// A catastrophic-backtracking pattern must fail fast against the match/depth
-// limits instead of spinning near PCRE2's default ceiling. Without the match
-// context this call would explore ~2^N paths and hang the search worker.
 void TestRegexUtilBoundsCatastrophicBacktracking() {
   microide::util::CompiledRegex regex("(a+)+$", 0);
   Expect(regex.valid(), "the backtracking pattern should compile");
@@ -64,8 +61,6 @@ void TestRegexUtilBoundsCatastrophicBacktracking() {
   auto match_data = regex.CreateMatchData();
   Expect(match_data.valid(), "match data should be created");
 
-  // 60 'a's followed by a non-'a' terminator: the pattern can never match, and a
-  // naive engine backtracks exponentially. The limits must cut it off.
   const std::string evil(60, 'a');
   const std::string text = evil + "!";
 
@@ -74,8 +69,6 @@ void TestRegexUtilBoundsCatastrophicBacktracking() {
          "catastrophic backtracking should hit the match/depth limit, not hang");
 }
 
-// The limits must not disturb ordinary matching: a normal pattern over normal
-// text still succeeds well within the caps.
 void TestRegexUtilNormalMatchWithinLimits() {
   microide::util::CompiledRegex regex("(foo|bar)+baz", 0);
   Expect(regex.valid(), "a normal alternation pattern should compile");
@@ -86,7 +79,6 @@ void TestRegexUtilNormalMatchWithinLimits() {
   Expect(rc >= 0, "a legitimate pattern should still match under the limits");
 }
 
-// SubstituteInto: global capture-group substitution with the extended escapes.
 void TestRegexUtilSubstituteIntoCaptureGroups() {
   microide::util::CompiledRegex regex("(\\w+)=(\\w+)", 0);
   Expect(regex.valid(), "substitute fixture should compile");
@@ -104,7 +96,6 @@ void TestRegexUtilSubstituteIntoCaselessAndEscapes() {
   const int rc = regex.SubstituteInto("FOO Foo foo", "x", out);
   Expect(rc == 3 && out == "x x x", "PCRE2_CASELESS should fold every case variant");
 
-  // \n / \t are interpreted under PCRE2_SUBSTITUTE_EXTENDED (VSCode-parity).
   microide::util::CompiledRegex tab("X", 0);
   std::string escaped;
   Expect(tab.SubstituteInto("aXb", "\\t", escaped) == 1 && escaped == "a\tb",
@@ -117,7 +108,6 @@ void TestRegexUtilSubstituteIntoNoMatchAndBadEscape() {
   Expect(regex.SubstituteInto("abc", "X", out) == 0 && out == "keepabc",
          "a no-match subject is copied through unchanged with a count of 0");
 
-  // `\q` is not a valid extended replacement escape -> negative error, out untouched.
   microide::util::CompiledRegex any("a", 0);
   std::string bad = "seed";
   const int rc = any.SubstituteInto("a", "\\q", bad);
@@ -125,22 +115,18 @@ void TestRegexUtilSubstituteIntoNoMatchAndBadEscape() {
          "an invalid replacement escape should return a negative rc and not mutate `out`");
 }
 
-// ExpandMatchAt: expand ONE match's replacement in full context (lookarounds work).
 void TestRegexUtilExpandMatchAt() {
   microide::util::CompiledRegex regex("(\\d+)", 0);
   Expect(regex.valid(), "expand fixture should compile");
 
-  // "a12b34": the match at offset 1 is "12"; expanding "<$1>" yields "<12>".
   const auto expanded = regex.ExpandMatchAt("a12b34", 1, "<$1>");
   Expect(expanded.has_value() && *expanded == "<12>",
          "ExpandMatchAt should expand the single match anchored at the offset");
 
-  // No match anchored at offset 0 ("a" is not a digit) -> nullopt.
   Expect(!regex.ExpandMatchAt("a12", 0, "$1").has_value(),
          "ExpandMatchAt should return nullopt when nothing matches anchored at the offset");
 }
 
-// FindNextRegexMatchInLine: the shared per-line iterator (empty-match recovery).
 void TestRegexUtilFindNextRegexMatchInLine() {
   microide::util::CompiledRegex regex("a", 0);
   auto match_data = regex.CreateMatchData();
@@ -155,7 +141,6 @@ void TestRegexUtilFindNextRegexMatchInLine() {
   Expect(!microide::util::FindNextRegexMatchInLine(regex, line, &from, &match_data, &start, &end),
          "the line should be exhausted after both matches");
 
-  // Empty-match / anchored-alternative recovery: `x?|foo` on "foo" finds "foo".
   microide::util::CompiledRegex alt("x?|foo", 0);
   auto alt_data = alt.CreateMatchData();
   std::size_t af = 0, as = 0, ae = 0;
@@ -164,15 +149,12 @@ void TestRegexUtilFindNextRegexMatchInLine() {
          "the anchored-alternative recovery should surface the non-empty `foo` match");
 }
 
-// TD-2026-07-25-101: search regexes match CHARACTERS. Byte-oriented matching let
-// `caf.` take `caf` plus the first byte of `é`, so a replace-all wrote invalid
-// UTF-8 and a highlight split the character -- for an ASCII query, i.e. always.
 void TestRegexUtilSearchMatchesWholeCharacters() {
   using microide::util::AsciiTwin;
   using microide::util::CompiledRegex;
   using microide::util::SearchRegexCompileOptions;
 #ifndef PCRE2_MATCH_INVALID_UTF
-  return;  // older PCRE2 keeps byte matching for ASCII queries (see the options)
+  return;
 #endif
   const std::string line = "caf\xC3\xA9 latte";
   for (const bool case_sensitive : {true, false}) {
@@ -188,7 +170,6 @@ void TestRegexUtilSearchMatchesWholeCharacters() {
     Expect(regex.SubstituteInto(line, "X", replaced) == 1 && replaced == "X latte",
            "replacing `caf.` should replace the whole character");
   }
-  // `\w` is a Unicode word character, as in VS Code's search.
   const CompiledRegex word("\\w+", SearchRegexCompileOptions("\\w+", true), {}, AsciiTwin::Build);
   auto word_data = word.CreateMatchData();
   std::size_t from = 0, start = 0, end = 0;
@@ -197,8 +178,6 @@ void TestRegexUtilSearchMatchesWholeCharacters() {
          "`\\w+` should take `café` whole");
 }
 
-// The ASCII twin finds exactly what the UTF compilation finds on an all-ASCII
-// line -- the property that makes running it there a pure speedup.
 void TestRegexUtilAsciiTwinAgreesOnAsciiLines() {
   using microide::util::AsciiTwin;
   using microide::util::CompiledRegex;
@@ -207,9 +186,6 @@ void TestRegexUtilAsciiTwinAgreesOnAsciiLines() {
       "\\w+",        "\\bfoo\\b",     "caf.",          "[^a-z ]+",   "\\d{2,}",
       "x?|foo",      "(?i)K",         "s+",            "\\s*;$",     "[[:alpha:]]+",
       "\\W",         "(?<=a)b",       "\\x{e9}|e",     ".",           "^\\S+",
-      // A multibyte literal under a quantifier: one character to UTF mode, several
-      // bytes to byte mode, so the quantifier binds differently (SearchRegexFuzz:
-      // `ӥ?|foo` matched empty in one and nothing in the other on an ASCII line).
       "\u04e5?|foo",  "\u00e9*x",      "(?:\u00fc)?a",
   };
   const std::vector<std::string> lines = {
@@ -222,7 +198,7 @@ void TestRegexUtilAsciiTwinAgreesOnAsciiLines() {
       const CompiledRegex regex(pattern, options, {}, AsciiTwin::Build);
       Expect(regex.valid(), "fixture pattern should compile: " + pattern);
       if (!regex.has_ascii_twin()) {
-        continue;  // UTF-only syntax: always runs the UTF compilation
+        continue;
       }
       for (const std::string& line : lines) {
         const auto collect = [&](RegexSubject subject) {
@@ -243,28 +219,12 @@ void TestRegexUtilAsciiTwinAgreesOnAsciiLines() {
   }
 }
 
-}  // namespace
+}
 
-// The empty-match advance in FindNextRegexMatchInLine must step a whole
-// CHARACTER when the pattern is compiled with PCRE2_UTF, not one byte.
-//
-// A byte step lands inside a multi-byte sequence; pcre2_match then rejects that
-// start offset with PCRE2_ERROR_BADUTFOFFSET, which the loop's `rc < 0` arm
-// treats as "line exhausted" — silently dropping every remaining match on the
-// line. PCRE2_MATCH_INVALID_UTF (>= 10.34) tolerates such an offset and masks
-// the bug, but SearchRegexCompileOptions deliberately falls back to plain
-// UTF|UCP on older PCRE2, and there a case-insensitive non-ASCII query that can
-// match empty returned ZERO matches from the first multi-byte character onward.
-//
-// So this asserts BOTH option sets explicitly. The second one is the older-PCRE2
-// fallback, which is otherwise unreachable (and therefore untestable) on a host
-// whose PCRE2 defines PCRE2_MATCH_INVALID_UTF.
 void TestRegexUtilEmptyMatchAdvanceStepsWholeCharacters() {
   using microide::util::CompiledRegex;
   using microide::util::FindNextRegexMatchInLine;
 
-  // Targets deliberately sit immediately after multi-byte characters, so a
-  // mid-sequence start offset is reached before any of them.
   const std::string line = "\xE6\x97\xA5" "aa" "\xE6\x9C\xAC" "aa" "\xE8\xAA\x9E" "aa";
   const std::vector<std::pair<std::size_t, std::size_t>> expected = {{3, 5}, {8, 10}, {13, 15}};
 
@@ -281,13 +241,12 @@ void TestRegexUtilEmptyMatchAdvanceStepsWholeCharacters() {
     while (FindNextRegexMatchInLine(regex, line, &from, &match_data, &start, &end)) {
       found.emplace_back(start, end);
       if (found.size() > 8) {
-        break;  // runaway guard
+        break;
       }
     }
     return found;
   };
 
-  // `é?|aa` matches EMPTY at offset 0, so the advance runs before any real match.
   const std::string pattern = "\xC3\xA9?|aa";
 
   std::uint32_t with_invalid_utf = PCRE2_CASELESS | PCRE2_UTF | PCRE2_UCP;
@@ -297,25 +256,15 @@ void TestRegexUtilEmptyMatchAdvanceStepsWholeCharacters() {
   Expect(collect(pattern, with_invalid_utf) == expected,
          "every match must be found under the current PCRE2 option set");
 
-  // The older-PCRE2 fallback: UTF without MATCH_INVALID_UTF. This is the
-  // configuration where a byte-wise advance silently returned no matches at all.
   Expect(collect(pattern, PCRE2_CASELESS | PCRE2_UTF | PCRE2_UCP) == expected,
          "every match must be found without PCRE2_MATCH_INVALID_UTF too — a byte-wise "
          "advance yields BADUTFOFFSET there and drops the rest of the line");
 
-  // Non-UTF (byte-oriented) matching must KEEP its 1-byte advance. Without
-  // PCRE2_UTF, PCRE2 may legally start a match at any byte — including one that
-  // happens to be a UTF-8 continuation byte — so stepping to a character
-  // boundary would skip over real matches in binary / Latin-1 / mixed-encoding
-  // content, which project search does scan.
   Expect(collect("x?|aa", PCRE2_CASELESS) == expected,
          "byte-oriented matching must still find every match");
 
-  // The load-bearing case for that guard: the only match begins at offset 2,
-  // which is the THIRD byte of the leading 3-byte character. A character-wise
-  // advance from offset 0 jumps straight to 3 and misses it entirely.
   {
-    const std::string binary_line = "\xE6\x97\xA5" "aa";  // match "\xA5a" starts at byte 2
+    const std::string binary_line = "\xE6\x97\xA5" "aa";
     CompiledRegex regex("x?|\xA5" "a", PCRE2_CASELESS, "bad pattern");
     Expect(regex.valid(), "byte-oriented fixture pattern should compile");
     Expect(!regex.utf_mode(), "the byte-oriented fixture must not be in UTF mode");
@@ -329,7 +278,6 @@ void TestRegexUtilEmptyMatchAdvanceStepsWholeCharacters() {
            "byte-oriented advance must not skip a match that begins on a continuation byte");
   }
 
-  // A pattern that ONLY matches empty yields no matches and still terminates.
   CompiledRegex empty_only("\xC3\xA9*", with_invalid_utf, "bad");
   Expect(empty_only.valid(), "empty-only pattern should compile");
   auto empty_data = empty_only.CreateMatchData();
@@ -365,4 +313,4 @@ void RegisterRegexUtilTests(std::vector<TestCase>& tests) {
           TestRegexUtilCopiesCompiledPatterns);
 }
 
-}  // namespace microide::tests
+}

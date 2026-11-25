@@ -1,5 +1,6 @@
 #include "architecture/WorkspaceCoordinatorArchitectureRules.h"
 
+#include "TestSupport.h"
 #include "architecture/ArchitectureFileScanner.h"
 
 #include <algorithm>
@@ -21,8 +22,6 @@ RuleResult CheckNoSynchronousSubprocessWaitInWorkspace(const std::filesystem::pa
   RuleResult result;
   result.label = "synchronous subprocess wait in workspace";
   result.hard_fail = true;
-  // Catches direct use of raw blocking-wait primitives. High-level RunSubprocess() wrappers are
-  // pre-existing and tracked separately; new workspace code must use ProjectBackgroundExecutor.
   const std::regex pattern(
       R"(\bSubprocess::Wait\s*\(|\bwaitpid\s*\(|\bWaitForSingleObject\s*\(|\bWaitForMultipleObjects\s*\()");
   for (const auto& entry :
@@ -38,16 +37,10 @@ RuleResult CheckNoSynchronousSubprocessWaitInWorkspace(const std::filesystem::pa
   return result;
 }
 
-// Task 4.2: LSP textDocument/didOpen and textDocument/didChange must not be sent
-// synchronously from EditorTabService::ActivateTab. The hydration path must dispatch
-// notifications asynchronously so the tab is visible before LSP acknowledges.
-
 RuleResult CheckLspDidOpenIsNonBlocking(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "LSP didOpen/didChange synchronous send from ActivateTab";
   result.hard_fail = true;
-  // Scan Activate() in TabCoordinator for direct LSP didOpen/didChange dispatch.
-  // Activation should only hydrate UI state and schedule async work.
   const std::filesystem::path target_path = repo_root / "src/workspace/coordinators/WorkspaceTabCoordinator.cpp";
   if (!RequireRuleTarget(result, target_path)) {
     return result;
@@ -81,11 +74,6 @@ RuleResult CheckLspDidOpenIsNonBlocking(const std::filesystem::path& repo_root) 
   }
 
   const std::string activate_body = text.substr(body_start + 1, body_end - body_start - 1);
-  // Also catch the injected `notify_lsp_buffer_open` callback: it used to bypass this
-  // lint (the operation is snake_case while the pattern only matched the PascalCase
-  // shell method), so activation could still synchronously hydrate the server through
-  // it (TD-2026-07-17A-033). The async form is `schedule_lsp_buffer_open`, which is
-  // deliberately NOT matched.
   const std::regex sync_lsp_dispatch_pattern(
       R"(\b(DidOpen|DidChange|DidChangeIncremental|EnsureLspDocumentOpen|NotifyLspBufferOpen|notify_lsp_buffer_open)\s*\()");
   std::smatch match;
@@ -97,12 +85,6 @@ RuleResult CheckLspDidOpenIsNonBlocking(const std::filesystem::path& repo_root) 
   return result;
 }
 
-// Forbids reintroducing a single combined `layout_revision` member or
-// accessor on `TextViewport::DocumentState`. The four-tier revision model
-// (content/syntax/layout_shape/presentation) replaced it intentionally; a
-// regression here would re-merge invalidations across tiers and silently
-// undo the openspec change `split-layout-revision-tiers`.
-
 RuleResult CheckTextViewportNoCombinedLayoutRevision(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "TextViewport tiered revisions (no combined layout_revision)";
@@ -112,9 +94,6 @@ RuleResult CheckTextViewportNoCombinedLayoutRevision(const std::filesystem::path
     return result;
   }
   const std::string text = ReadText(header);
-  // Look for a `layout_revision` member or accessor on the DocumentState.
-  // FoldingModel::Snapshot::layout_revision is in a different header and
-  // intentionally retains its name, so scoping to TextViewport.h is enough.
   const std::regex pattern(R"(\blayout_revision\b)");
   AppendCodeMaskRegexViolations(
       result, header, text, pattern,
@@ -163,13 +142,6 @@ RuleResult CheckNoLegacyPersistenceSymbols(const std::filesystem::path& repo_roo
 }
 
 RuleResult CheckReactivationDoesNotReloadPlugins(const std::filesystem::path& repo_root) {
-  // AGENTS.md policy invariant, now a narrow lint (TD-2026-07-17-037): project
-  // reactivation refresh uses the refresh_plugin_surfaces_for_reactivation seam
-  // and must never reload plugins (a reload tears down and re-runs every plugin
-  // on a plain project-tab switch). The reactivation path lives in
-  // ProjectCatalogService; a missing target file or a missing refresh-seam
-  // reference is a violation so a future move re-anchors the rule instead of
-  // letting it pass vacuously.
   RuleResult result;
   result.label = "project reactivation must refresh, not reload, plugins";
   result.hard_fail = true;
@@ -201,13 +173,6 @@ RuleResult CheckReactivationDoesNotReloadPlugins(const std::filesystem::path& re
 }
 
 RuleResult CheckNoFallbackEditorViewportSymbols(const std::filesystem::path& repo_root) {
-  // AGENTS.md policy invariant, now a narrow lint (TD-2026-07-17-037): the
-  // shell/project-level fallback editor viewport was deleted in the 2026-04-29
-  // cleanup — the active viewport resolves through EditorTabService::
-  // ActiveViewport(). Ban the deleted member spelling the same way the legacy
-  // persistence symbols are banned, so a same-name revival fails immediately.
-  // (A different-name revival stays reviewer-enforced; this is the ratchet for
-  // the explicit symbol the invariant names.)
   RuleResult result;
   result.label = "no fallback editor viewport symbols";
   result.hard_fail = true;
@@ -238,16 +203,11 @@ RuleResult CheckNoFallbackEditorViewportSymbols(const std::filesystem::path& rep
   return result;
 }
 
-// Catches the anti-pattern where workspace code posts work to the background executor
-// and then immediately blocks on the resulting future — defeating the offload while
-// looking asynchronous.
-
 RuleResult CheckNoExecutorPostThenFutureGetInWorkspace(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "workspace executor-post-then-future-get anti-pattern";
   result.hard_fail = true;
-  const std::regex pattern(
-      R"(project_background_executor_\s*\.\s*Post\s*\([\s\S]{0,2000}?\.\s*get\s*\(\s*\))");
+  const std::regex pattern(R"(\bget_future\s*\()");
   for (const auto& entry :
        std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
@@ -256,8 +216,8 @@ RuleResult CheckNoExecutorPostThenFutureGetInWorkspace(const std::filesystem::pa
     const std::string text = ReadText(entry.path());
     AppendCodeMaskRegexViolations(
         result, entry.path(), text, pattern,
-        "do not Post() to ProjectBackgroundExecutor and immediately wait on the future "
-        "from the caller — either run inline or restructure to async completion");
+        "do not hand work to another thread and wait on its future from the caller — "
+        "either run inline or restructure to async completion");
   }
   return result;
 }
@@ -266,30 +226,11 @@ RuleResult CheckNoSynchronousSubprocessInWorkspace(const std::filesystem::path& 
   RuleResult result;
   result.label = "synchronous subprocess call in workspace";
   result.hard_fail = true;
-  // Catch every door to a synchronous spawn. It was `platform::RunSubprocess` and the
-  // transparent `project::` alias (the old lint saw only the first, which is how the
-  // alias slipped the "dispatch through ProjectBackgroundExecutor" policy —
-  // TD-2026-07-16-15); since the launcher landed it is also `<something
-  // launcher>.Run(`. Adding that spelling was not optional housekeeping: routing the
-  // formatter through the launcher removed the last `RunSubprocess` token from
-  // src/workspace, and a rule matching only that token would have gone green while
-  // the five-second synchronous formatter it exists to bound sat exactly where it was.
   const std::regex pattern(
       R"(\b(platform|project)::RunSubprocess\s*\(|[Ll]auncher(\(\))?\s*(\.|->)\s*Run\s*\()");
-  // The one file that may spawn: SaveFormatterService, which does it from its own
-  // worker thread. That is the service's whole reason to exist — format-on-save is ON
-  // by default and the bundled prettier plugin registers a formatter for every web
-  // filetype, so this subprocess used to freeze the window on every Ctrl+S.
-  //
-  // It is not a free pass. `RunBlocking` still waits on the shell thread, for the
-  // saves whose caller cannot return before the file is on disk (closing a tab,
-  // renaming, quitting), and the second half of this rule keeps that wait from
-  // spreading past the TU that owns the save pipeline.
   const std::array<std::string_view, 1> allowed_files = {
       "SaveFormatterService.cpp",
   };
-  // A rule whose allowlist has gone empty of real matches is scanning for a call form
-  // the tree no longer uses. Track whether the exempt file still holds one.
   bool saw_allowlisted_match = false;
   for (const auto& entry :
        std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
@@ -320,10 +261,6 @@ RuleResult CheckNoSynchronousSubprocessInWorkspace(const std::filesystem::path& 
     });
   }
 
-  // Second half: the shell-thread WAIT. `RunBlocking` is the only remaining way for a
-  // save to park the UI on a formatter, and it exists for the saves whose caller acts
-  // on completion. Confining the call to the TU that owns the save pipeline is what
-  // stops "just wait for it here" from creeping back into the ordinary paths.
   const std::regex run_blocking(R"(\bRunBlocking\s*\()");
   bool saw_run_blocking = false;
   for (const auto& entry :
@@ -362,10 +299,6 @@ RuleResult CheckOverlayDismissalIsCentralized(const std::filesystem::path& repo_
   RuleResult result;
   result.label = "overlay dismissal must not bare-assign overlay.visible = false";
   result.hard_fail = true;
-  // Hiding an overlay without resetting keyboard focus strands input on the dead
-  // surface ("dead input" bugs). Dismissal must go through WorkspaceShell::DismissOverlay
-  // or the focus-safe HideOverlay() helper. WorkspacePersistenceCoordinatorSession.cpp is
-  // exempt: it reinitializes the entire project state on restore (no focus to strand).
   const std::regex pattern(R"(overlay\.visible\s*=\s*false)");
   const std::array<std::string_view, 2> allowed_files = {
       "WorkspaceShellOverlay.cpp",
@@ -393,18 +326,8 @@ RuleResult CheckEditorGroupsMutateWithTheSplitTree(const std::filesystem::path& 
   RuleResult result;
   result.label = "editor group mutations must carry the split tree with them";
   result.hard_fail = true;
-  // `ProjectWorkspaceState::editor_split`'s leaves ARE `editor_groups`, in order:
-  // the pane rects, the per-group tab-strip caches and the focused index all read
-  // that correspondence. A site that inserts or erases a group without telling the
-  // tree leaves a pane with no rect, or a rect with no pane — and nothing notices,
-  // because a group past the last leaf is simply never drawn. So every mutation of
-  // the vector has to live in a TU that also names `editor_split`; today that is
-  // the tab coordinator's group half and the session restore, and a third one
-  // should have to think about the tree before it joins them.
   const std::regex mutation_pattern(
       R"(editor_groups\s*\.\s*(?:insert|erase|clear|push_back|emplace_back|emplace|resize|pop_back|assign)\s*\()");
-  // A STRUCTURAL tree call, not a bare mention: a TU that only reads the tree for
-  // geometry and reshapes the vector is exactly the desync this exists to catch.
   const std::regex tree_pattern(
       R"(editor_split\s*\.\s*(?:InsertLeaf|RemoveLeaf|Reset|ResetToEvenSplit|Load)\s*\()");
   std::size_t scanned_mutations = 0;
@@ -439,7 +362,7 @@ RuleResult CheckEditorGroupsMutateWithTheSplitTree(const std::filesystem::path& 
          ++it) {
       const std::size_t begin = static_cast<std::size_t>(it->position());
       if (!in_code(begin, begin + static_cast<std::size_t>(it->length()))) {
-        continue;  // a mention in a comment or a string literal is not a mutation
+        continue;
       }
       ++scanned_mutations;
       if (names_tree) {
@@ -472,14 +395,6 @@ RuleResult CheckNoDirectGitRepositoryInWorkspace(const std::filesystem::path& re
   RuleResult result;
   result.label = "direct GitRepository construction in workspace";
   result.hard_fail = true;
-  // Both construction spellings. The original pattern was only
-  // `GitRepository\s*\(`, which matches a *temporary* (`GitRepository(root)`) —
-  // a form nobody writes. Every real construction in the tree is the named
-  // declaration `GitRepository repo(root);` / `const project::GitRepository
-  // repo(root);`, so the rule could not fire on the very shape it exists to ban.
-  // `\b` after the type name keeps `GitRepositoryService` / `GitRepositoryState`
-  // / `GitRepository::Foo` out, and requiring an identifier before the `(`/`{`
-  // keeps reference and pointer parameters (`GitRepository& repo`) out.
   const std::regex pattern(
       R"(\b(?:project::)?GitRepository\b\s*(?:[A-Za-z_]\w*\s*[({]|\())");
   const std::array<std::string_view, 1> allowed_files = {
@@ -502,16 +417,6 @@ RuleResult CheckNoDirectGitRepositoryInWorkspace(const std::filesystem::path& re
   return result;
 }
 
-// TextViewport's copy and move are DEFAULTED. They used to be hand-written, each
-// enumerating every one of its ~70 members, so a member added to the header and
-// forgotten in one of those lists compiled cleanly and silently dropped that
-// member's state on any copy/move of a viewport -- the shape of bug that surfaces
-// much later as "my folds/undo/highlight cache reset when I split the editor".
-// (This rule used to check the three lists against the header.) The members
-// whose transfer is not memberwise now say how they travel in their own types
-// (editor/TextViewportMemberPolicies.h), so the language covers every member.
-// This rule keeps it that way: the four special members stay `= default` in the
-// header and no out-of-line definition of one comes back.
 RuleResult CheckTextViewportSpecialMembersAreDefaulted(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "TextViewport copy/move are defaulted";
@@ -521,7 +426,7 @@ RuleResult CheckTextViewportSpecialMembersAreDefaulted(const std::filesystem::pa
   const std::string header_text = ReadRuleTarget(result, header);
   const std::string source_text = ReadRuleTarget(result, source);
   if (header_text.empty() || source_text.empty()) {
-    return result;  // ReadRuleTarget recorded the missing target
+    return result;
   }
   const std::array<std::string_view, 4> declarations = {
       "TextViewport(const TextViewport& other) = default;",
@@ -550,13 +455,6 @@ RuleResult CheckTextViewportSpecialMembersAreDefaulted(const std::filesystem::pa
   return result;
 }
 
-// util::SerializeLinesStreaming exists precisely so a whole-document payload is
-// built straight from the TextBuffer's zero-copy LineView, instead of first
-// materializing Snapshot() — a vector<std::string> with one heap allocation per
-// line — and then joining it. Its own comment already said "use this instead of
-// SerializeLines(buffer.Snapshot(), ...)", but that was advisory and eight call
-// sites (save, compare review, merge result, LSP sync) had drifted back onto the
-// slow path. This makes the advice enforceable.
 RuleResult CheckSerializeLinesDoesNotMaterializeSnapshot(
     const std::filesystem::path& repo_root) {
   RuleResult result;
@@ -570,9 +468,6 @@ RuleResult CheckSerializeLinesDoesNotMaterializeSnapshot(
     return result;
   }
 
-  // `SerializeLines(` ... `Snapshot()` on the same logical call. The call is
-  // sometimes wrapped across two lines, so match on the whole file text with the
-  // comment mask applied, bounded so it cannot run past the call.
   const std::regex pattern(R"(SerializeLines\([^;]{0,160}?Snapshot\(\))");
   std::size_t scanned = 0;
   for (const auto& entry : std::filesystem::recursive_directory_iterator(src_dir)) {
@@ -583,7 +478,6 @@ RuleResult CheckSerializeLinesDoesNotMaterializeSnapshot(
     if (ext != ".cpp" && ext != ".h" && ext != ".inc") {
       continue;
     }
-    // The helper's own documentation names the discouraged form.
     if (entry.path().filename() == "StringUtil.h") {
       continue;
     }
@@ -607,30 +501,6 @@ RuleResult CheckSerializeLinesDoesNotMaterializeSnapshot(
   return result;
 }
 
-// Every std::function field of a coordinator's `Operations` struct must have a
-// caller.
-//
-// These structs are how a coordinator declares what it needs the shell to do,
-// and the shell fills every field in with a working lambda. That makes an unused
-// field invisible: it compiles, it is wired, it reads like part of the contract,
-// and it does nothing. One sweep found 35 of them — PanelMouseCoordinator kept
-// ten debug callbacks after the debug pane moved to its own coordinator;
-// KeyInputCoordinator kept nineteen that lost to `dispatch_git_sidebar_action`,
-// to AssistService, or to a live copy on another struct. Two functions existed
-// only to be bound into one (`DestroyLifecycleCursors`, 58 lines of cursor
-// teardown that never ran; `DapManager::HasRegisteredAdapters`).
-//
-// Reads are scoped by include graph, not by name. Six of those 35 were invisible
-// to a name-only search because a *different* struct has a field spelled the
-// same and that one is called — `activate_tab`, `reset_caret_blink`,
-// `read_primary_selection_text` and friends are each live somewhere and dead
-// here. So a field counts as called only if the read appears in a file that
-// transitively includes the header declaring it.
-//
-// A "call" is any `.field` / `->field` that is not the `.field =` of a
-// designated initializer. That is deliberately loose: taking the field's
-// address, testing it for null, or forwarding it all count, because all three
-// mean a human still cares about it.
 RuleResult CheckCoordinatorOperationsAreCalled(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "every coordinator Operations field has a caller";
@@ -638,7 +508,6 @@ RuleResult CheckCoordinatorOperationsAreCalled(const std::filesystem::path& repo
 
   const std::filesystem::path src_dir = repo_root / "src";
 
-  // Read the tree once, keyed by the "src/"-relative path that #include uses.
   std::map<std::string, std::filesystem::path> by_include;
   std::map<std::string, std::string> text_of;
   std::map<std::string, std::vector<bool>> code_of;
@@ -665,7 +534,6 @@ RuleResult CheckCoordinatorOperationsAreCalled(const std::filesystem::path& repo
     return result;
   }
 
-  // Direct include edges, then a transitive closure of "who can see this header".
   std::map<std::string, std::set<std::string>> includes;
   const std::regex include_pattern(R"RX(#\s*include\s+"([^"]+)")RX");
   for (const auto& [key, text] : text_of) {
@@ -698,19 +566,6 @@ RuleResult CheckCoordinatorOperationsAreCalled(const std::filesystem::path& repo
     return seen;
   };
 
-  // Every identifier reached through `.` or `->` in each file, computed ONCE.
-  //
-  // This used to be a fresh `std::regex` per field, run over every file in that
-  // field's include scope — ~200 fields x ~1,000 files, i.e. the whole tree
-  // rescanned two hundred times. 3.3 s natively, and under TSAN with six ctest
-  // shards on four cores it went past the runner's 300 s per-test watchdog and
-  // took the lane red (the TD-2026-08-10-171 shape, on a rule that was already
-  // one case per rule). One pass per file and a set lookup per field is the same
-  // question asked once.
-  //
-  // Same acceptance as the regex it replaces: `(?:\.|->)\s*<name>\b`, minus the
-  // `.field =` designated initializer that wires the field up rather than calling
-  // it, and only at a position the code mask says is code.
   const auto member_reads = [](const std::string& text, const std::vector<bool>& is_code) {
     std::set<std::string> names;
     const auto is_ident_start = [](unsigned char c) {
@@ -746,7 +601,7 @@ RuleResult CheckCoordinatorOperationsAreCalled(const std::filesystem::path& repo
       }
       if (after < text.size() && text[after] == '=' &&
           (after + 1 >= text.size() || text[after + 1] != '=')) {
-        continue;  // `.field =`, the designated initializer, not a call
+        continue;
       }
       names.insert(text.substr(start, end - start));
       i = end - 1;
@@ -768,7 +623,6 @@ RuleResult CheckCoordinatorOperationsAreCalled(const std::filesystem::path& repo
     }
     const std::vector<bool>& is_code = code_of.at(key);
 
-    // Fields declared inside the `struct Operations { ... }` block.
     std::vector<std::pair<std::string, std::size_t>> fields;
     {
       std::size_t offset = 0;
@@ -847,4 +701,23 @@ RuleResult CheckCoordinatorOperationsAreCalled(const std::filesystem::path& repo
   return result;
 }
 
-}  // namespace microide::tests::architecture
+void RunExecutorPostThenFutureGetRuleFixtures() {
+  TemporaryDirectory fixture;
+  const std::filesystem::path& root = fixture.path();
+  std::filesystem::create_directories(root / "src/workspace");
+  WriteFile(root / "src/workspace/Bad.cpp",
+            "int F(){ auto p = std::make_shared<std::promise<int>>();\n"
+            "  auto f = p->get_future();\n"
+            "  executor.Post([p]{ p->set_value(1); });\n"
+            "  return f.get(); }\n");
+  Expect(CheckNoExecutorPostThenFutureGetInWorkspace(root).violations.size() == 1,
+         "the post-then-wait rule must flag a future handed to another thread, whatever the executor");
+  WriteFile(root / "src/workspace/Bad.cpp",
+            "void F(){ project_background_executor_.Post([]{ Work(); }); }\n"
+            "void G(){ Use(pane.get()); }\n"
+            "const char* kDoc = \"get_future()\";\n");
+  Expect(CheckNoExecutorPostThenFutureGetInWorkspace(root).violations.empty(),
+         "the post-then-wait rule must accept a fire-and-forget Post, an unrelated .get(), and string text");
+}
+
+}

@@ -32,7 +32,7 @@ class LocalGate final : public FileWriteGate {
   }
 };
 
-}  // namespace
+}
 
 FileWriteGate::Result WriteTextLocally(const std::filesystem::path& path, std::string_view text,
                                        FileWriteGate::Signature signature, util::WriteTarget target,
@@ -40,10 +40,6 @@ FileWriteGate::Result WriteTextLocally(const std::filesystem::path& path, std::s
   FileWriteGate::Result result;
   result.ok = util::WriteTextFileAtomically(path, text, &result.error, target, staging);
   if (result.ok && signature == FileWriteGate::Signature::Capture) {
-    // Stat only on success: a failed write left the original in place, and its
-    // signature is whatever the caller already had. The bytes are right here, so
-    // the signature carries their hash too — which is what lets a later check
-    // tell a real external edit from a touch or a byte-identical rewrite.
     result.signature = util::SignatureForKnownContent(path, text);
   }
   return result;
@@ -53,10 +49,8 @@ bool FileWriteGate::IsReadOnly(const std::filesystem::path& path) const {
   std::error_code error;
   const std::filesystem::file_status status = std::filesystem::status(path, error);
   if (error || !std::filesystem::is_regular_file(status)) {
-    return false;  // nothing there yet: the save creates it
+    return false;
   }
-  // Asked of the kernel rather than read off the mode bits: it knows the owner,
-  // the groups, ACLs, and that root may write anything.
   return ::access(path.c_str(), W_OK) != 0 && errno == EACCES;
 }
 
@@ -72,4 +66,4 @@ FileWriteGate& LocalFileWriteGate() {
   return gate;
 }
 
-}  // namespace microide::project
+}

@@ -8,8 +8,6 @@ namespace microide::workspace {
 
 namespace {
 
-// Depth-first, children left to right: the order panes appear on screen, and so
-// the order leaf ordinals (== editor group indices) are assigned in.
 template <typename Visit>
 void WalkDepthFirst(std::span<const EditorSplitTree::Node> nodes,
                     std::uint8_t root,
@@ -35,12 +33,9 @@ void WalkDepthFirst(std::span<const EditorSplitTree::Node> nodes,
   }
 }
 
-}  // namespace
+}
 
 void EditorSplitTree::Touch() {
-  // Process-wide so that two DIFFERENT trees can never share a stamp: a
-  // per-instance counter would let project A's tree at edit #5 collide with
-  // project B's at edit #5 the moment the shell switched between them.
   static std::atomic<std::uint64_t> next_revision{0};
   revision_ = next_revision.fetch_add(1, std::memory_order_relaxed) + 1;
 }
@@ -132,9 +127,6 @@ void EditorSplitTree::Normalise(Node& branch) {
   float total = 0.0f;
   bool invalid = false;
   for (std::size_t i = 0; i < branch.weights.size(); ++i) {
-    // A hand-edited session could carry a negative or non-finite weight straight
-    // into layout; fold the whole branch back to even shares rather than letting
-    // a zero-width pane reach the geometry pass.
     if (!std::isfinite(branch.weights[i]) || branch.weights[i] <= 0.0f) {
       invalid = true;
       break;
@@ -148,10 +140,6 @@ void EditorSplitTree::Normalise(Node& branch) {
     }
     return;
   }
-  // Idempotent within float precision: a branch whose shares already sum to one
-  // (up to the rounding a divider drag leaves behind) is left byte-for-byte as
-  // it is. Dividing through by 0.99999994 moved every weight by an ulp, so a
-  // tree did not equal its own persisted-and-reloaded form after one drag.
   if (std::abs(total - 1.0f) <= 1e-5f) {
     return;
   }
@@ -173,9 +161,6 @@ std::size_t EditorSplitTree::InsertLeaf(std::size_t leaf,
 
   const std::uint8_t parent = nodes_[target].parent;
   if (parent != kNoNode && nodes_[parent].orientation == orientation) {
-    // The pane's own branch already splits this way: the new pane becomes a
-    // sibling sharing the target's room, which is what keeps three side-by-side
-    // panes a flat row instead of a nest of pairs.
     Node& branch = nodes_[parent];
     std::size_t position = 0;
     while (position < branch.children.size() && branch.children[position] != target) {
@@ -200,8 +185,6 @@ std::size_t EditorSplitTree::InsertLeaf(std::size_t leaf,
     return LeafOrdinal(fresh);
   }
 
-  // Otherwise the leaf itself becomes the branch, keeping its slot in whatever
-  // holds it, with the old pane and the new one as its two children.
   const std::uint8_t moved = AddNode(EditorSplitOrientation::None, target);
   const std::uint8_t fresh = AddNode(EditorSplitOrientation::None, target);
   if (moved == kNoNode || fresh == kNoNode) {
@@ -229,10 +212,6 @@ std::size_t EditorSplitTree::MoveLeaf(std::size_t from,
       target >= leaf_count_ || leaf_count_ < 2) {
     return kNoLeaf;
   }
-  // Remove first: the grid may already be FULL, and inserting before removing
-  // would momentarily need a leaf the node budget cannot hold. Nothing below can
-  // fail once the removal has happened -- the tree is provably not full, and the
-  // adjusted target is a live ordinal -- so this never leaves a half-applied move.
   RemoveLeaf(from);
   return InsertLeaf(target > from ? target - 1 : target, orientation, before);
 }
@@ -265,10 +244,6 @@ void EditorSplitTree::RemoveLeaf(std::size_t leaf) {
     Normalise(branch);
   }
 
-  // A branch left holding one child is not a split any more: splice that child
-  // into the branch's own slot. If the child splits the same way as the
-  // grandparent, its children flatten into that row instead, keeping the tree
-  // canonical (no branch nested in a same-axis branch).
   if (nodes_[parent].children.size() == 1) {
     const std::uint8_t survivor = nodes_[parent].children[0];
     const std::uint8_t grandparent = nodes_[parent].parent;
@@ -325,10 +300,6 @@ void EditorSplitTree::Rebuild() {
     }
   }
   nodes_ = compacted;
-  // The walk starts at the old root, so the old root is the first node pushed and
-  // the compacted root is always index 0. (This was written as a ternary whose two
-  // arms were both 0 — it read as if empty and non-empty differed here, and they do
-  // not; the empty case is handled by the Reset below.)
   root_ = 0;
   if (nodes_.empty()) {
     Reset();
@@ -347,8 +318,6 @@ bool EditorSplitTree::ResizeDivider(std::uint8_t node, std::size_t boundary, flo
   const float pair = branch.weights[boundary] + branch.weights[boundary + 1];
   const float share = std::clamp(first_share, kMinDividerShare, 1.0f - kMinDividerShare);
   branch.weights[boundary] = pair * share;
-  // The remainder, not `pair * (1 - share)`: the two products need not sum back
-  // to `pair` in floats, and the branch total would drift an ulp per drag.
   branch.weights[boundary + 1] = pair - branch.weights[boundary];
   Touch();
   return true;
@@ -373,8 +342,6 @@ EditorSplitTreeRecord EditorSplitTree::Flatten() const {
 
 namespace {
 
-// Consume one node (and, recursively, its children) from a pre-order record.
-// Returns false on anything malformed; `cursor` ends past the subtree.
 bool LoadSubtree(const EditorSplitTreeRecord& record,
                  std::size_t& cursor,
                  std::uint8_t parent,
@@ -398,7 +365,7 @@ bool LoadSubtree(const EditorSplitTreeRecord& record,
     return false;
   }
   if (entry.weights.size() < 2) {
-    return false;  // a branch is a split; one child is not one.
+    return false;
   }
   for (std::size_t i = 0; i < entry.weights.size(); ++i) {
     const std::uint8_t child = static_cast<std::uint8_t>(out.size());
@@ -411,7 +378,7 @@ bool LoadSubtree(const EditorSplitTreeRecord& record,
   return true;
 }
 
-}  // namespace
+}
 
 bool EditorSplitTree::Load(const EditorSplitTreeRecord& record) {
   util::InlineVector<Node, kMaxNodes> loaded;
@@ -435,13 +402,7 @@ bool EditorSplitTree::Load(const EditorSplitTreeRecord& record) {
 }
 
 bool operator==(const EditorSplitTree& lhs, const EditorSplitTree& rhs) {
-  // STRUCTURAL, not index-by-index. `AddNode` appends, so a tree that has been
-  // edited (insert after a remove, say) carries the same shape under a different
-  // node numbering than the identical tree built by `Load`. Comparing the storage
-  // called those two unequal -- a trap for anything using this for "did the layout
-  // change", and it made a correct structure fail its own round-trip test. The
-  // flat pre-order form IS the canonical shape, so comparing it is the definition.
   return lhs.leaf_count_ == rhs.leaf_count_ && lhs.Flatten() == rhs.Flatten();
 }
 
-}  // namespace microide::workspace
+}

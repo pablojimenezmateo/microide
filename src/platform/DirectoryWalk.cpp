@@ -23,9 +23,6 @@ PathType PathTypeFromMode(mode_t mode) {
   return PathType::Other;
 }
 
-// The entry's type and whether it is a link, from readdir's `d_type` when the
-// filesystem reported one; a stat (relative to the open directory) otherwise, and
-// for a link, whose type is its target's.
 void ClassifyEntry(int directory_fd, const dirent& entry, PathType& type, bool& is_symlink) {
   is_symlink = false;
   switch (entry.d_type) {
@@ -78,7 +75,6 @@ class Walker {
   }
 
  private:
-  // Takes ownership of `directory_fd`. Returns false when the walk must stop.
   bool WalkDirectory(int directory_fd, int depth) {
     DIR* const directory = ::fdopendir(directory_fd);
     if (directory == nullptr) {
@@ -120,8 +116,6 @@ class Walker {
       } else if (action == WalkAction::Continue && walk_entry.type == PathType::Directory &&
                  (!walk_entry.is_symlink || options_.follow_directory_symlinks)) {
         keep_walking = Descend(::dirfd(directory), depth, walk_entry.name.size());
-        // The buffer holds this entry's path again once the subtree is done with
-        // it, but the subtree's longer paths may have moved it: re-point the views.
         walk_entry.path = path_;
         walk_entry.name = std::string_view(path_).substr(path_.size() - name.size());
         visitor_.Leave(walk_entry);
@@ -132,14 +126,11 @@ class Walker {
     return keep_walking;
   }
 
-  // Walks the directory whose path is in the buffer, `name_length` its last
-  // component. Returns false when the walk must stop.
   bool Descend(int parent_fd, int depth, std::size_t name_length) {
     if (depth + 1 > options_.max_depth) {
       status_.truncated_by_depth = true;
       return true;
     }
-    // The name is the buffer's tail, so it is NUL-terminated there.
     const int child_fd = ::openat(parent_fd, path_.c_str() + (path_.size() - name_length),
                                   O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (child_fd < 0) {
@@ -166,11 +157,11 @@ class Walker {
   WalkStatus status_;
 };
 
-}  // namespace
+}
 
 WalkStatus WalkDirectoryTree(const std::filesystem::path& root, const WalkOptions& options,
                              TreeWalkVisitor& visitor) {
   return Walker(options, visitor, root.native()).Run();
 }
 
-}  // namespace microide::platform
+}

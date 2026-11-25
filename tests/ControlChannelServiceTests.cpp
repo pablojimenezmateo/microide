@@ -30,7 +30,6 @@
 namespace microide::tests {
 namespace {
 
-// Connect to an AF_UNIX socket, returning the fd or -1.
 int ConnectUnix(const std::string& path) {
   const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
   if (fd < 0) {
@@ -46,7 +45,6 @@ int ConnectUnix(const std::string& path) {
   return fd;
 }
 
-// Drive the service until a response line is read back from `fd` or we time out.
 std::string ExchangeLine(microide::workspace::ControlChannelService& service, int fd,
                          const std::string& request) {
   const std::string framed = request + "\n";
@@ -69,9 +67,6 @@ std::string ExchangeLine(microide::workspace::ControlChannelService& service, in
   return received;
 }
 
-// Agent-facing queries: `editor`, `commands`, `terminals`, `terminal-output`.
-// Ported from the never-merged feat/editor-groups control branch and made
-// pane-aware (a terminal tab is a group of panes now).
 void TestAgentQueriesOverSocket() {
   const std::filesystem::path runtime =
       std::filesystem::temp_directory_path() /
@@ -84,7 +79,6 @@ void TestAgentQueriesOverSocket() {
   microide::workspace::WorkspaceContext context;
   auto& state = context.current_project_state;
   state.root = "/tmp/proj";
-  // Two terminal tabs; the first is split into two panes with output in each.
   for (int t = 0; t < 2; ++t) {
     state.terminal_tabs.push_back(microide::workspace::MakeTerminalTab(
         std::make_unique<microide::workspace::TerminalPaneState>()));
@@ -126,7 +120,6 @@ void TestAgentQueriesOverSocket() {
   }
   Expect(fd >= 0, "client should connect");
 
-  // editor: one group, the split tree is a single leaf, the focused group flagged.
   const auto editor = util::ParseJson(ExchangeLine(service, fd, R"({"query":"editor"})"));
   Expect(editor.has_value() && (*editor)["ok"].AsBool(), "editor query should succeed");
   const util::JsonValue& editor_result = (*editor)["result"];
@@ -138,7 +131,6 @@ void TestAgentQueriesOverSocket() {
              editor_result["split"].AsArray()[0]["orientation"].AsString() == "leaf",
          "an unsplit editor area is a single-leaf split tree");
 
-  // commands: the runnable registry, including the verbs this change added.
   const auto commands = util::ParseJson(ExchangeLine(service, fd, R"({"query":"commands"})"));
   Expect(commands.has_value() && (*commands)["ok"].AsBool(), "commands query should succeed");
   bool saw_reveal = false;
@@ -150,7 +142,6 @@ void TestAgentQueriesOverSocket() {
   }
   Expect(saw_reveal && saw_split, "commands lists reveal and term-split");
 
-  // terminals: tabs with their panes, so an agent can address one.
   const auto terminals = util::ParseJson(ExchangeLine(service, fd, R"({"query":"terminals"})"));
   Expect(terminals.has_value() && (*terminals)["ok"].AsBool(), "terminals query should succeed");
   const auto& tabs = (*terminals)["result"].AsArray();
@@ -161,7 +152,6 @@ void TestAgentQueriesOverSocket() {
              !tabs[0]["panes"].AsArray()[1]["running"].AsBool(),
          "a pane reports its label and whether its process is still running");
 
-  // terminal-output: defaults to the active tab's active pane.
   const auto out = util::ParseJson(ExchangeLine(service, fd, R"({"query":"terminal-output"})"));
   Expect(out.has_value() && (*out)["ok"].AsBool(), "terminal-output should succeed");
   Expect((*out)["result"]["pane"].AsInt(-1) == 0 && (*out)["result"]["running"].AsBool(),
@@ -170,14 +160,12 @@ void TestAgentQueriesOverSocket() {
   Expect(left_text.find("first\nsecond\nthird") != std::string::npos,
          "terminal-output returns the scrollback as newline-joined text");
   Expect(left_text.empty() || left_text.back() != '\n', "trailing blank rows are trimmed");
-  // The cursor, with the shape the program asked for (`CSI 6 SP q`: a steady bar).
   const util::JsonValue& cursor = (*out)["result"]["cursor"];
   Expect(cursor["row"].AsInt(-1) == 3 && cursor["column"].AsInt(-1) == 0 && cursor["visible"].AsBool(),
          "terminal-output reports where the cursor is");
   Expect(cursor["shape"].AsString() == "bar" && !cursor["blinking"].AsBool(),
          "and its DECSCUSR shape: " + cursor["shape"].AsString());
 
-  // An explicit pane and a line cap.
   const auto right_out = util::ParseJson(ExchangeLine(
       service, fd, R"({"query":"terminal-output","args":{"tab":0,"pane":1}})"));
   Expect(right_out.has_value() && (*right_out)["ok"].AsBool() &&
@@ -263,7 +251,6 @@ void TestLaunchConfigsAndAdaptersOverSocket() {
   const util::JsonValue& adapters_result = (*adapters)["result"];
   Expect(adapters_result.IsArray() && adapters_result.AsArray().size() == 2,
          "two adapters expected");
-  // Order is unspecified (map iteration); find the debugpy entry explicitly.
   bool found_debugpy = false;
   for (const util::JsonValue& adapter : adapters_result.AsArray()) {
     if (adapter["type"].AsString() == "debugpy") {
@@ -282,7 +269,6 @@ void TestLaunchConfigsAndAdaptersOverSocket() {
 }
 
 void TestQueryAndCommandOverSocket() {
-  // Isolate the runtime dir so the socket path is test-local.
   const std::filesystem::path runtime =
       std::filesystem::temp_directory_path() /
       ("microide-control-test-" + std::to_string(::getpid()));
@@ -293,7 +279,7 @@ void TestQueryAndCommandOverSocket() {
 
   microide::workspace::WorkspaceContext context;
   context.current_project_state.root = "/tmp/proj";
-  context.current_project_state.breakpoint_store.Set("/tmp/proj/a.cpp", 0);  // 0-based
+  context.current_project_state.breakpoint_store.Set("/tmp/proj/a.cpp", 0);
 
   std::string last_command;
   microide::workspace::ControlChannelService service;
@@ -307,7 +293,7 @@ void TestQueryAndCommandOverSocket() {
                     .ok = true, .feedback = "ack", .error = {}};
               },
       });
-  service.SetWakeChannel(0);  // no SDL push; the test polls instead.
+  service.SetWakeChannel(0);
   Expect(service.Start("/tmp/proj"), "control service should start");
 
   const std::string socket_path =
@@ -322,7 +308,6 @@ void TestQueryAndCommandOverSocket() {
   }
   Expect(fd >= 0, "client should connect to the control socket");
 
-  // Query: the seeded breakpoint should report at 1-based line 1.
   const std::string query_response = ExchangeLine(service, fd, R"({"id":1,"query":"breakpoints"})");
   const auto query_json = util::ParseJson(query_response);
   Expect(query_json.has_value(), "query response should be JSON");
@@ -335,7 +320,6 @@ void TestQueryAndCommandOverSocket() {
   Expect(file["breakpoints"].AsArray()[0]["line"].AsInt() == 1,
          "0-based store line should report as 1-based");
 
-  // Command: routes through execute_command_line.
   const std::string command_response =
       ExchangeLine(service, fd, R"({"id":2,"command":"debug-continue"})");
   const auto command_json = util::ParseJson(command_response);
@@ -348,12 +332,6 @@ void TestQueryAndCommandOverSocket() {
   std::filesystem::remove_all(runtime, ec);
 }
 
-// `idle` with {"wait": true} is answered at the app's next idle point -- the
-// main loop about to block with nothing queued (WorkspaceShell::
-// CurrentIdleWaitState releases the waiters) -- not when it is read. The QA
-// driver used to infer that point from 30 ms of silence in the app's log, a
-// third of every monkey step (profiled 2026-11-13). Without `wait` the answer
-// is immediate: an app serving a query is not idle.
 void TestAnIdleWaitIsAnsweredAtTheNextIdlePoint() {
   const std::filesystem::path runtime =
       std::filesystem::temp_directory_path() /
@@ -419,9 +397,6 @@ void TestAnIdleWaitIsAnsweredAtTheNextIdlePoint() {
   std::filesystem::remove_all(runtime, ec);
 }
 
-// A single control query must not materialize an unbounded JSON array on the UI
-// path. A debug-state response with a huge call stack is capped at
-// kMaxControlQueryEntries frames and flagged `framesTruncated`. TD-2026-07-17A-095.
 void TestQueryResponseIsBounded() {
   const std::filesystem::path runtime =
       std::filesystem::temp_directory_path() /
@@ -436,7 +411,7 @@ void TestQueryResponseIsBounded() {
   context.current_project_state.root = "/tmp/proj";
   auto& exec = context.current_project_state.debug_execution;
   exec.stopped = true;
-  exec.frames.resize(cap + 5);  // more frames than a single query may return
+  exec.frames.resize(cap + 5);
   for (auto& frame : exec.frames) {
     frame.SetSource("/tmp/proj/a.cpp");
     frame.line = 0;
@@ -460,9 +435,6 @@ void TestQueryResponseIsBounded() {
   }
   Expect(fd >= 0, "client should connect to the control socket");
 
-  // Drain locally with a generous buffer/deadline: the capped response is still a
-  // few hundred KiB, and the shared ExchangeLine helper's 3s deadline / 2 KiB reads
-  // are too tight for that under sanitizers.
   const std::string request = std::string(R"({"id":1,"query":"debug-state"})") + "\n";
   ::send(fd, request.data(), request.size(), 0);
   std::string response;
@@ -508,7 +480,7 @@ void TestControlListFiltersDeadPids() {
 
   const std::filesystem::path instances = runtime / "microide" / "instances";
   const int alive_pid = static_cast<int>(::getpid());
-  const int dead_pid = 1000000000;  // out of pid range → no such process
+  const int dead_pid = 1000000000;
   WriteDescriptor(instances, alive_pid);
   WriteDescriptor(instances, dead_pid);
 
@@ -523,11 +495,6 @@ void TestControlListFiltersDeadPids() {
   std::filesystem::remove_all(runtime, ec);
 }
 
-// Instance discovery reads attacker-droppable descriptor files (world-writable
-// on the /tmp fallback). A forged `socket` field must never redirect a driver's
-// connection: enumeration reconstructs the canonical socket path from the
-// validated pid and ignores the advertised value. A descriptor whose body pid
-// disagrees with its <pid>.json filename is rejected outright.
 void TestControlDiscoveryIgnoresForgedSocketAndPid() {
   const std::filesystem::path runtime =
       std::filesystem::temp_directory_path() /
@@ -540,25 +507,15 @@ void TestControlDiscoveryIgnoresForgedSocketAndPid() {
   std::filesystem::create_directories(instances, ec);
   const int alive_pid = static_cast<int>(::getpid());
 
-  // (a) A live descriptor advertising a hostile socket path in its body.
   {
     std::ofstream out(instances / (std::to_string(alive_pid) + ".json"), std::ios::trunc);
     out << R"({"pid":)" << alive_pid
         << R"(,"socket":"/tmp/attacker-controlled.sock","project_root":"/p"})";
   }
-  // (b) A descriptor whose filename claims a live pid but whose body pid disagrees
-  //     (forged) — filename is a *different* live pid so ProcessIsAlive passes.
   const int other_alive_pid = static_cast<int>(::getppid());
   Expect(other_alive_pid > 0 && other_alive_pid != alive_pid,
          "the forgery case needs a second live pid, or it never gets written and this "
          "test passes without testing anything");
-  // The forged BODY pid must differ from the filename's and from every pid a valid
-  // descriptor can carry — enumeration only ever reports a descriptor's filename
-  // pid, so the only candidate is `alive_pid`. `getppid() + 1 == getpid()` whenever
-  // the parent forked this process with no pid allocation in between, which is the
-  // common case on a fresh CI container and near-impossible on a busy workstation:
-  // taking it unguarded made the assertion below fire on case (a)'s own well-formed
-  // descriptor, so this test failed every CI lane and passed locally.
   int forged_body_pid = other_alive_pid + 1;
   while (forged_body_pid == alive_pid || forged_body_pid == other_alive_pid) {
     ++forged_body_pid;
@@ -580,9 +537,6 @@ void TestControlDiscoveryIgnoresForgedSocketAndPid() {
     }
     Expect(descriptor.pid != forged_body_pid,
            "a descriptor whose body pid disagrees with its filename must be rejected");
-    // The mismatch must drop the file outright, not fall back to trusting the
-    // filename: a descriptor carrying the FILENAME pid would mean the forged body
-    // was merely overridden, which is a weaker guarantee than the one claimed.
     Expect(descriptor.pid != other_alive_pid,
            "the mismatching descriptor must be dropped, not accepted under its filename pid");
   }
@@ -591,12 +545,6 @@ void TestControlDiscoveryIgnoresForgedSocketAndPid() {
   std::filesystem::remove_all(runtime, ec);
 }
 
-// `control-list` is the surface a driver actually reads, and it prints one JSON
-// object per line. Echoing the descriptor file body there would have handed back
-// the forged `socket` the enumeration above deliberately discards, and a body
-// containing a raw newline would have injected a second, wholly attacker-authored
-// line into the JSONL stream. The listing is re-serialized from validated fields
-// instead, so neither is possible.
 void TestControlListPrintsCanonicalSingleLineJson() {
   const std::filesystem::path runtime =
       std::filesystem::temp_directory_path() /
@@ -609,8 +557,6 @@ void TestControlListPrintsCanonicalSingleLineJson() {
   std::filesystem::create_directories(instances, ec);
   const int alive_pid = static_cast<int>(::getpid());
   {
-    // Pretty-printed (so the body spans several lines) AND advertising a hostile
-    // socket. Both are valid JSON, so this parses and is accepted as live.
     std::ofstream out(instances / (std::to_string(alive_pid) + ".json"), std::ios::trunc);
     out << "{\n  \"pid\": " << alive_pid
         << ",\n  \"socket\": \"/tmp/attacker-controlled.sock\",\n"
@@ -632,8 +578,6 @@ void TestControlListPrintsCanonicalSingleLineJson() {
   std::filesystem::remove_all(runtime, ec);
 }
 
-// An oversized descriptor file must be skipped before it is slurped, so a hostile
-// local process cannot OOM `control-list`/`control-send` with one giant file.
 void TestControlDiscoveryRejectsOversizedDescriptor() {
   const std::filesystem::path runtime =
       std::filesystem::temp_directory_path() /
@@ -646,11 +590,10 @@ void TestControlDiscoveryRejectsOversizedDescriptor() {
   std::filesystem::create_directories(instances, ec);
   const int alive_pid = static_cast<int>(::getpid());
 
-  // > 1 MiB body under a valid <pid>.json name.
   {
     std::ofstream out(instances / (std::to_string(alive_pid) + ".json"), std::ios::trunc);
     const std::string chunk(64 * 1024, 'x');
-    for (int i = 0; i < 20; ++i) {  // ~1.25 MiB
+    for (int i = 0; i < 20; ++i) {
       out << chunk;
     }
   }
@@ -663,14 +606,6 @@ void TestControlDiscoveryRejectsOversizedDescriptor() {
   std::filesystem::remove_all(runtime, ec);
 }
 
-// Regression (speed / local-DoS): the sweep bound must count directory entries
-// EXAMINED, not instances accepted. A pid-mismatched descriptor is rejected but
-// never pruned (unlike the dead-pid path), so a directory full of them used to
-// grow `instances` by zero and never trip the `kMaxControlInstances` break — an
-// unbounded scan, each entry formerly paying a 1 MiB zero-fill. Enumeration over a
-// pile of never-pruned junk descriptors must still return promptly and surface the
-// one valid live instance, and the junk must remain on disk (documenting exactly
-// why the bound has to be entries-scanned, not results-accepted).
 void TestControlDiscoveryBoundsHostileSweep() {
   const std::filesystem::path runtime =
       std::filesystem::temp_directory_path() /
@@ -682,16 +617,12 @@ void TestControlDiscoveryBoundsHostileSweep() {
   const std::filesystem::path instances = runtime / "microide" / "instances";
   std::filesystem::create_directories(instances, ec);
 
-  // A pile of small `<n>.json` descriptors whose body pid disagrees with the
-  // filename: each clears the stem/size pre-checks, hits the pid-mismatch reject,
-  // and is NOT pruned — the exact adversarial shape the sweep bound guards.
-  const int base = 900000000;  // out of live-pid range, but that path is never reached
+  const int base = 900000000;
   for (int i = 0; i < 300; ++i) {
     const int name_pid = base + i;
     std::ofstream out(instances / (std::to_string(name_pid) + ".json"), std::ios::trunc);
     out << R"({"pid":)" << (name_pid + 7) << R"(,"socket":"/tmp/x.sock"})";
   }
-  // One valid, live descriptor mixed in.
   const int alive_pid = static_cast<int>(::getpid());
   WriteDescriptor(instances, alive_pid);
 
@@ -705,19 +636,12 @@ void TestControlDiscoveryBoundsHostileSweep() {
            "no pid-mismatched junk descriptor should be accepted");
   }
   Expect(found_alive, "the one valid live descriptor must still be discovered amid the junk");
-  // The junk is rejected but never pruned: it stays on disk, so only an
-  // entries-examined bound (not the accepted-instance cap) keeps the sweep finite.
   Expect(std::filesystem::exists(instances / (std::to_string(base) + ".json")),
          "pid-mismatched descriptors are not pruned, so the scan must be bounded by entries examined");
 
   std::filesystem::remove_all(runtime, ec);
 }
 
-// Self-heal: some environments delete $XDG_RUNTIME_DIR contents while a process
-// is still alive, silently severing the advertised socket. The I/O thread must
-// detect the missing socket on its idle poll and re-bind a fresh listener at the
-// same path; the host re-writes the discovery descriptor on the next drain. After
-// the heal a new client must be able to connect and query.
 void TestSocketSelfHealsAfterExternalDeletion() {
   const std::filesystem::path runtime =
       std::filesystem::temp_directory_path() /
@@ -738,7 +662,7 @@ void TestSocketSelfHealsAfterExternalDeletion() {
                          return microide::workspace::ControlChannelService::CommandOutcome{.ok =
                                                                                                true};
                        }});
-  service.SetWakeChannel(0);  // no SDL push; the test polls / drains explicitly.
+  service.SetWakeChannel(0);
   Expect(service.Start("/tmp/proj"), "control service should start");
 
   const std::filesystem::path socket_path =
@@ -747,18 +671,14 @@ void TestSocketSelfHealsAfterExternalDeletion() {
       runtime / "microide" / "instances" / (std::to_string(::getpid()) + ".json");
   Expect(std::filesystem::exists(descriptor_path), "the discovery descriptor is written at start");
 
-  // A client connects before the deletion (sanity).
   int fd = ConnectUnix(socket_path.string());
   Expect(fd >= 0, "client connects to the original socket");
   ::close(fd);
 
-  // Simulate the external runtime-dir cleanup: drop both the socket and descriptor
-  // while the process keeps running.
   ::unlink(socket_path.string().c_str());
   std::filesystem::remove(descriptor_path, ec);
   Expect(!std::filesystem::exists(socket_path), "socket removed out from under the live process");
 
-  // The I/O thread re-binds on its next idle poll (≤1s). Poll a fresh connect.
   int healed_fd = -1;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
   while (healed_fd < 0 && std::chrono::steady_clock::now() < deadline) {
@@ -769,11 +689,6 @@ void TestSocketSelfHealsAfterExternalDeletion() {
   }
   Expect(healed_fd >= 0, "a new client connects after the listener self-heals");
 
-  // Draining the control callbacks observes the rebind and re-writes the descriptor.
-  // The rebind (which let `healed_fd` connect) and the republish callback are posted
-  // by the I/O thread independently, so the callback may not be enqueued at the exact
-  // instant the connect succeeds. Poll-drain until the descriptor reappears rather
-  // than draining once, so the test is deterministic instead of racing that window.
   bool descriptor_republished = false;
   const auto republish_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
   while (!descriptor_republished && std::chrono::steady_clock::now() < republish_deadline) {
@@ -787,11 +702,9 @@ void TestSocketSelfHealsAfterExternalDeletion() {
   Expect(descriptor_republished,
          "the discovery descriptor is re-published after the rebind");
 
-  // The healed listener still serves queries end-to-end.
   const auto status = util::ParseJson(ExchangeLine(service, healed_fd, R"({"id":1,"query":"status"})"));
   Expect(status.has_value() && (*status)["ok"].AsBool(),
          "the rebound socket answers queries");
-  // The status payload reports kernel-confinement availability so silent fail-open is observable.
   const util::JsonValue& sandbox = (*status)["result"]["sandbox"];
   Expect(sandbox.IsObject(), "status result carries a sandbox object");
   Expect(sandbox["active"].IsBool(), "sandbox reports an active flag");
@@ -802,13 +715,6 @@ void TestSocketSelfHealsAfterExternalDeletion() {
   std::filesystem::remove_all(runtime, ec);
 }
 
-// The self-heal rebind must apply the SAME directory hardening the initial bind
-// gets. `ControlChannelService::Start` runs `EnsureSecurePrivateDirectory` over the
-// runtime directory before the first bind precisely because the `/tmp/microide`
-// fallback has a world-writable parent -- but the rebind happens on the I/O thread,
-// where that caller is nowhere in sight, and it used a plain `create_directories`
-// that grants whatever the umask allows and trusts a pre-existing leaf. A rebind
-// must not re-advertise a socket under a directory it has not re-verified.
 void TestSocketRebindRehardensTheRuntimeDirectory() {
   const std::filesystem::path runtime =
       std::filesystem::temp_directory_path() /
@@ -836,8 +742,6 @@ void TestSocketRebindRehardensTheRuntimeDirectory() {
   const std::filesystem::path socket_path =
       base / (std::to_string(::getpid()) + ".sock");
 
-  // Simulate the hostile/degraded state a rebind can be handed: the socket gone
-  // and the directory left group/other accessible.
   ::unlink(socket_path.string().c_str());
   Expect(::chmod(base.string().c_str(), 0777) == 0, "the fixture can loosen the directory");
 
@@ -862,8 +766,6 @@ void TestSocketRebindRehardensTheRuntimeDirectory() {
   std::filesystem::remove_all(runtime, ec);
 }
 
-// A breakpoint-/debug- command over the channel auto-enables the debugger (no
-// `set-setting debug.enabled true` prelude); a non-debug command does not.
 void TestDebugCommandAutoEnablesDebugger() {
   const std::filesystem::path runtime =
       std::filesystem::temp_directory_path() /
@@ -911,17 +813,10 @@ void TestDebugCommandAutoEnablesDebugger() {
   ExchangeLine(service, fd, R"({"id":3,"command":"open /tmp/proj/a.cpp"})");
   Expect(ensure_calls == 2, "a non-debug command should not auto-enable the debugger");
 
-  // ...but not the master switch. Auto-enabling before `debug-toggle-enabled`
-  // made it impossible to turn the debugger OFF over the channel: the toggle read
-  // "enabled" every time, wrote "false", reported "Debugger disabled", and the
-  // next debug- command turned it straight back on. Verified against a live
-  // headless instance — three toggles in a row logged the same
-  // raw=true / wrote=1 / after=false, i.e. a no-op that always claimed to disable.
   ExchangeLine(service, fd, R"({"id":4,"command":"debug-toggle-enabled"})");
   Expect(ensure_calls == 2,
          "the debug.enabled master toggle must not be auto-enabled before it runs");
 
-  // The prefix rule still holds for everything else that merely starts similarly.
   ExchangeLine(service, fd, R"({"id":5,"command":"debug-toggle-something-else"})");
   Expect(ensure_calls == 3, "other debug- commands should still auto-enable");
 
@@ -930,8 +825,6 @@ void TestDebugCommandAutoEnablesDebugger() {
   std::filesystem::remove_all(runtime, ec);
 }
 
-// `--query notifications` lists every toast with its inline buttons, so an agent
-// can see "Reconnect" before pressing it with `notification-action`.
 void TestNotificationsQueryListsActions() {
   const std::filesystem::path runtime =
       std::filesystem::temp_directory_path() /
@@ -1000,8 +893,6 @@ void TestNotificationsQueryListsActions() {
              actions.AsArray()[0]["args"].AsArray().at(0).AsString() == "3",
          "each button is reported with its label, command and arguments");
 
-  // `--query keybindings` is what a QA driver presses: the chord as the menus
-  // spell it and where the registration says it is active.
   const auto keys = util::ParseJson(ExchangeLine(service, fd, R"({"id":2,"query":"keybindings"})"));
   Expect(keys.has_value() && (*keys)["ok"].AsBool(), "the keybindings query succeeds");
   const util::JsonValue& key_rows = (*keys)["result"];
@@ -1012,9 +903,6 @@ void TestNotificationsQueryListsActions() {
              key_rows.AsArray()[0]["skipsTerminal"].AsBool(),
          "each binding is reported with its id, chord, context and terminal skip");
 
-  // A state row that comes and goes between two looks -- "Reconnecting…" over a
-  // link back in 50 ms, which the remote suite's F.reconnecting-row polled for and
-  // never saw -- is still in `recent`, with its buttons.
   (void)notifications.DismissKey("remote.link");
   const auto gone = util::ParseJson(ExchangeLine(service, fd, R"({"id":3,"query":"notifications"})"));
   Expect(gone.has_value() && (*gone)["result"].AsArray().empty(), "the dismissed row is not up");
@@ -1030,8 +918,6 @@ void TestNotificationsQueryListsActions() {
   std::filesystem::remove_all(runtime, ec);
 }
 
-// The `compare` query reports what the diff view paints: rows, hunks and the
-// structural refinement's novel spans, which an oracle holds to its claims.
 void TestCompareQueryReportsRowsAndNovelSpans() {
   Expect(!microide::workspace::BuildControlCompareJson(nullptr)["available"].AsBool(),
          "no diff in front: not available");
@@ -1051,8 +937,6 @@ void TestCompareQueryReportsRowsAndNovelSpans() {
              (*changed)["rightSpans"].AsArray()[0].AsArray()[1].AsInt() == 5,
          "the novel token y is the one span on the right");
 
-  // A line that is not valid UTF-8 travels as JSON with U+FFFD in place of the
-  // bad bytes, which moves every offset after them: its exact bytes come along.
   microide::workspace::CompareTabState lossy;
   lossy.model = microide::compare::BuildCompareModel(std::string("f(\x80\x81, 1);\n"),
                                                      std::string("f(\x80\x81, 2);\n"));
@@ -1063,8 +947,6 @@ void TestCompareQueryReportsRowsAndNovelSpans() {
   Expect(!json["rows"].AsArray().at(1).HasKey("leftHex"), "a valid side carries none");
 }
 
-// Cross-platform: the stdout JSONL mirror must surface debug events even when no
-// socket client is connected (the whole point of `--control`).
 void TestStdoutMirrorEmitsWithoutConnections() {
   microide::workspace::WorkspaceContext context;
   context.current_project_state.root = "/tmp/proj";
@@ -1080,10 +962,8 @@ void TestStdoutMirrorEmitsWithoutConnections() {
               },
           .emit_jsonl = [&emitted](const std::string& line) { emitted.push_back(line); },
       });
-  // No Start(): the socket server is not running and there are zero connections.
   Expect(!service.IsRunning(), "service should not be running");
 
-  // Mirror off → no emission.
   service.OnDebugOutput("stdout", "ignored");
   Expect(emitted.empty(), "events should not emit while the mirror is off");
 
@@ -1107,11 +987,8 @@ void TestStdoutMirrorEmitsWithoutConnections() {
   Expect((*terminated)["reason"].AsString() == "debug adapter exited unexpectedly",
          "a non-clean end carries its reason so observers can distinguish a crash");
 
-  // TD-2026-07-17A-096: an oversized DAP output event must be byte-capped before the JSON
-  // event is built/serialized, with a truncation marker/flag, so it cannot force a large
-  // allocation/escape pass and per-client write-buffer attempt on the control channel.
   emitted.clear();
-  service.OnDebugOutput("stdout", std::string(1u * 1024 * 1024, 'z'));  // 1 MiB
+  service.OnDebugOutput("stdout", std::string(1u * 1024 * 1024, 'z'));
   Expect(emitted.size() == 1, "an oversized output event still mirrors exactly one line");
   const auto capped = util::ParseJson(emitted[0]);
   Expect(capped.has_value(), "the capped output event must be valid JSON");
@@ -1121,10 +998,6 @@ void TestStdoutMirrorEmitsWithoutConnections() {
          "a truncated output event must carry the truncated flag");
 }
 
-// Regression: the resolved `stopped` event must carry the populated execution view
-// (reason/threadId/file/line/frames) and framesPending:false. The original bug
-// fired this against an empty debug_execution, yielding reason="",threadId=0,
-// frames=[] — this asserts the populated payload.
 void TestStoppedEventCarriesPopulatedExecutionView() {
   microide::workspace::WorkspaceContext context;
   context.current_project_state.root = "/tmp/proj";
@@ -1135,7 +1008,7 @@ void TestStoppedEventCarriesPopulatedExecutionView() {
   exec.focused_frame_index = 0;
   microide::workspace::DebugStackFrameView frame;
   frame.SetSource("/tmp/proj/main.cpp");
-  frame.line = 41;  // 0-based; the event reports 1-based (42)
+  frame.line = 41;
   frame.display_primary = "main";
   exec.frames.push_back(frame);
 
@@ -1161,13 +1034,9 @@ void TestStoppedEventCarriesPopulatedExecutionView() {
          "resolved stop should report framesPending:false");
 }
 
-// The immediate stop event carries the real reason/thread with framesPending:true
-// and no file/line/frames, even with an empty (not-yet-resolved) execution view.
 void TestStopBeganEmitsImmediatePendingEvent() {
   microide::workspace::WorkspaceContext context;
   context.current_project_state.root = "/tmp/proj";
-  // debug_execution intentionally left empty: the immediate phase fires before
-  // ProjectStop rebuilds it.
 
   std::vector<std::string> emitted;
   microide::workspace::ControlChannelService service;
@@ -1189,10 +1058,6 @@ void TestStopBeganEmitsImmediatePendingEvent() {
   Expect(!(*event).AsObject().count("frames"), "immediate stop omits frames");
 }
 
-// `hit-test` names where a press at a point lands, so the QA driver waits for a
-// press's button events only when the app will get them: a press on the title
-// bar's drag area or a resize edge goes to the window manager, and one past the
-// window's current size goes nowhere (QA monkey: 9 s waits on CI's ASan lane).
 void TestHitTestQueryNamesWhereAPressLands() {
   const std::filesystem::path runtime =
       std::filesystem::temp_directory_path() /
@@ -1249,19 +1114,14 @@ void TestHitTestQueryNamesWhereAPressLands() {
   std::filesystem::remove_all(runtime, ec);
 }
 
-}  // namespace
+}
 
-// Regression: a socket path over the AF_UNIX limit made Start() return false and
-// say nothing, and every caller ignores that bool — so the control channel simply
-// did not exist, with nothing anywhere to explain why. A long $XDG_RUNTIME_DIR is
-// all it takes, and it cost a real debugging session before this message existed.
 void TestOverlongSocketPathSaysWhyItRefused() {
   std::vector<std::string> logged;
   microide::util::SetLogSink([&logged](std::string_view message) {
     logged.emplace_back(message);
   });
 
-  // 108 bytes is the sun_path limit; build a path comfortably past it.
   std::filesystem::path too_long = "/tmp";
   while (too_long.string().size() < 140) {
     too_long /= "a-directory-name-that-is-not-short";
@@ -1328,4 +1188,4 @@ void RegisterControlChannelServiceTests(std::vector<TestCase>& tests) {
           TestControlDiscoveryBoundsHostileSweep);
 }
 
-}  // namespace microide::tests
+}

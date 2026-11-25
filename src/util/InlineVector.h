@@ -9,25 +9,6 @@
 
 namespace microide::util {
 
-// Fixed-capacity, heap-free sequence for containers with a *structural* cap.
-//
-// `std::vector` is the wrong shape for a container whose maximum size is a
-// property of the design rather than of the data: it costs a heap round-trip
-// per construction to carry one or two small structs. The editor-pane layouts
-// are the case that motivated this — a mouse drag rebuilt them three times per
-// motion event, and each rebuild was two `std::vector` allocations to carry a
-// single-element result (TD-2026-08-06-145).
-//
-// This is NOT a small-vector with heap spill. `N` is a hard capacity; exceeding
-// it is a programming error, asserted in debug and clamped (the extra element is
-// dropped) in release. Only use it where the cap is enforced upstream by a
-// shared constant — `kMaxEditorGroups`, not "2 is probably enough".
-//
-// All `N` slots are value-initialised on construction, so `T` must be default
-// constructible and cheap to default construct. That keeps the implementation
-// free of manual lifetime management (no placement new, no launder, no
-// exception-safety window) at the cost of constructing slots that may go
-// unused — the right trade for the small POD-ish payloads this exists for.
 template <typename T, std::size_t N>
 class InlineVector {
   static_assert(N > 0, "InlineVector needs a non-zero capacity");
@@ -89,9 +70,6 @@ class InlineVector {
     storage_[size_++] = std::move(value);
   }
 
-  // Mirrors `std::vector::emplace_back` for the aggregate case: the slot is
-  // already constructed, so this assigns a freshly built `T` into it and returns
-  // the slot. Returns `back()` unchanged when the capacity is exceeded.
   template <typename... Args>
   constexpr reference emplace_back(Args&&... args) {
     assert(size_ < N && "InlineVector capacity exceeded");
@@ -102,14 +80,6 @@ class InlineVector {
     return storage_[size_++];
   }
 
-  // Shifting inserts/erases. Present because the containers this backs are
-  // *ordered* structures (editor panes left-to-right, a split branch's children)
-  // where a new pane lands between two existing ones; `N` is small enough that the
-  // shift is a few register moves.
-  // By value, not by const&: the shift below would clobber an argument that
-  // aliases a slot of this same vector (`v.insert(0, v[2])`), and every caller of
-  // an insert-shifting container eventually writes that line. `T` here is a
-  // small POD-ish type, so the copy is free.
   constexpr void insert(size_type index, T value) {
     assert(size_ < N && "InlineVector capacity exceeded");
     assert(index <= size_ && "InlineVector insert out of range");
@@ -158,4 +128,4 @@ class InlineVector {
   size_type size_ = 0;
 };
 
-}  // namespace microide::util
+}

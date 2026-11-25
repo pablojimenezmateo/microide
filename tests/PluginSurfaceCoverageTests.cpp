@@ -1,20 +1,3 @@
-// Plugin-surface coverage regression net.
-//
-// A single fixture plugin registers ONE of every plugin contribution surface and
-// drives the runtime publish/edit seams. The test then asserts, in one clean load,
-// that:
-//   * every Contributed* registration accessor is populated,
-//   * every Query* provider seam dispatches into Lua and marshals a result back,
-//   * the publish callbacks (diagnostics / decorations / surface / notify / log /
-//     ghost text / buffer edit) fire,
-//   * and host.Errors() stays empty.
-//
-// The point is breadth: if any single surface silently stops registering or
-// dispatching, exactly one assertion here flips red. Deep per-surface behavior
-// (atomic-undo edits, debounced reactive events, snippet Tab expansion, the
-// zero-cost-when-unused sampler) lives in PluginHostTests / WorkspaceShellPluginTests;
-// this file guarantees nothing falls off the contract wholesale.
-
 #include "TestSupport.h"
 
 #include "plugin/PluginHost.h"
@@ -31,11 +14,6 @@ namespace {
 
 using microide::plugin::PluginHost;
 
-// One plugin, every surface. Registration uses the same idioms the dogfood plugins
-// and the existing tests use; the language providers share the synthetic language
-// id "qa-cov" so the Query* calls below match them deterministically (no dependence
-// on filetype detection). lsp/debug commands are inert (`sh -c true`) — registration
-// smoke only, never a live session.
 constexpr std::string_view kCoveragePlugin = R"lua(
 local ide = require("microide")
 
@@ -188,8 +166,6 @@ return ide.plugin({
 })
 )lua";
 
-// Tracks which host callbacks the plugin exercised, so the test can assert that the
-// runtime publish/edit seams actually fired (not just that registration parsed).
 struct CallbackProbe {
   std::vector<std::string> logs;
   std::vector<std::string> notifications;
@@ -257,7 +233,6 @@ void TestPluginSurfaceCoverageRegistersEverySurface() {
   const std::filesystem::path readme = project_root / "README.md";
   const std::string_view lang = "qa-cov";
 
-  // ---- registration accessors: each surface must have landed -------------
   auto has = [](const auto& vec) { return !vec.empty(); };
   Expect(has(host.CommandNames()), "commands surface should register");
   Expect(has(host.SidebarProviders()), "sidebar surface should register");
@@ -285,7 +260,6 @@ void TestPluginSurfaceCoverageRegistersEverySurface() {
   Expect(has(host.ContributedThemes()), "theme surface should register");
   Expect(has(host.ContributedFileIconThemes()), "file-icon surface should register");
 
-  // ---- provider dispatch: each Query* must reach Lua and marshal a result -
   std::string err;
   PluginHost::HoverResult hover;
   Expect(host.QueryHover(readme, 1, 1, &hover, &err), "hover provider should dispatch");
@@ -316,7 +290,6 @@ void TestPluginSurfaceCoverageRegistersEverySurface() {
   Expect(host.RunTests("qa-coverage.t", {"t.case"}, &run_results, &err) && !run_results.empty(),
          "test provider should run");
 
-  // ---- command dispatch + runtime publish/edit seams ---------------------
   std::string command_error;
   std::string feedback;
   Expect(host.ExecuteCommand("qa.cov.cmd", {"a", "b"}, &command_error, &feedback) &&
@@ -328,8 +301,6 @@ void TestPluginSurfaceCoverageRegistersEverySurface() {
   Expect(probe.diagnostics_published, "ctx.diagnostics.publish seam should fire");
   Expect(probe.decorations_published, "ctx.decorations.set seam should fire");
   Expect(probe.surface_published, "ctx.surface.set seam should fire");
-  // The published surface's hit-region rect must be sanitized: NaN x folded to 0,
-  // negative width clamped to >= 0.
   Expect(probe.last_surface.has_value() && !probe.last_surface->hit_regions.empty(),
          "the published surface should carry the hit region");
   if (probe.last_surface.has_value() && !probe.last_surface->hit_regions.empty()) {
@@ -344,8 +315,6 @@ void TestPluginSurfaceCoverageRegistersEverySurface() {
   Expect(!probe.logs.empty(), "ctx.log seam should fire");
 }
 
-// Inverse guard: with no plugins installed, every surface accessor is empty. Catches
-// any accidental ambient/default registration leaking a surface the host did not load.
 void TestPluginSurfaceCoverageEmptyWithoutPlugins() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -372,11 +341,6 @@ void TestPluginSurfaceCoverageEmptyWithoutPlugins() {
   Expect(host.ContributedScmProviders().empty(), "no scm providers without a plugin");
 }
 
-// Regression (TD-2026-07-17A-044): a raw rgba8 raster's cache key must fold in the
-// declared dimensions (the same byte string is a valid 4x4 or 2x8 image), so two raw
-// rasters with identical bytes but different geometry get distinct content hashes and
-// don't alias the same decoded texture. Encoded bytes fully determine the image, so
-// their key stays bytes-only; a raw/encoded discriminator keeps the two apart.
 void TestRasterContentHashKeyIncludesDimensionsForRaw() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -384,27 +348,23 @@ void TestRasterContentHashKeyIncludesDimensionsForRaw() {
   using microide::plugin::surface_interop::ComputeRasterContentHash;
   const std::string bytes(64, '\x7f');
 
-  // Raw rgba8: identical bytes, different geometry -> distinct keys.
-  const std::uint64_t raw_4x4 = ComputeRasterContentHash(bytes, /*is_rgba=*/true, 4, 4);
-  const std::uint64_t raw_2x8 = ComputeRasterContentHash(bytes, /*is_rgba=*/true, 2, 8);
-  const std::uint64_t raw_4x4_again = ComputeRasterContentHash(bytes, /*is_rgba=*/true, 4, 4);
+  const std::uint64_t raw_4x4 = ComputeRasterContentHash(bytes, true, 4, 4);
+  const std::uint64_t raw_2x8 = ComputeRasterContentHash(bytes, true, 2, 8);
+  const std::uint64_t raw_4x4_again = ComputeRasterContentHash(bytes, true, 4, 4);
   Expect(raw_4x4 != raw_2x8,
          "raw rgba8 rasters with identical bytes but different dimensions differ");
   Expect(raw_4x4 == raw_4x4_again, "the raw raster key is stable for identical bytes+dimensions");
 
-  // Encoded: bytes fully determine the image, so dimensions do not fragment the key.
-  const std::uint64_t enc_a = ComputeRasterContentHash(bytes, /*is_rgba=*/false, 4, 4);
-  const std::uint64_t enc_b = ComputeRasterContentHash(bytes, /*is_rgba=*/false, 2, 8);
+  const std::uint64_t enc_a = ComputeRasterContentHash(bytes, false, 4, 4);
+  const std::uint64_t enc_b = ComputeRasterContentHash(bytes, false, 2, 8);
   Expect(enc_a == enc_b, "encoded rasters key on bytes only (dimensions come from the bytes)");
 
-  // A raw raster never aliases an encoded one with the same bytes.
   Expect(raw_4x4 != enc_a, "raw and encoded rasters with identical bytes have distinct keys");
 
-  // Never the "no raster" sentinel.
   Expect(raw_4x4 != 0 && enc_a != 0, "the content hash is never the 0 sentinel");
 }
 
-}  // namespace
+}
 
 void RegisterPluginSurfaceCoverageTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginSurface/RegistersEverySurface",
@@ -415,4 +375,4 @@ void RegisterPluginSurfaceCoverageTests(std::vector<TestCase>& tests) {
           TestRasterContentHashKeyIncludesDimensionsForRaw);
 }
 
-}  // namespace microide::tests
+}

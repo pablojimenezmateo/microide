@@ -1,10 +1,3 @@
-// Session-callback wiring and stop projection for DebugService, split out of
-// DebugService.cpp to keep that translation unit thin. BuildSessionCallbacks is
-// the large factory that binds a DebugSession's events to the shared project
-// views; ProjectStop projects a resolved stop into those views and
-// ClearTransientDebugViews tears them down on resume/teardown. These are still
-// DebugService members; only their definitions (and the two prebuilt-view
-// helpers they use) live here.
 #include "workspace/debug/DebugService.h"
 
 #include <cstdint>
@@ -23,14 +16,10 @@ namespace microide::workspace {
 
 namespace {
 
-// Build the host-side execution view from a stop + its resolved frames. Display
-// strings are prebuilt here (off the render hot path) so render TUs only draw.
 DebugExecutionView BuildExecutionView(const dap_protocol::DapStoppedEvent& stop,
                                       const std::vector<dap_protocol::DapStackFrame>& frames) {
   DebugExecutionView view;
   view.stopped = true;
-  // A resolved stop always carries a concrete focused thread (the no-threadId stop
-  // path resolves one before frames arrive); 0 is the "unknown" fallback.
   view.thread_id = stop.thread_id.value_or(0);
   view.stop_reason = stop.reason;
   view.focused_frame_index = TopFrameWithSource(frames, [](const std::string& path) {
@@ -41,10 +30,7 @@ DebugExecutionView BuildExecutionView(const dap_protocol::DapStoppedEvent& stop,
   for (const dap_protocol::DapStackFrame& frame : frames) {
     DebugStackFrameView row;
     row.id = frame.id;
-    // Normalizes `source_path` and caches its generic-string form together so the
-    // render/hover path-match reuses it per pane instead of re-normalizing.
     row.SetSource(frame.source.path);
-    // DAP lines are 1-based; the editor buffer is 0-based.
     row.line = frame.line > 0 ? static_cast<std::size_t>(frame.line - 1) : 0;
     row.display_primary = frame.name;
     std::string location =
@@ -61,8 +47,6 @@ DebugExecutionView BuildExecutionView(const dap_protocol::DapStoppedEvent& stop,
   return view;
 }
 
-// Build the thread-selector rows, prebuilding each display string off the render
-// hot path (e.g. "Thread 1: MainThread").
 std::vector<DebugThreadView> BuildThreadViews(const std::vector<dap_protocol::DapThread>& threads) {
   std::vector<DebugThreadView> views;
   views.reserve(threads.size());
@@ -80,13 +64,11 @@ std::vector<DebugThreadView> BuildThreadViews(const std::vector<dap_protocol::Da
   return views;
 }
 
-}  // namespace
+}
 
 void DebugService::ProjectStop(const dap_protocol::DapStoppedEvent& stop,
                                const std::vector<dap_protocol::DapStackFrame>& frames) {
   ProjectWorkspaceState& state = CurrentProjectState();
-  // Preserve the thread + session selectors across the rebuild (frames are rebuilt
-  // for the stopped thread, but the selector contents do not change).
   std::vector<DebugThreadView> threads = std::move(state.debug_execution.threads);
   std::vector<DebugSessionView> sessions = std::move(state.debug_execution.sessions);
   const int focused_session = state.debug_execution.focused_session_id;
@@ -95,10 +77,7 @@ void DebugService::ProjectStop(const dap_protocol::DapStoppedEvent& stop,
   state.debug_execution.focused_thread_id = stop.thread_id.value_or(0);
   state.debug_execution.sessions = std::move(sessions);
   state.debug_execution.focused_session_id = focused_session;
-  // A fresh stop invalidates any prior hover value (new frame state / values).
   state.debug_hover.Clear();
-  // Populate the Variables tree for the top (focused) frame so it is ready the
-  // instant the user switches to the Variables tab (scopes is one cheap request).
   if (const DebugStackFrameView* focused = state.debug_execution.FocusedFrame();
       focused != nullptr) {
     FocusFrame(focused->id);
@@ -110,9 +89,6 @@ void DebugService::ProjectStop(const dap_protocol::DapStoppedEvent& stop,
   }
   util::InvokeIfSet(operations_.request_editor_redraw);
   util::InvokeIfSet(operations_.request_debug_pane_redraw);
-  // The execution view is now fully populated (file/line/frames): report the
-  // resolved stop to push observers. ProjectStop runs only for the active
-  // session, so this fires exactly once per visible stop.
   util::InvokeIfSet(operations_.notify_stop_resolved);
 }
 
@@ -121,27 +97,19 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
   DebugSession::Callbacks callbacks;
   callbacks.on_output = [this, session_id, session_label](
                             const dap_protocol::DapOutputEvent& output) {
-    // Each session streams to its own console channel, regardless of which session
-    // is active, so background output never intermixes with the foreground one.
     util::InvokeIfSet(operations_.append_console_output, session_id, session_label, output);
     util::InvokeIfSet(operations_.request_debug_pane_redraw);
   };
   callbacks.on_state_changed = [this](DebugSession::State state) {
     util::InvokeIfSet(operations_.notify_session_state_changed, state);
-    // A state change moves a session row's label (running/paused/terminated).
     SyncSessionsPanel();
     util::InvokeIfSet(operations_.request_frame);
     util::InvokeIfSet(operations_.request_debug_pane_redraw);
   };
   callbacks.on_capabilities_changed = [this]() {
-    // A late `capabilities` event can flip supportsStepBack on (gdb under rr/record),
-    // which adds the Reverse Continue / Step Back buttons to the floating debug
-    // toolbar (chrome). Repaint so they appear without waiting for the next input.
     util::InvokeIfSet(operations_.request_frame);
     util::InvokeIfSet(operations_.request_debug_pane_redraw);
   };
-  // Fired once on the terminal transition (incl. a crash/kill, which reaches Failed
-  // without a DAP `terminated`). Drives the control-channel broadcast for every end.
   callbacks.on_terminated = [this, session_id](DebugSession::State terminal_state,
                                                const std::string& reason) {
     if (operations_.notify_session_terminated) {
@@ -149,17 +117,11 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
                                             terminal_state == DebugSession::State::Failed, reason);
     }
   };
-  // Immediate halt notification (real reason/thread, before frames resolve).
-  // Only the active session drives the shared push broadcast — a background stop
-  // does not project into the shared views, so it must not report one either.
   callbacks.on_stop_began = [this, session_id](const dap_protocol::DapStoppedEvent& stop) {
     if (IsActiveSession(session_id) && operations_.notify_stop_began) {
       operations_.notify_stop_began(stop.reason, stop.thread_id.value_or(0));
     }
   };
-  // On every stop: the active session projects into the shared views; a background
-  // session badges for attention and (when the user is not parked at another stop)
-  // auto-focuses so the just-paused session comes to the foreground.
   callbacks.on_stopped = [this, session_id](
                              const dap_protocol::DapStoppedEvent& stop,
                              const std::vector<dap_protocol::DapStackFrame>& frames) {
@@ -175,7 +137,6 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
     const bool active_inspecting =
         active != nullptr && active->CurrentState() == DebugSession::State::Stopped;
     if (!active_inspecting) {
-      // Auto-focus: bring the just-paused background session to the foreground.
       manager.SetActiveSession(session_id);
       manager.SetSessionAttention(session_id, false);
       ClearTransientDebugViews();
@@ -187,8 +148,6 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
     SyncSessionsPanel();
     util::InvokeIfSet(operations_.request_debug_pane_redraw);
   };
-  // On resume: the active session drops its execution view; a background resume
-  // just clears that session's attention badge.
   callbacks.on_resumed = [this, session_id]() {
     if (IsActiveSession(session_id)) {
       ClearTransientDebugViews();
@@ -198,8 +157,6 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
       util::InvokeIfSet(operations_.request_debug_pane_redraw);
     }
   };
-  // Thread list lands a beat after the stop; fill the selector (preserving the
-  // focused thread). Only the active session drives the shared selector.
   callbacks.on_threads = [this, session_id](
                              const std::vector<dap_protocol::DapThread>& threads) {
     ProjectWorkspaceState& state = CurrentProjectState();
@@ -212,8 +169,6 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
     }
     util::InvokeIfSet(operations_.request_debug_pane_redraw);
   };
-  // The session pulls the breakpoint snapshot at `initialized` and on each live
-  // re-send; verification reflects back into the project's BreakpointStore.
   callbacks.breakpoint_provider = [this]() {
     return CurrentProjectState().breakpoint_store.SnapshotAll();
   };
@@ -224,19 +179,6 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
         results.reserve(breakpoints.size());
         for (std::size_t i = 0; i < breakpoints.size(); ++i) {
           const dap_protocol::DapBreakpoint& breakpoint = breakpoints[i];
-          // The setBreakpoints response is positional to the request. Anchor each
-          // result to the line the user REQUESTED at this index — NOT the adapter's
-          // possibly-relocated `breakpoint.line` — so the gutter marker stays at the
-          // user's chosen line. This deliberately mirrors the async `breakpoint`
-          // event path (on_breakpoint_changed below), which also never moves the
-          // marker and reconciles by adapter id: recording `breakpoint.id` here is
-          // what lets a later event for this same breakpoint update it in place (by
-          // id) instead of clobbering a coincident breakpoint at the relocated line.
-          //
-          // A non-conformant adapter that returns MORE results than we requested has
-          // no requested line to anchor the extras to; DROP them rather than trust
-          // the adapter's line (which could land on, and clobber, an unrelated
-          // breakpoint at that line).
           if (i >= requested_lines.size()) {
             break;
           }
@@ -253,13 +195,6 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
       };
   callbacks.on_breakpoint_changed = [this](const std::filesystem::path& path,
                                            const dap_protocol::DapBreakpoint& breakpoint) {
-    // A DAP `breakpoint` event's adapter id belongs to exactly one store. A
-    // function breakpoint binds asynchronously too (gdb reports it `pending` in the
-    // setFunctionBreakpoints response, then verifies it via a `breakpoint` event
-    // carrying source.path + line). Try the function-breakpoint store first: if it
-    // claims the event by id, it must NOT also flow into the line store, whose
-    // line-match fallback would otherwise clobber a coincident line breakpoint at
-    // the function's resolved line (rewriting its adapter id and verify state).
     const bool claimed_by_function_bp =
         CurrentProjectState().function_breakpoint_store.ApplyBreakpointEvent(
             editor::VerifiedFunctionBreakpoint{
@@ -280,18 +215,12 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
     util::InvokeIfSet(operations_.request_editor_redraw);
     util::InvokeIfSet(operations_.request_debug_pane_redraw);
   };
-  // The session pulls the function-breakpoint snapshot at `initialized` and on each
-  // live re-send; verification reflects back into the FunctionBreakpointStore.
   callbacks.function_breakpoint_provider = [this]() {
     return CurrentProjectState().function_breakpoint_store.All();
   };
   callbacks.on_function_breakpoints_verified =
       [this](const std::vector<std::string>& requested_names,
              const std::vector<dap_protocol::DapBreakpoint>& breakpoints) {
-        // The setFunctionBreakpoints response is positional to the request. Ignore
-        // any results a non-conformant adapter returns beyond the requested count
-        // (mirrors the line-breakpoint handler) so extras cannot seed phantom
-        // verification state.
         std::vector<editor::VerifiedFunctionBreakpoint> results;
         results.reserve(std::min(breakpoints.size(), requested_names.size()));
         for (std::size_t i = 0; i < breakpoints.size() && i < requested_names.size(); ++i) {
@@ -305,16 +234,12 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
         SyncBreakpointsPanel();
         util::InvokeIfSet(operations_.request_debug_pane_redraw);
       };
-  // Advertised exception filters arrive at `initialized`: populate the Breakpoints
-  // panel (seeding the enabled set from adapter defaults the first time).
   callbacks.on_exception_filters_available =
       [this](const std::vector<dap_protocol::DapExceptionFilter>& filters) {
         CurrentProjectState().debug_breakpoints_panel.SetAdvertisedFilters(filters);
         SyncBreakpointsPanel();
         util::InvokeIfSet(operations_.request_debug_pane_redraw);
       };
-  // The session pulls the enabled filters (id + optional condition) at `initialized`
-  // and on live re-send.
   callbacks.exception_filter_provider = [this]() {
     std::vector<ExceptionFilterRequest> requests;
     for (const auto& [id, condition] :
@@ -327,18 +252,15 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
 }
 
 void DebugService::ClearTransientDebugViews() {
-  // Invalidate any in-flight scopes/variables/setVariable/watch responses: they
-  // belong to the stop being torn down and must not apply to the cleared models.
   frame_generation_.bump();
   watch_generation_.bump();
   ProjectWorkspaceState& state = CurrentProjectState();
   state.debug_execution.Clear();
   state.debug_variables.Clear();
   state.debug_hover.Clear();
-  // Keep the watch expressions (persistent) but drop their stale values.
   state.debug_watch.ClearResults();
   util::InvokeIfSet(operations_.request_editor_redraw);
   util::InvokeIfSet(operations_.request_debug_pane_redraw);
 }
 
-}  // namespace microide::workspace
+}

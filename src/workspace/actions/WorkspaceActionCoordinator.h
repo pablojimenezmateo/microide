@@ -10,10 +10,6 @@ namespace microide::workspace {
 
 class ActionCoordinator {
  public:
-  // Binds the shell's single long-lived context (see WorkspaceShell::MakeActionContext).
-  // By reference, not by value: the context is ~180 std::functions, so taking it by
-  // value cost two moves of that struct — each a manager call per function — on every
-  // action dispatch, including the ones on the keyboard input path.
   explicit ActionCoordinator(WorkspaceActionContext& context);
 
   bool Execute(ActionId id, const std::vector<std::string>& args, ActionSource source);
@@ -25,8 +21,6 @@ class ActionCoordinator {
     Rejected,
   };
 
-  // The `reject(feedback)` every executor uses: hands the feedback to the caller
-  // that asked for it (rejection_feedback may be null) and answers Rejected.
   static auto RejectInto(std::string* rejection_feedback) {
     return [rejection_feedback](std::string feedback) {
       if (rejection_feedback != nullptr) {
@@ -65,7 +59,6 @@ class ActionCoordinator {
                                ActionSource source,
                                std::string* rejection_feedback);
 
-  // ExecuteEdit's larger actions, one member each.
   DispatchResult ExecuteFormatJson(ActionId id, const std::vector<std::string>& args, ActionSource source,
                                    std::string* rejection_feedback);
   DispatchResult ExecutePointer(ActionId id, const std::vector<std::string>& args, ActionSource source,
@@ -75,17 +68,10 @@ class ActionCoordinator {
   DispatchResult ExecuteAddCursorAtMatch(ActionId id, const std::vector<std::string>& args, ActionSource source,
                                          std::string* rejection_feedback);
 
-  // ExecuteTab's larger actions, one member each.
   DispatchResult ExecuteOpen(ActionId id, const std::vector<std::string>& args, ActionSource source,
                              std::string* rejection_feedback);
-
-  // ExecuteGlobal's larger actions, one member each.
-
-  // ExecuteSearch's larger actions, one member each.
-
-  // ExecuteSidebar's larger actions, one member each.
 
   WorkspaceActionContext& context_;
 };
 
-}  // namespace microide::workspace
+}

@@ -38,9 +38,6 @@ namespace {
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
-// Divider grab rects for the active compare / merge tab. DiffDividerGeometry.h
-// takes WorkspaceShell by name, so it cannot be reached from inside the TestAccess
-// class body; these live here instead and read the same geometry production does.
 SDL_FRect CompareDividerRectOf(microide::workspace::WorkspaceShell& shell) {
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
   return microide::workspace::CompareDividerHitRect(
@@ -64,9 +61,6 @@ void EnsureDummySdlVideo() {
 
 #endif
 
-// The compare/ref picker now runs its git query on the background executor and
-// populates on a later frame via the git-sidebar wake event. Drive the mailbox
-// drain until the picker leaves its loading state (or a 2s deadline elapses).
 bool SettleComparePicker(WorkspaceShell& shell) {
   return WaitUntil(
       [&shell]() { return !WorkspaceShellTestAccess::ComparePickerLoading(shell); },
@@ -104,24 +98,6 @@ std::optional<microide::editor::EditorBlameOverlay> WaitForActiveMergeBlameOverl
   return WorkspaceShellTestAccess::ActiveMergeBlameOverlay(shell);
 }
 
-// TD-2026-08-17-258's open half: opening a working-tree comparison landed the
-// selection on the LAST hunk, so a forward "next hunk" jump clamped immediately
-// and the reader started at the bottom of the file. VS Code reveals the FIRST
-// change; the caret agreed with VS Code (`right_cursor_line` was 0) while the
-// selection did not, which is what made the two disagree at open.
-//
-// Multi-hunk on purpose: a one-hunk fixture cannot tell first from last, which
-// is exactly how the perf scenario that found this stayed green for so long.
-// Regression, and the one the first attempt at this fix missed entirely. The
-// confirmation originally lived only inside ValidateMergeResult, while the two
-// watcher paths that actually SET `external_result_stale` kept their own tick
-// compares — and ValidateMergeResult returns on that flag long before reaching the
-// guard. So a touch of the merge output still un-marked a completed resolution,
-// and the unit tests passed because they built a MergeTabState by hand with the
-// flag already false: a shape the running app does not produce.
-//
-// This one goes through the product path: open a real merge editor, rewrite the
-// output with identical bytes, and drive the watcher-side invalidation.
 void TestWorkspaceShellIdenticalMergeOutputRewriteKeepsResolution() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -141,8 +117,6 @@ void TestWorkspaceShellIdenticalMergeOutputRewriteKeepsResolution() {
          "merge editor should open");
 
   auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
-  // Stand in for a completed resolution: the resolver has written the output and
-  // recorded both what it wrote and the tick it wrote at.
   const std::string resolved = "line 1\nresolved line\nline 3\n";
   WriteFile(merge.output_path, resolved);
   merge.persisted_output_baseline = resolved;
@@ -150,7 +124,6 @@ void TestWorkspaceShellIdenticalMergeOutputRewriteKeepsResolution() {
   merge.external_result_stale = false;
   merge.marked_resolved = true;
 
-  // Something rewrites the output with the SAME bytes and moves its tick.
   WriteFile(merge.output_path, resolved);
   std::error_code mtime_error;
   std::filesystem::last_write_time(
@@ -165,8 +138,6 @@ void TestWorkspaceShellIdenticalMergeOutputRewriteKeepsResolution() {
          "a byte-identical rewrite must not un-mark a completed resolution");
 }
 
-// The other half, through the same product path: a real edit to the output must
-// still un-mark the resolution.
 void TestWorkspaceShellRealMergeOutputEditDropsResolution() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -218,7 +189,6 @@ void TestWorkspaceShellWorkingTreeCompareOpensOnFirstChange() {
   InitializeGitRepo(root);
   CommitAll(root, "Add multi-hunk compare fixture", "multi-hunk compare fixture");
 
-  // Three well-separated edits -> three hunks, none of them at line 0.
   std::string edited;
   for (int line = 0; line < 400; ++line) {
     if (line == 50 || line == 200 || line == 350) {
@@ -255,13 +225,6 @@ void TestWorkspaceShellWorkingTreeCompareOpensOnFirstChange() {
          "the editable pane's caret should agree with the selected row at open");
 }
 
-// Staging one hunk, then the next, through the shell. The compare surface diffs
-// HEAD against the working tree, so after the first stage the INDEX has moved
-// while the second hunk's patch still carries HEAD's line numbers; git refuses
-// to shift a hunk anchored at the start of the file ("patch does not apply"),
-// and a mid-file hunk that is still shown after being staged would apply twice.
-// The apply runs on the background executor and its shell-side follow-up now
-// rides the git-sidebar mailbox, which is what ConsumeGitSidebarRefresh drains.
 void TestWorkspaceShellCompareStagesHunksInSequence() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -273,7 +236,6 @@ void TestWorkspaceShellCompareStagesHunksInSequence() {
   WriteFile(source, edited);
 
   WorkspaceShell shell;
-  // The apply service's callbacks are wired with the lifecycle wake events.
   WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -281,7 +243,6 @@ void TestWorkspaceShellCompareStagesHunksInSequence() {
          "working-tree comparison should open");
   SoftwareCanvas canvas(1280, 720);
   shell.Render(canvas.renderer(), 1280, 720);
-  // The apply needs a repository snapshot; the sidebar refresh produces one.
   WorkspaceShellTestAccess::RefreshGitSidebar(shell);
   WorkspaceShellTestAccess::DrainProjectBackgroundExecutor(shell);
   WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
@@ -324,12 +285,6 @@ void TestWorkspaceShellCompareStagesHunksInSequence() {
              .c_str());
 }
 
-// The QA suite on CI (diff-hunk-keys, Wayland): `a` staged a hunk and `c`, pressed
-// before the git refresh that staging starts had landed, failed with "Diff is
-// stale" -- the apply refused any request whose repository generation had moved
-// since it was built, and every refresh moves it, including the one the stage
-// itself asked for. git's own preflight (`git apply --check`) is what keeps a
-// patch off content it was not built for.
 void TestWorkspaceShellCompareUnstagesRightAfterAStage() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -374,8 +329,6 @@ void TestWorkspaceShellCompareUnstagesRightAfterAStage() {
           WorkspaceShellTestAccess::CommandFeedbackText(shell) + "]")
              .c_str());
 
-  // `c` while a git refresh is queued ahead of it -- on CI, the one the stage's
-  // completion asked for. The refresh runs first and moves the generation.
   WorkspaceShellTestAccess::RefreshGitSidebar(shell);
   WorkspaceShellTestAccess::UnstageCompareHunk(shell);
   for (int round = 0; round < 3; ++round) {
@@ -388,11 +341,6 @@ void TestWorkspaceShellCompareUnstagesRightAfterAStage() {
              .c_str());
 }
 
-// A working-tree diff's right side is editable, so the review letters (`a` stage,
-// `d` discard) type text there, and nothing else staged or reverted one change:
-// partial staging was out of reach exactly where it is wanted. VS Code's Selected
-// Ranges commands do it -- the selected lines, else the change at the caret -- on
-// Ctrl+K Ctrl+Alt+S (stage), Ctrl+K Ctrl+N (unstage), Ctrl+K Ctrl+R (revert).
 void TestWorkspaceShellCompareSelectedRangesStageAndRevertFromAWorkingTreeDiff() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -426,7 +374,6 @@ void TestWorkspaceShellCompareSelectedRangesStageAndRevertFromAWorkingTreeDiff()
   Expect(WorkspaceShellTestAccess::ActiveCompare(shell).right_editable,
          "a working-tree diff's right side is editable (where the review letters type)");
 
-  // The diff opens on its first change; the chord stages that change alone.
   Expect(SendKeyDown(shell, SDLK_K, SDL_KMOD_CTRL), "Ctrl+K arms the chord");
   Expect(SendKeyDown(shell, SDLK_S, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_ALT)),
          "Ctrl+K Ctrl+Alt+S should be handled");
@@ -435,7 +382,6 @@ void TestWorkspaceShellCompareSelectedRangesStageAndRevertFromAWorkingTreeDiff()
          "Ctrl+K Ctrl+Alt+S stages the change at the caret and nothing else; index=[" + index_content() +
              "] feedback=[" + WorkspaceShellTestAccess::CommandFeedbackText(shell) + "]");
 
-  // Revert the remaining change: the command asks first, with the patch it would apply.
   {
     auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
     Expect(!compare.model.hunks.empty(), "the tail change is still in the diff");
@@ -448,11 +394,6 @@ void TestWorkspaceShellCompareSelectedRangesStageAndRevertFromAWorkingTreeDiff()
          "reverting asks first (the discard preview)");
 }
 
-// The other half of the same disagreement: `JumpCompareHunk` moved `selected_row`
-// and revealed it, but never moved the editable pane's caret. So after jumping to
-// a hunk in the middle of the file the reader was LOOKING at that hunk and TYPING
-// at line 0 — an edit landing 300 lines away from the cursor they can see. VS Code
-// puts the cursor on the change it reveals.
 void TestWorkspaceShellCompareHunkJumpMovesTheEditableCaret() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -488,8 +429,6 @@ void TestWorkspaceShellCompareHunkJumpMovesTheEditableCaret() {
   auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
   Expect(compare.model.hunks.size() >= 3, "the fixture should produce several hunks");
 
-  // Forward to the third change, then type. The edit must land there. Alt+]: the
-  // working side is being edited, where a bare ] is a typed bracket.
   Expect(SendKeyDown(shell, SDLK_RIGHTBRACKET, SDL_KMOD_ALT),
          "Alt+] should navigate to the next hunk");
   Expect(SendKeyDown(shell, SDLK_RIGHTBRACKET, SDL_KMOD_ALT),
@@ -512,12 +451,6 @@ void TestWorkspaceShellCompareHunkJumpMovesTheEditableCaret() {
          "typing after a hunk jump should edit the hunk the reader is looking at");
 }
 
-// QA diff-hunk-keys: from a row that is not in any change, ] counted from the
-// FIRST change -- "no hunk selected" became hunk 0, then +1 -- so from above the
-// first change it went to the second, from between the second and third back to
-// the second, and [ after the last change went to the first. From any row, next
-// is the first change below it and previous the last change above it (VS Code's
-// next/previous change).
 void TestWorkspaceShellCompareHunkJumpFromBetweenChangesGoesToTheNearestOne() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -546,7 +479,6 @@ void TestWorkspaceShellCompareHunkJumpFromBetweenChangesGoesToTheNearestOne() {
     return;
   }
   const auto selected_hunk = [&]() { return microide::workspace::CompareTabSelectedHunkIndex(compare); };
-  // The presentation row of a model row outside every change, past `after`.
   const auto context_row_after = [&](std::size_t after) -> std::optional<std::size_t> {
     for (std::size_t row = 0; row < compare.presentation.rows.size(); ++row) {
       if (compare.presentation.rows[row].kind != microide::compare::ComparePresentationRowKind::Model) {
@@ -614,17 +546,6 @@ void TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves() {
          "saving the compare tab should persist the edited current-state text");
 }
 
-// The compare's editable pane is a full TextViewport reaching the same action
-// layer as the editor pane, so it answers the multi-caret verbs too -- and
-// nothing tested that. Forty-four tests touch `right_viewport` and not one of
-// them ever put a second caret in it, so every multi-caret path on this surface
-// (and on the merge result pane beside it) ran only in the editor pane.
-//
-// The part worth checking is not that the text changes -- that is the same
-// applier the editor uses -- but that the compare MODEL survives an edit that
-// changes the line count under it. The right side's rows are aligned against the
-// left's, so a multi-caret insert that adds lines has to leave a model that
-// still describes the buffer, not one built for the buffer that was there.
 void TestWorkspaceShellCompareEditablePaneTakesMultipleCarets() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -652,7 +573,6 @@ void TestWorkspaceShellCompareEditablePaneTakesMultipleCarets() {
   Expect(viewport.secondary_caret_range_view().size() == 2,
          "three carets, one per line");
 
-  // A plain insert at every caret.
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "// "),
          "text input should reach the compare pane with several carets");
   Expect(viewport.lines()[0] == "// alpha" && viewport.lines()[1] == "// bravo" &&
@@ -661,7 +581,6 @@ void TestWorkspaceShellCompareEditablePaneTakesMultipleCarets() {
   Expect(viewport.secondary_caret_range_view().size() == 2,
          "the caret set survives the edit");
 
-  // An insert that CHANGES THE LINE COUNT under the row alignment.
   const std::size_t lines_before = viewport.line_count();
   Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "Enter should reach the compare pane");
@@ -669,8 +588,6 @@ void TestWorkspaceShellCompareEditablePaneTakesMultipleCarets() {
          "three carets each split their line, got " + std::to_string(viewport.line_count()) +
              " from " + std::to_string(lines_before));
 
-  // The model has to describe the buffer it now has. Rendering is what consumes
-  // it, so a stale row map shows up here rather than in an accessor.
   WorkspaceShellTestAccess::RenderFrame(shell);
   Expect(viewport.cursor_line() < viewport.line_count(),
          "the primary caret is inside the edited buffer");
@@ -679,17 +596,11 @@ void TestWorkspaceShellCompareEditablePaneTakesMultipleCarets() {
            "every secondary caret is inside the edited buffer");
   }
 
-  // And the whole thing undoes as three sites in one step, on this surface too.
   Expect(viewport.Undo(), "undo steps the compare pane's shared history");
   Expect(viewport.line_count() == lines_before,
          "one undo takes back all three splits, got " + std::to_string(viewport.line_count()));
 }
 
-// The left side is an immutable shared buffer, and the derived-state refresh now
-// recognizes it by IDENTITY rather than hashing its bytes on every call (the refresh
-// runs per mouse move, and hashing was a full pass over the left file each time).
-// Pin both halves of that: the same buffer is not a change, and a new buffer is one
-// even when its bytes are identical, because identity is the whole signal.
 void TestWorkspaceShellCompareLeftSideIsRecognizedByIdentity() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -723,9 +634,6 @@ void TestWorkspaceShellCompareLeftSideIsRecognizedByIdentity() {
   Expect(saw_new_left, "and the rebuilt model is diffed against the new left side");
 }
 
-// An external change to a compared file refreshes the compare in EVERY pane. The
-// refresh walked only the focused pane, so a compare in the other split kept the
-// pre-change diff — the case MarkCompareTabsStaleForPath's own comment named.
 void TestWorkspaceShellExternalChangeRefreshesACompareInAnUnfocusedPane() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -740,8 +648,6 @@ void TestWorkspaceShellExternalChangeRefreshesACompareInAnUnfocusedPane() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
-  // A split clones an EDITOR tab, so split on a plain file first, then put the
-  // compare in the first pane and move focus to the second.
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, other), "open a file to split");
   const std::size_t compare_group = WorkspaceShellTestAccess::FocusedGroupIndex(shell);
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
@@ -756,8 +662,6 @@ void TestWorkspaceShellExternalChangeRefreshesACompareInAnUnfocusedPane() {
 
   WriteFile(source, "one\nTHREE\n");
   WorkspaceShellTestAccess::MarkCompareTabsStaleForPath(shell, source);
-  // The refs are re-read off the shell thread (soak a509a3f35fe0): what lands is
-  // the rebuilt diff.
   WorkspaceShellTestAccess::FlushPendingFileReads(shell);
 
   const auto* compare = WorkspaceShellTestAccess::GroupActiveCompareOrNull(shell, compare_group);
@@ -769,14 +673,6 @@ void TestWorkspaceShellExternalChangeRefreshesACompareInAnUnfocusedPane() {
   Expect(saw_new_text, "the unfocused pane's compare was rebuilt from the changed file");
 }
 
-// A change to a compared file re-read the compare's committed side with a
-// blocking git per tab, though a full object id names content nothing can
-// change and the tab already holds it: with a few dozen compares of one file
-// open, every change held the shell thread for seconds (soak eee6ac0a5e0b,
-// 32325094bfef). The worktree side is re-read; the committed one is not.
-// The local launcher, counting the spawns made on the thread that built it -- the
-// shell thread, in a test -- so a test can tell a git read the shell waited for
-// from one a worker made.
 class ShellThreadSpawnCounter final : public microide::platform::ProcessLauncher {
  public:
   std::vector<std::string> ResolveArgv(std::vector<std::string> argv) const override {
@@ -807,13 +703,6 @@ class ShellThreadSpawnCounter final : public microide::platform::ProcessLauncher
   mutable std::atomic<int> shell_thread_spawns_{0};
 };
 
-// A change to a compared file re-read every ref-named side (HEAD, a branch, the
-// index) with a blocking `git cat-file` on the shell thread, per open diff of
-// the file: seconds under load, and a synchronous subprocess in workspace code
-// (soak a509a3f35fe0; a32ae2855 spared only sides named by a full object id).
-// The re-read runs off the shell thread, the diff it had stays on screen until
-// it lands -- and what lands is what the refs name NOW, since a ref can move
-// with the change (a commit, a checkout, a stage).
 void TestWorkspaceShellExternalChangeReadsNoRefOnTheShellThread() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -837,7 +726,6 @@ void TestWorkspaceShellExternalChangeReadsNoRefOnTheShellThread() {
       WorkspaceShellTestAccess::CurrentProjectState(shell).locality.launcher;
   WorkspaceShellTestAccess::CurrentProjectState(shell).locality.launcher = &counter;
 
-  // The change is committed, so HEAD moves with it: both diffs' ref sides change.
   WriteFile(source, "one\nTHREE\n");
   CommitAll(root, "three", "three");
   WorkspaceShellTestAccess::MarkCompareTabsStaleForPath(shell, source);
@@ -910,11 +798,6 @@ void TestWorkspaceShellExternalChangeReadsNoCommittedSideAgain() {
   Expect(left_kept && right_new, "the committed side is kept and the worktree side is the changed file");
 }
 
-// The compare's editable side IS the file, so it is one buffer with an editor
-// tab on the same path -- VS Code's diff editor edits the same model the text
-// editor shows. Each side used to load its own copy from disk: an edit in one
-// was invisible in the other, the compare diffed against disk rather than the
-// unsaved buffer, and saving one raised the external-change banner on the other.
 void TestWorkspaceShellWorkingTreeCompareSharesTheEditorTabsBuffer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -928,7 +811,6 @@ void TestWorkspaceShellWorkingTreeCompareSharesTheEditorTabsBuffer() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
-  // Editor tab first, with an unsaved edit; the compare must show THAT buffer.
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "// edited\n"), "edit the editor tab");
@@ -936,7 +818,6 @@ void TestWorkspaceShellWorkingTreeCompareSharesTheEditorTabsBuffer() {
 
   Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
          "the working-tree comparison should open");
-  // Opening the compare tab grew the tab vector; take the editor view afresh.
   editor::TextViewport& editor = WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 0);
   auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
   Expect(compare.right_editable, "the working-tree side is editable");
@@ -953,7 +834,6 @@ void TestWorkspaceShellWorkingTreeCompareSharesTheEditorTabsBuffer() {
   }
   Expect(first_row_is_edit, "the diff model is built from the shared buffer");
 
-  // An edit through the compare side shows in the editor tab, and vice versa.
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "X"), "edit through the compare side");
   Expect(editor.lines().LineView(0) == "X// edited", "the editor tab sees the compare's edit");
   const std::uint64_t model_before = compare.model_revision;
@@ -961,12 +841,9 @@ void TestWorkspaceShellWorkingTreeCompareSharesTheEditorTabsBuffer() {
   editor.InsertText("Y");
   Expect(compare.right_viewport.lines().LineView(0) == "YX// edited",
          "the compare side sees the editor's edit");
-  // The frame prep resolves the compare model for a pane that did not take the
-  // keystroke; simulate it through the test hook.
   WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
   Expect(compare.model_revision != model_before, "the diff model follows the shared buffer");
 
-  // One save cleans both, writes the buffer, and raises no external-change banner.
   Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::GroupActiveTabIndex(shell, 0)),
          "saving the compare tab should succeed");
   Expect(!editor.dirty() && !compare.right_viewport.dirty(), "one save cleans both views");
@@ -974,7 +851,6 @@ void TestWorkspaceShellWorkingTreeCompareSharesTheEditorTabsBuffer() {
   Expect(!WorkspaceShellTestAccess::HasExternalChangeBanner(shell, source),
          "saving one view of the buffer is not an external change to the other");
 
-  // The reverse order: a compare open first, then the editor tab shares its side.
   WorkspaceShell reverse;
   WorkspaceShellTestAccess::SetProjectRoot(reverse, root);
   WorkspaceShellTestAccess::SetWindowSize(reverse, 1280, 720);
@@ -995,10 +871,6 @@ void TestWorkspaceShellWorkingTreeCompareSharesTheEditorTabsBuffer() {
   Expect(shares, "the editor tab and the compare's side are views of one document");
 }
 
-// An external change to a file shown in an editor tab AND a working-tree compare
-// reloads one document and both views take it: the editor reload re-points the
-// compare side, and the compare's own refresh (a rebuild from disk) rejoins the
-// editor's reloaded buffer. Either order leaves the two sharing.
 void TestWorkspaceShellWorkingTreeCompareFollowsAnExternalReload() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1020,8 +892,6 @@ void TestWorkspaceShellWorkingTreeCompareFollowsAnExternalReload() {
   Expect(editor != nullptr && compare != nullptr && compare->SharesDocumentWith(*editor),
          "the two tabs start as views of one document");
 
-  // Change the file underneath both (clean) views and let the project change
-  // flow reload it.
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
   WriteFile(source, "changed on disk\nsecond\nthird\n");
   Expect(WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true),
@@ -1036,9 +906,6 @@ void TestWorkspaceShellWorkingTreeCompareFollowsAnExternalReload() {
          "after the reload the two tabs are still views of ONE document");
 }
 
-// A BOM file's working-tree compare: the blob carries the mark and the editable
-// pane strips it, so the pane's serialization has to put it back or line 1 reads
-// as modified forever, and saving the pane has to write it back.
 void TestWorkspaceShellWorkingTreeCompareKeepsUtf8Bom() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1077,16 +944,10 @@ void TestWorkspaceShellWorkingTreeCompareKeepsUtf8Bom() {
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "> "),
          "text input should edit the compare current-state pane");
   Expect(WorkspaceShellTestAccess::SaveTab(shell, 0), "saving the compare tab should write");
-  // The pane opens on the first change (line 3), so the text lands there; the
-  // saved file still starts with the mark.
   Expect(ReadFile(source) == "\xEF\xBB\xBF" "first\nsecond\n> third\n",
          "saving the pane writes the mark back ahead of the text");
 }
 
-// TD-2026-08-13-207: the compare pane's key handling was a hand-maintained subset
-// of the editor's, so it silently lacked whatever nobody remembered to copy —
-// here, Shift+Tab outdent and Tab-indents-a-multi-line-selection. Both surfaces
-// now run one shared switch, so a key added to it reaches both.
 void TestWorkspaceShellCompareEditablePaneIndentsAndOutdents() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1107,13 +968,10 @@ void TestWorkspaceShellCompareEditablePaneIndentsAndOutdents() {
   Expect(compare.right_editable && compare.right_view_active,
          "the compare fixture should start on the editable pane");
 
-  // Select the first two lines, then Tab. A multi-line selection indents as a
-  // block; the old compare switch replaced the selection with a tab character.
   compare.right_viewport.MoveCursorTo(0, 0);
-  compare.right_viewport.MoveCursorTo(1, 5, /*extend_selection=*/true);
+  compare.right_viewport.MoveCursorTo(1, 5, true);
   Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
          "Tab should be handled on the compare editable pane");
-  // One indent step, in whatever unit the pane indents with (spaces by default).
   const std::string_view indented = compare.right_viewport.lines().LineView(0);
   Expect(indented.size() > 5 && indented.ends_with("alpha") &&
              indented.find_first_not_of(" \t") == indented.size() - 5,
@@ -1121,22 +979,12 @@ void TestWorkspaceShellCompareEditablePaneIndentsAndOutdents() {
   Expect(compare.right_viewport.lines().LineView(1).find("bravo") != std::string::npos,
          "the second selected line survives the block indent");
 
-  // Shift+Tab outdents it again.
   Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_SHIFT),
          "Shift+Tab should be handled on the compare editable pane");
   Expect(compare.right_viewport.lines().LineView(0) == "alpha",
          "Shift+Tab outdents the block back rather than inserting a tab");
 }
 
-// TD-2026-08-13-206's remaining render feature: plugin decorations on the
-// editable compare pane.
-//
-// Asserted in PIXELS, and both ways round. A decoration that is merely plumbed
-// into `RowDecorationInput` and then dropped by the row builder — or drawn behind
-// the diff tint, or clipped out of the pane — would still pass a "the field is
-// set" test. So: render once with nothing published (the color must be absent),
-// publish, render again (the color must appear), and do the same for the gutter
-// mark, which paints through a different path entirely.
 void TestWorkspaceShellComparePaintsPluginDecorations() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1152,7 +1000,6 @@ void TestWorkspaceShellComparePaintsPluginDecorations() {
   Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
          "working-tree comparison should open");
 
-  // Colors no theme uses, so finding one is proof the decoration painted it.
   constexpr SDL_Color kStyleBackground{13, 240, 111, 255};
   constexpr SDL_Color kMarkColor{240, 13, 200, 255};
   SoftwareCanvas canvas(1280, 720);
@@ -1175,7 +1022,7 @@ void TestWorkspaceShellComparePaintsPluginDecorations() {
   auto& project_state = WorkspaceShellTestAccess::CurrentProjectState(shell);
   editor::PluginDecorationData data;
   data.text_styles.push_back(editor::TextStyleDecoration{
-      .line = 1,  // the `return (x + 1);` line, which exists on the right side
+      .line = 1,
       .start_column = 0,
       .end_column = 0,
       .background = kStyleBackground,
@@ -1198,11 +1045,6 @@ void TestWorkspaceShellComparePaintsPluginDecorations() {
          "a plugin gutter mark paints in the editable pane's gutter");
 }
 
-// TD-2026-08-13-206's last render feature: bracket-match highlight on the
-// editable pane. FindBracketMatch is O(file), so the entry left it out rather
-// than put an uncached scan on a per-frame path. The memo is what makes it
-// affordable, so the memo is what this pins: a repaint with an unchanged caret
-// and unchanged content must not rescan, and moving the caret must.
 void TestWorkspaceShellCompareBracketMatchIsMemoized() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1223,18 +1065,14 @@ void TestWorkspaceShellCompareBracketMatchIsMemoized() {
   Expect(compare.right_view_active, "the editable pane is active");
   Expect(!compare.bracket_match_valid, "the memo starts cold");
 
-  // A REAL renderer: RenderFrame's null one stops at the `renderer == nullptr`
-  // guard every surface opens with, so it would prove nothing about paint state.
   SoftwareCanvas canvas(1280, 720);
 
-  // Put the caret next to the '(' on the return line.
   compare.right_viewport.MoveCursorTo(1, 9);
   WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
   Expect(compare.bracket_match_valid, "painting resolves and memoizes the bracket match");
   const auto first_pair = compare.bracket_match_pair;
   const std::uint64_t revision_after_first = compare.bracket_match_content_revision;
 
-  // A repaint with nothing changed must reuse the memo: same key, same answer.
   WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
   Expect(compare.bracket_match_content_revision == revision_after_first &&
              compare.bracket_match_caret_line == 1 && compare.bracket_match_caret_column == 9,
@@ -1242,18 +1080,12 @@ void TestWorkspaceShellCompareBracketMatchIsMemoized() {
   Expect(compare.bracket_match_pair.has_value() == first_pair.has_value(),
          "an unchanged repaint keeps the memoized answer");
 
-  // Moving the caret changes the key, so the next paint re-resolves.
   compare.right_viewport.MoveCursorTo(0, 0);
   WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
   Expect(compare.bracket_match_caret_line == 0 && compare.bracket_match_caret_column == 0,
          "moving the caret re-keys the memo rather than serving the old match");
 }
 
-// Alt+O from a diff opens its working file. The path handed to OpenFile was the
-// compare tab's own, and opening the file added a tab -- reallocating the tab
-// storage under that reference before it was read again: a null dereference
-// under the slow QA coverage build and every time under ASan
-// (`tools/qa` compare-keys). OpenFileInNewTab now takes its path by value.
 void TestWorkspaceShellCompareAltOOpensTheWorkingFile() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1332,14 +1164,11 @@ void TestWorkspaceShellCompareClickAboveFirstRowIsNotHandled() {
   const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
   const float left_x = surface.left_x + 24.0f;
 
-  // Select a non-zero presentation row so a spurious "row 0" hit would be observable.
   const float row2_y = surface.rows_y + surface.line_height * 2.5f;
   Expect(SendMouseDown(shell, left_x, row2_y, SDL_BUTTON_LEFT),
          "clicking a real compare row should be handled");
   const std::size_t selected_after_real_click = compare.selected_row;
 
-  // A click in the band directly above the first row (negative row offset) must be
-  // rejected, not truncated to a phantom hit on row 0.
   const float above_y = surface.rows_y - 2.0f;
   Expect(!SendMouseDown(shell, left_x, above_y, SDL_BUTTON_LEFT),
          "clicking just above the first compare row must not be handled as a row hit");
@@ -1490,14 +1319,6 @@ void TestWorkspaceShellCompareCollapsedContextButtonsHoverAsInteractive() {
   Expect(WorkspaceShellTestAccess::CachedCursorIsPointer(shell),
          "hovering a collapsed-context action button should cache the pointer cursor");
 
-  // The cursor shape, the hover highlight and the click each used to re-derive
-  // "which collapsed-context action is under this point" from scratch. They share
-  // CompareCollapsedContextRowAt + CompareCollapsedContextActionAt now; assert the
-  // two observable halves agree on every button, so a future divergence shows up
-  // as a hand cursor over something that does not highlight.
-  //
-  // Rects are re-read per button: a motion event re-clamps compare scroll, which
-  // moves the row under the pointer.
   const microide::workspace::CompareHoverKind kinds[] = {
       microide::workspace::CompareHoverKind::CollapsedContextPreviousAction,
       microide::workspace::CompareHoverKind::CollapsedContextAllAction,
@@ -1515,9 +1336,6 @@ void TestWorkspaceShellCompareCollapsedContextButtonsHoverAsInteractive() {
     Expect(rect.has_value() && rect->w > 0.0f,
            "the fixture row should expose all three action buttons");
     const float by = rect->y + rect->h * 0.5f;
-    // Probe the edges, not just the centre: the buttons are ~140px wide, so a
-    // centre probe survives the whole button shifting by the scrollbar reserve
-    // plus the block inset — which is exactly how the two paths drift apart.
     for (const float bx : {rect->x + 1.0f, rect->x + rect->w * 0.5f, rect->x + rect->w - 1.0f}) {
       Expect(WorkspaceShellTestAccess::CursorKindAtIsPointer(shell, bx, by),
              "every collapsed-context action button should advertise a pointer cursor");
@@ -1527,7 +1345,6 @@ void TestWorkspaceShellCompareCollapsedContextButtonsHoverAsInteractive() {
     }
   }
 
-  // Inside the block but off every button: neither half may claim a hit.
   {
     const auto rects =
         WorkspaceShellTestAccess::ActiveCompareCollapsedContextActionRects(shell, *collapsed_row);
@@ -1859,10 +1676,6 @@ void TestWorkspaceShellCompareWheelScrollsRows() {
   const int before_scroll = compare.scroll_row;
   const float wheel_x = surface.right_x + 24.0f;
   const float wheel_y = surface.rows_y + surface.line_height * 0.5f;
-  // The wheel must not pull keyboard focus out of whatever the user is typing into,
-  // which is what every other scrollable surface already promises. Compare and merge
-  // were the two that claimed focus for the editor on every tick, so a wheel nudge
-  // over the diff silently redirected the next keystroke away from the terminal.
   WorkspaceShellTestAccess::SetFocusPanel(shell);
   Expect(SendMouseWheel(shell, wheel_x, wheel_y, -1),
          "scrolling the compare surface should be handled");
@@ -1908,17 +1721,10 @@ void TestWorkspaceShellCompareWheelScrollsColumns() {
 }
 
 void TestWorkspaceShellCompareWheelScrollsLeftDominatedColumns() {
-  // Regression: the two panes share one horizontal offset, but it used to be
-  // round-tripped through the editable right viewport, which clamps to the right
-  // document's longest line. When the overflowing content lives only on the left
-  // (a long line shortened/deleted in the working tree), that read-back forced the
-  // shared offset back to 0 and horizontal scrolling appeared completely dead.
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
   const std::filesystem::path source = root / "src" / "main.cpp";
 
-  // Long line at HEAD (left pane), collapsed to a short line in the working tree
-  // (right pane). The right document on its own never overflows the viewport.
   const std::string base_line =
       "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789\n";
   const std::string working_line = "short\n";
@@ -1967,7 +1773,6 @@ void TestWorkspaceShellCompareHorizontalNavigationInvalidatesEditablePane() {
 
   const SDL_FRect editable_rect = WorkspaceShellTestAccess::ActiveCompareEditableRect(shell);
 
-  // A frame painted first: the derived surfaces compare with it.
   SoftwareCanvas canvas{1280, 720};
   shell.Render(canvas.renderer(), 1280, 720);
   (void)shell.ConsumePendingRenderInvalidation();
@@ -1975,7 +1780,6 @@ void TestWorkspaceShellCompareHorizontalNavigationInvalidatesEditablePane() {
   event.type = SDL_EVENT_KEY_DOWN;
   event.key.key = SDLK_RIGHT;
   const auto result = shell.HandleEvent(event);
-  // What the frame repaints: the event's rects and what preparing it derives.
   const auto damage = FrameDamage(shell, canvas, 1280, 720, result.redraw);
 
   Expect(result.handled, "compare horizontal navigation should be handled");
@@ -2004,11 +1808,6 @@ void TestWorkspaceShellCompareSelectionStepInvalidatesRowBand() {
          "compare row invalidation fixture should open");
   (void)shell.ConsumePendingRenderInvalidation();
 
-  // Read the rows rather than assuming 0 and 1: a comparison opens on its first
-  // CHANGE now, which for this fixture is not row 0. The subject here is the redraw
-  // band, so what matters is that it covers the row the selection left and the row
-  // it arrived on, whichever those are.
-  // A frame painted first: the derived surfaces compare with it.
   SoftwareCanvas canvas{1280, 720};
   shell.Render(canvas.renderer(), 1280, 720);
   (void)shell.ConsumePendingRenderInvalidation();
@@ -2019,7 +1818,6 @@ void TestWorkspaceShellCompareSelectionStepInvalidatesRowBand() {
   event.type = SDL_EVENT_KEY_DOWN;
   event.key.key = SDLK_DOWN;
   const auto result = shell.HandleEvent(event);
-  // What the frame repaints: the event's rects and what preparing it derives.
   const auto damage = FrameDamage(shell, canvas, 1280, 720, result.redraw);
   const std::size_t after_row = WorkspaceShellTestAccess::ActiveCompare(shell).selected_row;
   Expect(after_row != before_row, "Down should move the compare selection");
@@ -2126,9 +1924,6 @@ void TestWorkspaceShellCompareRenderReusesVisibleLayoutCache() {
   Expect(compare.visible_layouts.live_count == warmed_cache_size,
          "stable compare frames should reuse cached visible layouts instead of appending more");
 
-  // The slab's own storage must SURVIVE the invalidation — that is the point of
-  // the live-count reset (TD-2026-08-17-261). Capture the buffer capacities
-  // first, then assert the rebuilt window does not reallocate them.
   const std::size_t retained_slots = compare.visible_layouts.layouts.size();
   const std::size_t retained_text_capacity =
       compare.visible_layouts.layouts.front().text.capacity();
@@ -2213,11 +2008,6 @@ void TestWorkspaceShellMergeBlameLoadsForResultPane() {
          "merge blame should keep the blame summary metadata");
 }
 
-// QA merge-toolbar (redraw verifier): Save on a merge repainted only its toolbar.
-// The result pane's inline blame is drawn only while it is clean, so the save that
-// cleaned it put an annotation on the caret row that no damage covered -- the
-// editor's Save repaints its pane through the blame invalidation, the merge's and
-// the diff's never called it.
 void TestWorkspaceShellMergeSaveRepaintsTheResultPane() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -2245,7 +2035,6 @@ void TestWorkspaceShellMergeSaveRepaintsTheResultPane() {
 
   Expect(WorkspaceShellTestAccess::SaveTab(shell, 0), "the merge result saves");
   Expect(!merge.result_viewport.dirty(), "and is clean");
-  // What the frame repaints: the save's rects and what preparing it derives.
   const auto damage =
       FrameDamage(shell, canvas, 1280, 720, WorkspaceShellTestAccess::TakePendingRenderInvalidation(shell));
   const SDL_FRect pane = WorkspaceShellTestAccess::ActiveMergeResultRect(shell);
@@ -2257,9 +2046,6 @@ void TestWorkspaceShellMergeSaveRepaintsTheResultPane() {
   Expect(covered, "the save that cleaned the result pane must repaint it (its blame shows only when clean)");
 }
 
-// QA monkey (seed 8, state oracle): comparing an untitled buffer with the
-// clipboard named its tab "compare: Clipboard  ↔  Untitled" -- the control
-// channel's title, prefix and all -- where every other comparison's tab is named.
 void TestWorkspaceShellPathlessComparisonTabIsNamedLikeVsCode() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2279,11 +2065,6 @@ void TestWorkspaceShellPathlessComparisonTabIsNamedLikeVsCode() {
          "the tab is named by its two sides, without the control title's prefix: " + title);
 }
 
-// Soak ba76514b00b9 / 9c030031f234 / a0ca81415037: a file compared with an
-// untitled buffer ("README.md  ↔  Untitled") was labelled "README.md" in the
-// strip -- the left side's name, which the tab only keeps for its syntax --
-// and read as the file's own tab beside it. The right side is the comparison's
-// editable side; with no file there it is named by both sides.
 void TestWorkspaceShellAFileComparedWithAnUntitledBufferIsNamedByBothSides() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2355,10 +2136,6 @@ void TestWorkspaceShellMergeTabUsesFilenameOnlyLabelAndTooltip() {
          "active merge breadcrumbs should keep the relative path");
 }
 
-// A conflicted binary/NUL worktree file must NOT build a text merge tab (the compare
-// path already refuses these). Building one would let the result viewport later save text
-// over binary bytes (TD-2026-07-17A-111). BuildMergeTabEntry classifies the three inputs
-// and OpenMergeEditor returns false when any is binary/too-large/unreadable.
 void TestWorkspaceShellMergeEditorRefusesBinaryInput() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2368,7 +2145,6 @@ void TestWorkspaceShellMergeEditorRefusesBinaryInput() {
   const std::filesystem::path output = root / "result.bin";
   WriteFile(base, "top\nbase\nbottom\n");
   WriteFile(incoming, "top\nincoming\nbottom\n");
-  // Current side carries an embedded NUL — classified as binary, not editable text.
   WriteFile(current, std::string("top\ncur\0rent\nbottom\n", 20));
   WriteFile(output, "top\ncurrent\nbottom\n");
 
@@ -2377,7 +2153,6 @@ void TestWorkspaceShellMergeEditorRefusesBinaryInput() {
   Expect(!WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
          "a binary/NUL merge input must not build a text merge tab");
 
-  // Sanity: with the same paths made all-text, the merge editor opens.
   WriteFile(current, "top\ncurrent\nbottom\n");
   Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
          "an all-text merge input should still open the merge editor");
@@ -2406,10 +2181,6 @@ void TestWorkspaceShellCompareDividerMatchesMarkerWidth() {
          "compare divider should not reserve extra empty space before the right gutter");
 }
 
-// Soak 33efed186772: a diff in a narrow pane (the editor split three ways, 824
-// units wide) put its divider at x 817..829 -- past its pane and past the
-// window. The layout floored the content width at two minimum panes whatever the
-// pane held, and the gutters on top of that ran the divider out of it.
 void TestWorkspaceShellCompareInANarrowPaneStaysInsideIt() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -2427,7 +2198,6 @@ void TestWorkspaceShellCompareInANarrowPaneStaysInsideIt() {
     Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, microide::workspace::EditorSplitOrientation::Vertical),
            "the editor splits");
   }
-  // The diff opens in the focused group: the last, narrowest one.
   Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"), "the diff opens");
   Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(shell), "in the focused pane");
   const SDL_FRect pane = WorkspaceShellTestAccess::ActiveTabSurface(shell);
@@ -2442,10 +2212,6 @@ void TestWorkspaceShellCompareInANarrowPaneStaysInsideIt() {
              std::to_string(surface.right_x + surface.gutter_width + surface.right_width));
 }
 
-// Soak 33efed186772 again, after the above: a pane narrower than the divider
-// and its margins (14 px of a nested split at scale 1.5). The divider still sat
-// 8 px into the pane, past its right edge, and its grab rect -- centered on it
-// and wider than it -- reached past the window.
 void TestWorkspaceShellCompareInAPaneNarrowerThanItsDividerStaysInsideIt() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -2459,7 +2225,6 @@ void TestWorkspaceShellCompareInAPaneNarrowerThanItsDividerStaysInsideIt() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 640, 600);
   WorkspaceShellTestAccess::OpenFile(shell, source);
-  // Split the focused pane until it is a sliver, then open the diff there.
   while (WorkspaceShellTestAccess::ActiveTabSurface(shell).w > 12.0f &&
          WorkspaceShellTestAccess::SplitEditorGroup(shell, microide::workspace::EditorSplitOrientation::Vertical)) {
   }
@@ -2478,8 +2243,6 @@ void TestWorkspaceShellCompareInAPaneNarrowerThanItsDividerStaysInsideIt() {
          "and so does its grab rect: " + std::to_string(grab.x) + ".." + std::to_string(grab.x + grab.w));
 }
 
-// The merge's twin (soak 82935dcbd8bc): three minimum panes floored the width
-// whatever the pane held, and its dividers ran out of a narrow split.
 void TestWorkspaceShellMergeInANarrowPaneStaysInsideIt() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -2511,8 +2274,6 @@ void TestWorkspaceShellMergeInANarrowPaneStaysInsideIt() {
              std::to_string(right));
 }
 
-// The merge in the same sliver: two 16-px dividers and their margins are wider
-// than the pane.
 void TestWorkspaceShellMergeInAPaneNarrowerThanItsDividersStaysInsideIt() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -2618,10 +2379,6 @@ void TestWorkspaceShellComparePaneResizeKeepsWiderPaneTextVisible() {
          "widening the right compare pane should preserve more visible text on the right");
 }
 
-// "Every resize divider answers a double-click by restoring its default size" was
-// implemented for four of the six: the sidebar, right pane, editor split and bottom
-// panel. Compare and merge — the two whose panes you are most likely to have dragged
-// far off balance while reading a diff — had no way back but dragging by hand.
 void TestWorkspaceShellCompareAndMergeDividersResetOnDoubleClick() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -2665,7 +2422,6 @@ void TestWorkspaceShellCompareAndMergeDividersResetOnDoubleClick() {
   merge.left_divider_fraction = 0.15f;
   merge.right_divider_fraction = 0.85f;
   const auto merge_dividers = MergeDividerRectsOf(shell);
-  // Either divider resets both, so one gesture recovers the whole layout.
   Expect(SendMouseDown(shell, merge_dividers[1].x + merge_dividers[1].w * 0.5f,
                        merge_dividers[1].y + merge_dividers[1].h * 0.5f, SDL_BUTTON_LEFT, 2),
          "double-clicking the merge right divider should be handled");
@@ -2677,10 +2433,6 @@ void TestWorkspaceShellCompareAndMergeDividersResetOnDoubleClick() {
   Expect(WorkspaceShellTestAccess::TransientDragTargetIsNone(shell),
          "a merge divider reset must not leave a drag armed behind it");
 
-  // Grabbing a merge divider must hold the resize cursor for the whole gesture.
-  // Dragging necessarily moves the pointer off the thin divider band, and only the
-  // sidebar and bottom-panel drags used to keep their shape through that.
-  // Re-read the geometry: the reset moved both dividers.
   const auto reset_dividers = MergeDividerRectsOf(shell);
   Expect(SendMouseDown(shell, reset_dividers[0].x + reset_dividers[0].w * 0.5f,
                        reset_dividers[0].y + reset_dividers[0].h * 0.5f, SDL_BUTTON_LEFT),
@@ -2792,8 +2544,6 @@ void TestWorkspaceShellCommitPickerDismissesAfterOpeningCompare() {
              WorkspaceShell::OverlayMode::CommitPicker,
          "the open overlay should be the commit picker");
 
-  // The overlay opens immediately in a loading state; wait for the async git
-  // history query to populate the picker before selecting a commit.
   Expect(SettleComparePicker(shell), "the async commit picker query should settle");
 
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
@@ -2826,8 +2576,6 @@ void TestWorkspaceShellComparePickerOpensAsyncAndDropsStaleResult() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
-  // Injected provider: blocks on `release` until the test lets it return, and
-  // returns `call_count` commits so each completion is distinguishable by size.
   std::atomic<bool> release{false};
   std::atomic<int> call_count{0};
   WorkspaceShellTestAccess::SetComparePickerFileHistoryProvider(
@@ -2844,8 +2592,6 @@ void TestWorkspaceShellComparePickerOpensAsyncAndDropsStaleResult() {
         return result;
       });
 
-  // First open: the overlay must appear immediately in a loading state, BEFORE
-  // the (blocked) git query returns. This is the core win of the async change.
   Expect(WorkspaceShellTestAccess::OpenComparePickerForPath(shell, source_a),
          "opening the async commit picker should succeed immediately");
   Expect(WorkspaceShellTestAccess::OverlayVisible(shell) &&
@@ -2857,17 +2603,12 @@ void TestWorkspaceShellComparePickerOpensAsyncAndDropsStaleResult() {
   Expect(WorkspaceShellTestAccess::ComparePickerItemCount(shell) == 0,
          "the picker item list should be empty while loading");
 
-  // Wait until the worker has actually entered the (blocked) first provider call
-  // so the second open queues behind an in-flight job.
   const auto call_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   while (call_count.load() < 1 && std::chrono::steady_clock::now() < call_deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   Expect(call_count.load() >= 1, "the first async history query should have started");
 
-  // Second open supersedes the first (bumps the request generation). When both
-  // complete, the stale first completion must be dropped and only the second
-  // (two commits) applied.
   Expect(WorkspaceShellTestAccess::OpenComparePickerForPath(shell, source_b),
          "opening a second async commit picker should succeed");
   Expect(WorkspaceShellTestAccess::ComparePickerLoading(shell),
@@ -2897,14 +2638,12 @@ void TestWorkspaceShellCompareRecomputeGate() {
          "working-tree comparison should open");
   auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
 
-  // A refresh with no content change must reuse the existing model.
   const std::uint64_t baseline_revision = compare.model_revision;
   WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
   WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
   Expect(compare.model_revision == baseline_revision,
          "no-op refreshes must not rebuild the compare model");
 
-  // A left-content change must rebuild exactly once.
   compare.left_content = compare::MakeCompareText("int gamma() {\n  return 3;\n}\n");
   WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
   Expect(compare.model_revision == baseline_revision + 1,
@@ -2914,15 +2653,11 @@ void TestWorkspaceShellCompareRecomputeGate() {
   Expect(compare.model_revision == after_content,
          "refresh after a rebuild with unchanged content must not rebuild again");
 
-  // Toggling a build option changes the model without a content change.
   compare.build_options.ignore_whitespace = !compare.build_options.ignore_whitespace;
   WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
   Expect(compare.model_revision == after_content + 1,
          "toggling ignore-whitespace must rebuild the compare model");
 
-  // An edit to the editable right pane is detected via the viewport's monotonic
-  // content_revision (no whole-buffer serialize on the no-op path) and rebuilds once;
-  // a subsequent no-op refresh must reuse the model rather than re-serialize + rebuild.
   const std::uint64_t before_right_edit = compare.model_revision;
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "// note "),
          "typing into the editable current-state pane should edit it");
@@ -2935,10 +2670,6 @@ void TestWorkspaceShellCompareRecomputeGate() {
          "no-op refreshes after a right-pane edit must not rebuild the compare model");
 }
 
-// Typing past the right edge of a compare tab's editable side scrolls BOTH panes
-// sideways to keep the caret in view; the edit damaged only the edited row, so
-// every other row of both panes kept its old horizontal offset (QA monkey seed
-// 13). Frame prep repaints the surface when its scroll position moved.
 void TestWorkspaceShellCompareHorizontalScrollRepaintsTheSurface() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2981,10 +2712,6 @@ void TestWorkspaceShellCompareHorizontalScrollRepaintsTheSurface() {
 }
 
 
-// TD-2026-11-11-439: a compare tab in one pane of a split paints, lays out and
-// takes clicks inside that pane. It used to take the whole editor column: the
-// other pane's editor was not drawn, the diff's header and buttons sat under that
-// pane's tab strip, and a click there reached whichever the hit test met first.
 void TestWorkspaceShellCompareInASplitStaysInItsPane() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2994,7 +2721,6 @@ void TestWorkspaceShellCompareInASplitStaysInItsPane() {
   const std::filesystem::path root = temp_dir.path() / "repo";
   const std::filesystem::path source = root / "notes.md";
   const std::filesystem::path other = root / "other.md";
-  // Long enough to scroll, changed throughout so no context collapses away.
   std::string base;
   std::string edited;
   for (int line = 0; line < 240; ++line) {
@@ -3020,8 +2746,6 @@ void TestWorkspaceShellCompareInASplitStaysInItsPane() {
   const std::size_t editor_group = compare_group == 0 ? 1 : 0;
   const SDL_FRect editor_pane = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, editor_group);
 
-  // One canvas throughout: the shell's glyph atlas belongs to the renderer it
-  // first drew with, so a second canvas would paint without text.
   microide::tests::SoftwareCanvas canvas(kWidth, kHeight);
   shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
@@ -3061,7 +2785,6 @@ void TestWorkspaceShellCompareInASplitStaysInItsPane() {
   Expect(changed == 0, "the other pane still shows its own editor, untouched by the diff (" +
                            std::to_string(changed) + " sampled pixels changed)");
 
-  // A click into the editor pane focuses it; the diff stays painted in its pane.
   {
     const float x = editor_pane.x + editor_pane.w * 0.5f;
     const float y = editor_pane.y + editor_pane.h * 0.5f;
@@ -3081,8 +2804,6 @@ void TestWorkspaceShellCompareInASplitStaysInItsPane() {
   Expect(WorkspaceShellTestAccess::RenderCompareSurfaceInvocationCount(shell) == 1,
          "a diff in an unfocused pane still paints there (not the welcome page)");
 
-  // TD-2026-11-13-445: the wheel over the unfocused diff scrolls that diff, and
-  // scrolling is not focusing.
   {
     auto& unfocused_compare = WorkspaceShellTestAccess::ActiveCompareInGroup(shell, compare_group);
     const int scroll_before = unfocused_compare.scroll_row;
@@ -3098,7 +2819,6 @@ void TestWorkspaceShellCompareInASplitStaysInItsPane() {
            "and leaves the focus where it was");
   }
 
-  // And a click into the diff's pane focuses it back, through the diff's own hit test.
   {
     const float x = compare_pane.x + compare_pane.w * 0.25f;
     const float y = compare_pane.y + compare_pane.h * 0.5f;
@@ -3114,10 +2834,6 @@ void TestWorkspaceShellCompareInASplitStaysInItsPane() {
          "a click into an unfocused diff's pane focuses that pane");
 }
 
-// Typing into a compare tab's long line WITHOUT scrolling (the caret mid-line)
-// widens the content, so the horizontal thumb shrinks -- on a strip none of the
-// edited row's damage covers. The thumb stayed at its old width (QA monkey, seed
-// 17). Frame prep diffs the surface's bars as painted.
 void TestWorkspaceShellCompareTypingRepaintsTheHorizontalThumb() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3160,11 +2876,6 @@ void TestWorkspaceShellCompareTypingRepaintsTheHorizontalThumb() {
 }
 
 
-// Two paints of one prepared frame must agree: the redraw verifier paints a frame
-// partially, then in full, and compares. Compare tokenization ran inside paint,
-// capped per call, so on a diff whose visible rows lie past the cap the second
-// paint highlighted rows the first had left plain (QA monkey, commands profile,
-// seed 20). It runs in frame prep now.
 void TestWorkspaceShellComparePaintsOfOneFrameAgree() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3174,8 +2885,6 @@ void TestWorkspaceShellComparePaintsOfOneFrameAgree() {
   const std::filesystem::path root = temp_dir.path() / "repo";
   const std::filesystem::path source = root / "big.cpp";
   std::string before;
-  // ~300 model rows: the visible context at the end lies past one paint's 256-row
-  // tokenizer cap and within two paints', which is where the two disagreed.
   for (int line = 0; line < 150; ++line) {
     before += "// comment line " + std::to_string(line) + "\nint value_" + std::to_string(line) + " = 1;\n";
   }
@@ -3192,11 +2901,9 @@ void TestWorkspaceShellComparePaintsOfOneFrameAgree() {
   Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
          "working-tree comparison should open");
   auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
-  compare.scroll_row = std::numeric_limits<int>::max() / 2;  // clamped to the bottom
+  compare.scroll_row = std::numeric_limits<int>::max() / 2;
   const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
 
-  // One canvas: glyph textures are per renderer, so two canvases differ wherever
-  // there is text.
   microide::tests::SoftwareCanvas canvas(kWidth, kHeight);
   pin_caret();
   const WorkspaceShell::FrameToken token = shell.PrepareFrameOnce(canvas.renderer(), kWidth, kHeight);
@@ -3214,12 +2921,6 @@ void TestWorkspaceShellComparePaintsOfOneFrameAgree() {
 }
 
 
-// The tokenizer's catch-up takes one capped step per frame, so it must SCHEDULE the
-// next frame. Prep's own damage belongs to the frame it prepares; requested there,
-// the catch-up painted its first step and stopped, and rows reached on a later
-// unrelated frame stayed plain on screen (QA monkey, commands profile, seed 61).
-// The presented-frame hook asks for the next step, and the requests stop once
-// caught up.
 void TestWorkspaceShellCompareSyntaxCatchUpSchedulesTheNextFrame() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3229,7 +2930,7 @@ void TestWorkspaceShellCompareSyntaxCatchUpSchedulesTheNextFrame() {
   const std::filesystem::path root = temp_dir.path() / "repo";
   const std::filesystem::path source = root / "big.cpp";
   std::string before;
-  for (int line = 0; line < 150; ++line) {  // visible context past one step's reach
+  for (int line = 0; line < 150; ++line) {
     before += "// comment line " + std::to_string(line) + "\nint value_" + std::to_string(line) + " = 1;\n";
   }
   WriteFile(source, before);
@@ -3265,13 +2966,8 @@ void TestWorkspaceShellCompareSyntaxCatchUpSchedulesTheNextFrame() {
   Expect(frames < 16, "the catch-up stops asking for frames once it has caught up");
 }
 
-// Soak 8cffab44c08e (deterministic, minimized to 20 actions): at a small editor
-// font a diff's collapsed-lines bar is one line tall, shorter than its "Show all"
-// / "Show next 20" buttons, which sat at the bar's top and hung below it. A frame
-// that repainted the bar's row left the overhang's border behind. The buttons
-// stay inside their row.
 void TestCompareCollapsedBarButtonsStayInsideTheirRow() {
-  render::TextRenderer text_renderer;  // backend-less: widths only
+  render::TextRenderer text_renderer;
   for (const float row_height : {10.0f, 15.0f, 16.0f, 24.0f}) {
     const SDL_FRect row{100.0f, 200.0f, 800.0f, row_height};
     const workspace::CollapsedContextActionRects rects =
@@ -3284,12 +2980,8 @@ void TestCompareCollapsedBarButtonsStayInsideTheirRow() {
   }
 }
 
-}  // namespace
+}
 
-// H11/J41: an unreadable or binary working-tree file must NOT open as an editable
-// compare showing "whole file deleted" (which could then save a false empty file).
-// A genuinely-missing working-tree file is a real deletion and still opens (empty).
-// Distinct files per case avoid compare-tab reuse collisions on the same path.
 void TestWorkspaceShellWorkingTreeCompareRejectsBinaryAndUnreadable() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -3307,24 +2999,19 @@ void TestWorkspaceShellWorkingTreeCompareRejectsBinaryAndUnreadable() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
-  // Missing working-tree file: a legitimate deletion -> opens as an (empty) diff.
   std::filesystem::remove(missing_file);
   Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, missing_file, "HEAD", "HEAD"),
          "a missing working-tree file should still open as a whole-file-deleted diff");
 
-  // Binary working-tree file (early AND late NUL): must be refused, not rendered as
-  // deleted/empty text.
   std::string binary_bytes;
-  binary_bytes.push_back('\0');            // early NUL
+  binary_bytes.push_back('\0');
   binary_bytes.append("PNG\r\n\x1a\n binary body ");
-  binary_bytes.push_back('\0');            // late NUL
+  binary_bytes.push_back('\0');
   binary_bytes.append(" trailing");
   WriteFile(binary_file, binary_bytes);
   Expect(!WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, binary_file, "HEAD", "HEAD"),
          "a binary working-tree file must not open as an editable text compare");
 
-  // Unreadable working-tree file: must be refused (not treated as empty). chmod 000
-  // is bypassed by root, so guard the assertion when the harness runs privileged.
   std::error_code ec;
   std::filesystem::permissions(locked_file, std::filesystem::perms::none,
                                std::filesystem::perm_options::replace, ec);
@@ -3341,19 +3028,10 @@ void TestWorkspaceShellWorkingTreeCompareRejectsBinaryAndUnreadable() {
   }
 }
 
-// Regression: syntax highlighting reaches hunks deep in a collapsed large-file
-// diff. The tokenizer window is derived in MODEL space from the visible
-// presentation rows (a collapsed run maps a low presentation index to a high model
-// row), with a continued redraw catching the cumulative tokenizer up. Previously
-// the window used the presentation scroll position, capping tokenization far below
-// the visible model rows, so deep rows drew unhighlighted.
 void TestWorkspaceShellCompareSyntaxReachesDeepCollapsedRows() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
   const std::filesystem::path source = root / "src" / "big.cpp";
-  // A large file whose long middle is unchanged (so it collapses) with edits at the
-  // top and bottom, so the bottom hunk sits at a high MODEL row behind a collapsed
-  // run of a much smaller PRESENTATION height.
   std::string base;
   for (int i = 0; i < 300; ++i) {
     base += "int v" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
@@ -3380,21 +3058,16 @@ void TestWorkspaceShellCompareSyntaxReachesDeepCollapsedRows() {
   Expect(model_row_count > presentation_row_count + 100,
          "the unchanged middle should collapse so model rows far exceed presentation rows");
 
-  // Scroll to the bottom so the deep (high-model-row) hunk is on screen.
   compare.scroll_row = static_cast<int>(presentation_row_count);
 
-  // Render repeatedly to let the per-frame-capped cumulative tokenizer catch up.
   SoftwareCanvas canvas(1280, 720);
   for (int frame = 0; frame < 20; ++frame) {
     shell.Render(canvas.renderer(), 1280, 720);
   }
 
   auto& tokenized_compare = WorkspaceShellTestAccess::ActiveCompare(shell);
-  // (The windows are addressed by each pane's lines: the left pane's last line.)
   Expect(tokenized_compare.left_token_window.frontier() == tokenized_compare.left_line_rows.size(),
          "tokenization reaches the deepest visible line behind the collapsed run");
-  // A deep content row (the bottom v299 change) is highlighted — not left blank.
-  // Scan the tail (the very last model row is the phantom trailing empty line).
   bool deep_row_has_tokens = false;
   const std::size_t tail_start = tokenized_compare.model.rows.size() > 8
                                      ? tokenized_compare.model.rows.size() - 8
@@ -3447,22 +3120,11 @@ void TestWorkspaceShellPlainCompareBuildsStickyEditableTab() {
          "the right pane should be editable when its side is a real file");
   Expect(!compare.model.hunks.empty(), "differing files should produce at least one hunk");
 
-  // The mode is sticky: a derived-state refresh must not re-infer a git mode.
   WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
   Expect(compare.plain_compare && compare.review_mode == microide::compare::CompareReviewMode::Plain,
          "review mode should stay Plain across a derived-state refresh");
 }
 
-// TD-2026-08-06-159: opening a compare tab must not materialize either side of the
-// document as owned lines. Syntax-state detection reads a bounded head (64 lines),
-// and the build used to split the whole left blob into owned strings and ask the
-// right buffer for a whole-document `Snapshot()` to hand that head over — together
-// about a third of a large compare's open, and the snapshot is retained afterwards.
-//
-// Both are invisible in the output, so this pins the two counters that see them:
-// the buffer's snapshot-build count for the right side, and a shebang on line 1
-// with a contradicting extension for the left, which proves the head was actually
-// read rather than the detection quietly skipped.
 void TestWorkspaceShellCompareOpenDoesNotMaterializeEitherSide() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -3491,8 +3153,6 @@ void TestWorkspaceShellCompareOpenDoesNotMaterializeEitherSide() {
 
   auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
   Expect(!compare.model.hunks.empty(), "the fixture must actually differ");
-  // The `.txt` extension says nothing; only the shebang can produce a definition,
-  // so a non-empty id proves the head reached the detector on both sides.
   Expect(compare.left_token_window.StateBefore(0).definition_id != 0,
          "the left side's syntax state must still be detected from its shebang");
   Expect(compare.right_token_window.StateBefore(0).definition_id ==
@@ -3502,9 +3162,6 @@ void TestWorkspaceShellCompareOpenDoesNotMaterializeEitherSide() {
 
 void TestWorkspaceShellPlainCompareBufferSidesAreReadOnly() {
   WorkspaceShell shell;
-  // Buffer (untitled, no path) on the right, clipboard on the left: neither is a
-  // real file, so the compare is read-only even though the right side requested
-  // editability.
   microide::workspace::CompareInput clipboard{
       .content = "one\ntwo\n", .label = "Clipboard", .path = {}, .editable = false};
   microide::workspace::CompareInput buffer{
@@ -3550,7 +3207,6 @@ void TestWorkspaceShellCompareFilesCommandOpensPlainCompare() {
   WriteFile(left_path, "one\n");
   WriteFile(right_path, "TWO\n");
 
-  // No project is opened: compare-files works on arbitrary/outside-project paths.
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::ExecuteAction(
              shell, WorkspaceShell::ActionId::CompareFiles,
@@ -3579,7 +3235,6 @@ void TestWorkspaceShellSelectForCompareThenCompareWithSelected() {
                                                     WorkspaceShell::ActionId::CompareWithSelected),
          "Compare with Selected should be disabled before anything is selected");
 
-  // Right-click file A -> Select for Compare.
   WorkspaceShellTestAccess::OpenTreeContextMenuForPath(shell, microide::workspace::TreeContextTargetKind::File, file_a);
   Expect(WorkspaceShellTestAccess::ExecuteContextMenuAction(
              shell, WorkspaceShell::ActionId::SelectForCompare),
@@ -3587,7 +3242,6 @@ void TestWorkspaceShellSelectForCompareThenCompareWithSelected() {
   Expect(WorkspaceShellTestAccess::HasCompareSelection(shell),
          "selecting a file should stash a compare selection");
 
-  // Right-click file B -> Compare with Selected.
   WorkspaceShellTestAccess::OpenTreeContextMenuForPath(shell, microide::workspace::TreeContextTargetKind::File, file_b);
   Expect(WorkspaceShellTestAccess::ExecuteContextMenuAction(
              shell, WorkspaceShell::ActionId::CompareWithSelected),
@@ -3624,10 +3278,6 @@ void TestWorkspaceShellCompareWithClipboardOpensPlainCompare() {
          "the right pane should be editable when its side is a real file");
 }
 
-// TD-2026-08-13-201: the drag CLAMP reached compare and merge, the two behaviours
-// built on top of it did not. A drag held past the bottom of a diff pane froze
-// the selection at the last visible row, and a double-click there placed a bare
-// caret instead of selecting the word.
 void TestWorkspaceShellCompareDragAutoscrollsAndKeepsGranularity() {
   EnsureDummySdlVideo();
 
@@ -3664,10 +3314,9 @@ void TestWorkspaceShellCompareDragAutoscrollsAndKeepsGranularity() {
   const float row_y = surface.rows_y + surface.line_height * 0.5f;
   const float right_x = surface.right_x + 24.0f;
 
-  // --- granularity: a double-click in the right pane selects the word ---
-  Expect(SendMouseDown(shell, right_x, row_y, SDL_BUTTON_LEFT, /*clicks=*/1),
+  Expect(SendMouseDown(shell, right_x, row_y, SDL_BUTTON_LEFT, 1),
          "the first click should be handled");
-  Expect(SendMouseDown(shell, right_x, row_y, SDL_BUTTON_LEFT, /*clicks=*/2),
+  Expect(SendMouseDown(shell, right_x, row_y, SDL_BUTTON_LEFT, 2),
          "the double-click should be handled");
   auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
   const auto word_selection = compare.right_viewport.selection_range();
@@ -3675,8 +3324,7 @@ void TestWorkspaceShellCompareDragAutoscrollsAndKeepsGranularity() {
          "a double-click in the compare right pane should select a word, not place a caret");
   Expect(SendMouseUp(shell, right_x, row_y, SDL_BUTTON_LEFT), "release should be handled");
 
-  // --- autoscroll: hold the pointer past the bottom of the pane ---
-  Expect(SendMouseDown(shell, right_x, row_y, SDL_BUTTON_LEFT, /*clicks=*/1),
+  Expect(SendMouseDown(shell, right_x, row_y, SDL_BUTTON_LEFT, 1),
          "pressing in the right pane should start a selection");
   Expect(SendMouseMotion(shell, right_x, layout.editor_surface.y + layout.editor_surface.h + 200.0f,
                          SDL_BUTTON_LMASK),
@@ -3692,7 +3340,6 @@ void TestWorkspaceShellCompareDragAutoscrollsAndKeepsGranularity() {
   Expect(SendMouseUp(shell, right_x, row_y, SDL_BUTTON_LEFT), "release should be handled");
 }
 
-// The merge half of TD-2026-08-13-201, on the result pane.
 void TestWorkspaceShellMergeDragAutoscrollsAndKeepsGranularity() {
   EnsureDummySdlVideo();
 
@@ -3724,15 +3371,15 @@ void TestWorkspaceShellMergeDragAutoscrollsAndKeepsGranularity() {
   const float x = result_rect.x + std::min(24.0f, result_rect.w * 0.25f);
   const float y = interaction.result.text.first_line_y + interaction.result.text.line_height * 0.5f;
 
-  Expect(SendMouseDown(shell, x, y, SDL_BUTTON_LEFT, /*clicks=*/1), "first click handled");
-  Expect(SendMouseDown(shell, x, y, SDL_BUTTON_LEFT, /*clicks=*/2), "double-click handled");
+  Expect(SendMouseDown(shell, x, y, SDL_BUTTON_LEFT, 1), "first click handled");
+  Expect(SendMouseDown(shell, x, y, SDL_BUTTON_LEFT, 2), "double-click handled");
   const auto word_selection =
       WorkspaceShellTestAccess::ActiveMerge(shell).result_viewport.selection_range();
   Expect(word_selection.has_value() && word_selection->start.column != word_selection->end.column,
          "a double-click in the merge result pane should select a word, not place a caret");
   Expect(SendMouseUp(shell, x, y, SDL_BUTTON_LEFT), "release handled");
 
-  Expect(SendMouseDown(shell, x, y, SDL_BUTTON_LEFT, /*clicks=*/1), "press handled");
+  Expect(SendMouseDown(shell, x, y, SDL_BUTTON_LEFT, 1), "press handled");
   Expect(SendMouseMotion(shell, x, layout.editor_surface.y + layout.editor_surface.h + 200.0f,
                          SDL_BUTTON_LMASK),
          "dragging below the merge surface should be handled");
@@ -3744,7 +3391,6 @@ void TestWorkspaceShellMergeDragAutoscrollsAndKeepsGranularity() {
   }
   Expect(WorkspaceShellTestAccess::ActiveMerge(shell).scroll_row > scroll_after_motion,
          "holding the pointer past the bottom of a merge must keep scrolling on the wake");
-  // The mirror the layout reads must not be left behind by the wake's scrolling.
   Expect(WorkspaceShellTestAccess::ActiveMerge(shell).scroll_row ==
              static_cast<int>(
                  WorkspaceShellTestAccess::ActiveMerge(shell).result_viewport.scroll_line()),
@@ -3753,10 +3399,6 @@ void TestWorkspaceShellMergeDragAutoscrollsAndKeepsGranularity() {
 }
 
 
-// TD-2026-08-13-200: `editor.wrap` used to be a dead control on the compare and
-// merge surfaces -- the flag never reached their viewports, and everything on
-// them assumed one document line occupies exactly one screen row. These pin the
-// row model that replaced that assumption.
 void TestWorkspaceShellCompareWordWrapExpandsRowsAndKeepsPanesAligned() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -3785,8 +3427,6 @@ void TestWorkspaceShellCompareWordWrapExpandsRowsAndKeepsPanesAligned() {
   Expect(!compare.right_viewport.soft_wrap(),
          "the compare right pane starts unwrapped");
 
-  // The setting has to reach the compare tab's own viewport: the all-tabs walk
-  // used to skip every tab that was not a plain editor tab.
   Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.wrap", "word"),
          "editor.wrap should be settable");
   Expect(compare.right_viewport.soft_wrap(),
@@ -3798,9 +3438,6 @@ void TestWorkspaceShellCompareWordWrapExpandsRowsAndKeepsPanesAligned() {
   Expect(wrapped_rows > presentation_rows,
          "wrapping a 900-column line must add on-screen rows");
 
-  // Alignment: the presentation row holding the two long lines occupies the SAME
-  // rows on both sides, and every on-screen row maps back to exactly one
-  // presentation row in order.
   std::size_t previous = 0;
   for (std::size_t visual = 0; visual < wrapped_rows; ++visual) {
     const std::size_t presentation =
@@ -3817,7 +3454,6 @@ void TestWorkspaceShellCompareWordWrapExpandsRowsAndKeepsPanesAligned() {
            "a presentation row's first on-screen row must map back to it");
   }
 
-  // Horizontal scrolling is gone while wrapped, exactly as in the editor.
   const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
   Expect(!surface.show_horizontal,
          "a wrapped compare surface must not offer a horizontal scrollbar");
@@ -3868,9 +3504,6 @@ void TestWorkspaceShellMergeWordWrapExpandsRows() {
          "a wrapped merge surface must not offer a horizontal scrollbar");
 }
 
-// An edit action (not typing, not paste, not undo) on a compare tab's right pane
-// must rebuild the diff model: the surface paints its right text FROM that model,
-// so an action that only mutated the buffer left the pre-edit text on screen.
 void TestWorkspaceShellCompareEditActionRefreshesDiffModel() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -3891,8 +3524,6 @@ void TestWorkspaceShellCompareEditActionRefreshesDiffModel() {
   Expect(compare.right_editable, "the working-tree compare pane should be editable");
   compare.right_viewport.MoveCursorTo(0, 0);
 
-  // What the surface would paint down the right pane, in order: the diff model's
-  // right side, NOT the viewport. The two must agree, or the edit is invisible.
   const auto painted_right_side = [&compare]() {
     std::string joined;
     for (const auto& row : compare.model.rows) {
@@ -3907,8 +3538,6 @@ void TestWorkspaceShellCompareEditActionRefreshesDiffModel() {
   Expect(initial_right_side.rfind("alpha\nbravo\ncharlie", 0) == 0,
          "the diff model should start out agreeing with the working-tree buffer");
 
-  // MoveLineDown goes through the shared action layer (ActiveEditableViewport),
-  // which reaches this pane -- the same layer that serves the editor surface.
   Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::MoveLineDown, {}),
          "MoveLineDown should be dispatched to the compare tab's editable pane");
   Expect(compare.right_viewport.lines().LineView(0) == "bravo",
@@ -3929,23 +3558,7 @@ std::string Quoted(std::string_view text) {
   return out + "\"";
 }
 
-// EVERY action, not the one somebody remembered. The compare surface paints its
-// right pane from the DIFF MODEL, not from the viewport, so an edit action that
-// mutates the buffer and does not rebuild the model leaves the pane showing the
-// pre-edit text until an unrelated event happens to refresh it. Three action
-// sites had each grown their own copy of that rebuild and every other edit
-// action simply did not do it (TD-2026-08-13-200); the rebuild is centralized in
-// NotifyEditorViewportChanged now, and the test that pins it exercises exactly
-// one verb.
-//
-// This walks the whole command registry instead and asserts the invariant that
-// does not need a list: IF an action changed the editable pane's buffer, THEN
-// the diff model's right side agrees with it afterwards. A new edit action is
-// covered the day it is registered, with nothing to remember.
 void TestWorkspaceShellCompareEveryActionKeepsTheDiffModelInSync() {
-  // Actions that deliberately leave the compare tab -- they replace or close the
-  // active tab, so "the compare tab's model agrees with its viewport" is not a
-  // question about them. Everything else runs.
   const std::vector<WorkspaceShell::ActionId> skipped = {
       WorkspaceShell::ActionId::CloseActiveTab,
       WorkspaceShell::ActionId::CloseOtherTabs,
@@ -3955,18 +3568,10 @@ void TestWorkspaceShellCompareEveryActionKeepsTheDiffModelInSync() {
       WorkspaceShell::ActionId::CloseGroup,
       WorkspaceShell::ActionId::ProjectClose,
       WorkspaceShell::ActionId::Quit,
-      // These pop a NATIVE OS dialog (SDL's XDG-portal file chooser). A test must
-      // never open one -- and headless it also leaks SDL's per-call portal state,
-      // because with no portal to answer, SDL never runs the callback that frees
-      // it. That leak is what made the ASAN lane fail with a stack of nothing but
-      // SDL_malloc; with fast_unwind_on_malloc=0 these two frames appear.
       WorkspaceShell::ActionId::Open,
       WorkspaceShell::ActionId::ProjectOpen,
   };
 
-  // ONE repository for the whole sweep: a git init + commit per action costs more
-  // than everything else here put together. Each action still gets a fresh shell
-  // and a rewritten working-tree file, which is what isolates them.
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
   const std::filesystem::path source = root / "src" / "main.cpp";
@@ -3989,16 +3594,10 @@ void TestWorkspaceShellCompareEveryActionKeepsTheDiffModelInSync() {
                         std::string(spec.command_name));
       return;
     }
-    // Re-resolved on every use, never held. An action that opens a tab pushes onto
-    // the group's tab vector, and a reallocation there invalidates any reference
-    // into it -- a use-after-free only ASAN sees, and the exact hazard a sweep
-    // that runs EVERY registered action walks into.
     const auto tab = [&shell]() { return WorkspaceShellTestAccess::ActiveCompareOrNull(shell); };
     Expect(tab() != nullptr && tab()->right_editable, "the working-tree pane is editable");
-    // A caret in the middle of the buffer with a selection, so the line ops, the
-    // clipboard verbs and the selection verbs all have something to act on.
     tab()->right_viewport.MoveCursorTo(1, 2);
-    tab()->right_viewport.MoveCursorTo(2, 3, /*extend_selection=*/true);
+    tab()->right_viewport.MoveCursorTo(2, 3, true);
 
     const auto pane_text = [&tab]() {
       std::string joined;
@@ -4010,8 +3609,6 @@ void TestWorkspaceShellCompareEveryActionKeepsTheDiffModelInSync() {
       }
       return joined;
     };
-    // What the surface would PAINT down the right pane: the diff model's own
-    // right-side text, in row order.
     const auto painted_text = [&tab]() {
       std::string joined;
       const auto* compare = tab();
@@ -4033,15 +3630,12 @@ void TestWorkspaceShellCompareEveryActionKeepsTheDiffModelInSync() {
 
     WorkspaceShellTestAccess::ExecuteAction(shell, spec.id, {});
 
-    // The action may have swapped the active tab even though it is not in the
-    // skip list (opening a picker, say); only judge it while a compare tab is
-    // still the one in front.
     if (tab() == nullptr) {
       continue;
     }
     const std::string after = pane_text();
     if (after == before) {
-      continue;  // not an edit action for this caret; nothing to require
+      continue;
     }
     ++mutating_actions;
     const std::string painted = painted_text();
@@ -4051,22 +3645,12 @@ void TestWorkspaceShellCompareEveryActionKeepsTheDiffModelInSync() {
                "pane holds " +
                Quoted(after) + " and the surface would paint " + Quoted(painted));
   }
-  // Vacuity guard: if nothing in the registry edited the pane, the sweep asserted
-  // nothing at all -- a disabled capability, a caret with no selection, or a
-  // dispatch that stopped reaching this surface.
   Expect(mutating_actions >= 8,
          "the sweep must have found actions that actually edit the compare pane, found "
          "only " +
              std::to_string(mutating_actions));
 }
 
-// Ctrl+D and the box gesture resolve through `ActiveEditableViewport()`, which IS
-// the compare tab's right pane -- so a multi-caret set on a compare tab is
-// reachable, edits every occurrence, and until this test existed was painted at
-// exactly one of them. The pane runs its own row loop (TD-2026-08-13-206) rather
-// than the editor's renderer, and that loop knew only about the primary caret and
-// the primary selection. Text changing where there is no caret is not a cosmetic
-// gap; it is the user editing blind.
 void TestWorkspaceShellCompareMultiCaretIsPainted() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -4089,18 +3673,11 @@ void TestWorkspaceShellCompareMultiCaretIsPainted() {
   Expect(compare != nullptr && compare->right_editable,
          "the working-tree pane should be editable");
 
-  // The caret BLINKS: `CaretVisibleNow()` is a function of wall-clock time since
-  // the last blink reset, so a pixel test that renders at the wrong moment sees no
-  // caret at all. It cost a UBSAN-lane failure the day this test landed -- the
-  // slower build simply crossed into an off phase. Turn blinking off so a caret is
-  // solid whenever it is drawn at all.
   Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "editor.caret_blink.enabled",
                                                             "false"),
          "the caret blink setting should be settable");
 
   const auto theme = microide::render::MakeDefaultTheme();
-  // Count the rows carrying a caret-coloured pixel down the right pane's text
-  // column. One row per caret is the whole claim.
   const auto rows_with_a_caret = [&]() {
     SoftwareCanvas canvas(1280, 720);
     shell.Render(canvas.renderer(), 1280, 720);
@@ -4133,8 +3710,6 @@ void TestWorkspaceShellCompareMultiCaretIsPainted() {
   compare->right_viewport.MoveCursorTo(0, 1);
   Expect(rows_with_a_caret() == 1, "one caret paints on one row to start with");
 
-  // Ctrl+D three times: the word, then the occurrence on each of the next two
-  // lines.
   for (int press = 0; press < 3; ++press) {
     Expect(WorkspaceShellTestAccess::ExecuteAction(
                shell, WorkspaceShell::ActionId::AddCursorAtNextMatch, {}),
@@ -4149,8 +3724,6 @@ void TestWorkspaceShellCompareMultiCaretIsPainted() {
          "every caret must be painted, not just the primary: only " +
              std::to_string(rows_with_a_caret()) + " of 3 rows carried one");
 
-  // And the edit really does reach all three, which is what makes an unpainted
-  // caret dangerous rather than untidy.
   compare->right_viewport.InsertText("X");
   Expect(std::string(compare->right_viewport.lines().LineView(0)) == "X aaa" &&
              std::string(compare->right_viewport.lines().LineView(1)) == "X bbb" &&
@@ -4315,4 +3888,4 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareUnstagesRightAfterAStage);
 }
 
-}  // namespace microide::tests
+}

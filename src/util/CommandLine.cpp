@@ -8,7 +8,7 @@ bool IsAsciiSpace(char ch) {
   return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\f' || ch == '\v';
 }
 
-}  // namespace
+}
 
 std::vector<std::string> SplitCommandLine(std::string_view text) {
   std::vector<std::string> words;
@@ -29,7 +29,7 @@ std::vector<std::string> SplitCommandLine(std::string_view text) {
       for (++i; i < text.size() && text[i] != '\''; ++i) {
         word.push_back(text[i]);
       }
-      continue;  // an unterminated quote ends the word at end-of-input
+      continue;
     }
     if (ch == '"') {
       for (++i; i < text.size() && text[i] != '"'; ++i) {
@@ -53,4 +53,4 @@ std::vector<std::string> SplitCommandLine(std::string_view text) {
   return words;
 }
 
-}  // namespace microide::util
+}

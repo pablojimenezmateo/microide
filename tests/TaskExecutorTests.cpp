@@ -84,8 +84,6 @@ void TestTaskExecutorCancelsActiveWorkAndDropsQueuedTasks() {
          "task executor should remain reusable after cancelling earlier work");
 }
 
-// TD-2026-07-16-09: a task that throws must not terminate the process or hang
-// WaitForIdle; the worker must keep draining and later tasks must still run.
 void TestTaskExecutorThrowingTaskDoesNotKillWorker() {
   TaskExecutor executor;
   std::atomic<bool> normal_ran = false;
@@ -94,24 +92,19 @@ void TestTaskExecutorThrowingTaskDoesNotKillWorker() {
       [&](const CancellationToken&) { throw std::runtime_error("boom from a task"); });
   executor.Submit([&](const CancellationToken&) { normal_ran.store(true); });
 
-  executor.WaitForIdle();  // must return despite the throwing task
+  executor.WaitForIdle();
   Expect(normal_ran.load(),
          "a task submitted after a throwing task must still run (worker survived)");
 }
 
-// TD-2026-07-17A-005: a keyed (coalescing) submit must drop still-queued work
-// for the same key so a superseding request replaces obsolete queued tasks
-// instead of leaving them to wake the worker only to early-out on staleness.
 void TestTaskExecutorCoalescesQueuedTasksByKey() {
-  TaskExecutor executor;  // single worker: keeps later submits queued behind one
+  TaskExecutor executor;
   std::atomic<bool> started = false;
   std::atomic<bool> gate = false;
   std::atomic<int> stale_runs = 0;
   std::atomic<int> latest_runs = 0;
   std::atomic<bool> other_ran = false;
 
-  // Occupy the single worker so subsequent submits sit in the queue where
-  // coalescing can act on them.
   executor.Submit([&](const CancellationToken&) {
     started.store(true);
     while (!gate.load()) {
@@ -125,7 +118,6 @@ void TestTaskExecutorCoalescesQueuedTasksByKey() {
   }
   Expect(started.load(), "blocker task should occupy the worker before we queue coalescing work");
 
-  // Two superseded "file:A" tasks then the latest; only the latest survives.
   executor.Submit("file:A", [&](const CancellationToken& token) {
     if (token.IsCancellationRequested()) return;
     stale_runs.fetch_add(1);
@@ -135,7 +127,6 @@ void TestTaskExecutorCoalescesQueuedTasksByKey() {
     stale_runs.fetch_add(1);
   });
   executor.Submit("file:A", [&](const CancellationToken&) { latest_runs.fetch_add(1); });
-  // A different key must not be coalesced away.
   executor.Submit("file:B", [&](const CancellationToken&) { other_ran.store(true); });
 
   gate.store(true);
@@ -148,7 +139,7 @@ void TestTaskExecutorCoalescesQueuedTasksByKey() {
   Expect(other_ran.load(), "a task with a different coalesce key must not be dropped");
 }
 
-}  // namespace
+}
 
 void RegisterTaskExecutorTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TaskExecutor/ThrowingTaskDoesNotKillWorker",
@@ -161,4 +152,4 @@ void RegisterTaskExecutorTests(std::vector<TestCase>& tests) {
           TestTaskExecutorCoalescesQueuedTasksByKey);
 }
 
-}  // namespace microide::tests
+}

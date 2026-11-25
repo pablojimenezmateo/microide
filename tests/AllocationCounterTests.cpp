@@ -27,10 +27,10 @@ void TestAllocationCounterTracksDelta() {
 #endif
 }
 
-}  // namespace
+}
 
 void RegisterAllocationCounterTests(std::vector<TestCase>& tests) {
   AddTest(tests, "AllocationCounter/TracksDelta", TestAllocationCounterTracksDelta);
 }
 
-}  // namespace microide::tests
+}

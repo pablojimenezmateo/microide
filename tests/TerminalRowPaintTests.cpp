@@ -1,13 +1,3 @@
-// What one terminal row paints (workspace/render/TerminalRowPaint).
-//
-// The selection used to paint the theme's hover tint under the theme's text
-// colour: barely visible, and it erased the output's own colours -- red text went
-// grey and a coloured background vanished inside it. These pin the replacement:
-// a wash composited over each cell's own background, the cell's foreground kept
-// (moved only as far as legibility needs), the line break of a row the selection
-// runs past washed to the pane's edge, and a double-width glyph emphasized whole
-// exactly when the copy takes it.
-
 #include "TestSupport.h"
 
 #include <cstddef>
@@ -71,7 +61,6 @@ TerminalLine MakeLine(std::string_view text) {
   return line;
 }
 
-// The fill covering `column`, if any (none: the base colour shows).
 std::optional<SDL_Color> FillAt(const TerminalRowPaintPlan& plan, std::size_t column) {
   for (const auto& fill : plan.fills) {
     if (column >= fill.begin && column < fill.end) {
@@ -98,7 +87,6 @@ TerminalRowEmphasis Selecting(std::size_t begin, std::size_t end, bool runs_past
   return emphasis;
 }
 
-// The reported case: `printf '\e[31mred\e[0m'`, selected, stayed red.
 void TestSelectedTextKeepsItsOwnColour() {
   TerminalLine line = MakeLine("red plain");
   for (std::size_t i = 0; i < 3; ++i) {
@@ -120,8 +108,6 @@ void TestSelectedTextKeepsItsOwnColour() {
   Expect(plain.has_value() && !Same(*plain, *red), "the plain text keeps its own colour");
 }
 
-// A coloured background is washed, not replaced: `\e[42m` inside a selection
-// still reads as green-ish, and differs from a selected default cell.
 void TestSelectionWashesAColouredBackground() {
   TerminalLine line = MakeLine("ab");
   line.cells[0].style.background = Rgba(kGreen);
@@ -135,8 +121,6 @@ void TestSelectionWashesAColouredBackground() {
          "and differs from a selected default cell");
 }
 
-// Nothing is drawn for the colour the pane body already has: an unemphasized
-// default row emits no fill at all.
 void TestPlainRowEmitsNoFills() {
   TerminalRowPaintPlan plan;
   PlanTerminalRow(MakeLine("just text   "), 40, TerminalRowEmphasis{}, Palette(), plan);
@@ -147,12 +131,9 @@ void TestPlainRowEmitsNoFills() {
              (plan.text_runs.empty() ? std::string() : std::string(plan.RunText(plan.text_runs[0]))) + "]");
 }
 
-// A row the selection continues past has its line break selected: the wash runs
-// to the pane's edge, even past the row's cells and on an empty row. The last
-// row of the selection stops where the selection does.
 void TestSelectionRunningPastARowWashesToTheEdge() {
   TerminalRowPaintPlan plan;
-  PlanTerminalRow(MakeLine("short"), 40, Selecting(2, 0, /*runs_past=*/true), Palette(), plan);
+  PlanTerminalRow(MakeLine("short"), 40, Selecting(2, 0, true), Palette(), plan);
   const SDL_Color wash = render::CompositeOver(kSelection, kBackground);
   Expect(!FillAt(plan, 1).has_value(), "before the selection: no fill");
   Expect(FillAt(plan, 2).has_value() && FillAt(plan, 39).has_value() && Same(*FillAt(plan, 39), wash),
@@ -160,7 +141,7 @@ void TestSelectionRunningPastARowWashesToTheEdge() {
   Expect(!FillAt(plan, 40).has_value(), "and not past the pane");
   Expect(plan.fills.size() == 1, "one coalesced fill, got " + std::to_string(plan.fills.size()));
 
-  PlanTerminalRow(TerminalLine{}, 30, Selecting(0, 0, /*runs_past=*/true), Palette(), plan);
+  PlanTerminalRow(TerminalLine{}, 30, Selecting(0, 0, true), Palette(), plan);
   Expect(plan.fills.size() == 1 && plan.fills[0].begin == 0 && plan.fills[0].end == 30,
          "an empty row inside a selection is washed across");
 
@@ -169,13 +150,11 @@ void TestSelectionRunningPastARowWashesToTheEdge() {
          "the selection's last row stops at its end column");
 }
 
-// Hidden text (SGR 8) stays hidden when selected; a foreground that would vanish
-// into the wash is pulled to a legible one.
 void TestEmphasisKeepsHiddenHiddenAndLowContrastLegible() {
   TerminalLine line = MakeLine("hx");
   line.cells[0].style.set(terminal::cell_attr::kHidden, true);
   const SDL_Color wash = render::CompositeOver(kSelection, kBackground);
-  line.cells[1].style.foreground = Rgba(wash);  // exactly the washed background
+  line.cells[1].style.foreground = Rgba(wash);
   TerminalRowPaintPlan plan;
   PlanTerminalRow(line, 10, Selecting(0, 2), Palette(), plan);
   const auto hidden = TextColorAt(plan, 0);
@@ -185,17 +164,13 @@ void TestEmphasisKeepsHiddenHiddenAndLowContrastLegible() {
          "a foreground equal to the wash is made legible");
 }
 
-// A double-width glyph is emphasized whole, and exactly when the copy takes it:
-// the copy keys on the lead cell (the trailing half has no text).
 void TestWideGlyphIsEmphasizedWithItsLead() {
   TerminalLine line = MakeLine("a  b");
-  line.cells[1].SetUtf8("\xe4\xb8\xad");  // 中, lead
+  line.cells[1].SetUtf8("\xe4\xb8\xad");
   line.cells[2].style.set(terminal::cell_attr::kWideTrailing, true);
   const std::vector<TerminalLine> lines{line};
   TerminalRowPaintPlan plan;
 
-  // Selection [2, 4): starts on the trailing half. The copy leaves the glyph out,
-  // so neither half is washed.
   PlanTerminalRow(line, 10, Selecting(2, 4), Palette(), plan);
   const std::string copy_from_trailing = workspace::ExtractTerminalSelectionText(
       lines, TerminalSelectionBounds{.start = {0, 2}, .end = {0, 4}});
@@ -204,8 +179,6 @@ void TestWideGlyphIsEmphasizedWithItsLead() {
   Expect(!FillAt(plan, 1).has_value() && !FillAt(plan, 2).has_value(),
          "so neither half of the glyph is washed");
 
-  // Selection [0, 2): ends on the trailing half. The copy takes the glyph, so
-  // both halves are washed.
   PlanTerminalRow(line, 10, Selecting(0, 2), Palette(), plan);
   const std::string copy_to_trailing = workspace::ExtractTerminalSelectionText(
       lines, TerminalSelectionBounds{.start = {0, 0}, .end = {0, 2}});
@@ -215,7 +188,6 @@ void TestWideGlyphIsEmphasizedWithItsLead() {
          "so both halves of the glyph are washed");
 }
 
-// A find hit is a wash too, the current one stronger; the selection outranks it.
 void TestFindMatchesWashAndSelectionOutranksThem() {
   const TerminalLine line = MakeLine("foo foo foo");
   const std::vector<terminal::TerminalSearchMatch> matches{
@@ -239,12 +211,6 @@ void TestFindMatchesWashAndSelectionOutranksThem() {
   Expect(!FillAt(plan, 3).has_value(), "the blank between matches is not washed");
 }
 
-// The row slice of a selection, swept: a column is selected on a row exactly when
-// TerminalSelectionContainsCell says so, and the row is washed past its end
-// exactly when the selection continues on the next row.
-// An underline takes its SGR 58 colour and shape, and strokes coalesce only
-// over cells that agree on both; a strikethrough keeps the text's colour, and a
-// cell with no colour of its own underlines in its text's.
 void TestUnderlinesTakeTheirColourAndShape() {
   using microide::terminal::TerminalUnderlineColor;
   using microide::terminal::TerminalUnderlineVariant;
@@ -259,7 +225,7 @@ void TestUnderlinesTakeTheirColourAndShape() {
     line.cells[i].style.set_underline_variant(TerminalUnderlineVariant::Curly);
     line.cells[i].extra = 3;
   }
-  line.cells[2].extra = 4;  // same shape, another colour
+  line.cells[2].extra = 4;
   line.cells[3].style.set_underline_variant(TerminalUnderlineVariant::Dashed);
   line.cells[3].extra = 4;
   line.cells[4].style.attrs = attr::kUnderline | attr::kStrikethrough;
@@ -290,9 +256,6 @@ void TestUnderlinesTakeTheirColourAndShape() {
          "without SGR 58 the underline is the text's colour");
 }
 
-// SGR 1 / 3 text is drawn in its face, so a glyph run ends where the face
-// changes, and knows the cells it covers (a face whose advance is not the grid's
-// is placed cell by cell).
 void TestTextRunsSplitOnTheFace() {
   using microide::render::FontStyle;
   namespace attr = microide::terminal::cell_attr;
@@ -322,14 +285,9 @@ void TestTextRunsSplitOnTheFace() {
   Expect(r[4].face == FontStyle::Regular && plan.RunText(r[4]) == "g" && r[4].end == 7, "and regular again");
 }
 
-// A symbol a fallback font draws wider than its cell needs the blank cell after
-// it in its own run: the text backend lets a glyph's ink run into blank cells of
-// the string it draws, and nothing past the string's end. Claude Code prints its
-// `⏺` in a colour of its own, so the run held the circle alone and the circle was
-// sheared off at its cell edge.
 void TestASymbolRunKeepsTheBlankCellAfterIt() {
   TerminalLine line = MakeLine("  done");
-  line.cells[0].SetUtf8("\xE2\x8F\xBA");  // U+23FA, one cell
+  line.cells[0].SetUtf8("\xE2\x8F\xBA");
   line.cells[0].style.foreground = Rgba(kRed);
   TerminalRowPaintPlan plan;
   PlanTerminalRow(line, 40, TerminalRowEmphasis{}, Palette(), plan);
@@ -337,14 +295,13 @@ void TestASymbolRunKeepsTheBlankCellAfterIt() {
          "the circle's run keeps the blank cell after it: [" +
              (plan.text_runs.empty() ? std::string() : std::string(plan.RunText(plan.text_runs.front()))) + "]");
 
-  // Only one, and only for a symbol: plain text keeps dropping its trailing blanks.
   TerminalLine ascii = MakeLine("ab    ");
   TerminalRowPaintPlan ascii_plan;
   PlanTerminalRow(ascii, 40, TerminalRowEmphasis{}, Palette(), ascii_plan);
   Expect(ascii_plan.text_runs.size() == 1 && ascii_plan.RunText(ascii_plan.text_runs.front()) == "ab",
          "ASCII text drops its trailing blanks");
   TerminalLine trailing = MakeLine("     ");
-  trailing.cells[0].SetUtf8("\xE2\x9C\xB3");  // U+2733 then blanks to the end
+  trailing.cells[0].SetUtf8("\xE2\x9C\xB3");
   TerminalRowPaintPlan trailing_plan;
   PlanTerminalRow(trailing, 40, TerminalRowEmphasis{}, Palette(), trailing_plan);
   Expect(trailing_plan.text_runs.size() == 1 &&
@@ -379,7 +336,7 @@ void TestRowSelectionEmphasisMatchesContainsCell() {
          "no selection, no selected columns");
 }
 
-}  // namespace
+}
 
 void RegisterTerminalRowPaintTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalRowPaint/SelectedTextKeepsItsOwnColour", TestSelectedTextKeepsItsOwnColour);
@@ -400,4 +357,4 @@ void RegisterTerminalRowPaintTests(std::vector<TestCase>& tests) {
           TestRowSelectionEmphasisMatchesContainsCell);
 }
 
-}  // namespace microide::tests
+}

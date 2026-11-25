@@ -169,9 +169,6 @@ SidebarMouseCoordinator& WorkspaceShell::MakeSidebarMouseCoordinator() {
                 OpenFile(path);
                 context_.current_project_state.surface.focus = FocusTarget::Editor;
                 const EditorGroup& target = context_.current_project_state.focused_group();
-                // The file is the pane's active tab now. Beside others, it moves out
-                // into the new pane; as the pane's only tab, the pane is split with a
-                // second view of it (and turned to the side the drop asked for).
                 if (target.open_tabs.size() >= 2) {
                   return tabs.MoveTabToNewGroup(group, target.active_tab_index, group, orientation, insert_before);
                 }
@@ -192,7 +189,7 @@ SidebarMouseCoordinator& WorkspaceShell::MakeSidebarMouseCoordinator() {
                 std::string refusal =
                     MakePathMutationCoordinator(editor_tabs, prompt_surfaces).PastePath(source, cut, folder);
                 if (!refusal.empty()) {
-                  Notify(NotificationService::Tone::Warning, refusal);  // a drop has no other voice
+                  Notify(NotificationService::Tone::Warning, refusal);
                 }
                 return refusal;
               },
@@ -206,4 +203,4 @@ SidebarMouseCoordinator& WorkspaceShell::MakeSidebarMouseCoordinator() {
   return *glue_->sidebar_mouse_coordinator;
 }
 
-}  // namespace microide::workspace
+}

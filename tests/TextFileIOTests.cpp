@@ -21,7 +21,6 @@ using microide::util::ReadTextFile;
 using microide::util::ReadTextFileClassified;
 using microide::util::TextFileReadStatus;
 
-// A normal small text file round-trips.
 void TestReadTextFileRoundTrip() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "hello.txt";
@@ -32,8 +31,6 @@ void TestReadTextFileRoundTrip() {
   Expect(*content == "line one\nline two\n", "content should round-trip verbatim");
 }
 
-// Binary / NUL-laden content is returned as bytes (classification happens later);
-// the reader itself must not crash or truncate at the NUL.
 void TestReadTextFileAcceptsBinaryBytes() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "binary.bin";
@@ -48,9 +45,6 @@ void TestReadTextFileAcceptsBinaryBytes() {
   Expect(content->size() == bytes.size(), "all bytes including NULs should be preserved");
 }
 
-// The OOM guard: a file whose reported size exceeds the cap is refused before any
-// allocation. A sparse file (resize_file) gives us the large logical size without
-// writing gigabytes to disk.
 void TestReadTextFileRejectsOversize() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "huge.txt";
@@ -63,8 +57,6 @@ void TestReadTextFileRejectsOversize() {
   Expect(!content.has_value(), "an oversize file must be refused, not allocated");
 }
 
-// Search reader: normal file reads, NUL-containing file is rejected as binary,
-// and an oversize file is skipped rather than crashing the worker.
 void TestReadFileForTextSearchGuards() {
   TemporaryDirectory temp_dir;
 
@@ -86,17 +78,13 @@ void TestReadFileForTextSearchGuards() {
   Expect(!ReadFileForTextSearch(huge_path, out), "an oversize file must be skipped");
 }
 
-// The explicit max_bytes parameter caps the read at the boundary, and the search
-// default (kMaxSearchFileBytes) is tighter than the whole-file cap so N search
-// workers cannot together hold multiple gigabytes. Uses a tiny cap so the test is
-// deterministic and cheap (no gigabyte allocations).
 void TestReadFileForTextSearchRespectsMaxBytes() {
   static_assert(microide::util::kMaxSearchFileBytes < kMaxTextFileBytes,
                 "search cap must be tighter than the whole-file cap");
 
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "capped.txt";
-  const std::string content(64, 'x');  // 64 bytes
+  const std::string content(64, 'x');
   WriteFile(path, content);
 
   std::string out;
@@ -106,9 +94,6 @@ void TestReadFileForTextSearchRespectsMaxBytes() {
   Expect(!ReadFileForTextSearch(path, out, 63), "a file one byte over the cap is skipped");
 }
 
-// H11/J41: the classifying reader distinguishes absent, unreadable, binary, and
-// oversized files so callers (e.g. compare's working-tree side) map only true
-// absence to empty content instead of masking a real error as a deleted file.
 void TestReadTextFileClassifiedDistinguishesCases() {
   TemporaryDirectory temp_dir;
 
@@ -126,7 +111,6 @@ void TestReadTextFileClassifiedDistinguishesCases() {
   Expect(missing.content.empty() && !missing.is_error(),
          "Missing is an empty, non-error state (a legitimate deleted side)");
 
-  // Binary: early AND late NUL bytes (J41) must both classify as Binary.
   const std::filesystem::path early_nul = temp_dir.path() / "early.bin";
   WriteFile(early_nul, std::string("\0abcdef", 7));
   Expect(ReadTextFileClassified(early_nul).status == TextFileReadStatus::Binary,
@@ -147,8 +131,6 @@ void TestReadTextFileClassifiedDistinguishesCases() {
   Expect(huge.status == TextFileReadStatus::TooLarge && huge.is_error(),
          "an oversize file classifies as TooLarge and is an error state");
 
-  // Unreadable: a file that exists but cannot be opened. chmod 000 is bypassed by
-  // root, so guard the assertion when the harness runs privileged.
   const std::filesystem::path locked_path = temp_dir.path() / "locked.txt";
   WriteFile(locked_path, "secret");
   std::filesystem::permissions(locked_path, std::filesystem::perms::none,
@@ -162,20 +144,14 @@ void TestReadTextFileClassifiedDistinguishesCases() {
       Expect(locked.status == TextFileReadStatus::Unreadable && locked.is_error(),
              "an existing but unreadable file classifies as Unreadable, not Missing");
     }
-    // Restore permissions so the temp dir can be cleaned up.
     std::filesystem::permissions(locked_path, std::filesystem::perms::owner_all,
                                  std::filesystem::perm_options::replace, ec);
   }
 }
 
-// TD-2026-07-17-039: every text-read entry point must reject a non-regular path
-// (directory, FIFO, device) BEFORE opening it. Opening a special file with
-// ifstream can block on open/seek before the size guard runs, so the read must
-// fail cleanly and quickly on a directory everywhere, and on a FIFO on POSIX.
 void TestReadTextFileRejectsNonRegularFiles() {
   TemporaryDirectory temp_dir;
 
-  // A directory is a non-regular path on every platform.
   const std::filesystem::path dir_path = temp_dir.path() / "a_directory";
   std::error_code ec;
   std::filesystem::create_directory(dir_path, ec);
@@ -187,7 +163,6 @@ void TestReadTextFileRejectsNonRegularFiles() {
   std::string out;
   Expect(!ReadFileForTextSearch(dir_path, out), "the search reader must reject a directory");
 
-  // A FIFO is the canonical block-on-open hazard. mkfifo is POSIX-only.
   const std::filesystem::path fifo_path = temp_dir.path() / "a_fifo";
   if (::mkfifo(fifo_path.c_str(), 0600) == 0) {
     Expect(!ReadTextFile(fifo_path).has_value(),
@@ -200,8 +175,6 @@ void TestReadTextFileRejectsNonRegularFiles() {
   }
 }
 
-// TD-2026-07-17A-024: the bounded line-window reader returns exactly the
-// requested 1-based range, strips CRLF, and never materializes the whole file.
 void TestReadFileLineWindowReturnsRequestedRange() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "src.txt";
@@ -214,7 +187,6 @@ void TestReadFileLineWindowReturnsRequestedRange() {
   Expect(window[2] == "four", "third window line should be line 4");
 }
 
-// A single target line (first==last) works, including the very first line.
 void TestReadFileLineWindowSingleLine() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "src.txt";
@@ -226,8 +198,6 @@ void TestReadFileLineWindowSingleLine() {
   Expect(mid.size() == 1 && mid[0] == "beta", "line 2 window should be just 'beta'");
 }
 
-// A final line with no trailing newline is still returned; a range past EOF
-// yields only the lines that exist.
 void TestReadFileLineWindowHandlesEofAndOverrun() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "src.txt";
@@ -242,35 +212,26 @@ void TestReadFileLineWindowHandlesEofAndOverrun() {
   Expect(straddle.size() == 2, "a range straddling EOF returns only existing lines");
 }
 
-// The byte budget bounds the scan: a target line beyond the budget is not
-// materialized, so the reader degrades to no snippet instead of slurping the file.
 void TestReadFileLineWindowRespectsByteBudget() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "big.txt";
   std::string content;
   for (int i = 0; i < 5000; ++i) {
-    content += "0123456789abcdef\n";  // 17 bytes/line
+    content += "0123456789abcdef\n";
   }
   WriteFile(path, content);
 
-  // Line 4000 sits well past a 1 KiB budget; the reader must give up cleanly.
-  const auto capped = ReadFileLineWindow(path, 3999, 4001, /*max_bytes=*/1024);
+  const auto capped = ReadFileLineWindow(path, 3999, 4001, 1024);
   Expect(capped.empty(), "a target beyond the byte budget yields an empty window");
-  // The same line resolves when the budget covers it.
-  const auto full = ReadFileLineWindow(path, 3999, 4001, /*max_bytes=*/kMaxTextFileBytes);
+  const auto full = ReadFileLineWindow(path, 3999, 4001, kMaxTextFileBytes);
   Expect(full.size() == 3, "with an ample budget the deep window resolves");
   Expect(full[1] == "0123456789abcdef", "the deep line content should match");
 }
 
-// Regression: a window that ends inside the FIRST chunk of a multi-chunk file must
-// stop there. The reader used to break only the inner byte loop without advancing
-// line_number, so the outer loop kept pulling 64 KiB chunks to EOF and flushed one
-// spurious extra line per chunk into the window.
 void TestReadFileLineWindowStopsAtLastLineInLargeFile() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "multichunk.txt";
   std::string content;
-  // 20,000 x 17 bytes = 340 KB, comfortably more than five 64 KiB read chunks.
   for (int i = 0; i < 20000; ++i) {
     content += "0123456789abcdef\n";
   }
@@ -281,13 +242,10 @@ void TestReadFileLineWindowStopsAtLastLineInLargeFile() {
   Expect(window[0] == "0123456789abcdef", "window line 2 content");
   Expect(window[1] == "0123456789abcdef", "window line 3 content");
 
-  // The stop is also a byte-budget stop: with a budget that only covers the first
-  // few lines the window still resolves, proving the scan does not run past them.
-  const auto bounded = ReadFileLineWindow(path, 1, 3, /*max_bytes=*/17 * 3);
+  const auto bounded = ReadFileLineWindow(path, 1, 3, 17 * 3);
   Expect(bounded.size() == 3, "lines 1-3 fit exactly in a 51-byte budget");
 }
 
-// A file whose scanned prefix contains a NUL is treated as binary -> empty window.
 void TestReadFileLineWindowRejectsBinary() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "bin.dat";
@@ -300,7 +258,7 @@ void TestReadFileLineWindowRejectsBinary() {
   Expect(window.empty(), "a binary prefix must yield an empty window, not garbage");
 }
 
-}  // namespace
+}
 
 void RegisterTextFileIOTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextFileIO/ReadTextFileRoundTrip", TestReadTextFileRoundTrip);
@@ -327,4 +285,4 @@ void RegisterTextFileIOTests(std::vector<TestCase>& tests) {
           TestReadTextFileRejectsNonRegularFiles);
 }
 
-}  // namespace microide::tests
+}

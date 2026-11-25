@@ -37,7 +37,7 @@ void MergeExpectingConflicts(const GitMergeConflictFixture& fixture, std::string
   RequireGitCommandSuccess(fixture.root, {"status", "--porcelain"}, "merge status");
 }
 
-}  // namespace
+}
 
 GitMergeConflictFixture CreateBothModifiedConflictRepo() {
   GitMergeConflictFixture fixture = MakeFixtureRoot();
@@ -182,4 +182,4 @@ GitMergeConflictFixture CreateLargeConflictRepo(std::size_t conflict_blocks) {
   return fixture;
 }
 
-}  // namespace microide::tests
+}

@@ -39,12 +39,6 @@ void TestProjectChangeNormalizerMapsIndexUpdates() {
          "deleted index updates should map to deleted file changes");
 }
 
-// The coalescer finds a pending change by its normalized path in an index
-// (TD-2026-10-28-418); it used to scan every pending change. Over random bursts --
-// repeated paths, the same file spelled `a/./x`, every kind in every order,
-// consumes in between -- it must produce exactly what the scan produced: the
-// changes in first-seen order, each merged by the same rules. The reference below
-// IS the scan.
 void TestProjectChangeCoalescerIndexMatchesTheLinearMerge() {
   using project::ProjectFileChange;
   using project::ProjectFileChangeKind;
@@ -143,10 +137,6 @@ void TestProjectChangeCoalescerMergesBursts() {
   Expect(ready->generation == 1, "coalescer should assign a monotonic generation id");
 }
 
-// A file-change flood (thousands of distinct paths) must not grow the pending
-// list without bound or make the merge O(N^2). Past the cap the coalescer
-// collapses to a single full-tree rescan and stops itemizing paths for the apply,
-// keeping a bounded list more for the language servers.
 void TestProjectChangeCoalescerCollapsesFloodToRescan() {
   project::ProjectChangeCoalescer coalescer;
   project::ProjectChangeBatch flood;
@@ -166,20 +156,14 @@ void TestProjectChangeCoalescerCollapsesFloodToRescan() {
          "an over-cap flood must collapse to a full-tree rescan");
   Expect(ready->file_changes.size() <= 1024,
          "pending file changes must stay bounded under a flood");
-  // The rescan alone does not say that paths were DROPPED: a rescan that still
-  // carries 1024 itemized changes looked to the apply like a complete list, and an
-  // open file past the cap was never reloaded.
   Expect(ready->file_changes_truncated,
          "a flood past the cap must say its itemized list is incomplete");
-  // The language servers still hear the rest, to a bound (TD-2026-10-29-422 item
-  // 1): before, a server was told the first 1024 of a 20,000-file checkout.
   Expect(ready->file_changes.size() + ready->unitemized_file_changes.size() == 16 * 1024,
          "the changes past the cap are kept for the servers, up to a bound: " +
              std::to_string(ready->unitemized_file_changes.size()));
   Expect(ready->unitemized_file_changes.front().relative_path == "gen/file_1024.o",
          "starting with the first one past the cap");
 
-  // A later event for a path in either list merges into it rather than adding one.
   project::ProjectChangeBatch first;
   for (int i = 0; i < 1100; ++i) {
     const std::string name = "f" + std::to_string(i);
@@ -213,10 +197,6 @@ void TestProjectChangeCoalescerCollapsesFloodToRescan() {
          "the flag clears with the batch that carried it; a rescan under the cap is complete");
 }
 
-// The apply rate (TD-2026-10-28-419): the first kApplyBurst batches apply at once,
-// then one per kApplyIntervalMs while changes keep coming, the held-back changes
-// merging into the next apply rather than being dropped; a quiet spell refills the
-// burst; and NextReadyDelayMs names exactly when the held batch becomes ready.
 void TestProjectChangeCoalescerRateLimitsAppliesWhileChangesKeepArriving() {
   using project::ProjectChangeCoalescer;
   ProjectChangeCoalescer coalescer;
@@ -261,9 +241,6 @@ void TestProjectChangeCoalescerRateLimitsAppliesWhileChangesKeepArriving() {
     Expect(coalescer.ConsumeReadyAt(now).has_value(), "a quiet spell refills the whole burst");
   }
 
-  // Holding only delays. A flood past 1,024 pending changes collapses to a rescan,
-  // and the language servers hear only itemized changes, so a held batch that grows
-  // to half that is released at once rather than merged toward the cap.
   write();
   Expect(!coalescer.ConsumeReadyAt(now).has_value(), "the spent budget holds a small batch");
   for (int i = 0; i < 600; ++i) {
@@ -320,17 +297,6 @@ void TestGitRepositoryMetadataTrackerDetectsHeadChanges() {
          "HEAD updates should be classified as head changes");
 }
 
-// Regression: a linked worktree (or submodule) has a `.git` *file* that points
-// at the real git directory via `gitdir: <path>`. The tracker used to stat
-// `<root>/.git/HEAD` as if `.git` were a directory, silently producing a
-// {head:0, index:0} tick that never changes — so commits/stages in a worktree
-// never triggered an auto-refresh. The tracker now follows the pointer.
-// Regression: HEAD and the branch ref were compared by modification tick, so
-// rewriting either with identical bytes reported a repository change and spawned a
-// `git status` with nothing to find. `git checkout <the branch already checked
-// out>` does exactly that. Not user-visible — which is why it survived the pass
-// that fixed the three visible instances — but it is a subprocess per event, and
-// for a remote project it would be a round trip. (TD-2026-09-29-306.)
 void TestGitRepositoryMetadataTrackerIgnoresIdenticalHeadRewrite() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -343,16 +309,12 @@ void TestGitRepositoryMetadataTrackerIgnoresIdenticalHeadRewrite() {
   tracker.SetProjectRoot(root);
   Expect(tracker.SampleChanges().empty(), "the first sample only establishes the baseline");
 
-  // Rewrite BOTH with the same bytes. Their modification ticks move; the
-  // repository did not.
   std::this_thread::sleep_for(std::chrono::milliseconds(5));
   WriteFile(root / ".git/HEAD", "ref: refs/heads/main\n");
   WriteFile(root / ".git/refs/heads/main", "1111111111111111111111111111111111111111\n");
   Expect(tracker.SampleChanges().empty(),
          "rewriting HEAD and the branch ref with identical bytes is not a repository change");
 
-  // A real commit — the branch ref advances — must still be reported, or the fix
-  // above would just be a way of never noticing anything.
   std::this_thread::sleep_for(std::chrono::milliseconds(5));
   WriteFile(root / ".git/refs/heads/main", "2222222222222222222222222222222222222222\n");
   const std::vector<project::RepositoryChange> advanced = tracker.SampleChanges();
@@ -371,7 +333,6 @@ void TestGitRepositoryMetadataTrackerFollowsWorktreeGitFile() {
   std::filesystem::create_directories(real_gitdir);
   WriteFile(real_gitdir / "HEAD", "ref: refs/heads/main\n");
   WriteFile(real_gitdir / "index", "index\n");
-  // A linked worktree's `.git` is a FILE pointing at the real gitdir.
   WriteFile(root / ".git", "gitdir: " + real_gitdir.string() + "\n");
 
   project::GitRepositoryMetadataTracker tracker;
@@ -389,9 +350,6 @@ void TestGitRepositoryMetadataTrackerFollowsWorktreeGitFile() {
          "a HEAD change in a worktree's resolved gitdir must be detected");
 }
 
-// TD-2026-07-16-63: an ORDINARY same-branch commit leaves `.git/HEAD` text unchanged
-// but advances `refs/heads/<branch>`. The tracker must detect that via the resolved
-// branch-ref tick, not only branch switches that rewrite HEAD.
 void TestGitRepositoryMetadataTrackerDetectsSameBranchCommit() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -405,7 +363,6 @@ void TestGitRepositoryMetadataTrackerDetectsSameBranchCommit() {
   Expect(tracker.SampleChanges().empty(), "baseline established with no changes");
 
   std::this_thread::sleep_for(std::chrono::milliseconds(5));
-  // Same branch, new commit: HEAD text is UNCHANGED, only the branch ref advances.
   WriteFile(root / ".git/refs/heads/main", "2222222222222222222222222222222222222222\n");
   const std::vector<project::RepositoryChange> changes = tracker.SampleChanges();
   Expect(std::any_of(changes.begin(), changes.end(),
@@ -415,8 +372,6 @@ void TestGitRepositoryMetadataTrackerDetectsSameBranchCommit() {
          "a same-branch commit advancing refs/heads/main must be detected as a head change");
 }
 
-// A packed-refs change (branch ref stored packed, no loose file) is also treated as
-// possible head movement.
 void TestGitRepositoryMetadataTrackerDetectsPackedRefsChange() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -441,23 +396,16 @@ void TestGitRepositoryMetadataTrackerDetectsPackedRefsChange() {
          "a packed-refs change must be treated as possible head movement");
 }
 
-// TD-2026-08-06-158: the repository APPEARING or DISAPPEARING is head movement,
-// and the tracker used to swallow both — ReadCurrentTicks returns nullopt with no
-// usable `.git`, and either transition hit the "no baseline" branch, which
-// re-baselines silently. So an in-session `git init` produced no repository
-// change, and everything keyed on one (the sidebar's staleness mark, the status
-// bar's availability probe) kept the pre-init answer.
 void TestGitRepositoryMetadataTrackerDetectsRepositoryAppearingAndDisappearing() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   std::filesystem::create_directories(root);
 
   project::GitRepositoryMetadataTracker tracker;
-  tracker.SetProjectRoot(root);  // no .git yet — an ordinary directory
+  tracker.SetProjectRoot(root);
   Expect(tracker.SampleChanges().empty(), "a project with no repository reports no changes");
   Expect(tracker.SampleChanges().empty(), "and keeps reporting none while that stays true");
 
-  // `git init`.
   std::filesystem::create_directories(root / ".git");
   WriteFile(root / ".git/HEAD", "ref: refs/heads/main\n");
   WriteFile(root / ".git/index", "index\n");
@@ -469,7 +417,6 @@ void TestGitRepositoryMetadataTrackerDetectsRepositoryAppearingAndDisappearing()
          "an in-session git init must publish a repository change");
   Expect(tracker.SampleChanges().empty(), "the transition fires once, not every sample");
 
-  // `rm -rf .git`.
   std::filesystem::remove_all(root / ".git");
   const std::vector<project::RepositoryChange> vanished = tracker.SampleChanges();
   Expect(std::any_of(vanished.begin(), vanished.end(),
@@ -480,15 +427,11 @@ void TestGitRepositoryMetadataTrackerDetectsRepositoryAppearingAndDisappearing()
   Expect(tracker.SampleChanges().empty(), "and that transition also fires once");
 }
 
-// TD-2026-07-17A-110: a malformed symbolic HEAD with an absolute (unsafe) ref must not
-// be followed. Otherwise `common_dir / ref` resolves to a path outside the git dir and
-// that external file would drive change detection.
 void TestGitRepositoryMetadataTrackerRejectsUnsafeSymbolicRef() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
   std::filesystem::create_directories(root / ".git");
   WriteFile(root / ".git/index", "index\n");
-  // A file OUTSIDE the git dir that a malformed absolute ref points at.
   const std::filesystem::path external = temp_dir.path() / "external_target";
   WriteFile(external, "one\n");
   WriteFile(root / ".git/HEAD", "ref: " + external.string() + "\n");
@@ -498,7 +441,7 @@ void TestGitRepositoryMetadataTrackerRejectsUnsafeSymbolicRef() {
   Expect(tracker.SampleChanges().empty(), "baseline established from the (rejected) unsafe ref");
 
   std::this_thread::sleep_for(std::chrono::milliseconds(5));
-  WriteFile(external, "two\n");  // mutate the external target the unsafe ref named
+  WriteFile(external, "two\n");
   const std::vector<project::RepositoryChange> changes = tracker.SampleChanges();
   Expect(std::none_of(changes.begin(), changes.end(),
                       [](const project::RepositoryChange& change) {
@@ -507,9 +450,6 @@ void TestGitRepositoryMetadataTrackerRejectsUnsafeSymbolicRef() {
          "an absolute (unsafe) symbolic HEAD ref must not be followed for change detection");
 }
 
-// TD-2026-07-17A-113: a special file (FIFO) named HEAD must be rejected before any
-// stream open, or opening it O_RDONLY would block the sampling thread forever. If the
-// guard regressed, this test would hang and be killed by the ctest timeout.
 void TestGitRepositoryMetadataTrackerSkipsFifoHeadWithoutBlocking() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -519,15 +459,10 @@ void TestGitRepositoryMetadataTrackerSkipsFifoHeadWithoutBlocking() {
   Expect(::mkfifo(head.c_str(), 0644) == 0, "FIFO HEAD fixture created");
 
   project::GitRepositoryMetadataTracker tracker;
-  tracker.SetProjectRoot(root);  // must return promptly, not block on the FIFO
-  // Index still ticks normally; a FIFO HEAD is simply treated as unavailable.
+  tracker.SetProjectRoot(root);
   Expect(tracker.SampleChanges().empty(), "sampling a FIFO HEAD returns without blocking");
 }
 
-// ReadHeadBranchName backs the status bar's branch label before the first
-// `git status` snapshot exists, so it has to handle the same layouts the tracker
-// does (ordinary checkout, linked worktree/submodule `.git` file) and refuse to
-// invent a branch for a detached HEAD.
 void TestReadHeadBranchNameResolvesLayouts() {
   TemporaryDirectory temp_dir;
 
@@ -537,20 +472,15 @@ void TestReadHeadBranchNameResolvesLayouts() {
   Expect(project::ReadHeadBranchName(plain, project::LocalGitMetadataSource()).value_or("") == "main",
          "an ordinary checkout should report its branch");
 
-  // git's short name drops the `refs/heads/` namespace and keeps the slashes
-  // (`# branch.head feature/stable-sort`); the label must not change when the
-  // first snapshot replaces this fallback.
   WriteFile(plain / ".git" / "HEAD", "ref: refs/heads/feature/stable-sort\n");
   Expect(project::ReadHeadBranchName(plain, project::LocalGitMetadataSource()).value_or("") == "feature/stable-sort",
          "a namespaced branch should report git's short name, slashes included");
 
-  // Detached HEAD: a raw object id, no branch to name.
   WriteFile(plain / ".git" / "HEAD",
             "9f2c1b7a4e6d8c0f1a2b3c4d5e6f708192a3b4c5\n");
   Expect(!project::ReadHeadBranchName(plain, project::LocalGitMetadataSource()).has_value(),
          "a detached HEAD has no branch name");
 
-  // A linked worktree's `.git` is a FILE pointing at the real gitdir.
   const std::filesystem::path worktree = temp_dir.path() / "worktree";
   const std::filesystem::path real_gitdir = temp_dir.path() / "main/.git/worktrees/wt";
   std::filesystem::create_directories(worktree);
@@ -560,22 +490,16 @@ void TestReadHeadBranchNameResolvesLayouts() {
   Expect(project::ReadHeadBranchName(worktree, project::LocalGitMetadataSource()).value_or("") == "wt-branch",
          "a linked worktree should resolve its own gitdir's HEAD");
 
-  // Not a repository at all.
   const std::filesystem::path bare = temp_dir.path() / "bare";
   std::filesystem::create_directories(bare);
   Expect(!project::ReadHeadBranchName(bare, project::LocalGitMetadataSource()).has_value(),
          "a directory outside any repository has no branch");
 
-  // An unsafe symbolic ref must not resolve (same guard the tracker applies).
   WriteFile(plain / ".git" / "HEAD", "ref: ../../../etc/passwd\n");
   Expect(!project::ReadHeadBranchName(plain, project::LocalGitMetadataSource()).has_value(),
          "an escaping symbolic ref must be refused");
 }
 
-// The open-document watcher reports paths; the batch it makes names a vanished
-// file Deleted (a Modified one would reload the buffer from nothing), keys a file
-// in the tree by its relative path so the tree watcher's report of the same change
-// coalesces with it, and keys one outside the root by its absolute path.
 void TestOpenFileChangesNameDeletesAndKeyByRelativePathInsideTheRoot() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -597,7 +521,7 @@ void TestOpenFileChangesNameDeletesAndKeyByRelativePathInsideTheRoot() {
          "a file outside the root is keyed by its absolute path");
 }
 
-}  // namespace
+}
 
 void RegisterProjectChangeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ProjectChange/OpenFileChangesNameDeletesAndKeyByRelativePathInsideTheRoot",
@@ -630,4 +554,4 @@ void RegisterProjectChangeTests(std::vector<TestCase>& tests) {
           TestGitRepositoryMetadataTrackerDetectsRepositoryAppearingAndDisappearing);
 }
 
-}  // namespace microide::tests
+}

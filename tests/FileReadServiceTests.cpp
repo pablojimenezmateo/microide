@@ -1,12 +1,3 @@
-// The dedicated off-thread file reader behind asynchronous open.
-//
-// What matters here is the accounting, not the timing: every posted read must
-// produce exactly one completion whatever happens to it, and no completion that
-// is not `Ok` may hand back bytes — a partially-read buffer sitting in `bytes`
-// is one missed branch away from being opened as the document. The tests are
-// written to be deterministic under cancellation races (a cancel may or may not
-// beat a fast local read), so they assert the invariant rather than the winner.
-
 #include "TestSupport.h"
 
 #include <algorithm>
@@ -23,8 +14,6 @@ namespace {
 using microide::project::FileReadService;
 using Status = microide::project::FileReadService::Status;
 
-// Collects completions on the calling (shell) thread, which is where the
-// mailbox runs them.
 struct Collector {
   std::vector<FileReadService::Completion> completions;
 
@@ -51,8 +40,6 @@ void TestAReadReturnsTheBytes() {
   const FileReadService::Completion& completion = collector.completions.front();
   Expect(completion.id == id, "the completion carries the id Begin returned");
   Expect(completion.path == file, "and the path it was posted for");
-  // The bytes are verbatim: the CRLF is still there, because classification
-  // happens on the shell thread against exactly what was on disk.
   Expect(completion.status == Status::Ok && completion.bytes == contents,
          "the reader hands back the file's bytes unchanged");
 }
@@ -73,8 +60,6 @@ void TestAnEmptyFileReadsAsEmptyAndSucceeds() {
   Expect(collector.completions.front().bytes.empty(), "with no bytes");
 }
 
-// A missing path, a directory and a file above the cap are three different
-// answers, and collapsing them would make the tab say the wrong thing.
 void TestUnreadableAndOversizedAreDistinctFromOk() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path missing = temp_dir.path() / "nope.txt";
@@ -100,9 +85,6 @@ void TestUnreadableAndOversizedAreDistinctFromOk() {
   }
 }
 
-// The accounting invariant under cancellation. Whether a cancel beats a read on
-// this machine is a race; that each read is reported exactly once, and that a
-// non-Ok completion carries no bytes, is not.
 void TestEveryPostedReadIsReportedExactlyOnce() {
   TemporaryDirectory temp_dir;
   std::vector<std::filesystem::path> files;
@@ -118,7 +100,6 @@ void TestEveryPostedReadIsReportedExactlyOnce() {
   for (const std::filesystem::path& file : files) {
     ids.push_back(service.Begin({.path = file, .on_complete = collector.Sink()}));
   }
-  // Cancel half of them by id, then cancel the rest wholesale on flush.
   for (std::size_t i = 0; i < ids.size(); i += 2) {
     service.Cancel(ids[i]);
   }
@@ -140,8 +121,6 @@ void TestEveryPostedReadIsReportedExactlyOnce() {
          "no read is reported twice");
 }
 
-// Cancelling an id the service has never heard of, or has already finished, must
-// be a no-op rather than corrupting the next read's bookkeeping.
 void TestCancellingAnUnknownIdIsHarmless() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path file = temp_dir.path() / "main.txt";
@@ -153,16 +132,12 @@ void TestCancellingAnUnknownIdIsHarmless() {
   service.Cancel(999999);
   const std::uint64_t id = service.Begin({.path = file, .on_complete = collector.Sink()});
   service.FlushPendingReads();
-  service.Cancel(id);  // already finished
+  service.Cancel(id);
 
   Expect(collector.completions.size() == 1, "the real read still completed once");
   Expect(collector.completions.front().status == Status::Ok, "and succeeded");
 }
 
-// `read_path = false`: the reader's thread, cancellation and completion contract
-// for a load whose inputs are not a file — a branch compare's two git blobs. It
-// must not touch the path at all (here it does not even exist) and must still run
-// the hook and report Ok.
 void TestANoReadRequestRunsItsHookWithoutTouchingThePath() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path missing = temp_dir.path() / "not-there.txt";
@@ -188,15 +163,6 @@ void TestANoReadRequestRunsItsHookWithoutTouchingThePath() {
   Expect(hook_ran && hook_saw_empty, "the hook ran, with no bytes");
 }
 
-// A flush returns with every read's completion delivered. Its shortcut -- "no
-// read pending and no completion waiting, nothing to do" -- read the two counts
-// a worker updates in turn: the pending count drops BEFORE the completion is
-// posted, so a flush between the two saw neither and returned while the
-// completion was still on its way. A caller then acted on a read it believed
-// answered (ExternalRepoChange/IdenticalRewriteWithSplitViewsReadsOnce, about one
-// run in sixty under load: the real change's confirm landed after the test's
-// assertions). Polling for the drop puts the flush inside that window as often
-// as the scheduler allows.
 void TestAFlushNeverReturnsBeforeTheCompletionLands() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path missing = temp_dir.path() / "not-there.txt";
@@ -210,7 +176,7 @@ void TestAFlushNeverReturnsBeforeTheCompletionLands() {
     service.FlushPendingReads();
     if (collector.completions.size() != 1) {
       ++misses;
-      service.FlushPendingReads();  // let the late one land before the collector goes
+      service.FlushPendingReads();
       (void)service.DrainCompletions();
     }
   }
@@ -218,7 +184,7 @@ void TestAFlushNeverReturnsBeforeTheCompletionLands() {
                           " of 2000 returned first");
 }
 
-}  // namespace
+}
 
 void RegisterFileReadServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "FileReadService/AReadReturnsTheBytes", TestAReadReturnsTheBytes);
@@ -236,4 +202,4 @@ void RegisterFileReadServiceTests(std::vector<TestCase>& tests) {
           TestCancellingAnUnknownIdIsHarmless);
 }
 
-}  // namespace microide::tests
+}

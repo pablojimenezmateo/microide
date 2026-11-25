@@ -11,4 +11,4 @@ struct PersistedCommitDraftState {
   std::string body;
 };
 
-}  // namespace microide::workspace
+}

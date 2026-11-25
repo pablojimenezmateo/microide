@@ -12,7 +12,6 @@ namespace {
 namespace remote = project::remote;
 using Item = plugin::PluginHost::SidebarItem;
 
-// The rows' totals: the sum of what was reported, or "…" when nothing was.
 struct Totals {
   std::optional<std::int64_t> rss;
   std::optional<std::int64_t> cpu;
@@ -33,10 +32,9 @@ struct Totals {
   }
 };
 
-// An id without a host prefix ("terminal:4").
 std::optional<HostRowId> ParseLocalHostRowId(std::string_view id);
 
-}  // namespace
+}
 
 std::vector<Item> BuildHostActivityRows(const HostActivityInput& input) {
   std::vector<Item> rows;
@@ -64,7 +62,6 @@ std::vector<Item> BuildHostActivityRows(const HostActivityInput& input) {
     return std::find(input.own_roots.begin(), input.own_roots.end(), root) != input.own_roots.end();
   };
 
-  // Server: the connection as this window sees it, and the server's own figures.
   if (group("group:server", "Server", input.connection_state)) {
     const std::string release = status != nullptr && !status->release.empty() ? status->release : input.server_release;
     std::string detail;
@@ -105,8 +102,6 @@ std::vector<Item> BuildHostActivityRows(const HostActivityInput& input) {
     if (group("group:terminals", "Terminals",
               std::to_string(status->terminals->size()) + std::string(remote::kFieldSeparator) + totals.Text())) {
       for (const remote::ServerTerminal& terminal : *status->terminals) {
-        // What runs in it is what the user looks for (`#3 · watch`); the directory
-        // while the shell itself is in the foreground.
         std::string place = terminal.command.empty() ? remote::TerminalPlace(terminal.cwd, terminal.root)
                                                      : terminal.command;
         if (place.empty() || place == ".") {
@@ -204,6 +199,6 @@ std::optional<HostRowId> ParseLocalHostRowId(std::string_view id) {
   return std::nullopt;
 }
 
-}  // namespace
+}
 
-}  // namespace microide::workspace
+}

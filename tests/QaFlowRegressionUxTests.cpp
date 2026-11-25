@@ -1,7 +1,3 @@
-// Regressions the GUI QA ux flows (tools/qa/flows_ux_*.py) found, pinned in
-// process: real events through HandleEvent, checked against the same queries the
-// harness reads. The redraw-diff regressions stay in QaFlowRegressionTests.cpp;
-// this file holds the behavioural ones -- what a press, a key or a drag DOES.
 #include "TestSupport.h"
 #include "TestSupportSdl.h"
 
@@ -27,7 +23,6 @@ namespace {
 using microide::workspace::WorkspaceShell;
 using TestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
-// The buffer as one string, lines joined by newlines.
 std::string ViewportText(const editor::TextViewport& viewport) {
   std::string text;
   for (std::size_t i = 0; i < viewport.lines().LineCount(); ++i) {
@@ -58,7 +53,6 @@ struct UxFixture {
     (void)shell.ConsumePendingRenderInvalidation();
   }
 
-  // The window point of the middle of the line-number column on 1-based `line`.
   SDL_FPoint LineNumberPoint(int line) {
     const util::JsonValue ui = TestAccess::ControlUi(shell);
     const util::JsonValue& pane = ui["editors"].AsArray()[0];
@@ -72,7 +66,6 @@ struct UxFixture {
     return SDL_FPoint{x, 0.0f};
   }
 
-  // The window point of 1-based (line, column) in the text, a fifth into the cell.
   SDL_FPoint TextPoint(int line, int column) {
     const util::JsonValue ui = TestAccess::ControlUi(shell);
     const util::JsonValue& pane = ui["editors"].AsArray()[0];
@@ -87,7 +80,6 @@ struct UxFixture {
     return SDL_FPoint{x, 0.0f};
   }
 
-  // A press and release of `button` at `point`, `clicks` deep.
   void Click(SDL_FPoint point, Uint8 button = SDL_BUTTON_LEFT, Uint8 clicks = 1) {
     SDL_Event down = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, point.x, point.y);
     SDL_Event up = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, point.x, point.y);
@@ -96,7 +88,6 @@ struct UxFixture {
     (void)DispatchEvents(shell, {MouseMotionEvent(point.x, point.y), down, up});
   }
 
-  // The label of the ui element named `name` ("" when absent).
   std::string ElementLabel(std::string_view name) {
     const util::JsonValue ui = TestAccess::ControlUi(shell);
     for (const util::JsonValue& entry : ui["elements"].AsArray()) {
@@ -109,7 +100,6 @@ struct UxFixture {
 
   void Frame() { shell.Render(canvas.renderer(), kWidth, kHeight); (void)shell.ConsumePendingRenderInvalidation(); }
 
-  // The primary selection as 0-based (anchor line, anchor column, caret line, caret column).
   std::string Selection() {
     const editor::TextViewport& viewport = TestAccess::ActiveEditor(shell);
     const auto range = viewport.selection_range();
@@ -127,9 +117,6 @@ struct UxFixture {
   SoftwareCanvas canvas{kWidth, kHeight};
 };
 
-// editor-mouse: a click on a line number placed a bare caret, and a drag down the
-// numbers stopped at the start of the line under the pointer. VS Code selects the
-// clicked line whole, and a drag over the numbers takes every line it crosses.
 void TestALineNumberPressSelectsWholeLines() {
   UxFixture fixture("lines.txt", "one\ntwo\nthree\nfour\nfive\n");
   const SDL_FPoint two = fixture.LineNumberPoint(2);
@@ -151,13 +138,9 @@ void TestALineNumberPressSelectsWholeLines() {
 }
 
 
-// find-select-all: Alt+Enter in the find widget did nothing. VS Code selects every
-// match the widget counts (its regex and case options included) and gives the
-// editor the keyboard, so the next keystroke replaces them all.
 void TestAltEnterInTheFindWidgetSelectsEveryMatch() {
   UxFixture fixture("find.txt", "foo bar Foo\nbaz foo\nfoo\n");
   (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F, SDL_KMOD_CTRL), TextInputEvent("foo")});
-  // Match case on: "Foo" on line 0 is not one of them.
   (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_C, SDL_KMOD_ALT)});
   (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN, SDL_KMOD_ALT)});
   const editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
@@ -169,9 +152,6 @@ void TestAltEnterInTheFindWidgetSelectsEveryMatch() {
          "typing goes to the editor and replaces every match, got " + ViewportText(viewport));
 }
 
-// editor-context-menu: a right-click inside a selection collapsed it to the
-// pointer, so the menu's Cut then took the whole LINE (an empty-selection cut)
-// instead of the word that had been selected. VS Code keeps the selection.
 void TestARightClickInsideASelectionKeepsIt() {
   UxFixture fixture("words.txt", "alpha beta gamma\nsecond line\n");
   fixture.Click(fixture.TextPoint(1, 8), SDL_BUTTON_LEFT, 2);
@@ -185,11 +165,6 @@ void TestARightClickInsideASelectionKeepsIt() {
          "a right-click outside it moves the caret there, got " + fixture.Selection());
 }
 
-// editor-context-menu: the right-click retargets the caret through its own copy
-// of the click's pointer-to-position mapping, and that copy did not open the gap
-// a multi-line ghost-text suggestion draws below its line -- so a right-click on
-// a line below a suggestion put the caret on a line above the one clicked. The
-// left click mirrored the gap; both now share one mapping.
 void TestARightClickBelowAGhostSuggestionLandsOnTheClickedLine() {
   UxFixture fixture("ghost.txt", "one\ntwo\nthree\nfour\nfive\n");
   Expect(TestAccess::SetSettingValueTransient(fixture.shell, "plugins.ghost_text", "true"),
@@ -200,8 +175,6 @@ void TestARightClickBelowAGhostSuggestionLandsOnTheClickedLine() {
   TestAccess::PublishGhostText(fixture.shell, "test", request);
   fixture.Frame();
   Expect(TestAccess::GhostText(fixture.shell) != nullptr, "precondition: the suggestion is live");
-  // The suggestion draws its two continuation rows between lines 1 and 2, so
-  // line 4 sits two rows lower than the gapless row table (ControlUi `rows`) says.
   const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
   const util::JsonValue& pane = ui["editors"].AsArray()[0];
   const double line_height = pane["lineHeight"].AsDouble();
@@ -214,9 +187,6 @@ void TestARightClickBelowAGhostSuggestionLandsOnTheClickedLine() {
              fixture.Selection());
 }
 
-// find-across-tabs: the find widget stays open across a tab switch, but its
-// matches stayed the previous tab's: the n-of-m kept the old count, and F3 in the
-// new tab jumped to the old file's coordinates and selected nothing there.
 void TestTheFindWidgetFollowsATabSwitch() {
   UxFixture fixture("one.txt", "xx foo\nyy foo\nzz foo\n");
   WriteFile(fixture.root / "two.txt", "a\nb\nc\nd\nfoo here\n");
@@ -231,10 +201,6 @@ void TestTheFindWidgetFollowsATabSwitch() {
   Expect(fixture.Selection() == "4:0 -> 4:3", "F3 selects foo in two.txt, got " + fixture.Selection());
 }
 
-// save-all: there was no Save All. VS Code's File > Save All (Ctrl+K S) writes
-// every unsaved file in every group; an untitled buffer has no name, so it is
-// left and the notice says so. The chord's second key is a printable S, whose
-// text must not land in the buffer.
 void TestCtrlKSSavesEveryDirtyFile() {
   UxFixture fixture("one.txt", "one\n");
   WriteFile(fixture.root / "two.txt", "two\n");
@@ -262,11 +228,6 @@ void TestCtrlKSSavesEveryDirtyFile() {
   Expect(named, "the notice says the untitled buffer was left for Save As");
 }
 
-// save-all: the unsaved prompt's letter keys typed themselves. D (Don't Save)
-// closed the untitled buffer and its "d" landed in the file that came to the
-// front; C (Cancel) put a "c" into the very buffer the prompt was protecting.
-// SDL follows a printable key press with its TEXT_INPUT, and the prompt took
-// the press but not the text.
 void TestTheUnsavedPromptsLettersDoNotType() {
   UxFixture fixture("clean.txt", "clean\n");
   const auto prompt_close_untitled = [&](SDL_Keycode key, const char* text) {
@@ -283,17 +244,11 @@ void TestTheUnsavedPromptsLettersDoNotType() {
   Expect(ViewportText(TestAccess::ActiveEditor(fixture.shell)) == "clean\n",
          "Don't Save leaves the file that comes to the front untouched, got " +
              ViewportText(TestAccess::ActiveEditor(fixture.shell)));
-  // The next press is a fresh one: its text is typed.
   (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_X), TextInputEvent("x")});
   Expect(ViewportText(TestAccess::ActiveEditor(fixture.shell)) == "xclean\n",
          "the following key types as usual, got " + ViewportText(TestAccess::ActiveEditor(fixture.shell)));
 }
 
-// multi-caret-pairs, on CI only: End, then Ctrl+Alt+Down twice, left one caret
-// at the end of the DOCUMENT. A key event that carried no modifiers fell back to
-// SDL's live modifier state -- which SDL updates when it pumps, so on a runner
-// behind its input it already held the NEXT chord's Ctrl and Alt, and End ran as
-// Ctrl+End. A key's modifiers are the ones its event carries.
 void TestAKeyReadsItsOwnModifiersNotTheNextChords() {
   UxFixture fixture("pairs.c", "a\nb\nc\n");
   {
@@ -305,8 +260,6 @@ void TestAKeyReadsItsOwnModifiersNotTheNextChords() {
          "End goes to the end of the line, got " + std::to_string(viewport.cursor_line()) + ":" +
              std::to_string(viewport.cursor_column()));
 
-  // The unsaved-changes prompt's letters read the same way: a Shift pumped for the
-  // next key made `d` a `D`, which answers nothing.
   Expect(TestAccess::ExecuteCommandLine(fixture.shell, "tab"), "an untitled buffer opens");
   (void)DispatchEvents(fixture.shell, {TextInputEvent("scratch")});
   (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_W, SDL_KMOD_CTRL)});
@@ -318,10 +271,6 @@ void TestAKeyReadsItsOwnModifiersNotTheNextChords() {
          "d answers Don't Save and the file comes back to the front");
 }
 
-// revert-file: there was no way to throw unsaved changes away but undoing them
-// one by one -- Reload from Disk refuses a dirty buffer, rightly, because it
-// swaps the buffer and its history. VS Code's Revert File takes the disk's text
-// as one undoable edit, so Ctrl+Z brings the discarded changes back.
 void TestRevertFileDiscardsChangesUndoably() {
   UxFixture fixture("notes.txt", "one\ntwo\n");
   (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_END, SDL_KMOD_CTRL), TextInputEvent("three")});
@@ -340,10 +289,6 @@ void TestRevertFileDiscardsChangesUndoably() {
          "with nothing unsaved revert-file refuses");
 }
 
-// state oracle: changing the tab size moved a caret that sat after a tab. The
-// viewport re-derived the caret's character from the VISUAL column it remembered
-// for Up/Down, and a tab is worth more columns now: `\tx|` became `\t|x`. The
-// status bar's Col (the visible column) then named the wrong place too.
 void TestTheStatusColumnFollowsTheTabSize() {
   UxFixture fixture("tabs.txt", "\tx\n");
   (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_END)});
@@ -359,11 +304,6 @@ void TestTheStatusColumnFollowsTheTabSize() {
                                       ", column " + std::to_string(viewport.cursor_column()));
 }
 
-// state oracle (wb-project-search): a project Replace All rewrote the file under
-// an open find widget and the clean editor reloaded it -- and the widget kept
-// counting the five matches that were gone. The match set's freshness was keyed
-// on (viewport, content revision), and a reload gives the same viewport a new
-// document whose revisions start over, so the old revision recurred over new text.
 void TestTheFindWidgetRecountsAfterAReload() {
   UxFixture fixture("reload.txt", "foo foo foo\n");
   (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F, SDL_KMOD_CTRL), TextInputEvent("foo")});
@@ -378,9 +318,6 @@ void TestTheFindWidgetRecountsAfterAReload() {
          "the widget counts no foo in the reloaded text, got " + std::to_string(ui["overlay"]["count"].AsInt()));
 }
 
-// state oracle: a renamed or Saved As file's tab kept its old name until the next
-// edit. The tab strip's geometry cache was keyed on the tabs' dirty marks, not
-// their titles, so a retitle with nothing else changing reused the old labels.
 void TestSaveAsRetitlesTheTab() {
   UxFixture fixture("tosave.txt", "x\n");
   fixture.Frame();
@@ -399,10 +336,6 @@ void TestSaveAsRetitlesTheTab() {
   Expect(renamed, "the tab is titled copy-of.txt, got " + labels);
 }
 
-// git-view click: a click on a git view entry opened its diff and handed the
-// keyboard to the editor, so the view's own `s` (stage) typed an "s" into the
-// file. The tree keeps the keyboard on a click, as VS Code's source control view
-// does; Enter is the open that moves it.
 void TestAClickOnAGitEntryKeepsTheKeyboardOnTheList() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -441,30 +374,23 @@ void TestAClickOnAGitEntryKeepsTheKeyboardOnTheList() {
          "the click keeps the keyboard on the git view, got " + ui["focus"].AsString());
 }
 
-// surround: a pair key over a selection that starts inside a string -- or on a
-// line a lone quote above made the highlighter call a string -- replaced the
-// selection with the opener instead of surrounding it. The auto-close rule (no
-// pairs inside strings) had been applied to surround, where the alternative to
-// surrounding is deleting what was selected.
 void TestASelectionInsideAStringIsSurrounded() {
   UxFixture fixture("strings.c", "char* s = \"hello world\";\nx\"\ny\"\n");
   editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
   viewport.MoveCursorTo(0, 11);
-  viewport.MoveCursorTo(0, 16, /*extend_selection=*/true);  // "hello" inside the literal
+  viewport.MoveCursorTo(0, 16, true);
   (void)DispatchEvents(fixture.shell, {TextInputEvent("(")});
   Expect(viewport.lines()[0] == "char* s = \"(hello) world\";",
          "the word inside the string is surrounded, got " + std::string(viewport.lines()[0]));
   viewport.MoveCursorTo(2, 0);
-  viewport.MoveCursorTo(2, 2, /*extend_selection=*/true);  // y" on the line after x"
+  viewport.MoveCursorTo(2, 2, true);
   (void)DispatchEvents(fixture.shell, {TextInputEvent("[")});
   Expect(viewport.lines()[2] == "[y\"]", "the line after a lone quote is surrounded, got " +
                                             std::string(viewport.lines()[2]));
-  // The multi-caret path had its own copy of the rule: three carets selecting
-  // three lines, the middle one after the lone quote.
   UxFixture three("three.c", "x\"\ny\"\nz\"\n");
   editor::TextViewport& view = TestAccess::ActiveEditor(three.shell);
   view.MoveCursorTo(0, 0);
-  view.MoveCursorTo(0, 2, /*extend_selection=*/true);
+  view.MoveCursorTo(0, 2, true);
   view.AddSecondaryCaretWithRange(editor::SelectionRange{{1, 0}, {1, 2}});
   view.AddSecondaryCaretWithRange(editor::SelectionRange{{2, 0}, {2, 2}});
   (void)DispatchEvents(three.shell, {TextInputEvent("(")});
@@ -472,8 +398,6 @@ void TestASelectionInsideAStringIsSurrounded() {
          "every caret's selection is surrounded, got " + ViewportText(view));
 }
 
-// doc comments: Enter inside a `/** */` comment started the next line with the
-// indentation only. VS Code's C-family rules continue it with ` * `.
 void TestEnterContinuesADocComment() {
   UxFixture fixture("doc.c", "/**\n * doc\n */\n/* plain\n");
   editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
@@ -487,9 +411,6 @@ void TestEnterContinuesADocComment() {
          "Enter continues a doc comment and leaves a plain one, got " + ViewportText(viewport));
 }
 
-// TD-2026-10-22-384: the window was always titled "microide", so two windows
-// were two identical taskbar entries and nothing outside the tab strip showed an
-// unsaved file. VS Code's `● file — folder — app`.
 void TestTheWindowTitleNamesTheActiveFileAndItsState() {
   UxFixture fixture("title.txt", "abc\n");
   const std::string project = fixture.root.filename().string();
@@ -509,10 +430,6 @@ void TestTheWindowTitleNamesTheActiveFileAndItsState() {
   Expect(title() == project + " \u2014 microide", "with no editor the title is the project's, got " + title());
 }
 
-// TD-2026-10-24-390 / TD-2026-10-18-355: Reopen Closed Editor restored the caret
-// but revealed it rather than the scroll the editor had, and dropped its folds; a
-// restart dropped every fold and forgot the closed editors. VS Code restores an
-// editor's whole view state either way.
 void TestAnEditorsViewSurvivesCloseReopenAndRestart() {
   std::string text = "void folded() {\n";
   for (int i = 0; i < 20; ++i) {
@@ -547,7 +464,6 @@ void TestAnEditorsViewSurvivesCloseReopenAndRestart() {
          "and the scroll it had, got " + std::to_string(view(fixture.shell).scroll_line()) + " for " +
              std::to_string(scroll));
 
-  // Close another file so the closed list has something to carry over.
   Expect(TestAccess::ExecuteCommandLine(fixture.shell, "open " + (fixture.root / "other.txt").string()),
          "other.txt opens");
   (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_W, SDL_KMOD_CTRL)});
@@ -567,9 +483,6 @@ void TestAnEditorsViewSurvivesCloseReopenAndRestart() {
   Expect(view(restored).path().filename() == "other.txt",
          "Reopen Closed Editor reaches the editor closed before the restart");
 
-  // A fold collapsed around a caret standing still stays collapsed (VS Code's
-  // revealCursor reveals only a caret that MOVED in); restoring that view is not
-  // a move.
   Expect(TestAccess::ExecuteCommandLine(fixture.shell, "goto 6:3"), "the caret goes into the body");
   fixture.Frame();
   Expect(TestAccess::ExecuteCommandLine(fixture.shell, "fold"), "the function folds around it");
@@ -582,10 +495,6 @@ void TestAnEditorsViewSurvivesCloseReopenAndRestart() {
          "the fold around the caret comes back collapsed");
 }
 
-// Found by the fold-restore test (TD-2026-10-24-390): every activation set the
-// tab size from the settings and then back to a 2-space file's own, each change
-// revealing the caret, so switching back to a tab whose caret was scrolled off
-// screen jumped the view to it. VS Code keeps a tab's scroll across switches.
 void TestSwitchingBackToATabKeepsItsScroll() {
   std::string text;
   for (int i = 0; i < 300; ++i) {
@@ -606,16 +515,11 @@ void TestSwitchingBackToATabKeepsItsScroll() {
          "the view is where it was left, got scroll " + std::to_string(back.scroll_line()));
 }
 
-// The quick-open modals' caret sits in their query field. The five modals share one
-// layout (the field at OverlayQueryRowOffset), and the caret's own row for Go to
-// File and project search stayed at the older 44: the caret was drawn 8 px above
-// the field's text (reported 2026-11-03: "the caret was above the input field").
 void TestTheQuickOpenCaretSitsInItsField() {
   UxFixture fixture("caret.txt", "x\n");
   const auto check = [&](const std::string& what, workspace::OverlayMode mode) {
     fixture.Frame();
     const SDL_FRect overlay = TestAccess::ActiveOverlayRect(fixture.shell);
-    // The field the overlay paints (WorkspaceShellRenderOverlay: overlay_field_rect).
     const float field_top = overlay.y + workspace::OverlayQueryRowOffset(mode) - 4.0f;
     const float field_bottom = field_top + 18.0f;
     const std::optional<SDL_FRect> caret = TestAccess::CaretDirtyRect(fixture.shell);
@@ -623,8 +527,6 @@ void TestTheQuickOpenCaretSitsInItsField() {
     if (!caret.has_value()) {
       return;
     }
-    // The field's text row (overlay_field_text_y): the caret is that row, one pixel
-    // up (the caret rect starts at text_y - 1), one line high.
     const float text_y = field_top + std::floor((18.0f - caret->h) * 0.5f);
     Expect(std::fabs(caret->y - (text_y - 1.0f)) < 0.5f && caret->y >= field_top - 1.0f &&
                caret->y + caret->h <= field_bottom + 2.0f,
@@ -638,16 +540,10 @@ void TestTheQuickOpenCaretSitsInItsField() {
   check("the command palette", workspace::OverlayMode::CommandPalette);
 }
 
-// Every focused single-line field draws its caret on the text it types: the caret
-// comes from one place (BuildActiveTextInputVisual) and each field from its own
-// renderer, and the two had drifted for Go to File (8 px high). An oracle that
-// restates no layout: render the field empty, type a marker, render again; the
-// pixels that changed in the strip just left of the caret are the typed text, and
-// the caret must sit on that text's row. Run over every field a test can reach.
 void TestEveryFieldsCaretSitsOnItsText() {
   UxFixture fixture("fields.txt", "alpha\nbeta\n");
   const auto snapshot = [&] {
-    TestAccess::SetCaretBlinkEpochMs(fixture.shell, SDL_GetTicks());  // the caret's visible phase
+    TestAccess::SetCaretBlinkEpochMs(fixture.shell, SDL_GetTicks());
     fixture.shell.Render(fixture.canvas.renderer(), UxFixture::kWidth, UxFixture::kHeight);
     (void)fixture.shell.ConsumePendingRenderInvalidation();
     SDL_FlushRenderer(fixture.canvas.renderer());
@@ -660,8 +556,6 @@ void TestEveryFieldsCaretSitsOnItsText() {
   };
   const auto check = [&](const std::string& what) {
     fixture.Frame();
-    // The field is the one typed into: a chord that opened nothing would type the
-    // marker into the editor, whose caret passes vacuously.
     const auto surface = TestAccess::CurrentTextInputSurface(fixture.shell);
     Expect(surface != workspace::TextInputSurface::Editor && surface != workspace::TextInputSurface::None &&
                surface != workspace::TextInputSurface::Terminal,
@@ -672,11 +566,9 @@ void TestEveryFieldsCaretSitsOnItsText() {
     const std::optional<SDL_FRect> caret = TestAccess::CaretDirtyRect(fixture.shell);
     Expect(caret.has_value(), what + ": a caret is drawn");
     if (caret.has_value() && empty != nullptr && typed != nullptr) {
-      // The strip of the last three typed cells, left of the caret's own column.
       const float cell = caret->w;
       const int x0 = std::max(0, static_cast<int>(caret->x - cell * 3.0f));
       const int x1 = std::max(0, static_cast<int>(caret->x) - 1);
-      // Changed rows in the strip, as runs; the run nearest the caret is its text.
       int best_top = -1;
       int best_bottom = -1;
       float best_distance = 1e9f;
@@ -701,8 +593,6 @@ void TestEveryFieldsCaretSitsOnItsText() {
       }
       Expect(best_top >= 0, what + ": the typed text is drawn just left of the caret (x " +
                                 std::to_string(caret->x) + ")");
-      // The glyphs' ink is inside the caret's line box; an "M" has no descender,
-      // so its ink sits in the upper part, never above the caret nor below it.
       Expect(best_top >= 0 && static_cast<float>(best_top) >= caret->y &&
                  static_cast<float>(best_bottom) <= caret->y + caret->h,
              what + ": the caret (y " + std::to_string(caret->y) + "-" + std::to_string(caret->y + caret->h) +
@@ -738,14 +628,11 @@ void TestEveryFieldsCaretSitsOnItsText() {
   }
   TestAccess::SetPanelContentTerminal(fixture.shell);
   Expect(TestAccess::ExecuteCommandLine(fixture.shell, "focus panel"), "focus the terminal");
-  // Ctrl+Shift+F: Ctrl+F is the program's in a terminal.
   (void)DispatchEvents(fixture.shell,
                        {KeyDownEvent(SDLK_F, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT))});
   check("the terminal's find bar");
 }
 
-// TD-2026-10-20-370: `files src` opened `src` as a second project and showed
-// the finder there; its argument is now Go to File's query.
 void TestTheFinderCommandsArgumentIsAQuery() {
   UxFixture fixture("finder.txt", "x\n");
   std::filesystem::create_directories(fixture.root / "src");
@@ -757,13 +644,8 @@ void TestTheFinderCommandsArgumentIsAQuery() {
   Expect(TestAccess::ProjectRoot(fixture.shell) == fixture.root, "and the project is still the same one");
 }
 
-// TD-2026-10-20-371: the colour-scheme setting was an enum of one value,
-// `default`: the Settings row cycled through nothing and `set-setting
-// editor.colorscheme <name>` refused every other scheme. Its values are now the
-// themes there are.
 void TestTheColourSchemeSettingOffersEveryScheme() {
   UxFixture fixture("scheme.txt", "x\n");
-  // `default` and `light` are the schemes on every machine (CI's whole list).
   Expect(TestAccess::SetSettingValue(fixture.shell, "editor.colorscheme", "light"),
          "a bundled scheme is a valid value");
   Expect(TestAccess::GetSettingValue(fixture.shell, "editor.colorscheme") == "light",
@@ -781,10 +663,6 @@ void TestTheColourSchemeSettingOffersEveryScheme() {
          "stepping the row walks the schemes, saw " + std::to_string(seen.size()));
 }
 
-// TD-2026-10-18-363: no colour-theme picker; a scheme could be applied only by
-// name. Ctrl+K Ctrl+T (a bare `colorscheme`, the palette's Color Theme…) opens a
-// quick pick of the schemes that previews each as the selection moves (VS Code),
-// puts the one in use back on Escape and keeps the chosen one on Enter.
 void TestTheColorThemePickPreviewsRevertsAndApplies() {
   UxFixture fixture("theme.txt", "x\n");
   auto active = [&] { return TestAccess::GetSettingValue(fixture.shell, "editor.colorscheme").value_or(""); };
@@ -803,10 +681,6 @@ void TestTheColorThemePickPreviewsRevertsAndApplies() {
   Expect(!overlay()["visible"].AsBool() && active() == "light", "Enter keeps the chosen scheme, got " + active());
 }
 
-// TD-2026-10-24-388: nothing set a buffer's language by hand. Change Language Mode
-// (Ctrl+K M, the status bar's language, `language-mode`) sets it for the document:
-// highlighting, the status bar and the language id follow; Plain Text highlights
-// nothing; Auto Detect goes back to what the file says.
 void TestChangeLanguageModeSetsTheDocumentsLanguage() {
   UxFixture fixture("code.txt", "int main() { return 0; }\n");
   editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
@@ -838,10 +712,6 @@ void TestChangeLanguageModeSetsTheDocumentsLanguage() {
   Expect(viewport.language_id() == detected, "Auto Detect goes back to " + detected + ", got " + viewport.language_id());
 }
 
-// menu_hover_paint allocated 60% more than v2.12.0: one File/Edit switch queued
-// the same popup rect four times, and the duplicates overflowed the invalidation's
-// inline storage on every hover. A rect a queued one covers adds nothing; one that
-// covers queued rects replaces them.
 void TestARenderInvalidationKeepsNoCoveredRect() {
   workspace::RenderInvalidation redraw;
   const SDL_FRect big{0.0f, 0.0f, 100.0f, 100.0f};
@@ -859,7 +729,7 @@ void TestARenderInvalidationKeepsNoCoveredRect() {
                                       std::to_string(small.rects.size()));
 }
 
-}  // namespace
+}
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/ALineNumberPressSelectsWholeLines", TestALineNumberPressSelectsWholeLines);
@@ -898,4 +768,4 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
           TestTheWindowTitleNamesTheActiveFileAndItsState);
 }
 
-}  // namespace microide::tests
+}

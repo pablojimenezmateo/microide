@@ -55,4 +55,4 @@ void PaintCard(SDL_Renderer* renderer, const CardPaint& card, const render::Them
   }
 }
 
-}  // namespace microide::workspace
+}

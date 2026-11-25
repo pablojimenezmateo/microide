@@ -48,9 +48,6 @@ void FrameDecoder::Feed(std::string_view bytes) {
   if (error_ != Error::None || bytes.empty()) {
     return;
   }
-  // Reclaim consumed bytes before growing: a long-lived stream would otherwise keep
-  // every frame it ever decoded. Compacting only when the dead prefix is at least
-  // half the buffer keeps it amortized O(1) per byte.
   if (read_offset_ > 0 && read_offset_ * 2 >= buffer_.size()) {
     buffer_.erase(0, read_offset_);
     read_offset_ = 0;
@@ -69,9 +66,6 @@ std::optional<Frame> FrameDecoder::Next() {
   const std::uint64_t length = GetLe(pending, 0, 4);
   const std::uint64_t type = GetLe(pending, 4, 2);
   const std::uint64_t lane = GetLe(pending, 6, 1);
-  // Validate the header as soon as it is complete, before waiting for (or
-  // buffering) its payload: a forged length must fail now, not after the peer has
-  // been allowed to stream 64 MiB at us.
   if (length > kMaxFramePayloadBytes) {
     error_ = Error::PayloadTooLarge;
     return std::nullopt;
@@ -115,4 +109,4 @@ std::string_view FrameDecoderErrorText(FrameDecoder::Error error) {
   return "unknown error";
 }
 
-}  // namespace microide::project::remote
+}

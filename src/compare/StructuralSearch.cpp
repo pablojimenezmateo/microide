@@ -6,36 +6,18 @@
 #include <string_view>
 #include <vector>
 
-// The graph search of the structural diff (see StructuralDiff.h): A* over
-// (next LHS node, next RHS node, entered-delimiter stack), difftastic's
-// formulation, for one gap the matcher could not split further.
 namespace microide::compare::detail {
 
 namespace {
 
-// Edge costs: difftastic's (src/diff/graph.rs, Edge::cost). Matching is always
-// cheaper than not matching; a match at a different nesting depth costs a
-// little more, so between two equal matches the one at the same depth wins; a
-// matched separator (`,` `;` `.`) costs enough more that an unchanged name with
-// novel punctuation always beats the reverse; entering a matching delimiter
-// pair costs more than an unchanged node and less than any novel edge; a
-// replaced literal costs more the less similar it is, and less than the two
-// novel atoms it stands for.
 constexpr std::uint32_t kMaxDepthPenalty = 40;
 constexpr std::uint32_t kSeparatorPenalty = 200;
 constexpr std::uint32_t kEnterUnchangedCost = 10;
 constexpr std::uint32_t kReplacedBaseCost = 500;
 constexpr std::uint32_t kNovelCost = 300;
 static_assert(kReplacedBaseCost + 100 <= 2 * kNovelCost);
-// A replaced literal more similar than this is shown as an edit (its words
-// diffed); a less similar one as two novel literals. difftastic's threshold.
 constexpr std::uint32_t kMinReplacedSimilarityPct = 20;
-// The search is A*: a vertex is queued by f = g + h, where g is its distance
-// and h the heuristic below. An edge raises f by its cost plus the change in h,
-// at most kNovelCost + kNovelCost, so a circular bucket queue of this size never
-// aliases two pending priorities.
 constexpr std::uint32_t kBucketCount = 1024;
-// Starting size of a search's open-addressed tables (power of two).
 constexpr std::size_t kInitialSlots = 64;
 static_assert(2 * kNovelCost < kBucketCount);
 static_assert(kReplacedBaseCost + 100 + kNovelCost < kBucketCount);
@@ -54,17 +36,10 @@ enum class Edge : std::uint8_t {
   ExitRhs,
 };
 
-// The entered-delimiter stack, persistent (every vertex shares its tail with
-// its predecessor's). A group is either ONE delimiter pair entered on both
-// sides (`both`), or a run of delimiters entered on one side only, kept as two
-// independent cons lists so either side can be exited without the other —
-// difftastic's PopBoth / PopEither.
 struct StackGroup {
   std::uint32_t prev = kNoDiffNode;
-  // `both`: the two entered list nodes. Otherwise: cons-list heads.
   std::uint32_t lhs = kNoDiffNode;
   std::uint32_t rhs = kNoDiffNode;
-  // The innermost entered list on each side, over the whole stack.
   std::uint32_t lhs_parent = kNoDiffNode;
   std::uint32_t rhs_parent = kNoDiffNode;
   bool both = false;
@@ -87,38 +62,30 @@ struct Vertex {
 
 struct QueueEntry {
   std::uint32_t vertex = 0;
-  std::uint32_t dist = 0;      // g when queued: a later, shorter g makes this entry stale
-  std::uint32_t priority = 0;  // f = g + h
+  std::uint32_t dist = 0;
+  std::uint32_t priority = 0;
 };
 
 struct SearchScratch {
   std::vector<Vertex> vertices;
-  // Open-addressed vertex table. Each slot carries its vertex's identity, so a
-  // probe compares in place instead of chasing the vertex and its stack groups.
   struct Slot {
     std::uint32_t lhs = kNoDiffNode;
     std::uint32_t rhs = kNoDiffNode;
     std::uint32_t lhs_parent = kNoDiffNode;
     std::uint32_t rhs_parent = kNoDiffNode;
-    std::uint32_t vertex = kNoDiffNode;  // kNoDiffNode = empty
+    std::uint32_t vertex = kNoDiffNode;
     bool can_pop_either = false;
   };
   std::vector<Slot> slots;
-  // Similarity of replaced-literal candidates, memoized per (LHS token, RHS
-  // token): the search meets the same pair from many vertices.
   std::vector<std::pair<std::uint64_t, std::uint32_t>> similarity_cache;
   std::size_t similarity_cache_used = 0;
   std::vector<StackGroup> groups;
   std::vector<Cons> conses;
   std::array<std::vector<QueueEntry>, kBucketCount> buckets;
-  // Buckets that received an entry since the last reset (a bucket appears
-  // again only after it emptied, so the list stays short).
   std::vector<std::uint32_t> touched_buckets;
   std::vector<std::string_view> words_a;
   std::vector<std::string_view> words_b;
 
-  // Large graphs are rare; do not keep their memory alive for the next,
-  // ordinary, comparison.
   void ReleaseIfLarge() {
     constexpr std::size_t kRetainVertices = 1u << 16;
     if (vertices.capacity() > kRetainVertices) {
@@ -159,10 +126,6 @@ void SplitWords(std::string_view text, std::vector<std::string_view>& words) {
   }
 }
 
-// How much of two literals' words they share, as a percentage of their word
-// bytes. Order-insensitive on purpose: it only decides whether the two are
-// "the same literal, edited"; the ordered word diff that marks what changed
-// runs later.
 std::uint32_t LiteralSimilarityPct(std::string_view a, std::string_view b) {
   SearchScratch& scratch = Scratch();
   SplitWords(a, scratch.words_a);
@@ -196,7 +159,6 @@ std::uint32_t LiteralSimilarityPct(std::string_view a, std::string_view b) {
   return static_cast<std::uint32_t>(common * 100 / total);
 }
 
-// difftastic's looks_like_punctuation: the separators whose match says little.
 bool IsSeparatorAtom(const DiffSyntaxTree& tree, const DiffSyntaxNode& node) {
   if (node.is_list) {
     return false;
@@ -219,16 +181,11 @@ class Search {
         lhs_scope_end_(ScopeEnd(lhs, lhs_scope)),
         rhs_scope_end_(ScopeEnd(rhs, rhs_scope)) {}
 
-  // Returns false when the vertex budget ran out.
   bool Run(std::uint32_t lhs_start, std::uint32_t rhs_start, StructuralMatch& match,
            std::size_t& vertex_count) {
     s_.vertices.clear();
     s_.groups.clear();
     s_.conses.clear();
-    // Most searches are small gaps, many per build: start every table small
-    // (they grow by rehashing) and clear only the queue buckets the previous
-    // search touched. Resetting fixed 1024-entry tables per search cost more
-    // than the searches themselves.
     s_.slots.assign(kInitialSlots, SearchScratch::Slot{});
     s_.similarity_cache.clear();
     s_.similarity_cache_used = 0;
@@ -272,7 +229,7 @@ class Search {
     vertex_count = s_.vertices.size();
     if (end == kNoDiffNode) {
       s_.ReleaseIfLarge();
-      return false;  // unreachable in a well-formed graph; fall back rather than guess
+      return false;
     }
     for (std::uint32_t at = end; s_.vertices[at].edge != Edge::Start; at = s_.vertices[at].pred) {
       const Vertex& vertex = s_.vertices[at];
@@ -291,10 +248,9 @@ class Search {
           break;
         }
         case Edge::Replaced: {
-          // The edge cost encodes the similarity (kReplacedBaseCost + 100 - pct).
           const std::uint32_t similarity = kReplacedBaseCost + 100 - (vertex.dist - from.dist);
           if (similarity <= kMinReplacedSimilarityPct) {
-            break;  // too different to read as an edit: both literals stay novel
+            break;
           }
           const std::uint32_t a = lhs_.nodes[from.lhs].token_begin;
           const std::uint32_t b = rhs_.nodes[from.rhs].token_begin;
@@ -315,8 +271,6 @@ class Search {
  private:
   std::uint32_t NextLhs(std::uint32_t node) const { return Next(lhs_, node, lhs_scope_); }
   std::uint32_t NextRhs(std::uint32_t node) const { return Next(rhs_, node, rhs_scope_); }
-  // The next sibling, with the scope's end read as the end of the list: the
-  // search never walks past the run it was given.
   static std::uint32_t Next(const DiffSyntaxTree& tree, std::uint32_t node, SiblingScope scope) {
     const DiffSyntaxNode& entry = tree.nodes[node];
     if (entry.parent == scope.parent && entry.next_sibling == scope.end) {
@@ -332,10 +286,6 @@ class Search {
     return stack == kNoDiffNode ? kNoDiffNode : s_.groups[stack].rhs_parent;
   }
 
-  // The vertex identity. Like difftastic, two vertices with different stacks
-  // but the same position, innermost parents and pop-either state are the
-  // same vertex: the cheaper path to it wins and its stack is the one kept.
-  // Comparing whole stacks would multiply the graph by the nesting depth.
   struct Key {
     std::uint32_t lhs, rhs, lhs_parent, rhs_parent;
     bool can_pop_either;
@@ -345,9 +295,6 @@ class Search {
     return Key{lhs, rhs, LhsParent(stack), RhsParent(stack),
                stack != kNoDiffNode && !s_.groups[stack].both};
   }
-  // murmur3's 64-bit finalizer: the table masks the LOW bits, and a plain
-  // multiply chain leaves those depending only on the inputs' low bits, which
-  // clustered the linear probing badly.
   static std::uint64_t Mix(std::uint64_t value) {
     value ^= value >> 33;
     value *= 0xff51afd7ed558ccdULL;
@@ -367,7 +314,6 @@ class Search {
            slot.rhs_parent == key.rhs_parent && slot.can_pop_either == key.can_pop_either;
   }
 
-  // Finds the vertex with this identity, or creates it (undiscovered).
   std::uint32_t Insert(std::uint32_t lhs, std::uint32_t rhs, std::uint32_t stack) {
     if ((s_.vertices.size() + 1) * 2 > s_.slots.size()) {
       Rehash(s_.slots.size() * 2);
@@ -410,7 +356,6 @@ class Search {
     }
   }
 
-  // LiteralSimilarityPct, memoized per token pair for this search.
   std::uint32_t Similarity(std::uint32_t lhs_token, std::uint32_t rhs_token) {
     const std::uint64_t key = (std::uint64_t{lhs_token} << 32) | rhs_token;
     if (s_.similarity_cache.empty()) {
@@ -465,7 +410,6 @@ class Search {
     ++pending_;
   }
 
-  // The preorder index one past the scope: where "the rest of this side" ends.
   static std::uint32_t ScopeEnd(const DiffSyntaxTree& tree, SiblingScope scope) {
     if (scope.end != kNoDiffNode) {
       return scope.end;
@@ -474,10 +418,6 @@ class Search {
                                        : static_cast<std::uint32_t>(tree.nodes.size());
   }
 
-  // How many nodes one side still has to consume: preorder is contiguous, so it
-  // is the distance from the next node to process to the end of the scope.
-  // With no next node the side has finished its innermost entered list, and
-  // continues after that list's subtree.
   static std::uint32_t Remaining(const DiffSyntaxTree& tree, std::uint32_t node,
                                  std::uint32_t parent, std::uint32_t scope_end) {
     const std::uint32_t position =
@@ -486,12 +426,6 @@ class Search {
     return scope_end > position ? scope_end - position : 0;
   }
 
-  // A lower bound on the cost still to pay. Every edge but a novel one consumes
-  // the same number of nodes on both sides (an unchanged subtree is the same
-  // size on each), and a novel edge consumes one node on one side at
-  // kNovelCost. So the difference in what the two sides have left can only be
-  // closed by that many novel edges: admissible, and consistent (an edge
-  // changes h by at most its own cost), which keeps A* exact.
   std::uint32_t Heuristic(std::uint32_t lhs, std::uint32_t rhs, std::uint32_t stack) const {
     const std::uint32_t lhs_left = Remaining(lhs_, lhs, LhsParent(stack), lhs_scope_end_);
     const std::uint32_t rhs_left = Remaining(rhs_, rhs, RhsParent(stack), rhs_scope_end_);
@@ -520,7 +454,6 @@ class Search {
     return static_cast<std::uint32_t>(s_.groups.size() - 1);
   }
 
-  // Enters a one-sided delimiter on the LHS (`lhs_side`) or the RHS.
   std::uint32_t PushOne(std::uint32_t stack, std::uint32_t node, bool lhs_side) {
     const bool extend = stack != kNoDiffNode && !s_.groups[stack].both;
     StackGroup group;
@@ -545,8 +478,6 @@ class Search {
     return static_cast<std::uint32_t>(s_.groups.size() - 1);
   }
 
-  // Exits the innermost one-sided delimiter on one side. Returns the new stack
-  // and the exited list node.
   std::uint32_t PopOne(std::uint32_t stack, bool lhs_side, std::uint32_t& exited) {
     StackGroup group = s_.groups[stack];
     const std::uint32_t head = lhs_side ? group.lhs : group.rhs;
@@ -578,7 +509,6 @@ class Search {
       const std::uint32_t next_stack = PopOne(stack, true, exited);
       Relax(from, NextLhs(exited), vertex.rhs, next_stack, Edge::ExitLhs, 0);
     }
-    // `group` may dangle after PopOne grew the arena; re-read.
     group = stack == kNoDiffNode ? nullptr : &s_.groups[stack];
     if (vertex.rhs == kNoDiffNode && group != nullptr && !group->both &&
         group->rhs != kNoDiffNode) {
@@ -595,8 +525,6 @@ class Search {
         const std::uint32_t cost = 1 + depth_difference +
                                    (IsSeparatorAtom(lhs_, a) ? kSeparatorPenalty : 0);
         Relax(from, NextLhs(vertex.lhs), NextRhs(vertex.rhs), stack, Edge::Unchanged, cost);
-        // An equal subtree is best crossed whole; entering it can only match
-        // the same tokens at a higher price.
         return;
       }
       if (a.is_list && b.is_list && lhs_.OpenToken(a).text == rhs_.OpenToken(b).text &&
@@ -648,7 +576,7 @@ class Search {
 };
 
 
-}  // namespace
+}
 
 bool IsPunctuationAtom(const DiffSyntaxTree& tree, const DiffSyntaxNode& node) {
   if (node.is_list) {
@@ -667,8 +595,6 @@ void MarkSubtreesUnchanged(const DiffSyntaxTree& lhs, std::uint32_t lhs_node,
                            StructuralMatch& match) {
   const DiffSyntaxNode& a = lhs.nodes[lhs_node];
   const DiffSyntaxNode& b = rhs.nodes[rhs_node];
-  // Equal content ids mean the same token sequence, so the ranges are the same
-  // length and line up one to one.
   const std::uint32_t count = a.token_end - a.token_begin;
   for (std::uint32_t offset = 0; offset < count; ++offset) {
     match.lhs_partner[a.token_begin + offset] = b.token_begin + offset;
@@ -682,4 +608,4 @@ bool SearchGap(const DiffSyntaxTree& lhs, const DiffSyntaxTree& rhs, SiblingScop
   return Search(lhs, rhs, lhs_scope, rhs_scope, budget).Run(lhs_first, rhs_first, match, vertices);
 }
 
-}  // namespace microide::compare::detail
+}

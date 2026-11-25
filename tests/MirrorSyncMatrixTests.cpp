@@ -14,19 +14,6 @@
 #include <string_view>
 #include <vector>
 
-// The full matrix of a local tree operation against a remote one, on the same
-// file or its directory: edit, create, delete, rename, move, both sides, in both
-// orderings a user meets -- the local operation made while connected against a
-// base the host had already moved on from, and made offline then replayed on
-// reconnect through the journal. Every cell must end with no error, no conflict
-// left, the two trees equal, and no bytes either side wrote lost without a
-// conflict having asked the user. The cells whose answer is fixed (a conflict
-// must be raised; a conflict must not be) say so.
-//
-// Written after a host that archived a folder (a rename of its directory) left
-// every locally edited file under it a conflict Take Remote could not settle, a
-// save the host never received of a file it deleted stayed "unsent" with no row
-// forever, and a folder deleted here never went from the host at all.
 namespace microide::tests {
 namespace {
 
@@ -88,7 +75,7 @@ void ApplyLocal(LocalOp op, MirrorSession& session, remote::MirrorWriteGate& gat
   const auto ops = [&](std::vector<TreeOp> list) {
     const auto applied = gate.ApplyTreeOps(list);
     Expect(applied.ok, label + ": the local operation applies: " + applied.error_message);
-    gate.DisposeStaged(applied.staged_directories);  // as the shell does, off its thread
+    gate.DisposeStaged(applied.staged_directories);
   };
   switch (op) {
     case LocalOp::None:
@@ -149,15 +136,13 @@ bool Holds(const Snapshot& files, std::string_view bytes) {
   return false;
 }
 
-// The cells whose answer is fixed. Everything else may or may not conflict, as
-// long as the invariants hold.
 enum class Verdict { Either, MustConflict, MustNotConflict };
 
 Verdict Expected(LocalOp local, RemoteOp host) {
   using L = LocalOp;
   using R = RemoteOp;
   if (local == L::None || host == R::None) {
-    return Verdict::MustNotConflict;  // one side alone is never a conflict
+    return Verdict::MustNotConflict;
   }
   switch (local) {
     case L::Edit:
@@ -165,14 +150,10 @@ Verdict Expected(LocalOp local, RemoteOp host) {
     case L::Create:
       return host == R::Create ? Verdict::MustConflict : Verdict::MustNotConflict;
     case L::Delete:
-      // The host's newer bytes are never put back silently, and a delete both
-      // sides made is settled.
       return host == R::Edit ? Verdict::MustConflict
              : host == R::Delete || host == R::Create || host == R::DeleteDir ? Verdict::MustNotConflict
                                                                               : Verdict::Either;
     case L::Rename:
-      // A rename the host refused (the file edited, deleted or moved there) parks
-      // the renamed copy; both sides renaming to the same name agree.
       return host == R::Create || host == R::Rename ? Verdict::MustNotConflict : Verdict::MustConflict;
     case L::MoveDir:
       return host == R::MoveDirElsewhere || host == R::DeleteDir ? Verdict::MustConflict
@@ -187,8 +168,6 @@ Verdict Expected(LocalOp local, RemoteOp host) {
   return Verdict::Either;
 }
 
-// One cell. Returns whether a conflict was raised, so the caller can run the
-// other resolution on the same cell.
 bool RunCell(LocalOp local, RemoteOp host, Ordering ordering, Resolution resolution) {
   const std::string label = std::string(ordering == Ordering::Live ? "live" : "offline") + ": local " +
                             Name(local) + " vs remote " + Name(host) + ", " +
@@ -200,13 +179,11 @@ bool RunCell(LocalOp local, RemoteOp host, Ordering ordering, Resolution resolut
   session.Sync();
   Expect(session.engine->status().error.empty(), label + ": the first sync: " + session.engine->status().error);
   if (ordering == Ordering::Live) {
-    // The host moved on; the local operation is checked against the base.
     ApplyRemote(host, session.host);
     remote::MirrorWriteGate gate(*session.store, *session.engine);
     ApplyLocal(local, session, gate, label);
     session.engine->Flush();
   } else {
-    // Made offline, journaled; the host moves on; replayed on reconnect.
     session.engine.reset();
     {
       remote::RemoteWorkspace offline(std::make_shared<remote::RemoteConnection>(nullptr));
@@ -239,7 +216,6 @@ bool RunCell(LocalOp local, RemoteOp host, Ordering ordering, Resolution resolut
     case Verdict::Either:
       break;
   }
-  // The conflicts' own report: a side it names as gone is gone.
   for (const remote::MirrorSyncEngine::Conflict& conflict : session.engine->ConflictDetails()) {
     Expect(conflict.in_mirror == std::filesystem::exists(session.Tree(conflict.path)),
            label + ": " + conflict.path + " says in_mirror=" + (conflict.in_mirror ? "yes" : "no"));
@@ -260,8 +236,6 @@ bool RunCell(LocalOp local, RemoteOp host, Ordering ordering, Resolution resolut
   const Snapshot mirror_files = Files(session.mirror_dir / "tree");
   Expect(host_files == mirror_files, label + ": the trees agree: host " + Describe(host_files) + " mirror " +
                                          Describe(mirror_files));
-  // No silent loss: bytes a side wrote survive unless a conflict asked, and then
-  // the chosen side's do.
   const bool local_wrote = local == LocalOp::Edit || local == LocalOp::Create;
   const bool remote_wrote = host == RemoteOp::Edit || host == RemoteOp::Create;
   if (local_wrote && (!conflicted || resolution == Resolution::KeepLocal)) {
@@ -286,7 +260,7 @@ void TestRow() {
   RunRow(kLocal, kOrdering);
 }
 
-}  // namespace
+}
 
 void RegisterMirrorSyncMatrixTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncMatrix/Live/Nothing", TestRow<LocalOp::None, Ordering::Live>);
@@ -305,4 +279,4 @@ void RegisterMirrorSyncMatrixTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncMatrix/Offline/DeleteDir", TestRow<LocalOp::DeleteDir, Ordering::Offline>);
 }
 
-}  // namespace microide::tests
+}

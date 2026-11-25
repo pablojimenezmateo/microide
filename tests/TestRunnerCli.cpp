@@ -43,7 +43,7 @@ ConsumeOptionalValueResult ConsumeOptionalValue(std::string_view arg,
   return ConsumeOptionalValueResult::Matched;
 }
 
-}  // namespace
+}
 
 TestRunnerCliParseResult ParseTestRunnerArgs(const std::vector<std::string_view>& args) {
   TestRunnerCliParseResult result;
@@ -183,4 +183,4 @@ void PrintTestRunnerUsage(std::ostream& out, std::string_view program_name) {
       << "  " << program_name << " --gtest_filter='WorkspaceShell/*Status*'\n";
 }
 
-}  // namespace microide::tests
+}

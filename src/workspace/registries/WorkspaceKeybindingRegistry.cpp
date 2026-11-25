@@ -32,8 +32,6 @@ SDL_Keymod NormalizedKeyModifiers(SDL_Keymod modifiers) {
 
 namespace {
 
-// A Global binding is active everywhere except a focused terminal, which owns the
-// keyboard unless the binding skips it; any other binding only in its context.
 template <typename Binding>
 bool BindingActiveIn(const Binding& binding, KeybindingContext context) {
   if (binding.context == KeybindingContext::Global) {
@@ -42,9 +40,6 @@ bool BindingActiveIn(const Binding& binding, KeybindingContext context) {
   return binding.context == context;
 }
 
-// The one matching rule both lookups (built-in specs and resolved bindings) share,
-// for a single key: a two-step chord's own key is not a binding of that key.
-// `modifiers` is already normalized.
 template <typename Binding>
 bool BindingMatches(const Binding& binding,
                     SDL_Keycode key,
@@ -67,7 +62,7 @@ std::string FormatBindingKeysOf(const Binding& binding) {
   return keys;
 }
 
-}  // namespace
+}
 
 bool IsTerminalReservedChord(SDL_Keycode key, SDL_Keymod modifiers) {
   const SDL_Keymod normalized = NormalizedKeyModifiers(modifiers);
@@ -82,9 +77,6 @@ bool KeybindingContextsOverlap(KeybindingContext a,
                                bool a_skips_terminal,
                                KeybindingContext b,
                                bool b_skips_terminal) {
-  // The contexts each one is active in, by BindingMatches: a specific context is
-  // active only there; Global in every context but Terminal, and in Terminal too
-  // when it skips the shell.
   const auto active_in = [](KeybindingContext binding, bool skips, KeybindingContext where) {
     if (binding == KeybindingContext::Global) {
       return where != KeybindingContext::Terminal || skips;
@@ -103,15 +95,6 @@ bool KeybindingContextsOverlap(KeybindingContext a,
 
 std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
   static const auto kSpecs = std::to_array<KeybindingSpec>({
-      // Global — available everywhere except modals.
-      //
-      // Scope follows VS Code's: a command that acts on the workbench (find in
-      // files, the editor tabs and groups, go to line, word wrap) is Global, so it
-      // works from the tree, a panel or the debug pane; Editor is for what edits or
-      // navigates the focused text. Find-in-files, close/next/previous/move tab,
-      // split and go to line were Editor, which made Ctrl+Shift+F do nothing while
-      // the tree had focus. A focused terminal still owns these keys (Ctrl+W is
-      // the shell's) unless terminal.commands_to_skip_shell names them.
       KeybindingSpec{
           .id = "new-tab",
           .action = ActionId::Tab,
@@ -172,10 +155,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 1,
           .command_name = {},
       },
-      // Ctrl+B stays with a focused terminal, unlike VS Code (whose default
-      // commandsToSkipShell takes it): it is readline's backward-char in every
-      // emacs-mode shell, and the sidebar is a click or a menu row away from there
-      // (TD-2026-10-22-382).
       KeybindingSpec{
           .id = "sidebar-toggle",
           .action = ActionId::SidebarToggle,
@@ -187,8 +166,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
       },
       KeybindingSpec{
-          // File > Open File… has advertised Ctrl+O since the menu was written; this
-          // is the binding that makes it true. A bare `open` opens the native picker.
           .id = "open-file",
           .action = ActionId::Open,
           .key = SDLK_O,
@@ -199,7 +176,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
       },
       KeybindingSpec{
-          // VS Code's Go to Symbol in Workspace: workspace/symbol as you type.
           .id = "workspace-symbol",
           .action = ActionId::WorkspaceSymbol,
           .key = SDLK_T,
@@ -210,7 +186,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
       },
       KeybindingSpec{
-          // VS Code's Go to Symbol in Editor: a pick of the active file's symbols.
           .id = "goto-symbol",
           .action = ActionId::GoToSymbolInEditor,
           .key = SDLK_O,
@@ -250,9 +225,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
-      // Ctrl+1..8 stay with a focused terminal: Ctrl+2 is the shell's NUL
-      // (Ctrl+@), and the terminal has its own focus keys
-      // (WorkspaceShell/TerminalCtrlSlashReachesTheShell).
       KeybindingSpec{
           .id = "focus-group-1",
           .action = ActionId::FocusEditorGroup,
@@ -341,8 +313,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
           .skips_terminal = false,
       },
-      // VS Code's Go Back / Go Forward. A focused terminal keeps Alt+Left/Right
-      // (pane focus, or the shell's word motion).
       KeybindingSpec{
           .id = "navigate-back",
           .action = ActionId::NavigateBack,
@@ -376,8 +346,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
           .skips_terminal = true,
       },
-      // VS Code on Linux: Ctrl+Q quits (a hot exit, so unsaved edits come back).
-      // Skips the terminal, where Ctrl+Q is XON and no one types it on purpose.
       KeybindingSpec{
           .id = "quit",
           .action = ActionId::Quit,
@@ -410,13 +378,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
           .skips_terminal = true,
       },
-      // Debugger execution control (Phase 3). Global; the actions are gated on
-      // `debug.enabled` + session state in WorkspaceActionAvailability, so these
-      // keys are inert until a session is active. F5/F10/F11/Shift+F11 mirror
-      // VSCode, and F6=Pause matches VSCode as well. F8=Start fills the gap left
-      // by F5 only *continuing* an already-paused session; F6/F8 were reclaimed
-      // from the former file-finder/sidebar-toggle bindings. F5 has since become
-      // start-or-continue, so F8 went back to VS Code's Go to Next Problem (below).
       KeybindingSpec{
           .id = "next-problem",
           .action = ActionId::GoToNextProblemInFiles,
@@ -447,8 +408,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
-      // VS Code's F6 under its other `when`: with no program running (Pause is
-      // not enabled), F6 / Shift+F6 move the keyboard between the window's parts.
       KeybindingSpec{
           .id = "focus-next-part",
           .action = ActionId::FocusNextPart,
@@ -470,8 +429,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
-      // F5 starts a session when none is running and continues a stopped one;
-      // Shift+F5 stops it (VS Code's pair).
       KeybindingSpec{
           .id = "debug-start-or-continue",
           .action = ActionId::DebugStartOrContinue,
@@ -544,8 +501,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
           .skips_terminal = true,
       },
-      // Right-side debug pane surface switches, grouped with the toggle above
-      // (Ctrl+Shift+D). Ctrl+digit is the zoom family, so these use Ctrl+Shift+digit.
       KeybindingSpec{
           .id = "debug-pane-callstack",
           .action = ActionId::DebugPaneShowCallStack,
@@ -601,7 +556,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
           .skips_terminal = true,
       },
-      // Editor context
       KeybindingSpec{
           .id = "undo",
           .action = ActionId::Undo,
@@ -672,8 +626,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
-      // Editor tabs had no key chord at all: openable (Ctrl+P) and closable
-      // (Ctrl+W), but reachable only with the mouse. These are VS Code's.
       KeybindingSpec{
           .id = "next-tab",
           .action = ActionId::TabSwitch,
@@ -694,10 +646,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 1,
           .command_name = {},
       },
-      // Reordering a tab was mouse-only: `tabmove` existed as a command with a
-      // relative offset, but nothing reached it from the keyboard. These are VS
-      // Code's Move Editor Left / Right, and like it they clamp at the ends
-      // rather than wrapping.
       KeybindingSpec{
           .id = "move-tab-right",
           .action = ActionId::TabMove,
@@ -718,9 +666,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 1,
           .command_name = {},
       },
-      // Ctrl+W stays with a focused terminal, as in VS Code: readline's
-      // unix-word-rubout. Ctrl+PageUp/PageDown there are the terminal's own tab
-      // switch (a Terminal-context binding), not the editor's.
       KeybindingSpec{
           .id = "close-tab",
           .action = ActionId::CloseActiveTab,
@@ -742,8 +687,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
       },
       KeybindingSpec{
-          // Ctrl+Shift+F, as in gnome-terminal, Konsole and kitty: Ctrl+F is the
-          // program's (readline's forward-char, vim's page down, less).
           .id = "terminal-find",
           .action = ActionId::TerminalFind,
           .key = SDLK_F,
@@ -753,7 +696,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
-      // VS Code's Focus and Select Breadcrumbs: the active file's folder as a pick.
       KeybindingSpec{
           .id = "browse-folder",
           .action = ActionId::BrowseFolder,
@@ -784,8 +726,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
-      // F3 / Shift+F3 step the buffer search from the editor, widget open or not
-      // (VS Code nextMatchFindAction / previousMatchFindAction).
       KeybindingSpec{
           .id = "find-next",
           .action = ActionId::FindNext,
@@ -815,8 +755,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
-          // Not from a focused terminal: there Ctrl+Shift+F is the terminal's own
-          // find (terminal-find), as on every Linux terminal.
       },
       KeybindingSpec{
           .id = "completion",
@@ -918,7 +856,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
-      // Editor essentials.
       KeybindingSpec{
           .id = "jump-to-matching-bracket",
           .action = ActionId::JumpToMatchingBracket,
@@ -949,11 +886,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
-      // Column (box) selection, matching VSCode's Ctrl+Shift+Alt+Arrow. Registered
-      // rather than hardcoded in the key coordinator so the chord is listed in the
-      // keyboard-shortcuts overlay and can be rebound. The mouse form
-      // (Shift+Alt+drag) stays in WorkspaceEditorMouseCoordinator -- drags are not
-      // keybindings.
       KeybindingSpec{
           .id = "column-select-up",
           .action = ActionId::ColumnSelectUp,
@@ -1064,7 +996,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
-      // VS Code's smartSelect.expand / shrink.
       KeybindingSpec{
           .id = "expand-selection",
           .action = ActionId::ExpandSelection,
@@ -1088,9 +1019,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
       KeybindingSpec{
           .id = "add-cursor-above",
           .action = ActionId::AddCursorAbove,
-          // Ctrl+Alt+Up/Down, as VSCode binds insertCursorAbove/Below. Alt+Up
-          // alone is move-line-up and Ctrl+Shift+Alt+Up is the column-select
-          // step, so the three vertical Alt chords stay distinct.
           .key = SDLK_UP,
           .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_ALT),
           .context = KeybindingContext::Editor,
@@ -1111,7 +1039,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
       KeybindingSpec{
           .id = "add-cursors-to-line-ends",
           .action = ActionId::AddCursorsToLineEnds,
-          // Shift+Alt+I, as VSCode binds insertCursorAtEndOfEachLineSelected.
           .key = SDLK_I,
           .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_SHIFT | SDL_KMOD_ALT),
           .context = KeybindingContext::Editor,
@@ -1132,7 +1059,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
       KeybindingSpec{
           .id = "add-cursor-all-matches",
           .action = ActionId::AddCursorAtAllMatches,
-          // Ctrl+Shift+L matches VSCode's "Select all occurrences".
           .key = SDLK_L,
           .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
           .context = KeybindingContext::Editor,
@@ -1150,10 +1076,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
-      // VS Code's Ctrl+K chords: Ctrl+K, then the second key. Global ones work from
-      // the tree and the panels too (not a focused terminal, which owns Ctrl+K);
-      // the fold and hover chords act on the focused text and need the editor. A
-      // second key without Ctrl (Ctrl+K S, Ctrl+K M) has its typed text swallowed.
       KeybindingSpec{
           .id = "open-folder",
           .action = ActionId::ProjectOpen,
@@ -1370,12 +1292,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .leader_key = SDLK_K,
           .leader_modifiers = SDL_KMOD_CTRL,
       },
-      // Code folding shortcuts: fold/unfold regions use single chords; fold-all /
-      // unfold-all are the Ctrl+K chords above.
-      // VS Code parity: F9 toggles a breakpoint on the caret line, Alt+Z toggles
-      // word wrap, Ctrl+] / Ctrl+[ indent / outdent, Ctrl+\ splits the editor
-      // right, and Ctrl+Shift+E / G / M open the explorer, source-control and
-      // problems views.
       KeybindingSpec{
           .id = "breakpoint-toggle",
           .action = ActionId::BreakpointToggle,
@@ -1479,8 +1395,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
-      // A diff's previous / next change (its header's buttons). Disabled outside a
-      // diff, so the chord falls through to whatever else wants it there.
       KeybindingSpec{
           .id = "diff-previous-change",
           .action = ActionId::ComparePreviousChange,
@@ -1521,11 +1435,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
-      // Terminal panel verbs. Ctrl+` / Ctrl+J / Ctrl+Shift+` are VS Code's; the
-      // maximize chord sits next to the panel toggle it modifies. The pane and
-      // tab verbs are Terminal-context: Alt+Left/Right and Ctrl+PageUp/PageDown
-      // keep their editor meanings everywhere else, and a single-pane terminal
-      // lets Alt+arrows fall through to its programs (the executor declines).
       KeybindingSpec{
           .id = "terminal-toggle",
           .action = ActionId::TerminalToggle,
@@ -1569,8 +1478,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
           .skips_terminal = true,
       },
-      // Ctrl+Shift+A, as in gnome-terminal and Konsole: Ctrl+A is the program's
-      // (readline's beginning-of-line, tmux and screen's prefix).
       KeybindingSpec{
           .id = "terminal-select-all",
           .action = ActionId::TerminalSelectAll,
@@ -1611,8 +1518,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
-      // Global, and past a focused terminal's shell: the alert is usually another
-      // terminal's, raised while this one has the keyboard.
       KeybindingSpec{
           .id = "terminal-next-alert",
           .action = ActionId::TerminalNextAlert,
@@ -1676,8 +1581,6 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
 
 namespace {
 
-// ResolveKeybindings, also naming each contributed binding it drops and the
-// resolved binding that holds its chord (`shadowed`, when given).
 std::vector<ResolvedKeybinding> ResolveKeybindingsReporting(
     const std::vector<plugin::PluginHost::ContributedKeybinding>& contributed,
     const std::vector<std::string>& disabled_ids,
@@ -1690,7 +1593,6 @@ std::vector<ResolvedKeybinding> ResolveKeybindingsReporting(
   const auto is_disabled = [&](std::string_view id) {
     return std::find(disabled_ids.begin(), disabled_ids.end(), id) != disabled_ids.end();
   };
-  // The binding's own default, then every user entry for it in order.
   const auto skips_terminal = [&](std::string_view id, bool skips) {
     for (const std::string& entry : skip_shell) {
       const bool removes = entry.starts_with('-');
@@ -1723,30 +1625,19 @@ std::vector<ResolvedKeybinding> ResolveKeybindingsReporting(
     result.push_back(std::move(rb));
   }
 
-  // Two bindings collide when they share a key + normalized modifiers and their
-  // contexts overlap (KeybindingContextsOverlap -- the rule BindingMatches
-  // applies). Resolved chords are indexed by (key, normalized mods) so each
-  // contributed binding checks only the handful on its own chord instead of
-  // rescanning every prior binding (the old linear rescan made a cap-sized reload
-  // quadratic; TD-2026-07-17-019).
   const auto chord_key = [](SDL_Keycode key, SDL_Keymod normalized_mods) {
     return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(key)) << 16) |
            static_cast<std::uint16_t>(normalized_mods);
   };
-  // One flat vector sorted by chord, not a map of vectors: a node and a vector
-  // per chord was two allocations per built-in binding on every resolve, which
-  // grew with every binding added (plugin_keybindings_resolve_at_cap).
   struct TakenChord {
     std::uint64_t chord = 0;
     KeybindingContext context = KeybindingContext::Global;
     bool skips_terminal = false;
-    std::size_t owner = 0;  // index into `result`: who holds the chord
+    std::size_t owner = 0;
   };
   std::vector<TakenChord> taken;
   taken.reserve(result.size() + contributed.size());
   for (const ResolvedKeybinding& existing : result) {
-    // A two-step chord holds its LEADER: a plugin's single Ctrl+K would leave every
-    // Ctrl+K chord dead. Its second key alone (Ctrl+O) is free for a single binding.
     const SDL_Keycode held_key = existing.leader_key != SDLK_UNKNOWN ? existing.leader_key : existing.key;
     const SDL_Keymod held_mods =
         existing.leader_key != SDLK_UNKNOWN ? existing.leader_modifiers : existing.modifiers;
@@ -1755,7 +1646,6 @@ std::vector<ResolvedKeybinding> ResolveKeybindingsReporting(
   }
   const auto by_chord = [](const TakenChord& a, const TakenChord& b) { return a.chord < b.chord; };
   std::stable_sort(taken.begin(), taken.end(), by_chord);
-  // The resolved binding holding (key, mods) where `context` is active, if any.
   const auto holder_of = [&](SDL_Keycode key, SDL_Keymod mods, KeybindingContext context,
                              bool skips) -> const TakenChord* {
     const TakenChord probe{chord_key(key, NormalizedKeyModifiers(mods))};
@@ -1783,10 +1673,6 @@ std::vector<ResolvedKeybinding> ResolveKeybindingsReporting(
     } else if (contrib.context == "terminal") {
       context = KeybindingContext::Terminal;
     }
-    // Built-ins resolve first and FindKeybinding returns the first match, so a plugin
-    // chord that collides with an already-resolved binding (a built-in or an earlier
-    // plugin) would be advertised in Help/Settings yet silently dispatch the winner
-    // instead. Skip the shadowed contribution so the UI never shows a dead binding.
     const bool skips = context == KeybindingContext::Global &&
                        skips_terminal(contrib.id, contrib.skips_terminal);
     if (const TakenChord* holder = holder_of(key, mods, context, skips); holder != nullptr) {
@@ -1810,8 +1696,6 @@ std::vector<ResolvedKeybinding> ResolveKeybindingsReporting(
     rb.context = context;
     rb.from_plugin = true;
     rb.skips_terminal = skips;
-    // Keep the conflict index in sync so a later plugin binding that collides
-    // with this accepted one is skipped, matching the old rescan-of-result.
     const TakenChord accepted{chord_key(key, NormalizedKeyModifiers(mods)), context, skips, result.size()};
     taken.insert(std::upper_bound(taken.begin(), taken.end(), accepted, by_chord), accepted);
     result.push_back(std::move(rb));
@@ -1820,7 +1704,7 @@ std::vector<ResolvedKeybinding> ResolveKeybindingsReporting(
   return result;
 }
 
-}  // namespace
+}
 
 std::vector<ResolvedKeybinding> ResolveKeybindings(
     const std::vector<plugin::PluginHost::ContributedKeybinding>& contributed,
@@ -1855,7 +1739,6 @@ const ResolvedKeybinding* FindKeybinding(const std::vector<ResolvedKeybinding>& 
     if (first == nullptr) {
       first = &rb;
     }
-    // A plugin command (no action) is always offered.
     if (!rb.command_name.empty() || action_enabled(rb.action)) {
       return &rb;
     }
@@ -1872,8 +1755,6 @@ const ResolvedKeybinding* FindChordKeybinding(const std::vector<ResolvedKeybindi
                                                const std::function<bool(ActionId)>& action_enabled) {
   const SDL_Keymod relevant_leader = NormalizedKeyModifiers(leader_modifiers);
   const SDL_Keymod relevant = NormalizedKeyModifiers(modifiers);
-  // A keypad digit is the digit as a chord's second key: Ctrl+K, Ctrl+keypad 0
-  // folds all as Ctrl+K Ctrl+0 does.
   if (key >= SDLK_KP_1 && key <= SDLK_KP_9) {
     key = static_cast<SDL_Keycode>(SDLK_1 + (key - SDLK_KP_1));
   } else if (key == SDLK_KP_0) {
@@ -1918,7 +1799,6 @@ bool ParseKeyChord(std::string_view chord, SDL_Keycode* key_out, SDL_Keymod* mod
   SDL_Keymod mods = SDL_KMOD_NONE;
   std::string remaining(chord);
 
-  // Strip modifier prefixes.
   while (true) {
     std::string lower = util::ToLowerAscii(remaining);
     if (lower.starts_with("ctrl+")) {
@@ -1940,16 +1820,6 @@ bool ParseKeyChord(std::string_view chord, SDL_Keycode* key_out, SDL_Keymod* mod
     }
   }
 
-  // Map the key name to an SDL_Keycode BY NAME, never through a scancode. A
-  // key event carries the keycode the pressed key produces under the user's
-  // layout (`z` on the key labelled Z), and FindKeybinding compares keycodes, so
-  // the chord has to name the same thing. The old form went
-  // SDL_GetScancodeFromName("Z") -> SDL_GetKeyFromScancode: that is the PHYSICAL
-  // QWERTY position, so on a QWERTZ layout a plugin's "ctrl+z" bound to the key
-  // labelled Y (and "ctrl+y" to Z), and on AZERTY "ctrl+a" to the key labelled Q.
-  // SDL3 keycodes for printable ASCII are the character itself (SDLK_A is 'a',
-  // SDLK_MINUS is '-'), so a one-byte printable name IS its keycode; the named
-  // keys are the constants; F-keys resolve by SDL's own key name.
   const std::string lower_key = util::ToLowerAscii(remaining);
   if (lower_key.size() == 1 && lower_key[0] > ' ' && lower_key[0] < 0x7F) {
     *key_out = static_cast<SDL_Keycode>(static_cast<unsigned char>(lower_key[0]));
@@ -1957,7 +1827,6 @@ bool ParseKeyChord(std::string_view chord, SDL_Keycode* key_out, SDL_Keymod* mod
     return true;
   }
 
-  // Function keys F1-F24, by SDL's key name ("F1").
   if (lower_key.size() >= 2 && lower_key.size() <= 3 && lower_key[0] == 'f') {
     bool all_digits = true;
     for (std::size_t i = 1; i < lower_key.size(); ++i) {
@@ -1978,7 +1847,6 @@ bool ParseKeyChord(std::string_view chord, SDL_Keycode* key_out, SDL_Keymod* mod
     }
   }
 
-  // Named keys.
   static const std::pair<std::string_view, SDL_Keycode> kNamedKeys[] = {
       {"escape", SDLK_ESCAPE},   {"esc", SDLK_ESCAPE},        {"enter", SDLK_RETURN},
       {"return", SDLK_RETURN},   {"tab", SDLK_TAB},           {"space", SDLK_SPACE},
@@ -2012,11 +1880,6 @@ std::string FormatKeyChord(SDL_Keycode key, SDL_Keymod modifiers) {
   if (modifiers & SDL_KMOD_GUI) {
     result += "Super+";
   }
-  // SDL names a few keys after the character they historically sent rather than
-  // after the legend printed on the key. "Return" is the one that shows: the key
-  // says Enter, VS Code's keybinding UI says Enter, and this is the only place
-  // that spells a chord for the menus, the shortcuts overlay and Help/About --
-  // so the alias belongs here and cannot drift between them.
   if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
     result += "Enter";
     return result;
@@ -2028,4 +1891,4 @@ std::string FormatKeyChord(SDL_Keycode key, SDL_Keymod modifiers) {
   return result;
 }
 
-}  // namespace microide::workspace
+}

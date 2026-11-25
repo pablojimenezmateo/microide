@@ -7,35 +7,20 @@
 
 namespace microide::workspace {
 
-// Node storage and identity for DebugValueTree: the id→slot mapping, insertion,
-// subtree teardown, reference rebinding, and the path key that survives a stop.
-// Split from DebugValueTree.cpp (which keeps the fetch/flatten/edit behaviour) to
-// stay under the debug-subsystem TU cap rather than raising it.
-
 void DebugValueTree::Clear() {
   DropAllNodes();
   roots_.clear();
   rows_.clear();
   truncated_ = false;
-  // next_id_ is intentionally NOT reset: node ids stay globally monotonic for the
-  // life of the tree so a stale async response (a setVariable/variables reply
-  // issued against a previous stop/frame) can never alias a freshly-created node
-  // that happens to reuse the same id. This is defense in depth behind the
-  // per-stop / per-eval generation guards in DebugService.
   selected_row_ = 0;
   editing_node_.reset();
   edit_buffer_.SetText({});
-  // NB: expanded_paths_ and the one-shot default-expansion flag intentionally survive
-  // Clear() — it runs on every stop/frame focus, so wiping them here would re-open the
-  // default scope on every stop and lose a user's collapse. Session-scoped reset lives
-  // in ResetExpansionForNewSession().
 }
 
 void DebugValueTree::ClearRoots() {
   DropAllNodes();
   roots_.clear();
   truncated_ = false;
-  // next_id_ stays monotonic across rebuilds — see Clear().
   editing_node_.reset();
 }
 
@@ -43,11 +28,6 @@ void DebugValueTree::DropAllNodes() {
   nodes_.clear();
   reference_to_node_.clear();
   live_nodes_ = 0;
-  // Re-base the slot array on the next id that will be handed out. This is the
-  // single point that keeps `nodes_[id - id_base_]` consistent with ids that are
-  // never reused, and it is why an id from a previous stop resolves to nullptr
-  // rather than aliasing a fresh node. `nodes_.clear()` keeps the capacity, so a
-  // per-stop rebuild of the same size does not re-grow the array.
   id_base_ = next_id_;
 }
 
@@ -57,34 +37,24 @@ DebugValueTree::Node* DebugValueTree::FindNode(std::uint32_t id) {
 
 const DebugValueTree::Node* DebugValueTree::FindNode(std::uint32_t id) const {
   if (id < id_base_) {
-    return nullptr;  // a node from a previous stop (ids are never reused)
+    return nullptr;
   }
   const std::size_t index = id - id_base_;
   if (index >= nodes_.size()) {
     return nullptr;
   }
   const Node& node = nodes_[index];
-  return node.live ? &node : nullptr;  // tombstone → gone, same as a map miss
+  return node.live ? &node : nullptr;
 }
 
 void DebugValueTree::PathKeyInto(const Node& node, std::string& out) const {
-  // Root→node chain joined by a unit separator (a byte that cannot appear in a
-  // DAP variable name). Each segment is the sibling ordinal plus the name, so
-  // two siblings that share a name — common in array pages and maps with
-  // repeated labels — get distinct keys and expand/collapse independently.
   path_key_segments_.clear();
   const Node* cur = &node;
   while (cur != nullptr) {
-    // The sibling position is cached on the node at insertion (index in roots_ or
-    // the parent's children vector), so this walk stays O(depth) rather than
-    // rescanning the whole sibling vector per level.
     path_key_segments_.push_back(PathKeySegment{cur->sibling_ordinal, cur->name});
     cur = cur->parent_id == 0 ? nullptr : FindNode(cur->parent_id);
   }
   out.clear();
-  // The ordinal is written through a stack buffer rather than std::to_string: the
-  // temporary is small enough to live in the string's own inline storage today,
-  // but that is an implementation detail to lean on rather than an invariant.
   char ordinal_digits[16];
   for (auto it = path_key_segments_.rbegin(); it != path_key_segments_.rend(); ++it) {
     if (!out.empty()) {
@@ -101,8 +71,6 @@ void DebugValueTree::PathKeyInto(const Node& node, std::string& out) const {
 }
 
 std::string DebugValueTree::PathKey(const Node& node) const {
-  // The owning form, for the callers that keep the key (an insert into
-  // expanded_paths_, or a prefix scan that has to outlive the scratch buffer).
   std::string key;
   PathKeyInto(node, key);
   return key;
@@ -121,15 +89,8 @@ std::uint32_t DebugValueTree::AddNode(Node node) {
   node.id = id;
   node.live = true;
   if (node.variables_reference > 0) {
-    // First-writer-wins: a conformant adapter keeps variablesReference unique while a
-    // stop is live, but a non-conformant one could recycle a still-live reference. Last-
-    // write-wins would then remap the reference to the recycled child, so a later page
-    // fetch for the original container would graft onto the wrong node. Keep the first
-    // mapping (matches the bounded-paging / clamped-totals hostile-adapter defenses).
     reference_to_node_.try_emplace(node.variables_reference, id);
   }
-  // Append-only: the invariant `nodes_.size() == next_id_ - id_base_` is what
-  // makes the id its own index, and only DropAllNodes may re-base it.
   nodes_.push_back(std::move(node));
   ++live_nodes_;
   return id;
@@ -147,8 +108,6 @@ std::uint32_t DebugValueTree::AddRoot(std::string name, std::string value, std::
   node.is_scope = is_scope;
   node.total_count = total_count;
   node.total_known = total_known;
-  // Ordinal = index this node will occupy in roots_ (stable across rebuilds since
-  // roots are appended in adapter order), so PathKey reads it in O(1).
   node.sibling_ordinal = static_cast<std::uint32_t>(roots_.size());
   const std::uint32_t id = AddNode(std::move(node));
   roots_.push_back(id);
@@ -156,9 +115,6 @@ std::uint32_t DebugValueTree::AddRoot(std::string name, std::string value, std::
 }
 
 void DebugValueTree::EraseSubtree(std::uint32_t node_id) {
-  // Iterative post-order-free walk: a hostile adapter can return a deeply nested
-  // one-child tree, so recursing here (once per depth level) could overflow the
-  // C++ stack. An explicit worklist keeps teardown O(nodes) with O(1) stack.
   std::vector<std::uint32_t> stack;
   stack.push_back(node_id);
   while (!stack.empty()) {
@@ -172,18 +128,12 @@ void DebugValueTree::EraseSubtree(std::uint32_t node_id) {
       stack.push_back(child_id);
     }
     const int reference = node->variables_reference;
-    // Drop the reference mapping only if it still points at this node — first-
-    // writer-wins may have handed our old reference to a sibling we must not strand.
     if (reference > 0) {
       const auto ref_it = reference_to_node_.find(reference);
       if (ref_it != reference_to_node_.end() && ref_it->second == id) {
         reference_to_node_.erase(ref_it);
       }
     }
-    // Tombstone in place: the slot index IS the id, so removing the element would
-    // renumber every later node. Move-assigning a default Node releases the three
-    // strings and the child vector, so a dead slot costs no heap — only its
-    // sizeof(Node) of already-reserved array space, reclaimed by DropAllNodes.
     *node = Node{};
     --live_nodes_;
   }
@@ -193,12 +143,6 @@ bool DebugValueTree::RebindReference(Node& node, int new_reference) {
   if (new_reference == node.variables_reference) {
     return false;
   }
-  // The structure reference changed (e.g. a scalar became a container): drop any
-  // stale children so a later expand refetches the new contents. Erase the old
-  // mapping only if it still points at THIS node -- a non-conformant adapter may
-  // have recycled our old reference onto a sibling that AddNode's first-writer-
-  // wins kept, and an unconditional erase would strand that sibling. Reinstall
-  // the new mapping with try_emplace to match AddNode's first-writer-wins.
   if (node.variables_reference > 0) {
     const auto it = reference_to_node_.find(node.variables_reference);
     if (it != reference_to_node_.end() && it->second == node.id) {
@@ -206,8 +150,6 @@ bool DebugValueTree::RebindReference(Node& node, int new_reference) {
     }
   }
   node.variables_reference = new_reference;
-  // Erase the stale children's subtrees so they are not orphaned in the node maps
-  // (node itself stays valid — only its descendants are removed).
   for (const std::uint32_t child_id : node.children) {
     EraseSubtree(child_id);
   }
@@ -220,4 +162,4 @@ bool DebugValueTree::RebindReference(Node& node, int new_reference) {
   return true;
 }
 
-}  // namespace microide::workspace
+}

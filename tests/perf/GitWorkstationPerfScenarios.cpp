@@ -18,7 +18,6 @@ namespace {
 
 using TA = microide::workspace::WorkspaceShell::TestAccess;
 
-// 1 000 modified tracked paths stress status parsing/grouping without a multi-minute open tax.
 constexpr const char* kLargeStatusFixture = "tests/perf/fixtures/git_1000_changed_project";
 constexpr const char* kManyUntrackedFixture = "tests/perf/fixtures/git_many_untracked_project";
 constexpr const char* k1000ChangedFixture = "tests/perf/fixtures/git_1000_changed_project";
@@ -41,16 +40,6 @@ void PrimeGitWorkstationFixture(ScenarioContext& context, const std::filesystem:
   context.PumpFrames(2);
 }
 
-// As above, but the project is OPENED first rather than having its root assigned.
-//
-// `PerfPrimeGitRepository` writes `current_project_state.root` directly — enough
-// for the git surfaces, which only need a repository path, and deliberately cheap.
-// It also means no file index and no FileIndexWatcher exist, which is fine until a
-// scenario's subject IS the watcher. The two external-change scenarios were in that
-// position: their "refresh" ran against an empty index and a monitor with no root,
-// so `external.refresh_open_merge` gated 31 allocations for a refresh that did not
-// happen. Opening the project first is what makes the phase measure the path it is
-// named after (TD-2026-08-15-253).
 void PrimeGitWorkstationProject(ScenarioContext& context, const std::filesystem::path& fixture,
                                 const char* scenario_label) {
   if (!DirectoryExistsNoThrow(fixture)) {
@@ -114,24 +103,10 @@ void RunDiffNextHunkLargeFile(ScenarioContext& context) {
     context.PumpFrames(4);
   });
   auto& compare = TA::ActiveCompare(context.Shell());
-  // At least two, not at least one. `JumpCompareHunk` clamps to the hunk list, so
-  // a single-hunk diff makes all 24 jumps land on the hunk the caret is already
-  // on — a burst that measures nothing, from a fixture that satisfies the check.
   if (compare.model.hunks.size() < 2) {
     throw std::runtime_error("diff_next_hunk_large_file: expected a multi-hunk diff, got " +
                              std::to_string(compare.model.hunks.size()) + " hunk(s)");
   }
-  // Walk back to the first hunk before measuring forward jumps, so the burst always
-  // starts from the same place. The driver — and therefore the shell — is reused
-  // across iterations, so iteration 2 onward re-opens a compare tab that is ALREADY
-  // OPEN and inherits the previous iteration's selection, which the previous burst
-  // left on the last hunk. (That carry-over is what TD-2026-08-17-258 originally
-  // read as "a comparison opens on its last hunk". It does not: a fresh open lands
-  // on the FIRST change, which is what this walk-back re-establishes.)
-  //
-  // The guard is on the destination, not on movement: "the walk moved" was
-  // satisfiable by a single jump, whereas landing on hunk 0 is the property the
-  // burst below actually depends on.
   for (int i = 0; i < 40; ++i) {
     context.JumpCompareHunk(-1);
   }
@@ -150,17 +125,6 @@ void RunDiffNextHunkLargeFile(ScenarioContext& context) {
       context.PumpFrames(1);
     }
   });
-  // Vacuity guard, and the reason this scenario needed one. The phase measured 3
-  // allocations against a 10,980 baseline — a 3,660x collapse that the gate
-  // reported as a PASS, because an allocation gate only fails on an increase. The
-  // cause was the fixture: its whole worktree diff was one appended block, so every
-  // jump clamped to the hunk the caret was already on. A number is not evidence
-  // that the operation a phase is named for happened; this is.
-  //
-  // The guard is on the DESTINATION, for the same reason the walk-back guard above
-  // is: "the selection moved" is satisfied by one jump out of twenty-four, so a
-  // burst that clamps after its first step still passes it. 24 forward jumps from
-  // hunk 0 must land on hunk 24.
   const std::vector<compare::CompareHunk>& hunks = TA::ActiveCompare(context.Shell()).model.hunks;
   const std::size_t expected_hunk = std::min<std::size_t>(24, hunks.size() - 1);
   const auto expected_row =
@@ -218,12 +182,6 @@ void RunDiffStageSelectedLines(ScenarioContext& context) {
 void RunMergeOpenManyConflicts(ScenarioContext& context) {
   PrimeGitWorkstationFixture(context, kManyConflictsFixture, "merge_open_many_conflicts");
   context.PumpFrames(2);
-  // Close any merge tab a previous iteration left open BEFORE the measured
-  // window. The driver is reused across iterations, so without this the `merge`
-  // command re-shows the already-open tab and every iteration after the first
-  // measures a re-show -- the p50 then describes an operation this phase is not
-  // named for, and a baseline of 185 allocations for "open a large merge" is what
-  // that produced (TD-2026-08-12-190).
   context.CloseActiveTab();
   context.Measure("merge.open_many_conflicts", [&] {
     if (!context.ExecuteCommand(
@@ -361,12 +319,6 @@ void RunMergeEditResultThenScroll(ScenarioContext& context) {
     incoming += "void unit_" + std::to_string(i) + "() {\n  int value_" + std::to_string(i) +
                 " = " + std::to_string(i + 500) + ";\n  sink(value_" + std::to_string(i) +
                 ");\n}\n\n";
-    // `current += base` — appending the whole accumulated base once per block —
-    // made this file the quadratic sum of every prefix: 3.3 MB of repeated text
-    // against a 24 KB base, so the scenario measured a 140x-lopsided diff rather
-    // than the three-way merge it is named for. Give `current` its own per-block
-    // variant, the way `incoming` has one, so every block is a genuine
-    // base/incoming/current conflict.
     current += "void unit_" + std::to_string(i) + "() {\n  int value_" + std::to_string(i) +
                " = " + std::to_string(i + 900) + ";\n  sink(value_" + std::to_string(i) +
                ");\n}\n\n";
@@ -398,27 +350,6 @@ void RunMergeEditResultThenScroll(ScenarioContext& context) {
   });
 }
 
-// TD-2026-08-13-208's prerequisite: typing into a LARGE WRAPPED compare tab.
-//
-// The entry is about a cost nothing measures — `RefreshCompareTabDerivedState`
-// serializes the whole right buffer and re-runs BuildCompareModel over both
-// files on every content change, the presentation model is rebuilt on top of
-// that, and (with wrap on) `EnsureCompareWrapLayout` re-wraps every row of both
-// sides because it keys on the model revision the rebuild just bumped. All three
-// are O(file), not O(edit), on a per-keystroke path.
-//
-// The existing diff scenarios open, jump and stage; none of them TYPES, and
-// `soft_wrap_*` measures the editor surface. So the work the entry describes had
-// no number attached to it, which is why the entry says to build this first.
-//
-// Gated as of TD-2026-08-15-245, on the DETERMINISTIC half only. It was left
-// ungated on the reasoning that a baseline recorded on a loaded machine is a
-// fiction — true of the timing half, and not of the allocation half, which
-// reproduces to the count on any machine. `--update-baseline=deterministic` mints
-// a record with `timing_is_advisory`, so the allocation and net-heap gates arm
-// immediately and wall/cpu/rss are measured, printed and explicitly not enforced
-// until a reference run arms them. Ungated meant this scenario — a per-keystroke
-// path through the compare surface — was checking nothing at all.
 void RunCompareTypeInWrappedDiff(ScenarioContext& context) {
   PrimeGitWorkstationFixture(context, kLargeDiffFixture, "compare_type_in_wrapped_diff");
   const std::filesystem::path source =
@@ -426,8 +357,6 @@ void RunCompareTypeInWrappedDiff(ScenarioContext& context) {
   if (!TA::OpenWorkingTreeComparison(context.Shell(), source, "HEAD", "HEAD")) {
     throw std::runtime_error("compare_type_in_wrapped_diff: compare open failed");
   }
-  // Applied AFTER the open: opening a project reloads config, which resets a
-  // setting applied before it.
   context.SetSetting("editor.wrap", "word");
   context.PumpFrames(4);
 
@@ -448,9 +377,6 @@ void RunCompareTypeInWrappedDiff(ScenarioContext& context) {
         std::to_string(model_rows) + " rows");
   }
 
-  // One keystroke at a time, each pumped: the point is the per-keystroke rebuild,
-  // and a burst typed into one frame would amortize exactly the cost being
-  // measured.
   context.Measure("compare.type_in_wrapped_diff", [&] {
     for (int i = 0; i < 16; ++i) {
       context.Type("x");
@@ -520,14 +446,6 @@ REGISTER_GIT_WORKSTATION_SCENARIO(git_sidebar_refresh_large_repo, RunGitSidebarR
 REGISTER_GIT_WORKSTATION_SCENARIO(git_sidebar_refresh_many_untracked,
                                  RunGitSidebarRefreshManyUntracked);
 REGISTER_GIT_WORKSTATION_SCENARIO(diff_open_1000_file_changes, RunDiffOpen1000FileChanges);
-// Not the macro: same warmup story as the two merge scenarios. Allocations settle
-// by iteration 2 (87,251 then 86,15x flat), RSS growth by iteration 4
-// (12.7 MB / 3.7 / 2.0 / 2.6 / then zero apart from occasional sub-MB arena
-// top-ups). Without a warmup the ramp dominates `p50_rss_growth_bytes`.
-// revision 3 (2026-08-17): `git_large_diff_project`'s worktree diff is 30
-// scattered hunks instead of one appended block, so every scenario reading this
-// fixture measures a different input than its previous baseline described
-// (TD-2026-08-17-258).
 const ScenarioRegistration g_perf_git_workstation_diff_next_hunk_large_file({
     .name = "diff_next_hunk_large_file",
     .smoke = false,
@@ -537,41 +455,6 @@ const ScenarioRegistration g_perf_git_workstation_diff_next_hunk_large_file({
     .measurement_revision = 3,
     .run = RunDiffNextHunkLargeFile,
 });
-// Not the macro: these three stage into the same large patch and share a resident
-// shape no envelope at the default 25% can hold. Their growth alternates cleanly —
-// zero on odd iterations, ~200-400 KB on even ones — and the size of the growing
-// half moves run to run: diff_stage_hunk_large_patch measured a trimmed mean of
-// 174 / 157 / 227 KB across three full runs of one unchanged binary (1.45x), the
-// other two 1.23x and 1.15x.
-//
-// 60% was not enough, and TD-2026-08-06-150 chased down why rather than widening
-// again. `mean_rss_growth_bytes` for these is not a property of the scenario at
-// all — it is a property of WHAT RAN BEFORE IT IN THE PROCESS. One unchanged
-// binary, diff_stage_selected_lines, trimmed mean per iteration:
-//
-//   solo run                              33 / 37 / 61 KB
-//   after a 26-scenario prefix            79 KB
-//   after a 24-scenario prefix            265 KB
-//   after the full 52-scenario prefix     239 KB
-//   full suite (TD-2026-08-06-147)        174 / 273 KB
-//
-// An 8x range, and the app's actual retention is IDENTICAL across every one of
-// them: `p50_net_heap_bytes` reads exactly 28,470 in all of them, as it does for
-// 52 of 52 scenarios re-measured under three different prefixes (worst spread 9
-// bytes). The 8x is glibc failing to trim a heap that 61,761 allocations per
-// iteration have fragmented differently depending on who fragmented it first.
-//
-// So the split is: `p50_net_heap_bytes` is the gate that a retention regression
-// trips, byte-exactly and prefix-independently; this one stays as an
-// order-of-magnitude backstop for growth that never went through `operator new`
-// (mmap, SDL, Lua, PCRE2, libc) and is invisible to the byte-exact gate. 150%
-// covers the 1.56x same-prefix draw with margin. It deliberately does NOT try to
-// cover the 8x cross-prefix swing — no envelope should, and a suite edit that
-// re-levels these is expected to go red and be rebaselined, not absorbed.
-//
-// Widened HERE and not in the JSON on purpose: --update-baseline rewrites every
-// tolerance in a baseline from this struct, so a hand-edit to the file survives
-// exactly until the next rebaseline (TD-2026-08-05-136).
 const ScenarioRegistration g_perf_git_workstation_diff_stage_hunk_large_patch({
     .name = "diff_stage_hunk_large_patch",
     .smoke = false,
@@ -590,9 +473,6 @@ const ScenarioRegistration g_perf_git_workstation_diff_stage_selected_lines({
     .measurement_revision = 3,
     .run = RunDiffStageSelectedLines,
 });
-// Not the macro: `measurement_revision` moved when the scenario started closing
-// its merge tab between iterations, so every iteration measures an OPEN rather
-// than a re-show (TD-2026-08-12-190).
 const ScenarioRegistration g_perf_git_workstation_merge_open_many_conflicts({
     .name = "merge_open_many_conflicts",
     .smoke = false,
@@ -601,18 +481,6 @@ const ScenarioRegistration g_perf_git_workstation_merge_open_many_conflicts({
     .measurement_revision = 2,
     .run = RunMergeOpenManyConflicts,
 });
-// Not the macro: this one needs a LONG warmup, and it is the reason to look at a
-// scenario's per-iteration series rather than only its summary. Re-opening this
-// merge settles over about seven iterations -- allocations 39,069 / 11,27x (x5) /
-// 9,590 / 7,779-and-flat, RSS growth 9.3 MB / 7.3 / 7.3 / 7.8 / 5.0 / 2.2 / 0.8 /
-// 0.02 / 0-and-flat -- as the allocator reaches the arena size this merge's peak
-// footprint needs. It is a warmup curve, not a leak: growth stops dead once it
-// gets there.
-//
-// Without a warmup the gate's verdict depends on the iteration count it happened
-// to be run with: `p50_rss_growth_bytes` read 1.5 MB at 8 iterations (FAIL
-// against a 64 KB floor) and 0 at 20 (PASS), from the same binary. A gate that
-// answers differently depending on how long you ran it is not gating anything.
 const ScenarioRegistration g_perf_git_workstation_merge_next_conflict_large_file({
     .name = "merge_next_conflict_large_file",
     .smoke = false,
@@ -622,19 +490,6 @@ const ScenarioRegistration g_perf_git_workstation_merge_next_conflict_large_file
     .run = RunMergeNextConflictLargeFile,
 });
 REGISTER_GIT_WORKSTATION_SCENARIO(merge_accept_hunk_interleaved, RunMergeAcceptHunkInterleaved);
-// Not the macro: this one needs a LONG warmup. Iteration 0 opens the merge and
-// builds the model (36,490 allocations against a 18,3xx steady state), so without
-// one it alone governs p95/max and the gate tracks which iteration the cold pass
-// landed on rather than the tail of the measured work.
-//
-// One is not enough, though, and the series says so: allocations sit at ~18,3xx
-// for eleven iterations and then STEP to ~15,49x and stay -- a discrete
-// transition, the shape of caches reaching capacity and starting to reuse rather
-// than a gradual settling. RSS growth tracks it exactly: ~3.9 MB per iteration
-// through iteration 8, then 942 KB / 627 KB / 4 KB, then flat zero from iteration
-// 11 on. Growth stops dead there, so it is a warmup curve and not a leak, but at
-// one warmup the `p50_rss_growth_bytes` gate was reading the ramp: 1.7 MB against
-// a 766 KB baseline, and identically so on the pre-rewrite binary.
 const ScenarioRegistration g_perf_git_workstation_merge_edit_result_then_scroll({
     .name = "merge_edit_result_then_scroll",
     .smoke = false,
@@ -643,7 +498,6 @@ const ScenarioRegistration g_perf_git_workstation_merge_edit_result_then_scroll(
     .warmup_iterations = 12,
     .run = RunMergeEditResultThenScroll,
 });
-// Ungated on purpose — see the runner's comment.
 const ScenarioRegistration g_perf_git_workstation_compare_type_in_wrapped_diff({
     .name = "compare_type_in_wrapped_diff",
     .smoke = false,
@@ -653,12 +507,6 @@ const ScenarioRegistration g_perf_git_workstation_compare_type_in_wrapped_diff({
     .run = RunCompareTypeInWrappedDiff,
 });
 REGISTER_GIT_WORKSTATION_SCENARIO(commit_open_with_large_staged_set, RunCommitOpenWithLargeStagedSet);
-// The third of the same family; see diff_stage_hunk_large_patch above.
-// revision 2 (2026-08-15): both external-change scenarios now OPEN the project
-// rather than assigning its root, and the change is delivered as a
-// FileIndexWatcher batch rather than by forcing a whole-tree rescan. The phases
-// measure the refresh they are named for instead of a no-op plus scaffolding, so
-// their numbers are not comparable with revision 1's (TD-2026-08-15-253).
 const ScenarioRegistration g_perf_git_workstation_external_change_refresh_open_diff({
     .name = "external_change_refresh_open_diff",
     .smoke = false,
@@ -679,5 +527,5 @@ const ScenarioRegistration g_perf_git_workstation_external_change_refresh_open_m
 
 #undef REGISTER_GIT_WORKSTATION_SCENARIO
 
-}  // namespace
-}  // namespace microide::tests::perf
+}
+}

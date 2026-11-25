@@ -18,43 +18,22 @@ namespace microide::project::remote {
 
 class RemoteServerClient;
 
-// The client's end of one host terminal over a RemoteServerClient: what a
-// TerminalSession in host mode sends through, and what applies the host's frames
-// to it (dev-docs/design/remote-projects.md § 6.5).
-//
-// The open is asynchronous. Starting a terminal must not cost the UI thread a
-// round trip to a far host, so `term/open` is sent and Open returns at once;
-// input and size changes made before the reply are queued and flushed when it
-// lands, and the session shows its first frame when that arrives.
 class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
                                     public Reattachable,
                                     public std::enable_shared_from_this<RemoteTerminalChannel> {
  public:
   using HostToLocal = std::function<std::filesystem::path(const std::filesystem::path&)>;
 
-  // `request.working_directory` is already a HOST path. `host_to_local` maps the
-  // shell's OSC 7 reports back into the editor's tree. With `request.attach` set
-  // this is a cold reattach to that terminal when the client's server is the one
-  // it was recorded under, falling back to a fresh open -- when the server
-  // restarted, or no longer has it -- as reattach() reports. The session is bound
-  // to the channel before anything is sent.
   static std::shared_ptr<RemoteTerminalChannel> Open(
       std::shared_ptr<RemoteServerClient> client,
       const terminal::HostTerminalSource::OpenRequest& request, terminal::TerminalSession& session,
       HostToLocal host_to_local);
 
-  // Take over host terminal `handle` — a reattach after a dropped link, or from
-  // another machine. Without `resume` the first frame is a cold one (the screen
-  // plus prefetched history; the session's contents are replaced). With it — the
-  // session's own host_resume_point() — the session keeps its scrollback and gets
-  // only what the host printed since.
   static std::shared_ptr<RemoteTerminalChannel> Attach(
       std::shared_ptr<RemoteServerClient> client, std::uint64_t handle,
       terminal::TerminalSession& session, HostToLocal host_to_local,
       std::optional<terminal::TerminalSession::HostResumePoint> resume = {});
 
-  // Carry on over `client` (a reconnect): a warm reattach from the session's own
-  // resume point. Input typed meanwhile is held and sent once it is answered.
   void Reattach(std::shared_ptr<RemoteServerClient> client) override;
 
   RemoteTerminalChannel(std::shared_ptr<RemoteServerClient> client,
@@ -70,10 +49,7 @@ class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
   std::optional<std::chrono::milliseconds> RoundTrip() const override;
   bool FetchHistory(std::uint64_t before, std::size_t count, HistoryDone done) override;
 
-  // The host's handle; 0 until term/open answers.
   std::uint64_t handle() const override;
-  // Frame bytes applied since the last attach: what tells "no frame came" from "a
-  // frame came and showed nothing" when a screen stays blank.
   std::uint64_t received_bytes() const;
 
  private:
@@ -84,10 +60,7 @@ class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
                   bool reattach);
   bool SendOpen(const std::shared_ptr<RemoteServerClient>& client,
                 const terminal::HostTerminalSource::OpenRequest& request);
-  // A refused cold attach that has an open to fall back on: sends it. False when
-  // there is none (the caller reports the refusal).
   bool FallBackToOpen(const std::shared_ptr<RemoteServerClient>& client);
-  // The host terminal is gone (`outcome` says how): the session shows an ended shell.
   void Ended(terminal::HostReattach outcome, const std::string& reason);
   void OpenFailed(const std::string& error);
   void ApplyFrame(std::string_view bytes);
@@ -97,18 +70,12 @@ class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
 
   HostToLocal host_to_local_;
 
-  // Guards everything below. Held while a frame is applied, so Close returning
-  // means no frame is touching the session.
   mutable std::mutex mutex_;
-  std::shared_ptr<RemoteServerClient> client_;   // replaced by a reconnect
-  terminal::TerminalSession* session_ = nullptr;  // null once closed
-  std::uint64_t handle_ = 0;                      // 0 until term/open answers
-  bool attached_ = false;                         // the open/attach was answered on client_
-  std::string pending_input_;                     // encoded events before that
-  // What this client last asked the host for on the current attach. The panel
-  // re-asks every frame its pane differs from the session's size — which, with a
-  // second smaller client sharing the terminal, is every frame — so a repeat is
-  // dropped here rather than sent per frame.
+  std::shared_ptr<RemoteServerClient> client_;
+  terminal::TerminalSession* session_ = nullptr;
+  std::uint64_t handle_ = 0;
+  bool attached_ = false;
+  std::string pending_input_;
   std::size_t sent_rows_ = 0;
   std::size_t sent_columns_ = 0;
   std::size_t pending_rows_ = 0;
@@ -117,12 +84,9 @@ class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
   std::uint64_t received_bytes_ = 0;
   std::uint64_t acked_bytes_ = 0;
   bool reattaching_ = false;
-  // Detached with a known handle: the terminal is left to the host, and a late
-  // open/attach answer must not close it.
   bool detached_ = false;
   terminal::HostReattach reattach_state_ = terminal::HostReattach::None;
-  // The open a requested reattach falls back to; dropped once answered.
   std::optional<terminal::HostTerminalSource::OpenRequest> fallback_;
 };
 
-}  // namespace microide::project::remote
+}

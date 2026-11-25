@@ -10,19 +10,6 @@
 #include <string>
 #include <vector>
 
-// Which surface owns Ctrl+C.
-//
-// CopySelectionText is a 42-line priority chain -- a focused single-line field
-// beats a terminal selection beats the editor, and inside the editor a
-// multi-caret selection beats the primary selection beats the caret's line --
-// and none of it was tested. The primitives underneath it are
-// (EditorEdgeCaseTests covers MultiCaretSelectedText and
-// MultiCaretLineTextForClipboard); the CHAIN was not, which is the half that
-// decides whether Ctrl+C in the find bar copies the query or the transcript.
-//
-// These drive ActionId::CopySelection and capture what reaches the clipboard,
-// so the wiring is covered as well as the choice.
-
 namespace microide::tests {
 namespace {
 
@@ -73,15 +60,12 @@ SelectionRange Range(std::size_t line, std::size_t from, std::size_t to) {
 }
 
 void TestMultiCaretSelectionsCopyJoinedByNewline() {
-  // VSCode's multi-caret copy: every caret's selection, newline-joined, in
-  // document order -- so a Ctrl+D multi-select copies every occurrence rather
-  // than just the primary's.
   CopyFixture fixture;
   auto& viewport = fixture.viewport();
   viewport.JumpCursorTo(0, 0, false);
-  viewport.MoveCursorTo(0, 5, /*extend_selection=*/true);  // "alpha"
-  viewport.AddSecondaryCaretWithRange(Range(1, 0, 5));   // "bravo"
-  viewport.AddSecondaryCaretWithRange(Range(2, 0, 7));   // "charlie"
+  viewport.MoveCursorTo(0, 5, true);
+  viewport.AddSecondaryCaretWithRange(Range(1, 0, 5));
+  viewport.AddSecondaryCaretWithRange(Range(2, 0, 7));
   Expect(viewport.has_multiple_carets(), "the fixture must actually have several carets");
 
   fixture.Copy();
@@ -93,15 +77,13 @@ void TestMultiCaretSelectionsCopyJoinedByNewline() {
 void TestSingleSelectionCopiesJustThatText() {
   CopyFixture fixture;
   fixture.viewport().JumpCursorTo(1, 6, false);
-  fixture.viewport().MoveCursorTo(1, 9, /*extend_selection=*/true);  // "two"
+  fixture.viewport().MoveCursorTo(1, 9, true);
   fixture.Copy();
   Expect(fixture.written->has_value(), "a selection copy should reach the clipboard");
   Expect(**fixture.written == "two", "a single selection copies exactly its text");
 }
 
 void TestBareCaretCopiesTheWholeLine() {
-  // No selection: VSCode copies the caret's whole line, and the copy is marked
-  // as a line copy so a later paste inserts it as a line rather than inline.
   CopyFixture fixture;
   fixture.viewport().JumpCursorTo(2, 4, false);
   fixture.Copy();
@@ -111,10 +93,6 @@ void TestBareCaretCopiesTheWholeLine() {
 }
 
 void TestSeveralBareCaretsCopyEveryLine() {
-  // The branch the comment in CopySelectionText calls out: the multi-caret
-  // AGGREGATE only fires when every caret has a non-empty selection, so without
-  // a separate bare-caret path a multi-caret line copy silently took one line --
-  // and the cut sharing this fallback deleted all of them.
   CopyFixture fixture;
   auto& viewport = fixture.viewport();
   viewport.JumpCursorTo(0, 2, false);
@@ -134,15 +112,10 @@ void TestSeveralBareCaretsCopyEveryLine() {
 }
 
 void TestFocusedSingleLineFieldOwnsTheKeystroke() {
-  // The documented rule: a focused single-line field owns Ctrl+C even when the
-  // editor below it has a selection. Its selection is what gets copied.
   CopyFixture fixture;
   fixture.viewport().JumpCursorTo(0, 0, false);
-  fixture.viewport().MoveCursorTo(0, 5, /*extend_selection=*/true);  // editor selects "alpha"
+  fixture.viewport().MoveCursorTo(0, 5, true);
 
-  // Ctrl+F, not ActionId::Find: the widget is non-modal, and it is the key path
-  // that opens it AND puts focus in the query field. Dispatching the action
-  // alone leaves focus on the editor, which is the whole point of non-modal.
   Expect(SendKeyDown(fixture.shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F should open the find widget");
   WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(fixture.shell, "needle");
   Expect(WorkspaceShellTestAccess::BufferSearchSurfaceFocused(fixture.shell),
@@ -155,9 +128,6 @@ void TestFocusedSingleLineFieldOwnsTheKeystroke() {
          "a focused single-line field owns Ctrl+C: the query, not the editor selection");
 }
 
-// TD-2026-10-19-366: a compositor that refuses the selection (Wayland, input with
-// no seat serial) left the app's own paste empty. A copy the system does not hold
-// afterwards is kept for the app's paste, until the system clipboard moves on.
 void TestSystemClipboardKeepsACopyTheSystemRefused() {
   std::optional<std::string> system = std::string("another app's text");
   bool refuse = true;
@@ -167,7 +137,7 @@ void TestSystemClipboardKeepsACopyTheSystemRefused() {
             if (!refuse) {
               system = std::string(text);
             }
-            return true;  // SDL reports success; the compositor ignores it
+            return true;
           },
       .get = [&]() { return system; },
   });
@@ -188,7 +158,7 @@ void TestSystemClipboardKeepsACopyTheSystemRefused() {
   Expect(clipboard.Read() == std::optional<std::string>("later"), "with nothing held over it");
 }
 
-}  // namespace
+}
 
 void RegisterEditorCopySurfacePriorityTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SystemClipboard/KeepsACopyTheSystemRefused",
@@ -205,4 +175,4 @@ void RegisterEditorCopySurfacePriorityTests(std::vector<TestCase>& tests) {
           TestFocusedSingleLineFieldOwnsTheKeystroke);
 }
 
-}  // namespace microide::tests
+}

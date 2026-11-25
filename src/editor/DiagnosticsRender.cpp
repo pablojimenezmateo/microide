@@ -22,13 +22,6 @@ int DiagnosticSeverityRank(DiagnosticSeverity severity) {
   return -1;
 }
 
-// LSP diagnostic ranges are half-open: the end position is one past the last
-// covered character. A range covers `line_index` when it falls within
-// [start.line, end.line], EXCEPT the final line of a strictly-multi-line range
-// that ends at column 0 — that end position sits at the very start of the line
-// and covers no character on it, so painting a marker/underline there is
-// spurious. Single-line zero-width ranges (start.line == end.line) are kept:
-// editors still surface a marker at an empty range like `{3,1}->{3,1}`.
 bool DiagnosticCoversLine(const PublishedDiagnostic& diagnostic, std::size_t line_index) {
   const auto& range = diagnostic.range;
   if (line_index < range.start.line || line_index > range.end.line) {
@@ -41,7 +34,7 @@ bool DiagnosticCoversLine(const PublishedDiagnostic& diagnostic, std::size_t lin
   return true;
 }
 
-}  // namespace
+}
 
 SDL_Color DiagnosticSeverityColor(const render::Theme& theme, DiagnosticSeverity severity) {
   switch (severity) {
@@ -107,11 +100,6 @@ void DrawDiagnosticGutterMarker(SDL_Renderer* renderer,
 
 namespace {
 
-// Snap a byte column up to the next code-point boundary (skip UTF-8 continuation
-// bytes). `LineVisualColumnMap::VisualColumnFor` rounds a mid-codepoint query DOWN
-// to the code-point start, whereas `VisualColumnForTextColumn` counts the code
-// point containing the column; snapping up makes the cached lookup byte-identical
-// to the uncached walk for every input.
 std::size_t SnapUpToCodePointBoundary(std::string_view text, std::size_t column) {
   while (column < text.size() &&
          (static_cast<unsigned char>(text[column]) & 0xC0u) == 0x80u) {
@@ -120,8 +108,6 @@ std::size_t SnapUpToCodePointBoundary(std::string_view text, std::size_t column)
   return column;
 }
 
-// Visual column for `clamped_column`, via the precomputed per-line map when
-// present (O(log N)), else the direct O(column) tab-stop walk.
 std::size_t VisualColumnFor(std::string_view text, std::size_t clamped_column,
                             std::size_t tab_size,
                             const TextLayout::LineVisualColumnMap* visual_map) {
@@ -131,10 +117,6 @@ std::size_t VisualColumnFor(std::string_view text, std::size_t clamped_column,
   return TextLayout::VisualColumnForTextColumn(text, clamped_column, tab_size);
 }
 
-// Core underline-rect computation. `visual_map`, when non-null, replaces the two
-// per-diagnostic O(column) visual-column walks with O(log N) lookups against a
-// map built once for the line — turning O(diagnostics * column) into
-// O(column + diagnostics * log column) for a line with many diagnostics.
 std::optional<SDL_FRect> DiagnosticUnderlineRectWithMap(
     const render::TextRenderer& text_renderer, float text_x, float y, float line_height,
     std::string_view text, std::size_t line_index, std::size_t horizontal_scroll,
@@ -178,7 +160,7 @@ std::optional<SDL_FRect> DiagnosticUnderlineRectWithMap(
   };
 }
 
-}  // namespace
+}
 
 std::optional<SDL_FRect> DiagnosticUnderlineRect(const render::TextRenderer& text_renderer,
                                                  float text_x,
@@ -192,7 +174,7 @@ std::optional<SDL_FRect> DiagnosticUnderlineRect(const render::TextRenderer& tex
                                                  const PublishedDiagnostic& diagnostic) {
   return DiagnosticUnderlineRectWithMap(text_renderer, text_x, y, line_height, text, line_index,
                                         horizontal_scroll, visible_columns, tab_size, diagnostic,
-                                        /*visual_map=*/nullptr);
+                                        nullptr);
 }
 
 bool AnyDiagnosticCoversLine(std::span<const PublishedDiagnostic> diagnostics,
@@ -220,18 +202,10 @@ void AppendDiagnosticUnderlines(DecoratedTextRow& row,
   if (diagnostics.empty() || line_height <= 0.0f || visible_columns == 0) {
     return;
   }
-  // `diagnostics` is the whole file's, so most rows have none -- and the map below
-  // is O(line). Ask before building it: on a file with no line breaks in it that
-  // map is two vectors the size of the document, built per row per frame, for a
-  // row with nothing to underline (TD-2026-08-05-133).
   if (!AnyDiagnosticCoversLine(diagnostics, line_index)) {
     return;
   }
 
-  // Build the per-line visual-column map ONCE and reuse it for every diagnostic on
-  // this line, instead of two O(column) tab-stop walks per diagnostic -- and skip
-  // it entirely on a line whose byte offsets already ARE its visual columns, where
-  // the null-map path computes the same answer without the two vectors.
   const bool needs_map = !TextLayout::VisualColumnsAreIdentity(text);
   std::optional<TextLayout::LineVisualColumnMap> visual_map;
   if (needs_map) {
@@ -252,4 +226,4 @@ void AppendDiagnosticUnderlines(DecoratedTextRow& row,
   }
 }
 
-}  // namespace microide::editor
+}

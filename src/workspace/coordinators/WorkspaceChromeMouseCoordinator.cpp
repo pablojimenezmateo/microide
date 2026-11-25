@@ -27,7 +27,7 @@ bool OptionalRectsEqual(const std::optional<SDL_FRect>& lhs,
   return RectsEqual(*lhs, *rhs);
 }
 
-}  // namespace
+}
 
 ChromeMouseCoordinator::ChromeMouseCoordinator(ProjectWorkspaceState& state,
                                                MenuSurfaceState& menu_state,
@@ -48,11 +48,6 @@ bool ChromeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     operations_.close_menu_bar();
   }
 
-  // An open menu takes the press first, wherever it lands: its rows are drawn over
-  // the sidebar, and the view buttons used to be tested first, so a row over them
-  // switched the sidebar view instead of running (File's fourth row over the Search
-  // button, with the project strip shown). A press outside
-  // the menu closes it and stops there, as everywhere else.
   if (HandleMenuButtonDown(event, layout)) {
     return true;
   }
@@ -68,8 +63,6 @@ bool ChromeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         return true;
       }
     }
-    // A second press on the button while its menu is open is a press outside that
-    // menu, which closed it above.
     if (mode_row.has_overflow && Contains(mode_row.overflow_rect, event.button.x, event.button.y)) {
       operations_.open_anchored_menu(MenuId::SidebarMode, mode_row.overflow_rect);
       state_.surface.focus = FocusTarget::Sidebar;
@@ -86,19 +79,13 @@ bool ChromeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 }
 
 bool ChromeMouseCoordinator::HandleMotion(const SDL_Event& event, const WorkspaceLayout& layout) {
-  // The chevron's hover fill follows the pointer; repaint it on the way in and
-  // on the way out. Before anything that may consume the motion: a popup open
-  // under the pointer still leaves the chevron drawn from the pointer. The chevron
-  // is in the menu bar, so away from it there is nothing to light and, unless it
-  // is lit, nothing to clear -- and its rect costs the bar's whole overflow layout,
-  // which every pointer move over an open menu paid (TD-2026-10-25-391).
   if (menu_state_.chevron_hovered || Contains(layout.menu_bar, event.motion.x, event.motion.y)) {
     if (const auto chevron = operations_.menu_overflow_chevron_rect(layout.menu_bar);
         chevron.has_value()) {
       const bool hovered = Contains(*chevron, event.motion.x, event.motion.y);
       if (hovered != menu_state_.chevron_hovered) {
         menu_state_.chevron_hovered = hovered;
-        operations_.request_frame();  // the chevron is a chrome unit keyed on its hover
+        operations_.request_frame();
       }
     } else {
       menu_state_.chevron_hovered = false;
@@ -111,9 +98,6 @@ bool ChromeMouseCoordinator::HandleMotion(const SDL_Event& event, const Workspac
   return HandleMenuMotion(event, layout);
 }
 
-// Closes the overflow popup. Its card and rows are derived units, so the frame
-// this owes repaints where it was (its rect was named here, before the close: the
-// chrome's rect is computed from the state after it and no longer knew the popup).
 void ChromeMouseCoordinator::CloseOverflowPopupWithRedraw() {
   if (menu_state_.overflow_popup_open) {
     operations_.request_frame();
@@ -130,12 +114,8 @@ bool ChromeMouseCoordinator::HandleWheel(const SDL_Event& event,
   }
 
   const int overlay_ticks = vertical_ticks != 0 ? vertical_ticks : horizontal_ticks;
-  // The find/replace widget is non-modal: only consume the wheel when the pointer
-  // is over it (to cycle matches); otherwise let the editor scroll normally.
   if (state_.overlay.mode == OverlayMode::BufferSearch ||
       state_.overlay.mode == OverlayMode::BufferReplace) {
-    // The rect the widget paints in (it used to test `editor_area`, which starts
-    // a tab strip and breadcrumb higher than where the widget is drawn).
     const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(
         FocusedGroupSurface(layout, state_.editor_split, state_.clamped_focused_group_index()),
         state_.overlay.mode == OverlayMode::BufferReplace);
@@ -146,13 +126,6 @@ bool ChromeMouseCoordinator::HandleWheel(const SDL_Event& event,
     operations_.request_overlay_redraw();
     return true;
   }
-  // Every list overlay (file finder, project search, command palette, commit and
-  // launch pickers, completion, code actions) scrolls *detached*: the wheel pans the
-  // rows and leaves the selection where it is, so the highlighted row may scroll out
-  // of view instead of the list dragging the selection along. This is what VS Code
-  // does, and it means a wheel nudge can never change what Enter is about to run.
-  // Every mode shares one `overlay.scroll_row` and one list geometry, so this is a
-  // single clamp rather than the per-mode selection arithmetic it replaces.
   const SDL_FRect overlay = operations_.compute_overlay_rect(layout.editor_area);
   const auto list_layout = operations_.compute_overlay_list_layout(overlay);
   state_.overlay.scroll_row = std::clamp(
@@ -218,8 +191,6 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
       }
       return true;
     }
-    // A press outside the popup closes it and stops there, like a menu's; one on
-    // the menu bar goes on to open what it landed on.
     CloseOverflowPopupWithRedraw();
     operations_.request_frame();
     if (!Contains(layout.menu_bar, event.button.x, event.button.y)) {
@@ -292,14 +263,6 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
       return true;
     }
   }
-  // A press on the empty (draggable) part of the title bar never reaches here:
-  // that region is reported as SDL_HITTEST_DRAGGABLE, and SDL consumes the
-  // button event to drive a compositor-side window move (see SDL's
-  // pointer_handle_button_common / ProcessHitTest). There is therefore no
-  // app-visible click to time, so double-click-to-maximize cannot be detected
-  // this way on Wayland (or X11) with our custom client-side title bar. Use the
-  // window-control Maximize button instead. Just consume any stray click: it
-  // changes nothing, and asks for nothing.
   return true;
 }
 
@@ -316,22 +279,13 @@ bool ChromeMouseCoordinator::HandleMenuOverflowPopupMotion(const SDL_Event& even
   const int hovered = row.has_value() ? static_cast<int>(*row) : -1;
   const int previous = menu_state_.overflow_popup_active_index;
   if (hovered == previous) {
-    // Still inside the popup: consume the motion so the surface underneath does
-    // not hover through an open popup.
     return row.has_value();
   }
-  // Each row is a derived unit keyed on whether it is the active one
-  // (MenuPopupPaint.h): the frame this owes repaints the row left and the row taken.
   menu_state_.overflow_popup_active_index = hovered;
   operations_.request_frame();
   return row.has_value();
 }
 
-// A popup row is painted highlighted when it is the ACTIVE item (the keyboard's,
-// which a menu opened from the bar starts on) and tracked for hover separately, so
-// a hover change repaints every row that was or is either one. Repainting only the
-// previously HOVERED row left the first row highlighted beside the hovered one when
-// the pointer entered a freshly opened menu (found by the QA redraw verifier).
 ChromeMouseCoordinator::PopupRowHover ChromeMouseCoordinator::HoveredPopupRow(
     std::span<const MenuItemSpec> items, const SDL_FRect& popup_rect, float x, float y) const {
   PopupRowHover hover;
@@ -345,9 +299,6 @@ ChromeMouseCoordinator::PopupRowHover ChromeMouseCoordinator::HoveredPopupRow(
   return hover;
 }
 
-// An open menu's rows are derived units keyed on whether they are lit
-// (MenuPopupPaint.h), so a hovered or active row that moved owes a frame, and
-// frame prep repaints the rows that changed. The rows were damaged here by rect.
 void ChromeMouseCoordinator::RequestFrameIfPopupRowsChanged(PopupRowPair previous, PopupRowPair current) {
   if (previous.hovered != current.hovered || previous.active != current.active) {
     operations_.request_frame();
@@ -423,8 +374,6 @@ bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
     menu_state_.hovered_popup_row_index = hovered_index;
     RequestFrameIfPopupRowsChanged({previous_hovered_index, previous_active_index},
                                    {hovered_index, menu_state_.active_menu_item_index});
-    // The submenu is a derived surface of its own: one that opened, closed or
-    // moved to another row repaints where it was and where it is.
     if (previous_submenu_id != menu_state_.active_submenu_id ||
         !OptionalRectsEqual(previous_submenu_anchor, menu_state_.active_submenu_anchor_rect)) {
       operations_.request_frame();
@@ -433,10 +382,6 @@ bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
   }
 
   if (menu_state_.hovered_popup_row_index >= 0) {
-    // Leaving the popup clears the hovered row AND the active one, which a key
-    // may have moved elsewhere since the pointer arrived (Up under a resting
-    // pointer): repaint both, or the key's row keeps its highlight on screen (QA
-    // monkey seed 15).
     RequestFrameIfPopupRowsChanged({menu_state_.hovered_popup_row_index, menu_state_.active_menu_item_index},
                                    {-1, -1});
     menu_state_.active_menu_item_index = -1;
@@ -451,11 +396,6 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
     return false;
   }
 
-  // The find / replace widget is non-modal: it has no match list, and a click
-  // outside its rect must NOT dismiss it — it falls through so the editor takes
-  // the click (and focus) while the widget keeps floating. Field clicks were
-  // already consumed earlier by HandleSingleLineInputMouseDown, so here we only
-  // see button clicks, empty-widget clicks, and outside clicks.
   if (state_.overlay.mode == OverlayMode::BufferSearch ||
       state_.overlay.mode == OverlayMode::BufferReplace) {
     const bool replace_mode = state_.overlay.mode == OverlayMode::BufferReplace;
@@ -463,8 +403,6 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
         FocusedGroupSurface(layout, state_.editor_split, state_.clamped_focused_group_index()),
         replace_mode);
     if (!Contains(fw.widget, event.button.x, event.button.y)) {
-      // Repaint the widget (it will render unfocused once the editor takes focus)
-      // and let the press fall through to the editor mouse path.
       operations_.request_overlay_redraw();
       return false;
     }
@@ -493,7 +431,6 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
                Contains(fw.replace_all_button, event.button.x, event.button.y)) {
       operations_.replace_all_buffer_search_matches();
     }
-    // Any in-widget click (button or chrome) focuses the widget.
     state_.surface.focus = FocusTarget::Overlay;
     operations_.request_overlay_redraw();
     return true;
@@ -501,11 +438,6 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
 
   const SDL_FRect overlay = operations_.compute_overlay_rect(layout.editor_area);
   if (!Contains(overlay, event.button.x, event.button.y)) {
-    // The completion list floats at the caret, inline with typing: a press
-    // elsewhere closes it and still lands where it was aimed (VS Code's suggest
-    // widget). Dismissed like a modal picker, the click was eaten and focus went
-    // to the sidebar -- the caret stayed put and the next key typed into the
-    // file tree.
     if (state_.overlay.mode == OverlayMode::Completion) {
       operations_.dismiss_overlay(true);
       return false;
@@ -521,7 +453,7 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
       Contains(list_layout.scrollbar->track, event.button.x, event.button.y)) {
     interaction_state_.drag_target = DragTarget::OverlayScrollbar;
     interaction_state_.drag_scrollbar_offset = ScrollbarGrabOffset(
-        *list_layout.scrollbar, static_cast<float>(event.button.y), /*vertical=*/true);
+        *list_layout.scrollbar, static_cast<float>(event.button.y), true);
     state_.overlay.scroll_row = std::clamp(
         static_cast<int>(std::lround(ScrollUnitsForPointer(
             *list_layout.scrollbar, static_cast<float>(event.button.y),
@@ -537,10 +469,6 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
       item_index.has_value()) {
     operations_.set_overlay_selected_index(*item_index);
     operations_.reveal_overlay_selection(overlay);
-    // A click on a row runs it, in every list overlay (VS Code's quick open and
-    // suggest widget both do): the file finder, the project-search overlay and
-    // the completion list used to only SELECT the clicked row, so a person who
-    // clicked a Go to File result got nothing until they pressed Enter.
     if (event.button.button == SDL_BUTTON_LEFT) {
       operations_.activate_overlay_selection();
       operations_.request_overlay_redraw();
@@ -584,10 +512,6 @@ bool ChromeMouseCoordinator::HandleTreeContextMenuMotion(const SDL_Event& event)
     return false;
   }
 
-  // The menu's rows are derived units keyed on whether they are lit
-  // (MenuPopupPaint.h): the active row moving owes a frame, and a motion that
-  // moves it nowhere owes nothing. Every motion under an open context menu used
-  // to repaint the menu bar and the menu.
   int active = -1;
   if (const auto popup_rect = operations_.compute_tree_context_menu_rect();
       popup_rect.has_value() && Contains(*popup_rect, event.motion.x, event.motion.y)) {
@@ -680,4 +604,4 @@ ChromeMouseCoordinator& WorkspaceShell::MakeChromeMouseCoordinator() {
   return *glue_->chrome_mouse_coordinator;
 }
 
-}  // namespace microide::workspace
+}

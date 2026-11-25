@@ -29,8 +29,6 @@ namespace {
 
 const DecoratedTextGridRenderer kDecoratedRowRenderer;
 
-// A caret is a 1px-wide vertical bar spanning the row, drawn in theme.cursor.
-// The primary caret and every secondary caret share this exact geometry.
 void DrawCaret(SDL_Renderer* renderer, float caret_x, float y, float line_height,
                SDL_Color cursor) {
   const SDL_FRect caret = SDL_FRect{std::round(caret_x), y - 1.0f, 1.0f, line_height};
@@ -38,15 +36,10 @@ void DrawCaret(SDL_Renderer* renderer, float caret_x, float y, float line_height
   render::FillRectInDrawColor(renderer, caret);
 }
 
-// Full-width row background highlight (execution line / selected row), inset 1px
-// from the viewport edges so it never paints over the border.
 SDL_FRect MakeRowBackgroundRect(const SDL_FRect& rect, float y, float line_height) {
   return SDL_FRect{rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, line_height};
 }
 
-// True when a visual row is the first (or only) visual row of its logical line,
-// i.e. the row that owns the gutter elements (line number, fold/breakpoint/plugin
-// marks). With soft-wrap off every row is a head; with it on only visual_start==0.
 bool IsLogicalLineHead(bool soft_wrap, std::size_t visual_start) {
   return !soft_wrap || visual_start == 0;
 }
@@ -54,27 +47,16 @@ bool IsLogicalLineHead(bool soft_wrap, std::size_t visual_start) {
 float ComputeGutterWidth(const render::TextRenderer& text_renderer, std::size_t line_count,
                          bool show_line_numbers) {
   if (!show_line_numbers) {
-    // No digits: reserve only the marker strip (diagnostic bar, breakpoint / execution
-    // marker) plus the dedicated fold column, so disabling line
-    // numbers actually reclaims the digit column instead of leaving it blank.
     return kGutterLineNumberInset + kGutterFoldColumnWidth;
   }
   char buf[20];
   const auto [end, _] = std::to_chars(buf, buf + sizeof(buf), std::max<std::size_t>(1, line_count));
-  // Digits begin after the reserved marker strip (kGutterLineNumberInset), so the
-  // gutter must be wide enough for both the markers and the widest line number.
   const float digits_width = text_renderer.MeasureWidth(std::string_view{buf, end});
   return std::max(56.0f,
                   kGutterLineNumberInset + digits_width + kGutterFoldGap +
                       kGutterFoldColumnWidth);
 }
 
-// Draws the single fold control: a small square button with a `+` glyph when
-// the region is collapsed (click to expand) and a `−` glyph when expanded
-// (click to collapse). A filled background plus a 1px border make it read as a
-// clickable button, and the 2px-thick glyph keeps it legible at gutter scale.
-// This is the only fold-marker draw path; both the scrolled rows and the
-// sticky header route through here so the control looks identical everywhere.
 void DrawFoldGutterMarker(SDL_Renderer* renderer,
                           SDL_Color glyph,
                           SDL_Color background,
@@ -114,10 +96,6 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
 
   render::DrawTitledCardFrame(renderer, theme, card, layout.header.h, render::CardStyle::Raised);
 
-  // The welcome surface is a cold (non-hot) path, so it draws with DrawString (no opaque
-  // background box) rather than DrawStringOn. Glyphs alpha-blend over whatever backdrop is
-  // already painted — card body (surface_raised), header band (chrome_background), and the
-  // semi-transparent action-button highlight — so no run shows a mismatched background box.
   const float inset_x = card.x + 20.0f;
   text_renderer.DrawString(renderer, inset_x, card.y + 8.0f, theme.chrome_text,
                            text_renderer.TruncateToWidthEphemeralView(model.title, card.w - 40.0f));
@@ -125,8 +103,6 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
       renderer, inset_x, card.y + layout.header.h - line_height - 4.0f, theme.text_secondary,
       text_renderer.TruncateToWidthEphemeralView(model.subtitle, card.w - 40.0f));
 
-  // A primary-action button: opaque selection fill plus a 3px accent bar on the left edge —
-  // the same selection-bar language used by the overlay list — instead of a muddy box.
   const auto draw_button = [&](const SDL_FRect& button, std::string_view label) {
     render::FillRect(renderer, button, theme.selection_strong);
     render::FillRect(renderer, SDL_FRect{button.x, button.y + 2.0f, 3.0f, button.h - 4.0f},
@@ -137,10 +113,7 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
                                text_renderer.TruncateToWidthEphemeralView(label, button.w - 20.0f));
   };
 
-  // A recent-entry row: folder/file name (accent) + muted path tail.
   const auto draw_recent_row = [&](const WelcomeHitRegion& region, const WelcomeRecent& recent) {
-    // The name view must be measured AND drawn before the path is truncated: both
-    // share one thread-local scratch, so the second call would clobber the first.
     const std::string_view name =
         text_renderer.TruncateToWidthEphemeralView(recent.name, region.rect.w * 0.5f);
     const float name_w = text_renderer.MeasureWidth(name);
@@ -157,8 +130,6 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
 
   if (model.kind == WelcomeKind::ProjectHome) {
     if (!model.remote.empty()) {
-      // The remote status block: `host:/path`, then each stage behind a square in
-      // its state's colour, then a failure's detail and Retry.
       const SDL_FRect& block = layout.remote_block;
       const float row = line_height + 6.0f;
       text_renderer.DrawString(renderer, block.x, block.y, theme.text_secondary,
@@ -187,8 +158,6 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
         }
       }
     }
-    // Left column flows top-down: an "Actions" caption, the three action buttons (keyed off
-    // the shared hit regions), a "Recent files" caption, then the recent-file rows.
     text_renderer.DrawString(renderer, caption_x, layout.recents_panel.y, theme.text_muted,
                              model.actions_heading);
     bool drew_file = false;
@@ -220,7 +189,6 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
                                                     layout.recents_panel.w - 16.0f));
     }
   } else {
-    // NoProject: a "Start" caption, the open-folder button, a "Recent" caption, recent rows.
     text_renderer.DrawString(renderer, caption_x, layout.recents_panel.y, theme.text_muted,
                              model.start_heading);
     draw_button(layout.open_folder_rect, model.open_folder_label);
@@ -243,8 +211,6 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
     }
   }
 
-  // Shortcuts panel: curated, registry-sourced key chords (never drifts). Shared by both
-  // variants, so the palette is advertised exactly once (here) — no separate footer hint.
   text_renderer.DrawString(renderer, layout.shortcuts_panel.x, layout.shortcuts_panel.y,
                            theme.text_muted, model.shortcuts_heading);
   const float keys_col = std::min(150.0f, layout.shortcuts_panel.w * 0.45f);
@@ -265,7 +231,7 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
   }
 }
 
-}  // namespace
+}
 
 SDL_FRect FoldGutterMarkerRect(float gutter_x,
                                float gutter_width,
@@ -299,13 +265,6 @@ EditorViewMetrics EditorViewRenderer::ComputeMetrics(const render::TextRenderer&
       metrics.sticky_band_top_y + static_cast<float>(sticky_clamped) * metrics.line_height;
   metrics.visible_rows =
       static_cast<std::size_t>(std::max(1, max_total_rows - static_cast<int>(sticky_clamped)));
-  // Right reserve = 12px inset past the gutter (mirrors text_x) + a 21px right gutter that
-  // covers the vertical scrollbar (kScrollbarThickness 10 + inset 2) AND the overview-ruler
-  // lane painted just left of it (workspace/render/OverviewRuler.h: kLaneGap 3 + kLaneWidth 6), so
-  // a long line's trailing glyphs never lay out under the lane. Kept unconditional (not
-  // gated on the overview-ruler setting) so the text width is identical across the render
-  // path and every hit-test/scroll ComputeMetrics caller — a gated reserve would desync
-  // click-to-caret mapping near the right edge from what was drawn.
   constexpr float kTextRightReserve = 33.0f;
   metrics.visible_columns = static_cast<std::size_t>(
       std::max(8.0f, (rect.w - metrics.gutter_width - kTextRightReserve) / char_width));
@@ -330,10 +289,6 @@ std::optional<BracketMatchPair> EditorViewRenderer::BracketMatch(const TextViewp
       std::iter_swap(bracket_match_cache_entries_.begin(), cache_it);
     }
   } else {
-    // Scoped: this is a cache MISS, i.e. every caret move next to a bracket, and
-    // the scan behind it is bounded in lines rather than bytes — so on a file
-    // with no line breaks in it one arrow key reads the whole document. It sat
-    // inside Render's self time with everything else that is not a row.
     util::PerformanceTrace::Scope match_scope("EditorViewRenderer::Render::BracketMatch");
     bracket_match_pair = FindBracketMatch(viewport, caret_line, caret_column);
     auto same_viewport_it = std::find_if(
@@ -367,14 +322,9 @@ std::optional<BracketMatchPair> EditorViewRenderer::BracketMatch(const TextViewp
   return bracket_match_pair;
 }
 
-// The indent guides for the visible window: from the small per-viewport cache
-// when nothing they depend on changed, else computed into it.
 const std::vector<IndentGuideRun>* EditorViewRenderer::ResolveIndentGuides(
     const TextViewport& viewport, const std::vector<std::size_t>& visible_rows_for_guides,
     const FoldingModel* folding_model) const {
-  // Cache probe plus, on a miss, the whole visible-window guide computation.
-  // Both live between the row loop and the frame setup, so without a scope they
-  // land in Render's self time with everything else that is not a row.
   util::PerformanceTrace::Scope scope("EditorViewRenderer::Render::IndentGuides");
   const auto& lines = viewport.lines();
   const std::size_t scroll_line = viewport.scroll_line();
@@ -449,8 +399,6 @@ const std::vector<IndentGuideRun>* EditorViewRenderer::ResolveIndentGuides(
   return indent_guides_to_paint;
 }
 
-// The sticky-scroll band: the openers of the scopes the first visible line is in,
-// pinned above the text, with their gutters, and the divider under them.
 void EditorViewRenderer::RenderStickyRows(const FramePaint& frame,
                                           std::span<const std::size_t> sticky_lines) const {
   SDL_Renderer* const renderer = frame.renderer;
@@ -501,8 +449,6 @@ void EditorViewRenderer::RenderStickyRows(const FramePaint& frame,
     sticky_input.row_visual_start = row_meta.visual_start;
     sticky_input.row_visual_end = row_meta.visual_end;
     sticky_input.line_length = lines.LineLength(line_index);
-    // Same rule as the ordinary row path below: the line's bytes are only read
-    // when a diagnostic on this row needs them.
     sticky_input.text = AnyDiagnosticCoversLine(diagnostics, line_index)
                             ? lines.LineView(line_index)
                             : std::string_view{};
@@ -620,19 +566,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   const std::size_t scroll_line = viewport.scroll_line();
   const std::size_t cursor_line = viewport.cursor_line();
   const bool soft_wrap = viewport.soft_wrap();
-  // 2026-05-15 perf deep-dive round 2 Finding 10: span accessor avoids the per-frame vector
-  // allocation that secondary_carets() performed when the caret set is stable.
-  // The RANGED view, not secondary_caret_positions(): each secondary caret carries
-  // its own wrap affinity, and the paint loop needs it to decide which of the two
-  // rows a caret sitting exactly on a wrap boundary belongs to. Same underlying
-  // vector, so still no per-frame allocation.
   const std::span<const TextViewportUndoHistory::SecondaryCaret> secondary_carets =
       viewport.secondary_caret_range_view();
   const auto selection = viewport.selection_range();
   char line_number_buf[20];
-  // Skip the ToLower allocation entirely on the common no-search frame; reuse
-  // the scratch buffer when a query is active so the std::string capacity
-  // persists across frames.
   if (search_query.empty()) {
     lowered_search_query_scratch_.clear();
   } else {
@@ -655,10 +592,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       view_model != nullptr ? &view_model->breakpoint_gutter_marks : nullptr;
   std::size_t breakpoint_gutter_mark_index = 0;
 
-  // Build the visible-row→buffer-line map once so the indent-guides compute
-  // and the per-row paint loop can both consume it. The visible-rows count is
-  // also part of the indent-guides cache key. The scratch member preserves
-  // capacity across frames so this loop does not reallocate every render.
   std::vector<std::size_t>& visible_rows_for_guides = visible_rows_for_guides_scratch_;
   visible_rows_for_guides.clear();
   if (indent_guides_enabled) {
@@ -697,28 +630,13 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   }
 
   util::PerformanceTrace::Scope rows_scope("EditorViewRenderer::Render::Rows");
-  // The single row -> y mapping. With no inline insets (the common case) row_gaps
-  // is empty and RowTop(row) == first_line_y + row*line_height exactly.
   const EditorRowYLayout row_y_layout(
       metrics.first_line_y, metrics.line_height, static_cast<std::uint32_t>(scroll_line),
       view_model != nullptr ? view_model->row_gaps : std::span<const RowGap>{});
   gutter_number_scratch_.clear();
-  // Resolve the caret's visual row once per frame; the soft-wrap layout only
-  // needs it to flag the caret row, and recomputing it per visible row is an
-  // O(visible_rows * caret_column) redundancy.
   const std::size_t caret_visual_row = soft_wrap ? viewport.cursor_visual_row() : 0;
-  // CharWidth() is fixed for the whole frame (font size does not change mid-render),
-  // so resolve the backend's advance once instead of per row / per glyph-cell.
   const float char_width_px = text_renderer.CharWidth();
-  // Only the fallback whitespace walk below uses this; the view-model glyph-run
-  // path carries its own. Rows of one wrapped line arrive in ascending order, so
-  // each resumes where the last stopped (TD-2026-08-14-218).
   WhitespaceWalkCursor whitespace_cursor;
-  // A partial frame paints through a clip that is often a row or a strip: the
-  // edited line, a scrollbar's thumb. Building and drawing every visible row for
-  // it costs a whole pane per clip (two clips a keystroke made typing 40% slower),
-  // so a row the clip cannot reach is skipped -- with a row of slack on each side
-  // for what overhangs its own band (a caret, a squiggle, a bracket box).
   std::optional<SDL_Rect> row_clip;
   if (SDL_RenderClipEnabled(renderer)) {
     SDL_Rect clip{};
@@ -733,19 +651,11 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
     const auto row_meta = viewport.WrappedVisualRowLayout(visual_row_index);
     const std::size_t line_index = row_meta.line_index;
-    // Bind the row layout by reference: the soft-wrap branch fills a reusable
-    // owned scratch, the common branch hands back the cache entry in place. This
-    // avoids copying the LayoutLine (string + 2 vectors) per visible row.
-    // Scoped: on a scroll through fresh content this is a cache miss per row (a
-    // full line layout build), and it was previously indistinguishable from the
-    // rest of the row loop in the ranked summary.
     const LayoutLine& row_layout = [&]() -> const LayoutLine& {
       util::PerformanceTrace::Scope layout_scope("EditorViewRenderer::Render::RowLayout");
       return soft_wrap ? viewport.VisibleWrappedRowLayoutRef(visual_row_index)
                        : viewport.VisibleLineLayoutRef(line_index);
     }();
-    // Caret is per-call, never baked into the cached layout -- both branches
-    // resolve it here against the same cached row.
     const TextViewport::LineCaret row_caret =
         soft_wrap ? viewport.CaretForWrappedRow(visual_row_index, caret_visual_row)
                   : viewport.CaretForLine(line_index);
@@ -757,8 +667,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     if (row_clip.has_value() &&
         (y + 2.0f * metrics.line_height <= static_cast<float>(row_clip->y) ||
          y - metrics.line_height >= static_cast<float>(row_clip->y + row_clip->h))) {
-      // The cursors that advance only on their own row step past this one; the
-      // whitespace walk starts the next row afresh.
       while (breakpoint_gutter_marks != nullptr &&
              breakpoint_gutter_mark_index < breakpoint_gutter_marks->size() &&
              (*breakpoint_gutter_marks)[breakpoint_gutter_mark_index].visual_row_index <= visual_row_index) {
@@ -773,16 +681,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
     const std::size_t row_visual_origin =
         soft_wrap ? row_meta.visual_start : viewport.horizontal_scroll();
-    // Hanging indent: continuation rows shift their whole content (text, carets,
-    // highlights, guides, whitespace markers) right by `indent` cells. Zero for
-    // first rows and non-wrapped rows, so this is a no-op there.
     const float row_text_x =
         metrics.text_x + static_cast<float>(row_meta.indent) * char_width_px;
-    // Mid-line inlay hints for this row. Suppressed on soft-wrapped lines in v1
-    // (cross-wrap-row displacement is out of scope); those lines still render,
-    // just without their hints. Built once here and reused by the whitespace,
-    // caret, decorated-row and end-of-line passes so they all stay grid-aligned
-    // with the shifted glyphs. Empty (the common case) => identity, ~zero cost.
     std::span<const InlineTextDecoration> row_inline_texts;
     InlayRowDisplacement row_inlay;
     std::size_t row_inlay_total_cells = 0;
@@ -811,26 +711,11 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         line_index >= active_search_match->start.line &&
         line_index <= active_search_match->end.line;
     const SDL_Color row_background = selected ? theme.row_highlight : theme.editor_background;
-    // Marshal this row's source-column fills and pre-positioned fills, then hand
-    // them to the unified BuildDecoratedRow. The builder resolves source->visual
-    // columns and owns the assembly order (background -> column fills ->
-    // pre-positioned -> syntax -> diagnostics).
-    // Source-byte window this row can actually show. Narrowing a match list by
-    // LINE is not narrowing at all when the document is one line: every match in
-    // the file lands on this row, and each one was resolved (two binary searches
-    // over the layout's cell grid) and then clipped away. `source_columns` is
-    // ascending, so its ends bound the row exactly.
-    //
-    // `+ 1` on the right so a one-cell end-of-line marker at `row_len` survives
-    // when the line's last byte is visible — that is the only span whose start
-    // legitimately sits one past the last visible source byte.
     const bool row_shows_source = !row_layout.source_columns.empty();
     const std::size_t row_first_source =
         row_shows_source ? row_layout.source_columns.front() : 0;
     const std::size_t row_last_source_plus_one =
         row_shows_source ? row_layout.source_columns.back() + 1 : 0;
-    // True when a source range [start, end) can put a cell on this row. A span
-    // ending at or before the window, or starting past it, draws nothing.
     const auto row_can_show_span = [&](std::size_t start_column, std::size_t end_column) {
       return row_shows_source && end_column > row_first_source &&
              start_column <= row_last_source_plus_one;
@@ -839,8 +724,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     column_fill_scratch_.clear();
     prepositioned_fill_scratch_.clear();
 
-    // Find in Selection's scope, first so the matches paint over it. A line the
-    // scope runs past is shaded to its end.
     if (find_scope.has_value() && line_index >= find_scope->start.line &&
         line_index <= find_scope->end.line) {
       const std::size_t scope_start = line_index == find_scope->start.line ? find_scope->start.column : 0;
@@ -857,18 +740,12 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
 
     if (!explicit_search_matches.empty()) {
-      // Regex / whole-buffer find: the caller supplies single-line match fragments
-      // sorted by (start.line, start.column). Binary-search this row's slice (mirrors
-      // the occurrence_ranges handling) and emit its fills — no per-line query scan.
       const SelectionRange* const frag_begin = explicit_search_matches.data();
       const SelectionRange* const frag_end = frag_begin + explicit_search_matches.size();
       const SelectionRange* it = std::lower_bound(
           frag_begin, frag_end, line_index,
           [](const SelectionRange& r, std::size_t l) { return r.start.line < l; });
       const std::size_t row_len = lines.LineLength(line_index);
-      // Fragments are sorted by (start.line, start.column), so the first one
-      // starting past this row's window ends the slice — everything after it is
-      // off-row by construction.
       for (; it != frag_end && it->start.line == line_index &&
              it->start.column <= row_last_source_plus_one;
            ++it) {
@@ -879,7 +756,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                      active_search_match->start.line == it->start.line &&
                                      active_search_match->start.column == it->start.column;
         const SDL_Color color = is_active_match ? theme.search_match_active : theme.search_match;
-        // Content span (clipped to the line's characters).
         const std::size_t content_end = std::min(it->end.column, row_len);
         if (content_end > it->start.column) {
           column_fill_scratch_.push_back(RowFillSpan{
@@ -889,8 +765,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
               .geometry = RowFillSpan::Geometry::kRange,
           });
         }
-        // A fragment ending past the line content includes the trailing newline: draw
-        // a one-cell marker at the line end so an invisible `\n` match is visible.
         if (it->end.column > row_len) {
           column_fill_scratch_.push_back(RowFillSpan{
               .start_column = row_len,
@@ -901,8 +775,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         }
       }
     } else if (!lowered_search_query.empty()) {
-      // Probe with a borrowed view so a cache hit allocates nothing (the query
-      // string is identical for every row this frame).
       const SearchMatchCacheKeyView cache_key_view{
           .viewport = &viewport,
           .content_revision = viewport.content_revision(),
@@ -918,17 +790,12 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         while (match_offset != std::string::npos) {
           const std::size_t match_end = match_offset + lowered_search_query.size();
           matches.emplace_back(match_offset, match_end);
-          // Advance past this match so highlighting is non-overlapping, matching
-          // find-navigation semantics (query is non-empty, so this always
-          // progresses). Advancing by 1 emitted redundant overlapping fills for
-          // self-overlapping queries (e.g. "aa" in "aaaa").
           match_offset = lowered_line_scratch.find(lowered_search_query, match_end);
         }
         if (search_match_cache_.size() >= kSearchMatchCacheLimit) {
           search_match_cache_.erase(search_match_cache_order_.front());
           search_match_cache_order_.pop_front();
         }
-        // Materialize the owning key only now, on insert.
         SearchMatchCacheKey owning_key{
             .viewport = &viewport,
             .content_revision = viewport.content_revision(),
@@ -940,20 +807,12 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         cache_it = inserted_it;
       }
 
-      // Source-column spans; the builder resolves them against `row_layout`.
-      // Bounded by the row's visible source window for the same reason as the
-      // explicit-fragment and occurrence loops above: the cached match list is for
-      // the whole LINE, which on a file with no line breaks in it is the whole
-      // document. Matches are found left to right, so the slice is contiguous.
       const auto& line_matches = cache_it->second;
       auto match_lo = std::lower_bound(
           line_matches.begin(), line_matches.end(), row_first_source,
           [](const std::pair<std::size_t, std::size_t>& m, std::size_t column) {
             return m.first < column;
           });
-      // Same back-step as the occurrence slice: a match can start before the
-      // window and still reach into it. Deliberately not a bound on the END
-      // column, which would assume every match has the same length.
       while (match_lo > line_matches.begin() && (match_lo - 1)->second > row_first_source) {
         --match_lo;
       }
@@ -979,9 +838,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
 
     if (view_model != nullptr && !view_model->occurrence_ranges.empty()) {
-      // Round-2 Finding 2: occurrence_ranges is sorted by line_index (see
-      // RefillOccurrenceScanCache). Binary-search for this row's slice instead of scanning the
-      // full vector per visible row.
       const auto occ_data = view_model->occurrence_ranges.data();
       const auto occ_end_ptr = occ_data + view_model->occurrence_ranges.size();
       const auto occ_lo = std::lower_bound(
@@ -990,16 +846,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       const auto occ_hi = std::upper_bound(
           occ_lo, occ_end_ptr, line_index,
           [](std::size_t l, const OccurrenceRange& r) { return l < r.line_index; });
-      // Same second narrowing as the search fragments above: occurrences are
-      // emitted left to right within a line (RefillOccurrenceScanCache), so the
-      // row's source window bounds the slice. Without it, a caret on a common
-      // token in a minified bundle pushed every one of its thousands of matches
-      // through the fill path on every visible row of every frame.
       auto occ_visible_lo = std::lower_bound(
           occ_lo, occ_hi, row_first_source,
           [](const OccurrenceRange& r, std::size_t column) { return r.start_column < column; });
-      // A match can start before the window and still reach into it. Spans are
-      // ascending, so stepping back stops at the first one that ends clear of it.
       while (occ_visible_lo > occ_lo && (occ_visible_lo - 1)->end_column > row_first_source) {
         --occ_visible_lo;
       }
@@ -1056,8 +905,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     if (indent_guides_to_paint != nullptr) {
       const std::size_t row_start_visual = row_meta.visual_start;
       const std::size_t row_end_visual = row_meta.visual_end;
-      // Guides are now stored as vertical runs `[start_row, end_row]`; honor
-      // both ends so a multi-row guide draws on every row it covers.
       for (const auto& guide : *indent_guides_to_paint) {
         if (row < guide.start_row || row > guide.end_row) continue;
         if (guide.column < row_start_visual || guide.column >= row_end_visual) continue;
@@ -1080,8 +927,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       const std::size_t row_start_visual = row_meta.visual_start;
       const std::size_t row_end_visual = row_meta.visual_end;
       const float char_width = char_width_px;
-      // Round-2 Finding 2: use the CSR-style row-offset table so we iterate only this row's runs
-      // instead of scanning the flat whitespace_glyph_runs vector.
       const bool use_vm_whitespace =
           view_model != nullptr && !view_model->whitespace_glyph_runs.empty() &&
           row + 1 < view_model->whitespace_row_offsets.size();
@@ -1090,9 +935,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         const std::size_t run_end = view_model->whitespace_row_offsets[row + 1];
         for (std::size_t gi = run_begin; gi < run_end; ++gi) {
           const WhitespaceGlyphRun& glyph = view_model->whitespace_glyph_runs[gi];
-          // The CSR row-offset table (whitespace_row_offsets) already partitions
-          // runs strictly by row, so every glyph in [run_begin, run_end) belongs
-          // to this row by construction; no per-glyph row-bounds filter needed.
           const float cell_x =
               row_text_x + static_cast<float>(glyph.cell_visual_start - row_start_visual) *
                                char_width +
@@ -1102,11 +944,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                cell_w, y, metrics.line_height, theme.text_disabled);
         }
       } else {
-        // The one whitespace walk, shared with the compare panes; the editor's
-        // only difference is that its markers ride the inlay-hint displacement
-        // (TD-2026-08-14-210). It reports the bytes it visited so "the walk
-        // resumes at the row rather than restarting at byte 0" stays a
-        // measurement rather than a comment (TD-2026-08-12-187).
         const std::size_t walked_bytes = AppendWhitespaceMarkers(
             prepositioned_fill_scratch_, lines.LineView(line_index), viewport.tab_size(),
             row_start_visual, row_end_visual, row_text_x, char_width, y, metrics.line_height,
@@ -1132,18 +969,12 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     row_input.row_visual_start = row_visual_origin;
     row_input.row_visual_end = row_meta.visual_end;
     row_input.line_length = lines.LineLength(line_index);
-    // Diagnostic underlining is the only consumer of the whole line on this path,
-    // and `diagnostics` covers the whole file, so most rows want none of it.
-    // Reading the line anyway copies any piece-tree line that spans pieces -- on a
-    // file with no line breaks in it, megabytes per frame (TD-2026-08-05-133).
     row_input.text = AnyDiagnosticCoversLine(diagnostics, line_index)
                          ? lines.LineView(line_index)
                          : std::string_view{};
     row_input.tokens = token_kinds;
     row_input.plain_color = selected ? theme.text_primary : theme.text_secondary;
     row_input.layout = &row_layout;
-    // The execution line outranks the selected-row highlight so a paused frame
-    // stays visible even while it is the caret line.
     row_input.has_background_fill = selected || is_execution_line;
     if (is_execution_line) {
       row_input.background_fill = DecoratedTextFill{
@@ -1173,9 +1004,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     row_input.text_renderer = &text_renderer;
     row_input.theme = &theme;
     {
-      // Assembly (token runs, fills, diagnostics, inlays) as distinct from the
-      // paint below it. Without this the whole cost landed in the Rows scope's
-      // self time, which is where the ranking stopped being able to say more.
       util::PerformanceTrace::Scope build_scope("EditorViewRenderer::Render::BuildDecoratedRow");
       BuildDecoratedRow(row_desc, row_input);
     }
@@ -1183,10 +1011,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       util::PerformanceTrace::Scope row_render_scope("EditorViewRenderer::Render::DecoratedRow");
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer, row_desc);
     }
-    // Gutter marks belong to the LOGICAL line, so they are drawn on its head row
-    // only -- like the line number, the fold arrow and the plugin marks below.
-    // Ungated, a soft-wrapped line with a diagnostic repeated its marker down the
-    // gutter once per continuation row.
     if (IsLogicalLineHead(soft_wrap, row_meta.visual_start)) {
       if (const auto severity = HighestDiagnosticSeverityForLine(diagnostics, line_index);
           severity.has_value()) {
@@ -1194,10 +1018,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                    *severity);
       }
     }
-    // Plugin gutter marks share the breakpoint/diagnostic marker slot. Draw the
-    // highest-priority mark (first after the line-sorted, priority-desc order)
-    // once per logical line, before the breakpoint dot / execution arrow so the
-    // debugger's own glyphs win when they coincide.
     if (plugin_decorations != nullptr && IsLogicalLineHead(soft_wrap, row_meta.visual_start)) {
       const std::span<const GutterMarkDecoration> marks =
           plugin_decorations->GutterMarksForLine(static_cast<std::uint32_t>(line_index));
@@ -1221,8 +1041,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       ++breakpoint_gutter_mark_index;
     }
     if (is_execution_line && IsLogicalLineHead(soft_wrap, row_meta.visual_start)) {
-      // Drawn after the breakpoint dot so the arrow overlays it when a session
-      // stops on a breakpoint line. Head row only: see the diagnostic marker.
       DrawExecutionLineGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height);
     }
     if (fold_gutter_marks != nullptr && fold_gutter_mark_index < fold_gutter_marks->size() &&
@@ -1237,10 +1055,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     if (IsLogicalLineHead(soft_wrap, row_meta.visual_start)) {
       const auto [end, _] = std::to_chars(line_number_buf, line_number_buf + sizeof(line_number_buf),
                                           line_index + 1);
-      // Always deferred to the single DrawEphemeralRuns flush below. The gutter
-      // background is a separate fill and no backend here paints a glyph
-      // background (DrawStringOn forwards to DrawString), so deferring the
-      // foreground digits is exact. `text` is a short digit string: SSO, no heap.
       GutterNumber& number = gutter_number_scratch_.emplace_back();
       number.x = gutter.x + kGutterLineNumberInset;
       number.y = y;
@@ -1252,8 +1066,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       const float caret_x = row_text_x + static_cast<float>(row_caret.column) * char_width_px +
                             inlay_shift_px(row_visual_origin + row_caret.column);
       DrawCaret(renderer, caret_x, y, metrics.line_height, theme.cursor);
-      // Ghost-text tail: the suggestion's first line, drawn dimmed starting at the
-      // caret. Below-caret rows (if any) render as a Below inset gap by the shell.
       if (view_model != nullptr && view_model->ghost_text_tail.has_value() &&
           view_model->ghost_text_tail->visual_row == visual_row_index) {
         text_renderer.DrawString(renderer, caret_x, y, theme.text_muted,
@@ -1266,10 +1078,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
              secondary_carets[secondary_caret_index].position.line < line_index) {
         ++secondary_caret_index;
       }
-      // Where this row sits among its logical line's wrapped rows. Resolved once
-      // per row rather than per caret, and only when there is a secondary caret on
-      // the line at all. Without soft wrap a row IS its line, so both are true and
-      // the rule below reduces to "paint it if it is on this row".
       bool row_is_line_first = true;
       bool row_is_line_last = true;
       if (soft_wrap && secondary_caret_index < secondary_carets.size() &&
@@ -1295,9 +1103,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
             continue;
           }
         } else {
-          // Unwrapped rows are horizontally SCROLLED rather than split, so a row's
-          // absolute end column and its cell count only coincide at scroll 0; the
-          // clip below is the long-standing behaviour and is left alone.
           const bool caret_hits_last_column = visual_column == row_end_visual_sc &&
                                               row_end_visual_sc == row_layout.visual_columns;
           if (visual_column < row_start_visual_sc ||
@@ -1312,33 +1117,17 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       }
     }
 
-    // Plugin-published end-of-line inline text (Error Lens, GitLens blame) and
-    // code lenses, drawn once per logical line on its first visual row, past the
-    // line's last glyph. The segment geometry mirrors WorkspaceShell's click
-    // hit-test (shared BuildEolDecorationSegments) so a click lands exactly where
-    // the code-lens affordance was painted.
     if (plugin_decorations != nullptr && IsLogicalLineHead(soft_wrap, row_meta.visual_start)) {
-      // Non-wrapped rows already resolved this exact line slice for the mid-line
-      // inlay pass above (row_inline_texts); reuse it instead of a second
-      // binary search. Only the soft-wrap head (where row_inline_texts is left
-      // empty) needs a fresh lookup.
       const std::span<const InlineTextDecoration> inline_texts =
           soft_wrap ? plugin_decorations->InlineTextsForLine(static_cast<std::uint32_t>(line_index))
                     : row_inline_texts;
-      // Phase E2: when above-line code lenses are active they render as inset
-      // strips, so suppress the end-of-line affordance for the same lenses.
       const std::span<const CodeLensDecoration> code_lenses =
           (view_model != nullptr && view_model->code_lens_above)
               ? std::span<const CodeLensDecoration>{}
               : plugin_decorations->CodeLensesForLine(static_cast<std::uint32_t>(line_index));
       if (!inline_texts.empty() || !code_lenses.empty()) {
-        // Non-wrap rows already have the full-line layout in `row_layout`; only
-        // the wrap branch (where row_layout is a single wrapped slice) needs the
-        // full-line width, served by reference from the cache.
         const std::size_t full_line_visual_columns =
             soft_wrap ? viewport.LogicalLineVisualWidth(line_index) : row_layout.visual_columns;
-        // Push the anchor past the line's mid-line inlay hints so end-of-line
-        // decorations still sit beyond the visually-last glyph.
         const float anchor_x =
             metrics.text_x +
             static_cast<float>(full_line_visual_columns + row_inlay_total_cells) * char_width_px;
@@ -1378,13 +1167,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
   }
 
-  // Flush the deferred gutter line numbers in one DrawEphemeralRuns. A line
-  // number is a distinct string per row, so the whole-string texture cache can
-  // never hit on one: it paid a surface build plus a texture upload per scrolled
-  // row, and each of those misses evicted a row-text entry that would have been
-  // reused. Both atlas paths draw the digits from the shared coverage atlas
-  // instead -- one submit on the GPU renderer, one small blit per digit on the
-  // software one -- and neither touches the cache.
   if (!gutter_number_scratch_.empty()) {
     util::PerformanceTrace::Scope gutter_scope("EditorViewRenderer::Render::GutterNumbers");
     gutter_number_run_scratch_.clear();
@@ -1412,4 +1194,4 @@ SDL_Color WelcomeStageColor(const render::Theme& theme, WelcomeStageState state)
   return theme.diagnostic_info;
 }
 
-}  // namespace microide::editor
+}

@@ -34,14 +34,6 @@ void NotifyBufferOpenForEditableTab(const TabEntry& tab,
   }
 }
 
-// A freshly-opened comparison lands on its FIRST change, with the editable pane's
-// caret on it — what VS Code's diff editor does, and what the reader opened the
-// diff for. Row 0 is whatever unchanged context precedes the first hunk, which on a
-// large file is the entire screen.
-//
-// Fresh tabs only. Re-activating an already-open comparison goes through
-// ActivateCompareTab without this, because the reader's own selection is the thing
-// to preserve there.
 void SelectFirstChangeOnOpen(TabEntry& tab) {
   if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value()) {
     return;
@@ -52,12 +44,6 @@ void SelectFirstChangeOnOpen(TabEntry& tab) {
   SyncCompareCaretToSelectedRow(compare_tab);
 }
 
-// `review_files` holds PROJECT-RELATIVE paths — JumpCompareReviewFile resolves an
-// entry as `root / entry` — so locating the file just opened has to compare
-// relative too. Comparing the absolute path against the list (which is what both
-// call sites used to do) never matched, so every review tab opened with
-// review_file_index 0 and "next review file" jumped to the second file no matter
-// which one you were on.
 std::size_t IndexOfReviewFile(const std::vector<std::filesystem::path>& review_files,
                               const std::filesystem::path& absolute_path,
                               const std::filesystem::path& root) {
@@ -73,7 +59,7 @@ std::size_t IndexOfReviewFile(const std::vector<std::filesystem::path>& review_f
              : static_cast<std::size_t>(found - review_files.begin());
 }
 
-}  // namespace
+}
 
 std::optional<CompareInput> ReadFileCompareInput(const std::filesystem::path& path, bool editable) {
   const std::filesystem::path normalized = util::NormalizedPath(path);
@@ -82,7 +68,7 @@ std::optional<CompareInput> ReadFileCompareInput(const std::filesystem::path& pa
     return std::nullopt;
   }
   return CompareInput{
-      .content = read.ok() ? read.content : std::string{},  // missing file -> empty (deleted) side
+      .content = read.ok() ? read.content : std::string{},
       .label = normalized.filename().string(),
       .path = normalized,
       .editable = editable,
@@ -143,9 +129,6 @@ std::optional<std::size_t> DiffTabCoordinator::FindOpenPlainCompareTabIndex(
 bool DiffTabCoordinator::OpenPlainComparison(CompareInput left, CompareInput right) {
   const std::filesystem::path left_path = util::NormalizedPath(left.path);
   const std::filesystem::path right_path = util::NormalizedPath(right.path);
-  // Dedup only when both sides are real files. A clipboard/untitled side has no
-  // stable identity and its content may have changed, so re-running always opens
-  // a fresh tab reflecting the caller's freshly-resolved content.
   if (!left_path.empty() && !right_path.empty()) {
     if (const auto existing_index = FindOpenPlainCompareTabIndex(left_path, right_path);
         existing_index.has_value()) {
@@ -159,17 +142,15 @@ bool DiffTabCoordinator::OpenPlainComparison(CompareInput left, CompareInput rig
   if (!compare_tab.has_value() || !compare_tab->compare.has_value()) {
     return false;
   }
-  return AddCompareTab(std::move(*compare_tab), /*load_off_thread=*/false);
+  return AddCompareTab(std::move(*compare_tab), false);
 }
 
 bool DiffTabCoordinator::AddCompareTab(TabEntry tab, bool load_off_thread) {
   if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
-    return false;  // Per-group tab ceiling; see kMaxOpenTabsPerGroup.
+    return false;
   }
   operations_.sync_active_editor_tab();
   state_.focused_group().open_tabs.push_back(std::move(tab));
-  // A stand-in has no changes to land on and no buffer to announce yet; both
-  // happen when its load lands (ApplyCompareTabLoad).
   if (!load_off_thread) {
     SelectFirstChangeOnOpen(state_.focused_group().open_tabs.back());
   }
@@ -189,8 +170,6 @@ void DiffTabCoordinator::ActivateCompareTab(std::size_t index, bool dismiss_over
   } else {
     state_.surface.focus = FocusTarget::Editor;
   }
-  // The pane's content, its breadcrumb and its tab strip are derived (the tab in
-  // front is in each one's key): a frame.
   operations_.request_frame();
 }
 
@@ -199,7 +178,7 @@ void DiffTabCoordinator::ActivateMergeTab(std::size_t index) {
   operations_.reveal_active_merge_selection();
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
-  operations_.request_frame();  // as ActivateCompareTab
+  operations_.request_frame();
 }
 
 void DiffTabCoordinator::RefreshExistingCompareTab(std::size_t index,
@@ -257,7 +236,7 @@ void DiffTabCoordinator::OpenComparison(const project::GitCommitEntry& commit) {
   }
 
   if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
-    return;  // Per-group tab ceiling; see kMaxOpenTabsPerGroup.
+    return;
   }
   operations_.sync_active_editor_tab();
   state_.focused_group().open_tabs.push_back(std::move(*compare_tab));
@@ -269,8 +248,6 @@ void DiffTabCoordinator::OpenComparison(const project::GitCommitEntry& commit) {
     opened.compare->review_file_index =
         IndexOfReviewFile(review_files, util::NormalizedPath(opened.compare->path), state_.root);
   }
-  // After the review metadata, not before: it is an input to the presentation the
-  // first-change row is expressed in.
   SelectFirstChangeOnOpen(opened);
   ActivateCompareTab(state_.focused_group().open_tabs.size() - 1, true);
   NotifyBufferOpenForEditableTab(opened, operations_);
@@ -308,7 +285,7 @@ bool DiffTabCoordinator::OpenMergeEditor(const std::filesystem::path& base_path,
   }
 
   if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
-    return false;  // Per-group tab ceiling; see kMaxOpenTabsPerGroup.
+    return false;
   }
   operations_.sync_active_editor_tab();
   state_.focused_group().open_tabs.push_back(std::move(*merge_tab));
@@ -331,10 +308,6 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(
     return true;
   }
 
-  // A large file opens as an empty, read-only stand-in and loads off the shell
-  // thread when it is first shown (see StartPendingCompareLoad). Not when an editor
-  // tab already holds the file: the right side is then that buffer, in memory, and
-  // only the left blob is left to read.
   const bool load_off_thread = [&] {
     if (!operations_.begin_compare_tab_load ||
         LiveBufferViewOfPath(state_.editor_groups, normalized_path) != nullptr) {
@@ -354,13 +327,8 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(
         project::ReadGitFileAtCommit(state_.root, state_.launcher(), normalized_path, left_ref,
                                      prefetched);
     if (!left_content.has_value() || left_content->truncated) {
-      // Absent revision, or a blob clipped at the subprocess capture ceiling: refuse
-      // rather than diff partial bytes as if they were the file's full content.
       return false;
     }
-    // Only a genuinely-absent working-tree file becomes an empty (deleted) side; an
-    // unreadable or binary file is an error state, not a whole-file-deleted diff, and
-    // must not be openable as an editable compare that could save false empty content.
     const util::TextFileReadResult working = util::ReadTextFileClassified(normalized_path);
     if (working.is_error()) {
       return false;
@@ -383,17 +351,10 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(
   compare_tab->compare->staging_view =
       compare::InferWorkingTreeStagingView(left_ref, compare_tab->compare->right_ref);
   if (load_off_thread) {
-    // Read-only until the load lands: a keystroke into the stand-in would become a
-    // buffer shadowing the file, and Ctrl+S would write it over the real one.
     compare_tab->compare->right_viewport.SetReadOnly(true);
     compare_tab->compare->load_pending = true;
   } else {
-    // The editable side is the file: if an editor tab already holds it (unsaved
-    // edits included), this pane shows and edits that buffer, as VS Code's diff
-    // editor does, rather than a copy read from disk that would then save over it.
     (void)AdoptLiveBufferForCompareRightSide(state_.editor_groups, *compare_tab->compare);
-    // Re-derived either way: the build derived the review header before the refs
-    // above existed, so it opened reading "Branch review" until the first edit.
     util::InvokeIfSet(operations_.refresh_compare_tab_derived_state, *compare_tab->compare);
   }
 
@@ -401,41 +362,27 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(
 }
 
 void DiffTabCoordinator::RefreshCompareTabsForPath(const std::filesystem::path& normalized_path) {
-  // EVERY group, not just the focused one. This walked only the focused group, so a
-  // compare in the other split kept painting the pre-change diff after its file
-  // changed on disk or a hunk was staged from elsewhere.
   for (std::size_t group_index = 0; group_index < state_.editor_groups.size(); ++group_index) {
     EditorGroup& group = state_.editor_groups[group_index];
     for (std::size_t index = 0; index < group.open_tabs.size(); ++index) {
       TabEntry& tab = group.open_tabs[index];
-      // A compare of two files is no git diff: its "refs" are the left file's
-      // name and "PLAIN", and rebuilding it as one made it a read-only diff of
-      // nothing, retitled. Its editable side is the file's buffer, which the
-      // reload keeps current, and its diff follows that buffer.
       if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() || tab.compare->plain_compare ||
           tab.compare->path != normalized_path) {
         continue;
       }
       CompareTabState& compare = *tab.compare;
       if (compare.load_pending) {
-        // Still a stand-in. A load in flight read the file BEFORE this change, so
-        // drop it; the tab still owes a load and the next frame that shows it
-        // reads the file as it is now.
         if (compare.pending_load.armed()) {
           operations_.cancel_file_read(compare.pending_load.id());
           compare.pending_load.Disarm();
         }
         continue;
       }
-      // Two committed sides, each named by a full object id: nothing a change to
-      // the file can touch, so nothing to rebuild (and no git to spawn for it).
       if (project::IsFullGitObjectId(compare.commit_hash) && project::IsFullGitObjectId(compare.right_ref)) {
         continue;
       }
       const bool reads_git = !CompareLeftSideIsHeld(compare) || compare.right_ref != "WORKTREE";
       if (reads_git && operations_.begin_compare_tab_refresh) {
-        // A read posted before this change may have read the refs before they
-        // moved: abandon it (its answer then claims nothing) and post another.
         if (compare.pending_refresh.armed()) {
           operations_.cancel_file_read(compare.pending_refresh.id());
           compare.pending_refresh.Disarm();
@@ -444,20 +391,15 @@ void DiffTabCoordinator::RefreshCompareTabsForPath(const std::filesystem::path& 
         (void)StartCompareTabRefresh(compare);
         continue;
       }
-      // Nothing for git to answer (or no reader wired): the rebuild reads only
-      // the working file, here.
       auto rebuilt = operations_.rebuild_compare_tab_entry(normalized_path, compare, nullptr);
       if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
         continue;
       }
       group.open_tabs[index] = std::move(*rebuilt);
       if (index == group.active_tab_index) {
-        // Only the focused group's front tab owns the selection reveal; any
-        // visible pane's front tab needs repainting.
         if (group_index == state_.focused_group_index) {
           operations_.reveal_active_compare_selection();
         }
-        // The rebuilt diff's rows and header are its pane's units: a frame.
         operations_.request_frame();
       }
     }
@@ -485,8 +427,6 @@ bool DiffTabCoordinator::StartCompareTabRefresh(CompareTabState& compare_tab) {
   if (id == 0) {
     return false;
   }
-  // Armed against no buffer revision: what it reads is the refs', which no edit
-  // of the right side changes. A newer change re-arms it, abandoning this one.
   compare_tab.pending_refresh.Arm(id, 0);
   return true;
 }
@@ -503,13 +443,9 @@ bool DiffTabCoordinator::ApplyCompareTabRefresh(const std::uint64_t id, const bo
       }
       CompareTabState& compare = *tab.compare;
       if (compare.pending_refresh.Resolve(id, 0) != editor::AsyncBufferWork::Claim::Current || cancelled) {
-        // Cancelled: the tab still owes its refresh, and the next frame that shows
-        // it posts it again.
         return true;
       }
       compare.refresh_owed = false;
-      // A side git could not answer leaves the diff as it was, as a synchronous
-      // rebuild that failed always has.
       auto rebuilt = operations_.rebuild_compare_tab_entry(compare.path, compare, &sides);
       if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
         return true;
@@ -519,7 +455,6 @@ bool DiffTabCoordinator::ApplyCompareTabRefresh(const std::uint64_t id, const bo
         if (group_index == state_.focused_group_index) {
           operations_.reveal_active_compare_selection();
         }
-        // The rebuilt diff's rows and header are its pane's units: a frame.
         operations_.request_frame();
       }
       return true;
@@ -550,8 +485,6 @@ bool DiffTabCoordinator::StartPendingCompareLoad(CompareTabState& compare_tab) {
 
 void DiffTabCoordinator::ApplyCompareTabLoad(const std::uint64_t id, const bool cancelled,
                                              const bool read_ok, CompareTabLoadResult& result) {
-  // Load ids are process-unique, so at most one tab holds this one; it may have
-  // moved pane or index while the load ran, so walk them all.
   for (std::size_t group_index = 0; group_index < state_.editor_groups.size(); ++group_index) {
     EditorGroup& group = state_.editor_groups[group_index];
     for (std::size_t tab_index = 0; tab_index < group.open_tabs.size(); ++tab_index) {
@@ -566,15 +499,10 @@ void DiffTabCoordinator::ApplyCompareTabLoad(const std::uint64_t id, const bool 
         return;
       }
       if (cancelled) {
-        // A project switch or teardown. The tab still owes its load, and the next
-        // frame that shows it posts it again.
         return;
       }
       compare.load_pending = false;
       if (!read_ok || !result.left_ok || !result.right_ok) {
-        // The stand-in stays — dropping the tab makes the click look like nothing
-        // happened — and stays READ-ONLY, so nothing can save its empty text over
-        // the file it failed to read.
         if (operations_.report_compare_load_failure) {
           const std::string name = compare.path.filename().string();
           std::string message;
@@ -589,7 +517,7 @@ void DiffTabCoordinator::ApplyCompareTabLoad(const std::uint64_t id, const bool 
           }
           operations_.report_compare_load_failure(std::move(message));
         }
-        operations_.request_frame();  // the stand-in stays; whatever it shows is its units'
+        operations_.request_frame();
         return;
       }
       compare.left_content = std::move(result.left);
@@ -600,16 +528,11 @@ void DiffTabCoordinator::ApplyCompareTabLoad(const std::uint64_t id, const bool 
       compare.model = std::move(result.model);
       compare.build_options.syntax = result.built_options.syntax;
       MarkCompareModelBuilt(compare, result.built_options, result.left_line_count);
-      // An editor tab opened on the file while this ran read it for itself (the
-      // stand-in is not a live buffer). One file is one buffer: join it, and the
-      // fingerprint the adoption invalidates makes the refresh rebuild the diff.
       AdoptLiveBufferForCompareRightSide(state_.editor_groups, compare,
                                          &compare.right_viewport);
       util::InvokeIfSet(operations_.refresh_compare_tab_derived_state, compare);
       SelectFirstChangeOnOpen(tab);
       NotifyBufferOpenForEditableTab(tab, operations_);
-      // The loaded diff's rows, header and breadcrumb are derived; its tab keeps
-      // its title and place in the strip. A frame.
       operations_.request_frame();
       return;
     }
@@ -633,11 +556,6 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(
     return true;
   }
 
-  // Two revisions, no file to read — but a large one still costs two blob pipes and
-  // an O(file) diff on the shell thread, and a commit review opens one of these per
-  // file. Sized by the working copy at the same path: the blobs are not known until
-  // they are read, and the file a review walks is almost always about the size it
-  // was at either end. No working copy (a deleted file) reads synchronously.
   const bool load_off_thread = [&] {
     if (!operations_.begin_compare_tab_load) {
       return false;
@@ -660,8 +578,6 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(
                                      prefetched);
     if (!left_content.has_value() || !right_content.has_value() || left_content->truncated ||
         right_content->truncated) {
-      // A truncated blob was clipped at the subprocess capture ceiling; refuse rather
-      // than present a partial diff as truth.
       return false;
     }
     compare_tab = operations_.build_compare_tab_from_buffers(
@@ -683,9 +599,6 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(
   compare_tab->compare->review_mode = compare::CompareReviewMode::Branch;
   compare_tab->compare->review_files =
       review_files != nullptr ? *review_files : [&]() {
-        // Only reached when the caller does not already know the set — the sidebar's
-        // single-file branch compare. Every bulk caller passes its list, because
-        // running this diff once per opened tab is what froze a large review.
         std::vector<std::filesystem::path> paths;
         for (const project::GitBranchFileEntry& entry :
              project::CollectGitBranchOutgoingFiles(state_.root, state_.launcher(), left_ref)) {
@@ -695,7 +608,6 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(
       }();
   compare_tab->compare->review_file_index =
       IndexOfReviewFile(compare_tab->compare->review_files, normalized_path, state_.root);
-  // The header names the review and its file position, neither known at build time.
   if (!load_off_thread && operations_.refresh_compare_tab_derived_state) {
     operations_.refresh_compare_tab_derived_state(*compare_tab->compare);
   }
@@ -714,10 +626,6 @@ bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path,
     return true;
   }
 
-  // Three `git show :N:path` runs -- three round trips for a remote project -- do
-  // not belong on the shell thread. Read them on the file reader and come back;
-  // the open completes with the stages in hand. A review session prefetches its
-  // whole batch first and passes it in, so it takes the inline path below.
   if (prefetched == nullptr && operations_.begin_git_conflict_prefetch) {
     operations_.begin_git_conflict_prefetch(normalized_path);
     return true;
@@ -732,8 +640,6 @@ bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path,
   if (!current_content.has_value() || !incoming_content.has_value() ||
       current_content->truncated || incoming_content->truncated ||
       (base_content.has_value() && base_content->truncated)) {
-    // A truncated conflict-stage blob was clipped at the subprocess capture ceiling;
-    // refuse rather than build a merge from partial bytes.
     return false;
   }
 
@@ -762,7 +668,7 @@ bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path,
   }
 
   if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
-    return false;  // Per-group tab ceiling; see kMaxOpenTabsPerGroup.
+    return false;
   }
   state_.focused_group().open_tabs.push_back(std::move(*merge_tab));
   ActivateMergeTab(state_.focused_group().open_tabs.size() - 1);
@@ -770,4 +676,4 @@ bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path,
   return true;
 }
 
-}  // namespace microide::workspace
+}

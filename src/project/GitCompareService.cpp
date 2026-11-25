@@ -20,18 +20,8 @@ namespace microide::project {
 
 namespace {
 
-// Upper bound on entries collected from an untrusted repo's ref / diff output
-// (branch picker, changed-file lists feeding CompareModel). A hostile repo with
-// millions of refs or a commit touching millions of files would otherwise
-// materialize + sort them all on the UI thread. Bounded only by the 128 MiB
-// capture cap otherwise, which is far too large for these list surfaces.
 constexpr std::size_t kMaxGitCollectionEntries = 50000;
 
-// Helper-level cap on `git log -n <limit>` for the recent-commit surface. The
-// caller-provided limit flows straight into `git log` and then into an
-// unbounded ParseLog, so a hostile or buggy caller could request millions of
-// commits and materialize them all on the UI thread. The recent-commit picker
-// asks for ~50; 1000 leaves generous headroom while bounding worst-case work.
 constexpr std::size_t kMaxRecentCommits = 1000;
 
 std::string ShortRefLabel(std::string_view ref) {
@@ -111,7 +101,7 @@ std::optional<GitBranchReference> ResolveNamedBranchReference(const GitRepositor
   return std::nullopt;
 }
 
-}  // namespace
+}
 
 GitFileHistoryResult CollectGitFileHistory(const std::filesystem::path& root,
                                            const platform::ProcessLauncher& launcher,
@@ -136,10 +126,6 @@ std::vector<GitCommitEntry> CollectGitRecentCommits(const std::filesystem::path&
     return {};
   }
   const std::size_t effective_limit = std::min(limit, kMaxRecentCommits);
-  // No separate `rev-parse --verify HEAD` pre-check: on an unborn branch `git log
-  // HEAD` exits non-zero and we already fall through to the empty return below, so
-  // the extra spawn was pure latency on every recent-commit query (Execute
-  // silences stderr by default, so the unborn-branch fatal never leaks).
   const auto result = repo.Execute(std::vector<std::string>{
       "log", "--no-color", "-n", std::to_string(effective_limit),
       "--pretty=format:%H%x1f%h%x1f%an%x1f%ar%x1f%s", "HEAD"});
@@ -155,8 +141,6 @@ std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& 
   if (!repo.IsValid()) {
     return {};
   }
-  // %(HEAD) is "*" for the checked-out branch and " " otherwise, so the caller can
-  // mark/exclude the current branch without a second `git branch --show-current`.
   const auto result = repo.Execute(std::vector<std::string>{
       "for-each-ref", "--format=%(refname)%09%(HEAD)", "--sort=-committerdate", "refs/heads",
       "refs/remotes"});
@@ -165,9 +149,6 @@ std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& 
   }
 
   std::vector<GitBranchReference> branches;
-  // Bound line materialization at the retained cap (plus small slack for filtered
-  // symbolic-head/empty lines) so a huge for-each-ref listing cannot build millions of
-  // line views before the branch cap stops collection. (TD-2026-07-16-30.)
   for (const std::string_view line :
        util::SplitLineViews(result.output, kMaxGitCollectionEntries + 8)) {
     if (branches.size() >= kMaxGitCollectionEntries) {
@@ -183,18 +164,11 @@ std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& 
       continue;
     }
     std::string label = ShortRefLabel(ref);
-    // Skip symbolic remote heads (e.g. origin/HEAD -> origin/main) so the list
-    // shows real branches only.
     const bool is_symbolic_head =
         label.size() >= 5 && label.compare(label.size() - 5, 5, "/HEAD") == 0;
     if (label.empty() || label == "origin/HEAD" || is_symbolic_head) {
       continue;
     }
-    // Keep the FULL ref (refs/heads/… or refs/remotes/origin/…) as the identity and
-    // the short form only as the display label. Using the short label as the ref
-    // (e.g. "origin/main") could resolve to the wrong target when a local branch
-    // and a remote-tracking name collide; the full ref is unambiguous. This matches
-    // the local/remote GitBranchReference builders above.
     branches.push_back(GitBranchReference{.ref = std::string(ref),
                                           .label = std::move(label),
                                           .is_head = is_head,
@@ -205,7 +179,6 @@ std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& 
 
 namespace {
 
-// `<revision>\0<absolute path>` — see GitRevisionBlobCache's key comment.
 std::string BlobCacheKey(const std::string& revision, const std::filesystem::path& absolute_path) {
   std::string key = revision;
   key.push_back('\0');
@@ -213,7 +186,7 @@ std::string BlobCacheKey(const std::string& revision, const std::filesystem::pat
   return key;
 }
 
-}  // namespace
+}
 
 void GitRevisionBlobCache::Prefetch(const std::filesystem::path& root,
                                     const platform::ProcessLauncher& launcher,
@@ -257,7 +230,7 @@ void GitRevisionBlobCache::Prefetch(const std::filesystem::path& root,
   for (std::size_t i = 0; i < answers.size(); ++i) {
     std::optional<GitRepository::BlobLookup>& answer = answers[i];
     if (!answer.has_value()) {
-      continue;  // unanswered: the caller falls back to the single-file read
+      continue;
     }
     entries_.emplace(BlobCacheKey(*request_revisions[i], *request_paths[i]), std::move(*answer));
   }
@@ -307,10 +280,6 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
     return std::nullopt;
   }
 
-  // One spawn for existence AND content. Every compare, merge and review tab
-  // loads its sides through here, and this used to be `cat-file -e` followed by
-  // `show` — two blocking git processes per side, on the shell thread, per file.
-  // See GitRepository::LookupBlobAtRevision.
   std::optional<GitRepository::BlobAtRevision> blob;
   if (auto lookup = repo.LookupBlobAtRevision(*relative, hash); lookup.has_value()) {
     if (!lookup->exists) {
@@ -319,8 +288,6 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
     blob = GitRepository::BlobAtRevision{.content = std::move(lookup->content),
                                         .truncated = lookup->truncated};
   } else {
-    // `--batch` could not express the name (a path containing a newline) or git
-    // failed outright; fall back to the pair so the rare case keeps working.
     if (!repo.FileExistsAtRevision(*relative, hash)) {
       return GitFileContentAtCommit{.exists = false, .content = ""};
     }
@@ -329,8 +296,6 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
   if (!blob.has_value()) {
     return std::nullopt;
   }
-  // Every compare/merge/review surface that shows a revision's side loads it
-  // here, so this is what feeds the diff pipeline's input-line counter.
   util::AddPerformanceCounter(util::PerfCounterId::GitDiffLoads);
   util::AddPerformanceCounter(util::PerfCounterId::GitDiffBytesRead, blob->content.size());
   return GitFileContentAtCommit{
@@ -339,13 +304,6 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
 
 std::optional<GitBranchReference> ResolveGitBaseReference(
     const std::filesystem::path& root, const platform::ProcessLauncher& launcher) {
-  // This chained up to SIX git subprocesses (symbolic-ref, config, config,
-  // symbolic-ref, show-ref, rev-parse) to answer one question, on every first
-  // git-sidebar refresh -- six round trips for a remote project. One
-  // `for-each-ref` answers every rule but the first: which branch HEAD is on (the
-  // `*`), whether main/master exist, where origin/HEAD points, and the current
-  // branch's upstream. The first rule (a `gh pr checkout` base) needs one config
-  // read, and only when it applies does it pay its own lookups.
   util::PerformanceTrace::Scope perf_scope("git::ResolveBaseReference");
   const GitRepository repo(root, launcher);
   if (!repo.IsValid()) {
@@ -414,11 +372,6 @@ std::optional<GitBranchReference> ResolveGitBaseReference(
     };
   }
 
-  // Keep the FULL ref (refs/heads/main) as identity, not the bare short name. The
-  // identity flows into `git diff <ref>...HEAD`, where a tag or other object also
-  // named "main"/"master" would otherwise win over the verified local branch
-  // (TD-2026-07-17A-025). Match the other GitBranchReference builders, which keep
-  // the short form only as the label.
   if (has_main) {
     return GitBranchReference{.ref = "refs/heads/main", .label = "main"};
   }
@@ -438,9 +391,6 @@ std::optional<GitBranchReference> ResolveGitBaseReference(
 
 std::vector<GitBranchFileEntry> ParseGitBranchDiffNameStatusZ(std::string_view output) {
   std::vector<GitBranchFileEntry> entries;
-  // Each retained entry consumes up to 3 NUL records (status + old-path + new-path for
-  // rename/copy), so bound token materialization at 3x the entry cap (+ slack) instead
-  // of splitting every record of hostile NUL-heavy diff output. (TD-2026-07-16-30.)
   const std::vector<std::string_view> tokens =
       util::SplitNulDelimited(output, kMaxGitCollectionEntries * 3 + 2);
   for (std::size_t i = 0; i < tokens.size() && entries.size() < kMaxGitCollectionEntries;) {
@@ -453,7 +403,6 @@ std::vector<GitBranchFileEntry> ParseGitBranchDiffNameStatusZ(std::string_view o
     }
     const char code = status_token.front();
     std::string_view path_token = tokens[i++];
-    // Rename/copy records carry the old path then the new path; report the new one.
     if ((code == 'R' || code == 'C') && i < tokens.size()) {
       if (!tokens[i].empty()) {
         path_token = tokens[i];
@@ -471,7 +420,6 @@ std::vector<GitBranchFileEntry> ParseGitBranchDiffNameStatusZ(std::string_view o
 
   std::sort(entries.begin(), entries.end(), [](const GitBranchFileEntry& lhs,
                                                const GitBranchFileEntry& rhs) {
-    // native() is a const reference; generic_string() would allocate per comparison.
     return lhs.relative_path.native() < rhs.relative_path.native();
   });
   return entries;
@@ -485,12 +433,6 @@ std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(
     return {};
   }
 
-  // `-z` makes paths NUL-delimited so paths containing spaces and rename records
-  // (status NUL old NUL new) parse correctly; the prior whitespace-split parser
-  // truncated spaced paths and mis-attributed renames.
-  // `--end-of-options` guards a user-typed SpecificRef base (custom_ref) that may
-  // begin with `-`: without it git parses `--output=...` etc. as an option rather
-  // than a revision. Matches the `--` discipline used elsewhere in this subsystem.
   const auto result = repo.Execute({"diff", "--name-status", "-z", "--find-renames",
                                     "--end-of-options", std::string(base_ref) + "...HEAD"});
   if (!result.success() || result.output.empty()) {
@@ -508,9 +450,6 @@ std::vector<GitBranchFileEntry> CollectGitWorkingTreeDiffFiles(
     return {};
   }
 
-  // Two-dot diff (no `...`): compares `ref` against the working tree, so it
-  // includes uncommitted edits — i.e. "what is different between local state and
-  // <ref>". `-z` keeps spaced paths and rename records intact.
   const auto result = repo.Execute({"diff", "--name-status", "-z", "--find-renames",
                                     "--end-of-options", std::string(ref)});
   if (!result.success() || result.output.empty()) {
@@ -528,20 +467,6 @@ std::vector<std::filesystem::path> CollectGitCommitChangedFiles(
     return {};
   }
 
-  // `-z`: NUL-delimited, unquoted output. Without it a path containing a newline
-  // splits into bogus entries and non-ASCII names come back C-quoted, so lookups by
-  // the real path fail (and the wrong file gets opened/diffed/staged).
-  // `--end-of-options` guards a commit_hash that could begin with `-` (matches the
-  // `--` discipline used by CollectGitBranchOutgoingFiles/WorkingTreeDiffFiles).
-  // `--root` and `-m --first-parent` are what make the two commits git otherwise
-  // reports as empty reviewable: without `--root` a repository's FIRST commit has
-  // no parent to diff against and diff-tree prints nothing, and without
-  // `-m --first-parent` a MERGE commit prints nothing either (diff-tree suppresses
-  // merges by default). Both cases surfaced as `review-commit <ref>: no changes in
-  // commit` on a commit that plainly changed files. First-parent is the diff every
-  // other reviewer shows for a merge, and it matches the `<ref>~1` left side the
-  // compare tab is opened with. Neither flag changes the output for an ordinary
-  // single-parent commit.
   const auto result = repo.Execute({"diff-tree", "--no-commit-id", "--name-only", "-r", "-z",
                                     "--root", "-m", "--first-parent", "--end-of-options",
                                     std::string(commit_hash)});
@@ -550,8 +475,6 @@ std::vector<std::filesystem::path> CollectGitCommitChangedFiles(
   }
 
   std::vector<std::filesystem::path> paths;
-  // One record per path: bound token materialization at the entry cap (+ slack for
-  // empty records) rather than splitting every record of a huge commit. (TD-30.)
   for (const std::string_view record :
        util::SplitNulDelimited(result.output, kMaxGitCollectionEntries + 8)) {
     if (paths.size() >= kMaxGitCollectionEntries) {
@@ -567,4 +490,4 @@ std::vector<std::filesystem::path> CollectGitCommitChangedFiles(
   return paths;
 }
 
-}  // namespace microide::project
+}

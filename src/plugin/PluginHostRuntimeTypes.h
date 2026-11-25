@@ -25,9 +25,6 @@ namespace microide::plugin::runtime_types {
 struct PluginInstance {
   std::string id;
   std::filesystem::path root;
-  // Sandbox state, resolved once at load. `data_dir` is the plugin's writable scratch
-  // directory (only reachable when fs caps allow data access); `capabilities` gates the
-  // fs/process chokepoints. Both default to the safe posture when no manifest declares them.
   std::filesystem::path data_dir;
   PluginCapabilities capabilities;
 #if MICROIDE_HAS_LUA_PLUGINS
@@ -38,9 +35,6 @@ struct PluginInstance {
   int on_project_close_ref = LUA_NOREF;
   int on_buffer_open_ref = LUA_NOREF;
   int on_buffer_save_ref = LUA_NOREF;
-  // Reactive editor events (SEAM 1). All optional; each stays LUA_NOREF unless the
-  // plugin registers it, which keeps the host's per-keystroke sampling zero-cost
-  // when nothing listens.
   int on_buffer_change_ref = LUA_NOREF;
   int on_cursor_move_ref = LUA_NOREF;
   int on_selection_change_ref = LUA_NOREF;
@@ -106,12 +100,6 @@ struct CodeActionRuntime {
 #endif
 };
 
-// The four plugin-native language query providers (go-to-definition, find
-// references, signature help, document symbols) share one record shape — a
-// single `provide` callback keyed by language id — so they live in one
-// discriminated vector instead of four near-identical ones.
-// The public provider kind, used as is: this was a value-for-value copy that
-// the contribution snapshot translated back with a switch.
 using LanguageQueryKind = PluginHost::ContributedLanguageProvider::Kind;
 
 struct LanguageQueryRuntime {
@@ -119,7 +107,6 @@ struct LanguageQueryRuntime {
   std::string id;
   std::string language_id;
   std::string plugin_id;
-  // SignatureHelp only: typing one of these opens the parameter hints.
   std::string trigger_characters;
 #if MICROIDE_HAS_LUA_PLUGINS
   lua_State* state = nullptr;
@@ -169,4 +156,4 @@ struct AuthProviderRuntime {
 #endif
 };
 
-}  // namespace microide::plugin::runtime_types
+}

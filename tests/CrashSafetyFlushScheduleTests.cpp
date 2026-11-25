@@ -19,8 +19,6 @@ void TestAQuietPauseFlushes() {
   Expect(!schedule.Due(1000 + kQuiet), "flushed, it is owed nothing");
 }
 
-// The data-loss case: keys every second never leave a quiet window, and a pure
-// debounce never flushed. The first unstaged edit bounds the wait.
 void TestSteadyTypingStillFlushesWithinTheMaximumWait() {
   CrashSafetyFlushSchedule schedule;
   std::uint64_t now = 5000;
@@ -46,7 +44,7 @@ void TestATouchOnlyExtendsAnArmedSchedule() {
   Expect(schedule.DelayMs(2000) == kQuiet, "but restarts the quiet window of one that is armed");
 }
 
-}  // namespace
+}
 
 void RegisterCrashSafetyFlushScheduleTests(std::vector<TestCase>& tests) {
   AddTest(tests, "CrashSafetyFlushSchedule/AQuietPauseFlushes", TestAQuietPauseFlushes);
@@ -55,4 +53,4 @@ void RegisterCrashSafetyFlushScheduleTests(std::vector<TestCase>& tests) {
   AddTest(tests, "CrashSafetyFlushSchedule/ATouchOnlyExtendsAnArmedSchedule", TestATouchOnlyExtendsAnArmedSchedule);
 }
 
-}  // namespace microide::tests
+}

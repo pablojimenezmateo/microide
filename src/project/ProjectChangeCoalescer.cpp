@@ -8,27 +8,10 @@ namespace microide::project {
 namespace {
 
 
-// Cap on distinct pending file changes before the coalescer collapses to a single
-// full-tree rescan. A file-change flood (a build writing thousands of files, a
-// `git checkout` of a huge tree, or a deliberate flood) would otherwise grow the
-// pending list without bound. A rescan supersedes the individual changes and
-// re-reads the tree, so past this cap it is both cheaper and bounded. The first
-// kMaxPendingFileChanges changes keep their per-file handling (open-buffer
-// reloads, diagnostics clearing).
 constexpr std::size_t kMaxPendingFileChanges = 1024;
-// A batch the apply rate holds is released anyway once it holds this many changes:
-// holding may delay a change, never cost it its itemization. Past
-// kMaxPendingFileChanges a flood collapses to a rescan, and the language servers
-// hear only the itemized changes (LspService::NotifyWatchedFileChanges).
 constexpr std::size_t kReleaseHeldAtFileChanges = kMaxPendingFileChanges / 2;
-// Past kMaxPendingFileChanges a change is still kept, for the language servers
-// alone (ProjectChangeBatch::unitemized_file_changes), up to this many. What it
-// costs is the servers' notification on the shell thread -- a path conversion
-// and a glob match per change per watching server -- once per flood.
 constexpr std::size_t kMaxUnitemizedFileChanges = 15 * 1024;
 
-// One more event for a path already pending: a delete wins, a modify of a
-// deleted path is a re-creation, and anything else takes the new kind.
 void MergeIntoPendingChange(ProjectFileChange& existing, ProjectFileChange change) {
   if (change.kind == ProjectFileChangeKind::Deleted) {
     existing.kind = ProjectFileChangeKind::Deleted;
@@ -43,7 +26,7 @@ void MergeIntoPendingChange(ProjectFileChange& existing, ProjectFileChange chang
   existing.absolute_path = std::move(change.absolute_path);
 }
 
-}  // namespace
+}
 
 void ProjectChangeCoalescer::Reset() {
   std::scoped_lock lock(mutex_);
@@ -90,7 +73,7 @@ std::optional<ProjectChangeBatch> ProjectChangeCoalescer::ConsumeReadyAt(std::ui
     if (!MustReleaseLocked()) {
       return std::nullopt;
     }
-    return TakePendingLocked(nullptr);  // released, not paid for: the budget stays spent
+    return TakePendingLocked(nullptr);
   }
   apply_budget_ = budget - 1;
   budget_epoch_ms_ = epoch_ms;
@@ -115,11 +98,9 @@ bool ProjectChangeCoalescer::MustReleaseLocked() const {
 
 std::size_t ProjectChangeCoalescer::BudgetAtLocked(std::uint64_t now_ms,
                                                    std::uint64_t* epoch_ms) const {
-  // A clock that went backwards (or a first call) refills nothing and loses nothing.
   const std::uint64_t elapsed = now_ms > budget_epoch_ms_ ? now_ms - budget_epoch_ms_ : 0;
   const std::uint64_t refilled = elapsed / kApplyIntervalMs;
   if (apply_budget_ + refilled >= kApplyBurst) {
-    // Full: the refill clock restarts when the next token is spent.
     *epoch_ms = now_ms;
     return kApplyBurst;
   }
@@ -151,13 +132,6 @@ std::optional<ProjectChangeBatch> ProjectChangeCoalescer::TakePendingLocked(
 
 
 void ProjectChangeCoalescer::MergeFileChange(ProjectFileChange change) {
-  // Looked up by its normalized text. This was a scan of every pending change
-  // with a path comparison each -- up to 1024 per incoming change, under the lock
-  // the shell thread's ConsumeReady waits on: a first remote sync's batches kept
-  // the watcher thread busy 0.4 s and stalled a frame for 138 ms
-  // (TD-2026-10-28-418). Watcher paths are already normal in practice, so the key
-  // is usually the path's own text. An index past kMaxPendingFileChanges names a
-  // slot in `unitemized_file_changes`.
   std::string key = util::PathTextNeedsNormalizing(change.relative_path.native())
                         ? change.relative_path.lexically_normal().native()
                         : change.relative_path.native();
@@ -173,13 +147,6 @@ void ProjectChangeCoalescer::MergeFileChange(ProjectFileChange change) {
     pending_.file_changes.push_back(std::move(change));
     return;
   }
-  // Past the cap the flood collapses to a full-tree rescan, which bounds what is
-  // acted on per path: the first kMaxPendingFileChanges keep per-file handling,
-  // and `file_changes_truncated` makes the apply re-check every open buffer for
-  // the rest. A rescan alone did not cover them: the apply re-checked buffers
-  // only for a rescan with NO itemized change, which a flood never is, so an open
-  // file past the cap kept its old text. The language servers still hear each
-  // change, up to kMaxUnitemizedFileChanges more; past that, nothing is kept.
   pending_.tree_rescan_requested = true;
   pending_.file_changes_truncated = true;
   if (pending_.unitemized_file_changes.size() < kMaxUnitemizedFileChanges) {
@@ -200,4 +167,4 @@ void ProjectChangeCoalescer::MergeRepositoryChange(RepositoryChange change) {
   }
 }
 
-}  // namespace microide::project
+}

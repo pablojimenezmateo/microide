@@ -25,15 +25,6 @@ namespace microide::workspace {
 
 namespace {
 
-// The disk signature a restored dirty snapshot compares the file against before
-// its save (TextViewport::DetectDiskConflict). Its stat as the buffer last saw it,
-// and its content hash when the snapshot recorded one under the same hash function
-// (the probe matches): then a touch while microide was down -- the stat moved, the
-// bytes did not -- saves. Without one it reads as a change and asks, the safe way
-// to be wrong.
-// A buffer of a file that did not exist yet (never saved) gets a baseline no real
-// file matches once one appears: a file someone created at that path meanwhile is
-// a change to show, not one to overwrite.
 util::FileSignature RestoredDiskBaseline(const PersistedEditorTabState::DiskBaseline& baseline,
                                          const std::filesystem::path& path) {
   util::FileSignature signature;
@@ -49,35 +40,25 @@ util::FileSignature RestoredDiskBaseline(const PersistedEditorTabState::DiskBase
   }
   std::error_code error;
   if (std::filesystem::exists(path, error) || error) {
-    signature.exists = true;  // mtime 0, size max: nothing on disk matches it
+    signature.exists = true;
     signature.size = static_cast<std::uintmax_t>(-1);
   }
   return signature;
 }
 
-}  // namespace
+}
 
 namespace {
 
-// Dirty-buffer snapshot byte budget (mirrors the reader's kMaxSessionBufferBytes);
-// process-wide, overridable for tests via SetMaxDirtySnapshotBytesForTesting.
 std::size_t& MaxDirtySnapshotBytesStorage() {
-  static std::size_t bytes = 64u * 1024 * 1024;  // 64 MiB
+  static std::size_t bytes = 64u * 1024 * 1024;
   return bytes;
 }
 
 std::size_t MaxDirtySnapshotBytes() { return MaxDirtySnapshotBytesStorage(); }
 
-// Whether a dirty buffer fits the reader's snapshot budget. Checked BEFORE
-// snapshotting: without it a huge dirty generated file materializes its whole
-// buffer into a second vector (Snapshot) and gets encoded into a session file the
-// reader would then reject at kMaxSessionBufferBytes / kMaxSessionBufferLines.
-// Sized from the live LineSpan (O(lines), no allocation, early-out); over budget,
-// the record carries no snapshot and its tab restores by reopening from disk
-// (matching the reader's rejection outcome, minus the wasted snapshot/encode/write).
-// TD-2026-07-17A-083.
 bool FitsDirtySnapshotBudget(const editor::TextViewport& view) {
-  constexpr std::size_t kMaxPersistedBufferLines = 4'000'000;  // mirrors reader
+  constexpr std::size_t kMaxPersistedBufferLines = 4'000'000;
   const std::size_t max_buffer_bytes = MaxDirtySnapshotBytes();
   const editor::LineSpan span = view.lines();
   if (span.size() > kMaxPersistedBufferLines) {
@@ -85,7 +66,7 @@ bool FitsDirtySnapshotBudget(const editor::TextViewport& view) {
   }
   std::size_t total_bytes = 0;
   for (std::size_t i = 0; i < span.size(); ++i) {
-    total_bytes += span[i].size() + 1;  // + newline
+    total_bytes += span[i].size() + 1;
     if (total_bytes > max_buffer_bytes) {
       return false;
     }
@@ -93,20 +74,12 @@ bool FitsDirtySnapshotBudget(const editor::TextViewport& view) {
   return true;
 }
 
-// Stages `view`'s unsaved text in a tab's record: the snapshot, its line ending
-// and mark, and -- for the buffer of a file, `normalized_path` -- the file as the
-// buffer last saw it. One definition for every record that carries a buffer: an
-// editor tab's, and a compare tab's for its editable side.
 void StageDirtyBuffer(const editor::TextViewport& view, const std::filesystem::path& normalized_path,
                       PersistedEditorTabState& out) {
   out.dirty_snapshot = true;
   out.line_ending = view.line_ending();
   out.utf8_bom = view.has_utf8_bom();
-  // Shares the piece tree's buffers: no copy of the text here, on the shell
-  // thread; the encode on the persistence worker reads it (TD-2026-11-02-429.3).
   out.buffer = view.lines().SnapshotDocument();
-  // The restore snapshot is one of the moments a buffer's bytes are written
-  // somewhere: a kill -9 finding then says whether the lost buffer was staged.
   view.TraceBufferIo("session-stage");
   if (!normalized_path.empty()) {
     const util::FileSignature& seen = view.disk_signature();
@@ -119,12 +92,6 @@ void StageDirtyBuffer(const editor::TextViewport& view, const std::filesystem::p
   }
 }
 
-// The result file as a merge's result buffer last saw it, for a staged typed
-// result -- what a save after a restore compares the file against. The buffer's
-// own stat once it has saved; before that, the file now, when it still holds
-// what the merge read (MergeResultChangedOnDisk); and when it does not, a
-// baseline no file matches, so the restored result's save asks rather than
-// writing over the change it never saw.
 std::optional<PersistedEditorTabState::DiskBaseline> MergeResultDiskBaseline(const MergeTabState& merge) {
   const util::FileSignature& seen = merge.result_viewport.disk_signature();
   if (!seen.exists && MergeResultChangedOnDisk(merge)) {
@@ -142,9 +109,6 @@ std::optional<PersistedEditorTabState::DiskBaseline> MergeResultDiskBaseline(con
   return baseline;
 }
 
-// A merge's typed result, staged in its record with the conflicts where the tab
-// tracks them in that text (TD-2026-11-19-453): an edit to a merge result was
-// staged nowhere, and a crash lost it.
 void StageTypedMergeResult(const MergeTabState& merge, PersistedEditorTabState& out) {
   const editor::TextViewport& result = merge.result_viewport;
   if (!result.dirty() || merge.output_path.empty()) {
@@ -170,8 +134,6 @@ void StageTypedMergeResult(const MergeTabState& merge, PersistedEditorTabState& 
   }
 }
 
-// A view (an editor tab's or a closed editor's) in its persisted form, and back.
-// One pair, so a tab and a closed editor save and restore the same things.
 void WriteViewState(const DeferredTabHandle& view, PersistedEditorTabState& out) {
   out.cursor_line = view.cursor_line;
   out.cursor_column = view.cursor_column;
@@ -192,8 +154,6 @@ DeferredTabHandle ReadViewState(const PersistedEditorTabState& tab, std::filesys
   };
 }
 
-// A persisted path made absolute against the project root and normalized; empty
-// stays empty.
 std::filesystem::path ResolveSessionPath(const std::filesystem::path& root,
                                          std::filesystem::path path) {
   if (path.empty()) {
@@ -205,13 +165,12 @@ std::filesystem::path ResolveSessionPath(const std::filesystem::path& root,
   return path.lexically_normal();
 }
 
-// A persisted scroll row as the int the tab state holds.
 int ScrollRowFromSession(std::size_t row) {
   return static_cast<int>(
       std::min<std::size_t>(row, static_cast<std::size_t>(std::numeric_limits<int>::max())));
 }
 
-}  // namespace
+}
 
 void PersistenceCoordinator::SetMaxDirtySnapshotBytesForTesting(std::size_t bytes) {
   MaxDirtySnapshotBytesStorage() = bytes == 0 ? 64u * 1024 * 1024 : bytes;
@@ -261,8 +220,6 @@ std::optional<TabEntry> PersistenceCoordinator::RestoreCompareTab(
     compare_state.divider_fraction = persisted_tab.compare_divider_fraction;
     compare_state.persistable = true;
     if (unsaved_right != nullptr) {
-      // The diff is built of the unsaved text, as a rebuild of a live dirty diff
-      // is: the file on disk is not what this side holds, and need not be readable.
       compare_state.right_viewport = *unsaved_right;
     }
     compare_tab = operations_.build_compare_tab_from_state(compare_path, compare_state);
@@ -285,10 +242,6 @@ std::optional<TabEntry> PersistenceCoordinator::RestoreCompareTab(
   compare.horizontal_scroll = persisted_tab.compare_horizontal_scroll;
   compare.divider_fraction = persisted_tab.compare_divider_fraction;
   if (unsaved_right != nullptr) {
-    // The restored buffer itself, not a copy of its text: unsaved, with the mark,
-    // line ending and disk baseline the snapshot kept, and shared with every other
-    // tab the restore puts on this file. A diff that cannot hold it (no editable
-    // side on this file any more) is not the tab to bring it back.
     if (!compare.right_editable ||
         !util::SameAsNormalizedPath(compare.right_viewport.path(), unsaved_right->path())) {
       return std::nullopt;
@@ -298,11 +251,6 @@ std::optional<TabEntry> PersistenceCoordinator::RestoreCompareTab(
   return compare_tab;
 }
 
-// A typed result the record staged, laid over the merge the restore rebuilt from
-// its inputs and choices: the text as typed, unsaved, with the file's baseline,
-// and the conflicts where the tab tracked them in it. Spans that no longer fit
-// the rebuilt model (an input changed while microide was down) are placed again
-// by matching the model against the text, as a result read from disk is.
 void PersistenceCoordinator::RestoreTypedMergeResult(const PersistedEditorTabState& persisted_tab,
                                                      const std::filesystem::path& output_path,
                                                      MergeTabState& merge) {
@@ -425,8 +373,6 @@ bool PersistenceCoordinator::RestoreSessionState() {
     state.overlay.workflow.compare_picker.selected_index = 0;
   }
 
-  // Breakpoints + launch configs persist independently of tabs; restore them
-  // before any early return so they survive even an empty-tab project.
   RestoreDebugState();
 
   {
@@ -439,8 +385,6 @@ bool PersistenceCoordinator::RestoreSessionState() {
   }
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::FinalizeState");
-    // Each empty group shows the welcome placeholder; per-group active index was
-    // already clamped during rebuild.
     for (EditorGroup& group : state.editor_groups) {
       if (group.open_tabs.empty()) {
         group.welcome_surface.viewport.SetPlaceholderText(
@@ -449,27 +393,11 @@ bool PersistenceCoordinator::RestoreSessionState() {
             "Use the sidebar to open files.\n");
       }
     }
-    // A restored session starts with the keyboard in the editor, as VS Code's does
-    // (TD-2026-10-16-348); the sidebar used to take it whenever it was shown.
     state.surface.focus = FocusTarget::Editor;
   }
   return true;
 }
 
-// A file open in two panes is ONE buffer, and both of its tabs persisted the
-// same dirty snapshot. Rebuilding each from its own lines gave the restored
-// session two independent documents for one file — an edit in one pane no
-// longer showed in the other, and each pane saved its own copy. The first
-// restored view of a path is kept here (a copy shares its DocumentState) and
-// every later dirty tab on that path copies it. Clean tabs restore lazily
-// through OpenEditorViewForPath, which finds the live view the same way.
-//
-// The buffer a record's dirty snapshot restores, as a view of it. The tabs of
-// one dirty buffer share it again: a file's by its path, an untitled buffer's
-// by its number -- it has no path, and keying it by the empty one restored each
-// pane on a buffer of its own, two texts under one Untitled-N after the first
-// edit (soak 2ae149191d79). An untitled tab from an older session has no
-// number and stays on its own.
 editor::TextViewport PersistenceCoordinator::RestoreDirtyView(
     const PersistedEditorTabState& persisted_tab, const std::filesystem::path& view_path,
     RestoredDirtyViews& dirty_views) {
@@ -479,19 +407,14 @@ editor::TextViewport PersistenceCoordinator::RestoreDirtyView(
                                            : std::string{};
   if (const auto shared = dirty_views.find(view_key);
       !view_key.empty() && shared != dirty_views.end()) {
-    return shared->second;  // another tab on the same dirty buffer
+    return shared->second;
   }
   editor::TextViewport restored_view;
-  // Load the snapshot's lines straight in (dirty=true baked in): LoadLines
-  // keeps the persisted line ending, where LoadContent would detect one.
   restored_view.LoadLines(persisted_tab.buffer.ToLines(), view_path, persisted_tab.line_ending);
   restored_view.SetUtf8Bom(persisted_tab.utf8_bom);
   if (persisted_tab.disk_baseline.has_value() && !view_path.empty()) {
     restored_view.RebindToPath(view_path, RestoredDiskBaseline(*persisted_tab.disk_baseline, view_path));
   }
-  // Preferences / indent detection before any view state is applied (they
-  // re-run EnsureCursorVisible), so a tab's scroll survives independent of
-  // the caret.
   operations_.apply_editor_preferences(restored_view);
   operations_.apply_detected_indent_on_open(restored_view);
   if (!view_key.empty()) {
@@ -500,19 +423,12 @@ editor::TextViewport PersistenceCoordinator::RestoreDirtyView(
   return restored_view;
 }
 
-// Rebuild one persisted tab into a runtime TabEntry. `should_eager_hydrate`
-// controls whether an editor tab is opened immediately or left deferred;
-// compare/merge tabs are always materialized fully.
 std::optional<TabEntry> PersistenceCoordinator::RebuildTab(
     const PersistedEditorTabState& persisted_tab, bool should_eager_hydrate,
     RestoredDirtyViews& dirty_views) {
   ProjectWorkspaceState& state = CurrentProjectState();
   const std::filesystem::path view_path = ResolveSessionPath(state.root, persisted_tab.path);
   if (persisted_tab.kind == "compare") {
-    // A diff whose editable side held unsaved text carries it, under the file's
-    // path. When the diff itself cannot come back -- its repository gone, its
-    // revision unreadable -- the text still does, in an editor tab on the file:
-    // the record then reads as an editor tab's, below.
     if (!persisted_tab.dirty_snapshot || view_path.empty()) {
       return RestoreCompareTab(persisted_tab, state.root, nullptr);
     }
@@ -525,7 +441,6 @@ std::optional<TabEntry> PersistenceCoordinator::RebuildTab(
     return RestoreMergeTab(persisted_tab, state.root);
   }
 
-  // Editor tab: restores exactly one viewport from its inline single-view fields.
   TabEntry::EditorTabState editor_state;
   editor_state.restore = ReadViewState(persisted_tab, view_path);
 
@@ -544,8 +459,6 @@ std::optional<TabEntry> PersistenceCoordinator::RebuildTab(
 
   const std::filesystem::path tab_path = operations_.editor_view_path(editor_state);
 
-  // An untitled buffer keeps the number it had; one from an older session gets
-  // the next free one (NumberUntitledTabs, below).
   const std::uint32_t untitled_number = tab_path.empty() ? persisted_tab.untitled_number : 0;
   TabEntry restored_tab{
       .kind = TabEntry::Kind::Editor,
@@ -580,18 +493,12 @@ void PersistenceCoordinator::RestoreEditorGroups(
     }
     EditorGroup group;
     std::size_t restored_active = 0;
-    // The decode cap (kMaxSessionTabsPerGroup = 4096) is a defensive parse ceiling,
-    // not a UI workload size. A CRC-valid but oversized session would otherwise make
-    // startup rebuild thousands of tabs — path-probing clean editors and building
-    // full compare/merge models — before the first frame. Cap restored tabs at a
-    // much smaller product limit; the active tab is always restored even past the
-    // cap so focus never strands. TD-2026-07-17A-082.
     constexpr std::size_t kMaxRestoredTabsPerGroup = 200;
     for (std::size_t i = 0; i < persisted_group.tabs.size(); ++i) {
       const PersistedEditorTabState& persisted_tab = persisted_group.tabs[i];
       const bool is_active = i == persisted_group.active_tab_index;
       if (group.open_tabs.size() >= kMaxRestoredTabsPerGroup && !is_active) {
-        continue;  // Past the product cap: skip non-active tabs (defensive).
+        continue;
       }
       const bool should_eager_hydrate = is_active || persisted_tab.dirty_snapshot;
       std::optional<TabEntry> tab = RebuildTab(persisted_tab, should_eager_hydrate, dirty_views);
@@ -611,14 +518,8 @@ void PersistenceCoordinator::RestoreEditorGroups(
   if (state.editor_groups.empty()) {
     state.editor_groups.emplace_back();
   }
-  // Restored untitled buffers (hot exit) take their numbers in tab order.
   NumberUntitledTabs(state.editor_groups);
-  // One file, one buffer: a diff's editable side and the editor tab on its file.
   RejoinRestoredCompareSides(state.editor_groups);
-  // The tree's leaves ARE the groups, so a record that does not describe exactly
-  // the groups that survived the restore (missing, corrupt, or written before a
-  // group was dropped for an unreadable path) is replaced by an even row rather
-  // than left to disagree with them.
   if (!state.editor_split.Load(persisted_session.split_tree) ||
       state.editor_split.leaf_count() != state.editor_groups.size()) {
     state.editor_split.ResetToEvenSplit(state.editor_groups.size(),
@@ -631,14 +532,7 @@ void PersistenceCoordinator::RestoreEditorGroups(
 void PersistenceCoordinator::RestoreSessionLayout(
     PersistedProjectSessionState& persisted_session) {
   ProjectWorkspaceState& state = CurrentProjectState();
-  // A CRC-valid but hand-edited (or NaN/Inf) persisted float would otherwise flow
-  // straight into layout: std::clamp(NaN, …) returns NaN, so the render-time pane
-  // clamps cannot recover it and the pane collapses/explodes. Replace any
-  // non-finite or negative dimension with the schema default here.
   const auto sanitize_pixels = [](float value, float fallback) {
-    // Reject non-finite and negative, AND cap an absurd finite value: a corrupt
-    // session could store a huge width/height that would squeeze the rest of the
-    // layout to nothing until the next resize. 100000px is far past any display.
     if (!std::isfinite(value) || value < 0.0f) {
       return fallback;
     }
@@ -648,9 +542,6 @@ void PersistenceCoordinator::RestoreSessionLayout(
   state.sidebar.width = sanitize_pixels(persisted_session.sidebar_width, kWorkspaceDefaultSidebarWidth);
   state.panel.height = sanitize_pixels(persisted_session.bottom_panel_height, kWorkspaceDefaultBottomPanelHeight);
   state.sidebar.git.outgoing_base_choice = persisted_session.outgoing_base_choice;
-  // Right-side debug pane: restore width/mode always, but only re-open it when the
-  // debugger feature is currently enabled (else a pane left open in a prior session
-  // would surface debug UI in the default debugger-off state).
   state.debug_pane.width = sanitize_pixels(persisted_session.right_pane_width, 0.0f);
   state.debug_pane.mode = persisted_session.right_pane_mode <=
                                   static_cast<std::uint8_t>(DebugPaneMode::Breakpoints)
@@ -660,9 +551,6 @@ void PersistenceCoordinator::RestoreSessionLayout(
       operations_.debugger_enabled && operations_.debugger_enabled();
   state.debug_pane.visible = persisted_session.right_pane_visible && debugger_enabled;
 
-  // File-tree expansion + sidebar view. RestoreExpansionState rebuilds the tree
-  // rows; a later Refresh() (on tab activation / sidebar refresh) preserves the
-  // restored expansion because it reads the same expanded_paths_ set.
   state.directory_tree.RestoreExpansionState(persisted_session.expanded_tree_paths,
                                              persisted_session.collapsed_tree_paths);
   if (!persisted_session.selected_tree_path.empty() && !state.root.empty()) {
@@ -673,8 +561,6 @@ void PersistenceCoordinator::RestoreSessionLayout(
   if (!persisted_session.sidebar_view_id.empty()) {
     state.sidebar.view_id = persisted_session.sidebar_view_id;
   }
-  // The panel comes back maximized if it was, and project init revives the
-  // terminals into it (TerminalPanelService::OpenTerminalsForProjectInit).
   state.panel.maximized = persisted_session.panel_maximized;
   state.terminal_layout_to_revive = std::move(persisted_session.terminal_layout);
   state.recently_closed_editors.clear();
@@ -712,8 +598,6 @@ void PersistenceCoordinator::SaveSessionState() {
   persisted_session.right_pane_width = state.debug_pane.width;
   persisted_session.right_pane_mode = static_cast<std::uint8_t>(state.debug_pane.mode);
 
-  // File-tree expansion + sidebar view state, so reopening lands on the same
-  // expanded folders / selected node / scroll position (terminals excluded).
   persisted_session.expanded_tree_paths = state.directory_tree.ExpandedRelativePaths();
   persisted_session.collapsed_tree_paths = state.directory_tree.ManuallyCollapsedRelativePaths();
   if (const auto selected = state.directory_tree.SelectedPath();
@@ -732,17 +616,9 @@ void PersistenceCoordinator::SaveSessionState() {
     persisted_session.terminal_layout = operations_.capture_terminal_layout();
   }
 
-  // The diffs whose editable side holds unsaved text that fits a snapshot, and the
-  // merges the session does not keep whose result does: almost always none. A
-  // persistable diff's own record carries its side, a persistable merge's its
-  // result. These are for the records that otherwise would not: an editor tab on
-  // the same file that has not loaded (it holds no buffer, the diff holds the
-  // file's), and a diff or merge the session does not keep at all -- a compare of
-  // two files, a git conflict's merge -- whose text then comes back in an editor
-  // tab on the file.
   struct UnkeptText {
     const editor::TextViewport* view = nullptr;
-    const MergeTabState* merge = nullptr;  // a merge's result, else a diff's side
+    const MergeTabState* merge = nullptr;
   };
   std::vector<UnkeptText> unsaved_diff_sides;
   for (const EditorGroup& group : state.editor_groups) {
@@ -775,12 +651,6 @@ void PersistenceCoordinator::SaveSessionState() {
     }
     return false;
   };
-  // Whether the file's own buffer -- an editor tab's or a diff's editable side --
-  // holds unsaved text. That buffer is the file's in the session: the restore
-  // gives every record of one path one buffer, so a merge result staged on the
-  // same path took its place and the file's text was gone (soak 02922e8eed90).
-  // A result is not the file's until it is kept; it then comes back in an
-  // Untitled tab of its own.
   const auto file_buffer_is_unsaved = [&state](const std::filesystem::path& path) {
     for (const EditorGroup& group : state.editor_groups) {
       for (const TabEntry& tab : group.open_tabs) {
@@ -792,7 +662,6 @@ void PersistenceCoordinator::SaveSessionState() {
     }
     return false;
   };
-  // The documents already staged in an editor record that stands in for a diff.
   std::vector<const editor::TextViewport*> stood_in;
 
   for (auto& group : state.editor_groups) {
@@ -815,7 +684,6 @@ void PersistenceCoordinator::SaveSessionState() {
                          [side](const editor::TextViewport* other) { return other->SharesDocumentWith(*side); })) {
           const std::filesystem::path path = side->path().lexically_normal();
           if (unkept->merge != nullptr && file_buffer_is_unsaved(path)) {
-            // Untitled: no path, and no number -- the restore gives it the next free one.
             persisted_tab.emplace();
             persisted_tab->kind = "editor";
             StageDirtyBuffer(*side, {}, *persisted_tab);
@@ -831,8 +699,6 @@ void PersistenceCoordinator::SaveSessionState() {
       } else {
         persisted_tab = BuildPersistedEditorTabState(tab_index, tab);
         if (persisted_tab.has_value() && !persisted_tab->dirty_snapshot && !persisted_tab->path.empty()) {
-          // A diff's side is the file's buffer and goes first; a merge's result
-          // only when the file's buffer has nothing unsaved (above).
           const UnkeptText* staged = nullptr;
           for (const UnkeptText& text : unsaved_diff_sides) {
             if (util::SameAsNormalizedPath(text.view->path(), persisted_tab->path) &&
@@ -859,7 +725,6 @@ void PersistenceCoordinator::SaveSessionState() {
     persisted_session.focused_group_index =
         persisted_session.groups.empty() ? 0 : persisted_session.groups.size() - 1;
   }
-  // Reopen Closed Editor reaches into an earlier session, as VS Code's does.
   for (const DeferredTabHandle& closed : state.recently_closed_editors) {
     PersistedEditorTabState persisted_closed;
     persisted_closed.path = closed.path;
@@ -880,7 +745,6 @@ bool PersistenceCoordinator::SaveTerminalLayout(const std::filesystem::path& roo
   }
   const std::filesystem::path session_path = ProjectStateDirectory(root) / "session";
   PersistedProjectSessionState persisted_session;
-  // Load flushes the write queue first, so this amends what the last save wrote.
   if (!operations_.persistence_service->LoadProjectSession(session_path, &persisted_session)) {
     return false;
   }
@@ -912,11 +776,6 @@ PersistenceCoordinator::BuildPersistedCompareTabState(
   persisted_tab.compare_review_mode = compare::CompareReviewModeLabel(tab.compare->review_mode);
   persisted_tab.compare_staging_view =
       compare::WorkingTreeStagingViewLabel(tab.compare->staging_view);
-  // The editable side is the file's buffer, and with no editor tab on the file
-  // this record is the only one that can carry its unsaved text: `path` names the
-  // file, as an editor record's does, and the snapshot rides beside the diff's own
-  // fields. A file also open in an editor tab is staged in both records; the
-  // restore makes one buffer of them (as of the two panes of a split).
   if (const editor::TextViewport* right = LoadedBufferViewOf(tab);
       right != nullptr && right->dirty() && !right->path().empty()) {
     if (FitsDirtySnapshotBudget(*right)) {
@@ -948,12 +807,6 @@ PersistenceCoordinator::BuildPersistedMergeTabState(
   persisted_tab.merge_horizontal_scroll = tab.merge->horizontal_scroll;
   persisted_tab.merge_left_divider_fraction = tab.merge->left_divider_fraction;
   persisted_tab.merge_right_divider_fraction = tab.merge->right_divider_fraction;
-  // Cap the save-side choice vector at the reader's budget so a huge generated
-  // conflict tab never builds a record set the reader (kMaxSessionMergeHunkChoices)
-  // would reject. Choices stay positional and every entry is persisted verbatim —
-  // the restore model rebuild does not reproduce the save-time inferred choice for
-  // every hunk, so an empty/default-skip encoding would change the restored result
-  // (bootstrap_choice is not the value a rebuild lands on). TD-2026-07-17A-097.
   constexpr std::size_t kMaxPersistedMergeHunkChoices = 200'000;
   const std::vector<compare::MergeHunk>& hunks = tab.merge->model.hunks;
   const std::size_t bounded =
@@ -967,7 +820,7 @@ PersistenceCoordinator::BuildPersistedMergeTabState(
 }
 
 std::optional<PersistedEditorTabState>
-PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
+PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t ,
                                                      TabEntry& tab) {
   if (tab.kind != TabEntry::Kind::Editor) {
     return std::nullopt;
@@ -988,10 +841,6 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
 
   auto& editor_state = tab.editor_state.value();
   const editor::TextViewport* persisted_viewport = &editor_state.viewport;
-  // Guarded: both sources were normalized on the way in (the tab's restored path
-  // by the reader, the viewport's by the open path), and lexically_normal() is
-  // ~12 allocations even when it changes nothing -- once per open tab of every
-  // group, on every session save (TD-2026-08-10-174).
   const std::filesystem::path& source_path =
       editor_state.content_pending() ? editor_state.restore.path : persisted_viewport->path();
   const std::filesystem::path normalized_path =
@@ -1018,4 +867,4 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
   return persisted_tab;
 }
 
-}  // namespace microide::workspace
+}

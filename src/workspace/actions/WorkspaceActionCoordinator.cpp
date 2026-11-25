@@ -15,21 +15,11 @@ ActionCoordinator::ActionCoordinator(WorkspaceActionContext& context) : context_
 bool ActionCoordinator::Execute(ActionId id,
                                 const std::vector<std::string>& args,
                                 ActionSource source) {
-  // `key` and `pointer` are input, not actions: what the key or click runs is the
-  // action, so it prepares for itself and leaves its own receipt. Prepared as an
-  // action, a `pointer` click closed the tree context menu it was aimed at before
-  // it landed; counted as one, a driver read "key ran" for every key the terminal
-  // took (both: the QA sweeps on Wayland, where all input goes this way).
   const bool input = id == ActionId::PressKey || id == ActionId::Pointer;
   if (!input) {
     context_.PrepareForAction(source);
     context_.NoteActionDispatched(id, source);
   }
-  // QA dry run (tools/qa's `keys` and `context-menus` sweeps): a key, a menu row
-  // or a context-menu row records which action it reached and runs nothing, so
-  // every one can be used in every context without closing tabs, starting
-  // debuggers, deleting files or quitting. Commands from the control channel
-  // still run -- the sweeps drive with them.
   static const bool qa_dry_run = util::PerformanceTrace::FlagEnabled("MICROIDE_QA_ACTION_DRY_RUN");
   if (qa_dry_run && source != ActionSource::Command) {
     return true;
@@ -37,16 +27,10 @@ bool ActionCoordinator::Execute(ActionId id,
   if (!input) {
     context_.NoteActionRan(id);
   }
-  // A menu row, palette row or shortcut that names a command it gives no
-  // arguments to, when the command cannot run without them: ask for them (VS
-  // Code's input box) instead of failing with its usage line. A context menu
-  // fills its arguments from the row it was opened on, and a command line typed
-  // them, so neither is asked.
   if (args.empty() && (source == ActionSource::Menu || source == ActionSource::Shortcut)) {
     if (const ActionSpec* spec = FindWorkspaceActionSpec(id);
         spec != nullptr && !spec->command_name.empty() &&
         CommandUsageRequiresArgument(spec->command_usage)) {
-      // The command's own choices where it has them; a typed answer otherwise.
       if (!context_.OpenArgumentPicker(id)) {
         context_.OpenCommandArgumentsPrompt(spec->command_name);
       }
@@ -110,4 +94,4 @@ bool ActionCoordinator::Execute(ActionId id,
   return true;
 }
 
-}  // namespace microide::workspace
+}

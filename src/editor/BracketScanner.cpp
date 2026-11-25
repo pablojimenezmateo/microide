@@ -11,13 +11,6 @@ namespace microide::editor {
 
 namespace {
 
-// Absolute-line view over a windowed slice of the buffer. The bracket matchers
-// reason in absolute line numbers (for syntax suppression and the returned
-// pair), but only the bounded window [base, base + slice.size()) is ever
-// dereferenced, so FindBracketMatch materializes just that slice instead of a
-// LineView per line in the whole file. `operator[]` maps an absolute index into
-// the slice; `size()` returns the absolute end index. base == 0 (the public
-// FindBracketMatchInLines path) is the identity, so behavior is unchanged there.
 struct WindowLines {
   const std::vector<std::string_view>* slice = nullptr;
   std::size_t base = 0;
@@ -28,21 +21,6 @@ struct WindowLines {
   std::size_t size() const { return base + slice->size(); }
 };
 
-// "Is the bracket at this column inside a string or comment?", resolved without a
-// token-cache probe per byte.
-//
-// Suppression is a per-LINE question answered by a per-COLUMN lookup, and the
-// matchers walk a line byte by byte — so every byte used to re-resolve the line's
-// token vector through `TextViewport::HighlightedLineTokens`: a cache probe, a
-// `PerformanceTrace::Scope`, and on a miss a full highlight of the line. On
-// ordinary source that is a few dozen probes and nobody noticed. On a file with no
-// line breaks in it, End puts the caret next to the closing bracket and a single
-// arrow key cost **12.6 million probes** — one per byte of the document, per caret
-// move (`editor_long_line_horizontal_scroll`).
-//
-// The matchers visit lines in a monotonic direction, so holding the current line's
-// span and refetching only when the line changes is exact and O(lines), not
-// O(bytes).
 class LineSuppressionCursor {
  public:
   explicit LineSuppressionCursor(const TextViewport* viewport) : viewport_(viewport) {}
@@ -52,8 +30,6 @@ class LineSuppressionCursor {
       return false;
     }
     if (tokens_ == nullptr || line_index != line_index_) {
-      // The reference points into the viewport's highlight LRU, which only the
-      // next fetch can evict — and the next fetch is the one that replaces it.
       tokens_ = &viewport_->HighlightedLineTokens(line_index);
       line_index_ = line_index;
     }
@@ -147,10 +123,8 @@ bool MatchBackwardFromCloser(const WindowLines& lines,
   int depth = 1;
 
   std::size_t bottom = close_line >= max_lines_each_side ? close_line - max_lines_each_side : 0;
-  // One budget across both loops below: they are two halves of a single scan.
   std::size_t budget = kMaxBracketMatchScanBytes;
 
-  // First scan the closer's own line to the left of close_col.
   if (close_col > 0) {
     std::string_view text = lines[close_line];
     std::size_t col = close_col;
@@ -178,7 +152,6 @@ bool MatchBackwardFromCloser(const WindowLines& lines,
     }
   }
 
-  // Then scan earlier lines, right-to-left.
   std::size_t line = close_line;
   while (line > bottom) {
     --line;
@@ -220,11 +193,6 @@ std::optional<BracketMatchPair> FindBracketMatchInWindow(
   std::string_view current = lines[caret_line];
   LineSuppressionCursor suppression(syntax_viewport);
 
-  // Try character at the caret first (caret is to the left of position).
-  // `caret_at_opener` follows the matched character, not which probe found it:
-  // the caret is adjacent to the open bracket whenever the resolved character is
-  // an opener (including the left-adjacent `foo(|bar)` case), and adjacent to the
-  // close bracket when it is a closer.
   auto try_at = [&](std::size_t col) -> std::optional<BracketMatchPair> {
     if (col >= current.size()) return std::nullopt;
     if (suppression.SuppressedAt(caret_line, col)) {
@@ -257,7 +225,7 @@ std::optional<BracketMatchPair> FindBracketMatchInWindow(
   return std::nullopt;
 }
 
-}  // namespace
+}
 
 std::optional<BracketMatchPair> FindBracketMatchInLines(
     const std::vector<std::string_view>& lines,
@@ -265,7 +233,6 @@ std::optional<BracketMatchPair> FindBracketMatchInLines(
     std::size_t caret_column,
     std::size_t max_lines_each_side,
     const TextViewport* syntax_viewport) {
-  // base == 0: absolute indexing over the whole vector (test entry point).
   return FindBracketMatchInWindow(WindowLines{&lines, 0}, caret_line, caret_column,
                                   max_lines_each_side, syntax_viewport);
 }
@@ -279,30 +246,10 @@ std::optional<BracketMatchPair> FindBracketMatch(const TextViewport& viewport,
   if (caret_line >= line_count) {
     return std::nullopt;
   }
-  // A caret line past the tokenization cap matches nothing.
-  //
-  // This is the argument `FoldingModel::kMaxBracketScanLineBytes` already makes,
-  // applied to the same bracket on the same line: past that cap the line has no
-  // syntax tokens, so `LineSuppressionCursor` cannot tell a brace inside a string
-  // literal from a real one and suppresses nothing. The pair it would highlight is
-  // arbitrary rather than approximate, and highlighting none is both cheaper and
-  // more honest -- the same degradation mature editors apply.
-  //
-  // It is also what stops this from reading the line at all. The window below
-  // takes a LineView per line, which on a piece-tree source materializes any line
-  // that spans pieces -- and on a file with no line breaks in it that was the last
-  // multi-megabyte copy per frame on the render path (TD-2026-08-05-133). Asking
-  // the LENGTH first costs two offset lookups.
   if (lines.LineLength(caret_line) > runtime_syntax::kMaxHighlightLineBytes) {
     util::AddPerformanceCounter(util::PerfCounterId::EditorBracketMatchLineTooLong);
     return std::nullopt;
   }
-  // Only the window [caret_line - max, caret_line + max] is ever scanned: the
-  // forward/backward matchers never look past it and the caret probes its own
-  // line. Materialize a LineView for just that window (O(window)) into a
-  // thread-local slice indexed absolutely via WindowLines(base = lo) -- the old
-  // code wrote an empty view for every line in the whole buffer (O(file)) each
-  // frame the caret sat next to a bracket, a multi-MB memset on large files.
   const std::size_t lo = caret_line > max_lines_each_side ? caret_line - max_lines_each_side : 0;
   const std::size_t hi = std::min(line_count, caret_line + max_lines_each_side + 1);
   thread_local std::vector<std::string_view> window;
@@ -315,4 +262,4 @@ std::optional<BracketMatchPair> FindBracketMatch(const TextViewport& viewport,
                                   max_lines_each_side, &viewport);
 }
 
-}  // namespace microide::editor
+}

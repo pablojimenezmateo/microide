@@ -7,7 +7,7 @@
 
 namespace microide::project {
 namespace {
-}  // namespace
+}
 
 CommitOperationResultCategory ClassifyCommitFailure(const int exit_code,
                                                     const std::string_view output) {
@@ -16,11 +16,6 @@ CommitOperationResultCategory ClassifyCommitFailure(const int exit_code,
   }
 
   const std::string lowered = util::ToLowerAscii(std::string(output));
-  // Match anchored hook-phase names only. The previous broad `find("hook")` catch
-  // misclassified any failure whose output merely mentioned "hook" (a branch,
-  // path, or commit-message word) as a hook failure, hiding the real cause. A
-  // generic hook failure without a recognizable phase name falls through to
-  // UnknownError, which still surfaces the captured output to the user.
   if (lowered.find("pre-commit") != std::string::npos ||
       lowered.find("commit-msg") != std::string::npos ||
       lowered.find("prepare-commit-msg") != std::string::npos ||
@@ -74,29 +69,19 @@ CommitOperationResult ExecuteGitCommit(const std::filesystem::path& repository_r
   if (operation == CommitOperationKind::NoVerify) {
     arguments.emplace_back("--no-verify");
   }
-  // Feed the message on stdin via `-F -` instead of `-m`: this keeps the body
-  // (which can be arbitrarily long and contain arbitrary bytes) off the argv,
-  // avoiding argv-length limits and process-listing exposure. `-F` uses the
-  // `whitespace` cleanup mode by default, matching the prior `-m` semantics.
   arguments.emplace_back("-F");
   arguments.emplace_back("-");
   std::string message(subject);
   if (!body.empty()) {
-    // `-m subject -m body` joins the two paragraphs with a blank line; mirror
-    // that layout on stdin so single-vs-multi-paragraph commits are unchanged.
     message.append("\n\n");
     message.append(body);
   }
 
-  // A commit can legitimately run a slow pre-commit hook, so use the generous
-  // write timeout rather than the short read cap.
   const GitRepository::CommandResult command =
       repo.ExecuteWithStdin(arguments, std::move(message), false, internal::kGitWriteTimeoutMs);
   result.hook_output = command.output;
   util::TrimTrailingLineEndings(&result.hook_output);
   if (command.timed_out) {
-    // A timeout is not an ordinary non-zero exit: report it as such instead of
-    // letting it fall through to a generic "Commit failed".
     result.category = CommitOperationResultCategory::TimedOut;
     result.detail = "Commit timed out and was aborted";
     return result;
@@ -130,4 +115,4 @@ CommitOperationResult ExecuteGitCommit(const std::filesystem::path& repository_r
   return result;
 }
 
-}  // namespace microide::project
+}

@@ -32,11 +32,6 @@ class SingleLineEditor {
   void Append(std::string text);
   void SetCaret(std::size_t caret);
   void SetSelectionAnchor(std::optional<std::size_t> selection_anchor);
-  // Moves the caret to `caret`, keeping the selection's anchor -- or anchoring
-  // it where the caret was when there is none. The pointer's extend gestures
-  // (a drag, Shift+click) go through here: setting the anchor to the caret and
-  // THEN moving the caret cannot work, because an anchor equal to the caret is
-  // an empty selection and is normalized away on the spot.
   void ExtendSelectionTo(std::size_t caret);
 
   std::optional<SingleLineSelection> Selection() const;
@@ -48,9 +43,6 @@ class SingleLineEditor {
   bool DeleteForward();
   bool MoveLeft(bool extend_selection = false);
   bool MoveRight(bool extend_selection = false);
-  // Word-granular motion/deletion. Word boundaries use the same identifier rule as
-  // SelectWordAt: each step skips any trailing non-word bytes then the adjacent word, so
-  // the caret lands on a word edge (matches the main editor and standard input fields).
   bool MoveWordLeft(bool extend_selection = false);
   bool MoveWordRight(bool extend_selection = false);
   bool DeleteWordLeft();
@@ -58,11 +50,6 @@ class SingleLineEditor {
   bool MoveHome(bool extend_selection = false);
   bool MoveEnd(bool extend_selection = false);
   bool SelectAll();
-  // What a double-click selects, through the one shared rule
-  // (editor::WordSelectionRunAt, as TextViewport::SelectWordOrRunAtCursor does):
-  // the identifier run straddling byte_offset -- or ending exactly there -- and
-  // otherwise the whitespace or operator run under it. Returns false and leaves
-  // state untouched only when there is nothing at all to select (an empty field).
   bool SelectWordAt(std::size_t byte_offset);
   bool DeleteSelection();
   std::string CopySelection() const;
@@ -79,4 +66,4 @@ class SingleLineEditor {
   std::optional<std::size_t> selection_anchor_;
 };
 
-}  // namespace microide::editor
+}

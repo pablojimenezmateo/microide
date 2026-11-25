@@ -1,22 +1,5 @@
 #pragma once
 
-// The `ui` control query: what is on screen, by name, with the rects a click is
-// tested against.
-//
-// A driver of the real window (tools/qa) can send keys through the control
-// channel, but without this it can only click coordinates. `ui` names the menu
-// bar items, the open popup's rows, the editor and panel tabs, the sidebar's view
-// buttons and visible rows, the status-bar segments and the banner/notification
-// buttons, each with its rect in window coordinates (the coordinates mouse events
-// use), plus focus, sidebar, overlay, menu and panel state and the layout's
-// surface rects. Element names are stable locators: `menu:Edit`,
-// `menu-item:Edit/Undo`, `tab:0/main.cpp`, `row:tree/src`, `status:line-column`.
-//
-// Geometry comes from the calls the mouse paths make (the shell wires them as
-// Operations), so a reported rect is the rect a click is tested against.
-// Answering reads state and computes layout; it never changes state or requests a
-// redraw, and needs no frame to have been painted.
-
 #include <SDL3/SDL.h>
 
 #include <functional>
@@ -35,7 +18,6 @@ namespace microide::workspace {
 struct WorkspaceContext;
 
 struct ControlUiElement {
-  // `<kind>:<locator>`; made unique by MakeControlUiNamesUnique.
   std::string name;
   std::string_view kind;
   SDL_FRect rect{};
@@ -43,19 +25,13 @@ struct ControlUiElement {
   std::optional<bool> enabled;
   std::optional<bool> active;
   std::optional<bool> selected;
-  // A menu row's command (the name the `ui` action receipt reports when it runs);
-  // empty for elements that run none, and for submenu rows.
   std::string command;
-  // The menu a click opens, by its label, for an element that opens one in place
-  // of running a command (a status segment's): a driver asserts the popup by it.
   std::string menu;
-  // A scrollbar's thumb (its `rect` is the track).
   std::optional<SDL_FRect> thumb;
 };
 
 using ControlUiElements = std::vector<ControlUiElement>;
 
-// Element kinds (the prefix of every name).
 namespace control_ui_kind {
 inline constexpr std::string_view kMenu = "menu";
 inline constexpr std::string_view kMenuItem = "menu-item";
@@ -75,71 +51,43 @@ inline constexpr std::string_view kDebugTab = "debug-tab";
 inline constexpr std::string_view kDebugRow = "debug-row";
 inline constexpr std::string_view kNotification = "notification";
 inline constexpr std::string_view kScrollbar = "scrollbar";
-}  // namespace control_ui_kind
+}
 
-// Appends an element named `<kind>:<locator>`.
 void AddControlUiElement(ControlUiElements& out,
                          std::string_view kind,
                          std::string_view locator,
                          const SDL_FRect& rect,
                          std::string label = {});
 
-// Appends `scrollbar:<locator>`: the track as its rect, the thumb, and the axis as
-// its label -- the geometry the surface's paint and its drag both use.
 void AddControlUiScrollbar(ControlUiElements& out,
                            std::string_view locator,
                            const ScrollbarGeometry& geometry);
 
-// Gives the second and later elements that share a name a `#2`, `#3`, ... suffix,
-// in the order they were collected (visual order), so a name resolves to one
-// element.
 void MakeControlUiNamesUnique(ControlUiElements& elements);
 
 class ControlUiQuery {
  public:
-  // One element source per surface; each appends that surface's elements in visual
-  // order. Any may be null (that surface then reports nothing).
   using ElementSource = std::function<void(const WorkspaceLayout&, ControlUiElements&)>;
 
   struct Operations {
     std::function<std::optional<WorkspaceLayout>()> layout;
-    // Window coordinates per layout unit (x, y): every rect and geometry field the
-    // query reports is in layout units; a driver multiplies by this to point.
     std::function<SDL_FPoint()> window_per_unit;
-    // The mouse cursor the shell would show at a point (`pointer`, `text`,
-    // `default`, `ew-resize`, ...). Each element reports the one at its centre, so
-    // a sweep can hold every clickable element to the hand cursor.
     std::function<std::string_view(float, float)> cursor_at;
-    // The cursor the window shows where the pointer last was (`cursor` in the
-    // answer); empty before the pointer has been seen.
     std::function<std::string_view()> pointer_cursor;
-    // The display label of a menu (`Edit`), for the menu state block.
     std::function<std::string(MenuId)> menu_label;
-    // `<menu>/<label>` of a menu's row, the locator its `menu-item:` element uses.
     std::function<std::string(MenuId, std::size_t)> menu_row_locator;
-    // The modal that owns the keyboard and pointer, if any: `settings`, `help`,
-    // `prompt` (a confirm/input prompt) or `unsaved-prompt`; empty for none.
     std::function<std::string()> modal;
-    ElementSource menus;       // menu bar items, then the open popup's (and submenu's) rows
-    ElementSource tabs;        // project tabs, each editor group's tabs, split dividers
-    ElementSource sidebar;     // view buttons, header buttons, visible rows
-    ElementSource panel;       // bottom-panel tabs and header buttons
-    ElementSource status_bar;  // segments
-    ElementSource buttons;     // editor banner, notification buttons
-    ElementSource overlay;     // the open overlay's rows, query field, find-widget controls
-    ElementSource dialogs;     // prompt and unsaved-prompt buttons/field, Settings rows
-    ElementSource fields;      // sidebar text fields (search view, commit message) and
-                               // the git view's header buttons
-    ElementSource debug;       // the debug toolbar's buttons, the debug pane's mode tabs
-                               // and its visible rows (call stack, variables, watch,
-                               // breakpoints)
-    // State no element carries: the overlay's query, match count and selection,
-    // the open prompt's text, and the editor popups (hover, signature help).
-    // Merged into the answer's `overlay`, and added as `prompt` and `popups`.
+    ElementSource menus;
+    ElementSource tabs;
+    ElementSource sidebar;
+    ElementSource panel;
+    ElementSource status_bar;
+    ElementSource buttons;
+    ElementSource overlay;
+    ElementSource dialogs;
+    ElementSource fields;
+    ElementSource debug;
     std::function<void(const WorkspaceLayout&, util::JsonObject&)> details;
-    // The `action-counts` query: how many times each command ran since startup
-    // (`{commands: {<command>: n}, plugins: {<plugin command>: n}}`), the
-    // commands named as `actions.last` names them.
     std::function<util::JsonValue()> action_counts;
   };
 
@@ -150,4 +98,4 @@ std::string_view ControlUiFocusName(FocusTarget focus);
 std::string_view ControlUiOverlayModeName(OverlayMode mode);
 std::string_view ControlUiPanelContentName(PanelContentKind content);
 
-}  // namespace microide::workspace
+}

@@ -12,21 +12,12 @@
 #include "workspace/render/DebugPanePaint.h"
 #include "workspace/render/SingleLineViewMetrics.h"
 
-// Right-side debug pane render TU. The four structured debug surfaces (Call Stack,
-// Variables, Watch, Breakpoints) moved here from the bottom panel. Prep lays the
-// active surface out into the frame's snapshot (PrepareDebugPaneFrame) and derives
-// its damage from it (openspec derived-damage 3.1); paint draws the snapshot only,
-// each element in its own PaintElement (clip-discipline stage 3). Neither reads
-// live project state through the context nor materializes per-frame strings.
-
 namespace microide::workspace {
 
 using namespace detail;
 
 namespace {
 
-// A value's kind as its display colour: the editor's syntax palette, so numbers,
-// strings and pointers read the same in the debugger as in source.
 SDL_Color ValueKindColor(const render::Theme& theme, DebugValueKind kind) {
   switch (kind) {
     case DebugValueKind::Number:
@@ -47,18 +38,13 @@ SDL_Color ValueKindColor(const render::Theme& theme, DebugValueKind kind) {
   return theme.text_secondary;
 }
 
-// Lays out the rows of the active surface. One instance per prepared frame.
 class DebugPaneRowLayout {
  public:
   DebugPaneRowLayout(PreparedFrameState::DebugPaneBodyPaint& body, const DebugPaneInputs& inputs)
       : body_(body), in_(inputs), theme_(*inputs.theme), text_(*inputs.text_renderer) {}
 
-  // A fresh row at visible row `row`, its band highlighted when `lit` or, for a
-  // row that reacts to the pointer, hovered.
   PreparedFrameState::DebugPaneRowPaint& Row(int row, bool lit, bool hoverable = true) {
     PreparedFrameState::DebugPaneRowPaint& painted = body_.rows.emplace_back();
-    // The text's line box is the band: a pixel lower, as it was, it ran a pixel
-    // into the next row's band, outside its own element (clip-discipline D1).
     painted.band = MakeRect(in_.content.x, DebugPaneRowBandTop(in_.text_y, in_.line_height, row), in_.content.w,
                             in_.line_height);
     painted.text_y = painted.band.y;
@@ -69,8 +55,6 @@ class DebugPaneRowLayout {
                   std::string_view text) {
     row.runs.push_back(DebugTextRun{.x = x, .width = width, .color = color, .text = text});
   }
-  // A primary label, then a muted secondary trailing it (a frame's name and
-  // location, a breakpoint's location and condition).
   void TwoColumns(PreparedFrameState::DebugPaneRowPaint& row, float x, float width, std::string_view primary,
                   SDL_Color primary_color, std::string_view secondary, SDL_Color secondary_color) {
     Run(row, x, width, primary_color, primary);
@@ -112,9 +96,6 @@ class DebugPaneRowLayout {
                theme_.text_muted);
   }
 
-  // The lazy value trees (Variables, Watch): an indented disclosure for an
-  // expandable row, then name | kind-coloured value | dim type hint, or the inline
-  // setVariable editor over the value column while a leaf is being edited.
   template <typename Model>
   void ValueTreeRow(const Model& model, std::size_t index, int row) {
     const std::vector<DebugVariableRowView>& rows = model.Rows();
@@ -131,8 +112,6 @@ class DebugPaneRowLayout {
       return;
     }
     if (var.is_placeholder || var.is_show_more || var.kind == DebugValueKind::Scope) {
-      // "loading…" dim and inert; "show more…" accented as clickable; a scope
-      // (Locals, Registers) reads as a section header.
       const SDL_Color color = var.is_placeholder ? theme_.text_muted : theme_.accent;
       if (!var.is_placeholder && !var.is_show_more && var.has_children) {
         Disclose(painted, row_x, var.expanded);
@@ -155,7 +134,7 @@ class DebugPaneRowLayout {
     if (!var.display_type.empty()) {
       const float type_w = text_.MeasureWidth(var.display_type);
       const float type_x = content_right - type_w;
-      constexpr float kMinValueRoom = 48.0f;  // keep the value legible before showing a type
+      constexpr float kMinValueRoom = 48.0f;
       if (type_x > name_x + name_w + 12.0f + kMinValueRoom) {
         Run(painted, type_x, type_w, theme_.text_muted, var.display_type);
         values_right = type_x - 8.0f;
@@ -164,7 +143,6 @@ class DebugPaneRowLayout {
     if (var.display_value.empty()) {
       return;
     }
-    // Loosely align the value column (~40% in); never let it overlap a long name.
     const float value_x =
         std::max(in_.text_x + std::max(120.0f, in_.text_width * 0.40f), name_x + name_w + 12.0f);
     if (const float value_w = values_right - value_x; value_w > 0.0f) {
@@ -178,10 +156,9 @@ class DebugPaneRowLayout {
     }
     const DebugBreakpointRowView& bp = model.Rows()[index];
     if (bp.kind == DebugBreakpointRowView::Kind::Header) {
-      Run(Row(row, false, /*hoverable=*/false), in_.text_x, in_.text_width, theme_.text_muted, bp.display);
+      Run(Row(row, false, false), in_.text_x, in_.text_width, theme_.text_muted, bp.display);
       return;
     }
-    // Clickable (toggle, edit): the band lifts on hover and on the keyboard selection.
     PreparedFrameState::DebugPaneRowPaint& painted = Row(row, selected_row == static_cast<int>(index));
     const std::string_view checkbox = bp.enabled ? "[x] " : "[ ] ";
     const float box_w = text_.MeasureWidth(checkbox);
@@ -191,8 +168,6 @@ class DebugPaneRowLayout {
       Run(painted, in_.text_x + box_w, in_.text_width - box_w, color, bp.display);
       return;
     }
-    // A disabled breakpoint dims; one the adapter rejected reads in the warning
-    // tint with the reason in the muted trailer.
     const float x = in_.text_x + kDebugPaneBreakpointIndent;
     const SDL_Color primary = bp.failed    ? theme_.diagnostic_warning
                               : bp.enabled ? theme_.text_secondary
@@ -219,7 +194,7 @@ class DebugPaneRowLayout {
     edit.text_x = value_x + 2.0f;
     const SingleLineViewMetrics metrics =
         ComputeSingleLineViewMetrics(text_, buffer, "", std::max(1.0f, value_w - 8.0f));
-    edit.text.assign(metrics.displayed_text);  // keeps its storage frame to frame
+    edit.text.assign(metrics.displayed_text);
     edit.selection = SDL_FRect{};
     if (metrics.selection_bytes.has_value()) {
       const std::string_view shown = edit.text;
@@ -246,7 +221,6 @@ void DrawModeGlyph(SDL_Renderer* renderer, DebugPaneMode mode, const SDL_FRect& 
   const float cy = icon.y + icon.h * 0.5f;
   switch (mode) {
     case DebugPaneMode::CallStack: {
-      // Three stacked horizontal bars (a "list").
       const float bar_w = std::min(10.0f, icon.w - 4.0f);
       for (int i = -1; i <= 1; ++i) {
         FillRect(renderer, MakeRect(cx - bar_w * 0.5f, cy + static_cast<float>(i) * 3.0f - 0.5f, bar_w, 1.5f),
@@ -255,7 +229,6 @@ void DrawModeGlyph(SDL_Renderer* renderer, DebugPaneMode mode, const SDL_FRect& 
       break;
     }
     case DebugPaneMode::Variables: {
-      // An "equals" sign (two short bars).
       const float bar_w = std::min(9.0f, icon.w - 4.0f);
       FillRect(renderer, MakeRect(cx - bar_w * 0.5f, cy - 2.5f, bar_w, 1.5f), color);
       FillRect(renderer, MakeRect(cx - bar_w * 0.5f, cy + 1.0f, bar_w, 1.5f), color);
@@ -270,7 +243,6 @@ void DrawModeGlyph(SDL_Renderer* renderer, DebugPaneMode mode, const SDL_FRect& 
   }
 }
 
-// The disclosure triangle of an expandable value-tree row, centred on its band.
 void DrawDisclosure(SDL_Renderer* renderer, float x, float band_y, float line_height, bool expanded,
                     SDL_Color color) {
   constexpr int kSize = 7;
@@ -287,7 +259,7 @@ void DrawDisclosure(SDL_Renderer* renderer, float x, float band_y, float line_he
   }
 }
 
-}  // namespace
+}
 
 void PrepareDebugPaneFrame(PreparedFrameState& frame, const DebugPaneInputs& inputs) {
   PreparedFrameState::DebugPaneBodyPaint& body = frame.debug_pane;
@@ -348,8 +320,6 @@ void PrepareDebugPaneFrame(PreparedFrameState& frame, const DebugPaneInputs& inp
     for (const PreparedFrameState::DebugPaneRowPaint& row : body.rows) {
       unit(row.band, FingerprintOf(row, body.edit, style));
     }
-    // The empty surface's sentence, word-wrapped: the pane is a ~270px rail and
-    // each says what would put a row here, which does not fit on one line.
     std::string_view hint;
     if (pane.watch != nullptr && pane.watch->Rows().empty()) {
       hint = "No watch expressions — click or press Insert to add one.";
@@ -427,8 +397,6 @@ void PaintDebugPaneBody(SDL_Renderer* renderer, const PreparedFrameState& frame,
 
 void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
                                             const WorkspaceLayout& layout) {
-  // Skipped entirely when the debugger is disabled: PrepareFrameOnce leaves the
-  // cached view model empty in that case.
   if (!prepare_cached_debug_pane_vm_.has_value()) {
     return;
   }
@@ -439,20 +407,13 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
 
   util::PerformanceTrace::Scope pane_scope("WorkspaceShell::RenderDebugPane");
 
-  // Pane background. Its left divider is the frame base's, as the sidebar's and
-  // the panel's are: drawn here, outside `right_pane`, it was lost whenever a clip
-  // touched only that column (the editor's edge) and this pass was skipped.
   DrawFilledRect(renderer, layout.right_pane, theme_.surface_background);
 
-  // The mode tabs, rows, hint and scrollbar, as prep laid them out.
   PaintDebugPaneBody(renderer, frame_state_, theme_, text_renderer_);
 
-  // The debug pane is a keyboard focus target (arrows/Enter drive its rows), so it
-  // marks focus the same way the other three focusable surfaces do. It was the one
-  // surface that took focus without ever saying so.
   if (pane_vm.focus == FocusTarget::DebugPane) {
     DrawSurfaceFocusRing(renderer, layout.right_pane);
   }
 }
 
-}  // namespace microide::workspace
+}

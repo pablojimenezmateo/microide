@@ -1,14 +1,3 @@
-// Multi-caret editing against a reference model.
-//
-// The reference is VS Code's rule: cursors are normalised before an edit
-// (overlapping selections merge; a collapsed caret touching a selection merges
-// into it), then every cursor applies the same edit to its own range, highest
-// first, and lands at the start of its range plus what it inserted. Random
-// documents, random caret sets (collapsed carets and selections, same-line and
-// cross-line), and the four edits every caret path shares: a typed character,
-// Enter, Backspace, Delete. The alphabet has no whitespace, brackets or quotes so
-// auto-indent, indent stops and auto-close pairs stay out of the reference.
-
 #include <algorithm>
 #include <cstddef>
 #include <cstdlib>
@@ -49,7 +38,7 @@ std::string DocumentText(const TextViewport& viewport) {
 }
 
 struct RefSite {
-  SelectionRange range;  // normalised; start == end for a collapsed caret
+  SelectionRange range;
 };
 
 struct RefDoc {
@@ -65,8 +54,6 @@ struct RefDoc {
     if (p.line + 1 < lines.size()) return TextPosition{p.line + 1, 0};
     return p;
   }
-  // Replace [start, end) with `text` (which may contain '\n'); returns the
-  // position just after the inserted text.
   TextPosition Replace(const SelectionRange& r, std::string_view text) {
     std::string head = lines[r.start.line].substr(0, r.start.column);
     std::string tail = lines[r.end.line].substr(r.end.column);
@@ -102,8 +89,6 @@ const char* OpName(Op op) {
   return "?";
 }
 
-// VS Code's CursorCollection.normalize: sorted by start; two cursors merge when
-// their ranges overlap, or touch while one of them is collapsed.
 std::vector<RefSite> Normalize(std::vector<RefSite> sites) {
   std::sort(sites.begin(), sites.end(), [](const RefSite& a, const RefSite& b) {
     if (Less(a.range.start, b.range.start)) return true;
@@ -128,7 +113,6 @@ std::vector<RefSite> Normalize(std::vector<RefSite> sites) {
   return out;
 }
 
-// Apply one op at every site, highest first. Returns the collapsed carets.
 std::vector<TextPosition> ReferenceApply(RefDoc& doc, std::vector<RefSite> sites, Op op, char ch) {
   sites = Normalize(sites);
   std::vector<TextPosition> carets(sites.size());
@@ -147,8 +131,6 @@ std::vector<TextPosition> ReferenceApply(RefDoc& doc, std::vector<RefSite> sites
         break;
     }
     const TextPosition landed = doc.Replace(r, text);
-    // Higher carets already landed in the pre-edit coordinates of this range;
-    // fold the shift this edit produced into them.
     for (std::size_t k = i + 1; k < carets.size(); ++k) {
       TextPosition& c = carets[k];
       if (c.line == r.end.line) {
@@ -219,17 +201,13 @@ std::string Quoted(std::string text) {
 }
 
 
-// Typing the character that is already selected is an exact no-op for the
-// buffer (nothing is dirtied, no undo entry), but the selection still collapses
-// past it, so "ab" typed over a selected "a" gives "ab" and not "b". Same for
-// Enter over a selected line break, and for every caret of a multi-caret set.
 void TestTypingTheSelectedTextCollapsesTheSelection() {
   {
     TextViewport viewport;
     viewport.SetViewportSize(20, 80);
     viewport.LoadContent("a\n", "/tmp/noop.txt");
     viewport.MoveCursorTo(0, 0);
-    viewport.MoveCursorTo(0, 1, /*extend_selection=*/true);
+    viewport.MoveCursorTo(0, 1, true);
     viewport.InsertCharacter('a');
     Expect(!viewport.selection_range().has_value(), "the selection collapsed");
     Expect(viewport.cursor_column() == 1, "the caret sits after the typed character");
@@ -243,7 +221,7 @@ void TestTypingTheSelectedTextCollapsesTheSelection() {
     viewport.SetViewportSize(20, 80);
     viewport.LoadContent("x\ny\n", "/tmp/noop.txt");
     viewport.MoveCursorTo(1, 0);
-    viewport.MoveCursorTo(0, 1, /*extend_selection=*/true);  // caret at the START
+    viewport.MoveCursorTo(0, 1, true);
     viewport.InsertNewline();
     Expect(DocumentText(viewport) == "x\ny\n", "Enter over a selected line break changes nothing");
     Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 0,
@@ -254,7 +232,7 @@ void TestTypingTheSelectedTextCollapsesTheSelection() {
     viewport.SetViewportSize(20, 80);
     viewport.LoadContent("a a\n", "/tmp/noop.txt");
     viewport.MoveCursorTo(0, 1);
-    viewport.MoveCursorTo(0, 0, /*extend_selection=*/true);  // primary caret at the START
+    viewport.MoveCursorTo(0, 0, true);
     viewport.AddSecondaryCaretWithRange(SelectionRange{{0, 2}, {0, 3}});
     viewport.InsertCharacter('a');
     Expect(DocumentText(viewport) == "a a\n", "both carets typed their own selection");
@@ -270,7 +248,6 @@ void TestMultiCaretEditsAgreeWithReference() {
   auto pick = [&](std::size_t n) { return std::uniform_int_distribution<std::size_t>(0, n - 1)(rng); };
 
   for (int iteration = 0; iteration < 2000; ++iteration) {
-    // A random small document.
     RefDoc doc;
     const std::size_t line_count = 1 + pick(5);
     for (std::size_t i = 0; i < line_count; ++i) {
@@ -294,14 +271,11 @@ void TestMultiCaretEditsAgreeWithReference() {
       return TextPosition{line, pick(doc.lines[line].size() + 1)};
     };
 
-    // Primary, then 0-3 secondaries; each is a caret or a selection. The
-    // viewport's own add/dedup policy decides what survives — the reference reads
-    // the resulting set back, so it only judges the edit.
     const auto primary_a = random_position();
     const auto primary_b = pick(2) == 0 ? primary_a : random_position();
     viewport.MoveCursorTo(primary_a.line, primary_a.column);
     if (!(primary_b == primary_a)) {
-      viewport.MoveCursorTo(primary_b.line, primary_b.column, /*extend_selection=*/true);
+      viewport.MoveCursorTo(primary_b.line, primary_b.column, true);
     }
     const std::size_t secondaries = pick(4);
     for (std::size_t s = 0; s < secondaries; ++s) {
@@ -352,8 +326,6 @@ void TestMultiCaretEditsAgreeWithReference() {
   }
 }
 
-// Newlines at a soft-wrap boundary and over two selected words in two wrapped lines
-// (the state seed 69 reached), every width, every row laid out after the edit.
 void TestNewlineAtASoftWrapBoundaryKeepsTheWrappedRowTableCurrent() {
   const std::string line =
       "Jobs run highest-priority first; ties keep insertion order. The trace prints a";
@@ -377,8 +349,6 @@ void TestNewlineAtASoftWrapBoundaryKeepsTheWrappedRowTableCurrent() {
   }
   Expect(true, "every row laid out against a current table");
 
-  // As the monkey had it: Select All Occurrences left both "trace" words selected,
-  // in two wrapped lines, and Enter replaced both selections with a newline.
   const std::string readme =
       "# taskflow\n\nA tiny scheduler that runs a fixed batch of jobs by priority and prints a\n"
       "short trace, which makes it a clean target for the debugger walkthrough.\n\n"
@@ -394,7 +364,7 @@ void TestNewlineAtASoftWrapBoundaryKeepsTheWrappedRowTableCurrent() {
     const std::size_t first = std::string("short ").size();
     const std::size_t second = line.find("trace");
     viewport.MoveCursorTo(3, first);
-    viewport.MoveCursorTo(3, first + 5, /*extend_selection=*/true);
+    viewport.MoveCursorTo(3, first + 5, true);
     viewport.AddSecondaryCaretWithRange(SelectionRange{{7, second}, {7, second + 5}});
     viewport.InsertNewline();
     for (std::size_t row = 0; row < 60; ++row) {
@@ -403,14 +373,6 @@ void TestNewlineAtASoftWrapBoundaryKeepsTheWrappedRowTableCurrent() {
   }
 }
 
-// Two views of one document (a split README, as the QA monkey had it: seed 69 at
-// 600 steps, then seed 601), each soft-wrapped. An edit through one view leaves
-// the other's per-line width table describing the old text, which is fine while
-// that table reads as stale. An edit through the OTHER view then spliced its own
-// change into that stale table and stamped it current, so the line the first view
-// changed kept its old width under a current stamp -- a release build lays the
-// line's rows out against the wrong width; a debug build aborts on the
-// cross-check (TD-2026-10-30-426).
 void TestAnEditThroughTheOtherViewOfADocumentKeepsItsWidthTableTrue() {
   const std::string text =
       "# taskflow\n\nshort line\nJobs run highest-priority first; ties keep insertion order.\n"
@@ -419,7 +381,7 @@ void TestAnEditThroughTheOtherViewOfADocumentKeepsItsWidthTableTrue() {
   left.SetViewportSize(20, 30);
   left.LoadContent(text, "/tmp/two-views.md");
   left.SetSoftWrap(true);
-  TextViewport right = left;  // a second view: the document is shared
+  TextViewport right = left;
   Expect(right.SharesDocumentWith(left), "the copy should be another view of the document");
   right.SetViewportSize(20, 50);
   right.SetSoftWrap(true);
@@ -431,15 +393,13 @@ void TestAnEditThroughTheOtherViewOfADocumentKeepsItsWidthTableTrue() {
   };
   lay_out(left);
   lay_out(right);
-  // Through the right view: line 2 grows past every other line, line count kept.
   right.MoveCursorTo(2, 5);
   right.InsertText("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
   lay_out(right);
-  // Through the left view: an edit on another line, line count kept.
   left.MoveCursorTo(4, 0);
   left.InsertText("}");
   lay_out(left);
-  const std::size_t widest = left.lines().LineLength(2);  // plain ASCII: bytes are columns
+  const std::size_t widest = left.lines().LineLength(2);
   Expect(widest > 80, "the widened line should be the widest");
   Expect(left.max_visual_columns() == widest,
          "the left view's widest line should be the line the right view widened: " +
@@ -447,16 +407,6 @@ void TestAnEditThroughTheOtherViewOfADocumentKeepsItsWidthTableTrue() {
   Expect(right.max_visual_columns() == widest, "and the right view's too");
 }
 
-// Every view's derived tables stay true whichever view edits (safety-plan W3).
-// Two to four views of one document at different widths, soft wrap on or off,
-// random edits through random views -- typing, newlines, deletions, selections
-// replaced, undo and redo, wrap and tab-size flips -- laying out only some views
-// after each step (so some lag, as a background pane does), and after every step
-// every view's tables that claim current are checked against a fresh build
-// (TextViewport::VerifyDerivedCachesForTesting). TD-2026-10-30-426 was one view's
-// table stamped current over the other view's edit; this is the stateful sweep of
-// that class. MICROIDE_VIEW_FUZZ_ROUNDS raises the round count (the plan's
-// acceptance run is 10000).
 void TestEditsThroughEveryViewKeepEveryViewsCachesTrue() {
   std::size_t rounds = 120;
   if (const char* env = std::getenv("MICROIDE_VIEW_FUZZ_ROUNDS"); env != nullptr && *env != '\0') {
@@ -488,7 +438,7 @@ void TestEditsThroughEveryViewKeepEveryViewsCachesTrue() {
     views[0].LoadContent(content, "/tmp/views.txt");
     const std::size_t view_count = 2 + pick(3);
     for (std::size_t i = 1; i < view_count; ++i) {
-      views.push_back(views[0]);  // another view: the document is shared
+      views.push_back(views[0]);
     }
     for (TextViewport& view : views) {
       view.SetViewportSize(12, 8 + pick(70));
@@ -529,7 +479,7 @@ void TestEditsThroughEveryViewKeepEveryViewsCachesTrue() {
         case 6: {
           view.MoveCursorTo(line, column);
           const std::size_t to_line = pick(view.line_count());
-          view.MoveCursorTo(to_line, pick(view.lines().LineLength(to_line) + 1), /*extend_selection=*/true);
+          view.MoveCursorTo(to_line, pick(view.lines().LineLength(to_line) + 1), true);
           view.InsertText(kPieces[pick(std::size(kPieces))]);
           op = "replace selection";
           break;
@@ -540,7 +490,6 @@ void TestEditsThroughEveryViewKeepEveryViewsCachesTrue() {
         case 10: view.SetViewportSize(12, 8 + pick(70)); op = "resize"; break;
         default: view.SetTabSize(1 + pick(8)); op = "tab size"; break;
       }
-      // Some views draw a frame, some do not (a background pane).
       for (TextViewport& other : views) {
         if (pick(2) == 0) {
           lay_out(other);
@@ -559,12 +508,6 @@ void TestEditsThroughEveryViewKeepEveryViewsCachesTrue() {
   }
 }
 
-// Soft-wrapped rows are laid out with the line's width taken from the width table
-// or the wrapped-row table, cross-checked (in debug builds) against the buffer.
-// The QA monkey tripped that check once after a newline over a selection in a
-// wrapped, split README (seed 69 at 600 steps; TD-2026-10-30-426); this lays out
-// every row of every line after random multi-caret edits so a stale entry trips it
-// here. It has not reproduced that finding, which needed the run's timing.
 void TestMultiCaretEditsKeepTheWrappedRowTableCurrent() {
   std::uint64_t seed = 0x2545F4914F6CDD1Dull;
   const auto pick = [&seed](std::size_t bound) {
@@ -588,7 +531,7 @@ void TestMultiCaretEditsKeepTheWrappedRowTableCurrent() {
       }
     }
     TextViewport viewport;
-    viewport.SetViewportSize(12, 9);  // narrow, so most lines wrap
+    viewport.SetViewportSize(12, 9);
     viewport.LoadContent(content, "/tmp/wrapped-multi-caret.txt");
     viewport.SetSoftWrap(true);
     const auto lay_out_every_row = [&]() {
@@ -622,7 +565,7 @@ void TestMultiCaretEditsKeepTheWrappedRowTableCurrent() {
   Expect(true, "every wrapped row laid out against a current table");
 }
 
-}  // namespace
+}
 
 void RegisterTextViewportMultiCaretReferenceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextViewport/TypingTheSelectedTextCollapsesTheSelection",
@@ -639,4 +582,4 @@ void RegisterTextViewportMultiCaretReferenceTests(std::vector<TestCase>& tests) 
           TestMultiCaretEditsAgreeWithReference);
 }
 
-}  // namespace microide::tests
+}

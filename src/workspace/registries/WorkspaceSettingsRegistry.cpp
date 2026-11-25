@@ -62,7 +62,7 @@ const SettingEnumValue kSeverityValues[] = {
     {"error", "Error"},
 };
 
-}  // namespace
+}
 
 std::span<const SettingSpec> BuiltinSettingSpecs() {
   static const auto kSpecs = std::to_array<SettingSpec>({
@@ -362,10 +362,6 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
       SettingSpec{
           .id = "terminal.shell",
           .label = "Terminal Shell",
-          // Project scope: which shell to run is a property of the project, not of
-          // the person. SettingsStore::Resolve is project-over-user for every
-          // setting regardless of declared scope, so an existing user-level value
-          // keeps working; the scope only steers where the Settings overlay writes.
           .description =
               "Shell command used by new terminals — a full command line, so "
               "arguments and quoting work (empty for platform default).",
@@ -411,7 +407,6 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
       SettingSpec{
           .id = "terminal.restore_sessions",
           .label = "Restore Terminals",
-          // VS Code's terminal.integrated.enablePersistentSessions (revive half).
           .description =
               "Reopen a project's terminals as they were: the same tabs and splits, "
               "each a fresh shell in the directory it was in.",
@@ -425,7 +420,6 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
       SettingSpec{
           .id = "terminal.commands_to_skip_shell",
           .label = "Terminal Commands to Skip Shell",
-          // VS Code's terminal.integrated.commandsToSkipShell, by keybinding id.
           .description =
               "Keybindings that still run while a terminal has focus instead of "
               "reaching the shell, by id (comma-separated): 'file-finder' makes "
@@ -797,8 +791,6 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .enum_values = kSeverityValues,
           .group = "Diagnostics",
       },
-      // Editor essentials toggles. Defaults match the design table; project
-      // overrides win over user preferences.
       SettingSpec{
           .id = "editor.fold.enabled",
           .label = "Code Folding",
@@ -1123,9 +1115,6 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .enum_values = {},
           .group = "Editor → Essentials → Shaping And Save",
       },
-      // Language-contract user overrides. The strings are comma-separated
-      // tokens consumed by `WorkspaceLanguageContract::Refresh`. Empty values
-      // mean "no override". Project scope wins over user scope.
       SettingSpec{
           .id = "editor.brackets.user_pairs",
           .label = "Extra Bracket Pairs",
@@ -1181,10 +1170,6 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .enum_values = {},
           .group = "Editor → Essentials → Shaping And Save",
       },
-      // Language Server Protocol. `lsp.enabled` is the master switch (mirrors
-      // `debug.enabled`): when off, no language server subprocess is started, all
-      // features go dark, and LSP menu entries hide. Each per-feature toggle below
-      // gates one capability while the master stays on. All default on.
       SettingSpec{
           .id = "lsp.enabled",
           .label = "Enable Language Server Protocol",
@@ -1355,16 +1340,12 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
 }
 
 const SettingSpec* FindBuiltinSettingSpec(std::string_view id) {
-  // Indexed, not scanned: every read of a setting with no override lands here --
-  // a dozen a frame, several per keystroke, two per LSP item each time a menu's
-  // item list is assembled -- and a scan compared the id against every spec. The
-  // specs are a static array and their ids literals, so the index lives as long.
   static const std::unordered_map<std::string_view, const SettingSpec*> kIndex = [] {
     std::unordered_map<std::string_view, const SettingSpec*> index;
     const auto specs = BuiltinSettingSpecs();
     index.reserve(specs.size());
     for (const SettingSpec& spec : specs) {
-      index.emplace(spec.id, &spec);  // first wins, as the scan's did
+      index.emplace(spec.id, &spec);
     }
     return index;
   }();
@@ -1390,8 +1371,6 @@ SettingValue DefaultSettingValue(const SettingSpec& spec) {
 std::optional<SettingValue> ParseSettingValue(const SettingSpec& spec, std::string_view text) {
   switch (spec.type) {
     case SettingType::Bool:
-      // The token sets every bool setting is READ with (SettingFlagEnabled), so a
-      // value the store accepts is one the readers agree on, in any case.
       if (const std::optional<bool> value = util::ParseBoolToken(text)) {
         return *value;
       }
@@ -1403,10 +1382,6 @@ std::optional<SettingValue> ParseSettingValue(const SettingSpec& spec, std::stri
       if (ec != std::errc{} || ptr != text.data() + text.size()) {
         return std::nullopt;
       }
-      // Clamp to the spec's inclusive range at store time so the stored/displayed
-      // value never diverges from the clamped value the editor actually applies
-      // (e.g. `set-setting editor.font_size 999` stores 32, not 999). Specs with
-      // no explicit range keep the INT_MIN..INT_MAX sentinels, so this is a no-op.
       return std::clamp(value, spec.min_int, spec.max_int);
     }
 
@@ -1415,9 +1390,6 @@ std::optional<SettingValue> ParseSettingValue(const SettingSpec& spec, std::stri
       if (!value.has_value()) {
         return std::nullopt;
       }
-      // Clamp to the spec's inclusive range at store time (mirrors the Int case)
-      // so e.g. `set-setting ui.scale 999` stores the applied max, not 999. Specs
-      // with no explicit range keep the lowest..max sentinels, so this is a no-op.
       return std::clamp(*value, spec.min_float, spec.max_float);
     }
 
@@ -1458,18 +1430,8 @@ void SerializeSettingValueInto(const SettingValue& value, std::string* out) {
         if constexpr (std::is_same_v<T, bool>) {
           out->assign(v ? "true" : "false");
         } else if constexpr (std::is_same_v<T, int>) {
-          // to_string of an int or a float is always short enough for the
-          // small-string buffer, so it allocates nothing; `assign` then copies
-          // into whatever `out` already holds.
           out->assign(std::to_string(v));
         } else if constexpr (std::is_same_v<T, float>) {
-          // to_chars, NOT std::to_string: to_string formats through printf's
-          // "%f", which takes the decimal separator from LC_NUMERIC, and SDL's
-          // X11 backend sets the process locale behind our back — so under a
-          // comma-decimal locale ui.scale serialized as "1,500000" and the
-          // locale-independent ParseFloat rejected it on the way back. to_chars
-          // is locale-independent and shortest-round-trip ("1.5", not
-          // "1.500000"), and 24 bytes always fits a float.
           char buffer[24];
           const auto [end, ec] = std::to_chars(buffer, buffer + sizeof(buffer), v);
           out->assign(buffer, ec == std::errc{} ? static_cast<std::size_t>(end - buffer) : 0);
@@ -1553,8 +1515,6 @@ SettingInfo SettingInfoForContribution(const plugin::PluginHost::ContributedSett
 
   if (contrib.type == "bool") {
     info.type = SettingType::Bool;
-    // The tokens a stored value is parsed with: an exact "true" read a plugin's
-    // "yes", "on", "1" or "True" default as off.
     info.default_value = util::ParseBoolToken(contrib.default_value).value_or(false);
   } else if (contrib.type == "int") {
     info.type = SettingType::Int;
@@ -1588,7 +1548,7 @@ const plugin::PluginHost::ContributedSettingSpec* FindContributedSettingSpec(
   return nullptr;
 }
 
-}  // namespace
+}
 
 std::vector<SettingInfo> AllSettingInfos(const plugin::PluginHost& plugin_host,
                                          std::span<const std::string> colorschemes) {
@@ -1608,11 +1568,6 @@ std::vector<SettingInfo> AllSettingInfos(const plugin::PluginHost& plugin_host,
 std::optional<SettingInfo> FindSettingInfo(std::string_view id,
                                             const plugin::PluginHost& plugin_host,
                                             std::span<const std::string> colorschemes) {
-  // Build the ONE matching info, not the whole catalogue. This used to
-  // materialize every built-in and plugin setting — four strings plus an
-  // enum-value vector each, ~200 settings — and then throw all but one away, on a
-  // path that runs per settings write (TD-2026-08-06-159). It was 42 % of
-  // `settings.apply_contract_family_all_tabs`.
   if (const SettingSpec* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
     return SettingInfoForBuiltin(*spec, colorschemes);
   }
@@ -1633,4 +1588,4 @@ std::optional<SettingScope> FindSettingScope(std::string_view id,
   return std::nullopt;
 }
 
-}  // namespace microide::workspace
+}

@@ -68,17 +68,10 @@ bool IsVirtualDocumentUri(std::string_view text) {
   return text.starts_with("virtual://");
 }
 
-}  // namespace
+}
 
 namespace {
 
-// MICROIDE_TRACE_INPUT=1: one log line per key, text and pointer event, naming
-// the focus it met, the focus it left, and whether a handler took it. A keystroke
-// the QA suite saw go missing on a slow runner (TD-2026-10-20-368) left a buffer
-// without it and nothing that said where it went. The QA driver also orders its
-// control commands after the input it sent through X by finding it here
-// (`_await_typed_input`): a query sent right after a click could otherwise be
-// answered before the click was handled.
 bool InputTraceEnabled() {
   static const bool enabled = util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_INPUT");
   return enabled;
@@ -123,16 +116,13 @@ void TraceTypedEvent(const SDL_Event& event, FocusTarget before, FocusTarget aft
           static_cast<int>(to.size()), to.data(), handled ? 1 : 0);
 }
 
-}  // namespace
+}
 
 WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) {
-  // The user's first input arms the focus-change autosave (PreparedFrameState).
   if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_TEXT_INPUT ||
       event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_WHEEL) {
     frame_state_.focus_autosave_armed = true;
   }
-  // Escape puts away a card Show Hover pinned to the caret, before anything else
-  // reads the key -- as in VS Code, where it closes the hover and nothing more.
   if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE &&
       context_.interaction_state.caret_hover.active) {
     context_.interaction_state.caret_hover.active = false;
@@ -141,16 +131,12 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
       ++editor_hover_target_generation_;
     }
     RequestPreparedFrame();
-    // Traced like every other key: the QA driver orders its control commands
-    // after the keys it sent by finding them in this log.
     const FocusTarget focus = context_.current_project_state.surface.focus;
     TraceTypedEvent(event, focus, focus, true);
     return EventResult{.handled = true, .redraw = ConsumePendingRenderInvalidation()};
   }
   const FocusTarget focus_before = context_.current_project_state.surface.focus;
   const DragTarget drag_before = context_.interaction_state.drag_target;
-  // A keystroke a read-only view refused is said out loud (VS Code's "Cannot edit
-  // in read-only editor"), not swallowed.
   const bool typing = event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_TEXT_INPUT;
   const editor::TextViewport* typed_into = typing ? ActiveEditorViewport() : nullptr;
   const std::uint64_t refused_before = typed_into != nullptr ? typed_into->refused_edits() : 0;
@@ -161,11 +147,6 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
                                         .key = "editor.read-only",
                                         .message = "Cannot edit in read-only editor"});
   }
-  // A panel shown maximized covers the sidebar, the editor and the debug pane.
-  // Whichever handler showed it, the keyboard leaves a surface it covers before
-  // the next event reads it, not at the next frame: a Git command whose output
-  // brought a maximized panel back left the keyboard on the covered sidebar
-  // (soak b6cc343b6ee1).
   MakeTerminalPanelService().SyncPanelMaximizedWithFocus();
   const FocusTarget focus_after = context_.current_project_state.surface.focus;
   if (typing || event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
@@ -173,36 +154,18 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
       event.type == SDL_EVENT_MOUSE_MOTION) {
     TraceTypedEvent(event, focus_before, focus_after, result.handled);
   }
-  // Dividers and scrollbar thumbs paint highlighted while dragged, so a press or
-  // release that changes the drag target owes a frame, whichever handler changed
-  // it: pressing the sidebar divider damaged nothing, and its highlight showed
-  // only once the first drag motion repainted (QA monkey). Each one lit is in the
-  // key of the unit that paints it, so the frame repaints those and no more.
   if (context_.interaction_state.drag_target != drag_before) {
-    result.redraw.frame = true;  // this event's, not left for the next turn's wake
+    result.redraw.frame = true;
   }
-  // A modal overlay the input took the focus away from ends, the focus staying
-  // where the input put it (ModalOverlayLostFocus).
   if (ModalOverlayLostFocus(context_.current_project_state)) {
     const FocusTarget kept = context_.current_project_state.surface.focus;
     DismissOverlay();
     context_.current_project_state.surface.focus = kept;
   }
-  // Clear any live ghost text the moment the caret/content/focus no longer matches
-  // its anchor, before sampling reactive events. No-op (one null check) unless a
-  // suggestion is showing, so it stays off the hot path.
   InvalidateGhostTextIfStale();
-  // Single chokepoint for reactive editor-event sampling: diff the active buffer's
-  // content/caret/selection once per input batch (no-op unless a plugin subscribes).
   SamplePluginEditorEvents();
-  // Re-arm the "after delay" autosave debounce on real buffer edits so a settled dirty
-  // buffer saves itself. No-op (one setting read) unless autosave=after_delay.
   MaybeArmAutosaveTimer();
-  // Always-on crash-safety: re-arm the session-snapshot flush so a settled dirty buffer's
-  // unsaved content is durably staged for restore even if the process later crashes.
   MaybeArmSessionFlushTimer();
-  // The Host view's subscription follows what is on screen, whichever handler
-  // showed or hid it (a key, a click, a project switch). A compare when nothing changed.
   if (glue_->remote_host_service != nullptr) {
     glue_->remote_host_service->SetHostViewVisible(HostViewShown(context_.current_project_state.sidebar),
                                                    context_.current_project_state.root);
@@ -224,9 +187,6 @@ CommandLineCoordinator& WorkspaceShell::MakeCommandLineCoordinator() {
               },
           .plugin_command_names =
               [this]() -> const std::vector<std::string>& {
-                // Hand back the stable host-owned vector directly (no copy); the
-                // command-line coordinator only iterates it to append prefix
-                // candidates (TD-2026-07-17A-012).
                 return plugin_runtime_.Host().CommandNames();
               },
           .sidebar_view_ids = [this]() { return OrderedSidebarViewIds(); },
@@ -234,9 +194,6 @@ CommandLineCoordinator& WorkspaceShell::MakeCommandLineCoordinator() {
           .execute_plugin_command =
               [this](const std::string& command, const std::vector<std::string>& args) {
                 CommandLineCoordinator::PluginCommandResult result;
-                // Recognition is synchronous; execution runs on the plugin worker
-                // and its real outcome surfaces as a toast on the drain. Confirm
-                // dispatch in the prompt so the user never sees silence.
                 result.handled = plugin_runtime_.Host().HasCommand(command);
                 if (!result.handled) {
                   return result;
@@ -297,7 +254,6 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
           .remote_hosts = [shell]() -> const RemoteHostService* { return shell->glue_->remote_host_service.get(); },
           .has_remote_recent =
               [shell, cached = std::make_shared<std::optional<std::pair<std::uint64_t, bool>>>()]() {
-                // Per painted row while the menu is open: the disk once per change.
                 const RecentsService& recents = shell->recents_service_;
                 if (!cached->has_value() || (*cached)->first != recents.revision()) {
                   const auto& ids = recents.RecentProjects();
@@ -366,8 +322,6 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
               [shell]() { shell->ConsumeHighlightPrefetchResults(); },
           .apply_decoded_raster_sizes =
               [shell]() {
-                // A placeholder may be waiting for this image wherever it shows: an
-                // inline inset in the editor, or the bottom panel's preview.
                 if (ApplyDecodedRasterSizes(shell->surface_texture_cache_, shell->context_)) {
                   shell->RequestPreparedFrame();
                   shell->RequestPreparedFrame();
@@ -407,16 +361,13 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
           .force_cursor_reassert = [shell]() { shell->ForceCursorReassert(); },
           .window_focus_gained =
               [shell]() {
-                // A missing project folder put back while the user was elsewhere (a
-                // file manager, a `git clone` over it): its watcher died with it, so
-                // nothing else would notice. Only while the row is up: one stat.
                 NotificationService& notes = shell->notification_service_;
                 if (!notes.FindRow(kProjectRootMissingNotificationKey).has_value() ||
                     !PublishProjectRootPresence(notes, shell->context_.current_project_state.root, SDL_GetTicks()) ||
                     notes.FindRow(kProjectRootMissingNotificationKey).has_value()) {
                   return;
                 }
-                (void)shell->StartFileIndexWatcherForCurrentProject();  // re-indexes the folder
+                (void)shell->StartFileIndexWatcherForCurrentProject();
                 shell->RequestFullRedraw();
               },
           .pointer_modifiers_changed =
@@ -429,10 +380,6 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
           .autosave_on_focus_lost =
               [shell]() {
                 shell->MaybeAutosaveDirtyTabs(true);
-                // Leaving the window is how a machine is left: the remote project
-                // in front saves its session, and every remote project's is left
-                // on its host as it is now, carets included, for the next machine
-                // (RemoteHostService::LeaveSessions). Nothing for local projects.
                 if (shell->context_.current_project_state.id.IsRemote()) {
                   shell->MakePersistenceCoordinator().SaveSessionState();
                 }
@@ -444,9 +391,6 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
           .request_window_redraw = [shell]() { shell->RequestPreparedFrame(); },
           .handle_key_down =
               [shell](const SDL_KeyboardEvent& event) {
-                // Escape abandons a live tab drag, ahead of every surface that also
-                // answers to Escape — a drag owns the pointer, so while one is in
-                // flight it owns the cancel key too.
                 if (event.key == SDLK_ESCAPE &&
                     shell->context_.interaction_state.tab_drag.kind != TabDragKind::None &&
                     shell->MakeTabMouseCoordinator().CancelDrag()) {
@@ -475,7 +419,6 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
                 if (dropped_path == nullptr) {
                   return false;
                 }
-                // Onto a running terminal pane: type its path there (TerminalDropText).
                 if (const auto layout = shell->CurrentWorkspaceLayout();
                     layout.has_value() && shell->BottomPanelVisible() &&
                     Contains(BottomPanelContentRect(*layout), x, y)) {
@@ -488,9 +431,6 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
                         *pane, std::filesystem::path(dropped_path));
                   }
                 }
-                // What a drop means is decided in WorkspaceFileDrop.h and executed
-                // through the two-call port below, so the shell gains no member and
-                // the behaviour is testable without an SDL event or a window.
                 const FileDropRequest request = ResolveFileDrop(
                     std::filesystem::path(dropped_path),
                     !shell->context_.current_project_state.root.empty());
@@ -545,7 +485,6 @@ void WorkspaceShell::Bootstrapper::WireQuickPick() const {
                 if (index >= state.launch_configs.size()) {
                   return;
                 }
-                // Remembered, so Start Debugging and a restart reuse it.
                 state.selected_launch_config_index = index;
                 shell->StartDebugging(state.launch_configs[index], state.root.generic_string());
               },
@@ -706,8 +645,6 @@ void WorkspaceShell::Bootstrapper::WireLsp() const {
                     language_id);
               },
       });
-  // Live theme pointer for baking semantic-token recolor decorations (theme_'s
-  // address is stable; a theme switch mutates it in place).
   shell->lsp_service_.SetTheme(&shell->theme_);
 }
 
@@ -728,17 +665,10 @@ void WorkspaceShell::Bootstrapper::WireDebug() const {
               },
           .remove_debug_console = [shell](int session_id) { shell->RemoveDebugConsole(session_id); },
           .notify_session_state_changed =
-              [shell](DebugSession::State /*state*/) { shell->RequestPreparedFrame(); },
-          // A terminal end (clean exit OR a crash/kill/launch-rejection) mirrors to
-          // the control channel here, so an observer is never stranded waiting on a
-          // `terminated` that a non-clean death never sent.
+              [shell](DebugSession::State ) { shell->RequestPreparedFrame(); },
           .notify_session_terminated =
               [shell](int session_id, bool failed, const std::string& reason) {
                 shell->control_channel_service_.OnDebugTerminated(session_id, reason);
-                // A non-clean end (crash / kill / launch rejection) is easy to miss:
-                // the session row + transient views disappear. Surface an error toast
-                // so the user knows the debugger died and why, not just that it
-                // silently vanished. A clean exit needs no toast (it was expected).
                 if (failed) {
                   shell->Notify(NotificationService::Tone::Error,
                          reason.empty() ? std::string("Debug adapter exited unexpectedly")
@@ -767,8 +697,6 @@ void WorkspaceShell::Bootstrapper::WireDebug() const {
               },
           .show_call_stack_panel =
               [shell]() {
-                // Auto-open the right-side debug pane on the first stop (Call Stack),
-                // but don't yank the user off another surface on every subsequent step.
                 shell->MakeDebugPaneService().OpenOnStop();
               },
       });
@@ -781,7 +709,7 @@ void WorkspaceShell::Bootstrapper::WireControlChannel() const {
       ControlChannelService::Operations{
           .execute_command_line =
               [shell](const std::string& line) {
-                shell->frame_state_.focus_autosave_armed = true;  // a command is input too
+                shell->frame_state_.focus_autosave_armed = true;
                 return shell->ExecuteControlCommand(line);
               },
           .emit_jsonl = [](const std::string& line) { std::cout << line << '\n' << std::flush; },
@@ -891,8 +819,6 @@ void WorkspaceShell::Bootstrapper::WireWorkspaceEdits() const {
                                   PromptSurfaceState::Kind::Confirm, std::filesystem::path{},
                                   std::string{});
                 shell->context_.prompts.surface.detail = std::move(detail);
-                // The prompt as it is now, with its detail (the open's own request
-                // was made before it had one). This named the menu bar.
                 shell->RequestPreparedFrame();
               },
           .notify_error =
@@ -903,9 +829,6 @@ void WorkspaceShell::Bootstrapper::WireWorkspaceEdits() const {
               [shell](const std::filesystem::path& path) { shell->NotifyPluginBufferSave(path); },
           .run_closed_file_edits_async =
               [shell](std::vector<ClosedFileEditBucket> buckets) {
-                // Load/apply/save the server rename's closed-file targets off the
-                // shell thread; the file-index watcher reflects the on-disk changes
-                // (TD-2026-07-17-011). The task captures only the buckets by value.
                 project::FileWriteGate* gate = &shell->context_.current_project_state.write_gate();
                 shell->project_background_executor_.Post(
                     [gate, buckets = std::move(buckets)]() mutable {
@@ -941,11 +864,6 @@ void WorkspaceShell::Bootstrapper::WireWorkspaceEdits() const {
               },
           .dispose_staged_paths_async =
               [shell](std::vector<std::filesystem::path> staged) {
-                // Removing a staged (already-renamed-aside) backup can be slow for
-                // directories; do it off the shell thread. Failure is harmless — a
-                // leftover hidden staging entry, never user data.
-                // Through the project's gate (captured now: the worker must not read
-                // shell state), which is where a remote project's host removes them.
                 project::FileWriteGate* gate = &shell->context_.current_project_state.write_gate();
                 shell->project_background_executor_.Post([gate, staged = std::move(staged)]() {
                   gate->DisposeStaged(staged);
@@ -1086,16 +1004,6 @@ void WorkspaceShell::Bootstrapper::WirePluginRuntime() const {
             const bool opened = is_virtual ? shell->OpenVirtualDocumentInNewTab(requested)
                                            : shell->OpenFileInNewTab(normalized_path);
             if (!opened) {
-              // Say why on the Plugin Errors channel rather than failing mutely.
-              // The bool is not a usable signal: PluginHostCallbacks routes
-              // open_file through ApplyHostMutation on the non-direct path and
-              // returns true unconditionally there, so a plugin never observes
-              // this false at all (TD-2026-07-27-001).
-              //
-              // The virtual-document case is worth naming specifically: the
-              // consumer side is complete, but no plugin API exists to REGISTER
-              // a virtual document yet, so every virtual:// open fails and the
-              // reason is not discoverable from the plugin side.
               std::string reason =
                   is_virtual
                       ? "open_file: no virtual document is registered for '" + requested +
@@ -1129,15 +1037,11 @@ void WorkspaceShell::Bootstrapper::WirePluginRuntime() const {
           },
       .live_buffer_text =
           [shell](const std::filesystem::path& path) -> std::shared_ptr<const std::string> {
-            // The buffer under the query is nearly always the one in front (a
-            // compare's or a merge's editable side included); otherwise any open
-            // editor tab on the path.
             const editor::TextViewport* viewport = shell->ActiveEditableViewport();
             if (viewport == nullptr || !util::SameAsNormalizedPath(viewport->path(), path)) {
               viewport = OpenEditorViewOfPath(shell->context_.current_project_state.editor_groups,
                                               path.lexically_normal());
             }
-            // A tab still reading its file has no text to give yet.
             return viewport != nullptr && !viewport->is_placeholder()
                        ? shell->plugin_runtime_.LiveBufferText(*viewport)
                        : nullptr;
@@ -1240,7 +1144,7 @@ void WorkspaceShell::Bootstrapper::WirePluginRuntime() const {
                 std::move(bytes), width, height);
           },
       .apply_workspace_edit =
-          [shell](std::string_view /*owner*/,
+          [shell](std::string_view ,
                  const plugin::PluginHost::WorkspaceEditRequest& request) {
             return shell->workspace_edit_service_.ApplyPluginEdit(request);
           },
@@ -1269,8 +1173,6 @@ void WorkspaceShell::Bootstrapper::WirePluginRuntime() const {
           [shell]() {
             return shell->settings_store_.Revision();
           },
-      // Plugin status items are drawn in the breadcrumb row (QA plugins-ui: an
-      // updated item kept its old text while only the menu bar was repainted).
       .request_status_redraw =
           [shell]() {
             shell->RequestPreparedFrame();
@@ -1282,4 +1184,4 @@ void WorkspaceShell::Bootstrapper::WirePluginRuntime() const {
   });
 }
 
-}  // namespace microide::workspace
+}

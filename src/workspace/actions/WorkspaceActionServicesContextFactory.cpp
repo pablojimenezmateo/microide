@@ -37,10 +37,8 @@ bool WorkspaceActionContext::PluginRuntimeEnabled() const {
 }
 
 void WorkspaceActionContext::ReloadPluginsWithFeedback() {
-  // The summary lands with the reload's completion (inline when no worker is
-  // wired, so this placeholder is overwritten before the command returns there).
   state_.panel.feedback.text = "Reloading plugins\u2026";
-  operations_.reload_plugins_for_current_project(/*announce=*/true);
+  operations_.reload_plugins_for_current_project(true);
 }
 
 void WorkspaceActionContext::RequestQuit() {
@@ -51,8 +49,6 @@ bool WorkspaceActionContext::DebuggerEnabled() const {
   if (!operations_.get_setting_value) {
     return false;
   }
-  // The menus' predicate: a private token list read "no" as on, so Toggle
-  // Debugger first "disabled" a debugger the menus already showed as off.
   return SettingFlagEnabled(operations_.get_setting_value("debug.enabled"));
 }
 
@@ -99,8 +95,6 @@ void WorkspaceActionContext::ShowDebugOutput() {
 
 WorkspaceActionContext::DebugValueRowSelection WorkspaceActionContext::SelectedDebugValueRow()
     const {
-  // Reads the pane's own models rather than routing through an Operations hook:
-  // both live on project state, which this context already owns.
   const auto row_from = [](const auto& model) {
     DebugValueRowSelection selection;
     const std::vector<DebugVariableRowView>& rows = model.Rows();
@@ -109,7 +103,6 @@ WorkspaceActionContext::DebugValueRowSelection WorkspaceActionContext::SelectedD
       return selection;
     }
     const DebugVariableRowView& row = rows[index];
-    // Synthetic rows ("loading…", "show more…") name nothing and hold no value.
     if (row.is_placeholder || row.is_show_more) {
       return selection;
     }
@@ -133,8 +126,6 @@ WorkspaceActionContext::DebugValueRowSelection WorkspaceActionContext::SelectedD
 
 void WorkspaceActionContext::AddDebugWatchExpression(std::string expression) {
   services_.debug.AddWatch(std::move(expression));
-  // Show the surface the expression just landed on, so the item has visible
-  // feedback when invoked from the Variables list.
   ShowDebugPaneSurface(DebugPaneMode::Watch);
 }
 
@@ -200,9 +191,6 @@ void WorkspaceActionContext::OpenRenameSymbolPrompt() {
   if (!operations_.open_prompt_surface) {
     return;
   }
-  // Prefill with the identifier under the cursor so a rename usually starts from the
-  // current name — this opens instantly. The language server's prepareRename then
-  // refines the seed / rejects invalid positions asynchronously (best-effort).
   std::string seed = services_.assist.refactor().SymbolAtCursor();
   operations_.open_prompt_surface(PromptSurfaceState::Action::RenameSymbol,
                                   PromptSurfaceState::Kind::TextInput, std::filesystem::path{}, seed);
@@ -275,31 +263,16 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
   if (glue_->action_context != nullptr) {
     return *glue_->action_context;
   }
-  // The LSP list results (references, call hierarchy, workspace symbols) fill an
-  // output channel asynchronously; the request shows that channel in the bottom
-  // panel so the answer lands where the user is looking. References forgot to,
-  // so Shift+F12 wrote its results into a channel nobody had open (QA flow
-  // lsp-navigation).
-  // `key` and `pointer` hand the shell an event from inside a control command. The
-  // app loop paints what an event returns; this one returns into the command, so
-  // its damage goes back on the pending list the command's own event returns --
-  // dropped, the frame after a control click repainted only what was still
-  // pending (QA on Wayland: a newly active tab kept its old look).
   const auto dispatch_injected = [this](const SDL_Event& event) {
     pending_render_invalidation_.Merge(HandleEvent(event).redraw);
   };
   const auto show_results_channel = [this](const char* channel_id, const char* label) {
-    // With its label from the start: the answer comes later, and the tab showed the
-    // channel's id until then.
     output_channels_.EnsureChannel(channel_id, label);
     EnsureOutputChannelTabOpen(channel_id);
     context_.current_project_state.panel.content = PanelContentKind::Output;
     context_.current_project_state.panel.output.channel_id = channel_id;
     RequestPreparedFrame();
   };
-  // The file reader's thread, with "read nothing": the shape a branch compare's
-  // blob load and a conflict merge's stage read already use. `apply` runs on the
-  // shell thread unless the project changed meanwhile.
   const auto run_off_shell_thread = [this](std::function<void()> gather, std::function<void()> apply) {
     const std::filesystem::path root = context_.current_project_state.root;
     (void)file_read_service_.Begin({
@@ -315,8 +288,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
         .read_path = false,
     });
   };
-  // Builds a fresh review coordinator per verb invocation; it owns no shell
-  // access beyond these narrow callbacks (host-owned sidebar + tab lifecycle).
   const auto make_review = [this, run_off_shell_thread]() {
     return ReviewSessionCoordinator(
         context_.current_project_state, MakeCompareMergeService(),
@@ -331,8 +302,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
             .run_off_shell_thread = run_off_shell_thread,
             .report_outcome =
                 [this](ReviewOpenOutcome outcome) {
-                  // As FinishReviewOutcome does for a synchronous one: command
-                  // feedback for the control channel, and a notification.
                   context_.current_project_state.panel.feedback.text = outcome.message;
                   if (!outcome.message.empty()) {
                     Notify(outcome.ok ? NotificationService::Tone::Info
@@ -369,12 +338,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                     MakeCommandLineCoordinator().RejectAction(source, std::move(feedback));
                 if (source != ActionSource::Command && !feedback_copy.empty()) {
                   output_channels_.AppendLine("actions.log", "Actions", feedback_copy);
-                  // A rejection sentence exists to be read. From a button, menu, or
-                  // shortcut the command feedback line is never painted and the log
-                  // channel is one nobody has open, so the refusal (a git op already
-                  // in flight, no repo, an action the selected row does not support)
-                  // looked exactly like the click doing nothing. Identical toasts
-                  // collapse, so a held shortcut cannot stack them.
                   Notify(NotificationService::Tone::Warning, feedback_copy);
                 }
                 return accepted;
@@ -421,8 +384,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this](const std::filesystem::path& dir) { return RevealPathInFileExplorer(dir); },
           .reveal_path_in_tree =
               [this](const std::filesystem::path& path) {
-                // Force-expand ancestors and select the row (SelectPath), then scroll
-                // it into view. Unconditional reveal — ignores the manual-collapse guard.
                 const bool found =
                     context_.current_project_state.directory_tree.SelectPath(path);
                 if (found) {
@@ -432,19 +393,14 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               },
           .open_terminal_find =
               [this](std::string query) {
-                // A terminal behind a hidden panel or another panel tab is still
-                // one to search: bring it up (it answered "No terminal to search").
                 if (ActiveTerminalPane() == nullptr) {
                   return false;
                 }
                 if (!BottomPanelShowsTerminal() && !MakeTerminalPanelService().RevealTerminal()) {
                   return false;
                 }
-                // A seedless invocation preloads the terminal selection, matching
-                // "Ctrl+F with something selected" everywhere else in the shell.
                 if (query.empty() && TerminalPanelService::HasSelection(context_.current_project_state)) {
                   query = TerminalPanelService::SelectedText(context_.current_project_state);
-                  // A multi-line selection is not a useful seed for a per-row scan.
                   if (const std::size_t newline = query.find('\n');
                       newline != std::string::npos) {
                     query.resize(newline);
@@ -510,10 +466,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 ApplyLanguageModeToActiveEditor(value);
                 return true;
               },
-          // Refine a just-opened Rename Symbol prompt from the server's prepareRename:
-          // prefill the exact placeholder (only while the user has not typed over the
-          // heuristic seed) or dismiss with a hint for a non-renameable position.
-          // Best-effort and async; a no-op when no server serves the buffer.
           .refine_rename_prompt =
               [this](std::string original_seed) {
                 assist_service_.refactor().PrepareRenameForCursor(
@@ -574,8 +526,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 if (!MakeEditorTabService().RevertEditorTabsForPath(path)) {
                   return false;
                 }
-                // A changed-on-disk banner over this file is answered: the buffer
-                // now holds what the disk holds.
                 RefreshOpenCompareTabsForPath(path);
                 DismissEditorBannerForPath(context_.current_project_state, path);
                 RequestPreparedFrame();
@@ -598,7 +548,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .active_navigable_viewport = [this]() { return ActiveNavigableViewport(); },
           .move_tab_to_group =
               [this](std::size_t from_group, std::size_t from_index, std::size_t to_group, std::size_t to_slot) {
-                // Same geometry drop the drag path does: both strips change length.
                 tab_strip_service_.InvalidateTabStripGeometry();
                 return MakeEditorTabService().MoveTabToGroup(from_group, from_index, to_group,
                                                              to_slot);
@@ -625,8 +574,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 if (compare_tab == nullptr) {
                   return false;
                 }
-                // VS Code's rule: the selected lines when there are any, else the
-                // change the caret is in.
                 const bool lines = compare_tab->right_view_active &&
                                    compare_tab->right_viewport.selection_range().has_value();
                 switch (verb) {
@@ -659,11 +606,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .selection_text_with_context = [this]() { return SelectionTextWithContext(); },
           .press_key =
               [dispatch_injected](SDL_Keycode key, SDL_Keymod modifiers) {
-                // A chord is pressed as a keyboard presses it: its modifiers go
-                // down first and come up last, each as its own key event. What
-                // reacts to a modifier's release (letting go of Ctrl opens the
-                // editor Ctrl+Tab selected) saw only the chord's own release, so
-                // `key ctrl+Tab` left the recent-editors pick up forever.
                 struct HeldModifier {
                   SDL_Keymod mask;
                   SDL_Keycode key;
@@ -697,11 +639,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 event.key.scancode = SDL_GetScancodeFromKey(key, nullptr);
                 event.key.down = true;
                 dispatch_injected(event);
-                // A printable key also types its character: SDL sends the text
-                // as its own event between the press and the release, and every
-                // text surface (the editor, the terminal, a query) reads only
-                // that. Without it `key y` answered no TUI prompt at all. Where
-                // no surface takes text, the text handler drops it.
                 const bool chorded = (modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) != 0;
                 if (!chorded) {
                   const SDL_Keycode typed =
@@ -728,8 +665,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               },
           .inject_pointer_event =
               [this, dispatch_injected](const SDL_Event& event, SDL_Keymod modifiers) {
-                // Pointer handlers read the held modifiers from the interaction
-                // state (SDL3 pointer events carry none), so hold them there.
                 SDL_Keymod& held = context_.interaction_state.key_modifiers;
                 const SDL_Keymod previous = held;
                 held = modifiers;
@@ -751,7 +686,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                     .pointer_y = last_mouse_y_,
                     .pointer_valid = last_mouse_position_valid_,
                 };
-                // Asked for: a fresh answer, not one kept from an earlier hover.
                 if (plugin_hover_cache_.state == PluginHoverCache::State::Resolved ||
                     plugin_hover_cache_.state == PluginHoverCache::State::Failed) {
                   plugin_hover_cache_.state = PluginHoverCache::State::Empty;
@@ -759,8 +693,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 }
                 UpdateEditorHover(last_mouse_x_, last_mouse_y_);
                 RequestPreparedFrame();
-                // Resolved at the caret, or being fetched (a language server's
-                // answer arrives later and re-resolves into the card).
                 return context_.interaction_state.caret_hover.active;
               },
           .apply_editor_preferences_to_all_tabs = [this]() { ApplyEditorPreferencesToAllTabs(); },
@@ -778,8 +710,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                   *error = "the active tab shows no banner";
                   return false;
                 }
-                // By label, ignoring case and a trailing ellipsis: `banner-action Save
-                // As` presses "Save As…" (nobody types the ellipsis).
                 const auto bare = [](std::string_view text) {
                   for (const std::string_view ellipsis : {std::string_view("\u2026"),
                                                           std::string_view("...")}) {
@@ -792,7 +722,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 const std::string wanted = util::ToLowerAscii(bare(label));
                 for (const EditorBannerButton& button : EditorBannerButtonsFor(banner->kind)) {
                   if (util::EqualsAsciiCaseInsensitive(bare(button.label), wanted)) {
-                    // The path is copied: the action may erase the banner it came from.
                     ActivateEditorBannerAction(button.action, std::filesystem::path(banner->path));
                     RequestPreparedFrame();
                     return true;
@@ -809,7 +738,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                     })) {
                   return false;
                 }
-                // The debug console's recipe: open the tab, select it, follow the tail.
                 EnsureOutputChannelTabOpen(channel_id);
                 auto& panel = context_.current_project_state.panel;
                 panel.content = PanelContentKind::Output;
@@ -852,7 +780,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                                                        std::vector<plugin::PluginHost::DocumentSymbolNode> symbols) {
                   const QuickPickState& pick = context_.current_project_state.overlay.workflow.quick_pick;
                   if (!pick.revert_view.has_value() || pick.revert_view->path != path) {
-                    return;  // another file's pick is up by now
+                    return;
                   }
                   (void)quick_pick_service_.DeliverItems(QuickPickKind::DocumentSymbol,
                                                          QuickPickService::DocumentSymbolItems(symbols));
@@ -946,9 +874,6 @@ SaveAllOutcome WorkspaceShell::ActionContextSaveAllDirtyTabs() {
   SaveAllOutcome outcome;
   std::lock_guard<std::mutex> lock(save_tab_mutex_);
   auto& tabs = MakeEditorTabService();
-  // One file open in two groups is one document: its second tab is
-  // saved by the first one's write, and saving it again would run
-  // the formatter twice.
   std::vector<const editor::TextViewport*> saved_views;
   for (const GroupTabRef& ref : tabs.DirtyGroupTabs()) {
     const TabEntry& tab = context_.current_project_state.editor_groups[ref.group_index].open_tabs[ref.tab_index];
@@ -978,4 +903,4 @@ SaveAllOutcome WorkspaceShell::ActionContextSaveAllDirtyTabs() {
   return outcome;
 }
 
-}  // namespace microide::workspace
+}

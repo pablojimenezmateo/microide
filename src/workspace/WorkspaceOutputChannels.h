@@ -36,45 +36,21 @@ class WorkspaceOutputChannels {
     std::string code;
     mutable std::filesystem::path highlighted_path;
     mutable std::optional<editor::HighlightedLine> highlighted_code;
-    // Cache of reference_path resolved against a project root and normalized. The
-    // render TU asks for this per visible reference/snippet row every frame, so the
-    // lexically_normal() cost is memoized here keyed by the root it was resolved for
-    // (TD-2026-07-17A-017).
     mutable std::filesystem::path resolved_reference_path;
     mutable std::filesystem::path resolved_for_root;
     mutable bool resolved_reference_valid = false;
   };
   const ParsedEntry* ParsedEntryAt(std::string_view id, std::size_t index) const;
-  // Total bytes charged to the channel's retained-memory budget: each raw entry
-  // line PLUS that entry's parsed context-snippet owned text (prefix/code). 0 for
-  // an unknown id. Exposed for tests/telemetry of the byte-cap accounting
-  // (TD-2026-07-17A-070).
   std::size_t RetainedBytes(std::string_view id) const;
-  // reference_path resolved against project_root (relative -> root/path) and
-  // lexically_normalized, cached per entry so a steady output panel does not
-  // re-resolve/normalize every visible reference/snippet row per paint. Returns an
-  // empty path for a missing entry.
   const std::filesystem::path& ResolvedReferencePath(
       std::string_view id, std::size_t index, const std::filesystem::path& project_root) const;
   const editor::HighlightedLine* HighlightedContextSnippet(std::string_view id,
                                                            std::size_t index,
                                                            const std::filesystem::path& resolved_path) const;
   void Clear(std::string_view id);
-  // Entry `index` of a channel is serial FirstEntrySerial(id) + index. An entry's
-  // text never changes once appended and a serial is never reused within a
-  // channel (trimming advances the base, clearing restarts it past every serial
-  // issued), so paint can name a row's text by its serial without hashing it.
   std::uint64_t FirstEntrySerial(std::string_view id) const;
-  // Drop a channel entirely (entries + parsed cache). No-op if the id is unknown.
-  // Used when a debug session is pruned so its console does not linger (Phase 10).
   void RemoveChannel(std::string_view id);
 
-  // TD-2026-07-17A-116: each channel is per-channel byte/entry capped, but the channel
-  // *set* was unbounded. Failed/crashed/launch-rejected debug sessions intentionally keep
-  // a unique `debug.console.<id>` channel, so repeated failing launches could accumulate
-  // many 16 MiB consoles and open output-tab ids. Cap the live channel count and evict the
-  // least-recently-touched channel when a new one crosses the cap, preserving the most
-  // recently active/failed consoles. Count of channels dropped this way (test/telemetry).
   static constexpr std::size_t kMaxOutputChannels = 64;
   std::size_t EvictedChannelCount() const { return evicted_channel_count_; }
 
@@ -85,24 +61,20 @@ class WorkspaceOutputChannels {
     std::vector<ParsedEntry> parsed_entries;
     std::size_t retained_bytes = 0;
     std::optional<std::filesystem::path> current_reference_path;
-    std::uint64_t first_serial = 0;  // entries[0]'s serial (FirstEntrySerial)
-    // Monotonic last-touch stamp (bumped on EnsureChannel/AppendLine) driving LRU
-    // eviction when the global channel count cap is crossed.
+    std::uint64_t first_serial = 0;
     std::uint64_t last_touch = 0;
   };
 
   void MarkDirty();
-  // Bump a channel's LRU stamp and, when creating pushed the set over the cap, evict the
-  // least-recently-touched OTHER channel.
   void TouchChannel(Channel& channel);
   void EvictLeastRecentlyUsedChannelIfNeeded(std::string_view keep_id);
 
   std::map<std::string, Channel, std::less<>> channels_;
   std::uint64_t touch_counter_ = 0;
-  std::uint64_t next_entry_serial_ = 1;  // above every serial issued, in any channel
+  std::uint64_t next_entry_serial_ = 1;
   std::size_t evicted_channel_count_ = 0;
   mutable bool channel_infos_dirty_ = true;
   mutable std::vector<ChannelInfo> channel_infos_;
 };
 
-}  // namespace microide::workspace
+}

@@ -19,10 +19,6 @@ namespace microide::workspace {
 
 namespace {
 
-// Project-relative, forward-slashed path for compact summaries; falls back to the
-// generic string when the file is outside the root. Purely lexical: this is a display
-// label, and std::filesystem::relative touches the filesystem (canonicalization) so it
-// can fail/slow on deleted paths, symlinks, or inaccessible mounts (TD-2026-07-17A-010).
 std::string DisplayPath(const std::filesystem::path& path, const std::filesystem::path& root) {
   if (std::optional<std::string> relative = util::RelativePathWithin(path, root)) {
     return std::move(*relative);
@@ -67,7 +63,7 @@ std::string BuildReviewSummary(std::string_view verb,
   return message;
 }
 
-}  // namespace
+}
 
 ReviewSessionCoordinator::ReviewSessionCoordinator(ProjectWorkspaceState& state,
                                                    CompareMergeService compare_merge,
@@ -80,8 +76,6 @@ ReviewOpenOutcome ReviewSessionCoordinator::RunReviewSession(
     const std::function<std::optional<std::filesystem::path>(const TabEntry&)>& scoped_path_of,
     const std::function<bool(const std::filesystem::path&)>& open_one,
     std::string_view empty_message) {
-  // Always reveal Source Control so the review surface is in view, even when the
-  // target set is empty (e.g. "no conflicts" still lands the user there).
   util::InvokeIfSet(operations_.show_git_sidebar);
 
   const std::vector<TabEntry>& tabs = state_.focused_group().open_tabs;
@@ -98,16 +92,10 @@ ReviewOpenOutcome ReviewSessionCoordinator::RunReviewSession(
 
   const ReviewTabPlan plan = ComputeReviewTabPlan(existing, targets);
 
-  // to_close holds only clean tabs (the planner routes dirty ones to kept_dirty),
-  // so this never triggers the dirty-save prompt; indices are descending.
   if (!plan.to_close.empty() && operations_.request_close_tabs) {
     operations_.request_close_tabs(plan.to_close);
   }
 
-  // Cap the number of tabs a single review opens: past the cap, stop building
-  // compare/merge models entirely and report the remainder as truncated instead of
-  // spending the shell thread opening thousands of tabs. Only the *attempts* count
-  // toward the cap, so a run that fails to open a few files still reaches the ceiling.
   std::vector<std::filesystem::path> opened;
   const std::size_t open_budget =
       std::min(plan.to_open.size(), kMaxReviewSessionOpenTabs);
@@ -125,9 +113,6 @@ ReviewOpenOutcome ReviewSessionCoordinator::RunReviewSession(
   }
   const std::size_t not_opened = plan.to_open.size() - attempted;
 
-  // Each open activated its own tab, so the last file reviewed would be the one
-  // on screen. A review starts at its first file (VS Code's commit changes do),
-  // whether that tab was opened now or kept from an earlier run.
   if (!targets.empty() && operations_.activate_tab) {
     const std::filesystem::path first = targets.front().lexically_normal();
     const std::vector<TabEntry>& now_open = state_.focused_group().open_tabs;
@@ -167,9 +152,6 @@ ReviewOpenOutcome ReviewSessionCoordinator::Dispatch(
 
 namespace {
 
-// The files a review prefetches blobs for, gathered before the shell knows which of
-// them already have a tab. Twice the open cap covers a rerun that reuses up to a
-// cap's worth of tabs; anything past it is read per file when opened.
 std::vector<std::filesystem::path> PrefetchSet(const std::vector<std::filesystem::path>& targets) {
   const std::size_t count =
       std::min(targets.size(), ReviewSessionCoordinator::kMaxReviewSessionOpenTabs * 2);
@@ -177,18 +159,15 @@ std::vector<std::filesystem::path> PrefetchSet(const std::vector<std::filesystem
 }
 
 struct Gathered {
-  // nullopt: git could not be asked (not installed, failed, truncated output).
   std::optional<std::vector<std::filesystem::path>> targets;
   project::GitRevisionBlobCache prefetched;
-  // review-branch: the resolved base, or an error to report instead.
   std::string ref;
   std::string label;
   std::string error;
-  // review-commit: the commit's changed files, project-relative.
   std::vector<std::filesystem::path> review_files;
 };
 
-}  // namespace
+}
 
 ReviewOpenOutcome ReviewSessionCoordinator::OpenConflictReview() {
   const std::filesystem::path root = state_.root;
@@ -207,25 +186,17 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenConflictReview() {
             targets.push_back((root / entry.relative_path).lexically_normal());
           }
         }
-        // Three index stages per conflicted file -- the worst per-file spawn count
-        // in the app before the bulk read.
         gathered->prefetched.Prefetch(root, *launcher, {":1", ":2", ":3"}, PrefetchSet(targets));
         gathered->targets = std::move(targets);
       },
       [gathered](ReviewSessionCoordinator& self) -> ReviewOpenOutcome {
         if (!gathered->targets.has_value()) {
-          // git could not be asked -- it is not installed, it failed, or its output
-          // was truncated. Saying "no conflicts to review" here would be a claim
-          // about the user's repository that nothing established, and the one they
-          // would act on by considering the merge finished.
           return ReviewOpenOutcome{.ok = false,
                                    .message = "Could not read the working tree from git"};
         }
         return self.RunReviewSession(
             "review-conflicts", *gathered->targets,
             [](const TabEntry& tab) -> std::optional<std::filesystem::path> {
-              // Only git-conflict merge tabs (3 stages of the same file) -- never a
-              // manual `merge` editor tab whose three inputs are distinct files.
               if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
                   tab.merge->incoming_path == tab.merge->output_path &&
                   tab.merge->current_path == tab.merge->output_path) {
@@ -263,7 +234,6 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenBranchReview(const std::string& 
              project::CollectGitWorkingTreeDiffFiles(root, *launcher, gathered->ref)) {
           targets.push_back((root / entry.relative_path).lexically_normal());
         }
-        // Only the left side is a revision; the right is the working tree on disk.
         gathered->prefetched.Prefetch(root, *launcher, {gathered->ref}, PrefetchSet(targets));
         gathered->targets = std::move(targets);
       },
@@ -299,11 +269,6 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenCommitReview(const std::string& 
   auto gathered = std::make_shared<Gathered>();
   return Dispatch(
       [root, launcher, gathered, ref, left_ref, right_ref] {
-        // The commit's own changed files, project-relative. This is BOTH the set of
-        // tabs to open and the review file list each of those tabs navigates --
-        // deriving the latter inside the open would spend a `git diff` spawn per
-        // tab to answer the same question, and would answer it with
-        // `<commit>~1...HEAD` (everything since the commit) instead of the commit.
         gathered->review_files = project::CollectGitCommitChangedFiles(root, *launcher, ref);
         std::vector<std::filesystem::path> targets;
         targets.reserve(gathered->review_files.size());
@@ -343,9 +308,6 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenCheckpointReview() {
           gathered->error = "review-checkpoint: no checkpoint marked yet (review-checkpoint-mark marks one)";
           return;
         }
-        // Tree against tree: a diff against the commit alone would miss every file
-        // that is new and untracked, and report as deleted the ones that were
-        // untracked when the checkpoint was marked.
         const project::GitSnapshotResult now = project::SnapshotGitWorkingTree(root, *launcher);
         if (!now.ok()) {
           gathered->error = "review-checkpoint: " + now.error;
@@ -398,4 +360,4 @@ ReviewOpenOutcome ReviewSessionCoordinator::MarkCheckpoint() {
       });
 }
 
-}  // namespace microide::workspace
+}

@@ -31,4 +31,4 @@ void ShutdownForDisabledRuntime(
     std::vector<std::string>* hover_provider_order,
     std::vector<runtime_types::PluginInstance>* plugins);
 
-}  // namespace microide::plugin::lifecycle_reset_interop
+}

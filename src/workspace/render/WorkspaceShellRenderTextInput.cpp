@@ -21,11 +21,6 @@ namespace microide::workspace {
 
 namespace {
 
-// True when `surface` is drawn by the shared single-line caret/selection
-// machinery. The multi-line and self-rendering surfaces (commit body, Settings
-// query, Variables value field) and the non-input surfaces opt out. Kept as one
-// exhaustive switch — no `default:` — so adding a TextInputSurface value forces a
-// classification decision here (via -Wswitch) instead of silently defaulting.
 bool UsesSharedSingleLineCaret(TextInputSurface surface) {
   switch (surface) {
     case TextInputSurface::PromptInput:
@@ -45,13 +40,9 @@ bool UsesSharedSingleLineCaret(TextInputSurface surface) {
     case TextInputSurface::TerminalFind:
       return true;
     case TextInputSurface::CommitBody:
-      // The body is a multi-line field rendered by the sidebar panel, not the
-      // shared single-line caret/selection machinery.
     case TextInputSurface::SettingsQuery:
     case TextInputSurface::SettingsValueEdit:
-      // The Settings overlay renders its own caret/selection.
     case TextInputSurface::DebugVariableEdit:
-      // The Variables value field renders its own caret/selection in the bottom panel.
     case TextInputSurface::None:
     case TextInputSurface::Editor:
     case TextInputSurface::Terminal:
@@ -60,7 +51,7 @@ bool UsesSharedSingleLineCaret(TextInputSurface surface) {
   return false;
 }
 
-}  // namespace
+}
 
 using namespace detail;
 
@@ -86,8 +77,6 @@ WorkspaceShell::SingleLineViewMetrics WorkspaceShell::ComputeSingleLineViewMetri
     const editor::SingleLineEditor& state,
     std::string_view prefix,
     float available_width) const {
-  // Canonical implementation lives in workspace/render/SingleLineViewMetrics.cpp so
-  // RenderViewModelBuilder can precompose field display text without shell access.
   return workspace::ComputeSingleLineViewMetrics(text_renderer_, state, prefix, available_width);
 }
 
@@ -107,8 +96,6 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
   const TextInputSurface surface = text_input_vm.current_surface;
   const float line_height = text_renderer_.LineHeight();
   const float char_width = std::max(1.0f, text_renderer_.CharWidth());
-  // A single-line field's caret and selection: its text at (text_x, text_y), laid
-  // out in `available_width` by `vm`.
   const auto field_visual = [&](float text_x, float text_y, float available_width, SingleLineViewMetrics vm,
                                 SDL_Color foreground) {
     return TextInputVisual{
@@ -139,14 +126,9 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       if (viewport == nullptr) {
         return std::nullopt;
       }
-      // The painted grid, sticky band included, or the IME's candidate window
-      // sits the band's height above the caret.
       const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
           text_renderer_, *viewport, *active_editor_pane_rect, viewport->sticky_band_rows(),
           LineNumbersEnabled());
-      // Guard the size_t subtractions: scroll is normally clamped to keep the caret
-      // visible, but a transient caret-left-of-scroll (or above scroll_line) would
-      // underflow to a huge value and fling the IME candidate anchor off-screen.
       const std::size_t visual_column = viewport->cursor_visual_column();
       const std::size_t h_scroll = viewport->horizontal_scroll();
       const std::size_t visual_row = viewport->cursor_visual_row();
@@ -183,9 +165,6 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
     case TextInputSurface::BufferSearch:
     case TextInputSurface::BufferReplaceSearch:
     case TextInputSurface::BufferReplaceReplace: {
-      // Compact find/replace widget: the caret and selection must align with the
-      // shared field geometry (same rects the renderer/hit-test use), and the
-      // fields carry no textual prefix decorators in any focus state.
       if (!overlay_vm.visible) {
         return std::nullopt;
       }
@@ -194,8 +173,6 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       const bool replace_field = surface == TextInputSurface::BufferReplaceReplace;
       const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(ActiveTabSurface(layout), replace_mode);
       const SDL_FRect field = replace_field ? fw.replace_field : fw.search_field;
-      // A field the layout left out (a pane too short or a card too narrow to hold
-      // it) has no caret to draw: placed by its empty rect, it landed at the origin.
       if (field.w <= 0.0f || field.h <= 0.0f) {
         return std::nullopt;
       }
@@ -209,8 +186,6 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       return field_visual(text_x, text_y, available_width, std::move(vm), theme_.text_primary);
     }
     case TextInputSurface::TerminalFind: {
-      // Terminal find bar: the caret rides the same field geometry frame prep laid
-      // out for the renderer, so the two cannot drift.
       if (!prepare_cached_bottom_panel_vm_.has_value() ||
           !prepare_cached_bottom_panel_vm_->find_visible ||
           prepare_cached_bottom_panel_vm_->find_query == nullptr) {
@@ -240,11 +215,6 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
             MakeRect(overlay.x + 12.0f, row_y - 4.0f, std::max(0.0f, overlay.w - 24.0f), 18.0f);
         return field.y + std::floor((field.h - line_height) * 0.5f);
       };
-      // The field row the view model laid out and the overlay paints the field at
-      // (RenderViewModelBuilder: overlay.y + OverlayQueryRowOffset(mode)). A row of
-      // its own here (44 for the file finder and project search, from before the five
-      // quick-open modals shared one layout at 52) drew their caret 8 px above the
-      // field's text.
       const float text_y = overlay_field_text_y(overlay_vm.query_row_y);
       const float available_width = std::max(1.0f, overlay.w - inset * 2.0f);
       SingleLineViewMetrics vm;
@@ -298,7 +268,6 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
           break;
       }
       if (text_rect.w <= 0.0f) {
-        // A collapsed scope field is not drawn, so it has no caret to place.
         return std::nullopt;
       }
       const float text_x = text_rect.x + 6.0f;
@@ -354,15 +323,12 @@ void WorkspaceShell::UpdateTextInputArea(
   SDL_SetTextInputArea(render_window, &area, cursor);
 }
 
-// A single-line field's selection and an IME preedit, laid out at frame prep as
-// what the text-input pass draws (HoverCardPaint.h): their unit keys on it.
 void WorkspaceShell::LayOutTextInputMarks(const std::optional<TextInputVisual>& visual, CardPaint& marks) const {
   marks.Clear();
   if (!visual.has_value()) {
     return;
   }
   marks.OpenOverlay(SDL_FRect{});
-  // The selection, over the field's text.
   if (visual->selection_bytes.has_value() && !visual->displayed_text.empty() &&
       UsesSharedSingleLineCaret(visual->surface)) {
     const auto [sel_start_byte, sel_end_byte] = *visual->selection_bytes;
@@ -378,8 +344,6 @@ void WorkspaceShell::LayOutTextInputMarks(const std::optional<TextInputVisual>& 
       }
     }
   }
-  // An IME preedit at the caret: its text, the selected part lit, an underline and
-  // the preedit's own caret.
   const TextCompositionState& composition_state = context_.text_input.composition;
   if (!composition_state.text.empty() && composition_state.surface == visual->surface) {
     const std::string_view composition = composition_state.text;
@@ -427,7 +391,6 @@ void WorkspaceShell::LayOutTextInputMarks(const std::optional<TextInputVisual>& 
   marks.FitOverlayToContents(text_renderer_);
 }
 
-// A single-line field's caret, its own overlay: a blink repaints the caret alone.
 void WorkspaceShell::LayOutTextInputCaret(const std::optional<TextInputVisual>& visual, CardPaint& caret) const {
   caret.Clear();
   if (!visual.has_value() || !context_.interaction_state.window_has_input_focus ||
@@ -436,8 +399,6 @@ void WorkspaceShell::LayOutTextInputCaret(const std::optional<TextInputVisual>& 
     return;
   }
   caret.OpenOverlay(SDL_FRect{});
-  // On a device pixel, where CurrentCaretDirtyRect puts the blink's damage: the
-  // measured x carries float noise (render::SnapToDevicePixel).
   caret.Fill(MakeRect(render::SnapToDevicePixel(visual->cursor_x, presentation_scale_x_),
                       (visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y) - 1.0f, 1.5f,
                       text_renderer_.LineHeight()),
@@ -445,4 +406,4 @@ void WorkspaceShell::LayOutTextInputCaret(const std::optional<TextInputVisual>& 
   caret.FitOverlayToContents(text_renderer_);
 }
 
-}  // namespace microide::workspace
+}

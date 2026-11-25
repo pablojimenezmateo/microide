@@ -5,10 +5,6 @@ namespace microide::plugin {
 PluginHost::Callbacks PluginHost::Impl::BuildRoutedCallbacks() {
   Callbacks routed;
 
-  // Each routed wrapper is assigned only when the corresponding raw callback is
-  // wired, so existence checks (`if (callbacks.x)`) keep their original meaning.
-
-  // Reads resolve from the per-call snapshot (or live shell, on the inline path).
   if (raw_callbacks.active_buffer) {
     routed.active_buffer = [this]() { return ResolveActiveBuffer(); };
   }
@@ -16,16 +12,11 @@ PluginHost::Callbacks PluginHost::Impl::BuildRoutedCallbacks() {
     routed.get_setting = [this](std::string_view id) { return ResolveSetting(id); };
   }
   if (raw_callbacks.is_command_name_available) {
-    // Consulted only during setup-time registration (which a detached reload runs
-    // with allow_registration set even though shell writes are deferred).
     routed.is_command_name_available = [this](std::string_view name) -> bool {
       return g_exec.allow_registration && raw_callbacks.is_command_name_available(name);
     };
   }
 
-  // Requests/writes: run directly when the worker holds exclusive shell access,
-  // otherwise marshal an owning copy to the UI thread via the mailbox. Closures
-  // never capture a lua_State / Lua ref.
   if (raw_callbacks.open_file) {
     routed.open_file = [this](const OpenFileRequest& request) -> bool {
       if (g_exec.direct) {
@@ -127,9 +118,6 @@ PluginHost::Callbacks PluginHost::Impl::BuildRoutedCallbacks() {
       if (g_exec.direct) {
         return raw_callbacks.apply_workspace_edit(owner, request);
       }
-      // Posted, not awaited: stamp the capturing snapshot's buffer identity and
-      // edit generation so the UI thread re-validates against the live buffer at
-      // apply time and drops the edit if stale. Report optimistic acceptance.
       WorkspaceEditRequest guarded = request;
       if (g_exec.snapshot != nullptr && g_exec.snapshot->active_buffer.present) {
         guarded.has_staleness_guard = true;
@@ -179,4 +167,4 @@ PluginHost::Callbacks PluginHost::Impl::BuildRoutedCallbacks() {
   return routed;
 }
 
-}  // namespace microide::plugin
+}

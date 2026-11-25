@@ -79,10 +79,6 @@ void WorkspacePluginRuntime::ReloadAsync(const std::filesystem::path& project_ro
   changed_syntax_languages_.clear();
   changed_syntax_language_views_.clear();
   const std::uint64_t generation = ++syntax_reload_generation_;
-  // The host reload runs the plugin Lua off the UI thread; its completion fires on the
-  // main thread (mailbox drain) or inline when no worker is wired. From that completion
-  // the runtime-syntax sources are stat/read/parsed on the plugin worker and only the
-  // built registry is swapped in on the main thread (TD-2026-07-17A-108).
   plugin_host_.ReloadAsync(
       project_root, locality, [this, project_root, reload_syntax_definitions, generation,
                      on_complete = std::move(on_complete)](bool clean_reload) mutable {
@@ -92,15 +88,10 @@ void WorkspacePluginRuntime::ReloadAsync(const std::filesystem::path& project_ro
           return;
         }
         if (!plugin_thread_.started()) {
-          // No plugin worker (no plugins to load): stay fully synchronous, exactly as
-          // before — nothing to gain from a worker hop and most tests run this path.
-          on_complete(ApplySyntaxReload(project_root, /*reload_syntax_definitions=*/true,
+          on_complete(ApplySyntaxReload(project_root, true,
                                         clean_reload));
           return;
         }
-        // DataDirectories reads the UI-thread-owned published plugin snapshot, so it is
-        // resolved here on the main thread and the resulting paths are handed to the
-        // worker (which never touches host state).
         std::vector<std::filesystem::path> directories = plugin_host_.DataDirectories("syntax");
         const std::uint64_t last_fingerprint = syntax_source_fingerprint_;
         const bool has_last_fingerprint = syntax_fingerprint_initialized_;
@@ -127,7 +118,6 @@ WorkspacePluginRuntime::SyntaxLoadResult WorkspacePluginRuntime::LoadSyntaxDefin
   SyntaxLoadResult result;
   result.fingerprint = syntax_fingerprint_cache_.Compute(directories);
   if (has_last_fingerprint && last_fingerprint == result.fingerprint) {
-    // Sources unchanged since the last publish: skip the load + registry rebuild.
     result.unchanged = true;
     return result;
   }
@@ -143,8 +133,6 @@ bool WorkspacePluginRuntime::PublishSyntaxReload(const std::filesystem::path& pr
                                                  bool clean_reload, SyntaxLoadResult result,
                                                  std::uint64_t generation) {
   asset_monitor_.SetProjectRoot(project_root);
-  // Drop a superseded reload's publish: a newer ReloadAsync bumped the generation, so
-  // its (latest) worker result must own the global registry — never this stale one.
   if (generation != syntax_reload_generation_) {
     return clean_reload && runtime_syntax_errors_.empty();
   }
@@ -249,30 +237,13 @@ std::string WorkspacePluginRuntime::ReloadSummary() const {
 }
 
 void WorkspacePluginRuntime::ShutdownHost() {
-  // Project switch: quiesce the worker so no in-flight/queued plugin job is
-  // touching the lua_State while the host runs on_project_close / shutdown
-  // callbacks and destroys plugin state on this (UI) thread. Unlike full
-  // Shutdown() we keep the worker ALIVE — the next project's reload posts to it —
-  // so we Drain() rather than permanently Shutdown() the queue. Host teardown
-  // itself runs plugin callbacks inline (g_exec.executing), so any synchronous
-  // host API they call takes the inline branch instead of re-posting to the
-  // worker, leaving the worker quiescent for the whole teardown.
   plugin_thread_.Drain();
   plugin_host_.Shutdown();
-  // Discard any deferred plugin→UI mutations still queued for the project we just
-  // tore down (including any posted by the on_project_close/shutdown callbacks
-  // above). Otherwise the next mailbox drain would replay the old project's
-  // diagnostics / decorations / surfaces / open_file into the newly active project.
   plugin_thread_.ClearMainThreadActions();
 }
 
 void WorkspacePluginRuntime::Shutdown() {
-  // Join the worker before tearing down the host so no in-flight job touches a
-  // lua_State the host is about to destroy.
   plugin_thread_.Shutdown();
-  // The worker is now joined; drop the host's pointer to it so the host's own
-  // teardown (and any late call) runs inline with exclusive access rather than
-  // dead-locking on a post to a stopped worker.
   plugin_host_.SetWorker(nullptr);
   asset_monitor_.SetWakeChannel(0);
   asset_monitor_.Reset();
@@ -287,4 +258,4 @@ void WorkspacePluginRuntime::Shutdown() {
   syntax_fingerprint_cache_.Clear();
 }
 
-}  // namespace microide::workspace
+}

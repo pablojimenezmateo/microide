@@ -21,8 +21,6 @@ namespace {
 using microide::platform::FileIndexWatcher;
 using microide::platform::IndexUpdateBatch;
 
-// Helper: wait up to deadline_ms for a condition to become true.
-// Returns true if condition was met.
 template <typename Pred>
 bool WaitFor(std::mutex& mutex, std::condition_variable& cv, Pred pred,
              std::chrono::milliseconds timeout) {
@@ -79,7 +77,6 @@ void TestFileIndexWatcherInitialBatchContainsExistingFiles() {
     for (const auto& batch : batches) {
       if (batch.is_initial) {
         found_initial = true;
-        // Should contain at least the 3 files
         std::size_t file_count = 0;
         for (const auto& change : batch.changes) {
           if (change.kind == IndexUpdateBatch::Kind::CreatedOrModified) {
@@ -96,12 +93,6 @@ void TestFileIndexWatcherInitialBatchContainsExistingFiles() {
   watcher.Unwatch();
 }
 
-// The watcher coalesces file events by path within one read of the inotify queue
-// and judges each path once, on its final state (TD-2026-10-28-418). Whatever it
-// coalesces, an index built by applying its batches in order must end up equal to
-// the tree: saves through a temporary beside the target, a file deleted and
-// recreated, a directory deleted and recreated holding the same file -- the
-// orderings a reordering bug would get wrong.
 void TestFileIndexWatcherBatchesReplayToTheTree() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "watch_replay";
@@ -139,10 +130,7 @@ void TestFileIndexWatcherBatchesReplayToTheTree() {
   Expect(WaitFor(mutex, cv, [&] { return initial; }, std::chrono::milliseconds(2000)), "the initial batch");
 
   for (int round = 0; round < 3; ++round) {
-    // Enough saves that the watcher is still reading them when the directory
-    // sequence below happens, so that sequence lands in ONE read of the queue --
-    // the case the coalescing must not reorder.
-    for (int i = 0; i < 400; ++i) {  // saves through a temporary, as every editor and the mirror do
+    for (int i = 0; i < 400; ++i) {
       const std::filesystem::path target = root / "keep" / ("file_" + std::to_string(i) + ".txt");
       const std::filesystem::path temp = root / "keep" / (".file_" + std::to_string(i) + ".txt.tmp");
       WriteFile(temp, "round " + std::to_string(round) + "\n");
@@ -155,7 +143,7 @@ void TestFileIndexWatcherBatchesReplayToTheTree() {
     std::filesystem::create_directories(root / "dir");
     WriteFile(root / "dir/inner.txt", "again\n");
   }
-  std::filesystem::remove(root / "keep/file_7.txt");  // and one removal that stays
+  std::filesystem::remove(root / "keep/file_7.txt");
 
   std::set<std::string> tree;
   for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
@@ -163,8 +151,6 @@ void TestFileIndexWatcherBatchesReplayToTheTree() {
       tree.insert(entry.path().lexically_relative(root).generic_string());
     }
   }
-  // Quiescent: the tree's paths indexed, and no batch for a while after.
-  // Polled: the quiet half of the condition comes true with time, not a batch.
   bool settled = false;
   for (const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
        !settled && std::chrono::steady_clock::now() < deadline;) {
@@ -186,14 +172,6 @@ void TestFileIndexWatcherBatchesReplayToTheTree() {
   watcher.Unwatch();
 }
 
-// inotify reports a removed directory's IN_DELETE_SELF when its last dentry
-// reference drops, not at the rmdir: while anything holds it open (the
-// watcher's own walk of it, a shell cd'd into it) the event waits, and can
-// arrive after the parent's IN_CREATE for a NEW directory at the same path.
-// Read against the path, it emitted a recursive delete of the new directory --
-// whose files the create's walk had just indexed -- and nothing re-added them
-// (the UBSan lane's `-dir/inner.txt`). The parent's IN_DELETE already removed
-// the old directory, in order; the late self-event must not touch the path.
 void TestFileIndexWatcherLateDeleteSelfSparesTheDirectoryNowAtThePath() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "late_self";
@@ -229,8 +207,6 @@ void TestFileIndexWatcherLateDeleteSelfSparesTheDirectoryNowAtThePath() {
   Expect(WaitFor(mutex, cv, [&] { return initial; }, std::chrono::milliseconds(2000)), "the initial batch");
   Expect(watcher.IsNative(), "this test is about inotify's ordering");
 
-  // Hold the old directory open across its removal: its IN_DELETE_SELF now
-  // waits for the close.
   const int held = ::open((root / "dir").c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
   Expect(held >= 0, "the old directory opens");
   std::filesystem::remove(root / "dir/old.txt");
@@ -245,13 +221,10 @@ void TestFileIndexWatcherLateDeleteSelfSparesTheDirectoryNowAtThePath() {
     std::lock_guard lock(mutex);
     seen_before_close = batches_seen;
   }
-  ::close(held);  // the old directory's IN_DELETE_SELF arrives now
-  // A marker after it, so the wait below ends once the watcher read past it.
+  ::close(held);
   WriteFile(root / "marker.txt", "m\n");
   Expect(WaitFor(mutex, cv, [&] { return index.contains("marker.txt"); }, std::chrono::milliseconds(5000)),
          "the watcher read past the late self-event");
-  // Unwatched first: the callback takes `mutex` under the watcher's dispatch
-  // lock, so holding it across Unwatch is a lock-order inversion (TSan).
   watcher.Unwatch();
   std::lock_guard lock(mutex);
   Expect(batches_seen > seen_before_close, "batches arrived after the close");
@@ -259,10 +232,6 @@ void TestFileIndexWatcherLateDeleteSelfSparesTheDirectoryNowAtThePath() {
          "the late IN_DELETE_SELF of the old directory left the new one's file indexed");
 }
 
-// A directory moved OUT of the tree took its descendants' watches with it, still
-// mapped to their old in-tree paths: only the moved directory's own watch was
-// dropped. A file deleted in the moved-away copy then read as a deletion of
-// whatever lives at the old path now -- a new directory of the same name.
 void TestFileIndexWatcherMovedOutSubtreeStopsSpeakingForItsOldPaths() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "moved_out";
@@ -305,11 +274,11 @@ void TestFileIndexWatcherMovedOutSubtreeStopsSpeakingForItsOldPaths() {
   Expect(WaitFor(mutex, cv, [&] { return index.contains("lib/sub/f.txt"); }, std::chrono::milliseconds(5000)),
          "the new file at the old path is indexed");
 
-  std::filesystem::remove(outside / "sub/f.txt");  // outside the project
+  std::filesystem::remove(outside / "sub/f.txt");
   WriteFile(root / "marker.txt", "m\n");
   Expect(WaitFor(mutex, cv, [&] { return index.contains("marker.txt"); }, std::chrono::milliseconds(5000)),
          "the watcher read past the outside deletion");
-  watcher.Unwatch();  // before taking `mutex`: see LateDeleteSelf
+  watcher.Unwatch();
   std::lock_guard lock(mutex);
   Expect(index.contains("lib/sub/f.txt"),
          "a deletion outside the project does not remove the file now at the old path");
@@ -342,7 +311,6 @@ void TestFileIndexWatcherDetectsCreatedFile() {
 
   Expect(watcher.Watch(root), "Watch should succeed on empty directory");
 
-  // Create a file after watching starts
   WriteFile(root / "new_file.txt", "hello\n");
 
   const bool notified =
@@ -362,14 +330,6 @@ void TestFileIndexWatcherDetectsCreatedFile() {
   watcher.Unwatch();
 }
 
-// A symlink to a directory inside the tree -- here a loop, `sub/loop -> ..`, the
-// QA monkey's -- was handed to inotify_add_watch, which follows links: it
-// returned the descriptor of the directory already watched, and the walk
-// re-labelled that descriptor with the link's path. Every later change in the
-// project root was then reported under `sub/loop/`, and an open, clean buffer
-// never reloaded an outside edit (QA monkey, world profile: README.md stayed
-// stale through a git stash). A symlinked directory is neither descended nor
-// watched, and the real directory's changes keep their own path.
 void TestFileIndexWatcherASymlinkLoopDoesNotRelabelTheRoot() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "watch_loop";
@@ -391,10 +351,8 @@ void TestFileIndexWatcherASymlinkLoopDoesNotRelabelTheRoot() {
     cv.notify_all();
   });
   Expect(watcher.Watch(root), "Watch should succeed");
-  // A new directory holding a link back to the root: its creation walks it.
   std::filesystem::create_directories(root / "sub");
   std::filesystem::create_directory_symlink("..", root / "sub" / "loop");
-  // ...and a directory created with the link already inside it (the moved-in walk).
   std::filesystem::create_directories(temp_dir.path() / "staged");
   std::filesystem::create_directory_symlink("..", temp_dir.path() / "staged" / "loop");
   std::filesystem::rename(temp_dir.path() / "staged", root / "moved");
@@ -419,11 +377,6 @@ void TestFileIndexWatcherASymlinkLoopDoesNotRelabelTheRoot() {
   watcher.Unwatch();
 }
 
-// Soak 20f30956197f (remote profile): a link made DANGLING in a watched directory
-// -- `qa-ext/link1 -> /root/qa-weird/mixed.txt`, the file deleted -- reported
-// nothing, so the remote server never learned the link followed that file and
-// never listed it once the file came back. A new entry the index cannot hold is
-// a shape change, dangling or not.
 void TestFileIndexWatcherReportsADanglingLinkMadeInAWatchedDirectory() {
   for (const bool loop_beside : {false, true}) {
     TemporaryDirectory temp_dir;
@@ -615,7 +568,7 @@ void TestFileIndexWatcherUnwatchStopsNotifications() {
   std::atomic<int> call_count{0};
 
   FileIndexWatcher watcher;
-  watcher.SetCallback([&](IndexUpdateBatch /*batch*/) {
+  watcher.SetCallback([&](IndexUpdateBatch ) {
     ++call_count;
   });
 
@@ -624,7 +577,6 @@ void TestFileIndexWatcherUnwatchStopsNotifications() {
 
   const int count_after_unwatch = call_count.load();
 
-  // Create a file after Unwatch; should NOT trigger callback
   WriteFile(root / "late_file.txt", "late\n");
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
@@ -745,9 +697,6 @@ void TestFileIndexWatcherIgnoresChangesInsideGitignoredDirectory() {
 }
 
 void TestFileIndexWatcherWatchReturnsPromptly() {
-  // Build a deep, wide tree (~2000 directories) so that a synchronous recursive
-  // walk would be observable. The async setup path should keep Watch() under a
-  // generous threshold even on slow machines.
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "wide_tree";
   std::filesystem::create_directories(root);
@@ -760,7 +709,7 @@ void TestFileIndexWatcherWatchReturnsPromptly() {
   }
 
   FileIndexWatcher watcher;
-  watcher.SetCallback([](IndexUpdateBatch /*batch*/) {});
+  watcher.SetCallback([](IndexUpdateBatch ) {});
 
   const auto start = std::chrono::steady_clock::now();
   const TimingWindow start_timing;
@@ -768,9 +717,6 @@ void TestFileIndexWatcherWatchReturnsPromptly() {
   const auto elapsed =
       std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
   Expect(ok, "Watch should succeed on wide tree");
-  // The watch-tree build runs on a background thread; Watch() itself should be fast.
-  // 200ms is loose to absorb sanitizer / loaded-CI overhead while still catching the
-  // pre-fix behavior where this took ~1s on real projects.
   Expect(start_timing.Within(elapsed, std::chrono::milliseconds(200)),
          "FileIndexWatcher::Watch should return promptly while watches build asynchronously");
 
@@ -778,9 +724,6 @@ void TestFileIndexWatcherWatchReturnsPromptly() {
 }
 
 void TestFileIndexWatcherUnwatchDuringBootstrapIsSafe() {
-  // Build a sizable tree, then immediately Unwatch() to exercise the
-  // stop-during-setup path in the Linux backend. Any race or use-after-free
-  // would surface under ASAN/TSAN here.
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "bootstrap_cancel";
   std::filesystem::create_directories(root);
@@ -793,9 +736,9 @@ void TestFileIndexWatcherUnwatchDuringBootstrapIsSafe() {
 
   for (int trial = 0; trial < 5; ++trial) {
     FileIndexWatcher watcher;
-    watcher.SetCallback([](IndexUpdateBatch /*batch*/) {});
+    watcher.SetCallback([](IndexUpdateBatch ) {});
     Expect(watcher.Watch(root), "Watch should succeed");
-    watcher.Unwatch();  // No assertion: success is "did not crash / hang".
+    watcher.Unwatch();
   }
 }
 
@@ -836,18 +779,13 @@ void TestFileIndexWatcherPollDiffSingleTickEmitsUniqueCreateModifyDelete() {
          "poll diff should contain exactly one delete entry");
 }
 
-// The core large-project fix: with NO root .gitignore, the initial scan must still
-// prune VCS metadata and build-output dirs via the built-in defaults, and must apply
-// file-level ignore rules (the closed index/finder parity gap).
 void TestFileIndexWatcherExcludesDefaultsAndFileLevelIgnore() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "svn_project";
-  // No root .gitignore at all (mirrors an SVN checkout).
   WriteFile(root / "src" / "main.cpp", "int main() {}\n");
   WriteFile(root / ".svn" / "wc.db", "svn-metadata\n");
   WriteFile(root / "builds" / "artifact.o", "binary\n");
   WriteFile(root / "node_modules" / "pkg" / "index.js", "1;\n");
-  // A nested .gitignore excludes a specific FILE (not a directory).
   WriteFile(root / "src" / ".gitignore", "secret.txt\n");
   WriteFile(root / "src" / "secret.txt", "shh\n");
 
@@ -896,7 +834,6 @@ void TestFileIndexWatcherExcludesDefaultsAndFileLevelIgnore() {
   watcher.Unwatch();
 }
 
-// A user-configured exclude glob skips a custom-named directory the defaults miss.
 void TestFileIndexWatcherHonorsUserExcludeGlobs() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "custom_excludes";
@@ -942,7 +879,6 @@ void TestFileIndexWatcherHonorsUserExcludeGlobs() {
   watcher.Unwatch();
 }
 
-// A small entry budget truncates the initial batch instead of walking an unbounded tree.
 void TestFileIndexWatcherInitialBatchRespectsEntryBudget() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "big_project";
@@ -989,12 +925,8 @@ void TestFileIndexWatcherInitialBatchRespectsEntryBudget() {
   watcher.Unwatch();
 }
 
-}  // namespace
+}
 
-// Regression: an incremental batch that arrives BEFORE the initial (wholesale-
-// replace) batch — the two workers race during the initial-scan window — is buffered
-// and replayed AFTER the initial batch, so a file created during the scan is not lost
-// and a file deleted during the scan does not resurrect.
 void TestFileIndexWatcherBuffersIncrementalsUntilInitialBatch() {
   FileIndexWatcher watcher;
   std::vector<IndexUpdateBatch> received;
@@ -1017,13 +949,10 @@ void TestFileIndexWatcherBuffersIncrementalsUntilInitialBatch() {
   baseline.entry.relative_path = "existing.cpp";
   initial.changes.push_back(std::move(baseline));
 
-  // An incremental "created during the scan" arrives BEFORE the initial batch.
   watcher.DispatchBatchForTesting(
       make_incremental("created_during_scan.cpp", IndexUpdateBatch::Kind::CreatedOrModified));
   Expect(received.empty(), "an incremental before the initial batch is buffered, not delivered");
 
-  // The trailing initial batch lands; it is delivered, then the buffered incremental
-  // is replayed on top of the baseline (never lost to the wholesale replace).
   watcher.DispatchBatchForTesting(std::move(initial));
   Expect(received.size() == 2, "the initial batch and the buffered incremental are both delivered");
   Expect(received[0].is_initial, "the initial (wholesale-replace) batch is delivered first");
@@ -1031,17 +960,12 @@ void TestFileIndexWatcherBuffersIncrementalsUntilInitialBatch() {
              BatchContainsPath(received[1], "created_during_scan.cpp"),
          "the buffered incremental replays AFTER the initial batch, preserving the created file");
 
-  // Once the initial batch has landed, later incrementals pass straight through.
   watcher.DispatchBatchForTesting(
       make_incremental("later.cpp", IndexUpdateBatch::Kind::CreatedOrModified));
   Expect(received.size() == 3 && BatchContainsPath(received[2], "later.cpp"),
          "incrementals after the initial batch are delivered immediately");
 }
 
-// The pre-initial buffer is bounded: a flood of incremental batches arriving
-// before the initial (wholesale-replace) batch cannot retain unbounded path
-// batches. Batches past the batch-count budget are dropped (newest-first) while
-// the earlier ones still replay after the initial batch. TD-2026-07-17A-107.
 void TestFileIndexWatcherBoundsPreInitialBatchFlood() {
   FileIndexWatcher watcher;
   std::vector<IndexUpdateBatch> received;
@@ -1057,8 +981,7 @@ void TestFileIndexWatcherBoundsPreInitialBatchFlood() {
     return batch;
   };
 
-  // Flood more pre-initial batches than the batch-count budget allows.
-  const std::size_t flood = 5000;  // > kMaxPendingBatches (4096)
+  const std::size_t flood = 5000;
   for (std::size_t i = 0; i < flood; ++i) {
     watcher.DispatchBatchForTesting(make_incremental("f" + std::to_string(i) + ".cpp"));
   }
@@ -1068,12 +991,10 @@ void TestFileIndexWatcherBoundsPreInitialBatchFlood() {
   initial.is_initial = true;
   watcher.DispatchBatchForTesting(std::move(initial));
 
-  // Delivered: the initial batch + at most the bounded number of buffered batches.
   Expect(!received.empty() && received.front().is_initial,
          "the initial batch is delivered first");
   Expect(received.size() < flood + 1,
          "the pre-initial buffer must drop batches past its budget rather than replay all");
-  // The earliest buffered batch (the oldest delta) is preserved, not the newest.
   bool has_first = false;
   for (const IndexUpdateBatch& batch : received) {
     if (BatchContainsPath(batch, "f0.cpp")) {
@@ -1127,4 +1048,4 @@ void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests) {
           TestFileIndexWatcherInitialBatchRespectsEntryBudget);
 }
 
-}  // namespace microide::tests
+}

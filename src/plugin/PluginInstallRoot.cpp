@@ -10,4 +10,4 @@ std::filesystem::path ResolveUserPluginInstallRoot() {
   return config_root.empty() ? std::filesystem::path{} : config_root / "plugins";
 }
 
-}  // namespace microide::plugin
+}

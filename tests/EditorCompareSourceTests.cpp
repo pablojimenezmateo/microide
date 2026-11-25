@@ -6,18 +6,6 @@
 #include <string>
 #include <vector>
 
-// What "compare this" actually compares.
-//
-// ResolveCurrentCompareInput is a 51-line priority chain with no test: a
-// context-menu invocation acts on the file targeted in the tree, otherwise the
-// ACTIVE EDITOR BUFFER wins -- deliberately, so a comparison shows the live,
-// possibly-unsaved text the user is looking at rather than what is on disk --
-// and only failing both does it fall back to a file.
-//
-// The dirty-buffer case is the one that matters and the one that would regress
-// silently: reading the file instead would still produce a plausible diff, just
-// of the wrong content.
-
 namespace microide::tests {
 namespace {
 
@@ -53,7 +41,6 @@ struct CompareFixture {
 
 void TestCompareTakesTheLiveBufferNotTheFileOnDisk() {
   CompareFixture fixture;
-  // Type into the buffer without saving. The file still says "on disk".
   fixture.viewport().JumpCursorTo(0, 0, false);
   fixture.viewport().InsertText("unsaved ");
   Expect(fixture.viewport().dirty(), "the fixture must leave the buffer unsaved");
@@ -72,8 +59,6 @@ void TestCompareTakesTheLiveBufferNotTheFileOnDisk() {
 }
 
 void TestCompareOfACleanBufferStillUsesTheBuffer() {
-  // Even clean, the buffer is the source -- the path matters for the label and
-  // the editable flag, and the content must round-trip unchanged.
   CompareFixture fixture;
   fixture.SelectForCompare(WorkspaceShell::ActionSource::Menu);
   Expect(WorkspaceShellTestAccess::HasCompareSelection(fixture.shell),
@@ -88,9 +73,6 @@ void TestCompareOfACleanBufferStillUsesTheBuffer() {
 }
 
 void TestContextMenuWithNoTreeTargetReportsNoFileSelected() {
-  // The context-menu branch acts on the tree target and does NOT fall through to
-  // the active buffer -- right-clicking nothing must say so rather than quietly
-  // comparing whatever happens to be open.
   CompareFixture fixture;
   const bool handled = fixture.SelectForCompare(WorkspaceShell::ActionSource::ContextMenu);
   (void)handled;
@@ -99,8 +81,6 @@ void TestContextMenuWithNoTreeTargetReportsNoFileSelected() {
 }
 
 void TestSelectingTwiceReplacesTheStash() {
-  // The stash is a single slot: a second select-for-compare replaces it, so a
-  // stale first pick cannot leak into a later comparison.
   CompareFixture fixture;
   fixture.SelectForCompare(WorkspaceShell::ActionSource::Menu);
   Expect(WorkspaceShellTestAccess::CompareSelection(fixture.shell).content.find("unsaved") ==
@@ -115,7 +95,7 @@ void TestSelectingTwiceReplacesTheStash() {
          "selecting again must replace the stash with the current buffer, not keep the old one");
 }
 
-}  // namespace
+}
 
 void RegisterEditorCompareSourceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorCompareSource/TakesTheLiveBufferNotTheFileOnDisk",
@@ -128,4 +108,4 @@ void RegisterEditorCompareSourceTests(std::vector<TestCase>& tests) {
           TestSelectingTwiceReplacesTheStash);
 }
 
-}  // namespace microide::tests
+}

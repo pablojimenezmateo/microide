@@ -15,7 +15,7 @@ WorkspaceWatch::WorkspaceWatch(std::filesystem::path root, Options options,
     Run();
   });
   watcher_.SetCallback([this](platform::IndexUpdateBatch batch) { OnBatch(std::move(batch)); });
-  (void)watcher_.Watch(root);  // false: it polls, which native() reports
+  (void)watcher_.Watch(root);
 }
 
 WorkspaceWatch::~WorkspaceWatch() {
@@ -32,7 +32,7 @@ WorkspaceWatch::~WorkspaceWatch() {
 
 void WorkspaceWatch::OnBatch(platform::IndexUpdateBatch batch) {
   if (batch.is_initial) {
-    return;  // the workspace already has a manifest; this is the watcher's baseline
+    return;
   }
   {
     std::lock_guard lock(mutex_);
@@ -43,8 +43,6 @@ void WorkspaceWatch::OnBatch(platform::IndexUpdateBatch batch) {
       }
       pending_.touched.push_back(std::move(path));
     }
-    // A shape change (a directory created or moved, a link, dropped events) or a
-    // walk that hit its budget: paths cannot describe it.
     pending_.full = pending_.full || batch.tree_structure_changed || batch.truncated;
     has_pending_ = true;
   }
@@ -76,7 +74,7 @@ void WorkspaceWatch::SetPolledPaths(std::vector<std::string> relative_paths) {
     std::lock_guard lock(mutex_);
     polled_ = std::move(polled);
   }
-  cv_.notify_all();  // an idle Run starts (or stops) its poll timer
+  cv_.notify_all();
 }
 
 void WorkspaceWatch::PollLocked() {
@@ -95,7 +93,6 @@ void WorkspaceWatch::PollLocked() {
 void WorkspaceWatch::Run() {
   std::unique_lock lock(mutex_);
   while (!stop_) {
-    // Idle: wait for the watcher, and with paths to poll, for the poll tick too.
     while (!stop_ && !has_pending_) {
       if (polled_.empty()) {
         cv_.wait(lock, [this] { return stop_ || has_pending_ || !polled_.empty(); });
@@ -106,8 +103,6 @@ void WorkspaceWatch::Run() {
     if (stop_) {
       return;
     }
-    // Let the burst settle: every further event restarts the quiet period, up to
-    // max_delay after the first.
     const auto first = std::chrono::steady_clock::now();
     for (;;) {
       has_pending_ = false;
@@ -131,4 +126,4 @@ void WorkspaceWatch::Run() {
   }
 }
 
-}  // namespace microide::server
+}

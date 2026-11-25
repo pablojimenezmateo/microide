@@ -28,12 +28,8 @@ TraceState& State() {
   return state;
 }
 
-// Default sink when MICROIDE_DAP_LOG is set to an empty/truthy value rather than
-// a path. Matches the path documented to the user by the --dap-log flag.
 constexpr const char* kDefaultPath = "/tmp/microide-dap.log";
 
-// Resolve the env-configured sink path. Returns empty if tracing is not enabled
-// through the environment. A bare truthy value (e.g. "1") maps to the default.
 std::string EnvSinkPath() {
   const char* value = std::getenv("MICROIDE_DAP_LOG");
   if (value == nullptr || value[0] == '\0') {
@@ -57,8 +53,6 @@ std::FILE* OpenSink(const std::string& path) {
   return file;
 }
 
-// Lazily resolves the sink (honoring the env var on first use) and returns it,
-// or nullptr when tracing is disabled. Caller must hold state.mutex.
 std::FILE* EnsureSinkLocked(TraceState& state) {
   if (state.sink != nullptr) {
     return state.sink;
@@ -89,7 +83,6 @@ void WriteLineLocked(TraceState& state, const std::string& line) {
   std::fflush(sink);
 }
 
-// Pull out a small summary so log scans don't require reading the whole JSON.
 std::string SummarizeMessage(const JsonValue& msg) {
   const JsonValue& type_val = msg["type"];
   std::string summary = type_val.IsString() ? type_val.AsString() : "?";
@@ -106,14 +99,11 @@ std::string SummarizeMessage(const JsonValue& msg) {
     summary += std::to_string(msg["request_seq"].AsInt(0));
   }
   if (type_val.AsString() == "response") {
-    // `success` is a JSON boolean — read it as such (AsInt returns 0 for a bool,
-    // which would mislabel every successful response as a failure).
     summary += msg["success"].AsBool(false) ? " ok" : " FAIL";
   }
   return summary;
 }
 
-// One `note <category>: <detail><tail>` line, built only when a sink is open.
 template <typename AppendTail>
 void WriteNote(const char* category, std::string_view detail, AppendTail&& append_tail) {
   TraceState& state = State();
@@ -129,7 +119,7 @@ void WriteNote(const char* category, std::string_view detail, AppendTail&& appen
   WriteLineLocked(state, line);
 }
 
-}  // namespace
+}
 
 bool DebugTrace::Enabled() {
   TraceState& state = State();
@@ -145,7 +135,7 @@ void DebugTrace::EnableToFile(const std::filesystem::path& path) {
   }
   state.sink = OpenSink(path.string());
   if (state.sink != nullptr) {
-    ElapsedMsLocked(state);  // anchor the clock at enable time
+    ElapsedMsLocked(state);
     std::fprintf(state.sink, "%10.2f  trace start: %s\n", 0.0, path.string().c_str());
     std::fflush(state.sink);
   }
@@ -202,4 +192,4 @@ void DebugTrace::Note(const char* category, std::string_view detail, long long n
   });
 }
 
-}  // namespace microide::util
+}

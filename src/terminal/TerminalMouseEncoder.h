@@ -30,4 +30,4 @@ struct TerminalMouseEncodeRequest {
 
 bool EncodeTerminalMouseEvent(const TerminalMouseEncodeRequest& request, std::string& out_bytes);
 
-}  // namespace microide::terminal
+}

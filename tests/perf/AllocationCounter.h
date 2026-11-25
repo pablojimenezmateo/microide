@@ -20,49 +20,16 @@ struct AllocationDelta {
   std::int64_t bytes_freed = 0;
 };
 
-// Allocation counters for the counting `operator new`/`delete` that a
-// MICROIDE_PERF_HARNESS_BUILD arms.
-//
-// The counts are PER CALLING THREAD. Snapshot on the thread whose work you are
-// measuring and delta on that same thread; a snapshot taken on one thread says
-// nothing about another. This is deliberate -- see the note in the .cpp -- and it
-// is what makes the numbers deterministic for scenarios that drive background
-// workers, and what makes "this frame must not allocate" mean the frame rather
-// than the whole process.
 class Allocations {
  public:
   static AllocationSnapshot Snapshot();
   static AllocationDelta DeltaSince(const AllocationSnapshot& before);
 
-  // Print the aggregated allocation-site table collected under
-  // MICROIDE_PERF_ALLOC_TRACE, most-frequent site first, and clear it.
-  //
-  // Does nothing when tracing is off. Safe to call unconditionally; PerfMain
-  // calls it once at the end of a run.
-  //
-  // Why this exists: the counters say a phase allocated 960 times and nothing
-  // says WHERE. TD-2026-08-06-139 sat unexplained for exactly that reason -- five
-  // gates had drifted up by a flat number of small allocations, and attributing
-  // them meant a git bisect over 90 commits because the harness could measure the
-  // regression but not point at it. `MICROIDE_PERF_BIG_ALLOC_BYTES` could not
-  // help: it traces the LARGEST allocations, and this class of regression is
-  // hundreds of 32-byte ones.
   static void DumpTracedAllocationSites();
 
-  // Substring set by MICROIDE_PERF_ALLOC_TRACE_PHASE, or empty when unset.
-  //
-  // An unfiltered trace is whole-RUN, and a scenario's setup out-allocates its
-  // measured phase by an order of magnitude: attributing the 320 allocations
-  // left in `editor_mouse_selection_drag` after TD-2026-08-06-145 meant reading
-  // past twelve syntax-registry and plugin-reload sites that the phase never
-  // touched. With this set, only allocations made inside a matching
-  // `ScenarioContext::Measure` phase are recorded, so the table IS the phase.
   static std::string_view PhaseTraceFilter();
 
-  // Arm/disarm site recording for the calling thread. No-op unless a phase
-  // filter is set. `ScenarioContext::Measure` owns the calls; nothing else
-  // should need them.
   static void SetPhaseTraceActive(bool active);
 };
 
-}  // namespace microide::tests::perf
+}

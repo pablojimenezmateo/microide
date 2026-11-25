@@ -69,4 +69,4 @@ struct ApiFns {
 void PushPluginContext(lua_State* state, void* host_upvalue, const ApiFns& fns);
 #endif
 
-}  // namespace microide::plugin::lua_context_interop
+}

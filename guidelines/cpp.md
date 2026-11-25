@@ -31,7 +31,8 @@ Purpose: define the standard C++ implementation practices for `microide`.
 - Prefer forward declarations where they keep dependencies obvious and safe.
 - Put implementation details in `.cpp` files unless a header-only definition is required.
 - Do not expose subsystem internals just to save a small amount of wiring.
-- If a header becomes difficult to read because it owns too many concerns, split the ownership boundary instead of piling on comments.
+- If a header becomes difficult to read because it owns too many concerns, split the ownership boundary.
+- Do not write comments. Names, types and small functions carry the meaning; the why goes in the commit message or `dev-docs/`. Only tool directives (`NOLINT`, `IWYU pragma`, the perf harness's `perf-measure-*:` exemptions) stay in source.
 
 ## Standard Vocabulary Types
 

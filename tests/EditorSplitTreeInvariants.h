@@ -10,10 +10,6 @@
 
 namespace microide::tests {
 
-// The structural contract every consumer of the tree relies on -- the pane-rect
-// walk, the focus index, the per-group caches, session persistence -- stated as
-// one check and run after every edit of a random edit sequence. A tree that
-// breaks any of these draws a group nowhere, or two groups in one place.
 inline void ExpectSplitTreeWellFormed(const microide::workspace::EditorSplitTree& tree,
                                       const std::string& context) {
   const auto nodes = tree.nodes();
@@ -21,7 +17,6 @@ inline void ExpectSplitTreeWellFormed(const microide::workspace::EditorSplitTree
   Expect(tree.root() < tree.node_count(), "root is a live node: " + context);
   Expect(nodes[tree.root()].parent == microide::workspace::EditorSplitTree::kNoNode, "root has no parent: " + context);
 
-  // Reachability and per-branch shape, by a walk of our own.
   std::vector<bool> seen(tree.node_count(), false);
   std::vector<std::uint8_t> stack{tree.root()};
   std::size_t leaves = 0;
@@ -65,7 +60,6 @@ inline void ExpectSplitTreeWellFormed(const microide::workspace::EditorSplitTree
   Expect(leaves == tree.leaf_count(), "leaf_count matches the walk: " + context);
   Expect(leaves >= 1 && leaves <= microide::workspace::kMaxEditorGroups, "leaf count within the cap: " + context);
 
-  // Ordinal <-> node is a bijection over the leaves.
   std::vector<bool> leaf_seen(tree.node_count(), false);
   for (std::size_t ordinal = 0; ordinal < tree.leaf_count(); ++ordinal) {
     const std::uint8_t node = tree.NodeForLeaf(ordinal);
@@ -81,11 +75,10 @@ inline void ExpectSplitTreeWellFormed(const microide::workspace::EditorSplitTree
   Expect(tree.NodeForLeaf(tree.leaf_count()) == microide::workspace::EditorSplitTree::kNoNode,
          "one past the last ordinal is no leaf: " + context);
 
-  // The persisted form round-trips to an equal, well-formed tree.
   microide::workspace::EditorSplitTree reloaded;
   Expect(reloaded.Load(tree.Flatten()), "Flatten() loads back: " + context);
   Expect(reloaded == tree, "the reloaded tree equals the original: " + context);
   Expect(reloaded.leaf_count() == tree.leaf_count(), "and keeps the leaf count: " + context);
 }
 
-}  // namespace microide::tests
+}

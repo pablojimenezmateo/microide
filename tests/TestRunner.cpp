@@ -29,17 +29,8 @@
 
 namespace {
 
-// The test the run loop is in, for the terminate handler (the watchdog reads it
-// too). Null between tests.
 std::atomic<const std::string*> g_current_test_name{nullptr};
 
-// A std::terminate in a shard printed one line — "terminate called without an
-// active exception" — and the test running at the time was often not the one at
-// fault (a thread from an earlier test). Print the stack of the thread that
-// called terminate, so the culprit names itself. The stack alone did not: a CI
-// binary's addresses do not symbolize against a local build, so an Expect that
-// threw through a noexcept frame (its message is the whole diagnosis) left only
-// offsets. Name the running test and the exception in flight first.
 [[noreturn]] void TerminateWithBacktrace() {
 #if defined(__GLIBC__)
   const auto write_text = [](std::string_view text) {
@@ -201,7 +192,7 @@ void ListSelectedTestsGtest(const std::vector<microide::tests::TestCase>& tests,
   }
 }
 
-}  // namespace
+}
 
 namespace microide::tests {
 
@@ -213,34 +204,17 @@ int RunTestSuite(int argc, char** argv, const TestSuiteConfig& config) {
     }
   };
 
-  // Tests drive the shell from this thread; marking it keeps the trace
-  // summary's main-thread split meaningful under the suite.
   microide::util::MarkTracingMainThread();
 
-  // Match the production process (src/app/main.cpp): a write to a subprocess pipe
-  // whose reader has died must surface as EPIPE, not a signal. Without it the suite
-  // inherits SIG_DFL and any git/LSP/DAP write that loses the race under load kills
-  // the whole shard — and whether it did depended on whether some earlier test in
-  // that shard happened to call IgnoreBrokenPipeSignal() first, so adding a test
-  // anywhere could reshuffle the round-robin and move the crash to a new shard.
   microide::platform::IgnoreBrokenPipeSignal();
   std::set_terminate(&TerminateWithBacktrace);
 
-  // Use in-process placeholder terminals for the whole suite instead of spawning
-  // real PTY-backed shells. Formerly a compile-time MICROIDE_TESTING fork; now a
-  // runtime switch so core compiles identically for the production binary.
   microide::terminal::SetUsePlaceholderTerminalsForTesting(true);
 
   if (config.install_process_hooks) {
     config.install_process_hooks();
   }
 
-  // Isolate every user-directory write (recents MRU, user config, per-project state,
-  // caches) into a throwaway temp tree for the whole process, so the suite never reads or
-  // pollutes the developer's real ~/.local/state, ~/.config, etc. Several WorkspaceShell
-  // fixtures open temp projects that would otherwise record their /tmp roots into the real
-  // recents store. These outlive every test; individual fixtures that set their own scoped
-  // XDG/HOME still override-then-restore back to these. Restored + removed at process exit.
   const microide::tests::TemporaryDirectory isolated_user_root;
   const std::filesystem::path user_root = isolated_user_root.path();
   std::error_code isolate_ec;
@@ -319,11 +293,6 @@ int RunTestSuite(int argc, char** argv, const TestSuiteConfig& config) {
     return 1;
   }
 
-  // Config knobs (env-driven so ctest/run-checks can tune without a rebuild):
-  //   MICROIDE_TEST_TIMEOUT_MS  watchdog per-test limit; a test that exceeds it
-  //                             is named and the process aborts (0 disables).
-  //   MICROIDE_TEST_SLOW_MS     threshold above which a test prints a SLOW line.
-  //   MICROIDE_TEST_TIMINGS     any non-empty value prints the slowest tests.
   const auto env_i64 = [](const char* variable, std::int64_t fallback) -> std::int64_t {
     const char* raw = std::getenv(variable);
     if (raw == nullptr || *raw == '\0') {
@@ -342,11 +311,7 @@ int RunTestSuite(int argc, char** argv, const TestSuiteConfig& config) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(d).count();
   };
 
-  // Watchdog: names (then aborts on) any test that runs away, so a hang or a
-  // pathological test surfaces as a clear diagnostic instead of a mysterious
-  // whole-shard ctest timeout. It watches an atomic "current test started at"
-  // stamp; the run loop clears it between tests.
-  std::atomic<std::int64_t> current_test_started{0};  // 0 == no test running
+  std::atomic<std::int64_t> current_test_started{0};
   std::atomic<const std::string*>& current_test_name = g_current_test_name;
   std::atomic<bool> watchdog_stop{false};
   std::thread watchdog;
@@ -370,11 +335,6 @@ int RunTestSuite(int argc, char** argv, const TestSuiteConfig& config) {
     });
   }
 
-  // Round-robin sharding: assign every selected test a stable 0-based ordinal
-  // and run only those whose ordinal lands in this shard. With the default
-  // shard_count == 1 this runs the whole suite. A shard whose slice is empty
-  // (shard_count > selected_count) is NOT an error — only a truly empty filter
-  // selection is (handled above). See TestRunnerCliOptions.
   const int shard_index = parsed.options.shard_index;
   const auto shard_count = static_cast<std::size_t>(parsed.options.shard_count);
   std::size_t selected_ordinal = 0;
@@ -438,8 +398,6 @@ int RunTestSuite(int argc, char** argv, const TestSuiteConfig& config) {
     return exit_code;
   }
 
-  // Final summary so callers (and agents) get an unambiguous pass signal
-  // without having to inspect the exit code or scrape verbose output.
   if (shard_count > 1) {
     std::cerr << name << ": OK (shard " << shard_index << "/" << shard_count << ": "
               << ran_count << " of " << selected_count
@@ -452,4 +410,4 @@ int RunTestSuite(int argc, char** argv, const TestSuiteConfig& config) {
   return 0;
 }
 
-}  // namespace microide::tests
+}

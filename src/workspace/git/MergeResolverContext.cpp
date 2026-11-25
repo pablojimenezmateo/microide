@@ -38,11 +38,6 @@ std::string BranchLabel(const project::GitRepositoryState& state) {
 }
 
 std::string IncomingRefLabel(const project::GitRepositoryState& repository_state) {
-  // MERGE_HEAD as the background refresh read it. This runs on the shell thread
-  // (FinalizeGitMergeTab), which first forked `git rev-parse --short MERGE_HEAD`
-  // (up to kGitReadTimeoutMs on a wedged git, for a pane caption) and then read
-  // the git directory itself -- a `.git` a remote project's mirror does not have
-  // (TD-2026-10-06-319). Abbreviated to 7 characters like BranchLabel above.
   if (!repository_state.pending_merge_head.empty()) {
     return repository_state.pending_merge_head.substr(0, 7);
   }
@@ -60,7 +55,7 @@ std::string PaneLabel(std::string_view role, std::string_view ref_context) {
   return std::string(role) + " (" + std::string(ref_context) + ")";
 }
 
-}  // namespace
+}
 
 MergeResolverLabels BuildMergeResolverLabels(const std::filesystem::path& project_root,
                                              const std::filesystem::path& output_path,
@@ -107,13 +102,9 @@ MergeResolverStatus BuildMergeResolverStatus(std::string& label_buffer,
       break;
   }
 
-  // Appended into the caller's buffer rather than composed with `+`. The old
-  // spelling built four temporaries per call for one toolbar line, and the
-  // merge surface calls this on every painted frame.
   std::string& label = label_buffer;
   label.clear();
   if (status.total_conflicts == 0) {
-    // A literal, so the buffer is not even touched in the no-conflict case.
     status.progress_label = "No merge conflicts";
     return status;
   }
@@ -136,8 +127,6 @@ MergeResolverStatus BuildMergeResolverStatus(std::string& label_buffer,
 std::optional<project::GitRepositoryEntry> FindConflictRepositoryEntry(
     const project::GitRepositoryState& repository_state,
     const std::filesystem::path& relative_path) {
-  // Repository entries carry generic text, not a `path` (TD-2026-08-11-183), so
-  // derive the key once here instead of per entry.
   const std::string key = relative_path.generic_string();
   for (const project::GitRepositoryEntry& entry : repository_state.entries) {
     if (entry.conflicted && entry.path.relative_path == key) {
@@ -176,4 +165,4 @@ std::span<const std::string> EnsureMergePreviewLines(MergeTabState& merge_tab,
   return merge_tab.preview_lines_cache;
 }
 
-}  // namespace microide::workspace
+}

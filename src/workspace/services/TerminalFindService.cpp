@@ -9,7 +9,7 @@
 
 namespace microide::workspace {
 
-using util::AppendUnsigned;  // one definition, in util/StringUtil.h
+using util::AppendUnsigned;
 
 void TerminalFindService::ClearMatches() {
   matches_.clear();
@@ -31,7 +31,6 @@ void TerminalFindService::RebuildCountText() {
   count_text_ += '/';
   AppendUnsigned(count_text_, matches_.size());
   if (truncated_) {
-    // The scan stopped at the cap, so the total is a floor, not a count.
     count_text_ += '+';
   }
 }
@@ -43,8 +42,6 @@ void TerminalFindService::Open(TerminalPaneState* tab, const std::string_view se
     query_.SetText(std::string(seed));
     Invalidate();
   }
-  // Reopening preselects the query so the next keystroke replaces it, which is
-  // what "Ctrl+F, type a new thing" expects.
   query_.SelectAll();
   Refresh(tab);
   RevealSelected(tab);
@@ -88,23 +85,13 @@ void TerminalFindService::Refresh(TerminalPaneState* tab) {
 
   std::size_t start_row = 0;
   std::uint64_t expected_trim_total = scanned_trim_total_;
-  // Which hit was selected, so it survives a rescan: a match set that merely grew
-  // at the tail must not jump the selection back to the top. Captured after the
-  // trim rebase below so it is in the same row space as the rescanned matches.
   std::optional<terminal::TerminalSearchMatch> previous;
-  // History prepended above (a host terminal's older page), or a gap filled in
-  // the middle, is rows the settled matches never saw: scan again from the top.
-  // The sequence is read before the scan, so a fill that lands during it is
-  // seen by the next refresh.
   const std::uint64_t row_shift_sequence = tab->session.RowShiftSequence();
   if (same_scan && (tab->session.ScrollbackTrimTotal() < scanned_trim_total_ ||
                     row_shift_sequence != scanned_row_shift_sequence_)) {
     same_scan = false;
   }
   if (same_scan) {
-    // Only the visible grid can still be rewritten, so keep the settled
-    // scrollback matches and rescan from that boundary. Rebase first: scrollback
-    // trimming runs on the reader thread and shifts every absolute row down.
     const std::uint64_t trim_total = tab->session.ScrollbackTrimTotal();
     if (const std::uint64_t delta = trim_total - scanned_trim_total_; delta > 0) {
       std::erase_if(matches_, [&](const terminal::TerminalSearchMatch& match) {
@@ -152,9 +139,6 @@ void TerminalFindService::Refresh(TerminalPaneState* tab) {
     selected_index_ = it == matches_.end() ? matches_.size() - 1
                                            : static_cast<std::size_t>(it - matches_.begin());
   } else {
-    // A fresh query starts at the newest hit: terminal output is read from the
-    // bottom, so the interesting match is almost always the last one. Enter then
-    // wraps forward and Shift+Enter walks back up through the history.
     selected_index_ = matches_.size() - 1;
   }
   RebuildCountText();
@@ -167,7 +151,6 @@ bool TerminalFindService::SelectRelative(TerminalPaneState* tab, const int delta
   }
   const auto count = static_cast<std::ptrdiff_t>(matches_.size());
   auto index = static_cast<std::ptrdiff_t>(selected_index_) + delta;
-  // Wrap at both ends, like every other find surface in the shell.
   index %= count;
   if (index < 0) {
     index += count;
@@ -183,17 +166,14 @@ void TerminalFindService::RevealSelected(TerminalPaneState* tab) const {
     return;
   }
   const std::size_t row = matches_[selected_index_].row;
-  // The panel render path records how many rows it last drew, so the reveal can
-  // center without the service needing the frame layout.
   const std::size_t visible_rows = std::max<std::size_t>(1, tab->visible_lines_max_rows);
   const auto first_visible = static_cast<std::size_t>(std::max(0, tab->scroll_row));
   if (row >= first_visible && row < first_visible + visible_rows) {
-    return;  // already on screen: don't yank the view for a match the user can see
+    return;
   }
-  // Following the tail would scroll straight back to the bottom on the next frame.
   tab->follow_tail = false;
   const std::size_t centered = row > visible_rows / 2 ? row - visible_rows / 2 : 0;
   tab->scroll_row = static_cast<int>(centered);
 }
 
-}  // namespace microide::workspace
+}

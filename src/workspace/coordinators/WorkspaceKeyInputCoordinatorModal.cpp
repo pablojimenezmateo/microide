@@ -62,12 +62,6 @@ bool KeyInputCoordinator::HandleTreeContextMenuKeyDown(const SDL_KeyboardEvent& 
       menu_state_.tree_context_menu.active_item_index = operations_.next_enabled_tree_context_menu_item_index(
           menu_state_.tree_context_menu.active_item_index, -1);
       return true;
-    // Home/End were the two keys the menus did not answer, in a shell where every
-    // other list does. They cannot go through ListNavigationKeyDelta: that resolver
-    // expresses them as a ±count delta, which lands on the ends only for a mover
-    // that clamps — this one wraps, so ±count is a full lap back to where it
-    // started. Stepping once from "no selection" is the primitive's own way of
-    // naming the first/last enabled item, skipping separators and disabled rows.
     case SDLK_HOME:
       menu_state_.tree_context_menu.active_item_index =
           operations_.next_enabled_tree_context_menu_item_index(-1, 1);
@@ -104,8 +98,6 @@ bool KeyInputCoordinator::HandleMenuBarKeyDown(const SDL_KeyboardEvent& event,
       return operations_.move_active_menu_item(1);
     case SDLK_UP:
       return operations_.move_active_menu_item(-1);
-    // See the tree context menu above for why these step from "no selection"
-    // rather than by a ±count delta.
     case SDLK_HOME:
     case SDLK_END:
       menu_state_.active_menu_item_index = -1;
@@ -122,9 +114,6 @@ bool KeyInputCoordinator::HandleMenuBarKeyDown(const SDL_KeyboardEvent& event,
   }
 }
 
-// The menu-bar overflow popup, which holds the menus that did not fit in compact
-// layout. Mirrors HandleMenuBarKeyDown: every key is consumed while the popup is
-// up so nothing leaks into the surface underneath, and Esc is what closes it.
 bool KeyInputCoordinator::HandleMenuOverflowPopupKeyDown(const SDL_KeyboardEvent& event,
                                                          SDL_Keymod modifiers) {
   const std::size_t item_count = operations_.menu_overflow_item_count();
@@ -133,9 +122,6 @@ bool KeyInputCoordinator::HandleMenuOverflowPopupKeyDown(const SDL_KeyboardEvent
     return true;
   }
   const int last_index = static_cast<int>(item_count) - 1;
-  // Every row of this popup is an enabled menu, so stepping is plain arithmetic
-  // rather than the enabled-item search the popup menus need. It wraps, as the
-  // popup menus do.
   const auto step = [&](int delta) {
     const int current = menu_state_.overflow_popup_active_index;
     int next = current < 0 ? (delta > 0 ? 0 : last_index) : current + delta;
@@ -167,8 +153,6 @@ bool KeyInputCoordinator::HandleMenuOverflowPopupKeyDown(const SDL_KeyboardEvent
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
     case SDLK_SPACE:
-    // Right opens the highlighted menu, matching the submenu gesture in the
-    // popup menus: the overflow row IS a menu, so "open what is selected".
     case SDLK_RIGHT:
       if (menu_state_.overflow_popup_active_index >= 0) {
         operations_.open_menu_overflow_item(
@@ -182,7 +166,7 @@ bool KeyInputCoordinator::HandleMenuOverflowPopupKeyDown(const SDL_KeyboardEvent
 
 bool KeyInputCoordinator::HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& event) {
   if (prompts_.surface.kind == PromptSurfaceState::Kind::TextInput) {
-    const SDL_Keymod modifiers = event.mod;  // the event's own, as HandleKeyDown reads them
+    const SDL_Keymod modifiers = event.mod;
     if ((modifiers & SDL_KMOD_CTRL) != 0 && event.key == SDLK_V) {
       return operations_.execute_action(ActionId::PasteClipboard, {}, ActionSource::Shortcut);
     }
@@ -266,13 +250,11 @@ bool KeyInputCoordinator::HandleNotificationFocusKeyDown(const SDL_KeyboardEvent
     case SDLK_RALT:
     case SDLK_LGUI:
     case SDLK_RGUI:
-      return true;  // a bare modifier is the start of a chord, not a reason to leave
+      return true;
     default:
       break;
   }
   if (!key.has_value()) {
-    // VS Code gives focus back on any other key and lets it through, so typing
-    // after glancing at a toast still types.
     notifications_.ClearFocus();
     EnsureRedraw([this]() { operations_.request_window_redraw(); });
     return false;
@@ -287,4 +269,4 @@ bool KeyInputCoordinator::HandleNotificationFocusKeyDown(const SDL_KeyboardEvent
   return true;
 }
 
-}  // namespace microide::workspace
+}

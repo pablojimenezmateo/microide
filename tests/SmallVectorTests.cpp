@@ -10,20 +10,16 @@ namespace {
 
 using microide::util::SmallVector;
 
-// An argument that is an element of the vector itself survives the growth it
-// triggers -- std::vector guarantees `v.push_back(v[0])`, and the old growth freed
-// the heap buffer before reading it (ASan: heap-use-after-free). Both the spill
-// from inline storage and a heap-to-heap regrowth.
 void TestSmallVectorPushBackOfItsOwnElementSurvivesGrowth() {
   microide::util::SmallVector<int, 2> v{7, 8};
-  v.push_back(v[0]);  // inline -> heap
+  v.push_back(v[0]);
   Expect(v.size() == 3 && v[2] == 7, "an inline element pushed through a spill");
-  v.push_back(v[1]);  // heap, at capacity 4 after this: no growth
+  v.push_back(v[1]);
   while (v.size() < v.capacity()) {
     v.push_back(v.back());
   }
   const int first = v[0];
-  v.push_back(v[0]);  // heap -> bigger heap
+  v.push_back(v[0]);
   Expect(v.back() == first, "a heap element pushed through a regrowth");
   v.emplace_back(v[1]);
   Expect(v.back() == v[1], "and emplaced");
@@ -61,8 +57,6 @@ void TestSmallVectorSpillsAndKeepsEveryElement() {
 }
 
 void TestSmallVectorClearKeepsCapacitySoRefillsDoNotReallocate() {
-  // This is the property the redraw path depends on: a reused instance stops
-  // allocating once it has seen its high-water mark.
   SmallVector<int, 1> values;
   values.push_back(1);
   values.push_back(2);
@@ -79,7 +73,7 @@ void TestSmallVectorClearKeepsCapacitySoRefillsDoNotReallocate() {
 
 void TestSmallVectorCopyIsIndependentOfItsSource() {
   SmallVector<int, 2> source{1, 2};
-  source.push_back(3);  // spilled
+  source.push_back(3);
   SmallVector<int, 2> copy = source;
   Expect(copy.size() == 3 && copy[2] == 3, "a copy carries the spilled contents");
   Expect(copy.data() != source.data(), "a copy does not alias the source buffer");
@@ -112,11 +106,9 @@ void TestSmallVectorMoveTransfersTheHeapBufferAndEmptiesTheSource() {
 }
 
 void TestSmallVectorMoveAssignmentReleasesTheOldBuffer() {
-  // Assigning over a spilled vector must free what it held; run under ASAN/LSAN
-  // this is the leak check, and the value assertions hold everywhere.
   SmallVector<int, 1> target;
   target.push_back(1);
-  target.push_back(2);  // spilled
+  target.push_back(2);
   SmallVector<int, 1> source{5};
   target = std::move(source);
   Expect(target.size() == 1 && target[0] == 5, "move assignment replaces the contents");
@@ -171,7 +163,7 @@ void TestSmallVectorEqualityIgnoresCapacityAndStorageMode() {
          "a wider inline capacity holds the same logical contents");
 }
 
-}  // namespace
+}
 
 void RegisterSmallVectorTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SmallVector/StaysInlineBelowCapacity", TestSmallVectorStaysInlineBelowCapacity);
@@ -194,4 +186,4 @@ void RegisterSmallVectorTests(std::vector<TestCase>& tests) {
           TestSmallVectorEqualityIgnoresCapacityAndStorageMode);
 }
 
-}  // namespace microide::tests
+}

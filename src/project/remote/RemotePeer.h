@@ -17,25 +17,12 @@
 
 namespace microide::project::remote {
 
-// Requests, responses, notifications and content over a RemoteFrameTransport —
-// the same layer on both ends: the client's RemoteServerClient and the server's
-// workspace both talk through one of these.
-//
-// Built in: `link/ping` is answered automatically, a peer started with pings on
-// sends them and declares the link dead after three misses (LinkHeartbeat), and
-// `op/cancel` marks an in-flight incoming request cancelled (IsCancelled) and
-// calls the on_cancel hook so a streaming handler stops.
-//
-// Threading: handlers and callbacks run on the transport's I/O thread. Register
-// every handler before Start; Request, Notify, Reply, SendContent and Cancel are
-// callable from any thread.
 class RemotePeer {
  public:
   struct RpcError {
     std::int64_t code = 0;
     std::string message;
   };
-  // Exactly one of the two is set.
   using ResponseHandler =
       std::function<void(std::optional<util::JsonValue> result, std::optional<RpcError> error)>;
   using RequestHandler = std::function<void(std::uint64_t id, const util::JsonValue& params)>;
@@ -44,8 +31,6 @@ class RemotePeer {
 
   struct Options {
     RemoteFrameTransport::Options transport;
-    // Send link/ping on this cadence and fail the connection after LinkHeartbeat's
-    // misses. The client turns it on; the server only answers.
     bool send_pings = false;
     LinkHeartbeat::Config heartbeat;
   };
@@ -60,40 +45,23 @@ class RemotePeer {
   void OnContent(ContentHandler handler);
   void OnCancel(std::function<void(std::uint64_t id)> handler);
   void OnClosed(std::function<void(std::string_view reason)> handler);
-  // Called on the I/O thread with the method of every request or notification
-  // about to be dispatched to a registered handler (not pings, not cancels):
-  // what the server's idle rule reads to tell a client from an observer.
   void OnDispatch(std::function<void(std::string_view method)> handler);
 
   [[nodiscard]] bool Start(int read_fd, int write_fd, Options options);
   void Stop();
-  // End the connection with `reason` (reported through OnClosed).
   void Fail(std::string_view reason) { transport_.Fail(reason); }
   bool closed() const { return transport_.closed(); }
   bool OnIoThread() const { return transport_.OnIoThread(); }
-  // Wait for what was sent so far to be written (RemoteFrameTransport::Flush).
   bool Flush(std::chrono::milliseconds stall, std::chrono::milliseconds limit) {
     return transport_.Flush(stall, limit);
   }
-  // The flush before a deliberate teardown (a server's goodbye, a client going):
-  // half a second of a peer that has stopped reading, five in all.
   bool FlushForTeardown() { return Flush(std::chrono::milliseconds(500), std::chrono::seconds(5)); }
 
-  // Send a request; `handler` runs once with its result or error — including when
-  // the connection closes first (a kErrorCancelled-coded "connection closed").
-  // Returns the request id, or 0 when the request could not be sent -- and then the
-  // handler never runs. Exactly one of the two: a close that answered the request
-  // before its send failed still returns the id.
   std::uint64_t Request(std::string_view method, const util::JsonValue& params, Lane lane,
                         ResponseHandler handler);
-  // As above, with `before_send(id)` run after the id is allocated and before the
-  // request can reach the peer — where a caller registers a route for content
-  // frames that answer it, which may otherwise arrive before Request returns.
   std::uint64_t Request(std::string_view method, const util::JsonValue& params, Lane lane,
                         ResponseHandler handler,
                         const std::function<void(std::uint64_t id)>& before_send);
-  // Ask the peer to stop request `id`; the local handler still runs once, with the
-  // peer's terminal reply.
   bool Cancel(std::uint64_t id);
   bool Notify(std::string_view method, const util::JsonValue& params,
               Lane lane = Lane::Interactive, std::uint64_t id = 0);
@@ -102,10 +70,7 @@ class RemotePeer {
   bool SendContent(FrameType type, std::uint64_t handle, std::string_view bytes,
                    Lane lane = Lane::Interactive);
 
-  // Incoming request `id` was cancelled by the peer (op/cancel) and not yet replied.
   bool IsCancelled(std::uint64_t id) const;
-  // Requests sent and not yet answered -- the caller's, not the link's own
-  // heartbeat pings, which come and go on their own clock.
   std::size_t pending_request_count() const;
   std::optional<std::int64_t> rtt_ms() const;
   std::size_t bulk_window() const { return transport_.bulk_window(); }
@@ -114,7 +79,6 @@ class RemotePeer {
  private:
   void HandleFrame(Frame frame);
   void HandleClosed(std::string_view reason, bool report);
-  // Sends the heartbeat's ping when one is due; returns the delay to the next tick.
   std::chrono::milliseconds HandleTick();
   bool SendControl(FrameType type, Lane lane, std::uint64_t id, const util::JsonValue& body);
 
@@ -129,14 +93,11 @@ class RemotePeer {
   bool send_pings_ = false;
   std::chrono::steady_clock::time_point epoch_ = std::chrono::steady_clock::now();
 
-  mutable std::mutex mutex_;  // guards everything below
+  mutable std::mutex mutex_;
   std::uint64_t next_request_id_ = 1;
   struct PendingRequest {
     ResponseHandler handler;
-    bool heartbeat = false;  // a link/ping of SendPing's
-    // Queued on the transport. A request is registered before it is sent (a fast
-    // answer must find it) and erased if the send fails; until then it is not
-    // "sent and unanswered", and pending_request_count leaves it out.
+    bool heartbeat = false;
     bool sent = false;
   };
   std::map<std::uint64_t, PendingRequest> pending_;
@@ -150,4 +111,4 @@ class RemotePeer {
                             const std::function<void(std::uint64_t id)>& before_send, bool heartbeat);
 };
 
-}  // namespace microide::project::remote
+}

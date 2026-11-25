@@ -55,10 +55,6 @@ void TestWorkspaceShellExternalChangeReloadsCleanBuffer() {
          "clean buffers should reload from disk after an external change");
 }
 
-// The project watcher covers the tracked tree only: it never looks inside
-// `.git`, nor outside the root. A clean buffer open in either place kept its old
-// text through a change on disk (soak 0cc74c09cb0a: `.git/HEAD` after a branch
-// switch still named the old branch), and a save would have written it back.
 void TestWorkspaceShellExternalChangeReloadsAnOpenFileTheProjectDoesNotTrack() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -73,7 +69,6 @@ void TestWorkspaceShellExternalChangeReloadsAnOpenFileTheProjectDoesNotTrack() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "open the project");
   WorkspaceShellTestAccess::OpenFile(shell, outside);
   WorkspaceShellTestAccess::OpenFile(shell, head);
-  // Frame prep is what hands the open documents to the watcher.
   SoftwareCanvas canvas(1280, 720);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
@@ -84,7 +79,6 @@ void TestWorkspaceShellExternalChangeReloadsAnOpenFileTheProjectDoesNotTrack() {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 
-  // git's own write: a lock file renamed over HEAD.
   WriteFile(head.parent_path() / "HEAD.lock", "ref: refs/heads/topic\n");
   std::filesystem::rename(head.parent_path() / "HEAD.lock", head);
   WriteFile(outside, "after\n");
@@ -106,13 +100,6 @@ void TestWorkspaceShellExternalChangeReloadsAnOpenFileTheProjectDoesNotTrack() {
          "an open file outside the root reloads after a write (" + line_of(outside) + ")");
 }
 
-// A diff's editable side is the file too, and it was not among the open
-// documents the watcher is handed -- only editor tabs were. Where the tree's
-// watch does not reach (outside the root, `.git`, or a tree too big to watch
-// whole: soak b8f2d54da0f1, after symlink loops had spent the watch budget), a
-// file open ONLY in a diff never heard of a change to it: the diff kept the old
-// text as that file's live buffer, and the editor tab opened on the file next
-// was handed that buffer -- clean, and not what the file holds.
 void TestWorkspaceShellExternalChangeReachesAFileOpenOnlyInADiff() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -133,7 +120,6 @@ void TestWorkspaceShellExternalChangeReachesAFileOpenOnlyInADiff() {
          "its editable side is the file outside the root");
   Expect(WorkspaceShellTestAccess::EditorViewportForPath(shell, outside) == nullptr,
          "and no editor tab has that file open");
-  // Frame prep is what hands the open documents to the watcher.
   SoftwareCanvas canvas(1280, 720);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
@@ -165,14 +151,6 @@ void TestWorkspaceShellExternalChangeReachesAFileOpenOnlyInADiff() {
          "and an editor tab opened on it holds what the file holds");
 }
 
-// A compare of two files (compare-files) is not a git diff: its "refs" are the
-// left file's name and "PLAIN". In a repository, a change to its right-hand file
-// rebuilt it as a git diff of those names -- git answered "no such file" for
-// both -- and the tab became a read-only diff of an empty right side, retitled
-// as a working-tree diff, the file's own text gone from it (found by the diff
-// monkey, 2026-11-20, as a window title that no longer matched the tab). Its
-// editable side is the file's buffer and the reload keeps it current; the diff
-// follows the buffer.
 void TestWorkspaceShellAChangeKeepsAFileCompareAFileCompare() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -233,11 +211,6 @@ void DrainProjectChangesBeforeTheWrite(WorkspaceShell& shell) {
   }
 }
 
-// With no project open -- the last one closed -- the shell started no file
-// watcher at all, so a document open then never heard of a change to its file:
-// a diff of two files kept the right-hand file's old text as a clean buffer
-// through every rewrite after it (soak 3fe0951ba184, seen once `documents`
-// listed a diff's side). The watcher runs for the open documents alone.
 void TestWorkspaceShellAChangeReachesADiffOpenWithNoProject() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -256,7 +229,7 @@ void TestWorkspaceShellAChangeReachesADiffOpenWithNoProject() {
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "compare-files " + left.string() + " " + right.string()),
          "compare-files opens the diff with no project");
   SoftwareCanvas canvas(1280, 720);
-  WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());  // hands the watcher its files
+  WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
   DrainProjectChangesBeforeTheWrite(shell);
 
   WriteFile(right, "three\n");
@@ -276,11 +249,6 @@ void TestWorkspaceShellAChangeReachesADiffOpenWithNoProject() {
 }
 
 
-// Soak 8c7737a346f4: a project whose root is gone -- here a symlink to its parent,
-// deleted while another project was in front -- comes back to the front with no
-// tree to watch. The shell dropped the whole watcher then, its open-file watch
-// with it, and a clean buffer open there never heard of a change to its file:
-// an append outside left it empty for good.
 void TestWorkspaceShellAProjectWhoseRootIsGoneStillWatchesItsOpenFiles() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path first = temp_dir.path() / "first";
@@ -301,7 +269,6 @@ void TestWorkspaceShellAProjectWhoseRootIsGoneStillWatchesItsOpenFiles() {
   std::filesystem::remove_all(second);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "project-next"),
          "the second project comes back, its root gone");
-  // Frame prep is what hands the open documents to the watcher.
   WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
   DrainProjectChangesBeforeTheWrite(shell);
 
@@ -318,7 +285,6 @@ void TestWorkspaceShellAProjectWhoseRootIsGoneStillWatchesItsOpenFiles() {
   Expect(line() == "after", "the open file reloads after a write (" + line() + ")");
 }
 
-// Drains any pending project-change events so the watcher baseline is settled.
 void DrainProjectChanges(WorkspaceShell& shell) {
   for (int attempt = 0; attempt < 20; ++attempt) {
     if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
@@ -328,12 +294,6 @@ void DrainProjectChanges(WorkspaceShell& shell) {
   }
 }
 
-// Dispatch a synthetic watcher batch and let the shell apply it — then CHECK that
-// it applied. A batch that is delivered but never acted on leaves every "no banner
-// was raised" assertion below passing for the wrong reason, which is exactly how
-// TD-2026-09-29-311 hid: under load the initial scan had not finished when the
-// fixture stopped the watcher, so the dispatch wrapper buffered every synthetic
-// batch waiting for a baseline that was never coming, and reported success.
 void DispatchAndApply(WorkspaceShell& shell,
                       platform::IndexUpdateBatch batch,
                       const char* what) {
@@ -342,10 +302,6 @@ void DispatchAndApply(WorkspaceShell& shell,
   Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(shell,
                                                                            std::move(batch)),
          std::string("the fixture must actually deliver a watcher batch (") + what + ")");
-  // Wait for the APPLY itself, pumping the reload, rather than for a fixed 20 x
-  // 10 ms drain: under a loaded lane the sweep had not run inside 200 ms and this
-  // failed with nothing wrong (tests lane, 2026-11-09). Fast machines leave on the
-  // first poll.
   (void)WaitUntil(
       [&]() { return WorkspaceShellTestAccess::LastAppliedProjectChangeGeneration(shell) > before; },
       std::chrono::seconds(10), std::chrono::milliseconds(10),
@@ -355,10 +311,6 @@ void DispatchAndApply(WorkspaceShell& shell,
          std::string("the dispatched batch must actually be APPLIED, or every assertion "
                      "after it is about a sweep that never ran (") +
              what + ")");
-  // The echo check answers with a content digest computed OFF the shell thread,
-  // so the sweep can leave a path undecided and act when the digest lands. Wait
-  // for it here rather than letting the drain's 10 ms sleeps decide: the
-  // assertions below are about the verdict, not about how fast this machine is.
   WorkspaceShellTestAccess::FlushPendingFileReads(shell);
 }
 
@@ -399,9 +351,6 @@ void TestWorkspaceShellExternalChangeBannerForDirtyBuffer() {
          "dirty buffers should keep in-memory edits until the user acts");
 }
 
-// The soak's 3b57c171523f: type, the file changes on disk, undo. The undo lands on
-// the content the buffer was read with, which used to read clean -- a clean buffer
-// that differs from its file, with nothing left to reload it.
 void TestWorkspaceShellUndoAfterADiskChangeDoesNotReadClean() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -426,12 +375,6 @@ void TestWorkspaceShellUndoAfterADiskChangeDoesNotReadClean() {
          "a buffer undone to content the file no longer holds must not read clean");
 }
 
-// Soak ed121110a40f: a buffer edited in one project, the file then saved over by
-// a second project open on the same tree, the first project brought back and
-// its edit undone -- the undo read clean against a file that held the other
-// save. A project in the background catches up when it comes back, and that
-// catch-up reloaded the clean buffers but passed over the dirty ones, so the
-// change under their edits was never noted.
 void TestWorkspaceShellUndoAfterADiskChangeInTheBackgroundDoesNotReadClean() {
   TemporaryDirectory temp_dir;
   ScopedAppHomes homes(temp_dir.path() / "state", temp_dir.path() / "config");
@@ -458,7 +401,6 @@ void TestWorkspaceShellUndoAfterADiskChangeInTheBackgroundDoesNotReadClean() {
 
   Expect(WorkspaceShellTestAccess::HasExternalChangeBanner(shell, file_path),
          "the change made in the background should be shown under the unsaved edit");
-  // Keep is an answer: the next catch-up, with nothing new on disk, asks nothing.
   WorkspaceShellTestAccess::EditorBannerKeep(shell, file_path);
   Expect(WorkspaceShellTestAccess::SwitchProject(shell, 1), "to the second project again");
   Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0), "and back");
@@ -472,13 +414,6 @@ void TestWorkspaceShellUndoAfterADiskChangeInTheBackgroundDoesNotReadClean() {
          "a buffer undone to content the file no longer holds must not read clean");
 }
 
-// Soak b8f2d54da0f1: a file open only in diffs, changed on disk while its
-// project was in the background. A project catches up when it comes back by
-// re-reading its open buffers -- its EDITOR tabs' -- and then rebuilding its
-// diffs; a diff that cannot be rebuilt (the file is binary now) or that rejoins
-// its file's other diff (two diffs of one file, each handed the other's old
-// buffer) kept the text from before the change as that file's live buffer, and
-// the editor tab opened on the file next was handed it: clean, and not the file.
 void TestWorkspaceShellABackgroundChangeReachesAFileOpenOnlyInDiffs() {
   TemporaryDirectory temp_dir;
   ScopedAppHomes homes(temp_dir.path() / "state", temp_dir.path() / "config");
@@ -504,7 +439,7 @@ void TestWorkspaceShellABackgroundChangeReachesAFileOpenOnlyInDiffs() {
   };
   diff(root / "left.txt", binary);
   diff(root / "left.txt", text);
-  diff(root / "third.txt", text);  // a second diff of notes.txt
+  diff(root / "third.txt", text);
   DrainProjectChanges(shell);
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, other, true, false), "the second project opens in front");
 
@@ -544,8 +479,6 @@ void TestWorkspaceShellSelfWriteDoesNotRaiseBanner() {
 
   Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
          "saving a buffer with no external change should succeed");
-  // Pump the watcher: its echo of our own write must be recognized by signature
-  // and produce no banner (neither external-change nor reloaded notice).
   for (int attempt = 0; attempt < 20; ++attempt) {
     WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true);
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -556,17 +489,6 @@ void TestWorkspaceShellSelfWriteDoesNotRaiseBanner() {
          "the saved file should contain the in-memory edits");
 }
 
-// A synthetic "this file was modified" batch, pushed through the LIVE watcher's
-// dispatch so the shell's own change handling runs. The real watcher may or may not
-// deliver an inotify event inside a test's window, and a test that asserts NOTHING
-// happened cannot tell "the fix worked" from "the event never arrived" — so the
-// event is made certain rather than waited for.
-// Move `path`'s modification time somewhere unmistakably different. Both tests
-// below depend on the STAT differing — that is the whole precondition for the
-// content confirmation they exercise — and a rewrite that lands inside the same
-// filesystem mtime tick as the previous one does not move it. Leaving that to
-// timing made one of these pass or fail with machine load, which is the opposite
-// of what a test for a content check should depend on.
 void ForceDistinctModificationTime(const std::filesystem::path& path) {
   std::error_code error;
   std::filesystem::last_write_time(
@@ -593,19 +515,6 @@ platform::IndexUpdateBatch BuildModifiedBatch(const std::filesystem::path& root,
   return batch;
 }
 
-// Regression: the watcher's "is this our own echo?" check compared mtime+size, so a
-// byte-identical rewrite read as an external change. For a CLEAN buffer that reloaded
-// the file and raised a "reloaded from disk" notice for a file nobody had changed;
-// for a dirty one it raised the external-change banner, unprompted. An agent
-// rewriting a file with the same bytes produces exactly this, which is why it is the
-// common case rather than the exotic one.
-// State that decides the banner assertions below, rendered only when one fails.
-// These two tests have been seen to fail under heavy machine load — a real
-// external change reported as our own echo — at roughly one run in five, and
-// never reproducibly (TD-2026-09-29-311). Whatever the cause, the next
-// occurrence should say which input it saw rather than only which banner was
-// missing, because that is the difference between a fixture problem and a real
-// suppression bug.
 std::string BufferText(const editor::TextViewport& view) {
   return util::SerializeLinesStreaming(editor::LineSpan(view.lines()), view.line_ending());
 }
@@ -622,9 +531,6 @@ std::string ExternalChangeDiagnostics(WorkspaceShell& shell,
          " size=" + std::to_string(current.size) +
          "; buffer first line='" + std::string(viewport.lines().LineView(0)) +
          "' dirty=" + (viewport.dirty() ? "yes" : "no") +
-         // Which of the two ways "no banner" happens: the sweep found no open view
-         // of this path at all (so it had nothing to reload and nothing to warn
-         // about), or it found them and decided the change was our own echo.
          "; open views=" + std::to_string(WorkspaceShellTestAccess::CountOpenBufferViews(
                                shell, file_path)) +
          "; echo-suppressed=" +
@@ -648,16 +554,11 @@ void TestWorkspaceShellIdenticalRewriteRaisesNoReloadNotice() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "identical-rewrite fixture should open the project");
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
-  // Only the synthetic batches below may drive this test: the live inotify
-  // watcher reacting to the fixture's own writes is a second, uncontrolled
-  // source of batches (TD-2026-09-29-311). Unwatch also joins its threads, so
-  // anything in flight has landed before the assertions run.
   Expect(WorkspaceShellTestAccess::QuiesceFileIndexWatcherForTesting(shell),
          "the fixture must have a live watcher to quiesce");
   DrainProjectChanges(shell);
   WorkspaceShellTestAccess::ClearEditorBannersForTesting(shell);
 
-  // Rewrite with the SAME bytes: the mtime moves, the content does not.
   WriteFile(file_path, "same bytes\n");
   ForceDistinctModificationTime(file_path);
   DispatchAndApply(shell, BuildModifiedBatch(root, relative), "the identical-rewrite batch");
@@ -668,12 +569,6 @@ void TestWorkspaceShellIdenticalRewriteRaisesNoReloadNotice() {
          "a byte-identical rewrite must not raise the external-change banner");
 }
 
-// The split-pane shape, which the single-view tests could not distinguish: the
-// echo check walks EVERY view of the path, and each view used to re-read the file
-// to confirm the mismatch. Two panes on one file therefore meant two full reads
-// for one watcher event, and the answer was never shared. The read is now hoisted
-// out of the loop, which only stays correct if every view still gets its own
-// verdict and its own re-baseline — so assert the behaviour with two views open.
 void TestWorkspaceShellIdenticalRewriteWithSplitViewsReadsOnce() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -686,10 +581,6 @@ void TestWorkspaceShellIdenticalRewriteWithSplitViewsReadsOnce() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "split-view fixture should open the project");
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
-  // Only the synthetic batches below may drive this test: the live inotify
-  // watcher reacting to the fixture's own writes is a second, uncontrolled
-  // source of batches (TD-2026-09-29-311). Unwatch also joins its threads, so
-  // anything in flight has landed before the assertions run.
   Expect(WorkspaceShellTestAccess::QuiesceFileIndexWatcherForTesting(shell),
          "the fixture must have a live watcher to quiesce");
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, workspace::EditorSplitOrientation::Vertical),
@@ -710,7 +601,6 @@ void TestWorkspaceShellIdenticalRewriteWithSplitViewsReadsOnce() {
   Expect(!WorkspaceShellTestAccess::HasExternalChangeBanner(shell, file_path),
          "neither view raises the external-change banner");
 
-  // And a real change still reaches both views after the hoist.
   WriteFile(file_path, "SAME BYTES\n");
   ForceDistinctModificationTime(file_path);
   DispatchAndApply(shell, BuildModifiedBatch(root, relative), "the real-rewrite batch");
@@ -721,15 +611,6 @@ void TestWorkspaceShellIdenticalRewriteWithSplitViewsReadsOnce() {
                    ExternalChangeDiagnostics(shell, file_path));
 }
 
-// The echo confirm reads the file off the shell thread and answers later. If the
-// file changes again in between -- the confirm for an identical rewrite still in
-// flight when a real rewrite lands, whose own event is folded into it -- the
-// digest is of the OLD bytes. Paired with a fresh stat it matched the buffer
-// (which also holds the old bytes), so the view was re-baselined to the NEW
-// file's stat: the real change was filed as our own echo, the clean buffer never
-// reloaded, and every later check agreed nothing had changed. The flaky
-// IdenticalRewriteWithSplitViewsReadsOnce, and the soak's "clean buffer differs
-// from its file and the file is not changing" findings, were this.
 void TestWorkspaceShellStaleEchoDigestDoesNotSwallowALaterChange() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -745,21 +626,17 @@ void TestWorkspaceShellStaleEchoDigestDoesNotSwallowALaterChange() {
          "the fixture must have a live watcher to quiesce");
   DrainProjectChanges(shell);
 
-  // The identical rewrite the confirm was posted for, and what its worker read.
   WriteFile(file_path, "same bytes\n");
   ForceDistinctModificationTime(file_path);
   const util::FileSignature read_signature = util::StatFileSignature(file_path);
   const std::uint64_t old_digest = util::QuickContentHash("same bytes\n");
 
-  // A real change lands before the digest is answered.
   WriteFile(file_path, "SAME BYTES\n");
   ForceDistinctModificationTime(file_path);
   Expect(!WorkspaceShellTestAccess::ExternalChangeIsOwnEchoForTesting(shell, file_path, old_digest,
                                                                       read_signature),
          "a digest read before the file changed again must not excuse the change");
 
-  // Positive control: a digest read under the file's current stat still settles
-  // an identical rewrite as an echo.
   WriteFile(file_path, "same bytes\n");
   ForceDistinctModificationTime(file_path);
   Expect(WorkspaceShellTestAccess::ExternalChangeIsOwnEchoForTesting(
@@ -767,14 +644,6 @@ void TestWorkspaceShellStaleEchoDigestDoesNotSwallowALaterChange() {
          "a digest read under the current stat confirms an identical rewrite");
 }
 
-// The echo check's answer is a content digest, and computing it is a read of up to
-// 8 MiB. Doing that on the shell thread is the stall the remote-projects design
-// forbids ("hashing never happens on the shell thread"), and a `git checkout` that
-// moves the mtime of every open file pays it once per file with the window frozen.
-//
-// What this pins is the MECHANISM, not the clock: the posted-read counter is
-// monotonic, so "the digest went off-thread" is checkable without racing whether
-// it has come back. A version that read inline would leave it unchanged.
 void TestWorkspaceShellIdenticalRewriteConfirmsOffTheShellThread() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -792,8 +661,6 @@ void TestWorkspaceShellIdenticalRewriteConfirmsOffTheShellThread() {
   DrainProjectChanges(shell);
   WorkspaceShellTestAccess::ClearEditorBannersForTesting(shell);
 
-  // Same bytes, moved mtime: the one case that cannot be settled by the stat and
-  // therefore has to read.
   const std::uint64_t reads_before = WorkspaceShellTestAccess::PostedFileReadCount(shell);
   const std::uint64_t inline_reads_before =
       util::ReadPerformanceCounter(util::PerfCounterId::ExternalChangeConfirmInlineReads);
@@ -807,9 +674,6 @@ void TestWorkspaceShellIdenticalRewriteConfirmsOffTheShellThread() {
              !WorkspaceShellTestAccess::HasExternalChangeBanner(shell, file_path),
          "and the verdict it comes back with is still 'our own write'");
 
-  // A size change needs no digest, so it must not post a read at all — the stat
-  // already answered, and reading to confirm what is already known is the cost
-  // this whole path exists to avoid.
   const std::uint64_t reads_after_confirm = WorkspaceShellTestAccess::PostedFileReadCount(shell);
   WriteFile(file_path, "different length entirely\n");
   ForceDistinctModificationTime(file_path);
@@ -819,12 +683,6 @@ void TestWorkspaceShellIdenticalRewriteConfirmsOffTheShellThread() {
   Expect(WorkspaceShellTestAccess::HasReloadedNoticeBanner(shell, file_path),
          "and it still reaches the clean buffer as a reload");
 
-  // The case where the second read actually happened: same SIZE, different bytes,
-  // over a CLEAN buffer. The digest says "changed", so the sweep reloads — and the
-  // reload used to re-ask the echo question for itself, reading the same file a
-  // second time on the shell thread to learn what the sweep had just settled. A
-  // size change (above) never reached that read, which is why asserting it there
-  // proved nothing.
   WriteFile(file_path, "DIFFERENT LENGTH ENTIRELY\n");
   ForceDistinctModificationTime(file_path);
   DispatchAndApply(shell, BuildModifiedBatch(root, relative), "the same-size rewrite batch");
@@ -834,22 +692,11 @@ void TestWorkspaceShellIdenticalRewriteConfirmsOffTheShellThread() {
              "DIFFERENT LENGTH ENTIRELY\n",
          "and the clean buffer is reloaded with the new content");
 
-  // NOT tested here: "one confirm in flight per path". Two dispatches with no
-  // flush between them pass whether or not the dedup exists — if the first digest
-  // has already landed, the reload re-baselines the view and the second dispatch
-  // classifies as OwnEcho, posting no read for a different reason. Making it
-  // deterministic needs a seam that holds the reader, and a test that passes for
-  // two reasons is worse than none.
-
-  // The whole sweep did no confirming read on the shell thread. That is the point
-  // of the exercise, and it is a separate claim from "a read was posted".
   Expect(util::ReadPerformanceCounter(
              util::PerfCounterId::ExternalChangeConfirmInlineReads) == inline_reads_before,
          "no confirming read ran on the shell thread");
 }
 
-// The other half: a real external change must still reach the user. Without it the
-// fix above could pass by suppressing everything.
 void TestWorkspaceShellRealRewriteStillNotifies() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -862,16 +709,11 @@ void TestWorkspaceShellRealRewriteStillNotifies() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "real-rewrite fixture should open the project");
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
-  // Only the synthetic batches below may drive this test: the live inotify
-  // watcher reacting to the fixture's own writes is a second, uncontrolled
-  // source of batches (TD-2026-09-29-311). Unwatch also joins its threads, so
-  // anything in flight has landed before the assertions run.
   Expect(WorkspaceShellTestAccess::QuiesceFileIndexWatcherForTesting(shell),
          "the fixture must have a live watcher to quiesce");
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("dirty ");
   DrainProjectChanges(shell);
 
-  // Same LENGTH, different bytes — the case a content hash must not wave through.
   WriteFile(file_path, "SAME BYTES\n");
   ForceDistinctModificationTime(file_path);
   DispatchAndApply(shell, BuildModifiedBatch(root, relative),
@@ -898,8 +740,6 @@ void TestWorkspaceShellSaveTimeConflictGuardBlocksClobber() {
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("dirty ");
   DrainProjectChanges(shell);
 
-  // External writer changes the file. We deliberately do NOT pump the watcher,
-  // simulating a missed event; the save-time guard must still refuse to clobber.
   WriteFile(file_path, "newer on disk\n");
   Expect(!WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
          "save must fail when the file changed on disk since load");
@@ -909,10 +749,6 @@ void TestWorkspaceShellSaveTimeConflictGuardBlocksClobber() {
          "a blocked save should raise the external-change banner");
 }
 
-// #6: the after-delay autosave flush must honor the same disk-conflict guard as a manual
-// save. If the file changed on disk since load, an autosave firing (e.g. debounce elapsed
-// while the user was away) must NOT silently overwrite the external change -- it routes
-// through SaveTab, so it refuses and raises the banner instead of clobbering.
 void TestWorkspaceShellAutosaveFlushRespectsDiskConflict() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -924,18 +760,14 @@ void TestWorkspaceShellAutosaveFlushRespectsDiskConflict() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "autosave-conflict fixture should open the project");
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
-  // Set the mode AFTER opening: OpenProjectTab loads the project/user config, which would
-  // otherwise reset editor.autosave back to its default.
   Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.autosave", "after_delay"),
          "after_delay autosave should be settable");
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("dirty ");
   DrainProjectChanges(shell);
 
-  // External writer changes the file; the watcher event is deliberately missed.
   WriteFile(file_path, "newer on disk\n");
 
-  // Fire the autosave flush directly (as the debounce wake would).
-  WorkspaceShellTestAccess::MaybeAutosaveDirtyTabs(shell, /*on_focus_change=*/false);
+  WorkspaceShellTestAccess::MaybeAutosaveDirtyTabs(shell, false);
 
   Expect(ReadFile(file_path) == "newer on disk\n",
          "an autosave flush must not overwrite an external change (no silent clobber)");
@@ -971,8 +803,6 @@ void TestWorkspaceShellBannerOverwriteWritesInMemoryEdits() {
          "Overwrite should leave the buffer clean after saving");
 }
 
-// VS Code's save conflict: the refused save says why, and Compare shows the file
-// on disk beside the unsaved buffer without settling anything — the banner stays.
 void TestWorkspaceShellBannerCompareShowsDiskBesideTheBuffer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1053,12 +883,6 @@ void TestWorkspaceShellBannerKeepPreservesBoth() {
          "Keep should leave the on-disk content untouched");
 }
 
-// TD-2026-07-17A-015: an external clean reload replaces an open buffer's content
-// and re-syncs the LSP server with a full didChange. That re-sync used to snapshot
-// BOTH the pre-reload and the reloaded buffer into whole-document vectors; it now
-// captures only the pre-reload line count + first differing line (compared while
-// both buffers exist) and streams the didChange from the reloaded viewport, so a
-// large external reload copies neither buffer.
 void TestWorkspaceShellCleanReloadDoesNotSnapshotBuffers() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1083,9 +907,6 @@ void TestWorkspaceShellCleanReloadDoesNotSnapshotBuffers() {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 
-  // Rewrite on disk with a DIFFERENT line count so the reload takes the diagnostic-
-  // shift delta path (first differing line + net line delta), not just the equal-
-  // count early-out. The first ~250 lines are unchanged so first_changed is > 0.
   std::string updated;
   for (int i = 0; i < 250; ++i) {
     updated += "line ";
@@ -1100,7 +921,6 @@ void TestWorkspaceShellCleanReloadDoesNotSnapshotBuffers() {
          "external change to a clean buffer should trigger a reload");
   Expect(microide::editor::TextBuffer::snapshot_build_count() == 0,
          "a clean external reload must not snapshot the old or new buffer for LSP sync");
-  // 250 "line i" rows + the new tail + a trailing empty line the editor tracks.
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).line_count() == 252,
          "the reloaded buffer should hold the new (shorter) content");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[250] == "brand new tail line",
@@ -1129,18 +949,6 @@ void TestWorkspaceShellCleanReloadRaisesNotice() {
          "a silent clean reload should surface a passive reloaded-from-disk notice");
 }
 
-// QA monkey, qa-asan seed 3: a clean tab opened through a symlink kept its old
-// text after the file it links to was saved from that file's own tab. The
-// watcher names the file written -- the target -- and the sweep matched open
-// views by path, so the link's view was never asked. The batch here names only
-// the target, as the watcher does.
-// Soak 4f0b1aff2ec8: `review-conflicts` opened a merge tab for scheduler.cpp beside
-// its clean editor tab, the resolver's result was edited, and `git merge --abort`
-// rewrote the file. The edited RESULT is unsaved work and keeps its edits; the
-// editor tab is a clean view of the file and has
-// nothing to keep. The dirty check was asked about the path, though, and found
-// the merge result: the change was handled as one under edits, the clean editor
-// tab never reloaded, and it kept the conflict markers git had just removed.
 void TestWorkspaceShellAnEditedMergeResultDoesNotKeepTheFilesCleanTabStale() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1166,7 +974,7 @@ void TestWorkspaceShellAnEditedMergeResultDoesNotKeepTheFilesCleanTabStale() {
   WorkspaceShellTestAccess::ActiveMerge(shell).result_viewport.InsertText("resolving ");
   Expect(WorkspaceShellTestAccess::ActiveMerge(shell).result_viewport.dirty(), "its result is edited");
 
-  WriteFile(file_path, "ours\n");  // git merge --abort
+  WriteFile(file_path, "ours\n");
   Expect(WaitForProjectReload(shell, std::chrono::seconds(1)), "the change reaches the project");
 
   const editor::TextViewport* editor = nullptr;
@@ -1210,13 +1018,6 @@ void TestWorkspaceShellChangeToASymlinkTargetReloadsTheLinksCleanBuffer() {
          "and says so, on the link's tab");
 }
 
-// Soak a5c68f4f464f, the run that still failed: link-to-crlf.txt was opened
-// before the sync had made the LINK (an empty buffer, no file, so no real path
-// recorded); the sync then made it, dangling a moment -- the watcher named it,
-// read as deleted -- and crlf.txt arrived. The views open through a link to
-// crlf.txt were chosen by the real path each recorded when it opened: this one
-// had none, and kept its empty text. A change naming a view's own path makes it
-// look again at where that path leads.
 void TestWorkspaceShellAViewOpenedBeforeItsPathBecameALinkFollowsTheTarget() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1233,7 +1034,7 @@ void TestWorkspaceShellAViewOpenedBeforeItsPathBecameALinkFollowsTheTarget() {
          "nothing at the path yet: an empty buffer bound to it");
   DrainProjectChanges(shell);
 
-  std::filesystem::create_symlink("target.txt", link_path);  // the link first, dangling
+  std::filesystem::create_symlink("target.txt", link_path);
   platform::IndexUpdateBatch link_made;
   link_made.is_initial = false;
   link_made.changes.push_back(platform::IndexUpdateBatch::Change{
@@ -1242,7 +1043,7 @@ void TestWorkspaceShellAViewOpenedBeforeItsPathBecameALinkFollowsTheTarget() {
   });
   DispatchAndApply(shell, std::move(link_made), "the dangling link, read as gone");
 
-  WriteFile(target_path, "arrived\n");  // then what it names
+  WriteFile(target_path, "arrived\n");
   ForceDistinctModificationTime(target_path);
   DispatchAndApply(shell, BuildModifiedBatch(root, "target.txt"), "the target's arrival");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "arrived",
@@ -1250,24 +1051,18 @@ void TestWorkspaceShellAViewOpenedBeforeItsPathBecameALinkFollowsTheTarget() {
              std::string(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0]));
 }
 
-// Soak a5c68f4f464f (remote, reproduced 3/3 from its replay): link-to-crlf.txt
-// opened while its target had not arrived -- an empty clean buffer bound to the
-// link -- and crlf.txt then written by a route that reloads by path (a git
-// discard, a patch apply, a catch-up sweep, the remote pull) rather than by a
-// watcher batch. Only the watcher batch asked after the views open through a
-// link; every reload by path left them stale. Reloading a path reloads them too.
 void TestWorkspaceShellAReloadByPathReachesAViewOpenedThroughALink() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path target_path = root / "target.txt";
   const std::filesystem::path link_path = root / "link.txt";
   std::filesystem::create_directories(root);
-  std::filesystem::create_symlink("target.txt", link_path);  // dangling: the target has not arrived
+  std::filesystem::create_symlink("target.txt", link_path);
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
-  (void)WorkspaceShellTestAccess::ExecuteCommandLine(shell, "open " + link_path.string());  // the soak's step
+  (void)WorkspaceShellTestAccess::ExecuteCommandLine(shell, "open " + link_path.string());
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == link_path &&
              WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0].empty(),
          "the link opens, empty");
@@ -1279,13 +1074,6 @@ void TestWorkspaceShellAReloadByPathReachesAViewOpenedThroughALink() {
              std::string(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0]));
 }
 
-// Soak 77fa58de2a44: `qa-ext/link1 -> qa-weird/link-to-crlf.txt`, itself a link
-// to crlf.txt when link1 was opened. The world then put a regular file in
-// link-to-crlf.txt's place (a rename back, a branch switch), and a save through
-// that tab wrote it -- the change the watcher names, by that path. Which views
-// see it was decided by the real path each view recorded WHEN IT OPENED (crlf.txt
-// for link1), not by where its chain leads now (link-to-crlf.txt itself): link1
-// matched nothing, and its clean buffer kept the old text for good.
 void TestWorkspaceShellALinksChainThatChangedStillReachesItsCleanBuffer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1303,7 +1091,6 @@ void TestWorkspaceShellALinksChainThatChangedStillReachesItsCleanBuffer() {
   DrainProjectChanges(shell);
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "the first target", "opened through the chain");
 
-  // The middle link becomes a regular file of its own, then changes.
   std::filesystem::remove(middle);
   WriteFile(middle, "middle is a file now\n");
   ForceDistinctModificationTime(middle);
@@ -1313,13 +1100,6 @@ void TestWorkspaceShellALinksChainThatChangedStillReachesItsCleanBuffer() {
              std::string(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0]));
 }
 
-// Soak `88696b6b00ac` and its family (`data` oracle: "the clean buffer of
-// bom.txt differs from its file on disk", under qa-weird/loop/): the same file
-// open twice, once through a symlinked FOLDER (`loop -> .`). The file itself is no
-// link, so the view recorded no symlink target, and a save from the other tab --
-// whose echo the watcher names by the file's real path, as it names every change
-// (FileIndexWatcher does not report through links) -- never reached it. The
-// folder-link view's clean buffer kept the old bytes for good.
 void TestWorkspaceShellChangeReachesAViewOpenedThroughASymlinkedFolder() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1345,9 +1125,6 @@ void TestWorkspaceShellChangeReachesAViewOpenedThroughASymlinkedFolder() {
          "and says so, on that view's tab");
 }
 
-// The other half: saving through the link writes the target (the link is kept),
-// and the watcher's echo names the target. Routed to the link's view, it must
-// classify as that view's own write, not as an external change.
 void TestWorkspaceShellSaveThroughASymlinkIsItsOwnEcho() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1375,10 +1152,6 @@ void TestWorkspaceShellSaveThroughASymlinkIsItsOwnEcho() {
          "and leaves the buffer as saved");
 }
 
-// A flood past the coalescer's 1024-change cap keeps the first 1024 itemized and
-// asks for a rescan. The apply re-checked open buffers only for a rescan with NO
-// itemized change, so an open file whose change came after the cap -- a branch
-// switch touching a few thousand files -- kept showing its old text.
 void TestWorkspaceShellFloodPastTheCapReloadsAnOpenFileItDidNotName() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1416,7 +1189,7 @@ void TestWorkspaceShellFloodPastTheCapReloadsAnOpenFileItDidNotName() {
   for (int i = 0; i < kFlood; ++i) {
     flood.changes.push_back(modified(root / "gen" / ("f" + std::to_string(i) + ".txt")));
   }
-  flood.changes.push_back(modified(open_file));  // past the cap
+  flood.changes.push_back(modified(open_file));
   Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(shell, std::move(flood)),
          "flood fixture should deliver its batch");
   Expect(WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false),
@@ -1451,9 +1224,6 @@ void TestWorkspaceShellExternalHeadChangeMarksGitSnapshotStale() {
          "external HEAD changes should mark the git snapshot stale");
 }
 
-// Data-integrity (A4): an external change to a file open as a clean view in BOTH split
-// groups must reload every group, not just the focused one — a non-focused split view
-// left showing stale content can later be saved over the external change.
 void TestWorkspaceShellExternalChangeReloadsBothSplitGroups() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1465,15 +1235,12 @@ void TestWorkspaceShellExternalChangeReloadsBothSplitGroups() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "split-reload fixture should open the project");
 
-  // Group 0 gets a clean view of the file.
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
-  // Split, then open the same file as a clean view in the new (now focused) group.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
              shell, microide::workspace::EditorSplitOrientation::Vertical),
          "splitting the editor group should succeed");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "there should be two groups");
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
-  // Refocus group 0 so group 1 (also holding the file) is the NON-focused group.
   if (WorkspaceShellTestAccess::FocusedGroupIndex(shell) != 0) {
     WorkspaceShellTestAccess::FocusOtherEditorGroup(shell);
   }
@@ -1491,10 +1258,6 @@ void TestWorkspaceShellExternalChangeReloadsBothSplitGroups() {
          "the NON-focused split group's clean view must also reload (no stale content)");
 }
 
-// Autosave must flush a buffer dirtied in the NON-focused split group. Dirty-tab
-// enumeration used to walk only the focused group, so a file open exclusively in
-// the other split view was skipped by the autosave flush and never written to disk
-// (VSCode "Save All" flushes every group).
 void TestWorkspaceShellAutosaveFlushesNonFocusedGroupDirtyTab() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1508,14 +1271,12 @@ void TestWorkspaceShellAutosaveFlushesNonFocusedGroupDirtyTab() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "non-focused autosave fixture should open the project");
   WorkspaceShellTestAccess::OpenFile(shell, file_a);
-  // Split, then open file_b only in the new (focused) group 1.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
              shell, microide::workspace::EditorSplitOrientation::Vertical),
          "splitting the editor group should succeed");
   Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1, "the new group should be focused");
   WorkspaceShellTestAccess::OpenFile(shell, file_b);
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("edited ");
-  // Refocus group 0 so file_b is dirty and open ONLY in the non-focused group 1.
   Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus should return to group 0");
   Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0, "group 0 should be focused");
   Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).dirty(),
@@ -1524,10 +1285,9 @@ void TestWorkspaceShellAutosaveFlushesNonFocusedGroupDirtyTab() {
          "file_a should be clean in the focused group 0");
   DrainProjectChanges(shell);
 
-  // Set the mode AFTER opening so the project/user config load does not reset it.
   Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.autosave", "after_delay"),
          "after_delay autosave should be settable");
-  WorkspaceShellTestAccess::MaybeAutosaveDirtyTabs(shell, /*on_focus_change=*/false);
+  WorkspaceShellTestAccess::MaybeAutosaveDirtyTabs(shell, false);
 
   Expect(ReadFile(file_b) == "edited bbb\n",
          "autosave must flush the non-focused split group's dirty tab to disk");
@@ -1535,16 +1295,11 @@ void TestWorkspaceShellAutosaveFlushesNonFocusedGroupDirtyTab() {
          "the flushed non-focused tab should be clean afterwards");
 }
 
-// An autosave writes the buffer as it is. It applied the save-time transforms (here
-// the final newline) as an edit to the buffer, so one fired in the middle of an undo
-// -- a focus change between two Ctrl+Z -- wiped the redo history and left an undo
-// entry whose caret sat past its line (soak a1e5cc0de9e5). The transforms are the
-// explicit save's; an autosave neither applies them to the file nor to the buffer.
 void TestWorkspaceShellAnAutosaveWritesTheBufferAsItIs() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path file = root / "notes.txt";
-  WriteFile(file, "abc");  // no final newline
+  WriteFile(file, "abc");
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
@@ -1555,14 +1310,14 @@ void TestWorkspaceShellAnAutosaveWritesTheBufferAsItIs() {
          "on_focus_change autosave is settable");
   auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
   viewport.InsertText("1");
-  viewport.MoveCursorTo(0, 4);  // elsewhere: a second undo step, not one typing run
+  viewport.MoveCursorTo(0, 4);
   viewport.InsertText("2");
   const std::string with_both = viewport.SerializeText();
   viewport.Undo();
   const std::string with_one = viewport.SerializeText();
   Expect(viewport.dirty(), "mid-undo the buffer is dirty");
 
-  WorkspaceShellTestAccess::MaybeAutosaveDirtyTabs(shell, /*on_focus_change=*/true);
+  WorkspaceShellTestAccess::MaybeAutosaveDirtyTabs(shell, true);
 
   Expect(ReadFile(file) == with_one, "the autosave wrote the buffer as it is: '" + ReadFile(file) + "'");
   Expect(viewport.SerializeText() == with_one, "the autosave left the buffer's text alone");
@@ -1572,12 +1327,6 @@ void TestWorkspaceShellAnAutosaveWritesTheBufferAsItIs() {
 }
 
 
-// Soak 5c9620f457e8 / 3fe0951ba184 (diff profile): text typed into a compare of two
-// files, the right-hand file rewritten on disk, the typing undone. The undo landed
-// on the content the side was read with, which read clean -- a clean buffer that
-// differs from its file. The editor-tab case was fixed long ago (1359f8ef3); the
-// note that a change landed under edits reached editor tabs only, never a diff's
-// editable side.
 void TestWorkspaceShellUndoInADiffAfterADiskChangeDoesNotReadClean() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1609,10 +1358,6 @@ void TestWorkspaceShellUndoInADiffAfterADiskChangeDoesNotReadClean() {
 }
 
 
-// Soak 77fa58de2a44 (world profile): a diff opened on a DANGLING link -- qa-ext/link2,
-// its file not there yet -- never heard of the file appearing. The
-// watcher names the file written, and the views reached through a link were found
-// among EDITOR tabs only, so the diff's side kept its old text, clean.
 void TestWorkspaceShellAChangeReachesADiffOpenThroughALink() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1620,7 +1365,6 @@ void TestWorkspaceShellAChangeReachesADiffOpenThroughALink() {
   const std::filesystem::path target = root / "target.txt";
   const std::filesystem::path link = root / "qa-ext" / "link2";
   WriteFile(left, "left\n");
-  // Dangling when the diff opens, as the soak's link2 was: its file comes later.
   std::filesystem::create_directories(link.parent_path());
   std::filesystem::create_symlink(target, link);
 
@@ -1638,7 +1382,7 @@ void TestWorkspaceShellAChangeReachesADiffOpenThroughALink() {
   WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
   DrainProjectChangesBeforeTheWrite(shell);
 
-  WriteFile(target, "after\n");  // the file the link names appears
+  WriteFile(target, "after\n");
   const auto side_line = [&shell]() -> std::string {
     if (!WorkspaceShellTestAccess::ActiveTabIsCompare(shell)) {
       return "<no diff>";
@@ -1655,7 +1399,7 @@ void TestWorkspaceShellAChangeReachesADiffOpenThroughALink() {
                                      side_line() + ")");
 }
 
-}  // namespace
+}
 
 void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ExternalRepoChange/AnAutosaveWritesTheBufferAsItIs", TestWorkspaceShellAnAutosaveWritesTheBufferAsItIs);
@@ -1735,4 +1479,4 @@ AddTest(tests, "ExternalRepoChange/ABackgroundChangeReachesAFileOpenOnlyInDiffs"
           TestWorkspaceShellExternalHeadChangeMarksGitSnapshotStale);
 }
 
-}  // namespace microide::tests
+}

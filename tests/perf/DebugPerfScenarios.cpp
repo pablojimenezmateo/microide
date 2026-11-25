@@ -1,22 +1,3 @@
-// Performance scenarios for the debugger / DAP subsystem.
-//
-// These bring the debug subsystem to perf-coverage parity with the editor,
-// which previously had ~10 smoke + ~13 gated scenarios while debug had none.
-//
-// Two flavors:
-//   * Pure-unit micro-benchmarks construct the real data structures directly and
-//     measure the hot paths the render/step loop consumes (value-tree rebuild is
-//     literally the render-ready row list the bottom-panel render TU draws). They
-//     ignore the app driver, so they are deterministic and allocation-stable —
-//     which is why the six of them are now promoted to gated
-//     (`smoke = true, baseline_gated = true`) with committed reference-runner
-//     baselines, per the promotion path in dev-docs/performance/perf-harness.md.
-//   * One live mock-adapter session scenario drives a real DebugService stack
-//     (DapManager + DebugSession + a Python DAP adapter) and measures the
-//     stop -> stackTrace -> scopes -> variables latency end to end. It is
-//     inherently noisier (subprocess + IPC) and is skipped gracefully when the
-//     platform has no python3, so it stays advisory
-//     (`smoke = false, baseline_gated = false`).
 #include "perf/PerfHarness.h"
 
 #include "editor/BreakpointStore.h"
@@ -50,11 +31,6 @@ using microide::workspace::DebugSession;
 using microide::workspace::DebugValueTree;
 using microide::workspace::LaunchConfig;
 
-// ---- Synthetic data builders (no adapter) ---------------------------------
-
-// Build `count` flat scalar variables plus `structured` expandable ones. Scalars
-// dominate a real Locals scope; the structured tail exercises the has-children
-// classification + nested-expand bookkeeping.
 std::vector<codec::DapVariable> MakeVariables(int count, int structured, int first_child_ref) {
   std::vector<codec::DapVariable> vars;
   vars.reserve(static_cast<std::size_t>(count));
@@ -65,7 +41,7 @@ std::vector<codec::DapVariable> MakeVariables(int count, int structured, int fir
     if (is_struct) {
       v.value = "{...}";
       v.type = "struct S";
-      v.variables_reference = first_child_ref + i;  // expandable
+      v.variables_reference = first_child_ref + i;
       v.named_variables = 4;
       v.count_reported = true;
     } else {
@@ -77,23 +53,16 @@ std::vector<codec::DapVariable> MakeVariables(int count, int structured, int fir
   return vars;
 }
 
-// Build a value tree with `scopes` scopes, each expanded with `per_scope`
-// children, and return it ready to rebuild/inspect. Mirrors what DebugService
-// installs on a stop: AddRoot scopes, expand, ApplyVariables.
 DebugValueTree BuildExpandedTree(int scopes, int per_scope) {
   DebugValueTree tree;
   int ref = 1000;
   for (int s = 0; s < scopes; ++s) {
     const int scope_ref = ref++;
-    tree.AddRoot("Scope" + std::to_string(s), /*value=*/{}, /*type=*/{}, scope_ref,
-                 /*is_scope=*/true, per_scope, /*total_known=*/true);
+    tree.AddRoot("Scope" + std::to_string(s), {}, {}, scope_ref,
+                 true, per_scope, true);
   }
   tree.Rebuild();
-  // Expand each scope root and attach its children. Re-find the scope row each
-  // pass since rebuilds renumber the flat list as earlier scopes expand.
   for (int s = 0; s < scopes; ++s) {
-    // The s-th scope root sits at the head of the flat list among unexpanded
-    // scopes; toggling it returns its bounded child fetch.
     std::size_t scope_row = 0;
     const auto& rows = tree.Rows();
     for (std::size_t r = 0; r < rows.size(); ++r) {
@@ -104,34 +73,26 @@ DebugValueTree BuildExpandedTree(int scopes, int per_scope) {
     }
     const DebugValueTree::ChildFetch fetch = tree.ToggleRow(scope_row);
     if (fetch.reference != 0) {
-      tree.ApplyVariables(fetch.reference, MakeVariables(per_scope, /*structured=*/4,
-                                                         /*first_child_ref=*/100000 + s * 1000),
-                          /*start=*/0);
+      tree.ApplyVariables(fetch.reference, MakeVariables(per_scope, 4,
+                                                         100000 + s * 1000),
+                          0);
     }
   }
   return tree;
 }
 
-// ---- Pure-unit scenarios ---------------------------------------------------
-
-// Building + expanding a large variables tree is the per-stop cost: AddRoot the
-// scopes, expand, attach hundreds of children, flatten.
 void RunDebugValueTreeExpandLarge(ScenarioContext& context) {
   context.Measure("value_tree.build_expand", [&]() {
     for (int iter = 0; iter < 20; ++iter) {
-      DebugValueTree tree = BuildExpandedTree(/*scopes=*/4, /*per_scope=*/250);
-      // Touch the rows so the work is not optimized away.
+      DebugValueTree tree = BuildExpandedTree(4, 250);
       volatile std::size_t sink = tree.Rows().size();
       (void)sink;
     }
   });
 }
 
-// Rebuild() rematerializes the flat row list the render TU draws; it runs on
-// every tree mutation (expand/collapse/edit). Measure it on an already-large
-// expanded tree, isolated from the construction cost above.
 void RunDebugValueTreeRebuild(ScenarioContext& context) {
-  DebugValueTree tree = BuildExpandedTree(/*scopes=*/4, /*per_scope=*/250);
+  DebugValueTree tree = BuildExpandedTree(4, 250);
   context.Measure("value_tree.rebuild", [&]() {
     for (int iter = 0; iter < 200; ++iter) {
       tree.Rebuild();
@@ -139,24 +100,21 @@ void RunDebugValueTreeRebuild(ScenarioContext& context) {
   });
 }
 
-// Paging a large indexed container: a 5000-element array streamed in 200-row
-// pages via the "show more…" affordance. Bounds the per-page attach + rebuild.
 void RunDebugValueTreePaging(ScenarioContext& context) {
   context.Measure("value_tree.paging", [&]() {
     DebugValueTree tree;
     const int array_ref = 2000;
-    tree.AddRoot("bigArray", "[5000]", "int[5000]", array_ref, /*is_scope=*/false,
-                 /*total_count=*/5000, /*total_known=*/true);
+    tree.AddRoot("bigArray", "[5000]", "int[5000]", array_ref, false,
+                 5000, true);
     tree.Rebuild();
-    DebugValueTree::ChildFetch fetch = tree.ToggleRow(0);  // expand → first page
+    DebugValueTree::ChildFetch fetch = tree.ToggleRow(0);
     int start = 0;
     while (fetch.reference != 0 && start < 5000) {
       const int page = fetch.count > 0 ? fetch.count : DebugValueTree::kChildPageSize;
-      tree.ApplyVariables(fetch.reference, MakeVariables(page, /*structured=*/0,
-                                                         /*first_child_ref=*/0),
+      tree.ApplyVariables(fetch.reference, MakeVariables(page, 0,
+                                                         0),
                           start);
       start += page;
-      // Click the trailing "show more…" row to fetch the next page.
       const auto& rows = tree.Rows();
       if (rows.empty() || !rows.back().is_show_more) {
         break;
@@ -166,16 +124,12 @@ void RunDebugValueTreePaging(ScenarioContext& context) {
   });
 }
 
-// DAP wire encode/decode throughput over the payloads that dominate a stop: a
-// large `variables` body and a deep `stackTrace` body. Build the bodies once,
-// measure parse (decode) and serialize (encode) separately.
 void RunDapProtocolEncodeDecode(ScenarioContext& context) {
   using microide::util::JsonArray;
   using microide::util::JsonObject;
   using microide::util::JsonValue;
   using microide::util::SerializeJson;
 
-  // Synthesize a `variables` response body with 500 entries.
   JsonArray variables;
   variables.reserve(500);
   for (int i = 0; i < 500; ++i) {
@@ -190,7 +144,6 @@ void RunDapProtocolEncodeDecode(ScenarioContext& context) {
   vars_body_obj["variables"] = JsonValue(std::move(variables));
   const JsonValue vars_body(std::move(vars_body_obj));
 
-  // Synthesize a `stackTrace` body with 200 frames.
   JsonArray frames;
   frames.reserve(200);
   for (int i = 0; i < 200; ++i) {
@@ -227,15 +180,12 @@ void RunDapProtocolEncodeDecode(ScenarioContext& context) {
   });
 }
 
-// DebugBreakpointsModel.Rebuild rematerializes the Breakpoints-panel row list
-// (exception filters + line breakpoints + function breakpoints). Exercise it
-// with many breakpoints across many files.
 void RunDebugBreakpointsModelRebuild(ScenarioContext& context) {
   editor::BreakpointStore breakpoints;
   for (int file = 0; file < 20; ++file) {
     const std::filesystem::path path = "/src/file" + std::to_string(file) + ".cpp";
     for (int line = 0; line < 25; ++line) {
-      breakpoints.Set(path, static_cast<std::size_t>(line * 3 + 1), /*enabled=*/true);
+      breakpoints.Set(path, static_cast<std::size_t>(line * 3 + 1), true);
     }
   }
   editor::FunctionBreakpointStore functions;
@@ -252,22 +202,12 @@ void RunDebugBreakpointsModelRebuild(ScenarioContext& context) {
   });
 }
 
-// DebugPaneRowAtPoint is the shared row-geometry mapper hit on every click,
-// hover, and cursor move in the debug pane. Sweep many points across a tall
-// scrolled list to bound the per-hit cost.
 void RunDebugPaneHittestGeometry(ScenarioContext& context) {
   const SDL_FRect content = microide::workspace::MakeRect(0.0f, 30.0f, 240.0f, 800.0f);
   const float text_y = 38.0f;
   const float line_height = 16.0f;
   const int visible_rows = 48;
   const std::size_t line_count = 5000;
-  // The sweep is repeated rather than extended: `scroll` feeds the row mapping,
-  // so widening its range would change which inputs are exercised (and clamp
-  // against line_count). One sweep resolves ~40k points in about 0.1 ms, which is
-  // far below what this runner can time -- the gate on it swung 0.148-0.225 ms
-  // across repeat runs of one binary and sat permanently red against a 0.103 ms
-  // baseline. 100 sweeps put the measurement in a range where the median means
-  // something, over exactly the same input distribution.
   constexpr int kSweeps = 100;
   context.Measure("pane.hittest", [&]() {
     volatile int hits = 0;
@@ -275,7 +215,7 @@ void RunDebugPaneHittestGeometry(ScenarioContext& context) {
       for (int scroll = 0; scroll < 200; ++scroll) {
         for (int y = 30; y < 820; y += 4) {
           const auto hit = microide::workspace::DebugPaneRowAtPoint(
-              content, text_y, line_height, visible_rows, scroll, line_count, /*x=*/100.0f,
+              content, text_y, line_height, visible_rows, scroll, line_count, 100.0f,
               static_cast<float>(y));
           hits += hit.row_index;
         }
@@ -285,12 +225,6 @@ void RunDebugPaneHittestGeometry(ScenarioContext& context) {
   });
 }
 
-// ---- Live mock-adapter session scenario ------------------------------------
-
-// A compact DAP adapter (mirrors the test mock) that walks
-// initialize -> initialized -> launch -> configurationDone -> stopped, then
-// answers threads / stackTrace / scopes / variables. The variable count is
-// argv[1] so the scenario can scale the stop payload.
 const char* DebugPerfAdapterSource() {
   return R"py(import json
 import sys
@@ -371,7 +305,6 @@ while True:
 }
 
 bool HavePython3() {
-  // Best-effort: the scenario writes a python adapter and execs `python3`.
   return std::system("python3 --version >/dev/null 2>&1") == 0;
 }
 
@@ -440,12 +373,12 @@ void RunDebugSessionStopToVariables(ScenarioContext& context) {
     std::vector<DebugValueTree::ChildFetch> scope_fetches;
     session->RequestScopes(frame_id, [&](std::vector<codec::DapScope> scopes) {
       for (const codec::DapScope& scope : scopes) {
-        tree.AddRoot(scope.name, {}, {}, scope.variables_reference, /*is_scope=*/true,
+        tree.AddRoot(scope.name, {}, {}, scope.variables_reference, true,
                      scope.named_variables + scope.indexed_variables, scope.count_reported);
       }
       tree.Rebuild();
       if (!tree.Rows().empty()) {
-        scope_fetches.push_back(tree.ToggleRow(0));  // expand the first scope
+        scope_fetches.push_back(tree.ToggleRow(0));
       }
       scopes_done = true;
     });
@@ -468,28 +401,6 @@ void RunDebugSessionStopToVariables(ScenarioContext& context) {
 
   std::filesystem::remove_all(dir, ec);
 }
-
-// ---- Registration ----------------------------------------------------------
-
-// Three of the pure-unit micro-benchmarks below measure single-digit
-// milliseconds of deterministic computation, and this shared reference runner
-// cannot hold a 10%/20%/50% wall envelope over work that small: their
-// ALLOCATION counts are byte-identical to baseline run after run, while their
-// wall medians measured 16-120% over the committed p50 -- including on an
-// unmodified checkout, built and run in a worktree for exactly that comparison.
-// Gating wall at the allocation percent means three permanently red gates, which
-// is strictly worse than no gate: a real regression lands in a row that was
-// already red.
-//
-// So decouple them exactly as the tech-debt coverage scenarios already do
-// (see TechDebtCoveragePerfScenarios.cpp): allocations stay at the tight default
-// -- that is the complexity gate, and it is exact here -- while the wall envelope
-// widens to absorb scheduler jitter. A constant-factor wall regression is still
-// caught precisely by the interleaved tools/perf-compare.py current-vs-main run,
-// where shared machine load cancels.
-//
-// This is deliberately NOT applied to every scenario in this file: the ones that
-// hold their envelope keep their tight wall gate.
 
 const ScenarioRegistration g_perf_debug_value_tree_expand_large({Scenario{
     .name = "debug_value_tree_expand_large",
@@ -536,13 +447,9 @@ const ScenarioRegistration g_perf_debug_pane_hittest_geometry({Scenario{
 const ScenarioRegistration g_perf_debug_session_stop_to_variables({Scenario{
     .name = "debug_session_stop_to_variables",
     .smoke = false,
-    // Deterministic half only (TD-2026-08-15-245): the allocation and net-heap
-    // gates reproduce on any machine, so "reference-runner baseline pending" was
-    // never a reason for this to gate on NOTHING. `--update-baseline=deterministic`
-    // mints the record with `timing_is_advisory`; a reference run arms wall/cpu/rss.
     .baseline_gated = true,
     .run = RunDebugSessionStopToVariables,
 }});
 
-}  // namespace
-}  // namespace microide::tests::perf
+}
+}

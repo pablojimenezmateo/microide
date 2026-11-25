@@ -15,9 +15,6 @@ constexpr std::array<std::string_view, 7> kSpecKeys = {
     "open",    "launch",     "commands",
 };
 
-// Resolve an authored path against the project root. Absolute paths pass
-// through; relative paths join the root. Normalized so the breakpoint-store key
-// matches what editor surfaces produce.
 std::filesystem::path ResolveAgainstProject(const std::filesystem::path& project_root,
                                             const std::filesystem::path& path) {
   std::filesystem::path resolved = path.is_absolute() ? path : project_root / path;
@@ -31,7 +28,7 @@ std::optional<std::string> OptionalString(const util::JsonValue& value) {
   return std::nullopt;
 }
 
-}  // namespace
+}
 
 std::span<const std::string_view> ControlSpecKeys() {
   return {kSpecKeys.data(), kSpecKeys.size()};
@@ -59,8 +56,6 @@ ControlSpec ParseControlSpec(std::string_view json) {
   }
 
   if (parsed->HasKey("settings")) {
-    // Two accepted forms: an object {"id":"value",...} or an array of [id, value]
-    // string pairs (preserves order). Values must be strings.
     const util::JsonValue& settings = (*parsed)["settings"];
     if ((settings.IsObject() && settings.AsObject().size() > kMaxControlSpecSectionEntries) ||
         (settings.IsArray() && settings.AsArray().size() > kMaxControlSpecSectionEntries)) {
@@ -69,9 +64,6 @@ ControlSpec ParseControlSpec(std::string_view json) {
     }
     if (settings.IsObject()) {
       for (const auto& [id, value] : settings.AsObject()) {
-        // Reject an empty setting id to match the array form's `pair[0].empty()`
-        // guard below; an empty key would otherwise flow downstream as a
-        // silently-ignored ("", value) override.
         if (id.empty()) {
           spec.parse_error = "\"settings\" ids must be non-empty";
           return spec;
@@ -125,8 +117,6 @@ ControlSpec ParseControlSpec(std::string_view json) {
       }
       breakpoint.line = static_cast<std::size_t>(entry["line"].AsInt());
       if (entry.HasKey("enabled")) {
-        // Strict type check, matching "line"/"settings": AsBool coerces any non-bool
-        // to the fallback, so a mistyped "enabled":"false"/0 would silently enable it.
         if (!entry["enabled"].IsBool()) {
           spec.parse_error = "breakpoint \"enabled\" must be a boolean";
           return spec;
@@ -262,15 +252,11 @@ std::vector<std::string> ControlSpecToCommands(const ControlSpec& spec,
       commands.push_back("breakpoint-function-condition " + quoted_name + " " +
                          QuoteCommandArg(*function_breakpoint.condition));
     }
-    // add defaults to enabled; toggle once to disable.
     if (!function_breakpoint.enabled) {
       commands.push_back("breakpoint-function-toggle " + quoted_name);
     }
   }
 
-  // Reveal files. An explicit `open` list wins; otherwise reveal the distinct
-  // breakpoint files and position the first one at its breakpoint line so the
-  // developer lands on the bug.
   if (!spec.open.empty()) {
     for (const std::string& path : spec.open) {
       commands.push_back("open " +
@@ -304,4 +290,4 @@ std::vector<std::string> ControlSpecToCommands(const ControlSpec& spec,
   return commands;
 }
 
-}  // namespace microide::workspace
+}

@@ -34,9 +34,6 @@ void ExpectCaret(const TextViewport& viewport,
              std::to_string(column));
 }
 
-// The classification is the whole contract: a run of separators is its own word,
-// so `foo === bar` has three stops and not two. This is VS Code's rule and it is
-// what makes Ctrl+Right usable inside an expression rather than a line skipper.
 void TestWordBoundaryTreatsSeparatorRunsAsWords() {
   constexpr std::string_view kText = "foo === bar";
   Expect(editor::WordBoundaryRight(kText, 0) == 3, "word-right stops at the end of foo");
@@ -51,8 +48,6 @@ void TestWordBoundaryTreatsSeparatorRunsAsWords() {
 }
 
 void TestWordBoundaryKeepsMultibyteWordsWhole() {
-  // "café ñoño": é is two bytes, ñ is two bytes. A byte-wise rule stops inside
-  // each of them; the codepoint rule treats both words as single stops.
   constexpr std::string_view kText = "café ñoño";
   Expect(editor::WordBoundaryRight(kText, 0) == 5, "word-right clears the whole of café");
   Expect(editor::WordBoundaryRight(kText, 5) == 12, "word-right clears the whole of ñoño");
@@ -60,9 +55,6 @@ void TestWordBoundaryKeepsMultibyteWordsWhole() {
   Expect(editor::WordBoundaryLeft(kText, 6) == 0, "word-left lands on the start of café");
 }
 
-// The delete boundary differs from the motion boundary in exactly one place: a
-// run of two or more spaces goes on its own, so Ctrl+Backspace out of an indent
-// lands on column 0 instead of eating the previous word with it.
 void TestDeleteWordBoundaryTakesAWhitespaceRunOnItsOwn() {
   constexpr std::string_view kIndented = "    value";
   Expect(editor::DeleteWordBoundaryLeft(kIndented, 4) == 0,
@@ -76,8 +68,6 @@ void TestDeleteWordBoundaryTakesAWhitespaceRunOnItsOwn() {
   Expect(editor::WordBoundaryLeft(kGap, 7) == 0,
          "motion, by contrast, walks past the gap onto foo");
 
-  // A single space is not a run: it goes with the word, which is what makes one
-  // Ctrl+Backspace remove `bar ` rather than needing two.
   constexpr std::string_view kSingle = "foo bar";
   Expect(editor::DeleteWordBoundaryLeft(kSingle, 4) == 0,
          "a lone space does not trigger the whitespace-only delete");
@@ -88,15 +78,8 @@ void TestDeleteWordBoundaryTakesAWhitespaceRunOnItsOwn() {
          "a lone space is deleted together with the following word");
 }
 
-// Double-click-to-select and the occurrence highlight both stand on the same
-// identifier run. Both used to scan with a byte-wise ASCII predicate, so a word
-// with any non-ASCII letter in it was selected only up to that letter.
-// The public boundary entries snap a mid-scalar index down to its character
-// start. No caret this tree produces is ever mid-scalar, but a right-scan that
-// started on a continuation byte would return a boundary INSIDE a character --
-// and as the end of a delete range that splits it.
 void TestWordBoundarySnapsAMidScalarIndex() {
-  constexpr std::string_view kText = "café bar";  // é occupies bytes 3..4
+  constexpr std::string_view kText = "café bar";
   Expect(editor::WordBoundaryRight(kText, 4) == 5,
          "a right scan from inside é finishes the word it is inside");
   Expect(editor::WordBoundaryLeft(kText, 4) == 0,
@@ -112,20 +95,16 @@ void TestViewportSelectsMultibyteWordsWhole() {
   viewport.SetViewportSize(10, 80);
   viewport.LoadContent("int café = résumé;\n", "/tmp/word.txt");
 
-  // Caret on the 'c' of café.
   viewport.MoveCursorTo(0, 4);
   viewport.SelectWordAtCursor();
   Expect(viewport.SelectedText() == "café",
          "double-click on café should select all of it, not just caf");
 
-  // And from inside the accented tail, where the byte-wise rule selected nothing.
   const auto range = viewport.WordRangeAt(editor::TextPosition{0, 7});
   Expect(range.has_value(), "a position inside the multi-byte tail is still inside the word");
   Expect(range->start.column == 4 && range->end.column == 9,
          "the run should span the whole of café");
 
-  // A caret mid-scalar (a mouse hit can land there) resolves to the same word
-  // rather than to nothing.
   const auto mid_scalar = viewport.WordRangeAt(editor::TextPosition{0, 8});
   Expect(mid_scalar.has_value() && mid_scalar->start.column == 4 && mid_scalar->end.column == 9,
          "a caret inside a multi-byte character still resolves to its word");
@@ -141,7 +120,6 @@ void TestViewportWordMotionCrossesLines() {
   ExpectCaret(viewport, 0, 5, "word-right past alpha");
   viewport.MoveCursorWord(1);
   ExpectCaret(viewport, 0, 10, "word-right past beta");
-  // At the line end the next step is the line break itself.
   viewport.MoveCursorWord(1);
   ExpectCaret(viewport, 1, 0, "word-right crosses onto the next line");
   viewport.MoveCursorWord(1);
@@ -159,27 +137,22 @@ void TestViewportWordMotionCrossesLines() {
   ExpectCaret(viewport, 0, 0, "word-left saturates at the document start");
 }
 
-// Shift+Ctrl+Arrow extends rather than collapsing, and a plain Ctrl+Arrow over a
-// selection MOVES from the caret (VS Code cursorWordStartLeft) rather than
-// collapsing to the selection edge the way plain Left/Right does.
 void TestViewportWordMotionSelectionSemantics() {
   TextViewport viewport;
   viewport.SetViewportSize(10, 80);
   viewport.LoadContent("alpha beta gamma\n", "/tmp/word.txt");
 
   viewport.MoveCursorTo(0, 0);
-  viewport.MoveCursorWord(1, /*extend_selection=*/true);
+  viewport.MoveCursorWord(1, true);
   const auto extended = viewport.selection_range();
   Expect(extended.has_value(), "shift+ctrl+right should start a selection");
   Expect(extended->start.column == 0 && extended->end.column == 5,
          "shift+ctrl+right should select the first word");
-  viewport.MoveCursorWord(1, /*extend_selection=*/true);
+  viewport.MoveCursorWord(1, true);
   const auto grown = viewport.selection_range();
   Expect(grown.has_value() && grown->end.column == 10,
          "a second shift+ctrl+right should grow the selection by a word");
 
-  // Plain Ctrl+Left from the active caret at column 10: it does not collapse to
-  // column 0 (the anchor), it steps one word back from 10.
   viewport.MoveCursorWord(-1);
   Expect(!viewport.has_selection(), "a plain word step should drop the selection");
   ExpectCaret(viewport, 0, 6, "plain ctrl+left moves from the caret, not the anchor");
@@ -195,7 +168,6 @@ void TestViewportDeleteWordBackwardAndForward() {
   Expect(DocumentText(viewport) == "alpha \ngamma\n", "ctrl+backspace should remove beta");
   ExpectCaret(viewport, 0, 6, "caret lands where the word started");
 
-  // At column 0 the backward word delete is the line join, matching Backspace.
   viewport.MoveCursorTo(1, 0);
   viewport.DeleteWord(-1);
   Expect(DocumentText(viewport) == "alpha gamma\n", "ctrl+backspace at column 0 joins the lines");
@@ -204,8 +176,6 @@ void TestViewportDeleteWordBackwardAndForward() {
   viewport.DeleteWord(1);
   Expect(DocumentText(viewport) == " gamma\n", "ctrl+delete should remove the leading word");
 
-  // One Undo puts the whole word back: a word delete is one user action and must
-  // not be split across per-character history entries.
   Expect(viewport.Undo(), "undo should report a change");
   Expect(DocumentText(viewport) == "alpha gamma\n", "one undo restores the whole word");
 }
@@ -216,7 +186,7 @@ void TestViewportWordDeleteRemovesSelectionInstead() {
   viewport.LoadContent("alpha beta gamma\n", "/tmp/word.txt");
 
   viewport.MoveCursorTo(0, 6);
-  viewport.MoveCursorTo(0, 10, /*extend_selection=*/true);
+  viewport.MoveCursorTo(0, 10, true);
   viewport.DeleteWord(-1);
   Expect(DocumentText(viewport) == "alpha  gamma\n",
          "a word delete over a selection removes exactly the selection");
@@ -235,8 +205,6 @@ void TestViewportWordVerbsApplyToEveryCaret() {
   ExpectCaret(viewport, 0, 6, "primary caret stepped a word left");
   Expect(viewport.has_multiple_carets(), "the secondary caret survives a word step");
 
-  // A fresh viewport: MoveCursorTo does not clear the secondary set, so reusing
-  // the one above would delete at three carets and prove nothing about two.
   TextViewport deleter;
   deleter.SetViewportSize(10, 80);
   deleter.LoadContent("alpha one\nbravo two\n", "/tmp/word.txt");
@@ -247,12 +215,8 @@ void TestViewportWordVerbsApplyToEveryCaret() {
          "ctrl+backspace should remove a word at every caret");
 }
 
-}  // namespace
+}
 
-// A plain port of VS Code's wordOperations over ASCII (three classes: blank,
-// a run of separators from the default `editor.wordSeparators`, a run of
-// anything else), run against every caret of random lines. The literal tests
-// above pin a handful of phrases; this pins the rule.
 namespace {
 
 int VsCodeClass(char c) {
@@ -279,18 +243,12 @@ std::size_t VsCodeWordEndRight(std::string_view line, std::size_t caret) {
 }
 
 std::size_t VsCodeDeleteWordLeft(std::string_view line, std::size_t caret) {
-  // _deleteWordLeftWhitespace: two or more blanks right before the caret go alone.
   std::size_t blanks = 0;
   while (caret - blanks > 0 && VsCodeClass(line[caret - blanks - 1]) == 0) ++blanks;
   if (blanks >= 2) return caret - blanks;
   return VsCodeWordStartLeft(line, caret);
 }
 
-// _doFindPreviousWordOnLine / _doFindNextWordOnLine: the nearest non-blank run
-// on that side, extended to its full extent in BOTH directions (VS Code finds
-// the run's first character scanning one way, then calls _findEndOfWord /
-// _findStartOfWord to complete it), so a run straddling the caret comes back
-// whole from either side.
 struct VsCodeWord {
   std::size_t start = 0;
   std::size_t end = 0;
@@ -320,11 +278,6 @@ VsCodeWord VsCodeNextWord(std::string_view line, std::size_t caret) {
   return VsCodeRunAround(line, i);
 }
 
-// WordOperations.word() with inSelectionMode false: the identifier run the caret
-// falls inside (inclusive at both ends, prev tried first), else the gap between
-// the neighbouring runs -- which is the whitespace run in blanks and the
-// operator run inside one, because the two bounds come back crossed there and
-// `new Range(...)` normalises them.
 std::pair<std::size_t, std::size_t> VsCodeWordSelection(std::string_view line, std::size_t caret) {
   const VsCodeWord prev = VsCodePrevWord(line, caret);
   const VsCodeWord next = VsCodeNextWord(line, caret);
@@ -340,9 +293,6 @@ std::pair<std::size_t, std::size_t> VsCodeWordSelection(std::string_view line, s
   return {start, end};
 }
 
-// getWordAtPosition: the same two identifier branches, and nothing at all when
-// neither matches -- which is why Ctrl+D and occurrence highlighting stay out of
-// whitespace while the double-click above does not.
 std::pair<std::size_t, std::size_t> VsCodeWordAtPosition(std::string_view line,
                                                          std::size_t caret) {
   const VsCodeWord prev = VsCodePrevWord(line, caret);
@@ -356,13 +306,8 @@ std::pair<std::size_t, std::size_t> VsCodeWordAtPosition(std::string_view line,
   return {0, 0};
 }
 
-}  // namespace
+}
 
-// The double-click rule and the Ctrl+D / occurrence-highlight rule are two
-// different VS Code functions, and the difference between them is exactly what
-// keeps Ctrl+D out of indentation while double-click still selects it. Both are
-// checked at every caret of random lines against a direct port, because both
-// were silently answering "nothing" at a word's trailing edge.
 void TestEditorWordSelectionAgreesWithVsCodeWordRule() {
   std::uint64_t state = 0x2545f4914f6cdd1dULL;
   const auto next = [&](std::size_t bound) {
@@ -460,4 +405,4 @@ void RegisterEditorWordMotionTests(std::vector<TestCase>& tests) {
           TestViewportWordVerbsApplyToEveryCaret);
 }
 
-}  // namespace microide::tests
+}

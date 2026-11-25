@@ -91,7 +91,7 @@ was paint no one saw.
 - **Ask for a frame, not a rect.** A change to a derived surface calls
   `RequestPreparedFrame()` (a coordinator's `request_frame` operation). It counts as
   a request for `EnsureRedraw` fallbacks. Keep a rect only for what is not derived
-  yet, and say why at the call site.
+  yet.
 - **Every surface commits every frame**, with no units while it is hidden. A
   surface that skipped `Commit` while hidden would keep units it no longer paints
   and damage nothing when it came back.

@@ -19,9 +19,6 @@ std::string Describe(const std::optional<EditorNavigationHistory::Location>& loc
                               : std::string("nothing");
 }
 
-// VS Code's rule: another file, or more than ten lines away, is a new place; a
-// smaller move updates the current one, so going back returns to where you last
-// were in a file.
 void TestSmallMovesUpdateTheCurrentEntry() {
   EditorNavigationHistory history;
   history.Observe("/p/a.cpp", 0, 0);
@@ -49,7 +46,7 @@ void TestANewPlaceDropsTheForwardHistory() {
   (void)history.Step(-1, kAlwaysExists);
   (void)history.Step(-1, kAlwaysExists);
   Expect(history.CanGoForward(), "after going back there is somewhere to go forward to");
-  history.Observe("/p/a.cpp", 0, 0);  // where Step put the caret: not a new place
+  history.Observe("/p/a.cpp", 0, 0);
   Expect(history.CanGoForward(), "landing where the step went keeps the forward history");
   history.Observe("/p/d.cpp", 0, 0);
   Expect(!history.CanGoForward() && history.entries().size() == 2,
@@ -82,14 +79,10 @@ void TestHistoryIsBounded() {
          "the newest place should be kept");
 }
 
-// A far jump in a file already on the list is a new entry, and it allocates
-// nothing: the entries of one file share its path, and the list is reserved once.
-// Each recorded jump used to copy the path (large_file_restore_deep_scroll_first_paint,
-// 20 -> 26 allocations in its jump phase against v2.12.0).
 void TestAJumpWithinAListedFileAllocatesNothing() {
   EditorNavigationHistory history;
   history.Observe("/project/src/a-long-enough-name.cpp", 0, 0);
-  history.Observe("/project/src/a-long-enough-name.cpp", 500, 0);  // warm: reserves
+  history.Observe("/project/src/a-long-enough-name.cpp", 500, 0);
   const std::filesystem::path same = "/project/src/a-long-enough-name.cpp";
 #if MICROIDE_PERF_HARNESS_BUILD
   const microide::tests::perf::AllocationSnapshot before = microide::tests::perf::Allocations::Snapshot();
@@ -107,7 +100,7 @@ void TestAJumpWithinAListedFileAllocatesNothing() {
          "and the file's entries share one path");
 }
 
-}  // namespace
+}
 
 void RegisterEditorNavigationHistoryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorNavigationHistory/SmallMovesUpdateTheCurrentEntry",
@@ -120,4 +113,4 @@ void RegisterEditorNavigationHistoryTests(std::vector<TestCase>& tests) {
           TestAJumpWithinAListedFileAllocatesNothing);
 }
 
-}  // namespace microide::tests
+}

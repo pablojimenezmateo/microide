@@ -51,7 +51,6 @@ void TestMirrorInitialSyncAndHostChanges() {
          "an in-root link is a link in the mirror");
   Expect(session.engine->StateOf("a.txt") == ContentState::Current, "a pulled file is current");
 
-  // The host moves on: an edit, a delete, a new file.
   WriteFile(session.host / "a.txt", "alpha v2\n");
   std::filesystem::remove(session.host / "doomed.txt");
   WriteFile(session.host / "new/c.txt", "c\n");
@@ -62,10 +61,6 @@ void TestMirrorInitialSyncAndHostChanges() {
   Expect(session.engine->StateOf("doomed.txt") == ContentState::Unknown, "and the deleted one is gone");
 }
 
-// A pull is not flushed per file: the tree is flushed once before the state that
-// records it is saved (Durability::Deferred). Two fsyncs per pulled file -- the
-// tree's and the object store's -- were two thirds of a 4,521-file first sync on
-// a real host (TD-2026-10-14-340).
 void TestMirrorFlushesAPullOncePerSaveNotPerFile() {
   MirrorSession session;
   for (int i = 0; i < 300; ++i) {
@@ -84,8 +79,6 @@ void TestMirrorFlushesAPullOncePerSaveNotPerFile() {
          "the tree is flushed once per state save: " + std::to_string(flushes));
 }
 
-// § 7.9: what the host changed after the first sync is recorded, newest first, one
-// row per path — and the mirror's own pushes coming back are not host changes.
 void TestMirrorRecordsChangedOnHost() {
   using Kind = remote::MirrorSyncEngine::HostChange::Kind;
   MirrorSession session;
@@ -144,10 +137,6 @@ void TestMirrorRecordsChangedOnHost() {
          "Clear empties the list");
 }
 
-// File History: every content the host replaced is listed for its path, newest
-// first -- not only the one Changed on Host compares with -- and comes back from
-// the object store; the list survives Clear and a restart of the editor, and a
-// version whose bytes the store no longer holds is not offered.
 void TestMirrorKeepsEveryReplacedVersionOfAFile() {
   MirrorSession session;
   WriteFile(session.host / "a.txt", "v1\n");
@@ -181,7 +170,6 @@ void TestMirrorKeepsEveryReplacedVersionOfAFile() {
   session.engine->ClearHostChanges();
   Expect(session.engine->FileVersions("a.txt").size() == 2, "Clear empties Changed on Host, not the history");
 
-  // The editor restarts: a new engine over the same mirror.
   session.engine->PersistNow();
   session.Connect();
   session.Sync();
@@ -189,7 +177,6 @@ void TestMirrorKeepsEveryReplacedVersionOfAFile() {
   Expect(versions.size() == 2 && versions[0].hash == util::HashContent("v2\n"),
          "the history is the mirror's, not the session's: " + std::to_string(versions.size()));
 
-  // Bytes the store dropped: the version is no longer offered.
   const std::string hex = util::HashContent("v1\n").Hex();
   Expect(std::filesystem::remove(session.store->meta() / "objects" / hex.substr(0, 2) / hex),
          "the oldest version's object is where the store keeps it");
@@ -198,9 +185,6 @@ void TestMirrorKeepsEveryReplacedVersionOfAFile() {
          "a version without bytes is not offered: " + std::to_string(versions.size()));
 }
 
-// A pulled file keeps the host's mtime, so its recorded stat vouches for it at
-// once (no rehash on the next reconcile) — and a same-size rewrite in the mirror
-// still moves the stat and is caught.
 void TestMirrorPulledFilesAreTrustedAtOnce() {
   MirrorSession session;
   WriteFile(session.host / "old.txt", "four\n");
@@ -213,17 +197,12 @@ void TestMirrorPulledFilesAreTrustedAtOnce() {
   Expect(std::filesystem::last_write_time(session.Tree("old.txt")) ==
              std::filesystem::last_write_time(session.host / "old.txt"),
          "it carries the host's mtime");
-  WriteFile(session.Tree("old.txt"), "FOUR\n");  // same size, a tool's edit
+  WriteFile(session.Tree("old.txt"), "FOUR\n");
   session.Sync();
   Expect(ReadFile(session.host / "old.txt") == "FOUR\n",
          "a same-size rewrite in the mirror is still seen, and pushed");
 }
 
-// A host file name that is not UTF-8 is still just bytes: it is listed, pulled
-// and pushed like any other (paths ride JSON strings, which carry bytes verbatim
-// between the two ends).
-// A large file is pulled too — after the small ones, on its own — so the tree is
-// complete; one over the per-file ceiling is not.
 void TestMirrorPullsLargeFilesLast() {
   MirrorSession session;
   const std::string big(9 * 1024 * 1024 + 3, 'L');
@@ -250,12 +229,6 @@ void TestMirrorPullsLargeFilesLast() {
          "a file over the ceiling stays absent, and says so");
 }
 
-// The workload's most common change — an agent rewriting one function in a big
-// source file — arrives as a zstd delta against the tree's copy (§ 6.2), not as
-// the file: the host diffs against the version this mirror holds, which for a
-// committed file is its git index blob (the first sync's bytes are not kept on the
-// host, TD-2026-10-28-417). A file edited here as well is never patched; that is a
-// conflict, as before.
 void TestMirrorPullsAnEditAsADelta() {
   MirrorSession session;
   std::string source;
@@ -278,17 +251,12 @@ void TestMirrorPullsAnEditAsADelta() {
   session.Sync();
   Expect(ReadFile(session.Tree("big.cpp")) == edited && ReadFile(session.Tree("small.txt")) == "v2\n",
          "the mirror has the host's new bytes");
-  // The 3-byte file's frame would outweigh the file, so it came whole.
   Expect(session.engine->status().pulled_as_delta == 1,
          "the big edit arrived as a delta, the tiny one whole: " +
              std::to_string(session.engine->status().pulled_as_delta));
   Expect(session.engine->StateOf("big.cpp") == ContentState::Current, "and the file is current");
 }
 
-// Bytes the mirror has held once never cross the link again (§ 6.2): a file an
-// agent puts back, a branch switched back, comes out of meta/objects — checked
-// against its hash like anything fetched. The sweep keeps what a path still
-// needs and drops the rest, oldest first, down to the budget.
 void TestMirrorRefillsKnownBytesFromItsObjectStore() {
   MirrorSession session;
   WriteFile(session.host / "a.txt", std::string(5000, 'A'));
@@ -297,7 +265,7 @@ void TestMirrorRefillsKnownBytesFromItsObjectStore() {
   WriteFile(session.host / "a.txt", std::string(5000, 'B'));
   session.Sync();
   Expect(session.engine->status().pulled_from_store == 0, "new bytes come from the host");
-  WriteFile(session.host / "a.txt", std::string(5000, 'A'));  // put back
+  WriteFile(session.host / "a.txt", std::string(5000, 'A'));
   session.Sync();
   Expect(ReadFile(session.Tree("a.txt")) == std::string(5000, 'A'), "the mirror has the bytes back");
   Expect(session.engine->status().pulled_from_store == 1,
@@ -312,15 +280,11 @@ void TestMirrorRefillsKnownBytesFromItsObjectStore() {
          "a zero budget drops what nothing needs, never what a path does");
 }
 
-// A file past the old 64 MiB per-object ceiling — a dataset, a build artifact
-// someone committed — is in the mirror too, with the defaults: it streams to disk
-// as it arrives (never held in memory whole), is verified against its hash, and
-// leaves no staging copy behind. It used to be absent, and invisible in the tree.
 void TestMirrorPullsAFileOverSixtyFourMegabytes() {
   MirrorSession session;
   std::string big(64 * 1024 * 1024 + 4097, '\0');
   for (std::size_t i = 0; i < big.size(); i += 4093) {
-    big[i] = static_cast<char>('a' + (i / 4093) % 26);  // not one repeated page
+    big[i] = static_cast<char>('a' + (i / 4093) % 26);
   }
   WriteFile(session.host / "data/huge.bin", big);
   WriteFile(session.host / "small.txt", "s\n");
@@ -336,13 +300,8 @@ void TestMirrorPullsAFileOverSixtyFourMegabytes() {
          "no staging copy is left behind");
 }
 
-// A tab opening a large file the backfill has not reached (large files go last,
-// and this one is over what the backfill takes at all) streams it to disk at
-// once instead of waiting for the whole tree.
 void TestMirrorPrioritizedLargeFileStreamsAtOnce() {
   MirrorSession session;
-  // Over the 64 MiB an in-memory interactive fetch may carry: before, Prioritize
-  // asked for it in memory, was refused, and the tab waited for the backfill.
   std::string big(64 * 1024 * 1024 + 4097, '\0');
   for (std::size_t i = 0; i < big.size(); i += 4093) {
     big[i] = static_cast<char>('a' + (i / 4093) % 26);
@@ -350,7 +309,7 @@ void TestMirrorPrioritizedLargeFileStreamsAtOnce() {
   WriteFile(session.host / "logs/big.log", big);
   WriteFile(session.host / "small.txt", "s\n");
   remote::MirrorSyncEngine::Options options;
-  options.max_file_bytes = 1024 * 1024;  // the backfill leaves it
+  options.max_file_bytes = 1024 * 1024;
   session.Connect(options);
   session.Sync();
   Expect(!std::filesystem::exists(session.Tree("logs/big.log")) &&
@@ -368,15 +327,13 @@ void TestMirrorPrioritizedLargeFileStreamsAtOnce() {
          "no staging copy is left behind");
 }
 
-// A file the host cannot read has no hash, so the host leaves it out; the sync
-// itself succeeds, everything else arrives, and it follows once it is readable.
 void TestMirrorSkipsAnUnreadableHostFile() {
   MirrorSession session;
   WriteFile(session.host / "ok.txt", "ok\n");
   WriteFile(session.host / "secret.txt", "no\n");
   std::filesystem::permissions(session.host / "secret.txt", std::filesystem::perms::none);
   if (::access((session.host / "secret.txt").c_str(), R_OK) == 0) {
-    return;  // running as root: nothing is unreadable
+    return;
   }
   session.Connect();
   session.Sync();
@@ -420,20 +377,12 @@ void TestMirrorPushesLocalWritesUnderCompareAndSwap() {
   session.engine->Flush();
   Expect(ReadFile(session.host / "fresh.txt") == "made here\n", "a file created locally is created");
 
-  // The pushed write comes back as the host's row: not a change, not a pull.
   session.materialized.clear();
   session.Sync();
   Expect(session.materialized.empty(), "our own push echoed by the manifest pulls nothing");
   Expect(session.engine->StateOf("a.txt") == ContentState::Current, "still current");
 }
 
-// TD-2026-10-22-385: a watch row the host built before it acknowledged a push --
-// the echo of the previous push -- reaches the client AFTER that acknowledgement
-// over a slow link (the host sends deltas on the bulk lane, answers on the
-// interactive one, and the serial queue runs the delta after the waiting push).
-// Taking it pulled the old content back over the save; the next push expected it
-// and conflicted, and every save after that stayed in the mirror. Delivered here
-// through the engine's watch sink, as the host's watch would deliver it.
 void TestMirrorIgnoresAWatchRowOlderThanItsPush() {
   MirrorSession session;
   WriteFile(session.host / "a.txt", "one\n");
@@ -456,7 +405,6 @@ void TestMirrorIgnoresAWatchRowOlderThanItsPush() {
                                .hash = util::HashContent(content),
                                .link_target = {}};
   };
-  // The echo of the FIRST content, from a manifest the host built before the push.
   session.engine->WatchSink()(remote::RemoteWorkspace::WatchDelta{
       .manifest_id = acknowledged, .deleted = {}, .rows = {row("one\n")}, .repository_moved = false});
   session.engine->Flush();
@@ -471,7 +419,6 @@ void TestMirrorIgnoresAWatchRowOlderThanItsPush() {
              session.engine->StateOf("a.txt") == ContentState::Current,
          "so the next save lands, with no conflict");
 
-  // A row from a later manifest is the host's change, and is followed.
   WriteFile(session.host / "a.txt", "host four\n");
   session.engine->WatchSink()(remote::RemoteWorkspace::WatchDelta{
       .manifest_id = session.store->entries()["a.txt"].pushed_manifest + 1,
@@ -483,10 +430,6 @@ void TestMirrorIgnoresAWatchRowOlderThanItsPush() {
          "a newer row is a host change and is pulled");
 }
 
-// The same stale row after Keep Local, the user's one unconditional write: the
-// resolution recorded no `pushed_manifest`, so a row the host built before it was
-// taken as a host change. Naming bytes the mirror still holds (the base, here), the
-// pull wrote them back over the kept file from the object cache, unasked.
 void TestMirrorIgnoresAWatchRowOlderThanItsKeepLocal() {
   MirrorSession session;
   WriteFile(session.host / "a.txt", "base\n");
@@ -497,14 +440,11 @@ void TestMirrorIgnoresAWatchRowOlderThanItsKeepLocal() {
   session.engine->NotifyLocalWrite("a.txt");
   session.engine->Flush();
   Expect(session.engine->Conflicts() == std::vector<std::string>{"a.txt"}, "both sides moved");
-  // Compare fetches the host's side; its bytes are at hand afterwards.
   session.engine->FetchHostCopy("a.txt", [](std::optional<std::filesystem::path>, std::string) {});
   session.engine->ResolveConflict("a.txt", remote::MirrorSyncEngine::Resolution::KeepLocal);
   session.engine->Flush();
   Expect(ReadFile(session.host / "a.txt") == "mine\n", "Keep Local writes the host");
   const std::uint64_t acknowledged = session.store->entries()["a.txt"].pushed_manifest;
-  // The newest manifest the mirror had taken: built before the answer, whatever
-  // the answer recorded.
   const std::uint64_t before_answer = session.store->manifest_id();
 
   const std::string_view stale = "base\n";
@@ -533,20 +473,12 @@ void TestMirrorIgnoresAWatchRowOlderThanItsKeepLocal() {
          "the answer's manifest is recorded, as a push's is: " + std::to_string(acknowledged));
 }
 
-// The skip above compares manifest ids, and those are one server tree's sequence:
-// a reconnect that reaches a new tree (the last connection to the old one went, or
-// the server restarted) starts again at 1. A push acknowledged at id N before the
-// link dropped then made every row for that path from the new tree's first N
-// manifests read as "older than the push" -- including the full manifest the
-// reconnect syncs from, which is skipped before it can re-plan the save journaled
-// while offline. QA remote E ("journal flushed on reconnect") and F failed on every
-// run once the QA host ran a server new enough to send the ids.
 void TestMirrorReconnectToANewServerFlushesTheJournal() {
   MirrorSession session;
   WriteFile(session.host / "a.txt", "one\n");
   session.Connect();
   for (int i = 0; i < 6; ++i) {
-    session.Sync();  // each full manifest is a new id
+    session.Sync();
   }
   WriteFile(session.Tree("a.txt"), "two\n");
   session.engine->NotifyLocalWrite("a.txt");
@@ -554,7 +486,6 @@ void TestMirrorReconnectToANewServerFlushesTheJournal() {
   Expect(ReadFile(session.host / "a.txt") == "two\n", "the save reaches the host");
   Expect(session.store->entries()["a.txt"].pushed_manifest > 3, "acknowledged well into the sequence");
 
-  // The link drops; a save made meanwhile is journaled.
   session.connection->Replace(nullptr);
   WriteFile(session.Tree("a.txt"), "three\n");
   session.engine->NotifyLocalWrite("a.txt");
@@ -562,7 +493,6 @@ void TestMirrorReconnectToANewServerFlushesTheJournal() {
   Expect(ReadFile(session.host / "a.txt") == "two\n" && session.engine->status().dirty == 1,
          "offline, the save waits in the journal");
 
-  // Back, to a new server whose ids start again.
   session.client = session.StartServer();
   session.connection->Replace(session.client);
   session.Sync();
@@ -572,19 +502,11 @@ void TestMirrorReconnectToANewServerFlushesTheJournal() {
          "and the file is current, nothing left unsent");
 }
 
-// A push the host applied but whose answer was lost with the link -- the client
-// only learns "no answer" -- and a save after it. The next connection's push
-// expects the old base and finds the host holding the lost push's bytes. That is
-// the client's own write, not a host change: it becomes the base and the newer save
-// lands over it. Taken for a conflict, it parked the file, and every later save of
-// it stayed in the mirror (QA remote, slow link: D2's save landed unanswered, then
-// E, F and J failed on LICENSE).
 void TestMirrorAPushWhoseAnswerWasLostIsNotAConflict() {
   MirrorSession session;
   WriteFile(session.host / "a.txt", "one\n");
   session.Connect();
   session.Sync();
-  // Swap in a server whose pid is known, so its answers can be withheld.
   const std::filesystem::path pid_file = session.temp.path() / "server.pid";
   session.client = session.StartServer(pid_file);
   session.connection->Replace(session.client);
@@ -600,29 +522,18 @@ void TestMirrorAPushWhoseAnswerWasLostIsNotAConflict() {
   }
   ::kill(static_cast<pid_t>(*pid), SIGSTOP);
 
-  // The push goes out; no answer can come.
   const std::size_t before = session.client->peer().pending_request_count();
   WriteFile(session.Tree("a.txt"), "two\n");
   session.engine->NotifyLocalWrite("a.txt");
-  // pending_request_count counts a request once it is queued on the transport,
-  // not when it is registered: counted from registration, the wait below once
-  // saw the push before it was sent, the Fail beat the send, and the push was
-  // (rightly) never-sent -- 1 run in ~15 on two cores (TD-2026-10-28-410).
-  // It also leaves the link's own pings out: one going unanswered
-  // to the stopped server here once passed for the push, which then found the
-  // link failed, was never sent, and the host bytes the test wrote below really
-  // were a host change (1 run in ~40 under load, CI's TSan job).
   Expect(WaitUntil([&] { return session.client->peer().pending_request_count() > before; },
                    std::chrono::seconds(10), std::chrono::milliseconds(1)),
          "the push is on the wire");
-  // The link drops before the answer; the host had applied the write.
   session.client->peer().Fail("the link dropped mid-write");
   session.engine->Flush();
   ::kill(static_cast<pid_t>(*pid), SIGKILL);
   WriteFile(session.host / "a.txt", "two\n");
   Expect(session.engine->status().dirty == 1, "unanswered, the save stays in the journal");
 
-  // Saved again while the link is down: never sent, so never a candidate.
   WriteFile(session.Tree("a.txt"), "three\n");
   session.engine->NotifyLocalWrite("a.txt");
   session.engine->Flush();
@@ -650,7 +561,6 @@ void TestMirrorParksConflictsAndNeverOverwritesLocalEdits() {
   session.Connect();
   session.Sync();
 
-  // Both sides move from the base.
   WriteFile(session.host / "a.txt", "agent\n");
   WriteFile(session.Tree("a.txt"), "human\n");
   session.engine->NotifyLocalWrite("a.txt");
@@ -663,11 +573,6 @@ void TestMirrorParksConflictsAndNeverOverwritesLocalEdits() {
   Expect(session.engine->status().conflicts == 1, "and still reports it");
 }
 
-// Soak 464a40fee2bd: a parked conflict read as a pull still to come. The recount
-// counted its stale base as pending while every pull skips a conflicted path, so
-// the project reported "1 pending" until the user settled the conflict, and the
-// QA oracle waited 90 s for a sync that was never going to run. A conflict is a
-// conflict, not also a pending pull -- as it is already not also an unsent save.
 void TestMirrorAParkedConflictIsNotAPendingPull() {
   MirrorSession session;
   WriteFile(session.host / "a.txt", "base\n");
@@ -687,11 +592,6 @@ void TestMirrorAParkedConflictIsNotAPendingPull() {
              std::to_string(status.absent));
 }
 
-// The QA monkey's remote job (soak f3ad7063ff9a): a folder renamed in the mirror
-// to a name the host cannot be sent (one with a backslash in it) read as a move
-// out of the project -- the host DELETED the folder, and the mirror kept it under
-// the new name, never synced. Such a rename, create or save is refused before
-// anything changes on either side.
 void TestMirrorANameTheHostCannotTakeIsRefused() {
   MirrorSession session;
   WriteFile(session.host / "docs/a.txt", "a\n");
@@ -715,12 +615,6 @@ void TestMirrorANameTheHostCannotTakeIsRefused() {
          "nothing was made in the mirror");
 }
 
-// The QA monkey's remote job (soak 4399652f0e70): a save under a path that goes
-// THROUGH a link to a folder in the mirror -- `d/loop -> .`, saved as
-// `d/loop/new.txt` -- lands in the folder the link names (`d/new.txt`), but the
-// gate journaled the path as typed, link and all. The host refuses a path through
-// a link, and the file stayed only in the mirror. The gate journals the file's
-// real place in the tree.
 void TestMirrorASaveThroughAFolderLinkPushesItsRealPath() {
   MirrorSession session;
   WriteFile(session.host / "d/a.txt", "a\n");
@@ -741,13 +635,6 @@ void TestMirrorASaveThroughAFolderLinkPushesItsRealPath() {
              " blocked=" + std::to_string(status.blocked) + " " + status.error);
 }
 
-// The QA monkey's remote job (soak 9e0fe5eaa149, 367234368d0e): the tree ops'
-// twin of the save above. A folder made in the mirror through `d/loop -> .` was
-// replayed to the host by the path as typed, link and all; the host refuses a
-// path through a link, so the folder existed only in the mirror, and every file
-// later saved into it -- pushed by its real path -- had no folder to land in.
-// Each op is replayed by its real place: the folder links on the way resolved,
-// the node itself (which may be a link) kept.
 void TestMirrorTreeOpsThroughAFolderLinkReachTheHost() {
   MirrorSession session;
   WriteFile(session.host / "d/a.txt", "a\n");
@@ -792,12 +679,6 @@ void TestMirrorTreeOpsThroughAFolderLinkReachTheHost() {
              " blocked=" + std::to_string(status.blocked) + " " + status.error);
 }
 
-// The QA monkey's remote job (soak 517966306bfc, 14a5c9606a3a): a save through a
-// link in the mirror -- an in-root link is recreated as a link -- writes the file
-// the link names (the atomic save resolves the chain, so the link survives), but
-// the write gate journaled the LINK's path. The engine pushed the link path,
-// which the host refuses (a link is there), and the file that changed was never
-// sent: it stayed only in the mirror. The gate journals where the bytes landed.
 void TestMirrorASaveThroughALinkPushesTheFileItNames() {
   MirrorSession session;
   WriteFile(session.host / "target.txt", "base\n");
@@ -824,11 +705,6 @@ void TestMirrorASaveThroughALinkPushesTheFileItNames() {
              std::to_string(status.blocked) + " " + status.error);
 }
 
-// A save the host refuses for the path itself is blocked, not unsent: a file
-// saved where the host has a dangling link, an edit to a file the host made
-// unreadable. Each was an error retried at every reconnect, "unsent" forever with
-// a generic sync error (soak 464a40fee2bd). Blocked, it waits for the host to
-// change the path or for the user: Retry, or Replace on Host (KeepLocal).
 void TestMirrorASaveTheHostRefusesIsBlockedNotUnsent() {
   MirrorSession session;
   WriteFile(session.host / "locked.txt", "base\n");
@@ -836,7 +712,7 @@ void TestMirrorASaveTheHostRefusesIsBlockedNotUnsent() {
   std::filesystem::create_symlink("/nonexistent-qa/two", session.host / "link2");
   session.Connect();
   session.Sync();
-  const bool root = ::geteuid() == 0;  // permissions do not refuse root
+  const bool root = ::geteuid() == 0;
 
   std::filesystem::permissions(session.host / "locked.txt", std::filesystem::perms::none);
   for (const char* path : {"link1", "link2", "locked.txt"}) {
@@ -854,13 +730,11 @@ void TestMirrorASaveTheHostRefusesIsBlockedNotUnsent() {
              blocked[0].reason.find("not a regular file") != std::string::npos,
          "each says why, as the host did: " + (blocked.empty() ? std::string("none") : blocked[0].reason));
 
-  // A sync with nothing changed on the host sends none of them again.
   session.Sync();
   status = session.engine->status();
   Expect(status.blocked == refused && status.error.empty(), "a reconnect leaves them blocked");
 
   if (!root) {
-    // The host makes the file readable again: its row changes, and the save lands.
     std::filesystem::permissions(session.host / "locked.txt",
                                  std::filesystem::perms::owner_read | std::filesystem::perms::owner_write);
     session.Sync();
@@ -868,13 +742,11 @@ void TestMirrorASaveTheHostRefusesIsBlockedNotUnsent() {
            "a change on the host retries the blocked save");
   }
 
-  // The user removes the link on the host and retries.
   std::filesystem::remove(session.host / "link1");
   session.engine->RetryBlocked("link1");
   session.engine->Flush();
   Expect(ReadFile(session.host / "link1") == "mine link1\n", "Retry sends it once the host allows it");
 
-  // Replace on Host overwrites the link itself, not what it names.
   session.engine->ResolveConflict("link2", remote::MirrorSyncEngine::Resolution::KeepLocal);
   session.engine->Flush();
   Expect(!std::filesystem::is_symlink(session.host / "link2") &&
@@ -886,19 +758,13 @@ void TestMirrorASaveTheHostRefusesIsBlockedNotUnsent() {
          "nothing is left blocked or unsent");
 }
 
-// The shape of soak 37ec61829b08's sightings: a save to a file the host cannot
-// read is refused (blocked); the host then renames that file away, and the user
-// chooses Replace on Host. The mirror must not settle with the user's file on
-// its side only. This sequence holds without faults (the file lands on the host);
-// the soak's sightings add link cuts and server kills between the steps, and
-// MICROIDE_TRACE_MIRROR_SYNC now records each decision about the path.
 void TestMirrorARefusedSaveWhoseHostFileIsRenamedAwayIsNotLeftBehind() {
   MirrorSession session;
   WriteFile(session.host / "ok.txt", "ok\n");
   WriteFile(session.host / "unreadable.txt", "host\n");
   std::filesystem::permissions(session.host / "unreadable.txt", std::filesystem::perms::none);
   if (::access((session.host / "unreadable.txt").c_str(), R_OK) == 0) {
-    return;  // running as root: nothing is unreadable
+    return;
   }
   session.Connect();
   session.Sync();
@@ -923,16 +789,12 @@ void TestMirrorARefusedSaveWhoseHostFileIsRenamedAwayIsNotLeftBehind() {
   std::filesystem::permissions(session.host / "unreadable.txt.renamed", std::filesystem::perms::owner_all);
 }
 
-// Soak 0cc274626767: Replace on Host over a file the host cannot read wrote the
-// user's bytes with the old file's mode -- none -- so the host still could not
-// read it and never listed it. The mirror held it as made-here-only, and when the
-// host deleted it the mirror kept it: the two settled apart.
 void TestMirrorReplaceOnHostOfAnUnreadableFileLeavesItReadable() {
   MirrorSession session;
   WriteFile(session.host / "unreadable.txt", "host\n");
   std::filesystem::permissions(session.host / "unreadable.txt", std::filesystem::perms::none);
   if (::access((session.host / "unreadable.txt").c_str(), R_OK) == 0) {
-    return;  // running as root: nothing is unreadable
+    return;
   }
   session.Connect();
   session.Sync();
@@ -954,8 +816,6 @@ void TestMirrorReplaceOnHostOfAnUnreadableFileLeavesItReadable() {
          "the host deleting it deletes it here too");
 }
 
-// Nothing is settled automatically; the user's choice is: keep mine (the one
-// unconditional write) or take the host's.
 void TestMirrorResolvesConflictsTheUsersWay() {
   MirrorSession session;
   WriteFile(session.host / "mine.txt", "base\n");
@@ -994,24 +854,16 @@ void TestMirrorResolvesConflictsTheUsersWay() {
              session.engine->StateOf("mine.txt") == ContentState::Current &&
              session.engine->StateOf("theirs.txt") == ContentState::Current,
          "both are current again");
-  // And they stay settled: the next sync finds nothing to do.
   session.Sync();
   Expect(session.engine->Conflicts().empty(), "a sync does not reopen them");
 }
 
-// A parked conflict whose two sides come to hold the same bytes -- the user's
-// version applied on the host by hand, the same fix made on both sides -- has
-// nothing left to choose: it settles itself on the next row, instead of staying a
-// row whose either button would write what is already there. ConflictDetails says
-// what each side still holds while it is one.
 void TestMirrorConflictClearsWhenTheHostAdoptsTheMirrorsBytes() {
   MirrorSession session;
   WriteFile(session.host / "a.txt", "base\n");
   WriteFile(session.host / "gone.txt", "base\n");
   session.Connect();
   session.Sync();
-  // A write into tree/ outside the gate (no journal entry) while the host moves
-  // too: the next sync parks it. And a host delete of a file changed here.
   WriteFile(session.host / "a.txt", "agent\n");
   WriteFile(session.Tree("a.txt"), "human\n");
   std::filesystem::remove(session.host / "gone.txt");
@@ -1024,7 +876,6 @@ void TestMirrorConflictClearsWhenTheHostAdoptsTheMirrorsBytes() {
          "the details say which side still holds each");
   Expect(ReadFile(session.Tree("a.txt")) == "human\n", "nothing was written either way");
 
-  // The host comes to hold the mirror's bytes.
   WriteFile(session.host / "a.txt", "human\n");
   session.Sync();
   Expect(session.engine->Conflicts() == std::vector<std::string>{"gone.txt"},
@@ -1037,10 +888,6 @@ void TestMirrorConflictClearsWhenTheHostAdoptsTheMirrorsBytes() {
   Expect(ReadFile(session.Tree("a.txt")) == "agent again\n", "the next host edit is pulled like any other");
 }
 
-// Keep Local on a file the host deleted puts the mirror's copy back on the host --
-// also when the host moved its whole directory away (an openspec change archived
-// on the host: `changes/x/` renamed to `changes/archive/<date>-x/`), and also for a
-// copy the mirror never recorded a base for.
 void TestMirrorKeepLocalRestoresAFileTheHostMovedAway() {
   MirrorSession session;
   WriteFile(session.host / "changes/x/design.md", "base\n");
@@ -1071,9 +918,6 @@ void TestMirrorKeepLocalRestoresAFileTheHostMovedAway() {
   Expect(session.engine->StateOf("changes/x/design.md") == ContentState::Current, "it is current");
 }
 
-// Take Remote on a file the host deleted removes the mirror's copy -- also when the
-// host moved the file's whole directory away, so that the host has no parent
-// directory to look the file up in either.
 void TestMirrorTakeRemoteFollowsAFileTheHostMovedAway() {
   MirrorSession session;
   WriteFile(session.host / "changes/x/design.md", "base\n");
@@ -1101,11 +945,6 @@ void TestMirrorTakeRemoteFollowsAFileTheHostMovedAway() {
   Expect(session.engine->Conflicts().empty(), "and they are no longer conflicts");
 }
 
-// A save of a file whose directory the host moved away while the save was on its
-// way (or made offline): the push is made against the base, finds nothing there,
-// and is a conflict ("deleted on remote, changed locally") -- not a re-creation of
-// the file on the host, and not an empty directory left behind on the host by the
-// refused write.
 void TestMirrorASaveIntoADirectoryTheHostMovedAwayIsAConflict() {
   MirrorSession session;
   WriteFile(session.host / "changes/x/design.md", "base\n");
@@ -1120,9 +959,6 @@ void TestMirrorASaveIntoADirectoryTheHostMovedAwayIsAConflict() {
          "the save is a conflict: " + session.engine->status().error);
   Expect(!std::filesystem::exists(session.host / "changes/x"),
          "and the refused write left no directory on the host");
-  // The refusal itself says nothing is on the host: the conflict is one-sided
-  // before any manifest reconciles the delete. Read off the push alone it was
-  // "changed on both sides", and the row offered Merge with no remote side.
   const auto before_sync = session.engine->ConflictDetails();
   Expect(before_sync.size() == 1 && !before_sync[0].on_host,
          "the push's own answer makes it deleted on the remote");
@@ -1134,10 +970,6 @@ void TestMirrorASaveIntoADirectoryTheHostMovedAwayIsAConflict() {
          "one the remote deleted and the local side changed");
 }
 
-// A rename made here that the host refused (the original edited there since) parks
-// the renamed copy at its new path. Its conflict says it was renamed and from
-// where -- read as "deleted on remote", the row described a file the user had
-// just renamed -- across a restart, and no longer once it is settled.
 void TestMirrorAParkedRenameRemembersWhereItCameFrom() {
   MirrorSession session;
   WriteFile(session.host / "dir/a.txt", "base\n");
@@ -1156,7 +988,7 @@ void TestMirrorAParkedRenameRemembersWhereItCameFrom() {
   const auto details = [&] { return session.engine->ConflictDetails(); };
   Expect(details().size() == 1 && details()[0].path == "dir/r.txt" && details()[0].renamed_from == "dir/a.txt",
          "the parked copy says it was renamed from dir/a.txt");
-  session.Connect();  // a restart: the store reopened from disk
+  session.Connect();
   Expect(details().size() == 1 && details()[0].renamed_from == "dir/a.txt", "and still does after a restart");
   session.engine->ResolveConflict("dir/r.txt", remote::MirrorSyncEngine::Resolution::KeepLocal);
   session.engine->Flush();
@@ -1166,12 +998,6 @@ void TestMirrorAParkedRenameRemembersWhereItCameFrom() {
          "and the settled entry forgets the rename");
 }
 
-// Every resolution on every shape a conflict comes in. A choice offered on a row
-// must do what it says for that row's shape -- the deleted-on-host shape under a
-// directory the host moved away failed Take Remote with "cannot open changes/x"
-// for as long as it existed, because the tests only ever settled conflicts both
-// sides still had. Compare and Merge fetch the remote side: where there is no
-// remote file they answer that plainly, never with a filesystem error.
 void TestMirrorEveryResolutionOfEveryConflictShape() {
   using Resolution = remote::MirrorSyncEngine::Resolution;
   enum class Shape { BothChanged, DeletedOnRemote, MovedAwayOnRemote, DeletedLocally };
@@ -1211,9 +1037,6 @@ void TestMirrorEveryResolutionOfEveryConflictShape() {
           session.Sync();
           break;
         case Shape::DeletedLocally:
-          // A parked conflict whose local file is then deleted ("deleted locally,
-          // changed on remote"). A plain local delete the host refuses is not one:
-          // the next sync restores the host's newer bytes by design.
           WriteFile(session.host / c.path, "remote\n");
           WriteFile(session.Tree(c.path), "local\n");
           session.Sync();
@@ -1224,7 +1047,6 @@ void TestMirrorEveryResolutionOfEveryConflictShape() {
       const bool remote_has = c.shape == Shape::BothChanged || c.shape == Shape::DeletedLocally;
       const bool local_has = c.shape != Shape::DeletedLocally;
 
-      // Compare's and Merge's fetch of the remote side, before the choice.
       std::optional<std::filesystem::path> copy;
       std::string copy_error;
       session.engine->FetchHostCopy(c.path, [&](std::optional<std::filesystem::path> got, std::string why) {
@@ -1261,9 +1083,6 @@ void TestMirrorEveryResolutionOfEveryConflictShape() {
   }
 }
 
-// A conflict merged three ways: the sides are the base both started from (kept in
-// meta/objects), the host's current bytes and the mirror's file; the result is
-// pushed only over the host version it was merged against.
 void TestMirrorMergesAConflictThreeWays() {
   MirrorSession session;
   WriteFile(session.host / "merge.txt", "one\ntwo\nthree\n");
@@ -1295,8 +1114,8 @@ void TestMirrorMergesAConflictThreeWays() {
              sides.host.string().find("/tree/") == std::string::npos,
          "both outside the tree");
 
-  WriteFile(session.Tree("merge.txt"), "ONE\ntwo\nTHREE\n");  // the merge's result
-  WriteFile(session.host / "merge.txt", "ONE!\ntwo\nthree\n");  // an agent, meanwhile
+  WriteFile(session.Tree("merge.txt"), "ONE\ntwo\nTHREE\n");
+  WriteFile(session.host / "merge.txt", "ONE!\ntwo\nthree\n");
   session.engine->ResolveConflict("merge.txt", remote::MirrorSyncEngine::Resolution::KeepLocal, sides.host_hash);
   session.engine->Flush();
   Expect(ReadFile(session.host / "merge.txt") == "ONE!\ntwo\nthree\n" &&
@@ -1337,29 +1156,21 @@ void TestMirrorJournalSurvivesARestart() {
   WriteFile(session.host / "a.txt", "v1\n");
   session.Connect();
   session.Sync();
-  // A save that never reached the host: written and journaled, then the link died.
   WriteFile(session.Tree("a.txt"), "offline edit\n");
   session.store->entries()["a.txt"].push_pending = true;
   std::string error;
   Expect(session.store->Save(&error), "journal saved");
-  session.Connect();  // a new connection, a reopened store
+  session.Connect();
   Expect(session.engine->StateOf("a.txt") == ContentState::Dirty, "the reopened mirror knows it");
   session.Sync();
   Expect(ReadFile(session.host / "a.txt") == "offline edit\n", "the next sync replays it");
   Expect(session.engine->StateOf("a.txt") == ContentState::Current, "and it is current");
 
-  // An edit made in tree/ by something other than the editor is ours too.
   WriteFile(session.Tree("a.txt"), "a tool wrote this\n");
   session.Sync();
   Expect(ReadFile(session.host / "a.txt") == "a tool wrote this\n", "an outside local edit is pushed");
 }
 
-// A crash BEFORE the journal recorded a save: the editor wrote tree/, the client
-// died before meta/state said so, and the host edited the same file while the
-// client was down. Nothing of either side may be lost: the file whose two sides
-// both moved is a conflict, never overwritten in either direction, and a file
-// only the client changed is still pushed -- the stat no longer vouches for the
-// base, so the bytes are hashed and found newer.
 void TestMirrorACrashBeforeTheJournalLosesNothing() {
   MirrorSession session;
   WriteFile(session.host / "a.txt", "v1\n");
@@ -1367,11 +1178,10 @@ void TestMirrorACrashBeforeTheJournalLosesNothing() {
   session.Connect();
   session.Sync();
   Expect(session.engine->StateOf("a.txt") == ContentState::Current, "synced");
-  session.engine.reset();  // a clean stop: meta/state as a crash would find it
+  session.engine.reset();
   const std::filesystem::path meta = session.mirror_dir / "meta";
   const std::filesystem::path snapshot = session.temp.path() / "meta-before-crash";
   std::filesystem::copy(meta, snapshot, std::filesystem::copy_options::recursive);
-  // What the crashed window did and recorded nowhere, and what the host did meanwhile.
   WriteFile(session.Tree("a.txt"), "local edit nobody journaled\n");
   WriteFile(session.Tree("b.txt"), "local only edit\n");
   WriteFile(session.host / "a.txt", "host edit meanwhile\n");
@@ -1388,10 +1198,6 @@ void TestMirrorACrashBeforeTheJournalLosesNothing() {
   Expect(session.engine->StateOf("b.txt") == ContentState::Current, "and is current");
 }
 
-// What Remove Mirror counts as lost: the journal is not the whole story. An edit
-// in tree/ nothing journaled (a crash between the write and the journal, a tool
-// writing while the project was closed) and a file made here that the state never
-// heard of are the user's too; a file that still holds its base is not.
 void TestMirrorLocalWorkCountsWhatTheJournalMissed() {
   MirrorSession session;
   WriteFile(session.host / "a.txt", "a1\n");
@@ -1441,7 +1247,6 @@ void TestMirrorFollowsTheHostWatch() {
   Expect(followed, std::string("an edit, a new file and a delete on the host reach the mirror with no ") +
                        "sync requested (" + (native ? "native" : "polling") + " watch)");
 
-  // A local save echoed back by the watch changes nothing.
   WriteFile(session.Tree("a.txt"), "three\n");
   session.engine->NotifyLocalWrite("a.txt");
   session.engine->Flush();
@@ -1452,14 +1257,6 @@ void TestMirrorFollowsTheHostWatch() {
          "our own push echoed by the watch is current, not a change");
 }
 
-// What a host change pulls is recorded on disk once its pulls land, not only when
-// something later happens to save: the app leaves through quick_exit, so a state
-// save still queued -- or never queued -- is lost, and the next start finds the
-// pulled bytes unrecorded. Measured on a real host: a branch checkout pulled 1,700
-// files minutes before a quit, and after the host moved on overnight the 59 it
-// had touched again each came up as a Keep Local / Take Remote conflict the user
-// never made. The snapshot below is the directory as quick_exit would leave it:
-// taken while the engine is alive, so its destructor's save cannot hide the bug.
 void TestMirrorRecordsWatchedPullsBeforeAQuit() {
   MirrorSession session;
   WriteFile(session.host / "a.txt", "one\n");
@@ -1490,7 +1287,6 @@ void TestMirrorRecordsWatchedPullsBeforeAQuit() {
            "the state on disk records the pulled bytes as the base");
   }
 
-  // Restart from what the quit left, after the host moved on again.
   session.engine.reset();
   std::filesystem::remove_all(session.mirror_dir);
   std::filesystem::rename(snapshot, session.mirror_dir);
@@ -1501,7 +1297,6 @@ void TestMirrorRecordsWatchedPullsBeforeAQuit() {
          "a file the user never edited is not a conflict after a restart");
   Expect(ReadFile(session.Tree("a.txt")) == "three\n", "it is pulled like any other host edit");
 
-  // Quitting with nothing pulled since the last save costs no flush.
   session.engine->Flush();
   util::ResetPerformanceCounters();
   session.engine->PersistNow();
@@ -1509,11 +1304,6 @@ void TestMirrorRecordsWatchedPullsBeforeAQuit() {
          "PersistNow with nothing unrecorded does not flush the tree");
 }
 
-// A mass delete is held in case the host root vanished (§ 6.3), but a branch
-// switch deletes for git's reasons: when the host's HEAD moves with it
-// (watch/moved), the mirror follows. Measured on a real host before this: a
-// checkout 2,000 commits back left 2,960 files in the mirror that the host no
-// longer had, behind a prompt with no Apply button.
 void TestMirrorFollowsABranchSwitchThatDeletesMostFiles() {
   MirrorSession session;
   InitializeGitRepo(session.host);
@@ -1557,9 +1347,6 @@ void TestMirrorFollowsABranchSwitchThatDeletesMostFiles() {
          "switching back brings the files back");
 }
 
-// The other side of the same rule: files removed with no HEAD move (an unmounted
-// directory, an rm) are still held, and a held path the host lists again is not
-// deleted when the hold is approved.
 void TestMirrorHoldsAMassDeleteTheRepositoryDidNotExplain() {
   MirrorSession session;
   InitializeGitRepo(session.host);
@@ -1586,7 +1373,6 @@ void TestMirrorHoldsAMassDeleteTheRepositoryDidNotExplain() {
              std::chrono::seconds(10)),
          [&] { return "removed with no HEAD move, the delete is held: " +
              std::to_string(session.engine->status().held_deletes); });
-  // Past the host's repository sampler: nothing announces a move it did not see.
   std::this_thread::sleep_for(std::chrono::milliseconds(1500));
   session.engine->Flush();
   Expect(session.engine->status().held_deletes == 140 && std::filesystem::exists(session.Tree("f0")),
@@ -1612,9 +1398,6 @@ void TestMirrorHoldsAMassDeleteTheRepositoryDidNotExplain() {
          "and the one that came back is kept, with the host's new bytes");
 }
 
-// TD-2026-10-27-402: a mass delete the watch delivers in two batches, each under
-// the threshold alone, is held as one -- the first batch's deletes, already
-// applied, are put back and held with the second's.
 void TestMirrorHoldsAMassDeleteSplitAcrossBatches() {
   MirrorSession session;
   for (int i = 0; i < 150; ++i) {
@@ -1660,20 +1443,17 @@ void TestMirrorHoldsAMassDeleteSplitAcrossBatches() {
   Expect(session.engine->status().held_deletes == 0, "and nothing is held after the approval");
 }
 
-// TD-2026-10-27-403: a pull the host answers "no such file" -- deleted while the
-// backfill was on its way, with no delete delta to say so -- is the host's delete:
-// the row stops counting as one to fetch.
 void TestMirrorAPullOfAFileTheHostDeletedDropsTheRow() {
   MirrorSession session;
   WriteFile(session.host / "a.txt", "a\n");
   WriteFile(session.host / "big.txt", "more than ten bytes\n");
   remote::MirrorSyncEngine::Options options;
-  options.max_file_bytes = 10;  // never backfilled: absent until a tab asks
+  options.max_file_bytes = 10;
   session.Connect(options);
   session.Sync();
   Expect(session.engine->status().absent == 1 && session.engine->StateOf("big.txt") == ContentState::Absent,
          "the large file is listed and not fetched");
-  std::filesystem::remove(session.host / "big.txt");  // and no watch to report it
+  std::filesystem::remove(session.host / "big.txt");
   session.engine->Prioritize({"big.txt"});
   session.engine->Flush();
   const auto status = session.engine->status();
@@ -1683,10 +1463,6 @@ void TestMirrorAPullOfAFileTheHostDeletedDropsTheRow() {
   Expect(status.unreadable == 0, "and it is not an unreadable file");
 }
 
-// A rename and a delete made with no connection are journaled, survive the engine
-// going away, and replay — in order, before the manifest is compared — on the next
-// connection: the deleted file is not pulled back, the renamed one lands at its
-// new path on the host.
 void TestMirrorTreeOpsMadeOfflineReplay() {
   MirrorSession session;
   WriteFile(session.host / "old.txt", "moving\n");
@@ -1694,7 +1470,6 @@ void TestMirrorTreeOpsMadeOfflineReplay() {
   session.Connect();
   session.Sync();
   {
-    // Offline: an engine whose connection has no client.
     remote::RemoteWorkspace offline(std::make_shared<remote::RemoteConnection>(nullptr));
     remote::MirrorSyncEngine engine(offline, *session.store);
     remote::MirrorWriteGate gate(*session.store, engine);
@@ -1709,7 +1484,7 @@ void TestMirrorTreeOpsMadeOfflineReplay() {
     engine.Flush();
     Expect(session.store->pending_tree_ops().size() == 2, "and wait in the journal");
   }
-  session.Connect();  // a new engine over a reopened store
+  session.Connect();
   Expect(session.store->pending_tree_ops().size() == 2, "the journal survived the restart");
   session.Sync();
   Expect(!std::filesystem::exists(session.host / "old.txt") &&
@@ -1759,22 +1534,18 @@ void TestMirrorWriteGateReachesTheHost() {
   Expect(session.engine->StateOf("moved/b.txt") == ContentState::Current,
          "the renamed file keeps its base under its new name");
 
-  // A path outside the mirror is a plain local write.
   const auto outside = gate.WriteText(session.temp.path() / "elsewhere.txt", "x");
   Expect(outside.ok && !std::filesystem::exists(session.host / "elsewhere.txt"),
          "a write outside tree/ stays local");
 }
 
-// § 7.3: the host's files the mirror has not fetched are published for the tree
-// and quick-open to list, with the folders they imply; each leaves the list once it
-// has landed.
 void TestMirrorListsWhatItHasNotFetched() {
   MirrorSession session;
   WriteFile(session.host / "small.txt", "s\n");
   WriteFile(session.host / "logs/a.log", std::string(2 * 1024 * 1024, 'a'));
   WriteFile(session.host / "logs/deep/b.log", std::string(2 * 1024 * 1024, 'b'));
   remote::MirrorSyncEngine::Options options;
-  options.max_file_bytes = 1024 * 1024;  // the backfill leaves both logs
+  options.max_file_bytes = 1024 * 1024;
   session.Connect(options);
   Expect(session.engine->PendingPaths() == nullptr, "nothing is pending before the manifest");
   session.Sync();
@@ -1795,7 +1566,6 @@ void TestMirrorListsWhatItHasNotFetched() {
   Expect(session.engine->PendingPaths() == nullptr, "and nothing is pending any more");
 }
 
-// A gate that records what reached it and writes nothing.
 class RecordingGate final : public project::FileWriteGate {
  public:
   std::vector<std::filesystem::path> written;
@@ -1816,9 +1586,6 @@ class RecordingGate final : public project::FileWriteGate {
   void DisposeStaged(std::span<const std::filesystem::path>) override {}
 };
 
-// Soak 500d49cd7220: a local project's save of a mirror file went to the local
-// gate, and the sync never heard of it. The local projects' gate hands a path in
-// an open mirror to that mirror's gate, the deepest one holding it.
 void TestMirrorRoutingSendsAMirrorPathToItsMirrorsGate() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path mirror = temp_dir.path() / "remote" / "app";
@@ -1854,7 +1621,7 @@ void TestMirrorRoutingSendsAMirrorPathToItsMirrorsGate() {
          "an unregistered mirror is a local path again");
 }
 
-}  // namespace
+}
 
 void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/InitialSyncAndHostChanges", TestMirrorInitialSyncAndHostChanges);
@@ -1934,4 +1701,4 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
           TestMirrorConflictClearsWhenTheHostAdoptsTheMirrorsBytes);
 }
 
-}  // namespace microide::tests
+}

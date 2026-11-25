@@ -29,4 +29,4 @@ int FindProjectSearchResultLine(const std::vector<int>& line_map, std::size_t re
   return 0;
 }
 
-}  // namespace microide::workspace
+}

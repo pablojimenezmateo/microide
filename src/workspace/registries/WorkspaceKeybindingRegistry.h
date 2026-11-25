@@ -29,40 +29,14 @@ struct KeybindingSpec {
   std::array<std::string_view, 2> args{};
   std::size_t arg_count = 0;
   std::string_view command_name;
-  // Whether a Global binding still fires while a terminal holds keyboard focus
-  // (VS Code's `terminal.integrated.commandsToSkipShell`). Off by default: a
-  // focused terminal owns the keyboard, so Ctrl+O reaches nano as ^O, Ctrl+J
-  // reaches Claude Code as a newline and F5 reaches htop. Set only on a
-  // reserved chord (IsTerminalReservedChord). Terminal-context bindings always
-  // fire in a terminal, and are reserved chords too.
   bool skips_terminal = false;
-  // This binding takes a chord an EARLIER built-in also holds, whenever that one's
-  // action is not enabled (VS Code's `when` clauses: F6 pauses a running program
-  // and otherwise focuses the next part). Declared, so no two built-ins share a
-  // chord by accident (KeybindingRegistry/BuiltinKeybindingsDoNotShadowEachOther).
   bool shares_chord = false;
-  // A two-step chord (VS Code's Ctrl+K Ctrl+O): this leader first, then `key` +
-  // `modifiers`. SDLK_UNKNOWN for a single key. The leader arms in the contexts the
-  // binding is active in; a key that completes no chord dispatches as usual.
   SDL_Keycode leader_key = SDLK_UNKNOWN;
   SDL_Keymod leader_modifiers = SDL_KMOD_NONE;
 };
 
-// The chords a focused terminal leaves to the workbench; every other key is the
-// program's. Ctrl+Shift+<key> is the namespace every Linux terminal reserves for
-// its own UI (copy, paste, find, new tab) -- a legacy encoding cannot tell most
-// of them from Ctrl+<key> -- and Ctrl+` / Ctrl+PageUp / Ctrl+PageDown / Ctrl+Tab
-// are the way out (toggle the panel, switch terminal tab, switch editor). Only a
-// built-in binding on one of these may be active in a focused terminal (a
-// Terminal-context binding, or a Global one that skips the shell); a user can
-// still hand any binding to the workbench with terminal.commands_to_skip_shell.
 bool IsTerminalReservedChord(SDL_Keycode key, SDL_Keymod modifiers);
 
-// Whether two bindings on one chord can both be active in some focus context --
-// then FindKeybinding's first match leaves the other dead. The rule dispatch
-// applies: a Global binding is active everywhere but a focused terminal, and
-// there too when it skips the shell; any other context only in itself. The one
-// definition for the plugin-contribution screen and the built-in lint.
 bool KeybindingContextsOverlap(KeybindingContext a,
                                bool a_skips_terminal,
                                KeybindingContext b,
@@ -83,56 +57,36 @@ struct ResolvedKeybinding {
   std::vector<std::string> args;
   std::string command_name;
   bool from_plugin = false;
-  bool skips_terminal = false;  // see KeybindingSpec::skips_terminal
-  bool shares_chord = false;    // see KeybindingSpec::shares_chord
-  SDL_Keycode leader_key = SDLK_UNKNOWN;  // see KeybindingSpec::leader_key
+  bool skips_terminal = false;
+  bool shares_chord = false;
+  SDL_Keycode leader_key = SDLK_UNKNOWN;
   SDL_Keymod leader_modifiers = SDL_KMOD_NONE;
 };
 
-// `skip_shell` edits which Global bindings fire while a terminal holds focus
-// (VS Code's `terminal.integrated.commandsToSkipShell`): an entry naming a binding
-// id adds it to the skip-shell set, `-id` removes it; the last entry for an id
-// wins. It is applied before conflicts are resolved, so a plugin's terminal chord
-// can take a key the user has handed back to the shell.
 std::vector<ResolvedKeybinding> ResolveKeybindings(
     const plugin::PluginHost& plugin_host,
     const std::vector<std::string>& disabled_ids = {},
     const std::vector<std::string>& skip_shell = {});
 
-// Pure seam taking the contributed keybindings directly. This is the per-reload
-// rebuild whose cost the per-kind contribution cap bounds (TD-2026-07-17-019);
-// the perf harness measures it at the cap through this overload.
 std::vector<ResolvedKeybinding> ResolveKeybindings(
     const std::vector<plugin::PluginHost::ContributedKeybinding>& contributed,
     const std::vector<std::string>& disabled_ids = {},
     const std::vector<std::string>& skip_shell = {});
-// A contributed binding ResolveKeybindings drops because one resolved before it
-// holds its chord where it would be active (TD-2026-10-20-369): which, and who.
 struct ShadowedKeybinding {
   std::string id;
-  std::string chord;    // as the menus spell it
-  std::string held_by;  // the holding binding's id
+  std::string chord;
+  std::string held_by;
 };
 std::vector<ShadowedKeybinding> ShadowedContributedKeybindings(
     const std::vector<plugin::PluginHost::ContributedKeybinding>& contributed,
     const std::vector<std::string>& disabled_ids = {},
     const std::vector<std::string>& skip_shell = {});
 
-// The binding (key, modifiers) dispatches in `context`. A Global binding is active
-// in every context except Terminal, where it must also skip the terminal. Several
-// built-ins may share a chord, as VS Code's do under different `when` clauses
-// (F6: Pause while a program runs, Focus Next Part otherwise): given
-// `action_enabled`, the first whose action is enabled wins, else the first -- which
-// then reports why it cannot run. Without it, the first.
 const ResolvedKeybinding* FindKeybinding(const std::vector<ResolvedKeybinding>& bindings,
                                           SDL_Keycode key,
                                           SDL_Keymod modifiers,
                                           KeybindingContext context,
                                           const std::function<bool(ActionId)>& action_enabled = {});
-// The second step of a two-step chord: the binding whose leader is (leader_key,
-// leader_modifiers) and whose own key is (key, modifiers), active in `context`,
-// by FindKeybinding's rules (a keypad digit counts as the digit). FindKeybinding
-// itself matches single keys only.
 const ResolvedKeybinding* FindChordKeybinding(const std::vector<ResolvedKeybinding>& bindings,
                                                SDL_Keycode leader_key,
                                                SDL_Keymod leader_modifiers,
@@ -140,21 +94,16 @@ const ResolvedKeybinding* FindChordKeybinding(const std::vector<ResolvedKeybindi
                                                SDL_Keymod modifiers,
                                                KeybindingContext context,
                                                const std::function<bool(ActionId)>& action_enabled = {});
-// Whether (key, modifiers) starts a two-step chord active in `context`.
 bool IsChordLeader(const std::vector<ResolvedKeybinding>& bindings,
                    SDL_Keycode key,
                    SDL_Keymod modifiers,
                    KeybindingContext context);
 
-// Parse "Ctrl+Shift+S" → key + modifiers. Returns false for unrecognised chords.
 bool ParseKeyChord(std::string_view chord, SDL_Keycode* key, SDL_Keymod* modifiers);
 std::string FormatKeyChord(SDL_Keycode key, SDL_Keymod modifiers);
-// A binding's keys as the menus spell them: "Ctrl+S", or "Ctrl+K Ctrl+O" for a
-// two-step chord.
 std::string FormatBindingKeys(const KeybindingSpec& binding);
 std::string FormatBindingKeys(const ResolvedKeybinding& binding);
 
-// Normalized Ctrl/Shift/Alt/Meta mask for keybinding comparison.
 SDL_Keymod NormalizedKeyModifiers(SDL_Keymod modifiers);
 
-}  // namespace microide::workspace
+}

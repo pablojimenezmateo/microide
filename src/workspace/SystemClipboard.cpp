@@ -39,7 +39,6 @@ bool SystemClipboard::Write(std::string_view text) {
     system_at_hold_.reset();
     return true;
   }
-  // Refused, or reported set and not there: keep it for this app's paste.
   held_ = std::string(text);
   system_at_hold_ = std::move(now);
   return true;
@@ -51,7 +50,7 @@ std::optional<std::string> SystemClipboard::Read() {
     if (system == system_at_hold_) {
       return held_;
     }
-    held_.reset();  // the system clipboard moved on: another copy took over
+    held_.reset();
     system_at_hold_.reset();
   }
   return system;
@@ -59,8 +58,6 @@ std::optional<std::string> SystemClipboard::Read() {
 
 std::optional<std::string> SystemClipboard::ReadPng() {
   std::optional<std::string> bytes = backend_.get_png ? backend_.get_png() : std::nullopt;
-  // The name is whatever the clipboard's owner chose to call its data: only
-  // bytes that start as a PNG file does are handed on as one.
   constexpr std::string_view kPngSignature = "\x89PNG\r\n\x1a\n";
   if (!bytes.has_value() || bytes->size() > kMaxPngBytes || !bytes->starts_with(kPngSignature)) {
     return std::nullopt;
@@ -68,4 +65,4 @@ std::optional<std::string> SystemClipboard::ReadPng() {
   return bytes;
 }
 
-}  // namespace microide::workspace
+}

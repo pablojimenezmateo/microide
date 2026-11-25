@@ -10,11 +10,6 @@
 namespace microide::workspace {
 
 void LspClient::SortCompletionItemsByServerRank(std::vector<CompletionItem>& items) {
-  // Mirrors VS Code's default completion comparator. Note the deliberate
-  // asymmetry: sortText is only consulted when BOTH items have one, so a server
-  // that ranks part of its list does not push its unranked items to an arbitrary
-  // end. Ties fall through to label, then kind, so the order is total and
-  // deterministic; stable_sort keeps the server's array order for full ties.
   std::stable_sort(items.begin(), items.end(),
                    [](const CompletionItem& lhs, const CompletionItem& rhs) {
                      if (!lhs.sort_text.empty() && !rhs.sort_text.empty()) {
@@ -36,7 +31,6 @@ void LspClient::RequestHoverAsync(std::string uri, Position pos, HoverCallback c
   if (impl_->DispatchTestStub(impl_->test_handlers.hover, callback, uri)) {
     return;
   }
-  // Hover delivers the raw `result` JSON; the consumer parses the contents shape.
   impl_->DispatchResultRequest(
       "textDocument/hover", lsp_protocol::MakeTextDocumentPositionParams(uri, pos),
       std::move(callback),
@@ -65,8 +59,6 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
       [](util::JsonValue& result) -> std::optional<CompletionList> {
         CompletionList list;
         std::vector<CompletionItem>& items = list.items;
-        // Accept either a bare CompletionItem[] (complete by definition) or a
-        // CompletionList{isIncomplete, items:[...]}.
         util::JsonArray* arr = result.MutableArray();
         if (arr == nullptr) {
           list.is_incomplete = result["isIncomplete"].AsBool(false);
@@ -77,11 +69,6 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
         if (arr == nullptr) {
           return list;
         }
-        // Move each string field out of the owned response instead of copying: this
-        // list is materialized again in the AssistService session on the main thread
-        // on every keystroke that triggers completion, so per-item copies add up.
-        // Cap the item count so a huge/hostile list cannot stall the UI; the overlay
-        // is windowed and a human never scrolls past a few thousand candidates.
         constexpr std::size_t kMaxCompletionItems = 5000;
         const auto take = [](util::JsonValue& obj, std::string_view key) -> std::string {
           if (util::JsonValue* v = obj.MutableAt(key)) {
@@ -89,11 +76,6 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
           }
           return {};
         };
-        // CompletionItem.documentation is `string | MarkupContent{kind,value}` per LSP;
-        // essentially every real server (clangd, rust-analyzer, gopls, pyright, tsserver)
-        // sends the object form. Extract the string out of either shape (moving to avoid a
-        // copy) — the bare `take` above would silently drop the object form, blanking the
-        // completion popup's doc pane. Mirrors hover/signature-help's StringOrValueField.
         const auto take_markup = [](util::JsonValue& obj, std::string_view key) -> std::string {
           util::JsonValue* v = obj.MutableAt(key);
           if (v == nullptr) return {};
@@ -105,8 +87,6 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
         };
         for (util::JsonValue& item : *arr) {
           if (items.size() >= kMaxCompletionItems) {
-            // A truncated list is not the server's complete answer: refiltering
-            // it locally would hide every item past the cap for the whole word.
             list.is_incomplete = true;
             break;
           }
@@ -119,12 +99,6 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
           ci.sort_text = take(item, "sortText");
           ci.filter_text = take(item, "filterText");
           ci.insert_text_format = static_cast<int>(item["insertTextFormat"].AsInt(1));
-          // Prefer the server's textEdit: its range is authoritative (it knows the
-          // token being completed, so a member/path completion extends the
-          // qualifier instead of a heuristic clobbering it), and its newText wins
-          // over insertText. Supports both TextEdit{range,newText} and
-          // InsertReplaceEdit{insert,replace,newText}; we use the replace range so
-          // accepting mid-identifier overwrites the whole token.
           if (util::JsonValue* text_edit = item.MutableAt("textEdit")) {
             if (text_edit->HasKey("range")) {
               ci.replace_range = lsp_protocol::ParseRange((*text_edit)["range"]);
@@ -135,8 +109,6 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
             if (!new_text.empty()) ci.insert_text = std::move(new_text);
           }
           if (ci.insert_text.empty()) ci.insert_text = ci.label;
-          // Capped like every other harvested array; a real item carries one or
-          // two (an import line and, rarely, a qualifier fix).
           constexpr std::size_t kMaxAdditionalTextEdits = 64;
           ci.additional_text_edits =
               lsp_protocol::ParseTextEdits(item["additionalTextEdits"], kMaxAdditionalTextEdits);
@@ -187,11 +159,6 @@ void LspClient::RequestCodeActionAsync(std::string uri, Range range,
           return std::nullopt;
         }
         std::vector<CodeAction> actions;
-        // Cap the code-action list: a hostile server can pack a huge array into
-        // one 64 MiB message; each action is re-materialized into a session item on
-        // the UI thread. Mirrors the completion 5000 cap. A usable lightbulb menu
-        // never approaches this. Move title/command/arguments out of the owned
-        // response instead of copying.
         constexpr std::size_t kMaxCodeActions = 5000;
         const std::size_t action_count = std::min(result_array->size(), kMaxCodeActions);
         actions.reserve(action_count);
@@ -245,9 +212,6 @@ void LspClient::RequestFormattingAsync(std::string uri, int tab_size, bool inser
   impl_->DispatchResultRequest(
       "textDocument/formatting", JsonValue(std::move(params)), std::move(callback),
       [](const util::JsonValue& result) -> std::optional<std::vector<TextEdit>> {
-        // Return the FULL TextEdit[]: a whole-document reformat commonly comes back
-        // as many edits, and dropping all but the first silently corrupts the
-        // buffer. ParseTextEdits caps the count as a hostile-server backstop.
         if (!result.IsArray()) {
           return std::nullopt;
         }
@@ -258,7 +222,6 @@ void LspClient::RequestFormattingAsync(std::string uri, int tab_size, bool inser
 void LspClient::RequestRangeFormattingAsync(std::string uri, Range range, int tab_size,
                                             bool insert_spaces, FormattingCallback callback) {
   if (!callback) return;
-  // Range formatting shares the formatting stub handler (same TextEdit[] shape).
   if (impl_->DispatchTestStub(impl_->test_handlers.formatting, callback, uri, insert_spaces)) {
     return;
   }
@@ -281,9 +244,6 @@ void LspClient::RequestRangeFormattingAsync(std::string uri, Range range, int ta
 }
 
 namespace {
-// definition / typeDefinition / implementation / declaration are identical on the
-// wire: TextDocumentPositionParams in, Location|Location[]|LocationLink[] out.
-// Templated on Impl so the private nested type is deduced, never named here.
 template <typename Impl>
 void DispatchLocationRequest(Impl* impl, const char* method, const std::string& uri,
                              LspClient::Position pos, LspClient::LocationCallback callback) {
@@ -294,7 +254,7 @@ void DispatchLocationRequest(Impl* impl, const char* method, const std::string& 
             lsp_protocol::ParseLocations(result));
       });
 }
-}  // namespace
+}
 
 void LspClient::RequestGoToDefinitionAsync(std::string uri, Position pos,
                                            LocationCallback callback) {
@@ -341,8 +301,6 @@ void LspClient::RequestPrepareRenameAsync(std::string uri, Position pos,
   if (impl_->DispatchTestStub(impl_->test_handlers.prepare_rename, callback, uri, pos)) {
     return;
   }
-  // Skip the round-trip when the server has no prepareRename provider: the caller
-  // then keeps its heuristic seed rather than provoking a server error per rename.
   if (!impl_->supports_prepare_rename.load(std::memory_order_acquire)) {
     callback(std::nullopt);
     return;
@@ -369,10 +327,6 @@ void LspClient::RequestRenameAsync(std::string uri, Position pos, std::string ne
   impl_->DispatchResultRequest(
       "textDocument/rename", JsonValue(std::move(params)), std::move(callback),
       [](const util::JsonValue& result) {
-        // ParseWorkspaceEdit bounds the total files/edits materialized on the main
-        // thread (a hostile server could otherwise pack a sub-64 MiB result with
-        // thousands of files each carrying a huge edit array). A rename result also
-        // supports the `documentChanges` shape, which the helper handles too.
         return std::optional<WorkspaceEdit>(lsp_protocol::ParseWorkspaceEdit(result));
       });
 }
@@ -456,9 +410,6 @@ void LspClient::RequestDocumentHighlightAsync(std::string uri, Position pos,
                               pos)) {
     return;
   }
-  // Short-circuit without a round-trip when the server has no provider: this
-  // request fires on caret movement, so provoking a per-move server error would be
-  // the most frequent wasted message the client sends.
   if (!impl_->supports_document_highlight.load(std::memory_order_acquire)) {
     callback(std::nullopt);
     return;
@@ -545,8 +496,6 @@ void LspClient::RequestPrepareCallHierarchyAsync(std::string uri, Position pos,
 }
 
 namespace {
-// incomingCalls and outgoingCalls are the same request with a different method and
-// a different key naming the far end of each edge.
 template <typename Impl>
 void DispatchCallHierarchyCalls(Impl* impl, bool incoming, util::JsonValue item,
                                 LspClient::CallHierarchyCallsCallback callback) {
@@ -568,18 +517,18 @@ void DispatchCallHierarchyCalls(Impl* impl, bool incoming, util::JsonValue item,
             lsp_protocol::ParseCallHierarchyCalls(result, incoming));
       });
 }
-}  // namespace
+}
 
 void LspClient::RequestIncomingCallsAsync(util::JsonValue item,
                                           CallHierarchyCallsCallback callback) {
   if (!callback) return;
-  DispatchCallHierarchyCalls(impl_.get(), /*incoming=*/true, std::move(item), std::move(callback));
+  DispatchCallHierarchyCalls(impl_.get(), true, std::move(item), std::move(callback));
 }
 
 void LspClient::RequestOutgoingCallsAsync(util::JsonValue item,
                                           CallHierarchyCallsCallback callback) {
   if (!callback) return;
-  DispatchCallHierarchyCalls(impl_.get(), /*incoming=*/false, std::move(item), std::move(callback));
+  DispatchCallHierarchyCalls(impl_.get(), false, std::move(item), std::move(callback));
 }
 
-}  // namespace microide::workspace
+}

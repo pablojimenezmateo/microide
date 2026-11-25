@@ -38,8 +38,6 @@
 
 namespace microide::workspace {
 
-// A set of single ASCII characters, written once by the I/O thread (at initialize)
-// and read lock-free by the UI thread on every typed character.
 class AtomicAsciiSet {
  public:
   void Store(std::string_view characters) {
@@ -49,8 +47,6 @@ class AtomicAsciiSet {
     }
     Publish(mask);
   }
-  // An LSP `triggerCharacters` array; multi-character and non-ASCII entries are not
-  // representable and no real server advertises them.
   void Store(const util::JsonValue& strings) {
     std::uint64_t mask[2] = {0, 0};
     if (strings.IsArray()) {
@@ -82,14 +78,6 @@ class AtomicAsciiSet {
   std::array<std::atomic<std::uint64_t>, 2> mask_{};
 };
 
-// ---------------------------------------------------------------------------
-// Impl
-// ---------------------------------------------------------------------------
-// The transport half (I/O thread, outbound queues, framing, caps) lives in the
-// shared StdioJsonRpcClientTransport mixin — one implementation for the LSP and
-// DAP clients, which used to carry drifting copies of it. Impl supplies the
-// protocol half the mixin calls back into: DispatchMessage, FailPendingRequests,
-// SetLastError, TraceSend, WakeMainThread.
 struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
   Impl()
       : StdioJsonRpcClientTransport(StdioTransportConfig{
@@ -104,7 +92,6 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
             .send_error = "failed to send message to language server",
         }) {}
 
-  // No per-message send trace; LSP tracing is lifecycle-level (LspClientTrace).
   void TraceSend(const util::JsonValue&) const {}
   void TraceLifecycle(std::string_view phase, std::string_view detail = {}) {
     TraceLspLifecycle(language_id, proc.pid(), phase, detail);
@@ -117,31 +104,12 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
   bool shutdown_response_received = false;
   int shutdown_request_id = 0;
 
-  // Per-request pending callbacks (keyed by request id), guarded by mutex. Each
-  // carries a deadline so a silent server can never strand a request (and its UI
-  // loading state) forever: the I/O loop sweeps expired requests and synthesizes an
-  // empty response, which every handler treats as "no result". Mirrors the DAP
-  // client's timeout sweep.
-  // The callback receives the transport-level outcome plus the response envelope.
-  // The outcome is kOk when a real frame arrived (DispatchResultRequest then refines
-  // it to kOk/kEmpty/kProtocolError by inspecting the payload); kTimeout / kUnavailable
-  // when the sweep synthesizes a failure (the envelope is then an empty `{}`).
-  // Entries carry `sent_at` for round-trip attribution: `deadline` cannot stand in
-  // for it, since tests shorten request_timeout_.
   PendingRequestTable<std::function<void(LspRequestOutcome, util::JsonValue)>> pending_requests;
 
-  // Per-request timeout; kLspRequestTimeout in production, lowered by tests so the
-  // deadline sweep can be exercised without a 30s wait.
   std::chrono::milliseconds request_timeout_ = kLspRequestTimeout;
 
-  // Callbacks marshalled to the main thread and drained once per frame. Carries
-  // its own mutex + SDL wake event, so it is the innermost lock: producers may
-  // post while holding `mutex`. Drain releases its mailbox lock before invoking
-  // callbacks, which may acquire `mutex` to revalidate document state.
   util::MainThreadMailbox main_mailbox;
 
-  // Grouped so teardown is a single Reset() and setters/clearers cannot drift out of
-  // sync with the teardown list (a stale hand-maintained list once forgot one).
   struct TestHandlers {
     std::function<void(std::string, DocumentSymbolCallback)> document_symbol;
     std::function<void(std::string, SemanticTokensCallback)> semantic_tokens;
@@ -162,79 +130,38 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
         execute_command;
     std::function<void(std::string, Position, PrepareCallHierarchyCallback)>
         prepare_call_hierarchy;
-    // One handler for both directions; `incoming` says which was asked for.
     std::function<void(bool, util::JsonValue, CallHierarchyCallsCallback)> call_hierarchy_calls;
     void Reset() { *this = TestHandlers{}; }
   };
   TestHandlers test_handlers;
 
-  // Server semantic-token legend (index -> type name), captured at initialize.
-  // Guarded by `mutex`. Empty when the server advertises no semanticTokens provider.
   std::vector<std::string> semantic_token_types;
   std::atomic<bool> supports_semantic_tokens{false};
-  // Server advertised renameProvider.prepareProvider (captured at initialize).
   std::atomic<bool> supports_prepare_rename{false};
-  // Server advertised an inlayHintProvider (captured at initialize).
   std::atomic<bool> supports_inlay_hints{false};
-  // Server advertised a documentHighlightProvider (captured at initialize).
   std::atomic<bool> supports_document_highlight{false};
-  // Server advertised a codeLensProvider, and whether it carries resolveProvider
-  // (i.e. whether range-only lenses can be filled in via codeLens/resolve).
   std::atomic<bool> supports_code_lens{false};
   std::atomic<bool> supports_code_lens_resolve{false};
-  // Server advertised a callHierarchyProvider (captured at initialize).
   std::atomic<bool> supports_call_hierarchy{false};
-  // completionProvider.triggerCharacters and signatureHelpProvider.triggerCharacters
-  // (every server in use advertises single ASCII characters: `.`, `:`, `>`, `(`,
-  // `,`). Asked on every typed character, so lock-free.
   AtomicAsciiSet completion_triggers;
   AtomicAsciiSet signature_help_triggers;
 
-  // File watchers the server registered via client/registerCapability for
-  // workspace/didChangeWatchedFiles. Written on the I/O thread (registrations
-  // arrive as server requests), read on the shell thread (one query per changed
-  // file). Guarded by `mutex`; `has_file_watchers` is the lock-free gate so the
-  // overwhelmingly common "server registered nothing" case costs one relaxed load
-  // per batch instead of a lock per file.
   LspFileWatchRegistry file_watch_registry;
   std::atomic<bool> has_file_watchers{false};
 
-  // Negotiated position encoding (LSP `capabilities.positionEncoding`), captured at
-  // initialize. Guarded by `mutex`. We advertise utf-8 first, so a conformant server
-  // that supports it reports "utf-8" and our editor byte offsets are then exact LSP
-  // positions with zero conversion. Per spec the default when unreported is "utf-16".
   std::string position_encoding = "utf-16";
 
-  // Diagnostics callback — set from main thread, called on main thread via main_mailbox.
   OnPublishDiagnostics diagnostics_callback;
-  // Server-initiated workspace/applyEdit handler — set from the main thread and
-  // invoked on the main thread (it mutates buffers / writes files); returns
-  // whether the edit was applied. Null => reply applied:false.
   std::function<bool(WorkspaceEdit)> apply_edit_handler;
 
   std::unordered_map<std::string, int> document_versions;
-  // Highest version each URI reached before it was last closed. A reopen resumes
-  // from here + 1 instead of restarting at 1, which is what makes the staleness
-  // gate survive a close -> reopen: a publishDiagnostics still in flight from the
-  // previous open carries a version from the OLD numbering, and against a
-  // restarted-at-1 document `old_version < 1` is false, so it was accepted and
-  // painted on the freshly reopened buffer until the next republish. Nothing in
-  // the protocol requires didOpen to start at 1 — `TextDocumentItem.version` is
-  // just "the version number of this document" — so keeping it monotonic per URI
-  // costs nothing on the wire and removes the whole window.
-  //
-  // Entries are only added on close, so this holds at most one int per file the
-  // session has opened and closed; a document that is still open lives in
-  // document_versions.
   std::unordered_map<std::string, int> retired_document_versions;
   int next_id = 1;
   std::string root_uri;
-  // root_uri decoded once at Start(), so the didChangeWatchedFiles registration
-  // path can resolve RelativePattern base URIs without re-parsing per call.
   std::filesystem::path root_path;
   std::string language_id;
-  util::JsonValue initialization_options;  // LSP initializationOptions (object or Null)
-  util::JsonValue settings;                // answers workspace/configuration (object or Null)
+  util::JsonValue initialization_options;
+  util::JsonValue settings;
   std::string last_error;
   LspClient::ReadinessSnapshot readiness_snapshot;
   std::atomic<bool> supports_incremental_sync{false};
@@ -271,8 +198,6 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
     return JsonValue(std::move(msg));
   }
 
-  // Seed for a server-request reply envelope; callers add "result" or "error".
-  // `id` is echoed verbatim (int or string per JSON-RPC).
   util::JsonValue MakeResponse(const util::JsonValue& id) {
     using namespace util;
     JsonObject msg;
@@ -286,7 +211,6 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
     pending_requests.clear();
     main_mailbox.Clear();
     document_versions.clear();
-    // A restarted server has no memory of the old numbering, so neither should we.
     retired_document_versions.clear();
     shutdown_response_received = false;
     shutdown_request_id = 0;
@@ -299,10 +223,6 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
       if (!util::IsAsciiDigit(static_cast<unsigned char>(text[i]))) {
         continue;
       }
-      // Accumulate in 64-bit and saturate: the digit run comes from
-      // server-controlled $/progress text, so a long run would overflow a plain
-      // int (signed-overflow UB). Clamp to INT_MAX — the exact count past that is
-      // meaningless for a readiness heuristic.
       std::int64_t value = 0;
       std::size_t cursor = i;
       while (cursor < text.size() &&
@@ -318,23 +238,14 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
     return 0;
   }
 
-  // Update the readiness snapshot from a $/progress notification's value. Defined
-  // in WorkspaceLspClientLifecycle.cpp.
   void SetProgressReadiness(const util::JsonValue& value);
 
-  // Reply to a server-initiated request. `id` is echoed verbatim (it may be an
-  // int or a string per JSON-RPC). Defined in WorkspaceLspClientDispatch.cpp.
   void SendResponseResult(const util::JsonValue& id, util::JsonValue result);
   void SendResponseError(const util::JsonValue& id, int code, std::string message);
 
-  // Server -> client requests must always get a reply, or chatty servers
-  // (clangd, Roslyn/OmniSharp) log errors or stall. Defined in
-  // WorkspaceLspClientDispatch.cpp.
   void HandleServerRequest(const util::JsonValue& id, const std::string& method,
                            const util::JsonValue& params);
 
-  // Route one inbound frame: response callback, server request, diagnostics, or
-  // progress. Defined in WorkspaceLspClientDispatch.cpp.
   void DispatchMessage(util::JsonValue msg);
 
   int RegisterPendingRequest(std::function<void(LspRequestOutcome, util::JsonValue)> cb) {
@@ -344,39 +255,20 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
     return id;
   }
 
-  // A failed send's cleanup; false when the EOF sweep claimed the entry first
-  // (PendingRequestTable::Remove).
   bool RemovePendingRequest(int id) {
     std::lock_guard lock(mutex);
     return pending_requests.Remove(id);
   }
 
-  // Synthesize empty responses for pending requests so a non-responding server never
-  // strands a request (and its UI loading state). `only_expired` fails just those
-  // past their deadline (the periodic sweep); otherwise fails all (the server exited
-  // and no response can ever arrive). Runs on the I/O thread: handlers are posted to
-  // the main-thread mailbox. The empty `{}` envelope has no "result" key, so every
-  // response handler degrades to its no-result path.
   void FailPendingRequests(bool only_expired);
 
-  // Test-stub fast path shared by every interactive request. Returns true when the
-  // client is in stub mode (the caller then returns): posts a main-thread task that
-  // calls the installed handler with the request's args, or delivers std::nullopt
-  // when no handler is installed. Collapses the per-request lock + test_stub_mode
-  // check + PostWithoutWake boilerplate. `args` are forwarding references and are
-  // consumed ONLY on the stub branch, so `callback`/`uri` remain intact for the real
-  // request path when this returns false. Callers pass their arguments as lvalues
-  // (the stub path copies them): `std::move(uri)` here, as every caller once wrote,
-  // moved only when the stub took the request -- correct, and indistinguishable at
-  // the call from the outline's empty-URI bug (227a2ddf), which is what clang-tidy's
-  // bugprone-use-after-move reports (tools/tidy.py).
   template <typename Handler, typename Callback, typename... Args>
   bool DispatchTestStub(const Handler& handler_member, Callback& callback, Args&&... args) {
     std::lock_guard lock(mutex);
     if (!test_stub_mode.load(std::memory_order_acquire)) {
       return false;
     }
-    Handler handler = handler_member;  // copy under lock, as the per-method code did
+    Handler handler = handler_member;
     main_mailbox.PostWithoutWake(
         [handler = std::move(handler), cb = std::move(callback),
          ... args = std::forward<Args>(args)]() mutable {
@@ -389,37 +281,23 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
     return true;
   }
 
-  // Shared scaffolding for every async request: register the response handler,
-  // send the request, and on send failure clean up and invoke the failure path.
-  // Keeps the per-method code to "build params" + "parse result".
   void DispatchRequest(const std::string& method, util::JsonValue params,
                        std::function<void(LspRequestOutcome, util::JsonValue)> response_handler,
                        std::function<void()> on_send_failure) {
     const int id = RegisterPendingRequest(std::move(response_handler));
     if (!SendMessageAfterInitialize(MakeRequest(id, method, std::move(params)))) {
-      // Only report the failure if the entry was still ours to fail. If the EOF
-      // sweep already claimed it, it also already invoked the handler — running
-      // on_send_failure() again would double-fire the callback.
       if (RemovePendingRequest(id)) {
         on_send_failure();
       }
     }
   }
 
-  // Result-shaped request helper: owns the boilerplate every feature request
-  // repeats — the empty-`callback` guard, the "no `result` key" -> nullopt path,
-  // and the send-failure -> nullopt path — so a request method reduces to "build
-  // params + parse result". `parse_result` maps the response's `result` value to
-  // the callback's argument (an `std::optional<...>`); the absent/failure cases
-  // deliver a default-constructed argument (i.e. `std::nullopt`).
   template <typename Callback, typename Parser>
   void DispatchResultRequest(const std::string& method, util::JsonValue params, Callback callback,
                              Parser parse_result) {
     if (!callback) {
       return;
     }
-    // T is the payload the parser yields (parse_result returns std::optional<T>);
-    // the callback takes LspResult<T>.
     using OptT = std::decay_t<std::invoke_result_t<Parser&, util::JsonValue&>>;
     using ResultT = LspResult<typename OptT::value_type>;
     Callback failure = callback;
@@ -427,23 +305,14 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
         method, std::move(params),
         [cb = std::move(callback), parse_result = std::move(parse_result)](
             LspRequestOutcome transport, util::JsonValue resp) mutable {
-          // A synthesized transport failure (timeout / server-gone) carries no
-          // payload: deliver the reason so the caller does not mistake it for an
-          // authoritative empty answer.
           if (transport != LspRequestOutcome::kOk) {
             cb(ResultT(transport, std::nullopt));
             return;
           }
-          // A real frame arrived. A JSON-RPC error response, or a frame with neither
-          // `result` nor `error`, is a protocol error — again NOT an empty answer.
           if (util::JsonValue* error = resp.MutableAt("error"); error != nullptr && !error->IsNull()) {
             cb(ResultT(LspRequestOutcome::kProtocolError, std::nullopt));
             return;
           }
-          // The response is owned here, so hand the `result` subtree to the parser
-          // as a mutable lvalue: hot parsers (completion/code-action) move their
-          // strings out instead of copying. MutableAt is non-null iff the key is
-          // present (matches the old HasKey guard, incl. a null `result`).
           util::JsonValue* result = resp.MutableAt("result");
           if (result == nullptr) {
             cb(ResultT(LspRequestOutcome::kProtocolError, std::nullopt));
@@ -459,20 +328,10 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
         });
   }
 
-  // The blocking initialize handshake: advertise client capabilities, read and
-  // parse the server's initialize response (sync kind, position encoding,
-  // semantic-token legend), send `initialized`, then flush queued config/didOpen
-  // and spawn the I/O thread. Runs on init_thread. Defined in
-  // WorkspaceLspClientLifecycle.cpp.
   void DoInitializeBlocking();
-  // Records what the initialize response's `capabilities` advertise: sync kind,
-  // trigger characters, position encoding, semantic-token legend, optional providers.
   void ApplyServerCapabilities(const util::JsonValue& server_caps);
 
-  // Graceful shutdown: shutdown/exit handshake with bounded waits, then join the
-  // I/O thread and force-kill if the server does not exit. Runs on
-  // shutdown_thread. Defined in WorkspaceLspClientLifecycle.cpp.
   void DoShutdown();
 };
 
-}  // namespace microide::workspace
+}

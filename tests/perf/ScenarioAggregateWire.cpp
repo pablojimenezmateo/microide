@@ -8,11 +8,6 @@ namespace microide::tests::perf {
 
 namespace {
 
-// Length-prefixed little-endian binary, not JSON: doubles have to survive the
-// pipe BIT-exactly. A metric that changes in its last mantissa bit because it
-// round-tripped through decimal text would show up as a real move on a gate whose
-// tolerance is a percentage of it, and the whole point of this transport is that
-// the number the child measured is the number the parent gates.
 class Writer {
  public:
   void U64(std::uint64_t value) {
@@ -65,8 +60,6 @@ class Reader {
   }
   std::string Str() {
     const std::uint64_t length = U64();
-    // A length past the end can only mean a truncated or corrupt stream; refuse
-    // rather than allocating whatever the bytes happened to say.
     if (!ok_ || length > bytes_.size() - offset_) {
       ok_ = false;
       return {};
@@ -138,19 +131,13 @@ MetricSet ReadMetricSet(Reader& r) {
   return m;
 }
 
-}  // namespace
+}
 
 std::string EncodeScenarioAggregate(const Aggregate& aggregate) {
   Writer w;
   w.Str(aggregate.scenario_name);
   w.U64(aggregate.smoke ? 1u : 0u);
-  // Carried across the fork like everything else: a skip declared in the child
-  // has to reach the parent, which is the process that decides the run's verdict
-  // (TD-2026-08-10-170). Without it an isolated run would silently regain the
-  // vacuous pass the skip exists to prevent.
   w.Str(aggregate.skip_reason);
-  // The child runs the scenario, so the child is the only process that knows
-  // which revision of it ran. The parent gates.
   w.U64(aggregate.measurement_revision);
   WriteMetricSet(w, aggregate.metrics);
   w.U64(aggregate.iterations.size());
@@ -235,4 +222,4 @@ std::optional<Aggregate> DecodeScenarioAggregate(std::string_view bytes) {
   return aggregate;
 }
 
-}  // namespace microide::tests::perf
+}

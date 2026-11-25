@@ -15,11 +15,6 @@ namespace microide::util {
 
 std::int64_t JsonValue::AsIntSlow(std::int64_t fallback) const {
   if (const auto* d = std::get_if<double>(&v)) {
-    // Converting a double whose truncated magnitude does not fit int64 is UB
-    // ([conv.fpint]); this is reachable because ParseNumber stores an integer
-    // literal that overflows int64 (e.g. a uint64-range DAP variablesReference)
-    // as a double. Clamp to the representable range instead of trapping. NaN
-    // (which fails both comparisons) falls through to the fallback.
     const double d_value = *d;
     if (d_value >= 9223372036854775808.0) return std::numeric_limits<std::int64_t>::max();
     if (d_value < -9223372036854775808.0) return std::numeric_limits<std::int64_t>::min();
@@ -31,7 +26,7 @@ std::int64_t JsonValue::AsIntSlow(std::int64_t fallback) const {
 const JsonValue& JsonValue::operator[](std::string_view key) const {
   static const JsonValue kNull;
   if (const auto* o = std::get_if<JsonObject>(&v)) {
-    auto it = o->find(key);  // binary search over the sorted entries; no allocation
+    auto it = o->find(key);
     if (it != o->end()) return it->value;
   }
   return kNull;
@@ -52,16 +47,8 @@ bool JsonValue::HasKey(std::string_view key) const {
   return false;
 }
 
-// ---------------------------------------------------------------------------
-// Parser
-// ---------------------------------------------------------------------------
-
 namespace {
 
-// Bounds recursion so a hostile deeply-nested payload (e.g. `[[[[...]]]]` from a
-// control-spec file, a socket request line, or an instance descriptor) cannot
-// overflow the native stack. Control/DAP/LSP messages nest only a handful of
-// levels, so this ceiling never trips on legitimate input.
 constexpr int kMaxParseDepth = 200;
 
 struct Parser {
@@ -69,8 +56,6 @@ struct Parser {
   std::size_t pos = 0;
   int depth = 0;
 
-  // RAII depth counter: incremented on entry to each array/object, decremented
-  // on scope exit regardless of which early return fires.
   struct DepthGuard {
     Parser& parser;
     bool within_limit;
@@ -98,7 +83,6 @@ struct Parser {
     return false;
   }
 
-  // Returns nullopt on error.
   std::optional<JsonValue> ParseValue() {
     SkipWhitespace();
     const char c = Peek();
@@ -124,8 +108,6 @@ struct Parser {
     const std::size_t start = pos;
     bool is_float = false;
     if (Peek() == '-') ++pos;
-    // Integer part: RFC 8259 requires at least one digit after the optional
-    // sign, and a leading '0' must stand alone (reject a lone '-' and "01").
     if (pos >= src.size() || src[pos] < '0' || src[pos] > '9') return std::nullopt;
     if (src[pos] == '0') {
       ++pos;
@@ -135,7 +117,6 @@ struct Parser {
     if (pos < src.size() && src[pos] == '.') {
       is_float = true;
       ++pos;
-      // A decimal point must be followed by at least one digit (reject "1.").
       if (pos >= src.size() || src[pos] < '0' || src[pos] > '9') return std::nullopt;
       while (pos < src.size() && src[pos] >= '0' && src[pos] <= '9') ++pos;
     }
@@ -143,7 +124,6 @@ struct Parser {
       is_float = true;
       ++pos;
       if (pos < src.size() && (src[pos] == '+' || src[pos] == '-')) ++pos;
-      // An exponent must carry at least one digit (reject "1e" and "1e+").
       if (pos >= src.size() || src[pos] < '0' || src[pos] > '9') return std::nullopt;
       while (pos < src.size() && src[pos] >= '0' && src[pos] <= '9') ++pos;
     }
@@ -151,12 +131,6 @@ struct Parser {
     if (is_float) {
       const auto parsed = ParseDouble(tok);
       if (parsed.has_value()) return JsonValue(*parsed);
-      // A syntactically valid JSON float literal whose magnitude overflows
-      // double (e.g. "1e400") must not abort the entire message parse, mirroring
-      // the int64-overflow fallback below — otherwise one out-of-range number
-      // silently drops the whole LSP/DAP response and stalls the request.
-      // Preserve the sign as ±inf; SerializeJson maps non-finite doubles to null
-      // and the numeric accessors clamp it, so the surrounding value resolves.
       const double overflow = (!tok.empty() && tok.front() == '-')
                                   ? -std::numeric_limits<double>::infinity()
                                   : std::numeric_limits<double>::infinity();
@@ -164,11 +138,6 @@ struct Parser {
     }
     const auto parsed = ParseInt64(tok);
     if (parsed.has_value()) return JsonValue(*parsed);
-    // A syntactically valid JSON integer literal that overflows int64 (e.g. a
-    // uint64-range handle/id/address emitted by a DAP adapter or LSP server) must
-    // not abort the entire message parse — that would silently drop the whole
-    // response and stall the outstanding request. Fall back to a lossy double so
-    // the surrounding value still resolves.
     const auto as_double = ParseDouble(tok);
     if (!as_double.has_value()) return std::nullopt;
     return JsonValue(*as_double);
@@ -178,10 +147,6 @@ struct Parser {
     if (!Expect('"')) return std::nullopt;
     std::string result;
     while (pos < src.size()) {
-      // Bulk-copy the run of ordinary bytes up to the next quote or backslash in a
-      // single append instead of byte-by-byte; escape-free strings (nearly all of
-      // them on the LSP/DAP inbound hot path) then cost one memcpy rather than N
-      // single-byte operator+= calls.
       const std::size_t run_start = pos;
       while (pos < src.size() && src[pos] != '"' && src[pos] != '\\' &&
              static_cast<unsigned char>(src[pos]) >= 0x20) {
@@ -190,15 +155,10 @@ struct Parser {
       if (pos > run_start) {
         result.append(src.data() + run_start, pos - run_start);
       }
-      if (pos >= src.size()) break;  // no closing quote before end of input
-      // RFC 8259 forbids raw control bytes (< 0x20) inside a string; they must be
-      // escaped. The run above stops on such a byte (it is not '"' or '\\'), so a
-      // control byte here is a hard reject. Escaped \n \t \r etc. stay valid: they
-      // arrive as a '\\' handled by the escape switch below, never as a raw byte.
+      if (pos >= src.size()) break;
       if (static_cast<unsigned char>(src[pos]) < 0x20) return std::nullopt;
       const char c = src[pos++];
       if (c == '"') return JsonValue(std::move(result));
-      // c is a backslash: decode the escape sequence.
       if (pos >= src.size()) return std::nullopt;
       const char esc = Advance();
       switch (esc) {
@@ -218,14 +178,6 @@ struct Parser {
             if (d < 0) return std::nullopt;
             cp = (cp << 4) | static_cast<unsigned int>(d);
           }
-          // A lone surrogate -- a high one not followed by `\u` and a low one,
-          // or a low one on its own -- is not a scalar value, and emitting it
-          // would be invalid UTF-8 (CESU-8 `ED A0 80`) that poisons every consumer
-          // assuming util::IsValidUtf8. It becomes U+FFFD, as a JavaScript string
-          // with one renders. Rejecting it failed the whole document, and the
-          // JSON-RPC framing then dropped the whole MESSAGE: a language server on
-          // Node (which escapes a lone surrogate as `\udXXX` since ES2019) that
-          // put one in a hover or one completion item lost the entire response.
           if (cp >= 0xD800 && cp <= 0xDBFF) {
             unsigned int lo = 0;
             bool paired = pos + 6 <= src.size() && src[pos] == '\\' && src[pos + 1] == 'u';
@@ -239,7 +191,7 @@ struct Parser {
               pos += 6;
               cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
             } else {
-              cp = 0xFFFD;  // the escape after it, if any, is read on its own
+              cp = 0xFFFD;
             }
           } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
             cp = 0xFFFD;
@@ -250,7 +202,7 @@ struct Parser {
         default: return std::nullopt;
       }
     }
-    return std::nullopt;  // unterminated
+    return std::nullopt;
   }
 
   std::optional<JsonValue> ParseArray() {
@@ -285,10 +237,6 @@ struct Parser {
       if (!Expect(':')) return std::nullopt;
       auto val = ParseValue();
       if (!val) return std::nullopt;
-      // Append; the sort at the closing brace establishes the invariant. Moving
-      // the key out of the parsed JsonValue matters: `obj[key->AsString()]`
-      // copied every key string a second time, on top of the map node it
-      // allocated for it.
       obj.AppendInDocumentOrder(std::move(*key->MutableString()), std::move(*val));
       SkipWhitespace();
       if (Expect('}')) {
@@ -300,20 +248,16 @@ struct Parser {
   }
 };
 
-}  // namespace
+}
 
 std::optional<JsonValue> ParseJson(std::string_view text) {
   Parser p{text};
   auto result = p.ParseValue();
   if (!result) return std::nullopt;
   p.SkipWhitespace();
-  if (p.pos != text.size()) return std::nullopt;  // trailing garbage
+  if (p.pos != text.size()) return std::nullopt;
   return result;
 }
-
-// ---------------------------------------------------------------------------
-// Serializer
-// ---------------------------------------------------------------------------
 
 namespace {
 
@@ -322,9 +266,6 @@ void AppendEscaped(std::string& out, const std::string& s) {
   const std::size_t n = s.size();
   std::size_t i = 0;
   while (i < n) {
-    // Bulk-append the run of bytes that need no escaping (>= 0x20, not '"' or '\')
-    // in one shot instead of byte-by-byte; the overwhelming majority of every
-    // outgoing string copies verbatim.
     const std::size_t run_start = i;
     while (i < n) {
       const unsigned char uc = static_cast<unsigned char>(s[i]);
@@ -355,39 +296,22 @@ void AppendEscaped(std::string& out, const std::string& s) {
 }
 
 void AppendValue(std::string& out, const JsonValue& val, int depth = 0) {
-  // Mirror the parser's recursion ceiling so serializing a pathologically deep
-  // value (however it was constructed) cannot overflow the stack. Past the limit
-  // we emit null rather than recurse — serialization has no error channel.
   if (depth > kMaxParseDepth) { out += "null"; return; }
   if (val.IsNull()) { out += "null"; return; }
   if (val.IsBool()) { out += val.AsBool() ? "true" : "false"; return; }
   if (val.IsInt()) {
-    // to_chars into a stack buffer avoids the throwaway heap std::string that
-    // std::to_string allocates for every integer serialized.
     char buf[24];
     const auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), val.AsInt());
-    (void)ec;  // int64 always fits in 24 bytes
+    (void)ec;
     out.append(buf, static_cast<std::size_t>(ptr - buf));
     return;
   }
   if (val.IsDouble()) {
     const double d = val.AsDouble();
-    // A non-finite double has no JSON representation; emitting the bare token
-    // `nan`/`inf` would produce output this very parser (and any strict peer)
-    // rejects, and serialization has no error channel to report it. Emit `null`,
-    // matching JSON.stringify convention, so a stray NaN cannot corrupt a message.
     if (!std::isfinite(d)) { out += "null"; return; }
-    // to_chars, NOT snprintf("%.17g"). printf's float conversions take the
-    // decimal separator from LC_NUMERIC, and the process locale is not ours to
-    // control (SDL's X11 toolkit backend calls `setlocale(LC_ALL, "")`), so a
-    // comma-decimal locale would emit `1,5` — malformed JSON on the wire to
-    // every LSP server, DAP adapter, and control-channel client. to_chars is
-    // locale-independent by definition. It is also faster and produces the
-    // shortest round-trip form, so `0.1` serializes as `0.1` rather than
-    // `%.17g`'s `0.10000000000000001`.
     char buf[40];
     const auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), d);
-    (void)ec;  // shortest round-trip for a finite double always fits in 40 bytes
+    (void)ec;
     out.append(buf, static_cast<std::size_t>(ptr - buf));
     return;
   }
@@ -420,7 +344,7 @@ void AppendValue(std::string& out, const JsonValue& val, int depth = 0) {
   }
 }
 
-}  // namespace
+}
 
 std::string SerializeJson(const JsonValue& value) {
   std::string out;
@@ -428,25 +352,10 @@ std::string SerializeJson(const JsonValue& value) {
   return out;
 }
 
-// Deliberately OUT OF LINE, unlike the rest of JsonObject's members.
-//
-// `find` / `operator[]` sit on the LSP/DAP/control decode hot path and want to
-// inline; this does not — it runs once per parsed or constructed object, and its
-// cost is the string moves, not the call. Keeping it in the header meant every
-// `JsonObject{...}` literal in the tree (there are many, on the control and
-// protocol paths) got the insertion sort fully UNROLLED against its known
-// initializer-list length: more code at every site, and GCC 13's -Warray-bounds
-// then lost the link between the vector's allocation size and the unrolled
-// indices and reported ~21 false out-of-bounds warnings across a clean build.
 void JsonObject::SortAfterParse() {
   if (entries_.size() < 2) {
     return;
   }
-  // Stable, so a duplicate key's document order survives into the run below and
-  // last-wins stays well defined. std::stable_sort allocates a temporary buffer;
-  // JSON objects are small enough that the hand-rolled insertion sort is both
-  // faster and allocation-free at the sizes that actually occur, and the library
-  // sort only takes over for the pathological wide object.
   constexpr std::size_t kInsertionSortLimit = 32;
   if (entries_.size() <= kInsertionSortLimit) {
     for (std::size_t i = 1; i < entries_.size(); ++i) {
@@ -464,17 +373,12 @@ void JsonObject::SortAfterParse() {
                        return detail::JsonKeyOrderLess(a.key, b.key);
                      });
   }
-  // Collapse each equal-key run to its LAST member, matching the `obj[key] =
-  // value` overwrite the unordered_map parser did.
   auto write = entries_.begin();
   for (auto read = entries_.begin(); read != entries_.end();) {
     auto next = read + 1;
     while (next != entries_.end() && next->key == read->key) {
       ++next;
     }
-    // Guard the self-assignment. With no duplicate keys -- every real object --
-    // `write` IS `next - 1` on every step, and self-move-assigning a std::string
-    // leaves it in a valid but unspecified state, which in practice empties it.
     if (write != next - 1) {
       *write = std::move(*(next - 1));
     }
@@ -484,4 +388,4 @@ void JsonObject::SortAfterParse() {
   entries_.erase(write, entries_.end());
 }
 
-}  // namespace microide::util
+}

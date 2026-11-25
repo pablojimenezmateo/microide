@@ -37,12 +37,6 @@ struct TerminalSessionTestAccess;
 
 namespace microide::terminal {
 
-// Process-wide test switch: when enabled, terminal startup uses in-process
-// placeholders instead of spawning real PTY-backed child processes, and
-// SendBytes captures output to TerminalSession::test_sent_bytes_ when no backend
-// is attached. Defaults to false, so production behavior is unchanged; the test
-// harness enables it once at startup. Replaces the former compile-time test
-// forks so core compiles identically for the production and test binaries.
 void SetUsePlaceholderTerminalsForTesting(bool enabled);
 bool UsePlaceholderTerminalsForTesting();
 
@@ -59,85 +53,36 @@ class TerminalSession {
   TerminalSession& operator=(const TerminalSession&) = delete;
 
   void SetWakeChannel(util::WakeChannel channel);
-  // `launcher` decides WHERE the shell runs. A local shell in a remote project is
-  // worse than no terminal — it looks right and runs the wrong `make` — so the
-  // launcher is a parameter rather than an assumption, and the remote terminal is a
-  // different argv rather than a different code path.
-  //
-  // On a launcher whose shells run on another machine, `attach` names a host
-  // terminal to reattach to instead of opening one (HostTerminalSource::
-  // OpenRequest::attach), and a host that is not connected yet leaves the session
-  // PENDING (see host_pending) rather than failing.
   bool Start(const platform::ProcessLauncher& launcher, const std::filesystem::path& working_directory,
              std::string_view command = {}, std::string_view shell = {}, HostIdentity attach = {});
-  // Same, with the shell already argv (an empty argv is the platform default).
-  // The host side of a host terminal starts here: its argv crossed the wire as
-  // an array and must not be re-split. `environment`: `KEY=VALUE` entries a LOCAL
-  // start sets in the shell's environment (TerminalStartRequest::environment) --
-  // how the remote server's shells get their BROWSER forwarder.
   bool StartArgv(const platform::ProcessLauncher& launcher,
                  const std::filesystem::path& working_directory, std::string_view command,
                  std::vector<std::string> shell_argv, HostIdentity attach = {},
                  std::vector<std::string> environment = {});
   void Stop();
-  // Test seam: brings the session up without spawning a real PTY/child process.
-  // Always compiled; selected at runtime when placeholder-terminal test mode is
-  // enabled (see SetUsePlaceholderTerminalsForTesting). Inert in production.
   bool StartPlaceholderForTesting(const std::filesystem::path& working_directory,
                                   std::string_view command = {});
   void Resize(std::size_t rows, std::size_t columns);
-  // Configure the scrollback cap (lines retained above the visible grid). Clamped
-  // to a sane floor; re-trims immediately when lowered below the current backlog.
   void SetMaxScrollbackLines(std::size_t max_lines);
   void SendBytes(std::string_view bytes);
-  // Encode and send a modified key press. Returns true if it produced output.
   bool SendKeyPress(const KeyPress& press);
   bool running() const;
   std::size_t LineCount() const;
-  // Monotonic count of scrollback lines dropped off the FRONT by TrimScrollbackLocked.
-  // Workspace-side absolute row mirrors (scroll position, selection, last-command row)
-  // rebase against the delta of this value so a coalesced trim does not shift the
-  // content out from under them (session cursor rows are rebased in-place already).
   std::uint64_t ScrollbackTrimTotal() const;
   std::vector<TerminalLine> SnapshotLines() const;
   std::vector<TerminalLine> SnapshotLineRange(std::size_t start_row, std::size_t max_lines) const;
-  // Same range, copied into a caller-owned buffer whose rows' `cells` capacity is
-  // reused. Prefer this on any path that re-snapshots the same visible range
-  // repeatedly (hover resolution, mouse drag, per-frame render): the by-value
-  // overload allocates one vector per row per call, and a wheel tick or a mouse
-  // move is not a rare event.
   void SnapshotLineRangeInto(std::size_t start_row,
                              std::size_t max_lines,
                              std::vector<TerminalLine>& out) const;
-  // `cursor`, when given, is sampled under the SAME lock as the lines, changed or
-  // not: read with a second lock, the PTY reader could move it in between and a
-  // frame painted the caret where the next output put it, over the text before it.
   bool SnapshotLineRangeIfChanged(std::size_t start_row, std::size_t max_lines, std::uint64_t previous_generation,
                                   TerminalLineRangeSnapshot* snapshot, TerminalCursorSnapshot* cursor = nullptr) const;
-  // Outcome of one FindMatches pass, sampled under the same lock as the scan so
-  // the caller never pairs a row count with a trim counter from a different
-  // instant.
   struct SearchScan {
     std::size_t line_count = 0;
-    // First row of the visible grid: everything below it is settled scrollback
-    // that no later output can rewrite, so a rescan after new output only has to
-    // restart from here. Zero on the alternate screen, which has no scrollback.
     std::size_t stable_row_end = 0;
     std::uint64_t trim_total = 0;
-    // Set when `expected_trim_total` was stale, so `out` was cleared and the scan
-    // restarted from row 0 regardless of `start_row`.
     bool full_rescan = false;
-    // Set when `max_matches` was reached; later rows were not scanned.
     bool truncated = false;
   };
-  // Appends literal matches for rows `[start_row, line_count)` to `out`.
-  //
-  // `expected_trim_total` is the ScrollbackTrimTotal() the rows already in `out`
-  // are expressed against. Scrollback trimming happens on the reader thread, so a
-  // caller that rebased its rows outside the lock can be overtaken between the
-  // rebase and the scan; passing the counter it rebased against lets the scan
-  // detect that atomically and restart cleanly instead of mixing two coordinate
-  // spaces. Pass the current counter with an empty `out` for a plain full scan.
   SearchScan FindMatches(const TerminalSearchQuery& query,
                          std::size_t start_row,
                          std::uint64_t expected_trim_total,
@@ -149,53 +94,28 @@ class TerminalSession {
   std::size_t columns() const;
   std::size_t cursor_row() const;
   std::size_t cursor_column() const;
-  // DECSCNM (`CSI ? 5 h`): the whole screen is drawn in reverse video. terminfo's
-  // `flash` sets it for 100 ms as the visual bell.
   bool screen_reverse_video() const;
   TerminalCursorSnapshot CursorSnapshot() const;
   bool using_alternate_screen() const;
   CursorShape cursor_shape() const;
   bool cursor_blinking() const;
-  // True while the application is mid-frame under synchronized output (DEC mode
-  // 2026). The host coalesces redraws across the frame to avoid tearing.
   bool synchronized_output_active() const;
-  // Current working directory advertised by the shell via OSC 7 (empty if none).
   std::filesystem::path reported_working_directory() const;
-  // The shell's process id on the machine that started it, or -1 when none runs.
   int child_process_id() const { std::scoped_lock lock(mutex_); return child_pid_; }
   bool ConsumeWakeEvent();
   bool WantsMouseCapture() const;
   bool WantsMouseMotionCapture(bool buttons_down) const;
   bool WantsFocusEvents() const;
   std::optional<std::string> ConsumePendingClipboardText();
-  // The colours the host paints unstyled cells with. Programs ask for them
-  // (OSC 10/11) to pick a light or dark theme, so answering with anything but
-  // what is on screen gives them the wrong one. A dark/light flip is reported to
-  // a program that enabled mode 2031.
   void SetDefaultColors(util::Rgba8 foreground, util::Rgba8 background);
-  // True once (then reset) after the program rang the bell (BEL outside an escape
-  // sequence) — locally, or on the host, carried by a frame's kBell.
   bool ConsumeBell();
-  // A desktop notification the program asked for (OSC 9 <body>, OSC 777 ;
-  // notify ; <title> ; <body>), the latest one, consumed once. Agent CLIs use it
-  // for "needs your input".
   struct Notification {
     std::string title;
     std::string body;
   };
   std::optional<Notification> ConsumeNotification();
-  // What programs on this host terminal's machine asked of the editor: a URL to
-  // open, through the BROWSER its server sets (TerminalHostFrame::open_url) --
-  // opened on THIS machine, the way VS Code's remote terminals do -- and a file
-  // to edit, through its EDITOR (TerminalHostFrame::edit). Local shells never
-  // raise either: their programs reach the desktop and their own editor.
   TerminalHostRequests ConsumeHostRequests();
-  // The URI of the OSC 8 hyperlink a cell carries (TerminalCell::extra); empty
-  // for 0, an id the session no longer holds, or an underline colour alone.
   std::string LinkUri(std::uint16_t extra) const;
-  // True once (then reset) when an OSC 52 clipboard sequence was dropped because it
-  // overran the escape-sequence buffer cap. Lets the host surface a status instead
-  // of silently swallowing a too-large clipboard write.
   bool ConsumeOversizedOsc52Dropped();
   void PasteText(std::string_view text);
   void SendFocusEvent(bool focused);
@@ -208,134 +128,48 @@ class TerminalSession {
                        std::size_t row,
                        std::size_t column,
                        util::KeyModifiers modifiers);
-  // The pointer over screen (row, column): the program's own (OSC 22) when it named
-  // one; else, for a program that owns the mouse, the hand over a control it lit in
-  // answer to the resting pointer (TerminalHoverAffordance) and the arrow elsewhere;
-  // else None, and the panel's rules apply (the I-beam, a link's hand).
   TerminalPointerShape PointerShapeAt(std::size_t row, std::size_t column) const;
 
-  // ---- Host terminals (dev-docs/design/remote-projects.md § 6.5) ----
-  //
-  // A session is in HOST MODE when its launcher's shells run on another machine
-  // (HostTerminalsFor): it parses nothing, mirrors the host's buffer from frames
-  // (ApplyHostFrame), and turns every input call into a semantic event the host
-  // encodes. Every reader — snapshots, search, cursor, mode queries — is the
-  // same code over the same members, which is why the panel needs no remote path.
   bool is_host_terminal() const;
 
-  // A host terminal asked for before its host's connection is up (Start through a
-  // HostTerminalSource that is not Ready) is PENDING: no shell runs anywhere yet,
-  // the buffer holds one status line, input is dropped (it must not be queued into
-  // a shell that may turn out to be a different one), and running() is false.
   bool host_pending() const;
-  // Rewrite a pending session's status line; no-op otherwise. Called when the
-  // connection's state changes, never per frame.
   void SetPendingStatus(std::string_view text);
-  // Start a pending session through `launcher`, whose host is now connected: the
-  // open, or the reattach, it was waiting for. False when it was not pending.
   bool StartPendingOnHost(const platform::ProcessLauncher& launcher);
-  // The host terminal this session is: its channel's while one is bound, the one
-  // it will reattach to while pending, the one it let go of after DetachFromHost.
-  // Empty for a local session, a fresh open not yet answered, and after Stop().
   HostIdentity host_identity() const;
-  // host_identity().handle, allocation-free: the per-wake check of whether a host
-  // pane's terminal changed since the session last recorded it.
   std::uint64_t host_handle() const;
-  // What became of the reattach this session asked for (None when it asked none).
   HostReattach host_reattach() const;
-  // Let go of the host terminal and leave it RUNNING on the host (quit and
-  // close-project, § 6.12): no term/close. host_identity() keeps naming it, and
-  // running() is false. Destroying or Stop()ping a session that was not detached
-  // still closes its host terminal.
   void DetachFromHost();
-  // True when the host's shell exited while this client was attached and saw it
-  // -- not when only the link to the host is down.
   bool host_shell_exited() const;
-  // True while the connection carrying this host terminal is down (HostEnded(LinkLost)
-  // until ReattachHost): its shell runs on, detached; the tab says so.
   bool host_link_down() const;
 
-  // Client side: apply one frame from the host (on the connection's thread).
-  // `working_directory`, when present, is already mapped into the editor's tree.
-  // False when the frame is inconsistent with what this session holds (a Keep or
-  // Promote that names a line it does not have): the caller should re-attach.
   bool ApplyHostFrame(TerminalHostFrame frame);
-  // The host side ended (HostEnd says how), `reason` on a status line. LinkLost
-  // applies to a running pane, TerminalGone to one waiting on a link.
   void HostEnded(HostEnd end, std::string_view reason);
-  // What a warm reattach tells the host this mirror still holds: the absolute
-  // index of its screen's first line, and which screen it shows. nullopt when the
-  // session has never mirrored a host terminal.
   struct HostResumePoint {
     std::uint64_t screen_top = 0;
     bool alternate = false;
   };
   std::optional<HostResumePoint> host_resume_point() const;
-  // Ask the host for history older than what this mirror holds (term/scrollback,
-  // § 6.12) — the view reached the top of what the attach prefetched. A page is
-  // prepended when it arrives; the scrollback trim total goes DOWN by its size, so
-  // every absolute row already held keeps its index. No-op off a host terminal,
-  // on the alternate screen, while a request is out, once the host has nothing
-  // older, or when the scrollback is at this client's own cap.
   void RequestOlderHostHistory();
-  // Fill a gap rule among rows [first_row, first_row + rows) with the host lines
-  // it withheld (term/scrollback), newest first and a page at a time -- what the
-  // view shows of a gap is fetched when it is on screen, the way the top already
-  // fetches older pages. The lines go in where the rule was, so every row below
-  // it moves down: RowShiftsSince reports by how much. No-op off a host terminal,
-  // on the alternate screen, while a fill is out, for a gap the host no longer
-  // holds, or at this client's scrollback cap.
   void RequestHostGapFill(std::size_t first_row, std::size_t rows);
-  // Rows inserted into the middle of the buffer (gap fills): RowShiftSequence()
-  // counts them, and RowShiftsSince(n) returns those after the n-th, oldest first.
-  // False when n is older than the short log reaches; a view that far behind
-  // re-anchors instead. A trim or a prepended page moves no absolute row, so
-  // neither is reported here (the trim total carries those).
   std::uint64_t RowShiftSequence() const;
   bool RowShiftsSince(std::uint64_t sequence, std::vector<TerminalHostHistory::RowShift>& out) const;
-  // Carry on over a new channel to the same host terminal (a reconnect), keeping
-  // the mirror: the channel was attached with host_resume_point(). A channel also
-  // binds itself through this before its first request goes out, so no frame can
-  // land on a session that does not know it yet.
   void ReattachHost(std::shared_ptr<TerminalHostChannel> channel);
-  // The channel's reattach was answered: the next cold frame is the recorded
-  // terminal's, and a dim rule goes under its restored history.
   void NoteHostReattached();
-  // Local echo prediction for host terminals (`remote.predict`).
   void SetPredictionMode(TerminalPredictionOverlay::Mode mode);
-  // Pending predictions not yet confirmed by the host; for tests and diagnostics.
   std::size_t PendingPredictions() const;
 
-  // Server side. One consistent capture under the session lock: the frame header
-  // (flags, cursor, title, working directory; consumes a pending OSC 52 write and
-  // bell) plus the lines from host-absolute index `from` (clamped to what the
-  // buffer still holds, and to at most `max_lines_before_screen` above the
-  // screen) through the end of the buffer.
   struct HostCapture {
-    TerminalHostFrame header;  // runs, keep bits and lines left empty
-    std::uint64_t first_line = 0;      // absolute index of lines[0]
-    std::vector<TerminalLine> lines;   // [first_line, end); the screen is the tail
+    TerminalHostFrame header;
+    std::uint64_t first_line = 0;
+    std::vector<TerminalLine> lines;
     std::uint64_t generation = 0;
-    // OutputCount() as of these lines, read under the same lock: the server acks
-    // input against THIS, so a frame acks exactly what it shows (TD-392).
     std::uint64_t output_count = 0;
   };
   void CaptureForHost(std::uint64_t from, std::size_t max_lines_before_screen, HostCapture& out);
-  // Server side, term/scrollback: up to `count` primary-buffer lines ending just
-  // before absolute line `before` (only what is still held; cell extras dropped --
-  // a page of history carries no extras table, so its links do not click and its
-  // coloured underlines take the text's colour). Returns the first line's absolute index.
   std::uint64_t CaptureHostHistory(std::uint64_t before, std::size_t count,
                                    std::vector<TerminalLine>& out) const;
-  // Called on the reader thread after each parsed output chunk and on exit, with
-  // no lock held. Set before Start; a host-side server drives its frames off it.
   void SetOutputObserver(std::function<void()> observer);
-  // Output the program wrote that the observer has not been told of yet
-  // (platform::TerminalBackend::HasUnreadOutput). Any thread.
   bool HasUnreadOutput() const;
-  // How many output chunks (and the exit) have been applied to the buffer --
-  // advanced under the buffer's lock as each is applied, unlike the observer,
-  // which runs after the lock is released. Any thread.
   std::uint64_t OutputCount() const;
 
  private:
@@ -345,22 +179,12 @@ class TerminalSession {
     Csi,
     Osc,
     CharsetDesignate,
-    // DCS (ESC P), SOS (ESC X), PM (ESC ^), APC (ESC _): string payloads that
-    // run until a String Terminator (ESC \) or BEL. We do not implement these
-    // (Sixel, Kitty graphics, tmux passthrough, DECRQSS, ...), but their
-    // payloads must be consumed and discarded rather than printed to the grid.
     StringPayload,
   };
 
   void AppendOutputLocked(std::string_view data);
-  // Append the "[process exited]" marker on a fresh line. Resets any dangling
-  // escape-parser state first so a child that died mid-sequence cannot swallow
-  // the marker. Caller must hold mutex_.
   void EmitProcessExitMarkerLocked();
-  // Reset escape-parsing state after an over-length / malformed sequence so the
-  // stream recovers to normal text instead of growing the buffer unbounded.
   void AbandonEscapeSequenceLocked();
-  // AppendOutputLocked's parser, one member per escape state.
   void EnterEscapeModeLocked(EscapeMode mode);
   void ConsumeGroundByteLocked(unsigned char byte);
   void ConsumeUtf8ByteLocked(unsigned char byte);
@@ -372,7 +196,6 @@ class TerminalSession {
   void FullResetLocked();
   void ReverseIndexLocked();
   void HandleEscapeSequenceLocked(std::string_view sequence);
-  // The CSI handlers HandleEscapeSequenceLocked dispatches to (TerminalSessionCsi.cpp).
   std::size_t AddressingOriginRowLocked() const;
   std::size_t CursorRowUpLocked(std::size_t count) const;
   void HandlePrivateCsiLocked(char final, char intermediate, const std::vector<int>& params);
@@ -386,8 +209,6 @@ class TerminalSession {
   void RepeatLastGlyphLocked(int requested);
   void SetCursorStyleLocked(int style);
   void HandleOscSequenceLocked(std::string_view sequence);
-  // Interns (uri, underline colour), freeing ids no buffer references when the
-  // table is full.
   std::uint16_t InternExtraLocked(std::string_view uri, TerminalColor underline_color);
   void HandleKittyKeyboardLocked(char prefix, char final, const std::vector<int>& params);
   void HandlePrivateModeLocked(int mode, bool enabled);
@@ -401,37 +222,15 @@ class TerminalSession {
   void FlushPendingReply();
   void EnsureCursorLineExistsLocked();
   void AdvanceCursorRowLocked(bool wrapped_from_previous = false);
-  // Executes one C0 control byte (< 0x20; ESC, CAN and SUB are the parser's, not
-  // this). One copy for both places ECMA-48 executes a C0: the ground state and the
-  // middle of a CSI sequence, which continues afterwards.
   void ExecuteC0Locked(unsigned char byte);
   void MoveCursorLocked(std::size_t row, std::size_t column);
-  // Absolute deque row of the top of the visible screen on the primary buffer.
-  // The primary deque holds scrollback followed by the visible grid, so row-
-  // addressing CSIs (CUP/HVP/VPA/DECSTBM home, CPR report) and full-display
-  // erases must be relative to this row, not to the top of scrollback. Returns 0
-  // on the alternate screen (which has no scrollback) and whenever the deque is
-  // not yet taller than the screen.
   std::size_t PrimaryScreenTopLocked() const;
   void PutGlyphLocked(std::string_view glyph);
-  // Bulk-write the leading run of plain printable ASCII in `run` (the case that
-  // dominates every real command's output) with one line lookup, one resize, and
-  // one wide-pair break for the whole span instead of per byte. Returns the number
-  // of bytes consumed, or 0 when the fast path does not apply and the caller must
-  // fall back to the per-byte parser.
   std::size_t PutAsciiRunLocked(std::string_view run);
-  // Blank any dangling half of a previously written double-width pair that a
-  // fresh write over [start, start+advance) would orphan, so the renderer never
-  // sees a lead without its trailing spacer (stale gap) or a spacer without its
-  // lead (overlap).
   void BreakWideGlyphPairForWriteLocked(TerminalLine& line, std::size_t start,
                                         std::size_t advance);
   void ResizeLineLocked(TerminalLine& line, std::size_t size);
   void ClearLineRangeLocked(TerminalLine& line, std::size_t start, std::size_t end);
-  // Blank a whole row honoring Background Color Erase (BCE): when the current SGR
-  // paints a non-default background, fill full-width styled blanks so the erased
-  // row keeps that background (matching EraseInLineLocked); otherwise keep the
-  // cheap empty-line reset, which renders identically to the default background.
   void BlankLineToCurrentBackgroundLocked(TerminalLine& line);
   void EraseInLineLocked(int mode);
   void EraseInDisplayLocked(int mode);
@@ -439,9 +238,6 @@ class TerminalSession {
   void ClampScrollRegionLocked();
   std::size_t ActiveScrollRegionTopLocked() const;
   std::size_t ActiveScrollRegionBottomLocked() const;
-  // True when a DECSTBM region narrower than the full screen is in effect. Used
-  // to gate primary-buffer scroll-region behavior so the common full-screen path
-  // (infinite scrollback accumulation) is untouched.
   bool HasCustomScrollRegionLocked() const;
   void ScrollRegionUpLocked(std::size_t top, std::size_t bottom, std::size_t count);
   void ScrollRegionDownLocked(std::size_t top, std::size_t bottom, std::size_t count);
@@ -453,63 +249,27 @@ class TerminalSession {
   void ResetScreenLocked(bool fill_rows);
   void SetAlternateScreenLocked(bool enabled, bool clear);
   void TrimScrollbackLocked();
-  // Shared body of every range snapshot: copies [start_row, start_row+max_lines)
-  // into `out`, reusing each destination row's cells buffer. Returns rows copied.
   std::size_t CopyLineRangeIntoLocked(std::size_t start_row,
                                       std::size_t max_lines,
                                       std::vector<TerminalLine>& out) const;
   void AdvanceSnapshotGenerationLocked();
-  // Clears everything a session negotiates or accumulates while a child is
-  // attached: process bookkeeping, the escape/UTF-8 decoder, every DEC/xterm
-  // private mode, the Kitty-keyboard and synchronized-output state, the cursor
-  // shape/position pair, both screens, and the scroll region. Start(),
-  // StartPlaceholderForTesting() and Stop() all need exactly this set, and each
-  // used to spell it out inline — three ~35-line copies that a comment asked
-  // future readers to "keep in lockstep" by hand. Callers layer their own
-  // differences on top (Start seeds the 24x80 geometry and the launch label,
-  // Stop clears the label and keeps the geometry).
   void ResetEmulationStateLocked();
-  // The modes, rendition, character sets, saved cursor and negotiated protocol
-  // state a new child and RIS (`ESC c`) both start from. Leaves the screens alone.
   void ResetTerminalModesLocked();
-  // The rest of what a starting session needs, on top of ResetEmulationStateLocked:
-  // the launch identity, a one-line buffer, the 24x80 seed geometry, and the wake /
-  // snapshot bookkeeping. Start() and StartPlaceholderForTesting() were still
-  // spelling this out separately after the emulation-state reset was factored out,
-  // which is exactly how the geometry-ordering comment ended up copied into both.
-  //
-  // Deliberately does NOT touch scrollback_trim_total_. That counter is the
-  // staleness token FindMatches compares an in-flight search against, so it must
-  // stay monotonic across a restart; zeroing it could make a search over the
-  // previous buffer's rows look current.
   void ReseedForStartLocked(const std::filesystem::path& working_directory,
                             std::string launch_label);
   bool ReserveWakeChannel(util::WakeChannel& channel) const;
   void PushWakeEvent() const;
 
   mutable std::mutex mutex_;
-  // `std::deque` so the scrollback trim `pop_front`-equivalent erase is
-  // amortized O(1) per element with no tail moves — `std::vector::erase(begin)`
-  // moved up to ~2 000 tail elements per trim under heavy output
-  // (round-4 Finding 3). Random access (`lines_[i]`) and iterator-based
-  // algorithms (`std::rotate`, `assign`, snapshot copy) still work.
   std::deque<TerminalLine> lines_ = {TerminalLine{}};
-  // Cell buffers rescued from trimmed scrollback lines, waiting to back the lines
-  // that replace them (TD-2026-08-14-231). See TerminalLineBufferPool.
   TerminalLineBufferPool line_buffer_pool_;
   TerminalScreenState primary_screen_;
   TerminalScreenState alternate_screen_;
-  // shared_ptr (not unique_ptr) so Resize()/SendBytes() can copy it under the lock
-  // and keep the backend alive across the unlocked Write()/Resize() call even if a
-  // concurrent Stop() moves it out — closing a use-after-free on the raw pointer.
   std::shared_ptr<platform::TerminalBackend> backend_;
   std::filesystem::path working_directory_;
   std::string default_launch_label_;
   std::string launch_label_;
   TerminalStyle current_style_;
-  // The pen's extended attributes: its OSC 8 link and SGR 58 underline colour,
-  // and the interned id of the pair (0 = neither) stamped onto every glyph
-  // written. The id is re-interned whenever either half changes.
   std::string pen_link_uri_;
   TerminalColor pen_underline_color_;
   std::uint16_t current_extra_ = 0;
@@ -522,112 +282,62 @@ class TerminalSession {
   mutable bool wake_event_pending_ = false;
   EscapeMode escape_mode_ = EscapeMode::None;
   bool osc_escape_pending_ = false;
-  // Set when an oversized OSC 52 clipboard sequence is abandoned at the escape
-  // buffer cap; drained by ConsumeOversizedOsc52Dropped so the host can notify.
   bool oversized_osc52_dropped_ = false;
-  // A BEL not yet consumed by the UI (ConsumeBell), and one not yet sent to a
-  // client in a host frame (CaptureForHost). Separate: a host session has both.
   bool pending_bell_ = false;
   std::optional<Notification> pending_notification_;
   bool pending_host_bell_ = false;
   bool use_alternate_screen_ = false;
   TerminalMouseModes mouse_;
-  // The pointer as the program last saw it: the cell of the last motion report
-  // and the row under it before the program answered (TerminalPointerState).
   TerminalPointerState pointer_;
   bool application_cursor_keys_mode_ = false;
   bool origin_mode_ = false;
   bool auto_wrap_mode_ = true;
-  // IRM (`CSI 4 h`): a printed glyph shifts the rest of the row right instead of
-  // overwriting it. `TERM=xterm-256color` advertises it (smir/rmir), so ncurses
-  // may use it to insert characters.
   bool insert_mode_ = false;
-  // The last graphic glyph printed, for REP (`CSI Ps b`), which that terminfo
-  // entry advertises too: ncurses 6.1+ draws a run of one character -- a box
-  // rule, a row of spaces -- as the character and a repeat count, so without it
-  // the run was missing and the rest of the row shifted left. Empty until a
-  // glyph is printed.
   std::array<char, 4> last_glyph_ = {};
   std::uint8_t last_glyph_length_ = 0;
   TerminalCharsets charsets_ = {};
-  TerminalCharsets saved_charsets_ = {};  // with DECSC's other saved state
+  TerminalCharsets saved_charsets_ = {};
   bool bracketed_paste_mode_ = false;
   bool focus_event_mode_ = false;
   bool cursor_visible_ = true;
   bool screen_reverse_video_ = false;
   bool synchronized_output_ = false;
-  // DEC mode 2031: the app wants `CSI ? 997 ; 1|2 n` when the colour scheme
-  // flips between dark and light (Claude Code, neovim, helix follow the theme).
   bool color_scheme_updates_ = false;
-  // What a cell with no explicit colour is painted with: the host's theme.
-  // Answers OSC 10/11/12 and the dark/light query. Defaults to the built-in
-  // dark palette until the host says otherwise.
   util::Rgba8 default_foreground_ = util::Rgba8{0xf5, 0xf7, 0xfa, 0xff};
   util::Rgba8 default_background_ = util::Rgba8{0x1f, 0x24, 0x2c, 0xff};
   int sync_suppressed_wakes_ = 0;
-  // A synchronized frame closed (`?2026l`) since the last wake decision. A read that
-  // closes frame N and opens N+1 ends with the mode set again; without this the
-  // finished frame N waited for the next output -- the screen one keystroke behind.
   bool sync_frame_completed_ = false;
-  // Kitty keyboard protocol progressive-enhancement flags (0 = legacy mode) and
-  // the push/pop stack maintained by `CSI > flags u` / `CSI < n u`.
   std::uint8_t kitty_keyboard_flags_ = 0;
   std::vector<std::uint8_t> kitty_keyboard_stack_;
   CursorShape cursor_shape_ = CursorShape::Block;
   bool cursor_blinking_ = true;
-  // Per-column horizontal tab stops. Rebuilt to the default 8-column grid on
-  // resize; mutable via HTS (ESC H) / TBC (CSI g).
   std::vector<bool> tab_stops_;
   std::filesystem::path reported_working_directory_;
   std::optional<std::string> pending_clipboard_text_;
   std::string pending_utf8_sequence_;
   std::size_t rows_ = 24;
   std::size_t columns_ = 80;
-  // Scrollback cap (the `terminal.scrollback_lines` setting; default mirrors
-  // kMaxScrollbackLines in TerminalInternalConstants.h).
   std::size_t max_scrollback_lines_ = 2000;
   std::uint64_t scrollback_trim_total_ = 0;
   std::size_t cursor_row_ = 0;
   std::size_t cursor_column_ = 0;
-  // Relative to the top of the visible screen, as xterm saves it: on the primary
-  // buffer the screen scrolls on through scrollback, and an absolute deque row
-  // saved before output scrolled it restored the cursor INTO history, so a program
-  // that saved, printed, and restored then wrote over lines the user had scrolled
-  // past. A scrollback trim leaves it alone; a resize clamps it.
   std::size_t saved_cursor_row_ = 0;
   std::size_t saved_cursor_column_ = 0;
-  // DECSC (ESC 7 / CSI s) saves the graphic rendition and origin mode alongside the
-  // cursor; DECRC (ESC 8 / CSI u) restores them. Without this an SGR change between
-  // save and restore leaks past the restore (e.g. `\0337\033[31mRED\0338X` must
-  // print X in the default color, not red).
   TerminalStyle saved_style_{};
   TerminalColor saved_underline_color_;
   bool saved_origin_mode_ = false;
   std::size_t scroll_region_top_ = 0;
   std::size_t scroll_region_bottom_ = 23;
   util::Revision snapshot_generation_{1};
-  std::uint64_t output_count_ = 0;  // OutputCount()
+  std::uint64_t output_count_ = 0;
 
-  // Test seam: captures bytes written while no backend is attached (placeholder
-  // test mode). Always present so the core ABI is identical for the production
-  // and test binaries; never read in production.
   std::string test_sent_bytes_;
 
-  // Replies to terminal queries (DSR/DA/DECRQM/color/focus) are accumulated here
-  // under mutex_ by SendBytesLocked and flushed by FlushPendingReply() after the
-  // lock is released, so the reader thread never blocks inside a PTY write()
-  // while holding mutex_. Capped so a query-flooding, non-draining child cannot
-  // grow it without bound.
   std::string pending_reply_;
 
-  // Host mode (see is_host_terminal). Guarded by mutex_.
   bool StartOnHost(const HostTerminalSource& source, const std::filesystem::path& working_directory,
                    std::string_view command, std::vector<std::string> shell_argv, HostIdentity attach);
-  // Stop's host half: close `channel` (when there is one) and forget every host
-  // state a session carries between starts, pending and detached included.
   void StopHost(const std::shared_ptr<TerminalHostChannel>& channel);
-  // Send through the host channel when there is one; false when this session
-  // is local (the caller encodes).
   bool SendToHost(TerminalInputEvent event);
   bool SendMouseToHost(TerminalInputEvent::Kind kind, MouseButton button, bool pressed,
                        std::size_t row, std::size_t column, util::KeyModifiers modifiers);
@@ -643,4 +353,4 @@ class TerminalSession {
   friend struct ::microide::tests::TerminalSessionTestAccess;
 };
 
-}  // namespace microide::terminal
+}

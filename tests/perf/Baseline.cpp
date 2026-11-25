@@ -10,8 +10,6 @@
 namespace microide::tests::perf {
 namespace {
 
-// JsonValue has no IsNumber(), and a metric may be written as either an integer
-// or a double depending on its value, so both count as "the baseline recorded it".
 bool IsNumber(const util::JsonValue& value) {
   return value.IsInt() || value.IsDouble();
 }
@@ -24,9 +22,6 @@ bool WithinTolerance(double expected, double actual, double tolerance_percent) {
   return actual <= expected + AllowedDelta(expected, tolerance_percent);
 }
 
-// Returns the INDEX of the metric just added, not a reference into the vector:
-// a later AddMetric reallocates, and a caller holding a reference across one is
-// a dangling-pointer bug waiting for the next metric to be added.
 std::size_t AddMetric(BaselineComparison* out,
                       std::string_view name,
                       double expected,
@@ -48,23 +43,6 @@ std::size_t AddMetric(BaselineComparison* out,
   return out->metrics.size() - 1;
 }
 
-// AddMetric for a gate whose allowance is an absolute quantity rather than a
-// percentage of the baseline.
-//
-// Every other metric here is non-negative and far from zero, so `expected *
-// tolerance%` is both the allowance and a readable description of it. Net heap
-// retention is neither: it is signed, and its most desirable value is exactly
-// zero, where a percentage envelope has zero width. The tolerance is still
-// REPORTED as a percentage (the equivalent one) so verdict lines, the JSON report
-// and the headroom ranking keep one vocabulary -- but at expected == 0 there is
-// no such percentage, and reporting 0% there would read as "gated to the byte"
-// when the gate is a page wide. That case reports the allowance's own scale.
-//
-// Known limit, stated rather than hidden: `EnvelopeUsedPercent` divides by
-// `expected`, so a gate whose baseline is exactly zero contributes nothing to the
-// headroom ranking. That is tolerable HERE and only here -- a scenario recorded
-// at zero net retention that starts retaining does not creep toward a 4 KB
-// allowance, it blows past it by orders of magnitude and fails outright.
 std::size_t AddMetricWithAllowance(BaselineComparison* out,
                                    std::string_view name,
                                    double expected,
@@ -85,12 +63,6 @@ std::size_t AddMetricWithAllowance(BaselineComparison* out,
   return out->metrics.size() - 1;
 }
 
-// Stop enforcing a metric that was already added, and say why.
-//
-// The measurement stays in the comparison — it is still the most useful number
-// in the room — but it no longer decides the run. Recomputing `passed` from the
-// remaining enforced metrics rather than flipping the bit keeps one definition
-// of "this scenario is red".
 void Unenforce(BaselineComparison* out, std::size_t index, std::string reason) {
   out->metrics[index].enforced = false;
   out->metrics[index].note = std::move(reason);
@@ -122,47 +94,11 @@ double ClampNormalizationFactor(double factor, bool* clamped) {
   return factor;
 }
 
-// Re-express this run's CPU durations in the machine state the baseline was
-// captured in, so the gate compares code against code.
-//
-// cpu_ms is a duration; it scales with the machine's effective clock, and the
-// baselines never recorded what that clock was. So `p50_cpu_ms: baseline=14.7
-// measured=29.9` was a statement about the governor as much as about the binary
-// — the same binary passed the same gate on other runs of the same suite
-// (TD-2026-08-05-137). Recording the clock in the baseline and scaling by the
-// ratio makes every CPU gate machine-state-independent instead of exempting
-// scenarios from CPU gating one at a time.
-//
-// PER ITERATION, against that iteration's own probe. The motivating failure was a
-// clock that stepped in the middle of a run — five iterations at one clock and
-// five at another — which a single per-run factor would smear across both halves.
-// Each iteration's reading cancels its own clock exactly, and the percentiles are
-// then taken over the normalised series.
 struct NormalizedCpu {
   MetricSet metrics;
   ClockNormalization clock;
 };
 
-// Re-express this run's WALL durations in the baseline's machine state, scaled by
-// how much of each iteration's wall time was actually work.
-//
-// The CPU correction above is unconditional because cpu_ms IS work. Wall is not:
-// `idle_soak_30s` sleeps for 27 of its 30 seconds, and a clock that runs 40 %
-// slower does not make a sleep 40 % longer. So the correction is weighted by that
-// iteration's own cpu/wall ratio -- full where wall is work, none where wall is
-// sleep, decided per scenario from measured data rather than from a per-scenario
-// opt-out list somebody has to maintain (TD-2026-08-06-140).
-//
-//   normalized_wall = wall * (1 + (clock_factor - 1) * cpu_fraction)
-//
-// The ratio is clamped to [0, 1]: above 1 means the scenario used more CPU than
-// wall (threads), where the extra CPU is not this thread's clock exposure and
-// scaling by it would over-correct.
-//
-// This is step ONE of the entry, and deliberately alone: it makes the wall gate
-// machine-state-independent WITHOUT touching any envelope. Cutting the 100/150/200
-// envelopes down to something that actually gates is step two, and it needs a
-// rebaseline plus a multi-run stability measurement on an idle runner.
 double WallClockCorrection(double clock_factor, double cpu_ms, double wall_ms) {
   if (wall_ms <= 0.0) {
     return 1.0;
@@ -230,9 +166,6 @@ NormalizedCpu NormalizeCpuAgainstBaselineClock(const BaselineRecord& baseline,
   }
 
   if (normalized.empty()) {
-    // No per-iteration probe. A caller that supplied only aggregate metrics (the
-    // baseline unit tests, and any future report replay) can still normalise on
-    // the run-level median, which is exact whenever the clock held steady.
     if (aggregate.metrics.p50_cpu_calibration_ns <= 0.0) {
       return out;
     }
@@ -255,69 +188,6 @@ NormalizedCpu NormalizeCpuAgainstBaselineClock(const BaselineRecord& baseline,
   return out;
 }
 
-// Decide whether a SETTLING-SERIES gate is comparable at this run's iteration
-// count, and annotate it either way.
-//
-// Two metrics are settling series, not steady ones, and both were affected. The
-// second was found on 2026-08-10, because the fix below had been applied to one
-// of the two (TD-2026-08-10-173) — the same "a fix applied to one of N instances
-// leaves the other N-1" shape as TD-2026-08-10-171.
-//
-// `mean_rss_growth_bytes` is a trimmed mean over a series that SETTLES: the first
-// iterations pay arena growth and first-touch faults that later ones do not, so
-// averaging fewer of them reads high. That is not jitter and it does not average
-// out — typing_large_file measured 100-114 KB at `--iterations=6` and 84-95 KB at
-// the default 10, five runs a side on one quiet box, one binary. Against an
-// 80,555 baseline with a +25% envelope that is a red gate half the time at 6 and
-// a comfortable pass at 10, and the failure line said "measured=113869 (+41%)"
-// with nothing to suggest the sample size was the reason (TD-2026-08-06-148).
-//
-// So: a run shorter than the baseline is not compared. Reporting the number and
-// declining to gate it beats a red that means nothing — a developer who drops
-// --iterations to save time gets an explanation, not a bisect.
-//
-// `p50_net_heap_bytes` is the same shape for a different reason: it is a MEDIAN
-// over a series whose first iterations fill caches the later ones reuse.
-// editor_indent_guides_paint, unchanged binary, ten iterations:
-//
-//   12,286,512  341,770  297,236  63,389  -7,535  29,836  48,084  -20,348  50,584  25,080
-//
-// p50 over the first 3 is 341,770; over 5, 297,236; over all 10, 49,334 — against
-// a 59,735 baseline. So a `--iterations=5` run reported +398 % on code that had
-// not moved, and a `--iterations=3` run +476 %, in both cases naming the one
-// metric the suite documents as deterministic to the byte. That is a
-// false-positive generator pointed at the retention gate, and the median does not
-// converge until the caches are full.
-//
-// The other direction is left enforced. A LONGER run reads lower, so the gate can
-// only get more permissive, which is a note rather than a failure — but it is
-// still worth saying, because a permissive gate that nobody knows is permissive
-// is how a baseline set goes quietly vacuous (validation-traps.md).
-// A median over a settling series, read at fewer samples than the baseline was
-// recorded over, is not that median. At one iteration it IS the first iteration —
-// the cold one, which is the series' MAXIMUM.
-//
-// `editor_soft_wrap_long_line_scroll` is the worked example, and the numbers are
-// exact rather than approximate: its `scroll_frames` phase records p50 = 10
-// allocations over ten iterations and max = 324, and a one-iteration run measures
-// 324. The scenario total records p50 = 384 and max = 699, and a one-iteration run
-// measures 699. So `--smoke --iterations=1`, which is what `ctest` runs on every
-// invocation, reported +3130 % on code that had not moved — and the same binary
-// passes at `--iterations=10`. The only reason nobody was looking at it is that
-// `microide_perf` was not being rebuilt in the default build directory, so the
-// gate was not running at all.
-//
-// Disarming is the established answer for the other two settling statistics
-// (TD-2026-08-06-148, TD-2026-08-10-173) and it is the WRONG one here: it would
-// switch off the suite's most deterministic gate in the one lane that runs on
-// every `ctest`, which is how a baseline set goes quietly vacuous.
-//
-// So the gate is REPOINTED rather than switched off. A single sample is bounded by
-// the series' maximum, so a short run is compared against the baseline's recorded
-// max with the max tolerance. It stays armed, the comparison is true rather than
-// approximately true, and a real regression still trips it — a cold iteration that
-// allocates more than the baseline's worst iteration is a regression by any
-// reading.
 void RepointSettlingAllocationGateAtRecordedMax(BaselineComparison* result,
                                                 std::size_t metric_index,
                                                 double recorded_max,
@@ -325,8 +195,6 @@ void RepointSettlingAllocationGateAtRecordedMax(BaselineComparison* result,
                                                 std::size_t measured_iterations,
                                                 std::size_t baseline_iterations,
                                                 std::string_view metric_name) {
-  // Either side unknown (a pre-iteration-count baseline, or an aggregate built
-  // from summary metrics alone), or the run is long enough to mean its median.
   if (baseline_iterations == 0 || measured_iterations == 0 ||
       measured_iterations >= baseline_iterations) {
     return;
@@ -342,8 +210,6 @@ void RepointSettlingAllocationGateAtRecordedMax(BaselineComparison* result,
        << ", and a median over that few samples of a settling series is the cold first "
           "iteration — which is the series' maximum, not its middle";
   metric.note = note.str();
-  // A metric that failed under the median comparison may pass under this one, so
-  // the run's verdict is recomputed from every metric rather than left latched.
   result->passed = true;
   for (const MetricComparison& entry : result->metrics) {
     if (entry.enforced && !entry.passed) {
@@ -360,9 +226,6 @@ void AnnotateSettlingGateForIterationCount(BaselineComparison* result,
                                            std::string_view statistic,
                                            std::string_view debt_id) {
   const std::size_t measured = aggregate.iterations.size();
-  // Either side unknown: a pre-iteration-count baseline, or an aggregate built
-  // from summary metrics alone (the unit tests, and report replay). Compare as
-  // before rather than inventing a count.
   if (baseline.iterations == 0 || measured == 0 || measured == baseline.iterations) {
     return;
   }
@@ -383,26 +246,6 @@ void AnnotateSettlingGateForIterationCount(BaselineComparison* result,
   result->metrics[metric_index].note = note.str();
 }
 
-// Gate every phase the baseline recorded, and say out loud when a phase the run
-// measured has no baseline to be gated against.
-//
-// This is the instrument TD-2026-08-06-153 was filed for. A scenario total is
-// dominated by setup on almost every shell scenario -- search_first_result's
-// tight, deterministic 20,192-allocation gate is 99.3% project-open, so the
-// search it is named after could decuple without moving it past its envelope.
-// The phase is what the scenario claims to measure.
-//
-// Two failure modes, both deliberate:
-//
-//  - A baseline phase MISSING from the run fails. That is not pedantry: a
-//    Measure() call deleted or renamed in a refactor silently removes a gate,
-//    and a gate that disappears without a word is exactly how this suite went
-//    quietly vacuous before (validation-traps.md). Renaming a phase is a
-//    rebaseline, like every other deliberate change to what is measured.
-//  - A measured phase with NO baseline is reported, unenforced, as one note per
-//    scenario. It is not a failure (a new phase must be addable without a red
-//    run), but it must not be invisible either -- an ungated phase that nobody
-//    knows is ungated is the whole subject of the entry.
 void ComparePhaseAllocations(BaselineComparison* out,
                              const BaselineRecord& baseline,
                              const Aggregate& aggregate) {
@@ -477,21 +320,6 @@ void ComparePhaseAllocations(BaselineComparison* out,
   out->metrics.push_back(std::move(note));
 }
 
-// Name the one shape that means "the harness moved, not the code".
-//
-// A code regression moves the MEDIAN. When `p50_allocations` matches its
-// baseline to the allocation while `p95`/`max` are multiples of theirs, the extra
-// work happened in one iteration of ten and is therefore a property of the
-// process, not of the scenario: exactly what per-scenario isolation did to 34 of
-// 100 scenarios by giving each one its own first-ever painted frame
-// (TD-2026-08-10-168, ~8,600 allocations in iteration 1, p50 matching exactly in
-// every case). Diagnosing that took a human noticing the pattern while chasing
-// something unrelated, and 168 closed with "nothing gates this" left open.
-//
-// This does not decide the verdict — the tail gate already failed on its own
-// merits, and a real tail regression exists. It attaches the reading that
-// separates the two, so the next occurrence is a sentence on the verdict line
-// instead of an afternoon.
 constexpr double kTailDivergenceP50MatchPercent = 1.0;
 constexpr double kTailDivergenceTailFactor = 2.0;
 
@@ -537,18 +365,12 @@ void NoteTailOnlyAllocationDivergence(BaselineComparison* out) {
   }
 }
 
-// A baseline recorded at a different revision of the scenario is not a baseline
-// for this scenario. Report every number, enforce none of them, and go red on
-// the mismatch itself so the run says "rerecord" instead of "regression".
 void RefuseComparisonAcrossMeasurementRevisions(BaselineComparison* out,
                                                 const BaselineRecord& baseline,
                                                 const Aggregate& aggregate) {
   if (baseline.measurement_revision == aggregate.measurement_revision) {
     return;
   }
-  // Unenforced with no per-metric note, deliberately. Every gate in the scenario
-  // is disqualified by the same one fact, and repeating it fourteen times on the
-  // verdict line buries the one sentence that matters under its own explanation.
   for (MetricComparison& metric : out->metrics) {
     metric.enforced = false;
   }
@@ -571,32 +393,15 @@ void RefuseComparisonAcrossMeasurementRevisions(BaselineComparison* out,
   out->metrics.push_back(std::move(mismatch));
 }
 
-}  // namespace
+}
 
 BaselineRecord MergeDeterministicMetrics(const BaselineRecord& existing,
                                          const BaselineRecord& fresh) {
-  // Start from `existing`, not from `fresh`: the default has to be "keep what is
-  // committed", so a metric added to MetricSet later is preserved by omission
-  // rather than silently overwritten with a reading this run was not entitled to
-  // take.
   BaselineRecord merged = existing;
   merged.scenario_name = fresh.scenario_name;
-  // Tolerances come from the scenario definition on either path — a deliberate
-  // widening lives in the Scenario struct precisely so a rebaseline cannot reset
-  // it (see Scenario::tolerance_rss_percent).
   merged.tolerances = fresh.tolerances;
-  // Same reasoning as tolerances: the revision is declared in the Scenario, so a
-  // rebaseline of any kind stamps what the code says today. A deterministic
-  // rebaseline carries the old wall numbers forward, which is fine — a scenario
-  // whose revision moved needs a full rerecord anyway, and stamping the new
-  // revision is what lets the run stop shouting about it.
   merged.measurement_revision = fresh.measurement_revision;
-  // The label describes the numbers this record now holds, and the deterministic
-  // ones are fresh, so it has to come from the fresh side.
   merged.build_config = fresh.build_config;
-  // NOT from `fresh`: the spread describes the timing half, which this mode does
-  // not re-record. Taking it from a run declared untrustworthy for timing would
-  // re-cut the wall envelope from exactly the measurement the mode avoids.
   merged.metrics.p50_allocations = fresh.metrics.p50_allocations;
   merged.metrics.p95_allocations = fresh.metrics.p95_allocations;
   merged.metrics.max_allocations = fresh.metrics.max_allocations;
@@ -646,9 +451,6 @@ std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
   record.tolerances.p50_percent = tolerances["p50_percent"].AsDouble(10.0);
   record.tolerances.p95_percent = tolerances["p95_percent"].AsDouble(20.0);
   record.tolerances.max_percent = tolerances["max_percent"].AsDouble(50.0);
-  // Allocation envelopes default to the wall envelopes when absent, so a baseline
-  // written before wall/alloc tolerances were decoupled behaves exactly as before
-  // (both metrics gated on the same percent).
   record.tolerances.alloc_p50_percent =
       tolerances["alloc_p50_percent"].AsDouble(record.tolerances.p50_percent);
   record.tolerances.alloc_p95_percent =
@@ -656,27 +458,16 @@ std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
   record.tolerances.alloc_max_percent =
       tolerances["alloc_max_percent"].AsDouble(record.tolerances.max_percent);
 
-  // cpu/rss are gated only when the baseline actually recorded them. Treating an
-  // absent metric as 0.0 would fail every pre-existing baseline on the first run;
-  // treating it as "not recorded" lets the 93 existing files keep working and
-  // start gating when they are next re-recorded on the reference runner.
   record.has_cpu_metrics = IsNumber(metrics["p50_cpu_ms"]);
   if (record.has_cpu_metrics) {
     record.metrics.p50_cpu_ms = metrics["p50_cpu_ms"].AsDouble();
     record.metrics.p95_cpu_ms = metrics["p95_cpu_ms"].AsDouble();
     record.metrics.max_cpu_ms = metrics["max_cpu_ms"].AsDouble();
   }
-  // The clock the baseline was captured at. Absent on every baseline written
-  // before it existed, which leaves those comparing unnormalised -- the same
-  // deliberate "start gating when re-recorded" rule cpu/rss already follow.
   record.has_calibration = IsNumber(metrics["p50_cpu_calibration_ns"]);
   if (record.has_calibration) {
     record.metrics.p50_cpu_calibration_ns = metrics["p50_cpu_calibration_ns"].AsDouble();
   }
-  // The GATED resident statistic is the trimmed mean. A baseline that predates it
-  // records only the percentiles, and gating those was a coin flip in both
-  // directions (TD-2026-08-05-136), so such a baseline stays ungated on resident
-  // growth until it is re-recorded rather than being gated on the wrong number.
   record.has_rss_metrics = IsNumber(metrics["mean_rss_growth_bytes"]);
   if (record.has_rss_metrics) {
     record.metrics.mean_rss_growth_bytes = metrics["mean_rss_growth_bytes"].AsDouble();
@@ -684,31 +475,19 @@ std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
     record.metrics.p95_rss_growth_bytes = metrics["p95_rss_growth_bytes"].AsDouble();
     record.metrics.max_rss_growth_bytes = metrics["max_rss_growth_bytes"].AsDouble();
   }
-  // Net heap retention. Same rule again: absent on every baseline written before
-  // the metric existed, and those stay ungated on it rather than being compared
-  // against an implicit zero.
   record.has_net_heap_metrics = IsNumber(metrics["p50_net_heap_bytes"]);
   if (record.has_net_heap_metrics) {
     record.metrics.p50_net_heap_bytes = metrics["p50_net_heap_bytes"].AsDouble();
   }
-  // How many iterations this baseline averaged. Absent on baselines written
-  // before the field existed; those keep gating the resident mean unconditionally,
-  // exactly as they did, and start declining short runs when they are next
-  // re-recorded.
   if (IsNumber((*parsed)["iterations"])) {
     const double iterations = (*parsed)["iterations"].AsDouble();
     record.iterations = iterations > 0.0 ? static_cast<std::size_t>(iterations) : 0;
   }
 
-  // Absent means 1: every scenario declares 1 until somebody changes what it
-  // measures, so a pre-field baseline is a revision-1 baseline and compares
-  // exactly as it did (TD-2026-08-07-167).
   if (IsNumber((*parsed)["measurement_revision"])) {
     const double revision = (*parsed)["measurement_revision"].AsDouble();
     record.measurement_revision = revision >= 1.0 ? static_cast<std::size_t>(revision) : 1;
   }
-  // Absent on every baseline written before the field existed, and false is the
-  // right answer for those: they were all recorded on the reference runner.
   record.timing_is_advisory = (*parsed)["timing_is_advisory"].AsBool(false);
   record.build_config = (*parsed)["build_config"].AsString();
   record.wall_spread_percent = (*parsed)["wall_spread_percent"].AsDouble(0.0);
@@ -724,10 +503,6 @@ std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
   record.tolerances.phase_alloc_p50_percent =
       tolerances["phase_alloc_p50_percent"].AsDouble(record.tolerances.alloc_p50_percent);
 
-  // Per-phase allocation baselines. Absent on every baseline written before
-  // phase gating existed; those keep gating on the scenario total alone, and
-  // CompareToBaseline says on the verdict line that the phases went ungated
-  // rather than letting the omission be silent.
   const util::JsonValue& phases = (*parsed)["phases"];
   if (phases.IsArray()) {
     for (const util::JsonValue& phase : phases.AsArray()) {
@@ -758,59 +533,28 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
       {"p95_allocations", baseline.metrics.p95_allocations},
       {"max_allocations", baseline.metrics.max_allocations},
   };
-  // Omitted entirely, not written as zero, for the SAME reason cpu is: the loader
-  // decides `has_rss_metrics` from whether mean_rss_growth_bytes is a number, and
-  // a zero would gate every future run against zero resident growth with only the
-  // 64 KiB floor for slack.
-  //
-  // Unguarded, this block armed gates nobody ever measured. A baseline predating
-  // the resident metric loads with has_rss_metrics=false — correctly ungated —
-  // and MergeDeterministicMetrics carries that false forward, because it starts
-  // from `existing` precisely so a metric this mode does not measure is preserved
-  // by omission. Writing the fields anyway threw that away: the next load saw
-  // four numbers, called them a recording, and gated on 0. That is how
-  // editor_moby_dick_workout ended up failing `mean_rss_growth_bytes:
-  // baseline=65536 measured=1.57e6` on a reading the file never contained
-  // (TD-2026-08-15-250).
   if (baseline.has_rss_metrics) {
     metrics["mean_rss_growth_bytes"] = baseline.metrics.mean_rss_growth_bytes;
     metrics["p50_rss_growth_bytes"] = baseline.metrics.p50_rss_growth_bytes;
     metrics["p95_rss_growth_bytes"] = baseline.metrics.p95_rss_growth_bytes;
     metrics["max_rss_growth_bytes"] = baseline.metrics.max_rss_growth_bytes;
   }
-  // Omitted entirely, not written as zero, when the scenario opts out: the
-  // loader decides `has_cpu_metrics` from whether p50_cpu_ms is a number, and a
-  // zero baseline would gate every future run against 0 ms.
   if (baseline.has_cpu_metrics) {
     metrics["p50_cpu_ms"] = baseline.metrics.p50_cpu_ms;
     metrics["p95_cpu_ms"] = baseline.metrics.p95_cpu_ms;
     metrics["max_cpu_ms"] = baseline.metrics.max_cpu_ms;
   }
-  // Same rule: omitted rather than zeroed when the run had no probe, because a
-  // zero here would come back as `has_calibration` with a divide-by-zero clock.
   if (baseline.has_calibration && baseline.metrics.p50_cpu_calibration_ns > 0.0) {
     metrics["p50_cpu_calibration_ns"] = baseline.metrics.p50_cpu_calibration_ns;
   }
-  // Written whenever the run recorded it, INCLUDING when it is exactly zero: zero
-  // net retention is a real and desirable reading, and the loader keys on
-  // presence rather than on the value.
   if (baseline.has_net_heap_metrics) {
     metrics["p50_net_heap_bytes"] = baseline.metrics.p50_net_heap_bytes;
   }
   root["metrics"] = std::move(metrics);
-  // Omitted when unknown, for the same reason the metrics above are: a zero here
-  // would come back as "recorded over 0 iterations", and every run would be
-  // longer than that.
   if (baseline.iterations > 0) {
     root["iterations"] = static_cast<std::int64_t>(baseline.iterations);
   }
-  // Always written, including the default 1: the whole value of the field is
-  // that a reader can tell "revision 1" from "this file predates the idea", and
-  // omitting the common case would throw that away for every baseline that has
-  // not yet needed a bump.
   root["measurement_revision"] = static_cast<std::int64_t>(baseline.measurement_revision);
-  // Written only when true, so a reference-lane baseline's JSON is unchanged and
-  // the committed set does not churn.
   if (baseline.timing_is_advisory) {
     root["timing_is_advisory"] = true;
   }
@@ -820,9 +564,6 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
   if (baseline.wall_spread_percent > 0.0) {
     root["wall_spread_percent"] = baseline.wall_spread_percent;
   }
-  // Written whenever the run measured phases at all. A scenario with no
-  // Measure() call writes no "phases" key, which is the same state as a
-  // pre-phase-gating baseline and compares the same way.
   if (!baseline.phases.empty()) {
     util::JsonArray phases;
     phases.reserve(baseline.phases.size());
@@ -873,20 +614,6 @@ double EnvelopeUsedPercent(const MetricComparison& metric) {
   return MetricDeltaPercent(metric) / metric.tolerance_percent * 100.0;
 }
 
-// A baseline whose timing half was recorded off the reference lane gates on its
-// deterministic metrics only, and says so per metric.
-//
-// The point is that "cannot record a trustworthy wall number here" stops meaning
-// "cannot record anything here". Before this, a scenario written on a loaded box
-// had two options, and both were bad: bake the noise into a wall gate that then
-// fails or passes at random, or register `baseline_gated = false` and gate on
-// NOTHING -- which is what the two soft-wrap scenarios did (TD-2026-08-12-186),
-// and what left five allocation gates 12-40 % loose with no way to tighten them
-// (TD-2026-08-11-184). Allocation counts and net-heap retention are
-// deterministic; wall, cpu and resident growth are not.
-//
-// Unenforced, not absent: the numbers are still measured, still printed, and
-// still comparable by eye. What they no longer do is decide the run.
 void UnenforceAdvisoryTimingHalf(BaselineComparison* out, const BaselineRecord& baseline) {
   if (!baseline.timing_is_advisory) {
     return;
@@ -911,16 +638,6 @@ void UnenforceAdvisoryTimingHalf(BaselineComparison* out, const BaselineRecord& 
   }
 }
 
-// Unenforce the metrics that move with the BUILD configuration when this run's
-// does not match the baseline's.
-//
-// Not everything: allocation counts came out byte-identical across the two
-// configurations measured (14,078 either way), which is what makes them the half
-// worth keeping enforced. Retention and durations are not — see
-// BaselineRecord::build_config for the numbers.
-//
-// Silent when either side is unknown, which is every baseline written before the
-// field existed: those compare exactly as they did.
 void UnenforceMetricsThatMoveWithBuildConfig(BaselineComparison* out,
                                              const BaselineRecord& baseline,
                                              const Aggregate& aggregate) {
@@ -948,25 +665,15 @@ void UnenforceMetricsThatMoveWithBuildConfig(BaselineComparison* out,
   }
 }
 
-// Safety factor on the measured spread, and the floor below which a gate stops
-// being a gate and becomes a coin flip.
-//
-// 3x because the spread recorded is one run's p95-over-p50 and the run being gated
-// is a different draw from the same distribution; 25% because a scenario whose
-// baseline run happened to be perfectly flat would otherwise get a zero-width
-// envelope, which is the mistake `p50_net_heap_bytes` and the resident gate each
-// had to be rescued from.
 inline constexpr double kWallSpreadSafetyFactor = 3.0;
 inline constexpr double kWallSpreadFloorPercent = 25.0;
 
 double EffectiveWallTolerance(double declared, double spread_percent) {
   if (!(spread_percent > 0.0)) {
-    return declared;  // not recorded: every baseline written before the field existed
+    return declared;
   }
   const double derived =
       std::max(spread_percent * kWallSpreadSafetyFactor, kWallSpreadFloorPercent);
-  // Never widen. A scenario that declared a wide envelope did so for a reason the
-  // baseline run cannot see (see the tolerance:: constants).
   return std::min(declared, derived);
 }
 
@@ -974,8 +681,6 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
   BaselineComparison result;
   result.scenario_name = aggregate.scenario_name;
   const NormalizedCpu wall = NormalizeWallAgainstBaselineClock(baseline, aggregate);
-  // Envelopes derived from the baseline's own measured jitter where it recorded
-  // any, capped at the declared tolerance (TD-2026-08-06-140 step two).
   const double wall_spread = baseline.wall_spread_percent;
   AddMetric(&result, "p50_wall_ms", baseline.metrics.p50_wall_ms, wall.metrics.p50_wall_ms,
             EffectiveWallTolerance(baseline.tolerances.p50_percent, wall_spread),
@@ -997,8 +702,6 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
   const std::size_t alloc_p95_index =
       AddMetric(&result, "p95_allocations", baseline.metrics.p95_allocations,
                 aggregate.metrics.p95_allocations, baseline.tolerances.alloc_p95_percent);
-  // Same defect, same fix: a 95th percentile over a settling series read at one
-  // sample is that sample, which is the cold first iteration.
   RepointSettlingAllocationGateAtRecordedMax(
       &result, alloc_p95_index, baseline.metrics.max_allocations,
       baseline.tolerances.alloc_max_percent, aggregate.iterations.size(), baseline.iterations,
@@ -1007,7 +710,6 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
             aggregate.metrics.max_allocations, baseline.tolerances.alloc_max_percent);
   if (baseline.has_cpu_metrics) {
     const NormalizedCpu cpu = NormalizeCpuAgainstBaselineClock(baseline, aggregate);
-    // Same normalization for both halves, so one clock note describes the run.
     result.clock = cpu.clock;
     AddMetric(&result, "p50_cpu_ms", baseline.metrics.p50_cpu_ms, cpu.metrics.p50_cpu_ms,
               baseline.tolerances.cpu_p50_percent, aggregate.metrics.p50_cpu_ms);
@@ -1017,50 +719,12 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
               baseline.tolerances.cpu_max_percent, aggregate.metrics.max_cpu_ms);
   }
   if (baseline.has_rss_metrics) {
-    // Resident growth is quantized to the 4 KiB page, so near zero a PERCENTAGE
-    // envelope is the wrong instrument entirely: one page of jitter on a one-page
-    // baseline is +50%, and no percentage that still catches real growth can absorb
-    // it. multi_project_switch proved this — recorded at 4,096, it measured 6,144 on
-    // the very next run and failed at +50% against a 25% envelope.
-    //
-    // The floor converts the gate to a flat absolute allowance in that regime. At
-    // 96 KiB the allowance is 120 KiB, which absorbs the allocator's page jitter
-    // while still failing a scenario that newly retains ~120 KiB per iteration
-    // (12 MB over a hundred operations). It was 64 KiB (80 KiB allowance) until
-    // multi_project_switch, retaining a real ~55 KiB, read 53, 54 and 65 KiB on
-    // three idle runs and 88 KiB on a fourth: red by eight pages of jitter
-    // (TD-2026-10-26-393). Nearly the whole suite records zero growth and gates on
-    // this flat allowance; the few that genuinely grow (MBs per iteration) are far
-    // above it and gate on the percentage as intended.
     constexpr double kRssNoiseFloorBytes = 96.0 * 1024.0;
     const auto add_rss = [&](std::string_view name, double expected, double actual,
                              double tolerance_percent) {
       return AddMetric(&result, name, std::max(expected, kRssNoiseFloorBytes), actual,
                        tolerance_percent);
     };
-    // ONE resident gate, on the trimmed mean, deliberately.
-    //
-    // p95 and max measure which iteration tripped an allocator arena expansion,
-    // which is why they were never gated. But p50 turned out to be no better, in
-    // two ways that only showed up once the readings were trimmed
-    // (TD-2026-08-05-136) and the numbers got sharp enough to see:
-    //
-    //  - It sits on a mode boundary for any scenario that retains on SOME
-    //    iterations. diff_stage_hunk_large_patch alternates 0 / ~220 KB, so its p50
-    //    is decided by how many iterations happened to land in each mode: 218, 184
-    //    and 324 KB across three runs of one unchanged binary, a 1.76x swing.
-    //  - Worse, it is BLIND to that whole shape. merge_scroll_large_fixture retains
-    //    ~972 KB per iteration on average and its p50 is exactly 0, so the gate
-    //    read "this scenario grows by nothing" for a megabyte an iteration. Same
-    //    for editor_sort_lines_large (p50 28 KB, mean 250 KB) and
-    //    editor_scroll_fresh_content_large (p50 2 KB, mean 195 KB).
-    //
-    // The trimmed mean sees every iteration, so a scenario that retains on half of
-    // them reports half the rate instead of zero, and dropping the single largest
-    // sample keeps iteration 0's cold pass from owning it. Measured across the same
-    // three runs it is stable where p50 was not: 1.02x on editor_sort_lines_large
-    // against 1.14x, 1.12x on editor_surround_multi_caret against 1.68x, 1.001x on
-    // merge_scroll_large_fixture. The percentiles stay recorded and reported.
     const std::size_t rss_index =
         add_rss("mean_rss_growth_bytes", baseline.metrics.mean_rss_growth_bytes,
                 aggregate.metrics.mean_rss_growth_bytes, baseline.tolerances.rss_mean_percent);
@@ -1069,28 +733,12 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
                                           "TD-2026-08-06-148");
   }
   if (baseline.has_net_heap_metrics) {
-    // The deterministic half of the memory gate (TD-2026-08-06-150). Unlike the
-    // resident mean this reproduces to the byte across process states, so it gets
-    // an allocation-class envelope and it is the gate that a retention regression
-    // is expected to trip.
-    //
-    // The floor exists for the same reason the resident one does, at a different
-    // scale. A scenario that nets exactly zero -- the desirable reading -- would
-    // otherwise get a zero-width gate and fail on the first byte, and "retains
-    // nothing" is precisely the state worth being able to record. One page of
-    // allowance is ~450x the worst cross-process spread ever measured for this
-    // metric (9 bytes) and still fails a scenario that newly holds 4 KB per
-    // iteration.
     constexpr double kNetHeapNoiseFloorBytes = 4096.0;
     const double expected = baseline.metrics.p50_net_heap_bytes;
     const std::size_t net_heap_index = AddMetricWithAllowance(
         &result, "p50_net_heap_bytes", expected, aggregate.metrics.p50_net_heap_bytes,
         std::max(std::abs(expected) * (baseline.tolerances.net_heap_percent / 100.0),
                  kNetHeapNoiseFloorBytes));
-    // Deterministic to the byte AT A FIXED ITERATION COUNT, which is not the same
-    // claim. The median walks down the settling series as iterations are added,
-    // so a short run gates a settling reading against a steady-state baseline
-    // (TD-2026-08-10-173).
     AnnotateSettlingGateForIterationCount(&result, net_heap_index, baseline, aggregate,
                                           "p50_net_heap_bytes", "a median",
                                           "TD-2026-08-10-173");
@@ -1106,9 +754,6 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
 CalibrationSpread MeasureCalibrationSpread(const Aggregate& aggregate) {
   CalibrationSpread spread;
   for (const Iteration& iteration : aggregate.iterations) {
-    // The metric field is the live path; the counter scan is the fallback for an
-    // aggregate rebuilt from a report, where the probe only ever appears as a
-    // named counter.
     std::uint64_t reading = iteration.metrics.cpu_calibration_ns;
     if (reading == 0) {
       for (const auto& [name, value] : iteration.perf_counters) {
@@ -1147,4 +792,4 @@ std::string DescribeCalibrationSpread(const CalibrationSpread& spread) {
   return out.str();
 }
 
-}  // namespace microide::tests::perf
+}

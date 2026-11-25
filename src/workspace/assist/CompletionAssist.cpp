@@ -21,8 +21,6 @@ using editor::PositionBefore;
 
 constexpr const char* kLoading = "Loading\xE2\x80\xA6";
 
-// Where `position` (at or after `edit`'s end, in the pre-edit document) sits
-// after `edit` replaced its range with `new_text`.
 editor::TextPosition RemapAcrossEdit(editor::TextPosition position,
                                      const CompletionAdditionalEdit& edit) {
   const std::size_t newlines =
@@ -39,11 +37,6 @@ editor::TextPosition RemapAcrossEdit(editor::TextPosition position,
   return editor::TextPosition{position.line + newlines - removed_lines, position.column};
 }
 
-// Applies a completion item's additionalTextEdits, highest first so each stays
-// valid against the still-unedited text below it, and returns `insertion`
-// remapped across every edit that sits above it. An edit overlapping the
-// insertion range is skipped: the protocol forbids it and applying it would
-// double-edit the token being completed.
 editor::SelectionRange ApplyCompletionAdditionalEdits(
     editor::TextViewport& viewport,
     const std::vector<CompletionAdditionalEdit>& edits,
@@ -77,7 +70,7 @@ bool CompletionListUp(const OverlayState& overlay) {
   return overlay.visible && overlay.mode == OverlayMode::Completion;
 }
 
-}  // namespace
+}
 
 CompletionSessionState& CompletionAssist::ResetSession(const editor::TextViewport& viewport,
                                                        bool automatic, const char* source) {
@@ -101,20 +94,16 @@ bool CompletionAssist::ShowCompletionOverlay(std::string* error_message) {
     return false;
   }
 
-  // Open the overlay in a loading state immediately, then query the plugin worker
-  // and the language server CONCURRENTLY (never serially). Neither blocks the UI;
-  // each fills the overlay on its own mailbox drain via PublishMerge, which ranks
-  // LSP-first for served languages and de-dupes overlapping labels.
-  ResetSession(*viewport, /*automatic=*/false, "lsp").error = kLoading;
+  ResetSession(*viewport, false, "lsp").error = kLoading;
   host_.ops().show_overlay(OverlayMode::Completion);
-  RequestCompletions(*viewport, /*refresh=*/false);
+  RequestCompletions(*viewport, false);
   return true;
 }
 
 void CompletionAssist::StartAutomaticCompletion(editor::TextViewport& viewport,
                                                 char trigger_character) {
-  auto_anchor_ = ResetSession(viewport, /*automatic=*/true, "lsp").replacement_range.start;
-  RequestCompletions(viewport, /*refresh=*/false,
+  auto_anchor_ = ResetSession(viewport, true, "lsp").replacement_range.start;
+  RequestCompletions(viewport, false,
                      trigger_character != '\0' ? LspClient::CompletionTrigger::kTriggerCharacter
                                                 : LspClient::CompletionTrigger::kInvoked,
                      trigger_character);
@@ -124,7 +113,7 @@ void CompletionAssist::AfterTyping(std::string_view typed) {
   const OverlayState& overlay = host_.context().current_project_state.overlay;
   const bool list_up = CompletionListUp(overlay);
   if (overlay.visible && !list_up) {
-    return;  // another overlay owns the screen
+    return;
   }
   const AssistHost::Operations& ops = host_.ops();
   editor::TextViewport* viewport = ops.active_editable_viewport();
@@ -135,11 +124,6 @@ void CompletionAssist::AfterTyping(std::string_view typed) {
     }
     return;
   }
-  // Nothing serves completions for this language (no server, no plugin provider):
-  // nothing below can trigger or suggest. Asked first because this runs on every
-  // keystroke, and the questions below (feature settings, the server, the word at
-  // the caret) cost a keystroke in a split ~25% over v2.12.0 for files nothing
-  // completes (editor_split_grid_workout's typing phase).
   if (port_.has_completion_provider && !port_.has_completion_provider(viewport->language_id())) {
     if (list_up) {
       FollowCompletionCaret();
@@ -147,9 +131,6 @@ void CompletionAssist::AfterTyping(std::string_view typed) {
     return;
   }
   const char c = typed.front();
-  // A trigger character -- a server's, or a plugin provider's -- starts a new list
-  // at the caret, replacing any list the character just ended (`obj` + `.` ->
-  // members of obj).
   bool server_trigger = false;
   if (LspFeatureEnabled(ops.get_setting_value, "lsp.completion.enabled")) {
     LspClient* client = ops.lsp_client_for_viewport(*viewport, nullptr);
@@ -168,14 +149,11 @@ void CompletionAssist::AfterTyping(std::string_view typed) {
     FollowCompletionCaret();
     return;
   }
-  // A word character (the whole-word byte class: ASCII alnum, `_`, any non-ASCII byte).
   if (!util::IsSearchWordByte(c) ||
       !SettingFlagEnabled(ops.get_setting_value("editor.quickSuggestions"),
-                          /*default_value=*/true)) {
+                          true)) {
     return;
   }
-  // Once per word: a word whose request is out (or came back empty) is not asked
-  // about again on every character typed into it.
   const editor::SelectionRange word = assist::CompletionReplacementRange(*viewport);
   if (auto_anchor_.has_value() && auto_anchor_->line == word.start.line &&
       auto_anchor_->column == word.start.column) {
@@ -195,7 +173,6 @@ void CompletionAssist::RequestCompletions(editor::TextViewport& viewport, bool r
   merge->generation = ++request_generation_;
   merge->request_column = viewport.cursor_column();
 
-  // Language-server source. A present server is authoritative for its language.
   const AssistHost::Operations& ops = host_.ops();
   LspClient* client = ops.lsp_client_for_viewport(viewport, nullptr);
   merge->sources.lsp_authoritative = client != nullptr;
@@ -210,8 +187,6 @@ void CompletionAssist::RequestCompletions(editor::TextViewport& viewport, bool r
         [this, request_path, encoding, merge](LspResult<LspClient::CompletionList> list) {
           host_.ops().finish_tracked_lsp_request();
           merge->sources.lsp_pending = false;
-          // finish_tracked above must run first so the in-flight counter is not
-          // leaked when a stale result bails.
           if (host_.IsStale(request_path) || merge->generation != request_generation_) {
             return;
           }
@@ -227,11 +202,10 @@ void CompletionAssist::RequestCompletions(editor::TextViewport& viewport, bool r
     merge->sources.lsp_pending = false;
   }
 
-  // Plugin source, dispatched at the same time.
   host_.plugins().Host().QueryCompletionsAsync(
       language_id, request_path, viewport.cursor_line() + 1, viewport.cursor_column() + 1, {},
       [this, request_path, merge](std::vector<plugin::PluginHost::CompletionCandidate> items,
-                                  std::string /*provider_error*/) {
+                                  std::string ) {
         merge->sources.plugin_pending = false;
         if (host_.IsStale(request_path) || merge->generation != request_generation_) {
           return;
@@ -251,11 +225,6 @@ bool CompletionAssist::RefilterCompletion(CompletionSessionState& session,
   }
   const std::string_view line = assist::LineViewAt(viewport, anchor.line);
   const std::size_t caret = std::min(viewport.cursor_column(), line.size());
-  // The anchor is where the word began when the list opened. The caret is still
-  // in that word while the identifier run ending at the caret starts at or before
-  // it: a typed space or `(` starts a new run after it, and a backspace past the
-  // anchor puts the caret before it. (At or before, not at: the insert-snippet
-  // list may anchor at the caret inside a word.)
   if (caret < anchor.column || util::Utf8IdentifierRunStart(line, caret) > anchor.column) {
     return false;
   }
@@ -292,12 +261,8 @@ void CompletionAssist::FollowCompletionCaret() {
   }
   const bool word_changed = session.replacement_range.end.column != previous_end;
   if (word_changed && session.is_incomplete && session.source != "snippet") {
-    // The server's list does not cover the new word: ask again, keeping the
-    // narrowed old list on screen until the answer replaces it.
-    RequestCompletions(*viewport, /*refresh=*/true);
+    RequestCompletions(*viewport, true);
   } else if (session.visible.empty() && session.error.empty()) {
-    // Nothing the sources returned matches the word, and they were not still
-    // loading: VS Code hides the widget rather than show an empty one.
     host_.ops().dismiss_overlay(true);
     return;
   }
@@ -373,12 +338,9 @@ void CompletionAssist::PublishMerge(const std::shared_ptr<Merge>& merge,
   session.request_column = merge->request_column;
   session.source = merge->lsp_items.empty() ? "plugin" : "lsp";
   const bool list_up = CompletionListUp(host_.context().current_project_state.overlay);
-  // A list the user closed stays closed; only an automatic one opens itself.
   if (!list_up && !session.automatic) {
     return;
   }
-  // The answer may arrive after more typing; it is filtered by the word as it is
-  // NOW, which is the point of keeping the items rather than the rows.
   editor::TextViewport* viewport = ops.active_editable_viewport();
   if (viewport == nullptr || !RefilterCompletion(session, *viewport)) {
     if (list_up) {
@@ -387,8 +349,6 @@ void CompletionAssist::PublishMerge(const std::shared_ptr<Merge>& merge,
     return;
   }
   if (session.automatic) {
-    // Never "Loading…" or "No completions available" for a list nobody asked
-    // for: it opens when it has rows and otherwise stays out of the way.
     session.error.clear();
     if (session.visible.empty()) {
       if (list_up && !merge->sources.AnyPending()) {
@@ -424,20 +384,11 @@ bool CompletionAssist::ApplySelectedCompletion() {
     return false;
   }
 
-  // Re-filter by the word as it is now, keeping the highlighted row: a click or
-  // Enter accepts what the user picked. The re-filter used to reset the
-  // selection to the top, so every accept took the first row (QA flow
-  // lsp-completion: clicking `empty()` inserted `emplace(...)`).
-  if (!RefilterCompletion(session, *viewport, /*keep_selection=*/true) || session.visible.empty()) {
+  if (!RefilterCompletion(session, *viewport, true) || session.visible.empty()) {
     return false;
   }
   const CompletionSessionItem& item =
       session.VisibleItem(std::min(session.selected_index, session.visible.size() - 1));
-  // Prefer the item's server-supplied textEdit range; fall back to the session's
-  // heuristic word range for plugin completions / items without a textEdit. A
-  // server range ends where the caret was when the list was requested, so the
-  // characters typed since (or erased) move its end with them -- otherwise
-  // accepting after typing `ve` into a list requested at `v` would leave the `e`.
   editor::SelectionRange replacement_range = session.replacement_range;
   if (item.replacement_range.has_value()) {
     replacement_range = *item.replacement_range;
@@ -452,12 +403,6 @@ bool CompletionAssist::ApplySelectedCompletion() {
     }
   }
   const AssistHost::EditSnapshot snapshot = AssistHost::CaptureEditSnapshot(*viewport);
-  // The item's additionalTextEdits (an auto-import line, typically) are positioned
-  // in the document BEFORE the completion, so they go in first, highest first,
-  // and the insertion range is remapped across the ones above it. Doing them
-  // first also keeps a snippet insertion last, so its session sees the final
-  // document. One undo group covers the lot; a group nests inside the snippet
-  // path's own, so undo stays one step either way.
   const bool has_additional_edits = !item.additional_edits.empty();
   if (has_additional_edits) {
     viewport->BeginUndoGroup();
@@ -469,8 +414,6 @@ bool CompletionAssist::ApplySelectedCompletion() {
       viewport->EndUndoGroup();
     }
   };
-  // A snippet item expands into the active tab's session; without a tab, or when
-  // the body does not parse, it is inserted as plain text.
   bool inserted = false;
   if (host_.SnippetsEnabled() && item.is_snippet) {
     if (TabEntry::EditorTabState* editor_tab = ops.active_editor_tab()) {
@@ -482,19 +425,10 @@ bool CompletionAssist::ApplySelectedCompletion() {
       }
     }
   }
-  // The buffer is writable (checked above), so a false here is ReplaceRange's
-  // no-op: the word already reads as the item (`return` typed in full, then
-  // Enter). That is an accept like any other -- the list closes and the caret
-  // lands after the word -- not a failure that leaves the list up over it.
   if (!inserted) {
     (void)viewport->ReplaceRange(replacement_range, item.insert_text);
   }
   finish_group();
-  // A completion edit mutates the buffer; the fold model's content_revision fingerprint
-  // alone does not force a rescan once a file is fully resolved (see the Undo/Redo path),
-  // so mark it dirty here — like the sibling snippet/insert paths — otherwise a
-  // same-line-count completion (a re-indenting textEdit, an item that inserts a bracket
-  // while replacing a same-line range) leaves stale/phantom fold ranges.
   if (TabEntry::EditorTabState* tab = ops.active_editor_tab(); tab != nullptr) {
     tab->folding_model->MarkDirty();
   }
@@ -516,7 +450,7 @@ bool CompletionAssist::ShowInsertSnippetOverlay(std::string* error_message) {
   if (contract == nullptr || contract->snippets.empty()) {
     return util::Fail(error_message, "No snippets for this language");
   }
-  CompletionSessionState& session = ResetSession(*viewport, /*automatic=*/false, "snippet");
+  CompletionSessionState& session = ResetSession(*viewport, false, "snippet");
   session.items.reserve(contract->snippets.size());
   for (const auto& sn : contract->snippets) {
     session.items.push_back(CompletionSessionItem{
@@ -528,16 +462,13 @@ bool CompletionAssist::ShowInsertSnippetOverlay(std::string* error_message) {
         .is_snippet = true,
     });
   }
-  // The word at the caret narrows the snippets like any completion. When it
-  // matches none, the caret is not on a snippet prefix: offer them all and insert
-  // at the caret instead of replacing the word.
   if (!RefilterCompletion(session, *viewport) || session.visible.empty()) {
     session.replacement_range.start = session.replacement_range.end =
         editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
-    (void)RefilterCompletion(session, *viewport);  // an empty word keeps every item
+    (void)RefilterCompletion(session, *viewport);
   }
   host_.ops().show_overlay(OverlayMode::Completion);
   return true;
 }
 
-}  // namespace microide::workspace
+}

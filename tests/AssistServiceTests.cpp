@@ -24,13 +24,8 @@ std::vector<std::string> RankLabels(const std::vector<std::string>& primary,
                                    [](const std::string& item) { return item; });
 }
 
-}  // namespace
+}
 
-// Regression coverage for the stale-async-result guard: a plugin/LSP completion
-// or code-action response that arrives after the active editable buffer has been
-// switched (or closed) must be dropped so it cannot clobber a newer session or
-// land across a file/project switch. assist::ResultIsStale is the pure
-// decision the async callbacks consult before mutating the overlay session.
 void RegisterAssistServiceTests(std::vector<TestCase>& tests) {
   tests.push_back({"AssistService/ResultIsStaleDropsClosedBuffer", [] {
                      Expect(assist::ResultIsStale(nullptr, "/proj/a.cpp"),
@@ -51,8 +46,6 @@ void RegisterAssistServiceTests(std::vector<TestCase>& tests) {
                             "a response for the still-active buffer path must be applied");
                    }});
 
-  // The concurrent provider merge: RankedUnion keeps the authoritative (primary)
-  // source first, drops later duplicates, and preserves per-source order.
   tests.push_back({"AssistService/RankedUnionPrimaryFirstDedupes", [] {
                      const std::vector<std::string> merged =
                          RankLabels({"lsp_a", "shared"}, {"shared", "plugin_b"});
@@ -77,23 +70,18 @@ void RegisterAssistServiceTests(std::vector<TestCase>& tests) {
                             "the union of two empty sources is empty");
                    }});
 
-  // Above the hash-set threshold (combined size >= 128) the de-dup switches from a
-  // linear seen-scan to a hash set; the ranked-append semantics (primary first,
-  // drop later duplicates, preserve per-source order) must be identical.
   tests.push_back({"AssistService/RankedUnionLargeListsDedupeIdentically", [] {
                      std::vector<std::string> primary;
                      std::vector<std::string> secondary;
                      for (int i = 0; i < 200; ++i) {
                        primary.push_back("p_" + std::to_string(i));
                      }
-                     // Secondary repeats every primary key (all dropped) plus 200 fresh
-                     // keys and internal duplicates (only the first survives).
                      for (int i = 0; i < 200; ++i) {
-                       secondary.push_back("p_" + std::to_string(i));  // dup of primary
+                       secondary.push_back("p_" + std::to_string(i));
                      }
                      for (int i = 0; i < 200; ++i) {
                        secondary.push_back("s_" + std::to_string(i));
-                       secondary.push_back("s_" + std::to_string(i));  // internal dup
+                       secondary.push_back("s_" + std::to_string(i));
                      }
                      const std::vector<std::string> merged = RankLabels(primary, secondary);
                      Expect(merged.size() == 400, "200 primary + 200 unique secondary keys survive");
@@ -105,10 +93,6 @@ void RegisterAssistServiceTests(std::vector<TestCase>& tests) {
                      }
                    }});
 
-  // TD-2026-07-17A-057: the code-action overlay materializes every action's inline
-  // WorkspaceEdit under a SHARED aggregate byte/edit budget. A server returning many
-  // large-but-capped fixes cannot make the overlay hold the sum of all edit
-  // payloads — past the budget an action's inline fix is dropped (edits_truncated).
   tests.push_back({"AssistService/CodeActionEditsShareAggregateBudget", [] {
                      using microide::workspace::LspClient;
                      const auto make_action = [](std::string title, std::size_t text_bytes) {
@@ -120,8 +104,6 @@ void RegisterAssistServiceTests(std::vector<TestCase>& tests) {
                            {range, std::string(text_bytes, 'x')}};
                        return action;
                      };
-                     // 16 MiB budget: two ~10 MiB edits — the first fits, the second
-                     // overflows the aggregate and is dropped.
                      const std::size_t big = 10u * 1024 * 1024;
                      std::vector<LspClient::CodeAction> actions;
                      actions.push_back(make_action("first", big));
@@ -137,16 +119,12 @@ void RegisterAssistServiceTests(std::vector<TestCase>& tests) {
                             "the second action's inline edit is dropped (over aggregate budget)");
                    }});
 
-  // ChooseNavigation: single-result nav prefers the authoritative source, waits
-  // for it while pending, and only consults the other once it resolves empty.
   using assist_merge::ChooseNavigation;
   using assist_merge::NavChoice;
   tests.push_back({"AssistService/NavWaitsForAuthoritativeLsp", [] {
-                     // LSP authoritative + still pending: even a ready plugin hit
-                     // must wait (a slower LSP answer wins for its language).
-                     Expect(ChooseNavigation(/*lsp_authoritative=*/true, /*lsp_pending=*/true,
-                                             /*lsp_has=*/false, /*plugin_pending=*/false,
-                                             /*plugin_has=*/true) == NavChoice::Pending,
+                     Expect(ChooseNavigation(true, true,
+                                             false, false,
+                                             true) == NavChoice::Pending,
                             "navigation must wait for a pending authoritative LSP source");
                    }});
 
@@ -158,7 +136,6 @@ void RegisterAssistServiceTests(std::vector<TestCase>& tests) {
   tests.push_back({"AssistService/NavFallsToPluginWhenLspEmpty", [] {
                      Expect(ChooseNavigation(true, false, false, false, true) == NavChoice::UsePlugin,
                             "an empty authoritative LSP defers to a resolved plugin result");
-                     // LSP empty but plugin still pending: wait for the plugin.
                      Expect(ChooseNavigation(true, false, false, true, false) == NavChoice::Pending,
                             "an empty LSP still waits on a pending plugin source");
                    }});
@@ -169,16 +146,12 @@ void RegisterAssistServiceTests(std::vector<TestCase>& tests) {
                    }});
 
   tests.push_back({"AssistService/NavPluginPreferredWithoutServer", [] {
-                     // No server (plugin authoritative): use the plugin result and
-                     // do not wait on the non-authoritative LSP source.
-                     Expect(ChooseNavigation(/*lsp_authoritative=*/false, /*lsp_pending=*/true,
-                                             /*lsp_has=*/false, /*plugin_pending=*/false,
-                                             /*plugin_has=*/true) == NavChoice::UsePlugin,
+                     Expect(ChooseNavigation(false, true,
+                                             false, false,
+                                             true) == NavChoice::UsePlugin,
                             "with no server the plugin result is used immediately");
                    }});
 
-  // The completion list's local filter (editor/CompletionFilter): what lets a
-  // keystroke narrow the list without asking the server again.
   tests.push_back({"CompletionFilter/FirstCharacterMustStartAWord", [] {
                      using editor::CompletionMatchScore;
                      using editor::kNoCompletionMatch;
@@ -197,9 +170,6 @@ void RegisterAssistServiceTests(std::vector<TestCase>& tests) {
                    }});
 
   tests.push_back({"CompletionFilter/ScoresTheBestWordStartNotTheFirst", [] {
-                     // `vector` is a scattered subsequence from the leading `V` and a
-                     // contiguous one from the second word; the score is the second's,
-                     // the same as a label holding only that word at a non-zero start.
                      Expect(editor::CompletionMatchScore("Vec_vector", "vector") ==
                                 editor::CompletionMatchScore("x_vector", "vector"),
                             "the score is the best alignment, not the first one found");
@@ -235,4 +205,4 @@ void RegisterAssistServiceTests(std::vector<TestCase>& tests) {
                    }});
 }
 
-}  // namespace microide::tests
+}

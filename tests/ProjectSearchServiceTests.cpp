@@ -18,9 +18,6 @@
 namespace microide::tests {
 namespace {
 
-// The index hands out generic path TEXT, not `std::filesystem::path`
-// (TD-2026-08-17-259). Tests build their candidate lists from CollectProjectFiles,
-// which still returns paths, so convert once here rather than at six call sites.
 project::SharedPathList MakeIndexedFileList(std::vector<std::filesystem::path> paths) {
   auto texts = std::make_shared<std::vector<std::string>>();
   texts->reserve(paths.size());
@@ -90,9 +87,6 @@ SearchRunResult RunProjectSearch(const std::filesystem::path& root,
 
   service.Stop();
 
-  // The engine streams matches in whatever order its parallel workers find them;
-  // mirror the shell consumer by restoring deterministic (file_index, line,
-  // column) order before assertions inspect the result list.
   std::sort(result.results.begin(), result.results.end(),
             [](const ProjectSearchResult& lhs, const ProjectSearchResult& rhs) {
               if (lhs.file_index != rhs.file_index) {
@@ -106,11 +100,6 @@ SearchRunResult RunProjectSearch(const std::filesystem::path& root,
   return result;
 }
 
-// Random literal queries over random files against a plain per-line scan: the
-// same set of (file, line, byte column) hits, in both case modes, with matches
-// that abut, overlap by prefix, sit at line ends, and cross ASCII/non-ASCII
-// case pairs. The service is chunked, multi-threaded and previews its hits;
-// none of that may change what is found.
 void TestProjectSearchServiceRandomLiteralQueriesAgreeWithReference() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -125,7 +114,7 @@ void TestProjectSearchServiceRandomLiteralQueriesAgreeWithReference() {
   const auto fold = [](std::string_view text) {
     std::string out;
     for (std::size_t i = 0; i < text.size();) {
-      if (text.compare(i, 2, "\xC3\x89") == 0) {  // É -> é
+      if (text.compare(i, 2, "\xC3\x89") == 0) {
         out += "\xC3\xA9";
         i += 2;
         continue;
@@ -155,7 +144,7 @@ void TestProjectSearchServiceRandomLiteralQueriesAgreeWithReference() {
     std::string query;
     const std::size_t atoms = 1 + next(3);
     for (std::size_t i = 0; i < atoms; ++i) {
-      const char* atom = kAtoms[next(std::size(kAtoms) - 1)];  // no line breaks
+      const char* atom = kAtoms[next(std::size(kAtoms) - 1)];
       query += atom;
     }
     for (const bool sensitive : {true, false}) {
@@ -181,9 +170,6 @@ void TestProjectSearchServiceRandomLiteralQueriesAgreeWithReference() {
                                                           ? std::string::npos
                                                           : newline - start);
           const std::string hay = sensitive ? std::string(raw) : fold(raw);
-          // Folding keeps byte offsets: every fold here is length-preserving.
-          // Hits do not overlap (grep's and VS Code's rule): `bb` is one hit in
-          // `bbb`, the scan resumes after each match.
           for (std::size_t at = hay.find(needle); at != std::string::npos;
                at = hay.find(needle, at + needle.size())) {
             want.push_back(name + ":" + std::to_string(line) + ":" + std::to_string(at));
@@ -276,28 +262,21 @@ void TestProjectSearchServiceLiteralModesAndCaseControls() {
 void TestProjectSearchServiceUnicodeCaseFolding() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
-  // "café" (lowercase é U+00E9), "CAFÉ" (uppercase É U+00C9), plus Cyrillic pair.
   WriteFile(root / "unicode.txt", "café CAFÉ ПРИВЕТ привет\n");
 
-  // Smart-case, all-lowercase query: folds and matches both case variants.
   const auto cafe = RunProjectSearch(root, "café");
   Expect(cafe.finished && cafe.error.empty(), "unicode smart-case search finishes");
   Expect(cafe.results.size() == 2, "café matches both café and CAFÉ via Unicode case fold");
-  // Length-preserving fold keeps reported byte columns aligned with the source.
   Expect(cafe.results[0].column == 0 && cafe.results[1].column == 6,
          "reported columns are original byte offsets, not folded-buffer offsets");
 
   const auto privet = RunProjectSearch(root, "привет");
   Expect(privet.results.size() == 2, "Cyrillic привет matches ПРИВЕТ and привет");
 
-  // An uppercase non-ASCII letter in the query makes smart-case sensitive.
   const auto sensitive = RunProjectSearch(root, "CAFÉ");
   Expect(sensitive.results.size() == 1, "uppercase É forces a case-sensitive smart search");
 }
 
-// The editor strips a UTF-8 BOM on open, so a hit on the first line has to be
-// reported in the columns of the text behind the mark or jumping to it lands
-// three bytes late (and a query anchored at `^` never matches line 1).
 void TestProjectSearchServiceSkipsUtf8Bom() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -338,8 +317,6 @@ void TestProjectSearchServiceNormalizesPreviewWhitespace() {
                                           result.results[0].match_preview_length) == "alpha",
          "project search should map the match range onto the collapsed preview for highlighting");
 
-  // A match after collapsed whitespace should still map correctly. Use a token
-  // that appears in no other file under this root so the count is unambiguous.
   WriteFile(root / "indented.txt", "\t\tzeta value\n");
   const auto indented = RunProjectSearch(root, "zeta");
   Expect(indented.finished && indented.results.size() == 1,
@@ -349,12 +326,6 @@ void TestProjectSearchServiceNormalizesPreviewWhitespace() {
          "match highlight range should account for collapsed leading whitespace");
 }
 
-// A hit's preview is a bounded window around the match, not the whole line. A
-// minified or generated line with many hits on it stored one full copy of the line
-// per hit: a sidebar of such rows painted a 300 KB label each (65-130 ms frames),
-// the control channel's `ui` reply passed its 8 MiB write cap and the app shed the
-// client (soak 1d64e3925f2b, ~1000 sightings), and a remote search rejected every
-// preview over its 4 KiB wire cap.
 void TestProjectSearchServicePreviewIsABoundedWindowAroundTheMatch() {
   using microide::project::kMaxProjectSearchPreviewBytes;
   using microide::project::MakeProjectSearchResult;
@@ -362,7 +333,6 @@ void TestProjectSearchServicePreviewIsABoundedWindowAroundTheMatch() {
     return hit.preview.substr(hit.match_preview_start, hit.match_preview_length);
   };
 
-  // Far into a long ASCII line.
   const std::string ascii = std::string(100000, 'x') + "needle" + std::string(100000, 'y');
   const ProjectSearchResult far = MakeProjectSearchResult(ascii, 100000, 100006, "long.txt", 0, 0);
   Expect(far.preview.size() <= kMaxProjectSearchPreviewBytes,
@@ -372,7 +342,6 @@ void TestProjectSearchServicePreviewIsABoundedWindowAroundTheMatch() {
   Expect(far.match_preview_start > 0, "the window keeps some context before the match");
   Expect(far.column == 100000, "the column stays the match's offset in the line, not in the window");
 
-  // Multi-byte characters around the match: no character is cut at either edge.
   std::string emoji;
   for (int i = 0; i < 50000; ++i) {
     emoji += "\xF0\x9F\x98\x80";
@@ -383,18 +352,15 @@ void TestProjectSearchServicePreviewIsABoundedWindowAroundTheMatch() {
   Expect(microide::util::IsValidUtf8(cut.preview), "the window splits no character at either edge");
   Expect(highlighted(cut) == "hit", "the window around a hit among emoji highlights the hit");
 
-  // A match longer than the window (`.*` on a long line) is clipped with it.
   const ProjectSearchResult whole = MakeProjectSearchResult(ascii, 0, ascii.size(), "long.txt", 0, 0);
   Expect(whole.preview.size() <= kMaxProjectSearchPreviewBytes, "a whole-line match keeps a bounded preview");
   Expect(whole.match_preview_start == 0 && whole.match_preview_length == whole.preview.size(),
          "a match longer than the window highlights the whole window");
 
-  // A short line is still the whole (collapsed) line.
   const ProjectSearchResult short_line = MakeProjectSearchResult("  alpha  beta", 2, 7, "short.txt", 0, 0);
   Expect(short_line.preview == "alpha beta" && highlighted(short_line) == "alpha",
          "a line that fits keeps its whole collapsed text");
 
-  // End to end: every hit on one long line carries its own bounded window.
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
   std::string line;
@@ -438,14 +404,9 @@ void TestProjectSearchServiceRegexModeAndInvalidRegex() {
   Expect(invalid_regex.results.empty(), "invalid regex project search should not publish matches");
 }
 
-// A case-insensitive REGEX search must fold Unicode case the same way the literal
-// path already does. PCRE2_CASELESS on its own (no PCRE2_UTF) folds ASCII and
-// nothing else, so the identical query used to match case-insensitively as a
-// literal and case-sensitively as a regex.
 void TestProjectSearchServiceRegexCaseInsensitiveFoldsNonAscii() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
-  // Greek delta and Cyrillic de, lowercase in the file, uppercase in the query.
   WriteFile(root / "greek.txt", "value δelta here\n");
   WriteFile(root / "cyrillic.txt", "value дom here\n");
 
@@ -463,25 +424,18 @@ void TestProjectSearchServiceRegexCaseInsensitiveFoldsNonAscii() {
   Expect(cyrillic.results.size() == 1,
          "a case-insensitive regex search for Д must find д");
 
-  // The literal path is the reference behavior these must agree with.
   ProjectSearchOptions literal_options;
   literal_options.case_mode = ProjectSearchCaseMode::Insensitive;
   const auto literal = RunProjectSearch(root, "Δelta", literal_options);
   Expect(literal.results.size() == greek.results.size(),
          "regex and literal case-insensitive search must agree on non-ASCII case folding");
 
-  // An ASCII query keeps the fast byte-oriented path and must be unaffected.
   const auto ascii = RunProjectSearch(root, "v.lue", options);
   Expect(ascii.finished && ascii.results.size() == 2,
          "an ASCII regex query must still match both files");
 }
 
 void TestProjectSearchServiceRegexEmptyMatchDoesNotHideRealMatch() {
-  // Regression: the empty-match branch used to advance one byte and abandon the
-  // offset entirely. For an alternation whose earlier branch matches empty at the
-  // same position a later branch matches non-empty (`x?|foo` at "foo": `x?` wins
-  // leftmost with an empty match at 0, but `foo` also starts at 0), the real match
-  // was silently dropped. The anchored retry must recover it.
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
   WriteFile(root / "alt.txt", "foo\n");
@@ -498,19 +452,11 @@ void TestProjectSearchServiceRegexEmptyMatchDoesNotHideRealMatch() {
 }
 
 void TestProjectSearchServiceRegexFindNextIsCancellable() {
-  // Regression: `x?` matches empty at every offset, so on a line with no 'x' the
-  // advance loop walks one byte per iteration doing a PCRE2 Match each time. The
-  // per-line cancel check never re-runs inside a single line, so on a huge single
-  // line Stop() could not interrupt it. FindNextRegexMatch now polls the cancel
-  // flag inside the advance loop. Drive it directly (deterministic; no Start/Stop
-  // timing race) with the flag preset and assert it bails before the line end.
   const util::CompiledRegex pattern("x?", 0, "test regex");
   Expect(pattern.valid(), "x? compiles");
   util::RegexMatchData match_data = pattern.CreateMatchData();
   Expect(match_data.valid(), "match data allocates");
 
-  // Longer than kRegexCancelPollInterval so a preset-cancel scan is guaranteed to
-  // hit the poll before reaching the end.
   const std::string line(20000, 'a');
   std::size_t search_from = 0;
   std::size_t match_start = 0;
@@ -523,8 +469,6 @@ void TestProjectSearchServiceRegexFindNextIsCancellable() {
   Expect(search_from < line.size(),
          "cancellation bails inside the advance loop, well before the line end");
 
-  // With cancellation not requested the same scan runs to completion: `x?` finds
-  // no non-empty match on a no-x line and advances one past the end.
   std::atomic<bool> no_cancel{false};
   search_from = 0;
   const bool found_full = project::search_internal::FindNextRegexMatch(
@@ -614,11 +558,6 @@ void TestProjectSearchServicePublishesStableResultOrdering() {
 void TestProjectSearchServiceFlagsTruncatedLargeResultSets() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
-  // Each file individually holds MORE than kMaxProjectSearchResults (200) matches, so a
-  // single worker scanning one file sequentially is guaranteed to attempt a match past
-  // the cap and set `truncated` — unlike a near-boundary fixture (250 total), where
-  // parallel early-stop can cancel stragglers before any worker attempts the (cap+1)-th
-  // match, leaving the default (early-stop) run's truncation flag racy.
   std::string repeated_lines;
   for (int line = 0; line < 250; ++line) {
     repeated_lines += "alpha\n";
@@ -636,10 +575,6 @@ void TestProjectSearchServiceFlagsTruncatedLargeResultSets() {
   Expect(capped.results.size() == 200,
          "large project search should publish the full capped result set");
 
-  // Under parallel search the *which* 200 matches are kept is timing-dependent
-  // (workers claim files in racing order), so we no longer assert an exact
-  // first/last match. What must hold: the published set is well-formed and sorted
-  // in (file_index, line, column) order by the consumer-mirroring helper.
   bool sorted = true;
   for (std::size_t i = 1; i < capped.results.size(); ++i) {
     const auto& prev = capped.results[i - 1];
@@ -657,12 +592,9 @@ void TestProjectSearchServiceFlagsTruncatedLargeResultSets() {
   Expect(capped.results.front().column == 0 && capped.results.back().column == 0,
          "each capped 'alpha' match should start at column 0");
 
-  // A default (early-stop) run cannot know the true total beyond the cap.
   Expect(capped.total_matches == 0,
          "default capped search should not report an exact total match count");
 
-  // Count-all keeps scanning past the cap to report the exact total while still
-  // only storing the first kMaxProjectSearchResults for display.
   ProjectSearchOptions count_all_options;
   count_all_options.count_all_matches = true;
   const auto counted = RunProjectSearch(root, "alpha", count_all_options);
@@ -675,28 +607,11 @@ void TestProjectSearchServiceFlagsTruncatedLargeResultSets() {
          "count-all project search should report every match across all files");
 }
 
-// Regression: the display cap is reached by *filling it exactly*, with candidate
-// files still unclaimed.
-//
-// One match per file, cap+10 files. Whichever worker stores the 200th match leaves
-// `matches_found` sitting at exactly the cap, so every other worker fails the claim
-// loop's guard and exits without ever attempting an over-cap match — the only thing
-// that used to set the flag. Ten files were then never scanned while the sidebar
-// reported a complete result set, and `ReplaceAll` reasoned about a set it had been
-// told was whole. Truncation must now be concluded from the unclaimed files instead.
-//
-// Pinned to ONE worker on purpose. With the machine's full worker count several
-// workers are mid-file when the cap fills, so one of them does attempt an over-cap
-// match and the old in-loop flag fires — the test then passes against the bug and
-// proves nothing (verified: it passed five for five with the fix disabled). A single
-// worker reaches the cap on file 199 and re-tests the claim guard before touching
-// file 200, which is the exact-fill boundary with nothing else to mask it. That is
-// also what TSAN's scheduling produced in CI on the many-worker path.
 void TestProjectSearchServiceFlagsTruncationWhenCapFillsExactly() {
   const ScopedEnvVar single_worker("MICROIDE_SEARCH_WORKER_LIMIT", "1");
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
-  constexpr int kMatchFiles = 210;  // kMaxProjectSearchResults (200) + 10
+  constexpr int kMatchFiles = 210;
   for (int i = 0; i < kMatchFiles; ++i) {
     WriteFile(root / ("m_" + std::to_string(i) + ".txt"), "needle\n");
   }
@@ -712,17 +627,9 @@ void TestProjectSearchServiceFlagsTruncationWhenCapFillsExactly() {
          "filling the display cap with candidate files left unscanned must flag truncation");
 }
 
-// Regression: count-all must report the EXACT total even when the overwhelming
-// majority of matches fall past the display cap. Past the cap the engine counts
-// matches in a per-worker local (folded into the shared counter once at worker exit)
-// instead of a per-match atomic fetch_add, so the fold arithmetic — including the
-// boundary-race hand-off between the under-cap atomic path and the over-cap local
-// path across multiple workers — must neither drop nor double-count a single match.
 void TestProjectSearchServiceCountAllExactTotalFarPastCap() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
-  // 40 files x 60 matching lines = 2400 matches, 12x the 200 cap: the first 200 go
-  // through the atomic slot-claim, the remaining 2200 through the local fold.
   std::string repeated_lines;
   for (int line = 0; line < 60; ++line) {
     repeated_lines += "needle\n";
@@ -830,9 +737,6 @@ void TestProjectSearchServiceStopDiscardsLateUpdates() {
   service.Start(root, "alpha", {}, indexed_files);
   service.Stop();
 
-  // A correctly-stopped search must never surface a pending update. Rather than
-  // checking once after a fixed sleep (which races a late worker publish), drain
-  // continuously for a bounded window and assert nothing valid ever appears.
   bool saw_update = false;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
   while (std::chrono::steady_clock::now() < deadline) {
@@ -900,9 +804,6 @@ void TestProjectSearchServicePublishesProgressDenominator() {
 }
 
 void TestProjectSearchServiceProgressPublishesBeforeFirstMatch() {
-  // Sets a large no-match prefix so the worker visits many files before any
-  // match. The denominator should be published immediately at Start, before any
-  // results arrive — guarding the "0 of Y files" anchor on large empty repos.
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
   for (int i = 0; i < 8; ++i) {
@@ -942,10 +843,6 @@ void TestProjectFileScannerTerminatesOnSymlinkLoop() {
   const std::filesystem::path root = temp_dir.path() / "project";
   WriteFile(root / "sub" / "real.txt", "hello\n");
 
-  // A directory symlink whose target is an ancestor turns the tree into a
-  // cycle: without a visited-target guard, CollectProjectFiles would recurse
-  // sub/loop/sub/loop/... forever. The scan must terminate and index the real
-  // file, following the symlink at most a bounded number of times.
   std::error_code link_error;
   std::filesystem::create_directory_symlink(root, root / "sub" / "loop", link_error);
   Expect(!link_error, "fixture should create an ancestor-referential directory symlink");
@@ -960,22 +857,14 @@ void TestProjectFileScannerTerminatesOnSymlinkLoop() {
     }
   }
   Expect(real_file_hits == 1, "the real file should be indexed exactly once by its real path");
-  // Termination alone proves the cycle was cut; the bound guards against a
-  // regression that follows the loop several extra times before stopping.
   Expect(files.size() < 16, "an ancestor symlink loop must not inflate the scan unbounded");
 }
 
-}  // namespace
+}
 
-// TD-2026-07-17-034: a pathological (catastrophic-backtracking) regex must not
-// monopolize a search worker. RegexUtil sets a PCRE2 match-step limit
-// (kRegexMatchLimit), so a classic exponential pattern hits the limit in bounded
-// steps and the search FINISHES quickly rather than hanging. Without the limit the
-// pattern below on ~45 non-terminating chars would take ~2^45 steps.
 void TestProjectSearchServiceCatastrophicRegexIsBounded() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
-  // A run of 'a' with no trailing 'b' forces (a+)+b to backtrack exponentially.
   WriteFile(root / "evil.txt", std::string(45, 'a') + "\n");
 
   ProjectSearchOptions regex_options;
@@ -988,16 +877,10 @@ void TestProjectSearchServiceCatastrophicRegexIsBounded() {
 
   Expect(result.finished,
          "a catastrophic-backtracking regex search must finish (match-step limit fires)");
-  // RunProjectSearch's own deadline is 2s; a bounded match limit finishes far faster.
-  // Assert comfortably under the deadline so a regression that removed the limit
-  // (and hung to the deadline) would fail here.
   Expect(start_timing.Within(elapsed, std::chrono::milliseconds(1500)),
          "the bounded match limit must let the search complete well before the deadline");
 }
 
-// VSCode-style scope filters. The point of an include/exclude box is not just a
-// narrower result list — an out-of-scope file must never be opened, which is the
-// only reason scoping is faster than filtering results after the fact.
 void TestProjectSearchServiceScopeGlobsRestrictCandidates() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -1034,9 +917,6 @@ void TestProjectSearchServiceScopeGlobsRestrictCandidates() {
          "an empty include box should mean 'everything', not 'nothing'");
 }
 
-// The scope filter must reject on the path alone. A file whose content would match
-// but whose path is out of scope contributes nothing, and the skip is counted so a
-// regression that reads the file anyway is visible rather than merely slower.
 void TestProjectSearchServiceScopeGlobsSkipFilesWithoutReading() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -1116,4 +996,4 @@ void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
           TestProjectFileScannerTerminatesOnSymlinkLoop);
 }
 
-}  // namespace microide::tests
+}

@@ -12,17 +12,6 @@ namespace microide::render {
 
 namespace {
 
-// Give a recycled cache key a capacity that the NEXT row is likely to fit too.
-//
-// The eviction path hands the victim's map node back so the key string's buffer
-// is reused instead of freed and re-allocated (TD-2026-08-15-236). That only
-// pays off if the buffer refits: a string sized exactly to the row it last held
-// fits the next row only when that row is no longer, which on real text is a
-// coin flip. Rounding to a power of two collapses the cache's key buffers onto a
-// handful of sizes; the backend's `ResolveEntry` was the #1 allocator of six
-// render-frame phases with the exact sizing.
-//
-// libstdc++'s 15-byte SSO covers short runs, so the floor starts above it.
 void ReserveRoundedKeyCapacity(std::string& key_text, std::size_t needed) {
   if (key_text.capacity() >= needed) {
     return;
@@ -30,7 +19,7 @@ void ReserveRoundedKeyCapacity(std::string& key_text, std::size_t needed) {
   key_text.reserve(std::bit_ceil(std::max<std::size_t>(needed, 32)));
 }
 
-}  // namespace
+}
 
 StringTextureCache::~StringTextureCache() {
   Clear();
@@ -78,21 +67,6 @@ const StringTextureCache::Entry* StringTextureCache::Insert(std::string_view tex
   const Entry entry{.texture = texture, .width = width, .height = height};
   const std::size_t entry_bytes = EntryByteCost(width, height);
 
-  // Evict FIRST when this insert would put the cache over either budget, and
-  // build into the victim's node instead of erasing it and emplacing a fresh one.
-  //
-  // The pair is the steady state, not a corner: a scroll through fresh content
-  // misses on every row, and once the VRAM budget binds every miss IS an eviction
-  // — measured at 685 misses and 685 evictions across one scroll scenario. So the
-  // erase-then-emplace cost a map node plus a fresh copy of the row's own text,
-  // per row, per frame, and freed the identical pair one row later. `extract`
-  // hands the node back with the key string's capacity intact; assigning over it
-  // reuses that too (TD-2026-08-15-236).
-  //
-  // The `!entries_.empty()` guard is the counterpart of the trailing loop's `> 1`:
-  // a single composite that alone exceeds kMaxBytes must not evict itself and
-  // dangle the pointer this returns. Here it cannot — the victim is chosen before
-  // the new entry is in the map.
   Map::node_type recycled;
   if (!entries_.empty() &&
       (entries_.size() + 1 > kMaxEntries || bytes_ + entry_bytes > kMaxBytes)) {
@@ -103,9 +77,6 @@ const StringTextureCache::Entry* StringTextureCache::Insert(std::string_view tex
 
   Map::iterator map_it;
   if (!recycled.empty()) {
-    // `text` is a view of the caller's row text, never of a key in this map (we
-    // are here because `Find` missed), so overwriting the node's key cannot
-    // invalidate it.
     ReserveRoundedKeyCapacity(recycled.key().text, text.size());
     recycled.key().text.assign(text);
     recycled.key().color = color;
@@ -120,9 +91,6 @@ const StringTextureCache::Entry* StringTextureCache::Insert(std::string_view tex
     const auto [it, inserted] = entries_.emplace(std::move(key), Node{.entry = entry});
     map_it = it;
     if (!inserted) {
-      // Unreachable in practice — we are here because `Find` missed — but the
-      // assignment below overwrites the LRU links, so the existing entry has to
-      // leave the list before it stops describing where it sits in it.
       LruUnlink(map_it->second);
       bytes_ -= EntryByteCost(map_it->second.entry.width, map_it->second.entry.height);
       if (map_it->second.entry.texture != nullptr) {
@@ -135,10 +103,6 @@ const StringTextureCache::Entry* StringTextureCache::Insert(std::string_view tex
   map_it->second.key = &map_it->first;
   LruPushBack(map_it->second);
 
-  // Evict oldest entries until both the count and VRAM budgets are satisfied.
-  // Keep at least the just-inserted entry (>1 guard) so a single oversized
-  // composite that alone exceeds kMaxBytes never evicts itself, which would
-  // dangle the returned pointer.
   while (entries_.size() > 1 && (entries_.size() > kMaxEntries || bytes_ > kMaxBytes)) {
     const auto evict_it = EvictOldest();
     if (evict_it == entries_.end()) {
@@ -155,8 +119,6 @@ StringTextureCache::Map::iterator StringTextureCache::EvictOldest() {
   if (victim == nullptr || victim->key == nullptr) {
     return entries_.end();
   }
-  // `find` before `extract`/`erase`, not by key: the key lives inside the node
-  // they consume, so looking it up by reference afterwards would hash freed memory.
   const auto victim_it = entries_.find(*victim->key);
   LruUnlink(*victim);
   if (victim_it != entries_.end()) {
@@ -210,4 +172,4 @@ void StringTextureCache::LruPushBack(Node& node) {
   }
 }
 
-}  // namespace microide::render
+}

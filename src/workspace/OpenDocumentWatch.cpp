@@ -16,11 +16,6 @@ template <typename Visit>
 void ForEachOpenDocumentPath(const ProjectWorkspaceState& project, Visit&& visit) {
   for (const EditorGroup& group : project.editor_groups) {
     for (const TabEntry& tab : group.open_tabs) {
-      // An editor tab's buffer, or a diff's editable side: both ARE the file
-      // (LiveBufferViewOfPath), and the next tab opened on it is handed that
-      // buffer. Only editor tabs were listed, so a file open in a diff alone, where
-      // the tree's watch does not reach, kept its old text as the file's buffer
-      // (soak b8f2d54da0f1).
       const editor::TextViewport* view =
           tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()
               ? &tab.editor_state->viewport
@@ -31,7 +26,6 @@ void ForEachOpenDocumentPath(const ProjectWorkspaceState& project, Visit&& visit
         continue;
       }
       const std::filesystem::path& path = view->path();
-      // Untitled buffers have no path, virtual documents no absolute one.
       if (!path.empty() && path.is_absolute()) {
         visit(path);
       }
@@ -39,15 +33,13 @@ void ForEachOpenDocumentPath(const ProjectWorkspaceState& project, Visit&& visit
   }
 }
 
-}  // namespace
+}
 
 void SyncOpenDocumentWatch(const ProjectWorkspaceState& project, platform::FileIndexWatcher* watcher) {
   platform::OpenFileWatcher* open_files = watcher != nullptr ? watcher->open_files() : nullptr;
   if (open_files == nullptr) {
     return;
   }
-  // FNV-style mix of each path's hash, in tab order; 0 is the watcher's "re-arm"
-  // value, so a real fingerprint is never 0.
   std::uint64_t signature = 0xcbf29ce484222325ULL;
   ForEachOpenDocumentPath(project, [&signature](const std::filesystem::path& path) {
     signature ^= std::hash<std::string_view>{}(path.native());
@@ -62,4 +54,4 @@ void SyncOpenDocumentWatch(const ProjectWorkspaceState& project, platform::FileI
   open_files->SetFiles(signature, paths);
 }
 
-}  // namespace microide::workspace
+}

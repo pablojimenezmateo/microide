@@ -12,9 +12,6 @@ namespace {
 
 using editor::GutterIconShape;
 
-// Built-in extension → icon defaults. Colours are deliberately muted so the
-// file-tree reads as type-coded accents, not a rainbow. Keyed by lower-cased
-// extension without the leading dot.
 struct BuiltinRule {
   std::string_view ext;
   GutterIconShape shape;
@@ -73,8 +70,6 @@ std::optional<WorkspaceFileIconRegistry::Icon> ResolveBuiltinExtension(std::stri
   return std::nullopt;
 }
 
-// Extension (without the dot) of an already-lower-cased filename, as a view into
-// it — no allocation. A leading dot (dotfile) is not an extension separator.
 std::string_view ExtensionOf(std::string_view lower_filename) {
   const std::size_t dot = lower_filename.rfind('.');
   if (dot == std::string_view::npos || dot == 0 || dot + 1 >= lower_filename.size()) {
@@ -83,7 +78,7 @@ std::string_view ExtensionOf(std::string_view lower_filename) {
   return lower_filename.substr(dot + 1);
 }
 
-}  // namespace
+}
 
 void WorkspaceFileIconRegistry::Clear() {
   by_name_.clear();
@@ -99,11 +94,9 @@ void WorkspaceFileIconRegistry::Rebuild(const plugin::PluginHost& host) {
     for (const auto& rule : theme.rules) {
       const auto shape = editor::GutterIconRegistry::ResolveShape(rule.icon);
       if (!shape || rule.matcher.empty()) {
-        continue;  // unknown shape name → ignore the rule (already lower-cased)
+        continue;
       }
       const Icon icon{*shape, rule.color};
-      // Case-fold the matcher key (it is already ASCII-lowered upstream; folding
-      // additionally normalizes non-ASCII case) so lookups fold-match consistently.
       if (rule.match_filename) {
         by_name_[util::Utf8CaseFold(rule.matcher)] = icon;
       } else {
@@ -118,9 +111,6 @@ std::optional<WorkspaceFileIconRegistry::Icon> WorkspaceFileIconRegistry::Resolv
   if (filename.empty()) {
     return std::nullopt;
   }
-  // Case-fold once into the reused scratch buffer (ASCII fast path preserved);
-  // every lookup below works on a view of it, so a warmed registry resolves with
-  // zero heap allocation, and non-ASCII extensions/names match case-insensitively.
   util::Utf8CaseFoldInto(filename, lower_scratch_);
   const std::string_view lower_name = lower_scratch_;
   if (!by_name_.empty()) {
@@ -142,4 +132,4 @@ std::optional<WorkspaceFileIconRegistry::Icon> WorkspaceFileIconRegistry::Resolv
   return std::nullopt;
 }
 
-}  // namespace microide::workspace
+}

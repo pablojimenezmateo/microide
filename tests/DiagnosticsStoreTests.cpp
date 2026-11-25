@@ -239,17 +239,11 @@ void TestDiagnosticsSeverityFilter() {
   Expect(ParseDiagnosticSeverity("hint") == DiagnosticSeverity::Hint, "parse hint");
   Expect(ParseDiagnosticSeverity("nonsense") == DiagnosticSeverity::Hint, "unknown -> hint");
 
-  // `diagnostics.min_severity` is a hand-editable setting, so the spelling a
-  // person writes has to work. A capitalized or abbreviated value used to fall
-  // through to Hint -- "show everything", the opposite of what it asked for, with
-  // nothing reporting the typo.
   Expect(ParseDiagnosticSeverity("Error") == DiagnosticSeverity::Error, "case-insensitive");
   Expect(ParseDiagnosticSeverity("WARNING") == DiagnosticSeverity::Warning, "case-insensitive");
   Expect(ParseDiagnosticSeverity("warn") == DiagnosticSeverity::Warning, "warn alias");
   Expect(ParseDiagnosticSeverity("Information") == DiagnosticSeverity::Info, "information alias");
 
-  // The Try form is the same table, and it is the one that can tell an unknown
-  // value from a deliberate "hint" -- which is why the plugin path uses it.
   using microide::editor::TryParseDiagnosticSeverity;
   DiagnosticSeverity parsed = DiagnosticSeverity::Error;
   Expect(TryParseDiagnosticSeverity("hint", &parsed) && parsed == DiagnosticSeverity::Hint,
@@ -267,27 +261,21 @@ void TestDiagnosticsSeverityFilter() {
   }
   std::vector<PublishedDiagnostic> scratch;
 
-  // Hint (show-all) returns the SAME buffer (no copy).
   const auto shown_all = FilterDiagnosticsAtLeastSeverity(all, DiagnosticSeverity::Hint, scratch);
   Expect(shown_all.data() == all.data() && shown_all.size() == 4,
          "min=hint returns the input span unchanged");
 
-  // min=warning keeps Error + Warning only.
   const auto warn = FilterDiagnosticsAtLeastSeverity(all, DiagnosticSeverity::Warning, scratch);
   Expect(warn.size() == 2, "min=warning keeps error+warning");
   Expect(warn[0].severity == DiagnosticSeverity::Error &&
              warn[1].severity == DiagnosticSeverity::Warning,
          "min=warning suppresses info+hint");
 
-  // min=error keeps only errors.
   const auto err = FilterDiagnosticsAtLeastSeverity(all, DiagnosticSeverity::Error, scratch);
   Expect(err.size() == 1 && err[0].severity == DiagnosticSeverity::Error,
          "min=error keeps only errors");
 }
 
-// TD-2026-07-17A-056: SelectContextDiagnostics selects diagnostics overlapping a
-// code-action request range, capped so a densely-annotated line cannot materialize
-// a huge context payload before the async request is queued.
 void TestSelectContextDiagnosticsOverlapAndCap() {
   using microide::editor::PublishedDiagnostic;
   using microide::editor::SelectContextDiagnostics;
@@ -301,11 +289,10 @@ void TestSelectContextDiagnosticsOverlapAndCap() {
   };
 
   std::vector<PublishedDiagnostic> in;
-  in.push_back(make(0, 0, 0, 5, "a"));  // line 0 cols [0,5)
-  in.push_back(make(2, 0, 2, 3, "b"));  // line 2 — disjoint from a line-0 cursor
-  in.push_back(make(0, 3, 0, 8, "c"));  // line 0 cols [3,8)
+  in.push_back(make(0, 0, 0, 5, "a"));
+  in.push_back(make(2, 0, 2, 3, "b"));
+  in.push_back(make(0, 3, 0, 8, "c"));
 
-  // Empty selection (cursor) at line 0 col 4 overlaps "a" and "c" but not "b".
   const SelectionRange cursor{TextPosition{0, 4}, TextPosition{0, 4}};
   bool truncated = true;
   const auto sel = SelectContextDiagnostics(in, cursor, 100, &truncated);
@@ -313,7 +300,6 @@ void TestSelectContextDiagnosticsOverlapAndCap() {
   Expect(sel[0].message == "a" && sel[1].message == "c",
          "overlapping diagnostics keep stored order");
 
-  // 50 diagnostics all overlapping the cursor, capped at 8.
   std::vector<PublishedDiagnostic> many;
   for (int i = 0; i < 50; ++i) {
     many.push_back(make(0, 0, 0, 10, "d" + std::to_string(i)));
@@ -324,9 +310,6 @@ void TestSelectContextDiagnosticsOverlapAndCap() {
          "the context-diagnostic set is capped with the truncated flag set");
 }
 
-// A hostile/buggy language server can publish an unbounded number of
-// diagnostics for one file; the per-file list is scanned per visible row per
-// frame, so the store caps how many it retains to keep redraw bounded.
 void TestDiagnosticsStoreCapsPerFileCount() {
   DiagnosticsStore store;
   const std::filesystem::path path = "/tmp/project/huge.cpp";
@@ -345,8 +328,6 @@ void TestDiagnosticsStoreCapsPerFileCount() {
          "stored diagnostics per file must be capped so per-row scans stay bounded");
 }
 
-// Truncation must be observable so the Problems sidebar/status can signal that a
-// file's diagnostic list is incomplete.
 void TestDiagnosticsStoreFlagsTruncatedFiles() {
   constexpr std::size_t kMax = 10000;
   DiagnosticsStore store;
@@ -367,15 +348,12 @@ void TestDiagnosticsStoreFlagsTruncatedFiles() {
   Expect(store.IsPathTruncated(capped), "the capped file must be flagged truncated");
   Expect(store.HasTruncatedFile(), "the store must report at least one truncated file");
 
-  // A file whose list fits under the cap is not flagged.
   std::vector<Diagnostic> few;
   few.push_back(MakeDiagnostic(0, 0, 0, 1, DiagnosticSeverity::Error, "e"));
   Expect(store.ReplaceForOwnerFile("lint", small, std::move(few)),
          "a small diagnostic batch should publish");
   Expect(!store.IsPathTruncated(small), "an uncapped file must not be flagged truncated");
 
-  // Replacing the capped file with a small batch clears its truncated flag and
-  // the store-wide signal.
   std::vector<Diagnostic> replacement;
   replacement.push_back(MakeDiagnostic(0, 0, 0, 1, DiagnosticSeverity::Warning, "w"));
   Expect(store.ReplaceForOwnerFile("flood", capped, std::move(replacement)),
@@ -386,11 +364,6 @@ void TestDiagnosticsStoreFlagsTruncatedFiles() {
          "with no capped file remaining the store must report no truncation");
 }
 
-// TD-2026-07-17A-064: each owner is capped at 10000, but the merged multi-owner view
-// had no aggregate cap, so several LSP/plugin owners could multiply the per-visible-row
-// diagnostic scan/underline cost for one file. Publishing three fully-capped owners for
-// the same file must produce a merged list bounded by the aggregate cap, flagged
-// truncated.
 void TestDiagnosticsStoreCapsMergedMultiOwnerCount() {
   DiagnosticsStore store;
   const std::filesystem::path path = "/tmp/project/multi.cpp";
@@ -406,7 +379,7 @@ void TestDiagnosticsStoreCapsMergedMultiOwnerCount() {
   };
   publish_owner("lsp-a");
   publish_owner("lsp-b");
-  publish_owner("plugin-c");  // 3 * 10000 = 30000 merged before the aggregate cap
+  publish_owner("plugin-c");
 
   const auto* merged = store.FindByPath(path);
   Expect(merged != nullptr, "the merged file view should exist");
@@ -416,10 +389,6 @@ void TestDiagnosticsStoreCapsMergedMultiOwnerCount() {
          "an aggregate-capped merged view must be flagged truncated");
 }
 
-// A file's stamp moves when its own merged list changes, and only then: another
-// file's diagnostics, an owner republishing the same list, and an untouched file
-// leave it. A list cleared reads 0, and coming back takes a later stamp than any
-// it had, so a key on it never sees the old value again.
 void TestDiagnosticsStorePathRevisionMovesWithItsOwnFileOnly() {
   DiagnosticsStore store;
   const std::filesystem::path main = "/tmp/project/main.cpp";
@@ -447,7 +416,7 @@ void TestDiagnosticsStorePathRevisionMovesWithItsOwnFileOnly() {
   Expect(store.PathRevisionByKey(main_key) > second, "a list that comes back takes a later stamp");
 }
 
-}  // namespace
+}
 
 void RegisterDiagnosticsStoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DiagnosticsStore/CapsMergedMultiOwnerCount",
@@ -473,4 +442,4 @@ void RegisterDiagnosticsStoreTests(std::vector<TestCase>& tests) {
           TestDiagnosticsStoreTracksSeverityCountsAndRevision);
 }
 
-}  // namespace microide::tests
+}
