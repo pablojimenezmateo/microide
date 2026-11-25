@@ -953,25 +953,33 @@ class ResourceOracle:
         return names
 
     @staticmethod
-    def _memory(pid: int) -> str:
-        """Where the resident memory is: smaps_rollup, then the mappings with the
-        most RSS, grouped by what they map ([heap], an anonymous region, a file)."""
-        lines: list[str] = []
-        with contextlib.suppress(OSError):
-            lines += [line for line in Path(f"/proc/{pid}/smaps_rollup").read_text().splitlines()
-                      if line.split(":", 1)[0] in ("Rss", "Pss", "Anonymous", "Swap", "Private_Dirty")]
+    def memory_report(rollup: str, smaps: str) -> str:
+        """`memory.txt`: the totals of smaps_rollup that say where the resident
+        memory is, then the twelve mappings with the most of it, grouped by what
+        they map ([heap], an anonymous region, a file)."""
+        totals = ("Rss", "Pss", "Anonymous", "Swap", "Private_Dirty")
+        lines = [line for line in rollup.splitlines() if line.partition(":")[0] in totals]
         by_name: collections.Counter[str] = collections.Counter()
         name = "?"
-        with contextlib.suppress(OSError):
-            for line in Path(f"/proc/{pid}/smaps").read_text().splitlines():
-                head = line.split()
-                if head and "-" in head[0] and len(head) >= 5 and ":" not in head[0]:
-                    name = head[5] if len(head) >= 6 else "[anonymous]"
-                elif line.startswith("Rss:"):
-                    by_name[name] += int(line.split()[1])
+        for line in smaps.splitlines():
+            head = line.split()
+            if head and "-" in head[0] and ":" not in head[0] and len(head) >= 5:
+                name = head[5] if len(head) >= 6 else "[anonymous]"
+            elif line.startswith("Rss:"):
+                by_name[name] += int(line.split()[1])
         lines.append("largest resident mappings (kB):")
         lines += [f"  {kb:10d}  {mapped}" for mapped, kb in by_name.most_common(12)]
         return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def _memory(pid: int) -> str:
+        texts = []
+        for name in ("smaps_rollup", "smaps"):
+            try:
+                texts.append(Path(f"/proc/{pid}/{name}").read_text())
+            except OSError:
+                texts.append("")  # pragma: no mutate
+        return ResourceOracle.memory_report(*texts)
 
     @staticmethod
     def children_report(children: list[tuple[int, str, bytes]], uptime: float, ticks: int) -> str:

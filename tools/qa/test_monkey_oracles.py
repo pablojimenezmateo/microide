@@ -3204,5 +3204,53 @@ class RemoteConvergenceEvidenceTests(RemoteConvergenceTests):
         sides = {name for name in oracle.evidence if name.startswith("diff-") and name.endswith(".host")}
         self.assertEqual(sides, {"diff-a.txt.host", "diff-b.txt.host", "diff-c.txt.host"}, "the first three paths")
 
+
+class MemoryReportTests(unittest.TestCase):
+    ROLLUP = ("55a0-7ffc ---p 00000000 00:00 0 [rollup]\nRss:  900 kB\nPss:  800 kB\nPss_Anon: 1 kB\n"
+              "Anonymous:  700 kB\nSwap:  0 kB\nPrivate_Dirty:  600 kB\nShared_Clean: 5 kB\n")
+    SMAPS = ("55a0-55a1 r--p 00000000 08:01 12 /usr/bin/microide\nSize: 4 kB\nRss:  100 kB\n"
+             "55b0-55b1 rw-p 00000000 00:00 0 [heap]\nRss:  300 kB\nRss:  50 kB\n"
+             "7f00-7f01 rw-p 00000000 00:00 0\nRss:  200 kB\n"
+             "7f10-7f11 r--p 00000000 08:01 13 /usr/lib/libc.so\nRss:  100 kB\n"
+             "VmFlags: rd wr mr mw me ac\n")
+
+    def test_the_rollup_totals_and_the_largest_mappings(self):
+        report = monkey_oracles.ResourceOracle.memory_report(self.ROLLUP, self.SMAPS)
+        self.assertEqual(report, "Rss:  900 kB\nPss:  800 kB\nAnonymous:  700 kB\nSwap:  0 kB\n"
+                                 "Private_Dirty:  600 kB\n"
+                                 "largest resident mappings (kB):\n"
+                                 "         350  [heap]\n"
+                                 "         200  [anonymous]\n"
+                                 "         100  /usr/bin/microide\n"
+                                 "         100  /usr/lib/libc.so\n")
+
+    def test_rss_before_any_mapping_and_only_twelve_mappings(self):
+        smaps = "Rss: 7 kB\n" + "".join(f"{i:x}0-{i:x}1 r--p 0 0:0 1 /f{i}\nRss: {100 + i} kB\n" for i in range(14))
+        report = monkey_oracles.ResourceOracle.memory_report("", smaps).splitlines()
+        self.assertEqual(report[0], "largest resident mappings (kB):")
+        self.assertEqual(len(report), 13)
+        self.assertEqual(report[1], "         113  /f13")
+        self.assertNotIn("?", "\n".join(report), "seven kB before any mapping is not among the largest")
+        report = monkey_oracles.ResourceOracle.memory_report("", "Rss: 7 kB\n")
+        self.assertEqual(report, "largest resident mappings (kB):\n           7  ?\n")
+
+    def test_a_total_whose_value_has_a_colon_and_a_mapping_with_every_permission(self):
+        report = monkey_oracles.ResourceOracle.memory_report(
+            "Swap:  0 kB [a:b]\n", "50-60 rwxp 0 0:0 1 /jit\nRss: 9 kB\n")
+        self.assertEqual(report, "Swap:  0 kB [a:b]\nlargest resident mappings (kB):\n           9  /jit\n")
+
+    def test_a_line_that_only_looks_like_a_mapping_is_not_one(self):
+        smaps = ("10-20 r--p 0 0:0 1 /real\nRss: 1 kB\n"
+                 "Some-Field: 2 kB x y z\nRss: 2 kB\n"
+                 "30-40 r--p 0\nRss: 4 kB\n")
+        report = monkey_oracles.ResourceOracle.memory_report("", smaps)
+        self.assertEqual(report, "largest resident mappings (kB):\n           7  /real\n")
+
+    def test_this_process_has_both_parts_and_a_gone_one_has_neither(self):
+        report = monkey_oracles.ResourceOracle._memory(os.getpid())
+        self.assertTrue(report.startswith("Rss:"), report[:40])
+        self.assertIn("python", report)
+        self.assertEqual(monkey_oracles.ResourceOracle._memory(2 ** 22 + 12345), "largest resident mappings (kB):\n")
+
 if __name__ == "__main__":
     unittest.main()
