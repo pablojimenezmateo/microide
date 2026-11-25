@@ -121,14 +121,15 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
    holds it", because a save may change the buffer on its way (trailing
    whitespace, a final newline, a formatter) and the bytes it would have written
    are not known from outside. The `documents` query could report them.
-5. **A kill a signal lands, or a real crash, loses a coverage build's counters.**
-   The app flushes them at shutdown, before a self-kill at a crash point, and
-   when the driver asks before its own kill -9 (`code-coverage` query); a process
-   that dies of its own SIGSEGV writes nothing. Small: crashes are rare.
-6. **The profile is carried across commits.** `codecov.merge` adds each run to
-   one profile; a function that changed is dropped by llvm-cov on its hash, one
-   that was deleted lingers in the file (not in the report). `soak.py coverage`
-   has no reset; delete `build/soak/coverage/soak.profdata` to start over.
+5. **A real crash loses a coverage build's counters: DECIDED 2026-11-25, kept.**
+   The fatal-signal handler will not flush the profile: the writer allocates
+   and opens files, so a crash inside `malloc` would hang there and the soak
+   would book a stall instead of the crash. Crashes are rare; their runs'
+   coverage is the price.
+6. **The profile is carried across commits: FIXED 2026-11-25.** `soak.py
+   coverage --reset` drops the merged profile; the next coverage job starts it
+   afresh. Carrying it stays the default (llvm-cov drops changed functions by
+   hash), so reset after deleting much code.
 7. **Reach the review listed and did not build:** a scripted language server
    that answers out of order (safety-plan W8); IME composition (a control-channel
    hook for SDL's text-editing events); a Wayland cell in the soak's matrix (the
@@ -138,10 +139,13 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
    timestamps on the app's log lines on the driver's clock, so a trace line can
    be put beside the replay row that caused it (a prefix would change every log
    signature: it needs a field on the frame lines instead).
-8. **The stall watchdog's signal can interrupt a system call.** Under
-   `MICROIDE_TRACE_STALL_MS` (every QA run) a main-loop turn of over a second gets
-   a real-time signal for its stack. Code that does not retry `EINTR` would then
-   behave differently under QA than for a user; none is known.
+8. **The stall watchdog's signal can interrupt a system call: AUDITED
+   2026-11-25.** Its handler (and every other one) is `SA_RESTART`, so reads and
+   writes restart; what never restarts is `poll`/`select`/sleeps. Of the
+   twelve `poll`s, two treated `EINTR` as a timeout and now retry against the
+   remaining time: `WakePipe::PollReadableOrWake` (the LSP transport's reader)
+   and the server's `ProcessTable` stdin write, which any signal (SIGCHLD) could
+   fail -- a defect for users too, not only under QA.
 
 9. **Left by the 2026-11-17 review** (which tried the deep review in a private
    soak of its branch -- `MICROIDE_SOAK_REF`, `tools/soak/AGENT.md` § A change to

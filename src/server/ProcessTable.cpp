@@ -310,7 +310,11 @@ bool ProcessTable::WriteStdin(std::uint64_t handle, std::string_view bytes) {
     }
     if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
       pollfd fd{it->second->stdin_fd, POLLOUT, 0};
-      if (::poll(&fd, 1, 1000) <= 0) {
+      int ready = ::poll(&fd, 1, 1000);
+      while (ready < 0 && errno == EINTR) {
+        ready = ::poll(&fd, 1, 1000);
+      }
+      if (ready <= 0) {
         return false;
       }
       continue;

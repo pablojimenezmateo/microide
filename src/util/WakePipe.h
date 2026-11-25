@@ -1,5 +1,10 @@
 #pragma once
 
+#include <algorithm>
+#include <cerrno>
+#include <chrono>
+#include <cstdint>
+
 #include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
@@ -80,7 +85,13 @@ class WakePipe {
       fds[nfds].events = POLLIN;
       ++nfds;
     }
-    const int ready = ::poll(fds, nfds, timeout_ms);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    int ready = ::poll(fds, nfds, timeout_ms);
+    while (ready < 0 && errno == EINTR) {
+      const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+      ready = timeout_ms < 0 ? ::poll(fds, nfds, -1)
+                             : ::poll(fds, nfds, static_cast<int>(std::max<std::int64_t>(0, left.count())));
+    }
     if (ready <= 0) {
       return false;
     }

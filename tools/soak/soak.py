@@ -3020,8 +3020,16 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 
 def cmd_coverage(args: argparse.Namespace) -> int:
-    """The source coverage report, refreshed; or the uncalled functions of some sources."""
+    """The source coverage report, refreshed; or the uncalled functions of some sources;
+    or, with --reset, the merged profile started over (the runs it held are dropped:
+    a deleted function lingers in it otherwise, and an old commit's counts stay)."""
     state = load_state()
+    if args.reset:
+        CODE_PROFILE.unlink(missing_ok=True)
+        state["code_reported_runs"] = None
+        save_state(state)
+        print(f"removed {CODE_PROFILE}; the next coverage job starts the profile afresh")
+        return 0
     good = state.get("good", {}).get("coverage")
     if not good or not CODE_PROFILE.is_file():
         print(code_line(state))
@@ -3115,6 +3123,7 @@ def main() -> int:
     coverage = sub.add_parser("coverage", help="the soak's source coverage: refresh code-coverage.md, or list "
                                                "the functions of some sources no job ever called")
     coverage.add_argument("--functions", nargs="+", metavar="SOURCE", help="paths under the repository (src/...)")
+    coverage.add_argument("--reset", action="store_true", help="drop the merged profile and start it over")
     led = sub.add_parser("ledger")
     led.add_argument("action", nargs="?", default="list", choices=("list", "show", "claim", "fixed", "reopen", "close", "note"))
     led.add_argument("sig", nargs="?")
