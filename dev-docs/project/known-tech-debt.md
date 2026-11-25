@@ -334,8 +334,14 @@ What it left, by workstream:
    malformed lines, odd ids and CRLF endings, each batch split at a random byte,
    with frames rendered between: every line gets exactly one JSON reply carrying
    its own id, in order, and the shell's invariants hold (dropping the reply to
-   a malformed line fails it). It found nothing. Still open as this item: the
-   libFuzzer form of `ViewportEditSequenceFuzz`. Previously: **W8 sequence fuzzers** are not built: `ControlCommandFuzz`, `LspSessionFuzz` and
+   a malformed line fails it). It found nothing. And `ViewportEditSequenceFuzz`
+   is a libFuzzer target (2026-11-25): two to four views of one document take
+   inserts, newlines, deletes, selection replaces, multi-caret inserts, undo,
+   redo, wrap/size/tab-size changes; every view's derived caches must stay true
+   after every step, an undo or redo that reports a change must change the text,
+   and undoing everything must give back the loaded text and redoing everything
+   the newest edit's. Ten minutes (196k runs) found nothing; its set-cover corpus
+   (596 inputs) is committed and the `fuzz` lane runs it. Item 4 is DONE. Previously: **W8 sequence fuzzers** are not built: `ControlCommandFuzz`, `LspSessionFuzz` and
    `DapSessionFuzz` (scripted fake servers answering late, out of order and for old
    versions), and the libFuzzer form of `ViewportEditSequenceFuzz`. The stateful
    multi-view unit sweep (`TextViewport/EditsThroughEveryViewKeepEveryViewsCachesTrue`)

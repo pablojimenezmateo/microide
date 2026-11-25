@@ -1837,6 +1837,46 @@ if(MICROIDE_FUZZ)
   )
   microide_configure_fuzz_target(PieceTreeEquivalenceFuzz)
 
+  # Multi-view TextViewport edits, undo and redo (safety-plan W8): every view's
+  # derived caches stay true, and undo/redo walk back to the loaded and the
+  # edited text. The editor sources are listed so libFuzzer instruments them;
+  # the util sources they call into come after them.
+  add_executable(ViewportEditSequenceFuzz
+    src/editor/BracketScanner.cpp
+    src/editor/ColumnSelection.cpp
+    src/editor/DocumentSnapshot.cpp
+    src/editor/FoldingModel.cpp
+    src/editor/IndentDetect.cpp
+    src/editor/LineIndentScan.cpp
+    src/editor/PieceTree.cpp
+    src/editor/SaveNormalization.cpp
+    src/editor/SyntaxHighlighter.cpp
+    src/editor/TextBuffer.cpp
+    src/editor/TextLayout.cpp
+    src/editor/TextLayoutCache.cpp
+    src/editor/TextViewport.cpp
+    src/editor/TextViewportEditEngine.cpp
+    src/editor/TextViewportFileIO.cpp
+    src/editor/TextViewportHighlightCache.cpp
+    src/editor/TextViewportLanguageBehavior.cpp
+    src/editor/TextViewportMultiCaret.cpp
+    src/editor/TextViewportUndoHistory.cpp
+    src/editor/TextViewportViewState.cpp
+    src/editor/RuntimeSyntaxRegistry.cpp
+    src/editor/SmartSelect.cpp
+    src/editor/WordBoundary.cpp
+    src/util/ContentHash.cpp
+    src/util/DurableFile.cpp
+    src/util/Log.cpp
+    src/util/Sha256.cpp
+    src/util/StringUtil.cpp
+    src/util/TextFileIO.cpp
+    tests/fuzz/ViewportEditSequenceFuzz.cpp
+    $<TARGET_OBJECTS:microide_runtime_syntax_generated>
+  )
+  target_link_libraries(ViewportEditSequenceFuzz PRIVATE ${MICROIDE_KERNEL_LIBS})
+  microide_configure_fuzz_target(ViewportEditSequenceFuzz)
+
   add_executable(SearchRegexFuzz
     # RegexUtil.h's empty-match advance steps whole UTF-8 characters, so it needs
     # StringUtil's NextUtf8Boundary. Fuzz targets list explicit sources rather than
@@ -2045,7 +2085,6 @@ if(MICROIDE_PERF_HARNESS_BUILD)
   add_executable(microide_perf
     src/app/DirtyRegionPolicy.cpp
     $<TARGET_OBJECTS:microide_runtime_syntax_generated>
-    $<TARGET_OBJECTS:microide_kernel>
   $<TARGET_OBJECTS:microide_core>
     tests/perf/AllocationCounter.cpp
     tests/perf/PerfCpuAffinity.cpp
