@@ -3780,5 +3780,224 @@ class UndoChurnWindowTests(unittest.TestCase):
         self.assertTrue(self.oracle([row] + [{}] * 63)._churned_during_check("/w/a.txt", 100.0))
         self.assertFalse(self.oracle([row] + [{}] * 64)._churned_during_check("/w/a.txt", 100.0))
 
+
+class _FakeClock:
+    """time.monotonic and time.sleep for code that waits: a sleep moves the clock."""
+
+    def __init__(self):
+        self.now = 1000.0
+        self.slept: list[float] = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.slept.append(seconds)
+        self.now += seconds
+
+    def patch(self):
+        stack = contextlib.ExitStack()
+        stack.enter_context(mock.patch.object(monkey_oracles.time, "monotonic", self.monotonic))
+        stack.enter_context(mock.patch.object(monkey_oracles.time, "sleep", self.sleep))
+        return stack
+
+
+class RssTimelineEdgeTests(RssTimelineTests):
+    def test_up_to_eighty_steps_are_all_kept(self):
+        timeline = self.oracle([(i, i, 100) for i in range(50)]).rss_timeline(jumps=0)
+        self.assertEqual(len(timeline.splitlines()), 51)
+
+    def test_a_fall_back_to_the_first_steps_level_is_no_jump(self):
+        timeline = self.oracle([(0, 0, 1000), (1, 0, 10), (2, 0, 20)]).rss_timeline(jumps=5, around=0)
+        jumps = [line for line in timeline.splitlines() if line.startswith("+")]
+        self.assertEqual(jumps, ["+10 kB between step 1 and step 2 (actions 0..0):"])
+
+    def test_no_growth_is_no_jump_and_an_app_without_actions_has_none_to_list(self):
+        oracle = monkey_oracles.ResourceOracle(mock.Mock(spec=[]))
+        oracle.rss_steps = [(0, 0, 5), (1, 0, 5), (2, 0, 9)]
+        jumps = [line for line in oracle.rss_timeline(jumps=5).splitlines() if line.startswith("+")]
+        self.assertEqual(jumps, ["+4 kB between step 1 and step 2 (actions 0..0):"])
+
+    def test_an_action_is_shown_as_written_and_cut_past_three_hundred(self):
+        timeline = self.oracle([(0, 0, 1), (1, 1, 2)], [{"t": "\u00e9"}]).rss_timeline(jumps=1, around=0)
+        self.assertIn('  {"t": "\u00e9"}\n', timeline)
+        exactly = {"t": "x" * (300 - len('{"t": ""}'))}
+        timeline = self.oracle([(0, 0, 1), (1, 1, 2)], [exactly]).rss_timeline(jumps=1, around=0)
+        self.assertIn("  " + json.dumps(exactly) + "\n", timeline)
+        over = {"t": "x" * (301 - len('{"t": ""}'))}
+        timeline = self.oracle([(0, 0, 1), (1, 1, 2)], [over]).rss_timeline(jumps=1, around=0)
+        self.assertIn("... (301 chars)", timeline)
+
+
+class ResourceSampleEdgeTests(unittest.TestCase):
+    app = ResourceOracleProcessTests.app
+
+    def setUp(self):
+        import subprocess
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.dir, ignore_errors=True))
+        script = self.dir / "holder.py"
+        script.write_text(
+            "import subprocess, threading, time\n"
+            "kids = [subprocess.Popen(['sleep', '30'])]\n"
+            "t = threading.Thread(target=lambda: kids.append(subprocess.Popen(['sleep', '30'])))\n"
+            "t.start(); t.join()\n"
+            "worker = threading.Thread(target=lambda: time.sleep(30), daemon=True)\n"
+            "worker.start()\n"
+            "print('ready', flush=True)\n"
+            "time.sleep(30)\n")
+        self.proc = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, text=True)
+        self.addCleanup(self.stop)
+        self.assertEqual(self.proc.stdout.readline().strip(), "ready")
+
+    def stop(self):
+        import signal
+        if self.proc.poll() is None:
+            for task in Path(f"/proc/{self.proc.pid}/task").iterdir():
+                for child in (task / "children").read_text().split():
+                    with contextlib.suppress(OSError):
+                        os.kill(int(child), signal.SIGKILL)
+        self.proc.kill()
+        self.proc.wait()
+
+    def test_children_of_every_thread_and_the_status_fields(self):
+        oracle = monkey_oracles.ResourceOracle(self.app())
+        sample = oracle.sample()
+        self.assertEqual(sample["children"], 2)
+        status = Path(f"/proc/{self.proc.pid}/status").read_text()
+        self.assertEqual(sample["threads"], int(status.split("Threads:")[1].split()[0]))
+        self.assertGreater(sample["rss_kb"], 1000)
+
+    def test_a_status_without_the_fields_samples_nothing(self):
+        oracle = monkey_oracles.ResourceOracle(self.app())
+        real = Path.read_text
+
+        def no_threads(path, *args, **kwargs):
+            text = real(path, *args, **kwargs)
+            return "\n".join(l for l in text.splitlines() if not l.startswith("Threads")) if path.name == "status" \
+                else text
+        with mock.patch.object(Path, "read_text", no_threads):
+            self.assertIsNone(oracle.sample())
+
+
+class CheckCleanFlowTests(CleanBufferTests):
+    def test_the_documents_are_asked_once_and_judged_for_names_too(self):
+        path, sha = self.file("a.txt", b"same\n")
+        docs = [{"path": path, "sha256": sha, "dirty": False},
+                {"path": "", "title": "Untitled-1", "sha256": "a", "project": "/p"},
+                {"path": "", "title": "Untitled-1", "sha256": "b", "project": "/p"}]
+        oracle, app = self.oracle(docs)
+        found = self.check(oracle)
+        self.assertEqual(found, ["2 different unsaved buffers are all titled Untitled-1"])
+        documents = [c for c in app.query.call_args_list if c.args[0] == "documents"]
+        self.assertEqual(len(documents), 1)
+        self.assertIn("untitled-documents.json", oracle.evidence)
+
+    def test_a_disagreement_is_read_again_three_times_a_gap_apart(self):
+        path, _ = self.file("a.txt", b"disk\n")
+        oracle, _ = self.oracle([{"path": path, "sha256": "f" * 64, "dirty": False}])
+        slept = []
+        with mock.patch.object(monkey_oracles.time, "sleep", slept.append), \
+                mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 2.0):
+            found = oracle.check_clean()
+        self.assertEqual(slept, [0.6, 0.6, 0.6])
+        self.assertEqual([kind for kind, _ in found], ["data"])
+        self.assertEqual(oracle.untitled_evidence, {})
+        oracle, _ = self.oracle([{"path": path, "sha256": "f" * 64, "dirty": False}])
+        reads = []
+        real = oracle.clean_mismatches
+
+        def counted(docs):
+            reads.append(1)
+            return real(docs)
+        with mock.patch.object(oracle, "clean_mismatches", side_effect=counted), \
+                mock.patch.object(monkey_oracles.time, "sleep", lambda _s: None):
+            oracle.check_clean(attempts=2)
+        self.assertEqual(len(reads), 2, "one read and one more for two attempts")
+
+
+class LspAnswersTests(unittest.TestCase):
+    def oracle(self, answers):
+        app = mock.Mock()
+        it = iter(answers)
+
+        def query(verb, args=None):
+            self.assertEqual(verb, "status")
+            answer = next(it)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        app.query.side_effect = query
+        return monkey_oracles.UndoAlgebra(app, random.Random(0))
+
+    def test_it_waits_while_requests_are_in_flight(self):
+        clock = _FakeClock()
+        oracle = self.oracle([{"lspRequestsInFlight": 2}, {"lspRequestsInFlight": 1}, {"lspRequestsInFlight": 0}])
+        with clock.patch(), mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 1.0):
+            self.assertTrue(oracle._lsp_answers_landed())
+        self.assertEqual(clock.slept, [0.02, 0.02])
+
+    def test_a_binary_without_the_field_reads_as_none_in_flight(self):
+        with _FakeClock().patch():
+            self.assertTrue(self.oracle([{}])._lsp_answers_landed())
+            self.assertTrue(self.oracle([{"lspRequestsInFlight": None}])._lsp_answers_landed())
+
+    def test_requests_still_in_flight_at_the_deadline_or_no_answer_is_no(self):
+        clock = _FakeClock()
+        oracle = self.oracle([{"lspRequestsInFlight": 1}] * 1000)
+        with clock.patch(), mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 2.0):
+            self.assertFalse(oracle._lsp_answers_landed())
+        self.assertAlmostEqual(sum(clock.slept), monkey_oracles.LSP_ANSWER_WAIT_S * 2.0, delta=0.03)
+        with _FakeClock().patch():
+            self.assertFalse(self.oracle([monkey_oracles.q.QaFailure("busy")])._lsp_answers_landed())
+
+
+class LoggedHistoryTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.dir, ignore_errors=True))
+
+    def test_every_log_oldest_first_unreadable_ones_passed_over(self):
+        newer = self.dir / "microide-1.log"
+        older = self.dir / "microide-2.log"
+        locked = self.dir / "microide-3.log"
+        newer.write_bytes(b"P path=/a x new\n")
+        older.write_bytes(b"P path=/a \xff old\nP path=/b no\nQ path=/a no\n")
+        locked.write_text("P path=/a locked\n")
+        os.utime(older, (1, 1))
+        os.utime(locked, (2, 2))
+        os.utime(newer, (3, 3))
+        locked.chmod(0)
+        self.addCleanup(locked.chmod, 0o600)
+        (self.dir / "other.log").write_text("P path=/a other\n")
+        app = mock.Mock(work=self.dir)
+        self.assertEqual(monkey_oracles._logged_history(app, "P", "/a"),
+                         ["microide-2.log: P path=/a \ufffd old", "microide-1.log: P path=/a x new"])
+        self.assertEqual(monkey_oracles._logged_history(app, "P", "/a", keep=1), ["microide-1.log: P path=/a x new"])
+        self.assertEqual(monkey_oracles._logged_history(mock.Mock(spec=[]), "P", "/a"), [])
+
+
+class DefaultLimitTests(unittest.TestCase):
+    def test_the_timeline_shows_five_jumps_with_three_actions_before_each(self):
+        app = mock.Mock()
+        app.actions = [{"a": i} for i in range(40)]
+        oracle = monkey_oracles.ResourceOracle(app)
+        oracle.rss_steps = [(i, 4 * i, 100 * i * i) for i in range(10)]
+        timeline = oracle.rss_timeline()
+        jumps = [line for line in timeline.splitlines() if line.startswith("+")]
+        self.assertEqual(len(jumps), 5)
+        self.assertEqual(jumps[0], "+1700 kB between step 8 and step 9 (actions 32..36):")
+        block = timeline.split(jumps[0], 1)[1].split("\n+", 1)[0]
+        self.assertEqual([json.loads(line) for line in block.strip().splitlines()],
+                         [{"a": i} for i in range(29, 36)])
+
+    def test_the_history_keeps_the_last_two_hundred_lines(self):
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(directory, ignore_errors=True))
+        (directory / "microide-1.log").write_text("".join(f"P path=/a n{i}\n" for i in range(201)))
+        history = monkey_oracles._logged_history(mock.Mock(work=directory), "P", "/a")
+        self.assertEqual(len(history), 200)
+        self.assertTrue(history[0].endswith(" n1"))
+
 if __name__ == "__main__":
     unittest.main()

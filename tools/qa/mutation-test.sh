@@ -42,6 +42,9 @@ if [[ -n "$only" ]]; then
   place_tests
   mkdir -p "$qa/mutants/tests"
   cp "$qa/tests/test_monkey_oracles.py" "$qa/mutants/tests/test_monkey_oracles.py"
+  # mutmut runs only the tests its stats tie to a function; a test added since
+  # the stats were taken would never be run against the mutants.
+  rm -f "$qa/mutants/mutmut-stats.json"
   key="${only//./ǁ}"
   [[ "$key" == *ǁ* ]] && pattern="monkey_oracles.xǁ${key}__mutmut_*" || pattern="monkey_oracles.x_${key}__mutmut_*"
   cd "$qa"

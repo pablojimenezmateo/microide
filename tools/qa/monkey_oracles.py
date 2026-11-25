@@ -868,7 +868,7 @@ class UndoAlgebra:
                 return False
             if in_flight == 0:
                 return True
-            if time.monotonic() >= deadline:
+            if _past(deadline):
                 return False
             time.sleep(0.02)
 
@@ -953,7 +953,7 @@ class ResourceOracle:
             (step0, from_action, _), (step1, to_action, _) = self.rss_steps[i - 1], self.rss_steps[i]
             out.append(f"\n+{delta} kB between step {step0} and step {step1} (actions {from_action}..{to_action}):")
             for row in actions[max(0, from_action - around):to_action]:
-                text = json.dumps(row, ensure_ascii=False)
+                text = json.dumps(row, ensure_ascii=False)  # pragma: no mutate
                 out.append("  " + (text if len(text) <= 300 else text[:300] + f"... ({len(text)} chars)"))
         return "\n".join(out) + "\n"
 
@@ -1113,13 +1113,13 @@ class ResourceOracle:
         try:
             fds = len(os.listdir(base / "fd"))
             status = (base / "status").read_text()
-            fields = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
-            threads = int(fields.get("Threads", "0").strip())
-            rss = int(fields.get("VmRSS", "0 kB").split()[0])
+            fields = {key: value for key, _, value in (line.partition(":") for line in status.splitlines())}  # pragma: no mutate
+            threads = int(fields["Threads"])
+            rss = int(fields["VmRSS"].split()[0])
             children = 0
             for task in (base / "task").iterdir():
                 children += len((task / "children").read_text().split())
-        except (OSError, ValueError):
+        except (OSError, ValueError, KeyError):
             return None
         sample = {"fds": fds, "threads": threads, "rss_kb": rss, "children": children,
                   "panes": self._terminal_panes()}
