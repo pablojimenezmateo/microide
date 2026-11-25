@@ -5,7 +5,6 @@
 #include <string>
 #include <vector>
 
-
 namespace microide::workspace {
 
 class ToolDownloader {
@@ -24,8 +23,6 @@ class ToolDownloader {
 
   std::optional<std::filesystem::path> GetCachedTool(const std::string& tool_id,
                                                      const std::string& expected_sha256 = {}) const;
-
-  void ClearCache();
 
  private:
   std::filesystem::path cache_dir_;

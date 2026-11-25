@@ -22,7 +22,7 @@ using microide::workspace::BottomPanelLineIndexAtY;
 using microide::workspace::CompareCollapsedContextBlockRect;
 using microide::workspace::EmptyTabStripPlaceholderRect;
 using microide::workspace::BuildChromeTabRenderItems;
-using microide::workspace::BuildCompareScrollbarRuns;
+using microide::workspace::BuildCompareScrollbarRunsInto;
 using microide::workspace::ClassifyMergeHoverState;
 using microide::workspace::ComputeDirtyPromptButtonRects;
 using microide::workspace::ComputeDirtyPromptRect;
@@ -47,7 +47,6 @@ using microide::workspace::ComputeVisibleLineRangeRect;
 using microide::workspace::ComputeVisibleStripLayouts;
 using microide::workspace::EnsureVisibleStripIndex;
 using microide::workspace::HoveredChromeTabTooltipLabel;
-using microide::workspace::HorizontalScrollbarHitRect;
 using microide::workspace::LayoutMode;
 using microide::workspace::LayoutModeInputs;
 using microide::workspace::MakeHorizontalScrollbarGeometry;
@@ -218,7 +217,8 @@ void TestWorkspaceSharedCompareScrollbarMarkers() {
           }),
       microide::compare::ComparePresentationOptions{},
       microide::compare::ComparePresentationCollapseState{});
-  const auto runs = BuildCompareScrollbarRuns(presentation, model);
+  std::vector<microide::workspace::CompareScrollbarRun> runs;
+  BuildCompareScrollbarRunsInto(presentation, model, runs);
   Expect(runs.size() == 3, "compare scrollbar runs should group contiguous changed rows");
   Expect(runs[0].kind == microide::compare::CompareRowKind::Added && runs[0].start_row == 1 &&
              runs[0].end_row == 3,
@@ -272,7 +272,8 @@ void TestWorkspaceSharedCompareScrollbarMarkersFollowPresentationRows() {
       microide::compare::ComparePresentationOptions{},
       microide::compare::ComparePresentationCollapseState{});
 
-  const auto runs = BuildCompareScrollbarRuns(presentation, model);
+  std::vector<microide::workspace::CompareScrollbarRun> runs;
+  BuildCompareScrollbarRunsInto(presentation, model, runs);
   Expect(runs.size() == 2,
          "collapsed compare presentations should still emit one run per visible changed run");
   Expect(presentation.rows.size() > 5,
@@ -305,7 +306,8 @@ void TestWorkspaceSharedCompareScrollbarRunsFlagLayoutOnlyRows() {
           }),
       microide::compare::ComparePresentationOptions{},
       microide::compare::ComparePresentationCollapseState{});
-  const auto runs = BuildCompareScrollbarRuns(presentation, model);
+  std::vector<microide::workspace::CompareScrollbarRun> runs;
+  BuildCompareScrollbarRunsInto(presentation, model, runs);
   Expect(runs.size() == 3, "novel head, layout-only body and novel tail should be three runs");
   Expect(!runs[0].layout_only && runs[1].layout_only && !runs[2].layout_only,
          "only the re-indented body should be flagged layout-only");
@@ -1411,13 +1413,6 @@ void TestWorkspaceSharedHitTargets() {
   const SDL_FRect vert_hit = VerticalScrollbarHitRect(*vertical);
   Expect(vert_hit.w >= 18.0f,
          "vertical scrollbar hit rect should meet the documented 18px cross-axis size");
-
-  const auto horizontal = MakeHorizontalScrollbarGeometry(MakeRect(0.0f, 0.0f, 200.0f, 100.0f),
-                                                          80.0f, 20.0f, 10.0f, false);
-  Expect(horizontal.has_value(), "horizontal scrollbar geometry should exist for hit-rect test");
-  const SDL_FRect horiz_hit = HorizontalScrollbarHitRect(*horizontal);
-  Expect(horiz_hit.h >= 18.0f,
-         "horizontal scrollbar hit rect should meet the documented 18px cross-axis size");
 
   const SDL_FRect tab_rect = MakeRect(100.0f, 30.0f, 160.0f, 24.0f);
   const SDL_FRect close_visual = MakeRect(240.0f, 35.0f, 14.0f, 14.0f);

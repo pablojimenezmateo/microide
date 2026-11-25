@@ -137,19 +137,6 @@ void ForEachMergeResultLine(const MergeModel& model, bool bootstrap, Fn&& fn) {
   }
 }
 
-std::vector<std::string> CollectMergeResultLines(const MergeModel& model, bool bootstrap) {
-  std::size_t count = 0;
-  ForEachMergeResultLine(model, bootstrap, [&count](std::string_view) { ++count; });
-  std::vector<std::string> lines;
-  lines.reserve(count);
-  ForEachMergeResultLine(model, bootstrap,
-                         [&lines](std::string_view line) { lines.emplace_back(line); });
-  if (lines.empty()) {
-    lines.push_back("");
-  }
-  return lines;
-}
-
 std::string BuildMergeResultText(const MergeModel& model,
                                  std::string_view separator,
                                  bool bootstrap) {
@@ -355,102 +342,8 @@ std::string BootstrapMergeResultText(const MergeModel& model, std::string_view s
   return BuildMergeResultText(model, separator, true);
 }
 
-std::vector<std::string> MergeResultLines(const MergeModel& model) {
-  return CollectMergeResultLines(model, false);
-}
-
 std::string MergeResultText(const MergeModel& model, std::string_view separator) {
   return BuildMergeResultText(model, separator, false);
-}
-
-MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model) {
-  MergeDisplayModel display;
-
-  int base_cursor = 0;
-  int incoming_line = 1;
-  int result_line = 1;
-  int current_line = 1;
-  std::vector<std::string_view> hunk_result_scratch;
-  const auto emit_unchanged_rows = [&](int from_line, int to_line) {
-    for (int line = from_line; line < to_line; ++line) {
-      const std::string_view text = model.base_lines[static_cast<std::size_t>(line)];
-      display.rows.push_back(MergeDisplayRow{
-          .incoming_text = std::string(text),
-          .result_text = std::string(text),
-          .current_text = std::string(text),
-          .incoming_line = incoming_line++,
-          .result_line = result_line++,
-          .current_line = current_line++,
-          .hunk = -1,
-          .conflict = false,
-          .incoming_changed = false,
-          .result_changed = false,
-          .current_changed = false,
-      });
-    }
-  };
-  for (const MergeHunk& hunk : model.hunks) {
-    emit_unchanged_rows(base_cursor, hunk.base_start);
-
-    const MergeChoiceLineSpans result_spans = MergeChoiceLineViews(hunk, hunk.choice);
-    hunk_result_scratch.clear();
-    hunk_result_scratch.reserve(result_spans.size());
-    hunk_result_scratch.insert(hunk_result_scratch.end(), result_spans.first.begin(),
-                               result_spans.first.end());
-    hunk_result_scratch.insert(hunk_result_scratch.end(), result_spans.second.begin(),
-                               result_spans.second.end());
-    const std::vector<std::string_view>& hunk_result_lines = hunk_result_scratch;
-    const bool incoming_changed = hunk.incoming_lines != hunk.base_lines;
-    const bool result_changed = hunk_result_lines != hunk.base_lines;
-    const bool current_changed = hunk.current_lines != hunk.base_lines;
-    const int start_row = static_cast<int>(display.rows.size());
-    const std::size_t row_count =
-        std::max({hunk.incoming_lines.size(), hunk_result_lines.size(), hunk.current_lines.size()});
-    for (std::size_t row = 0; row < row_count; ++row) {
-      const bool has_incoming = row < hunk.incoming_lines.size();
-      const bool has_result = row < hunk_result_lines.size();
-      const bool has_current = row < hunk.current_lines.size();
-      display.rows.push_back(MergeDisplayRow{
-          .incoming_text = has_incoming ? std::string(hunk.incoming_lines[row]) : std::string{},
-          .result_text = has_result ? std::string(hunk_result_lines[row]) : std::string{},
-          .current_text = has_current ? std::string(hunk.current_lines[row]) : std::string{},
-          .incoming_line = has_incoming ? incoming_line++ : 0,
-          .result_line = has_result ? result_line++ : 0,
-          .current_line = has_current ? current_line++ : 0,
-          .hunk = hunk.index,
-          .conflict = hunk.conflict,
-          .incoming_changed = incoming_changed,
-          .result_changed = result_changed,
-          .current_changed = current_changed,
-      });
-    }
-    if (static_cast<int>(display.rows.size()) > start_row) {
-      display.hunks.push_back(CompareHunk{
-          .index = hunk.index,
-          .start_row = start_row,
-          .end_row = static_cast<int>(display.rows.size()) - 1,
-      });
-    }
-    base_cursor = hunk.base_end;
-  }
-
-  emit_unchanged_rows(base_cursor, static_cast<int>(model.base_lines.size()));
-
-  if (display.rows.empty()) {
-    const std::vector<std::string> result_lines = MergeResultLines(model);
-    for (const std::string& text : result_lines) {
-      display.rows.push_back(MergeDisplayRow{
-          .incoming_text = text,
-          .result_text = text,
-          .current_text = text,
-          .incoming_line = incoming_line++,
-          .result_line = result_line++,
-          .current_line = current_line++,
-      });
-    }
-  }
-
-  return display;
 }
 
 const char* MergeChoiceLabel(MergeChoice choice) {

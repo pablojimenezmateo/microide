@@ -275,10 +275,6 @@ std::optional<std::string> GitRepository::ReadFileAtRevision(
   return std::move(blob->content);
 }
 
-std::optional<std::string> GitRepository::ResolveHeadId() const {
-  return gitutil::ResolveHeadId(*launcher_, root_);
-}
-
 bool GitRepository::HasHeadCommit() const {
   return ExecuteSucceeds({"rev-parse", "--verify", "HEAD"});
 }

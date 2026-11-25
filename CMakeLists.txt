@@ -423,7 +423,6 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/IgnoreMatcher.cpp
   src/project/PatchApplyTypes.cpp
   src/project/PatchGenerator.cpp
-  src/project/PatternCache.cpp
   src/platform/ProcessLauncher.cpp
   src/project/ProjectBackgroundExecutor.cpp
   src/project/ProjectChangeCoalescer.cpp
@@ -1705,7 +1704,6 @@ add_executable(microide_kernel_tests
   tests/MergeModelPropertyTests.cpp
   tests/ParseTests.cpp
   tests/RevisionTests.cpp
-  tests/PatternCacheTests.cpp
   tests/PersistedRecordIoTests.cpp
   tests/Phase3Tests.cpp
   tests/PluginThreadTests.cpp

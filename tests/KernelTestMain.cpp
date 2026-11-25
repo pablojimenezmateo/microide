@@ -67,7 +67,6 @@ void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests);
 void RegisterOpenFileWatcherTests(std::vector<TestCase>& tests);
 void RegisterFileIndexWatcherContractTests(std::vector<TestCase>& tests);
 void RegisterTerminalLifecycleStressTests(std::vector<TestCase>& tests);
-void RegisterPatternCacheTests(std::vector<TestCase>& tests);
 void RegisterEditBatchOrderTests(std::vector<TestCase>& tests);
 void RegisterTestRunnerCliTests(std::vector<TestCase>& tests);
 void RegisterRemoteFrameTests(std::vector<TestCase>& tests);
@@ -181,7 +180,6 @@ void RegisterKernelTests(std::vector<TestCase>& tests) {
   RegisterOpenFileWatcherTests(tests);
   RegisterFileIndexWatcherContractTests(tests);
   RegisterProjectChangeTests(tests);
-  RegisterPatternCacheTests(tests);
   RegisterEditBatchOrderTests(tests);
 }
 

@@ -219,7 +219,6 @@ struct ScrollSurfaceLayout {
   std::size_t max_horizontal_scroll = 0;
 };
 
-
 struct EditorGroupRects {
   SDL_FRect tab_strip{};
   SDL_FRect breadcrumb{};
@@ -378,7 +377,6 @@ SDL_FRect SidebarResizeHitRect(const WorkspaceLayout& layout);
 SDL_FRect BottomPanelResizeHitRect(const WorkspaceLayout& layout);
 SDL_FRect RightPaneResizeHitRect(const WorkspaceLayout& layout);
 SDL_FRect VerticalScrollbarHitRect(const ScrollbarGeometry& geometry);
-SDL_FRect HorizontalScrollbarHitRect(const ScrollbarGeometry& geometry);
 SDL_FRect TabCloseHitRect(const SDL_FRect& close_visual_rect, const SDL_FRect& tab_rect);
 SDL_FRect EmptyTabStripPlaceholderRect(const SDL_FRect& tab_strip);
 SDL_FRect WindowControlButtonHitRect(const SDL_FRect& button_rect);
@@ -464,9 +462,6 @@ float ScrollbarGrabOffset(const ScrollbarGeometry& geometry,
                           float pointer_coordinate,
                           bool vertical);
 
-std::vector<CompareScrollbarRun> BuildCompareScrollbarRuns(
-    const compare::ComparePresentationModel& presentation,
-    const compare::CompareModel& model);
 void BuildCompareScrollbarRunsInto(const compare::ComparePresentationModel& presentation,
                                    const compare::CompareModel& model,
                                    std::vector<CompareScrollbarRun>& runs);

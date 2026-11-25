@@ -15,24 +15,27 @@
 namespace microide::tests {
 namespace {
 
-using microide::compare::BuildMergeDisplayModel;
 using microide::compare::BuildMergeModel;
 using microide::compare::BootstrapMergeResultText;
 using microide::compare::MergeChoice;
 using microide::compare::MergeChoiceLines;
 using microide::compare::MergeModel;
-using microide::compare::MergeResultLines;
 using microide::compare::MergeResultText;
 
-void TestMergeDisplayModelSkipsZeroRowDeletionHunks() {
-  auto model = BuildMergeModel("a\nb\nc\n", "a\nc\n", "a\nc\n");
-  const auto display = BuildMergeDisplayModel(model);
-  for (const auto& hunk : display.hunks) {
-    Expect(hunk.end_row >= hunk.start_row,
-           "every display hunk must have a non-inverted row range");
-    Expect(hunk.start_row >= 0 && hunk.end_row < static_cast<int>(display.rows.size()),
-           "display hunk row range stays within the row list");
+std::vector<std::string> MergeResultLines(const MergeModel& model) {
+  const std::string text = MergeResultText(model, "\n");
+  std::vector<std::string> lines;
+  std::size_t start = 0;
+  for (std::size_t end = text.find('\n'); end != std::string::npos; end = text.find('\n', start)) {
+    lines.emplace_back(text, start, end - start);
+    start = end + 1;
   }
+  lines.emplace_back(text, start);
+  return lines;
+}
+
+void TestMergeSharedDeletionResolves() {
+  auto model = BuildMergeModel("a\nb\nc\n", "a\nc\n", "a\nc\n");
   const auto result = MergeResultLines(model);
   Expect(result.size() == 3, "both-sides deletion resolves to a\\nc\\n plus trailing empty");
   Expect(result[0] == "a" && result[1] == "c", "the shared deletion is applied");
@@ -395,8 +398,7 @@ void RegisterMergeModelTests(std::vector<TestCase>& tests) {
           TestMergeResultTextHonorsRequestedLineEnding);
   AddTest(tests, "Merge/LargeInputsUseSharedFallbackDiff",
           TestMergeLargeInputsUseSharedFallbackDiff);
-  AddTest(tests, "Merge/DisplayModelSkipsZeroRowDeletionHunks",
-          TestMergeDisplayModelSkipsZeroRowDeletionHunks);
+  AddTest(tests, "Merge/SharedDeletionResolves", TestMergeSharedDeletionResolves);
 }
 
 }

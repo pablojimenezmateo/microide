@@ -86,18 +86,6 @@ std::optional<SidebarViewInfo> FindSidebarView(std::string_view id,
   return std::nullopt;
 }
 
-std::vector<std::string> SidebarViewIds(const plugin::PluginHost& plugin_host) {
-  std::vector<std::string> ids;
-  const auto views = SidebarViews(plugin_host);
-  ids.reserve(views.size());
-  for (const SidebarViewInfo& view : views) {
-    ids.emplace_back(view.id);
-  }
-  std::sort(ids.begin(), ids.end());
-  ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
-  return ids;
-}
-
 SidebarViewRequest ParseSidebarViewRequest(const std::vector<std::string>& args,
                                           const plugin::PluginHost& plugin_host) {
   SidebarViewRequest request;

@@ -462,14 +462,6 @@ SDL_FRect VerticalScrollbarHitRect(const ScrollbarGeometry& geometry) {
                   geometry.track.w + kWorkspaceScrollbarHitInflate * 2.0f, geometry.track.h);
 }
 
-SDL_FRect HorizontalScrollbarHitRect(const ScrollbarGeometry& geometry) {
-  if (geometry.track.w <= 0.0f || geometry.track.h <= 0.0f) {
-    return geometry.track;
-  }
-  return MakeRect(geometry.track.x, geometry.track.y - kWorkspaceScrollbarHitInflate,
-                  geometry.track.w, geometry.track.h + kWorkspaceScrollbarHitInflate * 2.0f);
-}
-
 SDL_FRect TabCloseHitRect(const SDL_FRect& close_visual_rect, const SDL_FRect& tab_rect) {
   if (close_visual_rect.w <= 0.0f || close_visual_rect.h <= 0.0f) {
     return close_visual_rect;
@@ -979,14 +971,6 @@ float ScrollUnitsForPointer(const ScrollbarGeometry& geometry,
   const float thumb_start = std::clamp(pointer_coordinate - grab_offset, track_start,
                                        track_start + travel);
   return ((thumb_start - track_start) / travel) * max_scroll;
-}
-
-std::vector<CompareScrollbarRun> BuildCompareScrollbarRuns(
-    const compare::ComparePresentationModel& presentation,
-    const compare::CompareModel& model) {
-  std::vector<CompareScrollbarRun> runs;
-  BuildCompareScrollbarRunsInto(presentation, model, runs);
-  return runs;
 }
 
 void BuildCompareScrollbarRunsInto(const compare::ComparePresentationModel& presentation,

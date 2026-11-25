@@ -52,7 +52,6 @@ void TestToolDownloaderWithoutUserCacheDirectoryRefuses() {
   Expect(!downloader.Download("tool", source.string(), "").has_value(),
          "a downloader with no cache directory must refuse to cache");
   Expect(!downloader.IsCached("tool"), "a downloader with no cache directory caches nothing");
-  downloader.ClearCache();
   Expect(!std::filesystem::exists(std::filesystem::current_path() / "~"),
          "no cache tree may appear under the working directory");
 }

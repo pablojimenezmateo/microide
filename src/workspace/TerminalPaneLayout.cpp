@@ -68,10 +68,6 @@ bool ResizeTerminalPaneDivider(TerminalPaneWeights& weights,
   return true;
 }
 
-bool ResetTerminalPaneDivider(TerminalPaneWeights& weights, std::size_t boundary) {
-  return ResizeTerminalPaneDivider(weights, boundary, 0.5f);
-}
-
 TerminalPaneRectsLayout ComputeTerminalPaneRects(const SDL_FRect& body,
                                                  std::span<const float> weights) {
   TerminalPaneRectsLayout layout;

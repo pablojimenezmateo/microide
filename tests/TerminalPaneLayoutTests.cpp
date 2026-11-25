@@ -17,7 +17,6 @@ using microide::workspace::kMaxTerminalPanes;
 using microide::workspace::kTerminalPaneDividerThickness;
 using microide::workspace::kTerminalPaneMinShare;
 using microide::workspace::RemoveTerminalPaneWeight;
-using microide::workspace::ResetTerminalPaneDivider;
 using microide::workspace::ResizeTerminalPaneDivider;
 using microide::workspace::TerminalPaneIndexAt;
 using microide::workspace::TerminalPaneRectsLayout;
@@ -132,9 +131,6 @@ void TestTerminalPaneDividerResizeMovesOnlyThePair() {
          "a pane cannot be dragged below its minimum share");
   Expect(!ResizeTerminalPaneDivider(weights, 2, 0.5f), "there is no divider after the last pane");
   Expect(!ResizeTerminalPaneDivider(weights, 0, std::nanf("")), "NaN is refused");
-
-  Expect(ResetTerminalPaneDivider(weights, 0), "reset answers like a resize");
-  Expect(std::abs(weights[0] - weights[1]) < 1e-5f, "reset evens the pair");
 }
 
 void TestTerminalPaneRectsTileTheBodyForEveryWeightMix() {

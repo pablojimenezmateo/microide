@@ -161,12 +161,4 @@ std::optional<std::filesystem::path> ToolDownloader::GetCachedTool(
   return cached;
 }
 
-void ToolDownloader::ClearCache() {
-  if (cache_dir_.empty()) {
-    return;
-  }
-  std::error_code ec;
-  std::filesystem::remove_all(cache_dir_, ec);
-}
-
 }

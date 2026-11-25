@@ -64,7 +64,6 @@ using microide::workspace::QuoteCommandArg;
 using microide::util::RelativePathWithin;
 using microide::util::ReplacePathPrefix;
 using microide::workspace::RelativePathLabel;
-using microide::workspace::SidebarViewIds;
 using microide::workspace::SidebarViewRequest;
 using microide::workspace::SidebarViewSpec;
 using microide::workspace::SidebarViews;
@@ -607,12 +606,6 @@ void TestWorkspaceSidebarRegistry() {
              views[4].id == "tests" && views[5].id == "outline" && views[6].id == "host-changes" &&
              views[7].id == "host" && views[8].id == "conflicts",
          "sidebar registry should preserve built-in view declaration ordering");
-
-  const auto view_ids = SidebarViewIds(plugin_host);
-  Expect(view_ids.size() == 9 && view_ids[0] == "conflicts" && view_ids[1] == "git" && view_ids[2] == "host" &&
-             view_ids[3] == "host-changes" && view_ids[4] == "outline" && view_ids[5] == "problems" &&
-             view_ids[6] == "search" && view_ids[7] == "tests" && view_ids[8] == "tree",
-         "sidebar registry should preserve built-in view completion ids");
 
   const SidebarViewRequest search_request =
       ParseSidebarViewRequest({"search", "lint", "errors"}, plugin_host);

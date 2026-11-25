@@ -12,7 +12,6 @@ namespace microide::tests {
 namespace {
 
 using microide::compare::MergeChoice;
-using microide::compare::MergeDisplayModel;
 using microide::compare::MergeHunk;
 using microide::compare::MergeModel;
 
@@ -192,48 +191,6 @@ void TestMergeBothChoicesConcatenateInTheNamedOrder() {
   }
 }
 
-void TestMergeDisplayRowsAreOrderedAndPointAtRealHunks() {
-  for (std::uint64_t seed = 1; seed <= 300; ++seed) {
-    Rng rng(seed ^ 0xD15Aull);
-    const std::vector<std::string> base_lines = BuildLines(rng, 2 + rng.Below(12));
-    const MergeModel model = compare::BuildMergeModel(Join(base_lines),
-                                                      Join(BranchOf(rng, base_lines)),
-                                                      Join(BranchOf(rng, base_lines)));
-    const MergeDisplayModel display = compare::BuildMergeDisplayModel(model);
-    int previous_incoming = 0;
-    int previous_result = 0;
-    int previous_current = 0;
-    for (const auto& row : display.rows) {
-      if (row.incoming_line != 0) {
-        Expect(row.incoming_line > previous_incoming,
-               "incoming line numbers must increase down the rows" + Seed(seed));
-        previous_incoming = row.incoming_line;
-      }
-      if (row.result_line != 0) {
-        Expect(row.result_line > previous_result,
-               "result line numbers must increase down the rows" + Seed(seed));
-        previous_result = row.result_line;
-      }
-      if (row.current_line != 0) {
-        Expect(row.current_line > previous_current,
-               "current line numbers must increase down the rows" + Seed(seed));
-        previous_current = row.current_line;
-      }
-      Expect(row.hunk < static_cast<int>(model.hunks.size()),
-             "a display row must not name a hunk the model does not have" + Seed(seed));
-    }
-    int previous_end = -1;
-    for (std::size_t i = 0; i < display.hunks.size(); ++i) {
-      const auto& hunk = display.hunks[i];
-      Expect(hunk.start_row <= hunk.end_row && hunk.start_row > previous_end,
-             "display hunks must be sorted, disjoint and non-empty" + Seed(seed));
-      Expect(hunk.end_row < static_cast<int>(display.rows.size()),
-             "a display hunk must stay inside the row vector" + Seed(seed));
-      previous_end = hunk.end_row;
-    }
-  }
-}
-
 void TestIdenticalSidesProduceNoHunks() {
   for (std::uint64_t seed = 1; seed <= 150; ++seed) {
     Rng rng(seed ^ 0x1DE0ull);
@@ -254,8 +211,6 @@ void RegisterMergeModelPropertyTests(std::vector<TestCase>& tests) {
           TestMergeChoiceViewsCountAndLinesAgree);
   AddTest(tests, "MergeModelProperty/BothChoicesConcatenateInTheNamedOrder",
           TestMergeBothChoicesConcatenateInTheNamedOrder);
-  AddTest(tests, "MergeModelProperty/DisplayRowsAreOrderedAndPointAtRealHunks",
-          TestMergeDisplayRowsAreOrderedAndPointAtRealHunks);
   AddTest(tests, "MergeModelProperty/IdenticalSidesProduceNoHunks",
           TestIdenticalSidesProduceNoHunks);
 }

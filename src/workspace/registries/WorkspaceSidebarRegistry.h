@@ -47,7 +47,6 @@ inline SidebarMode SidebarModeForViewId(std::string_view view_id,
   const auto view = FindSidebarView(view_id, plugin_host);
   return view.has_value() ? view->mode : SidebarMode::None;
 }
-std::vector<std::string> SidebarViewIds(const plugin::PluginHost& plugin_host);
 SidebarViewRequest ParseSidebarViewRequest(const std::vector<std::string>& args,
                                           const plugin::PluginHost& plugin_host);
 

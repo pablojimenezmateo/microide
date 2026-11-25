@@ -27,8 +27,6 @@ bool ResizeTerminalPaneDivider(TerminalPaneWeights& weights,
                                std::size_t boundary,
                                float first_share);
 
-bool ResetTerminalPaneDivider(TerminalPaneWeights& weights, std::size_t boundary);
-
 struct TerminalPaneDividerRect {
   SDL_FRect rect{};
   std::size_t boundary = 0;

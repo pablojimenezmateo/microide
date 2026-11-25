@@ -78,7 +78,6 @@ class GitRepository {
                                                    std::string_view revision = "HEAD") const;
   std::optional<std::string> ReadFileAtRevision(const std::filesystem::path& relative_path,
                                                 std::string_view revision = "HEAD") const;
-  std::optional<std::string> ResolveHeadId() const;
   bool HasHeadCommit() const;
   bool FileIsTracked(const std::filesystem::path& relative_path) const;
   bool FileIsWorkingTreeClean(const std::filesystem::path& relative_path) const;

@@ -380,9 +380,6 @@ void TestWriteSideRunsThroughTheLauncherItIsGiven() {
   ran("StagedDiffContainsConflictMarkers", [&](const ScriptedProcessLauncher& l) {
     (void)project::StagedDiffContainsConflictMarkers(root, l);
   });
-  ran("GitRepository::ResolveHeadId", [&](const ScriptedProcessLauncher& l) {
-    (void)project::GitRepository(root, l).ResolveHeadId();
-  });
 }
 
 void TestBlameRunsThroughTheRequestsLauncher() {
