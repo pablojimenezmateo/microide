@@ -520,6 +520,10 @@ void DiffTabCoordinator::ApplyCompareTabLoad(const std::uint64_t id, const bool 
         compare.right_viewport.SetReadOnly(false);
       }
       if (!read_ok || !result.left_ok || !result.right_ok) {
+        if (!right_held) {
+          compare.right_editable = false;
+          compare.right_view_active = false;
+        }
         if (operations_.report_compare_load_failure) {
           const std::string name = compare.path.filename().string();
           std::string message;
