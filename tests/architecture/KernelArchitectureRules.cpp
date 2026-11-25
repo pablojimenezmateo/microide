@@ -1,4 +1,5 @@
 #include "architecture/KernelArchitectureRules.h"
+#include "architecture/CommentArchitectureRules.h"
 #include "architecture/InputGeometryArchitectureRules.h"
 
 #include "architecture/LanguageHazardArchitectureRules.h"
@@ -668,6 +669,7 @@ const std::vector<NamedRule>& KernelArchitectureRuleList() {
       {"CheckWaitFailureMessagesAreLazy", CheckWaitFailureMessagesAreLazy},
       {"CheckEditorMetricsNameTheirStickyBand", CheckEditorMetricsNameTheirStickyBand},
       {"CheckTabSurfacesLayOutInTheFocusedPane", CheckTabSurfacesLayOutInTheFocusedPane},
+      {"CheckNoCommentsInSources", CheckNoCommentsInSources},
   };
   return rules;
 }

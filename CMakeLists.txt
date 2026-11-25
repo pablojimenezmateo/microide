@@ -1439,6 +1439,7 @@ add_executable(microide_tests
   tests/architecture/TerminalArchitectureRules.cpp
   tests/architecture/LanguageHazardArchitectureRules.cpp
   tests/architecture/InputGeometryArchitectureRules.cpp
+  tests/architecture/CommentArchitectureRules.cpp
   tests/BackgroundTaskCounterTests.cpp
   tests/FileWriteGateTests.cpp
   tests/SaveFormatterPipelineTests.cpp
@@ -1579,6 +1580,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     tests/architecture/TerminalArchitectureRules.cpp
     tests/architecture/LanguageHazardArchitectureRules.cpp
     tests/architecture/InputGeometryArchitectureRules.cpp
+    tests/architecture/CommentArchitectureRules.cpp
   )
   set_source_files_properties(${MICROIDE_REGEX_HEAVY_TEST_SOURCES} PROPERTIES
     COMPILE_OPTIONS "-O2"

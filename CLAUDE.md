@@ -67,7 +67,7 @@ roadmap entry describes intended rather than shipped state.
 - Keep deterministic logic out of SDL event glue and paint code when possible. Thin orchestration layers are easier to test and safer to refactor.
 - Avoid hidden coupling through mutable global state, shared singleton-style services, or broad friend access.
 - Treat performance-sensitive work as measurable engineering. Use `dev-docs/performance/startup-tracing.md` and `dev-docs/performance/runtime-profiling.md` instead of guessing.
-- Do not write comments in source code. Make the code say it through names, types and small functions; put the why in the commit message or `dev-docs/`. The only comments allowed are tool directives: `NOLINT`, `IWYU pragma`, and the perf harness's `perf-measure-builds-input:` / `perf-measure-waits-on-clock:` exemptions.
+- Do not write comments in source code. Make the code say it through names, types and small functions; put the why in the commit message or `dev-docs/`. The only comments allowed are tool directives: `NOLINT`, `IWYU pragma`, and the perf harness's `perf-measure-builds-input:` / `perf-measure-waits-on-clock:` exemptions. `CheckNoCommentsInSources` (generated tables and `tests/fixtures` data are exempt).
 
 ## Development Workflow
 
