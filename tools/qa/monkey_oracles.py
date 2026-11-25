@@ -39,6 +39,9 @@ CRASH_SAFETY_QUIET_S = 3.5
 # `persistence` query) before the kill oracle calls the flush missing. Generous:
 # under a loaded soak the wake, the encode and the fsync all queue behind others.
 CRASH_SAFETY_STAGED_LIMIT_S = 20.0
+# How long a trigger is given to reach its boundary: the flush's quiet and then
+# some (how much more no test can tell).
+POINT_KILL_WAIT_S = CRASH_SAFETY_QUIET_S + 8.0  # pragma: no mutate
 
 
 def _forget_files_of(disk_before: dict[str, str | None], paths: set[str]) -> None:
@@ -73,6 +76,12 @@ def _writes_logged(log: str) -> dict[str, str]:
     """The files the app logged saving in `log`, each with the sha256 prefix of
     what it wrote (the last write of a path wins)."""
     return {match.group(1): match.group(2) for match in _WRITE_LOGGED.finditer(log)}
+
+
+def _rule_site(rule: str) -> str:
+    """The crash site a crash-points rule (`[action:]site[@file][#nth]`) names."""
+    after_action = rule.partition(":")[2] if ":" in rule else rule
+    return after_action.partition("@")[0].partition("#")[0]
 
 
 def _past(deadline: float) -> bool:
@@ -411,8 +420,8 @@ class DataOracle:
                 app.send_line(f"open {q.quote_arg(str(fresh))}", record=False)
             elif trigger == "project":
                 app.send_line("project-next", record=False)
-            limit = time.monotonic() + (CRASH_SAFETY_QUIET_S + 8.0) * q.SLOW_FACTOR
-            while app.alive() and not app.dying() and time.monotonic() < limit:
+            limit = time.monotonic() + POINT_KILL_WAIT_S * q.SLOW_FACTOR
+            while app.alive() and not app.dying() and not _past(limit):
                 # Nothing owed to disk and nothing in flight: the trigger passed
                 # no such boundary (no editor took the edit, the flush wrote
                 # another record), and no later moment will.
@@ -424,7 +433,7 @@ class DataOracle:
         if app.dying():
             app.wait_gone(60.0)
         died = not app.alive()
-        site = rule.split(":", 1)[-1].split("@", 1)[0].split("#", 1)[0]
+        site = _rule_site(rule)
         self.point_outcomes[f"hit:{site}" if died else "missed"] += 1
         if not died:
             with contextlib.suppress(q.QaFailure):

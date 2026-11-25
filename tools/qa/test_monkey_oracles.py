@@ -1670,26 +1670,30 @@ class CrashPointTests(unittest.TestCase):
         app.query.side_effect = RuntimeError("busy")
         self.assertEqual(oracle._trigger_for("main.cpp"), "edit")
 
-    def dying_app(self, trigger_kills=True, buffer=None):
+    def dying_app(self, trigger_kills=True, buffer=None, staged_after=None):
         oracle, app = self.oracle({})
-        state = {"alive": True}
+        state = {"alive": True, "polls": 0}
         sent = []
         armed = []
+        self.polls = state
 
         def query(verb, args=None):
             if verb == "crash-points":
                 armed.append(args)
                 return {}
             if verb == "documents":
+                self.assertEqual(args, {"all": True})
                 return [{"path": "/p/a.txt", "dirty": True, "sha256": "edited", "project": "/p"}]
             if verb == "buffer":
                 return buffer or {}
             if verb == "persistence":
-                return {"staged": False}
+                state["polls"] += 1
+                return {"staged": staged_after is not None and state["polls"] >= staged_after}
             return {}
         app.query.side_effect = query
 
         def send_line(line, record=True):
+            self.assertIs(record, False, line)
             sent.append(line)
             if trigger_kills and line != "insert-line-below":
                 state["alive"] = False
@@ -3251,6 +3255,166 @@ class MemoryReportTests(unittest.TestCase):
         self.assertTrue(report.startswith("Rss:"), report[:40])
         self.assertIn("python", report)
         self.assertEqual(monkey_oracles.ResourceOracle._memory(2 ** 22 + 12345), "largest resident mappings (kB):\n")
+
+
+class InvariantEvidenceTests(InvariantOracleTests):
+    VIOLATION = {"violations": [{"rule": "r", "detail": "d"}]}
+
+    def test_checks_are_counted_and_the_state_queries_asked_as_they_should_be(self):
+        app, asked = self.app({"invariants": {"violations": []}})
+        oracle = monkey_oracles.InvariantOracle(app)
+        oracle.check()
+        oracle.check(deep=True)
+        self.assertEqual(oracle.checks, 2)
+        self.assertEqual(asked, [("invariants", {"deep": False}), ("invariants", {"deep": True})])
+        app, asked = self.app({"invariants": self.VIOLATION, "tabs": [1], "documents": [2], "editor": {"e": 3}})
+        oracle = monkey_oracles.InvariantOracle(app)
+        oracle.check()
+        self.assertEqual(asked[1:], [("tabs", None), ("documents", {"all": True}), ("editor", None)])
+        self.assertEqual(oracle.evidence["invariants.json"], json.dumps(self.VIOLATION, indent=1).encode())
+        self.assertEqual(oracle.evidence["tabs.json"], b"[\n 1\n]")
+        self.assertEqual(oracle.evidence["documents.json"], b"[\n 2\n]")
+        self.assertEqual(oracle.evidence["editor.json"], b'{\n "e": 3\n}')
+
+    def test_a_state_query_that_fails_leaves_the_others(self):
+        app, _ = self.app({"invariants": self.VIOLATION, "tabs": RuntimeError("busy"), "documents": [2],
+                           "editor": {}})
+        oracle = monkey_oracles.InvariantOracle(app)
+        self.assertEqual(len(oracle.check()), 1)
+        self.assertNotIn("tabs.json", oracle.evidence)
+        self.assertIn("documents.json", oracle.evidence)
+
+    def test_the_caret_reports_are_read_from_the_whole_log_with_the_binary(self):
+        app, _ = self.app({"invariants": self.VIOLATION, "tabs": [], "documents": [], "editor": {}})
+        app.log_since.return_value = "the log"
+        app.binary = Path("/bin/microide")
+        oracle = monkey_oracles.InvariantOracle(app)
+        with mock.patch.object(monkey_oracles, "caret_bounds_reports", return_value="caret report\n") as reports:
+            oracle.check()
+        app.log_since.assert_called_once_with(0, 8 * 1024 * 1024)
+        reports.assert_called_once_with("the log", Path("/bin/microide"))
+        self.assertEqual(oracle.evidence["caret-bounds.txt"], b"caret report\n")
+        app.log_since.side_effect = RuntimeError("gone")
+        oracle.reported.clear()
+        oracle.check()
+        self.assertNotIn("caret-bounds.txt", oracle.evidence)
+        app.log_since.side_effect = None
+        del app.binary
+        oracle.reported.clear()
+        with mock.patch.object(monkey_oracles, "caret_bounds_reports", return_value="") as reports:
+            oracle.check()
+        self.assertIsNone(reports.call_args.args[1])
+        self.assertNotIn("caret-bounds.txt", oracle.evidence)
+
+
+class KillAtDetailTests(CrashPointTests):
+    def kill(self, oracle, point, slow=0.001):
+        with mock.patch.object(monkey_oracles, "CRASH_SAFETY_QUIET_S", 0.0), \
+                mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", slow), \
+                mock.patch.object(monkey_oracles.time, "sleep", lambda _s: None):
+            return oracle._kill_at(point)
+
+    def test_the_save_needs_a_dirty_editor_with_a_path(self):
+        for buffer in ({"kind": "compare", "path": "/x/a.txt", "dirty": True},
+                       {"kind": "editor", "path": "", "dirty": True},
+                       {"kind": "editor", "path": "/x/a.txt", "dirty": False}):
+            oracle, app, sent, _ = self.dying_app(trigger_kills=False, buffer=buffer)
+            _, _, saved = self.kill(oracle, "kill:durable.renaming@a.txt#1|save")
+            self.assertIsNone(saved, buffer)
+            self.assertNotIn("save", sent, buffer)
+
+    def test_the_file_a_save_will_write_is_read_before_it(self):
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(directory, ignore_errors=True))
+        (directory / "a.txt").write_bytes(b"on disk\n")
+        oracle, _, _, _ = self.dying_app(buffer={"kind": "editor", "path": str(directory / "a.txt"), "dirty": True})
+        self.kill(oracle, "kill:durable.renaming@a.txt#1|save")
+        self.assertEqual(oracle.saved_file_before, hashlib.sha256(b"on disk\n").hexdigest())
+        oracle_two, _, _, _ = self.dying_app()
+        oracle_two.saved_file_before = "from an earlier kill"
+        self.kill(oracle_two, "kill:durable.writing@session#1|edit")
+        self.assertIsNone(oracle_two.saved_file_before, "each kill starts with no saved file")
+
+    def test_an_edit_trigger_opens_nothing_and_open_triggers_count_up(self):
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(directory, ignore_errors=True))
+        oracle, app, sent, _ = self.dying_app(trigger_kills=False)
+        app.project = directory
+        self.kill(oracle, "kill:durable.writing@session#1|edit")
+        self.assertEqual(sent, ["insert-line-below"])
+        self.kill(oracle, "kill:durable.renaming@recents#1|open")
+        self.kill(oracle, "kill:durable.renaming@recents#1|open")
+        self.assertEqual((directory / "qa-point-2.txt").read_text(), "2\n")
+        self.assertTrue(sent[-1].endswith("qa-point-2.txt") or "qa-point-2.txt" in sent[-1], sent)
+        oracle, app, sent, _ = self.dying_app(trigger_kills=False)
+        app.project = None
+        self.kill(oracle, "kill:durable.renaming@recents#1|open")
+        self.assertEqual(sent, ["insert-line-below"], "with no project there is nowhere to make the file")
+
+    def test_an_open_trigger_in_a_project_it_cannot_write_still_opens(self):
+        oracle, app, sent, _ = self.dying_app(trigger_kills=False)
+        app.project = Path("/proc")
+        self.kill(oracle, "kill:durable.renaming@recents#1|open")
+        self.assertTrue(sent[1].startswith("open "), sent)
+
+    def test_a_trigger_that_fails_mid_request_is_the_death_asked_for(self):
+        oracle, app, _, _ = self.dying_app()
+        app.send_line.side_effect = monkey_oracles.q.QaFailure("the app died under the request")
+        app.alive.side_effect = lambda: False
+        self.assertEqual(self.kill(oracle, "kill:durable.writing@session#1|edit"), (True, [], None))
+
+    def test_the_wait_polls_until_staged_and_a_dying_app_is_waited_for(self):
+        oracle, app, _, _ = self.dying_app(trigger_kills=False, staged_after=3)
+        died, _, _ = self.kill(oracle, "kill:durable.writing@session#1|edit", slow=1.0)
+        self.assertFalse(died)
+        self.assertEqual(self.polls["polls"], 3)
+        oracle, app, _, _ = self.dying_app(trigger_kills=False)
+        app.dying.return_value = True
+        self.kill(oracle, "kill:durable.writing@session#1|edit", slow=1.0)
+        self.assertEqual(self.polls["polls"], 0, "a dying app is not polled")
+        app.wait_gone.assert_called_once_with(60.0)
+
+    def test_the_rule_ends_at_the_first_bar(self):
+        oracle, app, sent, armed = self.dying_app(trigger_kills=False)
+        self.kill(oracle, "kill:durable.writing@a|b#1|edit")
+        self.assertEqual(armed[0], {"arm": "kill:durable.writing@a"})
+
+
+class KillAtOutcomeTests(KillAtDetailTests):
+    def test_the_site_a_rule_names(self):
+        site = monkey_oracles._rule_site
+        self.assertEqual(site("kill:durable.writing@session (staging)#1"), "durable.writing")
+        self.assertEqual(site("kill:durable.renaming#2"), "durable.renaming")
+        self.assertEqual(site("delay=5000:durable.fsyncing@a:b.txt"), "durable.fsyncing")
+        self.assertEqual(site("fail=ENOSPC:tree-op.moved@a@b"), "tree-op.moved")
+        self.assertEqual(site("kill:s#1#2"), "s")
+        self.assertEqual(site("durable.written@x"), "durable.written")
+
+    def test_outcomes_count_hits_by_site_and_misses(self):
+        oracle, app, _, _ = self.dying_app(trigger_kills=False)
+        slept = []
+        with mock.patch.object(monkey_oracles, "CRASH_SAFETY_QUIET_S", 0.0), \
+                mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 0.0001), \
+                mock.patch.object(monkey_oracles.time, "sleep", slept.append):
+            oracle._kill_at("kill:durable.writing@session#1|edit")
+            oracle._kill_at("kill:durable.writing@session#1|edit")
+        self.assertEqual(dict(oracle.point_outcomes), {"missed": 2})
+        self.assertTrue(slept and all(s == 0.05 for s in slept), slept)
+        oracle, _, _, _ = self.dying_app()
+        self.kill(oracle, "kill:durable.renaming@a.txt#1|project")
+        self.kill(oracle, "kill:durable.renaming@a.txt#1|project")
+        self.assertEqual(dict(oracle.point_outcomes), {"hit:durable.renaming": 2})
+
+    def test_a_disarm_the_app_refuses_is_not_an_error(self):
+        oracle, app, _, _ = self.dying_app(trigger_kills=False)
+        query = app.query.side_effect
+
+        def refusing(verb, args=None):
+            if verb == "crash-points" and args == {"disarm": True}:
+                raise monkey_oracles.q.QaFailure("gone")
+            return query(verb, args)
+        app.query.side_effect = refusing
+        self.assertEqual(self.kill(oracle, "kill:x@y#1|edit")[0], False)
 
 if __name__ == "__main__":
     unittest.main()
