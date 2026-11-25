@@ -56,6 +56,7 @@ class PromptSurfaceService {
   void OpenConfirmCommandPrompt(std::string command_line, std::string question);
 
  private:
+  void ShowDirtyPrompt(DirtyPromptState prompt);
   std::uint64_t EnsureFocusedTabStableId(std::size_t index);
   std::vector<std::uint64_t> StableIdsForFocusedTabs(const std::vector<std::size_t>& indices);
 

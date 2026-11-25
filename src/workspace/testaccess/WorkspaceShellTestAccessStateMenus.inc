@@ -1092,17 +1092,9 @@
   }
   static bool BreakpointEnabledForTest(const WorkspaceShell& shell,
                                        const std::filesystem::path& path, std::size_t line) {
-    const auto* file =
-        shell.context_.current_project_state.breakpoint_store.FindByPath(path);
-    if (file == nullptr) {
-      return false;
-    }
-    for (const editor::Breakpoint& breakpoint : *file) {
-      if (breakpoint.line == line) {
-        return breakpoint.enabled;
-      }
-    }
-    return false;
+    const editor::Breakpoint* breakpoint =
+        shell.context_.current_project_state.breakpoint_store.FindAt(path, line);
+    return breakpoint != nullptr && breakpoint->enabled;
   }
   static DebugExecutionView& DebugExecution(WorkspaceShell& shell) {
     return shell.context_.current_project_state.debug_execution;

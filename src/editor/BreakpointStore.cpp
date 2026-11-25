@@ -190,12 +190,18 @@ void BreakpointStore::Clear() {
 }
 
 bool BreakpointStore::HasBreakpoint(const std::filesystem::path& path, std::size_t line) const {
+  return FindAt(path, line) != nullptr;
+}
+
+const Breakpoint* BreakpointStore::FindAt(const std::filesystem::path& path,
+                                          std::size_t line) const {
   const auto it = by_path_.find(PathKey(path));
   if (it == by_path_.end()) {
-    return false;
+    return nullptr;
   }
   const auto& breakpoints = it->second.breakpoints;
-  return FindLine(breakpoints, line) != breakpoints.end();
+  const auto found = FindLine(breakpoints, line);
+  return found == breakpoints.end() ? nullptr : &*found;
 }
 
 const std::vector<Breakpoint>* BreakpointStore::FindByPath(

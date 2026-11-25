@@ -497,6 +497,19 @@ std::string TerminalLabelPrefix(const ProjectWorkspaceState& state, const Termin
   return std::string(host) + " \xc2\xb7 ";
 }
 
+std::string TerminalTabLabel(const ProjectWorkspaceState& state, const TerminalPaneState& pane,
+                             bool mixed) {
+  std::string label = pane.session.LaunchLabel();
+  if (label.empty()) {
+    label = "Terminal";
+  }
+  label.insert(0, TerminalLabelPrefix(state, pane, mixed));
+  if (pane.session.host_link_down()) {
+    label += kDetachedSuffix;
+  }
+  return label;
+}
+
 }
 
 std::string TerminalPaneLabelPrefix(const ProjectWorkspaceState& state, const TerminalPaneState& pane) {
@@ -567,15 +580,8 @@ const std::vector<BottomPanelTabModel>& TabStripService::BuildBottomPanelTabs(
       continue;
     }
 
-    std::string label = pane->session.LaunchLabel();
-    if (label.empty()) {
-      label = "Terminal";
-    }
-    label.insert(0, TerminalLabelPrefix(state, *pane, mixed));
+    std::string label = TerminalTabLabel(state, *pane, mixed);
     const bool detached = pane->session.host_link_down();
-    if (detached) {
-      label += kDetachedSuffix;
-    }
     tabs.push_back(BottomPanelTabModel{
         .kind = BottomPanelTabKind::Terminal,
         .terminal_index = i,
@@ -780,17 +786,10 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleTerminalTabs(
       continue;
     }
 
-    std::string label = pane->session.LaunchLabel();
-    if (label.empty()) {
-      label = "Terminal";
-    }
-    label.insert(0, TerminalLabelPrefix(state, *pane, mixed));
-    if (pane->session.host_link_down()) {
-      label += kDetachedSuffix;
-    }
+    std::string label = TerminalTabLabel(state, *pane, mixed);
     terminal_indices.push_back(i);
     display_titles.push_back(label);
-    tooltip_labels.push_back(label);
+    tooltip_labels.push_back(std::move(label));
     widths.push_back(std::clamp(measure_width(display_titles.back()) + 38.0f, 84.0f, 220.0f));
   }
 

@@ -63,6 +63,7 @@ class BreakpointStore {
   void Clear();
 
   bool HasBreakpoint(const std::filesystem::path& path, std::size_t line) const;
+  const Breakpoint* FindAt(const std::filesystem::path& path, std::size_t line) const;
   const std::vector<Breakpoint>* FindByPath(const std::filesystem::path& path) const;
   const std::vector<Breakpoint>* FindByPathKey(std::string_view path_key) const;
 

@@ -611,17 +611,8 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
 
 void WorkspaceShell::OpenBreakpointContextMenu(const std::filesystem::path& path, std::size_t line,
                                                const SDL_FRect& anchor_rect) {
-  const editor::Breakpoint* existing = nullptr;
-  if (const std::vector<editor::Breakpoint>* bps =
-          context_.current_project_state.breakpoint_store.FindByPath(path);
-      bps != nullptr) {
-    for (const editor::Breakpoint& bp : *bps) {
-      if (bp.line == line) {
-        existing = &bp;
-        break;
-      }
-    }
-  }
+  const editor::Breakpoint* existing =
+      context_.current_project_state.breakpoint_store.FindAt(path, line);
   if (existing == nullptr) {
     return;
   }
@@ -636,17 +627,8 @@ void WorkspaceShell::EditBreakpointModifierFromMenu(ActionId id) {
   if (path.empty()) {
     return;
   }
-  const editor::Breakpoint* existing = nullptr;
-  if (const std::vector<editor::Breakpoint>* bps =
-          context_.current_project_state.breakpoint_store.FindByPath(path);
-      bps != nullptr) {
-    for (const editor::Breakpoint& bp : *bps) {
-      if (bp.line == line) {
-        existing = &bp;
-        break;
-      }
-    }
-  }
+  const editor::Breakpoint* existing =
+      context_.current_project_state.breakpoint_store.FindAt(path, line);
   PromptSurfaceState::Action action = PromptSurfaceState::Action::SetBreakpointCondition;
   std::optional<std::string> current;
   switch (id) {
