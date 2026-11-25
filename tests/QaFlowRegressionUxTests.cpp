@@ -7,6 +7,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "WorkspaceShellEventHelpers.h"
 #include "support/GitSidebarWait.h"
@@ -788,6 +789,75 @@ void TestEveryClickableElementTheUiNamesIsAHoverTarget() {
   sweep("the file finder open");
 }
 
+void TestAClickAnywhereBehindAModalMovesNoFocus() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "notes.txt", "base\n");
+  WriteFile(root / "other.txt", "other\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  WriteFile(root / "notes.txt", "changed\n");
+  constexpr int kWidth = 1440;
+  constexpr int kHeight = 900;
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+  TestAccess::SetWindowSize(shell, kWidth, kHeight);
+  TestAccess::OpenFile(shell, root / "other.txt");
+  TestAccess::OpenFile(shell, root / "notes.txt");
+  TestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1), "the git view lists the change");
+  TestAccess::ActiveEditor(shell).InsertText("unsaved ");
+  SoftwareCanvas canvas(kWidth, kHeight);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  struct Target {
+    std::string name;
+    float x = 0.0f;
+    float y = 0.0f;
+  };
+  std::vector<Target> targets;
+  {
+    const util::JsonValue ui = TestAccess::ControlUi(shell);
+    for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+      const auto& r = entry["rect"].AsArray();
+      targets.push_back(Target{entry["name"].AsString(),
+                               static_cast<float>(r[0].AsInt()) + static_cast<float>(r[2].AsInt()) / 2.0f,
+                               static_cast<float>(r[1].AsInt()) + static_cast<float>(r[3].AsInt()) / 2.0f});
+    }
+  }
+  TestAccess::ShowDirtyPromptForQuit(shell);
+  Expect(TestAccess::DirtyPromptVisible(shell), "the unsaved-changes prompt is up");
+  const SDL_FRect dialog = workspace::ComputeDirtyPromptRect(TestAccess::CurrentLayout(shell).full);
+  const auto focus = TestAccess::CurrentProjectState(shell).surface.focus;
+  const std::size_t active_tab = TestAccess::CurrentProjectState(shell).focused_group().active_tab_index;
+  std::size_t clicked = 0;
+  std::string moved;
+  for (const Target& target : targets) {
+    if (target.x >= dialog.x && target.x <= dialog.x + dialog.w && target.y >= dialog.y &&
+        target.y <= dialog.y + dialog.h) {
+      continue;
+    }
+    ++clicked;
+    (void)DispatchEvents(shell, {MouseMotionEvent(target.x, target.y),
+                                 MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, target.x, target.y),
+                                 MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, target.x, target.y)});
+    const auto& state = TestAccess::CurrentProjectState(shell);
+    if (!TestAccess::DirtyPromptVisible(shell) || state.surface.focus != focus ||
+        state.focused_group().active_tab_index != active_tab) {
+      moved += " " + target.name;
+      if (!TestAccess::DirtyPromptVisible(shell)) {
+        TestAccess::ShowDirtyPromptForQuit(shell);
+      }
+    }
+  }
+  Expect(clicked > 20, "the sweep clicked the window's elements: " + std::to_string(clicked));
+  Expect(moved.empty(), "a click behind the prompt leaves the prompt, the focus and the active tab; not:" + moved);
+}
+
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/ALineNumberPressSelectsWholeLines", TestALineNumberPressSelectsWholeLines);
   AddTest(tests, "QaFlowRegressionUx/TheQuickOpenCaretSitsInItsField", TestTheQuickOpenCaretSitsInItsField);
@@ -823,6 +893,7 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
           TestAnEditorsViewSurvivesCloseReopenAndRestart);
   AddTest(tests, "QaFlowRegressionUx/EveryClickableElementTheUiNamesIsAHoverTarget",
           TestEveryClickableElementTheUiNamesIsAHoverTarget);
+  AddTest(tests, "QaFlowRegressionUx/AClickAnywhereBehindAModalMovesNoFocus", TestAClickAnywhereBehindAModalMovesNoFocus);
   AddTest(tests, "QaFlowRegressionUx/TheWindowTitleNamesTheActiveFileAndItsState",
           TestTheWindowTitleNamesTheActiveFileAndItsState);
 }

@@ -397,7 +397,7 @@ session fixed, each with a failing-first test:
 
 What it left, by workstream:
 
-1. **W9 rules 2 and 3.** `CheckHitTestsHonourModals` needs the hit-test call graph
+1. **W9 rules 2 and 3: DONE 2026-11-25 as sweeps.** `CheckHitTestsHonourModals` needs the hit-test call graph
    (which entry points move focus, in what order relative to the modal checks), and
    `CheckPointerOverElementsAreHoverTargets` cannot tie `PointerOver(rect)` to the
    hover catch-all by name (16 of the 35 sites pass a variable called `rect`). Both
@@ -410,8 +410,12 @@ What it left, by workstream:
    pointer onto every enabled button, tab, row, status segment, menu and overlay
    row the `ui` query names -- beside an editor with the git view, with a diff in
    front, with the file finder open -- and requires the shell's hover target (or
-   the diff surface's own hover state) to take it. All pass. The modal-focus
-   sweep is still open.
+   the diff surface's own hover state) to take it. All pass. And
+   `QaFlowRegressionUx/AClickAnywhereBehindAModalMovesNoFocus` clicks every
+   element of the window outside the unsaved-changes prompt with the prompt up:
+   the prompt, the focus and the active tab stay. Item 1 is DONE as runtime
+   sweeps (the static rules stay unbuilt, as this item found they cannot tie
+   names to behaviour).
 2. **W2 frame-prep invariants.** The default build has no `NDEBUG` (CMake build type
    empty), so the `qa` lane and the soak's default job are already the assert-armed
    QA the plan asks for; `guidelines/testing.md` now says so. Not added: asserts that
