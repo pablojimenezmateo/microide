@@ -808,6 +808,75 @@ RuleResult CheckFactoryHooksDoNotForwardToServices(const std::filesystem::path& 
   return CheckFactoryHooksDoNotForwardToServicesAtCap(repo_root, kMaxServiceForwardingHooks);
 }
 
+namespace {
+
+const std::regex& GitEntryPointCallPattern() {
+  static const std::regex pattern(
+      R"(\bproject::(?:ReadGitFileAtCommit|CollectGit[A-Za-z]+|RunGit[A-Za-z]+|GitMetadataFor|Git(?:Stage|Unstage|Discard)[A-Za-z]*)\s*\()");
+  return pattern;
+}
+
+constexpr std::array<std::string_view, 3> kGitWorkerTranslationUnits = {
+    "src/workspace/git/CompareTabLoad.cpp",
+    "src/workspace/git/GitOperationService.cpp",
+    "src/workspace/git/ReviewSessionCoordinator.cpp",
+};
+
+}
+
+std::size_t CountShellThreadGitCalls(const std::filesystem::path& repo_root, std::vector<Violation>* where) {
+  std::size_t count = 0;
+  for (const std::filesystem::path& path : SourceFilesUnder(repo_root / "src/workspace")) {
+    const std::string relative = path.lexically_relative(repo_root).generic_string();
+    if (std::find(kGitWorkerTranslationUnits.begin(), kGitWorkerTranslationUnits.end(), relative) !=
+        kGitWorkerTranslationUnits.end()) {
+      continue;
+    }
+    count += CodeMaskedMatchCount(ReadText(path), GitEntryPointCallPattern(), where, path);
+  }
+  return count;
+}
+
+RuleResult CheckWorkspaceGitCallsRatchetDownAtCap(const std::filesystem::path& repo_root, std::size_t cap) {
+  RuleResult result;
+  result.label = "workspace code outside the git worker units calls git no more often than the cap";
+  result.hard_fail = true;
+  for (const std::string_view unit : kGitWorkerTranslationUnits) {
+    if (!RequireRuleTarget(result, repo_root / unit)) {
+      return result;
+    }
+  }
+  std::size_t worker_calls = 0;
+  for (const std::string_view unit : kGitWorkerTranslationUnits) {
+    worker_calls += CodeMaskedMatchCount(ReadText(repo_root / unit), GitEntryPointCallPattern(), nullptr,
+                                         repo_root / unit);
+  }
+  if (worker_calls == 0) {
+    result.missing_targets.push_back(Violation{
+        .path = repo_root / kGitWorkerTranslationUnits[0],
+        .line = 1,
+        .message = "the git worker units call no git entry point; the pattern no longer matches them",
+    });
+    return result;
+  }
+  std::vector<Violation> sites;
+  const std::size_t count = CountShellThreadGitCalls(repo_root, &sites);
+  if (count > cap) {
+    for (Violation& site : sites) {
+      site.message = std::to_string(count) + " git calls outside the worker units exceed the cap of " +
+                     std::to_string(cap) +
+                     ": run the read on the reader thread (FileReadService, as git/CompareTabLoad does) or "
+                     "a ProjectBackgroundExecutor dispatch, then lower the cap";
+      result.violations.push_back(std::move(site));
+    }
+  }
+  return result;
+}
+
+RuleResult CheckWorkspaceGitCallsRatchetDown(const std::filesystem::path& repo_root) {
+  return CheckWorkspaceGitCallsRatchetDownAtCap(repo_root, kMaxShellThreadGitCalls);
+}
+
 void RunServiceDirectionRuleFixtures() {
   TemporaryDirectory fixture;
   const std::filesystem::path& root = fixture.path();
@@ -847,6 +916,26 @@ void RunServiceDirectionRuleFixtures() {
   WriteFile(factory, "void Free() {}\n");
   Expect(!CheckFactoryHooksDoNotForwardToServicesAtCap(root, 0).missing_targets.empty(),
          "a tree with no Make* factory must report a missing target, not pass");
+
+  Expect(!CheckWorkspaceGitCallsRatchetDownAtCap(root, 0).missing_targets.empty(),
+         "a tree without the git worker units must report a missing target, not pass");
+  std::filesystem::create_directories(root / "src/workspace/git");
+  for (const std::string_view unit : kGitWorkerTranslationUnits) {
+    WriteFile(root / unit, "void Work() { auto a = project::ReadGitFileAtCommit(root, launcher, path, ref); }\n");
+  }
+  WriteFile(factory,
+            "void Open() {\n"
+            "  auto a = project::ReadGitFileAtCommit(root, launcher, path, ref);\n"
+            "  auto b = project::CollectGitBranches(root, launcher);\n"
+            "  if (!project::GitStagePath(root, launcher, path)) {}\n"
+            "  std::function<project::GitOperationReport()> work;\n"
+            "}\n"
+            "const char* kDoc = \"project::ReadGitFileAtCommit(\";\n");
+  Expect(CountShellThreadGitCalls(root, nullptr) == 3,
+         "git entry-point calls outside the worker units count; types, strings and worker units do not");
+  Expect(CheckWorkspaceGitCallsRatchetDownAtCap(root, 3).violations.empty(), "a count at the cap passes");
+  Expect(CheckWorkspaceGitCallsRatchetDownAtCap(root, 2).violations.size() == 3,
+         "a count above the cap fails and names every site");
 }
 
 void RunExecutorPostThenFutureGetRuleFixtures() {

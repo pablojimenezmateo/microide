@@ -163,6 +163,7 @@ struct CompareTabState {
   std::uint64_t presentation_built_model_revision = 0;
   bool presentation_built_show_whitespace = false;
   bool load_pending = false;
+  bool keep_view_on_load = false;
   editor::AsyncBufferWork pending_load;
   bool refresh_owed = false;
   editor::AsyncBufferWork pending_refresh;
@@ -388,6 +389,11 @@ inline std::uint64_t EnsureTabStableId(TabEntry& tab) {
 [[nodiscard]] inline bool CompareLeftSideIsHeld(const CompareTabState& compare_tab) {
   return project::IsFullGitObjectId(compare_tab.commit_hash) && compare_tab.left_content &&
          compare_tab.build_options.left_exists.has_value();
+}
+
+[[nodiscard]] inline bool CompareRefreshReadsGit(const CompareTabState& compare_tab) {
+  return !compare_tab.plain_compare &&
+         (!CompareLeftSideIsHeld(compare_tab) || compare_tab.right_ref != "WORKTREE");
 }
 
 static_assert(std::is_default_constructible_v<TabEntry::EditorTabState>);

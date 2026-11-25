@@ -1,5 +1,6 @@
 #include "compare/CompareReviewTypes.h"
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
+#include "workspace/git/CompareTabLoad.h"
 
 #include <algorithm>
 #include <cmath>
@@ -190,50 +191,33 @@ std::optional<TabEntry> PersistenceCoordinator::RestoreCompareTab(
     return std::nullopt;
   }
 
-  std::optional<TabEntry> compare_tab;
-  if (!persisted_tab.compare_right_ref.empty()) {
-    const auto side_path = [&](const std::filesystem::path& path) {
-      return path.empty() ? compare_path : ResolveSessionPath(root, path);
-    };
-    CompareTabState compare_state;
-    compare_state.path = compare_path;
-    compare_state.left_path = side_path(persisted_tab.compare_left_path);
-    compare_state.right_path = side_path(persisted_tab.compare_right_path);
-    compare_state.commit_hash = persisted_tab.compare_commit_hash;
-    compare_state.right_ref = persisted_tab.compare_right_ref;
-    compare_state.left_label = persisted_tab.compare_commit_short_hash;
-    compare_state.right_label =
-        persisted_tab.compare_right_label.empty()
-            ? (persisted_tab.compare_right_ref == "WORKTREE" ? "Working tree"
-                                                             : persisted_tab.compare_right_ref)
-            : persisted_tab.compare_right_label;
-    compare_state.selected_row = persisted_tab.compare_selected_row;
-    compare_state.scroll_row = ScrollRowFromSession(persisted_tab.compare_scroll_row);
-    compare_state.horizontal_scroll = persisted_tab.compare_horizontal_scroll;
-    if (!persisted_tab.compare_review_mode.empty()) {
-      compare_state.review_mode = compare::ParseCompareReviewMode(persisted_tab.compare_review_mode);
-    }
-    if (!persisted_tab.compare_staging_view.empty()) {
-      compare_state.staging_view =
-          compare::ParseWorkingTreeStagingView(persisted_tab.compare_staging_view);
-    }
-    compare_state.divider_fraction = persisted_tab.compare_divider_fraction;
-    compare_state.persistable = true;
-    if (unsaved_right != nullptr) {
-      compare_state.right_viewport = *unsaved_right;
-    }
-    compare_tab = operations_.build_compare_tab_from_state(compare_path, compare_state);
-  } else {
-    const project::GitCommitEntry commit{
-        .hash = persisted_tab.compare_commit_hash,
-        .short_hash = persisted_tab.compare_commit_short_hash,
-        .subject = {},
-        .author = {},
-        .relative_date = {},
-    };
-    compare_tab = operations_.build_compare_tab_from_commit(compare_path, commit,
-                                                            persisted_tab.compare_selected_row);
+  const auto side_path = [&](const std::filesystem::path& path) {
+    return path.empty() ? compare_path : ResolveSessionPath(root, path);
+  };
+  const std::string right_ref =
+      persisted_tab.compare_right_ref.empty() ? std::string("WORKTREE") : persisted_tab.compare_right_ref;
+  CompareTabState compare_state;
+  compare_state.path = compare_path;
+  compare_state.left_path = side_path(persisted_tab.compare_left_path);
+  compare_state.right_path = side_path(persisted_tab.compare_right_path);
+  compare_state.commit_hash = persisted_tab.compare_commit_hash;
+  compare_state.right_ref = right_ref;
+  compare_state.left_label = persisted_tab.compare_commit_short_hash;
+  compare_state.right_label = !persisted_tab.compare_right_label.empty() ? persisted_tab.compare_right_label
+                              : right_ref == "WORKTREE"                  ? std::string("Working tree")
+                                                                          : right_ref;
+  compare_state.selected_row = persisted_tab.compare_selected_row;
+  compare_state.scroll_row = ScrollRowFromSession(persisted_tab.compare_scroll_row);
+  compare_state.horizontal_scroll = persisted_tab.compare_horizontal_scroll;
+  if (!persisted_tab.compare_review_mode.empty()) {
+    compare_state.review_mode = compare::ParseCompareReviewMode(persisted_tab.compare_review_mode);
   }
+  if (!persisted_tab.compare_staging_view.empty()) {
+    compare_state.staging_view = compare::ParseWorkingTreeStagingView(persisted_tab.compare_staging_view);
+  }
+  compare_state.divider_fraction = persisted_tab.compare_divider_fraction;
+  compare_state.persistable = true;
+  std::optional<TabEntry> compare_tab = MakeCompareStandIn(std::move(compare_state));
   if (!compare_tab.has_value() || !compare_tab->compare.has_value()) {
     return std::nullopt;
   }

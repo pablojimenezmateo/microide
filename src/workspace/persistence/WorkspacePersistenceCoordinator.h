@@ -26,12 +26,6 @@ class PersistenceCoordinator {
     std::function<void(editor::TextViewport&)> apply_editor_preferences;
     std::function<void(editor::TextViewport&)> apply_detected_indent_on_open;
     std::function<std::optional<TabEntry>(const std::filesystem::path&,
-                                          const project::GitCommitEntry&,
-                                          std::size_t)>
-        build_compare_tab_from_commit;
-    std::function<std::optional<TabEntry>(const std::filesystem::path&, const CompareTabState&)>
-        build_compare_tab_from_state;
-    std::function<std::optional<TabEntry>(const std::filesystem::path&,
                                           const std::filesystem::path&,
                                           const std::filesystem::path&,
                                           const std::filesystem::path&)>

@@ -60,6 +60,7 @@ const std::vector<NamedRule>& WorkspaceArchitectureRuleList() {
       {"CheckCoordinatorOperationsAreCalled", CheckCoordinatorOperationsAreCalled},
       {"CheckRedrawHooksAreRequestFrame", CheckRedrawHooksAreRequestFrame},
       {"CheckFactoryHooksDoNotForwardToServices", CheckFactoryHooksDoNotForwardToServices},
+      {"CheckWorkspaceGitCallsRatchetDown", CheckWorkspaceGitCallsRatchetDown},
       {"CheckRenderTuDoesNotMaterializeStrings", CheckRenderTuDoesNotMaterializeStrings},
       {"CheckRenderTuDoesNotCallToStringOrFormat", CheckRenderTuDoesNotCallToStringOrFormat},
       {"CheckTextViewportNoFullDocCopy", CheckTextViewportNoFullDocCopy},

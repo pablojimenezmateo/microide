@@ -18,8 +18,11 @@ struct CompareTabLoadRequest {
   std::filesystem::path path;
   std::filesystem::path root;
   const platform::ProcessLauncher* launcher = &platform::LocalProcessLauncher();
+  std::filesystem::path left_path;
   std::string left_ref;
+  std::filesystem::path right_path;
   std::string right_ref = "WORKTREE";
+  bool right_held = false;
   compare::CompareBuildOptions build_options;
   std::optional<compare::CompareReviewMode> collect_review_files;
 
@@ -39,6 +42,8 @@ struct CompareTabLoadResult {
   std::size_t left_line_count = 0;
   std::optional<std::vector<std::filesystem::path>> review_files;
 };
+
+TabEntry MakeCompareStandIn(CompareTabState state);
 
 void RunCompareTabLoad(const CompareTabLoadRequest& request, CompareTabLoadResult& result);
 

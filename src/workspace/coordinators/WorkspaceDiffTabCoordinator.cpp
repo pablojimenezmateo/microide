@@ -69,10 +69,6 @@ bool ComparesTwoFixedRevisions(const CompareTabState& compare) {
   return project::IsFullGitObjectId(compare.commit_hash) && project::IsFullGitObjectId(compare.right_ref);
 }
 
-bool CompareRefreshReadsGit(const CompareTabState& compare) {
-  return !CompareLeftSideIsHeld(compare) || compare.right_ref != "WORKTREE";
-}
-
 }
 
 std::optional<CompareInput> ReadFileCompareInput(const std::filesystem::path& path, bool editable) {
@@ -485,8 +481,11 @@ bool DiffTabCoordinator::StartPendingCompareLoad(CompareTabState& compare_tab) {
       .path = compare_tab.path,
       .root = state_.root,
       .launcher = &state_.launcher(),
+      .left_path = compare_tab.left_path,
       .left_ref = compare_tab.commit_hash,
+      .right_path = compare_tab.right_path,
       .right_ref = compare_tab.right_ref,
+      .right_held = compare_tab.right_viewport.dirty(),
       .build_options = compare_tab.build_options,
       .collect_review_files = OwedReviewFiles(compare_tab),
   });
@@ -516,6 +515,10 @@ void DiffTabCoordinator::ApplyCompareTabLoad(const std::uint64_t id, const bool 
         return;
       }
       compare.load_pending = false;
+      const bool right_held = compare.right_viewport.dirty();
+      if (right_held) {
+        compare.right_viewport.SetReadOnly(false);
+      }
       if (!read_ok || !result.left_ok || !result.right_ok) {
         if (operations_.report_compare_load_failure) {
           const std::string name = compare.path.filename().string();
@@ -537,12 +540,16 @@ void DiffTabCoordinator::ApplyCompareTabLoad(const std::uint64_t id, const bool 
       }
       compare.left_content = std::move(result.left);
       compare.build_options.left_exists = result.built_options.left_exists;
-      compare.build_options.right_exists = result.built_options.right_exists;
-      compare.right_viewport = std::move(result.right);
-      util::InvokeIfSet(operations_.apply_editor_preferences, compare.right_viewport);
-      compare.model = std::move(result.model);
       compare.build_options.syntax = result.built_options.syntax;
-      MarkCompareModelBuilt(compare, result.built_options, result.left_line_count);
+      if (right_held) {
+        compare.derived_fingerprint_valid = false;
+      } else {
+        compare.build_options.right_exists = result.built_options.right_exists;
+        compare.right_viewport = std::move(result.right);
+        util::InvokeIfSet(operations_.apply_editor_preferences, compare.right_viewport);
+        compare.model = std::move(result.model);
+        MarkCompareModelBuilt(compare, result.built_options, result.left_line_count);
+      }
       if (result.review_files.has_value()) {
         compare.review_files = std::move(*result.review_files);
         compare.review_file_index = IndexOfReviewFile(compare.review_files, compare.path, state_.root);
@@ -550,7 +557,13 @@ void DiffTabCoordinator::ApplyCompareTabLoad(const std::uint64_t id, const bool 
       AdoptLiveBufferForCompareRightSide(state_.editor_groups, compare,
                                          &compare.right_viewport);
       util::InvokeIfSet(operations_.refresh_compare_tab_derived_state, compare);
-      SelectFirstChangeOnOpen(tab);
+      if (compare.keep_view_on_load) {
+        compare.keep_view_on_load = false;
+        NormalizeCompareSelectionToModelRow(compare);
+        SyncCompareCaretToSelectedRow(compare);
+      } else {
+        SelectFirstChangeOnOpen(tab);
+      }
       NotifyBufferOpenForEditableTab(tab, operations_);
       operations_.request_frame();
       return;

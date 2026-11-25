@@ -14,6 +14,34 @@ std::size_t CountCompareTextLines(const std::string_view text) {
                       : static_cast<std::size_t>(std::count(text.begin(), text.end(), '\n')) + 1;
 }
 
+TabEntry MakeCompareStandIn(CompareTabState state) {
+  CompareTabState& compare = state;
+  compare.path = compare.path.lexically_normal();
+  compare.left_path = (compare.left_path.empty() ? compare.path : compare.left_path).lexically_normal();
+  compare.right_path = (compare.right_path.empty() ? compare.path : compare.right_path).lexically_normal();
+  compare.title = "compare: " + compare.path.filename().string();
+  compare.left_content = compare::EmptyCompareText();
+  compare.right_editable = compare.right_ref == "WORKTREE";
+  compare.right_view_active = compare.right_view_active || !compare.right_editable;
+  if (!compare.right_editable || !compare.right_viewport.dirty()) {
+    compare.right_viewport = editor::TextViewport();
+    compare.right_viewport.LoadContent("", compare.right_path);
+  }
+  compare.right_viewport.SetReadOnly(true);
+  compare.load_pending = true;
+  compare.keep_view_on_load = true;
+  TabEntry tab{
+      .kind = TabEntry::Kind::Compare,
+      .path = compare.path,
+      .title = compare.title,
+      .editor_state = std::nullopt,
+      .deferred_handle = std::nullopt,
+      .compare = std::move(state),
+      .merge = std::nullopt,
+  };
+  return tab;
+}
+
 void RunCompareTabLoad(const CompareTabLoadRequest& request, CompareTabLoadResult& result) {
   result.built_options = request.build_options;
   if (request.collect_review_files == compare::CompareReviewMode::Commit) {
@@ -26,8 +54,10 @@ void RunCompareTabLoad(const CompareTabLoadRequest& request, CompareTabLoadResul
     }
   }
 
-  std::optional<project::GitFileContentAtCommit> left = project::ReadGitFileAtCommit(
-      request.root, *request.launcher, request.path, request.left_ref);
+  const std::filesystem::path& left_path = request.left_path.empty() ? request.path : request.left_path;
+  const std::filesystem::path& right_path = request.right_path.empty() ? request.path : request.right_path;
+  std::optional<project::GitFileContentAtCommit> left =
+      project::ReadGitFileAtCommit(request.root, *request.launcher, left_path, request.left_ref);
   if (!left.has_value() || left->truncated) {
     return;
   }
@@ -35,19 +65,24 @@ void RunCompareTabLoad(const CompareTabLoadRequest& request, CompareTabLoadResul
   result.built_options.left_exists = left->exists;
   result.left = compare::MakeCompareText(left->exists ? std::move(left->content) : std::string());
   result.left_line_count = CountCompareTextLines(*result.left);
+  if (request.right_held) {
+    result.right_read = true;
+    result.right_ok = true;
+    return;
+  }
 
   bool right_exists = true;
   std::string right_bytes;
   if (request.right_is_working_tree()) {
-    util::TextFileReadResult working = util::ReadTextFileClassified(request.path);
+    util::TextFileReadResult working = util::ReadTextFileClassified(right_path);
     if (working.is_error()) {
       return;
     }
     right_exists = working.status != util::TextFileReadStatus::Missing;
     right_bytes = std::move(working.content);
   } else {
-    std::optional<project::GitFileContentAtCommit> right = project::ReadGitFileAtCommit(
-        request.root, *request.launcher, request.path, request.right_ref);
+    std::optional<project::GitFileContentAtCommit> right =
+        project::ReadGitFileAtCommit(request.root, *request.launcher, right_path, request.right_ref);
     if (!right.has_value() || right->truncated) {
       return;
     }

@@ -586,9 +586,6 @@
                               const std::vector<project::GitCommitEntry>& commits);
   bool ComparePickerRequestCurrent(std::uint64_t generation) const;
   SidebarMode ActiveSidebarMode() const;
-  std::optional<TabEntry> BuildCompareTabEntry(const std::filesystem::path& path,
-                                               const project::GitCommitEntry& commit,
-                                               std::size_t selected_row = 0) const;
   std::optional<TabEntry> BuildCompareTabEntry(const std::filesystem::path& path, const CompareTabState& compare_tab,
                                                const CompareRevisionSides* sides = nullptr) const;
   void RefreshCompareTabDerivedState(CompareTabState& compare_tab) const;

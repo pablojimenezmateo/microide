@@ -810,6 +810,43 @@ void TestWorkspaceShellMoveMergeSelectionInvalidatesConflictBand() {
          "merge conflict navigation should redraw less than the full merge surface height");
 }
 
+void TestWorkspaceShellARestoredDiffReadsNothingUntilShown() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "compare.txt";
+  WriteFile(source, "zero\none\n");
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(temp_dir.path() / "home");
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", (temp_dir.path() / "home").string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  WriteFile(source, "zero\none changed\n");
+  {
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"), "the diff opens");
+    WorkspaceShellTestAccess::SaveSessionState(shell);
+  }
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  const std::uint64_t reads_before = WorkspaceShellTestAccess::PostedFileReadCount(restored);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored), "the session restores");
+  const auto& stand_in = WorkspaceShellTestAccess::ActiveCompare(restored);
+  Expect(stand_in.load_pending && stand_in.model.rows.empty(),
+         "the restored diff is a stand-in: nothing of git was read before the first frame");
+  Expect(WorkspaceShellTestAccess::PostedFileReadCount(restored) == reads_before, "and no read is posted yet");
+  WorkspaceShellTestAccess::SettleCompareLoads(restored);
+  const auto& loaded = WorkspaceShellTestAccess::ActiveCompare(restored);
+  Expect(!loaded.load_pending && !loaded.right_viewport.read_only() &&
+             std::any_of(loaded.model.rows.begin(), loaded.model.rows.end(),
+                         [](const auto& row) { return row.left_text == "one" && row.right_text == "one changed"; }),
+         "once shown it loads the same diff, editable");
+}
+
 void TestWorkspaceShellRestoreSessionPreservesRenamedWorkingTreeCompareState() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -855,6 +892,7 @@ void TestWorkspaceShellRestoreSessionPreservesRenamedWorkingTreeCompareState() {
          "session restore should rebuild the renamed working-tree compare");
   Expect(WorkspaceShellTestAccess::OpenTabs(restored).size() == 1,
          "renamed working-tree compare should restore as a single tab");
+  WorkspaceShellTestAccess::SettleCompareLoads(restored);
 
   const auto& rebuilt = WorkspaceShellTestAccess::ActiveCompare(restored);
   Expect(rebuilt.path == renamed.lexically_normal(),
@@ -2099,6 +2137,7 @@ void TestWorkspaceShellRestoreSessionRejoinsADiffWithItsEditorTabsBuffer() {
   WorkspaceShellTestAccess::SetWindowSize(again, 1280, 720);
   Expect(WorkspaceShellTestAccess::RestoreSessionState(again), "the second restore succeeds");
   WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(again);
+  WorkspaceShellTestAccess::SettleCompareLoads(again);
   Expect(WorkspaceShellTestAccess::EditorGroupCount(again) == 2, "both panes come back");
   WorkspaceShellTestAccess::FocusEditorGroup(again, 1);
   Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(again), "the second pane's diff is in front");
@@ -4132,6 +4171,7 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreSessionPreservesNestedEditorSplitShape);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesBranchCompareState",
           TestWorkspaceShellRestoreSessionPreservesBranchCompareState);
+  AddTest(tests, "WorkspaceShell/ARestoredDiffReadsNothingUntilShown", TestWorkspaceShellARestoredDiffReadsNothingUntilShown);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesRenamedWorkingTreeCompareState",
           TestWorkspaceShellRestoreSessionPreservesRenamedWorkingTreeCompareState);
   AddTest(tests, "WorkspaceShell/RestoreClampsOutOfRangeSelectedLaunchConfig",

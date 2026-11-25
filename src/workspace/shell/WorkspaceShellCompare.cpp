@@ -54,41 +54,6 @@ std::size_t CompareMaxVisualColumns(const compare::CompareModel& model) {
 
 std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
     const std::filesystem::path& path,
-    const project::GitCommitEntry& commit,
-    std::size_t selected_row) const {
-  const std::filesystem::path normalized_path = path.lexically_normal();
-  const auto content =
-      project::ReadGitFileAtCommit(context_.current_project_state.root,
-                                   context_.current_project_state.launcher(), normalized_path,
-                                   commit.hash);
-  if (!content.has_value() || content->truncated) {
-    return std::nullopt;
-  }
-
-  const util::TextFileReadResult working = util::ReadTextFileClassified(normalized_path);
-  if (working.is_error()) {
-    return std::nullopt;
-  }
-  auto compare_tab = BuildCompareTabFromBuffers(
-      normalized_path, content->exists ? content->content : "", working.content,
-      commit.short_hash, "Working tree", selected_row, true, content->exists,
-      working.status != util::TextFileReadStatus::Missing);
-  if (compare_tab.has_value() && compare_tab->compare.has_value()) {
-    compare_tab->compare->left_path = normalized_path;
-    compare_tab->compare->right_path = normalized_path;
-    compare_tab->compare->commit_hash = commit.hash;
-    compare_tab->compare->right_ref = "WORKTREE";
-    compare_tab->compare->right_editable = true;
-    compare_tab->compare->right_view_active = true;
-    AdoptLiveBufferForCompareRightSide(context_.current_project_state.editor_groups,
-                                       *compare_tab->compare);
-    RefreshCompareTabDerivedState(*compare_tab->compare);
-  }
-  return compare_tab;
-}
-
-std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
-    const std::filesystem::path& path,
     const CompareTabState& compare_tab,
     const CompareRevisionSides* sides) const {
   if (compare_tab.load_pending) {

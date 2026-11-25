@@ -84,54 +84,6 @@ than a mechanical change:
   surface's `PaintCompareLeftSide` / `PaintCompareRightSide` (the right pane is
   editable and paints carets, diagnostics and blame the left does not).
 
-### TD-2026-11-19-453 — a data loss found and two findings read to the bottom of their evidence. [OPEN]
-
-Left by the 2026-11-19 bug-hunting pass (commits bbb153be3 onwards). None has a
-fix, and each names what it needs; the first is the one that loses a user's work.
-
-1. **Unsaved text in a diff or a merge result lost by a crash: FIXED
-   2026-11-20.** A diff's editable side (52e960935, bc0f32527) and a merge's
-   typed result (this pass: the record carries the text and its conflict spans;
-   a git conflict's merge, which the session does not keep, leaves an editor
-   record) are staged and restored, and `documents` lists both so the kill
-   oracle holds them to it. Left as the item's history until the entry moves to
-   the archive with its other two items.
-2. **The mirror engine logs no decision per path**, so a `remote:` finding
-   cannot be explained after the fact (soak 37ec61829b08: the host's
-   unreadable.txt was renamed away by the run, a blocked save of the mirror's
-   copy was parked on it, the link was reconnecting, and the oracle then read
-   settled, nothing blocked, the file only in the mirror). Wants one trace line
-   per `ReconcileDeleteLocked` / `PushNow` outcome (path, flags before and
-   after, the host's answer), behind the same switch as
-   `MICROIDE_TRACE_BUFFER_IO`, in the app log the soak already keeps.
-3. **`RemoteServer/PortsSubscribePushesANewListener` failed once in CI's ubsan
-   job** (run 44556917266, d3034cc03: "the spawned process's port is pushed
-   with an owner") and never locally. 381bd7bad fixes one way there -- the
-   sampler compared port numbers, so a number taken over inside a sample period
-   was never attributed -- without showing it is the way CI took; 76b802be0
-   makes the failure print the last push. (381bd7bad's message names 63acfda9c
-   for that run. It was d3034cc03.) Read the message of the next failure before
-   anything else.
-4. **Workspace code still waits for git on the shell thread, and no lint says
-   so.** `CheckNoSynchronousSubprocessInWorkspace` looks for
-   `platform::RunSubprocess` in `src/workspace`; a `project::` helper that
-   spawns is invisible to it, which is how a blocking `git cat-file` per open
-   diff, per change, reached the shell thread (soak a509a3f35fe0; fixed for that
-   path 2026-11-20: a change's refresh reads its refs off-thread). Left
-   synchronous, all user-initiated and one per action rather than one per
-   change: opening a working-tree diff of a file under the async threshold
-   (`DiffTabCoordinator::OpenWorkingTreeComparison`), a branch diff
-   (`OpenBranchHeadComparison`), a conflict merge's three stages without a
-   prefetch (`OpenGitConflictMerge`), and every `BuildCompareTabEntry` from a
-   state -- a reopen of an open diff, a rename's rebuild, and the session
-   restore, which reads each restored diff's refs before the first frame.
-   Wants those reads moved to the reader thread (the open's stand-in for the
-   small-file case, the refresh's keep-the-diff for the rest), and then a lint
-   over the `project::` git entry points (`ReadGitFileAtCommit`,
-   `GitRepository::Execute`, ...) called from `src/workspace` outside a
-   worker lambda -- with fixtures both ways, which is why it is not added
-   while the sites above would all fail it.
-
 ### TD-2026-11-16-452 — what the soak still cannot say about a finding, or reach. [OPEN]
 
 Left by the 2026-11-16 assessment of the soak (`tools/soak`) and the deep review
@@ -622,7 +574,7 @@ cross-subsystem bug-hunt passes 5–24 closeout) — now lives in:
   above, with the per-pass review summaries that headed this file) and
   `2026-11-08-resolved-debt-ledger.md` (TD-406, 408, 429-434) and
   `2026-11-13-resolved-debt-ledger.md` (TD-437 to 439, 441 to 443, 445 onward) and
-  `2026-11-25-resolved-debt-ledger.md` (TD-440, 449, 451, 454, 455)
+  `2026-11-25-resolved-debt-ledger.md` (TD-440, 449, 451, 453, 454, 455)
 - `CHANGELOG.md` — shipped, user-facing release history
 - `openspec/changes/archive/` — the full proposal/spec/tasks record per shipped change
 

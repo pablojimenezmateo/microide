@@ -3,6 +3,47 @@
 Moved from `dev-docs/project/known-tech-debt.md`'s open queue as each entry was
 resolved or closed, with its resolution appended. Newest first.
 
+### TD-2026-11-19-453 — a data loss found and two findings read to the bottom of their evidence. [CLOSED 2026-11-25]
+
+Left by the 2026-11-19 bug-hunting pass (commits bbb153be3 onwards). None has a
+fix, and each names what it needs; the first is the one that loses a user's work.
+
+1. **Unsaved text in a diff or a merge result lost by a crash: FIXED
+   2026-11-20.** A diff's editable side (52e960935, bc0f32527) and a merge's
+   typed result (this pass: the record carries the text and its conflict spans;
+   a git conflict's merge, which the session does not keep, leaves an editor
+   record) are staged and restored, and `documents` lists both so the kill
+   oracle holds them to it. Left as the item's history until the entry moves to
+   the archive with its other two items.
+2. **The mirror engine logs no decision per path: FIXED 2026-11-21** (746a30c2d,
+   recorded here 2026-11-25). `TraceMirror` logs each `ReconcileDeleteLocked`,
+   `PushNow`, keep/take and retry outcome with the entry's flags under
+   `MICROIDE_TRACE_MIRROR_SYNC`, which the QA driver arms, and the `remote:`
+   oracle attaches the path's history to the finding.
+3. **`RemoteServer/PortsSubscribePushesANewListener` failed once in CI's ubsan
+   job** (run 44556917266, d3034cc03: "the spawned process's port is pushed
+   with an owner") and never locally. 381bd7bad fixes one way there -- the
+   sampler compared port numbers, so a number taken over inside a sample period
+   was never attributed -- without showing it is the way CI took; 76b802be0
+   makes the failure print the last push. (381bd7bad's message names 63acfda9c
+   for that run. It was d3034cc03.) Read the message of the next failure before
+   anything else.
+4. **Workspace code still waits for git on the shell thread, and no lint says
+   so: FIXED 2026-11-25** for every site this item listed. Opening a diff of any
+   size, the commit picker's diff, a branch review's file list, reopening an open
+   diff, restoring a session's diffs and renaming under one all read git on the
+   reader thread (`git/CompareTabLoad`; a restored diff reads nothing until it is
+   first shown). The lint is `CheckWorkspaceGitCallsRatchetDown`, a cap of 26
+   that ratchets down: what it still counts is the sidebar's stage, unstage and
+   discard, the compare picker's history and recent-commit lists, the
+   repository probe, and the synchronous fallbacks of a `DiffTabCoordinator`
+   built without its async hooks (tests).
+
+**Closed 2026-11-25.** Items 1, 2 and 4 are fixed (above). Item 3 has not
+recurred in the six days of CI since 381bd7bad (every `checks` run's ubsan job
+included); 76b802be0's message prints the last push, so a recurrence files
+itself with its evidence -- open a new entry from that message if it does.
+
 ### TD-2026-11-23-454 — the bulk bandwidth estimator reads bunched acks as a faster link. [FIXED 2026-11-25]
 
 `RemoteFrameTransport::HandleAck` measures bandwidth as the bytes between two acks

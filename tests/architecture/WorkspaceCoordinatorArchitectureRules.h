@@ -29,6 +29,12 @@ std::size_t CountServiceForwardingHooks(const std::filesystem::path& repo_root,
 
 inline constexpr std::size_t kMaxServiceForwardingHooks = 43;
 
+RuleResult CheckWorkspaceGitCallsRatchetDown(const std::filesystem::path& repo_root);
+RuleResult CheckWorkspaceGitCallsRatchetDownAtCap(const std::filesystem::path& repo_root, std::size_t cap);
+std::size_t CountShellThreadGitCalls(const std::filesystem::path& repo_root, std::vector<Violation>* where);
+
+inline constexpr std::size_t kMaxShellThreadGitCalls = 26;
+
 void RunExecutorPostThenFutureGetRuleFixtures();
 void RunServiceDirectionRuleFixtures();
 

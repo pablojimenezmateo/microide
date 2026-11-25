@@ -22,40 +22,37 @@ PathMutationCoordinator::RetargetSpecialTabForRename(TabEntry& tab,
 
   if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
       util::PathEqualsOrWithinNormalized(tab.compare->path, old_path)) {
-    const std::filesystem::path updated_path =
-        util::ReplacePathPrefix(tab.compare->path, old_path, new_path);
-    if (preserve_unsaved_state && tab.compare->right_editable &&
-        tab.compare->right_viewport.dirty()) {
-      tab.compare->path = util::NormalizedPath(updated_path);
-      if (tab.compare->right_ref == "WORKTREE" &&
-          util::PathEqualsOrWithinNormalized(tab.compare->right_path, old_path)) {
-        tab.compare->right_path =
-            util::ReplacePathPrefix(tab.compare->right_path, old_path, new_path).lexically_normal();
-        tab.compare->right_viewport.SetPath(tab.compare->right_path);
+    CompareTabState& compare = *tab.compare;
+    const auto retarget_in_place = [&] {
+      compare.path = util::NormalizedPath(util::ReplacePathPrefix(compare.path, old_path, new_path));
+      if (compare.right_ref == "WORKTREE" && util::PathEqualsOrWithinNormalized(compare.right_path, old_path)) {
+        compare.right_path = util::ReplacePathPrefix(compare.right_path, old_path, new_path).lexically_normal();
+        compare.right_viewport.SetPath(compare.right_path);
       }
-      tab.compare->title = "compare: " + tab.compare->path.filename().string();
-      auto rebuilt = operations_.build_compare_tab_entry(tab.compare->path, *tab.compare);
-      if (rebuilt.has_value() && rebuilt->compare.has_value()) {
-        rebuilt->compare->right_viewport = tab.compare->right_viewport;
-        rebuilt->compare->right_editable = tab.compare->right_editable;
-        rebuilt->compare->right_view_active = tab.compare->right_view_active;
-        rebuilt->compare->persistable = tab.compare->persistable;
-        tab = std::move(*rebuilt);
-      }
-      tab.path = tab.compare->path;
-      tab.title = tab.compare->title;
+      compare.title = "compare: " + compare.path.filename().string();
+      tab.path = compare.path;
+      tab.title = compare.title;
+    };
+    if (compare.load_pending) {
+      retarget_in_place();
       return SpecialTabRetargetOutcome::Retargeted;
     }
-    CompareTabState updated_compare = *tab.compare;
-    updated_compare.path = util::NormalizedPath(updated_path);
-    if (updated_compare.right_ref == "WORKTREE" &&
-        util::PathEqualsOrWithinNormalized(updated_compare.right_path, old_path)) {
-      updated_compare.right_path =
-          util::ReplacePathPrefix(updated_compare.right_path, old_path, new_path).lexically_normal();
+    const bool keep_unsaved = preserve_unsaved_state && compare.right_editable && compare.right_viewport.dirty();
+    if (!keep_unsaved && CompareRefreshReadsGit(compare)) {
+      retarget_in_place();
+      compare.refresh_owed = true;
+      return SpecialTabRetargetOutcome::Retargeted;
     }
-    auto rebuilt = operations_.build_compare_tab_entry(updated_path, updated_compare);
+    retarget_in_place();
+    auto rebuilt = operations_.build_compare_tab_entry(compare.path, compare);
     if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
-      return SpecialTabRetargetOutcome::MustClose;
+      return keep_unsaved ? SpecialTabRetargetOutcome::Retargeted : SpecialTabRetargetOutcome::MustClose;
+    }
+    if (keep_unsaved) {
+      rebuilt->compare->right_viewport = compare.right_viewport;
+      rebuilt->compare->right_editable = compare.right_editable;
+      rebuilt->compare->right_view_active = compare.right_view_active;
+      rebuilt->compare->persistable = compare.persistable;
     }
     tab = std::move(*rebuilt);
     return SpecialTabRetargetOutcome::Retargeted;

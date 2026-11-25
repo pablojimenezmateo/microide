@@ -58,16 +58,6 @@ PersistenceCoordinator& WorkspaceShell::MakePersistenceCoordinator() {
               [this](editor::TextViewport& viewport) { ApplyEditorPreferences(viewport); },
           .apply_detected_indent_on_open =
               [this](editor::TextViewport& viewport) { ApplyDetectedIndentOnOpen(viewport); },
-          .build_compare_tab_from_commit =
-              [this](const std::filesystem::path& path,
-                     const project::GitCommitEntry& commit,
-                     std::size_t selected_row) {
-                return BuildCompareTabEntry(path, commit, selected_row);
-              },
-          .build_compare_tab_from_state =
-              [this](const std::filesystem::path& path, const CompareTabState& compare_state) {
-                return BuildCompareTabEntry(path, compare_state);
-              },
           .build_merge_tab_entry =
               [this](const std::filesystem::path& base_path,
                      const std::filesystem::path& incoming_path,
