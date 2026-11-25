@@ -207,6 +207,7 @@ enum class ActionId {
   InsertText,
   PressKey,
   Pointer,
+  Compose,
   ShowHover,
   SelectAll,
   Undo,

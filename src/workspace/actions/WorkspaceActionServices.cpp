@@ -1654,8 +1654,8 @@ void WorkspaceActionContext::PressKey(SDL_Keycode key, SDL_Keymod modifiers) {
   util::InvokeIfSet(operations_.press_key, key, modifiers);
 }
 
-void WorkspaceActionContext::InjectPointerEvent(const SDL_Event& event, SDL_Keymod modifiers) {
-  util::InvokeIfSet(operations_.inject_pointer_event, event, modifiers);
+void WorkspaceActionContext::InjectInputEvent(const SDL_Event& event, SDL_Keymod modifiers) {
+  util::InvokeIfSet(operations_.inject_input_event, event, modifiers);
 }
 
 bool WorkspaceActionContext::ShowHoverAtCaret() {

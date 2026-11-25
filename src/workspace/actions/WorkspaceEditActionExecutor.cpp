@@ -318,6 +318,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       return DispatchResult::Handled;
     case ActionId::Pointer:
       return ExecutePointer(id, args, source, rejection_feedback);
+    case ActionId::Compose:
+      return ExecuteCompose(args, rejection_feedback);
     case ActionId::TestsDiscover: {
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
@@ -627,6 +629,49 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSortLines(ActionId i
   return DispatchResult::Handled;
 }
 
+ActionCoordinator::DispatchResult ActionCoordinator::ExecuteCompose(const std::vector<std::string>& args,
+                                                                    std::string* rejection_feedback) {
+  const auto reject = RejectInto(rejection_feedback);
+  static constexpr std::string_view kUsage = "usage: compose edit <start> <length> <text>, compose commit <text>, or "
+                                             "compose cancel";
+  const std::string verb = args.empty() ? std::string() : util::ToLowerAscii(args[0]);
+  const std::size_t text_from = verb == "edit" ? 3 : 1;
+  std::string text;
+  for (std::size_t i = text_from; i < args.size(); ++i) {
+    text += (i > text_from ? " " : "") + args[i];
+  }
+  const auto composition = [&](const std::string& shown, Sint32 start, Sint32 length) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_TEXT_EDITING;
+    event.edit.text = shown.c_str();
+    event.edit.start = start;
+    event.edit.length = length;
+    context_.InjectInputEvent(event, SDL_KMOD_NONE);
+  };
+  if (verb == "edit") {
+    const std::optional<int> start = args.size() > 2 ? util::ParseInt(args[1]) : std::nullopt;
+    const std::optional<int> length = args.size() > 2 ? util::ParseInt(args[2]) : std::nullopt;
+    if (!start.has_value() || !length.has_value() || text.empty()) {
+      return reject(std::string(kUsage));
+    }
+    composition(text, *start, *length);
+    return DispatchResult::Handled;
+  }
+  if (verb == "commit" && !text.empty()) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_TEXT_INPUT;
+    event.text.text = text.c_str();
+    context_.InjectInputEvent(event, SDL_KMOD_NONE);
+    composition(std::string(), 0, 0);
+    return DispatchResult::Handled;
+  }
+  if (verb == "cancel" && args.size() == 1) {
+    composition(std::string(), 0, 0);
+    return DispatchResult::Handled;
+  }
+  return reject(std::string(kUsage));
+}
+
 ActionCoordinator::DispatchResult ActionCoordinator::ExecutePointer(ActionId ,
                                                                     const std::vector<std::string>& args,
                                                                     ActionSource ,
@@ -684,7 +729,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecutePointer(ActionId ,
     event.motion.x = *x;
     event.motion.y = *y;
     event.motion.state = held;
-    context_.InjectPointerEvent(event, modifiers);
+    context_.InjectInputEvent(event, modifiers);
   };
   const auto press = [&](Uint8 which, bool down, int count) {
     SDL_Event event{};
@@ -694,7 +739,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecutePointer(ActionId ,
     event.button.clicks = static_cast<Uint8>(count);
     event.button.x = *x;
     event.button.y = *y;
-    context_.InjectPointerEvent(event, modifiers);
+    context_.InjectInputEvent(event, modifiers);
   };
   if (verb == "move") {
     move(button.has_value() ? SDL_BUTTON_MASK(*button) : 0);
@@ -719,7 +764,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecutePointer(ActionId ,
     event.drop.x = *x;
     event.drop.y = *y;
     event.drop.data = args[3].c_str();
-    context_.InjectPointerEvent(event, modifiers);
+    context_.InjectInputEvent(event, modifiers);
   } else if (verb == "wheel") {
     const std::optional<int> notches = args.size() > 3 ? util::ParseInt(args[3]) : std::optional<int>(1);
     if (!notches.has_value() || *notches == 0 || *notches < -100 || *notches > 100) {
@@ -733,7 +778,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecutePointer(ActionId ,
     event.wheel.integer_y = -*notches;
     event.wheel.mouse_x = *x;
     event.wheel.mouse_y = *y;
-    context_.InjectPointerEvent(event, modifiers);
+    context_.InjectInputEvent(event, modifiers);
   } else {
     return reject(std::string(kUsage));
   }

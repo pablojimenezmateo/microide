@@ -433,6 +433,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::Pointer, "pointer",
                  "pointer [mods+]<move|down|up|click|wheel|drop> <x> <y> [button|notches|path] [clicks]",
                  "Pointer", ""},
+      ActionSpec{ActionId::Compose, "compose",
+                 "compose <edit <start> <length> <text>|commit <text>|cancel>", "Compose (IME)", ""},
       ActionSpec{ActionId::SelectAll, "select-all", "select-all", "Select All", "Ctrl+A"},
       ActionSpec{ActionId::Undo, "undo", "undo", "Undo", "Ctrl+Z"},
       ActionSpec{ActionId::JumpToMatchingBracket, "jump-to-matching-bracket",

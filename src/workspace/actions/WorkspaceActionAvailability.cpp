@@ -451,6 +451,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return active_viewport != nullptr || IsSingleLineTextInputSurface(text_input_surface);
     case ActionId::PressKey:
     case ActionId::Pointer:
+    case ActionId::Compose:
       return true;
     case ActionId::InsertText:
       [[fallthrough]];

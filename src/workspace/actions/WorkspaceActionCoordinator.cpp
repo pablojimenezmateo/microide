@@ -15,7 +15,7 @@ ActionCoordinator::ActionCoordinator(WorkspaceActionContext& context) : context_
 bool ActionCoordinator::Execute(ActionId id,
                                 const std::vector<std::string>& args,
                                 ActionSource source) {
-  const bool input = id == ActionId::PressKey || id == ActionId::Pointer;
+  const bool input = id == ActionId::PressKey || id == ActionId::Pointer || id == ActionId::Compose;
   if (!input) {
     context_.PrepareForAction(source);
     context_.NoteActionDispatched(id, source);

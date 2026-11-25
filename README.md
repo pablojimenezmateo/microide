@@ -964,6 +964,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `key <chord> [count]`
 - `show-hover`
 - `pointer [mods+]<move|down|up|click|wheel|drop> <x> <y> [button|notches|path] [clicks]`
+- `compose <edit <start> <length> <text>|commit <text>|cancel>`
 - `select-all`
 - `undo`
 - `jump-to-matching-bracket`

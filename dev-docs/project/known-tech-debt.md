@@ -305,9 +305,16 @@ What it left, by workstream:
    link keeps the old one for the batch's undo, a folder by
    `renameat2(RENAME_EXCHANGE)` (a kill after the swap leaves the old folder
    under the source's name, nothing lost); where neither works (no hard
-   links, no exchange) the old two-step path remains. A kill can still leave
-   a `.microide-staged-*` entry behind (clutter, never the only copy). Not
-   yet: the write-path inventory table for `editor-essentials.md`. The monkey cannot fill the disk
+   links, no exchange) the old two-step path remains. The ops stage under the
+   durable writes' own `.<name>.microide-staging.<pid>.<seq>` names, so a
+   kill's leftover is skipped by the index, git snapshots and mirror sync and
+   swept once its process is gone (the old `.microide-staged-N-<name>` names
+   were adopted by the mirror as a rename of the deleted file). The mirror
+   matrix keeps to the mirror's own durability (it skips `tree-op.*`); a
+   remote delete killed between its local apply and the engine's (deferred)
+   journal comes back on relaunch, as any locally missing file with no record
+   is pulled from the host. Not yet: the write-path inventory table for
+   `editor-essentials.md`. The monkey cannot fill the disk
    either (needs a size-limited filesystem for its fixture).
 4. **W8 sequence fuzzers -- the LSP one landed 2026-11-25, and found a
    deadlock.** `WorkspaceLspClient/AnswersEveryRequestOnceWhateverOrderTheServerReplies`

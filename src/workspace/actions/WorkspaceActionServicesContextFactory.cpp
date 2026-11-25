@@ -653,7 +653,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                   }
                 }
               },
-          .inject_pointer_event =
+          .inject_input_event =
               [this, dispatch_injected](const SDL_Event& event, SDL_Keymod modifiers) {
                 SDL_Keymod& held = context_.interaction_state.key_modifiers;
                 const SDL_Keymod previous = held;

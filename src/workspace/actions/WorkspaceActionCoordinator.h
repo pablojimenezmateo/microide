@@ -61,6 +61,7 @@ class ActionCoordinator {
 
   DispatchResult ExecuteFormatJson(ActionId id, const std::vector<std::string>& args, ActionSource source,
                                    std::string* rejection_feedback);
+  DispatchResult ExecuteCompose(const std::vector<std::string>& args, std::string* rejection_feedback);
   DispatchResult ExecutePointer(ActionId id, const std::vector<std::string>& args, ActionSource source,
                                 std::string* rejection_feedback);
   DispatchResult ExecuteSortLines(ActionId id, const std::vector<std::string>& args, ActionSource source,

@@ -152,7 +152,7 @@ class WorkspaceActionContext {
         request_active_editable_change_redraw;
     std::function<std::optional<std::string>()> selection_text_with_context;
     std::function<void(SDL_Keycode, SDL_Keymod)> press_key;
-    std::function<void(const SDL_Event&, SDL_Keymod)> inject_pointer_event;
+    std::function<void(const SDL_Event&, SDL_Keymod)> inject_input_event;
     std::function<bool()> show_hover_at_caret;
     std::function<void()> apply_editor_preferences_to_all_tabs;
     std::function<std::optional<std::string>(std::string_view)> get_setting_value;
@@ -419,7 +419,7 @@ class WorkspaceActionContext {
   void PasteClipboard();
   void InsertText(std::string text);
   void PressKey(SDL_Keycode key, SDL_Keymod modifiers);
-  void InjectPointerEvent(const SDL_Event& event, SDL_Keymod modifiers);
+  void InjectInputEvent(const SDL_Event& event, SDL_Keymod modifiers);
   bool ShowHoverAtCaret();
 
   void RefreshAvailableColorschemeNames();

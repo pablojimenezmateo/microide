@@ -482,6 +482,12 @@ The last four are the agent-facing ones (ported 2026-10-07 from the never-merged
   example, used to check Claude Code runs in the terminal: `panel-maximize`,
   `term claude`, `key down`, `key enter`, `type hello`, `key shift+enter`,
   `terminal-output`.
+- An input method: `compose edit <start> <length> <text>` shows `text` as the
+  in-flight composition with `length` code points from `start` selected (SDL's
+  text-editing event, through the window's real input path), `compose commit
+  <text>` types the converted text and ends the composition, and `compose
+  cancel` drops it. The text may hold spaces; nothing reaches the buffer until
+  the commit.
 
 Agent navigation commands: `reveal <path> <line[:col]>` opens the file, puts the
 caret on the 1-based line and centres it (a large file still loading lands there

@@ -152,10 +152,37 @@ void TestConversionKeysWorkNormallyWithoutAComposition() {
          "Enter splits the line when nothing is being composed");
 }
 
+void TestTheComposeCommandDrivesTheSameComposition() {
+  EditorFixture fixture("ab\n");
+  WorkspaceShell& shell = fixture.shell;
+  Expect(TestAccess::ExecuteControlCommand(shell, "compose edit 0 1 \xe3\x81\x8b").ok, "compose edit is accepted");
+  Expect(TestAccess::TextComposition(shell).text == "\xe3\x81\x8b" && fixture.viewport().SerializeText() == "ab\n",
+         "it shows the in-flight text without editing the buffer");
+  Expect(TestAccess::ExecuteControlCommand(shell, "compose edit 1 2 \xe3\x81\x8b \xe3\x81\x84").ok &&
+             TestAccess::TextComposition(shell).text == "\xe3\x81\x8b \xe3\x81\x84",
+         "an update replaces it, words and all");
+  Expect(TestAccess::ExecuteControlCommand(shell, "compose commit \xe6\xbc\xa2").ok, "compose commit is accepted");
+  Expect(TestAccess::TextComposition(shell).text.empty() && fixture.viewport().SerializeText() == "\xe6\xbc\xa2" "ab\n",
+         "a commit types the text and ends the composition: " + fixture.viewport().SerializeText());
+  Expect(TestAccess::ExecuteControlCommand(shell, "compose edit 0 0 x").ok &&
+             TestAccess::ExecuteControlCommand(shell, "compose cancel").ok &&
+             TestAccess::TextComposition(shell).text.empty() &&
+             fixture.viewport().SerializeText() == "\xe6\xbc\xa2" "ab\n",
+         "a cancel drops the composition and types nothing");
+  for (const char* bad : {"compose", "compose edit 0 x", "compose edit 0 1", "compose commit", "compose cancel x",
+                          "compose spin"}) {
+    const auto outcome = TestAccess::ExecuteControlCommand(shell, bad);
+    Expect(!outcome.ok && outcome.error.find("usage: compose") != std::string::npos,
+           std::string(bad) + " is refused with the usage: " + outcome.error);
+  }
+}
+
 }
 
 void RegisterImeCompositionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ImeComposition/RecordsTheInFlightText", TestCompositionRecordsTheInFlightText);
+  AddTest(tests, "ImeComposition/TheComposeCommandDrivesTheSameComposition",
+          TestTheComposeCommandDrivesTheSameComposition);
   AddTest(tests, "ImeComposition/CommitClearsTheComposition", TestCommitClearsTheComposition);
   AddTest(tests, "ImeComposition/EmptyUpdateAbandonsTheComposition",
           TestEmptyUpdateAbandonsTheComposition);
