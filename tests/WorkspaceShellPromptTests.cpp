@@ -18,6 +18,7 @@
 #include <vector>
 #include "WorkspaceShellEventHelpers.h"
 #include "support/GitSidebarWait.h"
+#include "support/ProjectSearchWait.h"
 
 namespace microide::tests {
 namespace {
@@ -310,6 +311,48 @@ void TestWorkspaceShellADiskFailureDuringASaveKeepsTheEditAndSaysWhy() {
     Expect(entries == 1, what + " leaves no staging file in the project");
     Expect(WorkspaceShellTestAccess::ExecuteControlCommand(shell, "save").ok && ReadFile(source) == "edited base text\n",
            what + ": once the disk has room the next save writes it");
+  }
+  util::SetCrashPointHook(nullptr);
+}
+
+void TestWorkspaceShellAReplaceAllThatCannotWriteOneFileKeepsItAndSaysWhich() {
+  util::CrashPointControl::Install();
+  for (const std::string_view site : {"durable.writing", "durable.fsyncing", "durable.renaming"}) {
+    TemporaryDirectory temp_dir;
+    const std::filesystem::path root = temp_dir.path() / "project";
+    WriteFile(root / "a.txt", "needle a\n");
+    WriteFile(root / "b.txt", "needle b\n");
+    WriteFile(root / "c.txt", "needle c\n");
+    WorkspaceShell shell;
+    Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+    Expect(WaitForFileIndexSize(shell, 3, std::chrono::milliseconds(3000)), "the files are indexed");
+    WorkspaceShellTestAccess::OpenFile(shell, root / "b.txt");
+    WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
+    Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(3000)), "the search completes");
+    WorkspaceShellTestAccess::SetProjectSearchReplaceText(shell, "pin");
+    std::string arm_error;
+    const std::string file = site == "durable.renaming" ? "b.txt" : "b.txt (staging)";
+    Expect(util::CrashPointControl::Arm("fail=ENOSPC:" + std::string(site) + "@" + file, &arm_error),
+           "armed: " + arm_error);
+    WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
+    util::CrashPointControl::Disarm();
+    const std::string what = "a full disk at " + std::string(site) + " for b.txt";
+    Expect(ReadFile(root / "a.txt") == "pin a\n" && ReadFile(root / "c.txt") == "pin c\n",
+           what + ": the other files are replaced");
+    Expect(ReadFile(root / "b.txt") == "needle b\n", what + ": b.txt keeps its bytes");
+    const std::string& error = WorkspaceShellTestAccess::ProjectSearchError(shell);
+    Expect(error.find("2 of 3") != std::string::npos && error.find("b.txt") != std::string::npos &&
+               error.find("space") != std::string::npos,
+           what + ": the search view says which file and why: " + error);
+    Expect(WorkspaceShellTestAccess::ActiveEditor(shell).SerializeText() == "needle b\n" &&
+               !WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+           what + ": b.txt's open tab still shows the file: " +
+               WorkspaceShellTestAccess::ActiveEditor(shell).SerializeText());
+    std::size_t entries = 0;
+    for ([[maybe_unused]] const auto& entry : std::filesystem::directory_iterator(root)) {
+      ++entries;
+    }
+    Expect(entries == 3, what + ": no staging file is left in the project");
   }
   util::SetCrashPointHook(nullptr);
 }
@@ -1565,6 +1608,8 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellDeleteClosesBackgroundCompareAndMergeTabs);
   AddTest(tests, "WorkspaceShell/ClosingNonActiveDirtyTabDoesNotStrandFocus",
           TestWorkspaceShellClosingNonActiveDirtyTabDoesNotStrandFocus);
+  AddTest(tests, "WorkspaceShell/AReplaceAllThatCannotWriteOneFileKeepsItAndSaysWhich",
+          TestWorkspaceShellAReplaceAllThatCannotWriteOneFileKeepsItAndSaysWhich);
   AddTest(tests, "WorkspaceShell/ADiskFailureDuringASaveKeepsTheEditAndSaysWhy",
           TestWorkspaceShellADiskFailureDuringASaveKeepsTheEditAndSaysWhy);
   AddTest(tests, "WorkspaceShell/AFailedSaveSaysWhy", TestWorkspaceShellAFailedSaveSaysWhy);
