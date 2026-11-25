@@ -1,11 +1,13 @@
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <deque>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -46,6 +48,9 @@ class StdioJsonRpcClientTransport {
   platform::AsyncSubprocess proc;
   std::mutex send_mutex;
   std::mutex write_mutex;
+  static constexpr std::chrono::seconds kWriteStallTimeout{30};
+  std::string pending_write_;
+  std::chrono::steady_clock::time_point write_stalled_since_{};
 
   StdioTransportConfig transport_config_;
 
@@ -105,32 +110,34 @@ class StdioJsonRpcClientTransport {
  public:
 
   void DrainOutbound() {
+    std::unique_lock wlock(write_mutex, std::try_to_lock);
+    if (!wlock.owns_lock()) {
+      return;
+    }
     std::deque<QueuedMessage> batch;
     {
       std::lock_guard lock(send_mutex);
       batch.swap(outbound_messages);
-    }
-    if (batch.empty()) {
-      return;
-    }
-    {
       std::size_t drained_bytes = 0;
       for (const QueuedMessage& queued : batch) {
         drained_bytes += queued.approx_bytes;
       }
-      std::lock_guard lock(send_mutex);
       outbound_queued_bytes_ -= std::min(outbound_queued_bytes_, drained_bytes);
     }
-    std::lock_guard wlock(write_mutex);
+    if (pending_write_.empty() && !batch.empty()) {
+      write_stalled_since_ = std::chrono::steady_clock::now();
+    }
     for (QueuedMessage& queued : batch) {
       util::AddPerformanceCounter(transport_config_.messages_sent);
       util::AddPerformanceCounter(transport_config_.bytes_sent, queued.approx_bytes);
-      if (!proc.Write(std::move(queued).TakeSerialized())) {
-        derived().SetLastError(transport_config_.send_error);
-        stop_io.store(true, std::memory_order_release);
-        return;
-      }
+      pending_write_ += std::move(queued).TakeSerialized();
     }
+    FlushPendingWriteLocked();
+  }
+
+  bool HasPendingWrite() {
+    std::lock_guard wlock(write_mutex);
+    return !pending_write_.empty();
   }
 
   bool SendMessageImmediate(const util::JsonValue& msg, bool allow_during_shutdown = false,
@@ -150,10 +157,44 @@ class StdioJsonRpcClientTransport {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
-      return proc.Write(serialized);
+      return WriteAfterPendingLocked(serialized);
     }
     std::lock_guard wlock(write_mutex);
+    return WriteAfterPendingLocked(serialized);
+  }
+
+  bool WriteAfterPendingLocked(const std::string& serialized) {
+    if (!pending_write_.empty()) {
+      const std::string earlier = std::exchange(pending_write_, std::string());
+      if (!proc.Write(earlier)) {
+        return false;
+      }
+    }
     return proc.Write(serialized);
+  }
+
+  void FlushPendingWriteLocked() {
+    if (pending_write_.empty()) {
+      return;
+    }
+    const std::optional<std::size_t> written = proc.WriteSome(pending_write_);
+    const auto now = std::chrono::steady_clock::now();
+    if (!written.has_value()) {
+      pending_write_.clear();
+      derived().SetLastError(transport_config_.send_error);
+      stop_io.store(true, std::memory_order_release);
+      return;
+    }
+    if (*written > 0) {
+      pending_write_.erase(0, *written);
+      write_stalled_since_ = now;
+      return;
+    }
+    if (now - write_stalled_since_ > kWriteStallTimeout) {
+      pending_write_.clear();
+      derived().SetLastError(transport_config_.send_error);
+      stop_io.store(true, std::memory_order_release);
+    }
   }
 
   bool SendMessageAfterInitialize(util::JsonValue msg) {
@@ -318,6 +359,10 @@ class StdioJsonRpcClientTransport {
     return wake_pipe_.PollReadableOrWake(proc.stdout_fd(), timeout_ms);
   }
 
+  bool WaitStdoutReadableOrWritable(int timeout_ms) {
+    return wake_pipe_.PollReadableOrWake(proc.stdout_fd(), timeout_ms, HasPendingWrite() ? proc.stdin_fd() : -1);
+  }
+
   void ParseBufferedMessages() {
     while (true) {
       const std::size_t buffered_before = framer_.BufferedBytes();
@@ -345,7 +390,7 @@ class StdioJsonRpcClientTransport {
       if (stop_io.load(std::memory_order_acquire)) {
         break;
       }
-      if (!WaitStdoutReadable(1000)) {
+      if (!WaitStdoutReadableOrWritable(1000)) {
         continue;
       }
       auto chunk = proc.Read(4096, read_timeout);

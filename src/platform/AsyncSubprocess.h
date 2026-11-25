@@ -37,6 +37,7 @@ class AsyncSubprocess {
   bool IsRunning() const;
 
   bool Write(std::string_view data);
+  std::optional<std::size_t> WriteSome(std::string_view data);
 
   std::optional<std::string> Read(std::size_t max_bytes = 65536, int timeout_ms = 1000);
 

@@ -297,7 +297,19 @@ What it left, by workstream:
    and have them); the same check for every other write path; the write-path
    inventory table for `editor-essentials.md`. The monkey cannot fill the disk
    either (needs a size-limited filesystem for its fixture).
-4. **W8 sequence fuzzers** are not built: `ControlCommandFuzz`, `LspSessionFuzz` and
+4. **W8 sequence fuzzers -- the LSP one landed 2026-11-25, and found a
+   deadlock.** `WorkspaceLspClient/AnswersEveryRequestOnceWhateverOrderTheServerReplies`
+   drives the client against a scripted server answering late, out of order,
+   twice, for ids never asked and with diagnostics for stale versions (four
+   seeds): every request must be answered exactly once. It deadlocked: the
+   transport's one I/O thread wrote the outbound batch with a blocking write,
+   so with the server's stdin full it stopped reading the server's stdout, and a
+   server that writes its replies synchronously then stopped reading too --
+   language features frozen until the 30 s write timeout killed the session.
+   `StdioJsonRpcClientTransport` now writes without blocking from a pending
+   buffer and waits for readable-or-writable (LSP and DAP both). Still open as
+   this item: the DAP and control-command sequence fuzzers, and the libFuzzer
+   form of `ViewportEditSequenceFuzz`. Previously: **W8 sequence fuzzers** are not built: `ControlCommandFuzz`, `LspSessionFuzz` and
    `DapSessionFuzz` (scripted fake servers answering late, out of order and for old
    versions), and the libFuzzer form of `ViewportEditSequenceFuzz`. The stateful
    multi-view unit sweep (`TextViewport/EditsThroughEveryViewKeepEveryViewsCachesTrue`)

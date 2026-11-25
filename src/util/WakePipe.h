@@ -68,16 +68,23 @@ class WakePipe {
 
   int read_fd() const { return read_fd_; }
 
-  bool PollReadableOrWake(int watched_fd, int timeout_ms) {
+  bool PollReadableOrWake(int watched_fd, int timeout_ms, int writable_fd = -1) {
     if (watched_fd < 0) {
       return true;
     }
-    pollfd fds[2] = {};
+    pollfd fds[3] = {};
     int nfds = 0;
     const int watched_index = nfds;
     fds[nfds].fd = watched_fd;
     fds[nfds].events = POLLIN | POLLHUP;
     ++nfds;
+    int writable_index = -1;
+    if (writable_fd >= 0) {
+      writable_index = nfds;
+      fds[nfds].fd = writable_fd;
+      fds[nfds].events = POLLOUT;
+      ++nfds;
+    }
     int wake_index = -1;
     if (const int wake_read_fd = read_fd(); wake_read_fd >= 0) {
       wake_index = nfds;
@@ -99,7 +106,8 @@ class WakePipe {
       Drain();
     }
     const short revents = fds[watched_index].revents;
-    return (revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0;
+    const bool writable = writable_index >= 0 && fds[writable_index].revents != 0;
+    return writable || (revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0;
   }
 
  private:

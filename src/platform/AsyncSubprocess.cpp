@@ -271,6 +271,29 @@ bool AsyncSubprocess::Write(std::string_view data) {
   return true;
 }
 
+std::optional<std::size_t> AsyncSubprocess::WriteSome(std::string_view data) {
+  if (impl_ == nullptr) {
+    return std::nullopt;
+  }
+  std::lock_guard lock(impl_->state_mutex);
+  if (!impl_->running.load(std::memory_order_acquire) || impl_->stdin_fd < 0) {
+    return std::nullopt;
+  }
+  for (;;) {
+    const ssize_t written = write(impl_->stdin_fd, data.data(), data.size());
+    if (written >= 0) {
+      return static_cast<std::size_t>(written);
+    }
+    if (errno == EINTR) {
+      continue;
+    }
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      return std::size_t{0};
+    }
+    return std::nullopt;
+  }
+}
+
 std::optional<std::string> AsyncSubprocess::Read(std::size_t max_bytes, int timeout_ms) {
   if (impl_ == nullptr) {
     return std::nullopt;

@@ -2345,6 +2345,160 @@ void TestLspCompletionSortsByServerRank() {
   Expect(items[0].kind == 2 && items[1].kind == 7, "kind is the final tie-break");
 }
 
+void TestWorkspaceLspClientAnswersEveryRequestOnceWhateverOrderTheServerReplies() {
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "server.py";
+  WriteFile(server_path, std::string(R"py(import json
+import random
+import sys
+import threading
+import time
+
+rng = random.Random(int(sys.argv[1]))
+pending = []
+lock = threading.Lock()
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    return json.loads(body.decode("utf-8")) if body else None
+
+def write_message(message):
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+def late_answers():
+    while True:
+        time.sleep(0.03)
+        with lock:
+            flush_some(everything=True)
+
+def answer(msg):
+    method = msg["method"]
+    if method == "textDocument/hover":
+        result = {"contents": {"kind": "plaintext", "value": "hover " + str(msg["id"])}}
+    elif method == "textDocument/completion":
+        result = {"isIncomplete": False, "items": [{"label": "item" + str(msg["id"])}]}
+    else:
+        result = [{"uri": msg["params"]["textDocument"]["uri"],
+                   "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 1}}}]
+    write_message({"jsonrpc": "2.0", "id": msg["id"], "result": result})
+    if rng.random() < 0.1:
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": result})
+
+def flush_some(everything=False):
+    rng.shuffle(pending)
+    take = len(pending) if everything else rng.randint(0, len(pending))
+    for _ in range(take):
+        if rng.random() < 0.2:
+            time.sleep(rng.random() * 0.02)
+        answer(pending.pop())
+
+threading.Thread(target=late_answers, daemon=True).start()
+version = 0
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    lock.acquire()
+    method = msg.get("method")
+    if method == "initialize":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": {"capabilities": {
+            "textDocumentSync": 1, "hoverProvider": True, "definitionProvider": True,
+            "completionProvider": {"triggerCharacters": ["."]}}}})
+    elif method == "textDocument/didChange":
+        version = msg["params"]["textDocument"].get("version", version)
+        uri = msg["params"]["textDocument"]["uri"]
+        stale = max(0, version - rng.randint(0, 3))
+        write_message({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
+            "uri": uri, "version": stale, "diagnostics": [{"range": {"start": {"line": 0, "character": 0},
+            "end": {"line": 0, "character": 1}}, "message": "stale " + str(stale), "severity": 1}]}})
+        if rng.random() < 0.1:
+            write_message({"jsonrpc": "2.0", "id": 900000 + version, "result": None})
+        flush_some()
+    elif method in ("textDocument/hover", "textDocument/completion", "textDocument/definition"):
+        pending.append(msg)
+        flush_some()
+    elif method == "shutdown":
+        flush_some(everything=True)
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    elif method == "exit":
+        break
+    elif "id" in msg and "method" in msg:
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    if method not in ("shutdown", "exit") and rng.random() < 0.3:
+        flush_some(everything=True)
+    lock.release()
+)py"));
+  for (const int seed : {1, 2, 3, 4}) {
+    LspClient client;
+    Expect(client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string(), std::to_string(seed)},
+                        "file:///tmp", "cpp"),
+           "the scripted server starts");
+    Expect(WaitUntil([&] { return client.IsInitialized(); }, std::chrono::seconds(5)), "the server initializes");
+    const std::string uri = "file:///tmp/seq.cpp";
+    std::string text = "int main() { return 0; }\n";
+    Expect(client.DidOpen(uri, "cpp", text), "the document opens");
+    std::vector<int> answers;
+    std::size_t issued = 0;
+    std::uint64_t state = static_cast<std::uint64_t>(seed) * 6364136223846793005ull + 1442695040888963407ull;
+    const auto next = [&state](std::uint64_t bound) {
+      state = state * 6364136223846793005ull + 1442695040888963407ull;
+      return (state >> 33) % bound;
+    };
+    for (int step = 0; step < 150; ++step) {
+      const std::uint64_t pick = next(4);
+      const LspClient::Position position{0, static_cast<int>(next(10))};
+      if (pick == 0) {
+        text.insert(text.size() - 1, std::string(1, static_cast<char>('a' + next(26))));
+        (void)client.DidChange(uri, text);
+        continue;
+      }
+      const std::size_t slot = issued++;
+      answers.push_back(0);
+      if (pick == 1) {
+        client.RequestHoverAsync(uri, position, [&answers, slot](auto) { ++answers[slot]; });
+      } else if (pick == 2) {
+        client.RequestCompletionAsync(uri, position, [&answers, slot](auto) { ++answers[slot]; });
+      } else {
+        client.RequestGoToDefinitionAsync(uri, position, [&answers, slot](auto) { ++answers[slot]; });
+      }
+      client.DrainCallbacks();
+    }
+    const bool settled = WaitUntil(
+        [&] {
+          client.DrainCallbacks();
+          return std::all_of(answers.begin(), answers.end(), [](int count) { return count >= 1; });
+        },
+        std::chrono::seconds(30), std::chrono::milliseconds(5));
+    client.DrainCallbacks();
+    std::size_t unanswered = 0;
+    std::size_t twice = 0;
+    for (const int count : answers) {
+      unanswered += count == 0 ? 1 : 0;
+      twice += count > 1 ? 1 : 0;
+    }
+    Expect(settled && unanswered == 0, "seed " + std::to_string(seed) + ": every request is answered, " +
+                                           std::to_string(unanswered) + " of " + std::to_string(issued) + " were not");
+    Expect(twice == 0, "seed " + std::to_string(seed) + ": no request is answered twice, " + std::to_string(twice) +
+                           " were (the server repeats some replies)");
+    Expect(client.IsRunning(), "seed " + std::to_string(seed) + ": the client survives stale versions and stray ids");
+    client.Shutdown();
+  }
+}
+
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceLspClient/SendsInvalidUtf8AsValidJson",
           TestWorkspaceLspClientSendsInvalidUtf8AsValidJson);
@@ -2394,6 +2548,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestWorkspaceLspClientDidOpenQueuedBeforeInitializeStillDeliversFullText);
   AddTest(tests, "WorkspaceLspClient/CapturesNegotiatedPositionEncoding",
           TestWorkspaceLspClientCapturesNegotiatedPositionEncoding);
+  AddTest(tests, "WorkspaceLspClient/AnswersEveryRequestOnceWhateverOrderTheServerReplies",
+          TestWorkspaceLspClientAnswersEveryRequestOnceWhateverOrderTheServerReplies);
   AddTest(tests, "WorkspaceLspClient/AnswersServerRequestsAndAdvertisesEnablers",
           TestWorkspaceLspClientAnswersServerRequestsAndAdvertisesEnablers);
   AddTest(tests, "WorkspaceLspClient/LspManagerSharesOneSubprocessAcrossLanguageIds",
