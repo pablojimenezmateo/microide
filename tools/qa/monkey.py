@@ -1621,6 +1621,11 @@ class Monkey:
         if buffer.get("kind") != "editor" or not buffer.get("path") or not buffer.get("dirty") \
                 or buffer.get("readOnly"):
             return self.type_action()
+        if self.rng.random() < 0.3:
+            rule = "fail=ENOSPC:durable.writing@session (staging)#1"
+            self.app.record_external({"external": "diskfull", "target": rule})
+            self._report(f"disk full at step {self.step_index}", self._fail_session_flush(rule))
+            return "diskfull:session"
         name = Path(os.path.realpath(buffer["path"])).name
         site, target = self.rng.choice([("durable.writing", f"{name} (staging)"),
                                         ("durable.fsyncing", f"{name} (staging)"),
@@ -1629,6 +1634,49 @@ class Monkey:
         self.app.record_external({"external": "diskfull", "target": rule})
         self._report(f"disk full at step {self.step_index}", self._fail_save(rule))
         return "diskfull"
+
+    def _state_write_notice(self) -> str | None:
+        for row in self.app.query("notifications"):
+            message = row.get("message") or ""
+            if message.startswith("Could not save the editor's "):
+                return message
+        return None
+
+    def _fail_session_flush(self, rule: str) -> list[tuple[str, str]]:
+        """A full disk under the session writer, where unsaved buffers are staged
+        for crash recovery: the app must say the edits are unprotected, and take
+        that back once a later flush lands."""
+        try:
+            self.app.query("crash-points", {"arm": rule})
+        except q.QaFailure:
+            return []
+        fired = False
+        try:
+            self.app.send_line("type " + q.quote_arg("~"), record=False)
+            deadline = time.monotonic() + 8.0 * q.SLOW_FACTOR
+            while time.monotonic() < deadline and not fired:
+                fired = bool(self.app.query("crash-points").get("armedMatches"))
+                time.sleep(0.1)
+        finally:
+            with contextlib.suppress(q.QaFailure):
+                self.app.query("crash-points", {"disarm": True})
+        if not fired:
+            return []
+        found: list[tuple[str, str]] = []
+        deadline = time.monotonic() + 5.0 * q.SLOW_FACTOR
+        while time.monotonic() < deadline and self._state_write_notice() is None:
+            time.sleep(0.05)
+        if self._state_write_notice() is None:
+            found.append(("data", f"a session flush that failed on a full disk ({rule}) said nothing"))
+            return found
+        self.app.send_line("type " + q.quote_arg("~"), record=False)
+        deadline = time.monotonic() + 10.0 * q.SLOW_FACTOR
+        while time.monotonic() < deadline and self._state_write_notice() is not None:
+            time.sleep(0.1)
+        if self._state_write_notice() is not None:
+            found.append(("data", f"after a session flush failed on a full disk ({rule}), the next flush that "
+                                  "landed left the warning up"))
+        return found
 
     def _fail_save(self, rule: str) -> list[tuple[str, str]]:
         buffer = self.app.query("buffer")
@@ -1703,7 +1751,9 @@ class Monkey:
                               self.data.kill9_and_check(self.rng, waited=bool(row.get("waited")),
                                                         point=row.get("point")))
         elif row.get("external") == "diskfull":
-            self._report("disk full (replayed)", self._fail_save(row.get("target", "")))
+            target = row.get("target", "")
+            replayed = self._fail_session_flush(target) if "@session " in target else self._fail_save(target)
+            self._report("disk full (replayed)", replayed)
         elif row.get("external") == "remote-fault":
             if self.host is not None:
                 self.host.fault(row.get("target", ""))

@@ -411,6 +411,17 @@ class RecordingTests(unittest.TestCase):
         self.assertTrue(q.is_finding_line(own))
         self.assertIsNone(q.rr_failure(own))
 
+    def test_a_state_write_the_driver_failed_is_not_a_finding(self):
+        injected = ("microide crash-point: failed durable.writing "
+                    "(/x/state/projects/p/.session.microide-staging.42.7) with errno 28, pass 1")
+        failed = "persistence: could not write /x/state/projects/p/session (write: No space left on device)"
+        other = "persistence: could not write /x/state/config (write: No space left on device)"
+        self.assertEqual(q.finding_lines([failed]), [failed])
+        self.assertEqual(q.finding_lines([injected, failed, other]), [other])
+        carried: set[str] = set()
+        self.assertEqual(q.finding_lines([injected], carried), [])
+        self.assertEqual(q.finding_lines([failed], carried), [])
+
     def test_an_app_that_died_with_its_recorder_is_not_a_crash(self):
         app = SimpleNamespace(new_log_lines=lambda: [], alive=lambda: False, proc=SimpleNamespace(returncode=134),
                               recording=True, findings=[], recent_log=[],

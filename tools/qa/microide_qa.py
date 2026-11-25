@@ -104,6 +104,32 @@ FINDING_MARKERS = (
 )
 
 
+_INJECTED_WRITE_FAILURE = re.compile(r"microide crash-point: failed \S+ \((.+)\) with errno")
+_STATE_WRITE_FAILED = re.compile(r"persistence: could not write (.+?) \(")
+_STAGING_NAME = re.compile(r"^\.(.+)\.microide-staging\.\d+\.\d+$")
+
+
+def finding_lines(lines: list[str], injected: set[str] | None = None) -> list[str]:
+    """The log lines the oracles report. A state write that failed because a
+    driver armed a fault at it (`crash-points` fail=, logged by the app as
+    `crash-point: failed <site> (<path>)` just before) is the injection, not a
+    finding; `injected` carries those paths across calls."""
+    injected = set() if injected is None else injected
+    found: list[str] = []
+    for line in lines:
+        if (failed := _INJECTED_WRITE_FAILURE.search(line)) is not None:
+            path = Path(failed.group(1))
+            staging = _STAGING_NAME.match(path.name)
+            injected.add(str(path.parent / (staging.group(1) if staging else path.name)))
+            continue
+        if not is_finding_line(line):
+            continue
+        if (state := _STATE_WRITE_FAILED.search(line)) is not None and state.group(1) in injected:
+            continue
+        found.append(line)
+    return found
+
+
 def loaded_diff(tab: dict[str, Any] | None) -> bool:
     """A diff tab whose sides have been read: a diff opens as a stand-in and
     loads on the reader thread, and commands on its changes wait for that."""
@@ -591,6 +617,7 @@ class App:
     # the app's frame-trace lines since the previous check.
     recent_shots: collections.deque = field(default_factory=lambda: collections.deque(maxlen=3))
     recent_log: list[str] = field(default_factory=list)
+    injected_write_failures: set[str] = field(default_factory=set)
     # What a replay needs to rebuild the run: fixture kind, profile, seed.
     replay_header: dict[str, Any] = field(default_factory=dict)
     # action-counts of earlier processes of this run (restart, crash_and_relaunch).
@@ -881,9 +908,8 @@ class App:
                 self.proc.wait(timeout=5)
         # The oracles over what the first run logged up to its exit; the exit
         # itself is the point, not a crash (check() would report it as one).
-        for line in self.new_log_lines():
-            if is_finding_line(line):
-                self.findings.append(Finding("log", line.strip()))
+        for line in finding_lines(self.new_log_lines(), self.injected_write_failures):
+            self.findings.append(Finding("log", line.strip()))
         if self.proc is not None and self.proc.returncode not in (0, None):
             self.expect(False, f"quit exited with status {self.proc.returncode}")
         elif not self.alive():
@@ -916,9 +942,8 @@ class App:
         self._bank_action_counts()
         if self.alive():
             self._sigkill()
-        for line in self.new_log_lines():
-            if is_finding_line(line):
-                self.findings.append(Finding("log", line.strip()))
+        for line in finding_lines(self.new_log_lines(), self.injected_write_failures):
+            self.findings.append(Finding("log", line.strip()))
         if self._socket is not None:
             with contextlib.suppress(OSError):
                 self._socket.close()
@@ -2528,9 +2553,8 @@ class App:
         keeps the window after this action in the evidence ring."""
         found: list[Finding] = []
         self.recent_log = self.new_log_lines()
-        for line in self.recent_log:
-            if is_finding_line(line):
-                found.append(Finding("log", line.strip()))
+        for line in finding_lines(self.recent_log, self.injected_write_failures):
+            found.append(Finding("log", line.strip()))
         if self.alive() and self.dying():
             # On its way out (its core going to the crash reporter): the exit
             # status is worth the wait, and "alive" for these seconds is not.
