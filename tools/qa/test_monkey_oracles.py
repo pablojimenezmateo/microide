@@ -1986,5 +1986,197 @@ class TerminalOriginsEdgeTests(unittest.TestCase):
         self.assertNotIn("not-part", out)
         self.assertEqual(monkey_oracles.terminal_origins("", set()), "")
 
+
+class _LoggingRelaunchingApp(_RelaunchingApp):
+    """The relaunching app with a work tree (its state records) and a log the
+    killed process wrote, as the driver's App has."""
+
+    def __init__(self, work: Path) -> None:
+        super().__init__()
+        self.work = work
+        self.log = ""
+        self.persistence = {"staged": True}
+
+    def _log_size(self) -> int:
+        return len(self.log)
+
+    def log_since(self, mark: int, limit: int) -> str:
+        return self.log[mark:mark + limit]
+
+    def query(self, verb, args=None):
+        if verb == "persistence":
+            if isinstance(self.persistence, Exception):
+                raise self.persistence
+            return self.persistence
+        return super().query(verb, args)
+
+
+def _io_line(kind: str, path: str, sha: str) -> str:
+    return f"microide buffer-io: {kind} path={path} doc=0x1 rev=1 dirty=1 bytes=3 sha={sha[:12]}\n"
+
+
+class Kill9ProcedureTests(unittest.TestCase):
+    """What kill9_and_check does around the verdicts: the row it records, the wait,
+    the evidence it keeps, and the save a kill cut part-way."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.dir, ignore_errors=True))
+
+    def app(self):
+        return _LoggingRelaunchingApp(self.dir / "work")
+
+    def run_kill(self, app, *, rng=None, waited=True, point=None, choose=None, kill_at=None, after=None,
+                 between=None):
+        oracle = monkey_oracles.DataOracle(app)
+        relaunch = app.crash_and_relaunch
+
+        def restore(*args, **kwargs):
+            relaunch(*args, **kwargs)
+            if between is not None:
+                between()
+            if after is not None:
+                app.docs[1] = [dict(d) for d in after]
+        app.crash_and_relaunch = restore
+        slept = []
+        with mock.patch.object(monkey_oracles.time, "sleep", slept.append), \
+                mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 0.001), \
+                contextlib.ExitStack() as stack:
+            if kill_at is not None:
+                stack.enter_context(mock.patch.object(oracle, "_kill_at", side_effect=lambda p: kill_at(oracle, p)))
+            found = oracle.kill9_and_check(rng or random.Random(1), waited=waited, point=point, choose=choose)
+        return oracle, [message for _, message in found], slept
+
+    def test_the_kill_is_recorded_for_a_replay(self):
+        app = self.app()
+        self.run_kill(app)
+        self.assertEqual(app.actions[-1], {"kill9": True, "waited": True})
+        app = self.app()
+        self.run_kill(app, point="kill:durable.writing@session#1|edit",
+                      kill_at=lambda oracle, p: (False, [], None))
+        self.assertEqual(app.actions[-1], {"kill9": True, "waited": True,
+                                           "point": "kill:durable.writing@session#1|edit"})
+
+    def test_whether_it_waits_is_drawn_seven_in_ten(self):
+        for draw, waited in ((0.69, True), (0.71, False)):
+            app = self.app()
+            rng = mock.Mock()
+            rng.random.return_value = draw
+            _, _, slept = self.run_kill(app, rng=rng, waited=None)
+            self.assertEqual(app.actions[-1]["waited"], waited, draw)
+            self.assertEqual(bool(slept) and slept[0] == monkey_oracles.CRASH_SAFETY_QUIET_S * 0.001, waited)
+        app = self.app()
+        self.run_kill(app, waited=False, point="kill:x@y#1|edit", kill_at=lambda oracle, p: (False, [], None))
+        self.assertTrue(app.actions[-1]["waited"], "a kill at a point always waits for the flush")
+
+    def test_a_point_chosen_once_the_flush_has_run(self):
+        app = self.app()
+        chosen = []
+
+        def choose():
+            chosen.append(app.query("persistence"))
+            return "kill:durable.renaming@session#1|edit"
+        self.run_kill(app, waited=None, choose=choose, kill_at=lambda oracle, p: (False, [], None))
+        self.assertEqual(len(chosen), 1)
+        self.assertEqual(app.actions[-1]["point"], "kill:durable.renaming@session#1|edit")
+        self.assertTrue(app.actions[-1]["waited"])
+
+    def test_a_flush_that_never_stages_is_a_finding_and_an_old_binary_is_not(self):
+        app = self.app()
+        app.persistence = {"staged": False}
+        _, found, _ = self.run_kill(app)
+        self.assertIn("the crash-safety flush did not stage the unsaved buffers within 20s of quiet "
+                      "(the `persistence` query never answered staged)", found)
+        app = self.app()
+        app.persistence = monkey_oracles.q.QaFailure("unknown query \"persistence\"")
+        _, found, _ = self.run_kill(app)
+        self.assertEqual(found, [])
+
+    def test_the_killed_process_state_is_kept_beside_the_run(self):
+        app = self.app()
+        (app.work / "state" / "projects").mkdir(parents=True)
+        (app.work / "state" / "projects" / "session").write_text("record")
+        (app.work / "kill-state").mkdir()
+        (app.work / "kill-state" / "stale").write_text("from an earlier kill")
+        oracle, _, _ = self.run_kill(app)
+        self.assertEqual(oracle.last_kill_state, app.work / "kill-state")
+        self.assertEqual((app.work / "kill-state" / "projects" / "session").read_text(), "record")
+        self.assertFalse((app.work / "kill-state" / "stale").exists(), "the previous kill's copy is replaced")
+        self.assertEqual(set(oracle.last_kill), {"before", "after"})
+        self.assertIn("/p/b/y.txt", [doc["path"] for doc in oracle.last_kill["before"]])
+        app = _RelaunchingApp()
+        oracle, _, _ = self.run_kill(app)
+        self.assertIsNone(oracle.last_kill_state, "no work tree, nothing kept")
+
+    def test_a_save_cut_part_way_leaves_the_old_or_the_written_bytes(self):
+        path = self.dir / "a.txt"
+        old, written, other = b"old\n", b"new\n", b"ne\n"
+
+        def scenario(now: bytes):
+            path.write_bytes(old)
+            app = self.app()
+            app.docs[1] = [{"path": str(path), "dirty": True, "sha256": "edited", "bytes": 4, "project": "/p/b"}]
+
+            def kill_at(oracle, point):
+                oracle.saved_file_before = hashlib.sha256(old).hexdigest()
+                app.log += _io_line("writing", str(path), hashlib.sha256(written).hexdigest())
+                path.write_bytes(now)
+                return True, list(app.docs[1]), str(path)
+            _, found, _ = self.run_kill(app, point="kill:durable.renaming@a.txt#1|save", kill_at=kill_at,
+                                        after=app.docs[1])
+            return found
+        self.assertEqual(scenario(old), [])
+        self.assertEqual(scenario(written), [])
+        self.assertIn("a save of a.txt killed part-way (killed at durable.renaming@a.txt#1) left the file neither "
+                      "as it was nor as the save was writing it", scenario(other))
+
+    def test_a_buffer_saved_before_the_kill_is_owed_nothing(self):
+        path = self.dir / "a.txt"
+        path.write_bytes(b"saved\n")
+        sha = hashlib.sha256(b"saved\n").hexdigest()
+        app = self.app()
+        app.docs[1] = [{"path": str(path), "dirty": True, "sha256": "unsaved", "bytes": 4, "project": "/p/b"}]
+        relaunch = app.crash_and_relaunch
+
+        def crash(*args, **kwargs):
+            if kwargs.get("between"):
+                app.log += _io_line("write", str(path), sha)
+            relaunch(*args, **kwargs)
+        app.crash_and_relaunch = crash
+        _, found, _ = self.run_kill(app, after=[])
+        self.assertEqual(found, [], "the log says it was saved and the file holds what it wrote")
+
+    def test_a_buffer_the_trigger_changed_back_clean_must_be_in_its_file(self):
+        path = self.dir / "a.txt"
+        path.write_bytes(b"trigger saved\n")
+        held = hashlib.sha256(b"trigger saved\n").hexdigest()
+        before = {"path": str(path), "dirty": True, "sha256": "staged", "bytes": 6, "project": "/p/b"}
+
+        def scenario(back_sha):
+            app = self.app()
+            app.docs[1] = [dict(before)]
+            edited = {**before, "sha256": "edited"}
+            _, found, _ = self.run_kill(app, point="kill:durable.writing@session#1|edit",
+                                        kill_at=lambda oracle, p: (True, [edited], None),
+                                        after=[{**before, "sha256": back_sha, "dirty": False}])
+            return found
+        self.assertEqual(scenario(held), [])
+        self.assertEqual(scenario("other"), ["the unsaved buffer a.txt came back after a kill -9 marked saved; its "
+                                             "file does not hold it (killed at durable.writing@session#1)"])
+
+    def test_a_clean_file_the_trigger_touched_may_change_on_disk(self):
+        path = self.dir / "c.txt"
+        path.write_bytes(b"clean\n")
+        sha = hashlib.sha256(b"clean\n").hexdigest()
+        clean = {"path": str(path), "dirty": False, "sha256": sha, "bytes": 6, "project": "/p/b"}
+        app = self.app()
+        app.docs[1] = [clean]
+
+        def kill_at(oracle, point):
+            path.write_bytes(b"saved by the trigger\n")
+            return True, [{**clean, "sha256": "changed"}], None
+        _, found, _ = self.run_kill(app, point="kill:durable.writing@c.txt#1|save", kill_at=kill_at, after=[clean])
+        self.assertEqual(found, [])
+
 if __name__ == "__main__":
     unittest.main()
