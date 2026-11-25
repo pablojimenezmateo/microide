@@ -5,6 +5,7 @@
 #include <cstring>
 #include <ctime>
 #include <string>
+#include <utility>
 
 #include "project/GitCommandUtil.h"
 
@@ -39,6 +40,74 @@ std::string FormatBlameDate(std::int64_t author_time) {
   return std::string(formatted, written);
 }
 
+struct CaretLines {
+  std::size_t start = 0;
+  std::size_t end = 0;
+};
+
+CaretLines CaretBlameLines(const editor::TextViewport& viewport) {
+  const std::size_t cursor = viewport.cursor_line();
+  const std::size_t line_count = viewport.line_count();
+  return CaretLines{
+      .start = cursor > kCaretBlameRadius ? cursor - kCaretBlameRadius : 0,
+      .end = line_count == 0 ? 0 : std::min(line_count - 1, cursor + kCaretBlameRadius),
+  };
+}
+
+bool BlameableBuffer(const std::filesystem::path& project_root,
+                     const editor::TextViewport& viewport) {
+  return !project_root.empty() && !viewport.is_placeholder() && !viewport.path().empty() &&
+         !viewport.dirty() &&
+         project::internal::AbsoluteToRelativePathRef(project_root, viewport.path()).has_value();
+}
+
+void FillBlameRequest(project::GitBlameRequest& request,
+                      const platform::ProcessLauncher* launcher,
+                      const std::filesystem::path& project_root,
+                      const editor::TextViewport& viewport,
+                      std::size_t visible_start_line,
+                      std::size_t visible_line_count,
+                      CaretLines caret) {
+  request.launcher = launcher;
+  AssignPathIfChanged(request.root, project_root);
+  AssignPathIfChanged(request.absolute_path, viewport.path());
+  request.visible_start_line = visible_start_line;
+  request.visible_line_count = visible_line_count;
+  request.total_line_count = viewport.line_count();
+  request.dirty = viewport.dirty();
+  request.result_start_line = caret.start;
+  request.result_line_count = caret.end - caret.start + 1;
+}
+
+void AppendBlameLine(editor::EditorBlameOverlay& overlay,
+                     render::TextRenderer& text_renderer,
+                     const project::GitBlameLine& line,
+                     float x,
+                     float y,
+                     float line_height,
+                     float right_limit) {
+  const float char_width = std::max(1.0f, text_renderer.CharWidth());
+  const float max_width = std::max(0.0f, right_limit - x);
+  if (max_width < char_width * 4.0f) {
+    return;
+  }
+  std::string display_text = text_renderer.TruncateToWidth(line.text, max_width);
+  if (display_text.empty()) {
+    return;
+  }
+  const float width = text_renderer.MeasureWidth(display_text);
+  overlay.lines.push_back(editor::EditorBlameLine{
+      .line_index = line.line,
+      .rect = MakeRect(x, y, width, line_height),
+      .text = std::move(display_text),
+      .commit_id = line.commit_id,
+      .author = line.author,
+      .summary = line.summary,
+      .date = FormatBlameDate(line.author_time),
+      .interactive = !line.commit_id.empty() && !line.synthetic,
+  });
+}
+
 }
 
 const platform::ProcessLauncher* EditorBlameOverlayService::ProjectLauncher() const {
@@ -69,12 +138,8 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildEditor
     float minimum_pane_width,
     std::size_t sticky_scroll_rows,
     bool show_line_numbers) const {
-  if (project_root.empty() || viewport.is_placeholder() || viewport.path().empty() || viewport.dirty() ||
+  if (!BlameableBuffer(project_root, viewport) ||
       !FitsPane(text_renderer, viewport, rect, minimum_pane_width, show_line_numbers)) {
-    return std::nullopt;
-  }
-
-  if (!project::internal::AbsoluteToRelativePathRef(project_root, viewport.path()).has_value()) {
     return std::nullopt;
   }
 
@@ -82,24 +147,12 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildEditor
       text_renderer, viewport, rect, sticky_scroll_rows, show_line_numbers);
   viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
   const std::size_t visible_start_line = viewport.VisualRowLineIndex(viewport.scroll_line());
-  const std::size_t caret_start =
-      viewport.cursor_line() > kCaretBlameRadius ? viewport.cursor_line() - kCaretBlameRadius : 0;
-  const std::size_t caret_end =
-      viewport.line_count() == 0 ? 0
-                                 : std::min(viewport.line_count() - 1, viewport.cursor_line() + kCaretBlameRadius);
-  project::GitBlameRequest& request = editor_request_;
-  request.launcher = ProjectLauncher();
-  AssignPathIfChanged(request.root, project_root);
-  AssignPathIfChanged(request.absolute_path, viewport.path());
-  request.visible_start_line = visible_start_line;
-  request.visible_line_count = metrics.visible_rows;
-  request.total_line_count = viewport.line_count();
-  request.dirty = viewport.dirty();
-  request.result_start_line = caret_start;
-  request.result_line_count = caret_end - caret_start + 1;
+  const CaretLines caret = CaretBlameLines(viewport);
+  FillBlameRequest(editor_request_, ProjectLauncher(), project_root, viewport, visible_start_line,
+                   metrics.visible_rows, caret);
 
-  git_blame_service.Request(request);
-  const project::GitBlameSnapshot snapshot = git_blame_service.Snapshot(request);
+  git_blame_service.Request(editor_request_);
+  const project::GitBlameSnapshot snapshot = git_blame_service.Snapshot(editor_request_);
   if (!snapshot.eligible && !snapshot.loading) {
     return std::nullopt;
   }
@@ -112,10 +165,9 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildEditor
   overlay.visible = true;
   overlay.lines.reserve(snapshot.lines.size());
   for (const auto& line : snapshot.lines) {
-    if (line.line < caret_start || line.line > caret_end || line.line < visible_start_line) {
+    if (line.line < caret.start || line.line > caret.end || line.line < visible_start_line) {
       continue;
     }
-
     const std::size_t visual_row = viewport.VisualRowForLine(line.line);
     if (visual_row < viewport.scroll_line()) {
       continue;
@@ -124,30 +176,10 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildEditor
     if (row >= metrics.visible_rows) {
       continue;
     }
-
     const editor::LayoutLine layout = viewport.VisibleLineLayout(line.line);
     const float y = metrics.first_line_y + static_cast<float>(row) * metrics.line_height;
     const float x = metrics.text_x + static_cast<float>(layout.visual_columns) * char_width + inline_gap;
-    const float max_width = std::max(0.0f, right_limit - x);
-    if (max_width < char_width * 4.0f) {
-      continue;
-    }
-
-    const std::string display_text = text_renderer.TruncateToWidth(line.text, max_width);
-    if (display_text.empty()) {
-      continue;
-    }
-
-    overlay.lines.push_back(editor::EditorBlameLine{
-        .line_index = line.line,
-        .rect = MakeRect(x, y, text_renderer.MeasureWidth(display_text), metrics.line_height),
-        .text = display_text,
-        .commit_id = line.commit_id,
-        .author = line.author,
-        .summary = line.summary,
-        .date = FormatBlameDate(line.author_time),
-        .interactive = !line.commit_id.empty() && !line.synthetic,
-    });
+    AppendBlameLine(overlay, text_renderer, line, x, y, metrics.line_height, right_limit);
   }
   return overlay;
 }
@@ -160,45 +192,20 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildCompar
     const CompareOverlayLayout& layout,
     const std::function<std::optional<CompareBlameAnchor>(std::size_t, std::size_t)>&
         compare_blame_anchor) const {
-  if (!compare_tab.right_editable || !compare_tab.right_view_active) {
-    return std::nullopt;
-  }
-  if (project_root.empty() || compare_tab.right_viewport.is_placeholder() ||
-      compare_tab.right_viewport.path().empty() || compare_tab.right_viewport.dirty() ||
-      !FitsPane(text_renderer, compare_tab.right_viewport, layout.pane_rect, 320.0f,
-                true)) {
+  editor::TextViewport& viewport = compare_tab.right_viewport;
+  if (!compare_tab.right_editable || !compare_tab.right_view_active ||
+      !BlameableBuffer(project_root, viewport) ||
+      !FitsPane(text_renderer, viewport, layout.pane_rect, 320.0f, true)) {
     return std::nullopt;
   }
 
-  if (!project::internal::AbsoluteToRelativePathRef(project_root,
-                                                    compare_tab.right_viewport.path())
-           .has_value()) {
-    return std::nullopt;
-  }
+  viewport.SetViewportSize(static_cast<std::size_t>(layout.visible_rows), layout.visible_columns);
+  const CaretLines caret = CaretBlameLines(viewport);
+  FillBlameRequest(compare_request_, ProjectLauncher(), project_root, viewport,
+                   viewport.scroll_line(), static_cast<std::size_t>(layout.visible_rows), caret);
 
-  compare_tab.right_viewport.SetViewportSize(static_cast<std::size_t>(layout.visible_rows),
-                                             layout.visible_columns);
-  const std::size_t caret_start =
-      compare_tab.right_viewport.cursor_line() > kCaretBlameRadius
-          ? compare_tab.right_viewport.cursor_line() - kCaretBlameRadius
-          : 0;
-  const std::size_t caret_end = compare_tab.right_viewport.line_count() == 0
-                                    ? 0
-                                    : std::min(compare_tab.right_viewport.line_count() - 1,
-                                               compare_tab.right_viewport.cursor_line() + kCaretBlameRadius);
-  project::GitBlameRequest& request = compare_request_;
-  request.launcher = ProjectLauncher();
-  AssignPathIfChanged(request.root, project_root);
-  AssignPathIfChanged(request.absolute_path, compare_tab.right_viewport.path());
-  request.visible_start_line = compare_tab.right_viewport.scroll_line();
-  request.visible_line_count = static_cast<std::size_t>(layout.visible_rows);
-  request.total_line_count = compare_tab.right_viewport.line_count();
-  request.dirty = compare_tab.right_viewport.dirty();
-  request.result_start_line = caret_start;
-  request.result_line_count = caret_end - caret_start + 1;
-
-  git_blame_service.Request(request);
-  const project::GitBlameSnapshot snapshot = git_blame_service.Snapshot(request);
+  git_blame_service.Request(compare_request_);
+  const project::GitBlameSnapshot snapshot = git_blame_service.Snapshot(compare_request_);
   if (!snapshot.eligible && !snapshot.loading) {
     return std::nullopt;
   }
@@ -206,51 +213,27 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildCompar
   const float char_width = std::max(1.0f, text_renderer.CharWidth());
   const float inline_gap = static_cast<float>(kInlineBlameGapColumns) * char_width;
   const float right_limit = layout.right_x + layout.gutter_width + layout.right_width - 12.0f;
+  const std::size_t scroll_row = static_cast<std::size_t>(std::max(0, compare_tab.scroll_row));
 
   editor::EditorBlameOverlay overlay;
   overlay.visible = true;
   overlay.lines.reserve(snapshot.lines.size());
   for (const auto& line : snapshot.lines) {
-    if (line.line < caret_start || line.line > caret_end) {
+    if (line.line < caret.start || line.line > caret.end) {
       continue;
     }
-
-    const editor::LayoutLine layout_line = compare_tab.right_viewport.VisibleLineLayout(line.line);
+    const editor::LayoutLine layout_line = viewport.VisibleLineLayout(line.line);
     const std::optional<CompareBlameAnchor> anchor =
         compare_blame_anchor(line.line, layout_line.visual_columns);
-    if (!anchor.has_value()) {
-      continue;
-    }
-    const std::size_t scroll_row = static_cast<std::size_t>(std::max(0, compare_tab.scroll_row));
-    if (anchor->visual_row < scroll_row ||
+    if (!anchor.has_value() || anchor->visual_row < scroll_row ||
         anchor->visual_row >= scroll_row + static_cast<std::size_t>(layout.visible_rows)) {
       continue;
     }
-
     const float y = layout.rows_y +
                     static_cast<float>(anchor->visual_row - scroll_row) * layout.line_height;
     const float x = layout.right_x + layout.gutter_width +
                     static_cast<float>(anchor->end_column) * char_width + inline_gap;
-    const float max_width = std::max(0.0f, right_limit - x);
-    if (max_width < char_width * 4.0f) {
-      continue;
-    }
-
-    const std::string display_text = text_renderer.TruncateToWidth(line.text, max_width);
-    if (display_text.empty()) {
-      continue;
-    }
-
-    overlay.lines.push_back(editor::EditorBlameLine{
-        .line_index = line.line,
-        .rect = MakeRect(x, y, text_renderer.MeasureWidth(display_text), layout.line_height),
-        .text = display_text,
-        .commit_id = line.commit_id,
-        .author = line.author,
-        .summary = line.summary,
-        .date = FormatBlameDate(line.author_time),
-        .interactive = !line.commit_id.empty() && !line.synthetic,
-    });
+    AppendBlameLine(overlay, text_renderer, line, x, y, layout.line_height, right_limit);
   }
   return overlay;
 }
