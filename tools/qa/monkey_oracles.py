@@ -1568,7 +1568,7 @@ class IdleOracle:
         # a64655101a5a, every build since the oracle landed).
         samples: list[str] = []
         deadline = time.monotonic() + window
-        while time.monotonic() < deadline:
+        while not _past(deadline):
             samples.append(self._sample_main_thread())
             time.sleep(window / 40)
         after = self._main_thread_wakes()
@@ -1586,7 +1586,7 @@ class IdleOracle:
                     pass
             frames = [line for line in logged if "redraw frame" in line]
             reasons = collections.Counter(
-                line.split("reason=", 1)[1].split(" ", 1)[0] for line in frames if "reason=" in line)
+                _trace_field(line, "reason=") for line in frames if "reason=" in line)
             self.evidence = "\n".join([
                 f"voluntary wakes/s: {rate:.0f} (budget {self.BUDGET_PER_SECOND:.0f})",
                 f"frames in the window: {len(frames)} {dict(reasons)}",

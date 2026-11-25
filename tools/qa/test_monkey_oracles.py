@@ -3519,5 +3519,126 @@ class RepaintedRegionTests(unittest.TestCase):
         line = self.regions([self.frame("0,0,5,5")], elements=elements)[1]
         self.assertEqual(line, "    1  0,0,5,5  under: " + ", ".join(f"n{i}" for i in range(12)))
 
+
+class IdleEvidenceDetailTests(IdleOracleCheckTests):
+    def test_the_evidence_in_full(self):
+        frames = [f"microide redraw frame: frame={i} reason=scheduled-partial dirty=1 bounds=1,2,3,4" for i in range(2)]
+        lines = frames + [f"line {i}" for i in range(42)] + ["bad \udcff".encode("utf-8", "surrogateescape")
+                                                              .decode("utf-8", "replace")]
+        oracle, found = self.run_window([0, 40], logged=lines, samples=("ep_poll epoll_wait",))
+        evidence = oracle.evidence.splitlines()
+        self.assertEqual(evidence[:4], ["voluntary wakes/s: 1000 (budget 250)",
+                                        "frames in the window: 2 {'scheduled-partial': 2}",
+                                        "repainted bounds (x,y,w,h), most common first:",
+                                        "    2  1,2,3,4  under: -"])
+        self.assertEqual(evidence[4], "log lines in the window: 45")
+        self.assertEqual(evidence[5], "main thread wchan + syscall, sampled:")
+        self.assertRegex(evidence[6], r"^\s+\d+  ep_poll epoll_wait$")
+        self.assertEqual(evidence[7], "last log lines:")
+        self.assertEqual(evidence[8], "  line 3")
+        self.assertEqual(len(evidence), 8 + 40)
+        self.assertTrue(oracle.evidence.endswith("\n") and not oracle.evidence.endswith("\n\n"))
+
+    def test_a_log_that_is_not_utf8_is_read(self):
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(directory, ignore_errors=True))
+        log = directory / "app.log"
+        log.write_text("")
+        app = mock.Mock()
+        app.log_path = log
+        app.ui.return_value = {"elements": []}
+        oracle = monkey_oracles.IdleOracle(app)
+        counts = iter([0, 40])
+
+        def sample():
+            if log.stat().st_size == 0:
+                log.write_bytes(b"\xff\xfe broken\n")
+            return "x y"
+        with mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 0.04), \
+                mock.patch.object(oracle, "_main_thread_wakes", side_effect=lambda: next(counts)), \
+                mock.patch.object(oracle, "_sample_main_thread", side_effect=sample), \
+                mock.patch.object(monkey_oracles.time, "sleep", lambda _s: None):
+            oracle.check()
+        self.assertIn("\ufffd\ufffd broken", oracle.evidence)
+
+    def test_an_app_without_a_log_still_reports(self):
+        for app in (mock.Mock(spec=["settle_quiet", "ui"]), mock.Mock(log_path=Path("/nonexistent/app.log"))):
+            app.ui.return_value = {"elements": []}
+            oracle = monkey_oracles.IdleOracle(app)
+            counts = iter([0, 40])
+            with mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 0.04), \
+                    mock.patch.object(oracle, "_main_thread_wakes", side_effect=lambda: next(counts)), \
+                    mock.patch.object(oracle, "_sample_main_thread", return_value="x y"):
+                self.assertEqual(len(oracle.check()), 1)
+            self.assertIn("log lines in the window: 0", oracle.evidence)
+
+    def test_the_window_is_sampled_forty_times_and_a_slow_build_is_allowed_more(self):
+        oracle = monkey_oracles.IdleOracle(mock.Mock(spec=["settle_quiet", "ui"]))
+        slept = []
+        counts = iter([0, 600])
+        with mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 2.0), \
+                mock.patch.object(oracle, "_main_thread_wakes", side_effect=lambda: next(counts)), \
+                mock.patch.object(oracle, "_sample_main_thread", return_value="x y"), \
+                mock.patch.object(monkey_oracles, "_past", side_effect=[False] * 3 + [True]), \
+                mock.patch.object(monkey_oracles.time, "sleep", slept.append):
+            found = oracle.check()
+        self.assertEqual(slept, [2.0 / 40] * 3)
+        self.assertEqual(found, [], "300 wakes a second is within 250 x 2")
+
+
+class ResourceCheckDetailTests(unittest.TestCase):
+    BASE = {"fds": 50, "threads": 20, "children": 2, "rss_kb": 100_000}
+
+    def oracle(self, baseline, sample, slow=1.0, reported=()):
+        oracle = monkey_oracles.ResourceOracle(mock.Mock())
+        oracle.baseline = baseline
+        oracle.pid = 7
+        oracle.reported = set(reported)
+        holds = mock.Mock(return_value={"children.txt": b"x"})
+        with mock.patch.object(oracle, "sample", return_value=sample), \
+                mock.patch.object(oracle, "_what_it_holds", holds), \
+                mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", slow):
+            found = oracle.check()
+        return oracle, found, holds
+
+    def test_no_baseline_yet_is_nothing(self):
+        _, found, _ = self.oracle(None, dict(self.BASE))
+        self.assertEqual(found, [])
+
+    def test_samples_without_a_pane_count_count_none(self):
+        _, found, _ = self.oracle(dict(self.BASE), {**self.BASE, "fds": 50 + 257})
+        self.assertEqual(found, [("leak", "the app's fds grew by 257 over the run (50 -> 307; budget 256)")])
+        _, found, _ = self.oracle(dict(self.BASE), {**self.BASE, "fds": 50 + 257, "panes": 1})
+        self.assertEqual(found, [], "one pane more than a baseline without a count allows its four")
+
+    def test_the_memory_budget_grows_with_half_the_slow_factor_and_never_shrinks(self):
+        _, found, _ = self.oracle(dict(self.BASE), {**self.BASE, "rss_kb": 100_000 + 1_600_000}, slow=1.0)
+        self.assertEqual(len(found), 1)
+        _, found, _ = self.oracle(dict(self.BASE), {**self.BASE, "rss_kb": 100_000 + 2_300_000}, slow=3.0)
+        self.assertEqual(found, [("leak", "the app's rss_kb grew by 2300000 over the run (100000 -> 2400000; "
+                                          "budget 2250000)")])
+
+    def test_a_leak_is_reported_once_and_its_evidence_gathered_once(self):
+        oracle = monkey_oracles.ResourceOracle(mock.Mock())
+        oracle.baseline, oracle.pid = dict(self.BASE), 7
+        holds = mock.Mock(return_value={"children.txt": b"x"})
+        grown = {**self.BASE, "fds": 400, "threads": 100}
+        with mock.patch.object(oracle, "sample", return_value=grown), \
+                mock.patch.object(oracle, "_what_it_holds", holds), \
+                mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 1.0):
+            self.assertEqual(len(oracle.check()), 2)
+            self.assertEqual(oracle.check(), [])
+        holds.assert_called_once_with(7)
+        self.assertEqual(oracle.evidence, {"children.txt": b"x"})
+        self.assertEqual(oracle.reported, {"fds", "threads"})
+        _, _, holds = self.oracle(dict(self.BASE), grown)
+        holds.assert_called_once_with(7)
+        oracle = monkey_oracles.ResourceOracle(mock.Mock())
+        oracle.baseline, oracle.pid = dict(self.BASE), None
+        with mock.patch.object(oracle, "sample", return_value=grown), \
+                mock.patch.object(oracle, "_what_it_holds") as unasked:
+            oracle.check()
+        unasked.assert_not_called()
+
 if __name__ == "__main__":
     unittest.main()
