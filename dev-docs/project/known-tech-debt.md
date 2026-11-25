@@ -63,6 +63,21 @@ than a mechanical change:
   debug hooks on purpose: `DebugPaneTests` fake them to observe DAP focus
   without a session. What remains of the factories is hooks into shell
   methods with real bodies, which need those bodies moved to a service first.
+  The direction is now enforced: `CheckRedrawHooksAreRequestFrame` (no
+  per-surface redraw aliases; twenty were folded) and
+  `CheckFactoryHooksDoNotForwardToServices` (one-line service forwards counted
+  against a cap that ratchets DOWN, 43 after the lifecycle move). The long
+  members split without new declarations by moving their deterministic phases
+  to file-local free functions: `ReplaceAllProjectSearchMatches` 186 -> 84
+  lines, `HoveredTooltip` 259 -> 172, `ControlUiDetails`/`ControlUiButtons`
+  lost their repeated JSON and enum code and the compare section. What is left
+  on purpose: the 43 forwards sit in services whose hooks are optional
+  (`RemoteHostService` branches on a missing `recents_revision`), in classes
+  tests build with `{}` hooks (`TabCoordinator`), in the catalog/persistence/
+  terminal-panel ring where a lazy hook is what keeps their factories from
+  constructing each other recursively, or bind shell state into their
+  arguments; `ControlUiButtons`' merge section and `HandleScheduledWakeSources`
+  (a flat list of wake sources) need shell members and stay.
 - **Near-duplicates left in place:** the Lua wrappers in `PluginRuntimeApiInterop`
   and `PluginHostLuaApi.inc` (their scoping is the longjmp-safety contract; fold
   them only with `tools/audit-lua-longjmp.py` in the loop), and the compare
