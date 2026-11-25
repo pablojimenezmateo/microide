@@ -1578,8 +1578,10 @@ class Monkey:
         """A full disk at one write step of saving the focused, dirty file (the
         crash-points query's fail=ENOSPC rule, util/CrashPoint.h FaultPoint):
         the file keeps its bytes, the buffer its edit, a row says why, no
-        staging file is left. Recorded as an external row so a replay fails the
-        same save the same way."""
+        staging file is left. A save refused before it writes (a banner, an
+        external change) never meets the rule and is not judged by it.
+        Recorded as an external row so a replay fails the same save the same
+        way."""
         buffer = self.app.query("buffer")
         if buffer.get("kind") != "editor" or not buffer.get("path") or not buffer.get("dirty") \
                 or buffer.get("readOnly"):
@@ -1610,6 +1612,8 @@ class Monkey:
         said = False
         try:
             self.app.send_line("save", record=False)
+            if not self.app.query("crash-points").get("armedMatches"):
+                return []
             deadline = time.monotonic() + 5.0 * q.SLOW_FACTOR
             while time.monotonic() < deadline and not said:
                 said = any(f"Failed to save {name}" in (row.get("message") or "")
