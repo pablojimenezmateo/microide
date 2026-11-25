@@ -85,6 +85,7 @@ tools/run-checks.sh qa-remote   # -> /tmp/microide-qa-remote.log (remote-project
 tools/run-checks.sh qa-wayland  # -> /tmp/microide-qa-wayland.log (the GUI QA suite on headless weston at scale 2; input over the control channel's pointer/key)
 tools/run-checks.sh qa-scale    # -> /tmp/microide-qa-scale.log (scale-sensitive scenarios + a layout monkey at ui.scale 1.25 and 1.75)
 tools/run-checks.sh wake-race   # -> /tmp/microide-wake-race.log (SDL's lost wake under contention, with and without LostWakeRelay)
+tools/run-checks.sh mutation    # -> /tmp/microide-mutation.log (every mutant of the soak's oracles killed; tools/qa/mutation-test.sh --only <Class.method> for one function)
 tools/check-invariants-bite.sh  # every recorded negative control (tools/negative-controls/) must make its check fail
 tools/run-checks.sh all     # all four in sequence
 ```

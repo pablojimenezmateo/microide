@@ -4,7 +4,8 @@
 # each mutant; a mutant the tests do not fail is an oracle change nothing
 # would notice. Runs on a scratch copy of tools/ (mutmut writes a mutants/
 # tree beside the module), prints the per-function summary, and leaves the
-# copy for `mutmut show <name>`.
+# copy for `mutmut show <name>`. Exits 1 when a mutant survives or no test runs
+# it (the `mutation` lane of tools/run-checks.sh).
 #
 # Usage: tools/qa/mutation-test.sh [scratch-dir] [children]
 #        tools/qa/mutation-test.sh --only <Class.method|function> [scratch-dir]
@@ -84,4 +85,6 @@ rows = sorted(counts.items(), key=lambda kv: -(kv[1]["survived"] + kv[1]["no tes
 for name, c in rows:
     if c["survived"] or c["no tests"]:
         print(f"  {name:50s} survived {c['survived']:4d}  untested {c['no tests']:4d}  killed {c['killed']:4d}")
+if not total or total["survived"] or total["no tests"] or total["not checked"]:
+    sys.exit(1)
 EOF

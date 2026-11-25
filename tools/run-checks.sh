@@ -713,6 +713,12 @@ check_qa_driver() {
   run_logged "${LOG_DIR}/microide-soak-driver.log" python3 -m unittest discover -s tools/soak -p "test_*.py"
 }
 
+check_mutation() {
+  # Mutation testing of the soak's oracles: every mutant of monkey_oracles.py
+  # must be killed by test_monkey_oracles.py (or marked equivalent in place).
+  run_logged "${LOG_DIR}/microide-mutation.log" tools/qa/mutation-test.sh "${MICROIDE_MUTATION_DIR:-build/mutation}"
+}
+
 check_qa() {
   local log="${LOG_DIR}/microide-qa.log"
   local out="${MICROIDE_QA_OUT:-${LOG_DIR}/microide-qa-out}"
@@ -878,7 +884,7 @@ check_wake_race() {
 }
 
 usage() {
-  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|hardened|tidy|ci-driver|qa|qa-driver|qa-asan|qa-remote|qa-wayland|qa-scale|wake-race|all}" >&2
+  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|hardened|tidy|ci-driver|qa|qa-driver|mutation|qa-asan|qa-remote|qa-wayland|qa-scale|wake-race|all}" >&2
   echo "       tools/run-checks.sh qa            # GUI QA: scenario suite + 300-step monkey on Xvfb" >&2
   echo "       tools/run-checks.sh qa-asan       # the GUI QA suite + the monkey over seeds on the ASan build" >&2
   echo "       tools/run-checks.sh qa-remote     # remote-project scenarios against a loopback sshd, fast and slow link" >&2
@@ -935,6 +941,7 @@ main() {
     tidy) check_tidy ;;
     ci-driver) check_ci_driver ;;
     qa-driver) check_qa_driver ;;
+    mutation) check_mutation ;;
     qa) check_qa ;;
     qa-asan) check_qa_asan ;;
     qa-remote) check_qa_remote ;;

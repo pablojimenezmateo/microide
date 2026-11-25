@@ -97,7 +97,8 @@ ctest --test-dir build -R _tests_shard --output-on-failure -j$(nproc)
   source to a curated target list), `hardened` (`_GLIBCXX_ASSERTIONS`), `tidy`, `qa`
   (GUI QA on Xvfb with the redraw verifier -- run after touching damage, redraw,
   hover, focus or paint), `qa-asan`, `qa-remote`, `qa-wayland`, `qa-scale`,
-  `wake-race`, `all`. `tools/check-invariants-bite.sh` proves every recorded negative
+  `wake-race`, `mutation` (every mutant of the soak's oracles killed: `tools/qa/mutation-test.sh`,
+  `--only <Class.method>` for one function), `all`. `tools/check-invariants-bite.sh` proves every recorded negative
   control still fails its check.
 - Sanitizer and fuzz recipes (presets, `setarch -R` for TSan, LSan/TSan
   suppressions, fuzz corpora) are in the full guide.

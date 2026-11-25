@@ -390,20 +390,20 @@ What it left, by workstream:
    action and branch-coverage reports per commit. `surface.py` reports reached items
    per category; a keybinding counts as reached when its command ran, not when its
    chord ran in each context.
-8. **W10 remainder:** mutation testing over the oracle code (the driver's
-   invariants, the redraw verifier, the data oracle). MEASURED 2026-11-25
-   (`tools/qa/mutation-test.sh`, mutmut over `monkey_oracles.py` against
-   `test_monkey_oracles.py`): of 3401 mutants 990 are killed, 846 survive and
-   1546 sit in functions no unit test calls. Untested: `StructuralDiffOracle.check`,
-   `RemoteConvergence.check`, `Liveness.check`, `InvariantOracle.check`,
-   `IdleOracle.check`, `ResourceOracle.sample`, `DataOracle._kill_at`/`_trigger_for`/
-   `check_clean`/`crash_points` (30 functions). Weakest tested: `DataOracle.kill9_and_check`
-   (265 survive), `ResourceOracle._what_it_holds` (153), `UndoAlgebra.check` (65),
-   `ResourceOracle._memory` (55). Open: tests that kill those, most severe first
-   (the data oracle, then invariants, liveness, resources); the C++ redraw verifier
-   is held by its negative controls (`tools/check-invariants-bite.sh`), not here. The guard audit landed
-   (`validation-traps.md`), and with it the frame-token assert is armed in every
-   build with assertions rather than under ASan alone.
+8. **W10 remainder: DONE 2026-11-26.** Mutation testing over the oracle code:
+   `tools/run-checks.sh mutation` (`tools/qa/mutation-test.sh`, mutmut over
+   `monkey_oracles.py` against `test_monkey_oracles.py`) fails on any mutant that
+   survives or that no test runs. From 990 of 3401 killed (846 surviving, 1546 in
+   functions no test called) to all 3199 killed or hanging the tests; nineteen
+   lines are marked `# pragma: no mutate`, each a change no outcome can tell
+   apart (a timing instant, a falsy default, a codec name's case), and code
+   whose mutants were equivalent only because it was redundant was rewritten
+   instead (the UTF-8 boundaries are the decoder's own reading, the leak
+   evidence is formatters over a thin /proc reader). It found one oracle
+   defect: a merge result the kill's trigger had edited was reported lost
+   (`d7023aa2f`). `--only <Class.method>` reruns one function's mutants in
+   seconds. The C++ redraw verifier is held by its negative controls
+   (`tools/check-invariants-bite.sh`), not here.
 9. **DONE by 2026-11-25 (the ledger):** the focus-on-a-hidden-surface
    findings are verified (c0c5719bdbce, 1dd177bb2104, b6cc343b6ee1) and the
    stale-paint and latency families of those hunts are closed. Kept for the
