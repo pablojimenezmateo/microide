@@ -66,6 +66,7 @@ roadmap entry describes intended rather than shipped state.
 - Prefer RAII, explicit ownership, and value semantics. Reach for inheritance only when there is a durable polymorphic boundary; otherwise prefer plain types, composition, and focused helpers.
 - Keep deterministic logic out of SDL event glue and paint code when possible. Thin orchestration layers are easier to test and safer to refactor.
 - Avoid hidden coupling through mutable global state, shared singleton-style services, or broad friend access.
+- Cleanup passes (duplication, smells, dead code, god classes) follow `AGENTS.md` § Cleanup Passes: start from `known-tech-debt.md`, check `tools/refactor-churn.py` for oscillation, and encode every settled direction as a ratcheting architecture rule in the same change.
 - Treat performance-sensitive work as measurable engineering. Use `dev-docs/performance/startup-tracing.md` and `dev-docs/performance/runtime-profiling.md` instead of guessing.
 - Do not write comments in source code. Make the code say it through names, types and small functions; put the why in the commit message or `dev-docs/`. The only comments allowed are tool directives: `NOLINT`, `IWYU pragma`, and the perf harness's `perf-measure-builds-input:` / `perf-measure-waits-on-clock:` exemptions. `CheckNoCommentsInSources` (generated tables and `tests/fixtures` data are exempt).
 

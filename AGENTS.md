@@ -102,6 +102,30 @@ are `openspec/specs/workspace-architecture/spec.md`,
 `openspec/specs/shared-edit-primitives/spec.md`; update them in the same change when an
 invariant moves.
 
+## Cleanup Passes
+
+Duplication, smell, dead-code and god-class passes are run by many agents over months.
+They only add up if they move in one direction, so a pass follows this order:
+
+1. **Start from the record, not from taste.** Read `dev-docs/project/known-tech-debt.md`
+   (open items and § Guardrails -- rejected experiments) and
+   `dev-docs/project/architecture-invariants.md` before choosing targets. A target that
+   contradicts either is out of scope unless the pass changes the record on purpose.
+2. **Check for oscillation.** Run `python3 tools/refactor-churn.py --since=<last pass>`.
+   A pair of commits that keep trading the same lines is a disagreement: settle it once,
+   write the reason down, and encode it (next step) instead of picking a side again.
+   Find targets with the gated scanners (`tools/clone-scan.py`,
+   `tools/duplicate-constant-scan.py`) before eyeballing.
+3. **Encode every settled direction in the same change.** When a pass decides "X, not Y"
+   (a shape, a name, a boundary), it adds or tightens an architecture rule in
+   `tests/architecture/` -- a ban, or a count that ratchets DOWN -- with fixtures both
+   ways and a missing-target guard, lists it in `CLAUDE.md` § Hard Architectural
+   Invariants, and puts the why in `architecture-invariants.md`. Prose alone does not
+   survive the next agent; a failing check does. Lower a ratchet's cap in the change that
+   earns it; never raise one to make a change fit.
+4. **Leave the record current.** Update the TD entry the pass worked on (what landed, what
+   was left on purpose and why) so the next pass starts where this one stopped.
+
 ## Testing Rules
 
 - Every meaningful bug fix should add or tighten regression coverage.
