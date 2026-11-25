@@ -80,11 +80,13 @@ TabMouseCoordinator::TabMouseCoordinator(ProjectCatalogState& project_catalog,
                                          ProjectWorkspaceState& current_project_state,
                                          TabDragState& tab_drag_state,
                                          TabSlideState& tab_slide_state,
+                                         Services services,
                                          Operations operations)
     : project_catalog_(project_catalog),
       state_(current_project_state),
       tab_drag_state_(tab_drag_state),
       tab_slide_state_(tab_slide_state),
+      services_(services),
       operations_(std::move(operations)) {}
 
 bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
@@ -118,9 +120,7 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         };
       } else if (event.button.button == SDL_BUTTON_RIGHT) {
         operations_.switch_project(hit.index, true);
-        operations_.open_anchored_menu(
-            MenuId::ProjectTabContext,
-            MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
+        services_.menus.OpenAnchoredMenu(MenuId::ProjectTabContext, MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
                      1.0f));
       }
       return true;
@@ -192,9 +192,7 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
               "TabMouseCoordinator::HandleButtonDown::ActivateEditorTab");
           operations_.activate_tab(hit.index);
         }
-        operations_.open_anchored_menu(
-            MenuId::EditorTabContext,
-            MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
+        services_.menus.OpenAnchoredMenu(MenuId::EditorTabContext, MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
                      1.0f));
       }
       return true;
@@ -224,7 +222,7 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (event.button.button == SDL_BUTTON_LEFT && operations_.bottom_panel_maximize_button_rect &&
       Contains(operations_.bottom_panel_maximize_button_rect(panel_header), event.button.x,
                event.button.y)) {
-    operations_.toggle_panel_maximized();
+    services_.terminal_panel.TogglePanelMaximized();
     return true;
   }
 
@@ -256,9 +254,7 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     } else if (event.button.button == SDL_BUTTON_RIGHT) {
       if (operations_.activate_bottom_panel_tab(hit.index) &&
           operations_.bottom_panel_tab_is_terminal(hit.index)) {
-        operations_.open_anchored_menu(
-            MenuId::TerminalTabContext,
-            MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
+        services_.menus.OpenAnchoredMenu(MenuId::TerminalTabContext, MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
                      1.0f));
       }
     }
@@ -375,9 +371,9 @@ bool TabMouseCoordinator::HandleWheel(const SDL_Event& event,
 
 void TabMouseCoordinator::PersistReorderedTabs(TabDragKind kind) {
   if (kind == TabDragKind::Project) {
-    operations_.save_workspace_session();
+    services_.persistence.SaveWorkspaceSession();
   } else {
-    operations_.save_session_state();
+    services_.persistence.SaveSessionState();
   }
 }
 
@@ -390,6 +386,11 @@ TabMouseCoordinator& WorkspaceShell::MakeTabMouseCoordinator() {
       context_.current_project_state,
       context_.interaction_state.tab_drag,
       context_.interaction_state.tab_slide,
+      TabMouseCoordinator::Services{
+          .terminal_panel = MakeTerminalPanelService(),
+          .persistence = MakePersistenceCoordinator(),
+          .menus = MakeMenuCoordinator(),
+      },
       TabMouseCoordinator::Operations{
           .compute_visible_project_tabs =
               [this](const SDL_FRect& rect) -> const std::vector<VisibleStripTab>& {
@@ -411,10 +412,6 @@ TabMouseCoordinator& WorkspaceShell::MakeTabMouseCoordinator() {
               },
           .request_close_tab = [this](std::size_t index) { RequestCloseTab(index); },
           .activate_tab = [this](std::size_t index) { ActivateTab(index); },
-          .open_anchored_menu =
-              [this](MenuId id, const SDL_FRect& rect) {
-                MakeMenuCoordinator().OpenAnchoredMenu(id, rect);
-              },
           .bottom_panel_visible = [this]() { return BottomPanelVisible(); },
           .bottom_panel_terminal_new_tab_rect =
               [this](const SDL_FRect& rect) {
@@ -430,8 +427,6 @@ TabMouseCoordinator& WorkspaceShell::MakeTabMouseCoordinator() {
                 return tab_strip_service_.BottomPanelMaximizeButtonRect(
                     layout_mode_service_.CurrentMode(), rect);
               },
-          .toggle_panel_maximized =
-              [this]() { MakeTerminalPanelService().TogglePanelMaximized(); },
           .compute_visible_bottom_panel_tabs =
               [this](const SDL_FRect& rect) -> const std::vector<VisibleStripTab>& {
                 return tab_strip_service_.ComputeVisibleBottomPanelTabs(
@@ -466,15 +461,8 @@ TabMouseCoordinator& WorkspaceShell::MakeTabMouseCoordinator() {
                 return MakeEditorTabService().MoveTabToNewGroup(
                     from_group, from_index, target_group, orientation, insert_before);
               },
-          .move_active_terminal_tab_to =
-              [this](std::size_t index) {
-                return MakeTerminalPanelService().MoveActiveTerminalTabTo(index);
-              },
           .move_active_output_tab_to =
               [this](std::size_t index) { return MoveActiveOutputTabTo(index); },
-          .save_workspace_session =
-              [this]() { MakePersistenceCoordinator().SaveWorkspaceSession(); },
-          .save_session_state = [this]() { MakePersistenceCoordinator().SaveSessionState(); },
           .compute_project_tab_overflow_controls =
               [this](const SDL_FRect& strip, const std::vector<VisibleStripTab>& tabs) {
                 return tab_strip_chrome_.ComputeProjectTabOverflowControls(strip, tabs);

@@ -9,8 +9,18 @@
 
 namespace microide::workspace {
 
+class TerminalPanelService;
+class PersistenceCoordinator;
+class MenuCoordinator;
+
 class TabMouseCoordinator {
  public:
+  struct Services {
+    TerminalPanelService& terminal_panel;
+    PersistenceCoordinator& persistence;
+    MenuCoordinator& menus;
+  };
+
   struct Operations {
     std::function<const std::vector<WorkspaceShell::VisibleStripTab>&(const SDL_FRect&)>
         compute_visible_project_tabs;
@@ -23,12 +33,10 @@ class TabMouseCoordinator {
         compute_visible_tabs_for_group;
     std::function<void(std::size_t)> request_close_tab;
     std::function<void(std::size_t)> activate_tab;
-    std::function<void(MenuId, const SDL_FRect&)> open_anchored_menu;
     std::function<bool()> bottom_panel_visible;
     std::function<SDL_FRect(const SDL_FRect&)> bottom_panel_terminal_new_tab_rect;
     std::function<void(std::string)> open_terminal;
     std::function<SDL_FRect(const SDL_FRect&)> bottom_panel_maximize_button_rect;
-    std::function<void()> toggle_panel_maximized;
     std::function<const std::vector<WorkspaceShell::VisibleStripTab>&(const SDL_FRect&)>
         compute_visible_bottom_panel_tabs;
     std::function<bool(std::size_t)> activate_bottom_panel_tab;
@@ -41,10 +49,7 @@ class TabMouseCoordinator {
     std::function<bool(std::size_t, std::size_t, std::size_t, std::size_t)> move_tab_to_group;
     std::function<bool(std::size_t, std::size_t, std::size_t, EditorSplitOrientation, bool)>
         move_tab_to_new_group;
-    std::function<bool(std::size_t)> move_active_terminal_tab_to;
     std::function<bool(std::size_t)> move_active_output_tab_to;
-    std::function<void()> save_workspace_session;
-    std::function<void()> save_session_state;
     std::function<WorkspaceShell::TabStripOverflowControls(
         const SDL_FRect&, const std::vector<WorkspaceShell::VisibleStripTab>&)>
         compute_project_tab_overflow_controls;
@@ -70,6 +75,7 @@ class TabMouseCoordinator {
                       ProjectWorkspaceState& current_project_state,
                       TabDragState& tab_drag_state,
                       TabSlideState& tab_slide_state,
+                      Services services,
                       Operations operations);
 
   bool HandleButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
@@ -131,6 +137,7 @@ class TabMouseCoordinator {
   ProjectWorkspaceState& state_;
   TabDragState& tab_drag_state_;
   TabSlideState& tab_slide_state_;
+  Services services_;
   Operations operations_;
 };
 

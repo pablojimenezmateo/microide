@@ -10,6 +10,7 @@
 #include "workspace/EditorBodyDrop.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/render/TabStripAnimation.h"
+#include "workspace/services/TerminalPanelService.h"
 
 namespace microide::workspace {
 
@@ -213,7 +214,9 @@ TabMouseCoordinator::DragStrip TabMouseCoordinator::ResolveBottomPanelDragStrip(
   d.count = terminal_count;
   d.active = state_.active_terminal_tab_index;
   d.model_offset = 0;
-  d.move = operations_.move_active_terminal_tab_to;
+  d.move = [this](std::size_t index) {
+    return services_.terminal_panel.MoveActiveTerminalTabTo(index);
+  };
   d.valid = true;
   return d;
 }

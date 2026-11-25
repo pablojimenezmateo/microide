@@ -24,14 +24,18 @@
 #include "workspace/shell/ProjectInFront.h"
 #include "workspace/shell/WorkspaceShell.h"
 #include "util/InvokeIfSet.h"
+#include "workspace/WorkspacePluginRuntime.h"
+#include "workspace/persistence/RecentsService.h"
 
 namespace microide::workspace {
 
 LifecycleCoordinator::LifecycleCoordinator(WorkspaceContext& context,
                                            bool& quit_requested,
+                                           Services services,
                                            Operations operations)
     : context_(context),
       quit_requested_(quit_requested),
+      services_(services),
       operations_(std::move(operations)) {}
 
 bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root) {
@@ -54,13 +58,13 @@ bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root)
 
   {
     util::StartupTrace::Scope restore_config_scope("WorkspaceShell::RestoreUserConfig");
-    operations_.restore_user_config();
+    services_.persistence.RestoreUserConfig();
   }
   util::InvokeIfSet(operations_.apply_startup_setting_overrides);
   {
     util::StartupTrace::Scope refresh_colors_scope(
         "WorkspaceShell::RefreshAvailableColorschemeNames");
-    operations_.refresh_available_colorscheme_names();
+    services_.persistence.RefreshAvailableColorschemeNames();
   }
   {
     util::StartupTrace::Scope reset_state_scope("WorkspaceShell::ResetProjectScopedState");
@@ -69,7 +73,7 @@ bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root)
 
   if (!operations_.skip_workspace_session_restore()) {
     util::StartupTrace::Scope restore_workspace_scope("WorkspaceShell::RestoreWorkspaceSession");
-    if (operations_.restore_workspace_session()) {
+    if (services_.persistence.RestoreWorkspaceSession()) {
       return true;
     }
   }
@@ -107,15 +111,15 @@ bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root)
 }
 
 void LifecycleCoordinator::Shutdown() {
-  operations_.shutdown_plugin_runtime();
-  operations_.save_user_config();
+  services_.plugins.Shutdown();
+  services_.persistence.SaveUserConfig();
   operations_.stop_git_blame_service();
   util::InvokeIfSet(operations_.await_host_terminal_opens);
   operations_.release_host_terminals();
   operations_.persist_active_project();
   operations_.record_inactive_host_terminals();
-  operations_.save_workspace_session();
-  operations_.flush_recents();
+  services_.persistence.SaveWorkspaceSession();
+  services_.recents.FlushPendingSave();
   operations_.flush_persisted_state();
   operations_.persist_remote_mirrors();
   operations_.shutdown_project_search_runtime();
@@ -265,14 +269,16 @@ LifecycleCoordinator& WorkspaceShell::MakeLifecycleCoordinator() {
   glue_->lifecycle_coordinator = std::make_unique<LifecycleCoordinator>(
       context_,
       quit_requested_,
+      LifecycleCoordinator::Services{
+          .persistence = MakePersistenceCoordinator(),
+          .plugins = plugin_runtime_,
+          .recents = recents_service_,
+      },
       LifecycleCoordinator::Operations{
           .reset_startup_state = [this]() { ResetLifecycleStartupState(); },
           .initialize_project_search_runtime = [this]() { project_search_runtime_.Initialize(); },
           .register_wake_events = [this]() { RegisterLifecycleWakeEvents(); },
-          .restore_user_config = [this]() { MakePersistenceCoordinator().RestoreUserConfig(); },
           .apply_startup_setting_overrides = [this]() { ApplyStartupSettingOverrides(); },
-          .refresh_available_colorscheme_names =
-              [this]() { MakePersistenceCoordinator().RefreshAvailableColorschemeNames(); },
           .reset_project_scoped_state = [this](bool show_welcome) {
             ResetProjectScopedState(show_welcome);
           },
@@ -286,8 +292,6 @@ LifecycleCoordinator& WorkspaceShell::MakeLifecycleCoordinator() {
                 return !startup_options_.safe_mode &&
                        SettingFlagEnabled(GetSettingValue("session.restore_on_launch"), true);
               },
-          .restore_workspace_session =
-              [this]() { return MakePersistenceCoordinator().RestoreWorkspaceSession(); },
           .reload_plugins_for_current_project = [this]() { ReloadPluginsForCurrentProject(); },
           .open_project_tab =
               [this](const std::filesystem::path& project_root,
@@ -296,8 +300,6 @@ LifecycleCoordinator& WorkspaceShell::MakeLifecycleCoordinator() {
                 return OpenProjectTab(project_root, restore_persistence, log_feedback);
               },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
-          .shutdown_plugin_runtime = [this]() { plugin_runtime_.Shutdown(); },
-          .save_user_config = [this]() { MakePersistenceCoordinator().SaveUserConfig(); },
           .stop_git_blame_service =
               [this]() {
                 git_blame_service_.Stop();
@@ -354,9 +356,6 @@ LifecycleCoordinator& WorkspaceShell::MakeLifecycleCoordinator() {
                   MakeProjectCatalogService().PersistActiveEntry();
                 }
               },
-          .save_workspace_session =
-              [this]() { MakePersistenceCoordinator().SaveWorkspaceSession(); },
-          .flush_recents = [this]() { recents_service_.FlushPendingSave(); },
           .flush_persisted_state = [this]() { persistence_service_.FlushPendingWrites(); },
           .persist_remote_mirrors = [this]() { MakeRemoteHostService().PersistMirrors(); },
           .shutdown_project_search_runtime = [this]() { project_search_runtime_.Shutdown(); },
