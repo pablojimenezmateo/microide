@@ -23,7 +23,7 @@ ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
     return *glue_->project_catalog_service;
   }
   glue_->project_catalog_service = std::make_unique<ProjectCatalogService>(
-      context_,
+      context_, ProjectCatalogService::Services{.prompts = MakePromptSurfaceService(), .menus = MakeMenuCoordinator()},
       ProjectCatalogService::Operations{
           .initialize_current_project =
               [this](const project::ProjectId& id,
@@ -58,9 +58,7 @@ ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
                 return initialized;
               },
           .sync_active_editor_tab = [this]() { SyncActiveEditorTab(); },
-          .cancel_open_prompts = [this]() { MakePromptSurfaceService().CancelOpenPrompts(); },
           .stop_project_search = [this]() { StopProjectSearch(); },
-          .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },
           .clear_editor_blame = [this]() { ClearEditorBlame(); },
           .start_file_index_watcher_for_current_project =
               [this]() { return StartFileIndexWatcherForCurrentProject(); },

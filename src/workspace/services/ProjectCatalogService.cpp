@@ -4,11 +4,14 @@
 #include <utility>
 
 #include "util/PerformanceTrace.h"
+#include "workspace/coordinators/WorkspaceMenuCoordinator.h"
+#include "workspace/services/PromptSurfaceService.h"
 
 namespace microide::workspace {
 
-ProjectCatalogService::ProjectCatalogService(WorkspaceContext& context, Operations operations)
+ProjectCatalogService::ProjectCatalogService(WorkspaceContext& context, Services services, Operations operations)
     : context_(context),
+      services_(services),
       operations_(std::move(operations)),
       coordinator_(context_, BuildCoordinatorOperations()) {}
 
@@ -130,7 +133,7 @@ void ProjectCatalogService::StoreCurrentProjectState(ProjectWorkspaceState& stat
     perf_label.Field("root", context_.current_project_state.root);
   }
   util::PerformanceTrace::Scope trace_scope(perf_label.View());
-  operations_.cancel_open_prompts();
+  services_.prompts.CancelOpenPrompts();
   {
     util::PerformanceTrace::Scope scope(
         "ProjectCatalogService::StoreCurrentProjectState::SyncActiveEditorTab");
@@ -149,7 +152,7 @@ void ProjectCatalogService::StoreCurrentProjectState(ProjectWorkspaceState& stat
   {
     util::PerformanceTrace::Scope scope(
         "ProjectCatalogService::StoreCurrentProjectState::CloseTreeContextMenu");
-    operations_.close_tree_context_menu();
+    services_.menus.CloseTreeContextMenu();
   }
   context_.current_project_state.initialized = true;
   context_.current_project_state.restore_persistence_on_activate = false;
@@ -175,7 +178,7 @@ void ProjectCatalogService::LoadProjectState(ProjectWorkspaceState& state) {
   }
   {
     util::PerformanceTrace::Scope scope("ProjectCatalogService::LoadProjectState::CloseTreeContextMenu");
-    operations_.close_tree_context_menu();
+    services_.menus.CloseTreeContextMenu();
   }
   {
     util::PerformanceTrace::Scope scope("ProjectCatalogService::LoadProjectState::ClearEditorBlame");

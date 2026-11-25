@@ -8,16 +8,22 @@
 
 namespace microide::workspace {
 
+class MenuCoordinator;
+class PromptSurfaceService;
+
 class ProjectCatalogService {
  public:
+  struct Services {
+    PromptSurfaceService& prompts;
+    MenuCoordinator& menus;
+  };
+
   struct Operations {
     std::function<bool(const project::ProjectId&, const std::filesystem::path&, bool, bool, bool, bool,
                        const project::ProjectLocality&)>
         initialize_current_project;
     std::function<void()> sync_active_editor_tab;
-    std::function<void()> cancel_open_prompts;
     std::function<void()> stop_project_search;
-    std::function<void()> close_tree_context_menu;
     std::function<void()> clear_editor_blame;
     std::function<bool()> start_file_index_watcher_for_current_project;
     std::function<void()> stop_file_index_watcher;
@@ -41,7 +47,7 @@ class ProjectCatalogService {
     std::function<void()> request_frame;
   };
 
-  ProjectCatalogService(WorkspaceContext& context, Operations operations);
+  ProjectCatalogService(WorkspaceContext& context, Services services, Operations operations);
 
   bool Open(const project::ProjectId& id,
             const std::filesystem::path& normalized_root,
@@ -60,6 +66,7 @@ class ProjectCatalogService {
   void LoadProjectState(ProjectWorkspaceState& state);
 
   WorkspaceContext& context_;
+  Services services_;
   Operations operations_;
   ProjectCatalogCoordinator coordinator_;
 };

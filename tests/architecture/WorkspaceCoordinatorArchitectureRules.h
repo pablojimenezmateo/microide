@@ -27,7 +27,7 @@ RuleResult CheckFactoryHooksDoNotForwardToServicesAtCap(const std::filesystem::p
 std::size_t CountServiceForwardingHooks(const std::filesystem::path& repo_root,
                                         std::vector<Violation>* where);
 
-inline constexpr std::size_t kMaxServiceForwardingHooks = 43;
+inline constexpr std::size_t kMaxServiceForwardingHooks = 41;
 
 RuleResult CheckWorkspaceGitCallsRatchetDown(const std::filesystem::path& repo_root);
 RuleResult CheckWorkspaceGitCallsRatchetDownAtCap(const std::filesystem::path& repo_root, std::size_t cap);
