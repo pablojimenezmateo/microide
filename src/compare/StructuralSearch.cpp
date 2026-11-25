@@ -74,9 +74,12 @@ struct SearchScratch {
     std::uint32_t lhs_parent = kNoDiffNode;
     std::uint32_t rhs_parent = kNoDiffNode;
     std::uint32_t vertex = kNoDiffNode;
+    std::uint32_t epoch = 0;
     bool can_pop_either = false;
   };
   std::vector<Slot> slots;
+  std::vector<Slot> rehash_slots;
+  std::uint32_t epoch = 0;
   std::vector<std::pair<std::uint64_t, std::uint32_t>> similarity_cache;
   std::size_t similarity_cache_used = 0;
   std::vector<StackGroup> groups;
@@ -91,6 +94,7 @@ struct SearchScratch {
     if (vertices.capacity() > kRetainVertices) {
       std::vector<Vertex>().swap(vertices);
       std::vector<Slot>().swap(slots);
+      std::vector<Slot>().swap(rehash_slots);
       std::vector<StackGroup>().swap(groups);
       std::vector<Cons>().swap(conses);
       for (std::vector<QueueEntry>& bucket : buckets) {
@@ -186,7 +190,10 @@ class Search {
     s_.vertices.clear();
     s_.groups.clear();
     s_.conses.clear();
-    s_.slots.assign(kInitialSlots, SearchScratch::Slot{});
+    if (s_.slots.empty() || ++s_.epoch == 0) {
+      s_.slots.assign(std::max(kInitialSlots, s_.slots.size()), SearchScratch::Slot{});
+      s_.epoch = 1;
+    }
     s_.similarity_cache.clear();
     s_.similarity_cache_used = 0;
     for (const std::uint32_t bucket : s_.touched_buckets) {
@@ -321,7 +328,7 @@ class Search {
     const Key key = KeyOf(lhs, rhs, stack);
     const std::size_t mask = s_.slots.size() - 1;
     std::size_t index = HashKey(key) & mask;
-    while (s_.slots[index].vertex != kNoDiffNode) {
+    while (s_.slots[index].epoch == s_.epoch) {
       if (SlotMatches(s_.slots[index], key)) {
         return s_.slots[index].vertex;
       }
@@ -335,21 +342,22 @@ class Search {
                                           .lhs_parent = key.lhs_parent,
                                           .rhs_parent = key.rhs_parent,
                                           .vertex = vertex,
+                                          .epoch = s_.epoch,
                                           .can_pop_either = key.can_pop_either};
     return vertex;
   }
 
   void Rehash(std::size_t size) {
-    std::vector<SearchScratch::Slot> old(size, SearchScratch::Slot{});
-    old.swap(s_.slots);
+    s_.rehash_slots.assign(size, SearchScratch::Slot{});
+    s_.rehash_slots.swap(s_.slots);
     const std::size_t mask = size - 1;
-    for (const SearchScratch::Slot& slot : old) {
-      if (slot.vertex == kNoDiffNode) {
+    for (const SearchScratch::Slot& slot : s_.rehash_slots) {
+      if (slot.epoch != s_.epoch) {
         continue;
       }
       const Key key{slot.lhs, slot.rhs, slot.lhs_parent, slot.rhs_parent, slot.can_pop_either};
       std::size_t index = HashKey(key) & mask;
-      while (s_.slots[index].vertex != kNoDiffNode) {
+      while (s_.slots[index].epoch == s_.epoch) {
         index = (index + 1) & mask;
       }
       s_.slots[index] = slot;

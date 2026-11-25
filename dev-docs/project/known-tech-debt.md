@@ -188,6 +188,17 @@ atom gaps skip the graph too; (2) packing a vertex's identity into one 64-bit
 key and dropping `Vertex::stack` group reads from the hot path; (3) a lower
 search cap for gaps that contain no list at all. Gate each on the bench table.
 
+**2026-11-25: the vertex table, not the vertex key.** A profile (perf works on
+this machine now) put `Search::Insert` first, and the cost was the table, not
+the hashing: every search reset it to 64 slots and doubled it, each doubling a
+freshly zeroed allocation (the large ones mmap'd and faulted in). Slots now
+carry the search's epoch, so a search neither zeroes nor regrows a table a
+previous one sized, and the rehash buffer is kept. Refinement, min of 3x15
+interleaved runs, results identical: `CompareModel.cpp` 5.10 -> 3.46 ms,
+`PerfMain.cpp` 3.63 -> 2.64, `EditorViewRenderer.cpp` 1.56 -> 1.29, the
+Markdown file 13.0 -> 8.6. Still open: leads (2)'s key packing and (3), against
+the new numbers.
+
 Lead (1) measured 2026-11-13 and NOT taken: an exact DP aligner for atom-only
 gaps with literals on both sides (the search's own edge costs, tabulated; its
 cost matched the A* path cost on 600 random gaps) took 206 of the Markdown
