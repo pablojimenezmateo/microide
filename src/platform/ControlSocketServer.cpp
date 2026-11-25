@@ -159,6 +159,18 @@ struct ControlSocketServer::Impl {
     return !overflow;
   }
 
+  static void QueueLine(Connection& conn, std::string_view line) {
+    std::lock_guard<std::mutex> lock(conn.out_mutex);
+    const std::size_t pending = conn.write_buf.size() - conn.write_offset;
+    if (pending + line.size() + 1 > ControlSocketServer::kMaxWriteBufferBytes) {
+      conn.write_overflow.store(true, std::memory_order_release);
+      return;
+    }
+    CompactWriteBuffer(conn);
+    conn.write_buf.append(line);
+    conn.write_buf.push_back('\n');
+  }
+
   static void CompactWriteBuffer(Connection& conn) {
     if (conn.write_offset == 0) {
       return;
@@ -496,17 +508,7 @@ void ControlSocketServer::SendLine(std::uint64_t connection_id, const std::strin
     }
     conn = it->second;
   }
-  {
-    std::lock_guard<std::mutex> lock(conn->out_mutex);
-    const std::size_t pending = conn->write_buf.size() - conn->write_offset;
-    if (pending + line.size() + 1 > ControlSocketServer::kMaxWriteBufferBytes) {
-      conn->write_overflow.store(true, std::memory_order_release);
-    } else {
-      Impl::CompactWriteBuffer(*conn);
-      conn->write_buf.append(line);
-      conn->write_buf.push_back('\n');
-    }
-  }
+  Impl::QueueLine(*conn, line);
   conn->in_flight.fetch_sub(1, std::memory_order_release);
   impl_->WakeIoThread();
 }
@@ -521,15 +523,7 @@ void ControlSocketServer::Broadcast(const std::string& line) {
     }
   }
   for (const std::shared_ptr<Impl::Connection>& conn : snapshot) {
-    std::lock_guard<std::mutex> lock(conn->out_mutex);
-    const std::size_t pending = conn->write_buf.size() - conn->write_offset;
-    if (pending + line.size() + 1 > ControlSocketServer::kMaxWriteBufferBytes) {
-      conn->write_overflow.store(true, std::memory_order_release);
-      continue;
-    }
-    Impl::CompactWriteBuffer(*conn);
-    conn->write_buf.append(line);
-    conn->write_buf.push_back('\n');
+    Impl::QueueLine(*conn, line);
   }
   if (!snapshot.empty()) {
     impl_->WakeIoThread();

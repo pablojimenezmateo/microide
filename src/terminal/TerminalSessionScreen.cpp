@@ -644,16 +644,17 @@ bool TerminalSession::HasCustomScrollRegionLocked() const {
   return ActiveScrollRegionTopLocked() != 0 || ActiveScrollRegionBottomLocked() != rows_ - 1;
 }
 
-namespace {
-
-struct ScrollRotation {
-  std::size_t first_row = 0;
-  std::size_t last_row = 0;
-  std::size_t shift = 0;
-};
-
-ScrollRotation ResolveScrollRotation(std::size_t top, std::size_t bottom, std::size_t count,
-                                     std::size_t terminal_rows, std::size_t screen_top) {
+TerminalSession::ScrollRotation TerminalSession::ResolveScrollRegionLocked(std::size_t top,
+                                                                           std::size_t bottom,
+                                                                           std::size_t count) {
+  if (rows_ == 0) {
+    return {};
+  }
+  const std::size_t terminal_rows = rows_;
+  const std::size_t screen_top = use_alternate_screen_ ? 0 : PrimaryScreenTopLocked();
+  if (lines_.size() < screen_top + terminal_rows) {
+    lines_.resize(screen_top + terminal_rows);
+  }
   const std::size_t rel_top = std::min(top, terminal_rows - 1);
   const std::size_t rel_bottom = std::clamp(bottom, rel_top, terminal_rows - 1);
   return ScrollRotation{
@@ -663,19 +664,8 @@ ScrollRotation ResolveScrollRotation(std::size_t top, std::size_t bottom, std::s
   };
 }
 
-}
-
 void TerminalSession::ScrollRegionUpLocked(std::size_t top, std::size_t bottom, std::size_t count) {
-  if (rows_ == 0) {
-    return;
-  }
-
-  const std::size_t terminal_rows = std::max<std::size_t>(1, rows_);
-  const std::size_t screen_top = use_alternate_screen_ ? 0 : PrimaryScreenTopLocked();
-  if (lines_.size() < screen_top + terminal_rows) {
-    lines_.resize(screen_top + terminal_rows);
-  }
-  const ScrollRotation rotation = ResolveScrollRotation(top, bottom, count, terminal_rows, screen_top);
+  const ScrollRotation rotation = ResolveScrollRegionLocked(top, bottom, count);
   if (rotation.shift == 0) {
     return;
   }
@@ -691,16 +681,7 @@ void TerminalSession::ScrollRegionUpLocked(std::size_t top, std::size_t bottom, 
 void TerminalSession::ScrollRegionDownLocked(std::size_t top,
                                              std::size_t bottom,
                                              std::size_t count) {
-  if (rows_ == 0) {
-    return;
-  }
-
-  const std::size_t terminal_rows = std::max<std::size_t>(1, rows_);
-  const std::size_t screen_top = use_alternate_screen_ ? 0 : PrimaryScreenTopLocked();
-  if (lines_.size() < screen_top + terminal_rows) {
-    lines_.resize(screen_top + terminal_rows);
-  }
-  const ScrollRotation rotation = ResolveScrollRotation(top, bottom, count, terminal_rows, screen_top);
+  const ScrollRotation rotation = ResolveScrollRegionLocked(top, bottom, count);
   if (rotation.shift == 0) {
     return;
   }

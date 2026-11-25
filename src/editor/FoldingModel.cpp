@@ -257,14 +257,29 @@ void FoldingModel::SyncLineBracketCache(LineSpan lines, const BracketTable& tabl
   }
   SpliceLineBracketCache(lines, table, edit_span);
   if (bracket_cache_valid_through_ > line_count) {
-    const std::size_t keep = line_count;
-    std::size_t events = 0;
-    for (std::size_t i = 0; i < keep; ++i) {
-      events += line_bracket_count_[i];
-    }
-    line_bracket_count_.resize(keep);
-    line_brackets_.resize(events);
-    bracket_cache_valid_through_ = keep;
+    TruncateLineBracketCache(line_count);
+  }
+}
+
+void FoldingModel::TruncateLineBracketCache(std::size_t keep) {
+  std::size_t events = 0;
+  for (std::size_t i = 0; i < keep; ++i) {
+    events += line_bracket_count_[i];
+  }
+  line_bracket_count_.resize(keep);
+  line_brackets_.resize(events);
+  bracket_cache_valid_through_ = keep;
+}
+
+void FoldingModel::PartitionBlocks(std::size_t first_block, std::size_t block_count,
+                                   std::size_t line_count) {
+  std::size_t remaining = line_count;
+  for (std::size_t i = 0; i < block_count; ++i) {
+    Block& block = blocks_[first_block + i];
+    block.line_count = static_cast<std::uint32_t>(std::min(remaining, kTargetBlockLines));
+    remaining -= block.line_count;
+    block.valid = false;
+    block.event_count = 0;
   }
 }
 
@@ -279,14 +294,7 @@ void FoldingModel::SpliceLineBracketCache(LineSpan lines, const BracketTable& ta
   const std::size_t current_end = edit_span.current_end();
   if (cached_end == LineEditSpan::kToEnd || current_end == LineEditSpan::kToEnd ||
       cached_end > bracket_cache_valid_through_ || current_end > line_count) {
-    const std::size_t keep = begin;
-    std::size_t events = 0;
-    for (std::size_t i = 0; i < keep; ++i) {
-      events += line_bracket_count_[i];
-    }
-    line_bracket_count_.resize(keep);
-    line_brackets_.resize(events);
-    bracket_cache_valid_through_ = keep;
+    TruncateLineBracketCache(begin);
     return;
   }
 
@@ -390,14 +398,7 @@ void FoldingModel::RepartitionAll(std::size_t line_count) {
   const std::size_t block_count =
       line_count == 0 ? 0 : (line_count + kTargetBlockLines - 1) / kTargetBlockLines;
   blocks_.resize(block_count);
-  std::size_t remaining = line_count;
-  for (std::size_t i = 0; i < block_count; ++i) {
-    Block& block = blocks_[i];
-    block.line_count = static_cast<std::uint32_t>(std::min(remaining, kTargetBlockLines));
-    remaining -= block.line_count;
-    block.valid = false;
-    block.event_count = 0;
-  }
+  PartitionBlocks(0, block_count, line_count);
   block_starts_dirty_ = true;
   document_line_count_ = line_count;
   InvalidatePrefixFrom(0);
@@ -457,14 +458,7 @@ void FoldingModel::SyncBlocks(std::size_t line_count, const LineEditSpan& edit_s
     blocks_.insert(blocks_.begin() + static_cast<std::ptrdiff_t>(first_block), new_block_count,
                    Block{});
   }
-  std::size_t remaining = region_new_lines;
-  for (std::size_t i = 0; i < new_block_count; ++i) {
-    Block& block = blocks_[first_block + i];
-    block.line_count = static_cast<std::uint32_t>(std::min(remaining, kTargetBlockLines));
-    remaining -= block.line_count;
-    block.valid = false;
-    block.event_count = 0;
-  }
+  PartitionBlocks(first_block, new_block_count, region_new_lines);
   block_starts_dirty_ = true;
   document_line_count_ = line_count;
   InvalidatePrefixFrom(first_block + 1);

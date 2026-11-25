@@ -239,6 +239,12 @@ class TerminalSession {
   std::size_t ActiveScrollRegionTopLocked() const;
   std::size_t ActiveScrollRegionBottomLocked() const;
   bool HasCustomScrollRegionLocked() const;
+  struct ScrollRotation {
+    std::size_t first_row = 0;
+    std::size_t last_row = 0;
+    std::size_t shift = 0;
+  };
+  ScrollRotation ResolveScrollRegionLocked(std::size_t top, std::size_t bottom, std::size_t count);
   void ScrollRegionUpLocked(std::size_t top, std::size_t bottom, std::size_t count);
   void ScrollRegionDownLocked(std::size_t top, std::size_t bottom, std::size_t count);
   void SaveCursorLocked();
@@ -339,6 +345,8 @@ class TerminalSession {
                    std::string_view command, std::vector<std::string> shell_argv, HostIdentity attach);
   void StopHost(const std::shared_ptr<TerminalHostChannel>& channel);
   bool SendToHost(TerminalInputEvent event);
+  bool SendLocalMouseEvent(MouseButton button, bool pressed, bool motion, std::size_t row,
+                           std::size_t column, util::KeyModifiers modifiers);
   bool SendMouseToHost(TerminalInputEvent::Kind kind, MouseButton button, bool pressed,
                        std::size_t row, std::size_t column, util::KeyModifiers modifiers);
   std::shared_ptr<TerminalHostChannel> HostChannel() const;

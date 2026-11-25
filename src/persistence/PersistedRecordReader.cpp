@@ -144,16 +144,7 @@ std::optional<PersistedRecordReadResult> TryReadSpecificFile(
   }
   util::AddPerformanceCounter(util::PerfCounterId::PersistenceRecordReads);
   util::AddPerformanceCounter(util::PerfCounterId::PersistenceRecordBytesRead, file_bytes.size());
-
-  PersistedRecordReadResult decoded;
-  PersistedRecordReaderError decode_error = PersistedRecordReaderError::None;
-  if (!DecodeRecordFile(file_bytes, &decoded, &decode_error)) {
-    SetError(error, decode_error);
-    return std::nullopt;
-  }
-
-  SetError(error, PersistedRecordReaderError::None);
-  return decoded;
+  return PersistedRecordReader::Decode(file_bytes, error);
 }
 
 PersistedRecordReaderError MergeErrors(PersistedRecordReaderError primary,

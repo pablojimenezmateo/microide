@@ -334,6 +334,14 @@ std::vector<IndexUpdateBatch::Change> detail::BuildPollSnapshotDiff(
   std::vector<IndexUpdateBatch::Change> changes;
   auto prev_it = previous.begin();
   auto curr_it = current.begin();
+  const auto push_created_or_modified = [&changes](const auto& entry) {
+    IndexUpdateBatch::Change change;
+    change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
+    change.entry.relative_path = entry.first;
+    change.entry.mtime = entry.second.first;
+    change.entry.size = entry.second.second;
+    changes.push_back(std::move(change));
+  };
   while (prev_it != previous.end() || curr_it != current.end()) {
     if (curr_it == current.end() ||
         (prev_it != previous.end() && prev_it->first < curr_it->first)) {
@@ -345,23 +353,13 @@ std::vector<IndexUpdateBatch::Change> detail::BuildPollSnapshotDiff(
       continue;
     }
     if (prev_it == previous.end() || curr_it->first < prev_it->first) {
-      IndexUpdateBatch::Change change;
-      change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
-      change.entry.relative_path = curr_it->first;
-      change.entry.mtime = curr_it->second.first;
-      change.entry.size = curr_it->second.second;
-      changes.push_back(std::move(change));
+      push_created_or_modified(*curr_it);
       ++curr_it;
       continue;
     }
 
     if (prev_it->second != curr_it->second) {
-      IndexUpdateBatch::Change change;
-      change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
-      change.entry.relative_path = curr_it->first;
-      change.entry.mtime = curr_it->second.first;
-      change.entry.size = curr_it->second.second;
-      changes.push_back(std::move(change));
+      push_created_or_modified(*curr_it);
     }
     ++prev_it;
     ++curr_it;

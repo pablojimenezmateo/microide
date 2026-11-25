@@ -199,25 +199,7 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
                                        tab_size, out, facts);
     }
   };
-  if (visible_line_cache_.size() >= kVisibleLineCacheLimit) {
-    ++visible_line_evictions_;
-    util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutEvictions);
-    assert(visible_line_lru_.head != nullptr);
-    VisibleLineCacheEntry& victim = *visible_line_lru_.head;
-    VisibleLineLruUnlink(victim);
-    auto node = visible_line_cache_.extract(victim.key);
-    if (!node.empty()) {
-      build_into(node.mapped().layout);
-      node.mapped().key = cache_key;
-      node.key() = cache_key;
-      util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutRecycled);
-      const auto result = visible_line_cache_.insert(std::move(node));
-      VisibleLineLruPushBack(result.position->second);
-      return result.position->second.layout;
-    }
-  }
-  if (!visible_line_node_pool_.empty()) {
-    auto node = visible_line_node_pool_.Take();
+  const auto reuse_node = [&](auto node) -> const LayoutLine& {
     build_into(node.mapped().layout);
     node.mapped().key = cache_key;
     node.key() = cache_key;
@@ -225,6 +207,19 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
     const auto result = visible_line_cache_.insert(std::move(node));
     VisibleLineLruPushBack(result.position->second);
     return result.position->second.layout;
+  };
+  if (visible_line_cache_.size() >= kVisibleLineCacheLimit) {
+    ++visible_line_evictions_;
+    util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutEvictions);
+    assert(visible_line_lru_.head != nullptr);
+    VisibleLineCacheEntry& victim = *visible_line_lru_.head;
+    VisibleLineLruUnlink(victim);
+    if (auto node = visible_line_cache_.extract(victim.key); !node.empty()) {
+      return reuse_node(std::move(node));
+    }
+  }
+  if (!visible_line_node_pool_.empty()) {
+    return reuse_node(visible_line_node_pool_.Take());
   }
   const auto [it, _] = visible_line_cache_.emplace(cache_key, VisibleLineCacheEntry{});
   it->second.key = cache_key;

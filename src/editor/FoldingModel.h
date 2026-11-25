@@ -249,6 +249,8 @@ class FoldingModel {
   void SyncLineBracketCache(LineSpan lines, const BracketTable& table,
                             const std::vector<std::pair<char, char>>& pairs,
                             const LineEditSpan& edit_span, bool pairs_changed);
+  void TruncateLineBracketCache(std::size_t keep);
+  void PartitionBlocks(std::size_t first_block, std::size_t block_count, std::size_t line_count);
   void SpliceLineBracketCache(LineSpan lines, const BracketTable& table,
                               const LineEditSpan& edit_span);
   bool ExtendBracketCache(LineSpan lines, const BracketTable& table, std::size_t needed_end,

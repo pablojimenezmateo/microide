@@ -51,6 +51,12 @@ class FileTreeWatcher {
 
   PreparedNativeBackend PrepareNativeBackend(const std::vector<std::filesystem::path>& roots,
                                              const TreeTraversalFilter& filter);
+  struct PreparedTree {
+    PreparedNativeBackend backend;
+    std::vector<TreeSnapshotEntry> snapshot;
+  };
+  PreparedTree PrepareTree(const std::vector<std::filesystem::path>& roots,
+                           const TreeTraversalFilter& filter);
   std::unique_ptr<NativeBackend> InstallPreparedBackendLocked(PreparedNativeBackend prepared);
   void ResetNextPollAt();
   void NotifyWake();

@@ -572,21 +572,7 @@ bool TextViewport::SurroundRangeBoundaries(const SelectionRange& norm,
     }
   }
 
-  ClearLastAppliedEdit();
-  document_->lines.ReplaceLineRange(first, span, after_lines);
-  document_->dirty = true;
-  document_->undo_history.ClearRedo();
-  RefreshEncoding();
-  InvalidateLayoutCaches();
-  EnsureCursorVisible();
-  const ViewState after_state = CaptureViewState();
-  PushHistoryEntry(HistoryEntry{
-      .start_line = first,
-      .before_lines = std::move(before_lines),
-      .after_lines = std::move(after_lines),
-      .before_state = before_state,
-      .after_state = after_state,
-  });
+  CommitLineRangeEdit(first, std::move(before_lines), std::move(after_lines), before_state);
   return true;
 }
 

@@ -116,6 +116,30 @@ BranchReviewHunkIdentity WithNormalizedPath(const std::filesystem::path& reposit
   };
 }
 
+struct NoteKey {
+  BranchReviewNoteScope scope;
+  std::filesystem::path path;
+  std::optional<BranchReviewHunkIdentity> hunk_identity;
+
+  bool Matches(const BranchReviewNote& note) const {
+    const bool same_hunk =
+        note.hunk_identity.has_value() == hunk_identity.has_value() &&
+        (!hunk_identity.has_value() || HunkIdentitiesEqual(*note.hunk_identity, *hunk_identity));
+    return note.scope == scope && PathsEqual(note.path, path) && same_hunk;
+  }
+};
+
+NoteKey MakeNoteKey(const BranchReviewTargetIdentity& target,
+                    const BranchReviewNoteScope scope,
+                    const std::filesystem::path& path,
+                    const std::optional<BranchReviewHunkIdentity>& hunk_identity) {
+  NoteKey key{.scope = scope, .path = NormalizeReviewPath(target.repository_root, path)};
+  if (hunk_identity.has_value()) {
+    key.hunk_identity = WithNormalizedPath(target.repository_root, *hunk_identity);
+  }
+  return key;
+}
+
 }
 
 std::uint64_t BranchReviewStateService::NowUnixMs() {
@@ -296,20 +320,9 @@ void BranchReviewStateService::SetNote(const BranchReviewTargetIdentity& target,
   if (target_state == nullptr) {
     return;
   }
-  const std::filesystem::path normalized = NormalizeReviewPath(target.repository_root, path);
-  std::optional<BranchReviewHunkIdentity> normalized_hunk;
-  if (hunk_identity.has_value()) {
-    normalized_hunk = *hunk_identity;
-    normalized_hunk->path = NormalizeReviewPath(target.repository_root, normalized_hunk->path);
-  }
+  const NoteKey key = MakeNoteKey(target, scope, path, hunk_identity);
   for (BranchReviewNote& note : target_state->notes) {
-    const bool same_scope = note.scope == scope;
-    const bool same_path = PathsEqual(note.path, normalized);
-    const bool same_hunk =
-        (!note.hunk_identity.has_value() && !normalized_hunk.has_value()) ||
-        (note.hunk_identity.has_value() && normalized_hunk.has_value() &&
-         HunkIdentitiesEqual(*note.hunk_identity, *normalized_hunk));
-    if (same_scope && same_path && same_hunk) {
+    if (key.Matches(note)) {
       note.text = std::string(text);
       note.updated_at_unix_ms = NowUnixMs();
       PruneTarget(*target_state);
@@ -318,8 +331,8 @@ void BranchReviewStateService::SetNote(const BranchReviewTargetIdentity& target,
   }
   target_state->notes.push_back(BranchReviewNote{
       .scope = scope,
-      .path = normalized,
-      .hunk_identity = normalized_hunk,
+      .path = key.path,
+      .hunk_identity = key.hunk_identity,
       .text = std::string(text),
       .updated_at_unix_ms = NowUnixMs(),
   });
@@ -334,24 +347,11 @@ void BranchReviewStateService::DeleteNote(const BranchReviewTargetIdentity& targ
   if (target_state == nullptr) {
     return;
   }
-  const std::filesystem::path normalized = NormalizeReviewPath(target.repository_root, path);
-  std::optional<BranchReviewHunkIdentity> normalized_hunk;
-  if (hunk_identity.has_value()) {
-    normalized_hunk = *hunk_identity;
-    normalized_hunk->path = NormalizeReviewPath(target.repository_root, normalized_hunk->path);
-  }
+  const NoteKey key = MakeNoteKey(target, scope, path, hunk_identity);
   auto& notes = target_state->notes;
   const std::size_t before = notes.size();
   notes.erase(std::remove_if(notes.begin(), notes.end(),
-                             [&](const BranchReviewNote& note) {
-                               const bool same_scope = note.scope == scope;
-                               const bool same_path = PathsEqual(note.path, normalized);
-                               const bool same_hunk =
-                                   (!note.hunk_identity.has_value() && !normalized_hunk.has_value()) ||
-                                   (note.hunk_identity.has_value() && normalized_hunk.has_value() &&
-                                    HunkIdentitiesEqual(*note.hunk_identity, *normalized_hunk));
-                               return same_scope && same_path && same_hunk;
-                             }),
+                             [&](const BranchReviewNote& note) { return key.Matches(note); }),
               notes.end());
   if (notes.size() != before) {
     ++revision_;

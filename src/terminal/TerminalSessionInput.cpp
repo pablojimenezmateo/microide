@@ -94,6 +94,27 @@ bool TerminalSession::SendMouseToHost(TerminalInputEvent::Kind kind, MouseButton
   return true;
 }
 
+bool TerminalSession::SendLocalMouseEvent(MouseButton button,
+                                          bool pressed,
+                                          bool motion,
+                                          std::size_t row,
+                                          std::size_t column,
+                                          util::KeyModifiers modifiers) {
+  std::string bytes;
+  {
+    std::scoped_lock lock(mutex_);
+    const bool can_encode = (backend_ && backend_->running()) ||
+                            (UsePlaceholderTerminalsForTesting() && running_);
+    if (!EncodeTerminalSessionMouseEvent(mouse_.any, mouse_.drag, mouse_.normal, mouse_.sgr, rows_,
+                                         columns_, button, pressed, motion, row, column,
+                                         modifiers, can_encode, bytes)) {
+      return false;
+    }
+  }
+  SendBytes(bytes);
+  return true;
+}
+
 bool TerminalSession::SendMouseButton(MouseButton button,
                                       bool pressed,
                                       std::size_t row,
@@ -102,20 +123,7 @@ bool TerminalSession::SendMouseButton(MouseButton button,
   if (SendMouseToHost(TerminalInputEvent::Kind::MouseButton, button, pressed, row, column, modifiers)) {
     return true;
   }
-  std::string bytes;
-  {
-    std::scoped_lock lock(mutex_);
-    const bool can_encode = (backend_ && backend_->running()) ||
-                            (UsePlaceholderTerminalsForTesting() && running_);
-    if (!EncodeTerminalSessionMouseEvent(mouse_.any, mouse_.drag,
-                                         mouse_.normal, mouse_.sgr, rows_,
-                                         columns_, button, pressed, false, row, column, modifiers,
-                                         can_encode, bytes)) {
-      return false;
-    }
-  }
-  SendBytes(bytes);
-  return true;
+  return SendLocalMouseEvent(button, pressed, false, row, column, modifiers);
 }
 
 TerminalPointerShape TerminalSession::PointerShapeAt(std::size_t row, std::size_t column) const {
@@ -153,20 +161,7 @@ bool TerminalSession::SendMouseMotion(MouseButton button,
   if (SendMouseToHost(TerminalInputEvent::Kind::MouseMotion, button, true, row, column, modifiers)) {
     return true;
   }
-  std::string bytes;
-  {
-    std::scoped_lock lock(mutex_);
-    const bool can_encode = (backend_ && backend_->running()) ||
-                            (UsePlaceholderTerminalsForTesting() && running_);
-    if (!EncodeTerminalSessionMouseEvent(mouse_.any, mouse_.drag,
-                                         mouse_.normal, mouse_.sgr, rows_,
-                                         columns_, button, true, true, row, column, modifiers,
-                                         can_encode, bytes)) {
-      return false;
-    }
-  }
-  SendBytes(bytes);
-  return true;
+  return SendLocalMouseEvent(button, true, true, row, column, modifiers);
 }
 
 }

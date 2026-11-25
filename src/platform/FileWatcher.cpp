@@ -261,21 +261,8 @@ void FileTreeWatcher::SetRoots(std::vector<std::filesystem::path> roots) {
     pending_change_ = false;
   }
 
-  PreparedNativeBackend prepared = PrepareNativeBackend(normalized_roots, filter);
-  bool capture_snapshot = true;
-  std::vector<TreeSnapshotEntry> snapshot;
-  if (capture_snapshot) {
-    bool snapshot_truncated = false;
-    snapshot = CaptureTreeSnapshot(normalized_roots, filter,
-                                   entry_budget_.load(std::memory_order_relaxed),
-                                   &snapshot_truncated);
-    if (snapshot_truncated) {
-      prepared.tree_too_large = true;
-    }
-  }
-  if (prepared.tree_too_large) {
-    capture_snapshot = false;
-  }
+  PreparedTree tree = PrepareTree(normalized_roots, filter);
+  const bool capture_snapshot = !tree.backend.tree_too_large;
 
   std::unique_ptr<NativeBackend> old_backend;
   {
@@ -283,9 +270,9 @@ void FileTreeWatcher::SetRoots(std::vector<std::filesystem::path> roots) {
     if (roots_ != normalized_roots) {
       return;
     }
-    old_backend = InstallPreparedBackendLocked(std::move(prepared));
+    old_backend = InstallPreparedBackendLocked(std::move(tree.backend));
     if (capture_snapshot) {
-      snapshot_ = std::make_shared<const std::vector<TreeSnapshotEntry>>(std::move(snapshot));
+      snapshot_ = std::make_shared<const std::vector<TreeSnapshotEntry>>(std::move(tree.snapshot));
     } else {
       snapshot_.reset();
     }
@@ -362,49 +349,17 @@ bool FileTreeWatcher::Poll() {
   }
   const bool snapshot_valid = previous_snapshot != nullptr;
 
-  const std::size_t entry_budget = entry_budget_.load(std::memory_order_relaxed);
-
-  if (!snapshot_valid && !polling_required) {
-    if (!pending_change) {
-      return false;
-    }
-    bool snapshot_truncated = false;
-    std::vector<TreeSnapshotEntry> current_snapshot =
-        CaptureTreeSnapshot(roots, filter, entry_budget, &snapshot_truncated);
-    PreparedNativeBackend prepared = PrepareNativeBackend(roots, filter);
-    if (snapshot_truncated) {
-      prepared.tree_too_large = true;
-    }
-    const bool too_large = prepared.tree_too_large;
-    std::unique_ptr<NativeBackend> old_backend;
-    std::scoped_lock lock(mutex_);
-    if (roots != roots_) {
-      return false;
-    }
-    if (too_large) {
-      snapshot_.reset();
-    } else {
-      snapshot_ =
-          std::make_shared<const std::vector<TreeSnapshotEntry>>(std::move(current_snapshot));
-    }
-    old_backend = InstallPreparedBackendLocked(std::move(prepared));
-    ResetNextPollAt();
+  const bool reports_changes = snapshot_valid || polling_required;
+  if (!reports_changes && !pending_change) {
     return false;
   }
 
-  bool snapshot_truncated = false;
-  std::vector<TreeSnapshotEntry> current_snapshot =
-      CaptureTreeSnapshot(roots, filter, entry_budget, &snapshot_truncated);
-
-  PreparedNativeBackend prepared = PrepareNativeBackend(roots, filter);
-  if (snapshot_truncated) {
-    prepared.tree_too_large = true;
-  }
-  const bool too_large = prepared.tree_too_large;
+  PreparedTree tree = PrepareTree(roots, filter);
+  const bool too_large = tree.backend.tree_too_large;
   static const std::vector<TreeSnapshotEntry> kNoSnapshot;
   const std::vector<TreeSnapshotEntry>& previous =
       previous_snapshot != nullptr ? *previous_snapshot : kNoSnapshot;
-  const bool changed = !too_large && current_snapshot != previous;
+  const bool changed = reports_changes && !too_large && tree.snapshot != previous;
 
   std::unique_ptr<NativeBackend> old_backend;
   std::scoped_lock lock(mutex_);
@@ -414,12 +369,21 @@ bool FileTreeWatcher::Poll() {
   if (too_large) {
     snapshot_.reset();
   } else {
-    snapshot_ =
-        std::make_shared<const std::vector<TreeSnapshotEntry>>(std::move(current_snapshot));
+    snapshot_ = std::make_shared<const std::vector<TreeSnapshotEntry>>(std::move(tree.snapshot));
   }
-  old_backend = InstallPreparedBackendLocked(std::move(prepared));
+  old_backend = InstallPreparedBackendLocked(std::move(tree.backend));
   ResetNextPollAt();
   return changed;
+}
+
+FileTreeWatcher::PreparedTree FileTreeWatcher::PrepareTree(
+    const std::vector<std::filesystem::path>& roots, const TreeTraversalFilter& filter) {
+  PreparedTree tree{.backend = PrepareNativeBackend(roots, filter)};
+  bool snapshot_truncated = false;
+  tree.snapshot = CaptureTreeSnapshot(roots, filter, entry_budget_.load(std::memory_order_relaxed),
+                                      &snapshot_truncated);
+  tree.backend.tree_too_large = tree.backend.tree_too_large || snapshot_truncated;
+  return tree;
 }
 
 FileTreeWatcher::PreparedNativeBackend FileTreeWatcher::PrepareNativeBackend(
