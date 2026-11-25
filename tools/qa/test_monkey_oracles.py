@@ -2240,5 +2240,111 @@ class FrameLatencyEdgeTests(unittest.TestCase):
         app.log += self.frame(2, 900.0)
         self.assertEqual(len(oracle.check()), 1)
 
+
+class ProcReaderTests(unittest.TestCase):
+    """The oracles' /proc readers, against this test process and a child of it."""
+
+    def test_the_main_threads_voluntary_wakes_are_read_and_grow(self):
+        app = mock.Mock()
+        app.proc.poll.return_value = None
+        app.pid = os.getpid()
+        oracle = monkey_oracles.IdleOracle(app)
+        first = oracle._main_thread_wakes()
+        self.assertIsInstance(first, int)
+        for _ in range(5):
+            time.sleep(0.001)
+        self.assertGreater(oracle._main_thread_wakes(), first)
+        app.proc.poll.return_value = 0
+        self.assertIsNone(oracle._main_thread_wakes(), "an exited app has none")
+        app.proc = None
+        self.assertIsNone(oracle._main_thread_wakes())
+        app.proc = mock.Mock()
+        app.proc.poll.return_value = None
+        app.pid = 2 ** 22 + 12345
+        self.assertIsNone(oracle._main_thread_wakes(), "a pid that is gone")
+
+    def test_a_sample_is_the_wait_channel_and_the_syscall(self):
+        app = mock.Mock()
+        app.pid = os.getpid()
+        sample = monkey_oracles.IdleOracle(app)._sample_main_thread()
+        parts = sample.split(" ")
+        self.assertEqual(len(parts), 2, sample)
+        self.assertTrue(all(parts), sample)
+        app.pid = 2 ** 22 + 12345
+        self.assertEqual(monkey_oracles.IdleOracle(app)._sample_main_thread(), "? ?")
+        app.proc = None
+        self.assertEqual(monkey_oracles.IdleOracle(app)._sample_main_thread(), "")
+
+    def test_each_step_notes_the_rss_and_a_relaunch_starts_over(self):
+        app = mock.Mock()
+        app.proc.poll.return_value = None
+        app.pid = os.getpid()
+        app.actions = [1, 2, 3]
+        oracle = monkey_oracles.ResourceOracle(app)
+        oracle.note_step(1)
+        oracle.note_step(2)
+        self.assertEqual([(step, actions) for step, actions, _ in oracle.rss_steps], [(1, 3), (2, 3)])
+        self.assertTrue(all(rss > 0 for _, _, rss in oracle.rss_steps))
+        app.pid = os.getppid()
+        oracle.note_step(3)
+        self.assertEqual([step for step, _, _ in oracle.rss_steps], [3], "a new process starts the list afresh")
+        app.proc.poll.return_value = 1
+        oracle.note_step(4)
+        self.assertEqual(len(oracle.rss_steps), 1, "an exited app notes nothing")
+        app.proc = None
+        oracle.note_step(5)
+        self.assertEqual(len(oracle.rss_steps), 1)
+
+
+class RssTimelineTests(unittest.TestCase):
+    def oracle(self, steps, actions=()):
+        app = mock.Mock()
+        app.actions = list(actions)
+        oracle = monkey_oracles.ResourceOracle(app)
+        oracle.rss_steps = list(steps)
+        return oracle
+
+    def test_one_step_is_no_timeline(self):
+        self.assertEqual(self.oracle([(0, 0, 10)]).rss_timeline(), "")
+        self.assertEqual(self.oracle([]).rss_timeline(), "")
+
+    def test_the_rows_are_thinned_to_forty(self):
+        timeline = self.oracle([(i, i, 100 + i) for i in range(200)]).rss_timeline(jumps=0)
+        rows = timeline.splitlines()
+        self.assertEqual(rows[0], "step  actions  rss_kb")
+        self.assertEqual(len(rows), 41)
+        self.assertEqual(rows[1], "    0        0  100")
+        self.assertEqual(rows[2], "    5        5  105")
+
+    def test_the_largest_jumps_come_first_and_a_fall_is_none(self):
+        steps = [(0, 0, 100), (1, 1, 150), (2, 2, 400), (3, 3, 300), (4, 4, 320)]
+        actions = [{"a": i} for i in range(5)]
+        timeline = self.oracle(steps, actions).rss_timeline(jumps=5, around=1)
+        jumps = [line for line in timeline.splitlines() if line.startswith("+")]
+        self.assertEqual(jumps, ["+250 kB between step 1 and step 2 (actions 1..2):",
+                                 "+50 kB between step 0 and step 1 (actions 0..1):",
+                                 "+20 kB between step 3 and step 4 (actions 3..4):"])
+        block = timeline.split("+250 kB", 1)[1].split("\n+", 1)[0]
+        self.assertIn('{"a": 0}', block, "`around` actions before the jump's own")
+        self.assertIn('{"a": 1}', block)
+        self.assertNotIn('{"a": 2}', block)
+        self.assertTrue(timeline.endswith("\n"))
+
+    def test_a_long_action_is_cut_at_three_hundred_characters(self):
+        timeline = self.oracle([(0, 0, 1), (1, 1, 2)], [{"t": "x" * 400}]).rss_timeline(jumps=1, around=0)
+        line = next(line for line in timeline.splitlines() if '"t"' in line)
+        self.assertEqual(len(line), 2 + 300 + len("... (409 chars)"))
+        self.assertTrue(line.endswith("... (409 chars)"))
+        short = self.oracle([(0, 0, 1), (1, 1, 2)], [{"t": "x"}]).rss_timeline(jumps=1, around=0)
+        self.assertIn('  {"t": "x"}\n', short)
+
+
+class UndoPickTests(unittest.TestCase):
+    def test_one_to_four_undos_from_the_oracles_own_generator(self):
+        picks = {monkey_oracles.UndoAlgebra(mock.Mock(), random.Random(seed)).pick() for seed in range(60)}
+        self.assertEqual(picks, {1, 2, 3, 4})
+        self.assertEqual(monkey_oracles.UndoAlgebra(mock.Mock(), random.Random(7)).pick(),
+                         random.Random(7).randint(1, 4))
+
 if __name__ == "__main__":
     unittest.main()
