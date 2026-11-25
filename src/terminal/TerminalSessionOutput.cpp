@@ -294,7 +294,7 @@ void TerminalSession::ReverseIndexLocked() {
     const std::size_t scroll_region_top = ActiveScrollRegionTopLocked();
     const std::size_t scroll_region_bottom = ActiveScrollRegionBottomLocked();
     if (cursor_row_ == scroll_region_top) {
-      ScrollRegionDownLocked(scroll_region_top, scroll_region_bottom, 1);
+      ScrollRegionLocked(scroll_region_top, scroll_region_bottom, 1, ScrollDirection::Down);
     } else if (cursor_row_ > 0) {
       --cursor_row_;
     }
@@ -303,7 +303,7 @@ void TerminalSession::ReverseIndexLocked() {
     const std::size_t rel_top = ActiveScrollRegionTopLocked();
     const std::size_t rel_bottom = ActiveScrollRegionBottomLocked();
     if (cursor_row_ == screen_top + rel_top) {
-      ScrollRegionDownLocked(rel_top, rel_bottom, 1);
+      ScrollRegionLocked(rel_top, rel_bottom, 1, ScrollDirection::Down);
     } else if (cursor_row_ > screen_top) {
       --cursor_row_;
     }

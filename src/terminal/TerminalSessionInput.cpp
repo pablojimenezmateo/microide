@@ -70,20 +70,36 @@ void TerminalSession::PasteText(std::string_view text) {
   SendBytes(bytes);
 }
 
-bool TerminalSession::SendMouseToHost(TerminalInputEvent::Kind kind, MouseButton button,
-                                      bool pressed, std::size_t row, std::size_t column,
-                                      util::KeyModifiers modifiers) {
+bool TerminalSession::SendMouseEvent(TerminalInputEvent::Kind kind, MouseButton button,
+                                     bool pressed, std::size_t row, std::size_t column,
+                                     util::KeyModifiers modifiers) {
+  std::string bytes;
+  bool local = false;
   {
     std::scoped_lock lock(mutex_);
-    if (host_.channel == nullptr) {
-      return false;
+    local = host_.channel == nullptr;
+    if (local) {
+      const bool can_encode = (backend_ && backend_->running()) ||
+                              (UsePlaceholderTerminalsForTesting() && running_);
+      const bool motion = kind == TerminalInputEvent::Kind::MouseMotion;
+      if (!EncodeTerminalSessionMouseEvent(mouse_.any, mouse_.drag, mouse_.normal, mouse_.sgr,
+                                           rows_, columns_, button, pressed, motion, row, column,
+                                           modifiers, can_encode, bytes)) {
+        return false;
+      }
+    } else {
+      const TerminalMouseTrackingMode mode =
+          CurrentTerminalMouseTrackingMode(mouse_.any, mouse_.drag, mouse_.normal);
+      if (mode == TerminalMouseTrackingMode::Disabled ||
+          (kind == TerminalInputEvent::Kind::MouseMotion &&
+           mode == TerminalMouseTrackingMode::Normal)) {
+        return true;
+      }
     }
-    const TerminalMouseTrackingMode mode = CurrentTerminalMouseTrackingMode(
-        mouse_.any, mouse_.drag, mouse_.normal);
-    if (mode == TerminalMouseTrackingMode::Disabled ||
-        (kind == TerminalInputEvent::Kind::MouseMotion && mode == TerminalMouseTrackingMode::Normal)) {
-      return true;
-    }
+  }
+  if (local) {
+    SendBytes(bytes);
+    return true;
   }
   SendToHost(TerminalInputEvent{.kind = kind,
                                 .button = button,
@@ -94,36 +110,13 @@ bool TerminalSession::SendMouseToHost(TerminalInputEvent::Kind kind, MouseButton
   return true;
 }
 
-bool TerminalSession::SendLocalMouseEvent(MouseButton button,
-                                          bool pressed,
-                                          bool motion,
-                                          std::size_t row,
-                                          std::size_t column,
-                                          util::KeyModifiers modifiers) {
-  std::string bytes;
-  {
-    std::scoped_lock lock(mutex_);
-    const bool can_encode = (backend_ && backend_->running()) ||
-                            (UsePlaceholderTerminalsForTesting() && running_);
-    if (!EncodeTerminalSessionMouseEvent(mouse_.any, mouse_.drag, mouse_.normal, mouse_.sgr, rows_,
-                                         columns_, button, pressed, motion, row, column,
-                                         modifiers, can_encode, bytes)) {
-      return false;
-    }
-  }
-  SendBytes(bytes);
-  return true;
-}
-
 bool TerminalSession::SendMouseButton(MouseButton button,
                                       bool pressed,
                                       std::size_t row,
                                       std::size_t column,
                                       util::KeyModifiers modifiers) {
-  if (SendMouseToHost(TerminalInputEvent::Kind::MouseButton, button, pressed, row, column, modifiers)) {
-    return true;
-  }
-  return SendLocalMouseEvent(button, pressed, false, row, column, modifiers);
+  return SendMouseEvent(TerminalInputEvent::Kind::MouseButton, button, pressed, row, column,
+                        modifiers);
 }
 
 TerminalPointerShape TerminalSession::PointerShapeAt(std::size_t row, std::size_t column) const {
@@ -158,10 +151,8 @@ bool TerminalSession::SendMouseMotion(MouseButton button,
       }
     }
   }
-  if (SendMouseToHost(TerminalInputEvent::Kind::MouseMotion, button, true, row, column, modifiers)) {
-    return true;
-  }
-  return SendLocalMouseEvent(button, true, true, row, column, modifiers);
+  return SendMouseEvent(TerminalInputEvent::Kind::MouseMotion, button, true, row, column,
+                        modifiers);
 }
 
 }

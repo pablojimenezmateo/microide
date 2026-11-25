@@ -159,7 +159,7 @@ void TerminalSession::AdvanceCursorRowLocked(bool wrapped_from_previous) {
     const std::size_t scroll_region_bottom = ActiveScrollRegionBottomLocked();
     if (cursor_row_ >= scroll_region_top && cursor_row_ <= scroll_region_bottom) {
       if (cursor_row_ == scroll_region_bottom) {
-        ScrollRegionUpLocked(scroll_region_top, scroll_region_bottom, 1);
+        ScrollRegionLocked(scroll_region_top, scroll_region_bottom, 1, ScrollDirection::Up);
         cursor_column_ = 0;
         EnsureCursorLineExistsLocked();
         lines_[cursor_row_].wrapped_from_previous = wrapped_from_previous;
@@ -185,7 +185,7 @@ void TerminalSession::AdvanceCursorRowLocked(bool wrapped_from_previous) {
     const std::size_t region_bottom_abs = screen_top + rel_bottom;
     if (cursor_row_ >= region_top_abs && cursor_row_ <= region_bottom_abs) {
       if (cursor_row_ == region_bottom_abs) {
-        ScrollRegionUpLocked(rel_top, rel_bottom, 1);
+        ScrollRegionLocked(rel_top, rel_bottom, 1, ScrollDirection::Up);
         cursor_column_ = 0;
         EnsureCursorLineExistsLocked();
         lines_[cursor_row_].wrapped_from_previous = wrapped_from_previous;
@@ -644,52 +644,27 @@ bool TerminalSession::HasCustomScrollRegionLocked() const {
   return ActiveScrollRegionTopLocked() != 0 || ActiveScrollRegionBottomLocked() != rows_ - 1;
 }
 
-TerminalSession::ScrollRotation TerminalSession::ResolveScrollRegionLocked(std::size_t top,
-                                                                           std::size_t bottom,
-                                                                           std::size_t count) {
+void TerminalSession::ScrollRegionLocked(std::size_t top, std::size_t bottom, std::size_t count,
+                                         ScrollDirection to) {
   if (rows_ == 0) {
-    return {};
+    return;
   }
-  const std::size_t terminal_rows = rows_;
   const std::size_t screen_top = use_alternate_screen_ ? 0 : PrimaryScreenTopLocked();
-  if (lines_.size() < screen_top + terminal_rows) {
-    lines_.resize(screen_top + terminal_rows);
+  if (lines_.size() < screen_top + rows_) {
+    lines_.resize(screen_top + rows_);
   }
-  const std::size_t rel_top = std::min(top, terminal_rows - 1);
-  const std::size_t rel_bottom = std::clamp(bottom, rel_top, terminal_rows - 1);
-  return ScrollRotation{
-      .first_row = rel_top + screen_top,
-      .last_row = rel_bottom + screen_top,
-      .shift = std::min(count, rel_bottom - rel_top + 1),
-  };
-}
-
-void TerminalSession::ScrollRegionUpLocked(std::size_t top, std::size_t bottom, std::size_t count) {
-  const ScrollRotation rotation = ResolveScrollRegionLocked(top, bottom, count);
-  if (rotation.shift == 0) {
+  const std::size_t rel_top = std::min(top, rows_ - 1);
+  const std::size_t rel_bottom = std::clamp(bottom, rel_top, rows_ - 1);
+  const auto shift = static_cast<std::ptrdiff_t>(std::min(count, rel_bottom - rel_top + 1));
+  if (shift == 0) {
     return;
   }
-  const std::size_t shift = rotation.shift;
-  auto begin = lines_.begin() + static_cast<std::ptrdiff_t>(rotation.first_row);
-  auto end = lines_.begin() + static_cast<std::ptrdiff_t>(rotation.last_row + 1);
-  std::rotate(begin, begin + static_cast<std::ptrdiff_t>(shift), end);
-  for (auto it = end - static_cast<std::ptrdiff_t>(shift); it != end; ++it) {
-    BlankLineToCurrentBackgroundLocked(*it);
-  }
-}
-
-void TerminalSession::ScrollRegionDownLocked(std::size_t top,
-                                             std::size_t bottom,
-                                             std::size_t count) {
-  const ScrollRotation rotation = ResolveScrollRegionLocked(top, bottom, count);
-  if (rotation.shift == 0) {
-    return;
-  }
-  const std::size_t shift = rotation.shift;
-  auto begin = lines_.begin() + static_cast<std::ptrdiff_t>(rotation.first_row);
-  auto end = lines_.begin() + static_cast<std::ptrdiff_t>(rotation.last_row + 1);
-  std::rotate(begin, end - static_cast<std::ptrdiff_t>(shift), end);
-  for (auto it = begin; it != begin + static_cast<std::ptrdiff_t>(shift); ++it) {
+  const auto begin = lines_.begin() + static_cast<std::ptrdiff_t>(rel_top + screen_top);
+  const auto end = lines_.begin() + static_cast<std::ptrdiff_t>(rel_bottom + screen_top + 1);
+  const bool up = to == ScrollDirection::Up;
+  std::rotate(begin, up ? begin + shift : end - shift, end);
+  const auto blank_begin = up ? end - shift : begin;
+  for (auto it = blank_begin; it != blank_begin + shift; ++it) {
     BlankLineToCurrentBackgroundLocked(*it);
   }
 }

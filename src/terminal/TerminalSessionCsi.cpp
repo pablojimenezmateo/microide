@@ -213,8 +213,8 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       ScrollUpLocked(count_param());
       return;
     case 'T':
-      ScrollRegionDownLocked(ActiveScrollRegionTopLocked(), ActiveScrollRegionBottomLocked(),
-                             count_param());
+      ScrollRegionLocked(ActiveScrollRegionTopLocked(), ActiveScrollRegionBottomLocked(),
+                         count_param(), ScrollDirection::Down);
       return;
     case 'n':
       if (!params.empty()) {
@@ -320,7 +320,7 @@ void TerminalSession::InsertLinesLocked(std::size_t count) {
                                          ActiveScrollRegionTopLocked(),
                                          ActiveScrollRegionBottomLocked());
       span.has_value()) {
-    ScrollRegionDownLocked(span->top, span->bottom, count);
+    ScrollRegionLocked(span->top, span->bottom, count, ScrollDirection::Down);
   }
 }
 
@@ -330,7 +330,7 @@ void TerminalSession::DeleteLinesLocked(std::size_t count) {
                                          ActiveScrollRegionTopLocked(),
                                          ActiveScrollRegionBottomLocked());
       span.has_value()) {
-    ScrollRegionUpLocked(span->top, span->bottom, count);
+    ScrollRegionLocked(span->top, span->bottom, count, ScrollDirection::Up);
   }
   EnsureCursorLineExistsLocked();
 }
@@ -360,7 +360,8 @@ void TerminalSession::EraseCharactersLocked(std::size_t count) {
 
 void TerminalSession::ScrollUpLocked(std::size_t count) {
   if (use_alternate_screen_ || HasCustomScrollRegionLocked()) {
-    ScrollRegionUpLocked(ActiveScrollRegionTopLocked(), ActiveScrollRegionBottomLocked(), count);
+    ScrollRegionLocked(ActiveScrollRegionTopLocked(), ActiveScrollRegionBottomLocked(), count,
+                       ScrollDirection::Up);
     return;
   }
   const std::size_t screen_rows = std::max<std::size_t>(1, rows_);
