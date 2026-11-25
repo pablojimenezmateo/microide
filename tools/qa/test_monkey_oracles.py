@@ -4,7 +4,9 @@ queries the oracle asks."""
 from __future__ import annotations
 
 import contextlib
+import os
 import random
+import re
 import time
 import sys
 import tempfile
@@ -1395,6 +1397,195 @@ class RemoteConvergenceTests(unittest.TestCase):
     def test_differing_lists_both_sides(self):
         self.assertEqual(monkey_oracles.RemoteConvergence.differing({"a": "1", "b": "2"}, {"a": "1", "c": "3"}),
                          ["b", "c"])
+
+
+class Utf8BoundaryTests(unittest.TestCase):
+    def test_each_well_formed_character_is_one_unit(self):
+        boundaries = monkey_oracles._utf8_boundaries
+        self.assertEqual(boundaries(b""), {0})
+        self.assertEqual(boundaries(b"ab"), {0, 1, 2})
+        self.assertEqual(boundaries("\u00e9a".encode()), {0, 2, 3})
+        self.assertEqual(boundaries("\u4f60".encode()), {0, 3})
+        self.assertEqual(boundaries("\U0001f600".encode()), {0, 4})
+        self.assertEqual(boundaries("a\u00e9\u4f60\U0001f600".encode()), {0, 1, 3, 6, 10})
+
+    def test_a_byte_outside_any_character_stands_alone(self):
+        boundaries = monkey_oracles._utf8_boundaries
+        self.assertEqual(boundaries(b"\x97a"), {0, 1, 2}, "a stray continuation byte")
+        self.assertEqual(boundaries(b"\xc3a"), {0, 1, 2}, "a lead cut off by an ASCII byte")
+        self.assertEqual(boundaries(b"\xe4\xbd"), {0, 1, 2}, "a three-byte lead cut off at the end")
+        self.assertEqual(boundaries(b"\xc0\x80"), {0, 1, 2}, "an overlong lead is not a lead")
+        self.assertEqual(boundaries(b"\xf5\x80\x80\x80"), {0, 1, 2, 3, 4}, "past U+10FFFF is not a lead")
+        self.assertEqual(boundaries(b"\xed\xa0\x80"), {0, 1, 2, 3}, "a surrogate does not decode")
+        self.assertEqual(boundaries(b"\xdf\xbf\xef\xbf\xbf\xf4\x8f\xbf\xbf"), {0, 2, 5, 9},
+                         "the top of each length")
+
+
+class LatencySubjectTests(unittest.TestCase):
+    def test_a_query_by_its_verb_a_command_by_its_command(self):
+        subject = monkey_oracles.latency_subject
+        self.assertEqual(subject("query 'ui'"), "the ui query")
+        self.assertEqual(subject("query 'crash-points'"), "the crash-points query")
+        self.assertEqual(subject(repr("type a long line of text")), "the type command")
+        self.assertEqual(subject('"format-document --all"'), "the format-document command")
+        self.assertEqual(subject(repr("  key ctrl+s")), "the key command")
+        self.assertEqual(subject("''"), "an empty command")
+        self.assertEqual(subject(repr("   ")), "an empty command")
+        self.assertEqual(subject(repr("it's")), "the it command")
+
+    def test_anything_else_is_named_as_it_came(self):
+        subject = monkey_oracles.latency_subject
+        self.assertEqual(subject("hit-test"), "hit-test")
+        self.assertEqual(subject("query 'a b'"), "query 'a b'")
+        self.assertEqual(subject("'"), "'", "one quote is not a quoted line")
+        self.assertEqual(subject("'unbalanced\""), "'unbalanced\"")
+        self.assertEqual(subject("'bad \\x escape'"), "the bad command", "a line literal_eval refuses")
+
+
+class ResourceOracleProcessTests(unittest.TestCase):
+    """The leak oracle against a real process: a child that holds two files, a
+    pipe and a sleeping child of its own."""
+
+    def setUp(self):
+        import subprocess
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.dir, ignore_errors=True))
+        script = self.dir / "holder.py"
+        script.write_text(
+            "import os, subprocess, sys, time\n"
+            f"a = open({str(self.dir / 'a.txt')!r}, 'w')\n"
+            f"b = open({str(self.dir / 'b.txt')!r}, 'w')\n"
+            "r, w = os.pipe()\n"
+            "child = subprocess.Popen(['sleep', '30'])\n"
+            "print('ready', flush=True)\n"
+            "time.sleep(30)\n")
+        self.proc = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, text=True)
+        self.addCleanup(self.stop)
+        self.assertEqual(self.proc.stdout.readline().strip(), "ready")
+
+    def stop(self):
+        import signal
+        for child in Path(f"/proc/{self.proc.pid}/task/{self.proc.pid}/children").read_text().split() \
+                if self.proc.poll() is None else []:
+            with contextlib.suppress(OSError):
+                os.kill(int(child), signal.SIGKILL)
+        self.proc.kill()
+        self.proc.wait()
+
+    def app(self, terminals=None):
+        app = mock.Mock()
+        app.proc = self.proc
+        app.pid = self.proc.pid
+        app.work = None
+        app.binary = None
+        app.actions = []
+        app.query.return_value = terminals if terminals is not None else []
+        return app
+
+    def test_a_sample_counts_what_the_process_holds(self):
+        oracle = monkey_oracles.ResourceOracle(self.app())
+        sample = oracle.sample()
+        self.assertEqual(sample["children"], 1)
+        self.assertGreaterEqual(sample["fds"], 5, "stdin/out/err, two files and a pipe's two ends")
+        self.assertGreaterEqual(sample["threads"], 1)
+        self.assertGreater(sample["rss_kb"], 0)
+        self.assertEqual(sample["panes"], 0)
+        self.assertIs(oracle.baseline, sample, "the first sample is the baseline")
+        self.assertEqual(oracle.pid, self.proc.pid)
+        self.assertGreater(sum(oracle.baseline_threads.values()), 0)
+        second = oracle.sample()
+        self.assertIs(oracle.baseline, sample, "a later sample keeps it")
+        self.assertEqual(oracle.samples, [sample, second])
+
+    def test_a_relaunch_starts_a_new_baseline_and_a_gone_app_samples_nothing(self):
+        app = self.app()
+        oracle = monkey_oracles.ResourceOracle(app)
+        oracle.sample()
+        oracle.pid = 1
+        fresh = oracle.sample()
+        self.assertIs(oracle.baseline, fresh)
+        app.pid = None
+        self.assertIsNone(oracle.sample())
+        app.proc = None
+        self.assertIsNone(oracle.sample())
+
+    def test_open_terminal_panes_are_counted_in_either_answer_shape(self):
+        oracle = monkey_oracles.ResourceOracle(self.app([{"panes": [1, 2]}, {"panes": []}]))
+        self.assertEqual(oracle.sample()["panes"], 3, "a tab with no pane list is one pane")
+        oracle = monkey_oracles.ResourceOracle(self.app({"tabs": [{"panes": [1, 2, 3]}]}))
+        self.assertEqual(oracle.sample()["panes"], 3)
+        app = self.app()
+        app.query.side_effect = RuntimeError("busy")
+        self.assertEqual(monkey_oracles.ResourceOracle(app).sample()["panes"], 0)
+
+    def test_the_evidence_names_children_descriptors_threads_and_memory(self):
+        oracle = monkey_oracles.ResourceOracle(self.app())
+        oracle.sample()
+        held = oracle._what_it_holds(self.proc.pid)
+        children = held["children.txt"].decode()
+        self.assertTrue(children.startswith("1 direct children by program: {'sleep': 1}"), children)
+        self.assertIn("sleep 30", children)
+        fds = held["fds.txt"].decode()
+        self.assertRegex(fds, r"\s2  file:\.txt")
+        pipes = re.search(r"(\d+)  pipe", fds)
+        self.assertTrue(pipes and int(pipes.group(1)) >= 2, fds)
+        threads = held["threads.txt"].decode()
+        self.assertTrue(threads.startswith("threads by name: now (at the baseline, change)"))
+        self.assertIn("+0)", threads)
+        memory = held["memory.txt"].decode()
+        self.assertIn("Rss:", memory)
+        self.assertIn("largest resident mappings (kB):", memory)
+        self.assertIn("python", memory.lower())
+
+    def test_a_thread_gone_since_the_baseline_is_listed_at_zero(self):
+        oracle = monkey_oracles.ResourceOracle(self.app())
+        oracle.sample()
+        oracle.baseline_threads["worker-gone"] = 2
+        threads = oracle._what_it_holds(self.proc.pid)["threads.txt"].decode()
+        self.assertIn("     0  (   2, -2)  worker-gone", threads)
+
+
+class ResourceBudgetTests(unittest.TestCase):
+    BASE = {"fds": 50, "threads": 20, "children": 2, "rss_kb": 100_000, "panes": 0}
+
+    def check(self, now, reported=()):
+        oracle = monkey_oracles.ResourceOracle(mock.Mock())
+        oracle.baseline = dict(self.BASE)
+        oracle.pid = None
+        oracle.reported = set(reported)
+        with mock.patch.object(oracle, "sample", return_value={**self.BASE, **now}), \
+                mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 1.0):
+            return [message for _, message in oracle.check()]
+
+    def test_growth_within_every_budget_is_fine(self):
+        self.assertEqual(self.check({"fds": 50 + 256, "threads": 20 + 64, "children": 2 + 48,
+                                     "rss_kb": 100_000 + 1_500_000}), [])
+
+    def test_growth_past_a_budget_is_one_leak_per_resource(self):
+        self.assertEqual(self.check({"fds": 50 + 257}),
+                         ["the app's fds grew by 257 over the run (50 -> 307; budget 256)"])
+        self.assertEqual(self.check({"threads": 85, "children": 51}),
+                         ["the app's threads grew by 65 over the run (20 -> 85; budget 64)",
+                          "the app's children grew by 49 over the run (2 -> 51; budget 48)"])
+        self.assertEqual(self.check({"fds": 1000}, reported={"fds"}), [], "once per run")
+
+    def test_open_terminal_panes_are_allowed_what_they_hold(self):
+        self.assertEqual(self.check({"fds": 50 + 256 + 40, "panes": 10}), [])
+        self.assertEqual(self.check({"fds": 50 + 256 + 41, "panes": 10}),
+                         ["the app's fds grew by 297 over the run (50 -> 347; budget 256, "
+                          "plus 40 for 10 more open terminal pane(s))"])
+
+    def test_a_slow_build_gets_more_memory(self):
+        oracle = monkey_oracles.ResourceOracle(mock.Mock())
+        oracle.baseline, oracle.pid = dict(self.BASE), None
+        with mock.patch.object(oracle, "sample", return_value={**self.BASE, "rss_kb": 100_000 + 2_000_000}), \
+                mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 3.0):
+            self.assertEqual(oracle.check(), [], "the budget is 1.5 GB x slow factor / 2")
+
+    def test_no_sample_or_no_baseline_is_nothing(self):
+        oracle = monkey_oracles.ResourceOracle(mock.Mock())
+        with mock.patch.object(oracle, "sample", return_value=None):
+            self.assertEqual(oracle.check(), [])
 
 if __name__ == "__main__":
     unittest.main()

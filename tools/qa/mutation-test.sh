@@ -12,7 +12,7 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-scratch="${1:-$repo/build/mutation}"
+scratch="$(realpath -m "${1:-$repo/build/mutation}")"
 children="${2:-8}"
 command -v mutmut >/dev/null || { echo "mutation-test: no mutmut (pipx install mutmut)" >&2; exit 2; }
 
