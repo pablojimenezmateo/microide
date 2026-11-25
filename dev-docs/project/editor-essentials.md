@@ -330,6 +330,28 @@ comment metadata is still used where insertion and pair logic consult it.
   mutates a line vector during the save pipeline; wired to viewport flags from
   workspace editor preferences (`WorkspaceShellEditor.cpp`).
 
+## Write paths and what holds each to old-or-new bytes
+
+Every write under a project root goes through the project's `FileWriteGate`
+(local: `LocalFileWriteGate`; remote: `MirrorWriteGate`, which also journals the
+push), and every write of the app's own state through `PersistedRecordWriter`.
+Both end in `util::WriteTextFileAtomically` / `DurableFile`: a staging file
+(`.<name>.microide-staging.<pid>.<seq>`, skipped by every scan and swept once its
+process is gone), fsync, rename, directory fsync. Its crash points (`durable.*`)
+and fault points (`fail=<errno>:durable.writing|fsyncing|renaming`) are shared
+by every row below. The tree operations have their own (`tree-op.*`).
+
+| writer | entry | kill at every step | injected write failure |
+| --- | --- | --- | --- |
+| editor save, save-all, autosave | `TextViewport::Save` -> `FileWriteGate::WriteText` | `LocalWriteFaultMatrix/EveryCrashPointOfASaveLeavesTheOldOrTheNewFile`; the monkey's kill -9 at a named point (`DataOracle.kill9_and_check`) | `LocalWriteFaultMatrix/EveryInjectedWriteFailureLeavesTheOldFile`, `WorkspaceShell/ADiskFailureDuringASaveKeepsTheEditAndSaysWhy`, QA flow `save-disk-full`, the monkey's `diskfull` |
+| replace-in-project | `RunProjectReplace` -> `WriteText` per file | the save matrix (same path) | `WorkspaceShell/AReplaceAllThatCannotWriteOneFileKeepsItAndSaysWhich` |
+| merge output, its backup restore | `WorkspaceCompareInteractionCoordinator` -> `WriteText`, `ApplyTreeOp` | the save matrix (same path) | the save matrix (same path); no merge-specific row test |
+| plugin `files.write_text` | `PluginWorkspaceInterop` -> `WriteGateFor(path).WriteText` | the save matrix (same path) | the save matrix (same path) |
+| sidebar create / rename / move / delete / trash, path mutations | `WorkspaceSidebarCoordinatorActions`, `WorkspacePathMutationCoordinator` -> `ApplyTreeOp(s)` | `LocalWriteFaultMatrix/EveryCrashPointOfAnOverwritingTreeOpLeavesTheOldOrTheNewTree`; rollback: `Project/ATreeBatchIsAllOrNothing`, `Project/AFailedBatchUndoesItsOverwrites` | the batch's own rollback (a failed op undoes the batch) |
+| LSP workspace edits (rename, code actions, resource ops) | `WorkspaceEditService` -> open buffers, then `ApplyTreeOps` and saves | the tree-op and save matrices | the tree-op rollback |
+| session, settings, recents, debug state | `PersistedRecordWriter` -> `DurableFile` | the monkey's kill -9 (the session restore oracle) | not held: a full disk under these has no row to show (TD-2026-11-16-452 item 3) |
+| remote mirror | `MirrorWriteGate`, `MirrorStore`, `TreeFiles` | `MirrorFaultMatrix/*` (kill, power cut at each disk step) | `MirrorFaultMatrix/*` |
+
 ## Command palette names
 
 Toggle commands use stable ids such as `toggle-editor-folding`,

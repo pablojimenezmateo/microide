@@ -317,8 +317,10 @@ What it left, by workstream:
    matrix keeps to the mirror's own durability (it skips `tree-op.*`); a
    remote delete killed between its local apply and the engine's (deferred)
    journal comes back on relaunch, as any locally missing file with no record
-   is pulled from the host. Not yet: the write-path inventory table for
-   `editor-essentials.md`. The monkey cannot fill the disk
+   is pulled from the host. The write-path inventory is in
+   `editor-essentials.md` ("Write paths and what holds each to old-or-new
+   bytes"). Item 3 is DONE; what it shows unheld (a full disk under the session
+   and config writers) is TD-2026-11-16-452 item 3. The monkey cannot fill the disk
    either (needs a size-limited filesystem for its fixture).
 4. **W8 sequence fuzzers -- the LSP one landed 2026-11-25, and found a
    deadlock.** `WorkspaceLspClient/AnswersEveryRequestOnceWhateverOrderTheServerReplies`
