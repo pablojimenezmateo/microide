@@ -6227,10 +6227,11 @@ void TestLeavingTheCommitSubjectFieldRepaintsItsCaret() {
   expect_fresh(DispatchEvents(shell, {KeyDownEvent(SDLK_F6)}), "F6 into the sidebar");
   expect_fresh(DispatchEvents(shell, {MouseMotionEvent(x, y)}), "the pointer over the field");
   const float below = subject->y + 240.0f;
-  expect_fresh(DispatchEvents(shell, {MouseMotionEvent(x, below),
-                                      MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, below),
-                                      MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, below)}),
-               "a click lower in the sidebar");
+  const workspace::RenderInvalidation click =
+      DispatchEvents(shell, {MouseMotionEvent(x, below), MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, below),
+                             MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, below)});
+  TestAccess::SettleCompareLoads(shell);
+  expect_fresh(click, "a click lower in the sidebar, and the diff it opened once loaded");
 }
 
 void TestACommitBodySelectionStaysInsideItsField() {
