@@ -391,7 +391,17 @@ What it left, by workstream:
    per category; a keybinding counts as reached when its command ran, not when its
    chord ran in each context.
 8. **W10 remainder:** mutation testing over the oracle code (the driver's
-   invariants, the redraw verifier, the data oracle). The guard audit landed
+   invariants, the redraw verifier, the data oracle). MEASURED 2026-11-25
+   (`tools/qa/mutation-test.sh`, mutmut over `monkey_oracles.py` against
+   `test_monkey_oracles.py`): of 3401 mutants 990 are killed, 846 survive and
+   1546 sit in functions no unit test calls. Untested: `StructuralDiffOracle.check`,
+   `RemoteConvergence.check`, `Liveness.check`, `InvariantOracle.check`,
+   `IdleOracle.check`, `ResourceOracle.sample`, `DataOracle._kill_at`/`_trigger_for`/
+   `check_clean`/`crash_points` (30 functions). Weakest tested: `DataOracle.kill9_and_check`
+   (265 survive), `ResourceOracle._what_it_holds` (153), `UndoAlgebra.check` (65),
+   `ResourceOracle._memory` (55). Open: tests that kill those, most severe first
+   (the data oracle, then invariants, liveness, resources); the C++ redraw verifier
+   is held by its negative controls (`tools/check-invariants-bite.sh`), not here. The guard audit landed
    (`validation-traps.md`), and with it the frame-token assert is armed in every
    build with assertions rather than under ASan alone.
 9. **DONE by 2026-11-25 (the ledger):** the focus-on-a-hidden-surface
