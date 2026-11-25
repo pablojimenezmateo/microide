@@ -42,7 +42,7 @@ bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
   }
   const auto follow_terminal_tail = [&]() { terminal_tab->follow_tail = true; };
   const auto handled_with_panel_redraw = [this]() {
-    operations_.request_bottom_panel_content_redraw();
+    operations_.request_frame();
     return true;
   };
 
@@ -78,9 +78,8 @@ bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
 
   if ((event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER) &&
       (modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI | SDL_KMOD_SHIFT)) == 0 &&
-      !terminal_tab->session.running() && !terminal_tab->launch_working_directory.empty() &&
-      operations_.relaunch_active_terminal) {
-    operations_.relaunch_active_terminal();
+      !terminal_tab->session.running() && !terminal_tab->launch_working_directory.empty()) {
+    services_.terminal_panel.RelaunchActivePane();
     return handled_with_panel_redraw();
   }
 
@@ -211,7 +210,7 @@ bool TextInputCoordinator::PasteTextIntoTerminal(std::string text) {
   }
   terminal_tab->follow_tail = true;
   terminal_tab->session.PasteText(text);
-  operations_.request_bottom_panel_content_redraw();
+  operations_.request_frame();
   return true;
 }
 
@@ -300,15 +299,15 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
   glue_->text_input_coordinator = std::make_unique<TextInputCoordinator>(
       context_.current_project_state, context_.prompts, context_.menu_state,
       context_.text_input,
+      TextInputCoordinator::Services{
+          .compare_merge = MakeCompareMergeService(),
+          .quick_pick = quick_pick_service_,
+          .assist = assist_service_,
+          .terminal_panel = MakeTerminalPanelService(),
+      },
       TextInputCoordinator::Operations{
           .current_text_input_surface = [this]() { return CurrentTextInputSurface(); },
-          .request_prompt_redraw = [this]() { RequestPreparedFrame(); },
-          .request_sidebar_redraw = [this]() { RequestPreparedFrame(); },
-          .request_overlay_redraw = [this]() { RequestPreparedFrame(); },
           .request_frame = [this]() { RequestPreparedFrame(); },
-          .request_window_redraw = [this]() { RequestPreparedFrame(); },
-          .refresh_compare_picker = [this]() { MakeCompareMergeService().interactions().RefreshPicker(); },
-          .refresh_quick_pick = [this]() { quick_pick_service_.Refilter(); },
           .refresh_command_palette = [this]() { RefreshCommandPalette(); },
           .refresh_buffer_search = [this]() { RefreshBufferSearch(); },
           .refresh_project_search = [this]() { RefreshProjectSearch(); },
@@ -384,8 +383,6 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
           .clear_terminal_selection = [this]() { ClearTerminalSelection(); },
           .append_terminal_pending_input =
               [this](std::string_view input) { AppendTerminalPendingInput(input); },
-          .request_bottom_panel_content_redraw =
-              [this]() { RequestPreparedFrame(); },
           .terminal_has_selection =
               [this]() { return TerminalPanelService::HasSelection(context_.current_project_state); },
           .selected_terminal_text =
@@ -427,14 +424,6 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
               [](SDL_Keycode key, SDL_Keymod modifiers) {
                 return KeycodeToAscii(key, modifiers);
               },
-          .try_editor_snippet_insert_text =
-              [this](editor::TextViewport* viewport, std::string_view text) {
-                return assist_service_.snippets().TryInsertText(viewport, text);
-              },
-          .assist_after_typing =
-              [this](std::string_view typed) { assist_service_.AfterTyping(typed); },
-          .relaunch_active_terminal =
-              [this]() { return MakeTerminalPanelService().RelaunchActivePane(); },
       });
   return *glue_->text_input_coordinator;
 }

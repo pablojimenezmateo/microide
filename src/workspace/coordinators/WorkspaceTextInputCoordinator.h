@@ -16,17 +16,23 @@
 
 namespace microide::workspace {
 
+class CompareMergeService;
+class QuickPickService;
+class AssistService;
+class TerminalPanelService;
+
 class TextInputCoordinator {
  public:
+  struct Services {
+    CompareMergeService& compare_merge;
+    QuickPickService& quick_pick;
+    AssistService& assist;
+    TerminalPanelService& terminal_panel;
+  };
+
   struct Operations {
     std::function<TextInputSurface()> current_text_input_surface;
-    std::function<void()> request_prompt_redraw;
-    std::function<void()> request_sidebar_redraw;
-    std::function<void()> request_overlay_redraw;
     std::function<void()> request_frame;
-    std::function<void()> request_window_redraw;
-    std::function<void()> refresh_compare_picker;
-    std::function<void()> refresh_quick_pick;
     std::function<void()> refresh_command_palette;
     std::function<void()> refresh_buffer_search;
     std::function<void()> refresh_project_search;
@@ -51,7 +57,6 @@ class TextInputCoordinator {
     std::function<TerminalPaneState*()> active_terminal_pane;
     std::function<void()> clear_terminal_selection;
     std::function<void(std::string_view)> append_terminal_pending_input;
-    std::function<void()> request_bottom_panel_content_redraw;
     std::function<bool()> terminal_has_selection;
     std::function<std::string()> selected_terminal_text;
     std::function<bool(std::string_view)> write_clipboard_text;
@@ -63,15 +68,13 @@ class TextInputCoordinator {
     std::function<void()> submit_terminal_pending_input;
     std::function<void()> erase_last_terminal_pending_input_codepoint;
     std::function<char(SDL_Keycode, SDL_Keymod)> keycode_to_ascii;
-    std::function<bool(editor::TextViewport*, std::string_view)> try_editor_snippet_insert_text;
-    std::function<void(std::string_view)> assist_after_typing;
-    std::function<bool()> relaunch_active_terminal;
   };
 
   TextInputCoordinator(ProjectWorkspaceState& state,
                        PromptState& prompts,
                        MenuSurfaceState& menu_state,
                        TextInputState& text_input_state,
+                       Services services,
                        Operations operations);
 
   void SyncTextInputSurface(SDL_Window* window);
@@ -100,6 +103,7 @@ class TextInputCoordinator {
   PromptState& prompts_;
   MenuSurfaceState& menu_state_;
   TextInputState& text_input_state_;
+  Services services_;
   Operations operations_;
 };
 

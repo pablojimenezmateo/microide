@@ -6,8 +6,14 @@
 
 namespace microide::workspace {
 
+class CompareMergeService;
+
 class MergeMouseCoordinator {
  public:
+  struct Services {
+    CompareMergeService& compare_merge;
+  };
+
   struct Operations {
     std::function<workspace::MergeSurfaceLayout(const SDL_FRect&, const MergeTabState&)> compute_merge_surface_layout;
     std::function<ScrollSurfaceLayout(const SDL_FRect&, const workspace::MergeSurfaceLayout&, const MergeTabState&)>
@@ -18,14 +24,12 @@ class MergeMouseCoordinator {
     std::function<workspace::MergeToolbarLayout(const SDL_FRect&, const workspace::MergeSurfaceLayout&)>
         compute_merge_toolbar_layout;
     std::function<bool(ActionId, const std::vector<std::string>&, ActionSource)> execute_action;
-    std::function<void()> open_merge_result_file;
     std::function<SDL_FRect(const workspace::MergeSurfaceLayout&, const workspace::MergeInteractionLayout&,
                             const MergeTrackedConflict&, bool)>
         build_merge_source_action_button_rect;
     std::function<std::array<SDL_FRect, 4>(const workspace::MergeSurfaceLayout&,
                                            const workspace::MergeInteractionLayout&, const MergeTrackedConflict&)>
         build_merge_result_action_button_rects;
-    std::function<void(compare::MergeChoice)> apply_merge_choice;
     std::function<std::optional<std::string>()> read_primary_selection_text;
     std::function<void(MergeTabState&)> update_merge_tracking_after_viewport_edit;
     std::function<void()> note_active_editable_edit;
@@ -41,16 +45,15 @@ class MergeMouseCoordinator {
                                                  float)>
         classify_merge_hover_state;
     std::function<void()> reset_caret_blink;
-    std::function<void(int)> move_merge_selection;
     std::function<void()> mark_merge_resolved;
     std::function<void()> toggle_merge_base_pane;
-    std::function<void()> jump_next_unresolved_merge_conflict;
     std::function<std::optional<SDL_FRect>(const SDL_FRect&, const workspace::MergeSurfaceLayout&, std::string_view)>
         merge_secondary_toolbar_button_rect;
   };
 
   MergeMouseCoordinator(ProjectWorkspaceState& state,
                         InteractionState& interaction_state,
+                        Services services,
                         Operations operations);
 
   bool HandleButtonDown(const SDL_Event& event, const SDL_FRect& surface);
@@ -74,6 +77,7 @@ class MergeMouseCoordinator {
 
   ProjectWorkspaceState& state_;
   InteractionState& interaction_state_;
+  Services services_;
   Operations operations_;
 };
 

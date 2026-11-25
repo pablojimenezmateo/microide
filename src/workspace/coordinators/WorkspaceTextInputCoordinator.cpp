@@ -9,6 +9,9 @@
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 #include "workspace/shell/WorkspaceShell.h"
 #include "util/InvokeIfSet.h"
+#include "workspace/services/CompareMergeService.h"
+#include "workspace/services/QuickPickService.h"
+#include "workspace/services/AssistService.h"
 
 namespace microide::workspace {
 
@@ -19,11 +22,13 @@ TextInputCoordinator::TextInputCoordinator(ProjectWorkspaceState& state,
                                            PromptState& prompts,
                                            MenuSurfaceState& menu_state,
                                            TextInputState& text_input_state,
+                                           Services services,
                                            Operations operations)
     : state_(state),
       prompts_(prompts),
       menu_state_(menu_state),
       text_input_state_(text_input_state),
+      services_(services),
       operations_(std::move(operations)) {}
 
 void TextInputCoordinator::SyncTextInputSurface(SDL_Window* window) {
@@ -76,10 +81,10 @@ bool TextInputCoordinator::CompositionConsumesKey(SDL_Keycode key, SDL_Keymod mo
 void TextInputCoordinator::RequestSurfaceRedraw(TextInputSurface surface) {
   switch (surface) {
     case TextInputSurface::PromptInput:
-      operations_.request_prompt_redraw();
+      operations_.request_frame();
       break;
     case TextInputSurface::DebugVariableEdit:
-      operations_.request_window_redraw();
+      operations_.request_frame();
       break;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
@@ -87,7 +92,7 @@ void TextInputCoordinator::RequestSurfaceRedraw(TextInputSurface surface) {
     case TextInputSurface::SidebarSearchExclude:
     case TextInputSurface::CommitSubject:
     case TextInputSurface::CommitBody:
-      operations_.request_sidebar_redraw();
+      operations_.request_frame();
       break;
     case TextInputSurface::FileFinder:
     case TextInputSurface::BufferSearch:
@@ -99,13 +104,13 @@ void TextInputCoordinator::RequestSurfaceRedraw(TextInputSurface surface) {
     case TextInputSurface::CommandPalette:
     case TextInputSurface::SettingsQuery:
     case TextInputSurface::SettingsValueEdit:
-      operations_.request_overlay_redraw();
+      operations_.request_frame();
       break;
     case TextInputSurface::Editor:
       operations_.request_frame();
       break;
     case TextInputSurface::TerminalFind:
-      operations_.request_bottom_panel_content_redraw();
+      operations_.request_frame();
       break;
     case TextInputSurface::None:
     case TextInputSurface::Terminal:
@@ -165,27 +170,27 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
                                                        bool text_changed) {
   switch (surface) {
     case TextInputSurface::PromptInput:
-      operations_.request_prompt_redraw();
+      operations_.request_frame();
       break;
     case TextInputSurface::CommitPicker:
       if (text_changed) {
-        operations_.refresh_compare_picker();
+        services_.compare_merge.interactions().RefreshPicker();
       } else {
-        operations_.request_overlay_redraw();
+        operations_.request_frame();
       }
       break;
     case TextInputSurface::QuickPick:
       if (text_changed) {
-        operations_.refresh_quick_pick();
+        services_.quick_pick.Refilter();
       } else {
-        operations_.request_overlay_redraw();
+        operations_.request_frame();
       }
       break;
     case TextInputSurface::CommandPalette:
       if (text_changed) {
         operations_.refresh_command_palette();
       } else {
-        operations_.request_overlay_redraw();
+        operations_.request_frame();
       }
       break;
     case TextInputSurface::BufferSearch:
@@ -193,23 +198,23 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
       if (text_changed) {
         operations_.refresh_buffer_search();
       } else {
-        operations_.request_overlay_redraw();
+        operations_.request_frame();
       }
       break;
     case TextInputSurface::BufferReplaceReplace:
-      operations_.request_overlay_redraw();
+      operations_.request_frame();
       break;
     case TextInputSurface::TerminalFind:
       if (text_changed && operations_.refresh_terminal_find) {
         operations_.refresh_terminal_find();
       }
-      operations_.request_bottom_panel_content_redraw();
+      operations_.request_frame();
       break;
     case TextInputSurface::ProjectSearchOverlay:
       if (text_changed) {
         operations_.refresh_project_search();
       } else {
-        operations_.request_overlay_redraw();
+        operations_.request_frame();
       }
       break;
     case TextInputSurface::FileFinder:
@@ -221,18 +226,18 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
         state_.file_finder.Refresh();
         operations_.reset_overlay_scroll();
       } else {
-        operations_.request_overlay_redraw();
+        operations_.request_frame();
       }
       break;
     case TextInputSurface::SettingsQuery:
       if (text_changed && operations_.refresh_settings_overlay) {
         operations_.refresh_settings_overlay();
       } else {
-        operations_.request_overlay_redraw();
+        operations_.request_frame();
       }
       break;
     case TextInputSurface::SettingsValueEdit:
-      operations_.request_overlay_redraw();
+      operations_.request_frame();
       break;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchInclude:
@@ -241,15 +246,15 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
         state_.overlay.workflow.project_search.search_on_type_due_ms =
             SDL_GetTicks() + ProjectSearchState::kSearchOnTypeDebounceMs;
       }
-      operations_.request_sidebar_redraw();
+      operations_.request_frame();
       break;
     case TextInputSurface::SidebarSearchReplace:
     case TextInputSurface::CommitSubject:
     case TextInputSurface::CommitBody:
-      operations_.request_sidebar_redraw();
+      operations_.request_frame();
       break;
     case TextInputSurface::DebugVariableEdit:
-      operations_.request_window_redraw();
+      operations_.request_frame();
       break;
     case TextInputSurface::None:
     case TextInputSurface::Editor:
@@ -261,7 +266,7 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
 bool TextInputCoordinator::HandleTextEditing(const SDL_TextEditingEvent& event) {
   if (menu_state_.menu_bar_open || menu_state_.tree_context_menu.open) {
     if (!text_input_state_.composition.text.empty()) {
-      operations_.request_window_redraw();
+      operations_.request_frame();
     }
     text_input_state_.composition = TextCompositionState{};
     return true;
@@ -271,7 +276,7 @@ bool TextInputCoordinator::HandleTextEditing(const SDL_TextEditingEvent& event) 
   const TextInputSurface surface = operations_.current_text_input_surface();
   if (surface == TextInputSurface::None || surface == TextInputSurface::Terminal) {
     if (!text_input_state_.composition.text.empty()) {
-      operations_.request_window_redraw();
+      operations_.request_frame();
     }
     text_input_state_.composition = TextCompositionState{};
     return false;
@@ -350,7 +355,7 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input,
       ClearCommitBodyHint(body);
       body.InsertText(input);
       operations_.reset_caret_blink();
-      operations_.request_sidebar_redraw();
+      operations_.request_frame();
       return true;
     }
     case TextInputSurface::Editor:
@@ -363,13 +368,9 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input,
           return false;
         }
         const auto follow_completion = [this, input, distribute_across_carets] {
-          if (operations_.assist_after_typing) {
-            operations_.assist_after_typing(distribute_across_carets ? std::string_view{}
-                                                                         : input);
-          }
+          services_.assist.AfterTyping(distribute_across_carets ? std::string_view{} : input);
         };
-        if (operations_.try_editor_snippet_insert_text &&
-            operations_.try_editor_snippet_insert_text(viewport, input)) {
+        if (services_.assist.snippets().TryInsertText(viewport, input)) {
           follow_completion();
           return true;
         }
@@ -399,7 +400,7 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input,
         terminal_tab->follow_tail = true;
         operations_.append_terminal_pending_input(input);
         terminal_tab->session.SendBytes(input);
-        operations_.request_bottom_panel_content_redraw();
+        operations_.request_frame();
         return true;
       }
       return false;

@@ -35,7 +35,12 @@ struct ActionContextTestServices {
                             workspace::ProjectWorkspaceState& state, float& ui_scale)
       : terminal_panel(state, {}),
         editor_tabs(workspace::TabCoordinator(catalog, state, {})),
-        text_input(state, prompts, menus, text_input_state, {}),
+        text_input(state, prompts, menus, text_input_state,
+                   {.compare_merge = compare_merge,
+                    .quick_pick = quick_pick,
+                    .assist = assist,
+                    .terminal_panel = terminal_panel},
+                   {}),
         persistence(workspace_context, theme, colorschemes, theme_names, ui_scale, settings, {}),
         sidebar(workspace::SidebarCoordinator(state, prompts, menus, project_root, plugin_runtime, {})),
         compare_merge(workspace::DiffTabCoordinator(state, {}),

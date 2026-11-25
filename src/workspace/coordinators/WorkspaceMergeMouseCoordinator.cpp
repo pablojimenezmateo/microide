@@ -38,9 +38,11 @@ void MoveMergeResultCursorToHit(editor::TextViewport& viewport,
 
 MergeMouseCoordinator::MergeMouseCoordinator(ProjectWorkspaceState& state,
                                              InteractionState& interaction_state,
+                                             Services services,
                                              Operations operations)
     : state_(state),
       interaction_state_(interaction_state),
+      services_(services),
       operations_(std::move(operations)) {}
 
 MergeTabState* MergeMouseCoordinator::ActiveMergeTab() const {
@@ -93,11 +95,11 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 
   const auto toolbar = operations_.compute_merge_toolbar_layout(surface, surface_layout);
   if (Contains(toolbar.prev_rect, event.button.x, event.button.y)) {
-    operations_.move_merge_selection(-1);
+    services_.compare_merge.interactions().MoveMergeSelection(-1);
     return true;
   }
   if (Contains(toolbar.next_rect, event.button.x, event.button.y)) {
-    operations_.move_merge_selection(1);
+    services_.compare_merge.interactions().MoveMergeSelection(1);
     return true;
   }
   if (Contains(toolbar.save_rect, event.button.x, event.button.y)) {
@@ -105,7 +107,7 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     return true;
   }
   if (Contains(toolbar.open_rect, event.button.x, event.button.y)) {
-    operations_.open_merge_result_file();
+    services_.compare_merge.interactions().OpenMergeResultFile();
     return true;
   }
   if (operations_.merge_secondary_toolbar_button_rect) {
@@ -114,8 +116,8 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
           surface, surface_layout, label);
       return rect.has_value() && Contains(*rect, event.button.x, event.button.y);
     };
-    if (hit("Unresolved") && operations_.jump_next_unresolved_merge_conflict) {
-      operations_.jump_next_unresolved_merge_conflict();
+    if (hit("Unresolved")) {
+      services_.compare_merge.interactions().JumpNextUnresolvedMergeConflict();
       return true;
     }
     if (hit("Toggle Base") && operations_.toggle_merge_base_pane) {
@@ -143,7 +145,7 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         merge_tab->hover_state->kind == MergeHoverState::Kind::IncomingAccept) {
       if (Contains(source_button_rect(hovered_conflict, true), event.button.x, event.button.y)) {
         merge_tab->selected_hunk = merge_tab->hover_state->conflict_index;
-        operations_.apply_merge_choice(compare::MergeChoice::Incoming);
+        services_.compare_merge.interactions().ApplyMergeChoice(compare::MergeChoice::Incoming);
         return true;
       }
     }
@@ -151,7 +153,7 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         merge_tab->hover_state->kind == MergeHoverState::Kind::CurrentAccept) {
       if (Contains(source_button_rect(hovered_conflict, false), event.button.x, event.button.y)) {
         merge_tab->selected_hunk = merge_tab->hover_state->conflict_index;
-        operations_.apply_merge_choice(compare::MergeChoice::Current);
+        services_.compare_merge.interactions().ApplyMergeChoice(compare::MergeChoice::Current);
         return true;
       }
     }
@@ -161,22 +163,22 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       const auto action_rects = result_action_rects(hovered_conflict);
       if (Contains(action_rects[0], event.button.x, event.button.y)) {
         merge_tab->selected_hunk = merge_tab->hover_state->conflict_index;
-        operations_.apply_merge_choice(compare::MergeChoice::Base);
+        services_.compare_merge.interactions().ApplyMergeChoice(compare::MergeChoice::Base);
         return true;
       }
       if (Contains(action_rects[1], event.button.x, event.button.y)) {
         merge_tab->selected_hunk = merge_tab->hover_state->conflict_index;
-        operations_.apply_merge_choice(compare::MergeChoice::Incoming);
+        services_.compare_merge.interactions().ApplyMergeChoice(compare::MergeChoice::Incoming);
         return true;
       }
       if (Contains(action_rects[2], event.button.x, event.button.y)) {
         merge_tab->selected_hunk = merge_tab->hover_state->conflict_index;
-        operations_.apply_merge_choice(compare::MergeChoice::Current);
+        services_.compare_merge.interactions().ApplyMergeChoice(compare::MergeChoice::Current);
         return true;
       }
       if (Contains(action_rects[3], event.button.x, event.button.y)) {
         merge_tab->selected_hunk = merge_tab->hover_state->conflict_index;
-        operations_.apply_merge_choice(compare::MergeChoice::Both);
+        services_.compare_merge.interactions().ApplyMergeChoice(compare::MergeChoice::Both);
         return true;
       }
     }
@@ -479,6 +481,9 @@ MergeMouseCoordinator& WorkspaceShell::MakeMergeMouseCoordinator() {
   glue_->merge_mouse_coordinator = std::make_unique<MergeMouseCoordinator>(
       context_.current_project_state,
       context_.interaction_state,
+      MergeMouseCoordinator::Services{
+          .compare_merge = MakeCompareMergeService(),
+      },
       MergeMouseCoordinator::Operations{
           .compute_merge_surface_layout =
               [this](const SDL_FRect& rect, const MergeTabState& merge_tab) {
@@ -502,8 +507,6 @@ MergeMouseCoordinator& WorkspaceShell::MakeMergeMouseCoordinator() {
               [this](ActionId id, const std::vector<std::string>& args, ActionSource source) {
                 return ActionCoordinator(MakeActionContext()).Execute(id, args, source);
               },
-          .open_merge_result_file =
-              [this]() { MakeCompareMergeService().interactions().OpenMergeResultFile(); },
           .build_merge_source_action_button_rect =
               [this](const MergeSurfaceLayout& surface, const MergeInteractionLayout& interaction,
                      const MergeTrackedConflict& conflict, bool incoming) {
@@ -513,10 +516,6 @@ MergeMouseCoordinator& WorkspaceShell::MakeMergeMouseCoordinator() {
               [](const MergeSurfaceLayout& surface, const MergeInteractionLayout& interaction,
                      const MergeTrackedConflict& conflict) {
                 return BuildMergeResultActionButtonRects(surface, interaction, conflict);
-              },
-          .apply_merge_choice =
-              [this](compare::MergeChoice choice) {
-                MakeCompareMergeService().interactions().ApplyMergeChoice(choice);
               },
           .read_primary_selection_text = [this]() { return ReadPrimarySelectionText(); },
           .update_merge_tracking_after_viewport_edit =
@@ -542,12 +541,8 @@ MergeMouseCoordinator& WorkspaceShell::MakeMergeMouseCoordinator() {
                 return ClassifyMergeHoverState(surface, interaction, merge_tab, x, y);
               },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
-          .move_merge_selection =
-              [this](int delta) { MakeCompareMergeService().interactions().MoveMergeSelection(delta); },
           .mark_merge_resolved = [this]() { MarkMergeResolved(); },
           .toggle_merge_base_pane = [this]() { ToggleMergeBasePane(); },
-          .jump_next_unresolved_merge_conflict =
-              [this]() { MakeCompareMergeService().interactions().JumpNextUnresolvedMergeConflict(); },
           .merge_secondary_toolbar_button_rect =
               [this](const SDL_FRect& rect, const MergeSurfaceLayout& surface,
                      std::string_view label) {
