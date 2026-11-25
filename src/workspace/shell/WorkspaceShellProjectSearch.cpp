@@ -112,6 +112,149 @@ ProjectReplaceOutcome RunProjectReplace(const std::filesystem::path& root,
   return outcome;
 }
 
+struct ReplaceSpec {
+  std::string query;
+  std::string replace_text;
+  bool case_sensitive = false;
+  const util::CompiledRegex* regex = nullptr;
+};
+
+std::vector<std::filesystem::path> ProjectReplaceCandidateFiles(const ProjectSearchState& ps,
+                                                                const project::FileIndex& index,
+                                                                bool results_cover_all_matches) {
+  std::vector<std::filesystem::path> files;
+  if (results_cover_all_matches) {
+    files.reserve(ps.results.size());
+    for (const auto& result : ps.results) {
+      if (files.empty() || files.back() != result.relative_path) {
+        files.push_back(result.relative_path);
+      }
+    }
+  } else {
+    const project::FilePathSnapshot snapshot = index.SnapshotPathsWithVersion(
+        ps.options.show_hidden ? project::ProjectFileScanMode::IncludeHidden
+                               : project::ProjectFileScanMode::ExcludeHidden);
+    if (snapshot.files) {
+      files.reserve(snapshot.files->size());
+      for (const std::string& text : *snapshot.files) {
+        files.emplace_back(text);
+      }
+    }
+  }
+  const project::GlobSet include_globs = project::GlobSet::Parse(ps.include_globs.text());
+  const project::GlobSet exclude_globs = project::GlobSet::Parse(ps.exclude_globs.text());
+  if (!include_globs.empty() || !exclude_globs.empty()) {
+    std::erase_if(files, [&](const std::filesystem::path& relative_path) {
+      const std::string text = relative_path.generic_string();
+      return (!include_globs.empty() && !include_globs.Matches(text)) ||
+             (!exclude_globs.empty() && exclude_globs.Matches(text));
+    });
+  }
+  return files;
+}
+
+CodeActionEdit MinimalReplacementEdit(const std::filesystem::path& path,
+                                      const std::string& original,
+                                      const std::string& content) {
+  std::size_t prefix = 0;
+  const std::size_t shorter = std::min(original.size(), content.size());
+  while (prefix < shorter && original[prefix] == content[prefix]) {
+    ++prefix;
+  }
+  std::size_t suffix = 0;
+  while (suffix < shorter - prefix &&
+         original[original.size() - 1 - suffix] == content[content.size() - 1 - suffix]) {
+    ++suffix;
+  }
+  const auto position_of = [&original](std::size_t offset) {
+    const std::string_view before = std::string_view(original).substr(0, offset);
+    const std::size_t newline = before.rfind('\n');
+    return editor::TextPosition{
+        static_cast<std::size_t>(std::count(before.begin(), before.end(), '\n')),
+        newline == std::string_view::npos ? offset : offset - newline - 1};
+  };
+  return CodeActionEdit{
+      .path = path,
+      .range = {position_of(prefix), position_of(original.size() - suffix)},
+      .new_text = content.substr(prefix, content.size() - suffix - prefix),
+  };
+}
+
+struct DirtyBufferReplacement {
+  struct KeptCaret {
+    editor::TextViewport* viewport = nullptr;
+    std::size_t line = 0;
+    std::size_t column = 0;
+  };
+  std::vector<CodeActionEdit> edits;
+  std::vector<KeptCaret> carets;
+  std::unordered_set<std::string> handled;
+  std::unordered_set<std::string> dirty_elsewhere;
+  std::size_t replacements = 0;
+  bool invalid_replacement = false;
+};
+
+DirtyBufferReplacement ReplaceInDirtyBuffers(std::vector<EditorGroup>& groups,
+                                             const std::filesystem::path& root,
+                                             const std::vector<std::filesystem::path>& files,
+                                             const ReplaceSpec& spec) {
+  DirtyBufferReplacement out;
+  std::unordered_set<std::string> candidates;
+  for (const std::filesystem::path& relative_path : files) {
+    candidates.insert((root / relative_path).lexically_normal().string());
+  }
+  for (EditorGroup& group : groups) {
+    for (TabEntry& tab : group.open_tabs) {
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
+          !tab.editor_state->viewport.dirty()) {
+        continue;
+      }
+      std::string key = tab.path.lexically_normal().string();
+      if (candidates.count(key) == 0) {
+        out.dirty_elsewhere.insert(std::move(key));
+        continue;
+      }
+      if (!out.handled.insert(std::move(key)).second) {
+        continue;
+      }
+      editor::TextViewport& viewport = tab.editor_state->viewport;
+      std::string original;
+      viewport.lines().AppendWholeText(original);
+      std::string content = original;
+      std::size_t count = 0;
+      if (spec.regex != nullptr) {
+        const std::optional<std::size_t> replaced =
+            ReplaceRegexMatchesInText(content, *spec.regex, spec.replace_text);
+        if (!replaced.has_value()) {
+          out.invalid_replacement = true;
+          return out;
+        }
+        count = *replaced;
+      } else {
+        count = ReplaceLiteralMatchesInText(content, spec.query, spec.replace_text,
+                                            spec.case_sensitive);
+      }
+      if (count == 0) {
+        continue;
+      }
+      out.edits.push_back(MinimalReplacementEdit(tab.path, original, content));
+      out.carets.push_back({&viewport, viewport.cursor_line(), viewport.cursor_column()});
+      out.replacements += count;
+    }
+  }
+  return out;
+}
+
+void RestoreKeptCarets(const std::vector<DirtyBufferReplacement::KeptCaret>& carets) {
+  for (const DirtyBufferReplacement::KeptCaret& caret : carets) {
+    editor::TextViewport& viewport = *caret.viewport;
+    if (viewport.lines().LineCount() > 0) {
+      const std::size_t line = std::min(caret.line, viewport.lines().LineCount() - 1);
+      viewport.MoveCursorTo(line, std::min(caret.column, viewport.lines().LineLength(line)));
+    }
+  }
+}
+
 void SortProjectSearchResults(std::vector<project::ProjectSearchResult>& results) {
   std::sort(results.begin(), results.end(),
             [](const project::ProjectSearchResult& lhs, const project::ProjectSearchResult& rhs) {
@@ -480,35 +623,8 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   const bool results_cover_all_matches =
       !ps.running && !ps.truncated && ps.results.size() < kMaxProjectSearchResults &&
       ps.searched_query == ps.query.text();
-  std::vector<std::filesystem::path> files;
-  if (results_cover_all_matches) {
-    files.reserve(ps.results.size());
-    for (const auto& result : ps.results) {
-      if (files.empty() || files.back() != result.relative_path) {
-        files.push_back(result.relative_path);
-      }
-    }
-  } else {
-    const project::FilePathSnapshot snapshot =
-        context_.current_project_state.file_index.SnapshotPathsWithVersion(
-            ps.options.show_hidden ? project::ProjectFileScanMode::IncludeHidden
-                                   : project::ProjectFileScanMode::ExcludeHidden);
-    if (snapshot.files) {
-      files.reserve(snapshot.files->size());
-      for (const std::string& text : *snapshot.files) {
-        files.emplace_back(text);
-      }
-    }
-  }
-  const project::GlobSet include_globs = project::GlobSet::Parse(ps.include_globs.text());
-  const project::GlobSet exclude_globs = project::GlobSet::Parse(ps.exclude_globs.text());
-  if (!include_globs.empty() || !exclude_globs.empty()) {
-    std::erase_if(files, [&](const std::filesystem::path& relative_path) {
-      const std::string text = relative_path.generic_string();
-      return (!include_globs.empty() && !include_globs.Matches(text)) ||
-             (!exclude_globs.empty() && exclude_globs.Matches(text));
-    });
-  }
+  std::vector<std::filesystem::path> files = ProjectReplaceCandidateFiles(
+      ps, context_.current_project_state.file_index, results_cover_all_matches);
   if (files.empty()) {
     return;
   }
@@ -516,11 +632,9 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   const std::string query = ps.query.text();
   const std::string replace_text = ps.replace_text.text();
   const bool case_sensitive = ProjectSearchReplaceCaseSensitive();
-  const bool regex_mode =
-      ps.options.pattern_mode == project::ProjectSearchPatternMode::Regex;
 
   std::shared_ptr<util::CompiledRegex> regex;
-  if (regex_mode) {
+  if (ps.options.pattern_mode == project::ProjectSearchPatternMode::Regex) {
     const uint32_t regex_options = util::SearchRegexCompileOptions(query, case_sensitive);
     regex = std::make_shared<util::CompiledRegex>(query, regex_options,
                                                   "Invalid project search pattern",
@@ -532,106 +646,33 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
     }
   }
 
-  std::unordered_set<std::string> dirty_open;
-  std::size_t buffer_replacements = 0;
-  std::size_t buffers_replaced = 0;
-  {
-    std::unordered_set<std::string> candidates;
-    for (const std::filesystem::path& relative_path : files) {
-      candidates.insert((root / relative_path).lexically_normal().string());
-    }
-    std::unordered_set<std::string> handled;
-    std::vector<CodeActionEdit> buffer_edits;
-    struct CaretToKeep {
-      editor::TextViewport* viewport = nullptr;
-      std::size_t line = 0;
-      std::size_t column = 0;
-    };
-    std::vector<CaretToKeep> carets;
-    for (EditorGroup& group : context_.current_project_state.editor_groups) {
-      for (TabEntry& tab : group.open_tabs) {
-        if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
-            !tab.editor_state->viewport.dirty()) {
-          continue;
-        }
-        const std::string key = tab.path.lexically_normal().string();
-        if (candidates.count(key) == 0) {
-          dirty_open.insert(key);
-          continue;
-        }
-        if (!handled.insert(key).second) {
-          continue;
-        }
-        editor::TextViewport& viewport = tab.editor_state->viewport;
-        std::string original;
-        viewport.lines().AppendWholeText(original);
-        std::string content = original;
-        std::size_t count = 0;
-        if (regex != nullptr) {
-          const std::optional<std::size_t> replaced =
-              ReplaceRegexMatchesInText(content, *regex, replace_text);
-          if (!replaced.has_value()) {
-            ps.error = "Replace-all aborted: invalid replacement pattern.";
-            RequestPreparedFrame();
-            return;
-          }
-          count = *replaced;
-        } else {
-          count = ReplaceLiteralMatchesInText(content, query, replace_text, case_sensitive);
-        }
-        if (count == 0) {
-          continue;
-        }
-        std::size_t prefix = 0;
-        const std::size_t shorter = std::min(original.size(), content.size());
-        while (prefix < shorter && original[prefix] == content[prefix]) {
-          ++prefix;
-        }
-        std::size_t suffix = 0;
-        while (suffix < shorter - prefix &&
-               original[original.size() - 1 - suffix] == content[content.size() - 1 - suffix]) {
-          ++suffix;
-        }
-        const auto position_of = [&original](std::size_t offset) {
-          const std::string_view before = std::string_view(original).substr(0, offset);
-          const std::size_t newline = before.rfind('\n');
-          return editor::TextPosition{
-              static_cast<std::size_t>(std::count(before.begin(), before.end(), '\n')),
-              newline == std::string_view::npos ? offset : offset - newline - 1};
-        };
-        buffer_edits.push_back(CodeActionEdit{
-            .path = tab.path,
-            .range = {position_of(prefix), position_of(original.size() - suffix)},
-            .new_text = content.substr(prefix, content.size() - suffix - prefix),
-        });
-        carets.push_back(CaretToKeep{&viewport, viewport.cursor_line(), viewport.cursor_column()});
-        buffer_replacements += count;
-        ++buffers_replaced;
-      }
-    }
-    if (!buffer_edits.empty()) {
-      (void)workspace_edit_service_.ApplyBufferEdits(buffer_edits);
-      for (const CaretToKeep& caret : carets) {
-        editor::TextViewport& viewport = *caret.viewport;
-        if (viewport.lines().LineCount() > 0) {
-          const std::size_t line = std::min(caret.line, viewport.lines().LineCount() - 1);
-          viewport.MoveCursorTo(line, std::min(caret.column, viewport.lines().LineLength(line)));
-        }
-      }
-    }
-    std::erase_if(files, [&](const std::filesystem::path& relative_path) {
-      return handled.count((root / relative_path).lexically_normal().string()) != 0;
-    });
+  DirtyBufferReplacement buffers = ReplaceInDirtyBuffers(
+      context_.current_project_state.editor_groups, root, files,
+      ReplaceSpec{.query = query,
+                  .replace_text = replace_text,
+                  .case_sensitive = case_sensitive,
+                  .regex = regex.get()});
+  if (buffers.invalid_replacement) {
+    ps.error = "Replace-all aborted: invalid replacement pattern.";
+    RequestPreparedFrame();
+    return;
   }
-  if (buffers_replaced > 0) {
+  if (!buffers.edits.empty()) {
+    (void)workspace_edit_service_.ApplyBufferEdits(buffers.edits);
+    RestoreKeptCarets(buffers.carets);
+    const std::size_t edited = buffers.edits.size();
     RequestPreparedFrame();
     Notify(NotificationService::Tone::Info,
-           "Replaced " + std::to_string(buffer_replacements) + " in " + std::to_string(buffers_replaced) +
-               (buffers_replaced == 1 ? " unsaved editor" : " unsaved editors") + " (not yet saved)");
+           "Replaced " + std::to_string(buffers.replacements) + " in " + std::to_string(edited) +
+               (edited == 1 ? " unsaved editor" : " unsaved editors") + " (not yet saved)");
   }
+  std::erase_if(files, [&](const std::filesystem::path& relative_path) {
+    return buffers.handled.count((root / relative_path).lexically_normal().string()) != 0;
+  });
   if (files.empty()) {
     return;
   }
+  std::unordered_set<std::string> dirty_open = std::move(buffers.dirty_elsewhere);
 
   const std::size_t aggregate_cap = replace_all_aggregate_cap_bytes_;
   const std::uint64_t generation = ++project_replace_generation_;
