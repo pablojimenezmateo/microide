@@ -49,6 +49,7 @@ void ComputeStickyScrollLinesUncached(const editor::TextViewport& viewport,
                                       const editor::FoldingModel* folding_model,
                                       bool sticky_scroll_enabled,
                                       int sticky_max_depth,
+                                      std::size_t pane_rows,
                                       std::vector<std::size_t>& out_opener_lines);
 
 struct EditorBannerViewModel {
@@ -466,7 +467,8 @@ class RenderViewModelBuilder {
   static std::span<const std::size_t> StickyScrollLines(const editor::TextViewport& viewport,
                                                         const editor::FoldingModel* folding_model,
                                                         bool sticky_scroll_enabled,
-                                                        int sticky_max_depth);
+                                                        int sticky_max_depth,
+                                                        std::size_t pane_rows);
 
   void BuildEditorViewModelInto(editor::EditorViewModel& out,
                                 const editor::TextViewport& viewport,

@@ -777,9 +777,10 @@ void WorkspaceShell::PrepareEditorPaneMetrics(FramePrepPass& pass) {
       }
       const editor::FoldingModel* folds = fold_enabled ? GroupFoldingModelPtr(group) : nullptr;
       const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::SizeViewportWithStickyBand(
-          editor_text_renderer_, *viewport, pane.rect, line_numbers, [&](const editor::TextViewport& view) {
+          editor_text_renderer_, *viewport, pane.rect, line_numbers,
+          [&](const editor::TextViewport& view, std::size_t pane_rows) {
             return RenderViewModelBuilder::StickyScrollLines(view, folds, sticky_enabled && folds != nullptr,
-                                                             sticky_depth)
+                                                             sticky_depth, pane_rows)
                 .size();
           });
       const std::size_t sticky_rows = metrics.sticky_scroll_rows;

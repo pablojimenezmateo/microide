@@ -296,7 +296,7 @@
     const bool sticky_active = fold_enabled && sticky_setting && folding_model != nullptr;
     std::vector<std::size_t> sticky_lines;
     ComputeStickyScrollLinesUncached(viewport, folding_model, sticky_active, sticky_max_depth,
-                                     sticky_lines);
+                                     base_metrics.visible_rows, sticky_lines);
     return sticky_lines.size();
   }
   static microide::editor::EditorViewMetrics ActiveEditorRenderMetrics(WorkspaceShell& shell) {

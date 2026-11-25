@@ -261,6 +261,9 @@ std::optional<bool> WorkspaceShell::MotionDuringDrag(const SDL_Event& event, con
 
 std::optional<bool> WorkspaceShell::MotionDuringPointerGesture(const SDL_Event& event, const WorkspaceLayout& layout,
                                                                DamageMark mark) {
+  if (context_.interaction_state.path_drag.armed || context_.interaction_state.tab_drag.kind != TabDragKind::None) {
+    UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y), false);
+  }
   if (context_.interaction_state.path_drag.armed) {
     if (MakeSidebarMouseCoordinator().HandlePathDragMotion(static_cast<float>(event.motion.x),
                                                            static_cast<float>(event.motion.y), layout)) {

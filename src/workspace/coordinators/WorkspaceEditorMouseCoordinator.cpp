@@ -51,8 +51,9 @@ std::pair<editor::EditorViewMetrics, std::vector<std::size_t>> EditorPointerLayo
   const bool line_numbers = setting_enabled("editor.line_numbers", true);
   std::vector<std::size_t> sticky_lines;
   const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::SizeViewportWithStickyBand(
-      text_renderer, viewport, editor_rect, line_numbers, [&](const editor::TextViewport& view) {
-        ComputeStickyScrollLinesUncached(view, folding_model, sticky_active, sticky_max_depth, sticky_lines);
+      text_renderer, viewport, editor_rect, line_numbers, [&](const editor::TextViewport& view, std::size_t pane_rows) {
+        ComputeStickyScrollLinesUncached(view, folding_model, sticky_active, sticky_max_depth, pane_rows,
+                                         sticky_lines);
         return sticky_lines.size();
       });
   return {metrics, sticky_lines};

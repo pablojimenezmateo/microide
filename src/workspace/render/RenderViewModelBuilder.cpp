@@ -75,6 +75,8 @@ thread_local std::uint64_t g_occurrence_scan_misses = 0;
 thread_local struct StickyScrollViewportCache {
   std::uintptr_t viewport = 0;
   std::size_t scroll_line = 0;
+  std::size_t pane_rows = 0;
+  std::size_t visual_lines = 0;
   std::uint64_t fold_revision = 0;
   bool enabled = false;
   int max_depth = 0;
@@ -512,6 +514,7 @@ void ComputeStickyScrollLinesUncached(const editor::TextViewport& viewport,
                                       const editor::FoldingModel* folding_model,
                                       bool sticky_scroll_enabled,
                                       int sticky_max_depth,
+                                      std::size_t pane_rows,
                                       std::vector<std::size_t>& out_opener_lines) {
   thread_local std::vector<editor::FoldRange> ancestors;
   thread_local std::vector<std::size_t> openers;
@@ -527,9 +530,17 @@ void ComputeStickyScrollLinesUncached(const editor::TextViewport& viewport,
   const std::size_t top_line = viewport.VisualRowLineIndex(viewport.scroll_line());
   ancestors.clear();
   folding_model->AppendFoldsContaining(top_line, &ancestors);
+  const std::size_t visual_lines = viewport.visual_line_count();
+  const bool at_the_bandless_bottom = pane_rows >= visual_lines || viewport.scroll_line() >= visual_lines - pane_rows;
+  const std::size_t band_rows = std::min(max_depth, ancestors.size());
+  const std::size_t deepest_band_scroll =
+      visual_lines > pane_rows - std::min(pane_rows, band_rows) ? visual_lines - (pane_rows - std::min(pane_rows, band_rows))
+                                                                 : 0;
+  const std::size_t deepest_band_top =
+      at_the_bandless_bottom ? viewport.VisualRowLineIndex(std::min(visual_lines - 1, deepest_band_scroll)) : top_line;
   openers.clear();
   for (const editor::FoldRange& range : ancestors) {
-    if (range.opener_line < top_line && top_line <= range.closer_line) {
+    if (range.opener_line < top_line && top_line <= range.closer_line && deepest_band_top <= range.closer_line) {
       openers.push_back(range.opener_line);
     }
   }
@@ -1284,15 +1295,19 @@ std::span<const std::size_t> RenderViewModelBuilder::StickyScrollLines(
     const editor::TextViewport& viewport,
     const editor::FoldingModel* folding_model,
     bool sticky_scroll_enabled,
-    int sticky_max_depth) {
+    int sticky_max_depth,
+    std::size_t pane_rows) {
   if (!sticky_scroll_enabled || folding_model == nullptr || folding_model->resolved_ranges().empty()) {
     return {};
   }
   const std::uintptr_t viewport_key = reinterpret_cast<std::uintptr_t>(&viewport);
   const std::size_t scroll_line = viewport.scroll_line();
   const std::uint64_t fold_revision = folding_model->revision();
+  const std::size_t visual_lines = viewport.visual_line_count();
   const bool cache_hit = g_sticky_scroll_cache.viewport == viewport_key &&
                          g_sticky_scroll_cache.scroll_line == scroll_line &&
+                         g_sticky_scroll_cache.pane_rows == pane_rows &&
+                         g_sticky_scroll_cache.visual_lines == visual_lines &&
                          g_sticky_scroll_cache.fold_revision == fold_revision &&
                          g_sticky_scroll_cache.enabled == sticky_scroll_enabled &&
                          g_sticky_scroll_cache.max_depth == sticky_max_depth;
@@ -1300,11 +1315,13 @@ std::span<const std::size_t> RenderViewModelBuilder::StickyScrollLines(
     ++g_sticky_scroll_misses;
     g_sticky_scroll_cache.viewport = viewport_key;
     g_sticky_scroll_cache.scroll_line = scroll_line;
+    g_sticky_scroll_cache.pane_rows = pane_rows;
+    g_sticky_scroll_cache.visual_lines = visual_lines;
     g_sticky_scroll_cache.fold_revision = fold_revision;
     g_sticky_scroll_cache.enabled = sticky_scroll_enabled;
     g_sticky_scroll_cache.max_depth = sticky_max_depth;
-    ComputeStickyScrollLinesUncached(viewport, folding_model, sticky_scroll_enabled,
-                                     sticky_max_depth, g_sticky_scroll_cache.lines);
+    ComputeStickyScrollLinesUncached(viewport, folding_model, sticky_scroll_enabled, sticky_max_depth, pane_rows,
+                                     g_sticky_scroll_cache.lines);
   } else {
     ++g_sticky_scroll_hits;
   }
@@ -1411,8 +1428,8 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
 
   {
     util::PerformanceTrace::Scope sticky_scope("RenderViewModelBuilder::Editor::StickyLines");
-    out.sticky_lines = StickyScrollLines(viewport, folding_model, sticky_scroll_enabled,
-                                        sticky_max_depth);
+    out.sticky_lines = StickyScrollLines(viewport, folding_model, sticky_scroll_enabled, sticky_max_depth,
+                                         viewport.visible_lines() + viewport.sticky_band_rows());
   }
 
   if (render_whitespace_enabled && !viewport.is_placeholder()) {

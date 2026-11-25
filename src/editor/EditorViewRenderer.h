@@ -265,14 +265,13 @@ EditorViewMetrics EditorViewRenderer::SizeViewportWithStickyBand(const render::T
   viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
   const std::size_t wanted_scroll =
       viewport.soft_wrap() && viewport.visible_columns() != columns_before ? viewport.scroll_line() : scroll_before;
-  std::size_t wanted = wanted_scroll;
-  std::size_t band = band_rows_at_scroll(static_cast<const TextViewport&>(viewport));
+  const std::size_t pane_rows = metrics.visible_rows;
+  std::size_t band = band_rows_at_scroll(static_cast<const TextViewport&>(viewport), pane_rows);
   for (int pass = 0; pass < 8; ++pass) {
     metrics = ComputeMetrics(text_renderer, viewport, rect, band, show_line_numbers);
     viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-    viewport.SetScrollLine(wanted);
-    wanted = viewport.scroll_line();
-    const std::size_t settled = band_rows_at_scroll(static_cast<const TextViewport&>(viewport));
+    viewport.SetScrollLine(wanted_scroll);
+    const std::size_t settled = band_rows_at_scroll(static_cast<const TextViewport&>(viewport), pane_rows);
     if (settled == band) {
       break;
     }

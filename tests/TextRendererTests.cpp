@@ -2748,12 +2748,12 @@ void TestComputeStickyScrollLinesRespectsNestingAndDepth() {
   viewport.SetViewportSize(3, 120);
   viewport.SetScrollLine(2);
   std::vector<std::size_t> sticky;
-  ComputeStickyScrollLinesUncached(viewport, &model, true, 3, sticky);
+  ComputeStickyScrollLinesUncached(viewport, &model, true, 3, 3, sticky);
   Expect(sticky.size() == 2 && sticky[0] == 0 && sticky[1] == 1,
          "sticky band should list outer then inner opener lines for the nested block");
 
   std::vector<std::size_t> depth1;
-  ComputeStickyScrollLinesUncached(viewport, &model, true, 1, depth1);
+  ComputeStickyScrollLinesUncached(viewport, &model, true, 1, 3, depth1);
   Expect(depth1.size() == 1 && depth1[0] == 1,
          "depth cap one should keep only the innermost enclosing opener");
 }

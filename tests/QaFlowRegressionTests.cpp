@@ -1350,6 +1350,46 @@ void TestATabDraggedAcrossThreePanesPaintsFresh() {
   }
 }
 
+void TestATabDragAbandonedWithEscapeThenReleasedPaintsFresh() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("a.txt", "a\n");
+  WriteFile(fixture.root / "b.txt", "b\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "a second split-right should run");
+  TestAccess::OpenFileInNewTab(fixture.shell, fixture.root / "b.txt");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "three panes");
+  const auto dragged = fixture.ElementRect("tab:2/b.txt");
+  const auto target = fixture.ElementRect("tab:0/a.txt");
+  Expect(dragged.has_value() && target.has_value(), "the strips should name tab:2/b.txt and tab:0/a.txt");
+  if (!dragged || !target) {
+    return;
+  }
+  const float y = dragged->y + dragged->h / 2.0f;
+  const float x0 = dragged->x + dragged->w / 2.0f;
+  const float x1 = target->x + 4.0f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x0, y),
+                                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x0, y)}),
+                      "pressing on b.txt's tab");
+  for (int step = 1; step <= 12; ++step) {
+    SDL_Event motion = MouseMotionEvent(x0 + (x1 - x0) * static_cast<float>(step) / 12.0f, y);
+    motion.motion.state = SDL_BUTTON_LMASK;
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {motion}), "dragging into the first strip, step " +
+                                                                     std::to_string(step));
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}), "Escape abandons the drag");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x1, y)}),
+                      "releasing after Escape");
+  for (int wake = 0; wake < 30; ++wake) {
+    SDL_Delay(10);
+    fixture.ExpectFresh(TestAccess::HandleScheduledWake(fixture.shell).redraw,
+                        "the settle after Escape, wake " + std::to_string(wake));
+  }
+}
+
 void TestADraggedTabPaintsNothingUnderTheStrip() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3363,6 +3403,43 @@ void TestTypingAtTheEndUnderAStickyBandRepaintsTheTypedRow() {
   }
 }
 
+void TestTheCaretOnTheLastLineStaysInViewWhereAFoldEndsNearTheEnd() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  for (std::size_t tail = 1; tail < 30; ++tail) {
+    for (std::size_t inner = 1; inner < 4; ++inner) {
+      std::string body;
+      for (int i = 0; i < 40; ++i) {
+        body += "head " + std::to_string(i) + "\n";
+      }
+      body += "block:\n";
+      for (std::size_t i = 0; i < inner; ++i) {
+        body += "    inner\n";
+      }
+      for (std::size_t i = 0; i < tail; ++i) {
+        body += "tail " + std::to_string(i) + (i + 1 < tail ? "\n" : "");
+      }
+      FlowFixture fixture("fold-end.py", body);
+      editor::TextViewport& view = TestAccess::ActiveEditor(fixture.shell);
+      view.MoveCursorTo(view.line_count() - 1, 0);
+      view.RevealCaret();
+      workspace::RenderInvalidation full;
+      full.full = true;
+      fixture.ExpectFresh(full, "the caret on the last line");
+      for (const char* text : {"a", "b"}) {
+        const std::string what = "typing " + std::string(text) + " with " + std::to_string(tail) + " tail and " +
+                                 std::to_string(inner) + " inner lines";
+        fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent(text)}), what);
+        Expect(view.cursor_line() < view.scroll_line() + view.visible_lines(),
+               what + " keeps the caret in view: caret " + std::to_string(view.cursor_line()) + ", scroll " +
+                   std::to_string(view.scroll_line()) + ", rows " + std::to_string(view.visible_lines()) +
+                   ", band " + std::to_string(view.sticky_band_rows()));
+      }
+    }
+  }
+}
+
 void TestTypingWhereTheEndLeavesAFoldRepaintsTheTypedRow() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3407,6 +3484,10 @@ void TestTypingWhereTheEndLeavesAFoldRepaintsTheTypedRow() {
                                     std::to_string(view.sticky_band_rows()) + ", rows " +
                                     std::to_string(view.visible_lines()) + ", lines " +
                                     std::to_string(view.line_count()));
+    Expect(view.cursor_line() < view.scroll_line() + view.visible_lines(),
+           std::string("typing ") + text + " keeps the caret's row in the view: caret " +
+               std::to_string(view.cursor_line()) + ", scroll " + std::to_string(view.scroll_line()) + ", rows " +
+               std::to_string(view.visible_lines()) + ", band " + std::to_string(view.sticky_band_rows()));
   }
 }
 
@@ -9759,6 +9840,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestHoverUnderAStickyBandResolvesThePointersLine);
   AddTest(tests, "QaFlowRegression/MergeToolbarHoverRepaintsTheButton",
           TestMergeToolbarHoverRepaintsTheButton);
+  AddTest(tests, "QaFlowRegression/ATabDragAbandonedWithEscapeThenReleasedPaintsFresh",
+          TestATabDragAbandonedWithEscapeThenReleasedPaintsFresh);
   AddTest(tests, "QaFlowRegression/ATabDraggedAcrossThreePanesPaintsFresh",
           TestATabDraggedAcrossThreePanesPaintsFresh);
   AddTest(tests, "QaFlowRegression/MergeToolbarStaysInsideANarrowPane",
@@ -10018,6 +10101,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/AnOverlayIsPaintedOverTheBottomPanel", TestAnOverlayIsPaintedOverTheBottomPanel);
   AddTest(tests, "QaFlowRegression/TypingAtTheEndUnderAStickyBandRepaintsTheTypedRow",
           TestTypingAtTheEndUnderAStickyBandRepaintsTheTypedRow);
+  AddTest(tests, "QaFlowRegression/TheCaretOnTheLastLineStaysInViewWhereAFoldEndsNearTheEnd",
+          TestTheCaretOnTheLastLineStaysInViewWhereAFoldEndsNearTheEnd);
   AddTest(tests, "QaFlowRegression/TypingWhereTheEndLeavesAFoldRepaintsTheTypedRow",
           TestTypingWhereTheEndLeavesAFoldRepaintsTheTypedRow);
   AddTest(tests, "QaFlowRegression/TheMenuOverflowChevronIsAHoverTarget", TestTheMenuOverflowChevronIsAHoverTarget);
