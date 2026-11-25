@@ -99,7 +99,6 @@ const editor::SingleLineEditor* OverlayQueryEditor(const ProjectWorkspaceState& 
   const auto& workflow = state.overlay.workflow;
   switch (state.overlay.mode) {
     case OverlayMode::FileFinder: return &state.file_finder.query_state();
-    case OverlayMode::ProjectSearch: return &workflow.project_search.query;
     case OverlayMode::CommitPicker: return &workflow.compare_picker.query;
     case OverlayMode::QuickPick: return &workflow.quick_pick.query;
     case OverlayMode::CommandPalette: return &workflow.command_palette.query;

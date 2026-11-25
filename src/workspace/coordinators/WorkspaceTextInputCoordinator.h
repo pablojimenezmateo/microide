@@ -35,7 +35,6 @@ class TextInputCoordinator {
     std::function<void()> request_frame;
     std::function<void()> refresh_command_palette;
     std::function<void()> refresh_buffer_search;
-    std::function<void()> refresh_project_search;
     std::function<void()> reset_overlay_scroll;
     std::function<bool(std::string_view)> switch_quick_open_mode;
     std::function<editor::SingleLineEditor*()> settings_query_editor;

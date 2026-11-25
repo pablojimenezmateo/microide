@@ -13,8 +13,7 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
           state_.overlay.mode == OverlayMode::QuickPick ||
           state_.overlay.mode == OverlayMode::CommandPalette ||
           state_.overlay.mode == OverlayMode::BufferSearch ||
-          state_.overlay.mode == OverlayMode::BufferReplace ||
-          state_.overlay.mode == OverlayMode::ProjectSearch)) ||
+          state_.overlay.mode == OverlayMode::BufferReplace)) ||
         (state_.surface.focus == FocusTarget::Sidebar && state_.sidebar.visible &&
          operations_.active_sidebar_mode() == SidebarMode::Search &&
          state_.overlay.workflow.project_search.editing) ||

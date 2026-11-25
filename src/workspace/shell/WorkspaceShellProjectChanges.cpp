@@ -148,9 +148,7 @@ void WorkspaceShell::RefreshProjectFileViews() {
   }
   ProjectSearchState& search = project.overlay.workflow.project_search;
   search.searched_query.clear();
-  const bool search_shown =
-      (project.sidebar.visible && ActiveSidebarMode() == SidebarMode::Search) ||
-      (project.overlay.visible && project.overlay.mode == OverlayMode::ProjectSearch);
+  const bool search_shown = project.sidebar.visible && ActiveSidebarMode() == SidebarMode::Search;
   if (search_shown && !search.query.text().empty()) {
     RefreshProjectSearch(ProjectSearchRerun::InPlace);
   }

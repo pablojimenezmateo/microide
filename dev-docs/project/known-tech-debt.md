@@ -154,8 +154,9 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
    in the default and editing profiles, failing a composition that reaches the
    buffer before its commit); a Wayland cell in the soak's matrix
    (DONE 2026-11-25: the `wayland` job type, offered where a weston is); the
-   `project-search` overlay mode, which no run has ever shown (dead, or reachable
-   only from a layout the monkey does not make -- `surface-gaps.md` lists it);
+   `project-search` overlay mode, which no run has ever shown (DONE 2026-11-25:
+   dead -- nothing opened it since project search moved to the sidebar; the
+   mode, its text-input surface and their ~160 lines of branches are gone);
    timestamps on the app's log lines on the driver's clock, so a trace line can
    be put beside the replay row that caused it (a prefix would change every log
    signature: it needs a field on the frame lines instead).

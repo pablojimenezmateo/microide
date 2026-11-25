@@ -82,7 +82,6 @@ bool WorkspaceShell::ShouldBlinkCaret() const {
     case TextInputSurface::BufferSearch:
     case TextInputSurface::BufferReplaceSearch:
     case TextInputSurface::BufferReplaceReplace:
-    case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
     case TextInputSurface::QuickPick:
     case TextInputSurface::CommandPalette:

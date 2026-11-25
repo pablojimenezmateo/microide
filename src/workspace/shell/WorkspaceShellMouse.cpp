@@ -170,7 +170,6 @@ std::optional<bool> WorkspaceShell::MouseDownOnModals(const SDL_Event& event, co
       case TextInputSurface::BufferSearch:
       case TextInputSurface::BufferReplaceSearch:
       case TextInputSurface::BufferReplaceReplace:
-      case TextInputSurface::ProjectSearchOverlay:
       case TextInputSurface::CommitPicker:
         EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
         break;

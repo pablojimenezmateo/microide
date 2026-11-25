@@ -167,22 +167,6 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
     }
   }
 
-  if (state_.overlay.mode == OverlayMode::ProjectSearch) {
-    if (event.key == SDLK_ESCAPE) {
-      operations_.dismiss_overlay(true);
-      return true;
-    }
-    if (is_enter) {
-      operations_.activate_overlay_selection();
-      return true;
-    }
-    if (nav_delta.has_value()) {
-      operations_.move_project_search_selection(*nav_delta);
-      return true;
-    }
-    return services_.text_input.HandleSingleLineKeyDown(event, modifiers);
-  }
-
   if (state_.overlay.mode == OverlayMode::CommandPalette) {
     auto& palette = state_.overlay.workflow.command_palette;
     if (event.key == SDLK_ESCAPE) {

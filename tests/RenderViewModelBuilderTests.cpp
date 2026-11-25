@@ -225,34 +225,14 @@ void TestBuildOverlaySurfaceBoundsALongSecondaryColumnToTheRow() {
          "the truncated detail fits the column it is drawn in");
 }
 
-void TestBuildOverlaySurfaceComposesProjectSearchAndCompletion() {
+void TestBuildOverlaySurfaceComposesCompletion() {
   WorkspaceContext context;
-  auto& search = context.current_project_state.overlay.workflow.project_search;
-  project::ProjectSearchResult result;
-  result.relative_path = "src/a.cpp";
-  result.relative_path_string = "src/a.cpp";
-  result.line = 1;
-  result.column = 4;
-  result.preview = "hello world";
-  search.results.push_back(result);
-  search.selected_index = 0;
-  search.index_incomplete = true;
   context.current_project_state.overlay.visible = true;
-  context.current_project_state.overlay.mode = microide::workspace::OverlayMode::ProjectSearch;
-
   RenderViewModelBuilder builder(context);
   TextRenderer text_renderer;
   const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 160.0f,
                                     LayoutModeInputs{}, true);
   microide::workspace::OverlaySurfaceViewModel vm;
-  builder.BuildOverlaySurfaceInto(vm, layout, layout.editor_area, text_renderer);
-
-  Expect(vm.title == "Project Search", "project search title should be prebuilt");
-  Expect(!vm.note.empty() && vm.note_x > 0.0f,
-         "an incomplete index should surface the right-aligned note");
-  Expect(vm.rows.size() == 1 && vm.rows[0].primary == "src/a.cpp:2:5  hello world",
-         "the result row label (path:line:col + preview) should be composed in the builder");
-  Expect(vm.summary_line == "1 / 1 results", "the selection summary should be composed");
 
   auto& completion = context.current_project_state.overlay.workflow.completion;
   completion.items.push_back(microide::workspace::CompletionSessionItem{
@@ -1834,8 +1814,7 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestBuildOverlaySurfaceOwnsPickerRowsAndChrome);
   AddTest(tests, "RenderViewModelBuilder/OverlayBoundsALongSecondaryColumnToTheRow",
           TestBuildOverlaySurfaceBoundsALongSecondaryColumnToTheRow);
-  AddTest(tests, "RenderViewModelBuilder/OverlayComposesProjectSearchAndCompletion",
-          TestBuildOverlaySurfaceComposesProjectSearchAndCompletion);
+  AddTest(tests, "RenderViewModelBuilder/OverlayComposesCompletion", TestBuildOverlaySurfaceComposesCompletion);
   AddTest(tests, "RenderViewModelBuilder/OverlayFindWidgetSubmodel",
           TestBuildOverlaySurfaceFindWidgetSubmodel);
   AddTest(tests, "RenderViewModelBuilder/DebugPaneWiresNarrowModelPointers",

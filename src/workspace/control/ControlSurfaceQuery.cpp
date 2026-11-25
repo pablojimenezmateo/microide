@@ -15,8 +15,8 @@ namespace microide::workspace {
 namespace {
 
 constexpr std::array kOverlayModes = {OverlayMode::FileFinder,     OverlayMode::BufferSearch,
-                                      OverlayMode::BufferReplace,  OverlayMode::ProjectSearch,
-                                      OverlayMode::CommitPicker,   OverlayMode::QuickPick,
+                                      OverlayMode::BufferReplace,  OverlayMode::CommitPicker,
+                                      OverlayMode::QuickPick,
                                       OverlayMode::CommandPalette, OverlayMode::Completion,
                                       OverlayMode::CodeActions};
 constexpr std::array kPanelContents = {PanelContentKind::Terminal, PanelContentKind::Output,

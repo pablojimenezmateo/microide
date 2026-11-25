@@ -174,8 +174,6 @@ std::size_t WorkspaceShell::OverlayItemCount() const {
     case OverlayMode::BufferSearch:
     case OverlayMode::BufferReplace:
       return context_.current_project_state.overlay.workflow.buffer_search.matches.size();
-    case OverlayMode::ProjectSearch:
-      return context_.current_project_state.overlay.workflow.project_search.results.size();
     case OverlayMode::Completion:
       return context_.current_project_state.overlay.workflow.completion.VisibleCount();
     case OverlayMode::CodeActions:
@@ -197,8 +195,6 @@ std::size_t WorkspaceShell::OverlaySelectedIndex() const {
     case OverlayMode::BufferSearch:
     case OverlayMode::BufferReplace:
       return context_.current_project_state.overlay.workflow.buffer_search.selected_index;
-    case OverlayMode::ProjectSearch:
-      return context_.current_project_state.overlay.workflow.project_search.selected_index;
     case OverlayMode::Completion:
       return context_.current_project_state.overlay.workflow.completion.selected_index;
     case OverlayMode::CodeActions:
@@ -237,9 +233,6 @@ void WorkspaceShell::SetOverlaySelectedIndex(std::size_t index) {
           viewport->JumpCursorTo(match.start.line, match.start.column);
         }
       }
-      break;
-    case OverlayMode::ProjectSearch:
-      context_.current_project_state.overlay.workflow.project_search.selected_index = clamped_index;
       break;
     case OverlayMode::Completion:
       context_.current_project_state.overlay.workflow.completion.selected_index = clamped_index;
@@ -307,19 +300,6 @@ bool WorkspaceShell::ActivateOverlaySelection() {
       return true;
     case OverlayMode::BufferReplace:
       ReplaceCurrentBufferSearchMatch();
-      return true;
-    case OverlayMode::ProjectSearch:
-      if (!context_.current_project_state.overlay.workflow.project_search.results.empty() &&
-          context_.current_project_state.overlay.workflow.project_search.selected_index <
-              context_.current_project_state.overlay.workflow.project_search.results.size()) {
-        const auto& result =
-            context_.current_project_state.overlay.workflow.project_search.results[context_.current_project_state.overlay.workflow.project_search.selected_index];
-        OpenFile(context_.current_project_state.root / result.relative_path);
-        if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
-          viewport->JumpCursorTo(result.line, result.column);
-        }
-        OpenBufferSearchFromProjectSearchResult();
-      }
       return true;
     case OverlayMode::Completion:
       return assist_service_.completion().ApplySelectedCompletion();

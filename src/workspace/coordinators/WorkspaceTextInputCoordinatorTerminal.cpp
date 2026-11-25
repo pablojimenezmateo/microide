@@ -310,7 +310,6 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
           .request_frame = [this]() { RequestPreparedFrame(); },
           .refresh_command_palette = [this]() { RefreshCommandPalette(); },
           .refresh_buffer_search = [this]() { RefreshBufferSearch(); },
-          .refresh_project_search = [this]() { RefreshProjectSearch(); },
           .reset_overlay_scroll = [this]() { ResetOverlayScroll(); },
           .switch_quick_open_mode =
               [this](std::string_view query) {

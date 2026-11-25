@@ -825,7 +825,7 @@ void TestWorkspaceShellSingleLineTextSurfacePredicateCoversEveryField() {
   const Surface single_line[] = {
       Surface::PromptInput,         Surface::FileFinder,
       Surface::BufferSearch,        Surface::BufferReplaceSearch,
-      Surface::BufferReplaceReplace, Surface::ProjectSearchOverlay,
+      Surface::BufferReplaceReplace,
       Surface::CommitPicker,        Surface::QuickPick,
       Surface::CommandPalette,      Surface::SidebarSearchQuery,
       Surface::SidebarSearchReplace, Surface::SidebarSearchInclude,

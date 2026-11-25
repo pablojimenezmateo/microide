@@ -12,7 +12,6 @@ enum class TextInputSurface {
   BufferSearch,
   BufferReplaceSearch,
   BufferReplaceReplace,
-  ProjectSearchOverlay,
   CommitPicker,
   QuickPick,
   CommandPalette,
@@ -56,7 +55,6 @@ inline bool IsSingleLineTextInputSurface(TextInputSurface surface) {
     case TextInputSurface::BufferSearch:
     case TextInputSurface::BufferReplaceSearch:
     case TextInputSurface::BufferReplaceReplace:
-    case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
     case TextInputSurface::QuickPick:
     case TextInputSurface::CommandPalette:

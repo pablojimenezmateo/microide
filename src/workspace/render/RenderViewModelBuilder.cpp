@@ -741,9 +741,6 @@ class ListOverlayBuilder {
     out_.selected_row = static_cast<int>(SelectedIndex());
     row_width_ = out_.list_layout.row_width;
     switch (overlay_.mode) {
-      case OverlayMode::ProjectSearch:
-        ProjectSearch();
-        break;
       case OverlayMode::CommitPicker:
         CommitPicker();
         break;
@@ -778,8 +775,6 @@ class ListOverlayBuilder {
         return overlay_.workflow.quick_pick.matches.size();
       case OverlayMode::CommandPalette:
         return overlay_.workflow.command_palette.matches.size();
-      case OverlayMode::ProjectSearch:
-        return overlay_.workflow.project_search.results.size();
       case OverlayMode::Completion:
         return overlay_.workflow.completion.VisibleCount();
       case OverlayMode::CodeActions:
@@ -798,8 +793,6 @@ class ListOverlayBuilder {
         return overlay_.workflow.quick_pick.selected_index;
       case OverlayMode::CommandPalette:
         return overlay_.workflow.command_palette.selected_index;
-      case OverlayMode::ProjectSearch:
-        return overlay_.workflow.project_search.selected_index;
       case OverlayMode::Completion:
         return overlay_.workflow.completion.selected_index;
       case OverlayMode::CodeActions:
@@ -890,41 +883,6 @@ class ListOverlayBuilder {
     if (total_rows_ == 0) {
       empty_ref_ = AddTruncatedLabel(tr_, blob_, empty_label, inner_width, empty_label_stable);
     }
-  }
-
-  void ProjectSearch() {
-    const ProjectSearchState& search = overlay_.workflow.project_search;
-    if (search.index_incomplete) {
-      constexpr std::string_view kNote = "index incomplete — results may be partial";
-      SetRightAlignedNote(kNote);
-    }
-    std::string& scratch = ComposeScratch();
-    scratch = search.results.empty()
-                  ? FormatEmptyState("results")
-              : search.truncated
-                  ? BuildSelectionSummary(search.selected_index, search.results.size(),
-                                          " shown (capped)")
-                  : BuildSelectionSummary(search.selected_index, search.results.size(),
-                                          " results");
-    if (search.running) {
-      scratch += BuildSearchProgressSuffix(search.searched_files, search.total_files);
-    }
-    FillPickerChrome("Project Search", std::string_view{}, search.query,
-                     TextInputSurface::ProjectSearchOverlay, scratch,
-                     false, "No results",
-                     true);
-    ForVisible([&](std::size_t item_index) {
-      const auto& result = search.results[item_index];
-      scratch.clear();
-      scratch += result.relative_path_string;
-      scratch += ":";
-      AppendUnsigned(scratch, result.line + 1);
-      scratch += ":";
-      AppendUnsigned(scratch, result.column + 1);
-      scratch += "  ";
-      scratch += tr_.TruncateToWidthEphemeralView(result.preview, overlay_rect_.w - 220.0f);
-      EmitRow(scratch, false);
-    });
   }
 
   void CommitPicker() {
@@ -1129,7 +1087,6 @@ TextInputSurfaceViewModel RenderViewModelBuilder::BuildTextInputSurface() const 
       .buffer_search_query = &context_.current_project_state.overlay.workflow.buffer_search.query,
       .buffer_search_replace =
           &context_.current_project_state.overlay.workflow.buffer_search.replace_text,
-      .project_search_query = &context_.current_project_state.overlay.workflow.project_search.query,
       .project_search_edit_buffer =
           &context_.current_project_state.overlay.workflow.project_search.edit_buffer,
       .commit_picker_query = &context_.current_project_state.overlay.workflow.compare_picker.query,
@@ -1567,7 +1524,6 @@ HoverPopupViewModel RenderViewModelBuilder::BuildHoverPopup(bool has_active_targ
   if (overlay.visible) {
     switch (overlay.mode) {
       case OverlayMode::FileFinder:
-      case OverlayMode::ProjectSearch:
       case OverlayMode::CommitPicker:
       case OverlayMode::QuickPick:
       case OverlayMode::CommandPalette:

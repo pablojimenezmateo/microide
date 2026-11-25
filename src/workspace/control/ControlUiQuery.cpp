@@ -78,7 +78,6 @@ std::string_view ControlUiOverlayModeName(OverlayMode mode) {
     case OverlayMode::FileFinder: return "file-finder";
     case OverlayMode::BufferSearch: return "buffer-search";
     case OverlayMode::BufferReplace: return "buffer-replace";
-    case OverlayMode::ProjectSearch: return "project-search";
     case OverlayMode::CommitPicker: return "commit-picker";
     case OverlayMode::QuickPick: return "quick-pick";
     case OverlayMode::CommandPalette: return "command-palette";

@@ -65,7 +65,6 @@ enum class OverlayMode {
   FileFinder,
   BufferSearch,
   BufferReplace,
-  ProjectSearch,
   CommitPicker,
   QuickPick,
   CommandPalette,
@@ -76,7 +75,6 @@ enum class OverlayMode {
 inline bool OverlayIsQuickOpen(OverlayMode mode) {
   switch (mode) {
     case OverlayMode::FileFinder:
-    case OverlayMode::ProjectSearch:
     case OverlayMode::CommitPicker:
     case OverlayMode::QuickPick:
     case OverlayMode::CommandPalette:

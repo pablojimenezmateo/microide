@@ -186,14 +186,6 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
         }
         break;
       }
-      case OverlayMode::ProjectSearch: {
-        const SDL_FRect r = overlay_field_rect(overlay.y + query_row_offset);
-        if (Contains(r, x, y)) {
-          return FilledHit(TextInputSurface::ProjectSearchOverlay, r, "> ",
-                           &state.overlay.workflow.project_search.query);
-        }
-        break;
-      }
       case OverlayMode::CommitPicker: {
         const SDL_FRect r = overlay_field_rect(overlay.y + query_row_offset);
         if (Contains(r, x, y)) {
@@ -348,7 +340,6 @@ bool WorkspaceShell::HandleSingleLineInputMouseDown(const SDL_Event& event,
       break;
     case TextInputSurface::FileFinder:
     case TextInputSurface::BufferSearch:
-    case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
     case TextInputSurface::QuickPick:
     case TextInputSurface::CommandPalette:
@@ -402,7 +393,6 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
     case TextInputSurface::BufferSearch:
     case TextInputSurface::BufferReplaceSearch:
     case TextInputSurface::BufferReplaceReplace:
-    case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
     case TextInputSurface::QuickPick:
     case TextInputSurface::CommandPalette:
@@ -442,12 +432,6 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
           if (proj.overlay.visible) {
             hit = FilledHit(surface, ComputeBufferFindWidgetLayout(ActiveTabSurface(layout), true).replace_field,
                             "", &proj.overlay.workflow.buffer_search.replace_text);
-          }
-          break;
-        case TextInputSurface::ProjectSearchOverlay:
-          if (proj.overlay.visible) {
-            hit = FilledHit(surface, overlay_field_rect(overlay.y + query_row_offset), "> ",
-                            &proj.overlay.workflow.project_search.query);
           }
           break;
         case TextInputSurface::CommitPicker:

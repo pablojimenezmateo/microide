@@ -104,8 +104,6 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
                      : TextInputSurface::BufferReplaceReplace;
         }
         break;
-      case OverlayMode::ProjectSearch:
-        return TextInputSurface::ProjectSearchOverlay;
       case OverlayMode::CommitPicker:
         return TextInputSurface::CommitPicker;
       case OverlayMode::QuickPick:
