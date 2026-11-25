@@ -3,6 +3,59 @@
 Moved from `dev-docs/project/known-tech-debt.md`'s open queue as each entry was
 resolved or closed, with its resolution appended. Newest first.
 
+### TD-2026-11-11-444 — a cold structural refinement of a heavily churned file costs several times the old intraline pass. [CLOSED 2026-11-25 (decided)]
+
+`microide_diff_bench`, min of runs, interleaved with `main` on the same machine,
+four files diffed across ~4 months of history (table in
+`openspec/changes/archive/2026-11-11-structural-diff/bench.md`): code files
+2-4x the line-era cost (`CompareModel.cpp`, 110 hunks: 1.5 ms -> 5.8 ms), and a
+Markdown file rewritten end to end ~9x (1.5 ms -> 13.8 ms). The compare perf
+scenarios are at parity, allocations included, and a rebuild of an open compare
+refines only the hunks that changed (`HunkRefinementCache`), so this is the cost
+of the FIRST build of an extreme diff, not of typing.
+
+What is left, measured: an A* step costs ~100 ns (hash probe, stack-group
+reads, heuristic, bucket push for ~3-5 edges), and prose gaps keep the search
+because Markdown's backtick spans are string literals on both sides, which the
+atom-only shortcut must not skip (a replaced literal is a graph edge). Leads, in
+order of expected value: (1) a `Replaced`-aware flat matcher so literal-bearing
+atom gaps skip the graph too; (2) packing a vertex's identity into one 64-bit
+key and dropping `Vertex::stack` group reads from the hot path; (3) a lower
+search cap for gaps that contain no list at all. Gate each on the bench table.
+
+**2026-11-25: the vertex table, not the vertex key.** A profile (perf works on
+this machine now) put `Search::Insert` first, and the cost was the table, not
+the hashing: every search reset it to 64 slots and doubled it, each doubling a
+freshly zeroed allocation (the large ones mmap'd and faulted in). Slots now
+carry the search's epoch, so a search neither zeroes nor regrows a table a
+previous one sized, and the rehash buffer is kept. Refinement, min of 3x15
+interleaved runs, results identical: `CompareModel.cpp` 5.10 -> 3.46 ms,
+`PerfMain.cpp` 3.63 -> 2.64, `EditorViewRenderer.cpp` 1.56 -> 1.29, the
+Markdown file 13.0 -> 8.6. Still open: leads (2)'s key packing and (3), against
+the new numbers.
+
+Lead (1) measured 2026-11-13 and NOT taken: an exact DP aligner for atom-only
+gaps with literals on both sides (the search's own edge costs, tabulated; its
+cost matched the A* path cost on 600 random gaps) took 206 of the Markdown
+file's 111,061 vertices and 34 of `PerfMain.cpp`'s 26,221 -- such gaps are a
+rounding error, and the DP always fills n*m cells where A* runs near-linear on
+near-identical gaps; wall time showed no gain. The Markdown cost is in gaps
+that CONTAIN lists (link `[text](url)` pairs, parentheses in prose), so the
+remaining leads are (2) and (3), plus a profile: `perf` needs
+`kernel.perf_event_paranoid` <= 2 on this machine (it is 4) and valgrind is not
+installed, so the next pass should start by getting one of them.
+
+**Closed 2026-11-25, decided.** After the vertex-table change the first build
+costs 2.3x the line era for code (`CompareModel.cpp` 3.46 vs 1.51 ms) and 5.6x
+for the Markdown rewrite (8.6 vs 1.54 ms), and what is left is the search over
+gaps that CONTAIN lists -- the structural diff itself. Lead (3) cannot move it:
+lead (1)'s count put list-free gaps at 206 of 111,061 vertices on that file.
+Lead (2) aimed at the vertex key, and the profile now has `Search::Insert` at
+under 2% of the bench's samples. It is paid once per diff (a rebuild re-refines
+only the changed hunk, `HunkRefinementCache`) and is well inside the 16 ms
+frame for every file measured. Reopen with a profile if a real file's first
+build costs a frame.
+
 ### TD-2026-11-19-453 — a data loss found and two findings read to the bottom of their evidence. [CLOSED 2026-11-25]
 
 Left by the 2026-11-19 bug-hunting pass (commits bbb153be3 onwards). None has a
