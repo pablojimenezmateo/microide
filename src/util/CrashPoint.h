@@ -5,7 +5,7 @@
 
 namespace microide::util {
 
-using CrashPointHook = void (*)(const char* site, std::string_view detail);
+using CrashPointHook = int (*)(const char* site, std::string_view detail);
 
 namespace detail {
 inline std::atomic<CrashPointHook> g_crash_point_hook{nullptr};
@@ -21,8 +21,13 @@ inline bool CrashPointsArmed() noexcept {
 
 inline void CrashPoint(const char* site, std::string_view what = {}) noexcept {
   if (const CrashPointHook hook = detail::g_crash_point_hook.load(std::memory_order_acquire)) {
-    hook(site, what);
+    (void)hook(site, what);
   }
+}
+
+[[nodiscard]] inline int FaultPoint(const char* site, std::string_view what = {}) noexcept {
+  const CrashPointHook hook = detail::g_crash_point_hook.load(std::memory_order_acquire);
+  return hook != nullptr ? hook(site, what) : 0;
 }
 
 }

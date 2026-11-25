@@ -83,7 +83,7 @@ void JournalForPowerCut(std::size_t index, const char* site, std::string_view wh
   log << index << '\t' << site << '\t' << what << '\t' << (had_bytes ? 1 : 0) << '\n';
 }
 
-void DiskStepHook(const char* site, std::string_view what) {
+int DiskStepHook(const char* site, std::string_view what) {
   const std::size_t index = g_disk_steps.fetch_add(1);
   if (!g_power_log_dir.empty()) {
     JournalForPowerCut(index, site, what);
@@ -91,6 +91,7 @@ void DiskStepHook(const char* site, std::string_view what) {
   if (index == g_disk_kill_at.load()) {
     ::raise(SIGKILL);
   }
+  return 0;
 }
 
 void ApplyPowerCut(const std::filesystem::path& log_dir) {

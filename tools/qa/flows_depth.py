@@ -6,6 +6,7 @@ rename, and branch review.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable
 
 import microide_qa as q
@@ -432,6 +433,33 @@ def flow_save_pipeline(app: q.App) -> None:
                    f"the buffer to show what was saved, clean ({app.buffer().get('text')!r})")
 
 
+def flow_save_disk_full(app: q.App) -> None:
+    """A full disk at each durable-write step of a save (the `crash-points`
+    query's fail=ENOSPC rule): the save fails, the file keeps its bytes, the
+    buffer keeps the edit, a row says why, no staging file is left; once the disk
+    has room the next save writes it."""
+    open_file(app, "notes/full.txt", "on disk\n")
+    for site, file in (("durable.writing", "full.txt (staging)"), ("durable.fsyncing", "full.txt (staging)"),
+                       ("durable.renaming", "full.txt")):
+        before = read(app, "notes/full.txt")
+        app.click_text(1, 1)
+        app.type("x")
+        app.query("crash-points", {"arm": f"fail=ENOSPC:{site}@{file}#1"})
+        app.key("ctrl+s")
+        app.wait_until(lambda: any("Failed to save full.txt" in (n.get("message") or "")
+                                   for n in app.query("notifications")), 5.0,
+                       f"a row saying the save at {site} failed ({app.query('notifications')})")
+        app.query("crash-points", {"disarm": True})
+        app.expect(read(app, "notes/full.txt") == before,
+                   f"a full disk at {site} leaves the file ({read(app, 'notes/full.txt')!r})")
+        app.expect(app.buffer().get("dirty") is True, f"and the edit unsaved in the buffer at {site}")
+        leftovers = [p.name for p in (Path(app.project) / "notes").iterdir() if p.name != "full.txt"]
+        app.expect(not leftovers, f"and no staging file at {site} ({leftovers})")
+        app.key("ctrl+s")
+        app.wait_until(lambda: not app.buffer().get("dirty") and read(app, "notes/full.txt") == "x" + before, 5.0,
+                       f"the next save, with room, writes the edit ({read(app, 'notes/full.txt')!r})")
+
+
 PLUGINS: dict[str, tuple[str, ...]] = {"save-pipeline": ("qa-save",)}
 
 
@@ -544,4 +572,5 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "merge-mouse": flow_merge_mouse,
     "compare-mouse": flow_compare_mouse,
     "save-pipeline": flow_save_pipeline,
+    "save-disk-full": flow_save_disk_full,
 }

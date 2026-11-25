@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "util/CrashPointControl.h"
 
 #include "project/FileWriteGate.h"
 #include "project/GitCompareService.h"
@@ -274,6 +275,43 @@ void TestWorkspaceShellAFailedSaveSaysWhy() {
   Expect(said, "its row says why:" + rows);
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty() && ReadFile(source) == "base text\n",
          "the edit is kept, the file untouched");
+}
+
+void TestWorkspaceShellADiskFailureDuringASaveKeepsTheEditAndSaysWhy() {
+  util::CrashPointControl::Install();
+  for (const std::string_view site : {"durable.writing", "durable.fsyncing", "durable.renaming"}) {
+    TemporaryDirectory temp_dir;
+    const std::filesystem::path root = temp_dir.path() / "project";
+    const std::filesystem::path source = root / "notes.txt";
+    WriteFile(source, "base text\n");
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+    WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("edited ");
+    std::string arm_error;
+    Expect(util::CrashPointControl::Arm("fail=ENOSPC:" + std::string(site), &arm_error), "armed: " + arm_error);
+    const auto outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "save");
+    util::CrashPointControl::Disarm();
+    const std::string what = "a full disk at " + std::string(site);
+    Expect(!outcome.ok, what + " fails the save");
+    std::string rows;
+    bool said = false;
+    for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      rows += " [" + row.message + "]";
+      said = said || (row.message.starts_with("Failed to save notes.txt: ") && row.message.find("space") != std::string::npos);
+    }
+    Expect(said, what + " says the disk is full:" + rows);
+    Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty() && ReadFile(source) == "base text\n",
+           what + " keeps the edit and leaves the file untouched");
+    std::size_t entries = 0;
+    for ([[maybe_unused]] const auto& entry : std::filesystem::directory_iterator(root)) {
+      ++entries;
+    }
+    Expect(entries == 1, what + " leaves no staging file in the project");
+    Expect(WorkspaceShellTestAccess::ExecuteControlCommand(shell, "save").ok && ReadFile(source) == "edited base text\n",
+           what + ": once the disk has room the next save writes it");
+  }
+  util::SetCrashPointHook(nullptr);
 }
 
 void TestWorkspaceShellBannerActionCommandPressesTheActiveTabsBanner() {
@@ -1527,6 +1565,8 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellDeleteClosesBackgroundCompareAndMergeTabs);
   AddTest(tests, "WorkspaceShell/ClosingNonActiveDirtyTabDoesNotStrandFocus",
           TestWorkspaceShellClosingNonActiveDirtyTabDoesNotStrandFocus);
+  AddTest(tests, "WorkspaceShell/ADiskFailureDuringASaveKeepsTheEditAndSaysWhy",
+          TestWorkspaceShellADiskFailureDuringASaveKeepsTheEditAndSaysWhy);
   AddTest(tests, "WorkspaceShell/AFailedSaveSaysWhy", TestWorkspaceShellAFailedSaveSaysWhy);
   AddTest(tests, "WorkspaceShell/OpeningAMissingProjectSaysWhy", TestWorkspaceShellOpeningAMissingProjectSaysWhy);
   AddTest(tests, "WorkspaceShell/SavingAReadOnlyFileAsksFirst",

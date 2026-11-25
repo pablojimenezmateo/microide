@@ -100,13 +100,18 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
    books a fix per signature.
 2. **The fault-injection jobs are not recorded.** rr cannot follow the remote
    server (it runs under the loopback sshd, not under the app).
-3. **No write fails on purpose in the running app.** The crash points
-   (`crash-points` query) kill or stall at a durable-write boundary; they cannot
-   make the write FAIL (`CrashPoint` returns nothing), so a full disk -- ENOSPC
-   from the write, the fsync or the rename of a save or a session record -- is
-   still covered only by `LocalWriteFaultMatrix`. Wants a fault seam in
-   `util/DurableFile.cpp` beside the crash points, armed the same way, and an
-   oracle for "a failed save leaves the file and says so".
+3. **No write fails on purpose in the running app: the seam landed
+   2026-11-25.** A crash-point rule can now fail a durable write with an errno
+   (`fail=ENOSPC|EIO|EACCES|EROFS|EDQUOT|EXDEV|<n>:<site>[@<file>][#<nth>]`,
+   armed through the same `crash-points` query) at `durable.writing`,
+   `durable.fsyncing` and `durable.renaming` (`util::FaultPoint`). Held to it:
+   `LocalWriteFaultMatrix/EveryInjectedWriteFailureLeavesTheOldFile` (every
+   site x errno x create/replace), `WorkspaceShell/ADiskFailureDuringASaveKeepsTheEditAndSaysWhy`
+   and the QA flow `save-disk-full` (the file keeps its bytes, the buffer its
+   edit, a row says why, no staging file, the next save writes it). Still open:
+   a monkey oracle that arms a random fail rule mid-run (beside
+   `DataOracle.kill9_and_check`), so the session and user-config writers meet a
+   full disk too, not only an editor save.
 4. **A save killed part-way is not held to old-or-new bytes.** The point-kill
    oracle (`DataOracle.kill9_and_check`) checks what the buffers come back as; for
    the FILE a killed save was writing it only checks "back clean means the file
@@ -400,12 +405,14 @@ What it left, by workstream:
    step requests damage outside the window. Each needs its negative control (a past
    bug reverted) before it can be trusted not to abort a healthy run.
 3. **W5 remainder.** The local fault matrix covers SIGKILL at every crash point of
-   `WriteTextFileAtomically`. Not yet: errno injection (ENOSPC, EIO, EACCES, EXDEV on
-   rename, a 5 s fsync stall), which needs a syscall seam in `DurableFile`; crash
-   points in the session/user-config writers, replace-in-files, merge writes and
-   rename/move; the check that every failed save shows the user an error; and the
-   write-path inventory table for `editor-essentials.md`. The monkey cannot fill the
-   disk either (needs a size-limited filesystem for its fixture).
+   `WriteTextFileAtomically`, and since 2026-11-25 errno injection at its write,
+   fsync and rename (TD-452 item 3: ENOSPC, EIO, EROFS, EXDEV, ...; a 5 s fsync
+   stall is `delay=5000:durable.fsyncing`) with the editor save shown to keep the
+   edit and say why. Not yet: crash points in replace-in-files, merge writes and
+   rename/move (the session and user-config writers go through `DurableFile`
+   and have them); the same check for every other write path; the write-path
+   inventory table for `editor-essentials.md`. The monkey cannot fill the disk
+   either (needs a size-limited filesystem for its fixture).
 4. **W8 sequence fuzzers** are not built: `ControlCommandFuzz`, `LspSessionFuzz` and
    `DapSessionFuzz` (scripted fake servers answering late, out of order and for old
    versions), and the libFuzzer form of `ViewportEditSequenceFuzz`. The stateful

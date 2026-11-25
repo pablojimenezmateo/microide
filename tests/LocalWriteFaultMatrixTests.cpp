@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "util/CrashPoint.h"
+#include "util/CrashPointControl.h"
 #include "util/Parse.h"
 #include "util/TextFileIO.h"
 
@@ -29,10 +30,11 @@ constexpr std::string_view kHelperFlag = "--local-write-fault-client";
 std::atomic<std::size_t> g_steps{0};
 std::atomic<std::size_t> g_kill_at{std::numeric_limits<std::size_t>::max()};
 
-void KillAtStep(const char* , std::string_view ) {
+int KillAtStep(const char* , std::string_view ) {
   if (g_steps.fetch_add(1) == g_kill_at.load()) {
     ::raise(SIGKILL);
   }
+  return 0;
 }
 
 std::string ReadAll(const std::filesystem::path& path) {
@@ -152,6 +154,39 @@ void TestEveryCrashPointOfASaveLeavesTheOldOrTheNewFile() {
   }
 }
 
+void TestEveryInjectedWriteFailureLeavesTheOldFile() {
+  util::CrashPointControl::Install();
+  for (const std::string_view site : {"durable.writing", "durable.fsyncing", "durable.renaming"}) {
+    for (const auto& [name, code] : std::vector<std::pair<std::string_view, int>>{
+             {"ENOSPC", ENOSPC}, {"EIO", EIO}, {"EROFS", EROFS}, {"EXDEV", EXDEV}}) {
+      for (const bool create : {false, true}) {
+        TemporaryDirectory dir;
+        const std::filesystem::path target = dir.path() / "saved.txt";
+        if (!create) {
+          WriteFile(target, "old content\n");
+        }
+        const std::string what = std::string(name) + " at " + std::string(site) + (create ? " (create)" : "");
+        std::string arm_error;
+        Expect(util::CrashPointControl::Arm("fail=" + std::string(name) + ":" + std::string(site), &arm_error),
+               "the rule arms: " + arm_error);
+        std::error_code error;
+        const bool ok = util::WriteTextFileAtomically(
+            target, "new content\n", &error, create ? util::WriteTarget::CreateNew : util::WriteTarget::Replace);
+        util::CrashPointControl::Disarm();
+        Expect(!ok && error.value() == code, what + " fails the save with that error: " + error.message());
+        Expect(create ? !std::filesystem::exists(target) : ReadAll(target) == "old content\n",
+               what + " leaves the file as it was");
+        std::size_t entries = 0;
+        for ([[maybe_unused]] const auto& entry : std::filesystem::directory_iterator(dir.path())) {
+          ++entries;
+        }
+        Expect(entries == (create ? 0u : 1u), what + " leaves no staging file behind");
+      }
+    }
+  }
+  util::SetCrashPointHook(nullptr);
+}
+
 }
 
 bool IsLocalWriteFaultClient(int argc, char** argv) { return argc > 1 && std::string_view(argv[1]) == kHelperFlag; }
@@ -181,6 +216,8 @@ int RunLocalWriteFaultClient(int argc, char** argv) {
 void RegisterLocalWriteFaultMatrixTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LocalWriteFaultMatrix/EveryCrashPointOfASaveLeavesTheOldOrTheNewFile",
           TestEveryCrashPointOfASaveLeavesTheOldOrTheNewFile);
+  AddTest(tests, "LocalWriteFaultMatrix/EveryInjectedWriteFailureLeavesTheOldFile",
+          TestEveryInjectedWriteFailureLeavesTheOldFile);
 }
 
 }

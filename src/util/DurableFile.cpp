@@ -68,7 +68,15 @@ bool WriteFileBytesDurable(const std::filesystem::path& path, std::span<const st
   if (fd < 0) {
     return fail();
   }
-  if (!WriteAll(fd, bytes) || !FsyncFile(fd)) {
+  const auto injected = [](const char* site, const std::filesystem::path& file) {
+    const int code = FaultPoint(site, file.native());
+    if (code != 0) {
+      errno = code;
+    }
+    return code != 0;
+  };
+  if (injected("durable.writing", path) || !WriteAll(fd, bytes) || injected("durable.fsyncing", path) ||
+      !FsyncFile(fd)) {
     const std::error_code why = LastError();
     (void)CloseFile(fd);
     if (error != nullptr) {
@@ -87,7 +95,12 @@ bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::p
                      std::error_code* error_out) {
   std::error_code error;
   CrashPoint("durable.renaming-source", from.native());
-  CrashPoint("durable.renaming", to.native());
+  if (const int code = FaultPoint("durable.renaming", to.native()); code != 0) {
+    if (error_out != nullptr) {
+      *error_out = std::error_code(code, std::generic_category());
+    }
+    return false;
+  }
   std::filesystem::rename(from, to, error);
   if (error && error_out != nullptr) {
     *error_out = error;
@@ -107,7 +120,9 @@ bool RenameNoReplace(const std::filesystem::path& from, const std::filesystem::p
     return false;
   };
   CrashPoint("durable.renaming-source", from.native());
-  CrashPoint("durable.renaming", to.native());
+  if (const int code = FaultPoint("durable.renaming", to.native()); code != 0) {
+    return fail(code);
+  }
 #if defined(RENAME_NOREPLACE)
   if (::renameat2(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), RENAME_NOREPLACE) == 0) {
     CrashPoint("durable.renamed", to.native());

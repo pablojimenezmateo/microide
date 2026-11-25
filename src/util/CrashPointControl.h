@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -110,12 +111,13 @@ class CrashPointControl {
   }
 
  private:
-  enum class Action { Kill, Delay };
+  enum class Action { Kill, Delay, Fail };
 
   struct Rule {
     std::string text;
     Action action = Action::Kill;
     std::int64_t delay_ms = 0;
+    int error_code = 0;
     std::string site;
     std::string file;
     std::int64_t nth = 1;
@@ -161,8 +163,15 @@ class CrashPointControl {
       }
       rule->action = Action::Delay;
       rule->delay_ms = *ms;
+    } else if (action.starts_with("fail=")) {
+      const int code = ErrnoNamed(action.substr(5));
+      if (code == 0) {
+        return Fail(error, "fail=<errno> needs ENOSPC, EIO, EACCES, EROFS, EDQUOT, EXDEV or a number");
+      }
+      rule->action = Action::Fail;
+      rule->error_code = code;
     } else {
-      return Fail(error, "unknown action \"" + std::string(action) + "\" (kill, delay=<ms>)");
+      return Fail(error, "unknown action \"" + std::string(action) + "\" (kill, delay=<ms>, fail=<errno>)");
     }
     if (const std::size_t hash = rest.rfind('#'); hash != std::string_view::npos) {
       const auto nth = ParseInt64(rest.substr(hash + 1));
@@ -186,6 +195,19 @@ class CrashPointControl {
     return true;
   }
 
+  static int ErrnoNamed(std::string_view name) {
+    static constexpr std::pair<std::string_view, int> kNames[] = {
+        {"ENOSPC", ENOSPC}, {"EIO", EIO}, {"EACCES", EACCES}, {"EROFS", EROFS}, {"EDQUOT", EDQUOT}, {"EXDEV", EXDEV},
+    };
+    for (const auto& [known, code] : kNames) {
+      if (name == known) {
+        return code;
+      }
+    }
+    const auto number = ParseInt64(name);
+    return number.has_value() && *number > 0 && *number < 4096 ? static_cast<int>(*number) : 0;
+  }
+
   static std::string FileNameOf(std::string_view detail) {
     const std::size_t slash = detail.rfind('/');
     std::string_view name = slash == std::string_view::npos ? detail : detail.substr(slash + 1);
@@ -196,9 +218,10 @@ class CrashPointControl {
     return std::string(name);
   }
 
-  static void OnCrashPoint(const char* site, std::string_view detail) {
+  static int OnCrashPoint(const char* site, std::string_view detail) {
     Action action = Action::Kill;
     std::int64_t delay_ms = 0;
+    int error_code = 0;
     bool fire = false;
     std::uint64_t pass = 0;
     {
@@ -217,6 +240,7 @@ class CrashPointControl {
           fire = true;
           action = state.rule.action;
           delay_ms = state.rule.delay_ms;
+          error_code = state.rule.error_code;
           if (state.rule.nth != 0) {
             state.armed = false;
           }
@@ -224,17 +248,24 @@ class CrashPointControl {
       }
     }
     if (!fire) {
-      return;
+      return 0;
     }
     if (action == Action::Delay) {
       std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
-      return;
+      return 0;
+    }
+    if (action == Action::Fail) {
+      const std::string line = "microide crash-point: failed " + std::string(site) + " (" + std::string(detail) +
+                               ") with errno " + std::to_string(error_code) + ", pass " + std::to_string(pass) + "\n";
+      (void)!::write(STDERR_FILENO, line.data(), line.size());
+      return error_code;
     }
     const std::string line = "microide crash-point: killed at " + std::string(site) + " (" +
                              std::string(detail) + "), pass " + std::to_string(pass) + "\n";
     (void)!::write(STDERR_FILENO, line.data(), line.size());
     (void)FlushCoverageProfile();
     ::kill(::getpid(), SIGKILL);
+    return 0;
   }
 };
 
