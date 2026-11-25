@@ -15,6 +15,7 @@
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/services/CompareMergeService.h"
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/services/TerminalPanelService.h"
 #include "util/StringUtil.h"
@@ -349,7 +350,7 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
           .request_overlay_redraw = [this]() { RequestPreparedFrame(); },
           .request_frame = [this]() { RequestPreparedFrame(); },
           .request_window_redraw = [this]() { RequestPreparedFrame(); },
-          .refresh_compare_picker = [this]() { RefreshComparePicker(); },
+          .refresh_compare_picker = [this]() { MakeCompareMergeService().interactions().RefreshPicker(); },
           .refresh_quick_pick = [this]() { quick_pick_service_.Refilter(); },
           .refresh_command_palette = [this]() { RefreshCommandPalette(); },
           .refresh_buffer_search = [this]() { RefreshBufferSearch(); },
@@ -438,7 +439,7 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
               [this](std::string_view text) { return WriteClipboardText(text); },
           .write_primary_selection_text =
               [this](std::string_view text) { return WritePrimarySelectionText(text); },
-          .read_clipboard_text = [this]() { return ReadClipboardText(); },
+          .read_clipboard_text = [this]() { return clipboard_.Read(); },
           .store_clipboard_image = [this]() -> std::optional<std::filesystem::path> {
             const std::optional<std::string> png = clipboard_.ReadPng();
             if (!png.has_value()) {

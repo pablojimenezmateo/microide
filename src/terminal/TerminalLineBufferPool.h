@@ -78,7 +78,6 @@ class TerminalLineBufferPool {
   }
 
   std::size_t size() const noexcept { return buffers_.size(); }
-  std::size_t pooled_bytes() const noexcept { return pooled_bytes_; }
 
  private:
   std::vector<std::vector<TerminalCell>> buffers_;

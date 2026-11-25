@@ -120,8 +120,6 @@ struct BranchReviewHunkContentKey {
 
 BranchReviewHunkContentKey ComputeBranchReviewHunkContentKey(const CompareModel& model,
                                                              const CompareHunk& hunk);
-BranchReviewHunkContentKey ComputeBranchReviewHunkContentKey(const CompareModel& model,
-                                                             int hunk_index);
 
 // One value for a file's diff: its hunks' content hashes folded in order. Two
 // diffs with the same changed text agree whatever the line numbers.

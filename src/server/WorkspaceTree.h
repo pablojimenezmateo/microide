@@ -43,7 +43,7 @@ class WorkspaceTree {
     // 0 = min(hardware threads, 8).
     unsigned hash_threads = 0;
     // A file whose mtime or ctime is this recent is hashed on every manifest rather
-    // than trusted from the cache (project::remote::IsRacySignature). Tests shrink it.
+    // than trusted from the cache (project::remote::kRacySignatureWindowNs). Tests shrink it.
     std::int64_t racy_window_ns = project::remote::kRacySignatureWindowNs;
     // Where the hash cache persists between server processes ("" = memory only): an
     // on-demand server exits when idle, and without this every reconnect after

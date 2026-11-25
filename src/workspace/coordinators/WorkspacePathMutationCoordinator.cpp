@@ -9,6 +9,7 @@
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/shell/WorkspaceShell.h"
 #include "util/InvokeIfSet.h"
+#include "workspace/services/SidebarService.h"
 
 namespace microide::workspace {
 
@@ -274,10 +275,10 @@ PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator(EditorTabSer
               [this](NotificationService::Tone tone, std::string message) {
                 Notify(tone, std::move(message));
               },
-          .discard_all_git_sidebar_entries = [this]() { return DiscardAllGitSidebarEntries(); },
+          .discard_all_git_sidebar_entries = [this]() { return MakeSidebarService().DiscardAllGitEntries(); },
           .discard_git_sidebar_entry =
               [this](std::size_t index, const std::filesystem::path& expected_path) {
-                return DiscardGitSidebarEntry(index, expected_path);
+                return MakeSidebarService().DiscardGitEntry(index, expected_path);
               },
           .confirm_discard_patch_preview =
               [this]() { return patch_apply_service_.ConfirmPendingDiscard(); },
@@ -286,7 +287,7 @@ PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator(EditorTabSer
           .refresh_project_files = [this]() { RefreshProjectFiles(); },
           .request_automatic_git_sidebar_refresh =
               [this]() { RequestAutomaticGitSidebarRefresh(); },
-          .reveal_selected_tree_sidebar_line = [this]() { RevealSelectedTreeSidebarLine(); },
+          .reveal_selected_tree_sidebar_line = [this]() { MakeSidebarService().RevealSelectedTreeLine(); },
           .refresh_project_search = [this]() { RefreshProjectSearch(); },
           .refresh_problems_sidebar = [this]() { RefreshProblemsSidebar(); },
           .queue_editor_hover_refresh = [this]() { QueueEditorHoverRefresh(); },

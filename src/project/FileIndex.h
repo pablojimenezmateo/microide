@@ -193,7 +193,6 @@ class FileIndex {
   static ProjectFile ToProjectFile(const platform::IndexFileEntry& entry,
                                    const std::filesystem::path& normalized_relative_path);
   void EnsureFresh(ProjectFileScanMode mode) const;
-  bool UpsertProjectFileLocked(const ProjectFile& file);
   bool RemoveProjectFileLocked(const std::filesystem::path& relative_path);
   // Remove every directory in `relative_dirs`, and every indexed file beneath
   // them, in ONE compaction pass. Used for recursive deletions (a watched/nested

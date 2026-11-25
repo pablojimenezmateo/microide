@@ -42,10 +42,6 @@ inline constexpr float kGutterFoldRightPad = 6.0f;
 inline constexpr float kGutterFoldHitWidth = 18.0f;
 inline constexpr float kGutterFoldColumnWidth = kGutterFoldMarkerSize + kGutterFoldRightPad;
 
-inline constexpr float kGutterFoldColumnLeft(float gutter_x, float gutter_width) {
-  return gutter_x + gutter_width - kGutterFoldColumnWidth;
-}
-
 inline constexpr float kGutterFoldHitLeft(float gutter_x, float gutter_width) {
   return gutter_x + gutter_width - kGutterFoldHitWidth;
 }

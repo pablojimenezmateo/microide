@@ -241,14 +241,6 @@ editor::TextViewport* TabCoordinator::ActiveEditorViewport() {
   return &editor_tab->viewport;
 }
 
-const editor::TextViewport* TabCoordinator::ActiveEditorViewport() const {
-  const auto* editor_tab = ActiveEditorTab();
-  if (editor_tab == nullptr) {
-    return &state_.focused_group().welcome_surface.viewport;
-  }
-  return &editor_tab->viewport;
-}
-
 void TabCoordinator::Activate(std::size_t index) {
   if (index >= state_.focused_group().open_tabs.size()) {
     return;

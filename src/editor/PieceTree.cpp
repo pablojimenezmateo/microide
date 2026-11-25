@@ -903,11 +903,6 @@ void PieceTree::EraseLine(std::size_t index) {
   ReplaceLineRange(index, 1, std::span<const std::string>{});
 }
 
-void PieceTree::EraseLineRange(std::size_t begin, std::size_t end) {
-  if (begin >= end) return;
-  ReplaceLineRange(begin, end - begin, std::span<const std::string>{});
-}
-
 void PieceTree::PushBackLine(const std::string& value) {
   ReplaceLineRange(line_count_, 0, std::span<const std::string>(&value, 1));
 }

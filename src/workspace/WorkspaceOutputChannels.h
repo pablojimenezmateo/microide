@@ -60,11 +60,6 @@ class WorkspaceOutputChannels {
                                                            std::size_t index,
                                                            const std::filesystem::path& resolved_path) const;
   void Clear(std::string_view id);
-  // Bumps on every change to any channel's lines (append, clear, removal). The
-  // output panel draws a channel's tail; frame prep repaints the panel when this
-  // moved, since the producers -- a debug adapter's output, an LSP log, a plugin
-  // -- append from callbacks that know nothing about the panel.
-  std::uint64_t ContentRevision() const { return content_revision_; }
   // Entry `index` of a channel is serial FirstEntrySerial(id) + index. An entry's
   // text never changes once appended and a serial is never reused within a
   // channel (trimming advances the base, clearing restarts it past every serial
@@ -105,7 +100,6 @@ class WorkspaceOutputChannels {
   std::map<std::string, Channel, std::less<>> channels_;
   std::uint64_t touch_counter_ = 0;
   std::uint64_t next_entry_serial_ = 1;  // above every serial issued, in any channel
-  std::uint64_t content_revision_ = 0;
   std::size_t evicted_channel_count_ = 0;
   mutable bool channel_infos_dirty_ = true;
   mutable std::vector<ChannelInfo> channel_infos_;

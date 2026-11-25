@@ -227,16 +227,6 @@ bool PluginSurfaceStore::ApplyRasterSize(std::uint64_t content_hash, int width, 
   return changed;
 }
 
-void PluginSurfaceStore::Clear() {
-  if (by_owner_.empty()) {
-    return;
-  }
-  by_owner_.clear();
-  anchored_by_path_.clear();
-  dismissed_previews_.clear();
-  ++revision_;
-}
-
 const SurfaceContent* PluginSurfaceStore::Find(std::string_view owner,
                                                std::string_view surface_id) const {
   const auto owner_it = by_owner_.find(owner);

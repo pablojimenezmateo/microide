@@ -292,7 +292,7 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
           .request_git_refresh = [this]() { RequestGitSidebarRefresh(); },
           .consume_git_refresh_snapshot =
               [this](GitSidebarState::RefreshSnapshot* snapshot) {
-                const bool consumed = ConsumePendingGitSidebarRefreshSnapshot(snapshot);
+                const bool consumed = git_repository_service_.ConsumePendingSidebarSnapshot(snapshot);
                 if (consumed) {
                   InvalidateStaleMergeTabs();
                   // A commit that succeeded and then asked for this refresh wants
@@ -474,18 +474,6 @@ void WorkspaceShell::ShowTestsSidebar() {
   MakeSidebarService().ShowTests();
 }
 
-void WorkspaceShell::CloseSidebar() {
-  MakeSidebarService().Close();
-}
-
-void WorkspaceShell::ToggleSidebar() {
-  MakeSidebarService().Toggle();
-}
-
-void WorkspaceShell::RestorePreviousSidebar() {
-  MakeSidebarService().RestorePrevious();
-}
-
 void WorkspaceShell::RefreshProjectFiles() {
   MakeSidebarService().RefreshProjectFiles();
 }
@@ -559,11 +547,6 @@ void WorkspaceShell::RequestAutomaticGitSidebarRefresh() {
                                               : GitSidebarRefreshScope::StatusOnly);
 }
 
-bool WorkspaceShell::ConsumePendingGitSidebarRefreshSnapshot(
-    GitSidebarState::RefreshSnapshot* snapshot) {
-  return git_repository_service_.ConsumePendingSidebarSnapshot(snapshot);
-}
-
 void WorkspaceShell::RefreshGitSidebar() {
   RequestGitSidebarRefresh();
 }
@@ -591,10 +574,6 @@ void WorkspaceShell::ConsumeGitSidebarRefresh() {
 
 bool WorkspaceShell::RefreshProblemsSidebar() {
   return MakeSidebarService().RefreshProblems();
-}
-
-bool WorkspaceShell::RefreshTestsSidebar() {
-  return MakeSidebarService().RefreshTests();
 }
 
 bool WorkspaceShell::RefreshTestsSidebarState() {
@@ -676,60 +655,12 @@ bool WorkspaceShell::RefreshTestsSidebarState() {
     context_.current_project_state.sidebar.tests.selected_index = 0;
   }
 
-  RevealSelectedTestsSidebarLine();
+  MakeSidebarService().RevealSelectedTestsLine();
   if (context_.current_project_state.sidebar.visible &&
       ActiveSidebarMode() == SidebarMode::Tests) {
     RequestPreparedFrame();
   }
   return !context_.current_project_state.sidebar.tests.entries.empty();
-}
-
-bool WorkspaceShell::RefreshPluginSidebar() {
-  return MakeSidebarService().RefreshPlugin();
-}
-
-void WorkspaceShell::RevealSelectedGitSidebarLine() {
-  MakeSidebarService().RevealSelectedGitLine();
-}
-
-void WorkspaceShell::RevealSelectedProblemsSidebarLine() {
-  MakeSidebarService().RevealSelectedProblemsLine();
-}
-
-void WorkspaceShell::RevealSelectedTestsSidebarLine() {
-  MakeSidebarService().RevealSelectedTestsLine();
-}
-
-void WorkspaceShell::RevealSelectedTreeSidebarLine() {
-  MakeSidebarService().RevealSelectedTreeLine();
-}
-
-void WorkspaceShell::RevealSelectedPluginSidebarLine() {
-  MakeSidebarService().RevealSelectedPluginLine();
-}
-
-void WorkspaceShell::MoveGitSidebarSelection(int delta) {
-  MakeSidebarService().MoveGitSelection(delta);
-}
-
-void WorkspaceShell::MoveProblemsSidebarSelection(int delta) {
-  MakeSidebarService().MoveProblemsSelection(delta);
-}
-
-void WorkspaceShell::MoveTestsSidebarSelection(int delta) {
-  MakeSidebarService().MoveTestsSelection(delta);
-}
-
-void WorkspaceShell::MovePluginSidebarSelection(int delta) {
-  MakeSidebarService().MovePluginSelection(delta);
-}
-
-bool WorkspaceShell::OpenSelectedProblemSidebarItem() {
-  return MakeSidebarService().OpenProblemItem();
-}
-
-bool WorkspaceShell::OpenSelectedTestSidebarItem() {
-  return MakeSidebarService().OpenTestItem();
 }
 
 bool WorkspaceShell::OpenSelectedPluginSidebarItem() {
@@ -738,10 +669,6 @@ bool WorkspaceShell::OpenSelectedPluginSidebarItem() {
 
 bool WorkspaceShell::ToggleSelectedPluginSidebarItem() {
   return MakeSidebarService().TogglePluginItem();
-}
-
-bool WorkspaceShell::RunSelectedTestSidebarItem() {
-  return MakeSidebarService().RunTestItem();
 }
 
 bool WorkspaceShell::CanStageAllGitSidebarEntries() const {
@@ -761,33 +688,12 @@ bool WorkspaceShell::CanDiscardAllGitSidebarEntries() const {
   return const_cast<WorkspaceShell*>(this)->MakeSidebarService().CanDiscardAllGitEntries();
 }
 
-bool WorkspaceShell::StageAllGitSidebarEntries() {
-  return MakeSidebarService().StageAllGitEntries();
-}
-
-void WorkspaceShell::OpenDiscardAllGitSidebarPrompt() {
-  MakeSidebarService().OpenDiscardAllGitPrompt();
-}
-
-bool WorkspaceShell::DiscardAllGitSidebarEntries() {
-  return MakeSidebarService().DiscardAllGitEntries();
-}
-
 bool WorkspaceShell::StageGitSidebarEntry(std::size_t entry_index) {
   return MakeSidebarService().StageGitEntry(entry_index);
 }
 
-bool WorkspaceShell::DiscardGitSidebarEntry(std::size_t entry_index,
-                                           const std::optional<std::filesystem::path>& expected_path) {
-  return MakeSidebarService().DiscardGitEntry(entry_index, expected_path);
-}
-
 bool WorkspaceShell::DispatchGitSidebarAction(GitSidebarActionId action, std::size_t entry_index) {
   return MakeSidebarService().DispatchGitSidebarAction(action, entry_index);
-}
-
-void WorkspaceShell::ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path) {
-  MakeSidebarService().ReconcileOpenTabsAfterPathDiscard(path);
 }
 
 }  // namespace microide::workspace

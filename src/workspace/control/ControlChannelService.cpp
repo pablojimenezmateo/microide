@@ -364,8 +364,6 @@ void ControlChannelService::Stop() {
 
 bool ControlChannelService::IsRunning() const { return server_.IsRunning(); }
 
-std::size_t ControlChannelService::ConnectionCount() const { return server_.ConnectionCount(); }
-
 void ControlChannelService::ConsumeControlCallbacks() {
   // The I/O thread re-binds the listener when the advertised socket vanishes
   // mid-run; re-publish the discovery descriptor (which vanished with it) so

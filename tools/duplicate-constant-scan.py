@@ -48,7 +48,6 @@ ACCEPTED_DUPLICATES = {
     "kHighBits": "SWAR masks, independently obvious",
     "kLowOnes": "same",
     "kFileScheme": "the literal \"file://\" in two unrelated parsers",
-    "kNoFootprint": "size_t sentinel, independently obvious",
     "kMaxHoverBytes": "plugin vs LSP hover ceilings, deliberately equal but separately owned",
     "kMaxSignatures": "same",
     "kMaxQueuedBytes": "DAP and LSP client queues, separately tuned",

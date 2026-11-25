@@ -243,7 +243,6 @@ class LspService {
 
  private:
   ProjectWorkspaceState& CurrentProjectState();
-  const ProjectWorkspaceState& CurrentProjectState() const;
 
   // Shared preamble for the two didChange paths: resolve the server for `viewport`,
   // compute its document URI once, capture whether the document was already open

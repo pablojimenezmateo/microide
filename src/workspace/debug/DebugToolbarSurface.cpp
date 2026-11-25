@@ -66,7 +66,7 @@ std::string_view DebugToolbarButtonTooltip(DebugToolbarButton button, bool sessi
 }
 
 bool WorkspaceShell::DebugToolbarVisible() const {
-  return DebugEnabled() && IsDebugSessionActive();
+  return DebugEnabled() && debug_service_.IsSessionActive();
 }
 
 std::optional<float> WorkspaceShell::DebugToolbarAvoidBelowY(const WorkspaceLayout& layout) const {
@@ -203,7 +203,7 @@ bool WorkspaceShell::HandleDebugToolbarButtonDown(const SDL_Event& event,
     return false;
   }
   const DebugToolbarLayout tb = ComputeDebugToolbarLayout(
-      ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
+      ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout), debug_service_.SupportsStepBack());
   const float x = static_cast<float>(event.button.x);
   const float y = static_cast<float>(event.button.y);
   if (!Contains(tb.widget, x, y)) {

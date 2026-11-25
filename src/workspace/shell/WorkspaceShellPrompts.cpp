@@ -31,15 +31,6 @@ PromptSurfaceService& WorkspaceShell::MakePromptSurfaceService() {
   return *glue_->prompt_surface_service;
 }
 
-void WorkspaceShell::ShowDirtyPromptForTab(std::size_t index) {
-  MakePromptSurfaceService().ShowDirtyPromptForTab(index);
-}
-
-void WorkspaceShell::ShowDirtyPromptForTabs(std::vector<std::size_t> target_tabs,
-                                            std::vector<std::size_t> dirty_tabs) {
-  MakePromptSurfaceService().ShowDirtyPromptForTabs(std::move(target_tabs), std::move(dirty_tabs));
-}
-
 void WorkspaceShell::ShowDirtyPromptForProject(std::size_t index) {
   if (index >= context_.project_catalog.entries.size()) {
     return;
@@ -189,10 +180,6 @@ void WorkspaceShell::OpenPromptSurface(PromptSurfaceState::Action action,
   if (action == PromptSurfaceState::Action::RemoteFolder) {
     context_.prompts.surface.completions = MakeRemoteHostService().KnownHosts();
   }
-}
-
-void WorkspaceShell::OpenExternalUrlPrompt(std::string url) {
-  MakePromptSurfaceService().OpenExternalUrlPrompt(std::move(url));
 }
 
 void WorkspaceShell::DismissPromptSurface(bool restore_focus) {

@@ -3142,7 +3142,7 @@ void WorkspaceShell::PrepareHoverFrame(FramePrepPass& pass) {
         toolbar.visible = true;
         toolbar.stopped = IsDebugSessionStopped();
         toolbar.layout = ComputeDebugToolbarLayout(ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout),
-                                                   DebugSupportsReverse());
+                                                   debug_service_.SupportsStepBack());
         for (std::size_t i = 0; i < toolbar.layout.button_count; ++i) {
           toolbar.pointer_over[i] = PointerOver(toolbar.layout.buttons[i]);
         }

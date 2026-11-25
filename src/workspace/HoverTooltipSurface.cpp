@@ -301,7 +301,7 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
   //     before/after invalidation as every other chrome tooltip.
   if (!found && DebugToolbarVisible()) {
     const DebugToolbarLayout tb = ComputeDebugToolbarLayout(
-        ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
+        ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout), debug_service_.SupportsStepBack());
     if (Contains(tb.widget, x, y)) {
       const bool session_stopped = IsDebugSessionStopped();
       for (std::size_t i = 0; i < tb.button_count && !found; ++i) {

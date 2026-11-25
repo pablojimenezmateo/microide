@@ -41,37 +41,10 @@ std::string DebugConsoleChannelLabel(const std::string& session_label) {
 }
 }  // namespace
 
-bool WorkspaceShell::HasActiveCompletionProvider() const {
-  return lsp_service_.HasActiveCompletionProvider();
-}
-
-bool WorkspaceShell::HasActiveCodeActionProvider() const {
-  return lsp_service_.HasActiveCodeActionProvider();
-}
-
-bool WorkspaceShell::HasActiveDefinitionProvider() const {
-  return lsp_service_.HasActiveDefinitionProvider();
-}
-
-bool WorkspaceShell::HasActiveReferencesProvider() const {
-  return lsp_service_.HasActiveReferencesProvider();
-}
-
 LspManager& WorkspaceShell::CurrentLspManager() { return lsp_service_.CurrentLspManager(); }
 
-const LspManager& WorkspaceShell::CurrentLspManager() const {
-  return lsp_service_.CurrentLspManager();
-}
-
-LspManager& WorkspaceShell::EnsureProjectLspManager(ProjectWorkspaceState& state) {
-  return lsp_service_.EnsureProjectLspManager(state);
-}
 
 void WorkspaceShell::ConsumeLspCallbacks() { lsp_service_.ConsumeLspCallbacks(); }
-
-LspClient::ReadinessSnapshot WorkspaceShell::ActiveLspReadinessSnapshot(bool ensure_started) {
-  return lsp_service_.ActiveLspReadinessSnapshot(ensure_started);
-}
 
 const LspClient::ReadinessSnapshot& WorkspaceShell::MenuLspReadiness() const {
   // Frame 0 is "no frame prepared yet", so it can never satisfy the memo: the
@@ -291,11 +264,6 @@ void WorkspaceShell::PublishLspDiagnostics(ProjectWorkspaceState& state, std::st
   lsp_service_.PublishLspDiagnostics(state, std::move(uri), encoding, std::move(diagnostics));
 }
 
-void WorkspaceShell::SyncLspForActiveEditableChange(const std::vector<std::string>& before_lines,
-                                                    const std::vector<std::string>& after_lines) {
-  lsp_service_.SyncLspForActiveEditableChange(before_lines, after_lines);
-}
-
 void WorkspaceShell::SyncLspForActiveEditableLastChange() {
   lsp_service_.SyncLspForActiveEditableLastChange();
 }
@@ -304,9 +272,6 @@ void WorkspaceShell::SyncLspForActiveEditableLastChange() {
 
 DapManager& WorkspaceShell::CurrentDapManager() { return debug_service_.CurrentDapManager(); }
 
-const DapManager& WorkspaceShell::CurrentDapManager() const {
-  return debug_service_.CurrentDapManager();
-}
 
 DapManager& WorkspaceShell::EnsureProjectDapManager(ProjectWorkspaceState& state) {
   return debug_service_.EnsureProjectDapManager(state);
@@ -566,12 +531,10 @@ void WorkspaceShell::StopDebugging() {
   const bool last_session = debug_service_.SessionCount() <= 1;
   debug_service_.StopDebugging();
   if (last_session) {
-    CloseDebugPane();
+    MakeDebugPaneService().Close();
   }
   RequestPreparedFrame();
 }
-
-bool WorkspaceShell::IsDebugSessionActive() const { return debug_service_.IsSessionActive(); }
 
 bool WorkspaceShell::IsDebugSessionStopped() const {
   return debug_service_.SessionState() == DebugSession::State::Stopped;
@@ -580,8 +543,6 @@ bool WorkspaceShell::IsDebugSessionStopped() const {
 bool WorkspaceShell::DebugEnabled() const {
   return SettingFlagEnabled(GetSettingValue("debug.enabled"));
 }
-
-bool WorkspaceShell::DebugSupportsReverse() const { return debug_service_.SupportsStepBack(); }
 
 void WorkspaceShell::AppendDebugConsoleOutput(int session_id, const std::string& label,
                                               const dap_protocol::DapOutputEvent& output) {

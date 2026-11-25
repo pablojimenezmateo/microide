@@ -23,6 +23,7 @@
 #include "workspace/coordinators/WorkspaceMenuCoordinator.h"
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceProjectPresentation.h"
+#include "workspace/services/SidebarService.h"
 
 namespace microide::workspace {
 
@@ -526,7 +527,7 @@ bool WorkspaceShell::InitializeCurrentProject(const project::ProjectId& id,
       ApplyDetectedIndentOnOpen(startup_view);
       context_.current_project_state.focused_group().welcome_surface.viewport = startup_view;
       context_.current_project_state.directory_tree.SelectPath(candidate);
-      RevealSelectedTreeSidebarLine();
+      MakeSidebarService().RevealSelectedTreeLine();
       context_.current_project_state.focused_group().open_tabs.push_back(TabEntry{
           .kind = TabEntry::Kind::Editor,
           .path = candidate,

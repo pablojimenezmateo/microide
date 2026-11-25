@@ -137,15 +137,6 @@ BranchReviewHunkContentKey ComputeBranchReviewHunkContentKey(const CompareModel&
   return key;
 }
 
-BranchReviewHunkContentKey ComputeBranchReviewHunkContentKey(const CompareModel& model,
-                                                             const int hunk_index) {
-  if (hunk_index < 0 || static_cast<std::size_t>(hunk_index) >= model.hunks.size()) {
-    return BranchReviewHunkContentKey{};
-  }
-  return ComputeBranchReviewHunkContentKey(model,
-                                           model.hunks[static_cast<std::size_t>(hunk_index)]);
-}
-
 std::uint64_t DiffContentFingerprint(const CompareModel& model) {
   std::uint64_t fingerprint = 0xcbf29ce484222325ULL;
   for (const CompareHunk& hunk : model.hunks) {

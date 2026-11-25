@@ -146,11 +146,6 @@ WorkspaceShell::ProjectWorkspaceState* WorkspaceShell::ProjectCatalogEntry(std::
   return context_.ProjectCatalogEntry(index);
 }
 
-const WorkspaceShell::ProjectWorkspaceState* WorkspaceShell::ProjectCatalogEntry(
-    std::size_t index) const {
-  return context_.ProjectCatalogEntry(index);
-}
-
 const std::filesystem::path& WorkspaceShell::ProjectCatalogRoot(std::size_t index) const {
   return context_.ProjectCatalogRoot(index);
 }

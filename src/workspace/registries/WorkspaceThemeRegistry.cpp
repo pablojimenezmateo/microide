@@ -6,11 +6,6 @@
 
 namespace microide::workspace {
 
-void WorkspaceThemeRegistry::Clear() {
-  entries_.clear();
-  cache_.clear();
-}
-
 void WorkspaceThemeRegistry::Rebuild(const plugin::PluginHost& host) {
   entries_.clear();
   cache_.clear();

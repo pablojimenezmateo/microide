@@ -74,7 +74,4 @@ void MatchSyntaxTrees(const DiffSyntaxTree& lhs,
 // of two EQUAL nodes is called unchanged changes. MatchSyntaxTrees runs it.
 void FixStructuralSliders(const DiffSyntaxTree& lhs, const DiffSyntaxTree& rhs, StructuralMatch& match);
 
-// The flat fallback on its own: an LCS over the two token sequences' texts.
-void MatchTokensFlat(const DiffSyntaxTree& lhs, const DiffSyntaxTree& rhs, StructuralMatch& match);
-
 }  // namespace microide::compare

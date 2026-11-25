@@ -12,6 +12,7 @@
 #include "workspace/coordinators/WorkspaceMenuCoordinator.h"
 #include "workspace/coordinators/WorkspacePanelMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceSidebarMouseCoordinator.h"
+#include "workspace/services/CompareMergeService.h"
 #include "workspace/services/SidebarService.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 #include "workspace/shell/WorkspaceShell.h"
@@ -703,7 +704,7 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
           .settings_picker_move = [this](int delta) { MoveSettingsFontPicker(delta); },
           .settings_picker_reset_highlight =
               [this]() { settings_overlay_service_.ResetPickerHighlight(); },
-          .close_sidebar = [this]() { CloseSidebar(); },
+          .close_sidebar = [this]() { MakeSidebarService().Close(); },
           .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
           .activate_overlay_selection =
               [this]() {
@@ -742,7 +743,7 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
               },
           .action_enabled = [this](ActionId id) { return MakeActionAvailability().IsEnabled(id); },
           .complete_command_palette_query = [this]() { CompleteCommandPaletteQuery(); },
-          .move_compare_picker_selection = [this](int delta) { MoveComparePickerSelection(delta); },
+          .move_compare_picker_selection = [this](int delta) { MakeCompareMergeService().interactions().MovePickerSelection(delta); },
           .current_workspace_layout = [this]() { return CurrentWorkspaceLayout(); },
           .compute_overlay_rect = [this](const SDL_FRect& rect) { return ComputeOverlayRect(rect); },
           .reveal_overlay_selection = [this](const SDL_FRect& rect) { RevealOverlaySelection(rect); },
@@ -768,10 +769,10 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
           .replace_all_project_search_matches = [this]() { RequestProjectSearchReplaceAll(); },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
-          .restore_previous_sidebar = [this]() { RestorePreviousSidebar(); },
+          .restore_previous_sidebar = [this]() { MakeSidebarService().RestorePrevious(); },
           .seed_buffer_search_from_project_search =
               [this]() { OpenBufferSearchFromProjectSearchResult(); },
-          .move_git_sidebar_selection = [this](int delta) { MoveGitSidebarSelection(delta); },
+          .move_git_sidebar_selection = [this](int delta) { MakeSidebarService().MoveGitSelection(delta); },
           .type_navigate_git_sidebar =
               [this](char typed, std::uint64_t now_ns) { return MakeSidebarService().TypeNavigateGit(typed, now_ns); },
           .dispatch_git_sidebar_action =
@@ -799,23 +800,23 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
               },
           .commit_body_write_clipboard_text =
               [this](std::string_view text) { return WriteClipboardText(text); },
-          .commit_body_read_clipboard_text = [this]() { return ReadClipboardText(); },
-          .move_problems_sidebar_selection = [this](int delta) { MoveProblemsSidebarSelection(delta); },
-          .open_selected_problem_sidebar_item = [this]() { return OpenSelectedProblemSidebarItem(); },
+          .commit_body_read_clipboard_text = [this]() { return clipboard_.Read(); },
+          .move_problems_sidebar_selection = [this](int delta) { MakeSidebarService().MoveProblemsSelection(delta); },
+          .open_selected_problem_sidebar_item = [this]() { return MakeSidebarService().OpenProblemItem(); },
           .refresh_problems_sidebar = [this]() { return RefreshProblemsSidebar(); },
-          .move_tests_sidebar_selection = [this](int delta) { MoveTestsSidebarSelection(delta); },
+          .move_tests_sidebar_selection = [this](int delta) { MakeSidebarService().MoveTestsSelection(delta); },
           .open_selected_test_sidebar_item =
-              [this]() { return OpenSelectedTestSidebarItem(); },
+              [this]() { return MakeSidebarService().OpenTestItem(); },
           .run_selected_test_sidebar_item =
-              [this]() { return RunSelectedTestSidebarItem(); },
-          .refresh_tests_sidebar = [this]() { return RefreshTestsSidebar(); },
-          .move_plugin_sidebar_selection = [this](int delta) { MovePluginSidebarSelection(delta); },
+              [this]() { return MakeSidebarService().RunTestItem(); },
+          .refresh_tests_sidebar = [this]() { return MakeSidebarService().RefreshTests(); },
+          .move_plugin_sidebar_selection = [this](int delta) { MakeSidebarService().MovePluginSelection(delta); },
           .open_selected_plugin_sidebar_item = [this]() { return OpenSelectedPluginSidebarItem(); },
           .toggle_plugin_sidebar_item = [this]() { return ToggleSelectedPluginSidebarItem(); },
           .end_selected_plugin_sidebar_item = [this]() { return MakeSidebarService().EndPluginItem(); },
-          .refresh_plugin_sidebar = [this]() { return RefreshPluginSidebar(); },
-          .reveal_selected_tree_sidebar_line = [this]() { RevealSelectedTreeSidebarLine(); },
-          .move_compare_selection = [this](int delta) { MoveCompareSelection(delta); },
+          .refresh_plugin_sidebar = [this]() { return MakeSidebarService().RefreshPlugin(); },
+          .reveal_selected_tree_sidebar_line = [this]() { MakeSidebarService().RevealSelectedTreeLine(); },
+          .move_compare_selection = [this](int delta) { MakeCompareMergeService().interactions().MoveCompareSelection(delta); },
           .jump_compare_hunk = [this](int delta) { JumpCompareHunk(delta); },
           .stage_compare_hunk = [this]() { StageCompareHunk(); },
           .stage_compare_selected_lines = [this]() { StageCompareSelectedLines(); },
@@ -824,7 +825,7 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
           .open_discard_compare_hunk_prompt = [this]() { OpenDiscardCompareHunkPrompt(); },
           .open_discard_compare_selected_lines_prompt =
               [this]() { OpenDiscardCompareSelectedLinesPrompt(); },
-          .open_working_file_from_compare = [this]() { OpenWorkingFileFromCompare(); },
+          .open_working_file_from_compare = [this]() { MakeCompareMergeService().interactions().OpenWorkingFileFromCompare(); },
           .active_compare_tab = [this]() { return ActiveCompareTab(); },
           .refresh_compare_tab_derived_state =
               [this](CompareTabState& compare_tab) { RefreshCompareTabDerivedState(compare_tab); },
@@ -874,7 +875,7 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
               },
           .move_merge_selection = [this](int delta) { MoveMergeSelection(delta); },
           .apply_merge_choice = [this](compare::MergeChoice choice) { ApplyMergeChoice(choice); },
-          .open_merge_result_file = [this]() { OpenMergeResultFile(); },
+          .open_merge_result_file = [this]() { MakeCompareMergeService().interactions().OpenMergeResultFile(); },
           .toggle_debug_variable_row =
               [this](std::size_t row) { debug_service_.ToggleVariableRow(row); },
           .begin_debug_variable_edit =

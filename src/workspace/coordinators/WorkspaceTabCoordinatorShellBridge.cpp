@@ -28,6 +28,7 @@
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/coordinators/WorkspaceTabCoordinator.h"
 #include "util/ErrorOut.h"
+#include "workspace/services/SidebarService.h"
 
 namespace microide::workspace {
 
@@ -98,7 +99,7 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
               [](const TabEntry::EditorTabState& editor_state) {
                 return EditorViewPath(editor_state);
               },
-          .reveal_selected_tree_sidebar_line = [this]() { RevealSelectedTreeSidebarLine(); },
+          .reveal_selected_tree_sidebar_line = [this]() { MakeSidebarService().RevealSelectedTreeLine(); },
           .reveal_active_compare_selection = [this]() { RevealActiveCompareSelection(); },
           .reveal_active_merge_selection = [this]() { RevealActiveMergeSelection(); },
           .ensure_active_tab_visible = [this]() { tab_strip_chrome_.EnsureActiveTabVisible(); },
@@ -922,10 +923,6 @@ bool WorkspaceShell::ReloadCleanEditorTabsForPath(const std::filesystem::path& p
   return MakeEditorTabService().ReloadCleanEditorTabsForPath(path, echo_guard);
 }
 
-bool WorkspaceShell::OpenUntitledTab() {
-  return MakeEditorTabService().OpenUntitled();
-}
-
 bool WorkspaceShell::SplitEditorGroup(EditorSplitOrientation orientation) {
   return MakeEditorTabService().SplitEditorGroup(orientation);
 }
@@ -1054,10 +1051,6 @@ void WorkspaceShell::OpenFileAtLocation(const std::filesystem::path& path,
   if (viewport != nullptr && util::SameAsNormalizedPath(viewport->path(), normalized_path)) {
     viewport->JumpCursorTo(line, column);
   }
-}
-
-bool WorkspaceShell::ReopenActiveTab() {
-  return MakeEditorTabService().ReopenActive();
 }
 
 }  // namespace microide::workspace

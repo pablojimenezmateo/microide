@@ -560,15 +560,6 @@ void CompareInteractionCoordinator::MoveMergeSelection(int delta) {
   operations_.request_frame();
 }
 
-void CompareInteractionCoordinator::ScrollMergeColumns(int delta) {
-  MergeTabState* merge_tab = operations_.active_merge_tab();
-  if (merge_tab == nullptr || delta == 0) {
-    return;
-  }
-  operations_.scroll_merge_columns(*merge_tab, delta);
-  operations_.request_frame();
-}
-
 void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice) {
   MergeTabState* merge_tab = operations_.active_merge_tab();
   if (merge_tab == nullptr || merge_tab->conflicts.empty() ||

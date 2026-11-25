@@ -13,6 +13,7 @@
 #include "workspace/WorkspaceUiText.h"
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
+#include "workspace/services/CompareMergeService.h"
 
 
 namespace microide::workspace {
@@ -314,7 +315,7 @@ void WorkspaceShell::RevealOverlaySelection(const SDL_FRect& overlay) {
 bool WorkspaceShell::ActivateOverlaySelection() {
   switch (context_.current_project_state.overlay.mode) {
     case OverlayMode::CommitPicker:
-      OpenSelectedCompareCommit();
+      MakeCompareMergeService().interactions().OpenSelectedCommit();
       // Dismiss the picker so it does not stay painted on top of the comparison it
       // just opened (matches the FileFinder / BufferSearch activation paths below).
       DismissOverlay(true);

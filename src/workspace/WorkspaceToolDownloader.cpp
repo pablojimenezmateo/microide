@@ -151,16 +151,6 @@ std::optional<std::filesystem::path> ToolDownloader::Download(const std::string&
     return std::nullopt;
   }
 
-  const std::uintmax_t total_bytes = std::filesystem::file_size(*source_path, error);
-  if (on_progress_) {
-    on_progress_(DownloadProgress{
-        .tool_id = tool_id,
-        .bytes_downloaded = 0,
-        .total_bytes = error ? -1 : static_cast<std::int64_t>(total_bytes),
-        .complete = false,
-    });
-  }
-
   // Copy to a temp sibling, verify the hash there, then atomically rename into
   // place. Writing the final path directly and verifying afterwards left a
   // partial/unverified executable at cached_path on a crash or failed hash — one
@@ -199,15 +189,6 @@ std::optional<std::filesystem::path> ToolDownloader::Download(const std::string&
     return std::nullopt;
   }
 
-  if (on_progress_) {
-    const std::uintmax_t final_bytes = std::filesystem::file_size(cached_path, error);
-    on_progress_(DownloadProgress{
-        .tool_id = tool_id,
-        .bytes_downloaded = error ? 0 : static_cast<std::int64_t>(final_bytes),
-        .total_bytes = error ? -1 : static_cast<std::int64_t>(final_bytes),
-        .complete = true,
-    });
-  }
   return cached_path;
 }
 

@@ -1193,7 +1193,6 @@ class TextViewport {
   // Shared by the word/line selection verbs, which each open-coded it.
   void SelectOnCursorLine(std::size_t start_column, std::size_t end_column);
   void SelectRangeForExpansion(const SelectionRange& range);
-  void ClampCursorColumn();
   void ClampScrollState();
   void EnsureCursorVisible();
   // Single choke point for primary-caret navigation. Sets the primary caret,
@@ -1441,8 +1440,6 @@ class TextViewport {
   // Number of visual rows. O(1) in either path; in trivial mode this is the
   // document line count (less hidden lines).
   std::size_t WrappedRowCount() const;
-  // Document line for the row's offset table; identity in trivial mode.
-  std::size_t WrappedLineRowOffset(std::size_t line_index) const;
   // Full visual width of a logical line, read off the wrapped-row table: a line's
   // LAST row ends exactly at its width. Lets a wrapped row be built without
   // measuring the whole line it belongs to.

@@ -56,14 +56,6 @@ void FunctionBreakpointStore::SetHitCondition(std::size_t index,
   revision_.Bump();
 }
 
-void FunctionBreakpointStore::Clear() {
-  if (breakpoints_.empty()) {
-    return;
-  }
-  breakpoints_.clear();
-  revision_.Bump();
-}
-
 void FunctionBreakpointStore::ApplyVerification(
     const std::vector<std::string>& requested_names,
     const std::vector<VerifiedFunctionBreakpoint>& results) {

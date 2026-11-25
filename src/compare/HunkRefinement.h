@@ -59,12 +59,11 @@ void RefineHunk(std::span<const std::string_view> left_lines,
                 const DiffLexState& right_entry = {});
 
 // One hunk's refinement as the model build reads it: the rows, and the novel
-// spans of each line. A view into storage it does not own (a HunkRefinement or
-// a HunkRefinementCache arena); valid until that storage next changes.
+// spans of each line. A view into storage it does not own (a HunkRefinementCache
+// arena); valid until that storage next changes.
 class HunkRefinementView {
  public:
   HunkRefinementView() = default;
-  explicit HunkRefinementView(const HunkRefinement& refinement);
   HunkRefinementView(std::span<const HunkRow> rows, std::span<const CompareTextSpan> spans,
                      std::span<const std::uint32_t> line_starts, std::uint32_t left_lines);
 
@@ -76,7 +75,6 @@ class HunkRefinementView {
  private:
   std::span<const CompareTextSpan> LineSpans(std::uint32_t slot) const;
 
-  const HunkRefinement* refinement_ = nullptr;
   std::span<const HunkRow> rows_;
   std::span<const CompareTextSpan> spans_;
   std::span<const std::uint32_t> line_starts_;  // left lines, then right, then the end

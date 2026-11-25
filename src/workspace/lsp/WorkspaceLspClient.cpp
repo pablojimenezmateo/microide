@@ -67,10 +67,6 @@ bool LspClient::Start(const platform::ProcessLauncher& launcher,
 
 bool LspClient::IsRunning() const { return impl_->PeerRunning(); }
 
-bool LspClient::IsInitializing() const {
-  return impl_->initializing.load(std::memory_order_acquire);
-}
-
 bool LspClient::IsInitialized() const {
   return impl_->initialized.load(std::memory_order_acquire);
 }
@@ -394,10 +390,6 @@ void LspClient::Shutdown() {
   impl_->WaitForShutdown();
 }
 
-bool LspClient::IsShuttingDown() const {
-  return impl_->shutting_down.load(std::memory_order_acquire);
-}
-
 bool LspClient::IsShutdownComplete() const { return impl_->IsShutdownComplete(); }
 
 void LspClient::SetMaxQueuedBytesForTesting(std::size_t bytes) {
@@ -418,12 +410,6 @@ void LspClient::EnableTestStubMode() {
   impl_->readiness_snapshot.state = ReadinessSnapshot::State::Ready;
   impl_->readiness_snapshot.message.clear();
   impl_->readiness_snapshot.indexed_count = 0;
-}
-
-void LspClient::DisableTestStubMode() {
-  std::lock_guard lock(impl_->mutex);
-  impl_->test_stub_mode.store(false, std::memory_order_release);
-  impl_->test_handlers.document_symbol = nullptr;
 }
 
 void LspClient::SetTestDocumentSymbolHandler(

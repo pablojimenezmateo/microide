@@ -395,12 +395,6 @@ bool TextViewportUndoHistory::TryCoalesceWithTop(const Entry& next, CoalesceHint
   return true;
 }
 
-void TextViewportUndoHistory::RecordEntryDirect(Entry entry) {
-  redo_stack_.clear();
-  EndCoalesceRun();
-  AppendUndoEntry(std::move(entry));
-}
-
 std::optional<TextViewportUndoHistory::Entry>
 TextViewportUndoHistory::FinishActiveGroup(ViewState after_state) {
   if (group_stack_.empty()) {

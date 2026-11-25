@@ -57,7 +57,6 @@ class FunctionBreakpointStore {
   // of range or unchanged. Bumps the revision on change.
   void SetCondition(std::size_t index, std::optional<std::string> condition);
   void SetHitCondition(std::size_t index, std::optional<std::string> hit_condition);
-  void Clear();
 
   bool Empty() const { return breakpoints_.empty(); }
   std::size_t Count() const { return breakpoints_.size(); }

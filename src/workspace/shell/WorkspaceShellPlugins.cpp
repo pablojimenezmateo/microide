@@ -457,7 +457,7 @@ void WorkspaceShell::ConsumeReloadResult(PluginReloadRequest request, bool clean
     util::StartupTrace::Scope plugin_sidebar_scope("RefreshPluginSidebar");
     util::PerformanceTrace::Scope perf_plugin_sidebar_scope(
         "WorkspaceShell::ReloadPluginsForCurrentProject::RefreshPluginSidebar");
-    RefreshPluginSidebar();
+    MakeSidebarService().RefreshPlugin();
   }
   if (ActiveSidebarMode() == SidebarMode::Git) {
     util::StartupTrace::Scope git_sidebar_scope("RefreshGitSidebar");
@@ -527,7 +527,7 @@ void WorkspaceShell::RefreshPluginSurfacesForReactivation() {
   RebuildPresentationRegistries();
   RefreshPluginEditorEventInterest();
   NormalizeSidebarViewSelection();
-  RefreshPluginSidebar();
+  MakeSidebarService().RefreshPlugin();
   if (ActiveSidebarMode() == SidebarMode::Git) {
     RefreshGitSidebar();
   }

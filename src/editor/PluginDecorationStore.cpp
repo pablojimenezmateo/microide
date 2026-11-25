@@ -287,14 +287,6 @@ bool PluginDecorationStore::ClearPathPrefix(const std::filesystem::path& path_pr
                                  [this](const std::string& path_key) { RebuildPath(path_key); });
 }
 
-void PluginDecorationStore::Clear() {
-  if (by_owner_.empty() && merged_by_path_.empty()) {
-    return;
-  }
-  by_owner_.clear();
-  merged_by_path_.clear();
-}
-
 const FileDecorations* PluginDecorationStore::FindByPathKey(std::string_view path_key) const {
   // Hot path: called per visible pane per frame with a precomputed key (see
   // NormalizedPathKey / TextViewport::path_key). Skip the lookup entirely when

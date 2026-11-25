@@ -279,10 +279,10 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
 
   lsp_event_type_ = register_wake("lsp");
   lsp_service_.SetWakeChannel(lsp_event_type_);
-  EnsureProjectLspManager(context_.current_project_state).SetWakeChannel(lsp_event_type_);
+  lsp_service_.EnsureProjectLspManager(context_.current_project_state).SetWakeChannel(lsp_event_type_);
   for (const auto& entry : context_.project_catalog.entries) {
     if (entry != nullptr) {
-      EnsureProjectLspManager(*entry).SetWakeChannel(lsp_event_type_);
+      lsp_service_.EnsureProjectLspManager(*entry).SetWakeChannel(lsp_event_type_);
     }
   }
 

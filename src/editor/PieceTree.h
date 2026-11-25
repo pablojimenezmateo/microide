@@ -159,7 +159,6 @@ class PieceTree {
   void SetLine(std::size_t index, const std::string& value);
   void InsertLine(std::size_t index, const std::string& value);
   void EraseLine(std::size_t index);
-  void EraseLineRange(std::size_t begin, std::size_t end);
   void PushBackLine(const std::string& value);
 
   // Total bytes of the logical document (lines joined by '\n').

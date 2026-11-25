@@ -278,8 +278,11 @@ void TestArchitectureFileSizes() {
              // 1512: four dead members (TabTextModel, the static DirtyEditorTabIndices,
              // CurrentFocusedEditorRedrawRect, CurrentMergeResultLineToBottomRect)
              // removed, paying for the action context's two operation members.
+             // 1428: 56 one-line forwarders to the sidebar, compare/merge, prompt, LSP,
+             // debug-pane and tab-mouse services inlined into their callers, and dead
+             // members removed.
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1512);
+                                                     1428);
            });
 
   AssertRuleResultsPass(results);

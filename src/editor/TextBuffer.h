@@ -207,10 +207,6 @@ class TextBuffer {
     tree_.EraseLine(index);
     InvalidateSnapshot();
   }
-  void EraseLineRange(std::size_t begin, std::size_t end) {
-    tree_.EraseLineRange(begin, end);
-    InvalidateSnapshot();
-  }
   void PushBackLine(const std::string& value) {
     tree_.PushBackLine(value);
     InvalidateSnapshot();

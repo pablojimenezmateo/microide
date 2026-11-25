@@ -679,31 +679,6 @@ std::size_t TextViewport::TextColumnAtVisualColumn(std::size_t line,
   return TextLayout::TextColumnForVisualColumn(text, visual_column, tab_size_);
 }
 
-void TextViewport::ClampCursorColumn() {
-  if (document_->lines.empty() || cursor_line_ >= document_->lines.size()) {
-    cursor_column_ = 0;
-    return;
-  }
-
-  if (soft_wrap_) {
-    // In soft-wrap mode preferred_column_ is stored *relative to the wrapped row
-    // start* (see PreferredColumnForCaret), so it cannot be fed straight into
-    // TextColumnForVisualColumn as an absolute column — that snapped the caret to
-    // near the start of the logical line on any continuation row. Resolve it to an
-    // absolute visual column for the caret's current row first (mirrors
-    // AdvanceCaretVertical).
-    const std::size_t row = CursorVisualRow();
-    const std::size_t target_visual =
-        ResolveSoftWrapCursorColumnForTargetRow(preferred_column_, row);
-    cursor_column_ = TextColumnAtVisualColumn(cursor_line_, target_visual);
-    caret_wrap_affinity_ = AffinityForRowLanding(row, target_visual);
-    caret_wrap_affinity_position_ = TextPosition{cursor_line_, cursor_column_};
-    return;
-  }
-
-  cursor_column_ = TextColumnAtVisualColumn(cursor_line_, preferred_column_);
-}
-
 void TextViewport::ClampScrollState() {
   // Same argument as the horizontal clamp below: this can only LOWER the offset,
   // and zero is the floor. Reading the visual row count to reach that conclusion

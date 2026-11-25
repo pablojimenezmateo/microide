@@ -178,13 +178,8 @@ class TextViewportUndoHistory {
   // clearing the redo stack either way (same base semantics as the prior
   // PushHistoryEntry).
   void RecordEntry(Entry entry, CoalesceHint hint = CoalesceHint{});
-  // Bypass-grouping push (matches PushHistoryEntryDirect): clears redo,
-  // pushes onto undo, enforces the history cap. Used by paths that have
-  // already built a known-good aggregate (e.g. ResetState / Save).
-  void RecordEntryDirect(Entry entry);
   // Closes the innermost group. Returns the aggregate Entry the caller
-  // should push onto the undo stack via RecordEntryDirect (or nullopt if
-  // the group ended up as a no-op).
+  // should push onto the undo stack (or nullopt if the group ended up as a no-op).
   std::optional<Entry> FinishActiveGroup(ViewState after_state);
 
   // Undo / redo stack access -------------------------------------------

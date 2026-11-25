@@ -78,7 +78,6 @@ class AsyncBufferWork {
 
   [[nodiscard]] bool armed() const { return id_ != 0; }
   [[nodiscard]] std::uint64_t id() const { return id_; }
-  [[nodiscard]] std::uint64_t posted_revision() const { return posted_revision_; }
 
   // Does this slot hold `id`? A lookup that must not consume the slot — finding
   // the tab a completion belongs to before deciding what to do with it.

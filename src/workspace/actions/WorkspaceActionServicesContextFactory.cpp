@@ -426,7 +426,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 const bool found =
                     context_.current_project_state.directory_tree.SelectPath(path);
                 if (found) {
-                  RevealSelectedTreeSidebarLine();
+                  MakeSidebarService().RevealSelectedTreeLine();
                 }
                 return found;
               },

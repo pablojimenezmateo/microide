@@ -306,18 +306,6 @@ void ComposeComparePresentationDisplaySummary(ComparePresentationRow& row) {
   }
 }
 
-std::optional<std::size_t> ComparePresentationModelRowIndex(
-    const ComparePresentationModel& presentation,
-    std::size_t model_row_index) {
-  for (std::size_t i = 0; i < presentation.rows.size(); ++i) {
-    const auto& row = presentation.rows[i];
-    if (row.kind == ComparePresentationRowKind::Model && row.model_row_index == model_row_index) {
-      return i;
-    }
-  }
-  return std::nullopt;
-}
-
 std::size_t ComparePresentationRowForModelRow(const ComparePresentationModel& presentation,
                                               std::size_t model_row_index) {
   // An exact Model row always wins. Otherwise fall to the nearest anchored row

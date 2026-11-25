@@ -124,10 +124,6 @@ const WorkspaceShell::ActionSpec* WorkspaceShell::FindActionByCommand(std::strin
   return FindWorkspaceActionByCommand(command_name);
 }
 
-const std::vector<std::string>& WorkspaceShell::CommandNames() {
-  return WorkspaceCommandNames();
-}
-
 std::vector<std::string> WorkspaceShell::DocumentedCommandUsages() {
   return WorkspaceDocumentedCommandUsages();
 }
@@ -270,13 +266,13 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
       case ActionId::GoToTypeDefinition:
       case ActionId::GoToImplementation:
       case ActionId::GoToDeclaration:
-        return !HasActiveDefinitionProvider();
+        return !lsp_service_.HasActiveDefinitionProvider();
       case ActionId::FindReferences:
-        return !HasActiveReferencesProvider();
+        return !lsp_service_.HasActiveReferencesProvider();
       case ActionId::CodeActions:
-        return !HasActiveCodeActionProvider();
+        return !lsp_service_.HasActiveCodeActionProvider();
       case ActionId::Completion:
-        return !HasActiveCompletionProvider();
+        return !lsp_service_.HasActiveCompletionProvider();
       case ActionId::RenameSymbol:
       case ActionId::FormatDocument:
         // Server-only features (no plugin provider kind exists for them).
@@ -379,7 +375,7 @@ bool WorkspaceShell::ExecuteCustomMenuItem(MenuId id, std::size_t item_index) {
       });
       return true;
     case 2:
-      OpenOutgoingBaseRefPicker();
+      MakeCompareMergeService().interactions().OpenOutgoingBasePicker();
       return true;
     default:
       return false;

@@ -1,4 +1,5 @@
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/services/PromptSurfaceService.h"
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/shell/ShellGlueCache.h"
 
@@ -487,9 +488,9 @@ void WorkspaceShell::RequestCloseTabs(std::vector<std::size_t> indices) {
 
   if (!dirty_indices.empty()) {
     if (indices.size() == 1) {
-      ShowDirtyPromptForTab(indices.front());
+      MakePromptSurfaceService().ShowDirtyPromptForTab(indices.front());
     } else {
-      ShowDirtyPromptForTabs(std::move(indices), std::move(dirty_indices));
+      MakePromptSurfaceService().ShowDirtyPromptForTabs(std::move(indices), std::move(dirty_indices));
     }
     return;
   }

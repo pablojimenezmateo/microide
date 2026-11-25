@@ -36,6 +36,7 @@
 #include "workspace/coordinators/WorkspaceTabMouseCoordinator.h"
 #include "workspace/render/TabStripAnimation.h"
 #include "workspace/shell/WorkspaceShellBootstrapper.h"
+#include "workspace/services/CompareMergeService.h"
 
 namespace microide::workspace {
 
@@ -371,7 +372,7 @@ void WorkspaceShell::NoteActiveEditableEdit() {
 
 void WorkspaceShell::RequestActiveEditableChangeRedraw(const std::vector<std::string>& before_lines,
                                                        const std::vector<std::string>& after_lines) {
-  SyncLspForActiveEditableChange(before_lines, after_lines);
+  lsp_service_.SyncLspForActiveEditableChange(before_lines, after_lines);
   // The editor, compare and merge surfaces are derived (EditorRowUnits,
   // CompareRowUnits): a frame repaints what changed in them, so the request
   // names no rect (derived-damage 2.4).
@@ -1054,10 +1055,10 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
       const int before_row = compare_tab->scroll_row;
       const std::size_t before_columns = compare_tab->horizontal_scroll;
       if (delta->rows != 0) {
-        ScrollCompareRows(delta->rows);
+        MakeCompareMergeService().interactions().ScrollCompareRows(delta->rows);
       }
       if (delta->columns != 0) {
-        ScrollCompareColumns(delta->columns);
+        MakeCompareMergeService().interactions().ScrollCompareColumns(delta->columns);
       }
       SyncCompareViewportScroll(*compare_tab);
       return selection_autoscroll::FinishStep(

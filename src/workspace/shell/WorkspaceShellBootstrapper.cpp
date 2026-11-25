@@ -281,16 +281,16 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
           .active_compare_tab = [shell]() { return shell->ActiveCompareTab(); },
           .active_merge_tab = [shell]() { return shell->ActiveMergeTab(); },
           .active_completion_available = [shell]() {
-            return shell->HasActiveCompletionProvider();
+            return shell->lsp_service_.HasActiveCompletionProvider();
           },
           .active_code_actions_available = [shell]() {
-            return shell->HasActiveCodeActionProvider();
+            return shell->lsp_service_.HasActiveCodeActionProvider();
           },
           .active_definition_available = [shell]() {
-            return shell->HasActiveDefinitionProvider();
+            return shell->lsp_service_.HasActiveDefinitionProvider();
           },
           .active_references_available = [shell]() {
-            return shell->HasActiveReferencesProvider();
+            return shell->lsp_service_.HasActiveReferencesProvider();
           },
           .get_setting_value =
               [shell](std::string_view id) { return shell->GetSettingValue(id); },
@@ -769,7 +769,7 @@ void WorkspaceShell::Bootstrapper::WireDebug() const {
               [shell]() {
                 // Auto-open the right-side debug pane on the first stop (Call Stack),
                 // but don't yank the user off another surface on every subsequent step.
-                shell->OpenDebugPaneOnStop();
+                shell->MakeDebugPaneService().OpenOnStop();
               },
       });
 }

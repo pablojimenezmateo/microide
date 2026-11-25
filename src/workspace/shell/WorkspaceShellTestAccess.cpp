@@ -4,6 +4,7 @@
 
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "util/ErrorOut.h"
+#include "workspace/services/SidebarService.h"
 
 namespace microide::workspace {
 
@@ -55,7 +56,7 @@ bool WorkspaceShell::DiscoverTestsForActiveBuffer(std::string* error_message) {
     });
   }
   ShowTestsSidebar();
-  RefreshTestsSidebar();
+  MakeSidebarService().RefreshTests();
   return true;
 }
 
@@ -92,7 +93,7 @@ bool WorkspaceShell::RunTests(const std::vector<std::string>& test_ids, std::str
         .duration_ms = result.duration_ms,
     });
   }
-  RefreshTestsSidebar();
+  MakeSidebarService().RefreshTests();
   return true;
 }
 

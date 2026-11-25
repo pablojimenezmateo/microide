@@ -14,10 +14,6 @@ constexpr SDL_Color ToSdlColor(util::Rgba8 color) {
   return SDL_Color{color.r, color.g, color.b, color.a};
 }
 
-constexpr util::Rgba8 ToRgba8(SDL_Color color) {
-  return util::Rgba8{color.r, color.g, color.b, color.a};
-}
-
 constexpr util::KeyModifiers ToKeyModifiers(SDL_Keymod modifiers) {
   util::KeyModifiers result = util::kKeyModNone;
   if ((modifiers & SDL_KMOD_SHIFT) != 0) {

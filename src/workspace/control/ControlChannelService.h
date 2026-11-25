@@ -205,8 +205,6 @@ class ControlChannelService {
   void OnDebugTerminated(int session_id, const std::string& reason = {});
   void OnDebugOutput(const std::string& category, const std::string& text);
 
-  std::size_t ConnectionCount() const;
-
   // Answer one query verb as a socket client would get it, without a socket (tests).
   util::JsonValue AnswerQuery(const std::string& verb, bool* ok, std::string* error) const {
     return HandleQuery(verb, util::JsonValue(util::JsonObject{}), ok, error);

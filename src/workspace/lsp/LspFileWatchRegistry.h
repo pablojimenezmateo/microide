@@ -55,7 +55,6 @@ class LspFileWatchRegistry {
   // Drop the registration with this id. Returns true when one was removed.
   bool Unregister(std::string_view id);
 
-  void Clear();
 
   bool empty() const { return registrations_.empty(); }
   std::size_t size() const { return registrations_.size(); }

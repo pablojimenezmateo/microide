@@ -156,7 +156,6 @@ class TabCoordinator {
   TabEntry::EditorTabState* ActiveEditorTab();
   const TabEntry::EditorTabState* ActiveEditorTab() const;
   editor::TextViewport* ActiveEditorViewport();
-  const editor::TextViewport* ActiveEditorViewport() const;
   void Activate(std::size_t index);
   void SyncActiveEditorTab();
   bool ActivateCurrentTabAfterStateLoad();

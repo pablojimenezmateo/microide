@@ -222,7 +222,7 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
             ListNavigationKeyDelta(event.key, state_.sidebar.git.entries.size());
         delta.has_value()) {
       // Home/End used to assign the raw first/last index, which can point at an
-      // entry hidden under a collapsed directory. MoveGitSidebarSelection walks
+      // entry hidden under a collapsed directory. SidebarService::MoveGitSelection walks
       // visible rows only, so routing through it keeps the highlight on screen.
       operations_.move_git_sidebar_selection(*delta);
       return true;

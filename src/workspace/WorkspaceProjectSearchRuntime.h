@@ -19,7 +19,6 @@ class WorkspaceProjectSearchRuntime {
 
   bool HandlesEvent(Uint32 type) const;
   Uint32 event_type() const { return event_type_; }
-  std::uint64_t active_run_id() const { return active_run_id_; }
 
   std::uint64_t Start(const std::filesystem::path& root,
                       std::string query,

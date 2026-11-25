@@ -107,7 +107,6 @@ class PluginSurfaceStore {
   // preview tab). No-op if the surface is missing or already at `slot`.
   bool SetPreviewSlot(std::string_view owner, std::string_view surface_id,
                       SurfacePreviewSlot slot);
-  void Clear();
 
   const SurfaceContent* Find(std::string_view owner, std::string_view surface_id) const;
 

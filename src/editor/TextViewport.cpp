@@ -161,10 +161,6 @@ std::size_t TextViewport::WrappedRowCount() const {
   return layout_cache_.WrappedRowCount(document_ != nullptr ? document_->lines.size() : 0);
 }
 
-std::size_t TextViewport::WrappedLineRowOffset(std::size_t line_index) const {
-  return layout_cache_.WrappedLineRowOffset(line_index);
-}
-
 LayoutLine TextViewport::VisibleWrappedRowLayout(std::size_t visual_row_index) const {
   if (!soft_wrap_) {
     return VisibleLineLayout(visual_row_index);

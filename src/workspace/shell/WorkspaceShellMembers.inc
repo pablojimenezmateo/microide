@@ -189,7 +189,6 @@
     bool separator = false;
   };
 
-
   // The shell's one action context, built on first use and reused. Its three data
   // members are references to shell state (project catalog, current project state,
   // UI scale) whose addresses never move, and every operation lambda captures only
@@ -399,7 +398,6 @@
   void KickOffLspHover(const std::filesystem::path& path, std::size_t line, std::size_t column);
 
   static const ActionSpec* FindActionByCommand(std::string_view command_name);
-  static const std::vector<std::string>& CommandNames();
   static std::span<const MenuSpec> MenuSpecs();
   static const MenuSpec* FindMenuSpec(MenuId id);
   std::span<const MenuItemSpec> MenuItems(MenuId id) const;
@@ -524,9 +522,6 @@
   MergeMouseCoordinator& MakeMergeMouseCoordinator();
   TabMouseCoordinator& MakeTabMouseCoordinator();
   bool HandleTabMouseMotion(const SDL_Event& event, const WorkspaceLayout& layout);
-  bool HandleTabMouseButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
-  bool HandleTabMouseButtonUp(const SDL_Event& event);
-  bool HandleTabMouseWheel(const SDL_Event& event, const WorkspaceLayout& layout, int vertical_ticks);
   SidebarMouseCoordinator& MakeSidebarMouseCoordinator();
   PanelMouseCoordinator& MakePanelMouseCoordinator();
   DebugPaneMouseCoordinator& MakeDebugPaneMouseCoordinator();
@@ -541,7 +536,6 @@
   void ClearDragState();
   bool HasActiveProjectCatalogEntry() const;
   ProjectWorkspaceState* ProjectCatalogEntry(std::size_t index);
-  const ProjectWorkspaceState* ProjectCatalogEntry(std::size_t index) const;
   const std::filesystem::path& ProjectCatalogRoot(std::size_t index) const;
   void ResetProjectCatalogToWelcomeState();
   bool ReloadPluginsForCurrentProject(PluginReloadRequest request = {});
@@ -579,7 +573,6 @@
   void RequestGitSidebarRefresh(GitSidebarRefreshScope scope = GitSidebarRefreshScope::Full);
   void MaybeRequestTreeGitBadgesAfterFirstPaint();
   void RequestAutomaticGitSidebarRefresh();
-  bool ConsumePendingGitSidebarRefreshSnapshot(GitSidebarState::RefreshSnapshot* snapshot);
   void InvalidateRuntimeSyntaxStateCaches(std::span<const std::string_view> changed_languages);
   std::string PluginRuntimeReloadSummary() const;
   void NotifyPluginsAboutOpenBuffers(bool replay_plugin_buffer_opens = true,
@@ -675,9 +668,6 @@
   // close-tab UI that is legitimately scoped to the focused group.
   std::vector<GroupTabRef> DirtyEditorGroupTabs() const;
   std::vector<GroupTabRef> DirtyEditorGroupTabsForProject(std::size_t project_index) const;
-  void ShowDirtyPromptForTab(std::size_t index);
-  void ShowDirtyPromptForTabs(std::vector<std::size_t> target_tabs,
-                              std::vector<std::size_t> dirty_tabs);
   void ShowDirtyPromptForQuit();
   void DismissDirtyPrompt(bool restore_focus);
   void ConfirmDirtyPrompt();
@@ -789,7 +779,6 @@
   void RevealActiveMergeSelection();
   bool OpenComparePickerForPath(const std::filesystem::path& path,
                                 std::string_view commit_spec = {});
-  void OpenOutgoingBaseRefPicker();
   // Async picker orchestration (host-owned; the stack-temporary coordinator asks
   // for these via its Operations). Request* dispatch the git query on the
   // background executor keyed by a fresh generation; Apply* run on the main thread
@@ -818,9 +807,6 @@
                                              const std::filesystem::path& incoming_path,
                                              const std::filesystem::path& current_path,
                                              const std::filesystem::path& output_path) const;
-  void RefreshComparePicker();
-  void MoveComparePickerSelection(int delta);
-  void OpenSelectedCompareCommit();
   // Launch-config picker (Phase 9): open the fuzzy picker over the project's launch
   // configs, re-filter on query change, and start a session for the chosen config.
   // Open the command palette, optionally pre-filling the query (e.g. "project-open ") so the
@@ -844,9 +830,6 @@
   // must copy it out first.
   bool ProbeWelcomeSurface(const editor::WelcomeViewModel** model,
                            const editor::WelcomeLayout** layout) const;
-  void OpenComparison(const project::GitCommitEntry& commit);
-  void OpenWorkingFileFromCompare();
-  void MoveCompareSelection(int delta);
   void JumpCompareHunk(int delta);
   void StageCompareHunk();
   void StageCompareSelectedLines();
@@ -855,8 +838,6 @@
   void OpenDiscardCompareHunkPrompt();
   void OpenDiscardCompareSelectedLinesPrompt();
   void RefreshOpenCompareTabsForPath(const std::filesystem::path& path);
-  void ScrollCompareRows(int delta);
-  void ScrollCompareColumns(int delta);
   bool OpenMergeEditor(const std::filesystem::path& base_path,
                        const std::filesystem::path& incoming_path,
                        const std::filesystem::path& current_path,
@@ -892,13 +873,10 @@
   void SamplePluginEditorEvents();
   bool DispatchDuePluginEditorEvents();
   void MoveMergeSelection(int delta);
-  void ScrollMergeColumns(int delta);
   void ApplyMergeChoice(compare::MergeChoice choice);
   void ResetMergeHunk();
-  void JumpNextUnresolvedMergeConflict();
   void ToggleMergeBasePane();
   void MarkMergeResolved();
-  void OpenMergeResultFile();
   void MoveFileFinderSelection(int delta);
   void RenderCompareSurface(SDL_Renderer* renderer,
                             const SDL_FRect& rect,
@@ -919,14 +897,7 @@
   void ShowProblemsSidebar();
   void ShowGitSidebar();
   void ShowTestsSidebar();
-  // Right-side debug pane convenience wrappers (forward to MakeDebugPaneService()).
-  void ShowDebugPaneMode(DebugPaneMode mode);
-  void CloseDebugPane();
-  void OpenDebugPaneOnStop();
   SidebarModeRowLayout SidebarModeRow(const SDL_FRect& sidebar_rect) const;
-  void CloseSidebar();
-  void ToggleSidebar();
-  void RestorePreviousSidebar();
   void RefreshProjectFiles();
   void RefreshGitSidebar();
   void ConsumeGitSidebarRefresh();
@@ -982,9 +953,7 @@
   void DrawEditorInsets(SDL_Renderer* renderer, const SDL_FRect& pane_rect,
                         const editor::EditorViewMetrics& metrics, std::size_t scroll_line,
                         const editor::EditorViewModel& view_model);
-  bool RefreshTestsSidebar();
   bool RefreshTestsSidebarState();
-  bool RefreshPluginSidebar();
   SDL_FRect TreeSidebarCollapseButtonRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const;
   bool CanOpenGitCommitButton() const;
@@ -1010,24 +979,10 @@
   const std::vector<GitSidebarLine>& BuildGitSidebarLines() const;
   bool ToggleGitSidebarDirectoryCollapsed(const std::string& tree_node_key);
   std::optional<std::size_t> SelectedGitSidebarLineIndex() const;
-  void RevealSelectedTreeSidebarLine();
-  void RevealSelectedGitSidebarLine();
-  void RevealSelectedProblemsSidebarLine();
-  void RevealSelectedTestsSidebarLine();
-  void RevealSelectedPluginSidebarLine();
-  void MoveGitSidebarSelection(int delta);
-  void MoveProblemsSidebarSelection(int delta);
-  void MoveTestsSidebarSelection(int delta);
-  void MovePluginSidebarSelection(int delta);
-  bool OpenSelectedProblemSidebarItem();
-  bool OpenSelectedTestSidebarItem();
   bool OpenSelectedPluginSidebarItem();
   bool ToggleSelectedPluginSidebarItem();
-  bool RunSelectedTestSidebarItem();
   bool CanStageAllGitSidebarEntries() const;
   bool CanDiscardAllGitSidebarEntries() const;
-  bool StageAllGitSidebarEntries();
-  void OpenDiscardAllGitSidebarPrompt();
   void InitializeCommitWorkflowService();
   void InitializeGitOperationService();
   std::string DispatchGitOperationAction(ActionId id, const std::vector<std::string>& args);
@@ -1036,11 +991,8 @@
   bool RequestCommitWorkflowCommit();
   float GitSidebarCommitWorkflowHeight(const SDL_FRect& sidebar_rect) const;
   void PrepareCommitBodyViewportForFrame(const SDL_FRect& sidebar_rect);
-  bool DiscardAllGitSidebarEntries();
   bool StageGitSidebarEntry(std::size_t entry_index);
-  bool DiscardGitSidebarEntry(std::size_t entry_index, const std::optional<std::filesystem::path>& expected_path = {});
   bool DispatchGitSidebarAction(GitSidebarActionId action, std::size_t entry_index);
-  void ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path);
   void SetGitOutgoingBaseChoice(OutgoingBaseChoice choice);
   bool ReloadCleanEditorTabsForPath(
       const std::filesystem::path& path,
@@ -1246,7 +1198,6 @@
   bool RunAllDiscoveredTests(std::string* error_message = nullptr);
   const std::vector<std::string>* OutputChannelEntries(std::string_view id) const;
   void ConsumeLspCallbacks();
-  bool ReopenActiveTab();
   std::filesystem::path ConfigStatePath() const;
   std::filesystem::path UserConfigPath() const;
   std::filesystem::path ProjectStateDirectory() const;
@@ -1282,7 +1233,6 @@
   // Non-mutating fetch of a group's active-tab folding model. Safe to call from
   // the render path because RefreshEditorFoldingModels already made it fresh.
   bool WriteClipboardText(std::string_view text) const;
-  std::optional<std::string> ReadClipboardText() const;
   bool WritePrimarySelectionText(std::string_view text) const;
   std::optional<std::string> ReadPrimarySelectionText() const;
   std::optional<std::string> SelectionTextWithContext();
@@ -1293,17 +1243,10 @@
   // bulk-close callers that would otherwise call CountOpenBufferViews per tab.
   std::unordered_map<std::string, std::size_t> OpenBufferViewCounts() const;
   // Thin forwarders to lsp_service_ (see src/workspace/LspService.*).
-  bool HasActiveCompletionProvider() const;
-  bool HasActiveCodeActionProvider() const;
-  bool HasActiveDefinitionProvider() const;
-  bool HasActiveReferencesProvider() const;
   bool PluginServesLspMenuAction(ActionId id) const;
   LspManager& CurrentLspManager();
-  const LspManager& CurrentLspManager() const;
-  LspManager& EnsureProjectLspManager(ProjectWorkspaceState& state);
   // Thin forwarders to debug_service_ (see src/workspace/DebugService.*).
   DapManager& CurrentDapManager();
-  const DapManager& CurrentDapManager() const;
   DapManager& EnsureProjectDapManager(ProjectWorkspaceState& state);
   void ConsumeDapCallbacks();
   // Control channel (live remote control). ConsumeControlCallbacks drains the
@@ -1330,7 +1273,6 @@
   std::string StartAdHocDebug(const std::string& program, const std::vector<std::string>& args,
                               const std::string& type);
   void StopDebugging();
-  bool IsDebugSessionActive() const;
   bool IsDebugSessionStopped() const;
   // Canonical read of the master `debug.enabled` toggle (default off). The one
   // place that interprets the stored setting string as a bool for shell code.
@@ -1340,9 +1282,6 @@
   // a separate `set-setting debug.enabled true` prelude before breakpoint-/debug-
   // commands. Returns true when it flipped the setting on.
   bool EnsureDebuggerEnabledTransiently();
-  // Whether the active session's adapter advertises `supportsStepBack`: gates the
-  // debug toolbar's reverse buttons.
-  bool DebugSupportsReverse() const;
   // Breakpoint-modifier context menu (Phase 6). Read the breakpoint gutter
   // menu's target path+line; open a seeded prompt for a condition/hit/log field
   // (mapped from the ActionId) or remove the breakpoint and live-resend.
@@ -1370,7 +1309,6 @@
   void ShowDebugOutput();
   // Remove a pruned session's console channel + close its tab (Phase 10).
   void RemoveDebugConsole(int session_id);
-  LspClient::ReadinessSnapshot ActiveLspReadinessSnapshot(bool ensure_started = true);
   // Frame-memoized, never-starting readiness for the menu paint/hit-test paths.
   const LspClient::ReadinessSnapshot& MenuLspReadiness() const;
   void ActiveLspStatusStrings(bool ensure_started, std::string& text, std::string& tooltip, StatusTone& tone);
@@ -1394,8 +1332,6 @@
                              lsp_encoding::PositionEncoding encoding,
                              std::vector<LspClient::Diagnostic> diagnostics);
   void SyncLspForActiveEditableLastChange();
-  void SyncLspForActiveEditableChange(const std::vector<std::string>& before_lines,
-                                      const std::vector<std::string>& after_lines);
   void CloseAllTabs();
   void ReloadCleanOpenBuffersFromDisk();
   void AppendTerminalPendingInput(std::string_view input);
@@ -1449,10 +1385,8 @@
       std::size_t first_row = 0) const;
   std::optional<TerminalSelectionPoint> TerminalViewportPositionForPoint(int x, int y) const;
   bool OpenExternalUrl(std::string_view url);
-  void OpenExternalUrlPrompt(std::string url);
   bool RevealPathInFileExplorer(const std::filesystem::path& directory);
   void ResizeTerminalToPanel(const WorkspaceLayout& layout);
-  bool OpenUntitledTab();
   bool OpenFileInNewTab(const std::filesystem::path& path);
   bool SplitEditorGroup(EditorSplitOrientation orientation);
   bool FocusOtherEditorGroup();
@@ -1772,7 +1706,6 @@
                                                       std::size_t end_line) const;
   std::optional<SDL_FRect> CurrentCompareRowRangeRect(std::size_t start_row,
                                                       std::size_t end_row) const;
-  std::optional<SDL_FRect> CurrentMergeResultLineRangeRect(std::size_t start_line, std::size_t end_line) const;
   std::optional<SDL_FRect> CurrentMergeConflictRect(std::size_t conflict_index) const;
   std::optional<Uint32> NextCaretBlinkDelayMs() const;
   // "After delay" autosave (WorkspaceTabCoordinatorShellBridge.cpp). MaybeArmAutosaveTimer

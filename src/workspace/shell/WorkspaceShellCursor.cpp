@@ -828,7 +828,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindOverEditorArea(float x, flo
   // editor and must claim the cursor before the editor surface does.
   if (DebugToolbarVisible()) {
     const DebugToolbarLayout toolbar = ComputeDebugToolbarLayout(
-        ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
+        ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout), debug_service_.SupportsStepBack());
     if (Contains(toolbar.widget, x, y)) {
       for (std::size_t i = 0; i < toolbar.button_count; ++i) {
         if (Contains(toolbar.buttons[i], x, y)) {
@@ -1222,7 +1222,7 @@ std::optional<std::optional<SDL_FRect>> WorkspaceShell::HoverOverOverlayAndWidge
     }
     if (DebugToolbarVisible()) {
       const DebugToolbarLayout tb = ComputeDebugToolbarLayout(
-          ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
+          ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout), debug_service_.SupportsStepBack());
       probe(tb.widget, std::span<const SDL_FRect>(tb.buttons.data(), tb.button_count));
     }
     if (floating.has_value()) {

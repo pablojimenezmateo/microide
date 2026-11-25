@@ -1,7 +1,6 @@
 #pragma once
 
 #include <filesystem>
-#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -9,14 +8,6 @@
 #include "project/ProjectBackgroundExecutor.h"
 
 namespace microide::workspace {
-
-// Tool download progress callback.
-struct DownloadProgress {
-  std::string tool_id;
-  std::int64_t bytes_downloaded = 0;
-  std::int64_t total_bytes = -1;  // -1 if unknown
-  bool complete = false;
-};
 
 // Tool download and cache manager.
 class ToolDownloader {
@@ -48,16 +39,11 @@ class ToolDownloader {
   std::optional<std::filesystem::path> GetCachedTool(const std::string& tool_id,
                                                      const std::string& expected_sha256 = {}) const;
 
-  // Set progress callback.
-  using OnProgress = std::function<void(const DownloadProgress&)>;
-  void SetProgressCallback(OnProgress callback) { on_progress_ = std::move(callback); }
-
   // Clear entire cache.
   void ClearCache();
 
  private:
   std::filesystem::path cache_dir_;
-  OnProgress on_progress_;
   project::ProjectBackgroundExecutor background_executor_;
 };
 

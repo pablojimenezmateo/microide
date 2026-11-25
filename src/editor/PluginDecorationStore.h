@@ -162,7 +162,6 @@ class PluginDecorationStore {
   bool RetargetPathPrefix(const std::filesystem::path& old_prefix,
                           const std::filesystem::path& new_prefix);
   bool ClearPathPrefix(const std::filesystem::path& path_prefix);
-  void Clear();
 
   // Merged decorations for `path`, or nullptr if none. The pointer and the
   // string_views/spans reachable through it stay valid until the next mutation.

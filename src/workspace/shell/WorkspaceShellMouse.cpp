@@ -450,7 +450,7 @@ std::optional<bool> WorkspaceShell::MouseDownOnDividersAndPanels(const SDL_Event
 
   {
     util::PerformanceTrace::Scope tab_scope("WorkspaceShell::HandleMouseButtonDown::Tabs");
-    if (HandleTabMouseButtonDown(event, layout)) {
+    if (MakeTabMouseCoordinator().HandleButtonDown(event, layout)) {
       EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
@@ -794,7 +794,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   }
 
   if (event.button.button == SDL_BUTTON_LEFT && context_.interaction_state.tab_drag.kind != TabDragKind::None) {
-    if (HandleTabMouseButtonUp(event)) {
+    if (MakeTabMouseCoordinator().HandleButtonUp(event)) {
       EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }

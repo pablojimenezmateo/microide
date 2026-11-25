@@ -1040,7 +1040,7 @@ void WorkspaceShell::ControlUiDebug(const WorkspaceLayout& layout, ControlUiElem
   // (HandleDebugToolbarButtonDown) uses.
   if (DebugToolbarVisible()) {
     const DebugToolbarLayout tb =
-        ComputeDebugToolbarLayout(ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
+        ComputeDebugToolbarLayout(ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout), debug_service_.SupportsStepBack());
     const bool stopped = IsDebugSessionStopped();
     for (std::size_t i = 0; i < tb.button_count; ++i) {
       const DebugToolbarButton button = tb.kinds[i];

@@ -432,9 +432,6 @@ class LspClient {
   // True while the server process is running.
   bool IsRunning() const;
 
-  // True when the server is in the process of initializing.
-  bool IsInitializing() const;
-
   // True when the server has been fully initialized.
   bool IsInitialized() const;
 
@@ -673,7 +670,6 @@ class LspClient {
   // Shorten the per-request deadline so a test can exercise the timeout sweep
   // without a 30s wait. Call before issuing the request.
   void SetRequestTimeoutForTesting(std::chrono::milliseconds timeout);
-  void DisableTestStubMode();
   void SetTestDocumentSymbolHandler(
       std::function<void(std::string uri, DocumentSymbolCallback cb)> handler);
   // Unit tests: feed a canned hover response (raw LSP hover result JSON).
@@ -744,9 +740,6 @@ class LspClient {
   // Shutdown and close connection (blocks until complete).
   void BeginShutdown();
   void Shutdown();
-
-  // True while a background shutdown is in progress.
-  bool IsShuttingDown() const;
 
   // True once shutdown has fully completed.
   bool IsShutdownComplete() const;

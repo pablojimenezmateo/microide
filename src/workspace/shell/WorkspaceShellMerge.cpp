@@ -323,23 +323,6 @@ workspace::MergeInteractionLayout WorkspaceShell::BuildMergeInteractionLayout(co
   };
 }
 
-std::optional<SDL_FRect> WorkspaceShell::CurrentMergeResultLineRangeRect(std::size_t start_line,
-                                                                         std::size_t end_line) const {
-  const auto layout = CurrentWorkspaceLayout();
-  MergeTabState* merge_tab = const_cast<WorkspaceShell*>(this)->ActiveMergeTab();
-  if (!layout.has_value() || merge_tab == nullptr) {
-    return std::nullopt;
-  }
-
-  const SDL_FRect surface = ActiveTabSurface(*layout);
-  const MergeSurfaceLayout surface_layout = ComputeMergeSurfaceLayout(surface, *merge_tab);
-  const MergeInteractionLayout interaction =
-      BuildMergeInteractionLayout(surface, surface_layout, *merge_tab);
-  const auto band = ComputeVisibleLineRangeRect(interaction.result.rect, interaction.result.lines,
-                                                start_line, end_line);
-  return band.has_value() ? std::optional<SDL_FRect>(DirtyRectWithHalo(*band)) : std::nullopt;
-}
-
 std::optional<SDL_FRect> WorkspaceShell::CurrentMergeConflictRect(std::size_t conflict_index) const {
   const auto layout = CurrentWorkspaceLayout();
   MergeTabState* merge_tab = const_cast<WorkspaceShell*>(this)->ActiveMergeTab();

@@ -248,7 +248,7 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
                 }
               },
           .open_comparison =
-              [this](const project::GitCommitEntry& commit) { OpenComparison(commit); },
+              [this](const project::GitCommitEntry& commit) { MakeCompareMergeService().diff_tabs().OpenComparison(commit); },
           .set_outgoing_base_ref =
               [this](const std::string& ref, const std::string& /*label*/) {
                 SetGitOutgoingBaseChoice(OutgoingBaseChoice{
@@ -306,24 +306,6 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
                 }
               },
           .reveal_active_merge_selection = [this]() { RevealActiveMergeSelection(); },
-          .scroll_merge_columns =
-              [this](MergeTabState& merge_tab, int delta) {
-                if (const auto layout_state = CurrentWorkspaceLayout(); layout_state.has_value()) {
-                  const SDL_FRect surface = ActiveTabSurface(*layout_state, &merge_tab);
-                  const auto surface_layout =
-                      ComputeMergeSurfaceLayout(surface, merge_tab);
-                  const auto scroll_layout =
-                      ComputeMergeScrollLayout(surface, surface_layout, merge_tab);
-                  const long long target_scroll =
-                      static_cast<long long>(scroll_layout.horizontal_scroll) +
-                      static_cast<long long>(delta);
-                  merge_tab.horizontal_scroll = static_cast<std::size_t>(std::clamp(
-                      target_scroll, 0LL,
-                      static_cast<long long>(scroll_layout.max_horizontal_scroll)));
-                  merge_tab.result_viewport.SetHorizontalScroll(merge_tab.horizontal_scroll);
-                  merge_tab.horizontal_scroll = merge_tab.result_viewport.horizontal_scroll();
-                }
-              },
           .update_merge_max_visual_columns =
               [this](MergeTabState& merge_tab, const std::vector<std::string>& replacement_lines) {
                 UpdateMergeMaxVisualColumns(merge_tab, replacement_lines);
@@ -405,10 +387,6 @@ std::optional<std::size_t> WorkspaceShell::FindOpenMergeTabIndex(
   return const_cast<WorkspaceShell*>(this)->MakeCompareMergeService().diff_tabs().FindOpenMergeTabIndex(path);
 }
 
-void WorkspaceShell::OpenComparison(const project::GitCommitEntry& commit) {
-  MakeCompareMergeService().diff_tabs().OpenComparison(commit);
-}
-
 bool WorkspaceShell::OpenMergeEditor(const std::filesystem::path& base_path,
                                      const std::filesystem::path& incoming_path,
                                      const std::filesystem::path& current_path,
@@ -442,10 +420,6 @@ bool WorkspaceShell::OpenGitConflictMerge(const std::filesystem::path& path) {
 bool WorkspaceShell::OpenComparePickerForPath(const std::filesystem::path& path,
                                               std::string_view commit_spec) {
   return MakeCompareMergeService().interactions().OpenPickerForPath(path, commit_spec);
-}
-
-void WorkspaceShell::OpenOutgoingBaseRefPicker() {
-  MakeCompareMergeService().interactions().OpenOutgoingBasePicker();
 }
 
 void WorkspaceShell::RequestComparePickerFileHistory(const std::filesystem::path& path) {
@@ -549,30 +523,6 @@ void WorkspaceShell::ApplyComparePickerRefs(
   MakeCompareMergeService().interactions().ApplyRefsResult(branches, commits);
 }
 
-void WorkspaceShell::RefreshComparePicker() {
-  MakeCompareMergeService().interactions().RefreshPicker();
-}
-
-void WorkspaceShell::MoveComparePickerSelection(int delta) {
-  MakeCompareMergeService().interactions().MovePickerSelection(delta);
-}
-
-void WorkspaceShell::OpenSelectedCompareCommit() {
-  MakeCompareMergeService().interactions().OpenSelectedCommit();
-}
-
-void WorkspaceShell::OpenWorkingFileFromCompare() {
-  MakeCompareMergeService().interactions().OpenWorkingFileFromCompare();
-}
-
-void WorkspaceShell::OpenMergeResultFile() {
-  MakeCompareMergeService().interactions().OpenMergeResultFile();
-}
-
-void WorkspaceShell::MoveCompareSelection(int delta) {
-  MakeCompareMergeService().interactions().MoveCompareSelection(delta);
-}
-
 void WorkspaceShell::JumpCompareHunk(int delta) {
   MakeCompareMergeService().interactions().JumpCompareHunk(delta);
 }
@@ -623,20 +573,8 @@ void WorkspaceShell::OpenDiscardCompareSelectedLinesPrompt() {
   }
 }
 
-void WorkspaceShell::ScrollCompareRows(int delta) {
-  MakeCompareMergeService().interactions().ScrollCompareRows(delta);
-}
-
-void WorkspaceShell::ScrollCompareColumns(int delta) {
-  MakeCompareMergeService().interactions().ScrollCompareColumns(delta);
-}
-
 void WorkspaceShell::MoveMergeSelection(int delta) {
   MakeCompareMergeService().interactions().MoveMergeSelection(delta);
-}
-
-void WorkspaceShell::ScrollMergeColumns(int delta) {
-  MakeCompareMergeService().interactions().ScrollMergeColumns(delta);
 }
 
 void WorkspaceShell::ApplyMergeChoice(compare::MergeChoice choice) {
@@ -645,10 +583,6 @@ void WorkspaceShell::ApplyMergeChoice(compare::MergeChoice choice) {
 
 void WorkspaceShell::ResetMergeHunk() {
   MakeCompareMergeService().interactions().ResetMergeHunk();
-}
-
-void WorkspaceShell::JumpNextUnresolvedMergeConflict() {
-  MakeCompareMergeService().interactions().JumpNextUnresolvedMergeConflict();
 }
 
 void WorkspaceShell::ToggleMergeBasePane() {

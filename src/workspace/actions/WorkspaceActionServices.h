@@ -403,8 +403,6 @@ class WorkspaceActionContext {
   ProjectOpenPickerResult OpenNativeProjectPicker();
   ProjectOpenPickerResult OpenNativeFilePicker();
 
-  bool SidebarVisible() const;
-  std::string_view SidebarViewId() const;
   SidebarMode ActiveSidebarMode() const;
   void ShowSidebarSurface();
   void ToggleSidebar();
@@ -563,7 +561,6 @@ class WorkspaceActionContext {
   // The newest recently closed editor whose file still exists, removed from the
   // list (entries for files gone since are dropped on the way); nullopt for none.
   std::optional<DeferredTabHandle> TakeRecentlyClosedEditor();
-  bool SaveTab(std::size_t index);
   bool SaveTabDeferred(std::size_t index);
   SaveAllOutcome SaveAllDirtyTabs();
   bool RevertActiveFile();

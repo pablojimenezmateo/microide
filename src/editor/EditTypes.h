@@ -120,29 +120,4 @@ struct AppliedEditLineSpan {
   std::size_t new_end = 0;
 };
 
-// The span between two whole-buffer line snapshots: their common leading and
-// trailing lines trimmed. Empty when they are equal.
-inline std::optional<AppliedEditLineSpan> ComputeChangedLineSpan(const std::vector<std::string>& before_lines,
-                                                                 const std::vector<std::string>& after_lines) {
-  std::size_t prefix = 0;
-  while (prefix < before_lines.size() && prefix < after_lines.size() && before_lines[prefix] == after_lines[prefix]) {
-    ++prefix;
-  }
-  if (prefix == before_lines.size() && prefix == after_lines.size()) {
-    return std::nullopt;
-  }
-
-  std::size_t suffix = 0;
-  while (suffix < before_lines.size() - prefix && suffix < after_lines.size() - prefix &&
-         before_lines[before_lines.size() - 1 - suffix] == after_lines[after_lines.size() - 1 - suffix]) {
-    ++suffix;
-  }
-
-  return AppliedEditLineSpan{
-      .old_start = prefix,
-      .old_end = before_lines.size() - suffix,
-      .new_end = after_lines.size() - suffix,
-  };
-}
-
 }  // namespace microide::editor

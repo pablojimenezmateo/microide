@@ -662,7 +662,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
     return true;
   }
 
-  if (HandleTabMouseWheel(event, layout, vertical_ticks)) {
+  if (MakeTabMouseCoordinator().HandleWheel(event, layout, vertical_ticks)) {
     EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }

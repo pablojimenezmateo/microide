@@ -477,11 +477,6 @@ class Matcher {
 
 }  // namespace
 
-void MatchTokensFlat(const DiffSyntaxTree& lhs, const DiffSyntaxTree& rhs, StructuralMatch& match) {
-  MatchTokenRangeFlat(lhs, 0, static_cast<std::uint32_t>(lhs.tokens.size()), rhs, 0,
-                      static_cast<std::uint32_t>(rhs.tokens.size()), match);
-}
-
 void MatchSyntaxTrees(const DiffSyntaxTree& lhs,
                       const DiffSyntaxTree& rhs,
                       std::size_t vertex_budget,

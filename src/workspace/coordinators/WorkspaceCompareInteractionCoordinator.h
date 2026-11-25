@@ -35,7 +35,6 @@ class CompareInteractionCoordinator {
     std::function<void(CompareTabState&, int)> scroll_compare_rows;
     std::function<void(CompareTabState&, int)> scroll_compare_columns;
     std::function<void()> reveal_active_merge_selection;
-    std::function<void(MergeTabState&, int)> scroll_merge_columns;
     std::function<void(MergeTabState&, const std::vector<std::string>&)>
         update_merge_max_visual_columns;
     std::function<void()> request_tab_strip_redraw;
@@ -94,7 +93,6 @@ class CompareInteractionCoordinator {
   void ScrollCompareRows(int delta);
   void ScrollCompareColumns(int delta);
   void MoveMergeSelection(int delta);
-  void ScrollMergeColumns(int delta);
  void ApplyMergeChoice(compare::MergeChoice choice);
   void ResetMergeHunk();
   void JumpNextUnresolvedMergeConflict();

@@ -564,7 +564,7 @@
   static void RefreshGitSidebar(WorkspaceShell& shell) { shell.RefreshGitSidebar(); }
   static void RevealGitSidebarEntry(WorkspaceShell& shell, std::size_t entry_index) {
     shell.context_.current_project_state.sidebar.git.selected_index = entry_index;
-    shell.RevealSelectedGitSidebarLine();
+    shell.MakeSidebarService().RevealSelectedGitLine();
   }
   static void RequestAutomaticGitSidebarRefresh(WorkspaceShell& shell) {
     shell.RequestAutomaticGitSidebarRefresh();
@@ -578,10 +578,6 @@
   static const std::vector<WorkspaceShell::ProblemsSidebarEntry>& ProblemsSidebarEntries(
       const WorkspaceShell& shell) {
     return shell.context_.current_project_state.sidebar.problems.entries;
-  }
-  static const std::vector<WorkspaceShell::TestsSidebarEntry>& TestsSidebarEntries(
-      const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.sidebar.tests.entries;
   }
   static const std::vector<WorkspaceShell::GitSidebarEntry>& GitSidebarEntries(
       const WorkspaceShell& shell) {

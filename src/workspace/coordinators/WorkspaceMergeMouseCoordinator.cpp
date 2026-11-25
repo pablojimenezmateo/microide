@@ -581,7 +581,7 @@ MergeMouseCoordinator& WorkspaceShell::MakeMergeMouseCoordinator() {
           .mark_merge_resolved = [this]() { MarkMergeResolved(); },
           .toggle_merge_base_pane = [this]() { ToggleMergeBasePane(); },
           .jump_next_unresolved_merge_conflict =
-              [this]() { JumpNextUnresolvedMergeConflict(); },
+              [this]() { MakeCompareMergeService().interactions().JumpNextUnresolvedMergeConflict(); },
           .merge_secondary_toolbar_button_rect =
               [this](const SDL_FRect& rect, const MergeSurfaceLayout& surface,
                      std::string_view label) {

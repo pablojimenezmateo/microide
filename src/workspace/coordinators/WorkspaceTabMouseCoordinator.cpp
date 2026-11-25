@@ -557,16 +557,4 @@ bool WorkspaceShell::HandleTabMouseMotion(const SDL_Event& event, const Workspac
   return MakeTabMouseCoordinator().HandleMotion(event);
 }
 
-bool WorkspaceShell::HandleTabMouseButtonDown(const SDL_Event& event, const WorkspaceLayout& layout) {
-  return MakeTabMouseCoordinator().HandleButtonDown(event, layout);
-}
-
-bool WorkspaceShell::HandleTabMouseButtonUp(const SDL_Event& event) {
-  return MakeTabMouseCoordinator().HandleButtonUp(event);
-}
-
-bool WorkspaceShell::HandleTabMouseWheel(const SDL_Event& event, const WorkspaceLayout& layout, int vertical_ticks) {
-  return MakeTabMouseCoordinator().HandleWheel(event, layout, vertical_ticks);
-}
-
 }  // namespace microide::workspace

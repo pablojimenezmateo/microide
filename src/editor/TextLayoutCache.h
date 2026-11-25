@@ -249,7 +249,6 @@ class TextLayoutCache {
   // `lines_size`. Returns false in trivial mode (no offsets table exists)
   // or when the cache predates the latest edit.
   bool has_wrapped_line_row_offsets(std::size_t lines_size) const;
-  std::size_t wrapped_row_layouts_size() const { return wrapped_row_layouts_.size(); }
 
   // ---- stats -------------------------------------------------------------
   Stats stats() const {

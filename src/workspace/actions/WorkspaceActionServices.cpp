@@ -129,14 +129,6 @@ ProjectOpenPickerResult WorkspaceActionContext::OpenNativeFilePicker() {
   return operations_.open_native_file_picker();
 }
 
-bool WorkspaceActionContext::SidebarVisible() const {
-  return state_.sidebar.visible;
-}
-
-std::string_view WorkspaceActionContext::SidebarViewId() const {
-  return state_.sidebar.view_id;
-}
-
 SidebarMode WorkspaceActionContext::ActiveSidebarMode() const {
   return SidebarModeForViewId(state_.sidebar.view_id, services_.plugins.Host());
 }
@@ -1368,10 +1360,6 @@ std::optional<DeferredTabHandle> WorkspaceActionContext::TakeRecentlyClosedEdito
 
 bool WorkspaceActionContext::ReopenActiveTab() {
   return services_.editor_tabs.ReopenActive();
-}
-
-bool WorkspaceActionContext::SaveTab(std::size_t index) {
-  return operations_.save_tab(index);
 }
 
 bool WorkspaceActionContext::SaveTabDeferred(std::size_t index) {

@@ -22,7 +22,6 @@ namespace microide::workspace {
 // contrast-correction. Derived themes are cached, so re-selecting is O(1).
 class WorkspaceThemeRegistry {
  public:
-  void Clear();
   // Rebuild from the plugin host's contributed themes. Drops the derived cache.
   void Rebuild(const plugin::PluginHost& host);
 

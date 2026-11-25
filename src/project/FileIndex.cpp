@@ -659,19 +659,6 @@ void FileIndex::EnsureFresh(ProjectFileScanMode mode) const {
   RebuildCacheLocked(mode, cache);
 }
 
-bool FileIndex::UpsertProjectFileLocked(const ProjectFile& file) {
-  auto it = std::lower_bound(files_.begin(), files_.end(), file.relative_path, LessProjectPath);
-  if (it != files_.end() && it->relative_path == file.relative_path) {
-    if (it->mtime == file.mtime && it->size == file.size) {
-      return false;
-    }
-    *it = file;
-    return true;
-  }
-  files_.insert(it, file);
-  return true;
-}
-
 bool FileIndex::RemoveProjectFileLocked(const std::filesystem::path& relative_path) {
   auto it = std::lower_bound(files_.begin(), files_.end(), relative_path, LessProjectPath);
   if (it != files_.end() && it->relative_path == relative_path) {

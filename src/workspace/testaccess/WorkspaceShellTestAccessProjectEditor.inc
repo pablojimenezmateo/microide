@@ -90,11 +90,6 @@
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Editor;
   }
 
-  static WorkspaceShell::TabEntry::EditorTabState MakeEditorTabStateForTesting(
-      const editor::TextViewport& view) {
-    return MakeEditorTabState(view);
-  }
-
   static editor::TextViewport& ActiveEditor(WorkspaceShell& shell) {
     return *shell.ActiveEditorViewport();
   }
@@ -162,10 +157,6 @@
 
   static editor::FoldingModel* EnsureActiveFoldingModelFresh(WorkspaceShell& shell) {
     return shell.EnsureActiveFoldingModelFresh();
-  }
-  static editor::FoldingModel* ActiveTabFoldingModelForTesting(WorkspaceShell& shell) {
-    WorkspaceShell::TabEntry::EditorTabState* editor_tab = shell.ActiveEditorTab();
-    return editor_tab != nullptr ? editor_tab->folding_model.get() : nullptr;
   }
   static workspace::LspManager& LspManagerForTesting(WorkspaceShell& shell) {
     return shell.CurrentLspManager();
@@ -372,12 +363,6 @@
         CompareTabPresentationRowAt(ActiveCompare(shell), presentation_row);
     return row != nullptr ? row->kind : compare::ComparePresentationRowKind::Metadata;
   }
-  static int ActiveCompareCollapsedLineCount(WorkspaceShell& shell,
-                                             std::size_t presentation_row) {
-    const compare::ComparePresentationRow* row =
-        CompareTabPresentationRowAt(ActiveCompare(shell), presentation_row);
-    return row != nullptr ? row->collapsed_line_count : 0;
-  }
   static std::pair<std::size_t, std::size_t> ActiveCompareCollapsedRunIdentity(
       WorkspaceShell& shell,
       std::size_t presentation_row) {
@@ -393,13 +378,6 @@
         shell.context_.current_project_state.focused_group().active_tab().compare;
     return compare.has_value() && compare->hover_state.has_value()
                ? std::optional<CompareHoverKind>(compare->hover_state->kind)
-               : std::nullopt;
-  }
-  static std::optional<std::size_t> ActiveCompareHoverPresentationRow(const WorkspaceShell& shell) {
-    const auto& compare =
-        shell.context_.current_project_state.focused_group().active_tab().compare;
-    return compare.has_value() && compare->hover_state.has_value()
-               ? std::optional<std::size_t>(compare->hover_state->presentation_row)
                : std::nullopt;
   }
   static CollapsedContextActionRects ActiveCompareCollapsedContextActionRects(
@@ -484,7 +462,7 @@
                             WorkspaceShell::PromptSurfaceState::Kind::Confirm, path);
   }
   static void PrepareDiscardAllGitPrompt(WorkspaceShell& shell) {
-    shell.OpenDiscardAllGitSidebarPrompt();
+    shell.MakeSidebarService().OpenDiscardAllGitPrompt();
   }
 
   static WorkspaceShell::PromptSurfaceState& CurrentPromptSurface(WorkspaceShell& shell) {
@@ -499,13 +477,6 @@
     shell.context_.prompts.surface.selected_button = selected_button;
     shell.ConfirmPromptSurface();
   }
-  static bool ReplaceActiveEditorWithFile(WorkspaceShell& shell, const std::filesystem::path& path) {
-    editor::TextViewport opened_view;
-    if (!opened_view.OpenFile(path)) {
-      return false;
-    }
-    return shell.ReplaceActiveEditorView(opened_view);
-  }
   static bool OpenWorkingTreeComparison(WorkspaceShell& shell,
                                         const std::filesystem::path& path,
                                         const std::string& left_ref,
@@ -516,9 +487,6 @@
                                        const std::filesystem::path& path) {
     return shell.OpenComparePickerForPath(path, {});
   }
-  static void OpenOutgoingBaseRefPicker(WorkspaceShell& shell) {
-    shell.OpenOutgoingBaseRefPicker();
-  }
   // Async compare-picker seam: inject fake git providers so a test can block the
   // background query (assert the loading overlay) and control when results land.
   static void SetComparePickerFileHistoryProvider(
@@ -527,18 +495,6 @@
                                                   const std::filesystem::path&)>
           provider) {
     shell.compare_picker_file_history_provider_ = std::move(provider);
-  }
-  static void SetComparePickerBranchesProvider(
-      WorkspaceShell& shell,
-      std::function<std::vector<project::GitBranchReference>(const std::filesystem::path&)>
-          provider) {
-    shell.compare_picker_branches_provider_ = std::move(provider);
-  }
-  static void SetComparePickerRecentCommitsProvider(
-      WorkspaceShell& shell,
-      std::function<std::vector<project::GitCommitEntry>(const std::filesystem::path&, std::size_t)>
-          provider) {
-    shell.compare_picker_recent_commits_provider_ = std::move(provider);
   }
   static bool ComparePickerLoading(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.compare_picker.loading;
@@ -1018,16 +974,6 @@
                                                      std::string* error_message) {
     return shell.PrepareEditorViewportForSave(path, viewport, error_message, SaveMode::Blocking)
         .ok();
-  }
-  // Deferred preparation plus the wait that finishes it: what a test wants is the
-  // same end state as a blocking save, reached through the asynchronous path.
-  static bool PrepareEditorViewportForSaveDeferredForTesting(WorkspaceShell& shell,
-                                                             const std::filesystem::path& path,
-                                                             editor::TextViewport& viewport) {
-    const SavePreparation prepared =
-        shell.PrepareEditorViewportForSave(path, viewport, nullptr, SaveMode::Deferred);
-    shell.save_formatter_service_.FlushPendingRuns();
-    return prepared.ok();
   }
   static void FlushPendingSaveFormatters(WorkspaceShell& shell) {
     shell.save_formatter_service_.FlushPendingRuns();

@@ -115,7 +115,6 @@ class SurfaceTextureCache {
   std::uint64_t residency_generation() const { return residency_generation_; }
 
   std::size_t cached_count() const { return entries_.size(); }
-  std::size_t vram_bytes() const { return vram_bytes_; }
   // Diagnostic: number of retained permanent-failure markers. Bounded by
   // kMaxFailedHashes so a plugin publishing distinct invalid images cannot grow it
   // without limit; a persistently high value flags a broken image-producing plugin

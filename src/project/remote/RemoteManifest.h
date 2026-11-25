@@ -44,9 +44,6 @@ inline constexpr std::size_t kMaxManifestPathBytes = 4096;
 // (git's term) and is not trusted: the content is hashed again next time.
 inline constexpr std::int64_t kRacySignatureWindowNs = 2'000'000'000;
 std::int64_t WallClockNowNs();
-inline bool IsRacySignature(std::int64_t mtime_ns, std::int64_t ctime_ns, std::int64_t now_ns) {
-  return now_ns - mtime_ns < kRacySignatureWindowNs || now_ns - ctime_ns < kRacySignatureWindowNs;
-}
 
 // Whether `path` is a relative path that stays under the root by construction: not
 // empty, not absolute, no empty, "." or ".." component, no NUL, no backslash, no

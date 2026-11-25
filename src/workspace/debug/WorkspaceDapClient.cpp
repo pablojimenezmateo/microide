@@ -102,12 +102,6 @@ void DapClient::EnableTestStubMode() {
   impl_->initializing.store(false, std::memory_order_release);
 }
 
-void DapClient::DisableTestStubMode() {
-  std::lock_guard lock(impl_->mutex);
-  impl_->test_stub_mode.store(false, std::memory_order_release);
-  impl_->test_request_handler = nullptr;
-}
-
 void DapClient::SetTestRequestHandler(
     std::function<void(const std::string& command, const util::JsonValue& arguments,
                        ResponseCallback)> handler) {

@@ -306,9 +306,6 @@ bool SideEquals(std::string_view stored, std::span<const std::string_view> lines
 
 }  // namespace
 
-HunkRefinementView::HunkRefinementView(const HunkRefinement& refinement)
-    : refinement_(&refinement), rows_(refinement.rows) {}
-
 HunkRefinementView::HunkRefinementView(std::span<const HunkRow> rows,
                                        std::span<const CompareTextSpan> spans,
                                        std::span<const std::uint32_t> line_starts,
@@ -316,20 +313,10 @@ HunkRefinementView::HunkRefinementView(std::span<const HunkRow> rows,
     : rows_(rows), spans_(spans), line_starts_(line_starts), left_lines_(left_lines) {}
 
 std::span<const CompareTextSpan> HunkRefinementView::LeftSpans(std::uint32_t line) const {
-  if (refinement_ != nullptr) {
-    return line < refinement_->left_spans.size()
-               ? std::span<const CompareTextSpan>(refinement_->left_spans[line])
-               : std::span<const CompareTextSpan>();
-  }
   return line < left_lines_ ? LineSpans(line) : std::span<const CompareTextSpan>();
 }
 
 std::span<const CompareTextSpan> HunkRefinementView::RightSpans(std::uint32_t line) const {
-  if (refinement_ != nullptr) {
-    return line < refinement_->right_spans.size()
-               ? std::span<const CompareTextSpan>(refinement_->right_spans[line])
-               : std::span<const CompareTextSpan>();
-  }
   const std::size_t slot = std::size_t{left_lines_} + line;
   return slot + 1 < line_starts_.size() ? LineSpans(static_cast<std::uint32_t>(slot))
                                         : std::span<const CompareTextSpan>();

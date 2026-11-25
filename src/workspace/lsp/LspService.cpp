@@ -267,10 +267,6 @@ ProjectWorkspaceState& LspService::CurrentProjectState() {
   return context_->current_project_state;
 }
 
-const ProjectWorkspaceState& LspService::CurrentProjectState() const {
-  return context_->current_project_state;
-}
-
 std::string LspService::ActiveLanguageIdForProvider() const {
   const editor::TextViewport* viewport = operations_.active_editable_viewport();
   if (viewport == nullptr || viewport->path().empty()) {

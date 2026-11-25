@@ -274,14 +274,6 @@ DebugPaneService& WorkspaceShell::MakeDebugPaneService() {
   return *glue_->debug_pane_service;
 }
 
-void WorkspaceShell::ShowDebugPaneMode(DebugPaneMode mode) {
-  MakeDebugPaneService().ShowMode(mode);
-}
-
-void WorkspaceShell::CloseDebugPane() { MakeDebugPaneService().Close(); }
-
-void WorkspaceShell::OpenDebugPaneOnStop() { MakeDebugPaneService().OpenOnStop(); }
-
 DebugPaneMouseCoordinator& WorkspaceShell::MakeDebugPaneMouseCoordinator() {
   if (glue_->debug_pane_mouse_coordinator != nullptr) {
     return *glue_->debug_pane_mouse_coordinator;
@@ -300,7 +292,7 @@ DebugPaneMouseCoordinator& WorkspaceShell::MakeDebugPaneMouseCoordinator() {
               [this](int row, std::size_t count, int visible_rows) {
                 SetDebugPaneScrollRow(row, count, visible_rows);
               },
-          .show_debug_pane_mode = [this](DebugPaneMode mode) { ShowDebugPaneMode(mode); },
+          .show_debug_pane_mode = [this](DebugPaneMode mode) { MakeDebugPaneService().ShowMode(mode); },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
           .on_debug_frame_focus_changed =

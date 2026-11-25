@@ -122,10 +122,6 @@ ComparePresentationModel BuildComparePresentationModel(
 // those fields.
 void ComposeComparePresentationDisplaySummary(ComparePresentationRow& row);
 
-std::optional<std::size_t> ComparePresentationModelRowIndex(
-    const ComparePresentationModel& presentation,
-    std::size_t model_row_index);
-
 // Map a model row to the presentation row that represents it, always returning a
 // valid presentation-space index (0 when the presentation is empty). Unlike
 // ComparePresentationModelRowIndex this resolves a model row hidden inside a

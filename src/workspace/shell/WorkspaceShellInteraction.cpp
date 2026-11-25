@@ -191,10 +191,6 @@ bool WorkspaceShell::WriteClipboardText(std::string_view text) const {
   return clipboard_.Write(text);
 }
 
-std::optional<std::string> WorkspaceShell::ReadClipboardText() const {
-  return clipboard_.Read();
-}
-
 bool WorkspaceShell::WritePrimarySelectionText(std::string_view text) const {
   if (text.empty()) {
     return false;

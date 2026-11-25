@@ -134,13 +134,6 @@
     const auto& visible = shell.tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip);
     return shell.tab_strip_chrome_.ComputeTabOverflowControls(layout.tab_strip, visible);
   }
-  static WorkspaceShell::TabStripOverflowControls ProjectTabOverflowControls(
-      WorkspaceShell& shell) {
-    const WorkspaceLayout layout = CurrentLayout(shell);
-    const auto& visible =
-        shell.tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
-    return shell.tab_strip_chrome_.ComputeProjectTabOverflowControls(layout.project_tab_strip, visible);
-  }
   static bool ScrollEditorTabStrip(WorkspaceShell& shell, int direction) {
     return shell.tab_strip_chrome_.ScrollEditorTabStrip(direction);
   }
@@ -545,24 +538,6 @@
     return MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
                     kWorkspaceBottomPanelHeaderHeight);
   }
-  static std::optional<SDL_FRect> BottomPanelTabRectByTitle(WorkspaceShell& shell,
-                                                             std::string_view title) {
-    const WorkspaceLayout layout = CurrentLayout(shell);
-    const SDL_FRect panel_header =
-        MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w, 28.0f);
-    const std::vector<WorkspaceShell::VisibleStripTab> visible_tabs =
-        shell.tab_strip_service_.ComputeVisibleBottomPanelTabs(
-            shell.context_.current_project_state, panel_header,
-            shell.layout_mode_service_.CurrentMode(),
-            [&shell](std::string_view text) { return shell.text_renderer_.MeasureWidth(text); },
-            shell.output_channels_.Channels());
-    for (const WorkspaceShell::VisibleStripTab& tab : visible_tabs) {
-      if (tab.display_title == title) {
-        return tab.rect;
-      }
-    }
-    return std::nullopt;
-  }
   static std::optional<SDL_FRect> WindowControlButtonRect(
       WorkspaceShell& shell,
       WorkspaceShell::WindowControlButtonId id) {
@@ -577,15 +552,6 @@
   }
   static std::optional<SDL_FRect> MinimizeButtonRect(WorkspaceShell& shell) {
     return WindowControlButtonRect(shell, WorkspaceShell::WindowControlButtonId::Minimize);
-  }
-  static std::optional<SDL_FRect> MaximizeButtonRect(WorkspaceShell& shell) {
-    return WindowControlButtonRect(shell, WorkspaceShell::WindowControlButtonId::Maximize);
-  }
-  static std::optional<SDL_FRect> CloseButtonRect(WorkspaceShell& shell) {
-    return WindowControlButtonRect(shell, WorkspaceShell::WindowControlButtonId::Close);
-  }
-  static bool CachedCursorIs(const WorkspaceShell& shell, WorkspaceShell::CursorKind expected) {
-    return shell.cursor_kind_ == expected;
   }
   static int CachedCursorValue(const WorkspaceShell& shell) {
     return static_cast<int>(shell.cursor_kind_);

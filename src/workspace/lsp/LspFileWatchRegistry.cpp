@@ -173,8 +173,6 @@ bool LspFileWatchRegistry::Unregister(std::string_view id) {
   return registrations_.size() != before;
 }
 
-void LspFileWatchRegistry::Clear() { registrations_.clear(); }
-
 bool LspFileWatchRegistry::WantsChange(std::string_view relative_path,
                                        std::string_view absolute_path,
                                        LspFileChangeType change) const {

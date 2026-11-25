@@ -56,19 +56,6 @@ class PrimitiveWriter {
   bool WriteString(std::string_view value);
   bool WritePath(const std::filesystem::path& path);
 
-  template <typename T, typename WriteItem>
-  bool WriteVector(const std::vector<T>& values, WriteItem write_item) {
-    if (!WriteU32(static_cast<std::uint32_t>(values.size()))) {
-      return false;
-    }
-    for (const T& value : values) {
-      if (!write_item(*this, value)) {
-        return false;
-      }
-    }
-    return true;
-  }
-
   template <typename T, typename WriteValue>
   bool WriteOptional(const std::optional<T>& value, WriteValue write_value) {
     if (!WriteBool(value.has_value())) {

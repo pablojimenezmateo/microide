@@ -55,9 +55,6 @@
   static void ShowDirtyPromptForQuit(WorkspaceShell& shell) {
     shell.ShowDirtyPromptForQuit();
   }
-  static bool StageAllGitSidebarEntries(WorkspaceShell& shell) {
-    return shell.StageAllGitSidebarEntries();
-  }
   static bool StageGitSidebarEntry(WorkspaceShell& shell, std::size_t entry_index) {
     return shell.StageGitSidebarEntry(entry_index);
   }
@@ -226,9 +223,6 @@
   }
   static std::string PromptSurfaceDetail(const WorkspaceShell& shell) {
     return std::string(shell.PromptSurfaceDetail());
-  }
-  static int PromptSurfaceButtonCount(const WorkspaceShell& shell) {
-    return shell.context_.prompts.surface.button_count;
   }
   static const std::vector<WorkspaceShell::TabEntry>& OpenTabs(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.focused_group().open_tabs;
@@ -407,25 +401,6 @@
     }
     return std::nullopt;
   }
-  static std::optional<bool> PopupMenuItemChecked(WorkspaceShell& shell,
-                                                  WorkspaceShell::MenuId id,
-                                                  std::string_view label) {
-    const WorkspaceLayout layout = CurrentLayout(shell);
-    const auto popup_rect = shell.ComputePopupMenuRect(layout.menu_bar, id);
-    if (!popup_rect.has_value()) {
-      return std::nullopt;
-    }
-    const auto items = shell.MenuItems(id);
-    for (const auto& visible_item : shell.ComputeVisiblePopupMenuItems(id, *popup_rect)) {
-      if (visible_item.separator) {
-        continue;
-      }
-      if (shell.MenuItemLabel(items[visible_item.index], /*with_reason=*/false) == label) {
-        return visible_item.checked;
-      }
-    }
-    return std::nullopt;
-  }
   // Returns true if any menu item with the given label resolves to a
   // checked state on the menu's item table (does NOT require the menu to
   // be open — useful for unit-style checks against IsMenuItemChecked).
@@ -503,10 +478,6 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return project_search_panel::CaseButtonRect(layout.sidebar);
   }
-  static SDL_FRect SearchSidebarHiddenButtonRect(WorkspaceShell& shell) {
-    const WorkspaceLayout layout = CurrentLayout(shell);
-    return project_search_panel::HiddenButtonRect(layout.sidebar);
-  }
   static SDL_FRect SearchSidebarScopeButtonRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return project_search_panel::ScopeButtonRect(layout.sidebar);
@@ -537,14 +508,6 @@
   }
   static bool ProjectSearchEditing(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.editing;
-  }
-  static bool TextInputSwallowArmed(const WorkspaceShell& shell) {
-    return shell.context_.text_input.swallow_next_text_input;
-  }
-  // The text of the field being edited, as the search view paints it.
-  static std::string ProjectSearchEditBufferText(const WorkspaceShell& shell) {
-    return std::string(
-        shell.context_.current_project_state.overlay.workflow.project_search.edit_buffer.text());
   }
   static const project::ProjectSearchOptions& ProjectSearchOptions(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.options;
@@ -665,13 +628,6 @@
   static bool ProjectSearchWorkerFinished(const WorkspaceShell& shell) {
     return shell.project_search_runtime_.WorkerFinished();
   }
-  // Block until the search worker task has fully joined (not merely signaled
-  // finished). Tests that assert on the process-global text-search read counter
-  // call this before reading the counter so a trailing not-yet-joined worker
-  // read cannot land after a counter reset. See ProjectSearchService::WaitForWorkersIdle.
-  static void WaitForProjectSearchWorkersIdle(WorkspaceShell& shell) {
-    shell.project_search_runtime_.WaitForWorkersIdle();
-  }
   static bool GitSidebarRefreshing(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.sidebar.git.refreshing;
   }
@@ -770,12 +726,6 @@
   static void SetProjectSearchSelectedIndex(WorkspaceShell& shell, std::size_t index) {
     shell.context_.current_project_state.overlay.workflow.project_search.selected_index = index;
   }
-  // The find/replace widget is NON-MODAL: opening it leaves focus on the editor
-  // so typing keeps going to the buffer. A test that wants the query field to
-  // own a keystroke has to move focus the way clicking into it would.
-  static void FocusOverlaySurface(WorkspaceShell& shell) {
-    shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Overlay;
-  }
   // Selects the whole buffer-search query, so a test can check that a focused
   // single-line field -- not the editor under it -- owns a copy keystroke.
   static void SelectAllBufferSearchQuery(WorkspaceShell& shell) {
@@ -786,9 +736,6 @@
   }
   static FindWidgetLayout FindWidgetControls(WorkspaceShell& shell, bool replace_mode) {
     return ComputeBufferFindWidgetLayout(shell.ActiveTabSurface(CurrentLayout(shell)), replace_mode);
-  }
-  static SDL_FRect FindWidgetRect(WorkspaceShell& shell, bool replace_mode) {
-    return ComputeFindWidgetRect(shell.ActiveTabSurface(CurrentLayout(shell)), replace_mode);
   }
   static SDL_FRect EditorAreaRect(WorkspaceShell& shell) {
     return CurrentLayout(shell).editor_area;
@@ -1342,7 +1289,7 @@
   }
   static void ConsumeDapCallbacks(WorkspaceShell& shell) { shell.debug_service_.ConsumeDapCallbacks(); }
   static bool DebugSessionStopped(const WorkspaceShell& shell) { return shell.IsDebugSessionStopped(); }
-  static bool DebugSessionActive(const WorkspaceShell& shell) { return shell.IsDebugSessionActive(); }
+  static bool DebugSessionActive(const WorkspaceShell& shell) { return shell.debug_service_.IsSessionActive(); }
   static bool TabDragBodyDropActive(const WorkspaceShell& shell) {
     const auto& drag = shell.context_.interaction_state.tab_drag;
     return drag.dragging && drag.body_drop();
