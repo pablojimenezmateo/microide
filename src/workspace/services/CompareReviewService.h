@@ -30,7 +30,7 @@ class CompareReviewService {
   void SetSelectedHunkReviewed(bool reviewed);
   void SetActiveFileReviewed(bool reviewed);
   void EditSelectedNote(const std::string& note_text);
-  void ClearReview();
+  [[nodiscard]] bool ClearReview();
 
   void SetHunkReviewed(CompareTabState& compare_tab, int hunk, bool reviewed);
   void SetFileReviewed(CompareTabState& compare_tab, bool reviewed);

@@ -360,7 +360,7 @@ class WorkspaceActionContext {
   void MarkBranchHunkReviewed();
   bool RunCompareCommand(ActionId id, std::string* error);
   void UnmarkBranchHunkReviewed();
-  void ClearBranchReviewState();
+  [[nodiscard]] bool ClearBranchReviewState();
   void EditBranchReviewNote(std::string note_text);
   bool ApplyGitSelectedRanges(GitRangeVerb verb);
   void OpenMergeEditor(const std::filesystem::path& base_path,

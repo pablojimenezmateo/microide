@@ -113,7 +113,7 @@ def flow_journey_feature_branch(app: q.App) -> None:
 
     reply = app.send("review-commit", "HEAD")
     app.expect(bool(reply.get("ok")), f"the commit opens for review ({reply})")
-    app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "the commit's diff")
+    app.wait_until(lambda: q.loaded_diff(app.active_tab()), 5.0, "the commit's diff")
     step(app, "review the commit", 0.4)
 
     # Back to main: the file is gone from the tree; then back to the feature.

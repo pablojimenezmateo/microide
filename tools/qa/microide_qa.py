@@ -104,6 +104,12 @@ FINDING_MARKERS = (
 )
 
 
+def loaded_diff(tab: dict[str, Any] | None) -> bool:
+    """A diff tab whose sides have been read: a diff opens as a stand-in and
+    loads on the reader thread, and commands on its changes wait for that."""
+    return bool(tab) and tab.get("kind") == "compare" and not tab.get("loading", False)
+
+
 def is_finding_line(line: str) -> bool:
     """A log line an oracle reports. The input trace echoes what was typed, so a
     typed "Assertion" is not one."""

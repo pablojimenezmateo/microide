@@ -314,7 +314,7 @@ def flow_branch_review(app: q.App) -> None:
         app.expect(False, f"the git view lists the outgoing files ({_git_labels(app)})")
         return
     app.click_named("row:git/r1.txt")
-    app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "r1.txt's diff")
+    app.wait_until(lambda: q.loaded_diff(app.active_tab()), 5.0, "r1.txt's diff")
     step(app, "outgoing diff", 0.3)
     app.expect(app.send("mark-branch-file-reviewed").get("ok") is True, "marking the outgoing diff runs")
     app.wait_until(lambda: _git_labels(app).get("row:git/r1.txt", "").startswith("["), 3.0,
@@ -325,7 +325,7 @@ def flow_branch_review(app: q.App) -> None:
     app.wait_until(lambda: _git_labels(app).get("row:git/r1.txt", "").startswith("["), 5.0,
                    f"the mark survives a restart ({_git_labels(app)})")
     app.click_named("row:git/r1.txt")
-    app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "r1.txt's diff again")
+    app.wait_until(lambda: q.loaded_diff(app.active_tab()), 5.0, "r1.txt's diff again")
     app.send("clear-branch-review-state")
     app.wait_until(lambda: not _git_labels(app).get("row:git/r1.txt", "[").startswith("["), 3.0,
                    f"clearing removes the marker ({_git_labels(app)})")
@@ -347,7 +347,7 @@ def flow_selected_ranges(app: q.App) -> None:
         app.expect(False, "the git view lists ranges.txt")
         return
     app.click(*app.center(row))
-    app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "the diff")
+    app.wait_until(lambda: q.loaded_diff(app.active_tab()), 5.0, "the diff")
     app.send("focus", "editor")
     step(app, "diff", 0.4)
     app.key("ctrl+k")
@@ -455,7 +455,7 @@ def flow_compare_mouse(app: q.App) -> None:
         app.expect(False, "the changed file is listed in the git view")
         return
     app.click(*app.center(row))
-    if not app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "the diff to open"):
+    if not app.wait_until(lambda: q.loaded_diff(app.active_tab()), 5.0, "the diff to open"):
         return
     step(app, "compare tab", 0.5)
 

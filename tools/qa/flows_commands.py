@@ -76,7 +76,7 @@ def flow_commands_run(app: q.App) -> None:
         return
 
     app.send("review-commit", "HEAD")
-    if app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 8.0, "a diff tab"):
+    if app.wait_until(lambda: q.loaded_diff(app.active_tab()), 8.0, "a diff tab"):
         step(app, "a diff", 0.3)
 
         def diff() -> None:
@@ -142,7 +142,7 @@ def flow_argument_pickers(app: q.App) -> None:
         app.type("right.txt")
         app.wait_until(lambda: (app.ui()["overlay"].get("count") or 0) > 0, 3.0, "the finder to find right.txt")
         app.key("Return")
-        app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "the comparison")
+        app.wait_until(lambda: q.loaded_diff(app.active_tab()), 5.0, "the comparison")
         app.expect((app.active_tab() or {}).get("kind") == "compare", "Enter compares the pick with the open file")
     dismiss(app)
 

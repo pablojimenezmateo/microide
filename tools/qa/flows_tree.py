@@ -170,7 +170,7 @@ def flow_rename_open_tabs(app: q.App) -> None:
     row = app.wait_for("row:git/diffme.txt", 5.0)
     if app.expect(row is not None, "the git view lists diffme.txt"):
         app.click(*app.center(row))
-        app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "the diff to open")
+        app.wait_until(lambda: q.loaded_diff(app.active_tab()), 5.0, "the diff to open")
         step(app, "the diff of diffme.txt", 0.3)
         if app.expect(_rename(app, "diffme.txt", "diffed.txt"), "renaming diffme.txt from the tree"):
             app.wait_until(lambda: (app.project / "ren" / "diffed.txt").exists(), 3.0, "the rename on disk")

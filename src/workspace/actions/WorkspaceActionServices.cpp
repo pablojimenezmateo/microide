@@ -1141,8 +1141,8 @@ void WorkspaceActionContext::UnmarkBranchHunkReviewed() {
   services_.compare_review.SetSelectedHunkReviewed(false);
 }
 
-void WorkspaceActionContext::ClearBranchReviewState() {
-  services_.compare_review.ClearReview();
+bool WorkspaceActionContext::ClearBranchReviewState() {
+  return services_.compare_review.ClearReview();
 }
 
 void WorkspaceActionContext::EditBranchReviewNote(std::string note_text) {

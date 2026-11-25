@@ -737,6 +737,7 @@ util::JsonValue BuildEditorTabJson(std::size_t index, const TabEntry& tab, bool 
   object["dirty"] = util::JsonValue(TabEntryIsDirty(tab));
   if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
     const CompareTabState& compare = *tab.compare;
+    object["loading"] = util::JsonValue(compare.load_pending);
     object["changes"] = util::JsonValue(static_cast<std::int64_t>(compare.model.hunks.size()));
     object["ignoreWhitespace"] = util::JsonValue(compare.build_options.ignore_whitespace);
     object["showWhitespace"] = util::JsonValue(compare.show_whitespace);

@@ -60,7 +60,7 @@ def flow_review_marks(app: q.App) -> None:
         app.expect(False, "the git view lists the outgoing files")
         return
     app.click_named("row:git/one.txt")
-    app.wait_until(lambda: _diff_tab(app).get("kind") == "compare", 5.0, "one.txt's outgoing diff")
+    app.wait_until(lambda: q.loaded_diff(_diff_tab(app)), 5.0, "one.txt's outgoing diff")
     step(app, "outgoing diff", 0.5)
     app.expect(_diff_tab(app).get("reviewedHunks") == 0, f"nothing is reviewed yet ({_diff_tab(app)})")
     before = _editor_image(app) if not app.wayland else None
@@ -105,7 +105,7 @@ def flow_review_marks(app: q.App) -> None:
     # Every hunk of an Outgoing file reviewed marks the file: its row says so.
     app.key("ctrl+shift+g")
     app.click_named("row:git/two.txt")
-    app.wait_until(lambda: _diff_tab(app).get("kind") == "compare", 5.0, "two.txt's outgoing diff")
+    app.wait_until(lambda: q.loaded_diff(_diff_tab(app)), 5.0, "two.txt's outgoing diff")
     app.send("mark-branch-hunk-reviewed")  # two.txt's one hunk
     app.wait_until(lambda: _row_label(app, "row:git/two.txt").startswith("[reviewed]"), 3.0,
                    "the row marker once every hunk is reviewed")
@@ -133,7 +133,7 @@ def flow_git_unstage_and_push(app: q.App) -> None:
         app.expect(False, "the git view lists the staged file")
         return
     app.click(*app.center(row))
-    app.wait_until(lambda: _diff_tab(app).get("kind") == "compare", 5.0, "the staged diff")
+    app.wait_until(lambda: q.loaded_diff(_diff_tab(app)), 5.0, "the staged diff")
     app.send("focus", "editor")
     step(app, "diff", 0.4)
     app.key("ctrl+k")
@@ -188,7 +188,7 @@ def flow_review_controls(app: q.App) -> None:
         app.expect(False, "the git view lists the outgoing file")
         return
     app.click_named("row:git/calc.txt")
-    app.wait_until(lambda: _diff_tab(app).get("kind") == "compare", 5.0, "calc.txt's outgoing diff")
+    app.wait_until(lambda: q.loaded_diff(_diff_tab(app)), 5.0, "calc.txt's outgoing diff")
     if not app.wait_for("button:compare/hunk-0/toggle-reviewed", 5.0):
         app.expect(False, "the selected change shows Mark Reviewed")
         return

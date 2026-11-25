@@ -246,7 +246,10 @@ void CompareReviewService::EditSelectedNote(const std::string& note_text) {
   MarksChanged();
 }
 
-void CompareReviewService::ClearReview() {
+bool CompareReviewService::ClearReview() {
+  if (const CompareTabState* compare_tab = ActiveTab(); compare_tab != nullptr && compare_tab->load_pending) {
+    return false;
+  }
   if (const CompareTabState* compare_tab = ActiveReviewTab()) {
     state_.branch_review.ClearTarget(compare_tab->branch_target);
   } else if (const std::optional<compare::BranchReviewTargetIdentity> target =
@@ -255,6 +258,7 @@ void CompareReviewService::ClearReview() {
     state_.branch_review.ClearTarget(*target);
   }
   MarksChanged();
+  return true;
 }
 
 std::optional<compare::BranchReviewTargetIdentity> ReviewExportTarget(const ProjectWorkspaceState& state,

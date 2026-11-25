@@ -101,7 +101,7 @@ def flow_git_view_keys(app: q.App) -> None:
     app.expect(_porcelain(app).get(f"keys/{selected}", "") == " M", f"Unstage unstages it again ({_porcelain(app)})")
     app.send("focus", "sidebar")
     choose_from_context_menu_by_keys(app, "Open Changes")
-    app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "Open Changes to open the diff")
+    app.wait_until(lambda: q.loaded_diff(app.active_tab()), 5.0, "Open Changes to open the diff")
     step(app, "Shift+F10, Open Changes", 0.3)
     app.expect((app.active_tab() or {}).get("kind") == "compare", "Open Changes opens the entry's diff")
     app.send("focus", "sidebar")
@@ -114,7 +114,7 @@ def flow_git_view_keys(app: q.App) -> None:
     app.settle(0.1)
     other = (_git_selected(app) or "").split("/", 1)[-1]
     app.key("Return")
-    app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare"
+    app.wait_until(lambda: q.loaded_diff(app.active_tab())
                    and other in (app.active_tab() or {}).get("title", ""), 5.0, "Enter to open the next entry's diff")
     step(app, "Enter", 0.3)
     app.expect(other in (app.active_tab() or {}).get("title", ""), f"Enter opens the selected entry ({app.active_tab()})")

@@ -238,7 +238,7 @@ def flow_compare_and_merge(app: q.App) -> None:
     """Review the last commit as a compare tab; merge the conflicting branch and
     resolve the conflict in the merge editor; the file ends without markers."""
     app.send("review-commit", "HEAD")
-    app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 8.0, "a compare tab")
+    app.wait_until(lambda: q.loaded_diff(app.active_tab()), 8.0, "a compare tab")
     step(app, "review-commit", 0.6)
     app.expect(app.buffer().get("kind") == "compare", "the compare tab's editable side is the buffer")
     surface = app.ui()["surfaces"]["editorSurface"]

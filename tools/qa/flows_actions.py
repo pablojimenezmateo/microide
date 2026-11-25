@@ -57,7 +57,7 @@ def flow_notification_banner_commands(app: q.App) -> None:
                    f"Keep drops the banner and keeps the edit ({_banner(app)}, {app.text()!r})")
     if clash("theirs two\n"):
         app.send("banner-action", "Compare")
-        app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 3.0, "Compare to open a diff")
+        app.wait_until(lambda: q.loaded_diff(app.active_tab()), 3.0, "Compare to open a diff")
         step(app, "compare", 0.4)
         app.key("ctrl+w")
         step(app, "close the diff", 0.3)

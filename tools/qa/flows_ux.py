@@ -1309,7 +1309,7 @@ def flow_compare_keys(app: q.App) -> None:
     if row is None:
         return
     app.click(*app.center(row))
-    app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "the diff to open")
+    app.wait_until(lambda: q.loaded_diff(app.active_tab()), 5.0, "the diff to open")
     step(app, "compare tab", 0.5)
     app.send("focus", "editor")
     def line() -> int:

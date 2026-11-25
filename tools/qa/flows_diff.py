@@ -76,7 +76,7 @@ def flow_diff_commands(app: q.App) -> None:
     if row is None:
         return
     app.click(*app.center(row))
-    if not app.wait_until(lambda: _diff_tab(app).get("kind") == "compare", 5.0, "the diff to open"):
+    if not app.wait_until(lambda: q.loaded_diff(_diff_tab(app)), 5.0, "the diff to open"):
         return
     app.send("focus", "editor")
     step(app, "the diff", 0.5)
@@ -363,7 +363,7 @@ def flow_diff_hunk_keys(app: q.App) -> None:
     if not app.expect(row is not None, "the git view lists hunks.txt"):
         return
     app.click(*app.center(row))
-    if not app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "the diff to open"):
+    if not app.wait_until(lambda: q.loaded_diff(app.active_tab()), 5.0, "the diff to open"):
         return
     divider = app.wait_for("divider:compare", 3.0)
     surface = app.ui()["surfaces"]["editorSurface"]
@@ -600,7 +600,7 @@ def flow_diff_in_split(app: q.App) -> None:
     if row is None:
         return
     app.click(*app.center(row))
-    if not app.wait_until(lambda: _diff_tab(app).get("kind") == "compare", 5.0, "the diff to open"):
+    if not app.wait_until(lambda: q.loaded_diff(_diff_tab(app)), 5.0, "the diff to open"):
         return
     app.send("focus", "editor")
     step(app, "the diff in the right pane", 0.5)
@@ -651,7 +651,7 @@ def flow_diff_moved_code(app: q.App) -> None:
     if row is None:
         return
     app.click(*app.center(row))
-    if not app.wait_until(lambda: _diff_tab(app).get("kind") == "compare", 5.0, "the diff to open"):
+    if not app.wait_until(lambda: q.loaded_diff(_diff_tab(app)), 5.0, "the diff to open"):
         return
     step(app, "the diff", 0.5)
     tab = _diff_tab(app)

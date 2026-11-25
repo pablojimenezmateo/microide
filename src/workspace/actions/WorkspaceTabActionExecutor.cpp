@@ -495,7 +495,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       context_.UnmarkBranchHunkReviewed();
       return DispatchResult::Handled;
     case ActionId::ClearBranchReviewState:
-      context_.ClearBranchReviewState();
+      if (!context_.ClearBranchReviewState()) {
+        return reject("The diff in front is still loading; clear its review once it shows");
+      }
       return DispatchResult::Handled;
     case ActionId::CompareToggleIgnoreWhitespace:
     case ActionId::CompareToggleShowWhitespace:

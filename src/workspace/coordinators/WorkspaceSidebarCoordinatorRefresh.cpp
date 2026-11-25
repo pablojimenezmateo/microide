@@ -8,6 +8,7 @@
 
 #include "editor/TextViewport.h"
 #include "util/PathMatch.h"
+#include "workspace/git/CompareTabReview.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/ProjectSearchLiveHits.h"
 #include "workspace/WorkspaceLayout.h"
@@ -18,6 +19,34 @@
 #include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
+
+namespace {
+
+bool RetargetReviewDiffsToSnapshot(std::vector<EditorGroup>& groups, const std::filesystem::path& repository_root,
+                                   const GitSidebarState& git, const compare::BranchReviewStateService& review_service) {
+  bool retargeted = false;
+  for (EditorGroup& group : groups) {
+    for (TabEntry& tab : group.open_tabs) {
+      if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
+          !CompareTabTakesReviewMarks(*tab.compare)) {
+        continue;
+      }
+      CompareTabState& compare_tab = *tab.compare;
+      const compare::BranchReviewTargetIdentity target = compare::MakeBranchReviewTargetIdentity(
+          repository_root, compare_tab.commit_hash, compare_tab.right_ref, git.base_ref, git.snapshot_generation);
+      if (target == compare_tab.branch_target) {
+        continue;
+      }
+      compare_tab.branch_target = target;
+      ApplyBranchReviewPresentationMarkers(compare_tab, review_service);
+      RefreshCompareReviewHeader(compare_tab);
+      retargeted = true;
+    }
+  }
+  return retargeted;
+}
+
+}
 
 namespace {
 
@@ -131,6 +160,9 @@ void SidebarCoordinator::ApplyGitSnapshotKeepingSelection(
   git.selected_index = 0;
   ApplyGitRefreshSnapshot(git, std::move(snapshot), project_root_);
   git.refreshing = false;
+  if (RetargetReviewDiffsToSnapshot(state_.editor_groups, state_.root, git, state_.branch_review)) {
+    operations_.request_frame();
+  }
 
   const bool git_view_shown = state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git;
   for (std::size_t i = 0; i < git.entries.size(); ++i) {

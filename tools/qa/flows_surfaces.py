@@ -121,10 +121,10 @@ def flow_commands_args(app: q.App) -> None:
     write(app, "notes/incoming.txt", "a\nb2\nc\n")
     write(app, "notes/current.txt", "a\nb\nc3\n")
     _run(app, "compare-files notes/base.txt notes/incoming.txt",
-         lambda: (app.active_tab() or {}).get("kind") == "compare", "a compare tab", 6.0)
+         lambda: q.loaded_diff(app.active_tab()), "a compare tab", 6.0)
     _run(app, "merge notes/base.txt notes/incoming.txt notes/current.txt notes/merged.txt",
          lambda: (app.active_tab() or {}).get("kind") == "merge", "a merge tab", 6.0)
-    _run(app, "review-commit HEAD", lambda: (app.active_tab() or {}).get("kind") == "compare", "a commit review", 8.0)
+    _run(app, "review-commit HEAD", lambda: q.loaded_diff(app.active_tab()), "a commit review", 8.0)
     open_file(app, "notes/tosave.txt", "saved elsewhere\n")
     _run(app, "save notes/copy-of.txt", lambda: (app.project / "notes" / "copy-of.txt").exists()
          and read(app, "notes/copy-of.txt") == "saved elsewhere\n", "the buffer written under the given path")
@@ -400,7 +400,7 @@ def flow_diff_wrap(app: q.App) -> None:
     if row is None:
         return
     app.click(*app.center(row))
-    app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 8.0, "the working-tree diff")
+    app.wait_until(lambda: q.loaded_diff(app.active_tab()), 8.0, "the working-tree diff")
     step(app, "the README.md diff", 0.4)
     app.send("focus", "editor")
     app.send("wrap", "on")
