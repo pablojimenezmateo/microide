@@ -858,6 +858,36 @@ void TestAClickAnywhereBehindAModalMovesNoFocus() {
   Expect(moved.empty(), "a click behind the prompt leaves the prompt, the focus and the active tab; not:" + moved);
 }
 
+void TestADiffUnderAMaximizedPanelListsNoControls() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "notes.txt", "base\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  WriteFile(root / "notes.txt", "changed\n");
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+  TestAccess::SetWindowSize(shell, 800, 600);
+  Expect(TestAccess::OpenWorkingTreeComparison(shell, root / "notes.txt", "HEAD", "HEAD"), "the diff opens");
+  Expect(TestAccess::ExecuteCommandLine(shell, "panel-maximize"), "the panel is maximized");
+  SoftwareCanvas canvas(800, 600);
+  shell.Render(canvas.renderer(), 800, 600);
+  (void)shell.ConsumePendingRenderInvalidation();
+  std::string listed;
+  const util::JsonValue ui = TestAccess::ControlUi(shell);
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    const std::string name = entry["name"].AsString();
+    if (name.find("compare") != std::string::npos) {
+      listed += " " + name;
+    }
+  }
+  Expect(listed.empty(), "a diff the maximized panel covers names no control:" + listed);
+}
+
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/ALineNumberPressSelectsWholeLines", TestALineNumberPressSelectsWholeLines);
   AddTest(tests, "QaFlowRegressionUx/TheQuickOpenCaretSitsInItsField", TestTheQuickOpenCaretSitsInItsField);
@@ -894,6 +924,8 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/EveryClickableElementTheUiNamesIsAHoverTarget",
           TestEveryClickableElementTheUiNamesIsAHoverTarget);
   AddTest(tests, "QaFlowRegressionUx/AClickAnywhereBehindAModalMovesNoFocus", TestAClickAnywhereBehindAModalMovesNoFocus);
+  AddTest(tests, "QaFlowRegressionUx/ADiffUnderAMaximizedPanelListsNoControls",
+          TestADiffUnderAMaximizedPanelListsNoControls);
   AddTest(tests, "QaFlowRegressionUx/TheWindowTitleNamesTheActiveFileAndItsState",
           TestTheWindowTitleNamesTheActiveFileAndItsState);
 }

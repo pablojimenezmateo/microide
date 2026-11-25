@@ -583,8 +583,9 @@ void AppendCompareControls(ControlUiElements& out, render::TextRenderer& text_re
   for (const auto& [rect, name] :
        {std::pair{header.previous, "compare/previous-change"}, std::pair{header.next, "compare/next-change"},
         std::pair{header.file_reviewed, "compare/file-reviewed"}}) {
-    if (rect.has_value()) {
-      AddControlUiElement(out, kButton, name, *rect);
+    SDL_FRect shown{};
+    if (rect.has_value() && SDL_GetRectIntersectionFloat(&*rect, &surface_rect, &shown)) {
+      AddControlUiElement(out, kButton, name, shown);
     }
   }
   for (int row = 0; row < surface.visible_rows; ++row) {
@@ -781,7 +782,8 @@ void WorkspaceShell::ControlUiButtons(const WorkspaceLayout& layout, ControlUiEl
       }
     }
   }
-  if (CompareTabState* compare_tab = ActiveTabIsCompare() ? ActiveCompareTab() : nullptr; compare_tab != nullptr) {
+  if (CompareTabState* compare_tab = ActiveTabIsCompare() ? ActiveCompareTab() : nullptr;
+      compare_tab != nullptr && UiRectHasArea(ActiveTabSurface(layout))) {
     const SDL_FRect surface_rect = ActiveTabSurface(layout);
     AppendCompareControls(out, editor_text_renderer_, *compare_tab, surface_rect,
                           ComputeCompareSurfaceLayout(surface_rect, *compare_tab));
