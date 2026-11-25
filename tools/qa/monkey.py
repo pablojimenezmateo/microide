@@ -1237,6 +1237,8 @@ class Monkey:
     def window_action(self) -> str:
         if self.app.wayland:
             return self.chord_action()
+        if self.app.window_manager and self.rng.random() < 0.35:
+            return self._window_manager_action()
         if self.rng.random() < 0.3:
             self.app.focus_out()
             return "window:focus-out"
@@ -1251,6 +1253,19 @@ class Monkey:
         h = self.rng.choice(heights)
         self.app.resize(min(w, screen_w), min(h, screen_h))
         return "window:resize"
+
+    def _window_manager_action(self) -> str:
+        """What only a window manager answers (MQA_WM): the title bar's maximize,
+        pressed by name from a fresh layout (it sits beside Close, so the pointer
+        source never aims at it), and fullscreen on and off."""
+        if self.rng.random() < 0.5:
+            try:
+                self.app.click_named("button:window/maximize")
+            except q.QaFailure:
+                return self.chord_action()
+            return "window:maximize"
+        self.app.send_line("toggle-fullscreen")
+        return "window:fullscreen"
 
     def _window_scale(self) -> float:
         """Window pixels per layout unit, as the last `ui` answer has it."""

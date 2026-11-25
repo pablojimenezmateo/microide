@@ -466,6 +466,9 @@ JOB_TYPES = [
 # control channel): the X11 cells never meet the Wayland window, its scale or its
 # clipboard. Offered only where weston is (wayland_available).
 JobType("wayland", 3, "default", env=(("MQA_BACKEND", "wayland"), ("MQA_WAYLAND_SCALE", "2")), matrix=False),
+# An openbox on the job's Xvfb (MQA_WM): the app's own maximize and fullscreen
+# reach a window manager, which no other cell has. Offered only where openbox is.
+JobType("window-manager", 2, "default", "layout", env=(("MQA_WM", "openbox"),)),
     JobType("editing", 12, "default", "editing"),
     JobType("layout", 10, "default", "layout"),
     JobType("world", 8, "default", "world"),
@@ -736,6 +739,8 @@ def job_runnable(job: JobType) -> bool:
     run: it fetches packages)."""
     if dict(job.env).get("MQA_BACKEND") == "wayland":
         return WESTON.exists() or shutil.which("weston") is not None
+    if dict(job.env).get("MQA_WM"):
+        return shutil.which(dict(job.env)["MQA_WM"]) is not None
     return True
 
 

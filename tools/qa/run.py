@@ -348,7 +348,8 @@ def cmd_monkey(args: argparse.Namespace) -> int:
                 extra_env=remote_env, shots=args.out / f"seed-{seed}", plugins=plugins))
             app.replay_header = {"fixture": kind, "profile": args.profile, "seed": seed,
                                  "size": list(size), "args": extra, "weird": not args.no_weird,
-                                 "plugins": list(plugins), "remote": remote}
+                                 "plugins": list(plugins), "remote": remote,
+                                 "window_manager": app.window_manager_name}
             edited = open_remote(app, host) if host is not None else project
             app.replay_root = edited
             # The project the command lines name files of: a replay has its own,
@@ -407,7 +408,8 @@ def replay_record(record: dict, binary: Path, out: Path, actions: list | None = 
         app = stack.enter_context(q.App.launch(
             project=project, binary=binary, shots=out / "replay", size=size,
             extra_env={**record.get("env", {}), **remote_env},
-            extra_args=list(record.get("args", [])) + remote_args, plugins=tuple(record.get("plugins", ()))))
+            extra_args=list(record.get("args", [])) + remote_args, plugins=tuple(record.get("plugins", ())),
+            window_manager=record.get("window_manager", q.WINDOW_MANAGER)))
         app.replay_header = {**{k: v for k, v in record.items() if k != "actions"}}
         edited = open_remote(app, host) if host is not None else project
         app.replay_root = edited

@@ -366,11 +366,17 @@ What it left, by workstream:
    multi-view unit sweep (`TextViewport/EditsThroughEveryViewKeepEveryViewsCachesTrue`)
    covers the viewport half with a fixed generator.
 5. **Monkey reach not built** (`tools/soak/surface-extra.toml` lists each with what
-   covers it instead): IME composition and clipboard-from-another-app events (both
-   need a control-channel hook), maximize/fullscreen (Xvfb has no window manager),
-   multi-project switching (`project-open` re-roots the session away from the scratch
-   copy), fake language servers and debug adapters, a remote-project soak job, and
-   the 50 MB / submodule / large-history / empty-folder fixtures.
+   covers it instead). Reached since: clipboard from another application (the
+   `external` source owns the X CLIPBOARD, `x_clipboard.py`), IME composition (the
+   `compose` command and the `ime` source, 2026-11-25), a remote-project soak job
+   (`remote`), and maximize/fullscreen (2026-11-25: the `window-manager` job runs
+   an openbox on its Xvfb, `MQA_WM`, recorded in the replay header so a replay
+   gets one too; its window source presses the app's own maximize by name and
+   toggles fullscreen). Still not: multi-project switching (`project-open`
+   re-roots the session away from the scratch copy), language servers and debug
+   adapters that answer out of order inside the soak (the unit sequence tests
+   have them; the soak runs real clangd and gdb), and the 50 MB / submodule /
+   large-history / empty-folder fixtures.
 6. **DONE 2026-11-25:** `FrameLatency` reads each frame's prepare-and-paint
    time off the redraw trace (`elapsed=`) on every timed monkey step and files
    a frame over 0.5 s (slow factor applied) once per frame reason, the trace

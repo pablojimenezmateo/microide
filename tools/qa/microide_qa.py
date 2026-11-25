@@ -250,6 +250,10 @@ DOUBLE_CLICK_SECONDS = 0.55
 # "wayland" (a headless weston; input goes through the control channel's `pointer`
 # and `key` commands, since a Wayland compositor takes input from no other client).
 BACKEND = os.environ.get("MQA_BACKEND", "x11")
+# A window manager on the run's Xvfb ("openbox"; empty: none, the default). With
+# one, the app's own maximize and fullscreen reach a real window manager and
+# come back as the configure sequences a desktop sends.
+WINDOW_MANAGER = os.environ.get("MQA_WM", "")
 # How much slower than a release build the binary under test is; every control
 # timeout is multiplied by it (a coverage build ran `control-list` past the 3 s a
 # fast build answers in 50 ms).
@@ -597,6 +601,8 @@ class App:
     size: tuple[int, int]
     env: dict[str, str]
     xvfb: subprocess.Popen | None = None
+    wm: subprocess.Popen | None = None
+    window_manager_name: str = ""
     proc: subprocess.Popen | None = None
     log_path: Path | None = None
     # The project the run edits, which a replay has at a different path (a fresh
@@ -734,7 +740,8 @@ class App:
                extra_env: dict[str, str] | None = None,
                shots: Path | None = None,
                keep_home: bool = False,
-               plugins: tuple[str, ...] = ()) -> Iterator["App"]:
+               plugins: tuple[str, ...] = (),
+               window_manager: str | None = None) -> Iterator["App"]:
         binary = Path(binary or os.environ.get("MICROIDE_BIN") or REPO / "build/microide/microide")
         size = device_size(*size)
         if not binary.exists():
@@ -830,6 +837,7 @@ class App:
             extra_args += ["--set", "ui.scale", os.environ["MQA_UI_SCALE"]]
         app = cls(binary=binary, work=work, display=display or "", size=size, env=env, shots=shots,
                   project=project)
+        app.window_manager_name = WINDOW_MANAGER if window_manager is None else window_manager
         try:
             try:
                 app._start(project, extra_args)
@@ -858,6 +866,8 @@ class App:
             self.env["WAYLAND_DISPLAY"] = "mqa-wl"
         else:
             self._start_xvfb(w, h)
+            if self.window_manager_name:
+                self._start_window_manager()
             self.env["DISPLAY"] = self.display
             self._xt = xtest.XTest(self.display)
         self._extra_args = list(extra_args)
@@ -1098,6 +1108,26 @@ class App:
                                      capture_output=True).returncode == 0,
               5.0, "Xvfb never accepted connections")
 
+    @property
+    def window_manager(self) -> bool:
+        """A window manager runs on this run's X display (MQA_WM)."""
+        return self.wm is not None
+
+    def _start_window_manager(self) -> None:
+        """The MQA_WM window manager on the run's Xvfb, up once it has claimed the
+        screen (_NET_SUPPORTING_WM_CHECK on the root window)."""
+        if self.window_manager_name != "openbox" or shutil.which("openbox") is None:
+            raise QaFailure(f"MQA_WM={self.window_manager_name!r}: only an installed openbox is supported")
+        env = {**self.tool_env, "DISPLAY": self.display}
+        self.wm = subprocess.Popen(["openbox", "--sm-disable"], env=env, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, preexec_fn=self._dies_with_driver())
+        _wait(lambda: b"window id" in subprocess.run(
+                  ["xprop", "-display", self.display, "-root", "_NET_SUPPORTING_WM_CHECK"],
+                  env=env, capture_output=True).stdout or self.wm.poll() is not None,
+              5.0, "openbox never claimed the screen")
+        if self.wm.poll() is not None:
+            raise QaFailure("openbox exited at startup")
+
     def _start_weston(self, w: int, h: int) -> None:
         """A headless weston of its own (kiosk shell: the one window fills the
         output, as a maximized window does) on a socket under this run's
@@ -1138,7 +1168,7 @@ class App:
             with contextlib.suppress(OSError):
                 self._socket.close()
             self._socket = None
-        for proc in (self.proc, self.xvfb):
+        for proc in (self.proc, self.wm, self.xvfb):
             if proc is not None and proc.poll() is None:
                 with contextlib.suppress(ProcessLookupError):
                     os.killpg(proc.pid, signal.SIGTERM) if proc is self.proc else proc.terminate()
