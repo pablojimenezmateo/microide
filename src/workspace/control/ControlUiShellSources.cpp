@@ -1079,6 +1079,108 @@ void WorkspaceShell::ControlUiDebug(const WorkspaceLayout& layout, ControlUiElem
   }
 }
 
+namespace {
+
+util::JsonValue HoverPopupJson(const EditorHoverPopupLayout& hover, const editor::EditorBlameLine* blame) {
+  util::JsonObject entry;
+  std::string text;
+  std::string kind;
+  switch (hover.kind) {
+    case EditorHoverTarget::Kind::Blame:
+      kind = "blame";
+      if (blame != nullptr) {
+        text = blame->author + "\n" + blame->date + "\n" + blame->summary;
+      }
+      break;
+    case EditorHoverTarget::Kind::Diagnostic:
+      kind = "diagnostic";
+      text = hover.diagnostic.has_value() ? hover.diagnostic->message : std::string{};
+      if (hover.plugin_hover.has_value()) {
+        for (const std::string* block : {&hover.plugin_hover->title, &hover.plugin_hover->content}) {
+          if (!block->empty()) {
+            text += "\n" + *block;
+          }
+        }
+      }
+      break;
+    case EditorHoverTarget::Kind::Plugin:
+      kind = "symbol";
+      if (hover.plugin_hover.has_value()) {
+        text = hover.plugin_hover->title.empty() ? hover.plugin_hover->content
+                                                 : hover.plugin_hover->title + "\n" + hover.plugin_hover->content;
+      }
+      break;
+    case EditorHoverTarget::Kind::DebugValue:
+      kind = "debug-value";
+      text = hover.debug_value.has_value() ? hover.debug_value->value : std::string{};
+      break;
+  }
+  entry["kind"] = util::JsonValue(std::move(kind));
+  entry["text"] = util::JsonValue(std::move(text));
+  entry["rect"] = TruncatedRectJson(hover.rect);
+  if (hover.primary_action_rect.has_value()) {
+    util::JsonObject action;
+    action["label"] =
+        util::JsonValue(std::string(hover.kind == EditorHoverTarget::Kind::Diagnostic ? "Quick Fix" : "Copy SHA"));
+    action["rect"] = TruncatedRectJson(*hover.primary_action_rect);
+    entry["action"] = util::JsonValue(std::move(action));
+  }
+  return util::JsonValue(std::move(entry));
+}
+
+util::JsonValue ActionReceiptJson(const WorkspaceActionContext::ActionReceipt& receipt) {
+  util::JsonObject actions;
+  actions["dispatched"] = util::JsonValue(static_cast<std::int64_t>(receipt.dispatched));
+  actions["last"] = receipt.plugin_command.empty() ? util::JsonValue(nullptr) : util::JsonValue(receipt.plugin_command);
+  if (receipt.last.has_value()) {
+    for (const ActionSpec& spec : WorkspaceCommandSpecs()) {
+      if (spec.id == *receipt.last) {
+        actions["last"] = util::JsonValue(std::string(spec.command_name.empty() ? spec.label : spec.command_name));
+        break;
+      }
+    }
+  }
+  actions["source"] = util::JsonValue(std::string(ActionSourceName(receipt.source)));
+  actions["rejected"] = util::JsonValue(receipt.rejected);
+  return util::JsonValue(std::move(actions));
+}
+
+util::JsonValue EditorPaneJson(std::size_t group_index, bool focused, const SDL_FRect& pane_rect,
+                               const editor::TextViewport& viewport,
+                               const editor::EditorViewMetrics& metrics, const std::vector<float>& row_tops,
+                               float char_width) {
+  const auto num = FloatJson;
+  util::JsonObject entry;
+  entry["group"] = util::JsonValue(static_cast<std::int64_t>(group_index));
+  entry["focused"] = util::JsonValue(focused);
+  entry["rect"] = TruncatedRectJson(pane_rect);
+  entry["textX"] = num(metrics.text_x);
+  entry["firstLineY"] = num(metrics.first_line_y);
+  entry["lineHeight"] = num(metrics.line_height);
+  entry["charWidth"] = num(char_width);
+  entry["gutterX"] = num(pane_rect.x);
+  entry["gutterWidth"] = num(metrics.gutter_width);
+  entry["foldHitX"] = num(editor::kGutterFoldHitLeft(pane_rect.x, metrics.gutter_width));
+  entry["stickyRows"] = util::JsonValue(static_cast<std::int64_t>(metrics.sticky_scroll_rows));
+  entry["scrollColumn"] = util::JsonValue(static_cast<std::int64_t>(viewport.horizontal_scroll()));
+  util::JsonArray rows;
+  const std::size_t visual_count = viewport.visual_line_count();
+  for (std::size_t i = 0; i < metrics.visible_rows && i < row_tops.size(); ++i) {
+    const std::size_t visual = viewport.scroll_line() + i;
+    if (visual >= visual_count) {
+      break;
+    }
+    util::JsonObject row;
+    row["line"] = util::JsonValue(static_cast<std::int64_t>(viewport.VisualRowLineIndex(visual) + 1));
+    row["y"] = num(row_tops[i]);
+    rows.push_back(util::JsonValue(std::move(row)));
+  }
+  entry["rows"] = util::JsonValue(std::move(rows));
+  return util::JsonValue(std::move(entry));
+}
+
+}
+
 void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonObject& root) {
   const ProjectWorkspaceState& state = context_.current_project_state;
   root["windowTitle"] = util::JsonValue(frame_state_.window_title);
@@ -1147,51 +1249,9 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
   util::JsonObject popups;
   popups["hover"] = util::JsonValue(nullptr);
   if (const auto hover = ActiveEditorHoverPopupLayout(); hover.has_value()) {
-    util::JsonObject entry;
-    std::string text;
-    std::string kind;
-    switch (hover->kind) {
-      case EditorHoverTarget::Kind::Blame:
-        kind = "blame";
-        if (const editor::EditorBlameLine* blame = editor_blame_overlay_service_.VisibleLine(hover->blame_line_index);
-            blame != nullptr) {
-          text = blame->author + "\n" + blame->date + "\n" + blame->summary;
-        }
-        break;
-      case EditorHoverTarget::Kind::Diagnostic:
-        kind = "diagnostic";
-        text = hover->diagnostic.has_value() ? hover->diagnostic->message : std::string{};
-        if (hover->plugin_hover.has_value()) {
-          for (const std::string* block : {&hover->plugin_hover->title, &hover->plugin_hover->content}) {
-            if (!block->empty()) {
-              text += "\n" + *block;
-            }
-          }
-        }
-        break;
-      case EditorHoverTarget::Kind::Plugin:
-        kind = "symbol";
-        if (hover->plugin_hover.has_value()) {
-          text = hover->plugin_hover->title.empty() ? hover->plugin_hover->content
-                                                    : hover->plugin_hover->title + "\n" + hover->plugin_hover->content;
-        }
-        break;
-      case EditorHoverTarget::Kind::DebugValue:
-        kind = "debug-value";
-        text = hover->debug_value.has_value() ? hover->debug_value->value : std::string{};
-        break;
-    }
-    entry["kind"] = util::JsonValue(std::move(kind));
-    entry["text"] = util::JsonValue(std::move(text));
-    entry["rect"] = TruncatedRectJson(hover->rect);
-    if (hover->primary_action_rect.has_value()) {
-      util::JsonObject action;
-      action["label"] =
-          util::JsonValue(std::string(hover->kind == EditorHoverTarget::Kind::Diagnostic ? "Quick Fix" : "Copy SHA"));
-      action["rect"] = TruncatedRectJson(*hover->primary_action_rect);
-      entry["action"] = util::JsonValue(std::move(action));
-    }
-    popups["hover"] = util::JsonValue(std::move(entry));
+    popups["hover"] = HoverPopupJson(*hover, hover->kind == EditorHoverTarget::Kind::Blame
+                                                 ? editor_blame_overlay_service_.VisibleLine(hover->blame_line_index)
+                                                 : nullptr);
   }
   popups["signatureHelp"] = active_signature_help_.has_value() ? util::JsonValue(active_signature_help_->signature)
                                                                : util::JsonValue(nullptr);
@@ -1200,24 +1260,7 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
                                       : util::JsonValue(nullptr);
   root["popups"] = util::JsonValue(std::move(popups));
 
-  {
-    const WorkspaceActionContext::ActionReceipt& receipt = MakeActionContext().LastActionReceipt();
-    util::JsonObject actions;
-    actions["dispatched"] = util::JsonValue(static_cast<std::int64_t>(receipt.dispatched));
-    actions["last"] =
-        receipt.plugin_command.empty() ? util::JsonValue(nullptr) : util::JsonValue(receipt.plugin_command);
-    if (receipt.last.has_value()) {
-      for (const ActionSpec& spec : WorkspaceCommandSpecs()) {
-        if (spec.id == *receipt.last) {
-          actions["last"] = util::JsonValue(std::string(spec.command_name.empty() ? spec.label : spec.command_name));
-          break;
-        }
-      }
-    }
-    actions["source"] = util::JsonValue(std::string(ActionSourceName(receipt.source)));
-    actions["rejected"] = util::JsonValue(receipt.rejected);
-    root["actions"] = util::JsonValue(std::move(actions));
-  }
+  root["actions"] = ActionReceiptJson(MakeActionContext().LastActionReceipt());
 
   util::JsonArray editors;
   const bool line_numbers = SettingFlagEnabled(GetSettingValue("editor.line_numbers"), true);
@@ -1228,38 +1271,12 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
     }
     const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
         editor_text_renderer_, *viewport, pane.rect, viewport->sticky_band_rows(), line_numbers);
-    const auto num = FloatJson;
-    util::JsonObject entry;
-    entry["group"] = util::JsonValue(static_cast<std::int64_t>(pane.group_index));
-    entry["focused"] = util::JsonValue(pane.active);
-    entry["rect"] = TruncatedRectJson(pane.rect);
-    entry["textX"] = num(metrics.text_x);
-    entry["firstLineY"] = num(metrics.first_line_y);
-    entry["lineHeight"] = num(metrics.line_height);
-    entry["charWidth"] = num(editor_text_renderer_.CharWidth());
-    entry["gutterX"] = num(pane.rect.x);
-    entry["gutterWidth"] = num(metrics.gutter_width);
-    entry["foldHitX"] = num(editor::kGutterFoldHitLeft(pane.rect.x, metrics.gutter_width));
-    entry["stickyRows"] = util::JsonValue(static_cast<std::int64_t>(metrics.sticky_scroll_rows));
-    entry["scrollColumn"] = util::JsonValue(static_cast<std::int64_t>(viewport->horizontal_scroll()));
-    util::JsonArray rows;
-    const std::size_t visual_count = viewport->visual_line_count();
     std::vector<float> row_tops;
     VisibleRowTops(
         context_.current_project_state, *viewport, metrics, [this](std::string_view id) { return GetSettingValue(id); },
         row_tops);
-    for (std::size_t i = 0; i < metrics.visible_rows && i < row_tops.size(); ++i) {
-      const std::size_t visual = viewport->scroll_line() + i;
-      if (visual >= visual_count) {
-        break;
-      }
-      util::JsonObject row;
-      row["line"] = util::JsonValue(static_cast<std::int64_t>(viewport->VisualRowLineIndex(visual) + 1));
-      row["y"] = num(row_tops[i]);
-      rows.push_back(util::JsonValue(std::move(row)));
-    }
-    entry["rows"] = util::JsonValue(std::move(rows));
-    editors.push_back(util::JsonValue(std::move(entry)));
+    editors.push_back(EditorPaneJson(pane.group_index, pane.active, pane.rect, *viewport, metrics, row_tops,
+                                     editor_text_renderer_.CharWidth()));
   }
   root["editors"] = util::JsonValue(std::move(editors));
 

@@ -78,6 +78,8 @@ than a mechanical change:
   constructing each other recursively, or bind shell state into their
   arguments; `ControlUiButtons`' merge section and `HandleScheduledWakeSources`
   (a flat list of wake sources) need shell members and stay.
+- **2026-11-25, later:** `ControlUiDetails` 200 -> 115 lines (the hover popup,
+  the action receipt and each editor pane are file-local JSON builders).
 - **2026-11-25, later:** `HoveredTooltip` 172 -> 124 lines (its sidebar mode
   row, panel header, debug toolbar and status bar lookups are file-local).
 - **2026-11-25, later:** `RenderSettingsOverlay` 284 -> 27 lines: its frame,
