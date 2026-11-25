@@ -2603,5 +2603,181 @@ class Kill9EachBufferTests(Kill9ProcedureTests):
                                         after=[{**doc, "sha256": back_sha}])
             self.assertEqual(found, [], back_sha)
 
+
+class _LappingApp(_LoggingRelaunchingApp):
+    """Two projects that both owe a buffer, so the relaunch loads one and the
+    oracle's lap the other; `keeps` are paths an autosave cannot write, and
+    `drop_after_lap` paths the lap's documents no longer list."""
+
+    def __init__(self, work: Path) -> None:
+        super().__init__(work)
+        self.keeps: set[str] = set()
+        self.drop_after_lap: set[str] = set()
+        self.docs = {0: [{"path": "/p/a/x.txt", "dirty": True, "sha256": "xx", "bytes": 2, "project": "/p/a"}],
+                     1: [{"path": "/p/b/y.txt", "dirty": True, "sha256": "yy", "bytes": 2, "project": "/p/b"}]}
+
+    def send_line(self, line, timeout=15.0, record=True):
+        if line == "project-next":
+            self.lines.append(line)
+            if self.autosave == "on_focus_change":
+                for doc in self.docs[self.active]:
+                    if doc["dirty"] and doc["path"] not in self.keeps:
+                        doc.update(dirty=False, sha256=doc["sha256"] + "-saved")
+            at = self.catalog.index(self.active)
+            self.active = self.catalog[(at + 1) % len(self.catalog)]
+            self.loaded[self.active] = True
+            for p in self.docs:
+                self.docs[p] = [d for d in self.docs[p] if d["path"] not in self.drop_after_lap]
+            return {}
+        return super().send_line(line, timeout, record)
+
+
+class Kill9LapTests(Kill9ProcedureTests):
+    """The lap that loads the projects the relaunch did not, with and without
+    an autosave that saves what it leaves."""
+
+    def app(self):
+        return _LappingApp(self.dir / "work")
+
+    def test_the_lap_with_autosave_saves_both_and_owes_nothing(self):
+        app = self.app()
+        app.autosave = "on_focus_change"
+        _, found, _ = self.run_kill(app)
+        self.assertEqual(found, [], "the active project's buffer is judged as read before the lap")
+        self.assertIn("project-next", app.lines)
+
+    def test_a_background_buffer_back_changed_without_autosave_is_reported(self):
+        app = self.app()
+        relaunch = app.crash_and_relaunch
+
+        def changed(*args, **kwargs):
+            relaunch(*args, **kwargs)
+            app.docs[0] = [{**app.docs[0][0], "sha256": "other", "bytes": 5}]
+        app.crash_and_relaunch = changed
+        _, found, _ = self.run_kill(app)
+        self.assertEqual(found, ["the unsaved buffer x.txt came back after a kill -9 with different content "
+                                 "(2 -> 5 bytes)"])
+
+    def test_a_background_buffer_the_lap_could_not_save_is_still_judged(self):
+        app = self.app()
+        app.autosave = "on_focus_change"
+        app.keeps = {"/p/a/x.txt"}
+        relaunch = app.crash_and_relaunch
+
+        def changed(*args, **kwargs):
+            relaunch(*args, **kwargs)
+            app.docs[0] = [{**app.docs[0][0], "sha256": "other", "bytes": 5}]
+        app.crash_and_relaunch = changed
+        _, found, _ = self.run_kill(app)
+        self.assertEqual(found, ["the unsaved buffer x.txt came back after a kill -9 with different content "
+                                 "(2 -> 5 bytes)"])
+
+    def test_a_buffer_after_one_the_lap_saved_is_still_judged(self):
+        app = self.app()
+        app.autosave = "on_focus_change"
+        app.docs[0].append({"path": "/p/a/z.txt", "dirty": True, "sha256": "zz", "bytes": 2, "project": "/p/a"})
+        app.drop_after_lap = {"/p/a/z.txt"}
+        _, found, _ = self.run_kill(app)
+        self.assertEqual(found, ["the unsaved buffer z.txt did not come back after a kill -9 (the crash-safety "
+                                 "flush had 3.5s of quiet)"])
+
+    def test_a_buffer_read_before_the_lap_is_back_though_the_lap_lists_it_no_more(self):
+        app = self.app()
+        app.drop_after_lap = {"/p/b/y.txt"}
+        _, found, _ = self.run_kill(app)
+        self.assertEqual(found, [])
+
+    def test_a_link_to_a_file_the_lap_saved_is_not_changed_by_nothing(self):
+        target = self.dir / "x.txt"
+        target.write_bytes(b"before\n")
+        link = self.dir / "link.txt"
+        link.symlink_to(target)
+        app = self.app()
+        app.autosave = "on_focus_change"
+        app.docs[0] = [{"path": str(target), "dirty": True, "sha256": "xx", "bytes": 2, "project": "/p/a"}]
+        app.docs[1].append({"path": str(link), "dirty": False, "sha256": hashlib.sha256(b"before\n").hexdigest(),
+                            "bytes": 7, "project": "/p/b"})
+        send = app.send_line
+
+        def lap(line, timeout=15.0, record=True):
+            if line == "project-next" and app.active == 0:
+                target.write_bytes(b"autosaved\n")
+            return send(line, timeout, record)
+        app.send_line = lap
+        _, found, _ = self.run_kill(app)
+        self.assertEqual(found, [])
+        app = self.app()
+        app.docs[0] = [{"path": str(target), "dirty": True, "sha256": "xx", "bytes": 2, "project": "/p/a"}]
+        target.write_bytes(b"before\n")
+        app.docs[1].append({"path": str(link), "dirty": False, "sha256": hashlib.sha256(b"before\n").hexdigest(),
+                            "bytes": 7, "project": "/p/b"})
+        _, found, _ = self.run_kill(app, between=lambda: target.write_bytes(b"changed\n"))
+        self.assertIn("link.txt changed on disk across a kill -9 and relaunch, and nothing saved it", found)
+
+    def test_every_clean_file_is_checked_past_one_a_save_explains(self):
+        saved = self.dir / "s.txt"
+        saved.write_bytes(b"s\n")
+        other = self.dir / "o.txt"
+        other.write_bytes(b"o\n")
+        app = self.app()
+        app.autosave = "on_focus_change"
+        app.docs[0] = [{"path": str(saved), "dirty": True, "sha256": "s0", "bytes": 2, "project": "/p/a"}]
+        app.docs[1].extend([
+            {"path": str(saved), "dirty": False, "sha256": hashlib.sha256(b"s\n").hexdigest(), "bytes": 2,
+             "project": "/p/b", "title": "s"},
+            {"path": str(other), "dirty": False, "sha256": hashlib.sha256(b"o\n").hexdigest(), "bytes": 2,
+             "project": "/p/b"}])
+        send = app.send_line
+
+        def lap(line, timeout=15.0, record=True):
+            if line == "project-next" and app.active == 0:
+                saved.write_bytes(b"autosaved\n")
+            return send(line, timeout, record)
+        app.send_line = lap
+        _, found, _ = self.run_kill(app, between=lambda: other.write_bytes(b"changed\n"))
+        self.assertEqual(found, ["o.txt changed on disk across a kill -9 and relaunch, and nothing saved it"])
+
+
+class Kill9SavedFilesTests(Kill9LapTests):
+    """Which files the disk check may excuse as saved by the lap: only those of
+    background buffers the lap's autosave actually left clean."""
+
+    def link_case(self, *, autosave, back_x_clean=False, keep_x=False, x_in_active=False):
+        target = self.dir / "x.txt"
+        target.write_bytes(b"before\n")
+        link = self.dir / "link.txt"
+        if not link.is_symlink():
+            link.symlink_to(target)
+        app = self.app()
+        app.autosave = autosave
+        if keep_x:
+            app.keeps = {str(target)}
+        project = 1 if x_in_active else 0
+        app.docs[project] = [{"path": str(target), "dirty": True, "sha256": "xx", "bytes": 2,
+                              "project": app.ROOTS[project]}] + (app.docs[project] if x_in_active else [])
+        app.docs[1].append({"path": str(link), "dirty": False, "sha256": hashlib.sha256(b"before\n").hexdigest(),
+                            "bytes": 7, "project": "/p/b"})
+        relaunch = app.crash_and_relaunch
+
+        def crash(*args, **kwargs):
+            relaunch(*args, **kwargs)
+            target.write_bytes(b"changed outside\n")
+            if back_x_clean:
+                app.docs[project][0] = {**app.docs[project][0], "dirty": False}
+        app.crash_and_relaunch = crash
+        _, found, _ = self.run_kill(app)
+        return found
+
+    LINK = "link.txt changed on disk across a kill -9 and relaunch, and nothing saved it"
+
+    def test_without_autosave_nothing_is_excused(self):
+        self.assertIn(self.LINK, self.link_case(autosave="off", back_x_clean=True))
+
+    def test_the_active_projects_buffer_is_not_excused(self):
+        self.assertIn(self.LINK, self.link_case(autosave="off", x_in_active=True))
+
+    def test_a_buffer_the_lap_left_dirty_is_not_excused(self):
+        self.assertIn(self.LINK, self.link_case(autosave="on_focus_change", keep_x=True))
+
 if __name__ == "__main__":
     unittest.main()

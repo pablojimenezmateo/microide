@@ -491,8 +491,7 @@ class DataOracle:
             shutil.rmtree(self.last_kill_state, ignore_errors=True)
             state = Path(work) / "state"
             if state.is_dir():
-                shutil.copytree(state, self.last_kill_state, symlinks=True,  # pragma: no mutate
-                                ignore_dangling_symlinks=True, dirs_exist_ok=True)  # pragma: no mutate
+                shutil.copytree(state, self.last_kill_state, symlinks=True)
 
         # At a named boundary: the content each buffer may also come back with
         # (as the trigger's edit left it), the file its save was writing, and the
@@ -511,7 +510,7 @@ class DataOracle:
                        if doc.get("path") and was.get(_doc_key(doc)) != doc.get("sha256")}
             if saved_path is not None:
                 touched.add(saved_path)
-            killed_at = f" (killed at {point.split('|', 1)[0].split(':', 1)[-1]})" if died else ""
+            killed_at = f" (killed at {point.partition('|')[0].split(':', 1)[-1]})" if died else ""
             _forget_files_of(disk_before, touched)
         # With no project on the command line: the app restores its saved
         # workspace, as after a real crash. Naming the run's project opened that
@@ -535,7 +534,7 @@ class DataOracle:
         # setting is per project: what the active one says after the lap is not
         # what the one it left had).
         saving = self._load_restored_projects(dirty)
-        after = self._wait_restored(dirty) if saving is not None else restored
+        after = self._wait_restored(dirty) if saving is not None else restored  # pragma: no mutate
         by_first = {_doc_key(d): d for d in restored}
         after = [by_first.get(_doc_key(d), d) for d in after] + \
                 [d for d in restored if _doc_key(d) not in {_doc_key(a) for a in after}]
@@ -600,10 +599,9 @@ class DataOracle:
                 elif doc.get("path") in touched and not back.get("dirty"):
                     # A buffer the trigger changed, back clean: a save -- the
                     # trigger's, or an autosave the edit set off -- wrote it
-                    # before the kill, and then the file holds it.
-                    if _sha256_file(Path(str(doc["path"]))) == back.get("sha256"):
-                        saved_before_kill.add(os.path.realpath(str(doc["path"])))
-                    else:
+                    # before the kill, and then the file holds it. Its file is
+                    # out of the disk check already (`touched`).
+                    if _sha256_file(Path(str(doc["path"]))) != back.get("sha256"):
                         out.append(("data", f"the unsaved buffer {Path(str(key)).name} came back after a kill -9 "
                                             f"marked saved; its file does not hold it{killed_at}"))
                 elif doc.get("path") and doc.get("path") == saved_path:
