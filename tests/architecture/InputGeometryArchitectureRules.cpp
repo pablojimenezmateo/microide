@@ -11,10 +11,6 @@
 namespace microide::tests::architecture {
 namespace {
 
-// How far above a call its explanation may sit: the comment block directly over
-// the statement, which in this tree runs to a handful of lines.
-constexpr std::size_t kCommentWindowLines = 8;
-
 // The fourth argument of the call whose `(` is at `open`, or "" when it cannot
 // be read (fewer arguments, unbalanced text).
 std::string FourthArgument(std::string_view code, std::size_t open) {
@@ -50,7 +46,7 @@ std::string Trimmed(std::string text) {
 
 RuleResult CheckEditorMetricsNameTheirStickyBand(const std::filesystem::path& repo_root) {
   RuleResult result;
-  result.label = "an editor metrics call with a literal 0 sticky band says why the band does not matter";
+  result.label = "an editor metrics call names its sticky band: the viewport's, or editor::kNoStickyBand";
   result.hard_fail = true;
   const std::filesystem::path dir = repo_root / "src" / "workspace";
   if (!RequireRuleTarget(result, dir)) {
@@ -85,26 +81,13 @@ RuleResult CheckEditorMetricsNameTheirStickyBand(const std::filesystem::path& re
       if (band != "0") {
         continue;
       }
-      // The explanation: a comment mentioning the band in the lines just above
-      // the call's statement (searched in the ORIGINAL text, comments intact).
-      const std::size_t line = LineNumberAt(text, static_cast<std::size_t>(it->position()));
-      std::size_t begin = 0;
-      for (std::size_t seen = 1; seen + kCommentWindowLines < line && begin < text.size(); ++seen) {
-        begin = text.find('\n', begin) + 1;
-      }
-      const std::string_view window(text.data() + begin, static_cast<std::size_t>(it->position()) - begin);
-      const bool explained = window.find("//") != std::string_view::npos &&
-                             (window.find("band") != std::string_view::npos ||
-                              window.find("sticky") != std::string_view::npos);
-      if (!explained) {
-        result.violations.push_back(Violation{
-            .path = entry.path(),
-            .line = line,
-            .message = "ComputeMetrics with a literal 0 sticky band and no comment saying why the band "
-                       "does not matter here: pass the viewport's sticky_band_rows(), or explain the 0 "
-                       "(TD-2026-11-08-434's five sites laid rows out under a pinned band)",
-        });
-      }
+      result.violations.push_back(Violation{
+          .path = entry.path(),
+          .line = LineNumberAt(text, static_cast<std::size_t>(it->position())),
+          .message = "ComputeMetrics with a literal 0 sticky band: pass the viewport's sticky_band_rows(), "
+                     "or editor::kNoStickyBand where the band cannot matter "
+                     "(TD-2026-11-08-434's five sites laid rows out under a pinned band)",
+      });
     }
   }
   if (calls == 0) {
@@ -121,24 +104,20 @@ void RunEditorMetricsStickyBandRuleFixtures() {
   TemporaryDirectory fixture;
   const std::filesystem::path& root = fixture.path();
   std::filesystem::create_directories(root / "src" / "workspace");
-  // Negative control: a bare 0, and a 0 whose comment says nothing of the band.
   WriteFile(root / "src/workspace/Bad.cpp",
             "void A(){ auto m = editor::EditorViewRenderer::ComputeMetrics(r, v, rect, 0, numbers); }\n"
-            "// unrelated words\n"
-            "void B(){ auto m = ComputeMetrics(\n    r, v, rect, 0, numbers); }\n");
+            "void B(){\n"
+            "  // the sticky band does not matter here\n"
+            "  auto m = ComputeMetrics(\n    r, v, rect, 0, numbers); }\n");
   Expect(CheckEditorMetricsNameTheirStickyBand(root).violations.size() == 2,
-         "the sticky-band rule must flag a literal 0 band with no explanation, on one line or two");
-  // Positive control: the band passed, and a 0 explained just above it.
+         "the sticky-band rule must flag every literal 0 band, on one line or two, comment or not");
   WriteFile(root / "src/workspace/Bad.cpp",
             "void A(){ auto m = ComputeMetrics(r, v, rect, v.sticky_band_rows(), numbers); }\n"
-            "void B(){\n"
-            "  // Columns only: the sticky band takes rows, not columns.\n"
-            "  auto m = ComputeMetrics(r, v, rect, 0, numbers);\n"
-            "}\n"
+            "void B(){ auto m = ComputeMetrics(r, v, rect, editor::kNoStickyBand, numbers); }\n"
             "void C(){ auto m = ComputeMetrics(r, v, rect, sticky_rows, numbers); }\n"
             "const char* kDoc = \"ComputeMetrics(r, v, rect, 0, n)\";\n");
   Expect(CheckEditorMetricsNameTheirStickyBand(root).violations.empty(),
-         "the sticky-band rule must accept the band passed, a variable, an explained 0, and string text");
+         "the sticky-band rule must accept the band passed, kNoStickyBand, a variable, and string text");
   // Loud-missing-target guard.
   WriteFile(root / "src/workspace/Bad.cpp", "int H(){ return 0; }\n");
   Expect(!CheckEditorMetricsNameTheirStickyBand(root).missing_targets.empty(),

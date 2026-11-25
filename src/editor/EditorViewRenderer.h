@@ -63,6 +63,8 @@ SDL_FRect FoldGutterMarkerRect(float gutter_x,
                                float row_y,
                                float line_height);
 
+inline constexpr std::size_t kNoStickyBand = 0;
+
 class EditorViewRenderer {
  public:
   static EditorViewMetrics ComputeMetrics(const render::TextRenderer& text_renderer,

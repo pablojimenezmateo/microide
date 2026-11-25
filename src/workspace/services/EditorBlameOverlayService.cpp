@@ -67,7 +67,7 @@ bool EditorBlameOverlayService::FitsPane(render::TextRenderer& text_renderer,
 
   // Columns only: the sticky band takes rows, never columns.
   const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-      text_renderer, viewport, rect, 0, show_line_numbers);
+      text_renderer, viewport, rect, editor::kNoStickyBand, show_line_numbers);
   return metrics.visible_columns >= kMinimumCodeColumnsWithBlame;
 }
 

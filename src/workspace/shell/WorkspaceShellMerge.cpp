@@ -265,7 +265,8 @@ workspace::MergeResultInteractionLayout WorkspaceShell::BuildMergeResultInteract
       surface.show_horizontal);
   // The merge result pane has no sticky band (it pins no headers).
   const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-      editor_text_renderer_, merge_tab.result_viewport, result_rect, 0, LineNumbersEnabled());
+      editor_text_renderer_, merge_tab.result_viewport, result_rect, editor::kNoStickyBand,
+      LineNumbersEnabled());
   const VisibleLineRangeLayout lines = {
       .first_line_y = metrics.first_line_y,
       .line_height = metrics.line_height,
