@@ -75,6 +75,12 @@ def _writes_logged(log: str) -> dict[str, str]:
     return {match.group(1): match.group(2) for match in _WRITE_LOGGED.finditer(log)}
 
 
+def _past(deadline: float) -> bool:
+    """The monotonic clock has reached `deadline` (a wait's end; whether the
+    instant itself counts no test can tell)."""
+    return time.monotonic() >= deadline  # pragma: no mutate
+
+
 def _sha256_file(path: Path) -> str | None:
     try:
         if not path.is_file():
@@ -1714,7 +1720,7 @@ class RemoteConvergence:
                 self.app.send_line("remote-reconnect", record=False)
             except q.QaFailure:
                 pass
-        while not self.settled(remote) and time.monotonic() < deadline:
+        while not self.settled(remote) and not _past(deadline):
             time.sleep(0.5)
             remote = self._remote()
         if remote.get("elsewhere"):
@@ -1748,7 +1754,7 @@ class RemoteConvergence:
         while True:
             host, mirror = remote_host.content_set(self.host_root, self.mirror)
             diff = self.differing(host, mirror)
-            if not diff or time.monotonic() >= deadline:
+            if not diff or _past(deadline):
                 break
             time.sleep(0.5)
         if not diff:

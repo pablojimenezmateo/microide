@@ -1295,6 +1295,8 @@ class RemoteConvergenceTests(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
         self.addCleanup(lambda: __import__("shutil").rmtree(self.dir, ignore_errors=True))
+        self.oracle = None
+        self.notifications_fail = False
         self.mirror = self.dir / "mirror"
         self.host = self.dir / "host"
         self.mirror.mkdir()
@@ -1312,19 +1314,30 @@ class RemoteConvergenceTests(unittest.TestCase):
 
         def query(verb, args=None):
             if verb == "notifications":
+                self.assertEqual(args, {"recent": True})
+                if self.notifications_fail:
+                    raise monkey_oracles.q.QaFailure("busy")
                 return [{"message": "push refused"}]
+            self.assertEqual((verb, args), ("status", None))
             remote = answers.pop(0) if len(answers) > 1 else answers[0]
             root = "/elsewhere" if remote.get("elsewhere") else str(self.mirror)
             return {"projectRoot": root, "remote": remote}
         app.query.side_effect = query
         sets = list(trees)
         fake_host = mock.Mock()
-        fake_host.content_set.side_effect = lambda host, mirror: sets.pop(0) if len(sets) > 1 else sets[0]
-        oracle = monkey_oracles.RemoteConvergence(app, self.mirror, self.host, "remote-open host:/root")
+
+        def content_set(host, mirror):
+            self.assertEqual((host, mirror), (self.host, self.mirror))
+            return sets.pop(0) if len(sets) > 1 else sets[0]
+        fake_host.content_set.side_effect = content_set
+        oracle = self.oracle or monkey_oracles.RemoteConvergence(app, self.mirror, self.host, "remote-open host:/root")
+        oracle.app = app
+        self.slept = []
         with mock.patch.dict(sys.modules, {"remote_host": fake_host}), \
                 mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 0.0001), \
-                mock.patch.object(monkey_oracles.time, "sleep", lambda _s: None):
+                mock.patch.object(monkey_oracles.time, "sleep", self.slept.append):
             found = oracle.check()
+        self.assertTrue(all(kind == "remote" for kind, _ in found), found)
         return oracle, app, [message for _, message in found]
 
     def test_a_gone_app_is_not_compared(self):
@@ -3122,6 +3135,74 @@ class StructuralDiffHunkTextTests(StructuralDiffOracleTests):
         self.assertTrue(evidence.startswith(b'[\n {\n  "kind"'), evidence[:20])
         oracle, _ = self.check([_diff_row(left_text="f(a,  b)", right_text="f(a, b)", left_spans=[[4, 5]], hunk=2)])
         self.assertTrue(oracle.evidence["structural-hunk-3.json"].startswith(b'[\n {\n  "kind"'))
+
+
+class RemoteConvergenceDetailTests(RemoteConvergenceTests):
+    def test_outcomes_accumulate_over_checks(self):
+        oracle, _, _ = self.check([self.SETTLED], trees=(({"a": "1"}, {"a": "1"}),))
+        self.oracle = oracle
+        for statuses, trees in (([self.SETTLED], (({"a": "1"}, {"a": "1"}),)),
+                                ([{"elsewhere": True}, self.SETTLED], (({"a": "1"}, {"a": "1"}),)),
+                                ([{"elsewhere": True}], (({}, {}),)),
+                                ([{"elsewhere": True}], (({}, {}),)),
+                                ([{"state": "x"}], (({}, {}),)), ([{"state": "x"}], (({}, {}),)),
+                                ([{**self.SETTLED, "conflicts": 1}], (({}, {}),)),
+                                ([{**self.SETTLED, "conflicts": 1}], (({}, {}),)),
+                                ([{**self.SETTLED, "blocked": 1}], (({}, {}),)),
+                                ([{**self.SETTLED, "blocked": 1}], (({}, {}),)),
+                                ([self.SETTLED], (({"a": "1"}, {}),)), ([self.SETTLED], (({"a": "1"}, {}),)),
+                                ([self.SETTLED, {**self.SETTLED, "filesPending": 1}], (({"a": "1"}, {}),)),
+                                ([self.SETTLED, {**self.SETTLED, "filesPending": 1}], (({"a": "1"}, {}),))):
+            self.check(statuses, trees=trees)
+        self.assertEqual(dict(oracle.outcomes), {"agreed:1": 3, "reopened": 3, "elsewhere": 2, "unsettled": 2,
+                                                 "conflicted": 2, "blocked": 2, "differed": 2, "moved": 2})
+
+    def test_a_check_that_files_nothing_keeps_no_evidence(self):
+        oracle, _, _ = self.check([{"state": "x"}])
+        self.assertIn("remote-status.json", oracle.evidence)
+        self.oracle = oracle
+        self.check([self.SETTLED])
+        self.assertEqual(oracle.evidence, {})
+
+    def test_it_waits_half_a_second_between_reads(self):
+        self.check([{"state": "syncing"}, self.SETTLED])
+        self.assertEqual(self.slept, [0.5])
+        self.check([self.SETTLED], trees=(({"a": "1"}, {}), ({"a": "1"}, {"a": "1"})))
+        self.assertEqual(self.slept, [0.5])
+
+    def test_the_unsettled_evidence_is_the_status_and_the_recent_notices(self):
+        remote = {"state": "syncing", "filesPending": 3, "unsentPushes": 1}
+        oracle, _, _ = self.check([remote])
+        evidence = oracle.evidence["remote-status.json"]
+        self.assertEqual(json.loads(evidence), {"remote": remote, "notifications": [{"message": "push refused"}]})
+        self.assertTrue(evidence.startswith(b'{\n "remote": {\n  "state"'))
+        self.notifications_fail = True
+        oracle, _, _ = self.check([remote])
+        self.assertEqual(json.loads(oracle.evidence["remote-status.json"])["notifications"], [])
+
+    def test_each_reason_a_project_moved_while_it_compared(self):
+        for key in ("conflicts", "heldDeletes", "blocked"):
+            oracle, _, found = self.check([self.SETTLED, {**self.SETTLED, key: 1}], trees=(({"a": "1"}, {}),))
+            self.assertEqual(found, [], key)
+            self.assertEqual(dict(oracle.outcomes), {"moved": 1}, key)
+
+
+class RemoteConvergenceEvidenceTests(RemoteConvergenceTests):
+    def test_the_trees_evidence_names_each_path_on_both_sides(self):
+        host = {"a.txt": "0123456789abcdef", "b.txt": "2", "c.txt": "3", "d.txt": "4"}
+        mirror = {"a.txt": "fedcba9876543210", "c.txt": "x", "d.txt": "y", "e.txt": "5"}
+        for name in ("a.txt", "b.txt", "c.txt", "d.txt"):
+            (self.host / name).write_text(name)
+        oracle, _, found = self.check([self.SETTLED], trees=((host, mirror),))
+        self.assertEqual(found, ["the settled mirror and the host differ in 5 file(s); a.txt is with different content"])
+        self.assertEqual(oracle.evidence["trees.txt"].decode(),
+                         "a.txt: host 0123456789ab mirror fedcba987654\n"
+                         "b.txt: host 2 mirror absent\n"
+                         "c.txt: host 3 mirror x\n"
+                         "d.txt: host 4 mirror y\n"
+                         "e.txt: host absent mirror 5")
+        sides = {name for name in oracle.evidence if name.startswith("diff-") and name.endswith(".host")}
+        self.assertEqual(sides, {"diff-a.txt.host", "diff-b.txt.host", "diff-c.txt.host"}, "the first three paths")
 
 if __name__ == "__main__":
     unittest.main()
