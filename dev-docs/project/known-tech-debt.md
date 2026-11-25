@@ -27,8 +27,7 @@ than a mechanical change:
   budget keeps it from growing but also blocks splitting its long members
   (`RenderSettingsOverlay` 318 lines, `HoveredTooltip` 300, `ControlUiDetails` 288,
   `HandleScheduledWakeSources` 237, `ReplaceAllProjectSearchMatches` 225): a named
-  phase costs a declaration, so the code keeps lambdas instead (see the comment in
-  `HandleScheduledWakeSources`). Moving a cluster off the shell needs the cluster's
+  phase costs a declaration, so the code keeps lambdas instead. Moving a cluster off the shell needs the cluster's
   reads as an interface first; for ControlUi* that is ~50 callbacks, which is the
   next item's problem in another place.
 - **Operations structs of `std::function`.** `MakeActionContext` (604 lines),
@@ -42,6 +41,16 @@ than a mechanical change:
   switch so `-Wswitch` makes each new action decide), and the spec tables
   (`BuiltinKeybindingSpecs`, `BuiltinSettingSpecs`, `WorkspaceCommandSpecs`,
   `WorkspaceMenuSpecs`, `BuildDefaults`), which are data.
+- **2026-11-25 pass.** 56 one-line shell forwarders to services were inlined into
+  their callers (Members.inc cap 1512 -> 1428); the action context holds
+  `CompareReviewService&` instead of seven forwarding hooks; dead code found by
+  linking every binary with `--gc-sections --print-gc-sections` (and functions
+  only their own tests called, `PatternCache` among them) is gone; comments were
+  removed tree-wide (CLAUDE.md: tool directives only). The cluster moves above
+  and the remaining `Make*` hooks, which call shell methods with real bodies
+  rather than services, are still open. To re-run the dead-code scan: a clang
+  build with `-ffunction-sections` and those linker flags, then the symbols every
+  link removed minus those `nm` finds in any binary.
 - **Near-duplicates left in place:** the Lua wrappers in `PluginRuntimeApiInterop`
   and `PluginHostLuaApi.inc` (their scoping is the longjmp-safety contract; fold
   them only with `tools/audit-lua-longjmp.py` in the loop), and the compare
