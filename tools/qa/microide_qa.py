@@ -661,6 +661,11 @@ class App:
     # Set while the monkey runs a burst: actions recorded then carry "b": 1, and a
     # replay sends them with no settle or check between (the timing they had).
     in_burst: bool = False
+    # Whether the app was settled since the last recorded row: a row recorded with
+    # no settle since the one before marks that one "n" (no settle after it), so a
+    # replay sends the two back to back as the run did -- the rows of one monkey
+    # step, an action's own several sends.
+    settled_since_record: bool = True
     # Set while an oracle drives the app (the undo algebra's undos and redos):
     # what it sends is recorded with "o", after an {"oracle": ...} row, so a
     # replay re-runs the oracle there instead of replaying its commands blind.
@@ -2379,6 +2384,7 @@ class App:
         log is an app that has painted what the last input asked for -- or `most`
         seconds have passed. Returns the time waited. The monkey's fixed 0.12 s
         settle was 80% of a step; most actions are painted in a few ms."""
+        self.settled_since_record = True
         started = time.monotonic()
         deadline = started + most * SLOW_FACTOR
         # The app says when it is idle (the `idle` query, answered at its next idle
@@ -3061,6 +3067,9 @@ class App:
 
     def _record(self, action: dict[str, Any]) -> None:
         action["t"] = round(time.monotonic(), 3)
+        if self.actions and not self.settled_since_record and not self.in_burst:
+            self.actions[-1]["n"] = 1
+        self.settled_since_record = False
         if self.in_burst:
             action["b"] = 1
         if self.in_oracle:
@@ -3342,6 +3351,8 @@ def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12,
         following = actions[index + 1] if index + 1 < len(actions) else {}
         if action.get("b") and following.get("b"):
             continue  # the rest of the burst follows with no settle
+        if action.get("n") and following:
+            continue  # the run sent the next row without a settle in between
         app.settle_quiet(most=pause)
         if check:
             app.check(replay_label(index))

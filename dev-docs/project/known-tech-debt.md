@@ -181,11 +181,11 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
      its own thread on a copy of the state (`BackgroundBuild`); the loop keeps
      reaping, timing out and starting jobs, and folds in what the build changed
      when it ends (`test_background_build`).
-   - **Rows of one step are replayed with a settle between them.** The run
-     sends a step's rows back to back unless they are a burst; a replay settles
-     after each. Fixed where it was seen to matter (the window correction);
-     the general answer is for the recorder to mark what was sent without a
-     settle, as it does a burst.
+   - **Rows of one step were replayed with a settle between them: FIXED
+     2026-11-25.** The recorder marks a row `n` when the next one was sent
+     with no settle in between (App.settled_since_record), and the replay sends
+     such rows back to back, as it does a burst. A 120-step run: 57 of 226 rows
+     marked, and its replay followed the run's path.
    - **A lane's seeded monkey is a gate on a moving walk.** Any change to what
      the monkey can do re-rolls what seed 1 does; the lanes now keep a real-size
      window, and `qa-scale`'s layout seed 2 at 1.25 still meets a stale 1x8 px
