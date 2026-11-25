@@ -121,9 +121,15 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
    edit, a row says why, no staging file, the next save writes it). The `crash`
    profile's monkey now does it at random (`diskfull`: a one-shot ENOSPC at a
    random step of saving the focused dirty file, recorded so a replay fails the
-   same save). Still open: a full disk under the session and user-config
-   writers, whose failure has no row to show and needs its own oracle (the next
-   flush stages everything again).
+   same save). DONE 2026-11-25 for the session and user-config writers
+   too: a state write that fails keeps a sticky row up ("Could not save the
+   editor's session state: no space left on the device. Unsaved edits are not
+   protected against a crash until it saves.") until a later write of it lands
+   (`WorkspaceShell/ASessionThatCannotBeSavedSaysUnsavedWorkIsUnprotected`); the
+   idle loop polls only while state writes are in flight. The monkey's
+   `diskfull` fails the session flush 30% of the time and requires the row and
+   its withdrawal; the driver no longer books the app's `persistence: could not
+   write` line for a write it failed on purpose. Item 3 is DONE.
 4. **A save killed part-way is not held to old-or-new bytes: FIXED
    2026-11-25.** The app logs `buffer-io: writing` with the sha of the exact
    bytes it is about to write (after the save's own transforms), and the point
