@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "support/ProjectSearchWait.h"
 #include "workspace/registries/WorkspaceMenuRegistry.h"
 
 #include "TestSupportSdl.h"
@@ -595,6 +596,7 @@ void TestWorkspaceShellSearchSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::ShowSearchSidebar(shell, "main", false);
+  WaitForProjectSearch(shell);
 
   const SDL_FRect mode_rect = WorkspaceShellTestAccess::SearchSidebarModeButtonRect(shell);
   const SDL_FRect case_rect = WorkspaceShellTestAccess::SearchSidebarCaseButtonRect(shell);
