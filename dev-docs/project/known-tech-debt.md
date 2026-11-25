@@ -78,6 +78,9 @@ than a mechanical change:
   constructing each other recursively, or bind shell state into their
   arguments; `ControlUiButtons`' merge section and `HandleScheduledWakeSources`
   (a flat list of wake sources) need shell members and stay.
+- **2026-11-25, later:** `RenderSettingsOverlay` 284 -> 27 lines: its frame,
+  categories, section header, rows, controls and picker are file-local painters
+  over the prepared card (no new declaration).
 - **2026-11-25, later:** `ProjectCatalogService` takes a `Services` struct
   (`PromptSurfaceService&`, `MenuCoordinator&`); neither factory builds another,
   so they were not part of the factory ring. Cap 43 -> 41.
