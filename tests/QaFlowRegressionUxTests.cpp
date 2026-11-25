@@ -888,6 +888,43 @@ void TestADiffUnderAMaximizedPanelListsNoControls() {
   Expect(listed.empty(), "a diff the maximized panel covers names no control:" + listed);
 }
 
+void TestTheSearchSidebarsStatusLineStaysInsideAShortSidebar() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "notes.txt", "base\n");
+  constexpr int kWidth = 1024;
+  constexpr int kHeight = 648;
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+  TestAccess::SetWindowSize(shell, kWidth, kHeight);
+  TestAccess::ShowSearchSidebar(shell, "absent", false);
+  Expect(TestAccess::ExecuteCommandLine(shell, "search-toggle-details") &&
+             TestAccess::ProjectSearchScopeExpanded(shell),
+         "the include and exclude fields are open");
+  SoftwareCanvas canvas(kWidth, kHeight);
+  std::size_t shown = 0;
+  for (float panel = 300.0f; panel <= 520.0f; panel += 3.0f) {
+    TestAccess::SetBottomPanelHeight(shell, panel);
+    shell.Render(canvas.renderer(), kWidth, kHeight);
+    (void)shell.ConsumePendingRenderInvalidation();
+    const SDL_FRect sidebar = TestAccess::CurrentLayout(shell).sidebar;
+    const SDL_FRect status = TestAccess::SearchSidebarStatusRect(shell);
+    if (status.w <= 0.0f || status.h <= 0.0f) {
+      continue;
+    }
+    ++shown;
+    Expect(status.y + status.h <= sidebar.y + sidebar.h,
+           "a panel " + std::to_string(panel) + " tall leaves the sidebar " + std::to_string(sidebar.h) +
+               " tall, and its status line (" + std::to_string(status.y) + "+" + std::to_string(status.h) +
+               ") ends inside it (" + std::to_string(sidebar.y + sidebar.h) + ")");
+  }
+  Expect(shown > 0, "some heights show the status line");
+}
+
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/ALineNumberPressSelectsWholeLines", TestALineNumberPressSelectsWholeLines);
   AddTest(tests, "QaFlowRegressionUx/TheQuickOpenCaretSitsInItsField", TestTheQuickOpenCaretSitsInItsField);
@@ -924,6 +961,8 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/EveryClickableElementTheUiNamesIsAHoverTarget",
           TestEveryClickableElementTheUiNamesIsAHoverTarget);
   AddTest(tests, "QaFlowRegressionUx/AClickAnywhereBehindAModalMovesNoFocus", TestAClickAnywhereBehindAModalMovesNoFocus);
+  AddTest(tests, "QaFlowRegressionUx/TheSearchSidebarsStatusLineStaysInsideAShortSidebar",
+          TestTheSearchSidebarsStatusLineStaysInsideAShortSidebar);
   AddTest(tests, "QaFlowRegressionUx/ADiffUnderAMaximizedPanelListsNoControls",
           TestADiffUnderAMaximizedPanelListsNoControls);
   AddTest(tests, "QaFlowRegressionUx/TheWindowTitleNamesTheActiveFileAndItsState",

@@ -36,6 +36,15 @@ float ButtonRowWidth(const SDL_FRect& sidebar_rect) {
 
 SDL_FRect QueryRect(const SDL_FRect& sidebar_rect) { return FieldRect(sidebar_rect, kQueryTop); }
 
+SDL_FRect StatusRect(const SDL_FRect& sidebar_rect, bool scope_expanded, float line_height) {
+  const float top = StatusTop(scope_expanded);
+  if (!RowFits(sidebar_rect, top, line_height)) {
+    return kEmpty;
+  }
+  return MakeRect(sidebar_rect.x + kInset, sidebar_rect.y + top, std::max(0.0f, sidebar_rect.w - kInset * 2.0f),
+                  line_height);
+}
+
 SDL_FRect ReplaceRect(const SDL_FRect& sidebar_rect) {
   SDL_FRect field = FieldRect(sidebar_rect, kReplaceTop);
   if (field.h <= 0.0f) {

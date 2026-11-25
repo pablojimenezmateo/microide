@@ -2382,9 +2382,8 @@ void WorkspaceShell::PrepareSearchSidebarSurface(FramePrepPass& pass) {
                                  .label = "\xE2\x80\xA6",
                                  .active = search.scope_expanded},
     };
-    inputs.status_rect = MakeRect(
-        sidebar.x + project_search_panel::kInset, sidebar.y + project_search_panel::StatusTop(search.scope_expanded),
-        std::max(0.0f, sidebar.w - project_search_panel::kInset * 2.0f), text_renderer_.LineHeight());
+    inputs.status_rect =
+        project_search_panel::StatusRect(sidebar, search.scope_expanded, text_renderer_.LineHeight());
     inputs.status = sidebar_vm.project_search_status_text;
     const std::vector<int>& line_map = BuildProjectSearchLineMap();
     inputs.results = search.results;

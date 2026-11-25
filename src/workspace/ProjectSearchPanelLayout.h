@@ -62,6 +62,7 @@ inline std::array<FieldSlot, 4> SidebarSearchFieldRects(const SDL_FRect& sidebar
 inline float StatusTop(bool scope_expanded) {
   return kCollapsedStatusTop + (scope_expanded ? kScopeExtraHeight : 0.0f);
 }
+SDL_FRect StatusRect(const SDL_FRect& sidebar_rect, bool scope_expanded, float line_height);
 inline float ResultsTop(bool scope_expanded) {
   return kCollapsedResultsTop + (scope_expanded ? kScopeExtraHeight : 0.0f);
 }

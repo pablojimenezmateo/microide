@@ -492,6 +492,9 @@
     return shell.frame_state_.derived_damage.LaidOutUnitCount(surface);
   }
   static void ShowProblemsSidebar(WorkspaceShell& shell) { shell.ShowProblemsSidebar(); }
+  static SDL_FRect SearchSidebarStatusRect(const WorkspaceShell& shell) {
+    return shell.frame_state_.search_sidebar.status_rect;
+  }
   static void ShowTestsSidebar(WorkspaceShell& shell) { shell.ShowTestsSidebar(); }
   static void ShowGitSidebar(WorkspaceShell& shell) { shell.ShowGitSidebar(); }
   static void MaybeRequestTreeGitBadgesAfterFirstPaint(WorkspaceShell& shell) {
