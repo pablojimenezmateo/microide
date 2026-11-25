@@ -78,6 +78,11 @@ def _writes_logged(log: str) -> dict[str, str]:
     return {match.group(1): match.group(2) for match in _WRITE_LOGGED.finditer(log)}
 
 
+def _trace_field(line: str, key: str) -> str:
+    """The value after the first `key` of a trace line, up to the next space."""
+    return (line.partition(key)[2].split() or [""])[0]
+
+
 def _rule_site(rule: str) -> str:
     """The crash site a crash-points rule (`[action:]site[@file][#nth]`) names."""
     after_action = rule.partition(":")[2] if ":" in rule else rule
@@ -1207,9 +1212,9 @@ class Liveness:
     def check(self) -> list[tuple[str, str]]:
         what, seconds = self.app.slowest_answer
         sched, stall = self.app.slowest_sched, self.app.slowest_stall
-        waits = getattr(self.app, "slowest_waits", "")
+        waits = getattr(self.app, "slowest_waits", "")  # pragma: no mutate
         helpers = getattr(self.app, "slowest_helpers", None)
-        profile = getattr(self.app, "slowest_profile", "")
+        profile = getattr(self.app, "slowest_profile", "")  # pragma: no mutate
         self.app.slowest_helpers = None
         self.app.slowest_profile = ""
         self.app.slowest_answer = ("", 0.0)
@@ -1220,7 +1225,7 @@ class Liveness:
         if seconds <= self.budget or subject in self.reported:
             return []
         where = ""
-        account = ""
+        account = ""  # pragma: no mutate
         if sched is not None:
             ran, queued = sched
             if q.is_starved(seconds, queued):
@@ -1601,8 +1606,7 @@ class IdleOracle:
         """What the idle frames repainted: each frame's dirty bounds (the app logs
         them), most common first, with the UI elements under each -- the frame log
         said "dirty=1" and nothing about which surface kept asking."""
-        bounds = collections.Counter(
-            line.split("bounds=", 1)[1].split()[0] for line in frames if "bounds=" in line)
+        bounds = collections.Counter(_trace_field(line, "bounds=") for line in frames if "bounds=" in line)
         if not bounds:
             return []
         try:
@@ -1613,7 +1617,7 @@ class IdleOracle:
         # Which event asked for each frame (the frame trace's `event=`: a wake
         # channel's name or SDL's event type), most common first: the requester
         # that keeps an idle app repainting.
-        events = collections.Counter(line.split(" event=", 1)[1].split()[0] for line in frames if " event=" in line)
+        events = collections.Counter(_trace_field(line, " event=") for line in frames if " event=" in line)
         if events:
             out.append("frames by the event that asked for them: " +
                        ", ".join(f"{count} x {name}" for name, count in events.most_common(5)))

@@ -3416,5 +3416,108 @@ class KillAtOutcomeTests(KillAtDetailTests):
         app.query.side_effect = refusing
         self.assertEqual(self.kill(oracle, "kill:x@y#1|edit")[0], False)
 
+
+class LivenessDetailTests(LivenessTests):
+    def test_the_evidence_in_full(self):
+        app = self.app(seconds=3.5, sched=(3.0, 0.0), stall="#0 Frame()", waits="futex_wait 202", profile="")
+        oracle = self.oracle(app)
+        oracle.check()
+        self.assertEqual(oracle.evidence["latency.txt"].decode(),
+                         "query 'ui' took 3.50s (budget 2.0s)\n"
+                         "main thread over 3.50s: 3.00s on a CPU, 0.00s waiting for one, 0.50s blocked\n"
+                         "the app's stall watchdog during it (MICROIDE_TRACE_STALL_MS):\n"
+                         "#0 Frame()\n"
+                         "where the main thread sat while the answer was late (wchan, syscall nr and first arg; "
+                         "sampled every 0.2s):\n"
+                         "futex_wait 202\n")
+        self.assertEqual(set(oracle.evidence), {"latency.txt"})
+        oracle = self.oracle(self.app(seconds=3.5))
+        oracle.check()
+        self.assertEqual(oracle.evidence["latency.txt"].decode(),
+                         "query 'ui' took 3.50s (budget 2.0s)\n"
+                         "the app's stall watchdog printed nothing during it (no single loop turn ran that long, "
+                         "or the binary predates the watchdog)\n")
+
+    def test_an_app_without_the_newer_fields(self):
+        from types import SimpleNamespace
+        app = SimpleNamespace(slowest_answer=("query 'ui'", 3.5), slowest_sched=None, slowest_stall="")
+        oracle = self.oracle(app)
+        self.assertEqual(len(oracle.check()), 1)
+        self.assertEqual(set(oracle.evidence), {"latency.txt"})
+        self.assertNotIn("where the main thread sat", oracle.evidence["latency.txt"].decode())
+
+    def test_a_quiet_check_clears_the_evidence_and_starved_ones_add_up(self):
+        app = self.app(seconds=3.5)
+        oracle = self.oracle(app)
+        oracle.check()
+        app.slowest_answer = ("query 'ui'", 1.0)
+        oracle.check()
+        self.assertEqual(oracle.evidence, {})
+        for _ in range(2):
+            app.slowest_answer, app.slowest_sched = ("query 'tabs'", 4.0), (0.5, 3.0)
+            oracle.check()
+        app.slowest_answer, app.slowest_sched, app.slowest_helpers = ("query 'x'", 4.0), (0.5, 0.5), (3.0, 4.0)
+        oracle.check()
+        self.assertEqual(oracle.starved, 3)
+
+    def test_the_blocked_time_and_its_edges(self):
+        def verdict(seconds, ran, queued, helpers=(3.0, 4.0)):
+            oracle = self.oracle(self.app(seconds=seconds, sched=(ran, queued), helpers=helpers))
+            found = oracle.check()
+            return found[0][1].rsplit("mostly ", 1)[1] if found else "starved"
+        self.assertEqual(verdict(3.0, 1.4, 1.0), "computing", "0.6 s blocked is less than 1.4 s run")
+        self.assertEqual(verdict(3.0, 0.9, 1.4), "computing", "0.7 s blocked is less than 0.9 s run")
+        self.assertEqual(verdict(3.0, 1.0, 1.0), "computing", "as long blocked as run is not blocked on helpers")
+        self.assertEqual(verdict(3.0, 1.0, 1.0, helpers=None), "computing", "as long as it ran counts as computing")
+        self.assertEqual(verdict(3.0, 0.9, 1.0, helpers=None), "blocked (I/O, a lock, a child)")
+
+
+class RepaintedRegionTests(unittest.TestCase):
+    def regions(self, frames, elements=None, ui_error=False):
+        app = mock.Mock()
+        if ui_error:
+            app.ui.side_effect = RuntimeError("busy")
+        else:
+            app.ui.return_value = {} if elements is None else {"elements": elements}
+        return monkey_oracles.IdleOracle(app)._repainted_regions(frames)
+
+    @staticmethod
+    def frame(bounds, event=None):
+        return f"microide redraw frame: frame=1 reason=x bounds={bounds}" + (f" event={event}" if event else "")
+
+    def test_the_first_field_of_its_name_is_read(self):
+        self.assertEqual(monkey_oracles._trace_field("a bounds=1,2,3,4 x bounds=9", "bounds="), "1,2,3,4")
+        self.assertEqual(monkey_oracles._trace_field("a bounds=", "bounds="), "")
+
+    def test_no_elements_or_no_ui_leaves_the_regions_unnamed(self):
+        self.assertEqual(self.regions([self.frame("0,0,5,5")]),
+                         ["repainted bounds (x,y,w,h), most common first:", "    1  0,0,5,5  under: -"])
+        self.assertEqual(self.regions([self.frame("0,0,5,5")], ui_error=True)[1], "    1  0,0,5,5  under: -")
+
+    def test_the_three_most_repainted_and_the_five_most_asking(self):
+        frames = [self.frame(f"{i},0,1,1", event=f"e{i}") for i in range(7) for _ in range(7 - i)]
+        lines = self.regions(frames, elements=[])
+        self.assertEqual(lines[0], "frames by the event that asked for them: "
+                                   "7 x e0, 6 x e1, 5 x e2, 4 x e3, 3 x e4")
+        self.assertEqual(lines[2:], ["    7  0,0,1,1  under: -", "    6  1,0,1,1  under: -", "    5  2,0,1,1  under: -"])
+
+    def test_bounds_that_do_not_parse_do_not_stop_the_rest(self):
+        lines = self.regions([self.frame("a,b,c,d")] * 3 + [self.frame("1,2,3,4")], elements=[])
+        self.assertEqual(lines, ["repainted bounds (x,y,w,h), most common first:", "    1  1,2,3,4  under: -"])
+
+    def test_an_element_is_under_a_region_only_when_they_overlap(self):
+        def under(rect):
+            return self.regions([self.frame("10,10,10,10")], elements=[{"name": "e", "rect": rect}])[1]
+        for rect in ([19, 19, 5, 5], [5, 5, 6, 6], [15, 0, 1, 11], [0, 15, 11, 1]):
+            self.assertTrue(under(rect).endswith("under: e"), rect)
+        for rect in ([20, 10, 5, 5], [10, 20, 5, 5], [5, 10, 5, 5], [10, 5, 5, 5], [0, 0, 100], None):
+            self.assertTrue(under(rect).endswith("under: -"), rect)
+        self.assertTrue(under([12, 30, 1, 1]).endswith("under: -"), "x overlaps, y does not")
+
+    def test_at_most_twelve_names(self):
+        elements = [{"name": f"n{i}", "rect": [0, 0, 5, 5]} for i in range(13)]
+        line = self.regions([self.frame("0,0,5,5")], elements=elements)[1]
+        self.assertEqual(line, "    1  0,0,5,5  under: " + ", ".join(f"n{i}" for i in range(12)))
+
 if __name__ == "__main__":
     unittest.main()
