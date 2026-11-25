@@ -2229,6 +2229,34 @@ class FrameLatencyEdgeTests(unittest.TestCase):
         oracle.check()
         self.assertEqual(oracle.evidence, {}, "a check that files nothing keeps none")
 
+    def test_a_new_reason_after_a_reported_one_in_the_same_window_is_filed(self):
+        app = self.App()
+        oracle = self.oracle(app)
+        oracle.check()
+        app.log += self.frame(1, 900.0)
+        oracle.check()
+        app.log += self.frame(2, 900.0) + self.frame(3, 900.0, reason="event-partial")
+        found = oracle.check()
+        self.assertEqual(len(found), 1)
+        self.assertIn("event-partial frame", found[0][1])
+
+    def test_a_slow_first_line_is_its_own_evidence(self):
+        app = self.App()
+        oracle = self.oracle(app)
+        oracle.check()
+        app.log += self.frame(1, 900.0)
+        oracle.check()
+        self.assertEqual(oracle.evidence["frame-latency.txt"].decode(), self.frame(1, 900.0))
+
+    def test_a_window_reads_at_most_four_mebibytes(self):
+        app = mock.Mock()
+        app._log_size.side_effect = [10, 20]
+        app.log_since.return_value = ""
+        oracle = self.oracle(app)
+        oracle.check()
+        oracle.check()
+        app.log_since.assert_called_once_with(10, 4 * 1024 * 1024)
+
     def test_only_the_lines_since_the_last_check_are_read(self):
         app = self.App()
         oracle = self.oracle(app)

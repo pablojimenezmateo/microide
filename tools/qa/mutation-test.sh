@@ -7,25 +7,59 @@
 # copy for `mutmut show <name>`.
 #
 # Usage: tools/qa/mutation-test.sh [scratch-dir] [children]
+#        tools/qa/mutation-test.sh --only <Class.method|function> [scratch-dir]
+# --only reruns one function's mutants against the checkout's current module and
+# tests in an existing scratch copy, and prints each survivor's change.
+# A mutant that changes nothing observable (an equivalent mutant) is marked
+# `# pragma: no mutate` on its line, which mutmut then leaves alone.
 # Needs mutmut with pytest and pillow in its environment:
 #   pipx install mutmut && pipx inject mutmut pytest pillow
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+only=""
+if [[ "${1:-}" == "--only" ]]; then
+  only="${2:?--only needs a function, e.g. FrameLatency.check}"
+  shift 2
+fi
 scratch="$(realpath -m "${1:-$repo/build/mutation}")"
 children="${2:-8}"
 command -v mutmut >/dev/null || { echo "mutation-test: no mutmut (pipx install mutmut)" >&2; exit 2; }
+qa="$scratch/tools/qa"
+
+place_tests() {
+  mkdir -p "$qa/tests"
+  cp "$repo/tools/qa/test_monkey_oracles.py" "$qa/tests/test_monkey_oracles.py"
+  # The test imports its siblings from its own directory; under tests/ the mutated
+  # module comes from mutants/ first and the rest from the copy's tools/qa.
+  sed -i "s|^sys.path.insert(0, str(Path(__file__).resolve().parent))|sys.path.insert(0, str(Path(__file__).resolve().parent.parent))\nsys.path.append('$qa')|" \
+    "$qa/tests/test_monkey_oracles.py"
+}
+
+if [[ -n "$only" ]]; then
+  [[ -d "$qa/mutants" ]] || { echo "mutation-test: no scratch run at $scratch; run without --only first" >&2; exit 2; }
+  cp "$repo/tools/qa/monkey_oracles.py" "$qa/monkey_oracles.py"
+  place_tests
+  mkdir -p "$qa/mutants/tests"
+  cp "$qa/tests/test_monkey_oracles.py" "$qa/mutants/tests/test_monkey_oracles.py"
+  key="${only//./ǁ}"
+  [[ "$key" == *ǁ* ]] && pattern="monkey_oracles.xǁ${key}__mutmut_*" || pattern="monkey_oracles.x_${key}__mutmut_*"
+  cd "$qa"
+  mutmut run --max-children "$children" "$pattern" >only.log 2>&1 || true
+  survivors=$(mutmut results 2>/dev/null | grep -F "${pattern%\*}" | grep -E ": (survived|no tests)$" | sed 's/^ *//; s/:.*//' || true)
+  echo "$only: $(echo -n "$survivors" | grep -c . || true) surviving or untested"
+  for mutant in $survivors; do
+    echo "--- $mutant"
+    mutmut show "$mutant" 2>/dev/null | grep -E '^[-+] ' || true
+  done
+  exit 0
+fi
 
 rm -rf "$scratch"
 mkdir -p "$scratch"
 cp -r "$repo/tools" "$scratch/"
-qa="$scratch/tools/qa"
-mkdir -p "$qa/tests"
-mv "$qa/test_monkey_oracles.py" "$qa/tests/"
-# The test imports its siblings from its own directory; under tests/ the mutated
-# module comes from mutants/ first and the rest from the copy's tools/qa.
-sed -i "s|^sys.path.insert(0, str(Path(__file__).resolve().parent))|sys.path.insert(0, str(Path(__file__).resolve().parent.parent))\nsys.path.append('$qa')|" \
-  "$qa/tests/test_monkey_oracles.py"
+rm "$qa/test_monkey_oracles.py"
+place_tests
 printf '[mutmut]\npaths_to_mutate=monkey_oracles.py\ntests_dir=tests/\n' > "$qa/setup.cfg"
 
 cd "$qa"

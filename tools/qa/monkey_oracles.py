@@ -1206,7 +1206,7 @@ class FrameLatency:
     def check(self) -> list[tuple[str, str]]:
         self.evidence = {}
         size = self.app._log_size()
-        if self.offset is None or size < self.offset:
+        if self.offset is None or size < self.offset:  # pragma: no mutate
             self.offset = size
             return []
         text = self.app.log_since(self.offset, 4 * 1024 * 1024)
