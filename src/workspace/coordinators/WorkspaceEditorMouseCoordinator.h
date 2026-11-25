@@ -8,8 +8,14 @@
 
 namespace microide::workspace {
 
+class DebugService;
+
 class EditorMouseCoordinator {
  public:
+  struct Services {
+    DebugService& debug;
+  };
+
   struct Operations {
     std::function<WorkspaceShell::EditorPaneLayouts(const WorkspaceLayout&)>
         compute_editor_pane_layouts;
@@ -24,12 +30,10 @@ class EditorMouseCoordinator {
     std::function<void()> reset_caret_blink;
     std::function<void()> note_active_editable_edit;
     std::function<void()> request_frame;
-    std::function<void()> request_tab_strip_redraw;
     std::function<void()> clear_drag_state;
     std::function<std::optional<std::string>(std::string_view id)> get_setting_value;
     std::function<editor::FoldingModel*()> ensure_active_folding_model_fresh;
     std::function<void(EditorBannerAction, const std::filesystem::path&)> editor_banner_action;
-    std::function<void(const std::filesystem::path&)> on_breakpoint_toggled;
     std::function<void(const std::filesystem::path&, std::size_t, const SDL_FRect&)>
         open_breakpoint_context_menu;
     std::function<void()> go_to_definition;
@@ -38,6 +42,7 @@ class EditorMouseCoordinator {
   EditorMouseCoordinator(ProjectWorkspaceState& state,
                          InteractionState& interaction_state,
                          render::TextRenderer& text_renderer,
+                         Services services,
                          Operations operations);
 
   bool HandleButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
@@ -54,6 +59,7 @@ class EditorMouseCoordinator {
   ProjectWorkspaceState& state_;
   InteractionState& interaction_state_;
   render::TextRenderer& text_renderer_;
+  Services services_;
   Operations operations_;
 };
 

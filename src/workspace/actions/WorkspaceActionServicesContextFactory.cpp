@@ -132,7 +132,7 @@ void WorkspaceActionContext::AddDebugWatchExpression(std::string expression) {
 void WorkspaceActionContext::StopAllDebugSessions() {
   services_.debug.StopAllDebugging();
   services_.debug_pane.Close();
-  operations_.request_window_redraw();
+  operations_.request_frame();
 }
 
 void WorkspaceActionContext::OpenDebugReplPrompt() {
@@ -691,7 +691,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                                       std::string value) { return SetSettingValue(id, std::move(value)); },
           .notify = [this](NotificationService::Tone tone, std::string message) { Notify(tone, std::move(message)); },
           .note_layout_inputs_changed = [this]() { NoteLayoutInputsChanged(); },
-          .request_window_redraw = [this]() { RequestPreparedFrame(); },
           .activate_editor_banner =
               [this](std::string_view label, std::string* error) {
                 const EditorBannerState* banner =

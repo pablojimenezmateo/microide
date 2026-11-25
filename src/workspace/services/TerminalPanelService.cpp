@@ -62,9 +62,9 @@ bool TerminalPanelService::PanelShowsTerminal() const {
 void TerminalPanelService::NotePanelVisibilityChanged(bool was_visible) {
   if (PanelVisible() != was_visible) {
     operations_.note_layout_inputs_changed();
-    operations_.request_window_redraw();
+    operations_.request_frame();
   } else if (PanelVisible()) {
-    operations_.request_bottom_panel_redraw();
+    operations_.request_frame();
   }
 }
 
@@ -128,7 +128,7 @@ bool TerminalPanelService::AdoptHostTerminal(ProjectWorkspaceState& state, termi
   state.host_terminals_unrecorded = true;
   if (&state == &state_) {
     operations_.note_layout_inputs_changed();
-    operations_.request_bottom_panel_redraw();
+    operations_.request_frame();
   }
   return true;
 }
@@ -371,9 +371,9 @@ void TerminalPanelService::CloseTerminalTab(std::size_t index) {
     }
     if (PanelVisible() != was_visible) {
       operations_.note_layout_inputs_changed();
-      operations_.request_window_redraw();
+      operations_.request_frame();
     } else {
-      operations_.request_bottom_panel_redraw();
+      operations_.request_frame();
     }
     return;
   }
@@ -382,7 +382,7 @@ void TerminalPanelService::CloseTerminalTab(std::size_t index) {
                                                         : state_.active_terminal_tab_index,
                state_.terminal_tabs.size() - 1);
   operations_.note_layout_inputs_changed();
-  operations_.request_bottom_panel_redraw();
+  operations_.request_frame();
 }
 
 bool TerminalPanelService::MoveActiveTerminalTabTo(std::size_t index) {
@@ -474,7 +474,7 @@ bool TerminalPanelService::CloseActivePane() {
   operations_.clear_terminal_selection();
   tab->RemovePane(tab->active_pane);
   operations_.note_layout_inputs_changed();
-  operations_.request_bottom_panel_redraw();
+  operations_.request_frame();
   return true;
 }
 
@@ -517,7 +517,7 @@ bool TerminalPanelService::ActivatePaneAt(const WorkspaceLayout& layout, float x
   }
   operations_.clear_terminal_selection();
   tab->active_pane = index;
-  operations_.request_bottom_panel_redraw();
+  operations_.request_frame();
   return true;
 }
 
@@ -541,7 +541,7 @@ bool TerminalPanelService::RelaunchActivePane() {
   if (TerminalTabState* tab = state_.active_terminal_tab(); tab != nullptr) {
     ++tab->layout_revision;
   }
-  operations_.request_bottom_panel_redraw();
+  operations_.request_frame();
   return true;
 }
 
@@ -570,7 +570,7 @@ bool TerminalPanelService::ResizeActiveTabDivider(std::size_t boundary, float fi
   if (tab == nullptr || !tab->ResizeDivider(boundary, first_share)) {
     return false;
   }
-  operations_.request_bottom_panel_redraw();
+  operations_.request_frame();
   return true;
 }
 
@@ -649,7 +649,7 @@ void TerminalPanelService::SetPanelMaximized(bool maximized) {
   state_.panel.maximized = maximized;
   operations_.note_layout_inputs_changed();
   if (PanelVisible() != was_visible || PanelVisible()) {
-    operations_.request_window_redraw();
+    operations_.request_frame();
   }
 }
 
@@ -670,7 +670,7 @@ void TerminalPanelService::SyncPanelMaximizedWithFocus() {
   if (!state_.panel.maximized_seen_focus.has_value()) {
     if (hidden_surface) {
       state_.surface.focus = FocusTarget::Panel;
-      operations_.request_window_redraw();
+      operations_.request_frame();
     }
     state_.panel.maximized_seen_focus = state_.surface.focus;
     state_.panel.maximized_seen_editor_overlay = editor_overlay;
@@ -687,7 +687,7 @@ void TerminalPanelService::SyncPanelMaximizedWithFocus() {
     state_.panel.maximized = false;
     state_.panel.maximized_seen_focus.reset();
     operations_.note_layout_inputs_changed();
-    operations_.request_window_redraw();
+    operations_.request_frame();
   };
   switch (focus) {
     case FocusTarget::Editor:
@@ -713,7 +713,7 @@ void TerminalPanelService::NoteActiveTabShown() {
       tab != nullptr && (tab->has_unseen_output || tab->has_unseen_bell)) {
     tab->has_unseen_output = false;
     tab->has_unseen_bell = false;
-    operations_.request_bottom_panel_redraw();
+    operations_.request_frame();
   }
 }
 

@@ -104,8 +104,7 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
                                   pane.launch_working_directory, pane.launch_command, {});
               },
           .note_layout_inputs_changed = [this]() { NoteLayoutInputsChanged(); },
-          .request_window_redraw = [this]() { RequestPreparedFrame(); },
-          .request_bottom_panel_redraw = [this]() { RequestPreparedFrame(); },
+          .request_frame = [this]() { RequestPreparedFrame(); },
           .revive_terminals =
               [this]() {
                 return SettingFlagEnabled(GetSettingValue("terminal.restore_sessions"), true);

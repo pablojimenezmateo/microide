@@ -25,6 +25,7 @@
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceLayout.h"
 #include "util/InvokeIfSet.h"
+#include "workspace/debug/DebugService.h"
 
 namespace microide::workspace {
 namespace {
@@ -125,10 +126,12 @@ bool SettingOnByDefault(
 EditorMouseCoordinator::EditorMouseCoordinator(ProjectWorkspaceState& state,
                                                InteractionState& interaction_state,
                                                render::TextRenderer& text_renderer,
+                                               Services services,
                                                Operations operations)
     : state_(state),
       interaction_state_(interaction_state),
       text_renderer_(text_renderer),
+      services_(services),
       operations_(std::move(operations)) {}
 
 bool EditorMouseCoordinator::HandleGutterContextMenu(const SDL_Event& event,
@@ -222,7 +225,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (pane_it->group_index != state_.focused_group_index &&
       pane_it->group_index < state_.editor_groups.size()) {
     state_.focused_group_index = pane_it->group_index;
-    util::InvokeIfSet(operations_.request_tab_strip_redraw);
+    util::InvokeIfSet(operations_.request_frame);
   }
   const SDL_FRect editor_rect = pane_it->rect;
   editor::TextViewport* viewport = operations_.active_editor_viewport();
@@ -327,7 +330,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
           const std::filesystem::path& path = viewport->path();
           if (!path.empty()) {
             state_.breakpoint_store.Toggle(path, line_index);
-            util::InvokeIfSet(operations_.on_breakpoint_toggled, path);
+            services_.debug.ResendBreakpointsForFile(path);
             operations_.request_frame();
             state_.surface.focus = FocusTarget::Editor;
             return true;
@@ -654,6 +657,9 @@ EditorMouseCoordinator& WorkspaceShell::MakeEditorMouseCoordinator() {
       context_.current_project_state,
       context_.interaction_state,
       editor_text_renderer_,
+      EditorMouseCoordinator::Services{
+          .debug = debug_service_,
+      },
       EditorMouseCoordinator::Operations{
           .compute_editor_pane_layouts =
               [this](const WorkspaceLayout& layout) { return ComputeEditorPaneLayouts(layout); },
@@ -670,7 +676,6 @@ EditorMouseCoordinator& WorkspaceShell::MakeEditorMouseCoordinator() {
           .note_active_editable_edit =
               [this]() { NoteActiveEditableEdit(); },
           .request_frame = [this]() { RequestPreparedFrame(); },
-          .request_tab_strip_redraw = [this]() { RequestPreparedFrame(); },
           .clear_drag_state = [this]() { ClearDragState(); },
           .get_setting_value =
               [this](std::string_view id) { return GetSettingValue(id); },
@@ -679,10 +684,6 @@ EditorMouseCoordinator& WorkspaceShell::MakeEditorMouseCoordinator() {
           .editor_banner_action =
               [this](EditorBannerAction action, const std::filesystem::path& path) {
                 ActivateEditorBannerAction(action, path);
-              },
-          .on_breakpoint_toggled =
-              [this](const std::filesystem::path& path) {
-                debug_service_.ResendBreakpointsForFile(path);
               },
           .open_breakpoint_context_menu =
               [this](const std::filesystem::path& path, std::size_t line,

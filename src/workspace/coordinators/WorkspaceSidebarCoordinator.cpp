@@ -71,7 +71,7 @@ void SidebarCoordinator::ShowMode(SidebarMode mode, bool temporary) {
   state_.sidebar.visible = true;
   state_.surface.focus = FocusTarget::Sidebar;
   state_.sidebar.scroll_row = 0;
-  operations_.request_window_redraw();
+  operations_.request_frame();
 }
 
 void SidebarCoordinator::ShowTree(const std::filesystem::path& root) {
@@ -164,7 +164,7 @@ void SidebarCoordinator::Close() {
     state_.surface.focus = FocusTarget::Editor;
   }
   if (was_visible) {
-    operations_.request_window_redraw();
+    operations_.request_frame();
   }
 }
 
@@ -184,7 +184,7 @@ void SidebarCoordinator::Toggle() {
   state_.sidebar.prev_view_id.clear();
   state_.surface.focus = FocusTarget::Sidebar;
   if (!was_visible) {
-    operations_.request_window_redraw();
+    operations_.request_frame();
   }
 }
 
@@ -218,7 +218,7 @@ void SidebarCoordinator::RestorePrevious() {
   } else if (IsHostOwnedItemView(ActiveSidebarMode())) {
     RefreshHostView();
   }
-  operations_.request_sidebar_redraw();
+  operations_.request_frame();
 }
 
 void SidebarCoordinator::RefreshProjectFiles() {
@@ -238,7 +238,7 @@ void SidebarCoordinator::RefreshProjectFiles() {
   RefreshTests();
   RefreshPlugin();
   if (state_.sidebar.visible) {
-    operations_.request_sidebar_redraw();
+    operations_.request_frame();
   }
 }
 
@@ -267,8 +267,7 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
                 return OpenProjectTab(root, restore_persistence, log_feedback);
               },
           .stop_project_search = [this]() { StopProjectSearch(); },
-          .request_window_redraw = [this]() { RequestPreparedFrame(); },
-          .request_sidebar_redraw = [this]() { RequestPreparedFrame(); },
+          .request_frame = [this]() { RequestPreparedFrame(); },
           .note_layout_inputs_changed = [this]() { NoteLayoutInputsChanged(); },
           .request_git_refresh = [this]() { RequestGitSidebarRefresh(); },
           .consume_git_refresh_snapshot =

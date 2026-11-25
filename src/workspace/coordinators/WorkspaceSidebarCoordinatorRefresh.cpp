@@ -109,7 +109,7 @@ void ApplyGitRefreshSnapshot(GitSidebarState& git_state,
 void SidebarCoordinator::ApplyTreeGitStatuses(project::SharedGitTreeStatusMap statuses) {
   if (state_.directory_tree.ApplyGitStatuses(std::move(statuses)) && state_.sidebar.visible &&
       ActiveSidebarMode() == SidebarMode::Tree) {
-    operations_.request_sidebar_redraw();
+    operations_.request_frame();
   }
 }
 
@@ -138,16 +138,16 @@ void SidebarCoordinator::ApplyGitSnapshotKeepingSelection(
       git.selected_index = i;
       RevealSelectedGitLine();
       if (git_view_shown) {
-        operations_.request_sidebar_redraw();
+        operations_.request_frame();
       }
       return;
     }
   }
 
   RevealSelectedGitLine();
-  operations_.request_window_redraw();
+  operations_.request_frame();
   if (git_view_shown) {
-    operations_.request_sidebar_redraw();
+    operations_.request_frame();
   }
 }
 
@@ -157,7 +157,7 @@ void SidebarCoordinator::RefreshGit() {
     GitSidebarState::RefreshSnapshot pending_snapshot;
     if (!operations_.consume_git_refresh_snapshot(&pending_snapshot)) {
       if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git) {
-        operations_.request_sidebar_redraw();
+        operations_.request_frame();
       }
       return;
     }
@@ -181,7 +181,7 @@ void SidebarCoordinator::RefreshGit() {
       if (!state_.sidebar.git.refreshing && operations_.request_git_refresh != nullptr) {
         operations_.request_git_refresh();
       }
-      operations_.request_sidebar_redraw();
+      operations_.request_frame();
     }
     return;
   }
@@ -195,7 +195,7 @@ bool SidebarCoordinator::CatchUpSearchResults(const editor::TextViewport& viewpo
                                         SearchCandidatesFrom(state_.file_index, search))) {
     return false;
   }
-  operations_.request_sidebar_redraw();
+  operations_.request_frame();
   return true;
 }
 
@@ -233,7 +233,7 @@ bool SidebarCoordinator::RefreshProblems() {
 
   RevealSelectedProblemsLine();
   if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Problems) {
-    operations_.request_sidebar_redraw();
+    operations_.request_frame();
   }
   return !state_.sidebar.problems.entries.empty();
 }
@@ -245,7 +245,7 @@ bool SidebarCoordinator::RefreshTests() {
                             &state_.sidebar.tests.selected_index);
   RevealSelectedTestsLine();
   if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Tests) {
-    operations_.request_sidebar_redraw();
+    operations_.request_frame();
   }
   return populated;
 }
@@ -269,7 +269,7 @@ bool SidebarCoordinator::RefreshPlugin() {
   if (plugin_runtime_.Host().FindSidebarProvider(state_.sidebar.view_id) == nullptr) {
     state_.sidebar.view_id = "tree";
     if (state_.sidebar.visible) {
-      operations_.request_sidebar_redraw();
+      operations_.request_frame();
     }
     return false;
   }
@@ -277,7 +277,7 @@ bool SidebarCoordinator::RefreshPlugin() {
   const std::string request_view_id = state_.sidebar.view_id;
   RecomputePluginSidebarPlaceholder();
   if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Plugin) {
-    operations_.request_sidebar_redraw();
+    operations_.request_frame();
   }
 
   auto apply = operations_.apply_plugin_sidebar_result;
@@ -313,7 +313,7 @@ void SidebarCoordinator::ApplyPluginSidebarResult(
     RevealSelectedPluginLine();
   }
   if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Plugin) {
-    operations_.request_sidebar_redraw();
+    operations_.request_frame();
   }
 }
 
@@ -329,14 +329,14 @@ bool SidebarCoordinator::RefreshOutline() {
   if (viewport == nullptr || viewport->path().empty()) {
     RecomputePluginSidebarPlaceholder();
     if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Outline) {
-      operations_.request_sidebar_redraw();
+      operations_.request_frame();
     }
     return false;
   }
 
   RecomputePluginSidebarPlaceholder();
   if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Outline) {
-    operations_.request_sidebar_redraw();
+    operations_.request_frame();
   }
   util::InvokeIfSet(operations_.query_outline_symbols, *viewport);
   return true;
@@ -364,7 +364,7 @@ void SidebarCoordinator::RefreshHostView() {
   }
   RecomputePluginSidebarPlaceholder();
   if (state_.sidebar.visible) {
-    operations_.request_sidebar_redraw();
+    operations_.request_frame();
   }
 }
 
@@ -390,7 +390,7 @@ void SidebarCoordinator::ApplyOutlineResult(
   RecomputePluginSidebarPlaceholder();
   RevealSelectedPluginLine();
   if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Outline) {
-    operations_.request_sidebar_redraw();
+    operations_.request_frame();
   }
 }
 

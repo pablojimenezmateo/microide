@@ -82,14 +82,14 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::WindowMouseLeave");
       operations_.handle_window_mouse_leave();
-      operations_.request_window_redraw();
+      operations_.request_frame();
       return Finish(true);
       }
     case SDL_EVENT_WINDOW_MOUSE_ENTER:
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::WindowMouseEnter");
       util::InvokeIfSet(operations_.force_cursor_reassert);
-      operations_.request_window_redraw();
+      operations_.request_frame();
       return Finish(true);
       }
     case SDL_EVENT_WINDOW_FOCUS_GAINED:
@@ -99,7 +99,7 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       state_.key_modifiers = SDL_GetModState();
       util::InvokeIfSet(operations_.window_focus_gained);
       util::InvokeIfSet(operations_.force_cursor_reassert);
-      operations_.request_window_redraw();
+      operations_.request_frame();
       return Finish(true);
       }
     case SDL_EVENT_WINDOW_FOCUS_LOST:
@@ -109,7 +109,7 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       util::InvokeIfSet(operations_.end_selection_gesture);
       util::InvokeIfSet(operations_.autosave_on_focus_lost);
       util::InvokeIfSet(operations_.force_cursor_reassert);
-      operations_.request_window_redraw();
+      operations_.request_frame();
       return Finish(true);
       }
     case SDL_EVENT_KEY_DOWN:

@@ -125,14 +125,14 @@ bool ChromeMouseCoordinator::HandleWheel(const SDL_Event& event,
       return false;
     }
     operations_.move_buffer_search_selection(-overlay_ticks);
-    operations_.request_overlay_redraw();
+    operations_.request_frame();
     return true;
   }
   const SDL_FRect overlay = operations_.compute_overlay_rect(layout.editor_area);
   const auto list_layout = operations_.compute_overlay_list_layout(overlay);
   state_.overlay.scroll_row = std::clamp(
       state_.overlay.scroll_row - overlay_ticks * kWheelScrollRows, 0, list_layout.max_scroll);
-  operations_.request_overlay_redraw();
+  operations_.request_frame();
   return true;
 }
 
@@ -405,7 +405,7 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
         FocusedGroupSurface(layout, state_.editor_split, state_.clamped_focused_group_index()),
         replace_mode);
     if (!Contains(fw.widget, event.button.x, event.button.y)) {
-      operations_.request_overlay_redraw();
+      operations_.request_frame();
       return false;
     }
     if (Contains(fw.close_button, event.button.x, event.button.y)) {
@@ -434,7 +434,7 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
       operations_.replace_all_buffer_search_matches();
     }
     state_.surface.focus = FocusTarget::Overlay;
-    operations_.request_overlay_redraw();
+    operations_.request_frame();
     return true;
   }
 
@@ -445,7 +445,7 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
       return false;
     }
     operations_.dismiss_overlay(false);
-    operations_.request_overlay_redraw();
+    operations_.request_frame();
     return true;
   }
 
@@ -462,7 +462,7 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
             interaction_state_.drag_scrollbar_offset))),
         0, list_layout.max_scroll);
     state_.surface.focus = FocusTarget::Overlay;
-    operations_.request_overlay_redraw();
+    operations_.request_frame();
     return true;
   }
 
@@ -473,12 +473,12 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
     operations_.reveal_overlay_selection(overlay);
     if (event.button.button == SDL_BUTTON_LEFT) {
       operations_.activate_overlay_selection();
-      operations_.request_overlay_redraw();
+      operations_.request_frame();
       return true;
     }
   }
   state_.surface.focus = FocusTarget::Overlay;
-  operations_.request_overlay_redraw();
+  operations_.request_frame();
   return true;
 }
 
@@ -573,7 +573,6 @@ ChromeMouseCoordinator& WorkspaceShell::MakeChromeMouseCoordinator() {
           .replace_current_buffer_search_match = [this]() { ReplaceCurrentBufferSearchMatch(); },
           .replace_all_buffer_search_matches = [this]() { ReplaceAllBufferSearchMatches(); },
           .toggle_buffer_search_option = [this](BufferFindToggle toggle) { ToggleBufferSearchOption(toggle); },
-          .request_overlay_redraw = [this]() { RequestPreparedFrame(); },
           .dismiss_overlay = [this](bool focus_editor) { DismissOverlay(focus_editor); },
           .compute_overlay_rect = [this](const SDL_FRect& rect) { return ComputeOverlayRect(rect); },
           .clamp_overlay_scroll_row = [this](const SDL_FRect& rect) { ClampOverlayScrollRow(rect); },

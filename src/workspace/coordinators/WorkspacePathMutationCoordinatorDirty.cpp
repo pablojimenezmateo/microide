@@ -7,6 +7,7 @@
 #include "workspace/services/PromptSurfaceService.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "util/InvokeIfSet.h"
+#include "workspace/services/SidebarService.h"
 
 namespace microide::workspace {
 
@@ -254,7 +255,7 @@ void PathMutationCoordinator::ResumeDeferredPathMutation(PromptSurfaceState pend
 void PathMutationCoordinator::RefreshDiagnosticsAfterMutation() {
   operations_.refresh_problems_sidebar();
   operations_.queue_editor_hover_refresh();
-  operations_.request_editor_surface_redraw();
+  operations_.request_frame();
 }
 
 void PathMutationCoordinator::RetargetDiagnosticsForRename(
@@ -282,7 +283,7 @@ void PathMutationCoordinator::RetargetPluginDecorationsForRename(
   bool changed = presentation.decorations.RetargetPathPrefix(old_path, new_path);
   changed = presentation.surfaces.RetargetPathPrefix(old_path, new_path) || changed;
   if (changed) {
-    operations_.request_editor_surface_redraw();
+    operations_.request_frame();
   }
   state.MaybeReleasePluginPresentation();
 }
@@ -296,7 +297,7 @@ void PathMutationCoordinator::ClearPluginDecorationsForPath(const std::filesyste
   bool changed = presentation.decorations.ClearPathPrefix(path);
   changed = presentation.surfaces.ClearPathPrefix(path) || changed;
   if (changed) {
-    operations_.request_editor_surface_redraw();
+    operations_.request_frame();
   }
   state.MaybeReleasePluginPresentation();
 }
@@ -333,7 +334,7 @@ void PathMutationCoordinator::RefreshProjectViewsAfterMutation(
   } else if (!state.root.empty()) {
     state.directory_tree.SelectPath(state.root);
   }
-  operations_.reveal_selected_tree_sidebar_line();
+  services_.sidebar.RevealSelectedTreeLine();
   if (!state.overlay.workflow.project_search.query.text().empty()) {
     operations_.refresh_project_search();
   }

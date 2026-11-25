@@ -46,7 +46,6 @@ class ChromeMouseCoordinator {
     std::function<void()> replace_current_buffer_search_match;
     std::function<void()> replace_all_buffer_search_matches;
     std::function<void(BufferFindToggle)> toggle_buffer_search_option;
-    std::function<void()> request_overlay_redraw;
     std::function<void(bool)> dismiss_overlay;
     std::function<SDL_FRect(const SDL_FRect&)> compute_overlay_rect;
     std::function<void(const SDL_FRect&)> clamp_overlay_scroll_row;

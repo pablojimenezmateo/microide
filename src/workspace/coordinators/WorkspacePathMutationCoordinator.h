@@ -14,24 +14,26 @@ namespace microide::workspace {
 
 class PromptSurfaceService;
 
+class SidebarCoordinator;
+class PatchApplyService;
+
 class PathMutationCoordinator {
  public:
+  struct Services {
+    SidebarCoordinator& sidebar;
+    PatchApplyService& patch_apply;
+  };
+
   struct Operations {
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<void()> clear_editor_blame;
     std::function<void(NotificationService::Tone, std::string)> notify;
-    std::function<bool()> discard_all_git_sidebar_entries;
-    std::function<bool(std::size_t, const std::filesystem::path&)> discard_git_sidebar_entry;
-    std::function<bool()> confirm_discard_patch_preview;
-    std::function<void()> cancel_discard_patch_preview;
     std::function<void()> refresh_project_files;
     std::function<void()> request_automatic_git_sidebar_refresh;
-    std::function<void()> reveal_selected_tree_sidebar_line;
     std::function<void()> refresh_project_search;
     std::function<void()> refresh_problems_sidebar;
     std::function<void()> queue_editor_hover_refresh;
-    std::function<void()> request_editor_surface_redraw;
-    std::function<void()> request_window_redraw;
+    std::function<void()> request_frame;
     std::function<void(editor::TextViewport&)> apply_editor_preferences;
     std::function<void(editor::TextViewport&)> apply_detected_indent_on_open;
     std::function<std::filesystem::path(const TabEntry::EditorTabState&)> editor_view_path;
@@ -48,6 +50,7 @@ class PathMutationCoordinator {
   PathMutationCoordinator(WorkspaceContext& context,
                           EditorTabService& editor_tabs,
                           PromptSurfaceService& prompt_surfaces,
+                          Services services,
                           Operations operations);
 
   bool HasDirtyEditorTabsForPath(const std::filesystem::path& path,
@@ -118,6 +121,7 @@ class PathMutationCoordinator {
   WorkspaceContext& context_;
   EditorTabService& editor_tabs_;
   PromptSurfaceService& prompt_surfaces_;
+  Services services_;
   Operations operations_;
 };
 

@@ -101,7 +101,6 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
           .request_frame = [this]() { RequestPreparedFrame(); },
           .invalidate_tab_strip_geometry =
               [this]() { tab_strip_service_.InvalidateTabStripGeometry(); },
-          .request_editor_surface_redraw = [this]() { RequestPreparedFrame(); },
           .editor_group_rects =
               [this]() {
                 const auto layout = CurrentWorkspaceLayout();

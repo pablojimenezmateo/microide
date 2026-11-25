@@ -26,7 +26,7 @@ PromptSurfaceService& WorkspaceShell::MakePromptSurfaceService() {
       context_.current_project_state,
       context_.prompts,
       PromptSurfaceService::Operations{
-          .request_prompt_redraw = [this]() { RequestPreparedFrame(); },
+          .request_frame = [this]() { RequestPreparedFrame(); },
       });
   return *glue_->prompt_surface_service;
 }

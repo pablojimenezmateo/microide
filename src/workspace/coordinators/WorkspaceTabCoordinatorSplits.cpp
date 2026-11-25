@@ -248,7 +248,7 @@ bool TabCoordinator::ReopenActive() {
   SyncActiveEditorTabMetadata();
   state_.surface.focus = FocusTarget::Editor;
   operations_.reset_caret_blink();
-  operations_.request_editor_surface_redraw();
+  operations_.request_frame();
   return true;
 }
 

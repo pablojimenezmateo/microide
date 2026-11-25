@@ -21,7 +21,7 @@ class ProjectCatalogCoordinator {
     std::function<void()> shutdown_plugin_host;
     std::function<void()> reset_project_catalog_to_welcome_state;
     std::function<void()> ensure_active_project_visible;
-    std::function<void()> request_window_redraw;
+    std::function<void()> request_frame;
   };
 
   ProjectCatalogCoordinator(WorkspaceContext& context, Operations operations);

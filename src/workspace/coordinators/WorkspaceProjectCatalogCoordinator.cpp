@@ -168,7 +168,7 @@ void ProjectCatalogCoordinator::RestoreActivationCheckpoint(const ActivationChec
 void ProjectCatalogCoordinator::FinalizeMutation() {
   operations_.ensure_active_project_visible();
   operations_.save_workspace_session();
-  operations_.request_window_redraw();
+  operations_.request_frame();
 }
 
 }

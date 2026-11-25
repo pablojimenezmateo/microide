@@ -388,7 +388,6 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
                 }
               },
           .end_selection_gesture = [shell]() { shell->AbandonPointerGestures(); },
-          .request_window_redraw = [shell]() { shell->RequestPreparedFrame(); },
           .handle_key_down =
               [shell](const SDL_KeyboardEvent& event) {
                 if (event.key == SDLK_ESCAPE &&

@@ -123,7 +123,7 @@ void CompareReviewService::MarksChanged() {
   }
   util::InvokeIfSet(operations_.persist);
   util::InvokeIfSet(operations_.request_frame);
-  util::InvokeIfSet(operations_.request_sidebar_redraw);
+  util::InvokeIfSet(operations_.request_frame);
 }
 
 void CompareReviewService::SetHunkReviewed(CompareTabState& compare_tab, int hunk, bool reviewed) {
@@ -306,7 +306,6 @@ CompareReviewService& WorkspaceShell::MakeCompareReviewService() {
                 }
               },
           .request_frame = [this]() { RequestPreparedFrame(); },
-          .request_sidebar_redraw = [this]() { RequestPreparedFrame(); },
           .open_comment_prompt =
               [this](PromptSurfaceService::ReviewCommentPrompt prompt) {
                 MakePromptSurfaceService().OpenReviewCommentPrompt(std::move(prompt));

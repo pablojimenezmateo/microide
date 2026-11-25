@@ -15,7 +15,7 @@ struct ProjectWorkspaceState;
 class PromptSurfaceService {
  public:
   struct Operations {
-    std::function<void()> request_prompt_redraw;
+    std::function<void()> request_frame;
   };
 
   PromptSurfaceService(ProjectWorkspaceState& state, PromptState& prompts, Operations operations);

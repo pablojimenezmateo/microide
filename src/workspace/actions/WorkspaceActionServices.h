@@ -159,7 +159,6 @@ class WorkspaceActionContext {
     std::function<bool(std::string_view, std::string)> set_setting_value;
     std::function<void(NotificationService::Tone, std::string)> notify;
     std::function<void()> note_layout_inputs_changed;
-    std::function<void()> request_window_redraw;
     std::function<bool(std::string_view, std::string*)> activate_editor_banner;
     std::function<bool(std::string_view)> show_output_channel;
     std::function<RemoteHostService&()> remote_hosts;

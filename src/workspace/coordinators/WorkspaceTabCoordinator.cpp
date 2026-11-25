@@ -729,7 +729,7 @@ bool TabCoordinator::RefuseIfReadOnly(const std::filesystem::path& normalized_pa
   }
   if (banner_shows) {
     SetEditorBanner(state_, EditorBannerState::Kind::ReadOnly, normalized_path);
-    util::InvokeIfSet(operations_.request_editor_surface_redraw);
+    util::InvokeIfSet(operations_.request_frame);
   } else util::InvokeIfSet(operations_.notify_save_failed, normalized_path, "the file is read-only");
   return false;
 }

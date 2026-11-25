@@ -62,7 +62,6 @@ class WorkspaceEventDispatcher {
     std::function<void()> pointer_modifiers_changed;
     std::function<void()> autosave_on_focus_lost;
     std::function<void()> end_selection_gesture;
-    std::function<void()> request_window_redraw;
     std::function<bool(const SDL_KeyboardEvent&)> handle_key_down;
     std::function<bool(const SDL_KeyboardEvent&)> handle_key_up;
     std::function<bool(const char*, float, float)> handle_file_drop;

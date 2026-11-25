@@ -39,8 +39,7 @@ class TerminalPanelService {
         make_host_pane;
     std::function<bool(TerminalPaneState&)> relaunch_pane;
     std::function<void()> note_layout_inputs_changed;
-    std::function<void()> request_window_redraw;
-    std::function<void()> request_bottom_panel_redraw;
+    std::function<void()> request_frame;
     std::function<bool()> revive_terminals;
   };
 

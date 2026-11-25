@@ -46,7 +46,6 @@ class TabCoordinator {
     std::function<void()> reset_caret_blink;
     std::function<void()> request_frame;
     std::function<void()> invalidate_tab_strip_geometry;
-    std::function<void()> request_editor_surface_redraw;
     std::function<EditorGroupRectsLayout()> editor_group_rects;
     std::function<void()> request_automatic_git_sidebar_refresh;
     std::function<void(std::uint64_t stable_id)> tab_closed;

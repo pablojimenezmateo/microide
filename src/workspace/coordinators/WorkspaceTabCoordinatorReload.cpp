@@ -165,7 +165,7 @@ bool TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
     editor_state.folding_model->Clear();
     if (active_in_focused_group) {
       SyncActiveEditorTabMetadata();
-      operations_.request_editor_surface_redraw();
+      operations_.request_frame();
     }
   };
   for (std::size_t g = 0; g < state_.editor_groups.size(); ++g) {

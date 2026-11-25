@@ -140,7 +140,7 @@ void WorkspaceActionContext::ShowSidebarSurface() {
   }
   if (state_.surface.focus != FocusTarget::Sidebar) {
     state_.surface.focus = FocusTarget::Sidebar;
-    util::InvokeIfSet(operations_.request_window_redraw);
+    util::InvokeIfSet(operations_.request_frame);
   }
 }
 
@@ -443,7 +443,7 @@ bool WorkspaceActionContext::SetActiveLineEnding(util::LineEnding ending) {
     return false;
   }
   if (viewport->SetLineEnding(ending)) {
-    operations_.request_window_redraw();
+    operations_.request_frame();
   }
   return true;
 }
@@ -745,7 +745,7 @@ void WorkspaceActionContext::ApplyProjectSearchViewCommand(ActionId id) {
       break;
     case ActionId::ProjectSearchToggleDetails:
       search.scope_expanded = !search.scope_expanded;
-      operations_.request_window_redraw();
+      operations_.request_frame();
       return;
     default:
       break;
@@ -1705,14 +1705,14 @@ void WorkspaceActionContext::ReportColorschemeNames() {
 
 void WorkspaceActionContext::RequestLiveConfigRedraw() {
   util::InvokeIfSet(operations_.note_layout_inputs_changed);
-  util::InvokeIfSet(operations_.request_window_redraw);
+  util::InvokeIfSet(operations_.request_frame);
 }
 
 bool WorkspaceActionContext::FocusNotifications() {
   if (!services_.notifications.Focus()) {
     return false;
   }
-  operations_.request_window_redraw();
+  operations_.request_frame();
   return true;
 }
 
@@ -1742,7 +1742,7 @@ std::optional<NotificationAction> WorkspaceActionContext::TakeNotificationAction
              std::string(action) + "\"";
     return std::nullopt;
   }
-  operations_.request_window_redraw();
+  operations_.request_frame();
   return services_.notifications.TakeAction(*row_index, *action_index);
 }
 

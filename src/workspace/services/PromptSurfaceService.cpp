@@ -38,12 +38,12 @@ std::vector<std::uint64_t> PromptSurfaceService::StableIdsForFocusedTabs(
 }
 
 void PromptSurfaceService::ShowDirtyPrompt(DirtyPromptState prompt) {
-  operations_.request_prompt_redraw();
+  operations_.request_frame();
   prompts_.dirty_visible = true;
   prompts_.dirty_previous_focus = state_.surface.focus;
   prompts_.dirty = std::move(prompt);
   state_.surface.focus = FocusTarget::Overlay;
-  operations_.request_prompt_redraw();
+  operations_.request_frame();
 }
 
 void PromptSurfaceService::ShowDirtyPromptForTab(std::size_t index) {
@@ -152,23 +152,23 @@ void PromptSurfaceService::OnTabClosed(std::uint64_t stable_id) {
 }
 
 void PromptSurfaceService::DismissDirtyPrompt(bool restore_focus) {
-  operations_.request_prompt_redraw();
+  operations_.request_frame();
   prompts_.dirty_visible = false;
   prompts_.dirty = DirtyPromptState{};
   if (restore_focus || state_.surface.focus == FocusTarget::Overlay) {
     state_.surface.focus = FocusAfterPrompt(prompts_.dirty_previous_focus);
   }
-  operations_.request_prompt_redraw();
+  operations_.request_frame();
 }
 
 void PromptSurfaceService::DismissPromptSurface(bool restore_focus) {
-  operations_.request_prompt_redraw();
+  operations_.request_frame();
   prompts_.surface_visible = false;
   prompts_.surface = PromptSurfaceState{};
   if (restore_focus || state_.surface.focus == FocusTarget::Overlay) {
     state_.surface.focus = FocusAfterPrompt(prompts_.surface_previous_focus);
   }
-  operations_.request_prompt_redraw();
+  operations_.request_frame();
 }
 
 void PromptSurfaceService::CancelOpenPrompts() {
@@ -184,7 +184,7 @@ void PromptSurfaceService::OpenPromptSurface(PromptSurfaceState::Action action,
                                              PromptSurfaceState::Kind kind,
                                              const std::filesystem::path& path,
                                              std::string input) {
-  operations_.request_prompt_redraw();
+  operations_.request_frame();
   prompts_.surface_visible = true;
   prompts_.surface_previous_focus = state_.surface.focus;
   prompts_.surface.kind = kind;
@@ -205,7 +205,7 @@ void PromptSurfaceService::OpenPromptSurface(PromptSurfaceState::Action action,
   prompts_.surface.button_count = 2;
   prompts_.surface.selected_button = 0;
   state_.surface.focus = FocusTarget::Overlay;
-  operations_.request_prompt_redraw();
+  operations_.request_frame();
 }
 
 void PromptSurfaceService::OpenReviewCommentPrompt(ReviewCommentPrompt prompt) {
@@ -228,7 +228,7 @@ void PromptSurfaceService::OpenExternalUrlPrompt(std::string url) {
     return;
   }
 
-  operations_.request_prompt_redraw();
+  operations_.request_frame();
   prompts_.surface_visible = true;
   prompts_.surface_previous_focus = state_.surface.focus;
   prompts_.surface.kind = PromptSurfaceState::Kind::Confirm;
@@ -244,7 +244,7 @@ void PromptSurfaceService::OpenExternalUrlPrompt(std::string url) {
   prompts_.surface.button_count = 2;
   prompts_.surface.selected_button = 0;
   state_.surface.focus = FocusTarget::Overlay;
-  operations_.request_prompt_redraw();
+  operations_.request_frame();
 }
 
 }

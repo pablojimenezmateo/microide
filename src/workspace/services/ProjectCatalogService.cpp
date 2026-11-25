@@ -41,7 +41,7 @@ ProjectCatalogCoordinator::Operations ProjectCatalogService::BuildCoordinatorOpe
       .reset_project_catalog_to_welcome_state =
           [this]() { operations_.reset_project_catalog_to_welcome_state(); },
       .ensure_active_project_visible = [this]() { operations_.ensure_active_project_visible(); },
-      .request_window_redraw = [this]() { operations_.request_window_redraw(); },
+      .request_frame = [this]() { operations_.request_frame(); },
   };
 }
 

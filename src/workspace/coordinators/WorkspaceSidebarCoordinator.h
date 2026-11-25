@@ -26,8 +26,7 @@ class SidebarCoordinator {
     std::function<void()> close_tree_context_menu;
     std::function<bool(const std::filesystem::path&, bool, bool)> open_project_tab;
     std::function<void()> stop_project_search;
-    std::function<void()> request_window_redraw;
-    std::function<void()> request_sidebar_redraw;
+    std::function<void()> request_frame;
     std::function<void()> note_layout_inputs_changed;
     std::function<void()> request_git_refresh;
     std::function<bool(GitSidebarState::RefreshSnapshot*)> consume_git_refresh_snapshot;

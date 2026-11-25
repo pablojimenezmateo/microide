@@ -21,7 +21,6 @@ class CompareReviewService {
     std::function<CompareTabState*()> active_compare_tab;
     std::function<void()> persist;
     std::function<void()> request_frame;
-    std::function<void()> request_sidebar_redraw;
     std::function<void(PromptSurfaceService::ReviewCommentPrompt)> open_comment_prompt;
     std::function<void(int)> jump_compare_hunk;
   };
