@@ -238,7 +238,7 @@ class DataOracle:
         texts: dict[tuple[str, str], set[str]] = collections.defaultdict(set)
         for doc in docs:
             if not doc.get("path") and doc.get("title"):
-                texts[_doc_key(doc)].add(str(doc.get("sha256", "")))
+                texts[_doc_key(doc)].add(str(doc.get("sha256")))
         found = [("data", f"{len(shas)} different unsaved buffers are all titled {title}")
                  for (_, title), shas in sorted(texts.items()) if len(shas) > 1]
         if found:
@@ -841,13 +841,13 @@ class UndoAlgebra:
         if after.get("path") != before.get("path") or after.get("kind") != before.get("kind"):
             return []  # the commands moved focus somewhere else: not this rule's case
         if after.get("text") != before.get("text"):
-            if self._churned_during_check(str(before.get("path") or ""), started):
+            if self._churned_during_check(before.get("path"), started):
                 # The monkey's ExternalChurn rewrote this file under the clean
                 # buffer while the commands ran, and the buffer reloaded it: the
                 # text moved for a reason that is not undo or redo (soak
                 # d6710c671734, "churn 13\n" prepended between two undos).
                 return []
-            self.evidence = {"undo-before.txt": str(before.get("text", "")).encode(),
+            self.evidence = {"undo-before.txt": str(before["text"]).encode(),
                              "undo-after.txt": str(after.get("text") or "").encode()}
             return [("undo", f"{k} undo(s) then {k} redo(s) changed the text of "
                              f"{Path(before.get('path') or 'untitled').name} "
@@ -872,7 +872,7 @@ class UndoAlgebra:
                 return False
             time.sleep(0.02)
 
-    def _churned_during_check(self, path: str, started: float) -> bool:
+    def _churned_during_check(self, path: str | None, started: float) -> bool:
         """A churn row for `path` from the reload grace before the check began
         on: ExternalChurn records each row before its write, so a rewrite the
         check could have seen is already in the list."""
@@ -1386,19 +1386,12 @@ def _utf8_boundaries(raw: bytes) -> set[int]:
     a stray continuation byte in binary data, a cut-off lead -- is one on its own.
     Reading every 0x80-0xBF byte as "inside a character" called a span beside a
     lone 0x97 a split (soak 1b3aae58e0b7, 883 sightings on binary lines)."""
-    out = {0, len(raw)}
-    i = 0
-    while i < len(raw):
-        lead = raw[i]
-        n = 1 if lead < 0x80 else 2 if 0xC2 <= lead <= 0xDF else 3 if 0xE0 <= lead <= 0xEF \
-            else 4 if 0xF0 <= lead <= 0xF4 else 1
-        if n > 1:
-            try:
-                raw[i:i + n].decode("utf-8")
-            except UnicodeDecodeError:
-                n = 1
-        i += n
-        out.add(i)
+    out = {0}
+    offset = 0
+    for character in raw.decode("utf-8", "surrogateescape"):  # pragma: no mutate
+        size = len(character.encode("utf-8", "surrogateescape"))  # pragma: no mutate
+        offset += size
+        out.add(offset)
     return out
 
 

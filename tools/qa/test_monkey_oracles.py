@@ -1931,9 +1931,14 @@ class UndoAlgebraGuardTests(unittest.TestCase):
 class UntitledNameTests(unittest.TestCase):
     def oracle(self, docs, tabs=None):
         app = mock.Mock()
-        app.query.side_effect = lambda verb, args=None: (
-            [dict(d) for d in docs] if verb == "documents" else
-            (tabs if not isinstance(tabs, Exception) else (_ for _ in ()).throw(tabs)))
+        def query(verb, args=None):
+            if verb == "documents":
+                return [dict(d) for d in docs]
+            self.assertEqual((verb, args), ("tabs", None))
+            if isinstance(tabs, Exception):
+                raise tabs
+            return tabs
+        app.query.side_effect = query
         return monkey_oracles.DataOracle(app)
 
     def test_two_texts_under_one_untitled_name_are_a_data_finding_with_the_tabs(self):
@@ -3639,6 +3644,141 @@ class ResourceCheckDetailTests(unittest.TestCase):
                 mock.patch.object(oracle, "_what_it_holds") as unasked:
             oracle.check()
         unasked.assert_not_called()
+
+
+class UntitledEvidenceTests(UntitledNameTests):
+    def test_a_files_two_buffers_are_not_an_untitled_collision(self):
+        docs = [{"path": "/p/m.cpp", "title": "compare: m.cpp", "sha256": "a", "project": "/p"},
+                {"path": "/p/m.cpp", "title": "merge: m.cpp", "sha256": "b", "project": "/p"}]
+        self.assertEqual(self.oracle(docs).check_untitled_names(), [])
+
+    def test_the_evidence_is_indented_one_space(self):
+        docs = [{"path": "", "title": "Untitled-1", "sha256": "a", "project": "/p"},
+                {"path": "", "title": "Untitled-1", "sha256": "b", "project": "/p"}]
+        oracle = self.oracle(docs, tabs=[{"t": 1}])
+        oracle.check_untitled_names()
+        self.assertEqual(oracle.untitled_evidence["untitled-documents.json"], json.dumps(docs, indent=1).encode())
+        self.assertEqual(oracle.untitled_evidence["tabs.json"], b'[\n {\n  "t": 1\n }\n]')
+
+
+class UndoAlgebraEdgeTests(UndoAlgebraGuardTests):
+    def test_a_check_with_no_count_picks_its_own(self):
+        app = _UndoEditor(["a", "ab"], at=1)
+        oracle = monkey_oracles.UndoAlgebra(app, random.Random(0))
+        lines = []
+        app.on_line = lines.append
+        with mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 0.001), \
+                mock.patch.object(oracle, "pick", return_value=3) as pick:
+            oracle.check()
+        pick.assert_called_once_with()
+        self.assertEqual(lines.count("undo"), 3)
+
+    def test_an_undo_at_the_bottom_of_the_history_is_not_redone(self):
+        app = _UndoEditor(["a"], at=0)
+        lines = []
+        app.on_line = lines.append
+        self.check(app, asked=2)
+        self.assertEqual(lines, ["undo", "undo"])
+
+    def test_a_tab_whose_path_alone_changes_is_not_compared(self):
+        app = _UndoEditor(["a", "ab", "abc"], at=2, redo_drops=True)
+        answer = app.query
+        calls = {"n": 0}
+
+        def query(verb, args=None):
+            out = answer(verb, args)
+            if verb == "buffer":
+                calls["n"] += 1
+                if calls["n"] == 4:
+                    out["path"] = "/w/elsewhere.md"
+            return out
+        app.query = query
+        self.assertEqual(self.check(app)[1], [])
+
+    def test_an_untitled_buffer_is_named_untitled_and_a_textless_answer_is_empty(self):
+        app = _UndoEditor(["a", "ab", "abc"], at=2, redo_drops=True)
+        answer = app.query
+        calls = {"n": 0}
+
+        def query(verb, args=None):
+            out = answer(verb, args)
+            if verb == "buffer":
+                out["path"] = ""
+                calls["n"] += 1
+                if calls["n"] == 4:
+                    del out["text"]
+            return out
+        app.query = query
+        oracle, found = self.check(app)
+        self.assertEqual(found, [("undo", "2 undo(s) then 2 redo(s) changed the text of untitled (3 -> 0 chars)")])
+        self.assertEqual(oracle.evidence["undo-after.txt"], b"")
+
+
+class MismatchEvidenceTests(CleanBufferTests):
+    def test_the_summary_in_full(self):
+        path, _ = self.file("a.txt", b"0123456789" * 6 + b"tail-disk")
+        oracle, _ = self.oracle([], content=[{"path": path, "contentHex": (b"0123456789" * 6 + b"tail-buffer").hex()},
+                                             {"path": str(self.dir / "other.txt"), "contentHex": b"zz".hex()}])
+        out = oracle._mismatch_evidence(path, ("bufsha", "disksha"))
+        lines = out["mismatch-a.txt.txt"].decode().splitlines()
+        self.assertEqual(lines[:6], [f"path: {path}", "buffer sha256: bufsha", "disk sha256:   disksha",
+                                     "buffer 71 bytes, disk 69 bytes; first difference at byte 65",
+                                     "buffer[65:+48]: b'buffer'", "disk[65:+48]:   b'disk'"])
+        self.assertTrue(lines[6].startswith("disk mtime_ns "))
+        self.assertTrue(out["mismatch-a.txt.txt"].endswith(b"\n") and not out["mismatch-a.txt.txt"].endswith(b"\n\n"))
+        self.assertEqual(out["mismatch-a.txt.buffer"], b"0123456789" * 6 + b"tail-buffer")
+
+    def test_forty_eight_bytes_from_where_they_part(self):
+        path, _ = self.file("a.txt", b"x" + b"d" * 60)
+        oracle, _ = self.oracle([], content=[{"path": path, "contentHex": (b"x" + b"b" * 60).hex()}])
+        lines = oracle._mismatch_evidence(path, ("b", "d"))["mismatch-a.txt.txt"].decode().splitlines()
+        self.assertEqual(lines[4], "buffer[1:+48]: b'" + "b" * 48 + "'")
+        self.assertEqual(lines[5], "disk[1:+48]:   b'" + "d" * 48 + "'")
+
+    def test_a_side_that_cannot_be_read_is_left_out(self):
+        oracle, _ = self.oracle([], content=[])
+        out = oracle._mismatch_evidence(str(self.dir / "gone.txt"), ("b", "d"))
+        self.assertEqual(set(out), {"mismatch-gone.txt.txt"})
+        self.assertEqual(out["mismatch-gone.txt.txt"].decode(),
+                         f"path: {self.dir / 'gone.txt'}\nbuffer sha256: b\ndisk sha256:   d\n")
+        path, _ = self.file("b.txt", b"disk")
+        oracle, _ = self.oracle([], content=[{"path": path}])
+        out = oracle._mismatch_evidence(path, ("b", "d"))
+        self.assertEqual(set(out), {"mismatch-b.txt.disk", "mismatch-b.txt.txt"})
+        self.assertEqual(len(out["mismatch-b.txt.txt"].decode().splitlines()), 3)
+
+    def test_the_io_history_is_one_line_each(self):
+        path, _ = self.file("a.txt", b"x")
+        (self.dir / "microide-1.log").write_text(f"microide buffer-io: read path={path} x\n"
+                                                 f"microide buffer-io: write path={path} y\n")
+        oracle, _ = self.oracle([], content=[])
+        history = oracle._mismatch_evidence(path, ("b", "d"))["mismatch-a.txt.io.txt"]
+        self.assertEqual(history, (f"microide-1.log: microide buffer-io: read path={path} x\n"
+                                   f"microide-1.log: microide buffer-io: write path={path} y\n").encode())
+
+
+class UndoChurnWindowTests(unittest.TestCase):
+    def oracle(self, actions):
+        app = mock.Mock()
+        app.project = "/w"
+        app.actions = actions
+        return monkey_oracles.UndoAlgebra(app, random.Random(0))
+
+    def test_a_churn_row_from_the_grace_before_the_check_on_counts(self):
+        started = 100.0
+        since = started - monkey_oracles.CHURN_RELOAD_GRACE_S
+        churned = self.oracle([{"churn": "a.txt", "t": since}])._churned_during_check
+        self.assertTrue(churned("/w/a.txt", started), "a row at the edge of the grace counts")
+        self.assertFalse(self.oracle([{"churn": "a.txt", "t": since - 0.01}])._churned_during_check("/w/a.txt", started))
+        self.assertTrue(self.oracle([{"churn": "a.txt"}])._churned_during_check("/w/a.txt", started),
+                        "a row with no time counts")
+        self.assertFalse(self.oracle([{"churn": "b.txt", "t": started}])._churned_during_check("/w/a.txt", started))
+        self.assertFalse(self.oracle([{"churn": "a.txt", "t": started}])._churned_during_check(None, started))
+
+    def test_only_the_last_sixty_four_rows_are_read(self):
+        row = {"churn": "a.txt", "t": 100.0}
+        self.assertTrue(self.oracle([row] + [{}] * 63)._churned_during_check("/w/a.txt", 100.0))
+        self.assertFalse(self.oracle([row] + [{}] * 64)._churned_during_check("/w/a.txt", 100.0))
 
 if __name__ == "__main__":
     unittest.main()
